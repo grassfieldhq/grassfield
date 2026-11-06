@@ -307,7 +307,7 @@ TestCase {
             permissions: [{key: "network", name: "", level: 1, detail: ""}, {key: "home", name: "~", level: 2, detail: ""}]});
         compare(s.title, "Install “Notes”?");
         compare(s.message, "It's installed in your own folder, for you alone, without administrator rights.\n\nIt can reach:\n"
-                + "Files and Folders: Your home folder (read and write)\nNetwork: The internet and your local network\n\nThese will be installed:");
+                + "Files and Folders\nNetwork\n\nTake care:\nIt can read and change everything in your home folder, including other apps' data and settings.\n\nIts page lists each one.\n\nThese will be installed:");
         compare(s.confirmText, "Install");
         verify(!s.returnCancels, "the user's own folder, nothing built: Install is the default");
         verify(find(s, i => i.text === "Download, at most" && i.visible) !== null);
@@ -332,8 +332,9 @@ TestCase {
             download: "1.5 MB", access: ["outside", "sessionService:org.freedesktop.systemd1", "other:devices=tpm"],
             permissions: [{key: "outside", name: "", level: 1, detail: ""}, {key: "sessionService", name: "org.freedesktop.systemd1", level: 1, detail: ""},
                           {key: "other", name: "devices=tpm", level: 1, detail: ""}]});
-        verify(s.message.indexOf("It can reach:\nOther Apps and Services: Talks to “org.freedesktop.systemd1”\n"
-                                 + "Outside Its Sandbox: Programs outside its sandbox\nOther: A permission the Store can't describe: devices=tpm") >= 0, s.message);
+        verify(s.message.indexOf("It can reach:\nOther Apps and Services\nOutside Its Sandbox\nOther\n\n") >= 0, s.message);
+        // The warnings are on the sheet, each once, on their own lines (finding 10: they had been left out).
+        verify(s.message.indexOf("Take care:\nAnything it starts this way has all of your access.\n\n") >= 0, s.message);
         s.close();
         t.win.requestGet(app);
         t.backend.planReady("org.example.Notes", "install", {refusal: "", packages: [{name: "org.example.Notes", version: "stable", repo: "flathub", size: "1.5 MB"}],

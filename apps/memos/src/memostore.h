@@ -1,7 +1,7 @@
 // The store of Grassfield Memos (ADR-0051 D-3): one JSON file, private, written atomically, migrated forward only.
 //
 //   $XDG_DATA_HOME/grassfield/memos/memos.json   (~/.local/share/grassfield/memos when XDG_DATA_HOME is empty or relative)
-//   {"schema": 1, "memos": [{"id", "color", "html", "width", "height", "x", "y", "collapsed", "floating", "translucent",
+//   {"schema": 1, "memos": [{"id", "color", "html", "width", "height", "x", "y", "collapsed", "translucent",
 //                            "created", "modified"}]}
 //
 // Rules (the mechanism of Project Luma's sticky-notes store, Apache-2.0, reimplemented; no code copied):
@@ -53,7 +53,6 @@ struct Memo
     int x = 0;
     int y = 0;
     bool collapsed = false;
-    bool floating = false;
     bool translucent = false;
     QDateTime created;
     QDateTime modified;

@@ -94,6 +94,9 @@ TestCase {
         compare(item("shm").text, "The shared memory folder of your other programs (/dev/shm)");
         compare(item("folders", "~/Games", 3).text, "~/Games (read and write, created if missing)");
         compare(Store.previousWords({key: "folders", name: "~/Games", previous: {key: "folders", name: "~/Games", level: 3}}), "read and write, created if missing");
+        // A bus name that went from talk to own is said in bus words, never "read only" (review finding 9).
+        compare(Store.previousWords({key: "sessionService", name: "org.example.Sync", previous: {key: "sessionService", name: "org.example.Sync", level: 1}}), "could talk to it");
+        compare(Store.previousWords({key: "systemService", name: "org.example.Sync", previous: {key: "systemService", name: "org.example.Sync", level: 2}}), "owned it");
         compare(item("bus").note, "Including services that can start programs outside its sandbox.");
         compare(item("sessionService", "org.example.Sync", 1).text, "Talks to “org.example.Sync”");
         compare(item("sessionService", "org.example.Sync", 2).text, "Owns the name “org.example.Sync”");
@@ -129,6 +132,14 @@ TestCase {
                                        {key: "folders", name: "xdg-download", level: 2}]),
                 ["Files and Folders: Music (read only), Downloads (read and write)", "Network: The internet and your local network"]);
         compare(Store.permissionLines(null), []);
+        // The install sheet's short form: group titles, the warning notes once each (review finding 10).
+        const sum = Store.permissionSummary([{key: "outside", name: "", level: 1}, {key: "bus", name: "", level: 1}, {key: "network", name: "", level: 1},
+                                             {key: "audio", name: "", level: 1}]);
+        compare(sum.titles, ["Network", "Microphone and Speakers", "Other Apps and Services", "Outside Its Sandbox"]);
+        compare(sum.warnings, ["It can record from the microphone without asking.", "Including services that can start programs outside its sandbox.",
+                               "Anything it starts this way has all of your access."]);
+        compare(Store.permissionSummary(null), null);
+        compare(Store.permissionSummary([]).titles, []);
         for (const id of ["files", "network", "devices", "sound", "display", "keys", "services", "background", "sandbox", "other"])
             verify(Store.permissionGroupTitle(id) !== "", id);
         compare(Store.permissionGroupTitle("devices"), "Camera and Other Devices");

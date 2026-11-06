@@ -78,8 +78,10 @@ dead ends and download conditions; Apache-2.0). Mechanism reimplemented for pacm
     database every `grassfield-*` package would be foreign for the rest of that run, and an AUR package of the same name and
     a higher version would be built and installed (GF-045), on the whole fleet at once. So:
     - every change of form or cohort (plain → cohort, cohort → plain, a change of cohort) keeps them and sets their time to
-      the epoch (`touch -h -c -d @0`, never through a link). libalpm sends no If-Modified-Since for a local file whose time
-      is 0 (`dload.c`), so the next sync downloads the database and its signature unconditionally (200 for both), never a
+      the epoch (`touch -h -c -d @0`, never through a link). a download condition on a file dated the epoch is
+      always met (libalpm hands the file's time to libcurl, `curl -z`: recent libcurl, 8.23 included, does send an
+      `If-Modified-Since` for time 0, review of the Luma pull request, finding 4), because the server's copy is newer than
+      1970: the next sync downloads the database and its signature (200 for both, never a 304), never a
       new `.sig` beside a kept `.db` (P7). plain → cohort does it too (re-review LOW 3): g.4 makes a cohort path never older
       than the plain path, but the hosts' Last-Modified times are not trusted to order them, and a 304 for the database
       beside a newer `.sig` is one R4 failure. ADR-0033 h.3's host migration in the same scriptlet does the same.
@@ -133,8 +135,9 @@ Who gets what is decided by the paths (pacman). The descriptor only tells the pa
 - **Security**: the available Grassfield release's row reads "Grassfield 1.0.2" with "Important security update. Installed:
   1.0.1"; a security release still being synced reads "Grassfield 1.0.2 is an important security update." / "It will be
   offered to this computer soon."
-- **Withdrawn**: "Grassfield 1.0.1 has been withdrawn." / "A corrected version will be offered to this computer as soon as
-  it's ready."
+- **Withdrawn**: the headline says "Grassfield 1.0.1 has been withdrawn" (not "This computer is up to date", review of the
+  Luma pull request, nested finding 10), and the row under it "A corrected version is on its way." / "It will be offered to
+  this computer as soon as it's ready."
 - A **paused** release shows nothing (macOS explains no phased release); one that was staged disappears from the pane.
 - French: « Grassfield 1.0.1 est en cours de déploiement progressif. » / « Elle sera bientôt proposée sur cet ordinateur. »
   and the rest in `translations/grassfield_fr.ts`.
@@ -161,7 +164,7 @@ the metered query (U7): a different choice from Luma, which treats unknown as a 
 | Case | What happens |
 |---|---|
 | The repository never advertises (today) | no marker → plain form kept, no descriptor request: nothing changes on any client |
-| Stale synced database | a cohort only moves forward (g.4); every change of form or cohort sets the synced files' time to the epoch, so libalpm downloads both the database and its signature again with no If-Modified-Since (P7); they are never deleted inside a transaction (GF-045) |
+| Stale synced database | a cohort only moves forward (g.4); every change of form or cohort sets the synced files' time to the epoch, so libalpm downloads both the database and its signature again (a conditional request dated 1970 is always answered with the full file, 200; P7); they are never deleted inside a transaction (GF-045) |
 | A cohort path missing on the server | its 404 falls back to the plain lines. Outside a ramp the cohort and plain path name the same snapshot: no effect. During a ramp an advanced cohort's machine holds a newer database than the plain path → 304 + older `.sig` → "signature … is invalid" → `failed`, then `blocking` after two failures 15 minutes apart, with Turn Off… (a2). Forbidden by g.5 |
 | Marker published, cohort paths not served (a publisher bug) | enrolled machines fall back to the plain path at each sync (pacman prints a 404 error line in Omarchy's terminal) until it is fixed or the marker is withdrawn (then the next Grassfield upgrade writes the plain form) |
 | A machine changes channel | `set` writes the plain form of the new channel and drops the synced files; the same cohort is enrolled at the next Grassfield upgrade |
@@ -256,7 +259,7 @@ the metered query (U7): a different choice from Luma, which treats unknown as a 
 - `pacman -Sl grassfield` from inside a `post_upgrade` scriptlet (pacman holds `db.lck`; read operations take no lock, and
   libalpm re-validates the database signature when it loads it): to run in the container test (`tests/integration/
   software_update.sh`) before the first marker is published. A failure leaves the file as it is (safe).
-- That libalpm, sending no If-Modified-Since for a synced file whose time is 0, brings a 200 for the database and
+- That libalpm, whose conditional request for a synced file dated the epoch the server always answers in full, brings a 200 for the database and
   its signature (over https and `file://`), and that `yay -Sua` after a scriptlet that kept the files sees no foreign
   `grassfield-*` package: the updated A7e of `tests/integration/software_update.sh` (container, not run here).
 - pacman's fallback from a 404 cohort path to the plain line for both the database and its signature (Q1 tested an

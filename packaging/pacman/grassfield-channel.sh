@@ -218,9 +218,10 @@ gf_drop_synced() {
 # inside `omarchy update`, whose later step `omarchy-update-aur-pkgs` runs `yay -Sua --noconfirm` on the packages no sync
 # database lists (pacman -Qm). Deleting the [grassfield] database there would make every grassfield-* package foreign for
 # the rest of that run, so an AUR package of the same name and a higher version would be built and installed (GF-045). The
-# files stay, listing the packages; their time goes to the epoch: libalpm sends no If-Modified-Since for a local file whose
-# time is 0 (dload.c), so the next sync downloads the database and its signature unconditionally (200 for both: never a new
-# .sig beside a kept .db, P7). A link or another kind of file is left alone (pacman's own folder; nothing else writes there),
+# files stay, listing the packages; their time goes to the epoch: a download condition on a file dated the epoch is always
+# met (libalpm gives the file's time to libcurl, which may send If-Modified-Since for time 0; the server's copy is newer than
+# 1970, so the answer is a 200 either way), so the next sync downloads the database and its signature (200 for both: never
+# a new .sig beside a kept .db, P7). A link or another kind of file is left alone (pacman's own folder; nothing else writes there),
 # and touch -h never follows one even if it appeared between the test and the touch.
 gf_refetch_synced() {
   local s=$GF_DBPATH/sync f

@@ -143,6 +143,28 @@ def redact_json(value, parent=""):
     return value
 
 
+def is_path(value):
+    return isinstance(value, str) and (value.startswith("/") or value.startswith("~/") or value.startswith("$HOME/"))
+
+
+def wallpaper_names(value, wallpaper=False):
+    """A wallpaper's path says where the user keeps their pictures: only the file name stays (an owner's folder names are theirs)."""
+    if isinstance(value, dict):
+        return {k: wallpaper_names(v, wallpaper or k.lower().startswith("wallpaper")) for k, v in value.items()}
+    if isinstance(value, list):
+        return [wallpaper_names(v, wallpaper) for v in value]
+    if wallpaper and is_path(value):
+        return os.path.basename(value.rstrip("/")) or REDACTED
+    return value
+
+
+def folder_styles(value):
+    """folder-styles.json keys up to 20,000 folder paths: the report counts them and shows none."""
+    folders = value.get("folders") if isinstance(value, dict) else None
+    count = len(folders) if isinstance(folders, (dict, list)) else 0
+    return {"folders": "%d entries (the folder paths are left out of the report)" % count}
+
+
 LINE_PAIR = re.compile(r"^(\s*[\"']?([A-Za-z0-9_.\-]+)[\"']?\s*[=:]\s*)(.+)$")
 
 
@@ -341,9 +363,14 @@ def configuration():
             parts.append("--- %s: (cannot be read)" % name)
             continue
         try:
-            body = json.dumps(redact_json(json.loads(text)), indent=1, ensure_ascii=False)
+            data = json.loads(text)
+            if name == "folder-styles.json":
+                data = folder_styles(data)
+            elif name.lower().startswith("wallpaper"):
+                data = wallpaper_names(data, True)
+            body = json.dumps(wallpaper_names(redact_json(data)), indent=1, ensure_ascii=False)
         except ValueError:
-            body = redact_lines(text)
+            body = "(not JSON: left out)" if name == "folder-styles.json" else redact_lines(text)
         parts.append("--- %s\n%s" % (name, body))
     return "\n".join(parts) if parts else "(the folder is empty)"
 

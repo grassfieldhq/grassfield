@@ -35,6 +35,12 @@ function windowHeight(collapsed, expandedHeight, stripHeight, minHeight) {
     return collapsed ? stripHeight : Math.max(expandedHeight, minHeight);
 }
 
+// The memo's tag with the size the compositor's rule gives its window (config/hypr/grassfield/placement.lua memo_resize):
+// "memo:<id>[@x,y]!<w>x<h>"; a size already on the tag is replaced.
+function sizedTag(tag, width, height) {
+    return String(tag ?? "").replace(/![0-9]+x[0-9]+$/, "") + "!" + Math.round(width) + "x" + Math.round(height);
+}
+
 // Whether a height the window reports is the memo's own (kept and stored): not while collapsed, not the strip's height a
 // collapse is moving through.
 function keepsHeight(collapsed, height, stripHeight) {

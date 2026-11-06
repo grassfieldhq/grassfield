@@ -468,11 +468,31 @@ function permissionLines(grants) {
     return groups.map(g => qsTr("%1: %2").arg(g.title).arg(g.items.map(i => i.text).join(", ")));
 }
 
+// The same for an install sheet, short to scan (macOS's sheets say one thing per line): one line per group, its title only,
+// and the notes that warn (a wide grant: a service that starts programs, all of the user's access), each once, on a line
+// of their own. The page lists the items. {titles: [], warnings: []}; null when unread.
+function permissionSummary(grants) {
+    const groups = permissionGroups(grants);
+    if (groups === null)
+        return null;
+    const warnings = [];
+    for (const g of groups) {
+        for (const i of g.items) {
+            if (i.note !== "" && warnings.indexOf(i.note) < 0)
+                warnings.push(i.note);
+        }
+    }
+    return {titles: groups.map(g => g.title), warnings: warnings};
+}
+
 // What a grant was before an update (a widened or narrowed change's previous), in words.
 function previousWords(change) {
     const p = change.previous;
     if (!p)
         return "";
+    // A bus name is talked to or owned, never read or written (review of the Luma pull request, nested finding 9).
+    if (p.key === change.key && p.name === change.name && (p.key === "sessionService" || p.key === "systemService"))
+        return Number(p.level) >= 2 ? qsTr("owned it") : qsTr("could talk to it");
     if (p.key === change.key && p.name === change.name)
         return Number(p.level) >= 3 ? qsTr("read and write, created if missing") : Number(p.level) >= 2 ? qsTr("read and write") : qsTr("read only");
     return permissionItem(p).text;

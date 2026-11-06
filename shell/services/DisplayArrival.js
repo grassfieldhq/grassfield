@@ -95,9 +95,10 @@ function isKnown(seen, key, displaysMain) {
     return false;
 }
 
-// Output names of a nested or virtual compositor output (a dev session's own displays).
+// Output names of a nested or virtual compositor output (a dev session's own displays): the nested window (WAYLAND-1), a
+// headless output, and the project's own reference output (GF-REF, config/hypr/dev.lua).
 function isVirtualOutput(name) {
-    return typeof name === "string" && /^(WAYLAND|HEADLESS|X11)-[0-9]+$/.test(name);
+    return typeof name === "string" && /^((WAYLAND|HEADLESS|X11)-[0-9]+|GF-REF)$/.test(name);
 }
 
 // Whether this shell may offer at all: a packaged session; or a dev session with its own state folder

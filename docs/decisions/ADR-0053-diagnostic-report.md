@@ -54,7 +54,10 @@ and prints its path:
    serials never leave (review fix 2026-11-05): a `serial` field becomes `present`, and so does the serial field of every
    display identity string (`s:<make>|<model>|<serial>` of `displays.main`'s `set` and `main`, ADR-0044 D-2;
    `s:<model>|<serial>` of the wallpaper outputs), the `m:` and `n:` keys (connector-bound) staying as they are. Other text
-   files have `key = value` / `key: value` lines with such a key redacted.
+   files have `key = value` / `key: value` lines with such a key redacted. Paths of the user's own folders stay out
+   (security review of the Luma pull request, finding 2): `folder-styles.json` (up to 20,000 folder paths) is replaced by
+   the count of its entries, and a wallpaper path (any value under a `wallpaper*` key or in a `wallpaper*` file) keeps only
+   its file name.
 
 ### D-3 Redaction (the whole file, last)
 The home path becomes `~`. The user name, the real name and the host name become `<user>`, `<name>` and `<host>` wherever

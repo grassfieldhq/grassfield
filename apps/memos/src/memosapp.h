@@ -40,17 +40,20 @@ public:
     ~MemosApp() override;
 
     // Opens the store with these default sides (the tokens memos.windowWidth and windowHeight) and returns the memos to show,
-    // oldest first, as maps {id, color, html (cleaned), width, height, collapsed, floating, translucent, tag}. Empty when
+    // oldest first, as maps {id, color, html (cleaned), width, height, collapsed, translucent, tag}. Empty when
     // the store is read only (refusal()).
     Q_INVOKABLE QVariantList open(int defaultWidth, int defaultHeight);
     // A new memo near `frontId`'s window (down and to the right by `step`) when its frame is known; appended and saved.
     Q_INVOKABLE QVariantMap createMemo(const QString &frontId, int width, int height, int step);
-    // Any of html, color, width, height, collapsed, floating, translucent; saved after the debounce.
+    // Any of html, color, width, height, collapsed, translucent; saved after the debounce.
     Q_INVOKABLE void update(const QString &id, const QVariantMap &changes);
     Q_INVOKABLE void remove(const QString &id);
-    // The memo window's xdg-toplevel tag now (memo:<id>[:top][@x,y], hyprframes.h).
+    // The memo window's xdg-toplevel tag now (memo:<id>[@x,y], hyprframes.h).
     Q_INVOKABLE QString tagFor(const QString &id) const;
-    // Sends `window`'s tag again (Float on Top changed); main.cpp does it (windowchrome.h).
+    // The same after reading the window frames from Hyprland now (a collapse or an expand sends the corner it had before).
+    Q_INVOKABLE QString freshTagFor(const QString &id);
+    // Sends `window`'s tag again (the memo collapsed or expanded: the tag names the size the compositor gives the window);
+    // main.cpp does it (windowchrome.h).
     Q_INVOKABLE void retag(QObject *window, const QString &tag);
     // Positions read now and every change written now (Quit, the last memo closed, SIGTERM).
     Q_INVOKABLE bool saveNow();
@@ -81,10 +84,10 @@ public:
 signals:
     void openedChanged();
     void appearanceChanged();
-    void retagRequested(QWindow *window, const QString &tag);
     // Emitted by saveNow() before it writes: each window pushes the text it still holds (MemoWindow.flush, Main.qml), through
     // a direct call, so the write that follows has it (Quit, SIGTERM, a window deactivated).
     void aboutToSave();
+    void retagRequested(QWindow *window, const QString &tag);
     // Saved, or failed (no memo text in `message`).
     void saved(bool ok);
 

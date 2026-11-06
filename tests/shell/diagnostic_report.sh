@@ -29,6 +29,8 @@ cat >"$home/.config/grassfield/grassfield.json" <<EOF
  "wallpaperOutputs": {"outputs": [{"display": {"name": "DP-3", "model": "U2723QE", "serial": "SERIAL-WP-2"}, "key": "s:U2723QE|SERIAL-WP-3"}]},
  "lock": {"idleMinutes": 5, "showMessage": true, "message": "If found call FREE-TEXT-LOCK 0612345678"}}
 EOF
+printf '{"version": 1, "serial": 7, "folders": {"%s/Secret Plans/Divorce": {"color": "red"}, "%s/Photos/Trip": {"glyph": "star"}}}\n' "$home" "$home" >"$home/.config/grassfield/folder-styles.json"
+printf '{"version": 1, "outputs": {"DP-3": {"file": "%s/Pictures/Private/beach.jpg"}}}\n' "$home" >"$home/.config/grassfield/wallpaper-state.json"
 printf 'theme = dark\npassword = SECRET-FOUR\nauth_token: SECRET-FIVE\npsk '"'"'SECRET-SEVEN'"'"'\npass=SECRET-TEN\n' >"$home/.config/grassfield/notes.conf"
 ln -s /etc/hostname "$home/.config/grassfield/linked.json"
 
@@ -121,6 +123,8 @@ else
 fi
 desc="secret-looking values are removed from the configuration (JSON and key = value) and the journal; the rest is kept"
 check bash -c '! grep -q "SECRET-\|abcd1234zz\|abcdefghijklmnopqrstu" "$1" && grep -q "\[redacted\]" "$1" && grep -q "\"repeatRate\": 30" "$1" && grep -q "^theme = dark" "$1" && grep -q "\"enabled\": true" "$1"' _ "$out"
+desc="folder-styles.json is counted (2 entries), its folder paths are left out; a wallpaper path keeps only its file name"
+check bash -c '! grep -q "Secret Plans\|Divorce\|Photos/Trip" "$1" && grep -q "2 entries" "$1" && ! grep -q "Pictures/Private\|Pictures/a.jpg" "$1" && grep -q "\"beach.jpg\"" "$1" && grep -q "\"a.jpg\"" "$1"' _ "$out"
 desc="a symbolic link in the configuration folder is not followed"
 check bash -c '! grep -q -- "--- linked.json" "$1"' _ "$out"
 desc="monitor serials never leave through the configuration (displays.main keys, wallpaper outputs): replaced by present"

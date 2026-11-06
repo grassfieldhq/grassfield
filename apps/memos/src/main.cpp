@@ -61,8 +61,8 @@ void quitOnSignals(QGuiApplication &app)
     ::sigaction(SIGINT, &action, nullptr);
 }
 
-// Sends a memo window's tag again (Float on Top changed, ADR-0051 D-6): the same request ChromeTagger sends at the
-// window's creation (apps/windowchrome.h).
+// Sends a memo window's tag again (the memo collapsed or expanded: its tag now names the size the compositor's rule gives the
+// window, ADR-0051 D-6): the same request ChromeTagger sends at the window's creation (apps/windowchrome.h).
 void sendTagAgain(QWindow *window, const QString &tag)
 {
     if (!window || QGuiApplication::platformName() != QLatin1String("wayland"))

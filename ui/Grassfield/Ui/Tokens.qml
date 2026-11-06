@@ -950,6 +950,8 @@ QtObject {
     readonly property int notificationIconRadius: 7
     // F1 gap 7 (meas-A): icon 13-15 from the card edge; added to the 12-pt card padding [ref: docs/testing/f1-reference-gaps.md § Notifications and widgets; docs/specs/notifications.md]
     readonly property int notificationIconInset: 2
+    // F1 gap 7 (meas-A): text column 57-58 from the card edge = 14 + 32 icon + 11 [ref: docs/testing/f1-reference-gaps.md § Notifications and widgets; docs/specs/notifications.md]
+    readonly property int notificationTextGap: 11
     // F1 gap 7 (meas-A): title and body lines on one 16-pt pitch, no extra gap [ref: docs/testing/f1-reference-gaps.md § Notifications and widgets; docs/specs/notifications.md]
     readonly property int notificationLineGap: 0
     // spec N2: default 5 s [ref: docs/testing/f1-reference-gaps.md § Notifications and widgets; docs/specs/notifications.md]
@@ -4172,4 +4174,6 @@ QtObject {
     readonly property string memosGreyStrip: "#D1CDC5"
     // estimate: the in-memo Delete alert's veil over the memo, its paper at this opacity [ref: docs/decisions/ADR-0051-memos.md; docs/specs/memos.md]
     readonly property real memosAlertFillOpacity: 0.94
+    // estimate: the in-memo Delete alert's Cancel button, the memo ink at this opacity on the paper (the paper is light in both appearances, so the system's button fill and label, white in the dark appearance, would be unreadable on it) [ref: docs/decisions/ADR-0051-memos.md; docs/specs/memos.md]
+    readonly property real memosAlertButtonFillOpacity: 0.12
 }

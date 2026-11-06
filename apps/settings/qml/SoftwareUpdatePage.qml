@@ -113,6 +113,11 @@ SettingsPage {
         return null;
     }
 
+    // The installed release was withdrawn and no newer one is offered yet (ADR-0050, U37).
+    readonly property bool withdrawnNow: root.view.rollout.withdrawn !== "" && root.view.grassfield === null && !root.running
+    // "Up to date" is not said under a release that was withdrawn: the headline says that instead (macOS's headline is the news).
+    readonly property string upToDateText: root.withdrawnNow ? qsTr("Grassfield %1 has been withdrawn").arg(SoftwareUpdateLogic.displayVersion(root.view.rollout.withdrawn))
+                                                             : qsTr("This computer is up to date")
     // The status's headline and the line under it.
     readonly property string headline: {
         if (root.running)
@@ -123,9 +128,9 @@ SettingsPage {
         case "update-running":
             return qsTr("An update is running in Omarchy's terminal");
         case "up-to-date":
-            return qsTr("This computer is up to date");
+            return root.upToDateText;
         case "available":
-            return root.hasReleases ? qsTr("Updates are available") : qsTr("This computer is up to date");
+            return root.hasReleases ? qsTr("Updates are available") : root.upToDateText;
         case "failed":
             return qsTr("Software Update could not check for updates");
         case "blocking":
@@ -136,7 +141,7 @@ SettingsPage {
             // A build without a host or key cannot set Grassfield's updates up; the system's are still offered.
             if (root.updates.buildReady)
                 return qsTr("Grassfield updates are not set up");
-            return root.hasReleases ? qsTr("Updates are available") : qsTr("This computer is up to date");
+            return root.hasReleases ? qsTr("Updates are available") : root.upToDateText;
         }
         return root.updates.channel === "custom" ? qsTr("Grassfield updates need to be repaired") : qsTr("Software Update has not checked for updates yet");
     }
@@ -350,11 +355,11 @@ SettingsPage {
         }
         // The installed release was withdrawn (ADR-0050, U37), while no newer one is offered yet.
         SettingsRow {
-            visible: root.view.rollout.withdrawn !== "" && root.view.grassfield === null && !root.running
+            visible: root.withdrawnNow
             glyph: "grassfield-logo"
             tileColor: "grassfield"
-            title: qsTr("Grassfield %1 has been withdrawn.").arg(SoftwareUpdateLogic.displayVersion(root.view.rollout.withdrawn))
-            subtitle: qsTr("A corrected version will be offered to this computer as soon as it's ready.")
+            title: qsTr("A corrected version is on its way.")
+            subtitle: qsTr("It will be offered to this computer as soon as it's ready.")
         }
         SettingsRow {
             visible: root.view.omarchy !== null

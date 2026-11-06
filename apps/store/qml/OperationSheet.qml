@@ -175,10 +175,13 @@ Sheet {
                 // What it can reach, never less than its metadata grants (SD25), grouped as its page's cards (ADR-0049):
                 // unread, nothing is said.
                 const grants = root.plan.permissions === undefined || root.plan.permissions === null ? null : root.plan.permissions;
-                const lines = grants === null ? null : Store.permissionLines(grants);
+                // Short lines, one thing each (macOS's way): the groups by title, the warnings visible, the details on its page.
+                const summary = grants === null ? null : Store.permissionSummary(grants);
                 return [qsTr("It's installed in your own folder, for you alone, without administrator rights."),
-                        lines === null ? "" : lines.length === 0 ? qsTr("It can reach only its own window and files.")
-                                                                 : qsTr("It can reach:") + "\n" + lines.join("\n"),
+                        summary === null ? "" : summary.titles.length === 0 ? qsTr("It can reach only its own window and files.")
+                                                                           : qsTr("It can reach:") + "\n" + summary.titles.join("\n"),
+                        summary === null || summary.warnings.length === 0 ? "" : qsTr("Take care:") + "\n" + summary.warnings.join("\n"),
+                        summary === null || summary.titles.length === 0 ? "" : qsTr("Its page lists each one."),
                         qsTr("These will be installed:")].filter(t => t !== "").join("\n\n");
             }
             if (root.aur) {

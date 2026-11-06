@@ -5,7 +5,7 @@ import "MemoLogic.js" as MemoLogic
 
 // A memo's menus in the global menu bar (T1: master-prompt 5.7, ADR-0008), exported by Qt through DBusMenu; each memo window
 // has its own (MemoWindow.qml creates it only while the registrar is there). macOS structure: File, Edit, Font, Color, then
-// the Window menu's own items (Float on Top, Translucent, Collapse) in a Memo menu: the shell owns Window (T0), and a second
+// the Window menu's own items (Translucent, Collapse) in a Note menu (Stickies' own name for it): the shell owns Window (T0), and a second
 // one would show twice (ADR-0051 D-5). Every item runs the same action as the window's keys.
 Platform.MenuBar {
     id: bar
@@ -183,19 +183,8 @@ Platform.MenuBar {
     }
 
     Platform.Menu {
-        title: qsTr("Memo")
+        title: qsTr("Note")
 
-        Platform.MenuItem {
-            text: qsTr("Float on Top")
-            shortcut: "Ctrl+Alt+F"
-            checkable: true
-            checked: bar.win.floating
-            onTriggered: {
-                // The item checks itself when chosen; the memo's state decides.
-                checked = Qt.binding(() => bar.win.floating);
-                bar.win.toggleFloating();
-            }
-        }
         Platform.MenuItem {
             text: qsTr("Translucent")
             shortcut: "Ctrl+Alt+T"

@@ -28,7 +28,7 @@ Facts (2026-11-05, main 78733ac):
   for it. Whether a user may write it in a scope of its delegated user manager could not be checked here (this container
   runs cgroup v1 and no user manager): NOT VERIFIED, see D-5.
 - PipeWire clients play through the PipeWire socket, not `/dev/snd`: an open `/dev/snd/*` descriptor catches only ALSA
-  clients; the stream nodes (with `application.process.id`) catch the others.
+  clients; the stream nodes (with `pipewire.sec.pid`) catch the others.
 
 ## Options
 1. **A daemon** (Luma's model: a D-Bus service owning the policy). Cons: §5.8 asks for a versioned D-Bus interface, a
@@ -77,8 +77,8 @@ no limit.
 ### D-3 Claims (never limited) and protected units
 Checked by the helper only for apps that would be limited or are limited:
 - the person's choice to keep the app running (`--keep`, see Consequences: no UI in this slice);
-- sound or video: a PipeWire stream node of one of its processes (the shell reads `application.process.id` of the stream
-  nodes it tracks) or an open `/dev/snd/*`, `/dev/video*`, `/dev/media*` descriptor in any process of its scope;
+- sound or video: a PipeWire stream node of one of its processes (the shell reads `pipewire.sec.pid`, the pid the PipeWire server saw on the socket, of the stream
+  nodes it tracks; never the client-set `application.process.id`, which any app can set to another's pid) or an open `/dev/snd/*`, `/dev/video*`, `/dev/media*` descriptor in any process of its scope;
 - an alarm: a timerfd on `CLOCK_REALTIME_ALARM` (8) or `CLOCK_BOOTTIME_ALARM` (9) (`clockid:` in `/proc/PID/fdinfo`);
 - working: more than 0.5 % of one core over the last sampling window (`cpu.stat` `usage_usec` of the scope, a window of at
   least 10 s); the first sample of an app is not judged (counts as working);
@@ -153,7 +153,10 @@ decisions (`status` explains them) and never runs `systemctl` nor writes a cgrou
   the dev dry run after 30 s, woken when the overview opens, nothing applied for real).
 - NOT VERIFIED (no Hyprland, Quickshell runtime, user manager or cgroup v2 in the agent's container): the shell wiring at
   run time, `systemctl set-property` with empty values on a real scope, uclamp writability, the battery gain, no stutter
-  when switching back to an app (owner L2), the Settings sheet's rendering (visual NOT verified).
+  when switching back to an app (owner L2), the Settings sheet's rendering (visual NOT verified), and that the stream nodes' property
+  maps in Quickshell carry `pipewire.sec.pid` (a private PipeWire instance could not be started in the sandbox; owner L2: `pw-dump`
+  on a playing stream). A stream without it names no process: the helper's `/dev/snd` check still applies, and the person's
+  choice to keep an app running (`--keep`) is the remedy until the field is confirmed.
 
 ## Consequences
 - New: `packaging/bin/grassfield-energy` (installed with the other helpers in `/usr/lib/grassfield`),

@@ -151,23 +151,24 @@ local function fit(window)
 end
 
 -- Grassfield Memos (ADR-0051 D-6): a memo window names the position it had in its xdg-toplevel tag,
--- "memo:<32 hex>[:top]@<x>,<y>" (layout coordinates, as Hyprland's window list gave them to the app); it opens there, kept
+-- "memo:<32 hex>@<x>,<y>" (layout coordinates, as Hyprland's window list gave them to the app); it opens there, kept
 -- inside the free area of the display it opens on (the same bounds as `fit`). A tag without a position (a memo never seen by
 -- the compositor) leaves Hyprland's placement. Known limit: a memo whose display is gone comes back on the one it opens on.
 local function memo_place(window)
   if not window or not window.floating or window.fullscreen ~= 0 then
     return
   end
-  -- The app id exactly (case-sensitive, as Memos sets it) and the tag exactly: 32 lowercase hex digits, ":top" or nothing,
+  -- The app id exactly (case-sensitive, as Memos sets it) and the tag exactly: 32 lowercase hex digits,
   -- then the position (review of the memos slice: any client could pass a loose match).
   if window.class ~= "org.grassfield.Memos" then
     return
   end
   local tag = window.xdg_tag or ""
   local id = "^memo:" .. string.rep("[0-9a-f]", 32)
+  -- The tag may end with "!<w>x<h>" (a collapse or an expand sent it later, memo_resize below): not a position's concern.
   local hx, hy = tag:match(id .. "@(%-?%d+),(%-?%d+)$")
   if not hx then
-    hx, hy = tag:match(id .. ":top@(%-?%d+),(%-?%d+)$")
+    hx, hy = tag:match(id .. "@(%-?%d+),(%-?%d+)!%d+x%d+$")
   end
   if not hx then
     return
@@ -181,6 +182,67 @@ local function memo_place(window)
   local y = math.max(area_y + TITLEBAR, math.min(tonumber(hy), area_y + area_h - h))
   hl.dispatch(hl.dsp.window.move({ x = x, y = y, window = window }))
 end
+
+-- Grassfield Memos' collapse (ADR-0051 D-6): a Wayland client cannot resize its own floating window, and Hyprland 0.56 keeps a
+-- floating window at the size it has when the client only commits a smaller or larger surface (a collapsed memo sat on an empty
+-- rectangle). So a memo that collapses or expands sends its tag again with the size it wants, "...!<w>x<h>"; when that suffix
+-- changes, the window is resized to it with its top-left corner kept (macOS's notes shrink to their strip in place). The
+-- request is only ever for the window that sent it, and the size is bounded: nothing here gives a client more than it could
+-- take by resizing its own window. Only a change of the suffix acts, so a resize by the user is never undone.
+local MEMO_SIZE_MAX = 16384
+local memo_sizes = {}
+
+local function memo_resize(window)
+  if not window or not window.mapped or not window.floating or window.fullscreen ~= 0 or window.class ~= "org.grassfield.Memos" then
+    return
+  end
+  local tag = window.xdg_tag or ""
+  local id = "^memo:" .. string.rep("[0-9a-f]", 32)
+  -- The tag also carries the position the memo had when it asked ("@x,y": the app read it from Hyprland just before the
+  -- change); Hyprland moves a window whose surface grows or shrinks, so the corner is put back there.
+  local hx, hy, w, h = tag:match(id .. "@(%-?%d+),(%-?%d+)!(%d+)x(%d+)$")
+  if not w then
+    w, h = tag:match(id .. "!(%d+)x(%d+)$")
+  end
+  if not w then
+    return
+  end
+  w, h = tonumber(w), tonumber(h)
+  local key = tostring(window.address)
+  local want = w .. "x" .. h
+  if memo_sizes[key] == want then
+    return
+  end
+  memo_sizes[key] = want
+  local x, y = tonumber(hx), tonumber(hy)
+  if not x then
+    x, y = xy(window.at)
+  end
+  if not x or w < 1 or h < 1 or w > MEMO_SIZE_MAX or h > MEMO_SIZE_MAX then
+    return
+  end
+  -- The corner is kept inside the free area of the display, as memo_place does.
+  local area_x, area_y, area_w, area_h = work_area(window.monitor)
+  if area_x then
+    x = math.max(area_x, math.min(x, area_x + area_w - w))
+    y = math.max(area_y + TITLEBAR, math.min(y, area_y + area_h - h))
+  end
+  hl.dispatch(hl.dsp.window.resize({ x = w, y = h, exact = true, window = window }))
+  hl.dispatch(hl.dsp.window.move({ x = x, y = y, window = window }))
+end
+
+hl.on("window.update_rules", function(window)
+  local ok, err = pcall(memo_resize, window)
+  if not ok then
+    print("grassfield: resizing the memo failed: " .. tostring(err))
+  end
+end)
+
+hl.on("window.close", function(window)
+  if window then
+    memo_sizes[tostring(window.address)] = nil
+  end
+end)
 
 hl.on("window.open", function(window)
   local ok, err = pcall(memo_place, window)

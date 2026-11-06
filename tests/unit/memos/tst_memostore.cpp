@@ -61,7 +61,6 @@ Memo memo(const QString &html, const QString &color = QStringLiteral("blue"))
     m.hasPosition = true;
     m.x = -40;
     m.y = 300;
-    m.floating = true;
     m.created = QDateTime::fromString(QStringLiteral("2026-11-05T10:00:00Z"), Qt::ISODate);
     m.modified = QDateTime::fromString(QStringLiteral("2026-11-05T10:05:00Z"), Qt::ISODate);
     return m;
@@ -311,7 +310,6 @@ TEST(MemoStore, EveryEntryIsCheckedAndRepaired)
     EXPECT_EQ(b.x, -20);
     EXPECT_EQ(b.y, 40);
     EXPECT_TRUE(b.collapsed);
-    EXPECT_FALSE(b.floating); // a string is not a boolean
     // The same id twice: the second gets one of its own.
     EXPECT_NE(store.memos().at(2).id, good);
     EXPECT_TRUE(isId(store.memos().at(2).id));

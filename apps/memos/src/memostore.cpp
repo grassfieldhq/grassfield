@@ -75,7 +75,6 @@ QJsonObject Memo::toJson() const
                   {QStringLiteral("width"), width},
                   {QStringLiteral("height"), height},
                   {QStringLiteral("collapsed"), collapsed},
-                  {QStringLiteral("floating"), floating},
                   {QStringLiteral("translucent"), translucent},
                   {QStringLiteral("created"), stamp(created)},
                   {QStringLiteral("modified"), stamp(modified)}};
@@ -110,7 +109,6 @@ Memo Memo::fromJson(const QJsonObject &o, int defaultWidth, int defaultHeight)
         m.y = y.toInt();
     }
     m.collapsed = o.value(QStringLiteral("collapsed")).toBool(false);
-    m.floating = o.value(QStringLiteral("floating")).toBool(false);
     m.translucent = o.value(QStringLiteral("translucent")).toBool(false);
     m.created = parseStamp(o.value(QStringLiteral("created")));
     m.modified = o.contains(QStringLiteral("modified")) ? parseStamp(o.value(QStringLiteral("modified"))) : m.created;
@@ -121,7 +119,7 @@ bool Memo::operator==(const Memo &other) const
 {
     return id == other.id && color == other.color && html == other.html && width == other.width && height == other.height
         && hasPosition == other.hasPosition && (!hasPosition || (x == other.x && y == other.y)) && collapsed == other.collapsed
-        && floating == other.floating && translucent == other.translucent && stamp(created) == stamp(other.created)
+        && translucent == other.translucent && stamp(created) == stamp(other.created)
         && stamp(modified) == stamp(other.modified);
 }
 

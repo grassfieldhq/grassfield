@@ -15,34 +15,8 @@ local function full_screen(window)
   return window ~= nil and (window.fullscreen or 0) >= 2
 end
 
--- Grassfield Memos' Float on Top (ADR-0051 D-6): a memo whose xdg-toplevel tag says ":top" ("memo:<id>:top...") stays above
--- the other windows: after any window is raised, those memos are raised again over it (the active one last, so it keeps its
--- place among them). Not Hyprland's `pin`, which would also show the memo on every Desktop (macOS's Float on Top does not).
--- Memos sends the tag again when the user turns Float on Top on or off.
--- The app id exactly (case-sensitive) and the tag exactly: "memo:", 32 lowercase hex digits, ":top", then nothing or the position.
--- Known residual risk (ADR-0051 D-6): a Wayland client chooses its own app id and tag, so another program could claim
--- Memos' and keep its own window above the other windows (never above the shell's layers: the lock, the polkit and secret
--- sheets, the menu bar).
-local MEMO_TOP = "^memo:" .. string.rep("[0-9a-f]", 32) .. ":top"
-
-local function floats_on_top(window)
-  if window == nil or window.class ~= "org.grassfield.Memos" then
-    return false
-  end
-  local tag = window.xdg_tag or ""
-  return tag:match(MEMO_TOP .. "$") ~= nil or tag:match(MEMO_TOP .. "@%-?%d+,%-?%d+$") ~= nil
-end
-
-local function raise_floating_memos(active)
-  for _, other in ipairs(hl.get_windows({ mapped = true }) or {}) do
-    if floats_on_top(other) and other.floating and other.address ~= active.address then
-      hl.dispatch(hl.dsp.window.alter_zorder({ mode = "top", window = "address:" .. other.address }))
-    end
-  end
-  if floats_on_top(active) then
-    hl.dispatch(hl.dsp.window.alter_zorder({ mode = "top", window = active }))
-  end
-end
+-- Grassfield Memos has no Float on Top (ADR-0051 D-6): a rule keyed on the app id and a tag would trust names any Wayland
+-- client can claim. It returns with a compositor-plugin check of the client's real credentials.
 
 local function raise(window)
   if not window then
@@ -70,7 +44,6 @@ local function raise(window)
       end
     end
     hl.dispatch(hl.dsp.window.alter_zorder({ mode = "top", window = window }))
-    raise_floating_memos(window)
   end)
   if not ok then
     print("grassfield: raise on focus failed: " .. tostring(err))

@@ -166,9 +166,16 @@ TestCase {
     }
 
     function test_streamPids() {
-        compare(Logic.streamPids([{"application.process.id": "42"}, {"application.process.id": 42}, {"application.process.id": "7"}, {}, null,
-            {"application.process.id": "-1"}, {"application.process.id": "x"}, {"application.process.id": "99999999"}]), [7, 42]);
+        compare(Logic.streamPids([{"pipewire.sec.pid": "42"}, {"pipewire.sec.pid": 42}, {"pipewire.sec.pid": "7"}, {}, null,
+            {"pipewire.sec.pid": "-1"}, {"pipewire.sec.pid": "x"}, {"pipewire.sec.pid": "99999999"}]), [7, 42]);
         compare(Logic.streamPids(undefined), []);
+    }
+
+    // The client-set process id is not a claim (review finding 3): a stream that names a process of its own choosing
+    // protects nothing but what the server saw.
+    function test_streamPidsIgnoreTheClientsOwnClaim() {
+        compare(Logic.streamPids([{"application.process.id": "1234", "pipewire.sec.pid": "42"}]), [42]);
+        compare(Logic.streamPids([{"application.process.id": "1234"}]), []);
     }
 
     function test_theDigestChangesOnlyWithThePicture() {

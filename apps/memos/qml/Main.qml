@@ -54,7 +54,6 @@ QtObject {
             colorName: m.color,
             initialHtml: m.html,
             collapsed: m.collapsed,
-            floating: m.floating,
             translucent: m.translucent,
             expandedHeight: m.height,
             width: m.width,

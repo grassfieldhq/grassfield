@@ -346,14 +346,18 @@ TestCase {
         compare(row(t.page, "Grassfield 1.0.1").subtitle, "Important security update. Installed: 1.0.0");
 
         t = make(answer("up-to-date", Object.assign({rollout: {descriptor: "ok", cohort: 3, staged: null, withdrawn: "1.0.0-1", security: false}}, upToDate)));
-        const gone = row(t.page, "Grassfield 1.0.0 has been withdrawn.");
+        // The headline says it, never "up to date" under a withdrawn release (nested review finding 10).
+        verify(row(t.page, "Grassfield 1.0.0 has been withdrawn"));
+        verify(!row(t.page, "This computer is up to date"), "not up to date: its release was withdrawn");
+        const gone = row(t.page, "A corrected version is on its way.");
         verify(gone);
-        compare(gone.subtitle, "A corrected version will be offered to this computer as soon as it's ready.");
+        compare(gone.subtitle, "It will be offered to this computer as soon as it's ready.");
 
         const fixed = available();
         fixed.rollout = {descriptor: "ok", cohort: 3, staged: null, withdrawn: "1.0.0-1", security: false};
         t = make(fixed);
-        verify(!row(t.page, "Grassfield 1.0.0 has been withdrawn."), "a newer release is offered: its row is the answer");
+        verify(!row(t.page, "Grassfield 1.0.0 has been withdrawn"), "a newer release is offered: its row is the answer");
+        verify(!row(t.page, "A corrected version is on its way."));
 
         t = make(answer("up-to-date", Object.assign({rollout: {descriptor: "stale", cohort: 3, staged: {version: "1.0.1-1", security: false, offerAt: null}, withdrawn: null, security: false}}, upToDate)));
         verify(!row(t.page, "Grassfield 1.0.1 is being released gradually."), "a stale descriptor explains nothing");

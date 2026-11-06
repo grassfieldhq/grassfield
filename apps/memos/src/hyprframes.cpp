@@ -18,11 +18,9 @@
 
 namespace memos {
 
-QString memoTag(const QString &id, bool floating, bool hasPosition, int x, int y)
+QString memoTag(const QString &id, bool hasPosition, int x, int y)
 {
     QString tag = QStringLiteral("memo:") + id;
-    if (floating)
-        tag += QStringLiteral(":top");
     if (hasPosition)
         tag += QStringLiteral("@%1,%2").arg(x).arg(y);
     return tag;
@@ -30,7 +28,7 @@ QString memoTag(const QString &id, bool floating, bool hasPosition, int x, int y
 
 QString memoIdOfTag(const QString &tag)
 {
-    static const QRegularExpression re(QStringLiteral("^memo:([0-9a-f]{32})(?::top)?(?:@-?\\d+,-?\\d+)?$"));
+    static const QRegularExpression re(QStringLiteral("^memo:([0-9a-f]{32})(?:@-?\\d+,-?\\d+)?(?:!\\d+x\\d+)?$"));
     const QRegularExpressionMatch m = re.match(tag);
     return m.hasMatch() ? m.captured(1) : QString();
 }

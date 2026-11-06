@@ -72,6 +72,11 @@ hl.window_rule({ name = "gf-client-chrome-info-rounding", match = { class = "^or
 -- window).
 hl.window_rule({ name = "gf-third-party-rounding", match = { class = "negative:^org\\.grassfield\\..*$" }, rounding = 17 })
 
+-- Grassfield Memos: a memo window has square corners, as macOS's desktop notes (its paper and strip are rectangles, and the
+-- resize grip sits in the bottom-right corner, which a rounded window cuts). Only the corner radius is taken from the app id,
+-- a name any client could claim: the worst a claim gets is square corners (ADR-0051 D-6).
+hl.window_rule({ name = "gf-memos-square", match = { class = "^org\\.grassfield\\.Memos$" }, rounding = 0 })
+
 -- Glance (quick look of Preview): a floating panel centered on the screen, without the plugin titlebar.
 hl.window_rule({ name = "gf-glance", match = { class = "^org\\.grassfield\\.Preview\\.Glance$" }, float = true, center = true, decorate = false })
 

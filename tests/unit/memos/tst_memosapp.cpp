@@ -70,7 +70,7 @@ TEST(MemosApp, OpensCreatesNearTheFrontMemoAndSavesAfterTheDebounce)
     app.update(a, {{QStringLiteral("html"), QStringLiteral("<p>milk</p>")}, {QStringLiteral("color"), QStringLiteral("green")},
                    {QStringLiteral("width"), 10}, {QStringLiteral("floating"), true}, {QStringLiteral("unknown"), 1}});
     app.update(b, {{QStringLiteral("color"), QStringLiteral("magenta")}});
-    EXPECT_EQ(app.tagFor(a), QStringLiteral("memo:%1:top@300,120").arg(a));
+    EXPECT_EQ(app.tagFor(a), QStringLiteral("memo:%1@300,120").arg(a));
     // Nothing written before the debounce...
     EXPECT_TRUE(fx.written().isEmpty());
     int saved = 0;
@@ -83,7 +83,7 @@ TEST(MemosApp, OpensCreatesNearTheFrontMemoAndSavesAfterTheDebounce)
     EXPECT_EQ(wa.value(QStringLiteral("color")).toString(), QStringLiteral("green"));
     EXPECT_EQ(wa.value(QStringLiteral("html")).toString(), QStringLiteral("<p>milk</p>"));
     EXPECT_EQ(wa.value(QStringLiteral("width")).toInt(), kMinSide);
-    EXPECT_TRUE(wa.value(QStringLiteral("floating")).toBool());
+    EXPECT_FALSE(wa.contains(QStringLiteral("floating"))); // Float on Top is gone (ADR-0051 D-6): the key is ignored and not written
     EXPECT_EQ(wa.value(QStringLiteral("x")).toInt(), 300);
     EXPECT_FALSE(wa.contains(QStringLiteral("unknown")));
     EXPECT_EQ(list.at(1).toObject().value(QStringLiteral("color")).toString(), QStringLiteral("yellow")); // magenta refused

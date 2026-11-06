@@ -16,14 +16,13 @@ Window {
     property string colorName: "yellow"
     property string initialHtml: ""
     property bool collapsed: false
-    property bool floating: false
     property bool translucent: false
     // The memo's own height, kept while it is collapsed (the window is then the strip's height).
     property int expandedHeight: Tokens.memosWindowHeight
     // The registrar is there (Main.qml, kept up to date by src/main.cpp): the memo exports its menus.
     property bool globalMenu: false
     // ADR-0015 and ADR-0051 D-6: the window draws its own chrome; its xdg-toplevel tag is its memo tag (memo:<id>...), which
-    // the compositor's rules read (no plugin titlebar, the stored position, Float on Top). Set once, before the window maps.
+    // the compositor's rules read (no plugin titlebar, the stored position). Set once, before the window maps.
     property string gfChromeRole: ""
     // The Delete alert is up (Close on a memo with text).
     property bool confirmingClose: false
@@ -38,6 +37,9 @@ Window {
     readonly property real paperOpacity: memo.translucent ? Tokens.memosTranslucentOpacity : 1
     // A height change that is the collapse itself, not the user's resize.
     property bool applyingHeight: false
+    // The tag with the new size goes out once the window has committed its new constraints (the next frame).
+    property bool sizeTagDue: false
+    property string tagBeforeResize: ""
     // Set once the window is made: the sizes given at creation are the stored ones, not changes.
     property bool ready: false
 
@@ -48,6 +50,13 @@ Window {
     // Collapsed, the memo is its strip: it does not grow taller from the edges.
     maximumHeight: memo.collapsed ? Tokens.memosStripHeight : Tokens.memosWindowMaxSide
     visible: true
+
+    onFrameSwapped: {
+        if (!memo.sizeTagDue)
+            return;
+        memo.sizeTagDue = false;
+        memo.backend.retag(memo, MemoLogic.sizedTag(memo.tagBeforeResize, memo.width, memo.height));
+    }
 
     function plainText(): string {
         return textEdit.getText(0, textEdit.length);
@@ -68,10 +77,14 @@ Window {
     function setCollapsed(on: bool): void {
         if (on === memo.collapsed)
             return;
+        // The corner the memo has now, read before the change: Hyprland moves a window whose surface changes size.
+        memo.tagBeforeResize = memo.backend.freshTagFor(memo.memoId);
         memo.applyingHeight = true;
         memo.collapsed = on;
         memo.height = MemoLogic.windowHeight(on, memo.expandedHeight, Tokens.memosStripHeight, Tokens.memosWindowMinHeight);
         memo.applyingHeight = false;
+        // Wayland has no resize request for a floating window: the compositor's rule resizes it to the size on the tag.
+        memo.sizeTagDue = true;
         if (!on)
             textEdit.forceActiveFocus();
         memo.push({collapsed: on});
@@ -79,13 +92,6 @@ Window {
 
     function toggleCollapsed(): void {
         memo.setCollapsed(!memo.collapsed);
-    }
-
-    function toggleFloating(): void {
-        memo.floating = !memo.floating;
-        memo.push({floating: memo.floating});
-        // The compositor reads Float on Top from the tag (stacking.lua): the window sends it again.
-        memo.backend.retag(memo, memo.backend.tagFor(memo.memoId));
     }
 
     function toggleTranslucent(): void {
@@ -272,11 +278,6 @@ Window {
         enabled: !memo.collapsed
         onActivated: memo.toggleList()
         onActivatedAmbiguously: memo.toggleList()
-    }
-    Shortcut {
-        sequence: "Ctrl+Alt+F"
-        onActivated: memo.toggleFloating()
-        onActivatedAmbiguously: memo.toggleFloating()
     }
     Shortcut {
         sequence: "Ctrl+Alt+T"
@@ -573,6 +574,9 @@ Window {
                 Button {
                     objectName: "memoCancelDelete"
                     push: true
+                    // The paper is light in both appearances: the label is the memo's ink, not the system's (white in dark).
+                    labelColor: Tokens.memosInk
+                    fillColor: Appearance.withAlpha(Tokens.memosInk, Tokens.memosAlertButtonFillOpacity)
                     text: qsTr("Cancel")
                     onClicked: memo.cancelClose()
                 }

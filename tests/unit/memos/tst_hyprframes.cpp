@@ -14,15 +14,16 @@
 
 using namespace memos;
 
-TEST(HyprFrames, TagCarriesIdFloatAndPosition)
+TEST(HyprFrames, TagCarriesIdAndPosition)
 {
     const QString id = newId();
-    EXPECT_EQ(memoTag(id, false, false, 0, 0), QStringLiteral("memo:") + id);
-    EXPECT_EQ(memoTag(id, true, false, 0, 0), QStringLiteral("memo:") + id + QStringLiteral(":top"));
-    EXPECT_EQ(memoTag(id, true, true, -12, 340), QStringLiteral("memo:") + id + QStringLiteral(":top@-12,340"));
-    EXPECT_EQ(memoTag(id, false, true, 5, 6), QStringLiteral("memo:") + id + QStringLiteral("@5,6"));
-    for (const QString &tag : {memoTag(id, false, false, 0, 0), memoTag(id, true, true, -1, -2), memoTag(id, false, true, 1, 2)})
+    EXPECT_EQ(memoTag(id, false, 0, 0), QStringLiteral("memo:") + id);
+    EXPECT_EQ(memoTag(id, true, -12, 340), QStringLiteral("memo:") + id + QStringLiteral("@-12,340"));
+    EXPECT_EQ(memoTag(id, true, 5, 6), QStringLiteral("memo:") + id + QStringLiteral("@5,6"));
+    for (const QString &tag : {memoTag(id, false, 0, 0), memoTag(id, true, -1, -2), memoTag(id, true, 1, 2)})
         EXPECT_EQ(memoIdOfTag(tag), id) << qPrintable(tag);
+    // Float on Top's suffix is not a tag of ours any more (ADR-0051 D-6): nothing reads ":top".
+    EXPECT_EQ(memoIdOfTag(QStringLiteral("memo:") + id + QStringLiteral(":top")), QString());
     EXPECT_EQ(memoIdOfTag(QStringLiteral("browser")), QString());
     EXPECT_EQ(memoIdOfTag(QStringLiteral("memo:") + id.left(31)), QString());
     EXPECT_EQ(memoIdOfTag(QStringLiteral("memo:") + id + QStringLiteral(":bottom")), QString());
@@ -34,7 +35,7 @@ TEST(HyprFrames, OnlyThisProcessesMemoWindowsAreKept)
     const QString a = newId();
     const QString b = newId();
     const QByteArray json = QStringLiteral(
-                                "[{\"pid\": 42, \"xdgTag\": \"memo:%1:top@1,2\", \"at\": [100, 200], \"size\": [240, 180]},"
+                                "[{\"pid\": 42, \"xdgTag\": \"memo:%1@1,2\", \"at\": [100, 200], \"size\": [240, 180]},"
                                 " {\"pid\": 42, \"xdgTag\": \"memo:%2\", \"at\": [-50, 30], \"size\": [300, 16]},"
                                 " {\"pid\": 43, \"xdgTag\": \"memo:%1\", \"at\": [9, 9], \"size\": [9, 9]},"
                                 " {\"pid\": 42, \"xdgTag\": \"browser\", \"at\": [0, 0], \"size\": [800, 600]},"

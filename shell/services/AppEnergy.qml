@@ -28,7 +28,7 @@ Singleton {
     readonly property var base: Mode.dev ? [program, "--dry-run", "--state", Mode.stateDir + "/app-energy.json"] : [program]
 
     // The PipeWire streams and the processes behind them (playing or recording: never limited). The stream nodes are bound
-    // so that their properties (application.process.id) are known.
+    // so that their properties (pipewire.sec.pid, set by the PipeWire server) are known.
     readonly property var streams: (Pipewire.nodes ? Pipewire.nodes.values : []).filter(n => n.isStream)
     readonly property var mediaPids: Logic.streamPids(streams.map(n => n.properties))
 

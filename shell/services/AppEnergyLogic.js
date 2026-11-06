@@ -127,11 +127,14 @@ function stripStates(stages) {
     return out;
 }
 
-// Processes with a PipeWire stream (the `properties` maps of the stream nodes): playing or recording (a claim, D-3).
+// Processes with a PipeWire stream (the `properties` maps of the stream nodes): playing or recording (a claim, D-3). The
+// process is the one the PipeWire server saw on the other end of the socket (`pipewire.sec.pid`): `application.process.id`
+// is set by the client, so one app could name another's process and keep it from being slowed (security review of the Luma
+// pull request, finding 3). A stream without the server's pid names no process.
 function streamPids(propertyMaps) {
     const out = [];
     (propertyMaps || []).forEach(p => {
-        const n = p ? parseInt(p["application.process.id"], 10) : NaN;
+        const n = p ? parseInt(p["pipewire.sec.pid"], 10) : NaN;
         if (n > 0 && n < 4194304 && out.indexOf(n) < 0)
             out.push(n);
     });

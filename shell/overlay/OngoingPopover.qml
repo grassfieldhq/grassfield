@@ -21,9 +21,8 @@ FocusScope {
     readonly property var entry: root.alive && root.item.app !== "" ? Apps.lookup(root.item.app) : null
     readonly property string appName: root.alive && root.item.app !== "" ? Apps.nameFor(root.item.app) : ""
     readonly property real pad: Tokens.quicksettingsPadding
-    // A timer's time moves once a second while the popover shows it.
-    property real now: Date.now()
-    readonly property var shown: root.alive ? Ongoing.compact(root.item, root.now) : ({kind: "none"})
+    // A timer's time is the menu bar's own (one clock, MenuBridge.ongoingNow).
+    readonly property var shown: root.alive ? Ongoing.compact(root.item, MenuBridge.ongoingNow) : ({kind: "none"})
 
     width: Tokens.ongoingPopoverWidth
     height: column.implicitHeight + 2 * root.pad
@@ -37,13 +36,6 @@ FocusScope {
     onAliveChanged: {
         if (!root.alive)
             Qt.callLater(Popups.close);
-    }
-
-    Timer {
-        interval: Tokens.ongoingTickMs
-        repeat: true
-        running: root.alive && (root.item.ends !== null || root.item.started !== null)
-        onTriggered: root.now = Date.now()
     }
 
     Material {

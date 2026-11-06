@@ -63,7 +63,7 @@ bool namesWallpaperTool(const QString &program);
 bool isActionProgram(const QString &program);
 
 // Settings > Sound's alert preview (ADR-0047 B-4), exactly ui/Grassfield/Ui/SoundEffects.js previewArgv's form:
-//   pw-play --media-role Notification --volume <0.000-1.000> [--target <PipeWire node name>] -- \
+//   pw-play --media-role Notification --volume <0.000-1.000> [--target <PipeWire node name>] --
 //       /usr/share/sounds/grassfield/stereo/grassfield-alert-<one of the six ids>.wav
 bool isSoundPreview(const QStringList &argv);
 

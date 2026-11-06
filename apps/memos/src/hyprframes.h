@@ -1,8 +1,7 @@
 // Where the memo windows are (ADR-0051 D-6). A Wayland client cannot read or set its own window's position, so Memos asks
 // Hyprland's request socket for its window list (`j/clients`: read only, never a dispatch) and keeps the frames of its own
-// windows, found by pid and by their xdg-toplevel tag, `memo:<id>[:top][@<x>,<y>]`. The tag carries the position the memo
-// had, which config/hypr/grassfield/placement.lua applies when the window opens, and ":top", which stacking.lua keeps
-// above the other windows (Float on Top).
+// windows, found by pid and by their xdg-toplevel tag, `memo:<id>[@<x>,<y>]`. The tag carries the position the memo
+// had, which config/hypr/grassfield/placement.lua applies when the window opens.
 // Plain Qt Core and POSIX: the unit tests link it (tests/unit/memos/tst_hyprframes.cpp).
 #pragma once
 
@@ -20,8 +19,8 @@ struct Frame
     int height = 0;
 };
 
-// The tag of a memo window: `memo:<id>`, then `:top` when it floats on top, then `@<x>,<y>` when its position is known.
-QString memoTag(const QString &id, bool floating, bool hasPosition, int x, int y);
+// The tag of a memo window: `memo:<id>`, then `@<x>,<y>` when its position is known.
+QString memoTag(const QString &id, bool hasPosition, int x, int y);
 // The memo id of a tag (`memo:<32 hex>` and an optional tail), "" for any other tag.
 QString memoIdOfTag(const QString &tag);
 

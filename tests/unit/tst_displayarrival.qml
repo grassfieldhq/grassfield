@@ -90,6 +90,11 @@ TestCase {
         verify(!Arrival.allowed(false, true, true, []));
         verify(!Arrival.isVirtualOutput("WAYLAND-x"));
         verify(Arrival.isVirtualOutput("X11-1"));
+        // The project's own nested outputs: the nested window and the reference output (config/hypr/dev.lua).
+        verify(Arrival.allowed(false, true, true, ["WAYLAND-1", "GF-REF"]));
+        verify(Arrival.isVirtualOutput("GF-REF"));
+        verify(!Arrival.isVirtualOutput("GF-REF-2"));
+        verify(!Arrival.isVirtualOutput("xGF-REF"));
     }
 
     function test_decide() {

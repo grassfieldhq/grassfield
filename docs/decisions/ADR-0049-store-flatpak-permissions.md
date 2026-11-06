@@ -84,7 +84,9 @@ Wayland session gives it none), the sound server's microphone, programs at login
 with create says "read and write, created if missing"; the USB portal's devices and those hidden from it are named. Files and Folders ends with "Other files:
 only those you choose in an Open or Save dialog." when neither all files nor the home folder is granted. Nothing granted:
 one card "Only Its Own Window and Files". Unread metadata: no section (never "nothing"). The install sheet says the same
-groups as lines.
+groups by title, one per short line, then the warning notes (a wide grant) each once under "Take care:", and points to the
+page for the items (review of the Luma pull request, nested finding 10: the sheet had been a wall of text without the notes).
+Cards of one row are as tall as the tallest.
 
 ### D-3 What an update changes: added, widened, removed, narrowed
 `diffFlatpakPermissions(installed read narrowest, newer read widest)`, as pessimistic as flatpak's own

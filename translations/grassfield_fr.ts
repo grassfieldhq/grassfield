@@ -7053,12 +7053,8 @@
         <translation>Gris</translation>
     </message>
     <message>
-        <source>Memo</source>
-        <translation>Mémo</translation>
-    </message>
-    <message>
-        <source>Float on Top</source>
-        <translation>Toujours au premier plan</translation>
+        <source>Note</source>
+        <translation>Note</translation>
     </message>
     <message>
         <source>Translucent</source>
@@ -10232,6 +10228,14 @@
     <message>
         <source>It can reach:</source>
         <translation>Elle peut accéder à&#xa0;:</translation>
+    </message>
+    <message>
+        <source>Take care:</source>
+        <translation>Attention&#xa0;:</translation>
+    </message>
+    <message>
+        <source>Its page lists each one.</source>
+        <translation>Sa page les détaille un à un.</translation>
     </message>
     <message>
         <source>Update</source>
@@ -14104,12 +14108,16 @@
         <translation>Elle sera bientôt proposée sur cet ordinateur.</translation>
     </message>
     <message>
-        <source>Grassfield %1 has been withdrawn.</source>
-        <translation>Grassfield %1 a été retirée.</translation>
+        <source>Grassfield %1 has been withdrawn</source>
+        <translation>Grassfield %1 a été retirée</translation>
     </message>
     <message>
-        <source>A corrected version will be offered to this computer as soon as it&apos;s ready.</source>
-        <translation>Une version corrigée sera proposée sur cet ordinateur dès qu’elle sera prête.</translation>
+        <source>A corrected version is on its way.</source>
+        <translation>Une version corrigée est en route.</translation>
+    </message>
+    <message>
+        <source>It will be offered to this computer as soon as it&apos;s ready.</source>
+        <translation>Elle sera proposée sur cet ordinateur dès qu’elle sera prête.</translation>
     </message>
     <message>
         <source>Omarchy %1</source>
@@ -15371,6 +15379,14 @@
     <message>
         <source>read only</source>
         <translation>lecture seule</translation>
+    </message>
+    <message>
+        <source>owned it</source>
+        <translation>en était propriétaire</translation>
+    </message>
+    <message>
+        <source>could talk to it</source>
+        <translation>pouvait communiquer avec lui</translation>
     </message>
     <message>
         <source>read and write, created if missing</source>

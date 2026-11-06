@@ -322,8 +322,8 @@ Scope {
             // of the third-party items. Redacted again here while locked (the bridge already sends them so, and the bar is
             // under the lock surface then). Optional: they give way when the bar is crowded, as Now Playing.
             readonly property var ongoingItems: OngoingLogic.barItems(MenuBridge.ongoing, Tokens.ongoingBarMax).map(it => OngoingLogic.view(it, SessionState.locked))
-            // A timer's time moves once a second while one is shown.
-            property real ongoingNow: Date.now()
+            // A timer's time moves once a second while one is shown: the clock is MenuBridge's, shared with the popover.
+            readonly property real ongoingNow: MenuBridge.ongoingNow
             // The text of an item: a time, a percent, or "" (indeterminate).
             function ongoingText(item: var): string {
                 const shown = OngoingLogic.compact(item, win.ongoingNow);
@@ -1247,13 +1247,6 @@ Scope {
                             font.family: Appearance.fontFamily
                             font.pixelSize: Tokens.typographyMenuSize
                             font.weight: Tokens.typographyMenuWeight
-                        }
-
-                        Timer {
-                            interval: Tokens.ongoingTickMs
-                            repeat: true
-                            running: OngoingLogic.ticking(win.ongoingItems)
-                            onTriggered: win.ongoingNow = Date.now()
                         }
 
                         // Screen recording (ADR-0045 OC-1): while grassfield-capture records, the stop glyph and the elapsed

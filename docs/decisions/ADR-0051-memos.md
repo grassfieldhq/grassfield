@@ -6,7 +6,7 @@ model first) · Date: 2026-11-05 · Decider: owner (revisit), integrator (merge)
 - Owner request (2026-11-05, the "Luma ideas" work package): a native sticky-notes app "with the macOS 27 UI". The macOS 27
   model is the system's desktop notes app: each note is its own small coloured window with a thin title strip (a close box
   on the left, a collapse box on the right), double-click on the strip collapses it to the strip, resizable, styled text,
-  Color menu, Float on Top and Translucent per note, every note back where it was at the next launch, Quit keeps them.
+  Color menu, Translucent per note, every note back where it was at the next launch, Quit keeps them.
 - Idea inspired by Project Luma's `luma-sticky-notes` (Apache-2.0): its store's rules (a private directory re-asserted at
   each launch, a schema version migrated forward only, a newer schema refused, no note text in any log, colours checked
   against a fixed set). No code copied: Luma keeps SQLite from Python; Memos reimplements the rules in C++ with one JSON
@@ -74,29 +74,46 @@ table, a cell, a paragraph or a run; the text kept), so a hand-edited file loads
 - The middle button pastes the primary selection, plain text like every paste.
 - Global menus (T1, the other apps' pattern: Qt.labs.platform MenuBar only while the registrar exists, each memo window its
   own): File (New Memo Ctrl+N, Close Ctrl+W), Edit (Undo, Redo, Cut, Copy, Paste, Select All), Font (Bold Ctrl+B, Italic
-  Ctrl+I, Underline Ctrl+U, Bigger Ctrl++, Smaller Ctrl+-, Bulleted List), Color (the six, Ctrl+1 to Ctrl+6), and Memo
-  (Float on Top Ctrl+Alt+F, Translucent Ctrl+Alt+T, Collapse Ctrl+Alt+C, a check mark on the first two). macOS puts the last
-  three in its Window menu; the shell owns Window (T0, `shell/menubar`: its items are the shell's own, it takes no app
+  Ctrl+I, Underline Ctrl+U, Bigger Ctrl++, Smaller Ctrl+-, Bulleted List), Color (the six, Ctrl+1 to Ctrl+6), and Note
+  (Translucent Ctrl+Alt+T, Collapse Ctrl+Alt+C, a check mark on the first; Stickies' own name for that menu, so that the
+  French menu "Note" never reads as the app menu "Mémos"). macOS puts both in its Window menu, and a third item, Float on Top
+  (not shipped, D-6); the shell owns Window (T0, `shell/menubar`: its items are the shell's own, it takes no app
   items, and an app's own "Window" would show twice), so they get a menu of their own, as Files and Activity Monitor put
   their window items in View (F-10). If the shell's Window menu learns to take app items, they move there. The same keys
   work without the registrar.
 - A new memo opens near the memo in front: down and to the right by `memos.cascadeStep` (D-6).
 
-### D-6 Positions, Float on Top: the compositor's part
+### D-6 Positions: the compositor's part (Float on Top is not shipped)
 - The app cannot place or find its windows on Wayland. It reads its own windows' frames (`at`, `size`) from Hyprland's
   request socket (`j/clients`, read only, filtered on its own pid and its `memo:` tags; `apps/memos/src/hyprframes.cpp`) when
   it saves, and keeps them in the store. It never sends a dispatch.
-- Each memo window's xdg-toplevel tag (ADR-0015's role) is `memo:<id>[:top][@<x>,<y>]`. `config/hypr/grassfield/placement.lua`
-  moves a new Memos window to the `@x,y` its tag names before the usual `fit` (layout coordinates, as Hyprland reported them);
-  `stacking.lua` raises the Memos windows tagged `:top` after any window takes focus (Float on Top without Hyprland's `pin`,
-  which would also show the memo on every Desktop, unlike macOS). Toggling Float on Top sends the window's tag again.
-- Both rules match the app id exactly (`org.grassfield.Memos`, case-sensitive) and a tag of exactly 32 lowercase hex digits
+- Each memo window's xdg-toplevel tag (ADR-0015's role) is `memo:<id>[@<x>,<y>]`. `config/hypr/grassfield/placement.lua`
+  moves a new Memos window to the `@x,y` its tag names before the usual `fit` (layout coordinates, as Hyprland reported them).
+- **Float on Top is not shipped** (security review of the Luma pull request, finding 1, integrator decision). The first
+  design raised the Memos windows whose tag said `:top` after every focus change (`stacking.lua`). Both the app id and the
+  tag are chosen by the client: any Wayland client, a Flatpak included, could claim them and have its window raised over the
+  focused one after every focus change, and could cover the Store's widened-permission sheet with an empty input region.
+  The menu item, its shortcut, its state in the store, the `:top` tag suffix and the stacking rule are removed. **Float on
+  Top returns only with a compositor-plugin check of the client's real credentials** (the executable path read from the
+  kernel, and not sandboxed), never from names the client sets. The nested review also found it did not work (a floating
+  memo went behind any clicked window), so nothing that worked is lost.
+- The placement rule matches the app id exactly (`org.grassfield.Memos`, case-sensitive) and a tag of exactly 32 lowercase hex digits
   (`tests/shell/memos_rules.sh`). Residual risk (review of the memos slice): a Wayland client chooses its own app id and
-  tag, so another program can claim Memos' and keep its own window above the other windows, or open it at a position of
-  its choice inside the free area. It never goes above the shell's layers (the lock, the polkit and secret sheets, the menu
-  bar), but it can cover another app's window, the Store's permission sheet included. Binding the rules to Memos' process
+  tag, so another program can claim Memos' and open its window at a position of its choice inside the free area (the
+  position only: no stacking is granted by a name any more). Binding the rules to Memos' process
   needs a pid that Lua can trust (Hyprland 0.56's Lua window object is not known here to carry one, and a pid alone does not
   name the program); left for the nested session with the `hl.meta.lua` stub at hand.
+- **Collapse resizes the window** (nested review, finding 6). Hyprland 0.56 keeps a floating window at the size it has when
+  its client only commits a smaller or larger surface, so a collapsed memo sat on an empty rectangle. The app cannot ask for a
+  size on Wayland, so a collapse or an expand sends the xdg-toplevel tag again with `!<w>x<h>` (`memo:<id>[@x,y]!<w>x<h>`),
+  once the window has committed its new constraints, and with the corner it had before (read from Hyprland just before).
+  `placement.lua` (`memo_resize`, on `window.update_rules`) resizes the window to that size when the suffix changes, and puts
+  the corner back inside the free area (macOS's notes shrink to their strip in place). Only a change of the suffix acts, so
+  a resize by the user is never undone; the size is bounded and the request is only ever about the window that sent it.
+  Proved in nested at scale 1.25: 240x200 to 240x18 and back, four transitions, the corner at the same place.
+- **Square corners** (finding 8): macOS's notes have square corners and the resize grip sits in the bottom-right one, which a
+  rounded window cut. `windows.lua` sets `rounding = 0` for the Memos app id (`gf-memos-square`); a name claimed by another
+  client gets square corners and nothing else.
 - `windows.lua` lists `org.grassfield.Memos` with the apps that draw their own chrome (no plugin titlebar) and lets its
   windows send their own maximize request (there is none, the list is the client-chrome one).
 - Without Hyprland's socket (another compositor, an error) frames stay unknown: memos open where the compositor puts them,
@@ -127,8 +144,7 @@ corrupt file kept aside, validation, no memo text in any log message. `tst_hyprf
 filtered, the tag built and read. `tests/unit/tst_memos.qml`: MemoLogic.js (colours, cascade, first line, tags, collapse)
 and a memo window offscreen with a fake backend (strip, collapse, close alert, colour, translucent, menu-less keys).
 
-## NOT VERIFIED (no Hyprland, no nested session in the build container)
-The Lua placement and stacking rules, the live re-tag of Float on Top (whether Hyprland 0.56 takes a second
-`set_toplevel_tag`; if not, it applies at the next launch), Hyprland honouring a client's own resize when collapsing, the
+The Lua placement rule (the collapse resize, the square corners and the Cancel button were checked in nested, review fix 2026-11-06), the
+The Lua placement rule, (the collapse resize, the square corners and the Cancel button were checked in nested, review fix 2026-11-06), the
 global menu export, the window's look on screen (visual NOT verified unless the spec says otherwise), multi-display
 positions (a memo whose display is gone is fitted onto the display it opens on).

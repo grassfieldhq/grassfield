@@ -320,9 +320,9 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
 - U36. A Grassfield release the descriptor marks as a security release says "Important security update. Installed: …" in
   its row and is announced as "Important security update" (once per version, whatever a later descriptor says); one not
   yet in the database reads "Grassfield 1.0.2 is an important security update."
-- U37. An installed release the descriptor withdraws, while nothing newer is offered: "Grassfield 1.0.1 has been
-  withdrawn." / "A corrected version will be offered to this computer as soon as it's ready." A paused release shows
-  nothing.
+- U37. An installed release the descriptor withdraws, while nothing newer is offered: the status headline is
+  "Grassfield 1.0.1 has been withdrawn" (never "This computer is up to date" above it) and the row under it says "A corrected
+  version is on its way." / "It will be offered to this computer as soon as it's ready." A paused release shows nothing.
 - U38. A descriptor that is missing, invalid, unsigned, stale or expired removes the explanation only: the database
   decides what is offered, and the check succeeds as before.
 

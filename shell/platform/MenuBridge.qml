@@ -95,6 +95,21 @@ Singleton {
     // bar (one item each) and its "ongoing" popover. Empty without a bridge. The bridge sends them redacted (no app, text or
     // button) until this shell reports the session unlocked, and the menu bar redacts them again while locked.
     property var ongoing: Ongoing.empty()
+    // One clock for every ongoing time (the menu bar item and the popover): two timers of their own ticked a second apart, so
+    // the same timer read two different times (review of the Luma pull request, nested finding 10). It ticks once a second
+    // while some activity shows a time that moves.
+    property real ongoingNow: Date.now()
+    readonly property bool ongoingTicking: Ongoing.ticking(Object.values(root.ongoing.items))
+    onOngoingTickingChanged: {
+        if (root.ongoingTicking)
+            root.ongoingNow = Date.now();
+    }
+    Timer {
+        interval: Tokens.ongoingTickMs
+        repeat: true
+        running: root.ongoingTicking
+        onTriggered: root.ongoingNow = Date.now()
+    }
     readonly property bool sessionLocked: SessionState.locked
     onSessionLockedChanged: root.sendLock()
 

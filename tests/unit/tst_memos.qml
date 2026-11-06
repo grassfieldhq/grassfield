@@ -5,7 +5,7 @@ import "memos"
 import "../../apps/memos/qml/MemoLogic.js" as MemoLogic
 
 // Grassfield Memos (apps/memos/qml, ADR-0051, docs/specs/memos.md): MemoLogic.js, a memo window with a fake backend (colours,
-// collapse, the close rule and its alert, Translucent, Float on Top's tag, the Font keys and the plain paste, the text
+// collapse, the close rule and its alert, Translucent, the collapse's size tag, the Font keys and the plain paste, the text
 // pushed to the backend), and Main.qml opening the stored memos, a new one near the front one, and a memo the compositor
 // closed coming back on activation. The backend's own logic has its gtest cases (tests/unit/memos).
 TestCase {
@@ -15,6 +15,8 @@ TestCase {
     height: 300
     visible: true
     when: windowShown
+    // The backend of the refusal test (typed var: a created object is a QObject to qmllint).
+    property var refusingBackend: null
 
     Component {
         id: fakeBackend
@@ -55,7 +57,7 @@ TestCase {
     // its parent's family has the focus, so only a toplevel memo can be seen losing it.
     function makeMemo(props, toplevel) {
         const backend = fakeBackend.createObject(testCase);
-        backend.stored = [{id: "a", color: "blue", html: "", width: 240, height: 200, collapsed: false, floating: false, translucent: false}];
+        backend.stored = [{id: "a", color: "blue", html: "", width: 240, height: 200, collapsed: false, translucent: false}];
         backend.open(240, 200);
         const manager = fakeManager.createObject(testCase);
         const comp = Qt.createComponent(Qt.resolvedUrl("../../apps/memos/qml/MemoWindow.qml"));
@@ -153,6 +155,19 @@ TestCase {
         verify(close.x < collapse.x, "close at the left end, collapse at the right end");
     }
 
+    // A Wayland client cannot resize its floating window: a collapse and an expand send the tag again with the size the
+    // compositor's rule gives the window (ADR-0051 D-6, placement.lua memo_resize).
+    function test_collapseAndExpandSendTheSizeOnTheTag() {
+        const t = makeMemo({height: 260, expandedHeight: 260, width: 250});
+        t.win.toggleCollapsed();
+        tryVerify(() => t.backend.retags.length === 1, 2000, "the tag goes out once the new size is committed");
+        compare(t.backend.retags[0], "memo:a!250x" + Tokens.memosStripHeight);
+        t.win.toggleCollapsed();
+        tryVerify(() => t.backend.retags.length === 2, 2000);
+        compare(t.backend.retags[1], "memo:a!250x260");
+        compare(MemoLogic.sizedTag("memo:a@5,6!240x18", 250, 260.4), "memo:a@5,6!250x260", "an older size is replaced");
+    }
+
     function test_collapseKeepsTheMemosHeight() {
         const t = makeMemo({height: 260, expandedHeight: 260});
         t.win.toggleCollapsed();
@@ -209,7 +224,7 @@ TestCase {
         compare(t.backend.removed, []);
     }
 
-    function test_translucentAndFloatOnTop() {
+    function test_translucentAndNoFloatOnTop() {
         const t = makeMemo();
         const body = t.win.contentItem.children[0];
         compare(t.win.paperOpacity, 1);
@@ -217,11 +232,9 @@ TestCase {
         verify(t.win.translucent);
         compare(t.win.paperOpacity, Tokens.memosTranslucentOpacity);
         compare(t.backend.lastUpdate("a", "translucent"), true);
+        // Float on Top is not shipped (ADR-0051 D-6): its key does nothing and no tag is sent again.
         keyClick(Qt.Key_F, Qt.ControlModifier | Qt.AltModifier);
-        verify(t.win.floating);
-        compare(t.backend.retags, ["memo:a:top"], "the window sends its tag again with :top");
-        keyClick(Qt.Key_F, Qt.ControlModifier | Qt.AltModifier);
-        compare(t.backend.retags, ["memo:a:top", "memo:a"]);
+        verify(t.win.floating === undefined);
     }
 
     function test_fontKeysAndPlainPaste() {
@@ -315,14 +328,14 @@ TestCase {
     }
 
     function test_mainOpensTheStoredMemos() {
-        const m = makeMain([{id: "a", color: "green", html: "<p>one</p>", width: 250, height: 210, collapsed: false, floating: true, translucent: false},
-                            {id: "b", color: "pink", html: "", width: 200, height: 300, collapsed: true, floating: false, translucent: true}]);
+        const m = makeMain([{id: "a", color: "green", html: "<p>one</p>", width: 250, height: 210, collapsed: false, translucent: false},
+                            {id: "b", color: "pink", html: "", width: 200, height: 300, collapsed: true, translucent: true}]);
         compare(m.main.windows.length, 2);
         const a = m.main.windows[0], b = m.main.windows[1];
         compare(a.colorName, "green");
         compare(a.width, 250);
         compare(a.height, 210);
-        compare(a.gfChromeRole, "memo:a:top");
+        compare(a.gfChromeRole, "memo:a");
         verify(b.collapsed);
         compare(b.height, Tokens.memosStripHeight);
         compare(b.expandedHeight, 300);
@@ -340,8 +353,8 @@ TestCase {
     }
 
     function test_mainReopensWhatTheCompositorClosed() {
-        const m = makeMain([{id: "a", color: "yellow", html: "<p>x</p>", width: 240, height: 200, collapsed: false, floating: false, translucent: false},
-                            {id: "b", color: "blue", html: "<p>y</p>", width: 240, height: 200, collapsed: false, floating: false, translucent: false}]);
+        const m = makeMain([{id: "a", color: "yellow", html: "<p>x</p>", width: 240, height: 200, collapsed: false, translucent: false},
+                            {id: "b", color: "blue", html: "<p>y</p>", width: 240, height: 200, collapsed: false, translucent: false}]);
         m.main.windowClosed(m.main.windows[0]);
         compare(m.main.windows.length, 1);
         compare(m.backend.removed, [], "the memo is kept");
@@ -356,8 +369,8 @@ TestCase {
 
     // Quit and SIGTERM save through backend.saveNow(): every window pushes what it holds first.
     function test_mainFlushesEveryWindowBeforeASave() {
-        const m = makeMain([{id: "a", color: "yellow", html: "", width: 240, height: 200, collapsed: false, floating: false, translucent: false},
-                            {id: "b", color: "blue", html: "", width: 240, height: 200, collapsed: false, floating: false, translucent: false}]);
+        const m = makeMain([{id: "a", color: "yellow", html: "", width: 240, height: 200, collapsed: false, translucent: false},
+                            {id: "b", color: "blue", html: "", width: 240, height: 200, collapsed: false, translucent: false}]);
         m.main.windows[0].editor.insert(0, "first");
         m.main.windows[1].editor.insert(0, "second");
         compare(m.backend.lastUpdate("a", "html"), undefined);
@@ -373,14 +386,14 @@ TestCase {
     }
 
     function test_mainRefusesANewerStore() {
-        const m = makeMain([{id: "a", color: "yellow", html: "", width: 240, height: 200, collapsed: false, floating: false, translucent: false}]);
+        const m = makeMain([{id: "a", color: "yellow", html: "", width: 240, height: 200, collapsed: false, translucent: false}]);
         cleanupMain(m);
-        const backend = fakeBackend.createObject(testCase, {refusal: "newer"});
+        testCase.refusingBackend = fakeBackend.createObject(testCase, {refusal: "newer"});
         const comp = Qt.createComponent(Qt.resolvedUrl("../../apps/memos/qml/Main.qml"));
-        const main = createTemporaryObject(comp, testCase, {backend: backend, globalMenu: false});
+        const main = createTemporaryObject(comp, testCase, {backend: testCase.refusingBackend, globalMenu: false});
         compare(main.windows.length, 0);
         verify(main.refusalWindow);
-        compare(backend.created, 0);
+        compare(testCase.refusingBackend.created, 0);
         verify(main.newMemo() === null);
         main.refusalWindow.destroy();
     }
