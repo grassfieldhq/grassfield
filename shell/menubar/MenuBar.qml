@@ -1437,9 +1437,8 @@ Scope {
 
                             // A steady width (LOW, UI audit 2026-11-05): tabular figures, so the time keeps its width from
                             // second to second, and on the dark beat of the flashing separators the colons turn
-                            // transparent instead of becoming spaces, so they keep their advance. The time is its own
-                            // StyledText (escaped; StyledText would collapse the date's en-space gap, so the date stays
-                            // plain); clockText's font is the metrics' too.
+                            // invisible instead of becoming spaces, so they keep their advance. The time is drawn
+                            // character by character as plain text (no rich text); clockText's font is the metrics' too.
                             Row {
                                 Text {
                                     id: clockText
@@ -1455,11 +1454,16 @@ Scope {
                                     }
                                 }
 
-                                Text {
-                                    textFormat: Text.StyledText
-                                    text: ClockFormat.styledTime(win.clockShownParts.time, win.clockFlashOff)
-                                    color: win.barText
-                                    font: clockText.font
+                                Repeater {
+                                    model: String(win.clockShownParts.time).split("")
+
+                                    Text {
+                                        required property string modelData
+                                        textFormat: Text.PlainText
+                                        text: modelData
+                                        color: modelData === ":" && win.clockFlashOff ? "transparent" : win.barText
+                                        font: clockText.font
+                                    }
                                 }
                             }
                         }

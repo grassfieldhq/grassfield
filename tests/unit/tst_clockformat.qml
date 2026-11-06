@@ -43,13 +43,6 @@ TestCase {
         compare(Clock.flash("13:46:05", true), "13 46 05");
     }
 
-    // UI audit 2026-11-05: the dark beat keeps the colons' advance (drawn transparent), and the time is escaped StyledText.
-    function test_styledTime() {
-        compare(Clock.styledTime("13:46", false), "13:46");
-        compare(Clock.styledTime("13:46", true), "13<font color=\"transparent\">:</font>46");
-        compare(Clock.styledTime("1:46 <&>", false), "1:46 &lt;&amp;&gt;");
-    }
-
     function test_dateWhenSpaceAllows() {
         compare(Clock.dateFits("always", {a: true}, 900, 100), true);
         compare(Clock.dateFits("never", {}, 1, 100), false);

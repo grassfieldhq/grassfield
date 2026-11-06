@@ -304,7 +304,7 @@ PopupMenu {
         // replaces this menu, nothing is killed before its button.
         // Empty Trash asks first, macOS wording, destructive (Cancel has the focus). The Trash it empties is the isolated one in dev.
         if (item.id === "trashEmpty") {
-            Popups.confirm(qsTr("Are you sure you want to permanently erase the items in the Trash?"), qsTr("You can’t undo this action."), qsTr("Empty Trash"), "emptytrash", {}, true);
+            Popups.confirm(qsTranslate("DockMenu", "Are you sure you want to permanently erase the items in the Trash?"), qsTranslate("DockMenu", "You can’t undo this action."), qsTranslate("DockMenu", "Empty Trash"), "emptytrash", {}, true);
             return;
         }
         if (item.id === "forcequit" || item.id === "forcequitHung" || item.id === "endtask") {
@@ -316,7 +316,7 @@ PopupMenu {
                 Popups.close();
                 return;
             }
-            Popups.confirm(qsTr("Force quit “%1”?").arg(Apps.nameFor(appId)), qsTr("Unsaved changes in this application will be lost."), qsTr("Force Quit"), "forcequit", {pid: pids[0], pids: pids, cls: root.appClasses}, true);
+            Popups.confirm(qsTranslate("DockMenu", "Force quit “%1”?").arg(Apps.nameFor(appId)), qsTranslate("DockMenu", "Unsaved changes in this application will be lost."), qsTranslate("DockMenu", "Force Quit"), "forcequit", {pid: pids[0], pids: pids, cls: root.appClasses}, true);
             return;
         }
         Popups.close();

@@ -30,7 +30,7 @@ TestCase {
         const icon = source("shell/desktop/DesktopIcon.qml");
         verify(/darkLabel \? Appearance\.lightColors\.barText : Appearance\.darkColors\.text/.test(icon), "the bar's dark foreground");
         compare(icon.split("!root.darkLabel").length - 1, 3, "the three halo passes go for a dark label");
-        verify(icon.indexOf("style: root.selected || root.darkLabel ? Text.Normal : Text.Outline") > 0, "and the outline");
+        verify(icon.indexOf("style: root.emphasized || root.darkLabel ? Text.Normal : Text.Outline") > 0, "and the outline");
         verify(icon.indexOf("Backdrop.grids[root.screenName]") > 0 && icon.indexOf("Backdrop.wallpapers[root.screenName]") > 0,
                "read from the wallpaper's grid, whatever the windows (not the bare-desktop backdrops)");
     }

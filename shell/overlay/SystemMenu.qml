@@ -67,17 +67,17 @@ PopupMenu {
             break;
         // Restart, Shut Down and Log Out: no message, the dialog shows its countdown (ADR-0040 ID-21).
         case "restart":
-            Popups.confirm(qsTr("Are you sure you want to restart your computer now?"), "", qsTr("Restart"), "restart", {}, true);
+            Popups.confirm(qsTranslate("SystemMenu", "Are you sure you want to restart your computer now?"), "", qsTranslate("SystemMenu", "Restart"), "restart", {}, true);
             break;
         case "shutdown":
-            Popups.confirm(qsTr("Are you sure you want to shut down your computer now?"), "", qsTr("Shut Down"), "shutdown", {}, true);
+            Popups.confirm(qsTranslate("SystemMenu", "Are you sure you want to shut down your computer now?"), "", qsTranslate("SystemMenu", "Shut Down"), "shutdown", {}, true);
             break;
         case "lock":
             Popups.close();
             Lock.lock("menu");
             break;
         case "logout":
-            Popups.confirm(qsTr("Are you sure you want to quit all applications and log out %1?").arg(SystemInfo.user), "", qsTr("Log Out"), "logout", {}, true);
+            Popups.confirm(qsTranslate("SystemMenu", "Are you sure you want to quit all applications and log out %1?").arg(SystemInfo.user), "", qsTranslate("SystemMenu", "Log Out"), "logout", {}, true);
             break;
         default:
             Popups.close();

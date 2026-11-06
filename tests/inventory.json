@@ -193,6 +193,7 @@
  {"path": "tests/unit/tst_knobshadow.qml", "layer": "headless"},
  {"path": "tests/unit/tst_popupkinds.qml", "layer": "logic"},
  {"path": "tests/unit/tst_keywindowfile.qml", "layer": "logic"},
+{"path": "tests/unit/tst_confirmtranslate.qml", "layer": "logic"},
  {"path": "tests/unit/tst_emoji.qml", "layer": "logic"},
  {"path": "tests/unit/tst_runmode.qml", "layer": "headless"},
  {"path": "tests/shell/run_mode_import/shell.qml", "layer": "headless"},

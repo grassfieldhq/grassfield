@@ -98,7 +98,7 @@ TestCase {
             const calls = source(path).match(/Popups\.confirm\([^;]*"(logout|restart|shutdown)", \{\}/g) || [];
             compare(calls.length, 3, path + ": Restart, Shut Down and Log Out");
             for (const call of calls)
-                verify(/^Popups\.confirm\(qsTr\("[^"]*"\)(\.arg\([A-Za-z.]*\))?, "", qsTr\(/.test(call), call);
+                verify(/^Popups\.confirm\(qs(?:Tr|Translate)\((?:"(?:SystemMenu|Search)", )?"[^"]*"\)(\.arg\([A-Za-z.]*\))?, "", qs(?:Tr|Translate)\(/.test(call), call);
         }
     }
 }

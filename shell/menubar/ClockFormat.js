@@ -39,13 +39,6 @@ function flash(timeText, off) {
     return off ? String(timeText).replace(/:/g, " ") : String(timeText);
 }
 
-// The time part as StyledText, escaped: on the "off" beat its colons are drawn transparent, so they keep their advance and
-// nothing after them moves (UI audit 2026-11-05: the blanks were narrower than the colons and the clock shifted each second).
-function styledTime(timeText, off) {
-    const escaped = String(timeText).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return off ? escaped.replace(/:/g, "<font color=\"transparent\">:</font>") : escaped;
-}
-
 // Which date pattern the clock uses: "both" (day of the week and date), "day", "date" or "none". `showDate` is the
 // resolved date setting: true to show the day and month (the setting "always", or "auto" when there is room).
 function dateKind(showDate, showDay) {

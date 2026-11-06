@@ -149,7 +149,7 @@
    "exempt": "the idle dim fades the session to the shadow colour for the last seconds before the lock and draws no text of its own",
    "sites": [{"file": "shell/security/idle/Idle.qml", "class": "backdrop", "count": 1}]},
   {"id": "menu bar of an output that is not the active one, light foreground (dimmed, macOS)", "fg": "darkColors.barText", "opacity": ["menubar.inactiveOpacity"], "backdrop": "bar-light-tone", "kind": "icon", "sites": [
-   {"file": "shell/menubar/MenuBar.qml", "class": "opacity-dynamic", "count": 8}
+   {"file": "shell/menubar/MenuBar.qml", "class": "opacity-dynamic", "count": 9}
   ]},
   {"id": "menu bar of an output that is not the active one, dark foreground (dimmed, macOS)", "fg": "lightColors.barText", "opacity": ["menubar.inactiveOpacity"], "backdrop": "bar-dark-tone", "kind": "icon", "sites": []},
   {"id": "disabled text", "fg": "colors.textSecondary", "opacity": ["material.disabledOpacity"], "backdrop": "material", "kind": "text",

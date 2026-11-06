@@ -171,6 +171,8 @@ Item {
             layer.effect: MultiEffect {
                 maskEnabled: true
                 maskSource: thumbMask
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1.0
             }
 
             Rectangle {

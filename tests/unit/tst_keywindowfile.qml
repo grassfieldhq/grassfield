@@ -180,7 +180,8 @@ TestCase {
         compare(settings.split("root.keyLook").length - 1, 3, "the sidebar's selection, its label and its tile");
         const viewer = source("apps/preview/qml/Viewer.qml");
         verify(viewer.indexOf("readonly property bool keyLook: Appearance.looksKey(viewerWin, viewerWin.active)") > 0);
-        compare(viewer.split("viewerWin.keyLook ?").length - 1, 4, "the title, the compact ring, the file plate and its name");
+        compare(viewer.split("viewerWin.keyLook ?").length - 1, 3, "the title, the file plate and its name");
+        verify(viewer.indexOf("viewerWin.keyLook ? Appearance.colors.selection : Appearance.unemphasizedSelection") > 0, "the plate keeps the key look");
         compare(viewer.indexOf("viewerWin.active ?"), -1);
         for (const app of ["activity", "files", "preview", "settings", "store"]) {
             const main = source("apps/" + app + "/src/main.cpp");

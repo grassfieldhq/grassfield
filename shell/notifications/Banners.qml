@@ -41,19 +41,9 @@ PanelWindow {
     readonly property real closeOverhang: Math.round(Tokens.notificationCloseSize / 3 * stack.dpr) / stack.dpr
     // The cards drawn now, leaving ones included: each has a blur region until its delegate is gone.
     property var cards: []
-    // The lowest point the stack draws (a leaving banner or one gliding up is still a child of the view), held at its
-    // peak while things move so the layer surface is not resized on every frame; `settle` lets it go.
-    readonly property real drawnBottom: Math.max(0, stack.contentItem.childrenRect.y + stack.contentItem.childrenRect.height - Tokens.notificationBannerGap)
-    property real heldBottom: 0
     readonly property int bannerCount: Notifications.bannerCount
 
     onBannerCountChanged: settle.restart()
-
-    onDrawnBottomChanged: {
-        if (drawnBottom > heldBottom)
-            heldBottom = drawnBottom;
-        settle.restart();
-    }
 
     screen: targetScreen
     // The Notifications column and Quick Settings replace the banners while they are open (their modules float over the
@@ -65,7 +55,9 @@ PanelWindow {
     }
     // No layer-shell margins: the offset under the menu bar lives inside the transparent window.
     implicitWidth: Tokens.notificationBannerWidth + 2 * win.pad
-    implicitHeight: stack.y + Math.max(stack.stackHeight, win.drawnBottom, win.heldBottom) + win.pad
+    // A fixed height (the screen's): the surface is never resized while banners move, so no frame shows a resized or
+    // stale surface (UI audit U1); the input mask and the blur regions follow the cards.
+    implicitHeight: win.targetScreen ? win.targetScreen.height : 0
     exclusionMode: ExclusionMode.Ignore
     color: "transparent"
     WlrLayershell.layer: WlrLayer.Overlay
@@ -103,12 +95,10 @@ PanelWindow {
         height: stack.stackHeight > 0 ? stack.stackHeight + win.closeOverhang : 0
     }
 
-    // Runs while the stack moves (restarted by every change of its drawn bottom and of the banner count): it keeps the
-    // window up for the last banner's exit and holds its height until the motion ends.
+    // Runs after the banner count changes: it keeps the window up for the last banner's exit.
     Timer {
         id: settle
         interval: Math.max(stack.moveDuration, stack.fadeDuration)
-        onTriggered: win.heldBottom = 0
     }
 
     ListView {
