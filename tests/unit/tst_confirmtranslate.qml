@@ -22,6 +22,25 @@ TestCase {
         return xhr.responseText;
     }
 
+    // The countdown sentence is built in PopupKinds.js, called from a handler: a bare qsTr there stays English (nested capture,
+    // from the system menu). All six strings use qsTranslate("PopupKinds", ...) and sit in the catalog under that context.
+    function test_countdownSentencesCarryTheirContext() {
+        const catalog = source("translations/grassfield_fr.ts");
+        const ctx = catalog.substring(catalog.indexOf("<name>PopupKinds</name>"));
+        const body = ctx.substring(0, ctx.indexOf("</context>"));
+        const fn = source("shell/services/PopupKinds.js").split("function countdownMessage")[1];
+        verify(fn.length > 0);
+        compare(fn.replace(/qsTranslate\(/g, "").indexOf("qsTr("), -1, "no bare qsTr in countdownMessage");
+        const re = /qsTranslate\("([A-Za-z]+)",\s*"((?:[^"\\]|\\.)*)"/g;
+        let m, n = 0;
+        while ((m = re.exec(fn)) !== null) {
+            n++;
+            compare(m[1], "PopupKinds");
+            verify(body.indexOf("<source>" + m[2] + "</source>") >= 0, "in the PopupKinds catalog context: " + m[2]);
+        }
+        compare(n, 6);
+    }
+
     function test_confirmTextsCarryTheirContext() {
         const catalog = source("translations/grassfield_fr.ts");
         for (const f of files) {

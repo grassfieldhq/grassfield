@@ -29,6 +29,7 @@
  {"path": "tests/visual/lib.sh", "reason": "helper sourced by the visual scripts"},
  {"path": "tests/integration/portal-bus.sh", "reason": "helper sourced by portal_settings.sh and portal_filechooser.sh (the private bus)"},
  {"path": "tests/integration/print-cups.sh", "reason": "helper sourced by print_cups.sh and portal_filechooser.sh (the scratch CUPS scheduler)"},
+ {"path": "tests/visual/flow-banner-exit.sh", "reason": "measuring tool for the banner stack exits (UI audit U1): fast grim frames of three exits, read by banner-top-y.py; no checks of its own"},
  {"path": "tests/visual/fringe-count.sh", "reason": "measuring tool for captures (colour fringes of text), used by hand in the grayscale-text proof"},
  {"path": "tests/visual/ipc.sh", "reason": "helper: qs ipc against the nested shell"},
  {"path": "tests/visual/main-display.sh", "reason": "step driver for the two-output nested captures of the main display and the wallpaper per display (ADR-0044); no checks of its own"},

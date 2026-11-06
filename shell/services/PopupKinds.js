@@ -50,11 +50,11 @@ function countdownMessage(action, seconds) {
     const one = seconds === 1;
     switch (action) {
     case "logout":
-        return one ? qsTr("If you do nothing, you will be logged out automatically in 1 second.") : qsTr("If you do nothing, you will be logged out automatically in %1 seconds.").arg(seconds);
+        return one ? qsTranslate("PopupKinds", "If you do nothing, you will be logged out automatically in 1 second.") : qsTranslate("PopupKinds", "If you do nothing, you will be logged out automatically in %1 seconds.").arg(seconds);
     case "restart":
-        return one ? qsTr("If you do nothing, the computer will restart automatically in 1 second.") : qsTr("If you do nothing, the computer will restart automatically in %1 seconds.").arg(seconds);
+        return one ? qsTranslate("PopupKinds", "If you do nothing, the computer will restart automatically in 1 second.") : qsTranslate("PopupKinds", "If you do nothing, the computer will restart automatically in %1 seconds.").arg(seconds);
     case "shutdown":
-        return one ? qsTr("If you do nothing, the computer will shut down automatically in 1 second.") : qsTr("If you do nothing, the computer will shut down automatically in %1 seconds.").arg(seconds);
+        return one ? qsTranslate("PopupKinds", "If you do nothing, the computer will shut down automatically in 1 second.") : qsTranslate("PopupKinds", "If you do nothing, the computer will shut down automatically in %1 seconds.").arg(seconds);
     }
     return "";
 }
