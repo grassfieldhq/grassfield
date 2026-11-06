@@ -216,8 +216,11 @@ the metered query (U7): a different choice from Luma, which treats unknown as a 
 5. **Never removed.** Once a channel has published the marker, its 20 cohort paths keep resolving for as long as the marker
    is published and for at least 90 days after it is withdrawn (then every cohort resolves as the plain path does).
 6. **Events.**
-   - *New release*: a snapshot S built from the current state (h.2), `next = S`, the ramp chosen by the owner (default:
-     `startPercent` 5, `durationHours` 168); descriptor `rolling`.
+   - *New release*: a snapshot S built from the current state (h.2), `next = S`, the ramp chosen by the owner. Default
+     (owner decision of 2026-11-06, "il faut tout déployer"): `startPercent` 100, `durationHours` 0, so every cohort and
+     the plain path get the release at once; a gradual ramp (for example `startPercent` 5 over `durationHours` 168) only
+     when the owner asks for one for a given release. Descriptor `rolling`. (Section 3's schema keeps a ramp object for a
+     normal release: a ramp of 100 % is how "everyone at once" is written.)
    - *Security release*: built from the newest release, including the one rolling (so no cohort goes back), `base = next =`
      its snapshot, `rollout: null`, `importance: "security"`: every cohort and the plain path at once.
    - *Pause*: `pausedAt = now` (reach frozen: cohorts already on `next` stay there); descriptor `paused` with `pausedAt`.

@@ -78,8 +78,8 @@ dev state directory. `pw-dump` only reads.
 **B-1 An original sound set** (`branding/sounds/`): `generate.py` (Python standard library: `wave`, `math`, `struct`;
 additive synthesis with envelopes, a fixed-seed noise generator, 44.1 kHz mono 16-bit) writes the WAV files of the
 `grassfield` sound theme; `--check` fails when a committed file differs. Licence: MIT, the project's own (the generated
-sounds are the script's output). **Owner to confirm:** Grassfield's other own art is CC-BY-SA-4.0 (owner
-decision of 2026-10-27); MIT for generated sounds is the integrator's choice of 2026-11-05. Nothing imitates or names Apple's sounds.
+sounds are the script's output). **Owner confirmed (2026-11-06):** MIT for the generated sounds (the
+integrator's choice of 2026-11-05), although Grassfield's other own art is CC-BY-SA-4.0 (owner decision of 2026-10-27). Nothing imitates or names Apple's sounds.
 
 | File (Sound Naming Specification name where one exists) | Use |
 |---|---|
