@@ -18,9 +18,9 @@
 #     a stand-in that gave up because the shell's answer took over 1 s (a slow `qs ipc`: it ran its stock picker), the next
 #     request shows its panel and its answer reaches xdph; each request has its own socket, and none is left once it ended.
 # The panel's defaults (review of PR #83, MINOR 1; ADR-0035 7-8; owner decision Q14 as amended after the rc6 bug report): in
-# case 1 the panel, as the probe loads it, opens with Remember this choice ticked (xdph passed --allow-token) and unarmed
-# (Share disabled), and is armed after panel.alertArmMs with Remember still ticked; in case 2 (no --allow-token) it opens
-# unticked, though it was ticked in case 1.
+# case 1 the panel, as the probe loads it, opens with Remember this choice unticked though xdph passed --allow-token (owner
+# decision Q14 stands until its amendment is agreed: SharePickerPanel.followAllowToken) and unarmed (Share disabled), and is
+# armed after panel.alertArmMs with Remember still unticked; in case 2 (no --allow-token) it opens unticked too.
 # Step 7b:
 #   9 Selection: an area past its display's logical size is not answered; one inside is `[SELECTION]/region:<display>@x,y,w,h`;
 #  10 a window that hides itself from capture (Hyprland's getprop, faked) is greyed and never answered, another window is;
@@ -183,11 +183,11 @@ desc="1 the shell accepts, connects, gets xdph's two windows and opens the panel
 check shown_within
 desc="1 the request has its own socket, the only one"
 check test "$(state '%(channels)s')" == 1
-desc="1 the panel opens with Remember this choice ticked, as xdph's --allow-token says, and unarmed, Share disabled"
-check test "$(panel atOpen)" == "remember=True armed=False box=True share=False"
-desc="1 the panel is armed after panel.alertArmMs, Remember this choice still ticked"
+desc="1 the panel opens with Remember this choice unticked though xdph passed --allow-token (owner decision Q14 until its amendment is agreed), and unarmed, Share disabled"
+check test "$(panel atOpen)" == "remember=False armed=False box=False share=False"
+desc="1 the panel is armed after panel.alertArmMs, Remember this choice still unticked"
 check armed_within
-check test "$(panel now)" == "remember=True armed=True box=True share=False"
+check test "$(panel now)" == "remember=False armed=True box=False share=False"
 desc="1 the windows the shell holds are xdph's, with their handles"
 check test "$(state '%(windows)s')" == "[{'handle': '123456', 'appId': 'org.gnome.TextEditor', 'title': 'notes.txt', 'address': '1000'}, {'handle': '777', 'appId': 'firefox', 'title': 'A page', 'address': '2000'}]"
 desc="1 the user's choice of the display with Remember this choice reaches xdph"
@@ -202,7 +202,7 @@ check bash -c '[[ ! -e $1/stock.ran && ! -s $1/standin.err ]]' _ "$tmp"
 # 2.
 share no-token
 shown_within || true
-desc="2 without --allow-token the panel opens with Remember this choice unticked and unarmed (case 1 had it ticked)"
+desc="2 without --allow-token the panel opens with Remember this choice unticked and unarmed"
 check test "$(panel atOpen)" == "remember=False armed=False box=False share=False"
 desc="2 a second request while the panel is open: busy"
 check test "$(ipc picker request "$(printf '%032x' 1)" "$runtime/grassfield/picker/$(printf '%032x' 2).sock")" == busy

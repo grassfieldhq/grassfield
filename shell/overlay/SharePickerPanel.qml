@@ -13,9 +13,9 @@ import "../services/SharePicker.js" as Logic
 // Window each window xdph listed, grouped by app (one that hides itself from capture greyed, never chosen: 7-11), both as live
 // thumbnails; Selection an area dragged on a display's live preview (7-10). Nothing is selected at first: Share waits for a
 // choice.
-// Remember this choice (the portal's restore token) opens as xdph's --allow-token says (SharePicker.allowToken: ticked with
-// Omarchy's xdph.conf), as xdph's own picker does, and the user may untick it (amends owner decision Q14 after the rc6 bug
-// report: unticked, a browser asked twice for one share). Nothing answers keys or clicks until the panel is armed (7-8). The
+// Remember this choice (the portal's restore token) opens unticked (owner decision Q14) and the user may tick it; opening it
+// as xdph's --allow-token says (ticked with Omarchy's xdph.conf, so a browser asks once) waits for the owner's agreement to the
+// amendment (followAllowToken). Nothing answers keys or clicks until the panel is armed (7-8). The
 // picker cannot name the app (xdph does not pass it). Keys: arrows move in the grid, Return shares,
 // Esc cancels, Cmd-1, Cmd-2 and Cmd-3 (Super, forwarded as Ctrl) switch the tabs. Captures stop when the panel goes (the Overlay's
 // Loader unloads it).
@@ -27,6 +27,10 @@ Dialog {
     property string chosen: ""
     // Set once, when the panel opens (the stand-in's options line comes before the list that opens it), then the user's.
     property bool remember: false
+    // Owner decision Q14 ("unticked every time") stands until the owner agrees to its amendment (ADR-0035 D-6, proposed
+    // 2026-11-07 after the rc6 report: open as xdph's --allow-token says, so a browser asks once). The stand-in passes
+    // --allow-token and SharePicker keeps it; only this switch decides whether the box opens ticked.
+    readonly property bool followAllowToken: false
     // False until Tokens.panelAlertArmMs after the panel showed, or after the last key pressed meanwhile (the access alert's
     // rule, AccessAlert.qml): keys typed for another window when it appears (Up then Return in a terminal) and clicks choose
     // and share nothing. Esc and Cancel always cancel.
@@ -102,7 +106,7 @@ Dialog {
     panelWidth: Tokens.panelSharePickerWidth
 
     onRejected: SharePicker.cancel()
-    Component.onCompleted: root.remember = SharePicker.allowToken
+    Component.onCompleted: root.remember = root.followAllowToken && SharePicker.allowToken
 
     Timer {
         id: arm

@@ -377,7 +377,8 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   - "Share Your Screen", "An app wants to share your screen. Choose what it can see.", and Entire Screen / Window as a segmented control.
   - A grid of live thumbnails, three to a row, two rows before it scrolls.
   - Windows are grouped by app name, then sorted by title. A window without an address, or one the shell does not know, shows its app's icon.
-  - Remember this choice is unticked at every opening (until rc6; since the fix below it opens as xdph's `--allow-token` says).
+  - Remember this choice is unticked at every opening (owner decision Q14; the amendment below, which opens it as xdph's
+    `--allow-token` says, is built behind `SharePickerPanel.followAllowToken` = false and waits for the owner's agreement).
   - Cancel and Share. Share is dimmed until a tile is chosen; nothing is selected at first (7-3).
   - Arrows move in the grid, Return shares, Esc cancels, Cmd-1 and Cmd-2 switch the tabs, and a double-click shares.
   - Nothing answers keys or clicks for `panel.alertArmMs` after the panel shows, or after the last key pressed meanwhile (7-8);
@@ -420,7 +421,8 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   opened with Remember this choice unticked every time (Q14): no token, so every capture of the browser ran the picker again.
   Measured with the real xdg-desktop-portal 1.22.1 and xdph 1.4.1 against the nested session
   (`tests/integration/screencast_restore.sh`, case 1: two picker runs; case 2, with `r`: one).
-- **Decision (amends Q14; macOS model: one choice per share, which the app keeps while it shares; lasting access is listed in
+- **Proposed decision, pending the owner (would amend Q14; until then `followAllowToken` is false and a browser still asks
+  twice; macOS model: one choice per share, which the app keeps while it shares; lasting access is listed in
   Settings > Privacy > Screen Sharing, where it is removed):** Remember this choice opens as xdph's `--allow-token` says (xdph's
   `allow_token_by_default`, the default it gives its picker's box): ticked with Omarchy's `xdph.conf`. In the Omarchy session
   that file names `hyprland-preview-share-picker`; it and xdph's stock `hyprland-share-picker` both have an "Allow a restore
