@@ -339,6 +339,21 @@ Window {
 
     // Global menu (T1) ------------------------------------------------------------------------
 
+    // An item's name as the global menu shows it inside a label (Edit > Copy “name”): shortened in its middle to
+    // menu.nameMaxWidth in the menus' font, as PopupMenu draws a row's name (MenuItem.name), since the menu bar draws the
+    // labels it is sent as they are (owner report 2026-11-07: a long name widened the menu).
+    FontMetrics {
+        id: menuNameMetrics
+        font.family: Appearance.fontFamily
+        font.pixelSize: Tokens.typographyMenuSize
+        font.letterSpacing: Appearance.tracking(Tokens.typographyMenuSize)
+        font.weight: Tokens.typographySmallWeight
+    }
+
+    function menuName(name: string): string {
+        return menuNameMetrics.elidedText(name, Qt.ElideMiddle, Tokens.menuNameMaxWidth);
+    }
+
     Loader {
         active: win.globalMenu
         sourceComponent: GlobalMenu {

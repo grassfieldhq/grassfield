@@ -625,4 +625,76 @@ TestCase {
         wait(100);
         compare(m.submenuItem.currentIndex, 0);
     }
+
+    // An item's name in a row (Files' and the desktop's item menus: Compress “name”, Glance at “name”) is drawn shortened in
+    // its middle to menu.nameMaxWidth, its start, its end and the words around it kept, so that a long file name leaves the
+    // menu at its usual width (owner report 2026-11-07: the menu grew to menu.maxWidth). The accessible name keeps it whole.
+    Component {
+        id: namedMenuComponent
+        PopupMenu {
+            property string itemName: ""
+            model: [
+                {id: "open", text: "Open"},
+                {id: "compress", text: "Compress “%1”", name: itemName},
+                {id: "glance", text: "Glance at “%1”", name: itemName, shortcut: "Space"}
+            ]
+        }
+    }
+
+    function rowsOf(root: Item): var {
+        const out = [];
+        const stack = [root];
+        while (stack.length) {
+            const it = stack.pop();
+            if (it.shownText !== undefined && it.hasSubmenu !== undefined)
+                out.push(it);
+            for (let i = 0; i < it.children.length; i++)
+                stack.push(it.children[i]);
+        }
+        return out;
+    }
+
+    function test_aLongNameIsShortenedInTheMiddleAndTheMenuKeepsItsWidth() {
+        const longName = "Quarterly report of the regional office, final version approved by everyone 2026-11-07.pdf";
+        const shortMenu = createTemporaryObject(namedMenuComponent, testCase, {itemName: "Report.pdf"});
+        const longMenu = createTemporaryObject(namedMenuComponent, testCase, {itemName: longName});
+        wait(0);
+        const glance = rowsOf(longMenu).filter(r => r.text === "Glance at “%1”")[0];
+        verify(glance !== undefined);
+        const shown = glance.shownText;
+        verify(shown.startsWith("Glance at “Quarterly"), "the start of the name: " + shown);
+        verify(shown.endsWith(".pdf”"), "its end and the closing quote: " + shown);
+        verify(shown.indexOf("…") > 0, "shortened in its middle: " + shown);
+        compare(glance.Accessible.name, "Glance at “" + longName + "”", "the accessible name is whole");
+        const metrics = Qt.createQmlObject("import QtQuick; FontMetrics {}", testCase);
+        metrics.font = glance.children.filter(c => c.text === shown && c.truncated !== undefined)[0].font;
+        const name = shown.substring("Glance at “".length, shown.length - 1);
+        verify(metrics.advanceWidth(name) <= Tokens.menuNameMaxWidth + 0.5, "the name within menu.nameMaxWidth: " + metrics.advanceWidth(name));
+        verify(longMenu.width < Tokens.menuMaxWidth, "the menu stays below its cap: " + longMenu.width);
+        verify(longMenu.width - shortMenu.width <= Tokens.menuNameMaxWidth, "and no wider than a row with the longest name drawn");
+        const whole = rowsOf(shortMenu).filter(r => r.text === "Compress “%1”")[0];
+        compare(whole.shownText, "Compress “Report.pdf”", "a short name is drawn whole");
+        metrics.destroy();
+    }
+
+    // A row longer than the cap (a label without a name: a recent file, a tray label) still stops the menu at menu.maxWidth and
+    // is shortened in its middle (UI audit 2026-11-05 U10).
+    function test_aLongLabelStopsTheMenuAtItsCap() {
+        const m = createTemporaryObject(namedMenuComponent, testCase);
+        m.model = [{id: "a", text: "An extremely long tray label that is much wider than any menu should ever be, ending here"}];
+        wait(0);
+        compare(m.width, Tokens.menuMaxWidth);
+        let label = null;
+        const stack = [m];
+        while (stack.length && !label) {
+            const it = stack.pop();
+            if (it.text === m.model[0].text && it.truncated !== undefined)
+                label = it;
+            for (let i = 0; i < it.children.length; i++)
+                stack.push(it.children[i]);
+        }
+        verify(label !== null);
+        compare(label.elide, Text.ElideMiddle);
+        verify(label.truncated, "the label is shortened");
+    }
 }

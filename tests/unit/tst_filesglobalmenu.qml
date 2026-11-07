@@ -107,6 +107,10 @@ TestCase {
             fakeWin.ejected++;
             return true;
         }
+        // BrowserWindow.menuName: the name shortened in its middle (here: a marker).
+        function menuName(name: string): string {
+            return "<" + name + ">";
+        }
     }
 
     Component {
@@ -396,5 +400,17 @@ TestCase {
         compare(checked.indexOf("Date Modified") >= 0, true, "the tab sorts by date");
         compare(checked.indexOf("Descending") >= 0, true, "descending");
         compare(checked.indexOf("Name") >= 0, false);
+    }
+
+    // An item's name in a label (Edit > Copy “name”, File > Compress “name”) goes through the window's menuName, which shortens
+    // a long one in its middle: the menu bar draws the label it is sent as it is (owner report 2026-11-07).
+    function test_theNameInALabelIsTheShortenedOne() {
+        const bar = createTemporaryObject(menuComponent, test);
+        verify(bar);
+        select([3], {});
+        compare(bar.firstName, "<item3>");
+        select([1, 2], {});
+        compare(bar.firstName, "");
+        select([], {});
     }
 }

@@ -980,7 +980,7 @@ FocusScope {
                 {id: "deleteNow", text: qsTr("Delete Immediately…"), destructive: true},
                 {separator: true},
                 {id: "info", text: qsTr("Get Info"), shortcut: qsTr("Ctrl+I")},
-                {id: "copy", text: count === 1 ? qsTr("Copy “%1”").arg(name) : qsTr("Copy %1 Items").arg(count), shortcut: qsTr("Ctrl+C")}
+                {id: "copy", text: count === 1 ? qsTr("Copy “%1”") : qsTr("Copy %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Ctrl+C")}
             ];
         }
         if (model.isApplications) {
@@ -991,7 +991,7 @@ FocusScope {
                 {id: "trash", text: qsTr("Move to Trash"), shortcut: qsTr("Ctrl+Backspace"), enabled: root.applicationRemovable()},
                 {separator: true},
                 {id: "info", text: qsTr("Get Info"), shortcut: qsTr("Ctrl+I")},
-                {id: "copy", text: count === 1 ? qsTr("Copy “%1”").arg(name) : qsTr("Copy %1 Items").arg(count), shortcut: qsTr("Ctrl+C")},
+                {id: "copy", text: count === 1 ? qsTr("Copy “%1”") : qsTr("Copy %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Ctrl+C")},
                 {id: "rename", text: qsTr("Rename"), shortcut: qsTr("F2"), enabled: false}
             ];
         }
@@ -1026,17 +1026,20 @@ FocusScope {
         else
             items.push({id: "rename", text: qsTr("Rename"), shortcut: qsTr("F2"), enabled: count === 1 && editable});
         const local = model.selectedUrls().every(u => String(u).startsWith("file:"));
-        items.push({id: "compress", text: count === 1 ? qsTr("Compress “%1”").arg(name) : qsTr("Compress %1 Items").arg(count), enabled: local && !model.isSearch});
+        items.push({id: "compress", text: count === 1 ? qsTr("Compress “%1”") : qsTr("Compress %1 Items").arg(count), name: count === 1 ? name : "", enabled: local && !model.isSearch});
         items.push({id: "duplicate", text: qsTr("Duplicate"), shortcut: qsTr("Ctrl+D"), enabled: model.writable});
         items.push({id: "alias", text: qsTr("Make Alias"), shortcut: qsTr("Ctrl+Super+A"), enabled: local && model.writable});
         if (count === 1 && String(root.app.linkTarget(model.selectedUrls()[0])) !== "")
             items.push({id: "showOriginal", text: qsTr("Show Original"), shortcut: qsTr("Ctrl+R")});
-        items.push({id: "glance", text: count === 1 ? qsTr("Glance at “%1”").arg(name) : qsTr("Glance at %1 Items").arg(count), shortcut: qsTr("Space")});
+        items.push({id: "glance", text: count === 1 ? qsTr("Glance at “%1”") : qsTr("Glance at %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Space")});
         if (count > 1 && model.writable && !model.isSearch)
             items.push({id: "newFolderWithItems", text: qsTr("New Folder with Selection (%1 Items)").arg(count), shortcut: qsTr("Ctrl+Super+N")});
         items.push({separator: true});
-        items.push({id: "copy", text: count === 1 ? qsTr("Copy “%1”").arg(name) : qsTr("Copy %1 Items").arg(count), shortcut: qsTr("Ctrl+C")});
-        items.push({id: "copyPath", text: count === 1 ? qsTr("Copy “%1” as Pathname").arg(name) : qsTr("Copy %1 Items as Pathnames").arg(count), shortcut: qsTr("Ctrl+Alt+C")});
+        // Copy as Pathname is Copy's Option alternate, as in the Finder: shown while Alt is held (Edit > Copy as Pathname and
+        // Ctrl+Alt+C stay), so that its long label never widens the menu.
+        items.push({id: "copy", text: count === 1 ? qsTr("Copy “%1”") : qsTr("Copy %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Ctrl+C"),
+                    alternate: {id: "copyPath", text: count === 1 ? qsTr("Copy “%1” as Pathname") : qsTr("Copy %1 Items as Pathnames").arg(count), name: count === 1 ? name : "",
+                                shortcut: qsTr("Ctrl+Alt+C")}});
         // Share…, after Copy where Finder places it (macOS 13 and later; ADR-0045 OC-13): it opens the toolbar Share button's
         // menu where this menu was; none when there is nothing to share with (LocalSend not installed).
         if (root.shareMenu(model).length > 0)
@@ -1179,7 +1182,7 @@ FocusScope {
             const rows = model.selectedRows();
             const name = rows.length > 0 ? DisplayName.text(model.nameAt(rows[0])) : "";
             if (rows.length > 0)
-                items.push({id: "glance", text: rows.length === 1 ? qsTr("Glance at “%1”").arg(name) : qsTr("Glance at %1 Items").arg(rows.length), shortcut: qsTr("Space")});
+                items.push({id: "glance", text: rows.length === 1 ? qsTr("Glance at “%1”") : qsTr("Glance at %1 Items").arg(rows.length), name: rows.length === 1 ? name : "", shortcut: qsTr("Space")});
             if ((root.chooser && root.searchText !== "") || model.isSearch)
                 items.push({id: "enclosing", text: qsTr("Show in Enclosing Folder")});
             if (items.length > 0)

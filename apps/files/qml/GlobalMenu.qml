@@ -41,7 +41,8 @@ Platform.MenuBar {
     // These read folder.selectedCount themselves: its NOTIFY (selectionChanged) fires on every selection change, while a
     // binding on `count` only re-runs when the number changes (selecting another single item kept the old name and
     // Open With list, and Open With then acted on the new selection: review of 72272e4).
-    readonly property string firstName: bar.folder && bar.folder.selectedCount === 1 ? bar.label(bar.folder.nameAt(bar.folder.selectedRows()[0])) : ""
+    // Shortened in its middle when long (BrowserWindow.menuName): the menu bar keeps its menus' width.
+    readonly property string firstName: bar.folder && bar.folder.selectedCount === 1 ? bar.label(bar.win.menuName(DisplayName.text(bar.folder.nameAt(bar.folder.selectedRows()[0])))) : ""
     // Open With: for a selection of files (re-read when the selection changes), the applications for them and Other…, the
     // Choose Application panel (ADR-0035 5c-1).
     readonly property bool openWithFiles: {

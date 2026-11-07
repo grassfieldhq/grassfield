@@ -606,6 +606,16 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   folder by name (a panel picks in one folder; a search in it later).
 - **F-12 Names**: no Apple trademark in the UI (master-prompt §14): "This Mac" is "This Computer" (« Cet ordinateur »), as
   in the system menu's About This Computer; Quick Look is Glance; Archive Utility has no name of its own (Files expands).
+- **F-15 Names in menus** (owner report 2026-11-07, "the context menu grows too wide when the file name is long"): an
+  item's name inside a menu label (Compress “name”, Glance at “name”, Copy “name”) is drawn shortened in its
+  middle to `menu.nameMaxWidth` (160 pt), its start, its extension and the words around it kept, as the Finder truncates long
+  names in its menus; the menu keeps its usual width whatever the name (a short name: 255 pt, a 90-character one: 332 pt
+  instead of `menu.maxWidth` 400). The shared `PopupMenu` row takes the name (`name`, MenuItem), so Files' item, Action and
+  panel menus and the desktop's item menu share it, and the accessible name keeps the whole name; the global menu's labels
+  are shortened by Files before they are sent (`BrowserWindow.menuName`). Copy as Pathname became Copy's Option (Alt)
+  alternate in the item menu, as in the Finder (its label was the widest row); Edit > Copy as Pathname and ⌥⌘C stay.
+  Tests: `tst_popupmenu.qml` (`test_aLongNameIsShortenedInTheMiddleAndTheMenuKeepsItsWidth`, `test_aLongLabelStopsTheMenuAtItsCap`),
+  `tst_filesglobalmenu.qml`, `tst_iconmenu.qml`, `tst_filesbrowser.qml`.
 
 ### ADRs opened by this step
 - ADR-0026 Files window frames: size by Files, position and cascade by the compositor (cross-module: Files and

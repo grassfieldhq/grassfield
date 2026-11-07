@@ -539,7 +539,9 @@ TestCase {
         folder.selected = [0];
         const items = tab.itemMenu(folder);
         verify(!items.some(i => i.id === "cut"), "no Cut for files");
-        verify(items.some(i => i.id === "copyPath"), "Copy as Pathname");
+        const copy = items.find(i => i.id === "copy");
+        compare(copy.alternate.id, "copyPath", "Copy as Pathname is Copy's Alt alternate (the Finder's Option item)");
+        verify(!items.some(i => i.id === "copyPath"), "not a row of its own");
         fakeApp.canPaste = true;
         fakeApp.clipboardCount = 2;
         const background = tab.backgroundMenu(folder);
@@ -706,7 +708,7 @@ TestCase {
         const ids = items.map(i => i.id ?? "-");
         const share = items.find(i => i.id === "share");
         verify(share !== undefined, "Share…");
-        verify(ids.indexOf("share") > ids.indexOf("copyPath"), "after Copy as Pathname");
+        verify(ids.indexOf("share") === ids.indexOf("copy") + 1, "right after Copy (and its Alt alternate, Copy as Pathname)");
         compare(share.text, "Share…");
         compare(share.submenu, undefined, "no submenu: it opens the Share menu");
         const menu = tab.shareMenu(folder);

@@ -5,6 +5,10 @@ Item {
     id: root
 
     property string text: ""
+    // An item's name for the label's "%1" (Compress “%1”, Glance at “%1”): drawn shortened in its middle to menu.nameMaxWidth,
+    // its start and its end kept, so that a long file name never widens the menu (macOS Finder; owner report 2026-11-07). The
+    // accessible name keeps the whole name. Empty: the label is `text` as it is.
+    property string name: ""
     property string shortcut: ""
     // Plain text in the right-hand column, before the shortcut: the Grassfield menu's "Settings…  1 update" (ADR-0033 U19).
     property string detail: ""
@@ -36,8 +40,10 @@ Item {
     readonly property real trailRoom: trail.implicitWidth > 0 ? Tokens.menuShortcutGap + 2 * Tokens.spacingSm + trail.implicitWidth : 0
     implicitWidth: Math.ceil(root.labelX + label.implicitWidth + root.trailRoom + Tokens.menuItemPadding)
     implicitHeight: Tokens.menuItemHeight
+    // The label as drawn, and as told to assistive technologies (the whole name).
+    readonly property string shownText: root.name !== "" ? root.text.arg(nameMetrics.elidedText(root.name, Qt.ElideMiddle, Tokens.menuNameMaxWidth)) : root.text
     Accessible.role: Accessible.MenuItem
-    Accessible.name: root.text
+    Accessible.name: root.name !== "" ? root.text.arg(root.name) : root.text
     Accessible.description: root.detail !== "" && root.shortcut !== "" ? root.detail + ", " + root.shortcut : root.detail + root.shortcut
     Accessible.checkable: root.checked
     Accessible.checked: root.checked
@@ -92,12 +98,17 @@ Item {
         width: Math.max(0, root.width - root.labelX - root.trailRoom - Tokens.menuItemPadding)
         elide: Text.ElideMiddle
         anchors.verticalCenter: parent.verticalCenter
-        text: root.text
+        text: root.shownText
         color: root.foreground
         font.family: Appearance.fontFamily
         font.pixelSize: Tokens.typographyMenuSize
         font.letterSpacing: Appearance.tracking(Tokens.typographyMenuSize)
         font.weight: Tokens.typographySmallWeight
+    }
+
+    FontMetrics {
+        id: nameMetrics
+        font: label.font
     }
 
     Row {
