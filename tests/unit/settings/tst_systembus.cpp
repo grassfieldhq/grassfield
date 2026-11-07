@@ -1432,11 +1432,18 @@ struct PrivacyFixture {
                     return ok({QVariant::fromValue(PermissionTable{{"org.example.Meet", {"yes"}}}), variant(QVariant())});
                 if (table == QLatin1String("screencast") && id == QLatin1String("_0000_fake_0000_0000_"))
                     return ok({QVariant::fromValue(PermissionTable{{"org.example.Studio", {"yes"}}}), variant(QVariant())});
+                // A host app the portal could not name (xdg-desktop-portal 1.22 xdp-app-info-host.c: no app-*.scope with a
+                // desktop entry gives ""), and a key no portal writes.
+                if (table == QLatin1String("screencast") && id == QLatin1String("hostToken_without_id"))
+                    return ok({QVariant::fromValue(PermissionTable{{"", {"yes"}}}), variant(QVariant())});
+                if (table == QLatin1String("screencast") && id == QLatin1String("odd_key_token"))
+                    return ok({QVariant::fromValue(PermissionTable{{"../evil\nname", {"yes"}}}), variant(QVariant())});
                 return err(kNotFound);
             }
             if (c.member == QLatin1String("List")) {
                 if (table == QLatin1String("screencast"))
-                    return ok({QStringList{"../not/a/token", "00000000-1111-2222-3333-444444444444", "_0000_fake_0000_0000_"}});
+                    return ok({QStringList{"../not/a/token", "00000000-1111-2222-3333-444444444444", "_0000_fake_0000_0000_", "hostToken_without_id",
+                                           "odd_key_token"}});
                 return err(kNotFound);
             }
             if (c.member == QLatin1String("SetPermission") || c.member == QLatin1String("Delete"))
@@ -1471,11 +1478,15 @@ TEST(SystemBusPrivacy, TheStoreIsReadAsThePortalsReadIt)
     // Saved selections: one per app and token, a legacy UUID and a current token (one beginning with _, as one in 32 does); a
     // malformed token is never looked up.
     const QJsonArray shared = r.json.value("screencast").toArray();
-    ASSERT_EQ(shared.size(), 2);
+    ASSERT_EQ(shared.size(), 4);
     EXPECT_EQ(shared[0].toObject().value("app").toString(), QStringLiteral("org.example.Meet"));
     EXPECT_EQ(shared[0].toObject().value("token").toString(), QStringLiteral("00000000-1111-2222-3333-444444444444"));
     EXPECT_EQ(shared[1].toObject().value("app").toString(), QStringLiteral("org.example.Studio"));
     EXPECT_EQ(shared[1].toObject().value("token").toString(), QStringLiteral("_0000_fake_0000_0000_"));
+    // A grant of an app the portal could not name stays listed (and removable: privacy.forget goes by token) under "", and so
+    // does one under a key no portal writes: its raw text is never passed on.
+    EXPECT_EQ(shared[2].toObject(), (QJsonObject{{"app", ""}, {"token", "hostToken_without_id"}}));
+    EXPECT_EQ(shared[3].toObject(), (QJsonObject{{"app", ""}, {"token", "odd_key_token"}}));
     EXPECT_TRUE(r.json.value("remoteDesktop").toArray().isEmpty());
     // The portals: Background exported, RemoteDesktop not; both asked with a read the dev guard lets through.
     EXPECT_EQ(r.json.value("portals").toObject(), (QJsonObject{{"background", true}, {"remoteDesktop", false}}));

@@ -22,7 +22,8 @@ function validToken(token) {
 
 // The state as the panes use it: {location, background, camera: [{app, allowed}], remoteDesktop, screencast: [{app,
 // tokens}], portals: {background, remoteDesktop}}, one entry per application (its saved selections together), anything
-// malformed dropped; every key is there (a portal true or false only when the Backend knows).
+// malformed dropped; every key is there (a portal true or false only when the Backend knows). A saved selection may have the
+// app "": an app the portal could not name (the Backend lists it so that it can be removed); never a switch.
 function parse(text) {
     let v = null;
     try {
@@ -38,7 +39,7 @@ function parse(text) {
         const byApp = Object.create(null);
         out[key] = [];
         for (const e of listOf(key)) {
-            if (!e || !validApp(e.app) || !validToken(e.token))
+            if (!e || !(e.app === "" || validApp(e.app)) || !validToken(e.token))
                 continue;
             if (byApp[e.app] === undefined) {
                 byApp[e.app] = {app: e.app, tokens: []};

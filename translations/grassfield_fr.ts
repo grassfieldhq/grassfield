@@ -11365,6 +11365,13 @@
     </message>
 </context>
 <context>
+    <name>PrivacyState</name>
+    <message>
+        <source>Other Apps</source>
+        <translation>Autres apps</translation>
+    </message>
+</context>
+<context>
     <name>ProcessList</name>
     <message>
         <source>Sorted descending</source>

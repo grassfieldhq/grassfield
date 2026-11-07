@@ -408,6 +408,31 @@ TestCase {
         compare(t.backend.busQueries.length, queries + 1);
     }
 
+    // A lasting grant of a host app the portal could not name (xdg-desktop-portal 1.22 stores it under "") is listed as Other
+    // Apps and can be removed; "" is still no app for a switch (review of the rc6 picker fix, MINOR 3).
+    function test_unnamedAppSavedSelection() {
+        const s = Privacy.parse(JSON.stringify({
+            location: [{app: "", allowed: true}],
+            screencast: [{app: "", token: testCase.tokenB}, {app: "", token: "a b"}, {app: "org.example.Meet", token: testCase.tokenA}]
+        }));
+        compare(s.location, [], "no switch for an app without an id");
+        compare(s.screencast, [{app: "", tokens: [testCase.tokenB]}, {app: "org.example.Meet", tokens: [testCase.tokenA]}],
+            "a saved selection without an app id is kept, a bad token is not");
+        const t = make(categoryComp, {key: "screencast"});
+        answer(t, {screencast: [{app: "", token: testCase.tokenB}, {app: "org.example.Meet", token: testCase.tokenA}]});
+        const other = find(t.page, i => i.title === "Other Apps" && i.showToggle !== undefined);
+        verify(other, "listed under a clear name");
+        compare(other.subtitle, "1 saved choice", "no id to show beside the name");
+        verify(!other.selected, "not selected before a click");
+        const remove = find(t.page, i => i.accessibleName === "Remove the selected app");
+        verify(!remove.enabled, "nothing selected");
+        other.clicked();
+        verify(other.selected);
+        verify(remove.enabled);
+        remove.clicked();
+        compare(t.backend.busActions.map(a => a.op), [{op: "privacy.forget", kind: "screencast", token: testCase.tokenB}]);
+    }
+
     // A failed action stops the queue and shows the store's reason.
     function test_forgetFailure() {
         const t = make(categoryComp, {key: "screencast"});
