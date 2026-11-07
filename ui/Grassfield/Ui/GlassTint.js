@@ -127,6 +127,16 @@ function gridRange(grid, rect, pad) {
     return lo <= hi ? {lumMin: lo, lumMax: hi} : null;
 }
 
+// The luminance range of the wallpaper under a surface that always lies on the wallpaper, whatever windows its output shows
+// below it (the menu bar's band while the bar keeps its strip: no window is ever under it): the output's wallpaper range
+// (`range`, {lumMin, lumMax}) narrowed to the cells of the wallpaper's luminance grid under `rect` (gridRange). null when the
+// wallpaper's range is unknown (a video, a picture without statistics): the caller takes the worst case then.
+function wallpaperUnder(range, grid, rect, pad) {
+    if (!range || typeof range.lumMin !== "number" || typeof range.lumMax !== "number")
+        return null;
+    return gridRange(grid, rect, pad) ?? {lumMin: range.lumMin, lumMax: range.lumMax};
+}
+
 // The luminance grid of RGBA pixels (`data`, `w` x `h`, 0..255, as Context2D getImageData gives) cut into `cols` x `rows`
 // cells: each cell's lowest and highest pixel luminance. `outW` x `outH` is the output size the pixels stand for.
 function gridOf(data, w, h, cols, rows, outW, outH) {

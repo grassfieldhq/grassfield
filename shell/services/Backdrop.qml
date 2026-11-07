@@ -30,6 +30,13 @@ Singleton {
         return out;
     }
 
+    // The wallpaper under `rect` (output px) of an output, known whether or not windows are open on it (GlassTint.wallpaperUnder):
+    // for a surface that always lies on the wallpaper, the menu bar's band while the bar keeps its strip. `known` above is only for
+    // surfaces that can lie over windows. null when the wallpaper's range is unknown.
+    function wallpaperUnder(output: string, rect: rect): var {
+        return GlassTint.wallpaperUnder(root.wallpapers[output] ?? null, root.grids[output] ?? null, rect, Tokens.glassBackdropPad);
+    }
+
     function reportGrid(output: string, grid: var): void {
         const next = Object.assign({}, root.grids);
         if (grid)

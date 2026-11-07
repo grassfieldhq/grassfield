@@ -33,8 +33,22 @@ TestCase {
         verify(bar.indexOf("Appearance.colors.text") < 0, "a bar item draws in the appearance's text colour");
         verify((bar.match(/color: win\.barText/g) || []).length >= 10, "the bar's items use win.barText");
         has(bar, "tintColor: win.band ? win.band.colors.materialTint : Appearance.colors.materialTint", "band tint colour");
-        has(bar, "tintAlphaOverride: win.band ? win.band.alpha : -1", "band alpha");
+        has(bar, "tintAlphaOverride: win.bandAlpha", "band alpha");
         has(bar, 'glassClass: "menu"', "glass class");
+    }
+
+    // Owner 2026-11-07, "the translucent menu bar is not translucent on every display": without a measured strip the band took
+    // Appearance's backdrop of its output, known only while that output shows no window, so every display with a window open drew
+    // it at the worst case. The band's backdrop is the wallpaper under the bar whenever the bar keeps its strip, whatever windows
+    // lie below it; the bare-desktop rule stays for the glass that can lie over windows.
+    function test_bandWithoutAMeasuredStripTakesTheWallpaperUnderTheBar() {
+        const bar = source("shell/menubar/MenuBar.qml");
+        has(bar, "readonly property var wallpaperStrip: BarHide.bandOnWallpaper(win.hideMode, win.fullscreen) ? Backdrop.wallpaperUnder(win.screen.name, Qt.rect(0, 0, win.width, Tokens.menubarHeight)) : null", "the strip");
+        has(bar, 'readonly property real bandAlpha: win.band ? win.band.alpha : (win.wallpaperStrip ? Appearance.glassAlphaOver("menu", Appearance.effectiveTransparency, win.wallpaperStrip) : -1)', "its alpha");
+        const backdrop = source("shell/services/Backdrop.qml");
+        has(backdrop, "return GlassTint.wallpaperUnder(root.wallpapers[output] ?? null, root.grids[output] ?? null, rect, Tokens.glassBackdropPad);", "the wallpaper, not the bare outputs");
+        // The glass that can lie over windows keeps the bare-desktop rule.
+        has(backdrop, "const bare = Compositor.bareOutputs;", "known");
     }
 
     function test_materialTintColorDefaultsToTheAppearance() {

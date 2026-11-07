@@ -125,6 +125,23 @@ Scope {
             });
         }
 
+        // Test hook: the band of an output's bar as JSON {showBackground, blurred, measured (a strip the tone was measured on),
+        // strip (the wallpaper under the bar, or null), alpha (the tint alpha the band's material takes)}. Read-only.
+        function band(screen: string): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            const all = bars.instances;
+            let bar = null;
+            for (let i = 0; i < all.length; i++) {
+                if (all[i].screen.name === screen)
+                    bar = all[i];
+            }
+            if (!bar)
+                return "{}";
+            const alpha = bar.bandAlpha >= 0 ? bar.bandAlpha : Appearance.glassAlpha("menu", Appearance.effectiveTransparency, screen, Qt.rect(0, 0, bar.width, Tokens.menubarHeight));
+            return JSON.stringify({showBackground: bar.showBackground, blurred: bar.bandBlurred, measured: bar.band !== null, strip: bar.wallpaperStrip, alpha: Appearance.frosted(alpha)});
+        }
+
         // Test hook (tests/integration/global_menus.sh): JSON with the shown window, the bridge state, the bar's
         // left titles and, when a bridge menu is open, its rows (submenus included), in output coordinates.
         function bridgeState(screen: string): string {
@@ -307,6 +324,14 @@ Scope {
             // (BarHide.bandOnWallpaper); else the appearance's own material at the worst case (Appearance.barBand).
             readonly property var bandRange: BarHide.bandOnWallpaper(win.hideMode, win.fullscreen) ? BarTone.rangeOf(win.screen.name) : null
             readonly property var band: Appearance.barBand(bandRange, BarTone.bandDarkOf(win.screen.name))
+            // Without a measured strip (the artwork, a colour, a picture the bar's tone was not measured on) the band is the
+            // appearance's menu glass over the wallpaper under the bar (Backdrop.wallpaperUnder): while the bar keeps its strip
+            // nothing else lies behind it, windows open below it or not. It took Appearance's backdrop of the output before, which is
+            // known only while the output shows no window, so a display with a window open drew the band at the worst case,
+            // nearly opaque, and a bare one translucent (owner 2026-11-07, "not translucent on every display"). Unknown wallpaper,
+            // a bar over windows or a full-screen window: null, the worst case.
+            readonly property var wallpaperStrip: BarHide.bandOnWallpaper(win.hideMode, win.fullscreen) ? Backdrop.wallpaperUnder(win.screen.name, Qt.rect(0, 0, win.width, Tokens.menubarHeight)) : null
+            readonly property real bandAlpha: win.band ? win.band.alpha : (win.wallpaperStrip ? Appearance.glassAlphaOver("menu", Appearance.effectiveTransparency, win.wallpaperStrip) : -1)
             readonly property bool darkTone: BarTone.toneOf(win.screen.name) === "dark"
             readonly property var barPalette: darkTone ? Appearance.lightColors : Appearance.darkColors
             readonly property var foreground: Appearance.barForeground(showBackground, band, darkTone)
@@ -1036,8 +1061,8 @@ Scope {
                 glassClass: "menu"
                 backdropRect: Qt.rect(0, 0, win.width, Tokens.menubarHeight)
                 // The band's tone follows the strip under it (Appearance.glassBand), not the appearance; Reduce Transparency keeps the
-                // appearance's own opaque colours.
-                tintAlphaOverride: win.band ? win.band.alpha : -1
+                // appearance's own opaque colours. Its alpha: the band's, else the menu glass over the wallpaper under the bar.
+                tintAlphaOverride: win.bandAlpha
                 tintColor: win.band ? win.band.colors.materialTint : Appearance.colors.materialTint
                 radius: Tokens.radiusMenuBar
                 shadowEnabled: false
