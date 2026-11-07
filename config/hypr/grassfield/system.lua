@@ -12,6 +12,10 @@ local function capture(mode)
 end
 hl.bind("SUPER + SHIFT + code:12", capture("screen"), { description = "Screenshot of the screen" })
 hl.bind("SUPER + SHIFT + code:13", capture("selection"), { description = "Screenshot of a selection" })
+-- The numeric keypad's 3 and 4 do the same (<KP3> keycode 89, <KP4> keycode 83: KP_3 and KP_4 with NumLock on, KP_Next and
+-- KP_Left without; a keycode is the same in both states).
+hl.bind("SUPER + SHIFT + code:89", capture("screen"), { description = "Screenshot of the screen" })
+hl.bind("SUPER + SHIFT + code:83", capture("selection"), { description = "Screenshot of a selection" })
 hl.bind("PRINT", capture("selection"), { description = "Screenshot of a selection" })
 -- Stop the screen recording (macOS Control-Command-Esc; ADR-0045 OC-1), or the countdown of a capture: the helper signals only
 -- the recorder it started (its pid, start time and parent), never a process found by its name.

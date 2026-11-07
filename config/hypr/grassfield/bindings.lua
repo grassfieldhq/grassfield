@@ -225,6 +225,9 @@ bind("SUPER + N", "Notification Center", shell("notifications", "toggleCenter"))
 -- runs no capture (shell/services/CaptureState.qml). Bound by keycode (digits need Shift on some layouts). The screenshot keys
 -- and the stop key are system.lua's (real session only).
 bind("SUPER + SHIFT + code:14", "Screenshot and recording options", shell("capture", "toggle"))
+-- The numeric keypad's 5 does the same (<KP5>, keycode 84: KP_5 with NumLock on, KP_Begin without; a keycode is the same in
+-- both states). hl.bind, not bind(): Settings > Keyboard lists the literal bind() lines, and this is the same shortcut.
+hl.bind("SUPER + SHIFT + code:84", shell("capture", "toggle"), { description = "Screenshot and recording options" })
 bind("SUPER + ALT + ESCAPE", "Force Quit Applications", shell("menubar", "panel forcequit ''"))
 
 -- Keyboard access to the menu bar and the Dock (gate A1), like Ctrl+F2 / Ctrl+F3.

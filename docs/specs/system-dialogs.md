@@ -1369,7 +1369,7 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
 
 ### Functional requirements
 - SC1 Shift-Cmd-3 captures every display, one picture each, as macOS does (8-4). Shift-Cmd-4 and Print capture a
-  selection: a crosshair over the live screen in Grassfield's colours (`capture.*`: an even veil; the window or display
+  selection (the numeric keypad's 3 and 4 work as the top row's, NumLock on or off: keycodes 89 and 83, `system.lua`): a crosshair over the live screen in Grassfield's colours (`capture.*`: an even veil; the window or display
   under the pointer outlined).
   - A drag captures that area.
   - A click captures the window drawn on top under the pointer (on a workspace with a fullscreen or zoomed window, that
@@ -1386,8 +1386,8 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
   names one, `GRASSFIELD_CAPTURE_HELPER`, ADR-0019).
 
 ### Capture toolbar
-- SC6 Shift-Super-5 (`config/hypr/grassfield/bindings.lua`, the shell's `capture toggle`) opens the toolbar on the focused
-  display; again, it closes. It is a shell layer surface (`grassfield-capture`, `shell/capture/CaptureToolbar.qml`) over the
+- SC6 Shift-Super-5 (`config/hypr/grassfield/bindings.lua`, the shell's `capture toggle`; the numeric keypad's 5 too, NumLock on
+  or off: keycode 84) opens the toolbar on the focused display; again, it closes. It is a shell layer surface (`grassfield-capture`, `shell/capture/CaptureToolbar.qml`) over the
   whole display that holds the keyboard (exclusive, as Search) and swallows the clicks around the bar; opening it closes
   Overview, Apps, Search and the app switcher (ExclusiveSurfaces) and an open menu; the key focus returns to the window that
   had it when it closes. It never opens while the session is locked (`SessionState.refuses("capture")`) and closes when the
