@@ -150,6 +150,20 @@ TestCase {
         }
     }
 
+    // The owner's question (2026-11-07): whether apps stay in the Dock after they quit. The macOS switch answers it; its row says
+    // so under the title, and turning it off writes dock.showRecents false (the Dock drops the recent section at once).
+    function test_recentAppsRowSaysAppsStayAfterTheyQuit() {
+        const t = make();
+        const row = find(t.page.contentItem, i => i.title === "Show recent apps in Dock" && i.subtitle !== undefined);
+        verify(row, "the row");
+        compare(row.subtitle, "Apps you quit that are not kept in the Dock stay in their own section until newer ones replace them.");
+        const toggle = named(t.page.contentItem, "Show recent apps in Dock");
+        verify(toggle.checked, "on by default, as macOS");
+        toggle.toggled(false);
+        compare(last(t.store), {"dock.showRecents": false});
+        compare(toggle.checked, false);
+    }
+
     // TL32: the tiling switches in their order, each writing its key, under the compositor extension's footnote; the
     // double-click action offers Fill first.
     function test_windowsRows() {

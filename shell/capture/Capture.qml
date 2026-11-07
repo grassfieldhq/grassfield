@@ -38,7 +38,7 @@ Scope {
     readonly property bool canRecord: recorder && CaptureState.phase === "idle"
     // The Options as stored (capture.*): what the menu checks and what the helper is given.
     readonly property var options: ({
-            saveTo: Settings.captureSaveTo,
+            location: Settings.captureLocation,
             timer: Settings.captureTimer,
             microphone: Settings.captureMicrophone,
             showPointer: Settings.captureShowPointer
@@ -66,8 +66,12 @@ Scope {
             mode = "selection";
     }
 
+    // The display the next show() opens on: the menu bar's Screen Capture item names its bar's display (openOn); "" is the
+    // active one. show() stays the one place that opens the toolbar, refusing first while locked (tests/security/lock_surfaces.sh).
+    property string requestedScreen: ""
+
     function show(): void {
-        // Nothing opens over the lock screen (GF-116): Shift-Super-5 and IPC alike.
+        // Nothing opens over the lock screen (GF-116): Shift-Super-5, the menu bar item and IPC alike.
         if (SessionState.refuses("capture"))
             return;
         if (Popups.active)
@@ -75,7 +79,7 @@ Scope {
         launch.stop();
         pending = null;
         CaptureState.probeRecorder();
-        screenName = Compositor.activeScreenName;
+        screenName = ScreenChoice.pick(requestedScreen, Compositor.activeScreenName, Quickshell.screens.map(s => s.name));
         mode = Model.startMode(Settings.captureMode, canRecord);
         Compositor.refreshToplevels();
         open = true;
@@ -90,6 +94,17 @@ Scope {
             hide();
         else
             show();
+    }
+
+    // The menu bar's Screen Capture item: the toolbar on that bar's display. It only opens: once open, the toolbar covers the
+    // display and takes every click there (an Entire Screen mode captures the display clicked), so the bar never gets a second
+    // click; Esc or the toolbar's Close button dismisses it (macOS).
+    function openOn(screen: string): void {
+        if (open)
+            return;
+        requestedScreen = screen;
+        show();
+        requestedScreen = "";
     }
 
     // A click on a mode, or the arrows: the mode chosen is kept for the next time (capture.mode).

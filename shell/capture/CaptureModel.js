@@ -12,9 +12,14 @@ var MODES = [
     {id: "recordScreen", record: true, glyph: "record-screen"},
     {id: "recordSelection", record: true, glyph: "record-selection"}
 ];
-var SAVE_TO = ["desktop", "documents", "clipboard", "preview"];
-// A recording is not copied: its Save to lists these, and a stored "clipboard" means the Desktop for it.
-var RECORD_SAVE_TO = ["desktop", "documents", "preview"];
+// Save to (capture.location; owner 2026-11-07: the Desktop is no default any more): `screenshots` is the Screenshots folder in the
+// Pictures folder for a screenshot and the Videos folder for a recording (the default), then the Desktop, the Documents folder, the
+// clipboard (screenshots) and Preview (the file kept where `screenshots` puts it, opened in Preview). macOS 27 lists Desktop first
+// because it is its default; the default comes first here likewise.
+var LOCATIONS = ["screenshots", "desktop", "documents", "clipboard", "preview"];
+// A recording is not copied: its Save to lists these, and a stored "clipboard" means the default folder (Videos) for it.
+var RECORD_LOCATIONS = ["screenshots", "desktop", "documents", "preview"];
+var DEFAULT_LOCATION = "screenshots";
 var TIMERS = ["none", "5", "10"];
 var OUTPUT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -51,10 +56,10 @@ function step(mode, delta, canRecord) {
     return ids[Math.max(0, Math.min(ids.length - 1, at + (delta < 0 ? -1 : 1)))];
 }
 
-// The destination a mode uses for the stored Save to.
-function saveTo(mode, stored) {
-    const value = SAVE_TO.indexOf(stored) >= 0 ? stored : "desktop";
-    return isRecord(mode) && value === "clipboard" ? "desktop" : value;
+// The destination a mode uses for the stored Save to (Settings.captureLocation).
+function location(mode, stored) {
+    const value = LOCATIONS.indexOf(stored) >= 0 ? stored : DEFAULT_LOCATION;
+    return isRecord(mode) && value === "clipboard" ? DEFAULT_LOCATION : value;
 }
 
 function timerSeconds(timer) {
@@ -64,7 +69,7 @@ function timerSeconds(timer) {
 // "X,Y WxH" in the compositor's logical coordinates, as grim -g and the helper's --geometry take it.
 var GEOMETRY = /^-?[0-9]{1,6},-?[0-9]{1,6} [0-9]{1,6}x[0-9]{1,6}$/;
 
-// The helper's arguments (packaging/bin/grassfield-capture) for a mode, the options ({saveTo, timer, microphone,
+// The helper's arguments (packaging/bin/grassfield-capture) for a mode, the options ({location, timer, microphone,
 // showPointer}, as the settings store them), a display (`output`: the one clicked in an Entire Screen mode, the toolbar's for
 // Record Entire Screen; "" for every display) and the area chosen on the toolbar's surface (`geometry`, GEOMETRY: the frame of a
 // Selected Portion mode, the window clicked; "" lets the helper's crosshair choose).
@@ -72,7 +77,7 @@ function helperArgs(mode, options, output, geometry) {
     const o = options || {};
     const args = isRecord(mode) ? ["record", mode === "recordScreen" ? "screen" : "selection"]
                                 : [known(mode) ? mode : "selection"];
-    args.push("--save", saveTo(mode, o.saveTo));
+    args.push("--save", location(mode, o.location));
     const seconds = timerSeconds(o.timer);
     if (seconds > 0)
         args.push("--timer", String(seconds));
@@ -334,16 +339,17 @@ function clip(r, bounds) {
 
 // The Options menu (PopupMenu rows): Save to, Timer, Microphone for a recording, then Options (Show Mouse Pointer), each a
 // section with its header and a check on the current choice. `labels` holds the translated texts (the QML's qsTr), by key:
-// saveTo desktop documents clipboard preview timer none five ten microphone micNone micDefault options showPointer.
+// saveTo screenshots videos desktop documents clipboard preview timer none five ten microphone micNone micDefault options
+// showPointer (`screenshots` names a screenshot's default folder, `videos` a recording's: one choice, `location:screenshots`).
 function menuModel(mode, options, labels) {
     const o = options || {};
     const l = labels || {};
     const record = isRecord(mode);
-    const destination = saveTo(mode, o.saveTo);
+    const destination = location(mode, o.location);
     const timer = TIMERS.indexOf(o.timer) >= 0 ? o.timer : "none";
     const rows = [{header: true, text: l.saveTo}];
-    for (const id of record ? RECORD_SAVE_TO : SAVE_TO)
-        rows.push({id: "saveTo:" + id, text: l[id], checked: destination === id});
+    for (const id of record ? RECORD_LOCATIONS : LOCATIONS)
+        rows.push({id: "location:" + id, text: id === "screenshots" && record ? l.videos : l[id], checked: destination === id});
     rows.push({separator: true}, {header: true, text: l.timer});
     const timerLabels = {"none": l.none, "5": l.five, "10": l.ten};
     for (const id of TIMERS)
@@ -366,7 +372,7 @@ function choice(id, options) {
         return null;
     const key = parts[0];
     const value = parts[1];
-    if (key === "saveTo" && SAVE_TO.indexOf(value) >= 0)
+    if (key === "location" && LOCATIONS.indexOf(value) >= 0)
         return {key: key, value: value};
     if (key === "timer" && TIMERS.indexOf(value) >= 0)
         return {key: key, value: value};

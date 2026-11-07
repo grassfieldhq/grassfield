@@ -230,6 +230,15 @@ SettingsPage {
             glyph: "now-playing"
             tileColor: "red"
         }
+
+        // macOS 26/27 adds its Screen Capture control to the menu bar from here (owner 2026-11-07): off by default; a click on
+        // the item opens the capture toolbar, as Shift-Super-5.
+        ControlRow {
+            key: "menubar.showScreenCapture"
+            title: qsTr("Screen Capture")
+            glyph: "capture-selection"
+            tileColor: "graphite"
+        }
     }
 
     SettingsGroup {

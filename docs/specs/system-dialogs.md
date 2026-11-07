@@ -1369,14 +1369,16 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
 
 ### Functional requirements
 - SC1 Shift-Cmd-3 captures every display, one picture each, as macOS does (8-4). Shift-Cmd-4 and Print capture a
-  selection: a crosshair over the live screen in Grassfield's colours (`capture.*`: an even veil; the window or display
+  selection (the numeric keypad's 3 and 4 work as the top row's, NumLock on or off: keycodes 89 and 83, `system.lua`): a crosshair over the live screen in Grassfield's colours (`capture.*`: an even veil; the window or display
   under the pointer outlined).
   - A drag captures that area.
   - A click captures the window drawn on top under the pointer (on a workspace with a fullscreen or zoomed window, that
     window or one pinned over it), or the display under it when no window is there (the Desktop, the menu bar, the Dock).
   - Esc, or a second press while the crosshair shows, cancels without saving; only this helper's crosshair is cancelled.
-- SC2 Each file is saved on the Desktop as macOS names it, translated (the next display's " (2)"), and never overwrites a
-  file; the Desktop never shows a picture being written. The Desktop is xdg-user-dir's, never the home folder.
+- SC2 Each file is saved where Save to says (SC11; by default the Screenshots folder in the Pictures folder, not the Desktop:
+  owner 2026-11-07) as macOS names it, translated (the next display's " (2)"), and never overwrites a file; the folder never
+  shows a picture being written. The keys follow the toolbar's Save to (`capture.location`). The user's folders are
+  xdg-user-dir's, never the home folder.
 - SC3 The focused display's picture, or the selection, is copied to the clipboard as PNG.
 - SC4 A notice shows the picture, as the shell's ordinary banner (then in the Notification Center). A click or its "Open in
   Preview" button opens the capture's pictures in Grassfield's Preview for 2 minutes; then the notice goes. The next capture
@@ -1386,8 +1388,8 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
   names one, `GRASSFIELD_CAPTURE_HELPER`, ADR-0019).
 
 ### Capture toolbar
-- SC6 Shift-Super-5 (`config/hypr/grassfield/bindings.lua`, the shell's `capture toggle`) opens the toolbar on the focused
-  display; again, it closes. It is a shell layer surface (`grassfield-capture`, `shell/capture/CaptureToolbar.qml`) over the
+- SC6 Shift-Super-5 (`config/hypr/grassfield/bindings.lua`, the shell's `capture toggle`; the numeric keypad's 5 too, NumLock on
+  or off: keycode 84) opens the toolbar on the focused display; again, it closes. It is a shell layer surface (`grassfield-capture`, `shell/capture/CaptureToolbar.qml`) over the
   whole display that holds the keyboard (exclusive, as Search) and swallows the clicks around the bar; opening it closes
   Overview, Apps, Search and the app switcher (ExclusiveSurfaces) and an open menu; the key focus returns to the window that
   had it when it closes. It never opens while the session is locked (`SessionState.refuses("capture")`) and closes when the
@@ -1430,9 +1432,10 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
     display clicked as `--output NAME`; the helper refuses (exit 2, nothing captured) a geometry that is not wholly on one
     enabled display or has no size. Its crosshair stays only as the fallback when the surface has no geometry to give.
 - SC9 Options (the shared `PopupMenu` with section headers and check marks, opened above the button, inside the toolbar's
-  surface): Save to (Desktop, Documents, Clipboard, Preview; a recording mode lists Desktop, Documents and Preview), Timer
-  (None, 5 Seconds, 10 Seconds), Microphone in a recording mode (None, and the default input by its name), Show Mouse Pointer.
-  A choice is saved at once (`capture.saveTo`, `capture.timer`, `capture.microphone`, `capture.showPointer`).
+  surface): Save to (Screenshots, Desktop, Documents, Clipboard, Preview; a recording mode lists Videos, Desktop, Documents and
+  Preview: Screenshots and Videos are one choice, the default place, named after its folder), Timer (None, 5 Seconds, 10
+  Seconds), Microphone in a recording mode (None, and the default input by its name), Show Mouse Pointer. A choice is saved at
+  once (`capture.location`, `capture.timer`, `capture.microphone`, `capture.showPointer`).
 - SC10 The action hides the toolbar first, then (once its surface has given the keyboard back and gone,
   `focusReturn.releaseHoldMs` and a moment for the window's focus to return) runs `grassfield-capture` with the mode and the
   options (`shell/capture/CaptureModel.js` helperArgs): `screen [--output <the display clicked>] | window --geometry <the
@@ -1440,10 +1443,19 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
   clicked, else the toolbar's> | record selection --geometry <the frame>` with `--mic` too. Without a geometry the window mode
   is the helper's crosshair over the windows only (slurp -r). In a real session the helper runs in its own
   scope (uwsm-app, as the Dock starts apps), never in the shell's unit (its CPU and memory limits, its restarts).
-- SC11 Save to: the Desktop (copied to the clipboard too, the notice); Documents (xdg-user-dir's, never the home folder;
-  copied; the notice says Documents); Clipboard (the focused display's picture or the choice, copied as PNG; no file and no
-  notice, as macOS); Preview (opened in Preview at once, no notice; the file is kept on the Desktop, since Preview cannot
-  save a document).
+- SC11 Save to (`capture.location`; owner 2026-11-07: screenshots no longer land on the Desktop by default): Screenshots, the
+  default (a folder of that name in xdg-user-dir's Pictures, named in the session's language when it is made, « Captures
+  d’écran » in French, on first use; a folder already there under any of its names, English or a translation, is used as it
+  is, so that changing the session's language never starts a second folder; something else of that name, a
+  link included, sends the pictures to the Pictures folder itself; copied; the notice names the folder); the Desktop (copied,
+  the notice); Documents (xdg-user-dir's, never the home folder; copied; the notice says Documents); Clipboard (the focused
+  display's picture or the choice, copied as PNG; no file and no notice, as macOS); Preview (opened in Preview at once, no
+  notice; the file is kept in the Screenshots folder, since Preview cannot save a document). The older key `capture.saveTo`
+  (before 1.0.0-rc7) is read only while `capture.location` is absent: its Documents, Clipboard and Preview stay chosen, and
+  its Desktop moves to the Screenshots folder, because every file the shell created held that old default and it cannot be
+  told from a choice (`shell/store/CaptureLocation.js`, `grassfield-capture` stored_location). A file the shell reads as its
+  defaults (a key twice in one object, an integer beyond 2^53, an integer-like key: `JsonSafety.js`) reads as the defaults in
+  the helper too (`settings_group`), so the keys and the toolbar never disagree on Save to.
 - SC12 Timer: after the choice (the window clicked, the area dragged), the helper counts down; the shell shows the seconds
   left on a glass plate (`capture.countdownSize`, the menus' class, `grassfield-capture-countdown`, no keyboard, clicks pass
   through) centred on what will be captured, and drops it when the time is up; the picture or the recording waits half a
@@ -1456,10 +1468,11 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
   backend arguments of Omarchy's `omarchy-capture-screenrecording` (pinned): `-w <display> -s <its size, 4K at most>` or
   `-w WxH+X+Y`, `-k auto -f 60 -fm cfr -fallback-cpu-encoding yes`, `-cursor yes|no` (Show Mouse Pointer), and the
   microphone as `-a default_input -ac aac` when chosen. The desktop's sound is never recorded (macOS).
-- SC14 The movie is written to a hidden file of the helper's in the destination (the Desktop, Documents; the clipboard is not
-  offered and means the Desktop) and then takes the name "Screen Recording <date> at <time>.mp4" (the start time,
-  « Enregistrement de l’écran … à … » in French), never replacing a file; a notice "Screen Recording", "Saved to the Desktop."
-  (or Documents) with "Open" follows, whose click plays it in Preview; with Save to Preview it opens in Preview at once. A
+- SC14 The movie is written to a hidden file of the helper's in the destination (by default the Videos folder, xdg-user-dir's
+  VIDEOS; the Desktop, Documents; the clipboard is not offered and means the Videos folder) and then takes the name "Screen
+  Recording <date> at <time>.mp4" (the start time, « Enregistrement de l’écran … à … » in French), never replacing a file; a
+  notice "Screen Recording", "Saved to Videos." (the folder by its name; "Saved to the Desktop.", "Saved to Documents.") with
+  "Open" follows, whose click plays it in Preview; with Save to Preview it opens in Preview at once. A
   recorder that writes nothing leaves no file and a notice says the recording could not be saved.
 - SC15 While it records, the menu bar shows a stop item at the left of the system items (`record-stop` and the elapsed time,
   m:ss, then h:mm:ss; never hidden when the bar is crowded, as a privacy indicator); a click stops the recording, and so does
@@ -1504,7 +1517,10 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
   Desktop and in the clipboard; the notice and Preview.
 - A-SC4 (L0) `tests/shell/capture.sh` (`capture.d/options.py`, ADR-0045 OC-1): the toolbar's argv only (anything else is the
   usage, nothing run); the window mode (slurp -r over the windows only; a click outside every window, Esc); the pointer;
-  Save to Documents (and xdg-user-dir answering the home folder), Clipboard (no file, no notice), Preview (opened at once);
+  Save to Screenshots, Documents (and xdg-user-dir answering the home folder), Clipboard (no file, no notice), Preview
+  (opened at once, kept in the Screenshots folder); a recording's default place (the Videos folder), the clipboard meaning it;
+  (`capture.d/check.py`) the keys following `capture.location`, the Screenshots folder made in Pictures, its French name, an
+  English one kept, a file or a link in its place, the older `capture.saveTo`;
   the timer's state (countdown, until, where, private), the picture after it and the plate's half second, a stop during it;
   a recording of a display (Omarchy's arguments, the hidden file, the state naming the helper's child), of a display above
   4K, with the microphone and the pointer into Documents, of an area, of a display clicked; a second recording refused; stop
@@ -1552,9 +1568,13 @@ The capture toolbar and recording (ADR-0045 OC-1) differ from macOS 27 here:
   when the toolbar opens and when the mode is chosen): a window that moved meanwhile is tinted where it was. There is no camera
   pointer (none in Grassfield's cursor theme): the arrow shows.
 - In the Entire Screen modes nothing marks the display under the pointer before the click.
-- No floating thumbnail after a capture (the notice stands for it); no Mail, Messages or Other Location in Save to; no
+- No floating thumbnail after a capture (the notice stands for it); no Mail, Messages or Other Location in Save to (Other
+  Location needs a folder chooser the shell does not have: the portal's FileChooser answers on D-Bus asynchronously, and the
+  toolbar has no clean way to wait for it; not offered rather than half done); no
   Remember Last Selection and no Show Floating Thumbnail options; the microphone list holds the default input only.
-- Save to Preview keeps the file on the Desktop (Preview cannot save a document); macOS keeps it unsaved in Preview.
+- Save to Preview keeps the file in the Screenshots folder (Preview cannot save a document); macOS keeps it unsaved in Preview.
+- A stored `capture.saveTo` of Desktop from before 1.0.0-rc7 moves to the Screenshots folder even if it was chosen: it cannot
+  be told from the default every file the shell created held. Choosing Desktop again keeps it (`capture.location`).
 - Recordings are MP4 (gpu-screen-recorder's container, as Omarchy's), not MOV; no system audio (as macOS); no mouse clicks
   shown. gpu-screen-recorder's `-cursor` option and its exit on SIGINT are taken from its documented behaviour and Omarchy's
   use, not run in the cloud session that built this (no recorder there): NOT VERIFIED until the owner's session.

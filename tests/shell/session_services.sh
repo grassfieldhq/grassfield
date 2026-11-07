@@ -87,6 +87,16 @@ desc="screenshots: Super+Shift+3 (by keycode) runs Grassfield's capture of the s
 check bash -c 'grep -q "SUPER + SHIFT + code:12\", capture(\"screen\")" "$1" && grep -q "SUPER + SHIFT + code:13\", capture(\"selection\")" "$1" && grep -q "hl.bind(\"PRINT\", capture(\"selection\")" "$1" && grep -q "exec_cmd(\"/usr/lib/grassfield/grassfield-capture \" .. mode)" "$1" && ! grep -q "omarchy-capture" "$1"' _ "$sys"
 desc="capture toolbar: Super+Shift+5 (by keycode) opens the shell's toolbar, bound once (bindings.lua, not system.lua); Ctrl+Super+Esc runs grassfield-capture stop in the real session (ADR-0045 OC-1)"
 check bash -c 'grep -q "bind(\"SUPER + SHIFT + code:14\", \"Screenshot and recording options\", shell(\"capture\", \"toggle\"))" "$1" && ! grep -q "code:14" "$2" && grep -q "hl.bind(\"SUPER + CTRL + ESCAPE\", capture(\"stop\")" "$2" && ! grep -q "ESCAPE" <(grep -v "SUPER + ALT + ESCAPE\|CTRL + SHIFT + ESCAPE" "$1")' _ "$root/config/hypr/grassfield/bindings.lua" "$sys"
+desc="screenshots and the capture toolbar: the numeric keypad's 3, 4 and 5 (keycodes 89, 83 and 84, the same with NumLock on or off) do what the top row's do, each bound once, outside Settings' list of literal bind() lines"
+check bash -c 'grep -q "hl.bind(\"SUPER + SHIFT + code:89\", capture(\"screen\")" "$2" && grep -q "hl.bind(\"SUPER + SHIFT + code:83\", capture(\"selection\")" "$2" && grep -q "hl.bind(\"SUPER + SHIFT + code:84\", shell(\"capture\", \"toggle\"), { description = \"Screenshot and recording options\" })" "$1" && ! grep -q "code:84" "$2" && ! grep -Eq "code:(83|89)" "$1" && ! grep -Eq "^bind\(\"[^\"]*code:(83|84|89)" "$1" && for k in 83 84 89; do [ "$(grep -c "code:$k\"" "$1" "$2" | awk -F: "{ s += \$2 } END { print s }")" = 1 ] || exit 1; done' _ "$root/config/hypr/grassfield/bindings.lua" "$sys"
+# Hyprland's code:N is the xkb keycode (evdev + 8): the installed keymap data must give these keys those numbers.
+xkb_codes=/usr/share/X11/xkb/keycodes/evdev
+if [[ -r $xkb_codes ]]; then
+  desc="screenshots: the keycodes bound are the installed xkb data's: <AE03> 12, <AE04> 13, <AE05> 14, <KP3> 89, <KP4> 83, <KP5> 84"
+  check bash -c 'for p in AE03=12 AE04=13 AE05=14 KP3=89 KP4=83 KP5=84; do grep -Eq "^[[:space:]]*<${p%=*}>[[:space:]]*=[[:space:]]*${p#*=};" "$1" || exit 1; done' _ "$xkb_codes"
+else
+  echo "SKIP: screenshots: no $xkb_codes to check the keypad keycodes against"
+fi
 desc="screenshots: slurp's crosshair layer (namespace selection) is never faded out, so no picture shows it (ADR-0035 D-10)"
 check grep -q 'hl.layer_rule({ name = "gf-capture-selection-no-anim", match = { namespace = "^selection\$" }, no_anim = true })' "$root/config/hypr/grassfield/windows.lua"
 desc="capture toolbar: the countdown plate's layer goes without a fade, and both capture layers are blurred (ADR-0045 OC-1)"

@@ -36,6 +36,7 @@ Design system shared by the shell and (later) native apps: tokens, frosted mater
 | `menubar.showNowPlaying` | bool | true | Now Playing item in the menu bar while a player has a session |
 | `menubar.showSearch` | bool | true | Search item in the menu bar |
 | `menubar.showWifi` / `showSound` / `showBattery` / `showBatteryPercentage` / `showFocus` | bool | true | Menu bar items (Settings > Menu Bar); Focus only while Do Not Disturb is on |
+| `menubar.showScreenCapture` | bool | false | The Screen Capture item in the menu bar (Settings > Menu Bar): opens the capture toolbar on its display, as Shift-Super-5 |
 | `menubar.clockDate` | enum `auto` \| `always` \| `never` | auto | Menu bar clock date (auto = when space allows) |
 | `menubar.clockShowDayOfWeek` / `clockShowAmPm` / `clockFlashSeparators` | bool | true / true / false | Menu bar clock: day of the week, AM/PM, flashing colons |
 | `menubar.clockHours` | enum `auto` \| `12` \| `24` | auto | Menu bar clock hour format (auto follows the locale) |
@@ -76,7 +77,8 @@ Design system shared by the shell and (later) native apps: tokens, frosted mater
 | `icons.tint` | `"accent"` or `"#rrggbb"` | `"accent"` | `Appearance.iconTintSetting`, resolved to `Appearance.iconTint` |
 | `icons.folderColor` | `"theme"` \| `"accent"` \| `"#rrggbb"` | `"theme"` | `Appearance.folderColorSetting`, resolved to `Appearance.folderTint` (see Folder colours) |
 | `capture.mode` | `"screen"` \| `"window"` \| `"selection"` \| `"recordScreen"` \| `"recordSelection"` | `"selection"` | The capture toolbar (Shift-Super-5, ADR-0045 OC-1, `shell/capture`): the mode it opens in, the one chosen last; written by the toolbar, no Settings pane (macOS) |
-| `capture.saveTo` | `"desktop"` \| `"documents"` \| `"clipboard"` \| `"preview"` | `"desktop"` | The toolbar's Options > Save to (a recording never goes to the clipboard: the Desktop then) |
+| `capture.location` | `"screenshots"` \| `"desktop"` \| `"documents"` \| `"clipboard"` \| `"preview"` | `"screenshots"` | The toolbar's Options > Save to, which the screenshot keys follow too: the Screenshots folder in Pictures (a recording: the Videos folder), the Desktop, Documents, the clipboard (a recording never goes there: the Videos folder then), Preview (kept in the Screenshots folder) |
+| `capture.saveTo` | `"desktop"` \| `"documents"` \| `"clipboard"` \| `"preview"` | `"desktop"` | Superseded by `capture.location` (1.0.0-rc7), never written; read only while `capture.location` is absent: documents, clipboard and preview stay, desktop (the old default) reads as the Screenshots folder |
 | `capture.timer` | `"none"` \| `"5"` \| `"10"` | `"none"` | The toolbar's Options > Timer (a countdown before the capture or the recording) |
 | `capture.microphone` | `"none"` \| `"default"` | `"none"` | The toolbar's Options > Microphone (recordings; the default input, never the desktop's sound) |
 | `capture.showPointer` | bool | false | The toolbar's Options > Show Mouse Pointer |

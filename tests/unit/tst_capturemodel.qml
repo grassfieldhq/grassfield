@@ -2,17 +2,20 @@ import QtQuick
 import QtTest
 import Grassfield.Ui
 import "../../shell/capture/CaptureModel.js" as Model
+import "../../shell/store/CaptureLocation.js" as Location
 
 // The capture toolbar's decisions (ADR-0045 OC-1, docs/specs/system-dialogs.md "Capture toolbar"): the modes in macOS 27's
 // order, the mode the toolbar opens in, the arrows, the helper's argv for every mode and option, the Options menu's rows and
-// checks, and a chosen row as the setting it changes.
+// checks, and a chosen row as the setting it changes. Save to (capture.location, owner 2026-11-07): the Screenshots folder in
+// Pictures (a screenshot) or the Videos folder (a recording) by default, never the Desktop unless chosen.
 TestCase {
     name: "CaptureModel"
 
     readonly property var labels: ({
-            saveTo: "Save to", desktop: "Desktop", documents: "Documents", clipboard: "Clipboard", preview: "Preview",
-            timer: "Timer", none: "None", five: "5 Seconds", ten: "10 Seconds", microphone: "Microphone", micNone: "None",
-            micDefault: "Built-in Microphone", options: "Options", showPointer: "Show Mouse Pointer"
+            saveTo: "Save to", screenshots: "Screenshots", videos: "Videos", desktop: "Desktop", documents: "Documents",
+            clipboard: "Clipboard", preview: "Preview", timer: "Timer", none: "None", five: "5 Seconds", ten: "10 Seconds",
+            microphone: "Microphone", micNone: "None", micDefault: "Built-in Microphone", options: "Options",
+            showPointer: "Show Mouse Pointer"
         })
 
     function test_modesInOrder() {
@@ -41,38 +44,59 @@ TestCase {
         compare(Model.step("recordScreen", 1, false), "screen", "a mode no longer offered: the first one");
     }
 
-    function test_saveToPerMode() {
-        compare(Model.saveTo("selection", "clipboard"), "clipboard");
-        compare(Model.saveTo("recordScreen", "clipboard"), "desktop", "a movie is not copied");
-        compare(Model.saveTo("recordScreen", "preview"), "preview");
-        compare(Model.saveTo("screen", "mail"), "desktop");
+    function test_locationPerMode() {
+        compare(Model.location("selection", "clipboard"), "clipboard");
+        compare(Model.location("recordScreen", "clipboard"), "screenshots", "a movie is not copied: the Videos folder");
+        compare(Model.location("recordScreen", "preview"), "preview");
+        compare(Model.location("screen", "desktop"), "desktop", "the Desktop when chosen");
+        compare(Model.location("screen", "mail"), "screenshots", "an unknown place: the default folder");
+        compare(Model.location("screen", undefined), "screenshots");
         compare(Model.timerSeconds("5"), 5);
         compare(Model.timerSeconds("10"), 10);
         compare(Model.timerSeconds("none"), 0);
         compare(Model.timerSeconds(5), 0, "only the stored strings");
     }
 
+    // The Save to in effect (shell/store/CaptureLocation.js, read by SettingsStore): capture.location once it is in the file; without
+    // it the older capture.saveTo, whose Documents, Clipboard and Preview were choices and stay, and whose Desktop (its default,
+    // written into every file the shell created) cannot be told from a choice and moves to the new default.
+    function test_storedLocation() {
+        compare(Location.DEFAULT, "screenshots");
+        compare(Location.effective(undefined, undefined), "screenshots", "a fresh account");
+        compare(Location.effective("desktop", undefined), "desktop", "the Desktop chosen in the new menu stays");
+        compare(Location.effective("clipboard", "documents"), "clipboard", "the new key wins");
+        compare(Location.effective("mail", "documents"), "screenshots", "a bad new value is the default, not the old key");
+        compare(Location.effective(undefined, "documents"), "documents");
+        compare(Location.effective(undefined, "clipboard"), "clipboard");
+        compare(Location.effective(undefined, "preview"), "preview");
+        compare(Location.effective(undefined, "desktop"), "screenshots", "the old implicit default moves");
+        compare(Location.effective(undefined, "mail"), "screenshots");
+        compare(Location.effective(null, 7), "screenshots");
+        compare(Location.effective(undefined, "documents", true), "screenshots", "an unsafe file reads the defaults");
+    }
+
     function test_helperArgs() {
-        const plain = {saveTo: "desktop", timer: "none", microphone: "none", showPointer: false};
-        compare(Model.helperArgs("screen", plain, ""), ["screen", "--save", "desktop"], "the Capture button: every display");
-        compare(Model.helperArgs("screen", plain, "DP-1"), ["screen", "--save", "desktop", "--output", "DP-1"], "a display clicked");
-        compare(Model.helperArgs("window", plain, "DP-1"), ["window", "--save", "desktop"], "no window: the helper's crosshair");
-        compare(Model.helperArgs("window", plain, "", "100,50 800x600"), ["window", "--save", "desktop", "--geometry", "100,50 800x600"]);
-        compare(Model.helperArgs("selection", plain, "", "-10,20 300x200"), ["selection", "--save", "desktop", "--geometry", "-10,20 300x200"]);
+        const plain = {location: "screenshots", timer: "none", microphone: "none", showPointer: false};
+        compare(Model.helperArgs("screen", plain, ""), ["screen", "--save", "screenshots"], "the Capture button: every display");
+        compare(Model.helperArgs("screen", plain, "DP-1"), ["screen", "--save", "screenshots", "--output", "DP-1"], "a display clicked");
+        compare(Model.helperArgs("window", plain, "DP-1"), ["window", "--save", "screenshots"], "no window: the helper's crosshair");
+        compare(Model.helperArgs("window", plain, "", "100,50 800x600"), ["window", "--save", "screenshots", "--geometry", "100,50 800x600"]);
+        compare(Model.helperArgs("selection", plain, "", "-10,20 300x200"), ["selection", "--save", "screenshots", "--geometry", "-10,20 300x200"]);
         compare(Model.helperArgs("recordSelection", plain, "DP-1", "10,20 300x200"),
-            ["record", "selection", "--save", "desktop", "--geometry", "10,20 300x200"]);
-        compare(Model.helperArgs("screen", plain, "", "10,20 300x200"), ["screen", "--save", "desktop"], "no geometry for a screen");
-        compare(Model.helperArgs("selection", plain, "", "10,20 300x200 "), ["selection", "--save", "desktop"], "a malformed one: none");
-        compare(Model.helperArgs("selection", plain, "", "1.5,20 300x200"), ["selection", "--save", "desktop"]);
-        compare(Model.helperArgs("selection", {saveTo: "clipboard", timer: "5", microphone: "default", showPointer: true}, "DP-1"),
+            ["record", "selection", "--save", "screenshots", "--geometry", "10,20 300x200"]);
+        compare(Model.helperArgs("screen", plain, "", "10,20 300x200"), ["screen", "--save", "screenshots"], "no geometry for a screen");
+        compare(Model.helperArgs("selection", plain, "", "10,20 300x200 "), ["selection", "--save", "screenshots"], "a malformed one: none");
+        compare(Model.helperArgs("selection", plain, "", "1.5,20 300x200"), ["selection", "--save", "screenshots"]);
+        compare(Model.helperArgs("selection", {location: "desktop"}, ""), ["selection", "--save", "desktop"], "the Desktop when chosen");
+        compare(Model.helperArgs("selection", {location: "clipboard", timer: "5", microphone: "default", showPointer: true}, "DP-1"),
             ["selection", "--save", "clipboard", "--timer", "5", "--pointer"], "no microphone for a screenshot");
-        compare(Model.helperArgs("recordScreen", {saveTo: "documents", timer: "10", microphone: "default", showPointer: true}, "DP-1"),
+        compare(Model.helperArgs("recordScreen", {location: "documents", timer: "10", microphone: "default", showPointer: true}, "DP-1"),
             ["record", "screen", "--save", "documents", "--timer", "10", "--pointer", "--mic", "--output", "DP-1"]);
-        compare(Model.helperArgs("recordSelection", {saveTo: "clipboard", timer: "none", microphone: "none", showPointer: false}, "DP-1"),
-            ["record", "selection", "--save", "desktop"], "the area's display is the crosshair's; a movie goes to the Desktop");
-        compare(Model.helperArgs("recordScreen", plain, "a b"), ["record", "screen", "--save", "desktop"], "an odd display name is not passed");
-        compare(Model.helperArgs("recordScreen", plain, ""), ["record", "screen", "--save", "desktop"]);
-        compare(Model.helperArgs("nope", null, ""), ["selection", "--save", "desktop"]);
+        compare(Model.helperArgs("recordSelection", {location: "clipboard", timer: "none", microphone: "none", showPointer: false}, "DP-1"),
+            ["record", "selection", "--save", "screenshots"], "the area's display is the crosshair's; a movie goes to the Videos folder");
+        compare(Model.helperArgs("recordScreen", plain, "a b"), ["record", "screen", "--save", "screenshots"], "an odd display name is not passed");
+        compare(Model.helperArgs("recordScreen", plain, ""), ["record", "screen", "--save", "screenshots"]);
+        compare(Model.helperArgs("nope", null, ""), ["selection", "--save", "screenshots"]);
     }
 
     function ids(rows) {
@@ -80,32 +104,40 @@ TestCase {
     }
 
     function test_menuForAScreenshot() {
-        const rows = Model.menuModel("selection", {saveTo: "documents", timer: "5", microphone: "default", showPointer: false}, labels);
-        compare(ids(rows), ["#Save to", "saveTo:desktop", "saveTo:documents*", "saveTo:clipboard", "saveTo:preview", "-",
-            "#Timer", "timer:none", "timer:5*", "timer:10", "-", "#Options", "showPointer:toggle"]);
-        compare(rows[8].text, "5 Seconds");
+        const rows = Model.menuModel("selection", {location: "documents", timer: "5", microphone: "default", showPointer: false}, labels);
+        compare(ids(rows), ["#Save to", "location:screenshots", "location:desktop", "location:documents*", "location:clipboard",
+            "location:preview", "-", "#Timer", "timer:none", "timer:5*", "timer:10", "-", "#Options", "showPointer:toggle"]);
+        compare(rows[1].text, "Screenshots", "a screenshot's default folder by its name");
+        compare(rows[9].text, "5 Seconds");
         verify(rows.filter(r => !r.header && !r.separator).every(r => r.checked !== undefined), "every choice is checkable");
+        compare(ids(Model.menuModel("screen", {}, labels)).slice(0, 3), ["#Save to", "location:screenshots*", "location:desktop"],
+            "nothing chosen: the Screenshots folder");
     }
 
     function test_menuForARecording() {
-        const rows = Model.menuModel("recordScreen", {saveTo: "clipboard", timer: "nope", microphone: "default", showPointer: true}, labels);
-        compare(ids(rows), ["#Save to", "saveTo:desktop*", "saveTo:documents", "saveTo:preview", "-", "#Timer", "timer:none*",
-            "timer:5", "timer:10", "-", "#Microphone", "microphone:none", "microphone:default*", "-", "#Options", "showPointer:toggle*"]);
-        compare(rows[12].text, "Built-in Microphone", "the default input by its name");
+        const rows = Model.menuModel("recordScreen", {location: "clipboard", timer: "nope", microphone: "default", showPointer: true}, labels);
+        compare(ids(rows), ["#Save to", "location:screenshots*", "location:desktop", "location:documents", "location:preview", "-",
+            "#Timer", "timer:none*", "timer:5", "timer:10", "-", "#Microphone", "microphone:none", "microphone:default*", "-",
+            "#Options", "showPointer:toggle*"]);
+        compare(rows[1].text, "Videos", "a recording's default folder by its name");
+        compare(rows[13].text, "Built-in Microphone", "the default input by its name");
     }
 
     function test_choice() {
-        const o = {saveTo: "desktop", timer: "none", microphone: "none", showPointer: false};
-        compare(Model.choice("saveTo:preview", o), {key: "saveTo", value: "preview"});
+        const o = {location: "screenshots", timer: "none", microphone: "none", showPointer: false};
+        compare(Model.choice("location:preview", o), {key: "location", value: "preview"});
+        compare(Model.choice("location:desktop", o), {key: "location", value: "desktop"});
+        compare(Model.choice("location:screenshots", o), {key: "location", value: "screenshots"});
         compare(Model.choice("timer:10", o), {key: "timer", value: "10"});
         compare(Model.choice("microphone:default", o), {key: "microphone", value: "default"});
         compare(Model.choice("showPointer:toggle", o), {key: "showPointer", value: true});
         compare(Model.choice("showPointer:toggle", {showPointer: true}), {key: "showPointer", value: false});
-        compare(Model.choice("saveTo:mail", o), null);
+        compare(Model.choice("location:mail", o), null);
+        compare(Model.choice("saveTo:desktop", o), null, "the older key is never written");
         compare(Model.choice("timer:3", o), null);
         compare(Model.choice("mode:screen", o), null, "the menu never changes the mode");
         compare(Model.choice("", o), null);
-        compare(Model.choice("saveTo:desktop:x", o), null);
+        compare(Model.choice("location:desktop:x", o), null);
     }
 
     // ---- the selection frame ----

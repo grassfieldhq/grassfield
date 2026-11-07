@@ -96,13 +96,15 @@ TestCase {
     // Settings > Menu Bar: every key of the pane has the default the shell assumes and refuses a wrong value.
     function test_menuBarPaneKeys() {
         const booleans = ["showWifi", "showSound", "showBattery", "showBatteryPercentage", "showFocus", "showNowPlaying", "showSearch",
-            "showBackground", "showTrayItems", "clockShowAmPm", "clockFlashSeparators", "clockShowDayOfWeek", "clockShowSeconds"];
+            "showBackground", "showTrayItems", "clockShowAmPm", "clockFlashSeparators", "clockShowDayOfWeek", "clockShowSeconds",
+            "showScreenCapture"];
         for (const k of booleans) {
             const path = "menubar." + k;
             compare(Store.validate(path, true), "", path);
             verify(Store.validate(path, "yes") !== "", path);
         }
         compare(Store.DEFAULTS["menubar.clockShowSeconds"], false);
+        compare(Store.DEFAULTS["menubar.showScreenCapture"], false, "the Screen Capture item is off by default");
         compare(Store.DEFAULTS["menubar.clockDate"], "auto");
         compare(Store.DEFAULTS["menubar.recentItems"], 10);
         for (const m of ["auto", "always", "never"])

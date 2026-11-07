@@ -148,6 +148,12 @@ desktop, documents = os.path.join(home, "Desktop"), os.path.join(home, "Docs")
 BASE = {"PATH": fake + ":/usr/bin:/bin", "HOME": home, "FAKE_LOG": log, "FAKE_MONITORS": MONITORS, "FAKE_CLIENTS": CLIENTS,
         "FAKE_ANSWER": "", "FAKE_DOCUMENTS": documents, "XDG_RUNTIME_DIR": runtime}
 state_file = os.path.join(runtime, "grassfield", "capture-state.json")
+# Save to: the Desktop chosen in the toolbar (capture.location), which a run without --save follows; the default places (the
+# Screenshots folder in Pictures, the Videos folder) are checked where --save asks for them.
+os.makedirs(os.path.join(home, ".config", "grassfield"), exist_ok=True)
+with open(os.path.join(home, ".config", "grassfield", "grassfield.json"), "w") as f:
+    json.dump({"version": 1, "capture": {"location": "desktop"}}, f)
+screenshots, videos = os.path.join(home, "Pictures", "Screenshots"), os.path.join(home, "Videos")
 
 
 def calls(name=None):
@@ -286,14 +292,23 @@ for _ in range(40):
     time.sleep(0.05)
 check(len(calls("pw-play")) == 1 and calls("pw-play")[0]["argv"][-1] == "/usr/share/sounds/grassfield/stereo/screen-capture.wav",
       "Save to Clipboard: the shutter plays once")
-before = set(files(desktop))
+before, on_desktop = set(files(screenshots)), files(desktop)
 r, _ = capture(["selection", "--save", "preview"], FAKE_SLURP="10,20 300x200")
 run = calls("systemd-run")
-shown = [f for f in files(desktop) if name.fullmatch(f) and f not in before]
-check(r.returncode == 0 and len(shown) == 1 and run and run[0]["argv"][-1] == os.path.join(desktop, shown[0])
+shown = [f for f in files(screenshots) if name.fullmatch(f) and f not in before]
+check(r.returncode == 0 and len(shown) == 1 and run and run[0]["argv"][-1] == os.path.join(screenshots, shown[0])
+      and files(desktop) == on_desktop
       and "org.grassfield.Preview.desktop" in run[0]["argv"] and calls("notify-send") == [] and calls("wl-copy") == [],
-      "Save to Preview: the picture opens in Preview at once (kept on the Desktop: Preview cannot save), no notice [%r]"
+      "Save to Preview: the picture opens in Preview at once (kept in the Screenshots folder: Preview cannot save), no notice [%r]"
       % (run[0]["argv"] if run else None))
+# Save to the Screenshots folder (the toolbar's default): in the Pictures folder, the notice names it.
+pictures = os.path.join(home, "Pics")
+r, _ = capture(["selection", "--save", "screenshots"], FAKE_SLURP="10,20 300x200", FAKE_PICTURES=pictures)
+note = calls("notify-send")
+check(r.returncode == 0 and len(files(os.path.join(pictures, "Screenshots"))) == 1 and files(desktop) == on_desktop and note
+      and note[0]["argv"][-2:] == ["Screenshot", "Saved to Screenshots and copied."],
+      "Save to Screenshots: a Screenshots folder in xdg-user-dir's Pictures, copied, the notice names it [%r]"
+      % (note[0]["argv"][-2:] if note else None))
 
 # ---- the timer: a countdown the shell shows, then the picture ----
 r_proc = start(["screen", "--timer", "5"])
@@ -399,14 +414,26 @@ proc, ok = recording(["screen", "--save", "preview"])
 stop()
 proc.wait(timeout=30)
 run = calls("systemd-run")
-check(ok and len(files(desktop)) == 1 and run and run[0]["argv"][-1] == os.path.join(desktop, files(desktop)[0])
-      and calls("notify-send") == [], "Save to Preview: the movie opens in Preview at once, no notice")
+movies = [f for f in files(videos) if rec_name.fullmatch(f)]
+check(ok and len(movies) == 1 and files(desktop) == [] and run and run[0]["argv"][-1] == os.path.join(videos, movies[0])
+      and calls("notify-send") == [], "Save to Preview: the movie, kept in the Videos folder, opens in Preview at once, no notice")
 proc, ok = recording(["screen", "--save", "clipboard"])
 argv = recorder_argv()
 stop()
 proc.wait(timeout=30)
-check(ok and os.path.dirname(argv[argv.index("-o") + 1]) == desktop and calls("wl-copy") == [],
-      "a recording asked for the clipboard goes to the Desktop (a movie is not copied)")
+check(ok and os.path.dirname(argv[argv.index("-o") + 1]) == videos and calls("wl-copy") == [],
+      "a recording asked for the clipboard goes to the Videos folder (a movie is not copied)")
+# Save to the default place (the toolbar's `screenshots`): a recording goes to xdg-user-dir's Videos, and the notice names it.
+films = os.path.join(home, "Films")
+proc, ok = recording(["screen", "--save", "screenshots"], FAKE_VIDEOS=films, FAKE_ANSWER="")
+argv = recorder_argv()
+stop()
+proc.wait(timeout=30)
+note = calls("notify-send")
+check(ok and os.path.dirname(argv[argv.index("-o") + 1]) == films and len([f for f in files(films) if rec_name.fullmatch(f)]) == 1
+      and files(desktop) == [] and note and note[0]["argv"][-2:] == ["Screen Recording", "Saved to Films."],
+      "a recording saved to the default place: xdg-user-dir's Videos folder, the notice names it [%r]"
+      % (note[0]["argv"][-2:] if note else None))
 
 # The session ending (SIGTERM to the helper) while it records: the recorder is told to save, the file is named.
 count = len(files(desktop))

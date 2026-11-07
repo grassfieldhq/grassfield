@@ -231,6 +231,9 @@ Variants {
         property point menuAt: Qt.point(0, 0)
         readonly property var menuModel: menuOpen ? Model.menuModel(root.controller.mode, root.controller.options, {
             saveTo: qsTr("Save to"),
+            // The default places by their folders' names (grassfield-capture makes "Screenshots" in Pictures, translated).
+            screenshots: qsTr("Screenshots"),
+            videos: qsTr("Videos"),
             desktop: qsTr("Desktop"),
             documents: qsTr("Documents"),
             clipboard: qsTr("Clipboard"),

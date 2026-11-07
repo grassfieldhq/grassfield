@@ -226,7 +226,7 @@ does not check its gate.
 | notifications | dnd, status | dev | `dnd` would let another process silence notices (security notices too) |
 | notifications | invoke, clearAll, dismissAll | fixtures | runs another app's action / removes history |
 | menubar | open, panel | action | CTRL+F2, SUPER+ALT+ESCAPE |
-| menubar | close, openKind, keyboardWait, statusState, autohide, bridgeState, shown | dev | `bridgeState` returns the focused app's menu titles; `shown` the app the bar names and its app-menu count |
+| menubar | close, openKind, keyboardWait, statusState, autohide, bridgeState, shown, band | dev | `bridgeState` returns the focused app's menu titles; `shown` the app the bar names and its app-menu count; `band` an output's band state (shown, blurred, the wallpaper luminance range under it, its tint alpha: no content) |
 | widgets | status, addDesktop, clearDesktop | dev | `tests/visual/widgets-blur.sh`; `addDesktop`/`clearDesktop` change the saved placements |
 | controlcenter | transparency, appearance, reduceTransparency, reduceMotion | dev | persisted settings changes |
 | controlcenter | state | dev | `tests/visual/flow-quicksettings.sh`, `flow-settings.sh`: what the shell applies (appearance, transparency, DND, Night Shift availability); read-only |

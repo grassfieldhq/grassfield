@@ -91,6 +91,7 @@
     "showBattery": true,
     "showBatteryPercentage": true,
     "showFocus": true,
+    "showScreenCapture": false,
     "clockDate": "auto",
     "clockShowDayOfWeek": true,
     "clockHours": "auto",
@@ -134,6 +135,7 @@
   "capture": {
     "mode": "selection",
     "saveTo": "desktop",
+    "location": "screenshots",
     "timer": "none",
     "microphone": "none",
     "showPointer": false,

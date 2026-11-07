@@ -98,8 +98,9 @@ elif name == "hyprctl":
     else:
         print(env.get("FAKE_MONITORS" if sys.argv[2] == "monitors" else "FAKE_CLIENTS", "[]"))
 elif name == "xdg-user-dir":
-    if "FAKE_DESKTOP" in env:
-        print(env["FAKE_DESKTOP"])
+    # FAKE_DESKTOP answers DESKTOP, FAKE_PICTURES PICTURES, and so on; no variable, no answer.
+    if "FAKE_" + sys.argv[1] in env:
+        print(env["FAKE_" + sys.argv[1]])
     else:
         sys.exit(1)
 elif name == "pkill":
@@ -197,6 +198,19 @@ def files(folder):
 
 
 desktop = os.path.join(home, "Desktop")
+# Save to: the Desktop, chosen in the toolbar (capture.location in ~/.config/grassfield/grassfield.json, which the keys follow),
+# so that the checks below find the pictures where they look; the default place, the Screenshots folder, is checked at the end.
+config = os.path.join(home, ".config", "grassfield")
+os.makedirs(config, exist_ok=True)
+
+
+def set_config(doc):
+    with open(os.path.join(config, "grassfield.json"), "w") as f:
+        json.dump(doc, f)
+
+
+ON_DESKTOP = {"capture": {"location": "desktop"}}
+set_config(dict({"version": 1}, **ON_DESKTOP))
 name = re.compile(r"Screenshot [0-9]{4}-[0-9]{2}-[0-9]{2} at [0-9]{2}\.[0-9]{2}\.[0-9]{2}( \([0-9]+\))?\.png")
 
 # The screen: every enabled display, the focused one first, one picture each, saved to ~/Desktop (no xdg-user-dir answer).
@@ -462,7 +476,7 @@ for bad in (home, "/", "", "relative/dir"):
     check(len(files(desktop)) == count + 2 and not any(f.endswith(".png") for f in os.listdir(home)),
           "xdg-user-dir answering %r: ~/Desktop" % bad)
 
-# The shutter (ADR-0047 B-5): pw-play once a picture is saved, as Settings > Sound says (the defaults without a file).
+# The shutter (ADR-0047 B-5): pw-play once a picture is saved, as Settings > Sound says (the defaults without a sound group).
 def played():
     # pw-play is started in its own session and not waited for: give it a moment to record itself.
     for _ in range(40):
@@ -473,24 +487,22 @@ def played():
 
 
 SHUTTER = "/usr/share/sounds/grassfield/stereo/screen-capture.wav"
-config = os.path.join(home, ".config", "grassfield")
-os.makedirs(config, exist_ok=True)
 r, _ = capture("screen")
 check(played() == [["--media-role", "Notification", "--volume", "0.422", "--", SHUTTER]],
       "the shutter plays once per capture at the default alert volume (0.75 cubed) [%r]" % played())
 with open(os.path.join(config, "grassfield.json"), "w") as f:
-    json.dump({"version": 1, "sound": {"uiEffects": True, "alertVolume": 0.5, "effectsOutput": "bluez_output.AA_BB_CC_DD_EE_FF.1"}}, f)
+    json.dump(dict({"version": 1}, **ON_DESKTOP, sound={"uiEffects": True, "alertVolume": 0.5, "effectsOutput": "bluez_output.AA_BB_CC_DD_EE_FF.1"}), f)
 r, _ = capture("screen")
 check(played() == [["--media-role", "Notification", "--volume", "0.125", "--target", "bluez_output.AA_BB_CC_DD_EE_FF.1", "--", SHUTTER]],
       "it follows the alert volume and the effects output [%r]" % played())
 with open(os.path.join(config, "grassfield.json"), "w") as f:
-    json.dump({"version": 1, "sound": {"alertVolume": 7, "effectsOutput": "-x", "uiEffects": "no"}}, f)
+    json.dump(dict({"version": 1}, **ON_DESKTOP, sound={"alertVolume": 7, "effectsOutput": "-x", "uiEffects": "no"}), f)
 r, _ = capture("screen")
 check(played() == [["--media-role", "Notification", "--volume", "1.000", "--", SHUTTER]],
       "the contract's rules: a volume clamped, an invalid output or switch is the default [%r]" % played())
 for sound in ({"uiEffects": False}, {"alertVolume": 0}):
     with open(os.path.join(config, "grassfield.json"), "w") as f:
-        json.dump({"version": 1, "sound": sound}, f)
+        json.dump(dict({"version": 1}, **ON_DESKTOP, sound=sound), f)
     r, _ = capture("screen")
     time.sleep(0.3)
     check(r.returncode == 0 and calls("pw-play") == [], "no shutter with %r" % sound)
@@ -504,6 +516,7 @@ time.sleep(0.3)
 check(calls("pw-play") == [], "no shutter when no picture was saved")
 
 # French: the names and the notice.
+set_config(dict({"version": 1}, **ON_DESKTOP))
 r, _ = capture("screen", LANG="fr_FR.UTF-8")
 fr = [f for f in files(desktop) if f.startswith("Capture")]
 note = calls("notify-send")
@@ -512,5 +525,110 @@ check(len(fr) == 2 and all(re.fullmatch(r"Capture d’écran [0-9]{4}-[0-9]{2}-[
       and note and "default=Ouvrir dans la Visionneuse" in note[0]["argv"]
       and note[0]["argv"][-2:] == ["Capture d’écran", "Enregistrée sur le Bureau et copiée."],
       "in French: « Capture d’écran … à … », the notice in French [%r]" % fr)
+
+# Save to's default (owner 2026-11-07: not the Desktop): with nothing chosen the keys save to a Screenshots folder in the Pictures
+# folder, made on first use, and the notice names that folder. (The clipboard alone is options.py's: this grim fake writes no
+# picture to its standard output.)
+def shots(folder):
+    return [f for f in files(folder) if name.fullmatch(f) or f.startswith("Capture d’écran ")]
+
+
+os.unlink(os.path.join(config, "grassfield.json"))
+pictures = os.path.join(home, "Pics")
+screenshots = os.path.join(pictures, "Screenshots")
+on_desktop = files(desktop)
+r, _ = capture("screen", FAKE_PICTURES=pictures)
+note = calls("notify-send")
+focused = [f for f in shots(screenshots) if " (" not in f]
+check(r.returncode == 0 and len(shots(screenshots)) == 2 and files(desktop) == on_desktop
+      and not any(f.startswith(".") for f in os.listdir(screenshots))
+      and note and note[0]["argv"][-2:] == ["Screenshot", "Saved to Screenshots and copied."]
+      and len(focused) == 1 and "string:image-path:" + os.path.join(screenshots, focused[0]) in note[0]["argv"],
+      "nothing chosen: a Screenshots folder made in xdg-user-dir's Pictures, the notice names it, nothing on the Desktop [%r %r]"
+      % (files(screenshots), note[0]["argv"][-2:] if note else None))
+default_shots = os.path.join(home, "Pictures", "Screenshots")
+count = len(shots(default_shots))
+r, _ = capture("screen")
+check(len(shots(default_shots)) == count + 2, "no Pictures answer: ~/Pictures/Screenshots")
+r, _ = capture("screen", FAKE_PICTURES=home)
+check(len(shots(default_shots)) == count + 4 and not os.path.exists(os.path.join(home, "Screenshots")),
+      "xdg-user-dir answering the home folder for Pictures: ~/Pictures/Screenshots, never a folder in the home folder")
+# In French the folder is made under its French name; an English one already there is kept (no second folder).
+images = os.path.join(home, "Images")
+r, _ = capture("screen", FAKE_PICTURES=images, LANG="fr_FR.UTF-8")
+note = calls("notify-send")
+check(len(shots(os.path.join(images, "Captures d’écran"))) == 2 and note
+      and note[0]["argv"][-1] == "Enregistrée dans Captures d’écran et copiée.",
+      "in French: « Captures d’écran » in Images, the notice names it [%r]" % files(images))
+r, _ = capture("screen", FAKE_PICTURES=pictures, LANG="fr_FR.UTF-8")
+check(len(shots(screenshots)) == 4 and not os.path.exists(os.path.join(pictures, "Captures d’écran")),
+      "in French, the Screenshots folder already there is used [%r]" % files(pictures))
+# Back to English after French (review of e134ded6): the French folder already there is used, no "Screenshots" beside it.
+r, _ = capture("screen", FAKE_PICTURES=images)
+note = calls("notify-send")
+check(len(shots(os.path.join(images, "Captures d’écran"))) == 4 and not os.path.exists(os.path.join(images, "Screenshots"))
+      and note and note[0]["argv"][-1] == "Saved to Captures d’écran and copied.",
+      "in English, the French folder already there is used, no second folder [%r]" % files(images))
+# Something that is not a folder in its place: the pictures go to the Pictures folder itself, a link is never followed.
+odd = os.path.join(home, "Odd")
+os.makedirs(odd)
+with open(os.path.join(odd, "Screenshots"), "w") as f:
+    f.write("not a folder")
+r, _ = capture("screen", FAKE_PICTURES=odd)
+check(r.returncode == 0 and len(shots(odd)) == 2, "a file named Screenshots: the pictures go to the Pictures folder [%r]" % files(odd))
+linked, target = os.path.join(home, "Linked"), os.path.join(tmp, "elsewhere")
+os.makedirs(linked)
+os.makedirs(target)
+os.symlink(target, os.path.join(linked, "Screenshots"))
+r, _ = capture("screen", FAKE_PICTURES=linked)
+check(r.returncode == 0 and len(shots(linked)) == 2 and files(target) == [],
+      "a link named Screenshots is not followed: the Pictures folder [%r %r]" % (files(linked), files(target)))
+# The older key (capture.saveTo, before capture.location): its Documents stays, its Desktop (the old default every file the
+# shell created held) moves to the Screenshots folder; capture.location wins, and a bad one is the default.
+documents = os.path.join(home, "Docs")
+set_config({"version": 1, "capture": {"saveTo": "documents"}})
+r, _ = capture("screen", FAKE_PICTURES=pictures, FAKE_DOCUMENTS=documents)
+note = calls("notify-send")
+check(len(shots(documents)) == 2 and note and note[0]["argv"][-1] == "Saved to Documents and copied.",
+      "the older Save to Documents stays [%r]" % files(documents))
+set_config({"version": 1, "capture": {"saveTo": "desktop"}})
+count, on_desktop = len(shots(screenshots)), files(desktop)
+r, _ = capture("screen", FAKE_PICTURES=pictures)
+check(len(shots(screenshots)) == count + 2 and files(desktop) == on_desktop,
+      "the older Desktop, the old default, moves to the Screenshots folder")
+set_config({"version": 1, "capture": {"saveTo": "documents", "location": "mail"}})
+r, _ = capture("screen", FAKE_PICTURES=pictures, FAKE_DOCUMENTS=documents)
+check(len(shots(screenshots)) == count + 4 and len(shots(documents)) == 2,
+      "an unknown capture.location is the Screenshots folder; the older key is not read then")
+set_config({"version": 1, "capture": {"location": "desktop", "saveTo": "documents"}})
+r, _ = capture("screen", FAKE_PICTURES=pictures, FAKE_DOCUMENTS=documents)
+check(len(files(desktop)) == len(on_desktop) + 2 and len(shots(screenshots)) == count + 4 and len(shots(documents)) == 2,
+      "capture.location desktop: the Desktop, as chosen; the older key is not read then")
+set_config({"version": 1, "capture": {"location": "preview"}})
+r, _ = capture("selection", FAKE_PICTURES=pictures, FAKE_SLURP="10,20 300x200")
+run = calls("systemd-run")
+check(r.returncode == 0 and len(shots(screenshots)) == count + 5 and run and run[0]["argv"][-1].startswith(screenshots + "/")
+      and calls("notify-send") == [], "capture.location preview: kept in the Screenshots folder, opened in Preview")
+# A file the shell reads as its defaults (JsonSafety.js: a key twice in one object, an integer beyond 2^53, an integer-like key)
+# reads as the defaults here too (review of e134ded6: the helper took the last `location` while the shell read the Screenshots
+# folder).
+for raw, why in (('{"version": 1, "capture": {"location": "documents", "location": "desktop"}}', "a duplicate location key"),
+                 ('{"version": 1, "n": 9007199254740993, "capture": {"location": "desktop"}}', "an integer beyond 2^53"),
+                 ('{"version": 1, "capture": {"location": "desktop"}, "x": {"7": 1}}', "an integer-like key"),
+                 ('{"version": 1, "capture": {"location": "desktop"}, "x": NaN}', "NaN, which JSON.parse refuses"),
+                 ('{"version": 1, "capture": {"location": "desktop"}, "x": -Infinity}', "-Infinity, which JSON.parse refuses"),
+                 ('{"version": 1, "capture": {"location": "desktop"}, "x": ' + '[' * 200000 + ']' * 200000 + '}',
+                  "nesting too deep to read")):
+    with open(os.path.join(config, "grassfield.json"), "w") as f:
+        f.write(raw)
+    count, on_desktop, in_documents = len(shots(screenshots)), files(desktop), files(documents)
+    r, _ = capture("screen", FAKE_PICTURES=pictures, FAKE_DOCUMENTS=documents)
+    check(r.returncode == 0 and len(shots(screenshots)) == count + 2 and files(desktop) == on_desktop and files(documents) == in_documents,
+          "an unsafe file (%s): the default place, as the shell reads it" % why)
+# The same values written safely are followed (the rule is the file's, not the value's).
+set_config({"version": 1, "n": 9007199254740991, "capture": {"location": "desktop"}})
+on_desktop = files(desktop)
+r, _ = capture("screen", FAKE_PICTURES=pictures)
+check(len(files(desktop)) == len(on_desktop) + 2, "2^53 - 1 is safe: capture.location desktop is followed")
 
 sys.exit(1 if failed else 0)

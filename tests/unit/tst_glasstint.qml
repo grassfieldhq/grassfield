@@ -261,6 +261,23 @@ TestCase {
         compare(GlassTint.gridRange({width: 400, height: 200, cols: 4, rows: 2, min: [0], max: [1]}, Qt.rect(0, 0, 10, 10), 0), null);
     }
 
+    // The wallpaper under a surface that always lies on it (the menu bar's band while the bar keeps its strip): the output's
+    // wallpaper range narrowed to the cells under the surface, known whatever windows the output shows (owner 2026-11-07: the
+    // band was opaque on every display with a window open, translucent on a bare one).
+    function test_wallpaperUnder() {
+        const range = {lumMin: 0.01, lumMax: 0.9};
+        const strip = GlassTint.wallpaperUnder(range, splitGrid, Qt.rect(0, 0, 90, 24), 0);
+        fuzzyCompare(strip.lumMin, 0.01, 1e-9);
+        fuzzyCompare(strip.lumMax, 0.04, 1e-9);
+        compare(GlassTint.wallpaperUnder(range, null, Qt.rect(0, 0, 90, 24), 0), {lumMin: 0.01, lumMax: 0.9}, "no grid: the whole range");
+        compare(GlassTint.wallpaperUnder(null, splitGrid, Qt.rect(0, 0, 90, 24), 0), null, "an unknown wallpaper: unknown");
+        compare(GlassTint.wallpaperUnder({lumMin: "x", lumMax: 1}, null, Qt.rect(0, 0, 90, 24), 0), null);
+        // Over the measured strip the menu glass stays at its class target in the dark appearance, below the worst case.
+        Appearance.dark = true;
+        fuzzyCompare(Appearance.glassAlphaOver("menu", Tokens.materialDefaultTransparency, strip), Tokens.glassMenu, 1e-9);
+        verify(Appearance.glassAlphaOver("menu", Tokens.materialDefaultTransparency, strip) < Appearance.glassAlphaOver("menu", Tokens.materialDefaultTransparency, null));
+    }
+
     function test_gridOf() {
         // 4 x 2 pixels, two cells across: black and white on the left, a mid grey on the right.
         const px = [0, 0, 0, 255, 255, 255, 255, 255, 119, 119, 119, 255, 119, 119, 119, 255, 0, 0, 0, 255, 255, 255, 255, 255, 119, 119, 119, 255, 119, 119, 119, 255];
