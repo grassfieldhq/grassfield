@@ -437,20 +437,20 @@ namespace gf::chrome {
             // decision is known at the map (xdg-decoration objects exist before the first buffer; a GTK 3 header bar's KDE request
             // is there at map, decorations.sh D7); a client that switches later is read at its next commit of another size, or at
             // window.updateRules.
-            if (const auto surface = w->resource()) {
-                WP<CWLSurfaceResource> weakSurface = surface;
-                auto                   lastSize    = makeShared<Vector2D>(-1.0, -1.0);
-                e.commit = surface->m_events.commit.listen([ref, weakSurface, lastSize] {
+            // The last size lives in the listener itself (a mutable lambda, kept by the signal's one std::function), so nothing
+            // is looked up for an unchanged commit.
+            if (const auto surface = w->resource())
+                e.commit = surface->m_events.commit.listen([ref, lastSize = Vector2D{-1.0, -1.0}]() mutable {
                     guarded("client chrome commit", [&] {
-                        const auto now = weakSurface.lock();
-                        if (!now || now->m_current.size == *lastSize)
+                        const auto window = ref.lock();
+                        const auto now    = window ? window->resource() : nullptr;
+                        if (!now || now->m_current.size == lastSize)
                             return;
-                        *lastSize = now->m_current.size;
+                        lastSize = now->m_current.size;
                         if (auto* mine = watchOfRef(ref))
                             syncDecoration(*mine, st().ready);
                     });
                 });
-            }
             e.toplevelResource = toplevelResource(top, true);
             const auto globals = decorationGlobalsOf(w);
             e.managerBound     = globals.manager;
