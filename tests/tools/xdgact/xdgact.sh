@@ -2,6 +2,7 @@
 # A window that activates itself through xdg-activation-v1 on SIGUSR1 and unmaps itself (alive) on SIGUSR2, for the NESTED dev
 # compositor only (tests/tools/xdgact).
 # Usage (through the isolation helper, like every test client): scripts/dev/isolated.sh tests/tools/xdgact/xdgact.sh APP_ID [MIN_WIDTH | WxH]
+# XDGACT_DECORATION=client|none|unbound changes what it negotiates (default: server_side; tests/compositor/decorations.sh).
 # Builds the tool into .dev/tools/ on first use. Refuses anything but this tree's verified nested socket
 # (dev_nested_target: live recorded compositor running this tree's dev config; never the owner's instance or WAYLAND_DISPLAY).
 # Build only: tests/tools/xdgact/xdgact.sh --build
@@ -19,9 +20,11 @@ if [[ ! -x $bin || $src/xdgact.c -nt $bin ]]; then
   wayland-scanner private-code "$protocols/stable/xdg-shell/xdg-shell.xml" "$dev/tools/xdg-shell-protocol.c"
   wayland-scanner client-header "$protocols/staging/xdg-activation/xdg-activation-v1.xml" "$dev/tools/xdg-activation-v1-client-protocol.h"
   wayland-scanner private-code "$protocols/staging/xdg-activation/xdg-activation-v1.xml" "$dev/tools/xdg-activation-v1-protocol.c"
+  wayland-scanner client-header "$protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" "$dev/tools/xdg-decoration-unstable-v1-client-protocol.h"
+  wayland-scanner private-code "$protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" "$dev/tools/xdg-decoration-unstable-v1-protocol.c"
   # shellcheck disable=SC2046
   gcc -std=gnu11 -O1 -Wall -Wextra -I"$dev/tools" "$src/xdgact.c" "$dev/tools/xdg-shell-protocol.c" "$dev/tools/xdg-activation-v1-protocol.c" \
-    $(pkg-config --cflags --libs wayland-client) -o "$bin"
+    "$dev/tools/xdg-decoration-unstable-v1-protocol.c" $(pkg-config --cflags --libs wayland-client) -o "$bin"
 fi
 [[ ${1:-} == --build ]] && exit 0
 

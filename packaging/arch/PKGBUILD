@@ -289,9 +289,12 @@ package_grassfield-desktop() {
     'hyprsunset: Night Light (grassfield-nightshift)'
     'kimageformats: HEIF, AVIF and JPEG XL pictures as wallpapers (the helper reads what Qt can read)'
   )
-  # Login screen entry and a login-path check after install and upgrade (GF-015); the SDDM drop-in is a config file.
+  # Login screen entry and a login-path check after install and upgrade (GF-015); the SDDM drop-in is a config file, and so are
+  # the browsers' policy files below (an administrator's edit, or an emptied file, is kept across upgrades: pacman writes .pacnew).
   install=grassfield-desktop.install
-  backup=(etc/sddm.conf.d/grassfield.conf)
+  backup=(etc/sddm.conf.d/grassfield.conf
+          etc/chromium/policies/managed/zz-grassfield-gtk.json
+          etc/opt/chrome/policies/managed/zz-grassfield-gtk.json)
   local root
   root=$(_root)
 
@@ -375,6 +378,21 @@ package_grassfield-desktop() {
   install -d "$pkgdir/usr/lib/grassfield/session-bin"
   find "$root/packaging/session-bin" -maxdepth 1 -type f -exec install -m755 -t "$pkgdir/usr/lib/grassfield/session-bin/" {} +
   install -Dm644 "$root/packaging/sddm/grassfield.conf" "$pkgdir/etc/sddm.conf.d/grassfield.conf"
+  # Browsers' traffic lights (owner report on 1.0.0-rc6; config/hypr/grassfield/windows.lua): Omarchy's theme switcher writes
+  # the machine policy BrowserThemeColor (color.json) into the Chromium and Google Chrome policy directories, and a colour
+  # theme from policy replaces the GTK appearance's window buttons in every profile (nested, Chromium 155: no lights with
+  # color.json, the Grassfield lights without it). How Chromium reads it (its source, pinned in docs/specs/compositor.md "Known
+  # limitations"): ConfigDirPolicyLoader merges a directory's files in reverse name order and PolicyMap keeps the entry already
+  # there at equal priority, so the last name wins (color.json's value is kept as a conflict); ThemeColorPolicyHandler rejects a
+  # value that is not #RRGGBB with a policy error and applies nothing, so no colour theme is forced and the profile's own
+  # appearance applies again. Machine-wide, so in the Omarchy session too: there the browsers keep their own theme instead of
+  # Omarchy's colour (accepted in the integrator's review of 3ca47a4b; ADR-0015 amendment 2026-11-07). Root-owned, so Omarchy's policy setup, which removes only files that are
+  # not root's, keeps it.
+  for policy_dir in etc/chromium/policies/managed etc/opt/chrome/policies/managed; do
+    install -d "$pkgdir/$policy_dir"
+    printf '{"BrowserThemeColor": ""}\n' >"$pkgdir/$policy_dir/zz-grassfield-gtk.json"
+    chmod 644 "$pkgdir/$policy_dir/zz-grassfield-gtk.json"
+  done
   install -Dm644 "$root/packaging/sddm/grassfield-login.desktop" "$pkgdir/usr/share/grassfield/sddm/wayland-sessions/grassfield-login.desktop"
   for unit in crash-watch battery-watch migrate-notify automount secrets-handover portal-settings portal shell-failed security pacman-watch shell-watchdog; do
     install -Dm644 "$root/packaging/systemd/grassfield-$unit.service" "$pkgdir/usr/lib/systemd/user/grassfield-$unit.service"

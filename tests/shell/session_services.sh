@@ -217,7 +217,9 @@ check bash -c 'for f in "$1"/session-bin/*; do [[ -f $f && -x $f ]] || exit 1; d
 desc="the install lines skip a directory in packaging/bin (an ignored __pycache__ must neither break nor enter the package)"
 check bash -c 'w=$(mktemp -d) && mkdir -p "$w/packaging/bin/__pycache__" "$w/out" && printf "x\n" >"$w/packaging/bin/tool" && root=$w pkgdir=$w/pkg && mkdir -p "$pkgdir/usr/lib/grassfield" && eval "$(grep -F "find \"\$root/packaging/bin\" -maxdepth 1 -type f" "$1/arch/PKGBUILD")" && [[ -x $pkgdir/usr/lib/grassfield/tool && ! -e $pkgdir/usr/lib/grassfield/__pycache__ ]]; rc=$?; rm -rf "$w"; exit $rc' _ "$pk"
 desc="the .install scriptlet runs the login check and is declared by the PKGBUILD"
-check bash -c 'grep -q "grassfield-login-check" "$1/arch/grassfield-desktop.install" && grep -q "^  install=grassfield-desktop.install" "$1/arch/PKGBUILD" && grep -q "^  backup=(etc/sddm.conf.d/grassfield.conf)" "$1/arch/PKGBUILD"' _ "$pk"
+check bash -c 'grep -q "grassfield-login-check" "$1/arch/grassfield-desktop.install" && grep -q "^  install=grassfield-desktop.install" "$1/arch/PKGBUILD" && b=$(sed -n "/^  backup=(/,/)/p" "$1/arch/PKGBUILD" | tr "()\n" "   ") && [[ " $b " == *" etc/sddm.conf.d/grassfield.conf "* ]]' _ "$pk"
+desc="the browsers' policy files the package installs are config files (backup=: an administrator's edit survives an upgrade)"
+check bash -c 'b=$(sed -n "/^  backup=(/,/)/p" "$1/arch/PKGBUILD" | tr "()\n" "   ") && for d in etc/chromium/policies/managed etc/opt/chrome/policies/managed; do grep -qF "$d" "$1/arch/PKGBUILD" && [[ " $b " == *" $d/zz-grassfield-gtk.json "* ]] || exit 1; done' _ "$pk"
 if command -v vercmp >/dev/null; then
   up() { bash -c '. "$1"; post_upgrade "$2" "$3"' _ "$pk/arch/grassfield-desktop.install" "$1" "$2" 2>&1; }
   desc="the .install restart note is printed when upgrading from a version before the by-path shell (0.4.0-12 to 1.0.0rc1-1)"

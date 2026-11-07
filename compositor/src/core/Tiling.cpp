@@ -63,6 +63,10 @@ namespace gf::tiling {
         return placeForPointer(x, y, output, options);
     }
 
+    bool showsAtOnce(std::optional<Place> place, bool topFree, bool alt) {
+        return alt || (place == Place::Fill && topFree);
+    }
+
     bool CDwell::update(std::optional<Place> place, std::string_view output, uint64_t nowMs, bool immediate) {
         if (place != m_place || (place && output != m_output)) {
             m_place  = place;
@@ -575,6 +579,29 @@ namespace gf::tiling {
         const auto [x, w] = axis(frame.x, frame.w, from.x, from.w, to.x, to.w);
         const auto [y, h] = axis(frame.y, frame.h, from.y, from.h, to.y, to.h);
         return Rect{x, y, std::max(1.0, w), std::max(1.0, h)};
+    }
+
+    std::optional<Rect> fitIntoArea(const Rect& frame, const Rect& area, const Constraints& limits) {
+        if (!(area.w > 0) || !(area.h > 0))
+            return std::nullopt;
+        const bool wide = frame.w > area.w + 0.5;
+        const bool tall = frame.h > area.h + 0.5;
+        if (!wide && !tall)
+            return std::nullopt;
+        Rect r = frame;
+        if (wide) {
+            r.w = std::max(std::floor(area.w), std::ceil(limits.minW));
+            r.x = std::round(area.x);
+        }
+        if (tall) {
+            r.h = std::max(std::floor(area.h), std::ceil(limits.minH + limits.band));
+            r.y = std::round(area.y);
+        }
+        return r;
+    }
+
+    bool fitsOnMove(const std::optional<DeskPlace>& from, std::string_view toOutput, bool toSpecial) {
+        return !toSpecial && from && !from->special && !from->output.empty() && !toOutput.empty() && from->output != toOutput;
     }
 
     bool strayFrame(const Rect& frame, std::span<const Rect> outputs) {

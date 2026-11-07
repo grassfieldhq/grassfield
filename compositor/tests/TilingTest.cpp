@@ -768,6 +768,19 @@ TEST(TilingDwell, AltShowsAtOnce) {
     EXPECT_FALSE(d.update(Place::Left, "A", 104, false)) << "after a reset, the same place waits again";
 }
 
+// Owner report on 1.0.0-rc6 ("the gesture up to fill the screen is very slow"): the menu bar is a target, the pointer pushed past
+// the window held below it; it fills at once unless another output lies above (then the strip is crossed on the way there).
+TEST(TilingDwell, TheMenuBarFillsAtOnceWhenNothingIsAbove) {
+    EXPECT_TRUE(showsAtOnce(Place::Fill, true, false)) << "the menu bar, nothing above: at once";
+    EXPECT_FALSE(showsAtOnce(Place::Fill, false, false)) << "an output above: the strip is a way there, the delay stays";
+    EXPECT_FALSE(showsAtOnce(Place::Left, true, false)) << "the side edges keep the delay";
+    EXPECT_FALSE(showsAtOnce(Place::TopLeft, true, false)) << "the corners too";
+    EXPECT_FALSE(showsAtOnce(std::nullopt, true, false)) << "no place";
+    EXPECT_TRUE(showsAtOnce(Place::Right, false, true)) << "Alt: any place at once (TL17)";
+    CDwell d;
+    EXPECT_TRUE(d.update(Place::Fill, "A", 100, showsAtOnce(Place::Fill, true, false))) << "shown as the pointer reaches the menu bar";
+}
+
 TEST(TilingSides, ABorderPressGripsTheSidesItIsBeyond) {
     const Rect s{2000, 300, 800, 500};
     EXPECT_EQ(sidesAt(1995, 500, s), kSideLeft);
@@ -1007,6 +1020,53 @@ TEST(TilingMoveTo, AFreeWindowKeepsItsPlaceOnTheOtherOutput) {
     EXPECT_EQ(moveToArea(Rect{-200, 24, 800, 500}, from, to), (Rect{1440, 24, 800, 500}));
     EXPECT_EQ(moveToArea(Rect{0, 24, 0.4, 0.4}, from, to).w, 1) << "never smaller than 1 x 1";
     EXPECT_EQ(moveToArea(Rect{0, 24, 0.4, 0.4}, from, to).h, 1) << "never smaller than 1 x 1";
+}
+
+// Owner report on 1.0.0-rc6: a zoomed window moved to a smaller display overflowed it. Nested capture: a 1424 x 860 frame moved
+// to GF-REF at 1.25 (1536 x 864, work area 1536 x 840 below the 24 px menu bar) sat at y 3, its titlebar under the menu bar.
+TEST(TilingFitIntoArea, AWindowLargerThanTheDisplaysWorkAreaIsMadeToFitIt) {
+    const Rect area{1440, 24, 1536, 840};
+    EXPECT_EQ(fitIntoArea(Rect{1448, 3, 1424, 860}, area, Constraints{}), (Rect{1448, 24, 1424, 840})) << "too tall: the area's height, below the menu bar, x kept";
+    EXPECT_EQ(fitIntoArea(Rect{1500, 300, 1800, 400}, area, Constraints{}), (Rect{1440, 300, 1536, 400})) << "too wide: the area's width from its left edge, y kept";
+    EXPECT_EQ(fitIntoArea(Rect{1508, 184, 1400, 862}, area, Constraints{}), (Rect{1508, 24, 1400, 840})) << "a drop that hung below the screen";
+    EXPECT_EQ(fitIntoArea(Rect{1000, -50, 2000, 1200}, area, Constraints{}), (Rect{1440, 24, 1536, 840})) << "both axes";
+}
+
+TEST(TilingFitIntoArea, AWindowThatFitsKeepsItsFrame) {
+    const Rect area{1440, 24, 1536, 840};
+    EXPECT_FALSE(fitIntoArea(Rect{1600, 200, 800, 500}, area, Constraints{}).has_value());
+    EXPECT_FALSE(fitIntoArea(Rect{2600, 700, 800, 500}, area, Constraints{}).has_value()) << "hanging off the side or the bottom is the user's choice (macOS)";
+    EXPECT_FALSE(fitIntoArea(Rect{1440, 24, 1536, 840}, area, Constraints{}).has_value()) << "exactly the area";
+    EXPECT_FALSE(fitIntoArea(Rect{1440, 24, 1536.4, 840.4}, area, Constraints{}).has_value()) << "within rounding";
+    EXPECT_FALSE(fitIntoArea(Rect{1440, 24, 4000, 4000}, Rect{}, Constraints{}).has_value()) << "no area: nothing to fit";
+}
+
+// The review of 3ca47a4b: a 700 x 800 foot moved to Desktop 2 of its own display was fitted to 700 x 734, and so was one back from
+// a special workspace (minimize, hide, Show Desktop). Only a move from another output's regular Desktop fits.
+TEST(TilingFitIntoArea, OnlyAMoveFromAnotherOutputsDesktopFits) {
+    EXPECT_TRUE(fitsOnMove(DeskPlace{.output = "DP-1"}, "eDP-1", false)) << "another output's Desktop";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "eDP-1"}, "eDP-1", false)) << "another Desktop of the same output";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "DP-1", .special = true}, "eDP-1", false)) << "back from a special workspace";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "eDP-1", .special = true}, "eDP-1", false));
+    EXPECT_FALSE(fitsOnMove(std::nullopt, "eDP-1", false)) << "where it came from is unknown";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{}, "eDP-1", false)) << "an output without a name";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "DP-1"}, "", false));
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "DP-1"}, "eDP-1", true)) << "to a special workspace";
+}
+
+TEST(TilingFitIntoArea, NeverUnderTheWindowsMinimum) {
+    const Rect area{0, 24, 1280, 696};
+    Constraints c;
+    c.minW = 1400;
+    c.minH = 700;
+    c.band = 32;
+    const auto fitted = fitIntoArea(Rect{100, 100, 1500, 900}, area, c);
+    ASSERT_TRUE(fitted.has_value());
+    const Rect r = fitted.value_or(Rect{});
+    EXPECT_EQ(r.w, 1400) << "its minimum width, wider than the area";
+    EXPECT_EQ(r.h, 732) << "its minimum surface and its titlebar band";
+    EXPECT_EQ(r.x, 0);
+    EXPECT_EQ(r.y, 24) << "its titlebar still right below the menu bar";
 }
 
 // ADR-0036 D67: an output unplugged left a window off every output (integrator nested pass of 12e3dd3: x = -2919).

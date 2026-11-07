@@ -100,6 +100,94 @@ TEST(ClientChromeTag, TheTagIsTheShellsAndTheSessionRules) {
     EXPECT_EQ(kTag, "grassfield-client-chrome");
 }
 
+// ---- P9: the decoration the client negotiated (owner report on 1.0.0-rc6: two title bars on Telegram and ArtCraft) ----
+
+TEST(ClientChromeDecoration, TheValuesAreTheProtocolsEnums) {
+    // xdg-decoration-unstable-v1.xml zxdg_toplevel_decoration_v1.mode: client_side 1, server_side 2;
+    // kde-server-decoration.xml org_kde_kwin_server_decoration.mode: None 0, Client 1, Server 2.
+    EXPECT_EQ(gf::chrome::kXdgModeClientSide, 1U);
+    EXPECT_EQ(gf::chrome::kXdgModeServerSide, 2U);
+    EXPECT_EQ(gf::chrome::kKdeModeClient, 1U);
+    EXPECT_EQ(gf::chrome::kKdeModeServer, 2U);
+}
+
+// The review of 3ca47a4b (nested at 1.25): imv (no decoration manager bound) and foot -o csd.preferred=client (xdg client_side,
+// then Hyprland's server_side answer taken) were tagged and lost every title bar. A window the plugin tags must draw its own.
+TEST(ClientChromeDecoration, OnlyARequestThatProvesABarOfItsOwnTagsTheWindow) {
+    using gf::chrome::DecorationRequest;
+    using gf::chrome::drawsOwnTitlebar;
+    EXPECT_TRUE(drawsOwnTitlebar(DecorationRequest{.kdeObject = true, .kdeRequested = 1, .managerBound = true, .clientHasObject = true}))
+        << "KDE client: a GTK header bar";
+    EXPECT_TRUE(drawsOwnTitlebar(DecorationRequest{.managerBound = true})) << "a manager bound, no object in the client: Qt's frameless window (Telegram)";
+}
+
+TEST(ClientChromeDecoration, ARequestThatProvesNoBarKeepsThePluginsTitlebar) {
+    using gf::chrome::DecorationRequest;
+    using gf::chrome::drawsOwnTitlebar;
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{})) << "nothing negotiated, no manager bound: imv draws nothing";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.xdgObject = true, .xdgRequested = 1, .managerBound = true, .clientHasObject = true}))
+        << "xdg client_side alone: foot -o csd.preferred=client draws nothing under Hyprland (Chromium is in S1b)";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.xdgObject = true, .xdgRequested = 2, .managerBound = true, .clientHasObject = true}))
+        << "xdg server_side (foot, Qt, SDL, mpv)";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.xdgObject = true, .xdgRequested = 0, .managerBound = true, .clientHasObject = true}))
+        << "xdg object, mode left to the compositor";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.kdeObject = true, .kdeRequested = 2, .managerBound = true, .clientHasObject = true}))
+        << "KDE server (a GTK window without a header bar)";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.kdeObject = true, .kdeRequested = 0, .managerBound = true, .clientHasObject = true}))
+        << "KDE object, never asked (or KDE's none)";
+}
+
+// What degrades when Hyprland changes its private decoration containers' meaning (ADR-0015, amendment 2026-11-07): the lookups
+// miss, and a window whose client holds any decoration object keeps the plugin's titlebar; only a client with none is tagged.
+TEST(ClientChromeDecoration, AnObjectNotFoundForTheWindowKeepsThePluginsTitlebar) {
+    using gf::chrome::DecorationRequest;
+    using gf::chrome::drawsOwnTitlebar;
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.managerBound = true, .clientHasObject = true}))
+        << "the client holds an object not found for this window: another of its windows, or a changed private map";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.clientHasObject = true})) << "an object without its manager: nothing proved";
+}
+
+TEST(ClientChromeDecoration, AKdeClientRequestIsAHeaderBarWhateverTheXdgSide) {
+    using gf::chrome::DecorationRequest;
+    using gf::chrome::drawsOwnTitlebar;
+    EXPECT_FALSE(drawsOwnTitlebar(
+        DecorationRequest{.xdgObject = true, .xdgRequested = 1, .kdeObject = true, .kdeRequested = 2, .managerBound = true, .clientHasObject = true}));
+    EXPECT_TRUE(drawsOwnTitlebar(
+        DecorationRequest{.xdgObject = true, .xdgRequested = 2, .kdeObject = true, .kdeRequested = 1, .managerBound = true, .clientHasObject = true}));
+}
+
+TEST(ClientChromeDecoration, TheDecorationInterfacesAreTheProtocolsNames) {
+    using gf::chrome::DecorationInterface;
+    using gf::chrome::decorationInterface;
+    EXPECT_EQ(decorationInterface("zxdg_decoration_manager_v1"), DecorationInterface::Manager);
+    EXPECT_EQ(decorationInterface("org_kde_kwin_server_decoration_manager"), DecorationInterface::Manager);
+    EXPECT_EQ(decorationInterface("zxdg_toplevel_decoration_v1"), DecorationInterface::Object);
+    EXPECT_EQ(decorationInterface("org_kde_kwin_server_decoration"), DecorationInterface::Object);
+    EXPECT_EQ(decorationInterface("xdg_wm_base"), DecorationInterface::Other);
+    EXPECT_EQ(decorationInterface("zxdg_decoration_manager_v2"), DecorationInterface::Other) << "exact names";
+    EXPECT_EQ(decorationInterface(""), DecorationInterface::Other);
+}
+
+TEST(ClientChromeDecoration, TheDecorationKeyIsAnyLiveToplevel) {
+    using gf::chrome::toplevelCandidate;
+    EXPECT_TRUE(toplevelCandidate("xdg_toplevel", true)) << "any version: xdg-decoration does not need v5";
+    EXPECT_FALSE(toplevelCandidate("xdg_toplevel", false)) << "being destroyed: never handed to fromResource";
+    EXPECT_FALSE(toplevelCandidate("xdg_popup", true));
+    EXPECT_FALSE(toplevelCandidate("zxdg_toplevel_decoration_v1", true));
+}
+
+TEST(ClientChromeDecoration, ThePluginOnlyEverRemovesTheTagItAdded) {
+    using gf::chrome::TagChange;
+    using gf::chrome::tagChange;
+    EXPECT_EQ(tagChange(true, false, false), TagChange::Add) << "draws its own, untagged: the plugin tags it";
+    EXPECT_EQ(tagChange(true, true, false), TagChange::None) << "already tagged by a session rule";
+    EXPECT_EQ(tagChange(true, true, true), TagChange::None) << "already tagged by the plugin";
+    EXPECT_EQ(tagChange(false, true, true), TagChange::Remove) << "switched to server-side decorations: the plugin's tag goes";
+    EXPECT_EQ(tagChange(false, true, false), TagChange::None) << "the per-app fallback rule's tag is never removed";
+    EXPECT_EQ(tagChange(false, false, false), TagChange::None);
+    EXPECT_EQ(tagChange(false, false, true), TagChange::None) << "the plugin's tag already gone: nothing to remove";
+}
+
 // ---- P2 ----
 
 TEST(ClientChromeFeature, AdvertisedOnlyWhenItsListenersAreRegistered) {

@@ -14,6 +14,8 @@
 #   other-output   dragged by its titlebar until its middle is on that neighbouring output, then tile(address, "left"):
 #                  the left half of THAT output (the plugin's own drag does not update Hyprland's window monitor, R13)
 #   menu-bar       released on the menu bar: the free area is filled
+#   menu-bar-at-once  (1.0.0-rc6 report) released 60 ms after reaching the menu bar, no output above: filled (no delay there)
+#   drag-follows   (same report) a capture right after a jump of the pointer during the titlebar drag: the window is under it
 #   ipc            hl.plugin.grassfield.tile(address, "left"), then "previous": the left half, then the size from before
 #   options        with tilingEdges false a drag to the right edge does not tile
 # Step 1 (docs/specs/tiling.md TL1-TL15; only when the plugin advertises tiling-arrange; a second foot window):
@@ -840,6 +842,57 @@ drag $((mx + mw / 2)) $((my + 2)) tiling-preview-fill fill
 check "menu-bar: released on the menu bar, the free area is filled" is_box $((ax + m)) "$ry" $((aw - 2 * m)) "$fullh"
 drag $((mx + mw / 2)) $((my + mh / 2))
 check "drag-out after fill: ${w0}x${h0} again" size_is "$w0" "$h0"
+
+# The 1.0.0-rc6 report ("the gesture up to fill the screen is very slow"), two causes (docs/specs/tiling.md TL17):
+# menu-bar-at-once: with no output above GF-REF the menu bar fills at once: a release 60 ms after the pointer reached it fills
+#   (before, the preview waited 250 ms and such a release only moved the window up to the bar).
+# drag-follows: the titlebar drag sets the window under the pointer at once (warpPositionSize, as Hyprland's own move with
+#   animate_mouse_windowdragging off); before, each step restarted the 300 ms windowsMove animation and the window trailed the
+#   pointer. A second pointer device jumps 400 px while the drag holds; the capture taken right after shows the plugin's strip
+#   under the pointer and the wallpaper where the left part of the bar was.
+above=$(nestctl monitors -j | jq -r --argjson x "$mx" --argjson w "$mw" --argjson y "$my" \
+  '[.[] | select(((.y + .height / .scale) | round) == $y and .x < ($x + $w) and (.x + .width / .scale) > $x)] | length')
+if [[ $above == 0 ]]; then
+  area_now
+  read -r x y w h _a < <(geometry)
+  px=$((x + w / 2 - mx)) py=$((y - GF_TB_MID - my))
+  pointer abs "$px" $((py + 3)) sleep 120 abs "$px" "$py" sleep 200 down sleep 150 drag "$px" $((py / 2)) sleep 60 drag "$px" 2 sleep 60 up
+  sleep 0.8
+  check "menu-bar-at-once: released 60 ms after reaching the menu bar (no output above), the free area is filled" is_box $((ax + m)) "$ry" $((aw - 2 * m)) "$fullh"
+  drag $((mx + mw / 2)) $((my + mh / 2))
+else
+  say "SKIP: menu-bar-at-once (an output lies above $out: its menu bar keeps the delay)"
+fi
+read -r x y w h _a < <(geometry)
+mscale=$(nestctl monitors -j | jq -r --arg o "$out" '.[] | select(.name == $o) | .scale')
+gx=$((x + w / 2 - mx)) gy=$((y - GF_TB_MID - my)) jump=400
+pointer abs "$gx" $((gy + 3)) sleep 120 abs "$gx" "$gy" sleep 200 down sleep 150 drag $((gx + 20)) "$gy" sleep 2500 up &
+pfollow=$!
+sleep 1.5
+timeout 10 "$root/scripts/dev/pointer.sh" output "$out" abs $((gx + 20 + jump)) "$gy" >>"$log" 2>&1
+WAYLAND_DISPLAY=$sock timeout 10 grim -o "$out" "$run/drag-follows.png" 2>>"$log"
+wait "$pfollow"
+sleep 0.6
+follows=$(python3 -I - "$run/drag-follows.png" "$mscale" "$(jq -r '.titlebar.backgroundDark.value' "$root/ui/tokens/tokens.json")" \
+  "$(jq -r '.titlebar.backgroundLight.value' "$root/ui/tokens/tokens.json")" $((x - mx)) $((y - GF_TB_HEIGHT + 4 - my)) "$w" $((20 + jump)) <<'PY' 2>>"$log"
+import subprocess, sys
+png, scale = sys.argv[1], float(sys.argv[2])
+tokens = [tuple(int(t.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)) for t in sys.argv[3:5]]
+x0, row, w, moved = (int(v) for v in sys.argv[5:9])
+def px(x, y):
+    spot = "%[hex:p{" + str(int(x * scale)) + "," + str(int(y * scale)) + "}]"
+    out = subprocess.run(["magick", png, "-format", spot, "info:"], capture_output=True, text=True).stdout
+    return tuple(int(out[i:i + 2], 16) for i in (0, 2, 4)) if len(out) >= 6 else None
+def strip(p):
+    return p is not None and any(max(abs(a - b) for a, b in zip(p, t)) <= 8 for t in tokens)
+new = [strip(px(x0 + moved + w * f, row)) for f in (0.2, 0.4, 0.6, 0.8)]
+old = [strip(px(x0 + moved * f, row)) for f in (0.15, 0.35, 0.55, 0.75)]
+print("%d %d" % (all(new), not any(old)))
+PY
+)
+say "  drag-follows: strip at the new place, wallpaper at the old: '$follows' (want '1 1'); capture $run/drag-follows.png"
+check "drag-follows: right after a jump of the pointer the window is under it (no windowsMove animation during the drag)" test "$follows" = "1 1"
+drag $((mx + mw / 2)) $((my + mh / 2))
 
 area_now
 nestctl dispatch "hl.plugin.grassfield.tile(\"$addr\", \"left\")" >>"$log" 2>&1

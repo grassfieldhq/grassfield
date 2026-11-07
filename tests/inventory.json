@@ -643,6 +643,8 @@
  {"path": "tests/compositor/third_party_chrome.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/compositor/gtk_lights.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/compositor/top_clamp.sh", "layer": "nested", "runner": "bare"},
+ {"path": "tests/compositor/decorations.sh", "layer": "nested", "runner": "bare"},
+ {"path": "tests/compositor/display_fit.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/compositor/click_focus.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/compositor/overlay_unmap.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/compositor/cursor_refresh.sh", "layer": "nested", "runner": "bare"},
