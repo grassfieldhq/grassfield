@@ -6,6 +6,7 @@ set -u
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 qml=$root/shell/desktop/DesktopFiles.qml
 d=$(mktemp -d)
+trap 'rm -rf "$d"' EXIT
 node -e '
 const s = require("fs").readFileSync(process.argv[1], "utf8");
 const i = s.indexOf("id: clipboardProbe");
@@ -40,5 +41,4 @@ out=$(run "text/uri-list x-special/gnome-copied-files" | head -n 1); check "GNOM
 out=$(run "text/plain"); check "no uri list prints nothing" "$out" ""
 out=$(run ""); check "empty clipboard prints nothing" "$out" ""
 out=$(run "text/uri-list" | tail -n +2); check "uri list follows the first line" "$out" "$(printf 'file:///a/b\r')"
-rm -rf "$d"
 exit $fail

@@ -474,7 +474,7 @@ FocusScope {
         if (paths.length === 0 || dir === "")
             return;
         const want = Logic.slotAt(drop.x - Tokens.desktopIconCellWidth / 2 - leftInset, drop.y - Tokens.desktopIconCellHeight / 2 - topInset, areaW, Tokens.desktopIconCellWidth, Tokens.desktopIconCellHeight, grid.cols, grid.rows);
-        const added = files.importPaths(paths, false);
+        const added = files.importPaths(paths, false, null);
         // Reserve slots for the new names next to the drop point.
         const taken = {};
         for (const n of Object.keys(lay))
