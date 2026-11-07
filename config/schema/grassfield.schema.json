@@ -601,7 +601,7 @@
         },
         "showScreenCapture": {
           "type": "boolean",
-          "description": "Show the Screen Capture item in the menu bar (macOS 26/27: the Screen Capture control added to the menu bar): a click, or Return or Space from the keyboard, opens the capture toolbar as Shift-Super-5 does. Optional (it gives way when the bar is crowded). Default false.",
+          "description": "Show the Screen Capture item in the menu bar (macOS 26/27: the Screen Capture control added to the menu bar): a click, or Return or Space from the keyboard, opens the capture toolbar as Shift-Super-5 does; Esc or the toolbar's Close button dismisses it. Optional (it gives way when the bar is crowded). Default false.",
           "default": false
         },
         "clockDate": {

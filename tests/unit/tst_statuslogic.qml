@@ -121,8 +121,13 @@ TestCase {
         verify(bar.indexOf("active: root.captureActive") >= 0, "lit while the toolbar is open");
         const shell = source("shell/shell.qml");
         verify(shell.indexOf("captureActive: captureSurface.open") >= 0);
-        verify(shell.indexOf("onCaptureRequested: screen => captureSurface.toggleOn(screen)") >= 0);
+        verify(shell.indexOf("onCaptureRequested: screen => captureSurface.openOn(screen)") >= 0);
         const capture = source("shell/capture/Capture.qml");
+        // It only opens (review of e134ded6): the open toolbar covers its display and takes every click there, so the bar never gets
+        // a second one; Esc or the toolbar's Close button dismisses it. No hide() in openOn.
+        const body = capture.substring(capture.indexOf("function openOn("), capture.indexOf("\n    }\n", capture.indexOf("function openOn(")));
+        verify(body.length > 0 && body.indexOf("hide()") < 0, "openOn never closes");
+        verify(body.indexOf("if (open)\n            return;") >= 0, "an open toolbar is left as it is");
         verify(capture.indexOf("screenName = ScreenChoice.pick(requestedScreen, Compositor.activeScreenName, Quickshell.screens.map(s => s.name));") >= 0,
             "the named display, else the active one");
         verify(capture.indexOf("requestedScreen = screen;\n        show();\n        requestedScreen = \"\";") >= 0, "through show(), the one opener");

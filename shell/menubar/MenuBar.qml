@@ -25,8 +25,8 @@ Scope {
     // The Search status item asks the shell to toggle Search (shell.qml owns it); `searchActive` lights the item while open.
     property bool searchActive: false
     signal searchRequested
-    // The Screen Capture item (menubar.showScreenCapture) asks the shell to open or close the capture toolbar on its display
-    // (shell.qml owns it, as Shift-Super-5); `captureActive` lights the item while the toolbar is open.
+    // The Screen Capture item (menubar.showScreenCapture) asks the shell to open the capture toolbar on its display (shell.qml owns
+    // it, as Shift-Super-5; Esc or the toolbar's Close button dismisses it); `captureActive` lights the item while it is open.
     property bool captureActive: false
     signal captureRequested(string screen)
 
@@ -1370,8 +1370,10 @@ Scope {
                         }
 
                         // Screen Capture (macOS 26/27: the control added to the menu bar; Settings > Menu Bar, off by default): opens
-                        // the capture toolbar on this display, as Shift-Super-5; again, it closes. Not a menu: Return or Space from
-                        // the keyboard. Optional: it gives way first when the bar is crowded.
+                        // the capture toolbar on this display, as Shift-Super-5. The open toolbar covers the display and takes its clicks
+                        // (an Entire Screen mode captures the display clicked), so this item gets no second click: Esc or the toolbar's
+                        // Close button dismisses it, as macOS. Not a menu: Return or Space from the keyboard. Optional: it gives way first
+                        // when the bar is crowded.
                         BarButton {
                             id: captureButton
                             objectName: "menubar-capture"

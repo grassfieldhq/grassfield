@@ -511,7 +511,7 @@ ShellRoot {
         searchActive: searchSurface.open
         onSearchRequested: searchSurface.toggle()
         captureActive: captureSurface.open
-        onCaptureRequested: screen => captureSurface.toggleOn(screen)
+        onCaptureRequested: screen => captureSurface.openOn(screen)
     }
     Dock {
         id: dock
