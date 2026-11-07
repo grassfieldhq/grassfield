@@ -108,7 +108,12 @@ ShellRoot {
         ["screensaver.kind", "slideshow", () => Settings.screenSaverKind === "slideshow"],
         ["screensaver.folder", "/home/u/Photos", () => Settings.screenSaverFolder === "/home/u/Photos"],
         ["capture.mode", "recordScreen", () => Settings.captureMode === "recordScreen"],
-        ["capture.saveTo", "documents", () => Settings.captureSaveTo === "documents"],
+        // Save to: the older key alone keeps its Documents and moves its Desktop (the old default) to the Screenshots folder; the
+        // newer key wins once written, and an unknown place in it is the Screenshots folder.
+        ["capture.saveTo", "desktop", () => Settings.captureLocation === "screenshots"],
+        ["capture.saveTo", "documents", () => Settings.captureLocation === "documents"],
+        ["capture.location", "desktop", () => Settings.captureLocation === "desktop"],
+        ["capture.location", "mail", () => Settings.captureLocation === "screenshots"],
         ["capture.timer", "10", () => Settings.captureTimer === "10"],
         ["capture.timer", 10, () => Settings.captureTimer === "none"],
         ["capture.microphone", "default", () => Settings.captureMicrophone === "default"],

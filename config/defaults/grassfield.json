@@ -134,6 +134,7 @@
   "capture": {
     "mode": "selection",
     "saveTo": "desktop",
+    "location": "screenshots",
     "timer": "none",
     "microphone": "none",
     "showPointer": false,

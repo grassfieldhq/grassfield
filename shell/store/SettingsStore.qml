@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Grassfield.Ui
+import "CaptureLocation.js" as CaptureLocation
 
 // grassfield.json (contract version 1): schema, defaults, persistence. Not a singleton so that
 // tests can create independent instances; the shell uses it through the Settings singleton.
@@ -339,6 +340,10 @@ Scope {
     // The capture toolbar (Shift-Super-5, ADR-0045 OC-1): the mode chosen last and its Options menu (Save to, Timer, Microphone,
     // Show Mouse Pointer). The toolbar writes them; no Settings pane shows them.
     readonly property string captureMode: read("capture.mode")
+    // Save to (capture.location; capture.saveTo is the older key, read only while location is absent: CaptureLocation.effective,
+    // which keeps its documents, clipboard and preview and moves its desktop, the old default, to the Screenshots folder).
+    readonly property string captureLocation: CaptureLocation.effective(rawValue("capture.location"), rawValue("capture.saveTo"), root.unsafeFile)
+    // The older key as the contract reads it (the settings vectors; nothing else reads it).
     readonly property string captureSaveTo: read("capture.saveTo")
     readonly property string captureTimer: read("capture.timer")
     readonly property string captureMicrophone: read("capture.microphone")

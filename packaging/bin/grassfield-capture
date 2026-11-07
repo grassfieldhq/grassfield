@@ -5,34 +5,37 @@
 # picks an area, a click without a drag picks the window under the pointer, else the display, Esc cancels; a second press while
 # the crosshair shows cancels it, as Omarchy's capture did). grim takes the picture, slurp draws the crosshair in Grassfield's
 # colours (capture.* in ui/tokens/tokens.json, mirrored below; tests/shell/capture.sh holds them equal). Each file is named as
-# on macOS ("Screenshot 2026-10-31 at 14.05.12.png", the next display's " (2)", translated) on the Desktop; the focused
+# on macOS ("Screenshot 2026-10-31 at 14.05.12.png", the next display's " (2)", translated) where Save to says (below; by default
+# the Screenshots folder in the Pictures folder, never the Desktop unless chosen: owner 2026-11-07); the focused
 # display's picture (or the selection) is copied to the clipboard, and a Grassfield notice shows it with "Open in Preview"
 # (Preview is Grassfield's viewer, org.grassfield.Preview), which opens every picture of that capture. Nothing names an Omarchy
 # shortcut; no tensaku. Standard library only; strings through tr() (gate I1: scripts/dev/check-i18n.py).
 #
 # The capture toolbar (Shift-Cmd-5, shell/capture) runs the same modes with its options, and a window mode:
-#   grassfield-capture screen|window|selection [--save desktop|documents|clipboard|preview] [--timer 0|5|10] [--pointer]
-#                      [--output NAME (screen)] [--geometry "X,Y WxH" (window, selection)]
+#   grassfield-capture screen|window|selection [--save screenshots|desktop|documents|clipboard|preview] [--timer 0|5|10]
+#                      [--pointer] [--output NAME (screen)] [--geometry "X,Y WxH" (window, selection)]
 # The toolbar chooses on its own surface (macOS 27): the frame of Capture Selected Portion and the window clicked in Capture
 # Selected Window come as --geometry (whole numbers, a positive size, wholly on one enabled display, or the usage, exit 2), the
 # display clicked in Capture Entire Screen as --output (that display only; without it every display). Without --geometry the
 # helper's crosshair chooses (the keys, and the toolbar's fallback): `window` is the crosshair restricted to the windows (slurp
-# -r), a click picks the window drawn on top there. --save: the Desktop (the default, as above), the Documents folder (copied
-# too), the clipboard only (no file, no notice, as macOS), or Preview (the picture is kept on the Desktop, since Preview cannot
-# save a document, and opened in Preview at once, no notice). --timer: a countdown after the choice and before the picture;
-# --pointer: grim draws the pointer (-c).
-#   grassfield-capture record screen|selection [--save desktop|documents|preview] [--timer 0|5|10] [--pointer] [--mic]
-#                             [--output NAME (screen)] [--geometry "X,Y WxH" (selection)]
+# -r), a click picks the window drawn on top there. --save: the Screenshots folder in the Pictures folder (xdg-user-dir
+# PICTURES; the folder named in the session's language, made on first use, an existing English "Screenshots" kept), the Desktop,
+# the Documents folder (copied too), the clipboard only (no file, no notice, as macOS), or Preview (the picture is kept in the
+# Screenshots folder, since Preview cannot save a document, and opened in Preview at once, no notice). Without --save (the keys)
+# the toolbar's choice applies: capture.location of grassfield.json, as the shell reads it (stored_location). --timer: a
+# countdown after the choice and before the picture; --pointer: grim draws the pointer (-c).
+#   grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview] [--timer 0|5|10] [--pointer]
+#                             [--mic] [--output NAME (screen)] [--geometry "X,Y WxH" (selection)]
 # records with gpu-screen-recorder (an Omarchy base package) and Omarchy's backend arguments (omarchy-capture-screenrecording:
 # `-w <display> -s <size>` for a whole display, `-w WxH+X+Y` in logical coordinates for an area, `-k auto -f 60 -fm cfr
 # -fallback-cpu-encoding yes`, the microphone as `-a default_input -ac aac`; never the desktop's sound, as macOS). `screen`
 # records the display clicked or the toolbar's (--output), else the focused one; `selection` the toolbar's frame (--geometry)
 # or the crosshair's choice (a whole display is recorded as that display). The movie is written to a hidden file of this
-# helper's in the destination and then takes its name, "Screen Recording 2026-11-04 at 14.05.12.mp4" (the start time,
-# translated), never replacing a file; a notice "Screen Recording" with "Open" (Preview plays it) follows. A recording with
-# --save clipboard is not offered (a movie is not copied): it goes to the Desktop. While a recording or a countdown runs this
-# helper holds a lock and keeps its state in a private file, $XDG_RUNTIME_DIR/grassfield/capture-state.json (0600, by rename,
-# in the 0700 folder of the capture notice), which the shell watches (its countdown and the menu bar's stop item):
+# helper's in the destination (the default: the Videos folder, xdg-user-dir VIDEOS) and then takes its name, "Screen Recording
+# 2026-11-04 at 14.05.12.mp4" (the start time, translated), never replacing a file; a notice "Screen Recording" with "Open"
+# (Preview plays it) follows. A recording with --save clipboard is not offered (a movie is not copied): it goes to the Videos
+# folder. While a recording or a countdown runs this helper holds a lock and keeps its state in a private file,
+# $XDG_RUNTIME_DIR/grassfield/capture-state.json (0600, by rename, in the 0700 folder of the capture notice), which the shell watches (its countdown and the menu bar's stop item):
 #   {"v": 1, "phase": "idle" | "starting" | "selecting" | "countdown" | "recording", "kind": "shot" | "recording",
 #    "pid", "start", "until" (ms since the epoch, countdown), "rect" {x, y, w, h} and "output" (where the capture is),
 #    "recorder", "recorderStart" and "started" (ms, recording)}
@@ -88,8 +91,12 @@ PREVIEW_ICON = "org.grassfield.Preview"
 # The toolbar's options (shell/capture/CaptureModel.js builds the same argv).
 MODES = ("screen", "window", "selection")
 RECORD_MODES = ("screen", "selection")
-SAVE_TO = ("desktop", "documents", "clipboard", "preview")
+SAVE_TO = ("screenshots", "desktop", "documents", "clipboard", "preview")
 TIMERS = ("0", "5", "10")
+# Save to without --save (the keys): capture.location of grassfield.json, else the older capture.saveTo's documents, clipboard and
+# preview (its desktop, the old default, reads as the new one), else the Screenshots folder (shell/store/CaptureLocation.js).
+DEFAULT_SAVE = "screenshots"
+KEPT_FROM_SAVE_TO = ("documents", "clipboard", "preview")
 # The shell hides its countdown when the time is up, and Hyprland drops the countdown's layer at once (no_anim,
 # config/hypr/grassfield/windows.lua); the picture (or the recording) waits this long after, as for the last notice.
 COUNTDOWN_GONE_SECONDS = 0.5
@@ -109,26 +116,35 @@ TITLE = "Screenshot"
 NAME = "Screenshot %(date)s at %(time)s"
 BODY = "Saved to the Desktop and copied."
 BODY_DOCUMENTS = "Saved to Documents and copied."
+# The default place: the folder by its own name (the Screenshots folder in Pictures, the Videos folder for a recording).
+BODY_FOLDER = "Saved to %(folder)s and copied."
 OPEN = "Open in Preview"
 REC_TITLE = "Screen Recording"
 REC_NAME = "Screen Recording %(date)s at %(time)s"
 REC_DESKTOP = "Saved to the Desktop."
 REC_DOCUMENTS = "Saved to Documents."
+REC_FOLDER = "Saved to %(folder)s."
 REC_FAILED = "The screen recording could not be saved."
 REC_OPEN = "Open"
+# The folder screenshots go to by default, in the Pictures folder, named in the session's language when it is made (an existing
+# folder of the English name is used as it is, so that changing the language does not start a second one).
+SCREENSHOTS = "Screenshots"
 CATALOG = {
     "fr": {
         TITLE: "Capture d’écran",
         NAME: "Capture d’écran %(date)s à %(time)s",
         BODY: "Enregistrée sur le Bureau et copiée.",
         BODY_DOCUMENTS: "Enregistrée dans Documents et copiée.",
+        BODY_FOLDER: "Enregistrée dans %(folder)s et copiée.",
         OPEN: "Ouvrir dans la Visionneuse",
         REC_TITLE: "Enregistrement de l’écran",
         REC_NAME: "Enregistrement de l’écran %(date)s à %(time)s",
         REC_DESKTOP: "Enregistré sur le Bureau.",
         REC_DOCUMENTS: "Enregistré dans Documents.",
+        REC_FOLDER: "Enregistré dans %(folder)s.",
         REC_FAILED: "L’enregistrement de l’écran n’a pas pu être sauvegardé.",
         REC_OPEN: "Ouvrir",
+        SCREENSHOTS: "Captures d’écran",
     },
 }
 
@@ -141,21 +157,36 @@ SOUND_DEFAULTS = {"uiEffects": True, "alertVolume": 0.75, "effectsOutput": ""}
 NODE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.:@+-]{0,254}")
 
 
-def sound_settings():
-    out = dict(SOUND_DEFAULTS)
+def settings_group(name):
+    # One group of grassfield.json ({} when the file, or the group, cannot be used).
     home = os.environ.get("GRASSFIELD_CONFIG_HOME") or os.path.join(
         os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"), "grassfield")
-    sound = None
+    group = None
     try:
         fd = os.open(os.path.join(home, "grassfield.json"), os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
         with os.fdopen(fd, "rb") as f:
             st = os.fstat(f.fileno())
             if stat.S_ISREG(st.st_mode) and st.st_size <= 1 << 20:
                 data = json.loads(f.read(1 << 20).decode("utf-8"))
-                sound = data.get("sound") if isinstance(data, dict) else None
+                group = data.get(name) if isinstance(data, dict) else None
     except (OSError, ValueError):
-        sound = None
-    if not isinstance(sound, dict):
+        group = None
+    return group if isinstance(group, dict) else {}
+
+
+def stored_location():
+    # Save to for the keys (no --save): the toolbar's choice as the shell reads it (shell/store/CaptureLocation.js).
+    capture = settings_group("capture")
+    if "location" in capture:
+        return capture["location"] if capture["location"] in SAVE_TO else DEFAULT_SAVE
+    saved = capture.get("saveTo")
+    return saved if saved in KEPT_FROM_SAVE_TO else DEFAULT_SAVE
+
+
+def sound_settings():
+    out = dict(SOUND_DEFAULTS)
+    sound = settings_group("sound")
+    if not sound:
         return out
     if isinstance(sound.get("uiEffects"), bool):
         out["uiEffects"] = sound["uiEffects"]
@@ -366,7 +397,7 @@ def session_locked(monitors=None):
 
 def user_dir(key, fallback):
     # One of the user's folders as the shell finds the Desktop (shell/desktop/DesktopFiles.qml): xdg-user-dir's answer for
-    # `key` (DESKTOP, DOCUMENTS), else ~/<fallback>; never the home folder itself or the root.
+    # `key` (DESKTOP, DOCUMENTS, PICTURES, VIDEOS), else ~/<fallback>; never the home folder itself or the root.
     home = os.path.expanduser("~")
     r = run(["xdg-user-dir", key])
     path = os.fsdecode(r.stdout).strip() if r is not None and r.returncode == 0 else ""
@@ -383,10 +414,44 @@ def desktop():
     return user_dir("DESKTOP", "Desktop")
 
 
-def destination(save):
-    # Where a capture's file goes: Documents, else the Desktop (the Desktop for Preview too, and for a recording asked for the
-    # clipboard).
-    return user_dir("DOCUMENTS", "Documents") if save == "documents" else desktop()
+def screenshots():
+    # The Screenshots folder in the Pictures folder: one of either name that is already there (the session's language first),
+    # else the session's language's, made now. A name taken by something that is not a folder: the Pictures folder itself.
+    pictures = user_dir("PICTURES", "Pictures")
+    if pictures is None:
+        return None
+    names = [tr(SCREENSHOTS)] + ([SCREENSHOTS] if tr(SCREENSHOTS) != SCREENSHOTS else [])
+    for name in names:
+        path = os.path.join(pictures, name)
+        if os.path.isdir(path) and not os.path.islink(path):
+            return path
+    path = os.path.join(pictures, names[0])
+    try:
+        os.mkdir(path)
+    except FileExistsError:
+        return path if os.path.isdir(path) and not os.path.islink(path) else pictures
+    except OSError:
+        return pictures
+    return path
+
+
+def destination(save, record=False):
+    # Where a capture's file goes: the Screenshots folder (a recording: the Videos folder) unless the Desktop or Documents was
+    # chosen; Preview keeps its file in the default place too, and a recording asked for the clipboard goes there.
+    if save == "desktop":
+        return desktop()
+    if save == "documents":
+        return user_dir("DOCUMENTS", "Documents")
+    return user_dir("VIDEOS", "Videos") if record else screenshots()
+
+
+def saved_note(save, folder, record=False):
+    # The notice's sentence naming where the file went: the Desktop, Documents, else the folder by its own name.
+    if save == "desktop":
+        return tr(REC_DESKTOP if record else BODY)
+    if save == "documents":
+        return tr(REC_DOCUMENTS if record else BODY_DOCUMENTS)
+    return tr(REC_FOLDER if record else BODY_FOLDER) % {"folder": os.path.basename(folder.rstrip("/"))}
 
 
 def reserve(folder, prefix, ext):
@@ -800,7 +865,7 @@ def shot(opts):
             copy_png(f.read())
     except OSError:
         pass
-    notify(paths, TITLE, BODY_DOCUMENTS if save == "documents" else BODY, OPEN)
+    notify(paths, TITLE, saved_note(save, folder), OPEN)
     return 0
 
 
@@ -899,7 +964,7 @@ def record(opts):
         if opts["timer"]:
             countdown(opts["timer"], rect, output, "recording", lock)
         time.sleep(max(0.0, ready - time.monotonic()))
-        folder = destination(opts["save"])
+        folder = destination(opts["save"], record=True)
         tmp = reserve(folder, "grassfield-recording", ".mp4") if folder else None
         if tmp is None or session_locked():
             return 1  # (the session locked during the choice or the countdown: nothing is recorded)
@@ -961,7 +1026,7 @@ def record(opts):
     if opts["save"] == "preview":
         open_with(PREVIEW, [path])
         return 0
-    notify([path], REC_TITLE, REC_DOCUMENTS if opts["save"] == "documents" else REC_DESKTOP, REC_OPEN, picture=False)
+    notify([path], REC_TITLE, saved_note(opts["save"], os.path.dirname(path), record=True), REC_OPEN, picture=False)
     return 0
 
 
@@ -1014,7 +1079,7 @@ def parse(args):
         action, args = "record", args[1:]
     if not args or args[0] not in (RECORD_MODES if action == "record" else MODES):
         return None
-    out = {"action": action, "mode": args[0], "save": "desktop", "timer": 0, "pointer": False, "mic": False, "output": "",
+    out = {"action": action, "mode": args[0], "save": None, "timer": 0, "pointer": False, "mic": False, "output": "",
            "geometry": None}
     seen, i = set(), 1
     while i < len(args):
@@ -1044,8 +1109,6 @@ def parse(args):
             i += 1
         else:
             return None
-    if action == "record" and out["save"] == "clipboard":
-        out["save"] = "desktop"  # a movie is not copied (see above)
     return out
 
 
@@ -1056,20 +1119,24 @@ def raise_cancelled(signum, frame):
 def main():
     opts = parse(sys.argv[1:])
     if opts is None:
-        sys.stderr.write("usage: grassfield-capture screen|window|selection [--save desktop|documents|clipboard|preview]"
+        sys.stderr.write("usage: grassfield-capture screen|window|selection [--save screenshots|desktop|documents|clipboard|preview]"
                          " [--timer 0|5|10] [--pointer] [--output NAME (screen)] [--geometry 'X,Y WxH' (window, selection)]\n"
-                         "       grassfield-capture record screen|selection [--save desktop|documents|preview]"
+                         "       grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview]"
                          " [--timer 0|5|10] [--pointer] [--mic] [--output NAME (screen)] [--geometry 'X,Y WxH' (selection)]\n"
                          "       grassfield-capture stop\n")
         return 2
     if opts["action"] == "stop":
         return stop()
+    if opts["save"] is None:
+        opts["save"] = stored_location()  # the keys: the toolbar's Save to
+    if opts["action"] == "record" and opts["save"] == "clipboard":
+        opts["save"] = DEFAULT_SAVE  # a movie is not copied (see above): the Videos folder
     if opts["action"] == "record":
         try:
             return record(opts)
         except Cancelled:
             return 0
-    # A signal (the session ending) still runs the clean-up of save_picture(): no hidden file is left on the Desktop. SIGINT
+    # A signal (the session ending) still runs the clean-up of save_picture(): no hidden file is left in the folder. SIGINT
     # (stop, during the toolbar's countdown) ends the capture without a picture.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     signal.signal(signal.SIGINT, raise_cancelled)

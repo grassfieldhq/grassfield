@@ -4,8 +4,8 @@
 
 -- Screenshots, macOS keys with Super as Command: Command+Shift+3 the screen (every display, one picture each), Command+Shift+4 and
 -- Print a selection (a drag, or a click on a window; Esc cancels) (ADR-0035 D-10, owner decision Q4). Grassfield's capture (grim
--- and slurp in Grassfield's colours) saves to the Desktop as macOS names it, copies to the clipboard and shows a notice with
--- "Open in Preview". Command+Shift+5 opens the capture toolbar, a shell surface bound in bindings.lua (ADR-0045 OC-1). Bound by
+-- and slurp in Grassfield's colours) saves where the toolbar's Save to says (by default the Screenshots folder in Pictures) as
+-- macOS names it, copies to the clipboard and shows a notice with "Open in Preview". Command+Shift+5 opens the capture toolbar, a shell surface bound in bindings.lua (ADR-0045 OC-1). Bound by
 -- keycode (digits need Shift on some layouts). None of these keys runs under the session lock (no `locked` option).
 local function capture(mode)
   return hl.dsp.exec_cmd("/usr/lib/grassfield/grassfield-capture " .. mode)

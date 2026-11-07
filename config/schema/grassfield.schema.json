@@ -889,7 +889,19 @@
             "preview"
           ],
           "default": "desktop",
-          "description": "Options > Save to: the Desktop, the Documents folder, the clipboard only (screenshots; a recording then goes to the Desktop), or Preview (the file is kept on the Desktop and opened in Preview)."
+          "description": "Superseded by `location` (1.0.0-rc7); kept so that older files stay valid. Read only while `location` is absent: its documents, clipboard and preview stay chosen, and its desktop (the old default, which every file the shell created held, so it cannot be told from a choice) reads as `location`'s default. Nothing writes it any more."
+        },
+        "location": {
+          "type": "string",
+          "enum": [
+            "screenshots",
+            "desktop",
+            "documents",
+            "clipboard",
+            "preview"
+          ],
+          "default": "screenshots",
+          "description": "Options > Save to (owner 2026-11-07: never the Desktop by default): `screenshots` the Screenshots folder in the Pictures folder (xdg-user-dir PICTURES; the folder named in the session's language, made on first use) for a screenshot and the Videos folder (xdg-user-dir VIDEOS) for a recording; the Desktop; the Documents folder; the clipboard only (screenshots; a recording then goes to the Videos folder); or Preview (the file is kept where `screenshots` puts it and opened in Preview). The toolbar writes it; the screenshot keys follow it too."
         },
         "timer": {
           "type": "string",

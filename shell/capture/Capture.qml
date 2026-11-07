@@ -38,7 +38,7 @@ Scope {
     readonly property bool canRecord: recorder && CaptureState.phase === "idle"
     // The Options as stored (capture.*): what the menu checks and what the helper is given.
     readonly property var options: ({
-            saveTo: Settings.captureSaveTo,
+            location: Settings.captureLocation,
             timer: Settings.captureTimer,
             microphone: Settings.captureMicrophone,
             showPointer: Settings.captureShowPointer

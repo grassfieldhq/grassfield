@@ -96,6 +96,7 @@ ShellRoot {
             "screensaver.folder": "screenSaverFolder",
             "capture.mode": "captureMode",
             "capture.saveTo": "captureSaveTo",
+            "capture.location": "captureLocation",
             "capture.timer": "captureTimer",
             "capture.microphone": "captureMicrophone",
             "capture.showPointer": "captureShowPointer",

@@ -3422,6 +3422,14 @@
         <translation>Enregistrer dans</translation>
     </message>
     <message>
+        <source>Screenshots</source>
+        <translation>Captures d’écran</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Vidéos</translation>
+    </message>
+    <message>
         <source>Desktop</source>
         <translation>Bureau</translation>
     </message>

@@ -135,7 +135,8 @@ Singleton {
     readonly property string screenSaverFolder: store.screenSaverFolder
     // The capture toolbar's mode and Options menu (ADR-0045 OC-1); the toolbar writes them through setCaptureOption.
     readonly property string captureMode: store.captureMode
-    readonly property string captureSaveTo: store.captureSaveTo
+    // Save to: the Screenshots folder (Videos for a recording) unless another place was chosen (SettingsStore.captureLocation).
+    readonly property string captureLocation: store.captureLocation
     readonly property string captureTimer: store.captureTimer
     readonly property string captureMicrophone: store.captureMicrophone
     readonly property bool captureShowPointer: store.captureShowPointer
@@ -278,7 +279,7 @@ Singleton {
         store.setNotificationsPreviews(value);
     }
 
-    // key: mode | saveTo | timer | microphone | showPointer (capture.*); an invalid value is refused.
+    // key: mode | location | timer | microphone | showPointer (capture.*); an invalid value is refused.
     function setCaptureOption(key: string, value: var): void {
         store.setCaptureOption(key, value);
     }
