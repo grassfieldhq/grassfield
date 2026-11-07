@@ -123,8 +123,9 @@ TestCase {
         verify(shell.indexOf("captureActive: captureSurface.open") >= 0);
         verify(shell.indexOf("onCaptureRequested: screen => captureSurface.toggleOn(screen)") >= 0);
         const capture = source("shell/capture/Capture.qml");
-        verify(capture.indexOf("screenName = ScreenChoice.pick(screen, Compositor.activeScreenName, Quickshell.screens.map(s => s.name));") >= 0,
+        verify(capture.indexOf("screenName = ScreenChoice.pick(requestedScreen, Compositor.activeScreenName, Quickshell.screens.map(s => s.name));") >= 0,
             "the named display, else the active one");
+        verify(capture.indexOf("requestedScreen = screen;\n        show();\n        requestedScreen = \"\";") >= 0, "through show(), the one opener");
         verify(capture.indexOf('if (SessionState.refuses("capture"))') >= 0, "never over the lock screen");
     }
 }

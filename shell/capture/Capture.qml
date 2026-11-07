@@ -66,12 +66,11 @@ Scope {
             mode = "selection";
     }
 
-    function show(): void {
-        showOn("");
-    }
+    // The display the next show() opens on: the menu bar's Screen Capture item names its bar's display (toggleOn); "" is the
+    // active one. show() stays the one place that opens the toolbar, refusing first while locked (tests/security/lock_surfaces.sh).
+    property string requestedScreen: ""
 
-    // On a named display (the menu bar's Screen Capture item: its bar's display), else the active one (ScreenChoice.pick).
-    function showOn(screen: string): void {
+    function show(): void {
         // Nothing opens over the lock screen (GF-116): Shift-Super-5, the menu bar item and IPC alike.
         if (SessionState.refuses("capture"))
             return;
@@ -80,7 +79,7 @@ Scope {
         launch.stop();
         pending = null;
         CaptureState.probeRecorder();
-        screenName = ScreenChoice.pick(screen, Compositor.activeScreenName, Quickshell.screens.map(s => s.name));
+        screenName = ScreenChoice.pick(requestedScreen, Compositor.activeScreenName, Quickshell.screens.map(s => s.name));
         mode = Model.startMode(Settings.captureMode, canRecord);
         Compositor.refreshToplevels();
         open = true;
@@ -99,10 +98,13 @@ Scope {
 
     // The menu bar's Screen Capture item: the toolbar on that bar's display; again, it closes.
     function toggleOn(screen: string): void {
-        if (open)
+        if (open) {
             hide();
-        else
-            showOn(screen);
+            return;
+        }
+        requestedScreen = screen;
+        show();
+        requestedScreen = "";
     }
 
     // A click on a mode, or the arrows: the mode chosen is kept for the next time (capture.mode).
