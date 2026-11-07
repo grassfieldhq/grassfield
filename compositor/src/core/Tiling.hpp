@@ -94,6 +94,12 @@ namespace gf::tiling {
     // the same output for kPreviewDelay ms (token tiling.previewDelay), at once with Alt held; another place, another
     // output or none starts over and hides the preview at once.
     inline constexpr uint64_t kPreviewDelay = theme::tokens::kTilingPreviewDelay;
+    // Which places show without that delay: any with Alt held (TL17), and the menu bar's Fill when no other output lies
+    // above that output's top edge (`topFree`): the window is held below the menu bar there (FR56) and the pointer has gone on
+    // into the top of the screen, a target and never a way to another display (owner report on 1.0.0-rc6: "the gesture up to
+    // fill the screen is very slow"; macOS shows the fill outline as the pointer reaches the menu bar). With an output above,
+    // the strip is crossed on the way there and keeps the delay, as the side edges do.
+    bool showsAtOnce(std::optional<Place> place, bool topFree, bool alt);
     class CDwell {
       public:
         // The pointer is on `place` of output `output` (nullopt: none) at `nowMs`; `immediate`: Alt is held. True when

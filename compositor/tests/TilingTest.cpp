@@ -768,6 +768,19 @@ TEST(TilingDwell, AltShowsAtOnce) {
     EXPECT_FALSE(d.update(Place::Left, "A", 104, false)) << "after a reset, the same place waits again";
 }
 
+// Owner report on 1.0.0-rc6 ("the gesture up to fill the screen is very slow"): the menu bar is a target, the pointer pushed past
+// the window held below it; it fills at once unless another output lies above (then the strip is crossed on the way there).
+TEST(TilingDwell, TheMenuBarFillsAtOnceWhenNothingIsAbove) {
+    EXPECT_TRUE(showsAtOnce(Place::Fill, true, false)) << "the menu bar, nothing above: at once";
+    EXPECT_FALSE(showsAtOnce(Place::Fill, false, false)) << "an output above: the strip is a way there, the delay stays";
+    EXPECT_FALSE(showsAtOnce(Place::Left, true, false)) << "the side edges keep the delay";
+    EXPECT_FALSE(showsAtOnce(Place::TopLeft, true, false)) << "the corners too";
+    EXPECT_FALSE(showsAtOnce(std::nullopt, true, false)) << "no place";
+    EXPECT_TRUE(showsAtOnce(Place::Right, false, true)) << "Alt: any place at once (TL17)";
+    CDwell d;
+    EXPECT_TRUE(d.update(Place::Fill, "A", 100, showsAtOnce(Place::Fill, true, false))) << "shown as the pointer reaches the menu bar";
+}
+
 TEST(TilingSides, ABorderPressGripsTheSidesItIsBeyond) {
     const Rect s{2000, 300, 800, 500};
     EXPECT_EQ(sidesAt(1995, 500, s), kSideLeft);

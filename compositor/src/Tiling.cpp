@@ -257,6 +257,21 @@ namespace gf::tiler {
             return true;
         }
 
+        // The top edge of `m` is free when no other monitor's bottom edge touches it along an overlapping span: the menu bar
+        // strip is then the top of the screen, never crossed on the way to another output (core showsAtOnce).
+        bool topFree(const PHLMONITOR& m) {
+            const CBox box = m->logicalBox();
+            for (const auto& o : monitors()) {
+                if (o == m)
+                    continue;
+                const CBox other    = o->logicalBox();
+                const bool overlaps = other.x < box.x + box.w && other.x + other.w > box.x;
+                if (overlaps && std::abs(box.y - (other.y + other.h)) < 1.0)
+                    return false;
+            }
+            return true;
+        }
+
         bool sameBox(const CBox& a, const CBox& b) {
             return std::abs(a.x - b.x) <= 1.0 && std::abs(a.y - b.y) <= 1.0 && std::abs(a.w - b.w) <= 1.0 && std::abs(a.h - b.h) <= 1.0;
         }
@@ -1854,7 +1869,8 @@ namespace gf::tiler {
         auto       next   = snapFor(w, pointer);
         const auto m      = next ? next->monitor.lock() : nullptr;
         const auto now    = nowMs();
-        d.dwell.update(next ? std::optional{next->place} : std::nullopt, m ? std::string_view{m->m_name} : std::string_view{}, now, altHeld());
+        const auto place  = next ? std::optional{next->place} : std::nullopt;
+        d.dwell.update(place, m ? std::string_view{m->m_name} : std::string_view{}, now, tiling::showsAtOnce(place, m && topFree(m), altHeld()));
         d.candidate      = std::move(next);
         const auto after = shownOf(d);
         const bool same  = before && after ? before->place == after->place && before->frame == after->frame : before.has_value() == after.has_value();

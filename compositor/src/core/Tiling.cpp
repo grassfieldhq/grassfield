@@ -63,6 +63,10 @@ namespace gf::tiling {
         return placeForPointer(x, y, output, options);
     }
 
+    bool showsAtOnce(std::optional<Place> place, bool topFree, bool alt) {
+        return alt || (place == Place::Fill && topFree);
+    }
+
     bool CDwell::update(std::optional<Place> place, std::string_view output, uint64_t nowMs, bool immediate) {
         if (place != m_place || (place && output != m_output)) {
             m_place  = place;

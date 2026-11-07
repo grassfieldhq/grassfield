@@ -332,6 +332,13 @@ namespace {
         return enabled.good() && *enabled != 0;
     }
 
+    // Hyprland's misc:animate_mouse_windowdragging (false in the session, config/hypr/grassfield/looknfeel.lua), read at each
+    // step: whether a window dragged with the pointer moves through the windowsMove animation or sits under the pointer at once.
+    bool animateWindowDragging() {
+        const CConfigValue<Config::INTEGER> animate("misc:animate_mouse_windowdragging");
+        return animate.good() && *animate != 0;
+    }
+
     // Interactive move driven by the plugin: the window follows the pointer from the press point.
     // S2 history: with CLayoutManager::beginDragTarget and CKeybindManager::changeMouseBindMode the window
     // jumped by (window middle - press point). The cause was most likely Config::Actions::focus() warping
@@ -379,6 +386,13 @@ namespace {
         else
             box = gf::topClamp::heldMove(w, box, pointer);
         g_layoutManager->setTargetGeom(box, target);
+        // Under the pointer at once, as Hyprland's own move with animate_mouse_windowdragging off (the step of its drag:
+        // setTargetGeom, warpPositionSize; the shared edge's drag does the same). Owner report on 1.0.0-rc6 ("the gesture up to
+        // fill the screen is very slow"): each motion restarted the 300 ms windowsMove animation, so the window trailed the
+        // pointer on its way to the menu bar (nested capture: still mid-way 100 ms after a jump of the pointer). The release's
+        // tile is set after this step and keeps its animation.
+        if (!animateWindowDragging())
+            target->warpPositionSize();
         if (!grab.member) // a Split View member shows no tiling place: it lands in a half (TL33, step 6b)
             gf::tiler::dragMotion(w, pointer); // the place under the pointer, shown after the preview delay (TL17)
     }
