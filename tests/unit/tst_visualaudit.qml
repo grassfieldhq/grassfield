@@ -144,7 +144,7 @@ TestCase {
 
     function test_barGlyphsAreTheSameDrawingsWithAHeavierStroke() {
         const names = ["grassfield-logo", "wifi-1", "wifi-2", "wifi-3", "wifi-off", "network-wired", "volume-1", "volume-2", "volume-3", "volume-mute",
-            "battery", "battery-charging", "search", "now-playing", "moon", "control-center", "record-stop"];
+            "battery", "battery-charging", "search", "now-playing", "moon", "control-center", "record-stop", "capture-selection"];
         for (const n of names) {
             const base = readFile(Qt.resolvedUrl("../../ui/Grassfield/Ui/icons/" + n + ".svg"));
             const bar = readFile(Qt.resolvedUrl("../../ui/Grassfield/Ui/icons-bar/" + n + ".svg"));
