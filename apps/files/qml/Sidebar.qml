@@ -506,7 +506,9 @@ FocusScope {
                     root.insertGap = -1;
                     if (gap >= 0 && root.tab) {
                         root.app.moveInSidebar(placeDrag.url, gap);
-                        event.accept(Qt.MoveAction);
+                        // Copy, as every drop of Files answers (tst_filestabs): the place's own drag only asks whether it
+                        // was taken, nothing moves on disk.
+                        event.accept(Qt.CopyAction);
                     }
                     return;
                 }
