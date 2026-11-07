@@ -563,6 +563,12 @@ check(len(shots(os.path.join(images, "Captures d’écran"))) == 2 and note
 r, _ = capture("screen", FAKE_PICTURES=pictures, LANG="fr_FR.UTF-8")
 check(len(shots(screenshots)) == 4 and not os.path.exists(os.path.join(pictures, "Captures d’écran")),
       "in French, the Screenshots folder already there is used [%r]" % files(pictures))
+# Back to English after French (review of e134ded6): the French folder already there is used, no "Screenshots" beside it.
+r, _ = capture("screen", FAKE_PICTURES=images)
+note = calls("notify-send")
+check(len(shots(os.path.join(images, "Captures d’écran"))) == 4 and not os.path.exists(os.path.join(images, "Screenshots"))
+      and note and note[0]["argv"][-1] == "Saved to Captures d’écran and copied.",
+      "in English, the French folder already there is used, no second folder [%r]" % files(images))
 # Something that is not a folder in its place: the pictures go to the Pictures folder itself, a link is never followed.
 odd = os.path.join(home, "Odd")
 os.makedirs(odd)
@@ -603,5 +609,22 @@ r, _ = capture("selection", FAKE_PICTURES=pictures, FAKE_SLURP="10,20 300x200")
 run = calls("systemd-run")
 check(r.returncode == 0 and len(shots(screenshots)) == count + 5 and run and run[0]["argv"][-1].startswith(screenshots + "/")
       and calls("notify-send") == [], "capture.location preview: kept in the Screenshots folder, opened in Preview")
+# A file the shell reads as its defaults (JsonSafety.js: a key twice in one object, an integer beyond 2^53, an integer-like key)
+# reads as the defaults here too (review of e134ded6: the helper took the last `location` while the shell read the Screenshots
+# folder).
+for raw, why in (('{"version": 1, "capture": {"location": "documents", "location": "desktop"}}', "a duplicate location key"),
+                 ('{"version": 1, "n": 9007199254740993, "capture": {"location": "desktop"}}', "an integer beyond 2^53"),
+                 ('{"version": 1, "capture": {"location": "desktop"}, "x": {"7": 1}}', "an integer-like key")):
+    with open(os.path.join(config, "grassfield.json"), "w") as f:
+        f.write(raw)
+    count, on_desktop, in_documents = len(shots(screenshots)), files(desktop), files(documents)
+    r, _ = capture("screen", FAKE_PICTURES=pictures, FAKE_DOCUMENTS=documents)
+    check(r.returncode == 0 and len(shots(screenshots)) == count + 2 and files(desktop) == on_desktop and files(documents) == in_documents,
+          "an unsafe file (%s): the default place, as the shell reads it" % why)
+# The same values written safely are followed (the rule is the file's, not the value's).
+set_config({"version": 1, "n": 9007199254740991, "capture": {"location": "desktop"}})
+on_desktop = files(desktop)
+r, _ = capture("screen", FAKE_PICTURES=pictures)
+check(len(files(desktop)) == len(on_desktop) + 2, "2^53 - 1 is safe: capture.location desktop is followed")
 
 sys.exit(1 if failed else 0)

@@ -1445,14 +1445,17 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
   scope (uwsm-app, as the Dock starts apps), never in the shell's unit (its CPU and memory limits, its restarts).
 - SC11 Save to (`capture.location`; owner 2026-11-07: screenshots no longer land on the Desktop by default): Screenshots, the
   default (a folder of that name in xdg-user-dir's Pictures, named in the session's language when it is made, « Captures
-  d’écran » in French, on first use; an English "Screenshots" already there is used as it is; something else of that name, a
+  d’écran » in French, on first use; a folder already there under any of its names, English or a translation, is used as it
+  is, so that changing the session's language never starts a second folder; something else of that name, a
   link included, sends the pictures to the Pictures folder itself; copied; the notice names the folder); the Desktop (copied,
   the notice); Documents (xdg-user-dir's, never the home folder; copied; the notice says Documents); Clipboard (the focused
   display's picture or the choice, copied as PNG; no file and no notice, as macOS); Preview (opened in Preview at once, no
   notice; the file is kept in the Screenshots folder, since Preview cannot save a document). The older key `capture.saveTo`
   (before 1.0.0-rc7) is read only while `capture.location` is absent: its Documents, Clipboard and Preview stay chosen, and
   its Desktop moves to the Screenshots folder, because every file the shell created held that old default and it cannot be
-  told from a choice (`shell/store/CaptureLocation.js`, `grassfield-capture` stored_location).
+  told from a choice (`shell/store/CaptureLocation.js`, `grassfield-capture` stored_location). A file the shell reads as its
+  defaults (a key twice in one object, an integer beyond 2^53, an integer-like key: `JsonSafety.js`) reads as the defaults in
+  the helper too (`settings_group`), so the keys and the toolbar never disagree on Save to.
 - SC12 Timer: after the choice (the window clicked, the area dragged), the helper counts down; the shell shows the seconds
   left on a glass plate (`capture.countdownSize`, the menus' class, `grassfield-capture-countdown`, no keyboard, clicks pass
   through) centred on what will be captured, and drops it when the time is up; the picture or the recording waits half a
