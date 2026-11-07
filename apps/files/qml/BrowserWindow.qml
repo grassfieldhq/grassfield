@@ -339,6 +339,21 @@ Window {
 
     // Global menu (T1) ------------------------------------------------------------------------
 
+    // An item's name as the global menu shows it inside a label (Edit > Copy “name”): shortened in its middle to
+    // menu.nameMaxWidth in the menus' font, as PopupMenu draws a row's name (MenuItem.name), since the menu bar draws the
+    // labels it is sent as they are (owner report 2026-11-07: a long name widened the menu).
+    FontMetrics {
+        id: menuNameMetrics
+        font.family: Appearance.fontFamily
+        font.pixelSize: Tokens.typographyMenuSize
+        font.letterSpacing: Appearance.tracking(Tokens.typographyMenuSize)
+        font.weight: Tokens.typographySmallWeight
+    }
+
+    function menuName(name: string): string {
+        return menuNameMetrics.elidedText(name, Qt.ElideMiddle, Tokens.menuNameMaxWidth);
+    }
+
     Loader {
         active: win.globalMenu
         sourceComponent: GlobalMenu {
@@ -463,7 +478,14 @@ Window {
         onActivated: win.tab.copySelection(false)
         onActivatedAmbiguously: activated()
     }
-    // Decision F-6: Cmd+X does nothing to files (as in the Finder); Move Item Here moves the copied items.
+    // Cut (owner request 2026-11-07, which wins over the Finder here): Paste then moves the items; Esc or a new Copy cancels.
+    Shortcut {
+        sequence: "Ctrl+X"
+        enabled: !win.childIsKey
+        onActivated: win.tab.copySelection(true)
+        onActivatedAmbiguously: activated()
+    }
+    // Move Item Here (the Finder's ⌥⌘V): the copied items moved into the shown folder.
     Shortcut {
         sequence: "Ctrl+Alt+V"
         enabled: !win.childIsKey
@@ -606,6 +628,13 @@ Window {
         sequence: "Ctrl+Meta+A"
         enabled: !win.childIsKey && win.folder !== null && win.folder.selectedCount > 0
         onActivated: win.app.makeAlias(win.tab.selection(), win.folder)
+        onActivatedAmbiguously: activated()
+    }
+    // Add to Sidebar (the Finder's ⌃⌘T; FP-27).
+    Shortcut {
+        sequence: "Ctrl+Meta+T"
+        enabled: !win.childIsKey
+        onActivated: win.tab.addToSidebar()
         onActivatedAmbiguously: activated()
     }
     Shortcut {

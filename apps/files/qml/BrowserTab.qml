@@ -743,6 +743,27 @@ FocusScope {
     }
 
     // File > New Folder with Selection (⌃⌘N): the selected items moved into a new folder, then renamed in place.
+    // File > Add to Sidebar (the Finder's ⌃⌘T, Ctrl+Super+T here; FP-27): the selected folders, or the shown folder when
+    // nothing is selected, join the sidebar's Favorites (FilesApp keeps the folders and lists a removed standard place again).
+    function sidebarCandidates(): var {
+        const m = root.activeFolder;
+        if (!m || root.chooser || m.isTrash)
+            return [];
+        // Nothing selected: the shown folder, never a search, a tag search or Recents (FilesApp.sidebarCandidate).
+        if (m.selectedCount === 0)
+            return root.app.inSidebar(root.url) || !root.app.sidebarCandidate(root.url) ? [] : [root.url];
+        const rows = m.selectedRows();
+        if (m.isApplications || !rows.every(r => m.isDirAt(r)))
+            return [];
+        return rows.map(r => m.urlAt(r)).filter(u => !root.app.inSidebar(u));
+    }
+
+    function addToSidebar(): void {
+        const urls = root.sidebarCandidates();
+        if (urls.length > 0)
+            root.app.addToSidebar(urls, -1);
+    }
+
     function newFolderWithSelection(): void {
         const m = root.activeFolder;
         const urls = root.selection();
@@ -906,6 +927,8 @@ FocusScope {
                 root.endSearch();
             else if (root.chooser)
                 root.chooser.cancel();
+            else if (root.app.cutPending)
+                root.app.cancelCut(); // Esc cancels a cut not pasted yet (the items no longer fade)
             else
                 model.clearSelection();
             event.accepted = true;
@@ -980,7 +1003,7 @@ FocusScope {
                 {id: "deleteNow", text: qsTr("Delete Immediately…"), destructive: true},
                 {separator: true},
                 {id: "info", text: qsTr("Get Info"), shortcut: qsTr("Ctrl+I")},
-                {id: "copy", text: count === 1 ? qsTr("Copy “%1”").arg(name) : qsTr("Copy %1 Items").arg(count), shortcut: qsTr("Ctrl+C")}
+                {id: "copy", text: count === 1 ? qsTr("Copy “%1”") : qsTr("Copy %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Ctrl+C")}
             ];
         }
         if (model.isApplications) {
@@ -991,7 +1014,7 @@ FocusScope {
                 {id: "trash", text: qsTr("Move to Trash"), shortcut: qsTr("Ctrl+Backspace"), enabled: root.applicationRemovable()},
                 {separator: true},
                 {id: "info", text: qsTr("Get Info"), shortcut: qsTr("Ctrl+I")},
-                {id: "copy", text: count === 1 ? qsTr("Copy “%1”").arg(name) : qsTr("Copy %1 Items").arg(count), shortcut: qsTr("Ctrl+C")},
+                {id: "copy", text: count === 1 ? qsTr("Copy “%1”") : qsTr("Copy %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Ctrl+C")},
                 {id: "rename", text: qsTr("Rename"), shortcut: qsTr("F2"), enabled: false}
             ];
         }
@@ -999,20 +1022,34 @@ FocusScope {
         items.push({id: "open", text: qsTr("Open")});
         const allFiles = rows.every(r => !model.isDirAt(r));
         if (allFiles) {
-            // Finder's submenu: the type's applications, then Other…, the Choose Application panel (ADR-0035 5c-1).
+            // Finder's submenu: the default application first, "(default)", then the type's other applications, then Other…, the
+            // Choose Application panel (ADR-0035 5c-1). While Alt (Option) is held it is Always Open With: the chosen application
+            // becomes the default for the type (Linux has no per-document choice: decision F-19) and opens the items.
             const apps = root.app.applicationsFor(model.selectedUrls());
             const sub = [];
-            for (let i = 0; i < apps.length; i++)
-                sub.push({id: "app:" + apps[i].id, text: apps[i].name});
+            const always = [];
+            for (let i = 0; i < apps.length; i++) {
+                const text = apps[i].isDefault ? qsTr("%1 (default)").arg(apps[i].name) : apps[i].name;
+                sub.push({id: "app:" + apps[i].id, text: text});
+                always.push({id: "always:" + apps[i].id, text: text});
+                if (apps[i].isDefault && apps.length > 1) {
+                    sub.push({separator: true});
+                    always.push({separator: true});
+                }
+            }
             if (sub.length > 0)
                 sub.push({separator: true});
             sub.push({id: "openWithOther", text: qsTr("Other…")});
-            items.push({id: "openWith", text: qsTr("Open With"), submenu: sub});
+            items.push({id: "openWith", text: qsTr("Open With"), submenu: sub,
+                        alternate: apps.length > 0 ? {id: "alwaysOpenWith", text: qsTr("Always Open With"), submenu: always} : undefined});
         } else {
             items.push({id: "openWith", text: qsTr("Open With"), enabled: false});
         }
         if (count === 1 && model.isDirAt(first))
             items.push({id: "newTab", text: qsTr("Open in New Tab")});
+        // Folders: Add to Sidebar (File menu, Ctrl+Super+T), dimmed when they are all there already.
+        if (rows.every(r => model.isDirAt(r)))
+            items.push({id: "addToSidebar", text: qsTr("Add to Sidebar"), shortcut: qsTr("Ctrl+Super+T"), enabled: root.sidebarCandidates().length > 0});
         const editable = root.itemsEditable(model);
         items.push({separator: true});
         items.push({id: "trash", text: qsTr("Move to Trash"), shortcut: qsTr("Ctrl+Backspace"), enabled: editable});
@@ -1026,17 +1063,23 @@ FocusScope {
         else
             items.push({id: "rename", text: qsTr("Rename"), shortcut: qsTr("F2"), enabled: count === 1 && editable});
         const local = model.selectedUrls().every(u => String(u).startsWith("file:"));
-        items.push({id: "compress", text: count === 1 ? qsTr("Compress “%1”").arg(name) : qsTr("Compress %1 Items").arg(count), enabled: local && !model.isSearch});
+        items.push({id: "compress", text: count === 1 ? qsTr("Compress “%1”") : qsTr("Compress %1 Items").arg(count), name: count === 1 ? name : "", enabled: local && !model.isSearch});
         items.push({id: "duplicate", text: qsTr("Duplicate"), shortcut: qsTr("Ctrl+D"), enabled: model.writable});
         items.push({id: "alias", text: qsTr("Make Alias"), shortcut: qsTr("Ctrl+Super+A"), enabled: local && model.writable});
         if (count === 1 && String(root.app.linkTarget(model.selectedUrls()[0])) !== "")
             items.push({id: "showOriginal", text: qsTr("Show Original"), shortcut: qsTr("Ctrl+R")});
-        items.push({id: "glance", text: count === 1 ? qsTr("Glance at “%1”").arg(name) : qsTr("Glance at %1 Items").arg(count), shortcut: qsTr("Space")});
+        items.push({id: "glance", text: count === 1 ? qsTr("Glance at “%1”") : qsTr("Glance at %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Space")});
         if (count > 1 && model.writable && !model.isSearch)
             items.push({id: "newFolderWithItems", text: qsTr("New Folder with Selection (%1 Items)").arg(count), shortcut: qsTr("Ctrl+Super+N")});
         items.push({separator: true});
-        items.push({id: "copy", text: count === 1 ? qsTr("Copy “%1”").arg(name) : qsTr("Copy %1 Items").arg(count), shortcut: qsTr("Ctrl+C")});
-        items.push({id: "copyPath", text: count === 1 ? qsTr("Copy “%1” as Pathname").arg(name) : qsTr("Copy %1 Items as Pathnames").arg(count), shortcut: qsTr("Ctrl+Alt+C")});
+        // Cut (owner request 2026-11-07, which wins over the Finder here): the items fade until Paste moves them; Esc or a new
+        // Copy cancels.
+        items.push({id: "cut", text: count === 1 ? qsTr("Cut “%1”") : qsTr("Cut %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Ctrl+X"), enabled: editable});
+        // Copy as Pathname is Copy's Option alternate, as in the Finder: shown while Alt is held (Edit > Copy as Pathname and
+        // Ctrl+Alt+C stay), so that its long label never widens the menu.
+        items.push({id: "copy", text: count === 1 ? qsTr("Copy “%1”") : qsTr("Copy %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Ctrl+C"),
+                    alternate: {id: "copyPath", text: count === 1 ? qsTr("Copy “%1” as Pathname") : qsTr("Copy %1 Items as Pathnames").arg(count), name: count === 1 ? name : "",
+                                shortcut: qsTr("Ctrl+Alt+C")}});
         // Share…, after Copy where Finder places it (macOS 13 and later; ADR-0045 OC-13): it opens the toolbar Share button's
         // menu where this menu was; none when there is nothing to share with (LocalSend not installed).
         if (root.shareMenu(model).length > 0)
@@ -1071,8 +1114,12 @@ FocusScope {
         items.push({id: "info", text: qsTr("Get Info"), shortcut: qsTr("Ctrl+I")});
         items.push({separator: true});
         const n = root.app.clipboardCount;
-        items.push({id: "paste", text: n > 1 ? qsTr("Paste %1 Items").arg(n) : qsTr("Paste"), shortcut: qsTr("Ctrl+V"), enabled: root.app.canPaste && model.writable});
-        items.push({id: "moveHere", text: n > 1 ? qsTr("Move %1 Items Here").arg(n) : qsTr("Move Item Here"), shortcut: qsTr("Ctrl+Alt+V"), enabled: root.app.canPaste && model.writable});
+        const pastable = root.app.canPaste && model.writable;
+        // Paste copies what was copied and moves what was cut; while Alt (Option) is held it is Move Item Here, which moves what
+        // was copied (the Finder's Edit menu).
+        // "Paste" while the clipboard holds no item, as the Finder.
+        items.push({id: "paste", text: n > 1 ? qsTr("Paste %1 Items").arg(n) : n === 1 ? qsTr("Paste Item") : qsTr("Paste"), shortcut: qsTr("Ctrl+V"), enabled: pastable,
+                    alternate: {id: "moveHere", text: n > 1 ? qsTr("Move %1 Items Here").arg(n) : qsTr("Move Item Here"), shortcut: qsTr("Ctrl+Alt+V"), enabled: pastable}});
         items.push({separator: true});
         items.push(root.viewSubmenu());
         items.push({id: "useGroups", text: qsTr("Use Groups"), shortcut: qsTr("Ctrl+Super+0"), checked: root.groupBy > 0});
@@ -1179,7 +1226,7 @@ FocusScope {
             const rows = model.selectedRows();
             const name = rows.length > 0 ? DisplayName.text(model.nameAt(rows[0])) : "";
             if (rows.length > 0)
-                items.push({id: "glance", text: rows.length === 1 ? qsTr("Glance at “%1”").arg(name) : qsTr("Glance at %1 Items").arg(rows.length), shortcut: qsTr("Space")});
+                items.push({id: "glance", text: rows.length === 1 ? qsTr("Glance at “%1”") : qsTr("Glance at %1 Items").arg(rows.length), name: rows.length === 1 ? name : "", shortcut: qsTr("Space")});
             if ((root.chooser && root.searchText !== "") || model.isSearch)
                 items.push({id: "enclosing", text: qsTr("Show in Enclosing Folder")});
             if (items.length > 0)
@@ -1201,6 +1248,10 @@ FocusScope {
     function runAction(id: string, model: var): void {
         if (id.startsWith("app:")) {
             root.app.openWith(id.substring(4), model.selectedUrls());
+            return;
+        }
+        if (id.startsWith("always:")) {
+            root.app.alwaysOpenWith(id.substring(7), model.selectedUrls());
             return;
         }
         if (id === "openWithOther") {
@@ -1232,6 +1283,9 @@ FocusScope {
         case "newTab":
             root.win.newTab(model.selectedUrls()[0], null);
             break;
+        case "addToSidebar":
+            root.addToSidebar();
+            break;
         case "trash":
             root.trashSelection();
             break;
@@ -1261,6 +1315,9 @@ FocusScope {
             break;
         case "copy":
             root.copySelection(false);
+            break;
+        case "cut":
+            root.copySelection(true);
             break;
         case "paste":
             root.paste();

@@ -30,6 +30,10 @@ class PlacesModel : public QAbstractListModel
     Q_OBJECT
     Q_PROPERTY(bool trashEmpty READ trashEmpty NOTIFY trashEmptyChanged)
     Q_PROPERTY(bool networkAvailable READ networkAvailable CONSTANT)
+    // Favorites editing (FP-27): the row where the user's own folders start (right after the standard places, also when
+    // there are none) and how many there are.
+    Q_PROPERTY(int firstPinnedRow READ firstPinnedRow NOTIFY favoritesChanged)
+    Q_PROPERTY(int pinnedCount READ pinnedCount NOTIFY favoritesChanged)
 
 public:
     enum Roles {
@@ -59,6 +63,8 @@ public:
 
     bool trashEmpty() const { return m_trashEmpty; }
     bool networkAvailable() const;
+    int firstPinnedRow() const { return m_firstPinnedRow; }
+    int pinnedCount() const { return int(m_pinned.size()); }
 
     // Row whose URL is `url` or its closest ancestor among the entries (for the sidebar highlight), else -1.
     Q_INVOKABLE int rowForUrl(const QUrl &url) const;
@@ -81,9 +87,15 @@ public:
         QString file;
     };
     void setSavedSearches(const QList<SavedSearch> &searches);
+    // Favorites as the user edited them (NavLogic's lists): their own folders ("pinned" places, after the standard ones, in
+    // this order) and the standard places they removed (Home, Applications, a user folder: by URL).
+    void setFavorites(const QList<QUrl> &pinned, const QList<QUrl> &hidden);
+    // Whether `url` is listed in Favorites now (a standard place not removed, or a folder of the user's).
+    bool inFavorites(const QUrl &url) const;
 
 signals:
     void trashEmptyChanged();
+    void favoritesChanged();
     void mounted(const QUrl &url);
     void error(const QString &message);
 
@@ -97,7 +109,7 @@ private:
         QString name;
         QUrl url;
         QString iconName;
-        QString kind; // "recents" | "folder" | "applications" | "savedSearch" | "volume" | "network" | "trash" | "tag"
+        QString kind; // "recents" | "folder" | "applications" | "pinned" | "savedSearch" | "volume" | "network" | "trash" | "tag"
         QString udi;
         bool mounted = true;
         bool ejectable = false;
@@ -121,6 +133,9 @@ private:
     QList<Place> m_places;
     QStringList m_tags;
     QList<SavedSearch> m_savedSearches;
+    QList<QUrl> m_pinned;
+    QList<QUrl> m_hidden;
+    int m_firstPinnedRow = 0;
     KCoreDirLister *m_trashLister = nullptr;
     bool m_trashEmpty = true;
     DiskProbe m_disk;

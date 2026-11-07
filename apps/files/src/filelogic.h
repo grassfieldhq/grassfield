@@ -128,6 +128,9 @@ QString equivalentName(const QStringList &names, const QString &name);
 // The original path of a trashed item from its .trashinfo (the `Path=` line of the [Trash Info] group, percent-decoded), or ""
 // (no such line, or a relative path: a trash outside the home volume, left to the system).
 QString trashInfoOriginalPath(const QByteArray &trashinfo);
+// Whether GNOME file managers' clipboard list (x-special/gnome-copied-files: "cut" or "copy" on its first line, then the URLs)
+// says the items were cut (decision F-18: a cut made in Nautilus pastes as a move in Files, and fades meanwhile).
+bool gnomeCopiedFilesCut(const QByteArray &list);
 
 // Match text for the folder filter: canonically decomposed, combining marks dropped, case folded ("resume" finds
 // "Résumé.txt" in either normalization form).

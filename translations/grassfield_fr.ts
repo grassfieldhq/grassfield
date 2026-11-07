@@ -2953,6 +2953,14 @@
         <translation>Autre…</translation>
     </message>
     <message>
+        <source>Add to Sidebar</source>
+        <translation>Ajouter à la barre latérale</translation>
+    </message>
+    <message>
+        <source>Ctrl+Super+T</source>
+        <translation>Ctrl+Super+T</translation>
+    </message>
+    <message>
         <source>Duplicate</source>
         <translation>Dupliquer</translation>
     </message>
@@ -2995,10 +3003,6 @@
     <message>
         <source>Paste %1 Items</source>
         <translation>Coller %1 éléments</translation>
-    </message>
-    <message>
-        <source>Paste</source>
-        <translation>Coller</translation>
     </message>
     <message>
         <source>Ctrl+V</source>
@@ -3065,6 +3069,14 @@
         <translation>Liste</translation>
     </message>
     <message>
+        <source>%1 (default)</source>
+        <translation>%1 (par défaut)</translation>
+    </message>
+    <message>
+        <source>Always Open With</source>
+        <translation>Toujours ouvrir avec</translation>
+    </message>
+    <message>
         <source>Rename %1 Items…</source>
         <translation>Renommer %1 éléments…</translation>
     </message>
@@ -3101,6 +3113,18 @@
         <translation>Ctrl+Super+N</translation>
     </message>
     <message>
+        <source>Cut “%1”</source>
+        <translation>Couper « %1 »</translation>
+    </message>
+    <message>
+        <source>Cut %1 Items</source>
+        <translation>Couper %1 éléments</translation>
+    </message>
+    <message>
+        <source>Ctrl+X</source>
+        <translation>Ctrl+X</translation>
+    </message>
+    <message>
         <source>Copy “%1” as Pathname</source>
         <translation>Copier « %1 » en tant que chemin d’accès</translation>
     </message>
@@ -3119,6 +3143,14 @@
     <message>
         <source>New Terminal at Folder</source>
         <translation>Nouveau terminal au dossier</translation>
+    </message>
+    <message>
+        <source>Paste Item</source>
+        <translation>Coller l’élément</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>Coller</translation>
     </message>
     <message>
         <source>Move %1 Items Here</source>
@@ -5653,6 +5685,10 @@
         <translation>Arrêter</translation>
     </message>
     <message>
+        <source>The default application couldn’t be changed.</source>
+        <translation>L’application par défaut n’a pas pu être modifiée.</translation>
+    </message>
+    <message>
         <source>copy</source>
         <translation>copie</translation>
     </message>
@@ -5891,6 +5927,10 @@
     <message>
         <source>The saved search couldn’t be changed.</source>
         <translation>La recherche enregistrée n’a pas pu être modifiée.</translation>
+    </message>
+    <message>
+        <source>Only folders can be added to the sidebar.</source>
+        <translation>Seuls des dossiers peuvent être ajoutés à la barre latérale.</translation>
     </message>
     <message>
         <source>“%1” is no longer there.</source>
@@ -6765,6 +6805,10 @@
         <translation>Nouveau dossier intelligent</translation>
     </message>
     <message>
+        <source>%1 (default)</source>
+        <translation>%1 (par défaut)</translation>
+    </message>
+    <message>
         <source>Other…</source>
         <translation>Autre…</translation>
     </message>
@@ -6797,12 +6841,28 @@
         <translation>Afficher l’original</translation>
     </message>
     <message>
+        <source>Add to Sidebar</source>
+        <translation>Ajouter à la barre latérale</translation>
+    </message>
+    <message>
+        <source>Cut %1 Items</source>
+        <translation>Couper %1 éléments</translation>
+    </message>
+    <message>
+        <source>Cut “%1”</source>
+        <translation>Couper « %1 »</translation>
+    </message>
+    <message>
         <source>Copy %1 Items as Pathnames</source>
         <translation>Copier %1 éléments en tant que chemins d’accès</translation>
     </message>
     <message>
         <source>Copy as Pathname</source>
         <translation>Copier en tant que chemin d’accès</translation>
+    </message>
+    <message>
+        <source>Paste Item</source>
+        <translation>Coller l’élément</translation>
     </message>
     <message>
         <source>Move %1 Items Here</source>
@@ -13726,6 +13786,10 @@
     <message>
         <source>Open</source>
         <translation>Ouvrir</translation>
+    </message>
+    <message>
+        <source>Open in New Tab</source>
+        <translation>Ouvrir dans un nouvel onglet</translation>
     </message>
     <message>
         <source>Move to Trash</source>

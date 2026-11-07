@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtTest
+import Grassfield.Ui
 import "../../apps/files/qml"
 
 // grassfield-files column view (apps/files/qml/ColumnView.qml) on a stand-in listing: a double-click opens a file, a
@@ -32,6 +33,11 @@ TestCase {
             signal revealRequested(int row, bool rename)
 
             function expect(url: url, rename: bool): void {
+            }
+            // The column view's wishes, in order (FolderModel.expectAlone): "" drops the one before.
+            property var wishes: []
+            function expectAlone(url: url): void {
+                listing.wishes = listing.wishes.concat([String(url)]);
             }
             function select(row: int, modifiers: int): void {
                 listing.currentRow = row;
@@ -70,10 +76,10 @@ TestCase {
 
             Component.onCompleted: {
                 // photo.png first: a pane made with its row already 0 saw no change of it.
-                const rows = [["photo.png", false], ["Folder", true], ["note.txt", false], ["\u05e9\u05dc\u05d5\u05dd.txt", false]];
+                const rows = [["photo.png", false], ["Folder", true], ["note.txt", false], ["\u05e9\u05dc\u05d5\u05dd.txt", false], ["Other", true]];
                 for (const r of rows) {
                     listing.append({name: r[0], url: "file:///sandbox/" + r[0], iconName: "", emblem: "", selected: false, isDir: r[1],
-                                    folderColor: "", folderGlyph: "", hidden: false, dimmed: false, tagColors: []});
+                                    folderColor: "", folderGlyph: "", hidden: false, cut: false, dimmed: false, tagColors: []});
                 }
             }
         }
@@ -117,12 +123,27 @@ TestCase {
         }
         function applyPrefs(model: var): void {
         }
+        // When set, a navigation shows its location as BrowserTab does (synchronously: its segments change at once), and
+        // records it.
+        property bool follows: false
+        property var navigated: []
         function navigate(url: url, record: bool): void {
+            if (!fakeTab.follows)
+                return;
+            fakeTab.navigated = fakeTab.navigated.concat([String(url)]);
+            const path = String(url).substring("file:///sandbox".length).split("/").filter(p => p !== "");
+            const segs = [{url: "file:///sandbox"}];
+            for (let i = 0; i < path.length; i++)
+                segs.push({url: segs[segs.length - 1].url + "/" + path[i]});
+            if (JSON.stringify(segs) !== JSON.stringify(fakeTab.segments))
+                fakeTab.segments = segs;
         }
         function activate(row: int, model: var, modifiers: int): void {
             fakeTab.activated = fakeTab.activated.concat([model.get(row).name + ((modifiers & Qt.ControlModifier) ? " +cmd" : "")]);
         }
+        property var menus: []
         function contextMenu(model: var, row: int, x: real, y: real, keyboard: bool): void {
+            fakeTab.menus = fakeTab.menus.concat([model.get(row).name]);
         }
         // Every drop the views pass on (a drag that ends without a drop passes none).
         property var drops: []
@@ -353,5 +374,121 @@ TestCase {
         mouseClick(file, 40, file.height / 2, Qt.LeftButton);
         compare(columns.activeModel.selectedUrls().length, 1);
         compare(String(columns.activeModel.selectedUrls()[0]), "file:///sandbox/note.txt");
+    }
+
+    // The row delegate showing `name` in column `column` (the fake lists the same names in every column).
+    function rowIn(column: int, name: string): var {
+        const c = columns.columnAt(column);
+        if (!c)
+            return null;
+        const stack = [c];
+        while (stack.length) {
+            const it = stack.pop();
+            if (it.name === name && it.isDir !== undefined && it.renaming !== undefined)
+                return it;
+            for (let i = 0; i < it.children.length; i++)
+                stack.push(it.children[i]);
+        }
+        return null;
+    }
+
+    // `count` columns, laid out side by side (a column just made sits at the strip's start until the Row places it).
+    function waitForColumns(count: int): void {
+        tryVerify(() => columns.columnCount === count && (count < 2 || columns.columnAt(count - 1).x >= columns.columnAt(count - 2).width), 2000,
+                  count + " columns side by side");
+    }
+
+    function backToTheSandbox(): void {
+        fakeTab.follows = false;
+        fakeTab.segments = [{url: "file:///sandbox"}];
+        tryVerify(() => columns.columnCount === 1, 2000, "one column again");
+        columns.activeModel.select(-1, 0);
+        fakeTab.navigated = [];
+        fakeTab.menus = [];
+    }
+
+    // A click that leaves the location as it is (a file of the last column, the second press of a double click on a folder)
+    // must not leave the view thinking it changed the location itself: the next location set elsewhere (Back, the sidebar,
+    // the path bar) makes its last column the active one. Owner report 2026-11-07 ("in Columns view the selection sometimes
+    // goes back to the previous folder"): the flag outlived the click, the next location kept a column that was gone (or
+    // another folder's) active, and the next arrow key selected in it, dropping the columns after it.
+    function test_aLocationSetElsewhereMakesTheLastColumnActive() {
+        tryVerify(() => rowNamed("note.txt") !== null, 2000, "the column is listed");
+        fakeTab.follows = true;
+        const folder = rowIn(0, "Folder");
+        mouseClick(folder, 40, folder.height / 2, Qt.LeftButton);
+        waitForColumns(2);
+        compare(columns.activeColumn, 0, "the clicked column keeps the keyboard");
+        tryVerify(() => rowIn(1, "note.txt") !== null, 2000, "the second column is listed");
+        const file = rowIn(1, "note.txt");
+        mouseClick(file, 40, file.height / 2, Qt.LeftButton);
+        compare(columns.activeColumn, 1);
+        compare(fakeTab.segments.length, 2, "a file of the last column keeps the location");
+        // Elsewhere: the sidebar shows another place.
+        fakeTab.segments = [{url: "file:///sandbox"}];
+        compare(columns.columnCount, 1);
+        compare(columns.activeColumn, 0, "the last column is the active one");
+        verify(columns.activeModel !== null, "and its listing is the active listing");
+        // The same after the second press of a double click on a folder.
+        const again = rowIn(0, "Folder");
+        mouseDoubleClickSequence(again, 40, again.height / 2, Qt.LeftButton);
+        waitForColumns(2);
+        fakeTab.segments = [{url: "file:///sandbox"}, {url: "file:///sandbox/Other"}];
+        compare(columns.activeColumn, 1, "the last column of the new location");
+        backToTheSandbox();
+    }
+
+    // A right click on a folder that is not selected selects it, as a click does, and the next column shows it: the menu and
+    // the columns agree (the next column kept the folder selected before, and Right went back into it).
+    function test_aRightClickedFolderOpensInTheNextColumn() {
+        tryVerify(() => rowNamed("note.txt") !== null, 2000, "the column is listed");
+        fakeTab.follows = true;
+        const folder = rowIn(0, "Folder");
+        mouseClick(folder, 40, folder.height / 2, Qt.LeftButton);
+        waitForColumns(2);
+        const other = rowIn(0, "Other");
+        mouseClick(other, 40, other.height / 2, Qt.RightButton);
+        compare(String(fakeTab.segments[1].url), "file:///sandbox/Other", "the next column shows the folder right-clicked");
+        tryCompare(fakeTab, "menus", ["Other"], 2000, "and its menu opens");
+        compare(columns.activeColumn, 0);
+        verify(columns.activeModel.isSelected(4), "Other is the selection");
+        // A right click on the selected row only opens the menu.
+        const navigations = fakeTab.navigated.length;
+        mouseClick(rowIn(0, "Other"), 40, other.height / 2, Qt.RightButton);
+        compare(fakeTab.navigated.length, navigations);
+        tryCompare(fakeTab, "menus", ["Other", "Other"]);
+        backToTheSandbox();
+    }
+
+    // Each column wants only the folder its next column shows, and the last column nothing: a column still listing selects
+    // that folder alone once listed, never a folder shown before (FolderModel.expectAlone replaces; expect() added).
+    function test_eachColumnWantsOnlyTheFolderShownNext() {
+        tryVerify(() => rowNamed("note.txt") !== null, 2000, "the column is listed");
+        fakeTab.follows = true;
+        const listing = columns.activeModel;
+        listing.wishes = [];
+        mouseClick(rowIn(0, "Folder"), 40, 10, Qt.LeftButton);
+        waitForColumns(2);
+        compare(listing.wishes[listing.wishes.length - 1], "file:///sandbox/Folder");
+        mouseClick(rowIn(0, "Other"), 40, 10, Qt.LeftButton);
+        waitForColumns(2);
+        compare(listing.wishes[listing.wishes.length - 1], "file:///sandbox/Other", "the new folder replaces the old wish");
+        mouseClick(rowIn(0, "note.txt"), 40, 10, Qt.LeftButton);
+        compare(columns.columnCount, 1, "a file in the first column ends the columns after it");
+        compare(listing.wishes[listing.wishes.length - 1], "", "and the column, now the last, wants nothing");
+        backToTheSandbox();
+    }
+
+    // An item cut and not pasted yet is drawn faded, as a hidden one, until Paste moves it or the cut is cancelled (owner
+    // request 2026-11-07: Cut in Files; the other views share the rule).
+    function test_aCutItemIsFaded() {
+        tryVerify(() => rowNamed("note.txt") !== null, 2000, "the column is listed");
+        const listing = columns.activeModel;
+        compare(rowNamed("note.txt").opacity, 1);
+        listing.setProperty(2, "cut", true);
+        tryCompare(rowNamed("note.txt"), "opacity", Tokens.filesHiddenOpacity);
+        compare(rowNamed("photo.png").opacity, 1, "only the cut item");
+        listing.setProperty(2, "cut", false);
+        tryCompare(rowNamed("note.txt"), "opacity", 1);
     }
 }

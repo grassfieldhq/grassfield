@@ -1,6 +1,7 @@
 #include "placesmodel.h"
 
 #include "applicationslogic.h"
+#include "navlogic.h"
 #include "recents.h"
 #include "runmode.h"
 #include "taglogic.h"
@@ -152,7 +153,7 @@ void PlacesModel::rebuild()
     relist();
     QStringList folders;
     for (const Place &p : std::as_const(m_places))
-        if (p.kind == QLatin1String("folder"))
+        if ((p.kind == QLatin1String("folder") || p.kind == QLatin1String("pinned")) && p.url.isLocalFile())
             folders << p.url.toLocalFile();
     // The standard folders the list may not show (one answered missing before) are asked again too. One call each: a hung
     // one keeps no other from its answer.
@@ -192,7 +193,7 @@ void PlacesModel::relist()
     };
     for (const Standard &s : standard) {
         // Finder's Favorites: the Applications folder comes before Desktop, Documents and Downloads.
-        if (s.location == QStandardPaths::DesktopLocation) {
+        if (s.location == QStandardPaths::DesktopLocation && !m_hidden.contains(ApplicationsLogic::locationUrl())) {
             Place apps;
             apps.section = QStringLiteral("favorites");
             apps.name = tr("Applications");
@@ -209,6 +210,9 @@ void PlacesModel::relist()
         const int kind = m_folderKinds.value(path, 2);
         if (kind == 0 || kind == 1)
             continue;
+        // Removed from the sidebar by the user (Add to Sidebar of the folder lists it again).
+        if (m_hidden.contains(NavLogic::sidebarUrl(QUrl::fromLocalFile(path))))
+            continue;
         Place p;
         p.section = QStringLiteral("favorites");
         p.name = s.name;
@@ -216,6 +220,23 @@ void PlacesModel::relist()
         p.iconName = s.icon;
         p.kind = QStringLiteral("folder");
         p.unavailable = kind == DiskProbe::kNotResponding;
+        places.append(p);
+    }
+
+    // The folders the user added, after the standard places, in their order (the Finder's Favorites). Never read here: a
+    // local one is asked about off the GUI thread with the standard folders (DiskProbe), and one that is gone or does not
+    // answer stays listed, dimmed, as the Finder shows a missing sidebar item.
+    m_firstPinnedRow = int(places.size());
+    for (const QUrl &url : std::as_const(m_pinned)) {
+        Place p;
+        p.section = QStringLiteral("favorites");
+        const QString path = url.isLocalFile() ? url.toLocalFile() : QString();
+        p.name = path == QLatin1String("/") ? tr("Computer") : !url.fileName().isEmpty() ? url.fileName() : url.host().isEmpty() ? url.toDisplayString() : url.host();
+        p.url = url;
+        p.iconName = url.isLocalFile() ? QStringLiteral("folder-symbolic") : symbolic(QStringLiteral("folder-remote"), QStringLiteral("folder-symbolic"));
+        p.kind = QStringLiteral("pinned");
+        const int kind = path.isEmpty() ? 2 : m_folderKinds.value(path, 2);
+        p.unavailable = kind == 0 || kind == 1 || kind == DiskProbe::kNotResponding;
         places.append(p);
     }
 
@@ -273,6 +294,31 @@ void PlacesModel::relist()
     beginResetModel();
     m_places = places;
     endResetModel();
+    emit favoritesChanged();
+}
+
+void PlacesModel::setFavorites(const QList<QUrl> &pinned, const QList<QUrl> &hidden)
+{
+    if (pinned == m_pinned && hidden == m_hidden)
+        return;
+    const bool newFolders = pinned != m_pinned;
+    m_pinned = pinned;
+    m_hidden = hidden;
+    // A new folder is asked about (rebuild probes the folders listed); a removed one only leaves the list.
+    if (newFolders)
+        rebuild();
+    else
+        relist();
+}
+
+bool PlacesModel::inFavorites(const QUrl &url) const
+{
+    const QUrl clean = NavLogic::sidebarUrl(url);
+    for (const Place &p : m_places) {
+        if (p.section == QLatin1String("favorites") && p.kind != QLatin1String("savedSearch") && NavLogic::sidebarUrl(p.url) == clean)
+            return true;
+    }
+    return false;
 }
 
 QList<PlacesModel::Place> PlacesModel::devicePlaces()

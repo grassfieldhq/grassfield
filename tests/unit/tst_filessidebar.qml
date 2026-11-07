@@ -12,7 +12,7 @@ TestCase {
 
     name: "FilesSidebar"
     width: 400
-    height: 400
+    height: 600
     visible: true
     when: windowShown
 
@@ -95,6 +95,24 @@ TestCase {
             unavailable: false
         }
 
+        // A folder the user added to Favorites (row 5; PlacesModel lists them after the standard places).
+        ListElement {
+            section: "favorites"
+            name: "Projects"
+            url: "file:///home/u/Projects"
+            iconName: "folder"
+            kind: "pinned"
+            mounted: true
+            ejectable: false
+            busy: false
+            tag: ""
+            tagColor: -1
+            unavailable: false
+        }
+
+        property int firstPinnedRow: 5
+        property int pinnedCount: 1
+
         function rowForUrl(url): int {
             for (let i = 0; i < placesItem.count; i++) {
                 if (String(placesItem.get(i).url) === String(url))
@@ -114,18 +132,47 @@ TestCase {
 
         property var places: placesItem
         property var hiddenTags: []
+        // Favorites editing, recorded.
+        property var added: []
+        property var removed: []
+        property var moved: []
+        // A drop at a gap also names the place to fall back to (items with no folder go into it) and the sidebar's token.
+        property var lastFallback: ""
+        property string lastToken: ""
+        signal sidebarDropFallback(string token, var urls, url destination)
+        function addToSidebar(urls: var, position: int, fallback: url, token: string): void {
+            fakeApp.added = fakeApp.added.concat([{urls: urls.map(u => String(u)), position: position}]);
+            fakeApp.lastFallback = String(fallback);
+            fakeApp.lastToken = token;
+        }
+        function removeFromSidebar(url: url): void {
+            fakeApp.removed = fakeApp.removed.concat([String(url)]);
+        }
+        function moveInSidebar(url: url, position: int): void {
+            fakeApp.moved = fakeApp.moved.concat([{url: String(url), position: position}]);
+        }
     }
 
     QtObject {
         id: fakeTab
 
         property var url: "file:///media/usb"
+        // An Open or Save panel's tab has one (the sidebar edits nothing there).
+        property var chooser: null
         property var win: QtObject {
             property var menuLayer: QtObject {
                 function open(items, x, y, cb, back, flag): void {
-                    tc.menus = tc.menus.concat([{items: items, cb: cb}]);
+                    tc.menus = tc.menus.concat([{items: items, cb: cb, keyboard: flag}]);
                 }
             }
+            property var tabs: []
+            function newTab(url, restore): void {
+                fakeTab.win.tabs = fakeTab.win.tabs.concat([String(url)]);
+            }
+        }
+        property var drops: []
+        function dropUrls(urls, destination, model): void {
+            fakeTab.drops = fakeTab.drops.concat([String(destination)]);
         }
         property var navigated: []
         function navigate(url, record): void {
@@ -146,6 +193,7 @@ TestCase {
         height: 4
         z: 10
         Drag.keys: ["text/uri-list"]
+        Drag.mimeData: {"text/uri-list": "file:///home/u/New"}
         Drag.dragType: Drag.Internal
         Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
         Drag.hotSpot.x: 2
@@ -156,7 +204,7 @@ TestCase {
         id: sidebar
 
         width: 200
-        height: 300
+        height: 520
         app: fakeApp
         tab: fakeTab
     }
@@ -237,8 +285,7 @@ TestCase {
         compare(tc.menus[0].items.map(i => i.text), ["Eject"]);
         tc.menus[0].cb("eject");
         compare(tc.ejected, [1]);
-        // A folder row and a busy volume row have no menu.
-        mouseClick(listView.itemAtIndex(0), 20, 8, Qt.RightButton);
+        // A busy volume row has no menu.
         mouseClick(listView.itemAtIndex(2), 20, 8, Qt.RightButton);
         compare(tc.menus.length, 1);
     }
@@ -279,7 +326,8 @@ TestCase {
         mouseClick(item, 20, item.height / 2);
         compare(fakeTab.navigated, ["grassfield-apps:/"]);
         mouseClick(item, 20, item.height / 2, Qt.RightButton);
-        compare(tc.menus.length, 0, "no eject menu on a place that cannot be ejected");
+        compare(tc.menus.length, 1, "the Favorites place menu");
+        compare(tc.menus[0].items.filter(i => i.text).map(i => i.text), ["Open in New Tab", "Remove from Sidebar"], "no Eject on a place that cannot be ejected");
     }
 
     // A standard folder whose disk does not answer is listed, dimmed (PlacesModel's "unavailable"; re-review of 24bdf58,
@@ -292,6 +340,191 @@ TestCase {
         tryCompare(listView.itemAtIndex(0), "opacity", Tokens.materialDisabledOpacity);
         placesItem.setProperty(0, "unavailable", false);
         tryCompare(listView.itemAtIndex(0), "opacity", 1);
+    }
+
+    // Favorites editing (FP-27; owner report 2026-11-07: "there is no way to pin a folder in the sidebar, neither with right-click
+    // nor by drag and drop"). A Favorites folder place's menu: Open in New Tab and Remove from Sidebar, for a folder of the
+    // user's and a standard one alike (FilesApp hides a standard place); the Menu key opens the keyboard row's menu.
+    function test_aFavoritesPlaceMenuRemovesItFromTheSidebar() {
+        const listView = findList(sidebar);
+        fakeApp.removed = [];
+        fakeTab.win.tabs = [];
+        for (const row of [5, 0]) {
+            tc.menus = [];
+            const item = listView.itemAtIndex(row);
+            mouseClick(item, 20, item.height / 2, Qt.RightButton);
+            compare(tc.menus.length, 1, "row " + row + " has a menu");
+            compare(tc.menus[0].items.filter(i => i.text).map(i => i.text), ["Open in New Tab", "Remove from Sidebar"]);
+            tc.menus[0].cb("unlist");
+        }
+        compare(fakeApp.removed, ["file:///home/u/Projects", "file:///home/u"]);
+        tc.menus[0].cb("newTab");
+        compare(fakeTab.win.tabs, ["file:///home/u"]);
+        // The keyboard: the Menu key on the row the keyboard is on.
+        tc.menus = [];
+        sidebar.forceActiveFocus();
+        listView.forceActiveFocus();
+        sidebar.keyRow = 5;
+        keyClick(Qt.Key_Menu);
+        compare(tc.menus.length, 1, "the Menu key opens the row's menu");
+        verify(tc.menus[0].keyboard, "opened for the keyboard (its first row selected)");
+        compare(tc.menus[0].items.filter(i => i.text).map(i => i.text), ["Open in New Tab", "Remove from Sidebar"]);
+        // A panel's sidebar edits nothing.
+        tc.menus = [];
+        fakeTab.chooser = {filter: {}};
+        mouseClick(listView.itemAtIndex(5), 20, 8, Qt.RightButton);
+        compare(tc.menus.length, 0, "no menu in an Open or Save panel");
+        fakeTab.chooser = null;
+    }
+
+    // A drag at the edge of a Favorites row shows the insertion line and a drop there adds the items to the user's folders at
+    // that position (FilesApp keeps the folders); in the middle of a place the items go into it, as before. The drag is
+    // tracked by the rows' drop areas for real; an internal drag carries no URLs, so the drop's items are handed to the row
+    // as its onDropped hands a system drag's (PlaceRow.dropItems).
+    function test_aDropBetweenFavoritesRowsAddsToTheSidebar() {
+        const listView = findList(sidebar);
+        fakeApp.added = [];
+        fakeTab.drops = [];
+        const dragTo = (row, y) => {
+            const item = listView.itemAtIndex(row);
+            const p = item.mapToItem(tc, item.width / 2, y);
+            incoming.x = p.x - 2;
+            incoming.y = p.y - 2;
+            incoming.Drag.active = true;
+            incoming.y += 0.5;
+            wait(20);
+        };
+        const items = ["file:///home/u/New"];
+        const pinned = listView.itemAtIndex(5);
+        dragTo(5, pinned.height - 3);
+        compare(sidebar.insertGap, 1, "the bottom edge of the user's first folder: after it");
+        const line = findLine();
+        verify(line !== null && line.visible, "the insertion line shows");
+        fuzzyCompare(line.y + line.height / 2, pinned.y + pinned.height, 0.5, "under the user's first folder");
+        verify(pinned.dropItems(items));
+        incoming.Drag.active = false;
+        compare(fakeApp.added, [{urls: items, position: 1}]);
+        compare(fakeApp.lastFallback, "file:///home/u/Projects", "items with no folder would go into Projects itself");
+        compare(sidebar.insertGap, -1, "the line goes with the drop");
+        verify(!line.visible);
+        dragTo(5, 3);
+        compare(sidebar.insertGap, 0, "its top edge: before it");
+        verify(pinned.dropItems(items));
+        incoming.Drag.active = false;
+        dragTo(0, 3);
+        compare(sidebar.insertGap, 0, "a standard place's edge: before the user's folders");
+        incoming.Drag.active = false;
+        sidebar.insertGap = -1;
+        dragTo(0, pinned.height / 2);
+        compare(sidebar.insertGap, -1, "the middle of a place: into it");
+        verify(listView.itemAtIndex(0).dropItems(items));
+        incoming.Drag.active = false;
+        compare(fakeTab.drops, ["file:///home/u"], "the items went into Home");
+        compare(fakeApp.added.length, 2);
+        // A panel's sidebar takes no insertion.
+        fakeTab.chooser = {filter: {}};
+        dragTo(5, pinned.height - 3);
+        compare(sidebar.insertGap, -1);
+        incoming.Drag.active = false;
+        fakeTab.chooser = null;
+    }
+
+    // A folder of the user's drags: dropped at another gap it moves there, released out of the sidebar it leaves Favorites
+    // (the Finder's drag out); the folder itself is untouched.
+    function test_aFolderOfTheUsersMovesAndDragsOut() {
+        const listView = findList(sidebar);
+        fakeApp.moved = [];
+        fakeApp.removed = [];
+        const pinned = listView.itemAtIndex(5);
+        const start = pinned.mapToItem(tc, 40, pinned.height / 2);
+        // To the top edge of Home (gap 0: before the user's folders).
+        const home = listView.itemAtIndex(0);
+        const to = home.mapToItem(tc, 40, 3);
+        // The pointer moves in steps, the event loop turning between them (an internal drag reaches the drop areas then).
+        const dragAlong = (from, dx, dy) => {
+            mousePress(tc, from.x, from.y);
+            for (let i = 1; i <= 8; i++) {
+                mouseMove(tc, from.x + dx * i / 8, from.y + dy * i / 8);
+                wait(10);
+            }
+            mouseRelease(tc, from.x + dx, from.y + dy);
+        };
+        dragAlong(start, 0, to.y - start.y);
+        compare(fakeApp.moved, [{url: "file:///home/u/Projects", position: 0}]);
+        compare(fakeApp.removed, [], "a move is no removal");
+        // Out of the sidebar (to its right).
+        dragAlong(start, 320, 0);
+        compare(fakeApp.removed, ["file:///home/u/Projects"]);
+        // A standard place does not drag.
+        fakeApp.removed = [];
+        dragAlong(home.mapToItem(tc, 40, home.height / 2), 320, 0);
+        compare(fakeApp.removed, []);
+    }
+
+    // Integrator review, L4: items with no folder among them dropped at the edge of a place go into that place (FilesApp answers
+    // with sidebarDropFallback for the token this sidebar sent); an answer for another sidebar's token is not this one's.
+    function test_anEdgeDropWithNoFolderGoesIntoThePlace() {
+        const listView = findList(sidebar);
+        fakeTab.drops = [];
+        const home = listView.itemAtIndex(0);
+        const p = home.mapToItem(tc, home.width / 2, 3);
+        incoming.x = p.x - 2;
+        incoming.y = p.y - 2;
+        incoming.Drag.active = true;
+        incoming.y += 0.5;
+        wait(20);
+        compare(sidebar.insertGap, 0, "Home's top edge is a gap");
+        verify(home.dropItems(["file:///home/u/note.txt"]));
+        incoming.Drag.active = false;
+        compare(fakeApp.lastFallback, "file:///home/u", "Home is the place to fall back to");
+        verify(fakeApp.lastToken !== "", "with this sidebar's token");
+        fakeApp.sidebarDropFallback("another-sidebar", ["file:///home/u/note.txt"], "file:///home/u");
+        compare(fakeTab.drops, [], "another sidebar's answer is ignored");
+        fakeApp.sidebarDropFallback(fakeApp.lastToken, ["file:///home/u/note.txt"], "file:///home/u");
+        compare(fakeTab.drops, ["file:///home/u"], "the items go into Home, as a drop in its middle");
+        fakeApp.sidebarDropFallback(fakeApp.lastToken, ["file:///home/u/note.txt"], "file:///home/u");
+        compare(fakeTab.drops, ["file:///home/u"], "once");
+    }
+
+    // Integrator re-review of 771cbddc, L1: a second edge drop made before the first one's folder check returns keeps the first
+    // drop's answer valid; each answer goes to its own drop, in whatever order they come.
+    function test_twoQuickEdgeDropsEachGetTheirAnswer() {
+        const listView = findList(sidebar);
+        fakeTab.drops = [];
+        const dropAtTopOf = row => {
+            const item = listView.itemAtIndex(row);
+            const p = item.mapToItem(tc, item.width / 2, 3);
+            incoming.x = p.x - 2;
+            incoming.y = p.y - 2;
+            incoming.Drag.active = true;
+            incoming.y += 0.5;
+            wait(20);
+            verify(item.dropItems(["file:///home/u/" + row + ".txt"]));
+            incoming.Drag.active = false;
+            return fakeApp.lastToken;
+        };
+        const first = dropAtTopOf(0);
+        const second = dropAtTopOf(5);
+        verify(first !== second, "one token per drop");
+        // The second answer comes first, then the first one: both drops are moved, each into its own place.
+        fakeApp.sidebarDropFallback(second, ["file:///home/u/5.txt"], "file:///home/u/Projects");
+        fakeApp.sidebarDropFallback(first, ["file:///home/u/0.txt"], "file:///home/u");
+        compare(fakeTab.drops, ["file:///home/u/Projects", "file:///home/u"]);
+        fakeApp.sidebarDropFallback(first, ["file:///home/u/0.txt"], "file:///home/u");
+        compare(fakeTab.drops.length, 2, "each answer is taken once");
+    }
+
+    // The insertion line (a Rectangle with lineY in the list's content).
+    function findLine(): var {
+        const stack = [findList(sidebar).contentItem];
+        while (stack.length) {
+            const it = stack.pop();
+            if (it.lineY !== undefined)
+                return it;
+            for (let i = 0; i < it.children.length; i++)
+                stack.push(it.children[i]);
+        }
+        return null;
     }
 
     function findList(item: Item): var {

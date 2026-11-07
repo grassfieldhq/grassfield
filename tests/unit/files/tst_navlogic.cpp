@@ -152,3 +152,35 @@ TEST(GoToFolder, AFileOpensItsFolderWithTheFileSelected)
     EXPECT_TRUE(t.select.isEmpty());
     EXPECT_TRUE(goToTarget(QUrl()).folder.isEmpty());
 }
+
+// Sidebar Favorites editing (FP-27; owner report 2026-11-07: "there is no way to pin a folder in the sidebar"): the stored
+// list, adding at the insertion line, moving and the locations that are never Favorites folders.
+TEST(SidebarFavorites, TheStoredListIsCleanedAndBounded)
+{
+    const QList<QUrl> list = NavLogic::sidebarList({QStringLiteral("file:///home/u/Projects/"), QStringLiteral("file:///home/u/Projects"),
+                                                    QStringLiteral("file:///home/u/a/../Work"), QStringLiteral("sftp://host/srv/share/"),
+                                                    QStringLiteral("grassfield-search:/?q=x"), QStringLiteral("trash:/"), QStringLiteral("remote:/"),
+                                                    QStringLiteral("grassfield-apps:/"), QStringLiteral("relative/path"), QString()});
+    EXPECT_EQ(list, (QList<QUrl>{QUrl(QStringLiteral("file:///home/u/Projects")), QUrl(QStringLiteral("file:///home/u/Work")),
+                                 QUrl(QStringLiteral("sftp://host/srv/share"))}));
+    EXPECT_EQ(NavLogic::sidebarList(NavLogic::sidebarStored(list)), list) << "a round trip through the settings";
+    QStringList many;
+    for (int i = 0; i < 100; ++i)
+        many << QStringLiteral("file:///f%1").arg(i);
+    EXPECT_EQ(NavLogic::sidebarList(many).size(), NavLogic::kMaxSidebarFavorites);
+}
+
+TEST(SidebarFavorites, FoldersGoWhereTheLineIsAndMove)
+{
+    const QUrl a(QStringLiteral("file:///a")), b(QStringLiteral("file:///b")), c(QStringLiteral("file:///c")), d(QStringLiteral("file:///d"));
+    EXPECT_EQ(NavLogic::withSidebarFolders({a, b}, {c}, 1), (QList<QUrl>{a, c, b}));
+    EXPECT_EQ(NavLogic::withSidebarFolders({a, b}, {c, d}, 0), (QList<QUrl>{c, d, a, b})) << "several in their order";
+    EXPECT_EQ(NavLogic::withSidebarFolders({a, b}, {c}, -1), (QList<QUrl>{a, b, c})) << "no line: at the end";
+    EXPECT_EQ(NavLogic::withSidebarFolders({a, b}, {QUrl(QStringLiteral("file:///a/")), c}, 0), (QList<QUrl>{c, a, b})) << "one already listed stays where it is";
+    EXPECT_EQ(NavLogic::withSidebarFolders({a}, {QUrl(QStringLiteral("grassfield-tag:/Red")), QUrl(QStringLiteral("trash:/"))}, 0), QList<QUrl>{a});
+    EXPECT_EQ(NavLogic::movedInSidebar({a, b, c, d}, a, 3), (QList<QUrl>{b, c, a, d})) << "down: to the gap before d";
+    EXPECT_EQ(NavLogic::movedInSidebar({a, b, c, d}, d, 0), (QList<QUrl>{d, a, b, c})) << "up: to the top";
+    EXPECT_EQ(NavLogic::movedInSidebar({a, b, c, d}, b, 4), (QList<QUrl>{a, c, d, b})) << "after the last";
+    EXPECT_EQ(NavLogic::movedInSidebar({a, b, c, d}, b, 1), (QList<QUrl>{a, b, c, d})) << "its own gap: unchanged";
+    EXPECT_EQ(NavLogic::movedInSidebar({a, b}, c, 0), (QList<QUrl>{a, b})) << "not listed: unchanged";
+}

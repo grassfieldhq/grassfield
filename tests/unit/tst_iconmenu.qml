@@ -66,8 +66,11 @@ TestCase {
     function test_iconMenu() {
         const m = menu({kind: "icon", count: 1, singleName: "Report.pdf"});
         compare(ids(m), ["open", "trash", "getInfo", "rename", "compress", "duplicate", "alias", "quickLook", "copy"]);
-        compare(m.model.find(i => i.id === "compress").text, "Compress “Report.pdf”");
-        compare(m.model.find(i => i.id === "quickLook").text, "Glance at “Report.pdf”");
+        // The name goes in the row's name (drawn shortened in its middle when long: menu.nameMaxWidth).
+        compare(m.model.find(i => i.id === "compress").text, "Compress “%1”");
+        compare(m.model.find(i => i.id === "compress").name, "Report.pdf");
+        compare(m.model.find(i => i.id === "quickLook").text, "Glance at “%1”");
+        compare(m.model.find(i => i.id === "quickLook").name, "Report.pdf");
         verify(m.model.find(i => i.id === "rename").enabled);
         m.destroy();
     }

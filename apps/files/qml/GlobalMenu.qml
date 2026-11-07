@@ -41,7 +41,8 @@ Platform.MenuBar {
     // These read folder.selectedCount themselves: its NOTIFY (selectionChanged) fires on every selection change, while a
     // binding on `count` only re-runs when the number changes (selecting another single item kept the old name and
     // Open With list, and Open With then acted on the new selection: review of 72272e4).
-    readonly property string firstName: bar.folder && bar.folder.selectedCount === 1 ? bar.label(bar.folder.nameAt(bar.folder.selectedRows()[0])) : ""
+    // Shortened in its middle when long (BrowserWindow.menuName): the menu bar keeps its menus' width.
+    readonly property string firstName: bar.folder && bar.folder.selectedCount === 1 ? bar.label(bar.win.menuName(DisplayName.text(bar.folder.nameAt(bar.folder.selectedRows()[0])))) : ""
     // Open With: for a selection of files (re-read when the selection changes), the applications for them and Other…, the
     // Choose Application panel (ADR-0035 5c-1).
     readonly property bool openWithFiles: {
@@ -60,6 +61,15 @@ Platform.MenuBar {
         if (!rows.every(r => !f.isDirAt(r)))
             return [];
         return bar.app.applicationsFor(f.selectedUrls());
+    }
+
+    // What Add to Sidebar would add (BrowserTab.sidebarCandidates), read again on every selection and Favorites change.
+    readonly property var sidebarCandidates: {
+        void bar.app.places.pinnedCount;
+        void bar.app.places.firstPinnedRow;
+        const f = bar.folder;
+        void (f ? f.selectedCount : 0);
+        return bar.tab && bar.tab.sidebarCandidates ? bar.tab.sidebarCandidates() : [];
     }
 
     // Customize Folder applies to a selection of local folders. Read from folder.selectedCount (its NOTIFY fires on every
@@ -151,7 +161,8 @@ Platform.MenuBar {
                 delegate: Platform.MenuItem {
                     required property var modelData
 
-                    text: bar.label(modelData.name)
+                    // The default application first, marked (the Finder's Open With).
+                    text: modelData.isDefault ? qsTr("%1 (default)").arg(bar.label(modelData.name)) : bar.label(modelData.name)
                     onTriggered: bar.tab.runAction("app:" + modelData.id, bar.folder)
                 }
 
@@ -239,6 +250,13 @@ Platform.MenuBar {
             enabled: bar.keysHere && bar.count === 1 && String(bar.app.linkTarget(bar.tab.selection()[0])) !== ""
             onTriggered: bar.tab.showOriginal()
         }
+        // The Finder's Add to Sidebar (⌃⌘T): the selected folders, or the shown folder with nothing selected (FP-27).
+        Platform.MenuItem {
+            text: qsTr("Add to Sidebar")
+            shortcut: "Ctrl+Meta+T"
+            enabled: bar.keysHere && bar.tab !== null && bar.sidebarCandidates.length > 0
+            onTriggered: bar.tab.addToSidebar()
+        }
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("Glance at %1 Items").arg(bar.count) : bar.count === 1 ? qsTr("Glance at “%1”").arg(bar.firstName) : qsTr("Glance")
             // Finder's File > Quick Look (Cmd+Y); Space in the views too.
@@ -317,6 +335,14 @@ Platform.MenuBar {
             onTriggered: bar.app.redo()
         }
         Platform.MenuSeparator {}
+        // Cut (owner request 2026-11-07, which wins over the Finder here): the items fade until Paste moves them; Esc or a new
+        // Copy cancels.
+        Platform.MenuItem {
+            text: bar.count > 1 ? qsTr("Cut %1 Items").arg(bar.count) : bar.count === 1 ? qsTr("Cut “%1”").arg(bar.firstName) : qsTr("Cut")
+            shortcut: "Ctrl+X"
+            enabled: bar.keysHere && bar.count > 0 && bar.editable && !bar.inApplications
+            onTriggered: bar.tab.copySelection(true)
+        }
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("Copy %1 Items").arg(bar.count) : bar.count === 1 ? qsTr("Copy “%1”").arg(bar.firstName) : qsTr("Copy")
             shortcut: "Ctrl+C"
@@ -331,12 +357,12 @@ Platform.MenuBar {
             onTriggered: bar.app.copyPaths(bar.tab.selection())
         }
         Platform.MenuItem {
-            text: bar.app.clipboardCount > 1 ? qsTr("Paste %1 Items").arg(bar.app.clipboardCount) : qsTr("Paste")
+            text: bar.app.clipboardCount > 1 ? qsTr("Paste %1 Items").arg(bar.app.clipboardCount) : bar.app.clipboardCount === 1 ? qsTr("Paste Item") : qsTr("Paste")
             shortcut: "Ctrl+V"
             enabled: bar.keysHere && bar.app.canPaste && bar.writable
             onTriggered: bar.tab.paste()
         }
-        // Decision F-6: no Cut for files; the copied items move here instead (the Finder shows it while ⌥ is held).
+        // The Finder's Move Item Here (shown there while ⌥ is held; the menu bar has no Option items): the copied items moved here.
         Platform.MenuItem {
             text: bar.app.clipboardCount > 1 ? qsTr("Move %1 Items Here").arg(bar.app.clipboardCount) : qsTr("Move Item Here")
             shortcut: "Ctrl+Alt+V"

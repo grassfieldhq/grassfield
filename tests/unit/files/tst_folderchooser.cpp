@@ -7,23 +7,32 @@
 #include "applicationslogic.h"
 #include "filelogic.h"
 #include "foldermodel.h"
+#include "placesmodel.h"
 
 #include <QCoreApplication>
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QJSEngine>
+#include <QMimeData>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
 
+#include <KApplicationTrader>
+#include <KIO/FileUndoManager>
 #include <KService>
 #include <KSycoca>
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <functional>
+#include <tuple>
 
 namespace {
 
@@ -406,4 +415,400 @@ TEST(ApplicationLaunch, TheFailureNamesTheRowsNameCleaned)
     EXPECT_FALSE(failures.first().contains(QChar(0x202E))) << failures.first().toStdString();
     EXPECT_EQ(failures.first(), QStringLiteral("“%1” could not be started.").arg(FileLogic::displayName(model->nameAt(rowOf()))));
     QFile::remove(entry.fileName());
+}
+
+namespace {
+// Runs the event loop until `done` or 10 s.
+bool waitFor(const std::function<bool()> &done)
+{
+    QDeadlineTimer deadline(10000);
+    while (!done() && !deadline.hasExpired()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(5);
+    }
+    return done();
+}
+
+QStringList selectedNames(const FolderModel &model)
+{
+    QStringList out;
+    for (int r : model.selectedRows())
+        out << model.nameAt(r);
+    return out;
+}
+} // namespace
+
+// The column view's wish (FolderModel::expectAlone): the folder its next column shows, selected alone once the column's
+// listing has it. Owner report 2026-11-07 ("in Columns view the selection sometimes goes back to the previous folder"): the
+// column view used expect(), whose calls build one selection, so a wish still waiting for a slow listing joined the folder
+// the user chose meanwhile, and became the current row the next arrow key started from. A folder made after the wish stands
+// for an item a slow listing brings late.
+TEST(ColumnWish, AWishWaitingForTheListingNeverComesBackOverTheUsersChoice)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("chosen")));
+    FolderModel model;
+    model.setUrl(QUrl::fromLocalFile(dir.path()));
+    ASSERT_TRUE(waitFor([&] { return !model.loading() && model.count() == 1; }));
+    const auto url = [&](const char *name) { return QUrl::fromLocalFile(dir.filePath(QString::fromLatin1(name))); };
+    const auto rowOf = [&](const char *name) {
+        for (int r = 0; r < model.count(); ++r)
+            if (model.nameAt(r) == QLatin1String(name))
+                return r;
+        return -1;
+    };
+    const auto make = [&](const char *name) {
+        return QDir(dir.path()).mkdir(QString::fromLatin1(name)) && waitFor([&] { return rowOf(name) >= 0; });
+    };
+
+    // expect() as the column view called it: the late folder joins the user's choice and becomes the current row.
+    model.expect(url("before"), false);
+    model.select(rowOf("chosen"), 0, true);
+    model.expect(url("chosen"), false);
+    ASSERT_TRUE(make("before"));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(selectedNames(model), (QStringList{QStringLiteral("before"), QStringLiteral("chosen")})) << "expect() still builds one selection (a drop's items)";
+    EXPECT_EQ(model.currentRow(), rowOf("before"));
+
+    // expectAlone(): the new wish replaces the old one; the late folder changes nothing.
+    model.select(rowOf("chosen"), 0, true);
+    model.expectAlone(url("late"));
+    model.select(rowOf("chosen"), 0, true);
+    model.expectAlone(url("chosen"));
+    ASSERT_TRUE(make("late"));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(selectedNames(model), QStringList{QStringLiteral("chosen")});
+    EXPECT_EQ(model.currentRow(), rowOf("chosen"));
+
+    // A selection made in the listing drops a wish by itself (Select All, a click that leaves the location).
+    model.expectAlone(url("dropped"));
+    model.select(rowOf("chosen"), 0, true);
+    ASSERT_TRUE(make("dropped"));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(selectedNames(model), QStringList{QStringLiteral("chosen")});
+    model.expectAlone(url("emptied"));
+    model.expectAlone(QUrl());
+    ASSERT_TRUE(make("emptied"));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(selectedNames(model), QStringList{QStringLiteral("chosen")}) << "an empty URL drops the wish";
+
+    // Alone, a wish selects its folder alone once listed and asks the view to show it.
+    int revealed = -1;
+    QObject::connect(&model, &FolderModel::revealRequested, &model, [&](int row, bool) { revealed = row; });
+    model.expectAlone(url("next"));
+    ASSERT_TRUE(make("next"));
+    ASSERT_TRUE(waitFor([&] { return selectedNames(model) == QStringList{QStringLiteral("next")}; })) << selectedNames(model).join(QLatin1Char(',')).toStdString();
+    EXPECT_EQ(revealed, rowOf("next"));
+    // Already listed: at once.
+    model.expectAlone(url("chosen"));
+    EXPECT_EQ(selectedNames(model), QStringList{QStringLiteral("chosen")});
+}
+
+// Sidebar Favorites (FP-27; owner report 2026-11-07, "there is no way to pin a folder in the sidebar"): Add to Sidebar keeps
+// the folders among the items (KIO says which are; a file is refused with the banner's message), lists them after the standard
+// places and keeps them in QSettings; Remove from Sidebar takes a folder of the user's away and hides a standard place, which
+// Add to Sidebar lists again. The folders themselves are never touched.
+TEST(SidebarFavorites, AddToSidebarKeepsFoldersAndRemoveHidesStandardPlaces)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("Projects")));
+    QFile file(dir.filePath(QStringLiteral("note.txt")));
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.close();
+    const QUrl projects = QUrl::fromLocalFile(dir.filePath(QStringLiteral("Projects")));
+    FilesApp app(QList<QUrl>{});
+    auto *places = qobject_cast<PlacesModel *>(app.places());
+    ASSERT_NE(places, nullptr);
+    QStringList failures;
+    QObject::connect(&app, &FilesApp::operationFailed, &app, [&](const QString &message) { failures << message; });
+
+    app.addToSidebar({projects, QUrl::fromLocalFile(dir.filePath(QStringLiteral("note.txt")))}, -1);
+    ASSERT_TRUE(waitFor([&] { return places->pinnedCount() == 1 && !failures.isEmpty(); }));
+    EXPECT_EQ(failures, QStringList{QStringLiteral("Only folders can be added to the sidebar.")});
+    const QModelIndex row = places->index(places->firstPinnedRow(), 0);
+    EXPECT_EQ(places->data(row, PlacesModel::KindRole).toString(), QStringLiteral("pinned"));
+    EXPECT_EQ(places->data(row, PlacesModel::UrlRole).toUrl(), projects);
+    EXPECT_EQ(places->data(row, PlacesModel::NameRole).toString(), QStringLiteral("Projects"));
+    EXPECT_EQ(places->data(row, PlacesModel::SectionRole).toString(), QStringLiteral("favorites"));
+    EXPECT_TRUE(app.inSidebar(projects));
+    EXPECT_EQ(QSettings(QStringLiteral("Grassfield"), QStringLiteral("Files")).value(QStringLiteral("sidebar/favorites")).toStringList(), QStringList{projects.toString()});
+
+    // Once only; then gone again (the folder stays on disk).
+    app.addToSidebar({QUrl(projects.toString() + QLatin1Char('/'))}, 0);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(places->pinnedCount(), 1);
+    app.removeFromSidebar(projects);
+    EXPECT_EQ(places->pinnedCount(), 0);
+    EXPECT_FALSE(app.inSidebar(projects));
+    EXPECT_TRUE(QFileInfo(projects.toLocalFile()).isDir());
+
+    // A standard place: hidden, then listed again by Add to Sidebar.
+    const QUrl home = QUrl::fromLocalFile(QDir::homePath());
+    ASSERT_TRUE(app.inSidebar(home));
+    app.removeFromSidebar(home);
+    EXPECT_FALSE(app.inSidebar(home));
+    EXPECT_EQ(QSettings(QStringLiteral("Grassfield"), QStringLiteral("Files")).value(QStringLiteral("sidebar/hidden")).toStringList(), QStringList{home.toString()});
+    app.addToSidebar({home}, -1);
+    EXPECT_TRUE(app.inSidebar(home));
+    EXPECT_EQ(places->pinnedCount(), 0) << "listed again in its own place, not as a folder of the user's";
+}
+
+// Cut (owner request 2026-11-07, decision F-18): Cut fades the items (FolderModel's cut role) until Paste moves them through
+// KIO's paste, which empties the clipboard, and Edit > Undo takes the move back; a cut from a GNOME file manager
+// (x-special/gnome-copied-files) is a cut too; a new Copy and Esc (cancelCut) cancel it. Offscreen, the clipboard is the
+// process's own. Each move is undone before the next step, so KIO's undo history is left as it was found.
+TEST(CutAndPaste, CutFadesAndPasteMovesWhateverManagerCut)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    for (const char *name : {"a.txt", "b.txt", "c.txt"}) {
+        QFile f(dir.filePath(QString::fromLatin1(name)));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(name);
+    }
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("to")));
+    const auto url = [&](const QString &rel) { return QUrl::fromLocalFile(dir.filePath(rel)); };
+    const auto here = [&](const char *rel) { return QFileInfo::exists(dir.filePath(QString::fromLatin1(rel))); };
+    FilesApp app(QList<QUrl>{});
+    QStringList told;
+    QObject::connect(&app, &FilesApp::operationFailed, &app, [&](const QString &message) { told << message; });
+    auto *model = qobject_cast<FolderModel *>(app.createFolderModel(&app));
+    ASSERT_NE(model, nullptr);
+    model->setUrl(QUrl::fromLocalFile(dir.path()));
+    ASSERT_TRUE(waitFor([&] { return !model->loading() && model->count() == 4; }));
+    const auto cutShown = [&](const char *name) {
+        for (int r = 0; r < model->count(); ++r)
+            if (model->nameAt(r) == QLatin1String(name))
+                return model->data(model->index(r, 0), FolderModel::CutRole).toBool();
+        return false;
+    };
+    const auto undoMove = [&](const char *back) {
+        if (!waitFor([&] { return app.canUndo(); }))
+            return false;
+        app.undo();
+        return waitFor([&] { return here(back); });
+    };
+
+    app.copyToClipboard({url(QStringLiteral("a.txt"))}, true);
+    EXPECT_TRUE(app.cutPending());
+    EXPECT_TRUE(cutShown("a.txt"));
+    EXPECT_FALSE(cutShown("b.txt"));
+    // Both conventions are on the clipboard, for the other file managers.
+    const QMimeData *data = QGuiApplication::clipboard()->mimeData();
+    EXPECT_EQ(data->data(QStringLiteral("application/x-kde-cutselection")), QByteArray("1"));
+    EXPECT_TRUE(data->data(QStringLiteral("x-special/gnome-copied-files")).startsWith("cut\n"));
+    app.paste(url(QStringLiteral("to")), nullptr);
+    ASSERT_TRUE(waitFor([&] { return here("to/a.txt") && !app.cutPending(); }));
+    EXPECT_FALSE(here("a.txt")) << "moved, not copied";
+    EXPECT_FALSE(app.canPaste()) << "a cut is pasted once";
+    EXPECT_TRUE(undoMove("a.txt")) << "Undo takes the move back; told: " << told.join(QLatin1Char('|')).toStdString();
+    EXPECT_FALSE(here("to/a.txt"));
+
+    // A GNOME file manager's cut: Files moves it too, and fades it meanwhile.
+    auto *gnome = new QMimeData;
+    gnome->setUrls({url(QStringLiteral("b.txt"))});
+    gnome->setData(QStringLiteral("x-special/gnome-copied-files"), "cut\n" + url(QStringLiteral("b.txt")).toEncoded());
+    QGuiApplication::clipboard()->setMimeData(gnome);
+    EXPECT_FALSE(app.cutPending()) << "Nautilus's cut fades here but is not Files' to cancel (integrator review, L1)";
+    ASSERT_TRUE(waitFor([&] { return cutShown("b.txt"); }));
+    app.paste(url(QStringLiteral("to")), nullptr);
+    ASSERT_TRUE(waitFor([&] { return here("to/b.txt"); }));
+    EXPECT_FALSE(here("b.txt"));
+    EXPECT_TRUE(undoMove("b.txt")) << "told: " << told.join(QLatin1Char('|')).toStdString();
+
+    // A new Copy cancels the cut; so does Esc (cancelCut), which empties the clipboard.
+    app.copyToClipboard({url(QStringLiteral("c.txt"))}, true);
+    ASSERT_TRUE(waitFor([&] { return cutShown("c.txt"); }));
+    app.copyToClipboard({url(QStringLiteral("c.txt"))}, false);
+    EXPECT_FALSE(app.cutPending());
+    EXPECT_FALSE(cutShown("c.txt"));
+    app.copyToClipboard({url(QStringLiteral("c.txt"))}, true);
+    EXPECT_TRUE(app.cutPending());
+    app.cancelCut();
+    EXPECT_FALSE(app.cutPending());
+    EXPECT_FALSE(app.canPaste());
+    EXPECT_FALSE(cutShown("c.txt"));
+    EXPECT_TRUE(here("c.txt")) << "cancelling moves nothing";
+}
+
+// Default applications (owner report 2026-11-07, decision F-19): in the Grassfield session Change All… writes the session's own
+// list, grassfield-mimeapps.list (never mimeapps.list, which the Omarchy session reads); Get Info and Open With answer the
+// choice at once and Open With lists it first, marked; KService reads the session's list; outside the session the choice goes
+// to mimeapps.list as before. Two scratch applications for PNG pictures.
+TEST(DefaultApplications, ChangeAllInTheSessionWritesTheSessionsOwnList)
+{
+    const QString apps = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/applications");
+    const QString config = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    ASSERT_TRUE(QDir().mkpath(apps) && QDir().mkpath(config));
+    for (const char *id : {"org.example.ViewerA", "org.example.ViewerB"}) {
+        QFile f(apps + QLatin1Char('/') + QString::fromLatin1(id) + QStringLiteral(".desktop"));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray("[Desktop Entry]\nType=Application\nName=") + id + "\nExec=/bin/true %f\nMimeType=image/png;\n");
+    }
+    QFile generic(config + QStringLiteral("/mimeapps.list"));
+    ASSERT_TRUE(generic.open(QIODevice::WriteOnly));
+    const QByteArray omarchy = "[Default Applications]\nimage/png=org.example.ViewerA.desktop;\n";
+    generic.write(omarchy);
+    generic.close();
+    QTemporaryDir docs;
+    ASSERT_TRUE(docs.isValid());
+    QFile picture(docs.filePath(QStringLiteral("picture.png")));
+    ASSERT_TRUE(picture.open(QIODevice::WriteOnly));
+    picture.close();
+    const QUrl doc = QUrl::fromLocalFile(picture.fileName());
+    const QString type = QStringLiteral("image/png");
+    const QByteArray desktop = qgetenv("XDG_CURRENT_DESKTOP");
+    qputenv("XDG_CURRENT_DESKTOP", "Grassfield:Hyprland");
+    FilesApp app(QList<QUrl>{});
+    ASSERT_TRUE(waitFor([&] {
+        KSycoca::self()->ensureCacheValid();
+        return app.defaultApplication(type) == QLatin1String("org.example.ViewerA.desktop");
+    })) << app.defaultApplication(type).toStdString();
+
+    EXPECT_TRUE(app.setDefaultApplication(type, QStringLiteral("org.example.ViewerB.desktop")));
+    EXPECT_EQ(app.defaultApplication(type), QStringLiteral("org.example.ViewerB.desktop")) << "answered at once";
+    const QVariantList listed = app.applicationsFor({doc});
+    ASSERT_FALSE(listed.isEmpty());
+    EXPECT_EQ(listed.first().toMap().value(QStringLiteral("id")).toString(), QStringLiteral("org.example.ViewerB.desktop")) << "the default first";
+    EXPECT_TRUE(listed.first().toMap().value(QStringLiteral("isDefault")).toBool());
+    EXPECT_EQ(std::count_if(listed.cbegin(), listed.cend(), [](const QVariant &v) { return v.toMap().value(QStringLiteral("isDefault")).toBool(); }), 1);
+    QFile session(config + QStringLiteral("/grassfield-mimeapps.list"));
+    ASSERT_TRUE(session.open(QIODevice::ReadOnly));
+    EXPECT_EQ(session.readAll(), QByteArray("[Default Applications]\nimage/png=org.example.ViewerB.desktop;\n"));
+    session.close();
+    ASSERT_TRUE(generic.open(QIODevice::ReadOnly));
+    EXPECT_EQ(generic.readAll(), omarchy) << "the Omarchy session's list is untouched";
+    generic.close();
+    ASSERT_TRUE(waitFor([&] {
+        KSycoca::self()->ensureCacheValid();
+        const KService::Ptr s = KApplicationTrader::preferredService(type);
+        return s && s->storageId() == QLatin1String("org.example.ViewerB.desktop");
+    })) << "KService reads the session's list";
+
+    // Outside the session: mimeapps.list, as before.
+    qputenv("XDG_CURRENT_DESKTOP", "Hyprland");
+    EXPECT_TRUE(app.setDefaultApplication(type, QStringLiteral("org.example.ViewerB.desktop")));
+    ASSERT_TRUE(generic.open(QIODevice::ReadOnly));
+    EXPECT_TRUE(generic.readAll().contains("image/png=org.example.ViewerB.desktop"));
+    generic.close();
+    if (desktop.isNull())
+        qunsetenv("XDG_CURRENT_DESKTOP");
+    else
+        qputenv("XDG_CURRENT_DESKTOP", desktop);
+    QFile::remove(config + QStringLiteral("/grassfield-mimeapps.list"));
+    QFile::remove(config + QStringLiteral("/mimeapps.list"));
+    for (const char *id : {"org.example.ViewerA", "org.example.ViewerB"})
+        QFile::remove(apps + QLatin1Char('/') + QString::fromLatin1(id) + QStringLiteral(".desktop"));
+}
+
+// Integrator review of c5dac3f3 (M1, L1, L3): a paste empties the clipboard only when it still holds this very cut (something
+// copied while a slow move ran stays); Esc cancels only a cut Files wrote (another file manager's cut is not Files' to
+// empty); cut items pasted into their own folder stay where they are and stay cut (KIO would refuse a move onto itself).
+TEST(CutAndPaste, TheClipboardIsOnlyEverEmptiedForFilesOwnCut)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    for (const char *name : {"a.txt", "b.txt", "c.txt"}) {
+        QFile f(dir.filePath(QString::fromLatin1(name)));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(name);
+    }
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("to")));
+    const auto url = [&](const QString &rel) { return QUrl::fromLocalFile(dir.filePath(rel)); };
+    const auto here = [&](const char *rel) { return QFileInfo::exists(dir.filePath(QString::fromLatin1(rel))); };
+    FilesApp app(QList<QUrl>{});
+    QStringList told;
+    QObject::connect(&app, &FilesApp::operationFailed, &app, [&](const QString &message) { told << message; });
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    const auto undoMove = [&](const char *back) {
+        if (!waitFor([&] { return app.canUndo(); }))
+            return false;
+        app.undo();
+        return waitFor([&] { return here(back); });
+    };
+
+    // M1: a password copied while the move runs stays on the clipboard.
+    app.copyToClipboard({url(QStringLiteral("a.txt"))}, true);
+    app.paste(url(QStringLiteral("to")), nullptr);
+    clipboard->setText(QStringLiteral("a password copied meanwhile"));
+    ASSERT_TRUE(waitFor([&] { return here("to/a.txt") && !here("a.txt"); }));
+    QCoreApplication::processEvents();
+    ASSERT_TRUE(waitFor([&] { return app.canUndo(); })) << "the move ended";
+    EXPECT_EQ(clipboard->text(), QStringLiteral("a password copied meanwhile")) << "the newer content is not emptied";
+    EXPECT_TRUE(undoMove("a.txt")) << told.join(QLatin1Char('|')).toStdString();
+
+    // L1: another file manager's cut fades its items but is not Files' to cancel.
+    auto *gnome = new QMimeData;
+    gnome->setUrls({url(QStringLiteral("b.txt"))});
+    gnome->setData(QStringLiteral("x-special/gnome-copied-files"), "cut\n" + url(QStringLiteral("b.txt")).toEncoded());
+    clipboard->setMimeData(gnome);
+    EXPECT_FALSE(app.cutPending()) << "Nautilus's cut, not Files'";
+    app.cancelCut();
+    EXPECT_TRUE(app.canPaste()) << "Esc in Files leaves another application's clipboard alone";
+    // Files' own cut is pending, until something else is copied with the same items but without Files' mark.
+    app.copyToClipboard({url(QStringLiteral("b.txt"))}, true);
+    EXPECT_TRUE(app.cutPending());
+    auto *dolphin = new QMimeData;
+    dolphin->setUrls({url(QStringLiteral("b.txt"))});
+    dolphin->setData(QStringLiteral("application/x-kde-cutselection"), "1");
+    clipboard->setMimeData(dolphin);
+    EXPECT_FALSE(app.cutPending()) << "Dolphin's cut of the same item is Dolphin's";
+
+    // L3: cut items pasted into their own folder: nothing moves, no conflict, and the cut stays for another folder.
+    app.copyToClipboard({url(QStringLiteral("c.txt"))}, true);
+    told.clear();
+    const quint64 serial = KIO::FileUndoManager::self()->currentCommandSerialNumber();
+    app.paste(QUrl::fromLocalFile(dir.path()), nullptr);
+    for (int i = 0; i < 20; ++i)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    EXPECT_TRUE(here("c.txt"));
+    EXPECT_TRUE(app.cutPending()) << "still cut";
+    EXPECT_EQ(KIO::FileUndoManager::self()->currentCommandSerialNumber(), serial) << "no move was started";
+    EXPECT_TRUE(told.isEmpty()) << "no conflict: " << told.join(QLatin1Char('|')).toStdString();
+    app.paste(url(QStringLiteral("to")), nullptr);
+    ASSERT_TRUE(waitFor([&] { return here("to/c.txt") && !app.cutPending(); })) << "then pasted elsewhere it moves";
+    EXPECT_FALSE(app.canPaste()) << "and its own cut is consumed";
+    EXPECT_TRUE(told.isEmpty()) << told.join(QLatin1Char('|')).toStdString();
+    EXPECT_TRUE(undoMove("c.txt"));
+}
+
+// Integrator review, L4: items dropped at the edge of a Favorites place (an add-to-sidebar gap) that hold no folder go into
+// that place instead of being refused; folders still join Favorites, and nothing falls back then.
+TEST(SidebarFavorites, AnEdgeDropWithNoFolderGoesIntoThePlace)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("Folder")));
+    QFile file(dir.filePath(QStringLiteral("note.txt")));
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.close();
+    FilesApp app(QList<QUrl>{});
+    auto *places = qobject_cast<PlacesModel *>(app.places());
+    ASSERT_NE(places, nullptr);
+    QStringList told;
+    QObject::connect(&app, &FilesApp::operationFailed, &app, [&](const QString &message) { told << message; });
+    QList<std::tuple<QString, QList<QUrl>, QUrl>> fallbacks;
+    QObject::connect(&app, &FilesApp::sidebarDropFallback, &app, [&](const QString &token, const QList<QUrl> &urls, const QUrl &destination) {
+        fallbacks.append({token, urls, destination});
+    });
+    const QUrl documents = QUrl::fromLocalFile(QDir::homePath() + QStringLiteral("/Documents"));
+    const QUrl note = QUrl::fromLocalFile(dir.filePath(QStringLiteral("note.txt")));
+    app.addToSidebar({note}, 0, documents, QStringLiteral("t1"));
+    ASSERT_TRUE(waitFor([&] { return !fallbacks.isEmpty(); }));
+    EXPECT_EQ(std::get<0>(fallbacks.first()), QStringLiteral("t1"));
+    EXPECT_EQ(std::get<1>(fallbacks.first()), QList<QUrl>{note});
+    EXPECT_EQ(std::get<2>(fallbacks.first()), documents);
+    EXPECT_TRUE(told.isEmpty()) << "no refusal banner";
+    EXPECT_EQ(places->pinnedCount(), 0);
+    // A folder among them: it joins, nothing falls back.
+    const QUrl folder = QUrl::fromLocalFile(dir.filePath(QStringLiteral("Folder")));
+    app.addToSidebar({folder, note}, 0, documents, QStringLiteral("t2"));
+    ASSERT_TRUE(waitFor([&] { return places->pinnedCount() == 1; }));
+    EXPECT_EQ(fallbacks.size(), 1);
+    app.removeFromSidebar(folder);
+    // A search location is never a sidebar folder (File > Add to Sidebar is dimmed there); a removed standard place is one.
+    EXPECT_FALSE(app.sidebarCandidate(QUrl(QStringLiteral("grassfield-search:/?q=x"))));
+    EXPECT_TRUE(app.sidebarCandidate(folder));
 }

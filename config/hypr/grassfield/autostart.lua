@@ -46,6 +46,13 @@ hl.on("hyprland.start", function()
   local services = "grassfield-crash-watch.service grassfield-battery-watch.service grassfield-migrate-notify.service grassfield-automount.service grassfield-pacman-watch.path grassfield-shell-watchdog.timer"
   hl.exec_cmd("{ " .. import_env .. "; } && systemctl --user start grassfield-menu-bridge.service; systemctl --user start --no-block grassfield-prompter.service; systemctl --user start grassfield-secrets-handover.service; systemctl --user start --no-block grassfield-portal-settings.service; systemctl --user start --no-block grassfield-security.service; systemctl --user start grassfield-shell.service; systemctl --user start " .. services)
 
+  -- Default applications (decision F-19 of docs/specs/files.md, owner report 2026-11-07): Grassfield's own apps (Preview for
+  -- pictures and PDF, Files for folders) become this session's defaults where the user's grassfield-mimeapps.list has no entry
+  -- for the type yet. The XDG MIME applications specification reads that file before mimeapps.list only where
+  -- XDG_CURRENT_DESKTOP names Grassfield (session.lua): the Omarchy session keeps its own defaults, and a choice the user makes
+  -- here (Files' Get Info > Change All…) is never replaced. Grassfield Files does it and exits; no window.
+  hl.exec_cmd("command -v grassfield-files >/dev/null && grassfield-files --seed-default-apps")
+
   -- What Omarchy's autostart does besides starting its shell: the power profile for the current power source, the
   -- post-boot hooks of ~/.config/omarchy/hooks, and the lid state (clamshell with an external display at start).
   hl.exec_cmd("command -v omarchy-powerprofiles-init >/dev/null && omarchy-powerprofiles-init")

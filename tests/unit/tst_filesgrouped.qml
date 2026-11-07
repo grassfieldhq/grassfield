@@ -174,7 +174,7 @@ TestCase {
             groups.push({title: letter, first: listing.count, count: size});
             for (let i = 0; i < size; i++) {
                 listing.append({name: letter + " " + i, url: "file:///sandbox/" + g + "-" + i, iconName: "", thumbnail: "", emblem: "", selected: false,
-                                isDir: false, folderColor: "", folderGlyph: "", canPreview: true, hidden: false, dimmed: false, tagColors: [],
+                                isDir: false, folderColor: "", folderGlyph: "", canPreview: true, hidden: false, cut: false, dimmed: false, tagColors: [],
                                 modifiedText: "", sizeText: "", kind: "Plain text document"});
             }
         }

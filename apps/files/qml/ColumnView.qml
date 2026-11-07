@@ -38,6 +38,13 @@ FocusScope {
     Accessible.role: Accessible.Pane
     Accessible.name: qsTr("Columns")
 
+    // The columns shown (one per folder from the first segment to the location) and the one at `index` (null past the end).
+    readonly property int columnCount: columnsModel.count
+
+    function columnAt(index: int): Item {
+        return columns.itemAt(index);
+    }
+
     function applyPrefs(): void {
         for (let i = 0; i < columns.count; i++) {
             const c = columns.itemAt(i) as FileColumn;
@@ -120,11 +127,13 @@ FocusScope {
             columnsModel.remove(keep, columnsModel.count - keep);
         for (let i = keep; i < urls.length; i++)
             columnsModel.append({url: urls[i]});
-        // Each column selects the folder shown in the column after it.
-        for (let i = 0; i < columnsModel.count - 1; i++) {
+        // Each column selects the folder shown in the column after it, once listed; the last column has nothing to select. The
+        // wish replaces the one before it (FolderModel.expectAlone): a column still listing never brings back the folder it
+        // showed before the user chose another one in it (owner report 2026-11-07).
+        for (let i = 0; i < columnsModel.count; i++) {
             const c = columns.itemAt(i) as FileColumn;
             if (c && c.model)
-                c.model.expect(urls[i + 1], false);
+                c.model.expectAlone(i + 1 < columnsModel.count ? urls[i + 1] : "");
         }
         if (!root.internalNav)
             root.activeColumn = columnsModel.count - 1;
@@ -147,11 +156,16 @@ FocusScope {
         if (m.selectedCount !== 1) {
             root.internalNav = true;
             root.tab.navigate(c.url, false);
+            root.internalNav = false;
             return;
         }
         const r = m.selectedRows()[0];
         root.internalNav = true;
         root.tab.navigate(m.isDirAt(r) ? m.urlAt(r) : c.url, false);
+        // A navigation to the shown location changes nothing and runs no sync: the flag must not outlive this call, or the
+        // next location set elsewhere (Back, the sidebar, the path bar) would keep a column that is no longer there active,
+        // and the next key would act on it (owner report 2026-11-07).
+        root.internalNav = false;
     }
 
     function enterNext(index: int): void {
@@ -260,7 +274,7 @@ FocusScope {
             col.model.url = col.url;
             // The folder of the next column, if any, is selected here once listed.
             if (col.index + 1 < columnsModel.count)
-                col.model.expect(columnsModel.get(col.index + 1).url, false);
+                col.model.expectAlone(columnsModel.get(col.index + 1).url);
         }
 
         Connections {
@@ -387,6 +401,8 @@ FocusScope {
                 required property string folderColor
                 required property string folderGlyph
                 required property bool hidden
+                // Cut and not pasted yet (FilesApp, the clipboard): drawn faded like a hidden item until Paste moves it.
+                required property bool cut
                 // A file the Open or Save panel cannot take (FolderModel.chooser).
                 required property bool dimmed
                 required property var tagColors
@@ -396,7 +412,7 @@ FocusScope {
 
                 width: lv.width
                 height: Tokens.filesColumnRowHeight
-                opacity: entry.dimmed ? Tokens.materialDisabledOpacity : entry.hidden ? Tokens.filesHiddenOpacity : 1
+                opacity: entry.dimmed ? Tokens.materialDisabledOpacity : entry.hidden || entry.cut ? Tokens.filesHiddenOpacity : 1
                 Accessible.role: Accessible.ListItem
                 Accessible.name: DisplayName.text(entry.name)
                 Accessible.selectable: true
@@ -510,8 +526,20 @@ FocusScope {
                         root.activeColumn = col.index;
                         lv.forceActiveFocus();
                         if (event.button === Qt.RightButton) {
+                            // A right click selects the row as a click does, and the columns after it follow: the menu's
+                            // item and the next column agree (the next column kept the folder selected before, and a Right
+                            // arrow then went back to it).
                             const p = mapToItem(null, event.x, event.y);
-                            root.tab.contextMenu(col.model, entry.index, p.x, p.y, false);
+                            if (entry.selected) {
+                                root.tab.contextMenu(col.model, entry.index, p.x, p.y, false);
+                                return;
+                            }
+                            col.model.select(entry.index, 0, true);
+                            root.userSelected(col.index);
+                            // After the columns' own focus call (sync), so that the menu keeps the keyboard.
+                            const model = col.model;
+                            const row = entry.index;
+                            Qt.callLater(() => root.tab.contextMenu(model, row, p.x, p.y, false));
                             return;
                         }
                         const mods = event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier);

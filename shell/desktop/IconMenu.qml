@@ -70,7 +70,9 @@ PopupMenu {
             enabled: !several
         }, {
             id: "compress",
-            text: several ? qsTr("Compress %1 Items").arg(count) : qsTr("Compress “%1”").arg(singleName)
+            text: several ? qsTr("Compress %1 Items").arg(count) : qsTr("Compress “%1”"),
+            // A long name is drawn shortened in its middle (menu.nameMaxWidth, MenuItem.name): the menu keeps its width.
+            name: several ? "" : singleName
         }, {
             id: "duplicate",
             text: qsTr("Duplicate"),
@@ -80,7 +82,8 @@ PopupMenu {
             text: qsTr("Make Alias")
         }, {
             id: "quickLook",
-            text: several ? qsTr("Glance at %1 Items").arg(count) : qsTr("Glance at “%1”").arg(singleName),
+            text: several ? qsTr("Glance at %1 Items").arg(count) : qsTr("Glance at “%1”"),
+            name: several ? "" : singleName,
             shortcut: showKeyHints ? "Space" : ""
         }, {
             separator: true

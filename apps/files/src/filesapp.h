@@ -9,6 +9,7 @@
 #include <QJSValue>
 #include <QList>
 #include <QMimeData>
+#include <QDeadlineTimer>
 #include <QObject>
 #include <QPointF>
 #include <QDateTime>
@@ -80,6 +81,9 @@ class FilesApp : public QObject
     Q_PROPERTY(QString redoText READ redoText NOTIFY undoChanged)
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY clipboardChanged)
     Q_PROPERTY(int clipboardCount READ clipboardCount NOTIFY clipboardChanged)
+    // The clipboard still holds the items Files cut, not pasted yet (decision F-18); another file manager's cut fades its items
+    // (cut role) but is not Files' to cancel.
+    Q_PROPERTY(bool cutPending READ cutPending NOTIFY clipboardChanged)
     Q_PROPERTY(QString activity READ activity NOTIFY activityChanged)
     Q_PROPERTY(int activityPercent READ activityPercent NOTIFY activityChanged)
     // The progress window (FP-68, Finder-Copy): [{id, title, detail, percent}] of the running copies, moves and deletions,
@@ -154,6 +158,8 @@ public:
     QString redoText() const;
     bool canPaste() const;
     int clipboardCount() const;
+    // A cut Files wrote (its own mark and the same items) is still on the clipboard.
+    bool cutPending() const;
     QString activity() const { return m_activity; }
     int activityPercent() const { return m_activityPercent; }
     QVariantList jobs() const { return m_jobList; }
@@ -162,10 +168,17 @@ public:
     static constexpr int kProgressDelayMs = 250;
     // Tests only: a shorter wait (0 restores the default), so a copy that ends within 250 ms on a fast disk still publishes.
     void setProgressDelayForTests(int ms);
-    // Open With > Change All… (FP-65): `storageId` becomes the default application of the item's type (mimeapps.list).
+    // Open With > Change All… (FP-65): `storageId` becomes the default application of the item's type. In the Grassfield
+    // session (XDG_CURRENT_DESKTOP names it) the choice goes to the session's own list, $XDG_CONFIG_HOME/grassfield-mimeapps.list,
+    // which every toolkit reads there before mimeapps.list (decision F-19: the Omarchy session keeps its defaults);
+    // elsewhere to mimeapps.list (KApplicationTrader). defaultApplication() answers the choice at once (KService's cache
+    // reads the file again within 1.5 s).
     Q_INVOKABLE QString mimeTypeOf(const QUrl &url) const;
     Q_INVOKABLE QString defaultApplication(const QString &mimeType) const;
     Q_INVOKABLE bool setDefaultApplication(const QString &mimeType, const QString &storageId);
+    // Open With's Option item, Always Open With: `storageId` becomes the default of every type among `urls` it opens (Linux
+    // has no per-document choice, decision F-19), then opens them.
+    Q_INVOKABLE void alwaysOpenWith(const QString &storageId, const QList<QUrl> &urls);
 
     QString viewMode() const;
     void setViewMode(const QString &mode);
@@ -241,7 +254,7 @@ public:
 
     // Opening.
     Q_INVOKABLE void open(const QList<QUrl> &urls);
-    // [{id, name}] of the applications registered for the first item's MIME type, preferred first.
+    // [{id, name, isDefault}] of the applications registered for the first item's MIME type, the default first.
     Q_INVOKABLE QVariantList applicationsFor(const QList<QUrl> &urls) const;
     Q_INVOKABLE void openWith(const QString &storageId, const QList<QUrl> &urls);
     // Open With > Other…: the Choose Application panel for `urls`; the application chosen opens them (openWith).
@@ -272,7 +285,12 @@ public:
     Q_INVOKABLE void glance(const QList<QUrl> &urls);
 
     // Operations. `folder` (a FolderModel, may be null) selects the created items when they appear.
+    // Copy, or Cut (decision F-18, owner request 2026-11-07): the items fade in every listing until Paste moves them; the
+    // clipboard says "cut" the KDE way (application/x-kde-cutselection) and the GNOME way (x-special/gnome-copied-files).
     Q_INVOKABLE void copyToClipboard(const QList<QUrl> &urls, bool cut);
+    // Esc after Cut: the clipboard is emptied when it still holds the items Files cut (cutPending; nothing moves, they no
+    // longer fade). Another application's cut, or anything copied since, is left alone.
+    Q_INVOKABLE void cancelCut();
     Q_INVOKABLE void paste(const QUrl &destination, QObject *folder);
     // Move Item Here (⌥⌘V, decision F-6): the copied items moved into `destination` (undoable); Files has no Cut.
     Q_INVOKABLE void moveHere(const QUrl &destination, QObject *folder);
@@ -443,6 +461,25 @@ public:
     // The way back: lists a tag removed from the sidebar again (Tags section's menu).
     Q_INVOKABLE void showTag(const QString &tag);
 
+    // Sidebar Favorites (FP-27; owner report 2026-11-07, "there is no way to pin a folder in the sidebar"). Add to Sidebar
+    // (File > Add to Sidebar Ctrl+Super+T, the item menu, a drag between Favorites rows): the folders among `urls` (asked of
+    // KIO, never read here; a file is refused with a banner) join the user's own folders at `position` (-1: after them), a
+    // standard place the user removed is listed again, one already listed stays where it is. Kept in QSettings
+    // sidebar/favorites and sidebar/hidden (Files' and the Open and Save panels' sidebar).
+    // `fallback`, `token`: a drop at the edge of a place (Sidebar.qml) whose items hold no folder goes into that place instead:
+    // sidebarDropFallback(token, urls, fallback) tells the sidebar that asked (integrator review, L4).
+    Q_INVOKABLE void addToSidebar(const QList<QUrl> &urls, int position = -1, const QUrl &fallback = QUrl(), const QString &token = QString());
+    // Remove from Sidebar: a folder of the user's leaves the list; a standard place (Home, Applications, a user folder) is
+    // hidden until Add to Sidebar lists it again. The folder itself is never touched.
+    Q_INVOKABLE void removeFromSidebar(const QUrl &url);
+    // A folder of the user's moved to the gap `position` of their list (0: first).
+    Q_INVOKABLE void moveInSidebar(const QUrl &url, int position);
+    // Whether `url` is in Favorites now (Add to Sidebar is offered for the others).
+    Q_INVOKABLE bool inSidebar(const QUrl &url) const;
+    // Whether `url` can be added (a folder location, never a search, tag search, Recents or a Locations place; a removed
+    // standard place can): File > Add to Sidebar is dimmed in a search.
+    Q_INVOKABLE bool sidebarCandidate(const QUrl &url) const;
+
     // Customize Folder (FolderStyleLogic, FolderStyleStore): a folder's own colour and symbol. Only local folders
     // carry one. folderStyleUnavailable() is "" when every item of `urls` is such a folder, else the reason shown in
     // place of the controls (the menu item is disabled for it).
@@ -460,6 +497,10 @@ public:
     int folderStyleRevision() const { return m_folderStyleRevision; }
 
 signals:
+    // A drop at the edge of a sidebar place held no folder: the sidebar that sent `token` drops `urls` into `destination`.
+    void sidebarDropFallback(const QString &token, const QList<QUrl> &urls, const QUrl &destination);
+    // The cut items changed (listings fade them).
+    void cutUrlsChanged();
     void removableTextChanged();
     void appearanceChanged();
     void undoChanged();
@@ -590,6 +631,21 @@ private:
     QStringList m_knownTags;
     // Tags removed from the sidebar (not listed again when seen), persisted as tags/hidden.
     QStringList m_hiddenTags;
+    // Defaults chosen in this process (type -> desktop id), answered until KService's cache has read them (a few seconds).
+    QHash<QString, QPair<QString, QDeadlineTimer>> m_chosenDefaults;
+    // The items the clipboard holds cut (read on each clipboard change), told to every listing.
+    QSet<QUrl> m_cutUrls;
+    void readClipboardCut();
+    // Files' own last cut: its items and the token marking its clipboard data.
+    QSet<QUrl> m_ownCutUrls;
+    QByteArray m_ownCutToken;
+    // The clipboard says these very items were cut (any file manager's mark).
+    bool clipboardHoldsCut(const QSet<QUrl> &urls) const;
+    // Favorites as the user edited them: their own folders (sidebar/favorites) and the standard places removed
+    // (sidebar/hidden).
+    QList<QUrl> m_sidebarFolders;
+    QList<QUrl> m_sidebarHidden;
+    void publishSidebar();
     // Tag state of the items asked about by the menus (selection), probed once per few seconds.
     mutable TagStore::Cache m_tagCache;
     int m_tagRevision = 0;

@@ -263,7 +263,9 @@ selection").
   `view/sortDescending`, `view/foldersFirst`, `view/showHidden`, `view/galleryInfo` (default true), `view/preview` (the
   preview pane beside the icon and list views, default false), `view/columnPreview` (default true), `view/pathBar` and
   `view/statusBar` (default false), `view/sidebar` (default true), `tags/known` (the sidebar's tags, stored names in display order, at most 64),
-  `tags/hidden` (tags removed from the sidebar, at most 256), `go/recentFolders` (Go > Recent Folders and Go to Folder's
+  `tags/hidden` (tags removed from the sidebar, at most 256), `sidebar/favorites` (the folders the user added to Favorites,
+  URLs in display order, at most 64) and `sidebar/hidden` (the standard places the user removed from it, by URL; F-17),
+  `go/recentFolders` (Go > Recent Folders and Go to Folder's
   list: local folders and servers, newest first, at most 10), `servers/recent` and `servers/favorites` (Connect to Server:
   at most 20 each, the URL without any password, decision F-9).
 - Search location `grassfield-search:/?q=<text>&in=<local folder URL>&c=<attribute>:<op>:<unit>:<value>…` (ADR-0027;
@@ -480,7 +482,7 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
 | FP-24 | View > Customize Toolbar… | missing | none | — | — | later |
 | FP-25 | Title menu: ⌘-click or right-click on the title lists the enclosing folders | done (PR 1) | none | `pathSegments` | — | 1 |
 | FP-26 | Sidebar macOS 27: Recents at the top without a header; Favorites (Applications, Desktop, Documents, Downloads); Locations (the home folder by user name, the system disk, volumes, Network, Trash); Tags | done: Recents at the top without a header (PR 2); Favorites lists Home, Applications (the virtual `grassfield-apps:/` location), Desktop, Documents, Downloads, Pictures, Music, Videos; Locations has Computer, volumes, Network, Trash | Finder-Home, Finder-Gallery | KIO places, Solid | iCloud Drive, Shared and AirDrop: no equivalent (never) | 2 |
-| FP-27 | Sidebar editing: drag a folder in to add it, Remove from Sidebar, reorder, Add to Sidebar ⌃⌘T; collapse a section on hover; Settings > Sidebar choices | partial: tags only (Remove from Sidebar, Show Hidden Tag) | none | KFilePlacesModel bookmarks (`user-places.xbel`) | — | later |
+| FP-27 | Sidebar editing: drag a folder in to add it, Remove from Sidebar, reorder, Add to Sidebar ⌃⌘T; collapse a section on hover; Settings > Sidebar choices | partial (owner report 2026-11-07, decision F-17): Add to Sidebar ⌃⌘T (Ctrl+Super+T) in File and a folder's item menu, folders dragged between Favorites rows (insertion line), a folder of the user's moved or dragged out, Remove from Sidebar on every Favorites folder place (right click, the Menu key); tags: Remove from Sidebar, Show Hidden Tag. Not done: collapsing a section, Settings > Sidebar, files and apps in the sidebar | none | QSettings `sidebar/favorites`, `sidebar/hidden` (decision F-17) | — | owner fix |
 | FP-28 | Sidebar icons in the accent colour, neutral selection with a bold label | done (lot 2) | Finder-Home | — | — | — |
 | FP-29 | Eject button on volumes, Eject ⌘E | done, never exercised | Finder-Eject-Warning | Solid `StorageAccess::teardown` | — | 5 (tests) |
 | FP-30 | Folder banner ("Folder shared with File Sharing") | n/a | Finder-Home | — | no File Sharing state to show | never |
@@ -579,8 +581,8 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   Search and Recent Items), newest first, existing local files only, at most 500; Files adds the files it opens there
   through KIO (KRecentDocument).
 - **F-6 Move**: Finder has no Cut for files. Edit shows Copy and, while ⌥ is held, Paste becomes Move Item Here ⌥⌘V.
-  ⌘X does nothing to files (as in the Finder; no hidden shortcut, opus review of ADR-0028). A cut made in another file
-  manager still pastes as a move (interop: the clipboard says so; Files shows the move in the paste's progress).
+  A cut made in another file manager still pastes as a move (interop: the clipboard says so; Files shows the move in the
+  paste's progress). **Amended by F-18** (owner request 2026-11-07): Files has Cut ⌘X as well.
 - **F-7 Terminal**: the session's terminal is `xdg-terminal-exec` (Omarchy; the shell uses it for `Terminal=true` entries,
   ADR-0011). Files starts terminal applications and "New Terminal at Folder" through it, never through KIO's konsole
   lookup; the working directory is the folder. Launches keep `launchguard.cpp`'s rules (Files never runs a program from a
@@ -606,6 +608,96 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   folder by name (a panel picks in one folder; a search in it later).
 - **F-12 Names**: no Apple trademark in the UI (master-prompt §14): "This Mac" is "This Computer" (« Cet ordinateur »), as
   in the system menu's About This Computer; Quick Look is Glance; Archive Utility has no name of its own (Files expands).
+- **F-15 Names in menus** (owner report 2026-11-07, "the context menu grows too wide when the file name is long"): an
+  item's name inside a menu label (Compress “name”, Glance at “name”, Copy “name”) is drawn shortened in its
+  middle to `menu.nameMaxWidth` (160 pt), its start, its extension and the words around it kept, as the Finder truncates long
+  names in its menus; the menu keeps its usual width whatever the name (a short name: 255 pt, a 90-character one: 332 pt
+  instead of `menu.maxWidth` 400). The shared `PopupMenu` row takes the name (`name`, MenuItem), so Files' item, Action and
+  panel menus and the desktop's item menu share it, and the accessible name keeps the whole name; the global menu's labels
+  are shortened by Files before they are sent (`BrowserWindow.menuName`). Copy as Pathname became Copy's Option (Alt)
+  alternate in the item menu, as in the Finder (its label was the widest row); Edit > Copy as Pathname and ⌥⌘C stay.
+  Tests: `tst_popupmenu.qml` (`test_aLongNameIsShortenedInTheMiddleAndTheMenuKeepsItsWidth`, `test_aLongLabelStopsTheMenuAtItsCap`),
+  `tst_filesglobalmenu.qml`, `tst_iconmenu.qml`, `tst_filesbrowser.qml`.
+- **F-16 Column view selection** (owner report 2026-11-07, "sometimes it goes back to the previous folder"): a column
+  selects the folder its next column shows through `FolderModel.expectAlone` (one wish per listing, replaced by the next
+  one, dropped by an empty URL and by any selection made in the listing), never `expect()`, whose calls build one selection
+  for a drop's items: a column still listing never brings the previous folder back over the user's choice. A click that
+  leaves the location as it is no longer leaves the view's "I navigated" flag set for the next location set elsewhere. A
+  right click on a row of a column selects it and the next column follows, as a click does, before the menu opens.
+- **F-17 Favorites editing** (owner report 2026-11-07, "there is no way to pin a folder in the sidebar Favorites, neither
+  with right-click nor by drag and drop"): the Finder's model. Add to Sidebar (File menu and a folder's item menu, ⌃⌘T as
+  Ctrl+Super+T, free in `bindings.lua`) adds the selected folders, or the shown folder when nothing is selected; folders
+  dragged to the top or bottom quarter of a Favorites row are added where the accent insertion line shows (the middle of a
+  place still moves or copies the items into it); a folder of the user's is dragged to another gap (moved) or out of the
+  sidebar (removed; the folder itself is never touched); Remove from Sidebar is in the menu of every Favorites folder place
+  (right click, the Menu key or Shift+F10 on the keyboard row), with Open in New Tab. The user's folders are listed after
+  the standard places, in their order (the standard places keep theirs: they cannot be reordered); a removed standard place
+  (Home, Applications, a user folder) is hidden and comes back with Add to Sidebar of that folder. Only folders join
+  (KIO says which items are, never a read on the GUI thread; a file is refused with "Only folders can be added to the
+  sidebar."); Files' own lists (searches, tags, Recents) and the Locations places are never Favorites folders. A folder
+  that is gone or does not answer stays listed, dimmed (asked off the GUI thread with the standard folders, DiskProbe).
+  Kept in Files' QSettings (`sidebar/favorites`, `sidebar/hidden`), which the Open and Save panels read too, rather than in
+  KDE's `user-places.xbel`, which holds KDE's own default places and would bring them into the sidebar. An Open or Save
+  panel's sidebar shows the folders but edits nothing. Tests: `tst_navlogic.cpp` (SidebarFavorites), `tst_folderchooser.cpp`
+  (SidebarFavorites, on KIO), `tst_filessidebar.qml` (menu, insertion line and drop, move and drag out, a panel edits
+  nothing), `tst_filesbrowser.qml` (`test_addToSidebar`). Integrator review of c5dac3f3: items with no folder among them
+  dropped at a row's edge go into that place (as a drop in its middle) instead of being refused (L4: FilesApp answers
+  `sidebarDropFallback` to the sidebar that asked); File > Add to Sidebar adds nothing for a search, tag search or Recents
+  location shown with nothing selected (`FilesApp.sidebarCandidate`).
+- **F-18 Cut** (owner request 2026-11-07, "there is no Cut in Files", which wins over the Finder here): Cut ⌘X (Ctrl+X) in
+  Edit, in the item menu before Copy ("Cut “name”", "Cut N Items") and on the keyboard, where items can be edited (a
+  writable folder or a tag search; not the Trash, the Applications location or an Open or Save panel). The cut items are
+  drawn faded, as hidden ones, in every view until Paste ⌘V moves them into the folder (KIO's paste: undo, the conflict
+  sheets, the Copy window's progress); the clipboard is then emptied, only when it still holds that very cut (the cut
+  mark and the same items: a link or a password copied while a slow move ran stays). Cut items pasted into their own
+  folder stay where they are and stay cut (the Finder's Move Item Here does nothing there; KIO would refuse a move onto
+  itself). Esc in a view cancels a cut Files wrote and the clipboard still holds (Files marks its cut,
+  `application/x-grassfield-files-cut`, a token per cut; the clipboard is emptied, the items no longer fade), before it
+  clears the selection; another file manager's cut fades its items here but is not Files' to cancel, so Esc deselects at
+  once there. A new Copy replaces a cut. The clipboard
+  says "cut" the KDE way (`application/x-kde-cutselection`) and the GNOME way (`x-special/gnome-copied-files` starting with
+  "cut"), so Dolphin, Nautilus and the others move what Files cut, and Files moves (and fades) what they cut. The Finder's
+  own way stays: after Copy, Paste is Move Item Here while Alt (Option) is held in the folder's menu (Ctrl+Alt+V; Edit >
+  Move Item Here in the menu bar, which has no Option items). The folder menu and Edit say "Paste" while the clipboard holds
+  no item, "Paste Item" for one. Tests: `tst_folderchooser.cpp` (CutAndPaste, on KIO: Cut
+  fades and Paste moves, a GNOME cut too, Copy and Esc cancel; TheClipboardIsOnlyEverEmptiedForFilesOwnCut: newer content
+  kept, another manager's cut left alone, the same folder), `tst_filelogic.cpp` (the GNOME list), `tst_filescolumns.qml`
+  (a cut item is faded), `tst_filesbrowser.qml` (`test_cutAndMoveItemHere`).
+- **F-19 Default applications** (owner report 2026-11-07, "there is no way to choose the default app for a file type, and
+  Grassfield's apps come second when opening files"): the Finder's model. Get Info's "Open with:" pop-up lists the type's
+  applications, the default marked "(default)", and Change All… makes the chosen one the type's default; the item menu's
+  Open With lists the default first, marked, then the others, then Other… (the Choose Application panel); while Alt
+  (Option) is held it is Always Open With, which makes the chosen application the default and opens the items (Linux has no
+  per-document choice, so the default of the type, the same as Change All…). Storage: in the Grassfield session the choice
+  goes to `$XDG_CONFIG_HOME/grassfield-mimeapps.list` (the session's `XDG_CURRENT_DESKTOP` is `Grassfield:Hyprland`, and the
+  XDG MIME applications specification reads `<desktop>-mimeapps.list` before `mimeapps.list`), so the Omarchy session keeps
+  its own defaults; elsewhere `mimeapps.list` (KApplicationTrader). Verified on this system with a scratch home (2026-11-07):
+  GLib (`gio mime`), KService 6.31 (`KApplicationTrader::preferredService`, also when one cache serves both desktops and when
+  the file changes, in a new process at once and in a running one within 1.5 s, which Files covers by answering its own
+  choice at once), xdg-mime 1.2.1 and xdg-open (its generic path asks xdg-mime) honour the file; Qt hands documents to
+  xdg-open or the OpenURI portal (not run here: no compositor). At session start, `grassfield-files --seed-default-apps`
+  (config/hypr/grassfield/autostart.lua) adds Grassfield's apps for their types where the user's
+  `grassfield-mimeapps.list` has no entry yet and no explicit choice names another application: a type is seeded only when
+  every list the XDG MIME applications specification reads after the session's own (in its order: `$XDG_CONFIG_HOME`'s
+  `hyprland-mimeapps.list` and `mimeapps.list`, then each `$XDG_CONFIG_DIRS` directory's desktop lists and `mimeapps.list`,
+  e.g. `/etc/xdg`, then the deprecated `$XDG_DATA_HOME/applications` and each `$XDG_DATA_DIRS/applications`; the first list
+  that names the type gives its default) names no default for it, or exactly the default Omarchy ships (`$OMARCHY_PATH/default/applications/mimeapps.list` and
+  `config/hyprland-mimeapps.list`, read as data; `/usr/share/omarchy` without the variable). An application chosen earlier
+  (rc6's Change All… wrote `mimeapps.list` in the Grassfield session too; xdg-mime; KDE's and GNOME's dialogs) therefore keeps
+  its documents, and without Omarchy's shipped list every default the user has counts as a choice (integrator review of
+  c5dac3f3, L2; the full lookup order, re-review of 771cbddc, L3: Omarchy's own copy in `/usr/share/applications`, from
+  omarchy-settings, holds the stock values). Known limit, on the safe side: when Omarchy changes a stock default (Evince to
+  Papers, say), a list still holding the old value counts as a choice and that type is no longer seeded. The apps: Preview for the pictures and PDF of its MimeType list, Files for folders (Memos, Settings, the Store and Activity Monitor
+  open no file types); text, web pages, audio and video keep the user's editor, browser and player (Preview shows them, but
+  macOS opens them in TextEdit, Safari and QuickTime Player, which Grassfield has no equivalent of). An entry of the user's
+  is never replaced, other groups and lines are kept, and nothing is written outside the Grassfield session. Change All…
+  writes through a link to its file; the seeding leaves a linked `grassfield-mimeapps.list` as it is. A list that is not
+  valid UTF-8 is never rewritten (Change All… reports that the default couldn't be changed, the seeding skips it): its bytes
+  are not Files' to re-encode. Tests: `tst_applications.cpp` (DefaultApps: the desktop names, the key file edits, the seeds never
+  replacing the user's, Preview's and Files' types, the seeding of a scratch tree leaving `mimeapps.list` alone; an explicit
+  choice kept and Omarchy's stock default not, the same end to end, a Latin-1 list left byte for byte),
+  `tst_folderchooser.cpp` (DefaultApplications, on KIO: Change All… in the session writes the session's list and Open With
+  lists it first), `tst_filesbrowser.qml` (`test_openWithListsTheDefaultFirst`).
 
 ### ADRs opened by this step
 - ADR-0026 Files window frames: size by Files, position and cascade by the compositor (cross-module: Files and

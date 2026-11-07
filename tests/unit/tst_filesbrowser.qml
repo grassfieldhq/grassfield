@@ -70,8 +70,10 @@ TestCase {
             function rowForUrl(target: url): int {
                 return -1;
             }
+            // The rows that are folders.
+            property var dirRows: []
             function isDirAt(row: int): bool {
-                return false;
+                return folder.dirRows.indexOf(row) >= 0;
             }
             function nameAt(row: int): string {
                 return folder.isApplications ? "App " + row : "";
@@ -80,6 +82,8 @@ TestCase {
                 return folder.isApplications ? "grassfield-app:/app" + row : folder.url;
             }
             function expect(target: url, rename: bool): void {
+            }
+            function expectAlone(target: url): void {
             }
             function reload(): void {
             }
@@ -114,6 +118,18 @@ TestCase {
     // What Main.qml and the windows read of FilesApp.
     QtObject {
         id: fakeApp
+        // Add to Sidebar (FP-27): what was added, and what the sidebar lists.
+        property var sidebarAdded: []
+        property var inSidebarUrls: []
+        function addToSidebar(urls: var, position: int, fallback: url, token: string): void {
+            fakeApp.sidebarAdded = fakeApp.sidebarAdded.concat([{urls: urls.map(u => String(u)), position: position}]);
+        }
+        function sidebarCandidate(target: url): bool {
+            return !String(target).startsWith("grassfield-");
+        }
+        function inSidebar(target: url): bool {
+            return fakeApp.inSidebarUrls.indexOf(String(target)) >= 0;
+        }
         property bool dark: false
         property bool reduceMotion: false
         property string accentColor: "multicolor"
@@ -146,6 +162,17 @@ TestCase {
         property bool canUndo: false
         property bool canRedo: false
         property bool canPaste: false
+        // Cut (decision F-18): what reached the clipboard, whether a cut waits for its paste, and Esc's cancels.
+        property var clipboardWrites: []
+        property bool cutPending: false
+        property int cutsCancelled: 0
+        function copyToClipboard(urls: var, cut: bool): void {
+            fakeApp.clipboardWrites = fakeApp.clipboardWrites.concat([{urls: urls.map(u => String(u)), cut: cut}]);
+        }
+        function cancelCut(): void {
+            fakeApp.cutsCancelled += 1;
+            fakeApp.cutPending = false;
+        }
         property int clipboardCount: 0
         // Move Item Here and Empty Trash (decision F-6, FP-51): what was asked.
         property var movedHere: []
@@ -282,6 +309,11 @@ TestCase {
         property var openWithApps: []
         function applicationsFor(urls: var): var {
             return fakeApp.openWithApps;
+        }
+        // Always Open With (decision F-19): the application and the items.
+        property var alwaysOpened: []
+        function alwaysOpenWith(storageId: string, urls: var): void {
+            fakeApp.alwaysOpened = fakeApp.alwaysOpened.concat([{id: storageId, urls: urls.map(u => String(u))}]);
         }
         // What opened what (BrowserTab.activate and openSelection): applications start, files open.
         property var launched: []
@@ -530,22 +562,49 @@ TestCase {
         tab.setSearch("");
     }
 
-    // Decision F-6: no Cut for files; Move Item Here moves the copied items into the shown folder. Empty Trash is never
-    // offered in a dev session (ADR-0011), whatever asks for it.
-    function test_moveItemHereAndNoCut() {
+    // Cut (owner request 2026-11-07, decision F-18, over the Finder's F-6): Cut before Copy in the item menu, Ctrl+X, and Esc
+    // cancels a cut not pasted yet before it clears the selection. The Finder's way stays: in the folder's menu Paste turns
+    // into Move Item Here while Alt is held (its Option alternate). Empty Trash is never offered in a dev session (ADR-0011),
+    // whatever asks for it.
+    function test_cutAndMoveItemHere() {
         const files = test.openFiles(false);
         const tab = files.windows[0].tab;
         const folder = tab.folder;
         folder.selected = [0];
+        folder.selectedCount = 1;
         const items = tab.itemMenu(folder);
-        verify(!items.some(i => i.id === "cut"), "no Cut for files");
-        verify(items.some(i => i.id === "copyPath"), "Copy as Pathname");
+        const ids = items.map(i => i.id ?? "-");
+        const cut = items.find(i => i.id === "cut");
+        verify(cut !== undefined, "Cut for files");
+        compare(cut.shortcut, "Ctrl+X");
+        verify(cut.enabled, "in a writable folder");
+        compare(ids.indexOf("copy"), ids.indexOf("cut") + 1, "right before Copy");
+        fakeApp.clipboardWrites = [];
+        tab.runAction("cut", folder);
+        compare(fakeApp.clipboardWrites, [{urls: [String(folder.urlAt(0))], cut: true}]);
+        keyClick(Qt.Key_X, Qt.ControlModifier);
+        compare(fakeApp.clipboardWrites.length, 2, "Ctrl+X cuts");
+        verify(fakeApp.clipboardWrites[1].cut);
+        // Esc cancels the cut first.
+        fakeApp.cutPending = true;
+        fakeApp.cutsCancelled = 0;
+        tab.focusView();
+        keyClick(Qt.Key_Escape);
+        compare(fakeApp.cutsCancelled, 1, "Esc cancels the cut");
+        const copy = items.find(i => i.id === "copy");
+        compare(copy.alternate.id, "copyPath", "Copy as Pathname is Copy's Alt alternate (the Finder's Option item)");
+        verify(!items.some(i => i.id === "copyPath"), "not a row of its own");
         fakeApp.canPaste = true;
         fakeApp.clipboardCount = 2;
         const background = tab.backgroundMenu(folder);
-        const move = background.find(i => i.id === "moveHere");
-        verify(move !== undefined, "Move Item Here in the folder's menu");
+        verify(!background.some(i => i.id === "moveHere"), "Move Item Here is no row of its own");
+        const paste = background.find(i => i.id === "paste");
+        compare(paste.text, "Paste 2 Items");
+        const move = paste.alternate;
+        verify(move !== undefined, "Move Item Here is Paste's Alt alternate (the Finder's Option item)");
+        compare(move.id, "moveHere");
         compare(move.text, "Move 2 Items Here");
+        compare(move.shortcut, "Ctrl+Alt+V");
         fakeApp.movedHere = [];
         tab.runAction("moveHere", folder);
         compare(fakeApp.movedHere, [String(folder.url)]);
@@ -706,7 +765,7 @@ TestCase {
         const ids = items.map(i => i.id ?? "-");
         const share = items.find(i => i.id === "share");
         verify(share !== undefined, "Share…");
-        verify(ids.indexOf("share") > ids.indexOf("copyPath"), "after Copy as Pathname");
+        verify(ids.indexOf("share") === ids.indexOf("copy") + 1, "right after Copy (and its Alt alternate, Copy as Pathname)");
         compare(share.text, "Share…");
         compare(share.submenu, undefined, "no submenu: it opens the Share menu");
         const menu = tab.shareMenu(folder);
@@ -1180,5 +1239,89 @@ TestCase {
         // Without a drag, a choice applies at once.
         tab.setViewMode("icons");
         verify(String(tab.view).startsWith("IconView"), "no drag: the view follows at once");
+    }
+
+    // Add to Sidebar (FP-27; owner report 2026-11-07, "there is no way to pin a folder in the sidebar"): the item menu of
+    // folders and File > Add to Sidebar (Ctrl+Super+T) add the selected folders, or the shown folder when nothing is selected;
+    // the item is dimmed when they are all in the sidebar already, and a file has none.
+    function test_addToSidebar() {
+        const files = test.openFiles(false);
+        const tab = files.windows[0].tab;
+        const folder = tab.folder;
+        fakeApp.sidebarAdded = [];
+        fakeApp.inSidebarUrls = [];
+        folder.dirRows = [0];
+        folder.selected = [0];
+        folder.selectedCount = 1;
+        let items = tab.itemMenu(folder);
+        const add = items.find(i => i.id === "addToSidebar");
+        verify(add !== undefined, "Add to Sidebar in a folder's menu");
+        verify(add.enabled);
+        compare(add.shortcut, "Ctrl+Super+T");
+        tab.runAction("addToSidebar", folder);
+        compare(fakeApp.sidebarAdded, [{urls: [String(folder.urlAt(0))], position: -1}]);
+        fakeApp.inSidebarUrls = [String(folder.urlAt(0))];
+        items = tab.itemMenu(folder);
+        verify(!items.find(i => i.id === "addToSidebar").enabled, "dimmed: already in the sidebar");
+        folder.dirRows = [];
+        items = tab.itemMenu(folder);
+        verify(!items.some(i => i.id === "addToSidebar"), "a file has no Add to Sidebar");
+        // Nothing selected: the shown folder, from the keyboard.
+        folder.selected = [];
+        folder.selectedCount = 0;
+        fakeApp.inSidebarUrls = [];
+        fakeApp.sidebarAdded = [];
+        keyClick(Qt.Key_T, Qt.ControlModifier | Qt.MetaModifier);
+        compare(fakeApp.sidebarAdded, [{urls: [String(tab.url)], position: -1}]);
+    }
+
+    // Open With (owner report 2026-11-07, decision F-19): the default application first, marked "(default)" and set apart,
+    // then the others and Other…; while Alt is held the row is Always Open With, whose applications become the default and
+    // open the items.
+    function test_openWithListsTheDefaultFirst() {
+        const files = test.openFiles(false);
+        const tab = files.windows[0].tab;
+        const folder = tab.folder;
+        folder.dirRows = [];
+        folder.selected = [0];
+        folder.selectedCount = 1;
+        fakeApp.openWithApps = [{id: "org.grassfield.Preview.desktop", name: "Preview", isDefault: true}, {id: "imv.desktop", name: "imv", isDefault: false}];
+        const items = tab.itemMenu(folder);
+        const openWith = items.find(i => i.id === "openWith");
+        verify(openWith !== undefined);
+        compare(openWith.submenu.map(i => i.separator ? "-" : i.text), ["Preview (default)", "-", "imv", "-", "Other…"]);
+        compare(openWith.submenu[0].id, "app:org.grassfield.Preview.desktop");
+        const always = openWith.alternate;
+        verify(always !== undefined, "Always Open With is the Alt alternate");
+        compare(always.text, "Always Open With");
+        compare(always.submenu.filter(i => !i.separator).map(i => i.id), ["always:org.grassfield.Preview.desktop", "always:imv.desktop"]);
+        fakeApp.alwaysOpened = [];
+        tab.runAction("always:imv.desktop", folder);
+        compare(fakeApp.alwaysOpened, [{id: "imv.desktop", urls: [String(folder.urlAt(0))]}]);
+        fakeApp.openWithApps = [];
+        folder.selected = [];
+        folder.selectedCount = 0;
+    }
+
+    // Nits of the integrator review: the folder menu says "Paste" while the clipboard holds no item (the Finder), "Paste Item"
+    // for one; Add to Sidebar adds nothing for a search location shown with nothing selected.
+    function test_pasteLabelAndNoAddToSidebarInASearch() {
+        const files = test.openFiles(false);
+        const tab = files.windows[0].tab;
+        const folder = tab.folder;
+        fakeApp.clipboardCount = 0;
+        fakeApp.canPaste = false;
+        compare(tab.backgroundMenu(folder).find(i => i.id === "paste").text, "Paste");
+        fakeApp.clipboardCount = 1;
+        fakeApp.canPaste = true;
+        compare(tab.backgroundMenu(folder).find(i => i.id === "paste").text, "Paste Item");
+        fakeApp.clipboardCount = 0;
+        fakeApp.canPaste = false;
+        folder.selected = [];
+        folder.selectedCount = 0;
+        fakeApp.inSidebarUrls = [];
+        compare(tab.sidebarCandidates().length, 1, "a plain folder shown: Add to Sidebar adds it");
+        tab.navigate("grassfield-search:/?q=report", false);
+        compare(tab.sidebarCandidates(), [], "a search location: nothing to add");
     }
 }

@@ -562,3 +562,14 @@ TEST(FileLogicCopyWindow, TheBarFollowsTheBytesThenTheJobsOwnPercent)
     EXPECT_EQ(copyPercent(0, 0, 0), -1) << "no amount: the bar sweeps";
     EXPECT_EQ(copyPercent(0, 0, -1), -1);
 }
+
+// GNOME file managers' clipboard list (decision F-18): its first line says cut or copy.
+TEST(FileLogicClipboard, GnomesListSaysWhetherTheItemsWereCut)
+{
+    EXPECT_TRUE(FileLogic::gnomeCopiedFilesCut("cut\nfile:///home/u/a.txt"));
+    EXPECT_TRUE(FileLogic::gnomeCopiedFilesCut("cut\r\nfile:///home/u/a.txt\nfile:///home/u/b.txt"));
+    EXPECT_TRUE(FileLogic::gnomeCopiedFilesCut("cut"));
+    EXPECT_FALSE(FileLogic::gnomeCopiedFilesCut("copy\nfile:///home/u/a.txt"));
+    EXPECT_FALSE(FileLogic::gnomeCopiedFilesCut("file:///home/u/cut"));
+    EXPECT_FALSE(FileLogic::gnomeCopiedFilesCut(QByteArray()));
+}
