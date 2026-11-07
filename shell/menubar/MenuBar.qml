@@ -25,6 +25,10 @@ Scope {
     // The Search status item asks the shell to toggle Search (shell.qml owns it); `searchActive` lights the item while open.
     property bool searchActive: false
     signal searchRequested
+    // The Screen Capture item (menubar.showScreenCapture) asks the shell to open or close the capture toolbar on its display
+    // (shell.qml owns it, as Shift-Super-5); `captureActive` lights the item while the toolbar is open.
+    property bool captureActive: false
+    signal captureRequested(string screen)
 
     // Test and keyboard hook: qs ipc call menubar open <system|app|volume|network|battery|controlcenter> <output|"">.
     IpcHandler {
@@ -399,6 +403,8 @@ Scope {
                     list.push({key: "tray" + i, width: statusIconWidth, optional: true});
                 for (let i = 0; i < ongoingItems.length; i++)
                     list.push({key: "ongoing" + ongoingItems[i].id, width: ongoingWidth(ongoingItems[i]), optional: true});
+                if (Settings.menubarShowScreenCapture)
+                    list.push({key: "capture", width: statusIconWidth, optional: true});
                 if (showNowPlaying)
                     list.push({key: "nowplaying", width: statusIconWidth, optional: true});
                 if (showRecording)
@@ -1335,6 +1341,29 @@ Scope {
                                 heavy: true
                                 color: win.barText
                                 name: "screen-share"
+                            }
+                        }
+
+                        // Screen Capture (macOS 26/27: the control added to the menu bar; Settings > Menu Bar, off by default): opens
+                        // the capture toolbar on this display, as Shift-Super-5; again, it closes. Not a menu: Return or Space from
+                        // the keyboard. Optional: it gives way first when the bar is crowded.
+                        BarButton {
+                            id: captureButton
+                            objectName: "menubar-capture"
+                            tint: win.barTint
+                            shadowed: !win.showBackground
+                            shadowColor: win.barShadow
+                            padding: Tokens.menubarStatusItemPadding
+                            visible: Settings.menubarShowScreenCapture && !win.hiddenStatus.capture
+                            accessibleName: qsTr("Screen Capture")
+                            active: root.captureActive
+                            onActivated: root.captureRequested(win.screen ? win.screen.name : "")
+
+                            Icon {
+                                size: Tokens.menubarIconSize
+                                heavy: true
+                                color: win.barText
+                                name: "capture-selection"
                             }
                         }
 

@@ -154,6 +154,7 @@ Singleton {
     readonly property bool menubarShowBattery: store.menubarShowBattery
     readonly property bool menubarShowBatteryPercentage: store.menubarShowBatteryPercentage
     readonly property bool menubarShowFocus: store.menubarShowFocus
+    readonly property bool menubarShowScreenCapture: store.menubarShowScreenCapture
     readonly property string menubarClockDate: store.menubarClockDate
     readonly property bool menubarClockShowAmPm: store.menubarClockShowAmPm
     readonly property bool menubarClockFlashSeparators: store.menubarClockFlashSeparators

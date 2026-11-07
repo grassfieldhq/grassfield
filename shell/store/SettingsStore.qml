@@ -260,6 +260,8 @@ Scope {
     readonly property bool menubarShowBattery: read("menubar.showBattery")
     readonly property bool menubarShowBatteryPercentage: read("menubar.showBatteryPercentage")
     readonly property bool menubarShowFocus: read("menubar.showFocus")
+    // The Screen Capture item (macOS 26/27: the control added to the menu bar), off by default: it opens the capture toolbar.
+    readonly property bool menubarShowScreenCapture: read("menubar.showScreenCapture")
     readonly property string menubarClockDate: read("menubar.clockDate")
     readonly property bool menubarClockShowAmPm: read("menubar.clockShowAmPm")
     readonly property bool menubarClockFlashSeparators: read("menubar.clockFlashSeparators")

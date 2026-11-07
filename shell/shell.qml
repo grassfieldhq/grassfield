@@ -510,6 +510,8 @@ ShellRoot {
     MenuBar {
         searchActive: searchSurface.open
         onSearchRequested: searchSurface.toggle()
+        captureActive: captureSurface.open
+        onCaptureRequested: screen => captureSurface.toggleOn(screen)
     }
     Dock {
         id: dock

@@ -100,4 +100,31 @@ TestCase {
     function test_crowdingEmpty() {
         compare(keys(Logic.hiddenItems(0, [], 0)), "");
     }
+
+    function source(path) {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../" + path), false);
+        xhr.send();
+        verify(xhr.responseText.length > 0, path);
+        return xhr.responseText.replace(/\/\/.*$/gm, "");
+    }
+
+    // The Screen Capture item (menubar.showScreenCapture, owner 2026-11-07), wired as no pure function carries it: an optional
+    // status item (crowding hides it first among the optional ones it precedes), shown only when the setting is on, named for
+    // assistive technology, and opening the capture toolbar on its own bar's display through shell.qml.
+    function test_screenCaptureItemWiring() {
+        const bar = source("shell/menubar/MenuBar.qml");
+        verify(bar.indexOf('if (Settings.menubarShowScreenCapture)\n                    list.push({key: "capture", width: statusIconWidth, optional: true});') >= 0, "an optional status item");
+        verify(bar.indexOf("visible: Settings.menubarShowScreenCapture && !win.hiddenStatus.capture") >= 0, "the setting and crowding");
+        verify(bar.indexOf('accessibleName: qsTr("Screen Capture")') >= 0, "its accessible name");
+        verify(bar.indexOf('onActivated: root.captureRequested(win.screen ? win.screen.name : "")') >= 0, "its bar's display");
+        verify(bar.indexOf("active: root.captureActive") >= 0, "lit while the toolbar is open");
+        const shell = source("shell/shell.qml");
+        verify(shell.indexOf("captureActive: captureSurface.open") >= 0);
+        verify(shell.indexOf("onCaptureRequested: screen => captureSurface.toggleOn(screen)") >= 0);
+        const capture = source("shell/capture/Capture.qml");
+        verify(capture.indexOf("screenName = ScreenChoice.pick(screen, Compositor.activeScreenName, Quickshell.screens.map(s => s.name));") >= 0,
+            "the named display, else the active one");
+        verify(capture.indexOf('if (SessionState.refuses("capture"))') >= 0, "never over the lock screen");
+    }
 }

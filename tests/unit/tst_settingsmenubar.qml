@@ -159,6 +159,21 @@ TestCase {
         compare(asked, 2);
     }
 
+    // Screen Capture (macOS 26/27: the control added to the menu bar, owner 2026-11-07): off by default, the last control, its
+    // check box writing menubar.showScreenCapture.
+    function test_screenCaptureControl() {
+        const t = make(true);
+        waitForRendering(t.page);
+        const box = named(t.page.contentItem, "Show Screen Capture in the menu bar");
+        verify(box, "the row");
+        compare(box.x, Tokens.settingsMenuBarCheckX);
+        verify(!box.checked, "off by default");
+        const nowPlaying = named(t.page.contentItem, "Show Now Playing in the menu bar");
+        verify(box.mapToItem(t.page.contentItem, 0, 0).y > nowPlaying.mapToItem(t.page.contentItem, 0, 0).y, "after Now Playing");
+        mouseClick(box);
+        compare(last(t.store), {"menubar.showScreenCapture": true});
+    }
+
     function test_batteryOnlyWithABattery() {
         const t = make(false);
         const box = named(t.page.contentItem, "Show Battery in the menu bar");

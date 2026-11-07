@@ -36,6 +36,7 @@ Design system shared by the shell and (later) native apps: tokens, frosted mater
 | `menubar.showNowPlaying` | bool | true | Now Playing item in the menu bar while a player has a session |
 | `menubar.showSearch` | bool | true | Search item in the menu bar |
 | `menubar.showWifi` / `showSound` / `showBattery` / `showBatteryPercentage` / `showFocus` | bool | true | Menu bar items (Settings > Menu Bar); Focus only while Do Not Disturb is on |
+| `menubar.showScreenCapture` | bool | false | The Screen Capture item in the menu bar (Settings > Menu Bar): opens the capture toolbar on its display, as Shift-Super-5 |
 | `menubar.clockDate` | enum `auto` \| `always` \| `never` | auto | Menu bar clock date (auto = when space allows) |
 | `menubar.clockShowDayOfWeek` / `clockShowAmPm` / `clockFlashSeparators` | bool | true / true / false | Menu bar clock: day of the week, AM/PM, flashing colons |
 | `menubar.clockHours` | enum `auto` \| `12` \| `24` | auto | Menu bar clock hour format (auto follows the locale) |

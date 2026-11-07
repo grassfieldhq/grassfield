@@ -52,6 +52,7 @@ ShellRoot {
             "menubar.showBattery": "menubarShowBattery",
             "menubar.showBatteryPercentage": "menubarShowBatteryPercentage",
             "menubar.showFocus": "menubarShowFocus",
+            "menubar.showScreenCapture": "menubarShowScreenCapture",
             "menubar.clockDate": "menubarClockDate",
             "menubar.clockShowAmPm": "menubarClockShowAmPm",
             "menubar.clockFlashSeparators": "menubarClockFlashSeparators",

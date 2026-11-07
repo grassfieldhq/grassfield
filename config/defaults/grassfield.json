@@ -91,6 +91,7 @@
     "showBattery": true,
     "showBatteryPercentage": true,
     "showFocus": true,
+    "showScreenCapture": false,
     "clockDate": "auto",
     "clockShowDayOfWeek": true,
     "clockHours": "auto",

@@ -56,6 +56,7 @@ ShellRoot {
         ["menubar.showBattery", false, () => Settings.menubarShowBattery === false],
         ["menubar.showBatteryPercentage", false, () => Settings.menubarShowBatteryPercentage === false],
         ["menubar.showFocus", false, () => Settings.menubarShowFocus === false],
+        ["menubar.showScreenCapture", true, () => Settings.menubarShowScreenCapture === true],
         ["menubar.clockDate", "never", () => Settings.menubarClockDate === "never"],
         ["menubar.clockDate", "bogus", () => Settings.menubarClockDate === "auto"],
         ["menubar.clockShowAmPm", false, () => Settings.menubarClockShowAmPm === false],

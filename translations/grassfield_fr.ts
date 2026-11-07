@@ -9307,6 +9307,10 @@
         <translation>Partage d’écran</translation>
     </message>
     <message>
+        <source>Screen Capture</source>
+        <translation>Capture d’écran</translation>
+    </message>
+    <message>
         <source>Now Playing: %1</source>
         <translation>En cours de lecture : %1</translation>
     </message>
@@ -9448,6 +9452,10 @@
     <message>
         <source>Search</source>
         <translation>Recherche</translation>
+    </message>
+    <message>
+        <source>Screen Capture</source>
+        <translation>Capture d’écran</translation>
     </message>
     <message>
         <source>Allow in the Menu Bar</source>
