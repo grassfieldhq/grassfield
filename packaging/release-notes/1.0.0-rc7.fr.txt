@@ -1,0 +1,9 @@
+Les écrans externes qui reviennent de veille sans image se rallument d’eux-mêmes, et la sortie de veille allume tout de suite l’écran de verrouillage.
+Choisissez l’écran principal dans Réglages > Écrans (Utiliser comme), ou glissez la barre des menus vers un autre écran dans Disposer ; les écrans qui ne sont pas haute densité proposent leur résolution native.
+La barre des menus est translucide sur tous les écrans, et Réglages > Fond d’écran montre tout de suite quels écrans un choix modifie.
+Les captures d’écran sont enregistrées dans Images > Captures d’écran et les enregistrements dans Vidéos ; les raccourcis de capture fonctionnent sur le pavé numérique, et la barre des menus peut afficher un élément Capture d’écran (Réglages > Barre des menus).
+Fichiers : ajoutez des dossiers à la barre latérale (Ajouter à la barre latérale, ou en les glissant), Couper et coller avec Ctrl+X, une vue en colonnes plus stable et des menus plus étroits ; les éléments coupés dans Fichiers se collent aussi sur le bureau.
+Dans la session Grassfield, Visionneuse et Fichiers deviennent les apps par défaut des images, des PDF et des dossiers seulement là où vous n’aviez pas choisi une autre app ; choisissez l’app d’un type dans Obtenir des informations > Ouvrir avec > Tout modifier. La session Omarchy garde ses propres réglages.
+Une fenêtre déplacée vers un écran plus petit s’y ajuste, glisser une fenêtre vers le haut remplit l’écran tout de suite, et les fenêtres ne restent plus sous la barre des menus.
+Les apps qui dessinent leur propre barre de titre n’en montrent plus qu’une, et Chromium et Google Chrome affichent les boutons de fenêtre avec leur apparence GTK (dans Chrome, choisissez une fois Paramètres > Apparence > Mode : GTK).
+Réglages > Confidentialité > Partage d’écran montre aussi, sous « Autres apps », le partage d’écran gardé par des apps que le système ne sait pas nommer, pour que vous puissiez le retirer.

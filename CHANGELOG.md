@@ -4,6 +4,38 @@ All notable changes of Grassfield Desktop. The version of every package, library
 file at the repository root (`scripts/dev/check-version.sh`, part of `just check`, keeps the consumers equal to it).
 Format: one section per version, newest first.
 
+## 1.0.0-rc7 (release candidate, 2026-11-07)
+
+The owner's rc6 report, on two machines.
+
+Displays (PR #10): a display that comes back from sleep without a mode is reloaded until it has one (Omarchy's
+recovery, inside the shell). A resume lights the lock screen's displays, as macOS does (security module, display only).
+"Use as" is on every display, and the menu bar can be dragged in Arrange (ADR-0044 A-2). Panels below 150 ppi offer their
+native resolution.
+
+Shell (PR #13): the menu bar band takes the wallpaper under it as its backdrop on every display. The Wallpaper pane
+names the displays a choice changes. Screenshots go to Pictures/Screenshots (one folder in any language) and recordings
+to Videos, and the keys follow the toolbar's Save to. The numeric keypad has the capture keys, and there is an optional
+Screen Capture menu bar item.
+
+Files (PR #14): Favorites take the user's folders. Cut and Paste move items, with the Finder's Move Item Here. The
+clipboard is emptied only while it holds that cut. The Columns view's selection no longer goes back, and item menus
+shorten long names. Default apps of the Grassfield session live in grassfield-mimeapps.list: they are seeded only where
+no list names an explicit choice, and set with Change All…. The desktop's Paste Item moves a cut without ever replacing a
+file (PR #12).
+
+Windows (PR #15, grassfield-compositor): a window moved to another display fits its work area. The title bar drag
+follows the pointer, and the menu bar fills at once. Windows are held below a remapped menu bar. One title bar per window
+comes from the decoration the client negotiated (P9, ADR-0015 amendment). A machine-wide Chromium and Google Chrome
+policy keeps their GTK window buttons under Omarchy's colour policy.
+
+Screen sharing and dialogs (PR #16): the share picker receives xdph's --allow-token. Opening "Remember this choice" from
+it (so a browser asks once) is built but held off until the owner agrees to amend Q14. Settings > Privacy > Screen
+Sharing lists and removes grants under the empty app id (Other Apps). The callers that bypass the Open and Save panels
+(Qt under the gtk3 theme, LibreOffice, Chromium started before the portal) are documented.
+
+Also: the Settings singleton mirrors keyboard.dictation, and settings_vectors reads displays.main (PR #11).
+
 ## 1.0.0-rc6 (release candidate, 2026-11-06)
 
 The UI audit of 2026-11-05 (docs/audits): the notification banners move as one stack (no jump after an exit, the blur

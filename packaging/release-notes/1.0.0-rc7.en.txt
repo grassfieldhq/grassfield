@@ -1,0 +1,9 @@
+External displays that come back from sleep without a picture are switched on again by themselves, and waking from sleep lights the lock screen at once.
+Choose the main display in Settings > Displays (Use as), or drag the menu bar to another display in Arrange; panels that are not high density offer their native resolution.
+The menu bar is translucent on every display, and Settings > Wallpaper shows at once which displays a choice changes.
+Screenshots are saved in Pictures > Screenshots and recordings in Videos; the capture shortcuts work on the numeric keypad, and the menu bar can show a Screen Capture item (Settings > Menu Bar).
+Files: add folders to the sidebar (Add to Sidebar, or drag them in), Cut and paste with Ctrl+X, a steadier Columns view and narrower menus; items cut in Files can be pasted on the desktop.
+In the Grassfield session, Preview and Files become the default apps for pictures, PDF documents and folders only where you had not chosen another app yourself; choose the app for a type in Get Info > Open with > Change All. The Omarchy session keeps its own defaults.
+A window moved to a smaller display fits it, dragging a window to the top fills the screen at once, and windows no longer stay under the menu bar.
+Apps that draw their own title bar show only one, and Chromium and Google Chrome show the window buttons with their GTK look (in Chrome, choose Settings > Appearance > Mode: GTK once).
+Settings > Privacy > Screen Sharing now also shows, under Other Apps, screen sharing kept by apps the system cannot name, so you can remove it.
