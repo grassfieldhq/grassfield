@@ -523,9 +523,10 @@ namespace gf::tiler {
 
         // Owner report on 1.0.0-rc6 (macOS model): a window that lands on an output whose work area it does not fit is made to
         // fit it (core fitIntoArea), and its titlebar is never left under that output's menu bar (FR56: Hyprland keeps such a
-        // window inside the output and bottom-aligned, which put its titlebar under the bar). `why` names the move in the log.
-        // True when the window was moved or resized.
-        bool fitToOutput(const PHLWINDOW& w, std::string_view why) {
+        // window inside the output and bottom-aligned, which put its titlebar under the bar). `why` names the move in the log;
+        // `resize` false holds the titlebar below the menu bar only (the menu bar coming back resizes nothing). True when the
+        // window was moved or resized.
+        bool fitToOutput(const PHLWINDOW& w, std::string_view why, bool resize = true) {
             if (!g_layoutManager || !fitCandidate(w))
                 return false;
             const auto m = monitorOf(w);
@@ -535,7 +536,9 @@ namespace gf::tiler {
             const double band   = gf::chrome::bandOf(w);
             const CBox   now    = target->position();
             CBox         surface = now;
-            if (const auto frame = tiling::fitIntoArea(tiling::frameOf(toRect(now), band), areaFor(m, w->m_workspace->m_id).box, constraintsOf(w)))
+            const auto   frame   = resize ? tiling::fitIntoArea(tiling::frameOf(toRect(now), band), areaFor(m, w->m_workspace->m_id).box, constraintsOf(w))
+                                          : std::nullopt;
+            if (frame)
                 surface = toCBox(tiling::surfaceOf(*frame, band));
             surface = gf::topClamp::belowMenuBar(w, surface, band);
             if (sameBox(surface, now))
@@ -1347,9 +1350,10 @@ namespace gf::tiler {
         // The shell's menu bar layer, whose exclusive zone is the top reserved area the clamp and the work area read.
         constexpr std::string_view kMenuBarNamespace = "grassfield-menubar";
 
-        // The shell's menu bar mapped on an output (the session's start, the shell back after a restart): a window placed while
-        // it was away (at map, by an app, by a move meanwhile) and now under it goes below it (fitToOutput), as macOS never
-        // leaves a title bar under the menu bar (FR56). Never a window one of the drags holds.
+        // The shell's menu bar mapped on an output (the session's start, the shell back after a restart; the bar also maps again
+        // when it changes layer around a full-screen window): a window placed while it was away (at map, by an app, by a move
+        // meanwhile) and now under it goes below it, as macOS never leaves a title bar under the menu bar (FR56). Its size is
+        // left alone. Never a window one of the drags holds.
         void holdUnderMenuBars() {
             if (!Desktop::windowState())
                 return;
@@ -1357,7 +1361,7 @@ namespace gf::tiler {
             const auto windows = Desktop::windowState()->windows(); // a copy: nothing here maps or closes one, but stay safe
             for (const auto& w : windows) {
                 if (w && w != dragged && !heldByHyprlandDrag(w))
-                    fitToOutput(w, "left under the menu bar that came");
+                    fitToOutput(w, "left under the menu bar that came", false);
             }
         }
 
