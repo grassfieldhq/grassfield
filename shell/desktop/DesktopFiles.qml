@@ -151,13 +151,20 @@ Scope {
         });
     }
 
-    // Copy (or move, with `move`) files into the desktop folder under unclaimed names; never overwrites.
-    // Returns the names the files will have.
-    function importPaths(paths: var, move: bool): var {
-        const taken = names.slice();
+    // Copy (or move, with `move`) files into the desktop folder under unclaimed names; never overwrites. A name is
+    // unclaimed when neither a listed item nor a copy or move still running holds it (takenNames); a hidden file the
+    // listing does not show makes the command fail instead (cp --no-clobber, mv --update=none-fail), and the source
+    // stays. `onMoved(name)` runs for each move that succeeded. Returns the names the files will have.
+    function importPaths(paths: var, move: bool, onMoved: var): var {
+        const taken = takenNames();
         const added = [];
-        for (const src of paths) {
-            if (typeof src !== "string" || !src.startsWith("/") || src === "/")
+        for (const raw of paths) {
+            if (typeof raw !== "string")
+                continue;
+            // An absolute path without "." or ".." segments (a clipboard's "/a/b/.." would move a into the desktop's
+            // parent), trailing slashes dropped.
+            const src = raw.replace(/\/+$/, "");
+            if (!src.startsWith("/") || src.split("/").some(part => part === "." || part === ".."))
                 continue;
             if (Logic.dirName(src) === dir)
                 continue;
@@ -168,9 +175,14 @@ Scope {
             added.push(name);
             markBusy(name);
             const dest = path(name);
-            // gio move handles directories; cp -a does for copies (gio copy refuses directories).
-            const argv = move ? ["gio", "move", "--", src, dest] : ["cp", "-a", "--no-clobber", "--no-target-directory", "--", src, dest];
-            run(argv, move ? "move" : "copy", () => unmarkBusy(name));
+            // mv moves folders across file systems and, with --update=none-fail and --no-target-directory, never replaces
+            // an existing name nor moves into a folder of that name (gio move does both); cp -a copies folders.
+            const argv = move ? ["mv", "--update=none-fail", "--no-target-directory", "--", src, dest] : ["cp", "-a", "--no-clobber", "--no-target-directory", "--", src, dest];
+            run(argv, move ? "move" : "copy", ok => {
+                unmarkBusy(name);
+                if (ok && onMoved)
+                    onMoved(name);
+            });
         }
         return added;
     }
@@ -200,6 +212,10 @@ Scope {
 
     // Files on the clipboard (local paths of a text/uri-list), read when the desktop menu opens (refreshClipboard).
     property var clipboardPaths: []
+    // The clipboard's files were cut (Files' Cut, or another file manager's): Paste moves them (IconsLogic.parseClipboardProbe).
+    property bool clipboardCut: false
+    // The clipboard's uri list as it was read (IconsLogic.parseClipboardProbe): emptied after a move only if unchanged.
+    property string clipboardUriText: ""
     // Ctrl+V: paste as soon as the clipboard has been read.
     property bool pasteAfterRead: false
 
@@ -215,10 +231,27 @@ Scope {
     }
 
     // Paste Item(s): copies of the clipboard's files on the desktop, under unclaimed names (never overwrites); an item
-    // that already lives on the desktop gets a "copy" next to it, as on macOS.
+    // that already lives on the desktop gets a "copy" next to it, as on macOS. Cut items are moved here instead, as
+    // Files' Paste moves them, and the cut is forgotten once one of them has moved; the clipboard is emptied then only if
+    // it still holds that very list (anything copied while a slow move ran stays). An item already on the desktop stays
+    // where it is; a cut where nothing moved keeps the clipboard.
     function paste(): var {
+        if (clipboardCut) {
+            let forgotten = false;
+            const expected = clipboardUriText;
+            return importPaths(clipboardPaths, true, () => {
+                if (forgotten)
+                    return;
+                forgotten = true;
+                clipboardCut = false;
+                clipboardPaths = [];
+                clipboardUriText = "";
+                if (expected !== "")
+                    clipboardCheck.createObject(root, {expected: expected}).running = true;
+            });
+        }
         const here = clipboardPaths.filter(p => Logic.dirName(p) === dir).map(p => Logic.baseName(p)).filter(n => names.indexOf(n) >= 0);
-        return importPaths(clipboardPaths, false).concat(duplicate(here));
+        return importPaths(clipboardPaths, false, null).concat(duplicate(here));
     }
 
     // Get Info: Grassfield Files' Get Info window of each path (macOS model). A dev session runs the dev build
@@ -371,11 +404,25 @@ Scope {
 
     Process {
         id: clipboardProbe
-        // Only a text/uri-list offer is read; anything else (text, images) leaves Paste out.
-        command: ["sh", "-c", "wl-paste --list-types 2>/dev/null | grep -qx text/uri-list && wl-paste --no-newline --type text/uri-list 2>/dev/null"]
+        // Only a text/uri-list offer is read; anything else (text, images) leaves Paste out. The first line says whether
+        // the files were cut: KDE's application/x-kde-cutselection is "1", or GNOME's x-special/gnome-copied-files
+        // starts with "cut" (Files writes both next to the list, as Dolphin and Nautilus write theirs).
+        command: ["sh", "-c", "t=$(wl-paste --list-types 2>/dev/null) || exit 0\n"
+            + "printf '%s\\n' \"$t\" | grep -qx text/uri-list || exit 0\n"
+            + "cut=0\n"
+            + "if printf '%s\\n' \"$t\" | grep -qx application/x-kde-cutselection; then\n"
+            + "  [ \"$(wl-paste --no-newline --type application/x-kde-cutselection 2>/dev/null)\" = 1 ] && cut=1\n"
+            + "elif printf '%s\\n' \"$t\" | grep -qx x-special/gnome-copied-files; then\n"
+            + "  [ \"$(wl-paste --no-newline --type x-special/gnome-copied-files 2>/dev/null | head -n 1)\" = cut ] && cut=1\n"
+            + "fi\n"
+            + "echo cut=$cut\n"
+            + "wl-paste --no-newline --type text/uri-list 2>/dev/null"]
         stdout: StdioCollector {
             onStreamFinished: {
-                root.clipboardPaths = Logic.parseUriList(text);
+                const probe = Logic.parseClipboardProbe(text);
+                root.clipboardPaths = probe.paths;
+                root.clipboardCut = probe.cut && probe.paths.length > 0;
+                root.clipboardUriText = probe.uriText;
                 if (root.pasteAfterRead) {
                     root.pasteAfterRead = false;
                     root.paste();
@@ -584,6 +631,24 @@ Scope {
                 const m = /Default application for .*?:\s*(\S+\.desktop)/.exec(text);
                 if (m && textEditor.target !== "")
                     Apps.openDetached(["gtk-launch", m[1].replace(/\.desktop$/, ""), textEditor.target]);
+            }
+        }
+    }
+
+    // After a cut's move: the clipboard's uri list read again; emptied only when it is still the cut's own list.
+    Component {
+        id: clipboardCheck
+
+        Process {
+            id: check
+            property string expected: ""
+            command: ["wl-paste", "--no-newline", "--type", "text/uri-list"]
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    if (check.expected !== "" && text === check.expected)
+                        root.run(["wl-copy", "--clear"], "clear the clipboard after a move", null);
+                    check.destroy();
+                }
             }
         }
     }

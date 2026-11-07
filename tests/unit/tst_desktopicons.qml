@@ -272,6 +272,17 @@ TestCase {
         compare(Logic.parseUriList(text), ["/a/b", "/c/d"]);
     }
 
+    function test_parseClipboardProbe() {
+        compare(Logic.parseClipboardProbe("cut=1\nfile:///a/b\r\nfile:///c%20d\r\n"), {cut: true, paths: ["/a/b", "/c d"], uriText: "file:///a/b\r\nfile:///c%20d\r\n"});
+        compare(Logic.parseClipboardProbe("cut=0\nfile:///a/b\r\n"), {cut: false, paths: ["/a/b"], uriText: "file:///a/b\r\n"});
+        // No uri list on the clipboard: the probe prints nothing.
+        compare(Logic.parseClipboardProbe(""), {cut: false, paths: [], uriText: ""});
+        // Without the probe's first line nothing is trusted, and a bare uri list is not read as a cut.
+        compare(Logic.parseClipboardProbe("file:///a/b\r\n"), {cut: false, paths: [], uriText: ""});
+        compare(Logic.parseClipboardProbe("cut=yes\nfile:///a/b"), {cut: false, paths: [], uriText: ""});
+        compare(Logic.parseClipboardProbe("cut=1"), {cut: true, paths: [], uriText: ""});
+    }
+
     function test_baseAndDirName() {
         compare(Logic.baseName("/a/b/c.txt"), "c.txt");
         compare(Logic.baseName("/a/b/"), "b");

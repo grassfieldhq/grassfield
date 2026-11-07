@@ -487,6 +487,19 @@ function parseUriList(text) {
     return out;
 }
 
+// The desktop's clipboard probe (DesktopFiles.qml) prints "cut=1" or "cut=0" on its first line, then the text/uri-list
+// body; an output without that line (no uri list on the clipboard) holds no files. `uriText` is the list exactly as
+// the clipboard held it, what a later check compares before emptying the clipboard.
+function parseClipboardProbe(text) {
+    const s = String(text);
+    const nl = s.indexOf("\n");
+    const head = (nl < 0 ? s : s.substring(0, nl)).trim();
+    if (head !== "cut=1" && head !== "cut=0")
+        return {cut: false, paths: [], uriText: ""};
+    const body = nl < 0 ? "" : s.substring(nl + 1);
+    return {cut: head === "cut=1", paths: parseUriList(body), uriText: body};
+}
+
 function baseName(path) {
     const p = path.replace(/\/+$/, "");
     return p.substring(p.lastIndexOf("/") + 1);
