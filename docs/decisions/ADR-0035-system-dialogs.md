@@ -1355,6 +1355,13 @@ Decision:
   (GTK 3 `GtkFileChooserDialog`, themed by the above): Qt apps under the `gtk3` theme (Kdenlive, Grassfield's own Qt apps if
   they use QtQuick.Dialogs; they can call the portal directly), LibreOffice. **Owner decision Q3 (2026-10-27): portal apps +
   GTK 3 through `GTK_USE_PORTAL=1`; Qt keeps `gtk3`.**
+  **Audit after the rc6 bug report (2026-11-07; "some save or upload windows still show Omarchy's old file dialog"):** the
+  routing is right and the backend forwarded nothing in 14 days; the callers that show GTK 3's chooser are Qt apps under
+  `gtk3` (Q3), LibreOffice, and Chromium or Electron apps whose first portal call came while the frontend was starting
+  (Chromium keeps that failure for the life of the process; the frontend took 26 s at that login, I-4 of ADR-0041). Qt apps
+  could reach the panel without losing the GTK look through a platform-theme plugin named after the session (measured with a
+  prototype); it is not built: it needs its own ADR and an amendment of Q3. Spec system-dialogs.md section 1, "Which callers
+  reach the panel".
 - Cost: medium (a no-window D-Bus service, its unit, settings-file watching, tests on a private bus with the real frontend
   1.22.1 and fake backends; the 18 generated GTK themes and their contrast test; then the environment lines). Risk: GTK 3
   apps call the portal's `ReadAll` synchronously at start, so a hung Settings backend would delay their start (up to the

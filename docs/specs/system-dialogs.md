@@ -161,6 +161,39 @@ manual: an Electron app (Obsidian) Open and Save, a Flatpak if installed.
 P4-like budget above; common rules 3–5; the panel's strings in the Grassfield catalogue, the app's labels and filter names as
 given.
 
+### Which callers reach the panel (audit after the rc6 bug report)
+- **Report (owner, rc6):** "some save or upload windows still show Omarchy's old file dialog instead of Files". That dialog is
+  GTK 3's file chooser, which x-d-p-gtk shows in the Omarchy session and which an app shows itself when it does not use the
+  portal.
+- **The routing is right (measured 2026-11-07, read-only):** the running frontend has `XDG_CURRENT_DESKTOP=Grassfield:Hyprland`
+  and the link `grassfield-portals.conf` (FileChooser `grassfield;gtk`); in 14 days of the owner's journal the backend showed 6
+  panels (1489 to 3364 ms from the call, the first load included) and forwarded none to x-d-p-gtk.
+- **Callers that reach the panel:** GTK 3 apps through `GtkFileChooserNative` with `GTK_USE_PORTAL=1` (present in the
+  environment of the session's processes, the browser's included); GTK 4 (4.24 uses the portal by default; it has only a
+  `no-portals` debug key, so `GDK_DEBUG=portals` changes nothing there any more); Chromium 155 and Electron (the portal dialog
+  whenever the frontend answers, `ui/shell_dialogs/select_file_dialog_linux_portal.cc`, GTK's dialog only for a frontend older
+  than FileChooser 3); Firefox (its "auto" mode follows `GTK_USE_PORTAL`; not installed here); Flatpaks; apps that call the
+  portal themselves (Omarchy's hype). The panel takes everything they pass (filters and the current one, the folder, the
+  suggested name or file, several files, a folder, choices, the button's label, modality: chooserlogic, A-FC1).
+- **Callers that do not, each showing GTK 3's chooser in-process:**
+  - Qt apps under the session's `gtk3` platform theme (Omarchy's, kept by owner decision Q3): Qt's `QGtk3FileDialogHelper`.
+    Measured with a probe on the nested display (the helper a `QFileDialog` gets); on this machine OBS and Kdenlive are such
+    apps (Omarchy's own apps pick the portal themselves: omacut and hype call it, omawrite sets the portal theme for itself).
+    `QT_QPA_PLATFORMTHEME=xdgdesktopportal` alone is not a fix: in this session its base theme is Qt's generic one,
+    measured on the nested display: Fusion's light palette and "Sans Serif 9" instead of the GTK palette, font and dark scheme
+    (the reason Q3 kept `gtk3`). A fix that keeps the look, measured with a prototype: a platform-theme plugin under the key
+    `grassfield` (the session's first desktop name, which Qt lower-cases into a theme name) that hands back Qt's `gtk3` theme,
+    under `QT_QPA_PLATFORMTHEME=xdgdesktopportal`: the GTK palette, font and scheme unchanged and `QXdgDesktopPortalFileDialog`
+    for file dialogs. Not built: it is a new Qt plugin on Qt's private plugin API (rebuilt with every Qt minor release, and a
+    plugin that fails to load gives every Qt app the generic look), a change to the session's environment and units, and an
+    amendment of Q3; it needs its own ADR and the owner's agreement.
+  - LibreOffice (its GTK 3 plugin builds `GtkFileChooserDialog` itself, with its own controls).
+  - Chromium and Electron apps whose first portal call comes while the frontend is still starting: Chromium keeps the failure
+    for the life of the process (`components/dbus/xdg/portal.cc`, a failed setup is never retried) and shows GTK's dialog from
+    then on. At this login the frontend owned its name 26 s after it started, waiting on x-d-p-gtk (31.1 s to 56.6 s;
+    ADR-0041 I-4); on a private bus with the same frontend and x-d-p-gtk it took 0.4 s with and without `GTK_USE_PORTAL=1`, so
+    I-4's hypothesis does not explain it and the cause is still open.
+
 ### Known limitations
 Not a true sheet (a modal child window dimming its parent, not a card inside it); remote locations refused (4b-10); apps that
 draw their own dialog in-process are not covered (D-8). Step 4b also leaves out: the Save panel's Tags field (the panel would
