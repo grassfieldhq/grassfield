@@ -313,6 +313,14 @@ namespace gf::tiling {
     // most `to`'s; whole logical px.
     Rect moveToArea(const Rect& frame, const Rect& from, const Rect& to);
 
+    // A window that lands on another output (dropped there by a drag, or moved to a Desktop of that output) larger than that
+    // output's work area `area` (owner report on 1.0.0-rc6: a zoomed window moved to a smaller display overflowed it, its
+    // titlebar under the menu bar): macOS makes it fit the display, below the menu bar and above the Dock. Its frame `frame`
+    // (titlebar band included) is made at most the area's size on each axis, never under the window's minimum (`limits`, its
+    // band counted as fitsFrame does), whole logical px; on an axis where it was larger it starts at the area's start (its
+    // titlebar right below the menu bar), on the other it keeps its place. nullopt when it fits already on both axes.
+    std::optional<Rect> fitIntoArea(const Rect& frame, const Rect& area, const Constraints& limits);
+
     // An output went away (TL11): Hyprland moves a floating window of its Desktops by the offset between the two outputs,
     // and a window can end off every output (integrator nested pass of 6b's 12e3dd3: x = -2919). `strayFrame`: the frame
     // (titlebar included) shares no area with any of `outputs` (their logical boxes). `gatheredFrame`: where such a window

@@ -1022,6 +1022,39 @@ TEST(TilingMoveTo, AFreeWindowKeepsItsPlaceOnTheOtherOutput) {
     EXPECT_EQ(moveToArea(Rect{0, 24, 0.4, 0.4}, from, to).h, 1) << "never smaller than 1 x 1";
 }
 
+// Owner report on 1.0.0-rc6: a zoomed window moved to a smaller display overflowed it. Nested capture: a 1424 x 860 frame moved
+// to GF-REF at 1.25 (1536 x 864, work area 1536 x 840 below the 24 px menu bar) sat at y 3, its titlebar under the menu bar.
+TEST(TilingFitIntoArea, AWindowLargerThanTheDisplaysWorkAreaIsMadeToFitIt) {
+    const Rect area{1440, 24, 1536, 840};
+    EXPECT_EQ(fitIntoArea(Rect{1448, 3, 1424, 860}, area, Constraints{}), (Rect{1448, 24, 1424, 840})) << "too tall: the area's height, below the menu bar, x kept";
+    EXPECT_EQ(fitIntoArea(Rect{1500, 300, 1800, 400}, area, Constraints{}), (Rect{1440, 300, 1536, 400})) << "too wide: the area's width from its left edge, y kept";
+    EXPECT_EQ(fitIntoArea(Rect{1508, 184, 1400, 862}, area, Constraints{}), (Rect{1508, 24, 1400, 840})) << "a drop that hung below the screen";
+    EXPECT_EQ(fitIntoArea(Rect{1000, -50, 2000, 1200}, area, Constraints{}), (Rect{1440, 24, 1536, 840})) << "both axes";
+}
+
+TEST(TilingFitIntoArea, AWindowThatFitsKeepsItsFrame) {
+    const Rect area{1440, 24, 1536, 840};
+    EXPECT_FALSE(fitIntoArea(Rect{1600, 200, 800, 500}, area, Constraints{}).has_value());
+    EXPECT_FALSE(fitIntoArea(Rect{2600, 700, 800, 500}, area, Constraints{}).has_value()) << "hanging off the side or the bottom is the user's choice (macOS)";
+    EXPECT_FALSE(fitIntoArea(Rect{1440, 24, 1536, 840}, area, Constraints{}).has_value()) << "exactly the area";
+    EXPECT_FALSE(fitIntoArea(Rect{1440, 24, 1536.4, 840.4}, area, Constraints{}).has_value()) << "within rounding";
+    EXPECT_FALSE(fitIntoArea(Rect{1440, 24, 4000, 4000}, Rect{}, Constraints{}).has_value()) << "no area: nothing to fit";
+}
+
+TEST(TilingFitIntoArea, NeverUnderTheWindowsMinimum) {
+    const Rect area{0, 24, 1280, 696};
+    Constraints c;
+    c.minW = 1400;
+    c.minH = 700;
+    c.band = 32;
+    const auto r = fitIntoArea(Rect{100, 100, 1500, 900}, area, c);
+    ASSERT_TRUE(r.has_value());
+    EXPECT_EQ(r->w, 1400) << "its minimum width, wider than the area";
+    EXPECT_EQ(r->h, 732) << "its minimum surface and its titlebar band";
+    EXPECT_EQ(r->x, 0);
+    EXPECT_EQ(r->y, 24) << "its titlebar still right below the menu bar";
+}
+
 // ADR-0036 D67: an output unplugged left a window off every output (integrator nested pass of 12e3dd3: x = -2919).
 TEST(TilingGather, AFrameThatMeetsNoOutputIsStray) {
     const std::array<Rect, 2> outputs{Rect{0, 0, 1440, 900}, Rect{1440, 0, 1920, 1080}};

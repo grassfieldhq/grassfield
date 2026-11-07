@@ -581,6 +581,25 @@ namespace gf::tiling {
         return Rect{x, y, std::max(1.0, w), std::max(1.0, h)};
     }
 
+    std::optional<Rect> fitIntoArea(const Rect& frame, const Rect& area, const Constraints& limits) {
+        if (!(area.w > 0) || !(area.h > 0))
+            return std::nullopt;
+        const bool wide = frame.w > area.w + 0.5;
+        const bool tall = frame.h > area.h + 0.5;
+        if (!wide && !tall)
+            return std::nullopt;
+        Rect r = frame;
+        if (wide) {
+            r.w = std::max(std::floor(area.w), std::ceil(limits.minW));
+            r.x = std::round(area.x);
+        }
+        if (tall) {
+            r.h = std::max(std::floor(area.h), std::ceil(limits.minH + limits.band));
+            r.y = std::round(area.y);
+        }
+        return r;
+    }
+
     bool strayFrame(const Rect& frame, std::span<const Rect> outputs) {
         return std::ranges::none_of(outputs, [&frame](const Rect& o) {
             return std::min(frame.x + frame.w, o.x + o.w) > std::max(frame.x, o.x) && std::min(frame.y + frame.h, o.y + o.h) > std::max(frame.y, o.y);

@@ -81,6 +81,11 @@ namespace gf::tiler {
     // another space lets the floating algorithm fit it in the new work area, DefaultFloatingAlgorithm::movedTarget).
     void followOutput(const PHLWINDOW& w);
 
+    // The end of the plugin's titlebar drag that took a Free window to another output than the one under the middle of
+    // `pressBox` (its box at the press): when it is larger than that output's work area, it is made to fit it, its titlebar
+    // below the menu bar (core fitIntoArea; owner report on 1.0.0-rc6, macOS). After followOutput, never for a tiled window.
+    void fitAfterDrop(const PHLWINDOW& w, const CBox& pressBox);
+
     // The plugin may set `w`'s box (core movable: mapped, on a Desktop, its target in a layout space). A window that
     // closed or unmapped during a titlebar drag fails it: Hyprland would dereference null (gate C1).
     bool movable(const PHLWINDOW& w);

@@ -1348,9 +1348,13 @@ void CGrassfieldTitlebar::onGlobalMouseButton(const IPointer::SButtonEvent& e) {
                 gf::tiler::tile(w, snap->place, snap->monitor.lock());
         }
         gf::tiler::endMove(grab.window.lock()); // no-op unless the window is still Moving
-        // Dropped on another output: the window takes that output's Desktop, as after Hyprland's own move (R13).
-        if (grab.dragging && grab.moved)
+        // Dropped on another output: the window takes that output's Desktop, as after Hyprland's own move (R13), and fits its
+        // work area when it is larger (owner report on 1.0.0-rc6; a tile placed by the release is left alone).
+        if (grab.dragging && grab.moved) {
             gf::tiler::followOutput(grab.window.lock());
+            if (!snap)
+                gf::tiler::fitAfterDrop(grab.window.lock(), grab.pressBox);
+        }
         // Released on the Stages strip (macOS: a window dragged onto the strip becomes a stage of its own): the plugin does
         // what the shell's op move "new" does; the shell cannot see a titlebar drag (stages.md, Shell side work item 1).
         if (grab.dragging && grab.moved && g_pInputManager) {

@@ -17,6 +17,7 @@
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/event/EventBus.hpp>
@@ -74,6 +75,13 @@ namespace gf::tiler {
         struct SMoveRelease {
             PHLWINDOWREF        window;
             std::optional<Snap> snap; // the place shown at the release: tiled
+        };
+
+        // The output under a window's middle when one of Hyprland's moves of it was first seen: a release on another output
+        // fits the window there (fitToOutput; owner report on 1.0.0-rc6).
+        struct SMoveFrom {
+            PHLWINDOWREF window;
+            std::string  output;
         };
 
         // TL20: the clicks on one window's resize border, and a double-click waiting for Hyprland to end its resize.
@@ -166,6 +174,9 @@ namespace gf::tiler {
             std::unordered_map<uint64_t, tiling::TileRecord> splitHomes; // TL33: a member's tile on its home Desktop before its split
             std::vector<uint64_t>             chromeMembers;   // step 6e (D73): the members whose titlebars were last made to follow
             std::vector<uint64_t>             backInReach;     // windows that left a Split View, their titlebar not in reach yet (locked, hidden)
+            std::vector<PHLWINDOWREF>         fitting;         // Free windows moved to a Desktop: fitted to its output once Hyprland placed them
+            bool                              holdPending = false; // the shell's menu bar mapped: windows left under it go below it
+            std::optional<SMoveFrom>          moveFrom;        // the output one of Hyprland's moves began on (fitted at its release)
         };
 
         // Constructed on first use inside a guarded call (R13).
@@ -488,6 +499,50 @@ namespace gf::tiler {
             if (!layout || where.zone < 0 || where.zone >= static_cast<int>(layout->zones.size()))
                 return std::nullopt;
             return fitted({layout->zones[static_cast<size_t>(where.zone)]}, {w}, area).front();
+        }
+
+        bool heldByHyprlandDrag(const PHLWINDOW& w); // below, with the drags
+
+        // A Free floating window the plugin may fit onto the output it is on (fitToOutput): mapped on a regular Desktop (C1:
+        // movable), not full screen or zoomed, not a Split View member nor on a Split View Desktop (its half is the whole
+        // output's), not in a Stages strip (its place is the strip's), not tiled (a tile follows its window: relayout), and
+        // not in the middle of a drag: Hyprland's move gives the window the Desktop of the output its middle crosses while the
+        // button is still down (nested: a fit then had its width kept and its place taken back by the drag); the release fits
+        // it (finishMove, fitAfterDrop).
+        bool fitCandidate(const PHLWINDOW& w) {
+            if (!w || !tiling::movable(factsOf(w)) || !w->m_isFloating || fullscreenNow(w) || !w->m_workspace || w->m_workspace->m_isSpecialWorkspace)
+                return false;
+            const auto& s = st();
+            if (heldByHyprlandDrag(w) || s.drag.window.lock() == w)
+                return false;
+            if (gf::stager::inStripStage(w) || tiling::splitOfWindow(s.splits, idOf(w)) || tiling::splitOf(s.splits, w->m_workspace->m_id))
+                return false;
+            const auto* r = s.book.find(idOf(w));
+            return !r || (r->state != tiling::TileState::Tiled && r->state != tiling::TileState::Resizing);
+        }
+
+        // Owner report on 1.0.0-rc6 (macOS model): a window that lands on an output whose work area it does not fit is made to
+        // fit it (core fitIntoArea), and its titlebar is never left under that output's menu bar (FR56: Hyprland keeps such a
+        // window inside the output and bottom-aligned, which put its titlebar under the bar). `why` names the move in the log.
+        // True when the window was moved or resized.
+        bool fitToOutput(const PHLWINDOW& w, std::string_view why) {
+            if (!g_layoutManager || !fitCandidate(w))
+                return false;
+            const auto m = monitorOf(w);
+            if (!m || showsSpecial(m))
+                return false;
+            const auto   target = w->layoutTarget();
+            const double band   = gf::chrome::bandOf(w);
+            const CBox   now    = target->position();
+            CBox         surface = now;
+            if (const auto frame = tiling::fitIntoArea(tiling::frameOf(toRect(now), band), areaFor(m, w->m_workspace->m_id).box, constraintsOf(w)))
+                surface = toCBox(tiling::surfaceOf(*frame, band));
+            surface = gf::topClamp::belowMenuBar(w, surface, band);
+            if (sameBox(surface, now))
+                return false;
+            g_layoutManager->setTargetGeom(surface, target);
+            logRequest(Log::INFO, "window {:x} {}: made to fit {} at {:.0f},{:.0f} {:.0f}x{:.0f}", idOf(w), why, m->m_name, surface.x, surface.y, surface.w, surface.h);
+            return true;
         }
 
         void scheduleAfter();
@@ -855,8 +910,9 @@ namespace gf::tiler {
 
         // ---- drags (TL16-TL20) ----
 
-        void scheduleAfter(); // below: its callback is afterEvents
-        void gatherStrays();  // below, with onMonitorRemoved
+        void scheduleAfter();     // below: its callback is afterEvents
+        void gatherStrays();      // below, with onMonitorRemoved
+        void holdUnderMenuBars(); // below, with scheduleAfter
 
         uint64_t nowMs() {
             return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -946,6 +1002,10 @@ namespace gf::tiler {
                     dragDone(); // TL33: a Split View window shows no place; its release puts it back in its half (finishMove)
                 return;
             }
+            if (!s.moveFrom || s.moveFrom->window.lock() != w) {
+                const auto from = monitorOf(w);
+                s.moveFrom      = SMoveFrom{.window = w, .output = from ? from->m_name : std::string{}};
+            }
             const Vector2D pointer = g_pInputManager->getMouseCoordsInternal();
             if (const auto r = s.book.find(idOf(w)); r && r->state == tiling::TileState::Tiled) {
                 const Vector2D grip = s.press.value_or(pointer);
@@ -964,7 +1024,8 @@ namespace gf::tiler {
             auto& s = st();
             if (hyprlandDragging())
                 return;
-            const auto w = rel.window.lock();
+            const auto w    = rel.window.lock();
+            const auto from = std::exchange(s.moveFrom, std::nullopt);
             if (s.drag.hyprland)
                 dragDone();
             if (!w)
@@ -985,8 +1046,10 @@ namespace gf::tiler {
                 return;
             }
             if (rel.snap) {
-                if (!tile(w, rel.snap->place, rel.snap->monitor.lock()))
-                    endMove(w); // refused (D69: its minimum grew since the preview): Free where it was dropped
+                if (!tile(w, rel.snap->place, rel.snap->monitor.lock())) {
+                    endMove(w); // refused (D69: its minimum grew since the preview): Free where it was dropped,
+                    fitToOutput(w, "dropped where its tile was refused"); // below the menu bar (the top clamp left it to the tile)
+                }
                 return;
             }
             if (const auto r = s.book.find(idOf(w)); r && r->state == tiling::TileState::Tiled) {
@@ -994,6 +1057,10 @@ namespace gf::tiler {
                 return;
             }
             endMove(w);
+            // Released on another output than the one it was on (owner report on 1.0.0-rc6): it fits that output's work area.
+            const auto now = monitorOf(w);
+            if (from && from->window.lock() == w && now && now->m_name != from->output)
+                fitToOutput(w, "dropped on another output by Hyprland's move");
         }
 
         // TL20: a click on `w`'s resize border at `at` (`timeMs`: its press). Two on the same sides within the double-click
@@ -1255,6 +1322,12 @@ namespace gf::tiler {
             }
             for (const auto& resume : std::exchange(s.resuming, {}))
                 resumeNow(resume);
+            for (const auto& moved : std::exchange(s.fitting, {})) {
+                if (const auto w = moved.lock())
+                    fitToOutput(w, "moved to a Desktop");
+            }
+            if (std::exchange(s.holdPending, false))
+                holdUnderMenuBars();
             if (const auto rel = std::exchange(s.moveRelease, std::nullopt))
                 finishMove(*rel);
             if (const auto e = std::exchange(s.extend, std::nullopt))
@@ -1269,6 +1342,23 @@ namespace gf::tiler {
 
         void scheduleAfter() {
             st().later.schedule([] { gf::guarded("tiling after events", [] { afterEvents(); }); });
+        }
+
+        // The shell's menu bar layer, whose exclusive zone is the top reserved area the clamp and the work area read.
+        constexpr std::string_view kMenuBarNamespace = "grassfield-menubar";
+
+        // The shell's menu bar mapped on an output (the session's start, the shell back after a restart): a window placed while
+        // it was away (at map, by an app, by a move meanwhile) and now under it goes below it (fitToOutput), as macOS never
+        // leaves a title bar under the menu bar (FR56). Never a window one of the drags holds.
+        void holdUnderMenuBars() {
+            if (!Desktop::windowState())
+                return;
+            const auto dragged = st().drag.window.lock();
+            const auto windows = Desktop::windowState()->windows(); // a copy: nothing here maps or closes one, but stay safe
+            for (const auto& w : windows) {
+                if (w && w != dragged && !heldByHyprlandDrag(w))
+                    fitToOutput(w, "left under the menu bar that came");
+            }
         }
 
         void onClose(const PHLWINDOW& w) {
@@ -1300,13 +1390,24 @@ namespace gf::tiler {
 
         // TL14: minimize, hide and Show Desktop move a window to a special workspace (Suspended); back on a regular one it
         // returns to its zone if it is free. Move to Desktop between regular workspaces keeps the state.
+        // Owner report on 1.0.0-rc6: a window moved to a Desktop of another output (the Overview, Move to Desktop) kept its size
+        // there, overflowing a smaller display with its titlebar under the menu bar (Hyprland keeps it inside the output,
+        // bottom-aligned). A tiled window takes the same tile on that output (as move_to: relayout once Hyprland moved it); a
+        // Free one is fitted to that output's work area (fitToOutput, after events).
         void onMoveToWorkspace(const PHLWINDOW& w, const PHLWORKSPACE& ws) {
             auto& s = st();
             if (!s.splits.empty())
                 scheduleAfter(); // TL33: minimized, hidden or moved off a Split View Desktop (splitCheck)
-            const auto r = w && ws ? s.book.find(idOf(w)) : nullptr;
-            if (!r)
+            if (!w || !ws)
                 return;
+            const auto r = s.book.find(idOf(w));
+            if (!r) {
+                if (!ws->m_isSpecialWorkspace) {
+                    s.fitting.emplace_back(w);
+                    scheduleAfter();
+                }
+                return;
+            }
             if (ws->m_isSpecialWorkspace) {
                 if (s.book.suspend(idOf(w)))
                     notify(tiling::Reason::Suspended);
@@ -1318,6 +1419,15 @@ namespace gf::tiler {
                 return;
             }
             s.book.setWorkspace(idOf(w), ws->m_id); // the state reply carries no Desktop: no notice
+            const auto to = ws->m_monitor.lock();
+            if (r->state == tiling::TileState::Tiled && to && to->m_name != r->output) {
+                s.book.markRelayout(idOf(w), true); // checked again only once placed there (TL11's machinery)
+                s.relayoutPending = true;
+                scheduleAfter();
+            } else if (r->state != tiling::TileState::Tiled && r->state != tiling::TileState::Resizing) {
+                s.fitting.emplace_back(w);
+                scheduleAfter();
+            }
         }
 
         // ADR-0036 D67: after an output went away (the tiled windows placed again first, TL11), a floating window Hyprland
@@ -1748,6 +1858,8 @@ namespace gf::tiler {
         s.splitHomes.clear();
         s.chromeMembers.clear();
         s.backInReach.clear();
+        s.fitting.clear();
+        s.moveFrom.reset();
         if (!bus || !Desktop::windowState() || !State::monitorState() || !Fullscreen::controller())
             return false;
         auto& ev = bus->m_events;
@@ -1757,6 +1869,14 @@ namespace gf::tiler {
         l.push_back(ev.window.moveToWorkspace.listen(
             [](const PHLWINDOW& w, const PHLWORKSPACE& ws) { gf::guarded("tiling window.moveToWorkspace", [&] { onMoveToWorkspace(w, ws); }); }));
         l.push_back(ev.monitor.removed.listen([](const PHLMONITOR& m) { gf::guarded("tiling monitor.removed", [&] { onMonitorRemoved(m); }); }));
+        l.push_back(ev.layer.opened.listen([](const PHLLS& ls) {
+            gf::guarded("tiling layer.opened", [&] {
+                if (ls && ls->m_namespace == kMenuBarNamespace) {
+                    st().holdPending = true; // read once Hyprland gave the output its reserved area (after events)
+                    scheduleAfter();
+                }
+            });
+        }));
         if (g_pSessionLockManager) {
             l.push_back(g_pSessionLockManager->m_events.lock.listen([] {
                 gf::guarded("tiling session lock", [] {
@@ -1790,6 +1910,8 @@ namespace gf::tiler {
         s.recheck = false;
         s.press.reset();
         s.moveRelease.reset();
+        s.moveFrom.reset();
+        s.fitting.clear();
         s.border = {};
         s.extend.reset();
         s.resizing.reset();
@@ -2127,6 +2249,15 @@ namespace gf::tiler {
         target->assignToSpace(ws->m_space);
         g_layoutManager->setTargetGeom(box, target);
         logRequest(Log::DEBUG, "window {:x} moved by the plugin onto {}: now on its Desktop {}", idOf(w), m->m_name, ws->m_name);
+    }
+
+    void fitAfterDrop(const PHLWINDOW& w, const CBox& pressBox) {
+        if (!w)
+            return;
+        const auto from = monitorAt(pressBox.middle());
+        const auto now  = monitorOf(w);
+        if (now && now != from)
+            fitToOutput(w, "dropped on another output by its titlebar");
     }
 
     bool isTiled(const PHLWINDOW& w) {
@@ -2781,6 +2912,8 @@ namespace gf::tiler {
                 finishResize(); // the drag ended without a release seen here
             if (s.drag.hyprland)
                 dragDone(); // likewise the preview of a move
+            if (!s.moveRelease)
+                s.moveFrom.reset(); // a move that ended without a release seen here (one owed is read by finishMove)
             edgeHover();
             return;
         }
