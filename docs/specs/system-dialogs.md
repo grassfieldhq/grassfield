@@ -332,10 +332,9 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
 - SP6 the panel: tabs "Entire Screen" (one live thumbnail per display, the display's name), "Window" (live thumbnails of the
   windows in `XDPH_WINDOW_SHARING_LIST`, grouped by app, title under each, protected windows greyed with "This window can't be
   shared"), "Selection" (crosshair, region relative to its display); the heading "An app wants to share your screen." (the
-  picker cannot know which app); "Remember this choice" ticked at opening when xdph passes `--allow-token` (Omarchy's
-  `xdph.conf` sets `allow_token_by_default`), unticked otherwise, as xdph intends that flag for its picker's "Allow a restore
-  token" box (owner decision Q14 amended after
-  the rc6 bug report, see "Fixed after rc6" below); Cancel / Share (default once something is selected); double-click shares at
+  picker cannot know which app); "Remember this choice" unticked at opening (owner decision Q14; opening it ticked when
+  xdph passes `--allow-token`, as xdph intends that flag for its picker's "Allow a restore token" box, is built behind
+  `SharePickerPanel.followAllowToken` = false and waits for the owner's agreement, see "After rc6" below); Cancel / Share (default once something is selected); double-click shares at
   once.
 - SP7 keyboard: arrows move in the grid, Return shares, Esc cancels, Cmd-1/2/3 switch tabs.
 - SP8 the recording indicator in the menu bar while an app shares through the portal (xdph's PipeWire streams, ADR-0035 7-9:
@@ -411,7 +410,7 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   - `tst_barhide.qml`: the indicator while the bar is away (7-14).
   - The indicator in a real share (Chromium) is the integrator's.
 
-### Fixed after rc6: a browser asked several times for one share
+### After rc6: a browser asked several times for one share (fix built, held until the owner agrees)
 - **Report (owner, rc6):** "when I select the screen to share, the selection prompt comes back several times before it finally
   takes; in Google Meet the preview shows white".
 - **Cause:** Chromium's WebRTC capturer (Chrome, Chromium, Electron) captures twice for one share: once for its own picker's
@@ -431,13 +430,14 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   refuse a lasting token), or keeping it unticked (the bug).
 - **As built:** the stand-in sends `<id> options {"allowToken": true|false}` (from `--allow-token`) before the list line; the
   shell keeps it for that request (`SharePicker.allowToken`, `SharePicker.js parseOptions`; an older stand-in sends no such line
-  and the box opens unticked; an older shell ignores the line) and the panel opens with Remember this choice set from it.
+  and the box opens unticked; an older shell ignores the line). The panel opens Remember this choice from it only while
+  `SharePickerPanel.followAllowToken` is true; it is false until the owner agrees, so the box opens unticked.
 - **White preview:** not reproduced. A capture streams pictures only while its display draws: frames come with damage, and a
   capture of a display that does not draw streams none (measured: the nested window's output while hidden; the headless
   output with a window drawing streams real pictures, case 2). With one picker per share the browser's stream starts as soon as
   the user shares, instead of after a second picker that blocks xdph's main loop meanwhile (upstream). Owner check below.
 - **Tests:** `tst_sharepicker.qml` (parseOptions); `share_picker.sh` (the options line, with and without `--allow-token`);
-  `share_picker_ipc.sh` cases 1 and 2 (opens ticked with `--allow-token`, unticked without); `share_picker_nested.sh` check 1
+  `share_picker_ipc.sh` cases 1 and 2 (opens unticked with `--allow-token` while followAllowToken is false, unticked without); `share_picker_nested.sh` check 1
   (the nested shell got `--allow-token`; its guard now lists every display's Quickshell instances: Quickshell 0.3.2's
   `list -p` shows only the caller's display, so the guard refused every run from the main session); `screencast_restore.sh`
   (nested, the real frontend and xdph: the browser's second capture without a picker, pictures not blank, persist_mode 0,
@@ -448,10 +448,11 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   `tst_systembus.cpp` (privacyState lists an unnamed app's grant under ""), `tst_settingsprivacy.qml` (Other Apps listed,
   selected and removed by token; no switch for ""), `settings_dbus.sh` (the same over D-Bus, with Delete). The panel's look
   is not in a nested screenshot (grim did not show it on either output while the test held it
-  open): visual NOT verified; its state (ticked, unarmed, then armed) is read by the probe in `share_picker_ipc.sh`.
-- **Owner check (NOT VERIFIED here: needs the real browser):** in Chromium, Google Meet > Present > Entire screen: the
-  Grassfield picker shows once, Remember this choice is ticked, Share starts the presentation and Meet's preview shows the
-  screen.
+  open): visual NOT verified; its state (unticked, unarmed, then armed) is read by the probe in `share_picker_ipc.sh`.
+- **Owner check (NOT VERIFIED here: needs the real browser):** in Chromium, Google Meet > Present > Entire screen: while
+  followAllowToken is false the picker still shows twice (tick Remember this choice to make it show once); Share starts the
+  presentation and Meet's preview shows the screen. Once the owner agrees and the flag is true, the picker shows once with
+  the box ticked.
 
 ### Known limitations
 A browser's token lasts while the browser runs; an app that asks for a lasting one (persist_mode 2: OBS) keeps the choice across

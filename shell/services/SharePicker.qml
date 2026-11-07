@@ -32,9 +32,10 @@ Singleton {
     // The windows xdph listed ({handle, appId, title, address}), from the stand-in's list line.
     property var windows: []
     // xdph passed --allow-token (allow_token_by_default; Omarchy's xdph.conf sets it), from the stand-in's options line before
-    // the list: Remember this choice opens ticked, as xdph's own picker does. With it xdph gives the app a restore token, and a
-    // browser that asks once for its own preview and again to share (Chromium's WebRTC) is not asked twice (bug report on
-    // rc6). An older stand-in sends no options line: false.
+    // the list. The panel opens Remember this choice ticked from it only while SharePickerPanel.followAllowToken is true
+    // (pending the owner's agreement to amend Q14); then xdph gives the app a restore token, and a browser that asks once for
+    // its own preview and again to share (Chromium's WebRTC) is not asked twice (bug report on rc6). An older stand-in sends no
+    // options line: false.
     property bool allowToken: false
     // The panel was shown for the current request.
     property bool shown: false

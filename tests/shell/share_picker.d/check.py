@@ -286,7 +286,7 @@ options = [e for e in read("shell") if e["event"] == "options"]
 rid2 = read("qs")[0]["argv"][-2] if read("qs") else ""
 check(len(options) == 1 and options[0]["line"] == rid2 + ' options {"allowToken": true}\n'
       and xdph(out) == {"allowToken": True, "type": "output", "output": "DP-1"},
-      "with xdph's --allow-token the shell gets allowToken true (Remember this choice opens ticked), and xdph reads the token "
+      "with xdph's --allow-token the shell gets allowToken true, and xdph reads the token "
       "flag [%r %r]" % (options, out))
 
 # A long list (150 windows titled with 200 emoji each: 360 KB of JSON, past a socket's send buffer) reaches the shell whole.

@@ -109,8 +109,8 @@ answered() { ! kill -0 "$standin" 2>/dev/null; }
 share
 if wait_for 5 shown; then pass "1 the panel is shown on the nested display with the window xdph listed"; else fail "1 the panel did not show [$(ipc status)]"; fi
 if [[ $(sources) == 1 ]]; then pass "1 the window's live thumbnail has its source (the toplevel at its address)"; else fail "1 no capture source for the window [$(ipc status)]"; fi
-# The rc6 fix: xdph's --allow-token reaches the shell, so Remember this choice opens ticked (a browser is not asked twice).
-if [[ $(ipc status | jq -r '.allowToken') == true ]]; then pass "1 the shell got xdph's --allow-token (Remember this choice opens ticked)"; else fail "1 allowToken [$(ipc status | jq -c '.allowToken')]"; fi
+# The rc6 fix: xdph's --allow-token reaches the shell (the panel opens Remember this choice from it once followAllowToken is true).
+if [[ $(ipc status | jq -r '.allowToken') == true ]]; then pass "1 the shell got xdph's --allow-token"; else fail "1 allowToken [$(ipc status | jq -c '.allowToken')]"; fi
 sleep "${SHARE_PICKER_LOOK:-0}"
 
 # 2. No window is answered before Hyprland has said which hide from capture (its getprop answers).

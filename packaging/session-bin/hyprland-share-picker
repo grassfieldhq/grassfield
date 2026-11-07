@@ -11,8 +11,9 @@
 # The way (ADR-0035 D-6): the session locked, or its lock unknown, cancels at once (owner decision Q15). Otherwise a one-time
 # Unix socket ($XDG_RUNTIME_DIR/grassfield/picker/<random>.sock, 0600 in a 0700 directory, removed on every exit) and a random
 # request id; the shell is asked with `picker request <id> <socket>` under 1 s. "accepted": the shell connects within 2 s
-# (else cancelled), gets `<id> options {"allowToken": …}` (xdph's --allow-token: Remember this choice opens ticked, so that xdph
-# gives the app a restore token and a browser that asks again for the same share is not asked twice) and the window list on
+# (else cancelled), gets `<id> options {"allowToken": …}` (xdph's --allow-token; the panel opens Remember this choice ticked
+# from it only while SharePickerPanel.followAllowToken is true, pending the owner's agreement to amend Q14, so that xdph gives
+# the app a restore token and a browser that asks again for the same share is not asked twice) and the window list on
 # the socket (never in a command line other users can read), shows its panel,
 # writes `<id> wait` every 5 s and then `<id> <flags>/<selection>` or `<id> cancel`; end of file, 15 s without a line, or
 # xdph gone (stdout hung up) cancels. The answer is checked before it is printed: the id, the grammar, a window xdph listed,

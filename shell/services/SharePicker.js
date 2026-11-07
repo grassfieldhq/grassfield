@@ -88,8 +88,8 @@ function ordered(windows, nameFor) {
 }
 
 // The answer line for xdph's grammar: `<flags>/screen:<output>`, `<flags>/window:<handle>` or
-// `<flags>/region:<output>@x,y,w,h`, flag "r" when Remember this choice is ticked (it opens as xdph's --allow-token says:
-// SharePicker.allowToken). "" for anything that is not a listed choice: a display that is not there, a window xdph did not list or that
+// `<flags>/region:<output>@x,y,w,h`, flag "r" when Remember this choice is ticked (it opens unticked, or as xdph's --allow-token says
+// once SharePickerPanel.followAllowToken is true). "" for anything that is not a listed choice: a display that is not there, a window xdph did not list or that
 // hides itself from capture (`blocked`, step 7b), an area that is not inside its display's logical size (`sizes`: name ->
 // {width, height}). `blocked` null: Hyprland has not said yet which windows hide from capture, so no window is answered.
 function selection(kind, value, remember, outputs, windows, sizes, blocked) {

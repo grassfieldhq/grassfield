@@ -811,7 +811,7 @@ panel), `tst_folderchooser.cpp`, `tst_fileskiosheets.qml`, `tst_filesglobalmenu.
   lasting one (persist_mode 2) keeps the choice while the box is ticked, listed in Settings > Privacy > Screen Sharing (one the
   portal cannot name, app id "", as Other Apps; known
   limitation: xdph passes the picker neither the app nor the mode). The owner may restore Q14 as answered; spec
-  system-dialogs.md section 3, "Fixed after rc6".
+  system-dialogs.md section 3, "After rc6".
   Windows that hide themselves from capture (`no_screen_share`, `config/hypr/grassfield/privacy.lua`) are listed but greyed
   with "This window can't be shared".
 - The picker cannot name the app that asks: xdph receives the app id but passes the picker only `--allow-token` and the window
