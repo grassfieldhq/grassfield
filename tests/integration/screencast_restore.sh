@@ -126,6 +126,16 @@ EOF
     export WAYLAND_DISPLAY=$real_runtime/$sock HYPRLAND_INSTANCE_SIGNATURE=$sig XDG_CURRENT_DESKTOP=Hyprland XDG_DATA_DIRS=/usr/share
     export DBUS_SESSION_BUS_ADDRESS=unix:path=$p/run/bus DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent
     started() { stack+=("$1"); echo "$1" >>"$pidfile"; }
+    descendants() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descendants "$c"; done; }
+    # The processes connected to the private bus, by the bus's own record (its socket is in this run's directory: every peer
+    # is the test's).
+    bus_peers() {
+      busctl --user -j call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ListNames 2>/dev/null |
+        jq -r '.data[0][] | select(startswith(":"))' 2>/dev/null | while read -r name; do
+          busctl --user -j call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$name" \
+            2>/dev/null | jq -r '.data[0]' 2>/dev/null
+        done
+    }
     dbus-daemon --config-file="$p/bus.conf" --nofork --nopidfile >"$p/dbus.log" 2>&1 & started $!
     for _ in $(seq 50); do [[ -S $p/run/bus ]] && break; sleep 0.1; done
     pipewire >"$p/pipewire.log" 2>&1 & started $!
@@ -150,9 +160,21 @@ EOF
         busctl --user -j call org.freedesktop.impl.portal.PermissionStore /org/freedesktop/impl/portal/PermissionStore \
           org.freedesktop.impl.portal.PermissionStore Lookup ss screencast "$token" 2>/dev/null | jq -c '.data[0] | keys'
       done >"$p/store-apps"
-    # The isolation, while the stack still runs: its graph, the devices its processes hold, their environment (the services the
-    # private bus started, its children, too).
-    for c in $(pgrep -P "${stack[0]}" 2>/dev/null); do started "$c"; done
+    # The isolation, while the stack still runs: its graph, the devices its processes hold, their environment. "Its processes":
+    # the ones started above; every descendant of each, found recursively (a service dbus-daemon runs under a babysitter
+    # process that stays its parent, anything the others spawned and left running); and every process connected to the private
+    # bus, by the bus's record (GetConnectionUnixProcessID). The last takes in the services the private bus activated even when
+    # they are no descendant: on this machine dbus-daemon 1.16's babysitter exits and xdg-permission-store is reparented to the
+    # session's subreaper (systemd --user). Each is recorded, checked and stopped like the rest; names in stack-procs.
+    for s in "${stack[@]}"; do
+      for c in $(descendants "$s"); do started "$c"; done
+    done
+    for c in $(bus_peers); do
+      [[ $c =~ ^[0-9]+$ && $c != 0 && -e /proc/$c && " ${stack[*]} " != *" $c "* ]] && started "$c"
+    done
+    for s in "${stack[@]}"; do
+      [[ -r /proc/$s/comm ]] && echo "$s $(<"/proc/$s/comm")"
+    done >"$p/stack-procs"
     pw-dump >"$p/pw-dump.json" 2>/dev/null
     for s in "${stack[@]}"; do
       for fd in /proc/"$s"/fd/*; do readlink "$fd"; done 2>/dev/null | sed "s|^|$s |"
