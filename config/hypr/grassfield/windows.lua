@@ -24,8 +24,12 @@ hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield
 
 -- Third-party apps that draw their own window controls (GF-056; ADR-0015 amendment 2026-10-25). macOS: a window has one
 -- set of traffic lights, close, minimize, zoom, top-left; an app that draws its own title bar gets no second bar from the
--- system. Hyprland 0.56.2 gives a plugin no per-window decoration signal it could use instead (the xdg-decoration request
--- is kept in a private map, and header-bar toolkits never negotiate), so the list is by Wayland app id. Only apps whose
+-- system. Since the 1.0.0-rc6 report (two title bars on Telegram and the ArtCraft suite) the compositor plugin reads what each
+-- client negotiated (docs/specs/compositor.md P9): a client that asks for client-side decorations (xdg-decoration, or KDE's
+-- server-decoration where GTK header bars announce themselves) or negotiates nothing (a Qt frameless window) gets the same tag
+-- from the plugin, whatever its app id; Google Chrome and Telegram need no entry here. The list below stays as the fallback
+-- for the apps it names (and their maximize exemption above), as it was written when the request was thought unreadable
+-- (it sits in a private map of Hyprland 0.56.2, which P9 reaches). Only apps whose
 -- own close, minimize and zoom were seen to work in the nested session with the session's GTK button layout
 -- (close,minimize,maximize: on the left, packaging/dconf/grassfield.d/20-window-buttons.conf;
 -- tests/compositor/third_party_chrome.sh): Chromium's browser window (its --app web apps draw no frame and keep the
@@ -38,10 +42,20 @@ hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield
 -- Firefox's "Title Bar" option on (Customize Toolbar), Firefox draws no controls and no plugin bar appears either, a window
 -- with none (checked with a stand-in window: tagged, no strip). Firefox's default is its own frame (CSD), the case the
 -- screenshot shows; a user who turns "Title Bar" on gets no controls until they turn it off again (or the list drops it).
--- Google Chrome is left out: its Wayland app id (google-chrome is expected, from its desktop file) is not evidenced here.
+-- Google Chrome is left out: its Wayland app id (google-chrome is expected, from its desktop file) is not evidenced here;
+-- it negotiates client-side decorations as Chromium does, so the plugin tags it (P9).
 -- The traffic lights themselves come from the Grassfield GTK themes (ui/tools/gen-gtk-themes.py, window.* tokens), which
 -- GTK 3 and plain GTK 4 apps and Chromium's GTK appearance read (measured nested at 1.25: tests/compositor/gtk_lights.sh;
--- a fresh Chromium profile is "Classic" and draws plain grey buttons); libadwaita apps (Nautilus) ignore gtk-theme
+-- a fresh Chromium profile is "Classic" and draws plain grey buttons: Chromium gives new profiles its GTK appearance only on
+-- desktops it knows as GNOME-like, which this session's XDG_CURRENT_DESKTOP is not, and changing that would move other
+-- programs too, Chromium's own keyring choice among them). Omarchy's machine policy BrowserThemeColor (color.json, written by
+-- its theme switcher) replaced the GTK appearance's lights with its colour theme in every profile, GTK appearance chosen or not
+-- (nested, Chromium 155, the policy directory replaced in a mount namespace: lights without color.json, none with it, lights
+-- again with color.json and a later file that empties the colour): the package installs that later file,
+-- zz-grassfield-gtk.json, into the Chromium and Google Chrome policy directories (packaging/arch/PKGBUILD); machine-wide, so in
+-- the Omarchy session the browsers keep their own theme instead of Omarchy's colour too. A profile still in "Classic" shows its
+-- lights once Settings > Appearance > Mode is GTK, a choice the profile keeps (not written by Grassfield). Firefox draws them
+-- from the GTK theme only with its native titlebar buttons; not verified here (not installed); libadwaita apps (Nautilus) ignore gtk-theme
 -- (ADR-0015 amendment 2026-11-04). Their zoom needs the exemption below (untagged, Evince's zoom request was suppressed), and GTK4's
 -- minimize button needs the plugin to offer minimize in xdg wm_capabilities (plugin work item P8; without the plugin
 -- Hyprland offers no minimize and GTK4 greys it). Others join only once verified. Same tag as Grassfield's apps: no
