@@ -168,6 +168,7 @@ namespace gf::tiler {
             std::optional<SEdgeDrag>          edge;            // TL30: a shared edge being dragged
             bool                              edgeReleaseOwed = false; // the release of the handle's cancelled press is cancelled too
             bool                              edgeCursor      = false; // the handle's cursor is set (Hyprland's special-action override)
+            bool                              holdPending     = false; // the shell's menu bar mapped: windows left under it go below it
             SP<CEventLoopTimer>               edgeTimer;       // the frames that waited for the next refresh (code of this library: removed in stop())
             SEdgeScene                        edgeHoverScene;  // the edges hover looks up, kept while what they derive from holds
             std::vector<tiling::SplitDesk>    splits;          // TL33: the Split View Desktops the plugin made
@@ -175,8 +176,7 @@ namespace gf::tiler {
             std::vector<uint64_t>             chromeMembers;   // step 6e (D73): the members whose titlebars were last made to follow
             std::vector<uint64_t>             backInReach;     // windows that left a Split View, their titlebar not in reach yet (locked, hidden)
             std::vector<PHLWINDOWREF>         fitting;         // Free windows moved to a Desktop: fitted to its output once Hyprland placed them
-            bool                              holdPending = false; // the shell's menu bar mapped: windows left under it go below it
-            std::optional<SMoveFrom>          moveFrom;        // the output one of Hyprland's moves began on (fitted at its release)
+            SMoveFrom                         moveFrom;        // the output one of Hyprland's moves began on (fitted at its release; no window: none)
         };
 
         // Constructed on first use inside a guarded call (R13).
@@ -1005,7 +1005,7 @@ namespace gf::tiler {
                     dragDone(); // TL33: a Split View window shows no place; its release puts it back in its half (finishMove)
                 return;
             }
-            if (!s.moveFrom || s.moveFrom->window.lock() != w) {
+            if (s.moveFrom.window.lock() != w) {
                 const auto from = monitorOf(w);
                 s.moveFrom      = SMoveFrom{.window = w, .output = from ? from->m_name : std::string{}};
             }
@@ -1028,7 +1028,7 @@ namespace gf::tiler {
             if (hyprlandDragging())
                 return;
             const auto w    = rel.window.lock();
-            const auto from = std::exchange(s.moveFrom, std::nullopt);
+            const auto from = std::exchange(s.moveFrom, SMoveFrom{});
             if (s.drag.hyprland)
                 dragDone();
             if (!w)
@@ -1062,7 +1062,7 @@ namespace gf::tiler {
             endMove(w);
             // Released on another output than the one it was on (owner report on 1.0.0-rc6): it fits that output's work area.
             const auto now = monitorOf(w);
-            if (from && from->window.lock() == w && now && now->m_name != from->output)
+            if (from.window.lock() == w && now && now->m_name != from.output)
                 fitToOutput(w, "dropped on another output by Hyprland's move");
         }
 
@@ -1863,7 +1863,7 @@ namespace gf::tiler {
         s.chromeMembers.clear();
         s.backInReach.clear();
         s.fitting.clear();
-        s.moveFrom.reset();
+        s.moveFrom = {};
         if (!bus || !Desktop::windowState() || !State::monitorState() || !Fullscreen::controller())
             return false;
         auto& ev = bus->m_events;
@@ -1914,7 +1914,7 @@ namespace gf::tiler {
         s.recheck = false;
         s.press.reset();
         s.moveRelease.reset();
-        s.moveFrom.reset();
+        s.moveFrom = {};
         s.fitting.clear();
         s.border = {};
         s.extend.reset();
@@ -2917,7 +2917,7 @@ namespace gf::tiler {
             if (s.drag.hyprland)
                 dragDone(); // likewise the preview of a move
             if (!s.moveRelease)
-                s.moveFrom.reset(); // a move that ended without a release seen here (one owed is read by finishMove)
+                s.moveFrom = {}; // a move that ended without a release seen here (one owed is read by finishMove)
             edgeHover();
             return;
         }

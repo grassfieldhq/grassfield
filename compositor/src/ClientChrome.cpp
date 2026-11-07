@@ -390,12 +390,8 @@ namespace gf::chrome {
             WP<CXDGToplevelResource> weakTop = top;
             e.window       = ref;
             e.toplevel     = weakTop;
-            e.stateChanged = top->m_events.stateChanged.listen([ref, weakTop] { guarded("client chrome stateChanged", [&] { onStateChanged(ref, weakTop); }); });
-            e.requestMove  = top->m_events.requestMove.listen([ref](const SXDGToplevelMoveRequest& /*request*/) { guarded("client chrome requestMove", [&] { onRequestMove(ref); }); });
-            e.wasFullscreen = fullscreen;
             // P9: the decoration request is read again at each commit (a client that switches between its own title bar and the
             // system's, Firefox's "Title Bar" or Chromium's "Use system title bar and borders", commits after its request).
-            e.toplevelResource = toplevelResource(top, true);
             if (const auto surface = w->resource())
                 e.commit = surface->m_events.commit.listen([ref] {
                     guarded("client chrome commit", [&] {
@@ -403,6 +399,10 @@ namespace gf::chrome {
                             syncDecoration(*mine, st().ready);
                     });
                 });
+            e.toplevelResource = toplevelResource(top, true);
+            e.stateChanged = top->m_events.stateChanged.listen([ref, weakTop] { guarded("client chrome stateChanged", [&] { onStateChanged(ref, weakTop); }); });
+            e.requestMove  = top->m_events.requestMove.listen([ref](const SXDGToplevelMoveRequest& /*request*/) { guarded("client chrome requestMove", [&] { onRequestMove(ref); }); });
+            e.wasFullscreen = fullscreen;
             s.watches.push_back(std::move(e));
             syncDecoration(s.watches.back(), true);
             tellCapabilities(s.watches.back(), isClientChrome(w), true);
