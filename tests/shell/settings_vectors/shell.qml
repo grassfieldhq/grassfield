@@ -112,6 +112,7 @@ ShellRoot {
             "keyboard.shortcutStyle": "keyboardShortcutStyle",
             "keyboard.showInputMenu": "keyboardShowInputMenu",
             "keyboard.dictation": "keyboardDictation",
+            "displays.main": "displaysMain",
             "region.formats": "regionFormats",
             "region.firstDayOfWeek": "regionFirstDayOfWeek",
             "icons.mode": "iconMode",
