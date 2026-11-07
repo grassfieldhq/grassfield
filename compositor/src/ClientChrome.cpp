@@ -35,7 +35,10 @@
 // each client asked for is public in those objects (CXDGDecoration::mostRecentlyRequested, CServerDecorationKDE::
 // m_mostRecentlyRequested and m_surf). An explicit instantiation may name a private member ([temp.spec.general]/6), so the two
 // containers are reached through member pointers whose types the compiler checks against the installed headers; they are
-// only read, on the compositor thread, never kept.
+// only read, on the compositor thread, never kept. A Hyprland that renames or retypes them fails this file's build; one that
+// keeps their types but changes their meaning (another key, entries kept elsewhere) makes the lookups miss, which reads as
+// "no object for this window", and core drawsOwnTitlebar then tags only a client that holds no decoration object at all
+// (libwayland's public resource list): every other window keeps the plugin's titlebar (ADR-0015, amendment 2026-11-07).
 namespace {
     template <typename Tag, typename Tag::type Member>
     struct SExpose {
@@ -65,7 +68,7 @@ namespace gf::chrome {
             WP<CXDGToplevelResource> toplevel;
             CHyprSignalListener      stateChanged;
             CHyprSignalListener      requestMove;
-            CHyprSignalListener      commit; // P9: the surface's commits (a client changes its decoration request with one)
+            CHyprSignalListener      commit; // P9: the surface's commits (one of a new size reads the decoration again)
             CapabilityTell           caps;
             bool                     suppressAdded    = false; // D78: the plugin set SUPPRESS_MAXIMIZE on it (only that is cleared)
             bool                     wasFullscreen    = false; // in Hyprland's full screen at the last window.fullscreen
@@ -73,6 +76,8 @@ namespace gf::chrome {
             // P9: the xdg_toplevel resource, found once (the key of Hyprland's xdg-decoration map; only compared, never read),
             // what the client negotiated last, and whether the plugin added the client-chrome tag (only that is removed).
             wl_resource*             toplevelResource = nullptr;
+            bool                     managerBound     = false; // at its map, its client bound a decoration manager (core DecorationRequest)
+            bool                     clientHasObject  = false; // and held a decoration object of either protocol
             std::optional<bool>      drawsOwn;
             bool                     tagAdded = false;
         };
@@ -261,6 +266,39 @@ namespace gf::chrome {
             return find.found;
         }
 
+        // P9: whether the client of `w` bound a decoration manager and whether it holds any decoration object (core
+        // decorationInterface): a client that knows the compositor offers server-side decorations and made no decoration object
+        // at all decorates itself (Qt's frameless window). Read from libwayland's own list of the client's resources, by
+        // interface name only (nothing is dereferenced), once per window at its map: xdg-decoration objects must exist before
+        // the toplevel's first buffer. Public API, so it holds whatever Hyprland keeps in its private containers.
+        struct SDecorationGlobals {
+            bool manager = false;
+            bool object  = false;
+        };
+        SDecorationGlobals decorationGlobalsOf(const PHLWINDOW& w) {
+            SDecorationGlobals found;
+            const auto         surface = w ? w->resource() : nullptr;
+            wl_client*         client  = surface ? surface->client() : nullptr;
+            if (!client)
+                return found;
+            wl_client_for_each_resource(
+                client,
+                [](wl_resource* resource, void* data) -> wl_iterator_result {
+                    const char* cls = resource ? wl_resource_get_class(resource) : nullptr;
+                    if (!cls)
+                        return WL_ITERATOR_CONTINUE;
+                    auto* globals = static_cast<SDecorationGlobals*>(data);
+                    switch (decorationInterface(cls)) {
+                        case DecorationInterface::Manager: globals->manager = true; break;
+                        case DecorationInterface::Object: globals->object = true; break;
+                        case DecorationInterface::Other: break;
+                    }
+                    return globals->manager && globals->object ? WL_ITERATOR_STOP : WL_ITERATOR_CONTINUE;
+                },
+                &found);
+            return found;
+        }
+
         // P8: tells the window its capabilities again (core wmCapabilities) when they change, then a configure, as
         // xdg-shell asks ("when the capabilities change, compositors must send this event again and then send an
         // xdg_surface.configure event"). Nothing for a client older than xdg_toplevel v5 (it never had the event); a
@@ -316,6 +354,8 @@ namespace gf::chrome {
         // key is compared, never dereferenced). KDE: the object whose surface is the window's.
         DecorationRequest requestOf(const SWatch& e, const PHLWINDOW& w) {
             DecorationRequest r;
+            r.managerBound    = e.managerBound;
+            r.clientHasObject = e.clientHasObject;
             if (PROTO::xdgDecoration && e.toplevelResource) {
                 const auto& all = (*PROTO::xdgDecoration).*memberOf(SXdgDecorations{});
                 if (const auto it = all.find(e.toplevelResource); it != all.end() && it->second) {
@@ -336,11 +376,12 @@ namespace gf::chrome {
             return r;
         }
 
-        // P9: a window whose client draws its own title bar (core drawsOwnTitlebar) carries the client-chrome tag, so that the
-        // plugin's titlebar steps aside (P1) and the shell's Overview and Stages leave no band above it, whatever its app id; the
-        // per-app session rule stays as the fallback. The tag the plugin adds is static (a rule evaluation keeps it) and is the
-        // only one it ever removes: when the client asks for server-side decorations again, when the window closes and at the
-        // unload. X11 windows are left to their own hints (titlebarAllowed reads _MOTIF_WM_HINTS through Hyprland).
+        // P9: a window whose client provably draws its own title bar (core drawsOwnTitlebar: a KDE client request, or a decoration
+        // manager bound and no decoration object in the client) carries the client-chrome tag, so that the plugin's titlebar steps aside
+        // (P1) and the shell's Overview and Stages leave no band above it, whatever its app id; an app whose request proves nothing
+        // (Chromium's xdg client_side) is the per-app session rule's (S1b). The tag the plugin adds is static (a rule evaluation
+        // keeps it) and is the only one it ever removes: when the client's request no longer proves a bar, when the window closes
+        // and at the unload. X11 windows are left to their own hints (titlebarAllowed reads _MOTIF_WM_HINTS through Hyprland).
         // `bridged`: the minimize bridge runs (true from watch(), which start() calls before it is ready).
         void syncDecoration(SWatch& e, bool bridged) {
             const auto w   = e.window.lock();
@@ -356,9 +397,10 @@ namespace gf::chrome {
             const bool changed  = !e.drawsOwn || *e.drawsOwn != drawsOwn;
             e.drawsOwn          = drawsOwn;
             if (changed)
-                logRequest(Log::DEBUG, "client chrome: {:x} negotiated xdg {} {} kde {} {}: {}", addressOf(w), request.xdgObject ? "object" : "none",
-                           request.xdgRequested, request.kdeObject ? "object" : "none", request.kdeRequested,
-                           drawsOwn ? "draws its own title bar" : "server-side title bar");
+                logRequest(Log::DEBUG, "client chrome: {:x} negotiated xdg {} {} kde {} {}, manager {}, client {}: {}", addressOf(w),
+                           request.xdgObject ? "object" : "none", request.xdgRequested, request.kdeObject ? "object" : "none", request.kdeRequested,
+                           request.managerBound ? "bound" : "not bound", request.clientHasObject ? "has objects" : "has no object",
+                           drawsOwn ? "draws its own title bar" : "the plugin's titlebar");
             if (change == TagChange::None)
                 return;
             if (change == TagChange::Add) {
@@ -390,16 +432,29 @@ namespace gf::chrome {
             WP<CXDGToplevelResource> weakTop = top;
             e.window       = ref;
             e.toplevel     = weakTop;
-            // P9: the decoration request is read again at each commit (a client that switches between its own title bar and the
-            // system's, Firefox's "Title Bar" or Chromium's "Use system title bar and borders", commits after its request).
-            if (const auto surface = w->resource())
-                e.commit = surface->m_events.commit.listen([ref] {
+            // P9: the decoration request is read again when the window's surface commits a new size, so an ordinary frame (a video,
+            // a cursor blink) costs one comparison (review of 3ca47a4b: the request was read at every commit of every window). The
+            // decision is known at the map (xdg-decoration objects exist before the first buffer; a GTK 3 header bar's KDE request
+            // is there at map, decorations.sh D7); a client that switches later is read at its next commit of another size, or at
+            // window.updateRules.
+            if (const auto surface = w->resource()) {
+                WP<CWLSurfaceResource> weakSurface = surface;
+                auto                   lastSize    = makeShared<Vector2D>(-1.0, -1.0);
+                e.commit = surface->m_events.commit.listen([ref, weakSurface, lastSize] {
                     guarded("client chrome commit", [&] {
+                        const auto now = weakSurface.lock();
+                        if (!now || now->m_current.size == *lastSize)
+                            return;
+                        *lastSize = now->m_current.size;
                         if (auto* mine = watchOfRef(ref))
                             syncDecoration(*mine, st().ready);
                     });
                 });
+            }
             e.toplevelResource = toplevelResource(top, true);
+            const auto globals = decorationGlobalsOf(w);
+            e.managerBound     = globals.manager;
+            e.clientHasObject  = globals.object;
             e.stateChanged = top->m_events.stateChanged.listen([ref, weakTop] { guarded("client chrome stateChanged", [&] { onStateChanged(ref, weakTop); }); });
             e.requestMove  = top->m_events.requestMove.listen([ref](const SXDGToplevelMoveRequest& /*request*/) { guarded("client chrome requestMove", [&] { onRequestMove(ref); }); });
             e.wasFullscreen = fullscreen;

@@ -22,11 +22,21 @@ namespace gf::chrome {
     }
 
     bool drawsOwnTitlebar(const DecorationRequest& request) {
-        if (request.xdgObject)
-            return request.xdgRequested == kXdgModeClientSide;
-        if (request.kdeObject)
-            return request.kdeRequested == kKdeModeClient;
-        return true; // negotiated nothing: it decorates itself (xdg-decoration's and KDE's rule)
+        if (request.kdeObject && request.kdeRequested == kKdeModeClient)
+            return true; // a GTK header bar
+        if (request.xdgObject || request.kdeObject)
+            return false; // a request that proves no bar (xdg client_side included) or a server-side one
+        // A manager bound and no decoration object at all in the client: Qt's frameless window. An object the client holds
+        // that was not found for this toplevel (another of its windows, or a Hyprland whose private map changed) proves nothing.
+        return request.managerBound && !request.clientHasObject;
+    }
+
+    DecorationInterface decorationInterface(std::string_view interfaceName) {
+        if (interfaceName == "zxdg_decoration_manager_v1" || interfaceName == "org_kde_kwin_server_decoration_manager")
+            return DecorationInterface::Manager;
+        if (interfaceName == "zxdg_toplevel_decoration_v1" || interfaceName == "org_kde_kwin_server_decoration")
+            return DecorationInterface::Object;
+        return DecorationInterface::Other;
     }
 
     TagChange tagChange(bool drawsOwn, bool tagged, bool ours) {

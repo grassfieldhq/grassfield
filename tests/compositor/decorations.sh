@@ -1,23 +1,30 @@
 #!/usr/bin/env bash
 # L1 nested scenario: one title bar per window, decided by what the client negotiated (plugin work item P9, docs/specs/
-# compositor.md FR3e; owner report on 1.0.0-rc6: Telegram and the ArtCraft suite showed two title bars). A client that asks for
-# client-side decorations (xdg-decoration client_side, KDE server-decoration client: GTK header bars) or negotiates nothing
-# (a Qt frameless window: Telegram) gets the client-chrome tag from the plugin, so the plugin's titlebar steps aside; a
-# client that asks for server-side decorations keeps the plugin's titlebar.
+# compositor.md; owner report on 1.0.0-rc6: Telegram and the ArtCraft suite showed two title bars). Only a request that proves
+# the client draws its own bar tags the window: a KDE server-decoration client request (GTK header bars) or a decoration
+# manager bound and no decoration object in the client (a Qt frameless window: Telegram). Everything else keeps the
+# plugin's titlebar, an xdg client_side request and no negotiation at all included (review of 3ca47a4b: imv and
+# foot -o csd.preferred=client draw no bar of their own and had lost every title bar). The invariant checked on the capture:
+# no window ends with neither its own bar nor the plugin's.
 #
 # Usage: tests/compositor/decorations.sh [--plugin PATH]   (PATH: the library the session loaded, for D10's unload and load;
 # default compositor/build/grassfield-compositor.so)
 # NESTED only, bare: needs scripts/dev/nested-up.sh with the plugin loaded. Clients start through scripts/dev/isolated.sh on
 # the nested socket; hyprctl only through scripts/nestctl (read-only, plus window moves and the plugin's unload and load).
 #   D1 foot (xdg-decoration server_side): no client-chrome tag
-#   D2 xdgact server_side: no tag                 D3 xdgact client_side: the tag (Chromium's and Electron's request)
-#   D4 xdgact negotiating nothing: the tag
+#   D2 xdgact server_side: no tag
+#   D3 xdgact client_side, drawing nothing (foot -o csd.preferred=client's case): no tag, the plugin's titlebar stays
+#   D4 xdgact with the manager bound and no decoration object in the client (what Qt does for a frameless window): the tag
+#   D4b xdgact that binds no decoration manager (imv's case): no tag
 #   D5 a Qt frameless window (tests/compositor/decorations-fixture, the Telegram stand-in): the tag
 #   D6 a plain Qt window (Qt asks for server_side): no tag
 #   D7 a GTK 3 header bar (tests/fixtures/gtk-headerbar.py; KDE server-decoration client): the tag
 #   D8 a plain GTK 3 window (KDE server-decoration server): no tag
-#   D9 a capture: the plugin's strip above foot, none above the Qt frameless window (the row 4 px under the strip's top
-#      and 4 px above the surface, at 20-80 % of its width, against the strip's colours, as client_chrome.sh measures)
+#   D11 foot -o csd.preferred=client (asks client_side, draws nothing under Hyprland's server_side answer): no tag
+#   D12 imv, Omarchy's image viewer (binds no decoration manager, draws nothing): no tag
+#   D9 a capture (each window raised, imv closed): the plugin's strip above foot, above foot -o csd.preferred=client and above the xdgact window that binds no
+#      manager, none above the Qt frameless window (the row 4 px under the strip's top and 4 px above the surface, at 20-80 % of
+#      its width, against the strip's colours, as client_chrome.sh measures)
 #   D10 the plugin unloaded: the tag it added is gone (gate C2), a session rule's tag stays; loaded again: back
 # Exit: 0 PASS, 1 FAIL, 2 usage or environment error. Log: .dev/decorations/run-<timestamp>.log.
 set -uo pipefail
@@ -81,7 +88,7 @@ run_client() { # <name> <command...>: on the nested socket, isolated
     setsid "$root/scripts/dev/isolated.sh" --name "deco-$name" -- "$@" >>"$log" 2>&1 </dev/null &
   pids+=($!)
 }
-run_xdgact() { # <decoration: server|client|none> <app id>: xdgact.sh targets the verified nested socket itself
+run_xdgact() { # <decoration: server|client|none|unbound> <app id>: xdgact.sh targets the verified nested socket itself
   env -u WAYLAND_DISPLAY XDGACT_DECORATION="$1" setsid "$root/scripts/dev/isolated.sh" --name "deco-xdg-$1" -- "$xdgact" "$2" >>"$log" 2>&1 </dev/null &
   pids+=($!)
 }
@@ -134,9 +141,34 @@ expect_tag gf-deco-foot 0 D1 "foot (xdg server_side) keeps the plugin's titlebar
 run_xdgact server gf-deco-xdg-server
 expect_tag gf-deco-xdg-server 0 D2 "xdg-decoration server_side keeps the plugin's titlebar"
 run_xdgact client gf-deco-xdg-client
-expect_tag gf-deco-xdg-client 1 D3 "xdg-decoration client_side: the plugin steps aside"
+expect_tag gf-deco-xdg-client 0 D3 "xdg-decoration client_side alone proves no bar: the plugin's titlebar stays"
 run_xdgact none gf-deco-xdg-none
-expect_tag gf-deco-xdg-none 1 D4 "nothing negotiated: the plugin steps aside"
+expect_tag gf-deco-xdg-none 1 D4 "a decoration manager bound, no decoration object (Qt's frameless window): the plugin steps aside"
+run_xdgact unbound gf-deco-xdg-unbound
+expect_tag gf-deco-xdg-unbound 0 D4b "no decoration manager bound (imv's case): the plugin's titlebar stays"
+run_client foot-csd foot -o csd.preferred=client -T gf-deco-foot-csd -w 600x360 sh -c 'exec sleep 100000'
+expect_tag gf-deco-foot-csd 0 D11 "foot -o csd.preferred=client (asks client_side, draws nothing here): the plugin's titlebar stays"
+if command -v imv-wayland >/dev/null && command -v magick >/dev/null; then
+  magick -size 320x200 xc:'#3a6ea5' "$work/imv.png" 2>>"$log"
+  run_client imv imv-wayland "$work/imv.png"
+  # imv titles its window "imv - [1/1] <path> ..."
+  imv_title=""
+  for _ in $(seq 1 40); do
+    imv_title=$(ctl clients -j | jq -r '[.[] | select(.class == "imv")][0].title // empty')
+    [[ -n $imv_title ]] && break
+    sleep 0.25
+  done
+  if [[ -n $imv_title ]]; then
+    expect_tag "$imv_title" 0 D12 "imv (no decoration manager bound, draws nothing): the plugin's titlebar stays"
+    # imv opens at its picture's zoom (most of the output): closed, so that it covers none of D9's windows.
+    imv_pid=$(ctl clients -j | jq -r '[.[] | select(.class == "imv")][0].pid // empty')
+    [[ -n $imv_pid ]] && kill "$imv_pid" 2>/dev/null
+  else
+    check "D12 imv mapped" 1 "no window of class imv"
+  fi
+else
+  say "  D12: SKIP (imv-wayland or magick not installed)"
+fi
 if command -v qml6 >/dev/null; then
   run_client qt-frameless qml6 "$qml" -- gf-deco-qt-frameless
   expect_tag gf-deco-qt-frameless 1 D5 "a Qt frameless window (Telegram's kind): the plugin steps aside"
@@ -160,22 +192,52 @@ w.connect("destroy", Gtk.main_quit)
 w.show_all()
 Gtk.main()'
   expect_tag gf-deco-gtk-plain 0 D8 "a plain GTK 3 window (KDE server) keeps the plugin's titlebar"
+  # Reported, not judged: what an undecorated GTK 3 window (gtk_window_set_decorated(FALSE): a Tauri app without decorations,
+  # a splash) negotiates and whether it is tagged. It asked for no decorations at all; the plugin follows its request.
+  run_client gtk-undecorated python3 -I -c '
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk
+w = Gtk.Window(title="gf-deco-gtk-undecorated")
+w.set_decorated(False)
+w.set_default_size(420, 220)
+w.add(Gtk.Label(label="undecorated"))
+w.connect("destroy", Gtk.main_quit)
+w.show_all()
+Gtk.main()'
+  if wait_window gf-deco-gtk-undecorated; then
+    sleep 0.6
+    say "  note: an undecorated GTK 3 window: tags '$(window_of gf-deco-gtk-undecorated | cut -d' ' -f2)'"
+  fi
 else
   say "  D7, D8: SKIP (python GTK 3 not available)"
 fi
 
-# D9: the strip, measured on a capture with the two windows apart.
+# D9: the strip, measured on a capture with the windows apart (each at its own place on the headless output: the capture never
+# depends on the nested window's frames). The invariant: every window shows its own bar or the plugin's.
+strip_of() { # <title> <x> <y>: placed there and raised above every other window, then measured on the capture taken by D9
+  local a
+  place "$1" "$2" "$3"
+  a=$(window_of "$1" | cut -d' ' -f1)
+  ctl dispatch "hl.dsp.window.alter_zorder({ mode = 'top', window = 'address:$a' })" >>"$log" 2>&1
+}
+geom_rel() { ctl clients -j | jq -r --arg t "$1" --argjson mx "$mon_x" --argjson my "$mon_y" '[.[] | select(.title == $t)][0] | select(. != null) | "\(.at[0] - $mx) \(.at[1] - $my) \(.size[0])"'; }
 if [[ -n $(window_of gf-deco-qt-frameless) ]]; then
-  place gf-deco-foot 60 120
-  place gf-deco-qt-frameless 760 160
+  strip_of gf-deco-foot 40 80
+  strip_of gf-deco-qt-frameless 700 80
+  strip_of gf-deco-foot-csd 40 500
+  strip_of gf-deco-xdg-unbound 700 500
   sleep 0.8
-  read -r fx fy fw < <(ctl clients -j | jq -r --arg t gf-deco-foot --argjson mx "$mon_x" --argjson my "$mon_y" '[.[] | select(.title == $t)][0] | "\(.at[0] - $mx) \(.at[1] - $my) \(.size[0])"')
-  read -r qx qy qw < <(ctl clients -j | jq -r --arg t gf-deco-qt-frameless --argjson mx "$mon_x" --argjson my "$mon_y" '[.[] | select(.title == $t)][0] | "\(.at[0] - $mx) \(.at[1] - $my) \(.size[0])"')
   WAYLAND_DISPLAY=$sock timeout 10 grim -o "$out" "$work/strip.png" 2>>"$log"
-  f_strip=$(strip_above "$work/strip.png" "$fx" "$fy" "$fw")
-  q_strip=$(strip_above "$work/strip.png" "$qx" "$qy" "$qw")
-  [[ $f_strip == 1 && $q_strip == 0 ]]
-  check "D9 one title bar each: the plugin's strip above foot, none above the frameless window" $? "above foot: $f_strip (want 1), above the frameless window: $q_strip (want 0); capture $work/strip.png"
+  verdict=0 detail=""
+  for spec in gf-deco-foot:1 gf-deco-qt-frameless:0 gf-deco-foot-csd:1 gf-deco-xdg-unbound:1; do
+    t=${spec%:*} want=${spec#*:}
+    read -r gx gy gw < <(geom_rel "$t")
+    got=$(strip_above "$work/strip.png" "${gx:-0}" "${gy:-0}" "${gw:-0}")
+    detail+="$t $got (want $want); "
+    [[ $got == "$want" ]] || verdict=1
+  done
+  check "D9 one title bar each: the plugin's strip above foot, foot -o csd.preferred=client and the window binding no manager, none above the Qt frameless window" "$verdict" "${detail}capture $work/strip.png"
 fi
 
 # D10: gate C2. The plugin removes the tag it added and nothing else; a reload adds it again.

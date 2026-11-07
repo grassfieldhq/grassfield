@@ -18,8 +18,10 @@
 // always draws that size, whatever the compositor configures, as a window that cannot be resized does (tests/compositor/tiling.sh:
 // the plugin's titlebar disables its zoom light and the Zoom and Full Screen keys leave it alone, ADR-0040 step 1b's review).
 // Decorations (tests/compositor/decorations.sh): the toplevel asks for server-side decorations through xdg-decoration, as an app
-// that draws no title bar of its own does (foot, Qt, SDL); with XDGACT_DECORATION=client it asks for client-side ones, and with
-// XDGACT_DECORATION=none it negotiates nothing (a Qt frameless window does neither: it decorates itself).
+// that draws no title bar of its own does (foot, Qt, SDL); with XDGACT_DECORATION=client it asks for client-side ones (and still
+// draws no bar, as foot -o csd.preferred=client under Hyprland's server_side answer); with XDGACT_DECORATION=none it binds the
+// manager and makes no decoration object (what Qt does for a frameless window, which decorates itself); with
+// XDGACT_DECORATION=unbound it does not bind the manager at all (imv: it draws no bar either).
 #define _GNU_SOURCE
 #include "xdg-activation-v1-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
@@ -87,8 +89,11 @@ static void global_add(void* data, struct wl_registry* reg, uint32_t name, const
         activation = wl_registry_bind(reg, name, &xdg_activation_v1_interface, 1);
     else if (strcmp(iface, wl_seat_interface.name) == 0 && !seat)
         seat = wl_registry_bind(reg, name, &wl_seat_interface, 1);
-    else if (strcmp(iface, zxdg_decoration_manager_v1_interface.name) == 0)
-        decoration_manager = wl_registry_bind(reg, name, &zxdg_decoration_manager_v1_interface, 1);
+    else if (strcmp(iface, zxdg_decoration_manager_v1_interface.name) == 0) {
+        const char* decoration = getenv("XDGACT_DECORATION");
+        if (!(decoration && strcmp(decoration, "unbound") == 0))
+            decoration_manager = wl_registry_bind(reg, name, &zxdg_decoration_manager_v1_interface, 1);
+    }
 }
 static void global_remove(void* data, struct wl_registry* reg, uint32_t name) {
     (void)data;

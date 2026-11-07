@@ -37,28 +37,51 @@ namespace gf::chrome {
     // client_side 1, server_side 2; unset_mode: the compositor's choice) or KDE's server-decoration
     // (org_kde_kwin_server_decoration.request_mode: none 0, client 1, server 2; GTK 3 and GTK 4 announce their header bars
     // there). Hyprland 0.56.2 answers server_side to every request of both (read from the binary: xdgModeOnRequestCSD and
-    // kdeModeOnRequestCSD return 2) and keeps what the client asked (mostRecentlyRequested, public). Both protocols leave a
-    // client that negotiates nothing to decorate itself ("clients continue to self-decorate as they see fit"), which is what a
-    // Qt frameless window (Telegram) does. The values are the protocols' enums.
+    // kdeModeOnRequestCSD return 2) and keeps what the client asked (mostRecentlyRequested, public). The values are the
+    // protocols' enums. What a request proves (review of 3ca47a4b, nested at 1.25): an xdg client_side request does not prove a
+    // title bar (foot -o csd.preferred=client asks it, takes Hyprland's server_side answer and draws nothing; Chromium asks it
+    // and draws its tab strip: S1b names it), and neither does the absence of any negotiation (imv binds no decoration manager
+    // and draws nothing). A KDE client request does (GTK's header bars draw themselves whatever the answer), and so does a
+    // client that bound a decoration manager yet made no decoration object at all (Qt does that for a frameless window:
+    // Telegram).
     inline constexpr uint32_t kXdgModeClientSide = 1;
     inline constexpr uint32_t kXdgModeServerSide = 2;
     inline constexpr uint32_t kKdeModeClient     = 1;
     inline constexpr uint32_t kKdeModeServer     = 2;
 
     // What one toplevel negotiated: whether it made each protocol's decoration object, and its latest request there (0 when
-    // it never asked, or unset its mode).
+    // it never asked, or unset its mode), read from Hyprland's private containers; `managerBound`: its client bound
+    // zxdg_decoration_manager_v1 or org_kde_kwin_server_decoration_manager (it knows the compositor offers server-side
+    // decorations); `clientHasObject`: its client holds a decoration object of either protocol, for any of its windows. The
+    // last two come from libwayland's public list of the client's resources, so they hold whatever Hyprland keeps privately.
     struct DecorationRequest {
-        bool     xdgObject    = false;
-        uint32_t xdgRequested = 0;
-        bool     kdeObject    = false;
-        uint32_t kdeRequested = 0;
+        bool     xdgObject       = false;
+        uint32_t xdgRequested    = 0;
+        bool     kdeObject       = false;
+        uint32_t kdeRequested    = 0;
+        bool     managerBound    = false;
+        bool     clientHasObject = false;
     };
 
-    // The client draws its own title bar: it asked for client-side decorations (xdg-decoration first: a toolkit that speaks
-    // both decides there), or it negotiated through neither protocol. A server-side request, an xdg mode left to the
-    // compositor (server-side here) and a KDE object without a client request (0 is both "never asked" and KDE's "none",
-    // which no toolkit seen sends) keep the plugin's titlebar.
+    // The client draws its own title bar, proved by the protocol alone: a KDE client request, or a decoration manager bound
+    // and no decoration object in the whole client. Anything else keeps the plugin's titlebar: any xdg request, client_side
+    // included; a KDE server request or a KDE object without a client request (0 is both "never asked" and KDE's "none", which
+    // no toolkit seen sends); a client that bound no manager; a client that holds an object not found for this window
+    // (another of its windows is decorated, or Hyprland's private containers changed meaning). The invariant: a window the
+    // plugin tags always has a bar of its own; an app whose request proves nothing and that does draw its own goes in the
+    // per-app list S1b.
     bool drawsOwnTitlebar(const DecorationRequest& request);
+
+    // A Wayland interface name, as libwayland lists a client's resources: one of the two decoration managers
+    // (DecorationRequest::managerBound: zxdg_decoration_manager_v1, org_kde_kwin_server_decoration_manager), one of their
+    // decoration objects (DecorationRequest::clientHasObject: zxdg_toplevel_decoration_v1, org_kde_kwin_server_decoration),
+    // or anything else. Exact names.
+    enum class DecorationInterface : uint8_t {
+        Other,
+        Manager,
+        Object,
+    };
+    DecorationInterface decorationInterface(std::string_view interfaceName);
 
     // Whether the plugin's own Hyprland tag (kTag, static: rules never clear it) should be added to or removed from a window
     // now. `drawsOwn`: drawsOwnTitlebar; `tagged`: the window carries kTag from anyone; `ours`: the plugin added it.
