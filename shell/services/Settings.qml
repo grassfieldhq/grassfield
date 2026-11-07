@@ -78,6 +78,8 @@ Singleton {
     readonly property string terminalDarkTheme: store.terminalDarkTheme
     readonly property string keyboardShortcutStyle: store.keyboardShortcutStyle
     readonly property bool keyboardShowInputMenu: store.keyboardShowInputMenu
+    // Dictation (ADR-0045 OC-5): config/hypr/grassfield/bindings.lua reads the file itself; the shell mirrors it like every key.
+    readonly property bool keyboardDictation: store.keyboardDictation
     readonly property string regionFormats: store.regionFormats
     readonly property string regionFirstDayOfWeek: store.regionFirstDayOfWeek
     readonly property string iconMode: store.iconMode
