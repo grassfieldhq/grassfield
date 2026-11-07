@@ -45,6 +45,23 @@ TestCase {
         compare(Logic.parseList(id + " list []", id), []);
     }
 
+    // The stand-in's options line, sent before the list (bug report on rc6: a browser asked twice): `<id> options {json}`,
+    // allowToken true only when xdph passed --allow-token. Another request's line, or anything else, is no options line.
+    function test_theOptionsOfThatRequestOnly() {
+        compare(Logic.parseOptions(id + " options {\"allowToken\":true}", id), {allowToken: true});
+        compare(Logic.parseOptions(id + " options {\"allowToken\":false}", id), {allowToken: false});
+        compare(Logic.parseOptions(id + " options {}", id), {allowToken: false}, "nothing said: no token by default");
+        compare(Logic.parseOptions(id + " options {\"allowToken\":\"true\"}", id), {allowToken: false}, "only true allows the token");
+        compare(Logic.parseOptions(id + " options {\"allowToken\":1}", id), {allowToken: false}, "only true allows the token");
+        compare(Logic.parseOptions("f" + id.slice(1) + " options {\"allowToken\":true}", id), null, "another request's options");
+        compare(Logic.parseOptions(id + " options [true]", id), null, "not an object");
+        compare(Logic.parseOptions(id + " options {", id), null, "not JSON");
+        compare(Logic.parseOptions(id + " options null", id), null, "null");
+        compare(Logic.parseOptions(id + " list []", id), null, "the list is no options line");
+        compare(Logic.parseList(id + " options {\"allowToken\":true}", id), null, "nor is the options line a list");
+        compare(Logic.parseOptions(undefined, id), null);
+    }
+
     function test_aWindowThatDoesNotReadIsLeftOut() {
         const listed = Logic.parseList(id + " list " + JSON.stringify([
             {handle: "4294967296", class: "a", title: "past 32 bits", address: ""},

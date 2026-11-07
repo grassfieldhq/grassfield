@@ -802,6 +802,14 @@ panel), `tst_folderchooser.cpp`, `tst_fileskiosheets.qml`, `tst_filesglobalmenu.
   and "Selection" (a crosshair, D-10; step 7b draws the area on the display's live preview in the panel instead, decision
   7-10), "Remember this choice" **unticked every time, whatever `--allow-token` says** (owner
   decision Q14, 2026-10-27; Omarchy's `xdph.conf` sets `allow_token_by_default = true`, which would tick it), Cancel / Share.
+  **Amended 2026-11-07 (owner bug report on rc6, "the selection prompt comes back several times"):** the box opens as xdph's
+  `--allow-token` says (ticked with Omarchy's `xdph.conf`), the option Q14 did not take. Unticked, xdph gave no restore token
+  and Chromium's WebRTC capturer, which captures once for its picker's preview and again for the page with the token it got,
+  ran the picker twice for one share (measured with the real frontend 1.22.1 and xdph 1.4.1,
+  `tests/integration/screencast_restore.sh`). A browser's token lasts while it runs (persist_mode 1); an app that asks for a
+  lasting one (persist_mode 2) keeps the choice while the box is ticked, listed in Settings > Privacy > Screen Sharing (known
+  limitation: xdph passes the picker neither the app nor the mode). The owner may restore Q14 as answered; spec
+  system-dialogs.md section 3, "Fixed after rc6".
   Windows that hide themselves from capture (`no_screen_share`, `config/hypr/grassfield/privacy.lua`) are listed but greyed
   with "This window can't be shared".
 - The picker cannot name the app that asks: xdph receives the app id but passes the picker only `--allow-token` and the window
@@ -3392,7 +3400,7 @@ review.
 | Q11 | KIO and KWallet dialogs (D-12) | K1 Grassfield takes them / K2 Files' dialogs only, KWallet off for the session / K3 KDE's, themed | « Grassfield les prend (Recommandé) » | K1 |
 | Q12 | Wording of the security-rule amendment (D-9) | the proposed text / gcr prompts only, each other protocol later / write it in step 9 | « Texte proposé (Recommandé) » | the text quoted in D-9 |
 | Q13 | Place of steps 6 (print) and 10 (Bluetooth) | as placed / print after the screenshots / both at the end | « Comme placées (Recommandé) » | as placed |
-| Q14 | "Remember this choice" in the screen-sharing picker | unticked every time / follow xdph's `--allow-token` | « Décoché toujours (Recommandé) » | unticked every time |
+| Q14 | "Remember this choice" in the screen-sharing picker | unticked every time / follow xdph's `--allow-token` | « Décoché toujours (Recommandé) » | unticked every time; amended 2026-11-07 to follow `--allow-token` after the rc6 bug report (D-6), pending the owner's agreement |
 | Q15 | Screen-sharing request while the session is locked | cancel / hold until the unlock | « Annuler (Recommandé) » | cancel |
 | Q16 | Rename Quit to "Force Quit" in the app menu of a hung app | no, macOS model / yes | « Non, modèle macOS (Recommandé) » | no |
 | Q17 | Which daemon holds the Secret Service in the Grassfield session (D-12) | Q17-a gnome-keyring started with the session / Q17-b KWallet's takeover off for the session / Q17-c as is | « Bloquer KWallet » | Q17-b (not the recommended option) |

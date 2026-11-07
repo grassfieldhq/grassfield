@@ -293,8 +293,10 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
 - SP6 the panel: tabs "Entire Screen" (one live thumbnail per display, the display's name), "Window" (live thumbnails of the
   windows in `XDPH_WINDOW_SHARING_LIST`, grouped by app, title under each, protected windows greyed with "This window can't be
   shared"), "Selection" (crosshair, region relative to its display); the heading "An app wants to share your screen." (the
-  picker cannot know which app); "Remember this choice" unticked at every opening, whatever `--allow-token` says (owner
-  decision Q14); Cancel / Share (default once something is selected); double-click shares at once.
+  picker cannot know which app); "Remember this choice" ticked at opening when xdph passes `--allow-token` (Omarchy's
+  `xdph.conf` sets `allow_token_by_default`), unticked otherwise, as xdph's own picker does (owner decision Q14 amended after
+  the rc6 bug report, see "Fixed after rc6" below); Cancel / Share (default once something is selected); double-click shares at
+  once.
 - SP7 keyboard: arrows move in the grid, Return shares, Esc cancels, Cmd-1/2/3 switch tabs.
 - SP8 the recording indicator in the menu bar while an app shares through the portal (xdph's PipeWire streams, ADR-0035 7-9:
   Hyprland's screencast event comes from every capture, the shell's thumbnails too); its menu says what is shared (the
@@ -326,7 +328,7 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   - `shell/services/SharePicker.{qml,js}`: IPC target `picker` (`request`, plus the dev hooks `status` and `choose`).
   - `shell/overlay/SharePickerPanel.qml`: popup kind `sharePicker`.
 - **The channel as built (SP2, SP2b):**
-  - The stand-in's first line on the socket is `<id> list <json>`: xdph's windows as `{handle, class, title, address}`. The address is Hyprland's, in hex, or `""`. The titles never go into a command line (7-2).
+  - The stand-in's first line on the socket is `<id> list <json>` (since the rc6 fix below, after `<id> options {"allowToken": …}`): xdph's windows as `{handle, class, title, address}`. The address is Hyprland's, in hex, or `""`. The titles never go into a command line (7-2).
   - The shell opens the panel when that line arrives, at most 2 s after `accepted`; otherwise it closes the connection and shows nothing.
   - The shell's answer is `<id> <flags>/screen:<output>` or `<id> <flags>/window:<handle>`.
   - Lines with another id are ignored. A line longer than 4096 bytes, or one that is not ASCII, cancels.
@@ -335,7 +337,7 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   - "Share Your Screen", "An app wants to share your screen. Choose what it can see.", and Entire Screen / Window as a segmented control.
   - A grid of live thumbnails, three to a row, two rows before it scrolls.
   - Windows are grouped by app name, then sorted by title. A window without an address, or one the shell does not know, shows its app's icon.
-  - Remember this choice is unticked at every opening.
+  - Remember this choice is unticked at every opening (until rc6; since the fix below it opens as xdph's `--allow-token` says).
   - Cancel and Share. Share is dimmed until a tile is chosen; nothing is selected at first (7-3).
   - Arrows move in the grid, Return shares, Esc cancels, Cmd-1 and Cmd-2 switch the tabs, and a double-click shares.
   - Nothing answers keys or clicks for `panel.alertArmMs` after the panel shows, or after the last key pressed meanwhile (7-8);
@@ -368,7 +370,43 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   - `tst_barhide.qml`: the indicator while the bar is away (7-14).
   - The indicator in a real share (Chromium) is the integrator's.
 
+### Fixed after rc6: a browser asked several times for one share
+- **Report (owner, rc6):** "when I select the screen to share, the selection prompt comes back several times before it finally
+  takes; in Google Meet the preview shows white".
+- **Cause:** Chromium's WebRTC capturer (Chrome, Chromium, Electron) captures twice for one share: once for its own picker's
+  preview, then again when the page gets the stream, the second time with the restore token the first one got
+  (persist_mode 1, kept by the frontend only while the browser runs, for that browser's connection). xdph 1.4.1 gives a token
+  only when the picker's answer has the `r` flag (`Screencopy.cpp` onStart, `selection.allowToken`), and the Grassfield panel
+  opened with Remember this choice unticked every time (Q14): no token, so every capture of the browser ran the picker again.
+  Measured with the real xdg-desktop-portal 1.22.1 and xdph 1.4.1 against the nested session
+  (`tests/integration/screencast_restore.sh`, case 1: two picker runs; case 2, with `r`: one).
+- **Decision (amends Q14; macOS model: one choice per share, which the app keeps while it shares; lasting access is listed in
+  Settings > Privacy > Screen Sharing, where it is removed):** Remember this choice opens as xdph's `--allow-token` says, as
+  xdph's own picker does: ticked with Omarchy's `xdph.conf`, which Omarchy's own picker also opens ticked; the user may untick it
+  for one share (a browser then asks twice, as before). The alternatives: always answering `r` and dropping the box (no way to
+  refuse a lasting token), or keeping it unticked (the bug).
+- **As built:** the stand-in sends `<id> options {"allowToken": true|false}` (from `--allow-token`) before the list line; the
+  shell keeps it for that request (`SharePicker.allowToken`, `SharePicker.js parseOptions`; an older stand-in sends no such line
+  and the box opens unticked; an older shell ignores the line) and the panel opens with Remember this choice set from it.
+- **White preview:** not reproduced. A capture streams pictures only while its display draws: frames come with damage, and a
+  capture of a display that does not draw streams none (measured: the nested window's output while hidden; the headless
+  output with a window drawing streams real pictures, case 2). With one picker per share the browser's stream starts as soon as
+  the user shares, instead of after a second picker that blocks xdph's main loop meanwhile (upstream). Owner check below.
+- **Tests:** `tst_sharepicker.qml` (parseOptions); `share_picker.sh` (the options line, with and without `--allow-token`);
+  `share_picker_ipc.sh` cases 1 and 2 (opens ticked with `--allow-token`, unticked without); `share_picker_nested.sh` check 1
+  (the nested shell got `--allow-token`; its guard now lists every display's Quickshell instances: Quickshell 0.3.2's
+  `list -p` shows only the caller's display, so the guard refused every run from the main session); `screencast_restore.sh`
+  (nested, the real frontend and xdph: the browser's second capture without a picker, pictures not blank, persist_mode 0
+  and 2). The panel's look is not in a nested screenshot (grim did not show it on either output while the test held it
+  open): visual NOT verified; its state (ticked, unarmed, then armed) is read by the probe in `share_picker_ipc.sh`.
+- **Owner check (NOT VERIFIED here: needs the real browser):** in Chromium, Google Meet > Present > Entire screen: the
+  Grassfield picker shows once, Remember this choice is ticked, Share starts the presentation and Meet's preview shows the
+  screen.
+
 ### Known limitations
+A browser's token lasts while the browser runs; an app that asks for a lasting one (persist_mode 2: OBS) keeps the choice across
+its launches while Remember this choice is ticked, because xdph passes the picker neither the app nor the mode it asked
+(`tests/integration/screencast_restore.sh` case 4); Settings > Privacy > Screen Sharing lists such apps and removes them.
 A user `xdph.conf` naming another picker is respected; xdph blocks its main loop while any picker runs (upstream), for up to
 4 s when the shell dies before connecting and 15 s when it hangs after; the picker and the indicator cannot name the
 requesting app. A shell that hangs with its panel open leaves the panel drawn: the stand-in gives up after 15 s, and if the

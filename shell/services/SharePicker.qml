@@ -29,8 +29,13 @@ Singleton {
     property Socket channel: null
     // The request Sockets alive (a test hook, in `picker status`): one while a request is open, none once it ended.
     property int channels: 0
-    // The windows xdph listed ({handle, appId, title, address}), from the stand-in's first line.
+    // The windows xdph listed ({handle, appId, title, address}), from the stand-in's list line.
     property var windows: []
+    // xdph passed --allow-token (allow_token_by_default; Omarchy's xdph.conf sets it), from the stand-in's options line before
+    // the list: Remember this choice opens ticked, as xdph's own picker does. With it xdph gives the app a restore token, and a
+    // browser that asks once for its own preview and again to share (Chromium's WebRTC) is not asked twice (bug report on
+    // rc6). An older stand-in sends no options line: false.
+    property bool allowToken: false
     // The panel was shown for the current request.
     property bool shown: false
     // The handles of the listed windows that hide themselves from capture (no_screen_share; step 7b): greyed, never chosen.
@@ -116,6 +121,7 @@ Singleton {
         }
         root.current = null;
         root.windows = [];
+        root.allowToken = false;
         root.blocked = [];
         root.blockedKnown = false;
         root.shown = false;
@@ -128,6 +134,11 @@ Singleton {
     function received(sock: Socket, line: string): void {
         if (sock === null || sock !== root.channel || root.current === null || root.shown)
             return;
+        const options = Logic.parseOptions(line, root.current.id);
+        if (options !== null) {
+            root.allowToken = options.allowToken;
+            return;
+        }
         const listed = Logic.parseList(line, root.current.id);
         if (listed === null)
             return;
@@ -293,6 +304,7 @@ Singleton {
                 popup: Popups.kind,
                 outputs: root.outputs(),
                 windows: root.windows,
+                allowToken: root.allowToken,
                 blocked: root.blockedKnown ? root.blocked : null,
                 streams: root.streams.length,
                 labels: root.labels,

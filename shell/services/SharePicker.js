@@ -58,6 +58,27 @@ function parseList(line, id) {
     return out;
 }
 
+// The stand-in's options line, sent before the list: `<id> options {"allowToken": true|false}`, allowToken true when xdph
+// passed --allow-token (allow_token_by_default in xdph.conf; Omarchy's sets it). {allowToken} or null when the line is not
+// that request's options. Only true allows the token. A shell without this line (an older stand-in) keeps the default: no
+// token.
+function parseOptions(line, id) {
+    const head = id + " options ";
+    if (typeof line !== "string" || !line.startsWith(head))
+        return null;
+    let given;
+    try {
+        given = JSON.parse(line.slice(head.length));
+    } catch (e) {
+        return null;
+    }
+    if (given === null || typeof given !== "object" || Array.isArray(given))
+        return null;
+    return {
+        allowToken: given.allowToken === true
+    };
+}
+
 // The windows in the order the Window tab shows them: grouped by app (its name), then by title.
 function ordered(windows, nameFor) {
     return windows.slice().sort((a, b) => {
@@ -67,8 +88,8 @@ function ordered(windows, nameFor) {
 }
 
 // The answer line for xdph's grammar: `<flags>/screen:<output>`, `<flags>/window:<handle>` or
-// `<flags>/region:<output>@x,y,w,h`, flag "r" when the user ticked Remember this choice (owner decision Q14: unticked at every
-// opening). "" for anything that is not a listed choice: a display that is not there, a window xdph did not list or that
+// `<flags>/region:<output>@x,y,w,h`, flag "r" when Remember this choice is ticked (it opens as xdph's --allow-token says:
+// SharePicker.allowToken). "" for anything that is not a listed choice: a display that is not there, a window xdph did not list or that
 // hides itself from capture (`blocked`, step 7b), an area that is not inside its display's logical size (`sizes`: name ->
 // {width, height}). `blocked` null: Hyprland has not said yet which windows hide from capture, so no window is answered.
 function selection(kind, value, remember, outputs, windows, sizes, blocked) {

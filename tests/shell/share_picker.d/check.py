@@ -116,7 +116,12 @@ def shell(delay):
     for step in json.loads(os.environ.get("FAKE_SCRIPT", "[]")):
         kind, _, arg = step.partition(":")
         if kind == "list":
-            note("list", line=reader.readline().decode("ascii", "replace"))
+            # The options line comes first, then the list.
+            line = reader.readline().decode("ascii", "replace")
+            if line.startswith(rid + " options "):
+                note("options", line=line)
+                line = reader.readline().decode("ascii", "replace")
+            note("list", line=line)
         elif kind == "say":
             s.sendall((rid + " " + arg + "\n").encode())
         elif kind == "sayas":
@@ -269,6 +274,16 @@ check(all(not l.endswith(" +list") for l in open(logs["hyprctl"]).read().splitli
 check(qs and qs[0]["socket"] == ["0o600", True] and qs[0]["dir"] == ["0o700", False],
       "the one-time socket is 0600 in a 0700 directory when the shell is asked [%r]" % (qs[0] if qs else None))
 check(os.listdir(picker_dir) == [], "the socket file is gone afterwards")
+options = [e for e in read("shell") if e["event"] == "options"]
+check(len(options) == 1 and options[0]["line"] == rid + ' options {"allowToken": false}\n',
+      "without --allow-token the shell gets allowToken false, before the list [%r]" % options)
+out, _, _ = shell_answers("r/screen:DP-1", args=["--allow-token"])
+options = [e for e in read("shell") if e["event"] == "options"]
+rid2 = read("qs")[0]["argv"][-2] if read("qs") else ""
+check(len(options) == 1 and options[0]["line"] == rid2 + ' options {"allowToken": true}\n'
+      and xdph(out) == {"allowToken": True, "type": "output", "output": "DP-1"},
+      "with xdph's --allow-token the shell gets allowToken true (Remember this choice opens ticked), and xdph reads the token "
+      "flag [%r %r]" % (options, out))
 
 # A long list (150 windows titled with 200 emoji each: 360 KB of JSON, past a socket's send buffer) reaches the shell whole.
 big = "".join("%d[HC>]app[HT>]%s[HE>]0[HA>]" % (i + 1, "\U0001F600" * 200) for i in range(150))

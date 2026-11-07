@@ -46,7 +46,9 @@ target=$root/shell
 guard() {
   local pids
   [[ $(realpath -m "$target") != "$(realpath -m /usr/share/grassfield/shell)" ]] || { echo "share_picker: refusing: $target is the installed shell"; exit 2; }
-  pids=$(qs list -j -p "$target" 2>/dev/null | python3 -I -c 'import json, sys; print(" ".join(sorted({str(i["pid"]) for i in json.load(sys.stdin)})))' 2>/dev/null)
+  # Every display's instances: Quickshell 0.3.2's `list -p` shows only those on the caller's display, and this runs from another
+  # one (the nested shell's never showed, so the guard always refused).
+  pids=$(qs list --all -j 2>/dev/null | python3 -I -c 'import json, os, sys; want = os.path.realpath(sys.argv[1]); print(" ".join(sorted({str(i["pid"]) for i in json.load(sys.stdin) if os.path.dirname(os.path.realpath(i.get("config_path", ""))) == want})))' "$target" 2>/dev/null)
   [[ $pids == "$shell_pid" ]] || { echo "share_picker: refusing: the stand-in would reach Quickshell instances [$pids] of $target, not only this tree's nested shell (PID $shell_pid)"; exit 2; }
 }
 guard
@@ -107,6 +109,8 @@ answered() { ! kill -0 "$standin" 2>/dev/null; }
 share
 if wait_for 5 shown; then pass "1 the panel is shown on the nested display with the window xdph listed"; else fail "1 the panel did not show [$(ipc status)]"; fi
 if [[ $(sources) == 1 ]]; then pass "1 the window's live thumbnail has its source (the toplevel at its address)"; else fail "1 no capture source for the window [$(ipc status)]"; fi
+# The rc6 fix: xdph's --allow-token reaches the shell, so Remember this choice opens ticked (a browser is not asked twice).
+if [[ $(ipc status | jq -r '.allowToken') == true ]]; then pass "1 the shell got xdph's --allow-token (Remember this choice opens ticked)"; else fail "1 allowToken [$(ipc status | jq -c '.allowToken')]"; fi
 sleep "${SHARE_PICKER_LOOK:-0}"
 
 # 2. No window is answered before Hyprland has said which hide from capture (its getprop answers).
