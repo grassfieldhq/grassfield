@@ -1041,6 +1041,19 @@ TEST(TilingFitIntoArea, AWindowThatFitsKeepsItsFrame) {
     EXPECT_FALSE(fitIntoArea(Rect{1440, 24, 4000, 4000}, Rect{}, Constraints{}).has_value()) << "no area: nothing to fit";
 }
 
+// The review of 3ca47a4b: a 700 x 800 foot moved to Desktop 2 of its own display was fitted to 700 x 734, and so was one back from
+// a special workspace (minimize, hide, Show Desktop). Only a move from another output's regular Desktop fits.
+TEST(TilingFitIntoArea, OnlyAMoveFromAnotherOutputsDesktopFits) {
+    EXPECT_TRUE(fitsOnMove(DeskPlace{.output = "DP-1"}, "eDP-1", false)) << "another output's Desktop";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "eDP-1"}, "eDP-1", false)) << "another Desktop of the same output";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "DP-1", .special = true}, "eDP-1", false)) << "back from a special workspace";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "eDP-1", .special = true}, "eDP-1", false));
+    EXPECT_FALSE(fitsOnMove(std::nullopt, "eDP-1", false)) << "where it came from is unknown";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{}, "eDP-1", false)) << "an output without a name";
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "DP-1"}, "", false));
+    EXPECT_FALSE(fitsOnMove(DeskPlace{.output = "DP-1"}, "eDP-1", true)) << "to a special workspace";
+}
+
 TEST(TilingFitIntoArea, NeverUnderTheWindowsMinimum) {
     const Rect area{0, 24, 1280, 696};
     Constraints c;

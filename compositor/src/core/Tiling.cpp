@@ -600,6 +600,10 @@ namespace gf::tiling {
         return r;
     }
 
+    bool fitsOnMove(const std::optional<DeskPlace>& from, std::string_view toOutput, bool toSpecial) {
+        return !toSpecial && from && !from->special && !from->output.empty() && !toOutput.empty() && from->output != toOutput;
+    }
+
     bool strayFrame(const Rect& frame, std::span<const Rect> outputs) {
         return std::ranges::none_of(outputs, [&frame](const Rect& o) {
             return std::min(frame.x + frame.w, o.x + o.w) > std::max(frame.x, o.x) && std::min(frame.y + frame.h, o.y + o.h) > std::max(frame.y, o.y);

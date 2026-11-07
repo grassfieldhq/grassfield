@@ -321,6 +321,19 @@ namespace gf::tiling {
     // titlebar right below the menu bar), on the other it keeps its place. nullopt when it fits already on both axes.
     std::optional<Rect> fitIntoArea(const Rect& frame, const Rect& area, const Constraints& limits);
 
+    // Where a window was before a move to a Desktop: the output of the Desktop it was on and whether that was a special
+    // workspace (minimized, hidden, Show Desktop, a scratchpad). Kept by the glue per window.
+    struct DeskPlace {
+        std::string output;
+        bool        special = false;
+    };
+
+    // A move to a regular Desktop (`toOutput`'s) fits the window (fitIntoArea) only when it comes from a regular Desktop of
+    // another output: never on the same output (review of 3ca47a4b: a 700 x 800 foot moved to Desktop 2 of its own display was
+    // shrunk), never back from a special workspace (a restore, an unhide or the end of Show Desktop gives it back where it was),
+    // never when where it came from is unknown, and never to a special workspace.
+    bool fitsOnMove(const std::optional<DeskPlace>& from, std::string_view toOutput, bool toSpecial);
+
     // An output went away (TL11): Hyprland moves a floating window of its Desktops by the offset between the two outputs,
     // and a window can end off every output (integrator nested pass of 6b's 12e3dd3: x = -2919). `strayFrame`: the frame
     // (titlebar included) shares no area with any of `outputs` (their logical boxes). `gatheredFrame`: where such a window

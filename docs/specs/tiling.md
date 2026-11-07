@@ -281,6 +281,11 @@ the top (M04, Overview) and a Desktop change on a held edge (M05, Desktops); res
   the output, bottom-aligned: measured, the titlebar 21 px under the bar). A tiled window moved to a Desktop of another
   output takes the same tile there (TL11's relayout, as `move_to`). Not a full-screen or zoomed window, a Split View
   member or a window on a Split View Desktop, nor a Stages strip window. One INFO line per window fitted.
+  The move-to-a-Desktop fit is for another display only (review of 3ca47a4b; core `fitsOnMove`): the plugin remembers each
+  window's last regular Desktop and its output (seeded at load, kept at open and at each move); a move fits only from a
+  regular Desktop of another output to a regular Desktop, never to a special workspace nor back from one (minimize, a
+  scratchpad), never between two Desktops of one output, and never for a window whose last Desktop is unknown. A window
+  larger than its own output's work area keeps its size when it changes Desktop on that output, as on macOS.
 
 ### Popover and Window menu (step 3, waits for the merge of PRs #8-#10)
 - **TL22** Hover: the pointer resting on the zoom light for `tiling.hoverDelay` (about a second on macOS; measured in

@@ -175,7 +175,8 @@ namespace gf::tiler {
             std::unordered_map<uint64_t, tiling::TileRecord> splitHomes; // TL33: a member's tile on its home Desktop before its split
             std::vector<uint64_t>             chromeMembers;   // step 6e (D73): the members whose titlebars were last made to follow
             std::vector<uint64_t>             backInReach;     // windows that left a Split View, their titlebar not in reach yet (locked, hidden)
-            std::vector<PHLWINDOWREF>         fitting;         // Free windows moved to a Desktop: fitted to its output once Hyprland placed them
+            std::vector<PHLWINDOWREF>         fitting;         // Free windows moved to another output's Desktop: fitted once Hyprland placed them
+            std::unordered_map<uint64_t, tiling::DeskPlace> lastDesk; // the Desktop each window was last on (core fitsOnMove)
             SMoveFrom                         moveFrom;        // the output one of Hyprland's moves began on (fitted at its release; no window: none)
         };
 
@@ -1327,7 +1328,7 @@ namespace gf::tiler {
                 resumeNow(resume);
             for (const auto& moved : std::exchange(s.fitting, {})) {
                 if (const auto w = moved.lock())
-                    fitToOutput(w, "moved to a Desktop");
+                    fitToOutput(w, "moved to another output's Desktop");
             }
             if (std::exchange(s.holdPending, false))
                 holdUnderMenuBars();
@@ -1369,6 +1370,8 @@ namespace gf::tiler {
             auto& s = st();
             if (!s.splits.empty())
                 scheduleAfter(); // TL33: a Split View Desktop may have lost a window (splitCheck, once Hyprland removed it)
+            if (w)
+                s.lastDesk.erase(idOf(w)); // its address may be another window's next
             if (!w || !s.book.find(idOf(w)))
                 return;
             s.book.forget(idOf(w));
@@ -1398,15 +1401,34 @@ namespace gf::tiler {
         // there, overflowing a smaller display with its titlebar under the menu bar (Hyprland keeps it inside the output,
         // bottom-aligned). A tiled window takes the same tile on that output (as move_to: relayout once Hyprland moved it); a
         // Free one is fitted to that output's work area (fitToOutput, after events).
+        // The Desktop a workspace is, as core fitsOnMove reads it: its output's name and whether it is special.
+        tiling::DeskPlace deskPlaceOf(const PHLWORKSPACE& ws) {
+            const auto m = ws ? ws->m_monitor.lock() : nullptr;
+            return tiling::DeskPlace{.output = m ? m->m_name : std::string{}, .special = ws && ws->m_isSpecialWorkspace};
+        }
+
+        // Where a window is now, for its next move (at its map, at a load, after the plugin moved it to another output).
+        void rememberDesk(const PHLWINDOW& w) {
+            if (w && w->m_workspace)
+                st().lastDesk[idOf(w)] = deskPlaceOf(w->m_workspace);
+        }
+
         void onMoveToWorkspace(const PHLWINDOW& w, const PHLWORKSPACE& ws) {
             auto& s = st();
             if (!s.splits.empty())
                 scheduleAfter(); // TL33: minimized, hidden or moved off a Split View Desktop (splitCheck)
             if (!w || !ws)
                 return;
-            const auto r = s.book.find(idOf(w));
+            // Fitted only when it came from another output's regular Desktop (core fitsOnMove; the review of 3ca47a4b): never
+            // on its own output, never back from a special workspace.
+            const auto known = s.lastDesk.find(idOf(w));
+            const auto from  = known != s.lastDesk.end() ? std::optional{known->second} : std::nullopt;
+            const auto to    = deskPlaceOf(ws);
+            s.lastDesk[idOf(w)] = to;
+            const bool fit   = tiling::fitsOnMove(from, to.output, to.special);
+            const auto r     = s.book.find(idOf(w));
             if (!r) {
-                if (!ws->m_isSpecialWorkspace) {
+                if (fit) {
                     s.fitting.emplace_back(w);
                     scheduleAfter();
                 }
@@ -1423,12 +1445,11 @@ namespace gf::tiler {
                 return;
             }
             s.book.setWorkspace(idOf(w), ws->m_id); // the state reply carries no Desktop: no notice
-            const auto to = ws->m_monitor.lock();
-            if (r->state == tiling::TileState::Tiled && to && to->m_name != r->output) {
+            if (r->state == tiling::TileState::Tiled && !to.output.empty() && to.output != r->output) {
                 s.book.markRelayout(idOf(w), true); // checked again only once placed there (TL11's machinery)
                 s.relayoutPending = true;
                 scheduleAfter();
-            } else if (r->state != tiling::TileState::Tiled && r->state != tiling::TileState::Resizing) {
+            } else if (fit && r->state != tiling::TileState::Tiled && r->state != tiling::TileState::Resizing) {
                 s.fitting.emplace_back(w);
                 scheduleAfter();
             }
@@ -1864,10 +1885,14 @@ namespace gf::tiler {
         s.backInReach.clear();
         s.fitting.clear();
         s.moveFrom = {};
+        s.lastDesk.clear();
         if (!bus || !Desktop::windowState() || !State::monitorState() || !Fullscreen::controller())
             return false;
+        for (const auto& w : Desktop::windowState()->windows())
+            rememberDesk(w); // the windows mapped before this load: their next move starts where they are
         auto& ev = bus->m_events;
         auto& l  = s.listeners;
+        l.push_back(ev.window.open.listen([](const PHLWINDOW& w) { gf::guarded("tiling window.open", [&] { rememberDesk(w); }); }));
         l.push_back(ev.window.close.listen([](const PHLWINDOW& w) { gf::guarded("tiling window.close", [&] { onClose(w); }); }));
         l.push_back(ev.window.fullscreen.listen([](const PHLWINDOW& w) { gf::guarded("tiling window.fullscreen", [&] { onFullscreen(w); }); }));
         l.push_back(ev.window.moveToWorkspace.listen(
@@ -1916,6 +1941,7 @@ namespace gf::tiler {
         s.moveRelease.reset();
         s.moveFrom = {};
         s.fitting.clear();
+        s.lastDesk.clear();
         s.border = {};
         s.extend.reset();
         s.resizing.reset();
@@ -2252,6 +2278,7 @@ namespace gf::tiler {
             return;
         target->assignToSpace(ws->m_space);
         g_layoutManager->setTargetGeom(box, target);
+        st().lastDesk[idOf(w)] = tiling::DeskPlace{.output = m->m_name, .special = ws->m_isSpecialWorkspace}; // its next move starts here
         logRequest(Log::DEBUG, "window {:x} moved by the plugin onto {}: now on its Desktop {}", idOf(w), m->m_name, ws->m_name);
     }
 
