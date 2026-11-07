@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Dialogs
 import QtQuick.Effects
 import Grassfield.Ui
+import "Displays.js" as Displays
 
 // Settings > Wallpaper (ADR-0016) as macOS 27 lays it out (docs/audits/settings-parity-2026-10-26.md § Wallpaper): a preview
 // of the current wallpaper beside a group with its name, its status and the options that apply to it, then sections of
@@ -572,26 +573,69 @@ SettingsPage {
         root.pickStatus();
     }
 
-    // The answer for the display the options are for; for All Displays the one worth showing (an error on any output first).
+    // The answer for the display the options are for; for All Displays the one worth showing among the displays that follow All
+    // Displays (an error first), so that the preview never shows the picture of a display with its own wallpaper (owner
+    // 2026-11-07); every output's when none follows.
     function pickStatus(): void {
         const outputs = root.allStatus;
         if (root.currentDisplay !== null && outputs[root.currentDisplay.name]) {
             root.status = outputs[root.currentDisplay.name];
             return;
         }
-        const all = Object.keys(outputs).map(k => outputs[k]);
+        const following = root.displays.filter(d => !WallpaperConfig.sourceOverridden(root.stored.outputs, d) && outputs[d.name]).map(d => outputs[d.name]);
+        const all = following.length > 0 ? following : Object.keys(outputs).map(k => outputs[k]);
         root.status = all.find(o => o.state === "error") || all[all.length - 1] || {};
     }
 
     onCurrentDisplayChanged: root.pickStatus()
+    // A display that gains or loses a wallpaper of its own changes which display All Displays is shown by.
+    onStoredChanged: root.pickStatus()
 
-    // The connected displays (QScreen: name, model, serial), the same identity the shell uses (WallpaperConfig.displayKey).
+    // The displays with a wallpaper of their own, by name (what a choice under All Displays does not change).
+    readonly property var ownWallpaperNames: root.displays.filter(d => WallpaperConfig.sourceOverridden(root.stored.outputs, d)).map(d => d.label)
+
+    // The line under the picker: which displays a choice changes, by name.
+    readonly property string targetText: {
+        if (root.currentDisplay !== null)
+            return root.overridden ? qsTr("Changes apply to %1 only: it has a wallpaper of its own.").arg(root.currentDisplay.label)
+                                   : qsTr("Changes apply to %1 only. It follows All Displays until you choose a wallpaper for it.").arg(root.currentDisplay.label);
+        const own = root.ownWallpaperNames;
+        if (own.length === 0)
+            return qsTr("The same wallpaper on every display. Choose a display to give it a wallpaper of its own.");
+        if (own.length >= root.displays.length)
+            return qsTr("Every display has a wallpaper of its own, so a choice here shows on none of them. Choose a display to change its wallpaper.");
+        return own.length === 1 ? qsTr("Changes apply to every display except %1, which has a wallpaper of its own.").arg(own[0])
+                                : qsTr("Changes apply to every display except %1, which have wallpapers of their own.").arg(own.join(", "));
+    }
+
+    // The picture the preview shows: the shell's prepared picture for the display once its report names the choice; right after a
+    // choice, while the shell prepares it, the chosen tile's thumbnail, so that the change is seen in the pane at once (owner
+    // 2026-11-07). "" for the artwork and a colour (drawn, not pictures).
+    readonly property string previewFile: {
+        if (root.source === "builtin" || root.source === "color")
+            return "";
+        const shown = root.status.source === root.source && root.status.path === root.path;
+        if (shown && root.status.file)
+            return root.status.file;
+        const thumb = root.thumbs[root.path] || "";
+        return thumb !== "" ? thumb : (root.status.file || "");
+    }
+
+    // The connected displays (QScreen: name, model, serial), the same identity the shell uses (WallpaperConfig.displayKey), by the
+    // names Settings > Displays gives them (DisplayHeader): the laptop's panel is the Built-in Display, another its model (its
+    // connector without one); two of one name add their connectors.
     function refreshDisplays(): void {
         const list = root.backend.screens();
-        root.displays = list.map(s => {
+        const named = list.map(s => {
             const d = {name: s.name, model: s.model || "", serial: s.serial || ""};
             d.key = WallpaperConfig.displayKey(d);
-            d.label = d.model !== "" ? qsTr("%1 (%2)").arg(d.name).arg(d.model) : d.name;
+            d.label = Displays.isBuiltIn(d) ? qsTr("Built-in Display") : (String(d.model).trim() !== "" ? String(d.model).trim() : d.name);
+            return d;
+        });
+        const twins = named.map(d => named.filter(o => o.label === d.label).length > 1);
+        root.displays = named.map((d, i) => {
+            if (twins[i])
+                d.label = qsTr("%1 (%2)").arg(d.label).arg(d.name);
             return d;
         });
         if (root.displayId !== "all" && !root.displays.some(d => d.key === root.displayId))
@@ -663,14 +707,16 @@ SettingsPage {
                 }
             }
 
+            // Names the displays a choice changes (owner 2026-11-07: which display a change is for must be plain in the pane).
             Text {
                 id: pickerCaption
+                objectName: "wallpaperTarget"
                 anchors.top: pickerRow.bottom
                 anchors.topMargin: Tokens.spacingXs
                 width: parent.width
                 textFormat: Text.PlainText
                 wrapMode: Text.Wrap
-                text: root.currentDisplay === null ? qsTr("The same wallpaper on every display. Choose a display to give it a wallpaper of its own.") : (root.overridden ? qsTr("This display has a wallpaper of its own.") : qsTr("This display follows All Displays."))
+                text: root.targetText
                 color: Appearance.colors.textSecondary
                 font.family: Appearance.fontFamily
                 font.pixelSize: Tokens.typographyCaptionSize
@@ -695,7 +741,7 @@ SettingsPage {
                 width: Tokens.settingsWallpaperPreviewWidth
                 height: Tokens.settingsWallpaperPreviewHeight
                 Accessible.role: Accessible.Graphic
-                Accessible.name: qsTr("Current wallpaper: %1").arg(root.headline)
+                Accessible.name: root.currentDisplay !== null ? qsTr("Current wallpaper of %1: %2").arg(root.currentDisplay.label).arg(root.headline) : qsTr("Current wallpaper: %1").arg(root.headline)
 
                 // Dropping a file, a folder or a video on the preview sets it (ADR-0016 section 8).
                 DropArea {
@@ -731,8 +777,9 @@ SettingsPage {
                     Image {
                         id: preparedImage
                         anchors.fill: parent
-                        // The prepared picture the shell drew (the tool's own output, never the user's file), cropped as the display shows it.
-                        source: root.source !== "builtin" && root.source !== "color" && root.status.file ? "file://" + root.status.file : ""
+                        // The prepared picture the shell drew (the tool's own output, never the user's file), cropped as the display shows
+                        // it; right after a choice the tile's thumbnail (previewFile).
+                        source: root.previewFile !== "" ? "file://" + root.previewFile : ""
                         asynchronous: true
                         cache: false
                         fillMode: Image.PreserveAspectCrop

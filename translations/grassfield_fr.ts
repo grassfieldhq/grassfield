@@ -16833,20 +16833,36 @@
         <translation>Préparation de la vidéo… %1&#xa0;%</translation>
     </message>
     <message>
+        <source>Changes apply to %1 only: it has a wallpaper of its own.</source>
+        <translation>Les changements ne s’appliquent qu’à %1&#xa0;: cet écran a son propre fond d’écran.</translation>
+    </message>
+    <message>
+        <source>Changes apply to %1 only. It follows All Displays until you choose a wallpaper for it.</source>
+        <translation>Les changements ne s’appliquent qu’à %1. Cet écran suit Tous les écrans jusqu’à ce que vous lui choisissiez un fond d’écran.</translation>
+    </message>
+    <message>
+        <source>Every display has a wallpaper of its own, so a choice here shows on none of them. Choose a display to change its wallpaper.</source>
+        <translation>Chaque écran a son propre fond d’écran&#xa0;: un choix ici ne s’affiche sur aucun d’eux. Choisissez un écran pour changer son fond d’écran.</translation>
+    </message>
+    <message>
+        <source>Changes apply to every display except %1, which has a wallpaper of its own.</source>
+        <translation>Les changements s’appliquent à tous les écrans sauf %1, qui a son propre fond d’écran.</translation>
+    </message>
+    <message>
+        <source>Changes apply to every display except %1, which have wallpapers of their own.</source>
+        <translation>Les changements s’appliquent à tous les écrans sauf %1, qui ont leur propre fond d’écran.</translation>
+    </message>
+    <message>
+        <source>Built-in Display</source>
+        <translation>Écran intégré</translation>
+    </message>
+    <message>
         <source>%1 (%2)</source>
         <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>Display</source>
         <translation>Écran</translation>
-    </message>
-    <message>
-        <source>This display has a wallpaper of its own.</source>
-        <translation>Cet écran a son propre fond d’écran.</translation>
-    </message>
-    <message>
-        <source>This display follows All Displays.</source>
-        <translation>Cet écran suit Tous les écrans.</translation>
     </message>
     <message>
         <source>All Displays</source>
@@ -16875,6 +16891,10 @@
     <message>
         <source>The same wallpaper on every display. Choose a display to give it a wallpaper of its own.</source>
         <translation>Le même fond d’écran sur chaque écran. Choisissez un écran pour lui donner son propre fond d’écran.</translation>
+    </message>
+    <message>
+        <source>Current wallpaper of %1: %2</source>
+        <translation>Fond d’écran actuel de %1&#xa0;: %2</translation>
     </message>
     <message>
         <source>A video wallpaper pauses on battery, when you are away, under a full-screen window, and with Reduce Motion.</source>

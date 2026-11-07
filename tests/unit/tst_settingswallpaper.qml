@@ -30,10 +30,11 @@ TestCase {
             property string wallpaperRecentFile: "/home/u/.local/state/grassfield/wallpaper-recent.json"
             property var files: ({})
             property var queries: []
+            property var screenList: [{name: "eDP-1", model: "Panel", serial: "1", primary: true, pixelWidth: 2560, pixelHeight: 1600}]
             signal finished(string tag, bool ok, string output)
             signal fileChanged(string path)
             function screens(): var {
-                return [{name: "eDP-1", model: "Panel", serial: "1", primary: true, pixelWidth: 2560, pixelHeight: 1600}];
+                return screenList;
             }
             function watch(p: string): bool {
                 return true;
@@ -410,6 +411,78 @@ TestCase {
         t.page.usePicture(testCase.pictures[0]);
         compare(t.page.aboutEntry, null);
         verify(!about.parent.visible);
+    }
+
+    // ---- several displays (owner 2026-11-07: "when I change the wallpaper I can't see it", ADR-0044 D-5) ----
+    readonly property var twoScreens: [{name: "eDP-1", model: "Panel", serial: "", primary: true}, {name: "DP-1", model: "DELL U2720Q", serial: ""}]
+    readonly property string statusFile: "/run/user/1000/grassfield/wallpaper-state.json"
+
+    function statusOf(outputs) {
+        const f = {};
+        f[testCase.statusFile] = JSON.stringify({outputs: outputs, online: {}});
+        return f;
+    }
+
+    function picker(page) {
+        return find(page.contentItem, i => i.accessibleName === "Display" && i.picked !== undefined);
+    }
+
+    function caption(page) {
+        return find(page.contentItem, i => i.objectName === "wallpaperTarget");
+    }
+
+    // The displays go by the names Settings > Displays gives them: the laptop's panel is the Built-in Display, another its model;
+    // two of one model add their connectors.
+    function test_displayNames() {
+        const t = make({}, {}, {screenList: testCase.twoScreens});
+        compare(picker(t.page).model.map(m => m.text), ["All Displays", "Built-in Display", "DELL U2720Q"]);
+        const twins = make({}, {}, {screenList: [{name: "DP-1", model: "DELL U2720Q", serial: ""}, {name: "DP-2", model: "DELL U2720Q", serial: ""}]});
+        compare(picker(twins.page).model.map(m => m.text), ["All Displays", "DELL U2720Q (DP-1)", "DELL U2720Q (DP-2)"]);
+    }
+
+    // The line under the picker names the displays a choice changes: under All Displays, every display but those with a wallpaper
+    // of their own (which a choice there does not change); on one display, that display.
+    function test_targetIsNamed() {
+        const own = [{display: {name: "eDP-1", model: "Panel", serial: ""}, source: "file", path: testCase.pictures[1]}];
+        const t = make({"wallpaper.outputs": own}, {}, {screenList: testCase.twoScreens});
+        verify(caption(t.page).visible);
+        compare(caption(t.page).text, "Changes apply to every display except Built-in Display, which has a wallpaper of its own.");
+        picker(t.page).picked(t.page.displays[1].key);
+        compare(caption(t.page).text, "Changes apply to DELL U2720Q only. It follows All Displays until you choose a wallpaper for it.");
+        picker(t.page).picked(t.page.displays[0].key);
+        compare(caption(t.page).text, "Changes apply to Built-in Display only: it has a wallpaper of its own.");
+        const none = make({}, {}, {screenList: testCase.twoScreens});
+        compare(caption(none.page).text, "The same wallpaper on every display. Choose a display to give it a wallpaper of its own.");
+    }
+
+    // Under All Displays the preview shows the All Displays wallpaper (a display that follows it), never the picture of a
+    // display that has its own.
+    function test_allDisplaysPreviewShowsAFollower() {
+        const own = [{display: {name: "DP-1", model: "DELL U2720Q", serial: ""}, source: "file", path: testCase.pictures[1]}];
+        const files = statusOf({
+            "eDP-1": {state: "ready", source: "file", path: testCase.pictures[0], file: "/c/edp.png"},
+            "DP-1": {state: "ready", source: "file", path: testCase.pictures[1], file: "/c/dp.png"}
+        });
+        const t = make({"wallpaper.source": "file", "wallpaper.path": testCase.pictures[0], "wallpaper.outputs": own}, files, {screenList: testCase.twoScreens});
+        compare(t.page.previewFile, "/c/edp.png");
+        picker(t.page).picked(t.page.displays[1].key);
+        compare(t.page.previewFile, "/c/dp.png", "the display with its own wallpaper shows it");
+    }
+
+    // A picture chosen shows in the preview at once (its thumbnail), before the shell has prepared it for the display; the shell's
+    // picture takes over once its report names the choice.
+    function test_previewShowsTheChoiceAtOnce() {
+        const files = statusOf({"eDP-1": {state: "ready", source: "file", path: testCase.pictures[0], file: "/c/old.png"}});
+        const t = make({"wallpaper.source": "file", "wallpaper.path": testCase.pictures[0]}, files);
+        compare(t.page.previewFile, "/c/old.png");
+        const thumbs = Object.assign({}, t.page.thumbs);
+        thumbs[testCase.pictures[3]] = "/home/u/.cache/grassfield/wallpapers/thumbs/glacier.png";
+        t.page.thumbs = thumbs;
+        t.page.usePicture(testCase.pictures[3]);
+        compare(t.page.previewFile, "/home/u/.cache/grassfield/wallpapers/thumbs/glacier.png", "the thumbnail while the shell prepares it");
+        t.backend.files[testCase.statusFile] = JSON.stringify({outputs: {"eDP-1": {state: "ready", source: "file", path: testCase.pictures[3], file: "/c/new.png"}}});
+        t.backend.fileChanged(testCase.statusFile);
+        compare(t.page.previewFile, "/c/new.png", "the shell's picture once it shows the choice");
     }
 
     function test_photographsUnderTheDevGuard() {
