@@ -235,6 +235,14 @@ the top (M04, Overview) and a Desktop change on a held edge (M05, Desktops); res
   Step 2 as built: one dwell for every drag (core `CDwell`: the place and its output; a change starts over), a timer that
   draws the preview when the pointer rests, Alt read again after each key once Hyprland applied it. `tiling.previewDelay`
   is 250 ms, an estimate until measured in nested (ADR-0036 D11).
+  Since the 1.0.0-rc6 report ("the gesture up to fill the screen is very slow"): the menu bar's Fill shows at once when no
+  other output lies above that output's top edge (core `showsAtOnce`): the window is held below the menu bar (FR56) and the
+  pointer has gone on into the top of the screen, a target and never a way to another display, where macOS shows the fill
+  outline as the pointer reaches the menu bar; with an output above, the strip is crossed on the way there and keeps the
+  delay, as the side edges do. And the plugin's titlebar drag sets the window under the pointer at once
+  (`warpPositionSize` after each step, as Hyprland's own move with `misc:animate_mouse_windowdragging` off, the session's
+  value): each step had restarted the 300 ms `windowsMove` animation, so the window trailed the pointer on its way up
+  (nested capture: still mid-way 100 ms after a jump of the pointer). The tile at the release keeps its animation.
 - **TL18** Alt-drag (M06, setting "Hold Alt key while dragging windows to tile", `windows.tilingOptionDrag`, on): while Alt
   is held during a move, the zone is the nearest half, quarter or fill from the pointer's position in the work area (the
   work area split in thirds across and down: corners give quarters, side thirds halves, the top-middle third fill, the
@@ -263,6 +271,16 @@ the top (M04, Overview) and a Desktop change on a held edge (M05, Desktops); res
   window the plugin moves onto another output (its titlebar drag, a tile there) belongs to the Desktop that output shows,
   as after Hyprland's own move; `arrange` first gives each window it names the Desktop of the output it is on (ADR-0036
   D9).
+  Since the 1.0.0-rc6 report ("a maximized window moved to a smaller display overflows it"), macOS's rule for a window
+  that lands on another display: dropped there by a drag (the titlebar's, from the output under the box at the press;
+  Hyprland's move, from the output the move began on) or moved to a Desktop of that output (Hyprland's move to a
+  workspace: the Overview, a key), a Free window larger than that output's work area is made to fit it (core
+  `fitIntoArea`: at most the area's size on each axis, never under its minimum; on an axis where it was larger it starts at
+  the area's start, its titlebar right below the menu bar; on the other it keeps its place, so a window may still hang off
+  a side or the bottom), and its titlebar is never left under that output's menu bar (Hyprland keeps such a window inside
+  the output, bottom-aligned: measured, the titlebar 21 px under the bar). A tiled window moved to a Desktop of another
+  output takes the same tile there (TL11's relayout, as `move_to`). Not a full-screen or zoomed window, a Split View
+  member or a window on a Split View Desktop, nor a Stages strip window. One INFO line per window fitted.
 
 ### Popover and Window menu (step 3, waits for the merge of PRs #8-#10)
 - **TL22** Hover: the pointer resting on the zoom light for `tiling.hoverDelay` (about a second on macOS; measured in
