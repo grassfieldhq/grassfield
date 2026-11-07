@@ -614,7 +614,11 @@ check(r.returncode == 0 and len(shots(screenshots)) == count + 5 and run and run
 # folder).
 for raw, why in (('{"version": 1, "capture": {"location": "documents", "location": "desktop"}}', "a duplicate location key"),
                  ('{"version": 1, "n": 9007199254740993, "capture": {"location": "desktop"}}', "an integer beyond 2^53"),
-                 ('{"version": 1, "capture": {"location": "desktop"}, "x": {"7": 1}}', "an integer-like key")):
+                 ('{"version": 1, "capture": {"location": "desktop"}, "x": {"7": 1}}', "an integer-like key"),
+                 ('{"version": 1, "capture": {"location": "desktop"}, "x": NaN}', "NaN, which JSON.parse refuses"),
+                 ('{"version": 1, "capture": {"location": "desktop"}, "x": -Infinity}', "-Infinity, which JSON.parse refuses"),
+                 ('{"version": 1, "capture": {"location": "desktop"}, "x": ' + '[' * 200000 + ']' * 200000 + '}',
+                  "nesting too deep to read")):
     with open(os.path.join(config, "grassfield.json"), "w") as f:
         f.write(raw)
     count, on_desktop, in_documents = len(shots(screenshots)), files(desktop), files(documents)

@@ -202,9 +202,15 @@ def checked_number(token, kind):
     return kind(token)
 
 
+def refuse_constant(name):
+    # Python's json reads NaN, Infinity and -Infinity; JSON.parse (the shell's reader) refuses them.
+    raise ValueError("not JSON: " + name)
+
+
 def settings_group(name):
     # One group of grassfield.json ({} when the file, or the group, cannot be used). A file the shell would not read (a duplicate
-    # key, an integer beyond 2^53, an integer-like key: JsonSafety.js) reads as the defaults here too, as SettingsStore reads it.
+    # key, an integer beyond 2^53, an integer-like key: JsonSafety.js) reads as the defaults here too, as SettingsStore reads it;
+    # so does one JSON.parse refuses (NaN, Infinity) and one nested too deep to read (RecursionError).
     home = os.environ.get("GRASSFIELD_CONFIG_HOME") or os.path.join(
         os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"), "grassfield")
     group = None
@@ -214,9 +220,10 @@ def settings_group(name):
             st = os.fstat(f.fileno())
             if stat.S_ISREG(st.st_mode) and st.st_size <= 1 << 20:
                 data = json.loads(f.read(1 << 20).decode("utf-8"), object_pairs_hook=safe_pairs,
-                                  parse_int=lambda t: checked_number(t, int), parse_float=lambda t: checked_number(t, float))
+                                  parse_int=lambda t: checked_number(t, int), parse_float=lambda t: checked_number(t, float),
+                                  parse_constant=refuse_constant)
                 group = data.get(name) if isinstance(data, dict) else None
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         group = None
     return group if isinstance(group, dict) else {}
 
