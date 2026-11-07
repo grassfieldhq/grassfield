@@ -354,7 +354,7 @@ FolderModel::FolderModel(QObject *parent)
     m_expectTimer.setInterval(0);
     connect(&m_expectTimer, &QTimer::timeout, this, &FolderModel::checkExpected);
     const auto queueCheck = [this] {
-        if (!m_expected.isEmpty() && !m_checkingExpected)
+        if ((!m_expected.isEmpty() || !m_expectedAlone.isEmpty()) && !m_checkingExpected)
             m_expectTimer.start();
     };
     m_attrTimer.setSingleShot(true);
@@ -445,6 +445,7 @@ void FolderModel::setUrl(const QUrl &url)
     m_current.clear();
     m_anchor.clear();
     m_expected.clear();
+    m_expectedAlone.clear();
     m_renameUrl.clear();
     clearAllPreviews();
     m_tags.clear();
@@ -1108,6 +1109,7 @@ void FolderModel::select(int row, int modifiers, bool pointer)
     qCDebug(lcFiles) << "select" << row << url.fileName() << "modifiers" << modifiers;
     if (url.isEmpty())
         return;
+    dropAloneWish();
     QSet<QUrl> next = m_selected;
     if (modifiers & Qt::ShiftModifier) {
         int anchorRow = rowForUrl(m_anchor);
@@ -1140,6 +1142,7 @@ void FolderModel::selectAll()
 {
     if (m_chooserSingle)
         return;
+    dropAloneWish();
     QSet<QUrl> next;
     for (int r = 0; r < rowCount(); ++r)
         next.insert(urlAt(r));
@@ -1148,11 +1151,13 @@ void FolderModel::selectAll()
 
 void FolderModel::clearSelection()
 {
+    dropAloneWish();
     applySelection({});
 }
 
 void FolderModel::selectUrls(const QList<QUrl> &urls)
 {
+    dropAloneWish();
     QSet<QUrl> next;
     for (const QUrl &u : urls) {
         if (rowForUrl(u) >= 0 && !(m_chooserSingle && !next.isEmpty()))
@@ -1897,6 +1902,21 @@ void FolderModel::expect(const QUrl &url, bool rename)
     checkExpected();
 }
 
+void FolderModel::expectAlone(const QUrl &url)
+{
+    m_expectedAlone = url.isEmpty() ? QUrl() : url.adjusted(QUrl::StripTrailingSlash);
+    qCDebug(lcFiles) << "expect alone" << m_expectedAlone.fileName() << "row now" << (m_expectedAlone.isEmpty() ? -1 : rowForUrl(m_expectedAlone));
+    if (!m_expectedAlone.isEmpty())
+        checkExpected();
+}
+
+void FolderModel::dropAloneWish()
+{
+    // The selection checkExpected makes for the wish itself is not a choice of the user's.
+    if (!m_checkingExpected)
+        m_expectedAlone.clear();
+}
+
 void FolderModel::dropExpiredExpectations()
 {
     for (auto it = m_expected.begin(); it != m_expected.end();) {
@@ -1912,9 +1932,18 @@ void FolderModel::dropExpiredExpectations()
 void FolderModel::checkExpected()
 {
     // select() emits dataChanged, which calls back here.
-    if (m_expected.isEmpty() || m_checkingExpected)
+    if ((m_expected.isEmpty() && m_expectedAlone.isEmpty()) || m_checkingExpected)
         return;
     const QScopedValueRollback<bool> guard(m_checkingExpected, true);
+    if (!m_expectedAlone.isEmpty()) {
+        const int r = rowForUrl(m_expectedAlone);
+        if (r >= 0) {
+            qCDebug(lcFiles) << "reveal alone" << r << m_expectedAlone.fileName();
+            m_expectedAlone.clear();
+            select(r, 0);
+            emit revealRequested(r, false);
+        }
+    }
     dropExpiredExpectations();
     const QList<QUrl> pending = m_expected.keys();
     for (const QUrl &url : pending) {

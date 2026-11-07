@@ -162,6 +162,9 @@ TestCase {
             function expect(target: url, rename: bool): void {
                 listing.expected = listing.expected.concat([String(target)]);
             }
+            // The column view's wish (FolderModel.expectAlone).
+            function expectAlone(target: url): void {
+            }
             function reload(): void {
             }
             function requestPreview(row: int, large: bool): void {

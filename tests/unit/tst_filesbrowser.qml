@@ -81,6 +81,8 @@ TestCase {
             }
             function expect(target: url, rename: bool): void {
             }
+            function expectAlone(target: url): void {
+            }
             function reload(): void {
             }
             function requestPreview(row: int, large: bool): void {

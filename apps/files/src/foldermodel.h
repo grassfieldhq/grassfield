@@ -221,6 +221,12 @@ public:
     // Select `url` (and ask the view to start renaming it) once it appears in the listing. Successive calls
     // before the items appear build one selection.
     Q_INVOKABLE void expect(const QUrl &url, bool rename);
+    // The column view's wish for this listing (the folder its next column shows): `url` selected alone once it is listed,
+    // as expect() would, but each call replaces the wish before it instead of adding to it, an empty URL drops it, and any
+    // selection made in the listing meanwhile (a click, a key, Select All) drops it too. A wish still waiting for a slow
+    // listing never comes back over the user's own choice (owner report 2026-11-07: "in Columns view the selection sometimes
+    // goes back to the previous folder").
+    Q_INVOKABLE void expectAlone(const QUrl &url);
 
     KFileItem itemAt(int row) const;
     KFileItem rootItem() const;
@@ -282,6 +288,8 @@ private:
     void setError(const QString &error);
     void checkExpected();
     void dropExpiredExpectations();
+    // A selection made in the listing (not by checkExpected) ends expectAlone's wish.
+    void dropAloneWish();
     void onItemsDeleted(const KFileItemList &items);
     void startPreviews(ThumbChannel &channel);
     void clearPreviews(ThumbChannel &channel);
@@ -378,6 +386,8 @@ private:
     QUrl m_current;
     QUrl m_anchor;
     QHash<QUrl, QDeadlineTimer> m_expected;
+    // expectAlone's wish (empty: none).
+    QUrl m_expectedAlone;
     bool m_expectFresh = true;
     bool m_checkingExpected = false;
     QUrl m_renameUrl;

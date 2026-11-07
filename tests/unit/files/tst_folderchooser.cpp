@@ -407,3 +407,91 @@ TEST(ApplicationLaunch, TheFailureNamesTheRowsNameCleaned)
     EXPECT_EQ(failures.first(), QStringLiteral("“%1” could not be started.").arg(FileLogic::displayName(model->nameAt(rowOf()))));
     QFile::remove(entry.fileName());
 }
+
+namespace {
+// Runs the event loop until `done` or 10 s.
+bool waitFor(const std::function<bool()> &done)
+{
+    QDeadlineTimer deadline(10000);
+    while (!done() && !deadline.hasExpired()) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        QThread::msleep(5);
+    }
+    return done();
+}
+
+QStringList selectedNames(const FolderModel &model)
+{
+    QStringList out;
+    for (int r : model.selectedRows())
+        out << model.nameAt(r);
+    return out;
+}
+} // namespace
+
+// The column view's wish (FolderModel::expectAlone): the folder its next column shows, selected alone once the column's
+// listing has it. Owner report 2026-11-07 ("in Columns view the selection sometimes goes back to the previous folder"): the
+// column view used expect(), whose calls build one selection, so a wish still waiting for a slow listing joined the folder
+// the user chose meanwhile, and became the current row the next arrow key started from. A folder made after the wish stands
+// for an item a slow listing brings late.
+TEST(ColumnWish, AWishWaitingForTheListingNeverComesBackOverTheUsersChoice)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("chosen")));
+    FolderModel model;
+    model.setUrl(QUrl::fromLocalFile(dir.path()));
+    ASSERT_TRUE(waitFor([&] { return !model.loading() && model.count() == 1; }));
+    const auto url = [&](const char *name) { return QUrl::fromLocalFile(dir.filePath(QString::fromLatin1(name))); };
+    const auto rowOf = [&](const char *name) {
+        for (int r = 0; r < model.count(); ++r)
+            if (model.nameAt(r) == QLatin1String(name))
+                return r;
+        return -1;
+    };
+    const auto make = [&](const char *name) {
+        return QDir(dir.path()).mkdir(QString::fromLatin1(name)) && waitFor([&] { return rowOf(name) >= 0; });
+    };
+
+    // expect() as the column view called it: the late folder joins the user's choice and becomes the current row.
+    model.expect(url("before"), false);
+    model.select(rowOf("chosen"), 0, true);
+    model.expect(url("chosen"), false);
+    ASSERT_TRUE(make("before"));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(selectedNames(model), (QStringList{QStringLiteral("before"), QStringLiteral("chosen")})) << "expect() still builds one selection (a drop's items)";
+    EXPECT_EQ(model.currentRow(), rowOf("before"));
+
+    // expectAlone(): the new wish replaces the old one; the late folder changes nothing.
+    model.select(rowOf("chosen"), 0, true);
+    model.expectAlone(url("late"));
+    model.select(rowOf("chosen"), 0, true);
+    model.expectAlone(url("chosen"));
+    ASSERT_TRUE(make("late"));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(selectedNames(model), QStringList{QStringLiteral("chosen")});
+    EXPECT_EQ(model.currentRow(), rowOf("chosen"));
+
+    // A selection made in the listing drops a wish by itself (Select All, a click that leaves the location).
+    model.expectAlone(url("dropped"));
+    model.select(rowOf("chosen"), 0, true);
+    ASSERT_TRUE(make("dropped"));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(selectedNames(model), QStringList{QStringLiteral("chosen")});
+    model.expectAlone(url("emptied"));
+    model.expectAlone(QUrl());
+    ASSERT_TRUE(make("emptied"));
+    QCoreApplication::processEvents();
+    EXPECT_EQ(selectedNames(model), QStringList{QStringLiteral("chosen")}) << "an empty URL drops the wish";
+
+    // Alone, a wish selects its folder alone once listed and asks the view to show it.
+    int revealed = -1;
+    QObject::connect(&model, &FolderModel::revealRequested, &model, [&](int row, bool) { revealed = row; });
+    model.expectAlone(url("next"));
+    ASSERT_TRUE(make("next"));
+    ASSERT_TRUE(waitFor([&] { return selectedNames(model) == QStringList{QStringLiteral("next")}; })) << selectedNames(model).join(QLatin1Char(',')).toStdString();
+    EXPECT_EQ(revealed, rowOf("next"));
+    // Already listed: at once.
+    model.expectAlone(url("chosen"));
+    EXPECT_EQ(selectedNames(model), QStringList{QStringLiteral("chosen")});
+}

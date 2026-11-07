@@ -616,6 +616,12 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   alternate in the item menu, as in the Finder (its label was the widest row); Edit > Copy as Pathname and ⌥⌘C stay.
   Tests: `tst_popupmenu.qml` (`test_aLongNameIsShortenedInTheMiddleAndTheMenuKeepsItsWidth`, `test_aLongLabelStopsTheMenuAtItsCap`),
   `tst_filesglobalmenu.qml`, `tst_iconmenu.qml`, `tst_filesbrowser.qml`.
+- **F-16 Column view selection** (owner report 2026-11-07, "sometimes it goes back to the previous folder"): a column
+  selects the folder its next column shows through `FolderModel.expectAlone` (one wish per listing, replaced by the next
+  one, dropped by an empty URL and by any selection made in the listing), never `expect()`, whose calls build one selection
+  for a drop's items: a column still listing never brings the previous folder back over the user's choice. A click that
+  leaves the location as it is no longer leaves the view's "I navigated" flag set for the next location set elsewhere. A
+  right click on a row of a column selects it and the next column follows, as a click does, before the menu opens.
 
 ### ADRs opened by this step
 - ADR-0026 Files window frames: size by Files, position and cascade by the compositor (cross-module: Files and
