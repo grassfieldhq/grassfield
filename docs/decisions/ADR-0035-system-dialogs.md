@@ -802,6 +802,16 @@ panel), `tst_folderchooser.cpp`, `tst_fileskiosheets.qml`, `tst_filesglobalmenu.
   and "Selection" (a crosshair, D-10; step 7b draws the area on the display's live preview in the panel instead, decision
   7-10), "Remember this choice" **unticked every time, whatever `--allow-token` says** (owner
   decision Q14, 2026-10-27; Omarchy's `xdph.conf` sets `allow_token_by_default = true`, which would tick it), Cancel / Share.
+  **Amendment proposed 2026-11-07, NOT in force until the owner agrees (owner bug report on rc6, "the selection prompt comes
+  back several times"; built behind `SharePickerPanel.followAllowToken`, false: the box still opens unticked):** the box would open as xdph's
+  `--allow-token` says (ticked with Omarchy's `xdph.conf`), the option Q14 did not take. Unticked, xdph gave no restore token
+  and Chromium's WebRTC capturer, which captures once for its picker's preview and again for the page with the token it got,
+  ran the picker twice for one share (measured with the real frontend 1.22.1 and xdph 1.4.1,
+  `tests/integration/screencast_restore.sh`). A browser's token lasts while it runs (persist_mode 1); an app that asks for a
+  lasting one (persist_mode 2) keeps the choice while the box is ticked, listed in Settings > Privacy > Screen Sharing (one the
+  portal cannot name, app id "", as Other Apps; known
+  limitation: xdph passes the picker neither the app nor the mode). The owner may restore Q14 as answered; spec
+  system-dialogs.md section 3, "After rc6".
   Windows that hide themselves from capture (`no_screen_share`, `config/hypr/grassfield/privacy.lua`) are listed but greyed
   with "This window can't be shared".
 - The picker cannot name the app that asks: xdph receives the app id but passes the picker only `--allow-token` and the window
@@ -1347,6 +1357,14 @@ Decision:
   (GTK 3 `GtkFileChooserDialog`, themed by the above): Qt apps under the `gtk3` theme (Kdenlive, Grassfield's own Qt apps if
   they use QtQuick.Dialogs; they can call the portal directly), LibreOffice. **Owner decision Q3 (2026-10-27): portal apps +
   GTK 3 through `GTK_USE_PORTAL=1`; Qt keeps `gtk3`.**
+  **Audit after the rc6 bug report (2026-11-07; "some save or upload windows still show Omarchy's old file dialog"):** the
+  routing is right and, in the owner's journal from 2026-10-24 to 2026-11-07, the backend forwarded nothing; the callers that
+  show GTK 3's chooser are Qt apps under `gtk3` (Q3), LibreOffice, and Chromium or Electron apps whose first portal call came
+  while the frontend was starting (Chromium's main branch, read on 2026-11-07, keeps that failure for the life of the process;
+  at the owner's login of 2026-11-07 the frontend took 26 s, I-4 of ADR-0041). Qt apps
+  could reach the panel without losing the GTK look through a platform-theme plugin named after the session (measured with a
+  prototype); it is not built: it needs its own ADR and an amendment of Q3. Spec system-dialogs.md section 1, "Which callers
+  reach the panel".
 - Cost: medium (a no-window D-Bus service, its unit, settings-file watching, tests on a private bus with the real frontend
   1.22.1 and fake backends; the 18 generated GTK themes and their contrast test; then the environment lines). Risk: GTK 3
   apps call the portal's `ReadAll` synchronously at start, so a hung Settings backend would delay their start (up to the
@@ -3392,7 +3410,7 @@ review.
 | Q11 | KIO and KWallet dialogs (D-12) | K1 Grassfield takes them / K2 Files' dialogs only, KWallet off for the session / K3 KDE's, themed | « Grassfield les prend (Recommandé) » | K1 |
 | Q12 | Wording of the security-rule amendment (D-9) | the proposed text / gcr prompts only, each other protocol later / write it in step 9 | « Texte proposé (Recommandé) » | the text quoted in D-9 |
 | Q13 | Place of steps 6 (print) and 10 (Bluetooth) | as placed / print after the screenshots / both at the end | « Comme placées (Recommandé) » | as placed |
-| Q14 | "Remember this choice" in the screen-sharing picker | unticked every time / follow xdph's `--allow-token` | « Décoché toujours (Recommandé) » | unticked every time |
+| Q14 | "Remember this choice" in the screen-sharing picker | unticked every time / follow xdph's `--allow-token` | « Décoché toujours (Recommandé) » | unticked every time (in force); an amendment to follow `--allow-token` was proposed 2026-11-07 after the rc6 bug report (D-6) and is built behind `followAllowToken` = false, pending the owner's agreement |
 | Q15 | Screen-sharing request while the session is locked | cancel / hold until the unlock | « Annuler (Recommandé) » | cancel |
 | Q16 | Rename Quit to "Force Quit" in the app menu of a hung app | no, macOS model / yes | « Non, modèle macOS (Recommandé) » | no |
 | Q17 | Which daemon holds the Secret Service in the Grassfield session (D-12) | Q17-a gnome-keyring started with the session / Q17-b KWallet's takeover off for the session / Q17-c as is | « Bloquer KWallet » | Q17-b (not the recommended option) |

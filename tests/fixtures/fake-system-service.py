@@ -417,7 +417,9 @@ def permstore_world(svc):
         "location": {"location": {"org.example.Maps": ["EXACT", "1792800000"], "org.example.Weather": ["NONE", "0"], "../x": ["EXACT", "0"]}},
         "devices": {"camera": {"org.example.Meet": ["yes"], "org.example.Booth": ["ask"]}},
         "screencast": {"00000000-1111-2222-3333-444444444444": {"org.example.Meet": ["yes"]},
-                       "_0000_fake_0000_0000_": {"org.example.Studio": ["yes"]}},
+                       "_0000_fake_0000_0000_": {"org.example.Studio": ["yes"]},
+                       # A host app xdg-desktop-portal 1.22 could not name (xdp-app-info-host.c: ""), with a lasting grant.
+                       "hostToken_0000": {"": ["yes"]}},
     }
     name = "org.freedesktop.impl.portal.PermissionStore"
 

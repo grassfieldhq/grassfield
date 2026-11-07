@@ -1120,8 +1120,10 @@ StateResult privacyState(BusCaller &bus)
                 continue;
             const PermissionTable apps = cast<PermissionTable>(entry.args.value(0));
             for (auto it = apps.cbegin(); it != apps.cend(); ++it) {
-                if (isPortalAppId(it.key()))
-                    saved.append(QJsonObject{{QStringLiteral("app"), it.key()}, {QStringLiteral("token"), token}});
+                // A host app the portal could not name keeps its grant under "" (xdg-desktop-portal 1.22, xdp-app-info-host.c:
+                // no app-*.scope with a desktop entry), and a lasting one must stay removable (privacy.forget goes by token):
+                // listed under "", as is a key no portal writes, whose raw text is never passed on.
+                saved.append(QJsonObject{{QStringLiteral("app"), isPortalAppId(it.key()) ? it.key() : QString()}, {QStringLiteral("token"), token}});
             }
         }
         json.insert(key, saved);

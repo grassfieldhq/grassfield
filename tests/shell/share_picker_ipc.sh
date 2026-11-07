@@ -17,9 +17,10 @@
 #     Socket never connected again after a failed connection): after case 8, after a socket file nobody listens on, and after
 #     a stand-in that gave up because the shell's answer took over 1 s (a slow `qs ipc`: it ran its stock picker), the next
 #     request shows its panel and its answer reaches xdph; each request has its own socket, and none is left once it ended.
-# The panel's privacy defaults (review of PR #83, MINOR 1; owner decision Q14, ADR-0035 7-8): in cases 1 and 2 the panel, as
-# the probe loads it, opens with Remember this choice unticked and unarmed (Share disabled), and is armed after
-# panel.alertArmMs with Remember still unticked, though xdph passed --allow-token.
+# The panel's defaults (review of PR #83, MINOR 1; ADR-0035 7-8; owner decision Q14, whose amendment is held behind followAllowToken): in
+# case 1 the panel, as the probe loads it, opens with Remember this choice unticked though xdph passed --allow-token (owner
+# decision Q14 stands until its amendment is agreed: SharePickerPanel.followAllowToken) and unarmed (Share disabled), and is
+# armed after panel.alertArmMs with Remember still unticked; in case 2 (no --allow-token) it opens unticked too.
 # Step 7b:
 #   9 Selection: an area past its display's logical size is not answered; one inside is `[SELECTION]/region:<display>@x,y,w,h`;
 #  10 a window that hides itself from capture (Hyprland's getprop, faked) is greyed and never answered, another window is;
@@ -53,8 +54,11 @@ cleanup() {
 trap cleanup EXIT
 sig=gf-share-picker
 # The runtime directory is short and of its own: a Unix socket's path holds at most 107 bytes (the picker's channel is
-# <runtime>/grassfield/picker/<32 hex>.sock), and the test's directory can be deep in the tree.
-runtime=$(mktemp -d /tmp/gfspi.XXXXXX)
+# <runtime>/grassfield/picker/<32 hex>.sock), and the test's directory can be deep in the tree. Under TMPDIR when that is short
+# enough (a sandbox may keep /tmp read-only), else /tmp.
+runtime_base=${TMPDIR:-/tmp}
+((${#runtime_base} + 13 + 56 <= 107)) || runtime_base=/tmp
+runtime=$(mktemp -d "$runtime_base/gfspi.XXXXXX")
 mkdir -p "$runtime/hypr/$sig" "$tmp/cache" "$tmp/state" "$tmp/config" "$tmp/cfg" "$tmp/bin" "$tmp/fake" "$tmp/stock"
 chmod 700 "$runtime" "$tmp/cache"
 ((${#runtime} + 56 <= 107)) || { echo "FAIL: share_picker_ipc: the runtime directory $runtime is too long for a socket"; exit 1; }
@@ -154,10 +158,12 @@ printf '[{"name": "DP-1", "width": 800, "height": 600, "scale": 1, "transform": 
 chmod +x "$tmp/stock/hyprland-share-picker"
 # Two windows with Hyprland addresses (4096 = 0x1000, 8192 = 0x2000: the one that hides from capture).
 windows='123456[HC>]org.gnome.TextEditor[HT>]notes.txt[HE>]4096[HA>]777[HC>]firefox[HT>]A page[HE>]8192[HA>]'
-share() { # runs the stand-in as xdph does; sets `standin`
+share() { # runs the stand-in as xdph does (with --allow-token, as Omarchy's xdph.conf has it, unless told 'no-token'); sets `standin`
+  local token=--allow-token
+  [[ ${1:-} != no-token ]] || token=""
   rm -f "$tmp/stock.ran" "$tmp/standin.out"
   env "${base_env[@]}" GRASSFIELD_SHELL_DIR="$tmp/cfg" PATH="$tmp/fake:$PATH" XDPH_WINDOW_SHARING_LIST="$windows" \
-    "$tmp/bin/hyprland-share-picker" --allow-token >"$tmp/standin.out" 2>"$tmp/standin.err" &
+    "$tmp/bin/hyprland-share-picker" ${token:+"$token"} >"$tmp/standin.out" 2>"$tmp/standin.err" &
   standin=$!
 }
 shown_within() { local i; for ((i = 0; i < 60; i++)); do [[ $(state '%(shown)s %(popup)s') == "True sharePicker" ]] && return 0; sleep 0.05; done; return 1; }
@@ -177,7 +183,7 @@ desc="1 the shell accepts, connects, gets xdph's two windows and opens the panel
 check shown_within
 desc="1 the request has its own socket, the only one"
 check test "$(state '%(channels)s')" == 1
-desc="1 the panel opens with Remember this choice unticked and unarmed, Share disabled (xdph passed --allow-token)"
+desc="1 the panel opens with Remember this choice unticked though xdph passed --allow-token (owner decision Q14 until its amendment is agreed), and unarmed, Share disabled"
 check test "$(panel atOpen)" == "remember=False armed=False box=False share=False"
 desc="1 the panel is armed after panel.alertArmMs, Remember this choice still unticked"
 check armed_within
@@ -194,9 +200,9 @@ check gone_within
 check bash -c '[[ ! -e $1/stock.ran && ! -s $1/standin.err ]]' _ "$tmp"
 
 # 2.
-share
+share no-token
 shown_within || true
-desc="2 the panel opens again with Remember this choice unticked and unarmed, after Remember was ticked in case 1"
+desc="2 without --allow-token the panel opens with Remember this choice unticked and unarmed"
 check test "$(panel atOpen)" == "remember=False armed=False box=False share=False"
 desc="2 a second request while the panel is open: busy"
 check test "$(ipc picker request "$(printf '%032x' 1)" "$runtime/grassfield/picker/$(printf '%032x' 2).sock")" == busy

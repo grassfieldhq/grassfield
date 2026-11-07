@@ -571,7 +571,7 @@ st=$(probe privacy-state)
 check "location: Maps allowed (EXACT), Weather not (NONE), the malformed id dropped" py "$st" 'j["location"] == [{"app": "org.example.Maps", "allowed": True}, {"app": "org.example.Weather", "allowed": False}]'
 check "camera: Meet allowed, Booth's \"ask\" is not" py "$st" 'j["camera"] == [{"app": "org.example.Booth", "allowed": False}, {"app": "org.example.Meet", "allowed": True}]'
 check "no background entry and no remote desktop table: none (NotFound is not an error)" py "$st" 'j["background"] == [] and j["remoteDesktop"] == []'
-check "screen sharing: Meet's and Studio's saved selections (a current token beginning with _ too)" py "$st" 'j["screencast"] == [{"app": "org.example.Meet", "token": "'"$token"'"}, {"app": "org.example.Studio", "token": "'"$token2"'"}]'
+check "screen sharing: Meet's and Studio's saved selections (a current token beginning with _ too), and the one of a host app the portal could not name, under \"\"" py "$st" 'j["screencast"] == [{"app": "org.example.Meet", "token": "'"$token"'"}, {"app": "org.example.Studio", "token": "'"$token2"'"}, {"app": "", "token": "hostToken_0000"}]'
 check "the portals: Background exported, RemoteDesktop not" py "$st" 'j["portals"] == {"background": True, "remoteDesktop": False}'
 check "... read with Lookup and List only" bash -c '[[ -z $(grep -v "\"member\": \"\(Lookup\|List\)\"" "$1") ]]' _ "$work/permstore.log"
 out=$(probe act '{"op":"privacy.allow","category":"camera","app":"org.example.Booth","on":true}')
@@ -587,6 +587,8 @@ out=$(probe act '{"op":"privacy.forget","kind":"screencast","token":"'"$token"'"
 check "remove the saved selection: ok ($out), Delete('screencast', token)" logged permstore Delete / "'screencast', '$token'"
 out=$(probe act '{"op":"privacy.forget","kind":"screencast","token":"'"$token2"'"}')
 check "remove the one with a current token: ok ($out), Delete('screencast', token)" logged permstore Delete / "'screencast', '$token2'"
+out=$(probe act '{"op":"privacy.forget","kind":"screencast","token":"hostToken_0000"}')
+check "remove the unnamed host app's: ok ($out), Delete('screencast', token)" logged permstore Delete / "'screencast', 'hostToken_0000'"
 st=$(probe privacy-state)
 check "... and the store now reads every change" py "$st" 'j["camera"][0] == {"app": "org.example.Booth", "allowed": True} and [a["allowed"] for a in j["location"]] == [False, True] and j["background"] == [{"app": "org.example.Meet", "allowed": False}] and j["screencast"] == []'
 out=$(probe act '{"op":"privacy.forget","kind":"screencast","token":"'"$token"'"}')

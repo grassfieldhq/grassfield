@@ -31,6 +31,9 @@ QtObject {
     }
 
     function describe(app: string): var {
+        // An app the portal could not name (a saved selection only, Privacy.parse).
+        if (app === "")
+            return {name: qsTr("Other Apps"), icon: "", host: false, devices: false};
         let found = {name: app, icon: "", host: false};
         let named = false;
         const entries = [];

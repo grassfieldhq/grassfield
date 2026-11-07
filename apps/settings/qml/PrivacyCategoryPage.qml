@@ -18,7 +18,8 @@ SettingsPage {
 
     readonly property bool saved: Privacy.SAVED.indexOf(root.key) >= 0
     readonly property var apps: grants.list(root.key)
-    property string selectedApp: ""
+    // The selected app's id, null for none ("" is an app: one the portal could not name, listed as Other Apps).
+    property var selectedApp: null
     readonly property var selected: root.apps.find(a => a.app === root.selectedApp) ?? null
 
     // What a category's switch or list means, under the list. Only what the portal enforces: a switch answers the requests made
@@ -120,7 +121,7 @@ SettingsPage {
                         title: modelData.name
                         readonly property string count: modelData.tokens.length === 1 ? qsTr("1 saved choice") : qsTr("%1 saved choices").arg(modelData.tokens.length)
                         // An id that differs from the name says which app it is (a desktop entry can borrow a name).
-                        subtitle: modelData.name !== modelData.app ? modelData.app + " · " + count : count
+                        subtitle: modelData.app !== "" && modelData.name !== modelData.app ? modelData.app + " · " + count : count
                         showToggle: false
                         selected: modelData.app === root.selectedApp
                         onClicked: {
