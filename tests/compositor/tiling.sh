@@ -880,7 +880,8 @@ png, scale = sys.argv[1], float(sys.argv[2])
 tokens = [tuple(int(t.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)) for t in sys.argv[3:5]]
 x0, row, w, moved = (int(v) for v in sys.argv[5:9])
 def px(x, y):
-    out = subprocess.run(["magick", png, "-format", "%[hex:p{%d,%d}]" % (int(x * scale), int(y * scale)), "info:"], capture_output=True, text=True).stdout
+    spot = "%[hex:p{" + str(int(x * scale)) + "," + str(int(y * scale)) + "}]"
+    out = subprocess.run(["magick", png, "-format", spot, "info:"], capture_output=True, text=True).stdout
     return tuple(int(out[i:i + 2], 16) for i in (0, 2, 4)) if len(out) >= 6 else None
 def strip(p):
     return p is not None and any(max(abs(a - b) for a, b in zip(p, t)) <= 8 for t in tokens)
