@@ -10,8 +10,8 @@ hl.window_rule({ name = "gf-float-all", match = { class = ".*" }, float = true }
 -- suppression. Two rules make the negation of those matches (any class but Grassfield's and the third-party list below;
 -- or no xdg tag and not in that list) without reading the tag itself: the tag is a dynamic effect, the suppression a
 -- static one read at map. tests/shell/client_chrome_rules.sh checks that both negations are built from the two lists.
-hl.window_rule({ name = "gf-no-maximize-event", match = { class = "negative:^(org\\.grassfield\\.(Files|Settings|Preview|Store|Activity|Memos)|chromium|firefox|org\\.mozilla\\.firefox|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$" }, suppress_event = "maximize" })
-hl.window_rule({ name = "gf-no-maximize-event-untagged", match = { class = "negative:^(chromium|firefox|org\\.mozilla\\.firefox|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$", xdg_tag = "negative:.+" }, suppress_event = "maximize" })
+hl.window_rule({ name = "gf-no-maximize-event", match = { class = "negative:^(org\\.grassfield\\.(Files|Settings|Preview|Store|Activity|Memos)|chromium|google-chrome|firefox|org\\.mozilla\\.firefox|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$" }, suppress_event = "maximize" })
+hl.window_rule({ name = "gf-no-maximize-event-untagged", match = { class = "negative:^(chromium|google-chrome|firefox|org\\.mozilla\\.firefox|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$", xdg_tag = "negative:.+" }, suppress_event = "maximize" })
 
 -- Client chrome (ADR-0015): Grassfield apps that draw their own lights and toolbar are tagged
 -- `grassfield-client-chrome`; the compositor plugin draws no titlebar on them (plugin work item P1, docs/specs/compositor.md)
@@ -25,11 +25,12 @@ hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield
 -- Third-party apps that draw their own window controls (GF-056; ADR-0015 amendment 2026-10-25). macOS: a window has one
 -- set of traffic lights, close, minimize, zoom, top-left; an app that draws its own title bar gets no second bar from the
 -- system. Since the 1.0.0-rc6 report (two title bars on Telegram and the ArtCraft suite) the compositor plugin reads what each
--- client negotiated (docs/specs/compositor.md P9): a client that asks for client-side decorations (xdg-decoration, or KDE's
--- server-decoration where GTK header bars announce themselves) or negotiates nothing (a Qt frameless window) gets the same tag
--- from the plugin, whatever its app id; Google Chrome and Telegram need no entry here. The list below stays as the fallback
--- for the apps it names (and their maximize exemption above), as it was written when the request was thought unreadable
--- (it sits in a private map of Hyprland 0.56.2, which P9 reaches). Only apps whose
+-- client negotiated (docs/specs/compositor.md P9) and gives the same tag, whatever the app id, only where the request proves a
+-- bar of the app's own: a KDE server-decoration client request (GTK header bars) or a decoration manager bound by a client
+-- holding no decoration object (a Qt frameless window: Telegram, which therefore needs no entry here, and is better
+-- without one: with its "Use system window frame" it asks for server-side decorations and draws no bar). An xdg client_side
+-- request proves nothing (foot -o csd.preferred=client asks it and draws nothing under Hyprland), so Chromium-family browsers
+-- and Electron apps stay this list's. Only apps whose
 -- own close, minimize and zoom were seen to work in the nested session with the session's GTK button layout
 -- (close,minimize,maximize: on the left, packaging/dconf/grassfield.d/20-window-buttons.conf;
 -- tests/compositor/third_party_chrome.sh): Chromium's browser window (its --app web apps draw no frame and keep the
@@ -42,8 +43,9 @@ hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield
 -- Firefox's "Title Bar" option on (Customize Toolbar), Firefox draws no controls and no plugin bar appears either, a window
 -- with none (checked with a stand-in window: tagged, no strip). Firefox's default is its own frame (CSD), the case the
 -- screenshot shows; a user who turns "Title Bar" on gets no controls until they turn it off again (or the list drops it).
--- Google Chrome is left out: its Wayland app id (google-chrome is expected, from its desktop file) is not evidenced here;
--- it negotiates client-side decorations as Chromium does, so the plugin tags it (P9).
+-- Google Chrome (`google-chrome`, the app id of its desktop file and the class Omarchy's own browser rule names,
+-- /usr/share/omarchy/default/hypr/apps/browser.lua) joined on the owner's 1.0.0-rc6 report: it is Chromium's code, so its frame
+-- and controls are Chromium's, seen here; not run on the dev machine (not installed): the owner checks it.
 -- The traffic lights themselves come from the Grassfield GTK themes (ui/tools/gen-gtk-themes.py, window.* tokens), which
 -- GTK 3 and plain GTK 4 apps and Chromium's GTK appearance read (measured nested at 1.25: tests/compositor/gtk_lights.sh;
 -- a fresh Chromium profile is "Classic" and draws plain grey buttons: Chromium gives new profiles its GTK appearance only on
@@ -64,7 +66,7 @@ hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield
 -- controls: take it out of this list. Known limit (ADR-0015 amendment 2026-10-25): the GTK apps and Chromium draw the
 -- buttons of the GTK button layout, so a user layout without minimize or zoom leaves them a partial set (none without
 -- any button).
-hl.window_rule({ name = "gf-client-chrome-third-party", match = { class = "^(chromium|firefox|org\\.mozilla\\.firefox|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$" }, tag = "+grassfield-client-chrome" })
+hl.window_rule({ name = "gf-client-chrome-third-party", match = { class = "^(chromium|google-chrome|firefox|org\\.mozilla\\.firefox|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$" }, tag = "+grassfield-client-chrome" })
 
 -- The Open and Save panels (grassfield-portal, ADR-0035 D-4) draw a sheet's frame and no lights; a panel takes the Wayland app
 -- id of the application it belongs to (its Dock tile, its menu bar), so its xdg tag alone says it is one: no plugin

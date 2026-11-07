@@ -29,9 +29,9 @@ tp_class=$(sed -n 's/.*name = "gf-client-chrome-third-party", match = { class = 
 check "the third-party client-chrome rule matches a class list (GF-056)" $? "$tp_class"
 tp_re=${tp_class//\\\\/\\}
 okc=0
-for id in chromium firefox org.mozilla.firefox md.obsidian.Obsidian org.gnome.Evince org.gnome.Nautilus; do [[ $id =~ $tp_re ]] || okc=1; done
-for id in google-chrome firefox-esr Firefox org.mozillafirefox; do [[ $id =~ $tp_re ]] && okc=1; done
-check "the third-party list holds Firefox (firefox, org.mozilla.firefox; owner's rc1-22 screenshot) and not google-chrome (no evidence of its app id)" $okc
+for id in chromium google-chrome firefox org.mozilla.firefox md.obsidian.Obsidian org.gnome.Evince org.gnome.Nautilus; do [[ $id =~ $tp_re ]] || okc=1; done
+for id in google-chrome-beta chrome-example.com__-Default firefox-esr Firefox org.mozillafirefox; do [[ $id =~ $tp_re ]] && okc=1; done
+check "the third-party list holds Firefox (firefox, org.mozilla.firefox; owner's rc1-22 screenshot) and Google Chrome (google-chrome, as Omarchy's browser rule names it), not an app window (chrome-<site>-Default)" $okc
 # Every Grassfield app that draws its own chrome (its main.cpp makes a ChromeTagger, apps/windowchrome.h) is in the rule,
 # under each app id it gives itself; Glance alone has its own rule, without a titlebar (integrator, PR #47: Activity Monitor
 # showed two sets of lights). A missing app gets the plugin's titlebar over its toolbar.
