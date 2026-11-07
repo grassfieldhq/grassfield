@@ -92,9 +92,14 @@ ShellRoot {
             files.clipboardUriText = "OTHER";
             files.clipboardPaths = [root.outside + "/b/Dup.txt"];
             files.paste();
+            // A cut where every move fails (a hidden file of that name is there) leaves the clipboard alone.
             files.clipboardCut = true;
             files.clipboardUriText = "SAME";
-            files.clipboardPaths = [root.outside + "/.secret", root.outside + "/p/q/..", root.outside + "/p/q/../q", root.outside + "/Moved.txt"];
+            files.clipboardPaths = [root.outside + "/.secret"];
+            files.paste();
+            files.clipboardCut = true;
+            files.clipboardUriText = "SAME";
+            files.clipboardPaths = [ root.outside + "/p/q/..", root.outside + "/p/q/../q", root.outside + "/Moved.txt"];
             files.paste();
             files.readMeta(m => {
                 root.meta = m;

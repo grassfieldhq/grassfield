@@ -23,7 +23,7 @@ printf 'two\n' > "$tmp/outside/b/Dup.txt"
 # wl-copy is a recorder and wl-paste prints a fixed list ("SAME"): the test sees when the clipboard is emptied, and
 # nothing reaches a real clipboard.
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\n' "$tmp/wl-copy.log" > "$tmp/bin/wl-copy"
-printf '#!/bin/sh\nprintf SAME\n' > "$tmp/bin/wl-paste"
+printf '#!/bin/sh\ncase "$*" in *"--type text/uri-list"*) printf SAME ;; esac\n' > "$tmp/bin/wl-paste"
 chmod +x "$tmp/bin/wl-copy" "$tmp/bin/wl-paste"
 chmod 700 "$tmp/runtime"
 mkdir -p "$tmp/cfg"
