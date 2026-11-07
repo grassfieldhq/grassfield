@@ -54,8 +54,11 @@ cleanup() {
 trap cleanup EXIT
 sig=gf-share-picker
 # The runtime directory is short and of its own: a Unix socket's path holds at most 107 bytes (the picker's channel is
-# <runtime>/grassfield/picker/<32 hex>.sock), and the test's directory can be deep in the tree.
-runtime=$(mktemp -d /tmp/gfspi.XXXXXX)
+# <runtime>/grassfield/picker/<32 hex>.sock), and the test's directory can be deep in the tree. Under TMPDIR when that is short
+# enough (a sandbox may keep /tmp read-only), else /tmp.
+runtime_base=${TMPDIR:-/tmp}
+((${#runtime_base} + 13 + 56 <= 107)) || runtime_base=/tmp
+runtime=$(mktemp -d "$runtime_base/gfspi.XXXXXX")
 mkdir -p "$runtime/hypr/$sig" "$tmp/cache" "$tmp/state" "$tmp/config" "$tmp/cfg" "$tmp/bin" "$tmp/fake" "$tmp/stock"
 chmod 700 "$runtime" "$tmp/cache"
 ((${#runtime} + 56 <= 107)) || { echo "FAIL: share_picker_ipc: the runtime directory $runtime is too long for a socket"; exit 1; }

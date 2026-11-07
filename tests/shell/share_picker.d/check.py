@@ -36,7 +36,11 @@ def write(path, text, mode=0o755):
 bindir, fake, stock = (os.path.join(tmp, d) for d in ("bin", "fake", "stock"))
 for d in (bindir, fake, stock):
     os.makedirs(d)
-run = tempfile.mkdtemp(prefix="gfsp-", dir="/tmp")
+# Under TMPDIR when that is short enough (a sandbox may keep /tmp read-only), else /tmp.
+base = os.environ.get("TMPDIR") or "/tmp"
+if len(os.path.join(base, "gfsp-xxxxxxxx", "grassfield", "picker", "0" * 32 + ".sock").encode()) > 107:
+    base = "/tmp"
+run = tempfile.mkdtemp(prefix="gfsp-", dir=base)
 os.chmod(run, 0o700)
 atexit.register(shutil.rmtree, run, True)
 check(len(os.path.join(run, "grassfield", "picker", "0" * 32 + ".sock").encode()) <= 107, "the channel's path fits a Unix socket")
