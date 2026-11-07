@@ -1047,12 +1047,13 @@ TEST(TilingFitIntoArea, NeverUnderTheWindowsMinimum) {
     c.minW = 1400;
     c.minH = 700;
     c.band = 32;
-    const auto r = fitIntoArea(Rect{100, 100, 1500, 900}, area, c);
-    ASSERT_TRUE(r.has_value());
-    EXPECT_EQ(r->w, 1400) << "its minimum width, wider than the area";
-    EXPECT_EQ(r->h, 732) << "its minimum surface and its titlebar band";
-    EXPECT_EQ(r->x, 0);
-    EXPECT_EQ(r->y, 24) << "its titlebar still right below the menu bar";
+    const auto fitted = fitIntoArea(Rect{100, 100, 1500, 900}, area, c);
+    ASSERT_TRUE(fitted.has_value());
+    const Rect r = fitted.value_or(Rect{});
+    EXPECT_EQ(r.w, 1400) << "its minimum width, wider than the area";
+    EXPECT_EQ(r.h, 732) << "its minimum surface and its titlebar band";
+    EXPECT_EQ(r.x, 0);
+    EXPECT_EQ(r.y, 24) << "its titlebar still right below the menu bar";
 }
 
 // ADR-0036 D67: an output unplugged left a window off every output (integrator nested pass of 12e3dd3: x = -2919).
