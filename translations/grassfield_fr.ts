@@ -3005,10 +3005,6 @@
         <translation>Coller %1 éléments</translation>
     </message>
     <message>
-        <source>Paste</source>
-        <translation>Coller</translation>
-    </message>
-    <message>
         <source>Ctrl+V</source>
         <translation>Ctrl+V</translation>
     </message>
@@ -3109,6 +3105,18 @@
         <translation>Ctrl+Super+N</translation>
     </message>
     <message>
+        <source>Cut “%1”</source>
+        <translation>Couper « %1 »</translation>
+    </message>
+    <message>
+        <source>Cut %1 Items</source>
+        <translation>Couper %1 éléments</translation>
+    </message>
+    <message>
+        <source>Ctrl+X</source>
+        <translation>Ctrl+X</translation>
+    </message>
+    <message>
         <source>Copy “%1” as Pathname</source>
         <translation>Copier « %1 » en tant que chemin d’accès</translation>
     </message>
@@ -3127,6 +3135,10 @@
     <message>
         <source>New Terminal at Folder</source>
         <translation>Nouveau terminal au dossier</translation>
+    </message>
+    <message>
+        <source>Paste Item</source>
+        <translation>Coller l’élément</translation>
     </message>
     <message>
         <source>Move %1 Items Here</source>
@@ -6797,12 +6809,24 @@
         <translation>Ajouter à la barre latérale</translation>
     </message>
     <message>
+        <source>Cut %1 Items</source>
+        <translation>Couper %1 éléments</translation>
+    </message>
+    <message>
+        <source>Cut “%1”</source>
+        <translation>Couper « %1 »</translation>
+    </message>
+    <message>
         <source>Copy %1 Items as Pathnames</source>
         <translation>Copier %1 éléments en tant que chemins d’accès</translation>
     </message>
     <message>
         <source>Copy as Pathname</source>
         <translation>Copier en tant que chemin d’accès</translation>
+    </message>
+    <message>
+        <source>Paste Item</source>
+        <translation>Coller l’élément</translation>
     </message>
     <message>
         <source>Move %1 Items Here</source>

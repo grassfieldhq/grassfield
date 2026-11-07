@@ -926,6 +926,8 @@ FocusScope {
                 root.endSearch();
             else if (root.chooser)
                 root.chooser.cancel();
+            else if (root.app.cutPending)
+                root.app.cancelCut(); // Esc cancels a cut not pasted yet (the items no longer fade)
             else
                 model.clearSelection();
             event.accepted = true;
@@ -1058,6 +1060,9 @@ FocusScope {
         if (count > 1 && model.writable && !model.isSearch)
             items.push({id: "newFolderWithItems", text: qsTr("New Folder with Selection (%1 Items)").arg(count), shortcut: qsTr("Ctrl+Super+N")});
         items.push({separator: true});
+        // Cut (owner request 2026-11-07, which wins over the Finder here): the items fade until Paste moves them; Esc or a new
+        // Copy cancels.
+        items.push({id: "cut", text: count === 1 ? qsTr("Cut “%1”") : qsTr("Cut %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Ctrl+X"), enabled: editable});
         // Copy as Pathname is Copy's Option alternate, as in the Finder: shown while Alt is held (Edit > Copy as Pathname and
         // Ctrl+Alt+C stay), so that its long label never widens the menu.
         items.push({id: "copy", text: count === 1 ? qsTr("Copy “%1”") : qsTr("Copy %1 Items").arg(count), name: count === 1 ? name : "", shortcut: qsTr("Ctrl+C"),
@@ -1097,8 +1102,11 @@ FocusScope {
         items.push({id: "info", text: qsTr("Get Info"), shortcut: qsTr("Ctrl+I")});
         items.push({separator: true});
         const n = root.app.clipboardCount;
-        items.push({id: "paste", text: n > 1 ? qsTr("Paste %1 Items").arg(n) : qsTr("Paste"), shortcut: qsTr("Ctrl+V"), enabled: root.app.canPaste && model.writable});
-        items.push({id: "moveHere", text: n > 1 ? qsTr("Move %1 Items Here").arg(n) : qsTr("Move Item Here"), shortcut: qsTr("Ctrl+Alt+V"), enabled: root.app.canPaste && model.writable});
+        const pastable = root.app.canPaste && model.writable;
+        // Paste copies what was copied and moves what was cut; while Alt (Option) is held it is Move Item Here, which moves what
+        // was copied (the Finder's Edit menu).
+        items.push({id: "paste", text: n > 1 ? qsTr("Paste %1 Items").arg(n) : qsTr("Paste Item"), shortcut: qsTr("Ctrl+V"), enabled: pastable,
+                    alternate: {id: "moveHere", text: n > 1 ? qsTr("Move %1 Items Here").arg(n) : qsTr("Move Item Here"), shortcut: qsTr("Ctrl+Alt+V"), enabled: pastable}});
         items.push({separator: true});
         items.push(root.viewSubmenu());
         items.push({id: "useGroups", text: qsTr("Use Groups"), shortcut: qsTr("Ctrl+Super+0"), checked: root.groupBy > 0});
@@ -1290,6 +1298,9 @@ FocusScope {
             break;
         case "copy":
             root.copySelection(false);
+            break;
+        case "cut":
+            root.copySelection(true);
             break;
         case "paste":
             root.paste();

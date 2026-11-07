@@ -478,7 +478,14 @@ Window {
         onActivated: win.tab.copySelection(false)
         onActivatedAmbiguously: activated()
     }
-    // Decision F-6: Cmd+X does nothing to files (as in the Finder); Move Item Here moves the copied items.
+    // Cut (owner request 2026-11-07, which wins over the Finder here): Paste then moves the items; Esc or a new Copy cancels.
+    Shortcut {
+        sequence: "Ctrl+X"
+        enabled: !win.childIsKey
+        onActivated: win.tab.copySelection(true)
+        onActivatedAmbiguously: activated()
+    }
+    // Move Item Here (the Finder's ⌥⌘V): the copied items moved into the shown folder.
     Shortcut {
         sequence: "Ctrl+Alt+V"
         enabled: !win.childIsKey

@@ -464,6 +464,12 @@ QString equivalentName(const QStringList &names, const QString &name)
     return {};
 }
 
+bool gnomeCopiedFilesCut(const QByteArray &list)
+{
+    const int end = list.indexOf('\n');
+    return (end < 0 ? list : list.left(end)).trimmed() == "cut";
+}
+
 QString trashInfoOriginalPath(const QByteArray &trashinfo)
 {
     bool inGroup = false;

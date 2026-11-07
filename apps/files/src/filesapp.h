@@ -80,6 +80,8 @@ class FilesApp : public QObject
     Q_PROPERTY(QString redoText READ redoText NOTIFY undoChanged)
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY clipboardChanged)
     Q_PROPERTY(int clipboardCount READ clipboardCount NOTIFY clipboardChanged)
+    // The clipboard holds items cut and not pasted yet (by Files or another file manager; decision F-18).
+    Q_PROPERTY(bool cutPending READ cutPending NOTIFY clipboardChanged)
     Q_PROPERTY(QString activity READ activity NOTIFY activityChanged)
     Q_PROPERTY(int activityPercent READ activityPercent NOTIFY activityChanged)
     // The progress window (FP-68, Finder-Copy): [{id, title, detail, percent}] of the running copies, moves and deletions,
@@ -154,6 +156,7 @@ public:
     QString redoText() const;
     bool canPaste() const;
     int clipboardCount() const;
+    bool cutPending() const { return !m_cutUrls.isEmpty(); }
     QString activity() const { return m_activity; }
     int activityPercent() const { return m_activityPercent; }
     QVariantList jobs() const { return m_jobList; }
@@ -272,7 +275,11 @@ public:
     Q_INVOKABLE void glance(const QList<QUrl> &urls);
 
     // Operations. `folder` (a FolderModel, may be null) selects the created items when they appear.
+    // Copy, or Cut (decision F-18, owner request 2026-11-07): the items fade in every listing until Paste moves them; the
+    // clipboard says "cut" the KDE way (application/x-kde-cutselection) and the GNOME way (x-special/gnome-copied-files).
     Q_INVOKABLE void copyToClipboard(const QList<QUrl> &urls, bool cut);
+    // Esc after Cut: the clipboard is emptied when it still holds the cut items (nothing moves; they no longer fade).
+    Q_INVOKABLE void cancelCut();
     Q_INVOKABLE void paste(const QUrl &destination, QObject *folder);
     // Move Item Here (⌥⌘V, decision F-6): the copied items moved into `destination` (undoable); Files has no Cut.
     Q_INVOKABLE void moveHere(const QUrl &destination, QObject *folder);
@@ -474,6 +481,8 @@ public:
     int folderStyleRevision() const { return m_folderStyleRevision; }
 
 signals:
+    // The cut items changed (listings fade them).
+    void cutUrlsChanged();
     void removableTextChanged();
     void appearanceChanged();
     void undoChanged();
@@ -604,6 +613,9 @@ private:
     QStringList m_knownTags;
     // Tags removed from the sidebar (not listed again when seen), persisted as tags/hidden.
     QStringList m_hiddenTags;
+    // The items the clipboard holds cut (read on each clipboard change), told to every listing.
+    QSet<QUrl> m_cutUrls;
+    void readClipboardCut();
     // Favorites as the user edited them: their own folders (sidebar/favorites) and the standard places removed
     // (sidebar/hidden).
     QList<QUrl> m_sidebarFolders;

@@ -14,12 +14,16 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QJSEngine>
+#include <QMimeData>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
 
+#include <KIO/FileUndoManager>
 #include <KService>
 #include <KSycoca>
 
@@ -546,4 +550,82 @@ TEST(SidebarFavorites, AddToSidebarKeepsFoldersAndRemoveHidesStandardPlaces)
     app.addToSidebar({home}, -1);
     EXPECT_TRUE(app.inSidebar(home));
     EXPECT_EQ(places->pinnedCount(), 0) << "listed again in its own place, not as a folder of the user's";
+}
+
+// Cut (owner request 2026-11-07, decision F-18): Cut fades the items (FolderModel's cut role) until Paste moves them through
+// KIO's paste, which empties the clipboard, and Edit > Undo takes the move back; a cut from a GNOME file manager
+// (x-special/gnome-copied-files) is a cut too; a new Copy and Esc (cancelCut) cancel it. Offscreen, the clipboard is the
+// process's own. Each move is undone before the next step, so KIO's undo history is left as it was found.
+TEST(CutAndPaste, CutFadesAndPasteMovesWhateverManagerCut)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    for (const char *name : {"a.txt", "b.txt", "c.txt"}) {
+        QFile f(dir.filePath(QString::fromLatin1(name)));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(name);
+    }
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("to")));
+    const auto url = [&](const QString &rel) { return QUrl::fromLocalFile(dir.filePath(rel)); };
+    const auto here = [&](const char *rel) { return QFileInfo::exists(dir.filePath(QString::fromLatin1(rel))); };
+    FilesApp app(QList<QUrl>{});
+    QStringList told;
+    QObject::connect(&app, &FilesApp::operationFailed, &app, [&](const QString &message) { told << message; });
+    auto *model = qobject_cast<FolderModel *>(app.createFolderModel(&app));
+    ASSERT_NE(model, nullptr);
+    model->setUrl(QUrl::fromLocalFile(dir.path()));
+    ASSERT_TRUE(waitFor([&] { return !model->loading() && model->count() == 4; }));
+    const auto cutShown = [&](const char *name) {
+        for (int r = 0; r < model->count(); ++r)
+            if (model->nameAt(r) == QLatin1String(name))
+                return model->data(model->index(r, 0), FolderModel::CutRole).toBool();
+        return false;
+    };
+    const auto undoMove = [&](const char *back) {
+        if (!waitFor([&] { return app.canUndo(); }))
+            return false;
+        app.undo();
+        return waitFor([&] { return here(back); });
+    };
+
+    app.copyToClipboard({url(QStringLiteral("a.txt"))}, true);
+    EXPECT_TRUE(app.cutPending());
+    EXPECT_TRUE(cutShown("a.txt"));
+    EXPECT_FALSE(cutShown("b.txt"));
+    // Both conventions are on the clipboard, for the other file managers.
+    const QMimeData *data = QGuiApplication::clipboard()->mimeData();
+    EXPECT_EQ(data->data(QStringLiteral("application/x-kde-cutselection")), QByteArray("1"));
+    EXPECT_TRUE(data->data(QStringLiteral("x-special/gnome-copied-files")).startsWith("cut\n"));
+    app.paste(url(QStringLiteral("to")), nullptr);
+    ASSERT_TRUE(waitFor([&] { return here("to/a.txt") && !app.cutPending(); }));
+    EXPECT_FALSE(here("a.txt")) << "moved, not copied";
+    EXPECT_FALSE(app.canPaste()) << "a cut is pasted once";
+    EXPECT_TRUE(undoMove("a.txt")) << "Undo takes the move back; told: " << told.join(QLatin1Char('|')).toStdString();
+    EXPECT_FALSE(here("to/a.txt"));
+
+    // A GNOME file manager's cut: Files moves it too, and fades it meanwhile.
+    auto *gnome = new QMimeData;
+    gnome->setUrls({url(QStringLiteral("b.txt"))});
+    gnome->setData(QStringLiteral("x-special/gnome-copied-files"), "cut\n" + url(QStringLiteral("b.txt")).toEncoded());
+    QGuiApplication::clipboard()->setMimeData(gnome);
+    EXPECT_TRUE(app.cutPending());
+    ASSERT_TRUE(waitFor([&] { return cutShown("b.txt"); }));
+    app.paste(url(QStringLiteral("to")), nullptr);
+    ASSERT_TRUE(waitFor([&] { return here("to/b.txt"); }));
+    EXPECT_FALSE(here("b.txt"));
+    EXPECT_TRUE(undoMove("b.txt")) << "told: " << told.join(QLatin1Char('|')).toStdString();
+
+    // A new Copy cancels the cut; so does Esc (cancelCut), which empties the clipboard.
+    app.copyToClipboard({url(QStringLiteral("c.txt"))}, true);
+    ASSERT_TRUE(waitFor([&] { return cutShown("c.txt"); }));
+    app.copyToClipboard({url(QStringLiteral("c.txt"))}, false);
+    EXPECT_FALSE(app.cutPending());
+    EXPECT_FALSE(cutShown("c.txt"));
+    app.copyToClipboard({url(QStringLiteral("c.txt"))}, true);
+    EXPECT_TRUE(app.cutPending());
+    app.cancelCut();
+    EXPECT_FALSE(app.cutPending());
+    EXPECT_FALSE(app.canPaste());
+    EXPECT_FALSE(cutShown("c.txt"));
+    EXPECT_TRUE(here("c.txt")) << "cancelling moves nothing";
 }

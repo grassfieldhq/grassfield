@@ -159,6 +159,17 @@ TestCase {
         property bool canUndo: false
         property bool canRedo: false
         property bool canPaste: false
+        // Cut (decision F-18): what reached the clipboard, whether a cut waits for its paste, and Esc's cancels.
+        property var clipboardWrites: []
+        property bool cutPending: false
+        property int cutsCancelled: 0
+        function copyToClipboard(urls: var, cut: bool): void {
+            fakeApp.clipboardWrites = fakeApp.clipboardWrites.concat([{urls: urls.map(u => String(u)), cut: cut}]);
+        }
+        function cancelCut(): void {
+            fakeApp.cutsCancelled += 1;
+            fakeApp.cutPending = false;
+        }
         property int clipboardCount: 0
         // Move Item Here and Empty Trash (decision F-6, FP-51): what was asked.
         property var movedHere: []
@@ -543,24 +554,49 @@ TestCase {
         tab.setSearch("");
     }
 
-    // Decision F-6: no Cut for files; Move Item Here moves the copied items into the shown folder. Empty Trash is never
-    // offered in a dev session (ADR-0011), whatever asks for it.
-    function test_moveItemHereAndNoCut() {
+    // Cut (owner request 2026-11-07, decision F-18, over the Finder's F-6): Cut before Copy in the item menu, Ctrl+X, and Esc
+    // cancels a cut not pasted yet before it clears the selection. The Finder's way stays: in the folder's menu Paste turns
+    // into Move Item Here while Alt is held (its Option alternate). Empty Trash is never offered in a dev session (ADR-0011),
+    // whatever asks for it.
+    function test_cutAndMoveItemHere() {
         const files = test.openFiles(false);
         const tab = files.windows[0].tab;
         const folder = tab.folder;
         folder.selected = [0];
+        folder.selectedCount = 1;
         const items = tab.itemMenu(folder);
-        verify(!items.some(i => i.id === "cut"), "no Cut for files");
+        const ids = items.map(i => i.id ?? "-");
+        const cut = items.find(i => i.id === "cut");
+        verify(cut !== undefined, "Cut for files");
+        compare(cut.shortcut, "Ctrl+X");
+        verify(cut.enabled, "in a writable folder");
+        compare(ids.indexOf("copy"), ids.indexOf("cut") + 1, "right before Copy");
+        fakeApp.clipboardWrites = [];
+        tab.runAction("cut", folder);
+        compare(fakeApp.clipboardWrites, [{urls: [String(folder.urlAt(0))], cut: true}]);
+        keyClick(Qt.Key_X, Qt.ControlModifier);
+        compare(fakeApp.clipboardWrites.length, 2, "Ctrl+X cuts");
+        verify(fakeApp.clipboardWrites[1].cut);
+        // Esc cancels the cut first.
+        fakeApp.cutPending = true;
+        fakeApp.cutsCancelled = 0;
+        tab.focusView();
+        keyClick(Qt.Key_Escape);
+        compare(fakeApp.cutsCancelled, 1, "Esc cancels the cut");
         const copy = items.find(i => i.id === "copy");
         compare(copy.alternate.id, "copyPath", "Copy as Pathname is Copy's Alt alternate (the Finder's Option item)");
         verify(!items.some(i => i.id === "copyPath"), "not a row of its own");
         fakeApp.canPaste = true;
         fakeApp.clipboardCount = 2;
         const background = tab.backgroundMenu(folder);
-        const move = background.find(i => i.id === "moveHere");
-        verify(move !== undefined, "Move Item Here in the folder's menu");
+        verify(!background.some(i => i.id === "moveHere"), "Move Item Here is no row of its own");
+        const paste = background.find(i => i.id === "paste");
+        compare(paste.text, "Paste 2 Items");
+        const move = paste.alternate;
+        verify(move !== undefined, "Move Item Here is Paste's Alt alternate (the Finder's Option item)");
+        compare(move.id, "moveHere");
         compare(move.text, "Move 2 Items Here");
+        compare(move.shortcut, "Ctrl+Alt+V");
         fakeApp.movedHere = [];
         tab.runAction("moveHere", folder);
         compare(fakeApp.movedHere, [String(folder.url)]);

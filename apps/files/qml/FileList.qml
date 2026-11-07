@@ -301,6 +301,8 @@ FocusScope {
             required property string folderColor
             required property string folderGlyph
             required property bool hidden
+            // Cut and not pasted yet (FilesApp, the clipboard): drawn faded like a hidden item until Paste moves it.
+            required property bool cut
             // A file the Open or Save panel cannot take (FolderModel.chooser).
             required property bool dimmed
             required property var tagColors
@@ -312,7 +314,7 @@ FocusScope {
 
             width: list.contentWidth
             height: Tokens.filesListRowHeight
-            opacity: row.dimmed ? Tokens.materialDisabledOpacity : row.hidden ? Tokens.filesHiddenOpacity : 1
+            opacity: row.dimmed ? Tokens.materialDisabledOpacity : row.hidden || row.cut ? Tokens.filesHiddenOpacity : 1
             Accessible.role: Accessible.Row
             Accessible.name: DisplayName.text(row.name)
             Accessible.description: [row.modifiedText, row.sizeText, row.kind].join(", ")

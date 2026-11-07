@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtTest
+import Grassfield.Ui
 import "../../apps/files/qml"
 
 // grassfield-files column view (apps/files/qml/ColumnView.qml) on a stand-in listing: a double-click opens a file, a
@@ -78,7 +79,7 @@ TestCase {
                 const rows = [["photo.png", false], ["Folder", true], ["note.txt", false], ["\u05e9\u05dc\u05d5\u05dd.txt", false], ["Other", true]];
                 for (const r of rows) {
                     listing.append({name: r[0], url: "file:///sandbox/" + r[0], iconName: "", emblem: "", selected: false, isDir: r[1],
-                                    folderColor: "", folderGlyph: "", hidden: false, dimmed: false, tagColors: []});
+                                    folderColor: "", folderGlyph: "", hidden: false, cut: false, dimmed: false, tagColors: []});
                 }
             }
         }
@@ -476,5 +477,18 @@ TestCase {
         compare(columns.columnCount, 1, "a file in the first column ends the columns after it");
         compare(listing.wishes[listing.wishes.length - 1], "", "and the column, now the last, wants nothing");
         backToTheSandbox();
+    }
+
+    // An item cut and not pasted yet is drawn faded, as a hidden one, until Paste moves it or the cut is cancelled (owner
+    // request 2026-11-07: Cut in Files; the other views share the rule).
+    function test_aCutItemIsFaded() {
+        tryVerify(() => rowNamed("note.txt") !== null, 2000, "the column is listed");
+        const listing = columns.activeModel;
+        compare(rowNamed("note.txt").opacity, 1);
+        listing.setProperty(2, "cut", true);
+        tryCompare(rowNamed("note.txt"), "opacity", Tokens.filesHiddenOpacity);
+        compare(rowNamed("photo.png").opacity, 1, "only the cut item");
+        listing.setProperty(2, "cut", false);
+        tryCompare(rowNamed("note.txt"), "opacity", 1);
     }
 }

@@ -94,7 +94,7 @@ TestCase {
                 for (const e of entries) {
                     const url = String(listing.url).startsWith("grassfield-apps:") ? "grassfield-app:/" + e[0] : String(listing.url) + "/" + e[0];
                     listing.append({name: e[0], url: url, iconName: "", thumbnail: "", largeThumbnail: "", emblem: "", isDir: e[1], canPreview: false,
-                                    hidden: false, dimmed: listing.dimmedFor(e[0], e[1]), tagColors: [], folderColor: "", folderGlyph: "",
+                                    hidden: false, cut: false, dimmed: listing.dimmedFor(e[0], e[1]), tagColors: [], folderColor: "", folderGlyph: "",
                                     selected: keep.indexOf(url) >= 0 && !listing.dimmedFor(e[0], e[1]), modifiedText: "", sizeText: "", kind: "", group: ""});
                 }
                 listing.countSelected();

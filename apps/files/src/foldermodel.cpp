@@ -719,6 +719,7 @@ QHash<int, QByteArray> FolderModel::roleNames() const
         {FolderGlyphRole, "folderGlyph"},
         {GroupRole, "group"},
         {DimmedRole, "dimmed"},
+        {CutRole, "cut"},
     };
 }
 
@@ -773,6 +774,8 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const
         return item.isHidden();
     case DimmedRole:
         return dimmed(item);
+    case CutRole:
+        return !m_cut.isEmpty() && m_cut.contains(item.url().adjusted(QUrl::StripTrailingSlash));
     case CanPreviewRole:
         return previewSupported(item);
     case EmblemRole:
@@ -1908,6 +1911,26 @@ void FolderModel::expectAlone(const QUrl &url)
     qCDebug(lcFiles) << "expect alone" << m_expectedAlone.fileName() << "row now" << (m_expectedAlone.isEmpty() ? -1 : rowForUrl(m_expectedAlone));
     if (!m_expectedAlone.isEmpty())
         checkExpected();
+}
+
+void FolderModel::setCutUrls(const QSet<QUrl> &urls)
+{
+    if (urls == m_cut)
+        return;
+    QSet<QUrl> changed = m_cut;
+    changed.unite(urls);
+    changed.subtract(QSet<QUrl>(m_cut).intersect(urls));
+    m_cut = urls;
+    if (changed.size() > kSelectionBulkThreshold) {
+        if (rowCount() > 0)
+            emit dataChanged(index(0, 0), index(rowCount() - 1, 0), {CutRole});
+        return;
+    }
+    for (const QUrl &u : std::as_const(changed)) {
+        const int r = rowForUrl(u);
+        if (r >= 0)
+            emit dataChanged(index(r, 0), index(r, 0), {CutRole});
+    }
 }
 
 void FolderModel::dropAloneWish()

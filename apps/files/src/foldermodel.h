@@ -129,6 +129,8 @@ public:
         DimensionsRole,
         // A file the panel cannot take (chooser).
         DimmedRole,
+        // Cut and not pasted yet (FilesApp, from the clipboard): the views draw it faded (decision F-18).
+        CutRole,
     };
     Q_ENUM(Roles)
 
@@ -227,6 +229,8 @@ public:
     // listing never comes back over the user's own choice (owner report 2026-11-07: "in Columns view the selection sometimes
     // goes back to the previous folder").
     Q_INVOKABLE void expectAlone(const QUrl &url);
+    // The items the clipboard holds cut (FilesApp keeps every listing told; URLs without a trailing slash).
+    void setCutUrls(const QSet<QUrl> &urls);
 
     KFileItem itemAt(int row) const;
     KFileItem rootItem() const;
@@ -386,6 +390,7 @@ private:
     QUrl m_current;
     QUrl m_anchor;
     QHash<QUrl, QDeadlineTimer> m_expected;
+    QSet<QUrl> m_cut;
     // expectAlone's wish (empty: none).
     QUrl m_expectedAlone;
     bool m_expectFresh = true;

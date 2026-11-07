@@ -334,6 +334,14 @@ Platform.MenuBar {
             onTriggered: bar.app.redo()
         }
         Platform.MenuSeparator {}
+        // Cut (owner request 2026-11-07, which wins over the Finder here): the items fade until Paste moves them; Esc or a new
+        // Copy cancels.
+        Platform.MenuItem {
+            text: bar.count > 1 ? qsTr("Cut %1 Items").arg(bar.count) : bar.count === 1 ? qsTr("Cut “%1”").arg(bar.firstName) : qsTr("Cut")
+            shortcut: "Ctrl+X"
+            enabled: bar.keysHere && bar.count > 0 && bar.editable && !bar.inApplications
+            onTriggered: bar.tab.copySelection(true)
+        }
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("Copy %1 Items").arg(bar.count) : bar.count === 1 ? qsTr("Copy “%1”").arg(bar.firstName) : qsTr("Copy")
             shortcut: "Ctrl+C"
@@ -348,12 +356,12 @@ Platform.MenuBar {
             onTriggered: bar.app.copyPaths(bar.tab.selection())
         }
         Platform.MenuItem {
-            text: bar.app.clipboardCount > 1 ? qsTr("Paste %1 Items").arg(bar.app.clipboardCount) : qsTr("Paste")
+            text: bar.app.clipboardCount > 1 ? qsTr("Paste %1 Items").arg(bar.app.clipboardCount) : qsTr("Paste Item")
             shortcut: "Ctrl+V"
             enabled: bar.keysHere && bar.app.canPaste && bar.writable
             onTriggered: bar.tab.paste()
         }
-        // Decision F-6: no Cut for files; the copied items move here instead (the Finder shows it while ⌥ is held).
+        // The Finder's Move Item Here (shown there while ⌥ is held; the menu bar has no Option items): the copied items moved here.
         Platform.MenuItem {
             text: bar.app.clipboardCount > 1 ? qsTr("Move %1 Items Here").arg(bar.app.clipboardCount) : qsTr("Move Item Here")
             shortcut: "Ctrl+Alt+V"

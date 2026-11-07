@@ -185,7 +185,9 @@ FilesApp::FilesApp(const QList<QUrl> &initialUrls, QObject *parent)
         m_redoKinds.clear();
         emit undoChanged();
     });
+    connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &FilesApp::readClipboardCut);
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &FilesApp::clipboardChanged);
+    readClipboardCut();
     connect(qGuiApp, &QGuiApplication::focusWindowChanged, this, &FilesApp::focusWindowChanged);
     connect(m_places, &PlacesModel::error, this, &FilesApp::operationFailed);
     m_savedSearches = new SavedSearches(QString(), this);
@@ -457,6 +459,30 @@ bool FilesApp::canPaste() const
 int FilesApp::clipboardCount() const
 {
     return int(KioDialogs::pastableItems(QGuiApplication::clipboard()->mimeData()).size());
+}
+
+void FilesApp::readClipboardCut()
+{
+    const QMimeData *data = QGuiApplication::clipboard()->mimeData();
+    QSet<QUrl> cut;
+    if (data && (KIO::isClipboardDataCut(data) || FileLogic::gnomeCopiedFilesCut(data->data(kGnomeCopied)))) {
+        for (const QUrl &u : KioDialogs::pastableItems(data))
+            cut.insert(u.adjusted(QUrl::StripTrailingSlash));
+    }
+    if (cut == m_cutUrls)
+        return;
+    m_cutUrls = cut;
+    emit cutUrlsChanged();
+}
+
+void FilesApp::cancelCut()
+{
+    if (m_cutUrls.isEmpty())
+        return;
+    QGuiApplication::clipboard()->clear();
+    // The clipboard tells its change itself; read it now too (a platform may answer later).
+    readClipboardCut();
+    emit clipboardChanged();
 }
 
 QString FilesApp::viewMode() const
@@ -762,6 +788,8 @@ QObject *FilesApp::createFolderModel(QObject *parent)
     connect(model, &FolderModel::applicationsListed, this, [this](const QVariantMap &paths, const QVariantMap &names) { m_applicationPaths = paths; m_applicationNames = names; });
     connect(this, &FilesApp::tagsChanged, model, &FolderModel::tagsChanged);
     model->setStyleStore(&m_folderStyles);
+    model->setCutUrls(m_cutUrls);
+    connect(this, &FilesApp::cutUrlsChanged, model, [this, model] { model->setCutUrls(m_cutUrls); });
     connect(this, &FilesApp::folderStylesChanged, model, &FolderModel::folderStylesChanged);
     connect(this, &FilesApp::allFolderStylesChanged, model, &FolderModel::allFolderStylesChanged);
     return model;
@@ -1264,7 +1292,8 @@ void FilesApp::paste(const QUrl &destination, QObject *folder)
     const QList<QUrl> urls = KioDialogs::pastableItems(data);
     if (urls.isEmpty())
         return;
-    const bool cut = KIO::isClipboardDataCut(data);
+    // A cut, the KDE way or the GNOME way (Nautilus writes only its own list): the items move.
+    const bool cut = KIO::isClipboardDataCut(data) || FileLogic::gnomeCopiedFilesCut(data->data(kGnomeCopied));
     // Copying items into their own folder makes "name copy" duplicates instead of a conflict.
     if (!cut && !urls.isEmpty()) {
         bool sameFolder = true;

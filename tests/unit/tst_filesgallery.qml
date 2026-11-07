@@ -73,7 +73,7 @@ TestCase {
 
         function row(name: string, isDir: bool, canPreview: bool, tagColors: var): var {
             return {name: name, url: "file:///sandbox/" + name, iconName: "", thumbnail: "", largeThumbnail: "", emblem: "", selected: false, isDir: isDir,
-                    canPreview: canPreview, hidden: false, dimmed: false, tagColors: tagColors, folderColor: "", folderGlyph: ""};
+                    canPreview: canPreview, hidden: false, cut: false, dimmed: false, tagColors: tagColors, folderColor: "", folderGlyph: ""};
         }
 
         Component.onCompleted: {
