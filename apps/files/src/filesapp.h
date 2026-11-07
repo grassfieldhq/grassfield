@@ -9,6 +9,7 @@
 #include <QJSValue>
 #include <QList>
 #include <QMimeData>
+#include <QDeadlineTimer>
 #include <QObject>
 #include <QPointF>
 #include <QDateTime>
@@ -165,10 +166,17 @@ public:
     static constexpr int kProgressDelayMs = 250;
     // Tests only: a shorter wait (0 restores the default), so a copy that ends within 250 ms on a fast disk still publishes.
     void setProgressDelayForTests(int ms);
-    // Open With > Change All… (FP-65): `storageId` becomes the default application of the item's type (mimeapps.list).
+    // Open With > Change All… (FP-65): `storageId` becomes the default application of the item's type. In the Grassfield
+    // session (XDG_CURRENT_DESKTOP names it) the choice goes to the session's own list, $XDG_CONFIG_HOME/grassfield-mimeapps.list,
+    // which every toolkit reads there before mimeapps.list (decision F-19: the Omarchy session keeps its defaults);
+    // elsewhere to mimeapps.list (KApplicationTrader). defaultApplication() answers the choice at once (KService's cache
+    // reads the file again within 1.5 s).
     Q_INVOKABLE QString mimeTypeOf(const QUrl &url) const;
     Q_INVOKABLE QString defaultApplication(const QString &mimeType) const;
     Q_INVOKABLE bool setDefaultApplication(const QString &mimeType, const QString &storageId);
+    // Open With's Option item, Always Open With: `storageId` becomes the default of every type among `urls` it opens (Linux
+    // has no per-document choice, decision F-19), then opens them.
+    Q_INVOKABLE void alwaysOpenWith(const QString &storageId, const QList<QUrl> &urls);
 
     QString viewMode() const;
     void setViewMode(const QString &mode);
@@ -244,7 +252,7 @@ public:
 
     // Opening.
     Q_INVOKABLE void open(const QList<QUrl> &urls);
-    // [{id, name}] of the applications registered for the first item's MIME type, preferred first.
+    // [{id, name, isDefault}] of the applications registered for the first item's MIME type, the default first.
     Q_INVOKABLE QVariantList applicationsFor(const QList<QUrl> &urls) const;
     Q_INVOKABLE void openWith(const QString &storageId, const QList<QUrl> &urls);
     // Open With > Other…: the Choose Application panel for `urls`; the application chosen opens them (openWith).
@@ -613,6 +621,8 @@ private:
     QStringList m_knownTags;
     // Tags removed from the sidebar (not listed again when seen), persisted as tags/hidden.
     QStringList m_hiddenTags;
+    // Defaults chosen in this process (type -> desktop id), answered until KService's cache has read them (a few seconds).
+    QHash<QString, QPair<QString, QDeadlineTimer>> m_chosenDefaults;
     // The items the clipboard holds cut (read on each clipboard change), told to every listing.
     QSet<QUrl> m_cutUrls;
     void readClipboardCut();

@@ -1,4 +1,5 @@
 #include "applicationslogic.h"
+#include <QSaveFile>
 
 #include <QCollator>
 #include <QDir>
@@ -657,3 +658,207 @@ QString entryId(const QUrl &url)
 }
 
 } // namespace ApplicationsLogic
+
+namespace DefaultApps
+{
+namespace
+{
+const QString kGroup = QStringLiteral("[Default Applications]");
+
+bool isGroupLine(const QString &line)
+{
+    const QString t = line.trimmed();
+    return t.startsWith(QLatin1Char('[')) && t.endsWith(QLatin1Char(']'));
+}
+
+// The key of an entry line ("image/png=a.desktop;" -> "image/png"), "" for a comment, a blank or a group line.
+QString keyOf(const QString &line)
+{
+    const QString t = line.trimmed();
+    if (t.isEmpty() || t.startsWith(QLatin1Char('#')) || isGroupLine(t))
+        return {};
+    const int eq = t.indexOf(QLatin1Char('='));
+    return eq > 0 ? t.left(eq).trimmed() : QString();
+}
+
+QString valueOf(const QString &line)
+{
+    const int eq = line.indexOf(QLatin1Char('='));
+    return eq < 0 ? QString() : line.mid(eq + 1).trimmed();
+}
+
+// A MIME type as written in a list: "type/subtype", printable ASCII, no '=' or ';'.
+bool validType(const QString &type)
+{
+    static const QRegularExpression re(QStringLiteral("^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"));
+    return re.match(type).hasMatch();
+}
+
+// A desktop id: a file name ending in .desktop, no path, no '=' or ';'.
+bool validId(const QString &id)
+{
+    static const QRegularExpression re(QStringLiteral("^[A-Za-z0-9_.-]+\\.desktop$"));
+    return re.match(id).hasMatch();
+}
+} // namespace
+
+bool grassfieldDesktop(const QString &currentDesktop)
+{
+    for (const QString &name : currentDesktop.split(QLatin1Char(':'), Qt::SkipEmptyParts)) {
+        if (name.trimmed().compare(QLatin1String("Grassfield"), Qt::CaseInsensitive) == 0)
+            return true;
+    }
+    return false;
+}
+
+QHash<QString, QString> defaults(const QString &listText)
+{
+    QHash<QString, QString> out;
+    bool in = false;
+    for (const QString &line : listText.split(QLatin1Char('\n'))) {
+        if (isGroupLine(line)) {
+            in = line.trimmed() == kGroup;
+            continue;
+        }
+        const QString key = in ? keyOf(line) : QString();
+        if (key.isEmpty() || out.contains(key))
+            continue;
+        const QString first = valueOf(line).split(QLatin1Char(';'), Qt::SkipEmptyParts).value(0).trimmed();
+        if (!first.isEmpty())
+            out.insert(key, first);
+    }
+    return out;
+}
+
+QString withDefault(const QString &listText, const QString &type, const QString &desktopId)
+{
+    if (!validType(type) || !validId(desktopId))
+        return listText;
+    QStringList lines = listText.isEmpty() ? QStringList() : listText.split(QLatin1Char('\n'));
+    if (!lines.isEmpty() && lines.last().isEmpty())
+        lines.removeLast();
+    const QString entry = type + QLatin1Char('=') + desktopId + QLatin1Char(';');
+    int group = -1;
+    int end = int(lines.size());
+    for (int i = 0; i < lines.size(); ++i) {
+        if (!isGroupLine(lines.at(i)))
+            continue;
+        if (group >= 0) {
+            end = i;
+            break;
+        }
+        if (lines.at(i).trimmed() == kGroup)
+            group = i;
+    }
+    if (group < 0) {
+        if (!lines.isEmpty() && !lines.last().trimmed().isEmpty())
+            lines << QString();
+        lines << kGroup << entry;
+        return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+    }
+    for (int i = group + 1; i < end; ++i) {
+        if (keyOf(lines.at(i)) == type) {
+            lines[i] = entry;
+            // A repeated key of the same group goes: the first one counts.
+            for (int k = end - 1; k > i; --k) {
+                if (keyOf(lines.at(k)) == type)
+                    lines.removeAt(k);
+            }
+            return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+        }
+    }
+    // After the group's last entry (blank lines before the next group stay there).
+    int at = end;
+    while (at > group + 1 && lines.at(at - 1).trimmed().isEmpty())
+        --at;
+    lines.insert(at, entry);
+    return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+}
+
+QString withSeeds(const QString &listText, const QList<QPair<QString, QString>> &seeds)
+{
+    const QHash<QString, QString> have = defaults(listText);
+    QString text = listText;
+    for (const auto &seed : seeds) {
+        if (!have.contains(seed.first) && !defaults(text).contains(seed.first))
+            text = withDefault(text, seed.first, seed.second);
+    }
+    return text;
+}
+
+QStringList desktopMimeTypes(const QString &desktopText)
+{
+    bool in = false;
+    for (const QString &line : desktopText.split(QLatin1Char('\n'))) {
+        if (isGroupLine(line)) {
+            if (in)
+                break;
+            in = line.trimmed() == QLatin1String("[Desktop Entry]");
+            continue;
+        }
+        if (in && keyOf(line) == QLatin1String("MimeType"))
+            return valueOf(line).split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    }
+    return {};
+}
+
+QStringList seededTypes(const QString &desktopId, const QStringList &mimeTypes)
+{
+    QStringList out;
+    for (const QString &raw : mimeTypes) {
+        const QString type = raw.trimmed();
+        if (!validType(type))
+            continue;
+        const bool take = desktopId == QLatin1String("org.grassfield.Preview.desktop") ? type.startsWith(QLatin1String("image/")) || type == QLatin1String("application/pdf")
+                          : desktopId == QLatin1String("org.grassfield.Files.desktop") ? type == QLatin1String("inode/directory")
+                                                                                       : false;
+        if (take && !out.contains(type))
+            out << type;
+    }
+    return out;
+}
+
+bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs)
+{
+    if (configDir.isEmpty() || !QDir::isAbsolutePath(configDir))
+        return false;
+    QList<QPair<QString, QString>> seeds;
+    for (const QString id : {QStringLiteral("org.grassfield.Files.desktop"), QStringLiteral("org.grassfield.Preview.desktop")}) {
+        for (const QString &dir : applicationDirs) {
+            QFile file(dir + QLatin1Char('/') + id);
+            // A regular file of a sane size only (never a FIFO or a device).
+            const QFileInfo info(file);
+            if (!info.isFile() || info.size() > 256 * 1024)
+                continue;
+            if (!file.open(QIODevice::ReadOnly))
+                continue;
+            for (const QString &type : seededTypes(id, desktopMimeTypes(QString::fromUtf8(file.readAll()))))
+                seeds.append({type, id});
+            break; // the first file of an id is the one the lookup uses
+        }
+    }
+    if (seeds.isEmpty())
+        return false;
+    const QString path = configDir + QLatin1Char('/') + QLatin1String(kListName);
+    QString text;
+    QFile current(path);
+    const QFileInfo info(current);
+    if (info.exists()) {
+        // The user's own file: only a regular file of a sane size is read and rewritten.
+        if (!info.isFile() || info.isSymLink() || info.size() > 1024 * 1024 || !current.open(QIODevice::ReadOnly))
+            return false;
+        text = QString::fromUtf8(current.readAll());
+        current.close();
+    }
+    const QString next = withSeeds(text, seeds);
+    if (next == text)
+        return false;
+    if (!QDir().mkpath(configDir))
+        return false;
+    QSaveFile out(path);
+    if (!out.open(QIODevice::WriteOnly))
+        return false;
+    out.write(next.toUtf8());
+    return out.commit();
+}
+} // namespace DefaultApps

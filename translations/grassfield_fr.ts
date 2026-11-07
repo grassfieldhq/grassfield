@@ -3069,6 +3069,14 @@
         <translation>Liste</translation>
     </message>
     <message>
+        <source>%1 (default)</source>
+        <translation>%1 (par défaut)</translation>
+    </message>
+    <message>
+        <source>Always Open With</source>
+        <translation>Toujours ouvrir avec</translation>
+    </message>
+    <message>
         <source>Rename %1 Items…</source>
         <translation>Renommer %1 éléments…</translation>
     </message>
@@ -5657,6 +5665,10 @@
         <translation>Arrêter</translation>
     </message>
     <message>
+        <source>The default application couldn’t be changed.</source>
+        <translation>L’application par défaut n’a pas pu être modifiée.</translation>
+    </message>
+    <message>
         <source>copy</source>
         <translation>copie</translation>
     </message>
@@ -6771,6 +6783,10 @@
     <message>
         <source>New Smart Folder</source>
         <translation>Nouveau dossier intelligent</translation>
+    </message>
+    <message>
+        <source>%1 (default)</source>
+        <translation>%1 (par défaut)</translation>
     </message>
     <message>
         <source>Other…</source>

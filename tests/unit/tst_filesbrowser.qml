@@ -307,6 +307,11 @@ TestCase {
         function applicationsFor(urls: var): var {
             return fakeApp.openWithApps;
         }
+        // Always Open With (decision F-19): the application and the items.
+        property var alwaysOpened: []
+        function alwaysOpenWith(storageId: string, urls: var): void {
+            fakeApp.alwaysOpened = fakeApp.alwaysOpened.concat([{id: storageId, urls: urls.map(u => String(u))}]);
+        }
         // What opened what (BrowserTab.activate and openSelection): applications start, files open.
         property var launched: []
         property var opened: []
@@ -1265,5 +1270,33 @@ TestCase {
         fakeApp.sidebarAdded = [];
         keyClick(Qt.Key_T, Qt.ControlModifier | Qt.MetaModifier);
         compare(fakeApp.sidebarAdded, [{urls: [String(tab.url)], position: -1}]);
+    }
+
+    // Open With (owner report 2026-11-07, decision F-19): the default application first, marked "(default)" and set apart,
+    // then the others and Other…; while Alt is held the row is Always Open With, whose applications become the default and
+    // open the items.
+    function test_openWithListsTheDefaultFirst() {
+        const files = test.openFiles(false);
+        const tab = files.windows[0].tab;
+        const folder = tab.folder;
+        folder.dirRows = [];
+        folder.selected = [0];
+        folder.selectedCount = 1;
+        fakeApp.openWithApps = [{id: "org.grassfield.Preview.desktop", name: "Preview", isDefault: true}, {id: "imv.desktop", name: "imv", isDefault: false}];
+        const items = tab.itemMenu(folder);
+        const openWith = items.find(i => i.id === "openWith");
+        verify(openWith !== undefined);
+        compare(openWith.submenu.map(i => i.separator ? "-" : i.text), ["Preview (default)", "-", "imv", "-", "Other…"]);
+        compare(openWith.submenu[0].id, "app:org.grassfield.Preview.desktop");
+        const always = openWith.alternate;
+        verify(always !== undefined, "Always Open With is the Alt alternate");
+        compare(always.text, "Always Open With");
+        compare(always.submenu.filter(i => !i.separator).map(i => i.id), ["always:org.grassfield.Preview.desktop", "always:imv.desktop"]);
+        fakeApp.alwaysOpened = [];
+        tab.runAction("always:imv.desktop", folder);
+        compare(fakeApp.alwaysOpened, [{id: "imv.desktop", urls: [String(folder.urlAt(0))]}]);
+        fakeApp.openWithApps = [];
+        folder.selected = [];
+        folder.selectedCount = 0;
     }
 }

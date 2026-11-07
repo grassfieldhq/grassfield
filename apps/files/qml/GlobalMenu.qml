@@ -161,7 +161,8 @@ Platform.MenuBar {
                 delegate: Platform.MenuItem {
                     required property var modelData
 
-                    text: bar.label(modelData.name)
+                    // The default application first, marked (the Finder's Open With).
+                    text: modelData.isDefault ? qsTr("%1 (default)").arg(bar.label(modelData.name)) : bar.label(modelData.name)
                     onTriggered: bar.tab.runAction("app:" + modelData.id, bar.folder)
                 }
 

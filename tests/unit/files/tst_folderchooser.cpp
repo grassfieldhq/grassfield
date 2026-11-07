@@ -23,12 +23,14 @@
 #include <QTemporaryDir>
 #include <QThread>
 
+#include <KApplicationTrader>
 #include <KIO/FileUndoManager>
 #include <KService>
 #include <KSycoca>
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <functional>
 
 namespace {
@@ -628,4 +630,74 @@ TEST(CutAndPaste, CutFadesAndPasteMovesWhateverManagerCut)
     EXPECT_FALSE(app.canPaste());
     EXPECT_FALSE(cutShown("c.txt"));
     EXPECT_TRUE(here("c.txt")) << "cancelling moves nothing";
+}
+
+// Default applications (owner report 2026-11-07, decision F-19): in the Grassfield session Change All… writes the session's own
+// list, grassfield-mimeapps.list (never mimeapps.list, which the Omarchy session reads); Get Info and Open With answer the
+// choice at once and Open With lists it first, marked; KService reads the session's list; outside the session the choice goes
+// to mimeapps.list as before. Two scratch applications for PNG pictures.
+TEST(DefaultApplications, ChangeAllInTheSessionWritesTheSessionsOwnList)
+{
+    const QString apps = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/applications");
+    const QString config = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    ASSERT_TRUE(QDir().mkpath(apps) && QDir().mkpath(config));
+    for (const char *id : {"org.example.ViewerA", "org.example.ViewerB"}) {
+        QFile f(apps + QLatin1Char('/') + QString::fromLatin1(id) + QStringLiteral(".desktop"));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray("[Desktop Entry]\nType=Application\nName=") + id + "\nExec=/bin/true %f\nMimeType=image/png;\n");
+    }
+    QFile generic(config + QStringLiteral("/mimeapps.list"));
+    ASSERT_TRUE(generic.open(QIODevice::WriteOnly));
+    const QByteArray omarchy = "[Default Applications]\nimage/png=org.example.ViewerA.desktop;\n";
+    generic.write(omarchy);
+    generic.close();
+    QTemporaryDir docs;
+    ASSERT_TRUE(docs.isValid());
+    QFile picture(docs.filePath(QStringLiteral("picture.png")));
+    ASSERT_TRUE(picture.open(QIODevice::WriteOnly));
+    picture.close();
+    const QUrl doc = QUrl::fromLocalFile(picture.fileName());
+    const QString type = QStringLiteral("image/png");
+    const QByteArray desktop = qgetenv("XDG_CURRENT_DESKTOP");
+    qputenv("XDG_CURRENT_DESKTOP", "Grassfield:Hyprland");
+    FilesApp app(QList<QUrl>{});
+    ASSERT_TRUE(waitFor([&] {
+        KSycoca::self()->ensureCacheValid();
+        return app.defaultApplication(type) == QLatin1String("org.example.ViewerA.desktop");
+    })) << app.defaultApplication(type).toStdString();
+
+    EXPECT_TRUE(app.setDefaultApplication(type, QStringLiteral("org.example.ViewerB.desktop")));
+    EXPECT_EQ(app.defaultApplication(type), QStringLiteral("org.example.ViewerB.desktop")) << "answered at once";
+    const QVariantList listed = app.applicationsFor({doc});
+    ASSERT_FALSE(listed.isEmpty());
+    EXPECT_EQ(listed.first().toMap().value(QStringLiteral("id")).toString(), QStringLiteral("org.example.ViewerB.desktop")) << "the default first";
+    EXPECT_TRUE(listed.first().toMap().value(QStringLiteral("isDefault")).toBool());
+    EXPECT_EQ(std::count_if(listed.cbegin(), listed.cend(), [](const QVariant &v) { return v.toMap().value(QStringLiteral("isDefault")).toBool(); }), 1);
+    QFile session(config + QStringLiteral("/grassfield-mimeapps.list"));
+    ASSERT_TRUE(session.open(QIODevice::ReadOnly));
+    EXPECT_EQ(session.readAll(), QByteArray("[Default Applications]\nimage/png=org.example.ViewerB.desktop;\n"));
+    session.close();
+    ASSERT_TRUE(generic.open(QIODevice::ReadOnly));
+    EXPECT_EQ(generic.readAll(), omarchy) << "the Omarchy session's list is untouched";
+    generic.close();
+    ASSERT_TRUE(waitFor([&] {
+        KSycoca::self()->ensureCacheValid();
+        const KService::Ptr s = KApplicationTrader::preferredService(type);
+        return s && s->storageId() == QLatin1String("org.example.ViewerB.desktop");
+    })) << "KService reads the session's list";
+
+    // Outside the session: mimeapps.list, as before.
+    qputenv("XDG_CURRENT_DESKTOP", "Hyprland");
+    EXPECT_TRUE(app.setDefaultApplication(type, QStringLiteral("org.example.ViewerB.desktop")));
+    ASSERT_TRUE(generic.open(QIODevice::ReadOnly));
+    EXPECT_TRUE(generic.readAll().contains("image/png=org.example.ViewerB.desktop"));
+    generic.close();
+    if (desktop.isNull())
+        qunsetenv("XDG_CURRENT_DESKTOP");
+    else
+        qputenv("XDG_CURRENT_DESKTOP", desktop);
+    QFile::remove(config + QStringLiteral("/grassfield-mimeapps.list"));
+    QFile::remove(config + QStringLiteral("/mimeapps.list"));
+    for (const char *id : {"org.example.ViewerA", "org.example.ViewerB"})
+        QFile::remove(apps + QLatin1Char('/') + QString::fromLatin1(id) + QStringLiteral(".desktop"));
 }

@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
+#include <QStandardPaths>
 #include <QUrl>
 
 #include "translationloader.h"
@@ -27,6 +28,19 @@ int main(int argc, char *argv[])
     // The icon decoder child (AppIcons::loadIsolated runs this binary): decode stdin to a PNG on stdout and nothing else.
     if (AppIcons::isDecodeChildInvocation(argc, argv))
         return AppIcons::decodeChildMain(argc, argv);
+    // Session start (config/hypr/grassfield/autostart.lua; decision F-19 of docs/specs/files.md): Grassfield's apps become the
+    // Grassfield session's defaults for their types where the user's grassfield-mimeapps.list has no entry yet; nothing else
+    // runs, no window. Only in that session: elsewhere the name is not in XDG_CURRENT_DESKTOP and nothing is written.
+    if (argc == 2 && qstrcmp(argv[1], "--seed-default-apps") == 0) {
+        QCoreApplication core(argc, argv);
+        if (DefaultApps::grassfieldDesktop(qEnvironmentVariable("XDG_CURRENT_DESKTOP"))) {
+            QStringList dirs;
+            for (const QString &data : QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation))
+                dirs << data + QStringLiteral("/applications");
+            DefaultApps::seedSessionDefaults(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation), dirs);
+        }
+        return 0;
+    }
     // QApplication (not QGuiApplication): KIO's widgets library (KDirLister, its job delegate class) expects one; its
     // dialogs are not used (Grassfield's sheets, ADR-0035 D-12 a, src/kioprompts.h).
     QApplication app(argc, argv);

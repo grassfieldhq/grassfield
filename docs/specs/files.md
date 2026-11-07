@@ -653,6 +653,28 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   Move Item Here in the menu bar, which has no Option items). Tests: `tst_folderchooser.cpp` (CutAndPaste, on KIO: Cut
   fades and Paste moves, a GNOME cut too, Copy and Esc cancel), `tst_filelogic.cpp` (the GNOME list), `tst_filescolumns.qml`
   (a cut item is faded), `tst_filesbrowser.qml` (`test_cutAndMoveItemHere`).
+- **F-19 Default applications** (owner report 2026-11-07, "there is no way to choose the default app for a file type, and
+  Grassfield's apps come second when opening files"): the Finder's model. Get Info's "Open with:" pop-up lists the type's
+  applications, the default marked "(default)", and Change All… makes the chosen one the type's default; the item menu's
+  Open With lists the default first, marked, then the others, then Other… (the Choose Application panel); while Alt
+  (Option) is held it is Always Open With, which makes the chosen application the default and opens the items (Linux has no
+  per-document choice, so the default of the type, the same as Change All…). Storage: in the Grassfield session the choice
+  goes to `$XDG_CONFIG_HOME/grassfield-mimeapps.list` (the session's `XDG_CURRENT_DESKTOP` is `Grassfield:Hyprland`, and the
+  XDG MIME applications specification reads `<desktop>-mimeapps.list` before `mimeapps.list`), so the Omarchy session keeps
+  its own defaults; elsewhere `mimeapps.list` (KApplicationTrader). Verified on this system with a scratch home (2026-11-07):
+  GLib (`gio mime`), KService 6.31 (`KApplicationTrader::preferredService`, also when one cache serves both desktops and when
+  the file changes, in a new process at once and in a running one within 1.5 s, which Files covers by answering its own
+  choice at once), xdg-mime 1.2.1 and xdg-open (its generic path asks xdg-mime) honour the file; Qt hands documents to
+  xdg-open or the OpenURI portal (not run here: no compositor). At session start, `grassfield-files --seed-default-apps`
+  (config/hypr/grassfield/autostart.lua) adds Grassfield's apps for their types where the user's file has no entry yet:
+  Preview for the pictures and PDF of its MimeType list, Files for folders (Memos, Settings, the Store and Activity Monitor
+  open no file types); text, web pages, audio and video keep the user's editor, browser and player (Preview shows them, but
+  macOS opens them in TextEdit, Safari and QuickTime Player, which Grassfield has no equivalent of). An entry of the user's
+  is never replaced, other groups and lines are kept, a link is written through to its file, and nothing is written outside
+  the Grassfield session. Tests: `tst_applications.cpp` (DefaultApps: the desktop names, the key file edits, the seeds never
+  replacing the user's, Preview's and Files' types, the seeding of a scratch tree leaving `mimeapps.list` alone),
+  `tst_folderchooser.cpp` (DefaultApplications, on KIO: Change All… in the session writes the session's list and Open With
+  lists it first), `tst_filesbrowser.qml` (`test_openWithListsTheDefaultFirst`).
 
 ### ADRs opened by this step
 - ADR-0026 Files window frames: size by Files, position and cascade by the compositor (cross-module: Files and

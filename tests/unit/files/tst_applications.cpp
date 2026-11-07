@@ -502,3 +502,86 @@ TEST(Applications, QuitDuringASlowWalkWaitsForItAndIsClean)
     // Nothing running: an immediate, true answer.
     EXPECT_TRUE(waitForListings(0));
 }
+
+// Default applications (owner report 2026-11-07): the Grassfield session's own list, grassfield-mimeapps.list, which the XDG MIME
+// applications specification reads before mimeapps.list in a session whose XDG_CURRENT_DESKTOP names Grassfield.
+TEST(DefaultApps, TheSessionIsToldByItsDesktopNames)
+{
+    EXPECT_TRUE(DefaultApps::grassfieldDesktop(QStringLiteral("Grassfield:Hyprland")));
+    EXPECT_TRUE(DefaultApps::grassfieldDesktop(QStringLiteral("Hyprland:grassfield")));
+    EXPECT_FALSE(DefaultApps::grassfieldDesktop(QStringLiteral("Hyprland")));
+    EXPECT_FALSE(DefaultApps::grassfieldDesktop(QStringLiteral("GrassfieldDev")));
+    EXPECT_FALSE(DefaultApps::grassfieldDesktop(QString()));
+}
+
+TEST(DefaultApps, AChoiceIsWrittenInItsGroupAndEveryOtherLineStays)
+{
+    const QString user = QStringLiteral("# mine\n[Added Associations]\nimage/png=gimp.desktop;\n\n[Default Applications]\ntext/plain=nvim.desktop;\nimage/png=imv.desktop;other.desktop;\nimage/png=late.desktop\n\n[Removed Associations]\nimage/gif=x.desktop;\n");
+    EXPECT_EQ(DefaultApps::defaults(user).value(QStringLiteral("image/png")), QStringLiteral("imv.desktop")) << "the first of the list, the first key";
+    EXPECT_FALSE(DefaultApps::defaults(user).contains(QStringLiteral("image/gif"))) << "another group";
+    const QString changed = DefaultApps::withDefault(user, QStringLiteral("image/png"), QStringLiteral("org.grassfield.Preview.desktop"));
+    EXPECT_EQ(changed, QStringLiteral("# mine\n[Added Associations]\nimage/png=gimp.desktop;\n\n[Default Applications]\ntext/plain=nvim.desktop;\nimage/png=org.grassfield.Preview.desktop;\n\n[Removed Associations]\nimage/gif=x.desktop;\n"));
+    const QString added = DefaultApps::withDefault(user, QStringLiteral("application/pdf"), QStringLiteral("org.grassfield.Preview.desktop"));
+    EXPECT_TRUE(added.contains(QStringLiteral("image/png=late.desktop\napplication/pdf=org.grassfield.Preview.desktop;\n\n[Removed Associations]")));
+    EXPECT_EQ(DefaultApps::withDefault(QString(), QStringLiteral("image/png"), QStringLiteral("a.desktop")), QStringLiteral("[Default Applications]\nimage/png=a.desktop;\n"));
+    EXPECT_EQ(DefaultApps::withDefault(QStringLiteral("[Added Associations]\nx/y=b.desktop;"), QStringLiteral("image/png"), QStringLiteral("a.desktop")),
+              QStringLiteral("[Added Associations]\nx/y=b.desktop;\n\n[Default Applications]\nimage/png=a.desktop;\n"));
+    // Nothing that is not a type or a desktop id is ever written.
+    for (const auto &bad : {qMakePair(QStringLiteral("image/png\n[x]"), QStringLiteral("a.desktop")), qMakePair(QStringLiteral("image/png"), QStringLiteral("a.desktop\nimage/gif=b.desktop")),
+                            qMakePair(QStringLiteral("image"), QStringLiteral("a.desktop")), qMakePair(QStringLiteral("image/png"), QStringLiteral("../a.desktop"))})
+        EXPECT_EQ(DefaultApps::withDefault(user, bad.first, bad.second), user);
+}
+
+TEST(DefaultApps, SeedsNeverReplaceTheUsersOwnChoices)
+{
+    const QList<QPair<QString, QString>> seeds = {{QStringLiteral("image/png"), QStringLiteral("org.grassfield.Preview.desktop")},
+                                                  {QStringLiteral("inode/directory"), QStringLiteral("org.grassfield.Files.desktop")}};
+    const QString mine = QStringLiteral("[Default Applications]\nimage/png=gimp.desktop;\n");
+    EXPECT_EQ(DefaultApps::withSeeds(mine, seeds), QStringLiteral("[Default Applications]\nimage/png=gimp.desktop;\ninode/directory=org.grassfield.Files.desktop;\n"));
+    const QString seeded = DefaultApps::withSeeds(QString(), seeds);
+    EXPECT_EQ(DefaultApps::withSeeds(seeded, seeds), seeded) << "a second run changes nothing";
+}
+
+TEST(DefaultApps, PreviewIsThePicturesAndPdfDefaultAndFilesTheFoldersOne)
+{
+    const QString preview = QStringLiteral("[Desktop Entry]\nType=Application\nName=Preview\nMimeType=image/png;image/jpeg;application/pdf;text/plain;text/html;video/mp4;audio/flac;\n[Desktop Action x]\nMimeType=image/gif;\n");
+    EXPECT_EQ(DefaultApps::desktopMimeTypes(preview).size(), 7);
+    EXPECT_EQ(DefaultApps::seededTypes(QStringLiteral("org.grassfield.Preview.desktop"), DefaultApps::desktopMimeTypes(preview)),
+              (QStringList{QStringLiteral("image/png"), QStringLiteral("image/jpeg"), QStringLiteral("application/pdf")}));
+    EXPECT_EQ(DefaultApps::seededTypes(QStringLiteral("org.grassfield.Files.desktop"), {QStringLiteral("inode/directory")}), QStringList{QStringLiteral("inode/directory")});
+    EXPECT_TRUE(DefaultApps::seededTypes(QStringLiteral("org.grassfield.Memos.desktop"), {QStringLiteral("text/plain")}).isEmpty());
+}
+
+// The session start's seeding on a scratch tree: the Grassfield apps' types are added to the session's list where it has no
+// entry, the user's entries and the Omarchy session's mimeapps.list are left alone, and a second run writes nothing.
+TEST(DefaultApps, TheSessionStartSeedsItsOwnListOnly)
+{
+    QTemporaryDir dir(QDir(qEnvironmentVariableIsEmpty("GRASSFIELD_TEST_TMP") ? QDir::tempPath() : qEnvironmentVariable("GRASSFIELD_TEST_TMP")).filePath(QStringLiteral("seed-XXXXXX")));
+    ASSERT_TRUE(dir.isValid());
+    const QString config = dir.filePath(QStringLiteral("config"));
+    const QString user = dir.filePath(QStringLiteral("data/applications"));
+    const QString system = dir.filePath(QStringLiteral("usr/applications"));
+    ASSERT_TRUE(QDir().mkpath(config) && QDir().mkpath(user) && QDir().mkpath(system));
+    const auto write = [](const QString &path, const QByteArray &text) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write(text) == text.size();
+    };
+    ASSERT_TRUE(write(system + QStringLiteral("/org.grassfield.Preview.desktop"), "[Desktop Entry]\nType=Application\nMimeType=image/png;application/pdf;text/plain;\n"));
+    ASSERT_TRUE(write(system + QStringLiteral("/org.grassfield.Files.desktop"), "[Desktop Entry]\nType=Application\nMimeType=inode/directory;\n"));
+    // A user's own copy of Files' entry comes first in the lookup: it is the one read.
+    ASSERT_TRUE(write(user + QStringLiteral("/org.grassfield.Files.desktop"), "[Desktop Entry]\nType=Application\nMimeType=x-test/none;\n"));
+    const QByteArray omarchy = "[Default Applications]\nimage/png=imv.desktop;\ninode/directory=org.gnome.Nautilus.desktop;\n";
+    ASSERT_TRUE(write(config + QStringLiteral("/mimeapps.list"), omarchy));
+    ASSERT_TRUE(write(config + QStringLiteral("/grassfield-mimeapps.list"), "[Default Applications]\napplication/pdf=okular.desktop;\n"));
+
+    EXPECT_TRUE(DefaultApps::seedSessionDefaults(config, {user, system}));
+    QFile list(config + QStringLiteral("/grassfield-mimeapps.list"));
+    ASSERT_TRUE(list.open(QIODevice::ReadOnly));
+    EXPECT_EQ(list.readAll(), QByteArray("[Default Applications]\napplication/pdf=okular.desktop;\nimage/png=org.grassfield.Preview.desktop;\n"));
+    list.close();
+    QFile generic(config + QStringLiteral("/mimeapps.list"));
+    ASSERT_TRUE(generic.open(QIODevice::ReadOnly));
+    EXPECT_EQ(generic.readAll(), omarchy) << "the Omarchy session's list is never touched";
+    EXPECT_FALSE(DefaultApps::seedSessionDefaults(config, {user, system})) << "nothing new: not written again";
+    EXPECT_FALSE(DefaultApps::seedSessionDefaults(QStringLiteral("relative"), {user, system}));
+}

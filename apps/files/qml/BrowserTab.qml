@@ -1021,15 +1021,26 @@ FocusScope {
         items.push({id: "open", text: qsTr("Open")});
         const allFiles = rows.every(r => !model.isDirAt(r));
         if (allFiles) {
-            // Finder's submenu: the type's applications, then Other…, the Choose Application panel (ADR-0035 5c-1).
+            // Finder's submenu: the default application first, "(default)", then the type's other applications, then Other…, the
+            // Choose Application panel (ADR-0035 5c-1). While Alt (Option) is held it is Always Open With: the chosen application
+            // becomes the default for the type (Linux has no per-document choice: decision F-19) and opens the items.
             const apps = root.app.applicationsFor(model.selectedUrls());
             const sub = [];
-            for (let i = 0; i < apps.length; i++)
-                sub.push({id: "app:" + apps[i].id, text: apps[i].name});
+            const always = [];
+            for (let i = 0; i < apps.length; i++) {
+                const text = apps[i].isDefault ? qsTr("%1 (default)").arg(apps[i].name) : apps[i].name;
+                sub.push({id: "app:" + apps[i].id, text: text});
+                always.push({id: "always:" + apps[i].id, text: text});
+                if (apps[i].isDefault && apps.length > 1) {
+                    sub.push({separator: true});
+                    always.push({separator: true});
+                }
+            }
             if (sub.length > 0)
                 sub.push({separator: true});
             sub.push({id: "openWithOther", text: qsTr("Other…")});
-            items.push({id: "openWith", text: qsTr("Open With"), submenu: sub});
+            items.push({id: "openWith", text: qsTr("Open With"), submenu: sub,
+                        alternate: apps.length > 0 ? {id: "alwaysOpenWith", text: qsTr("Always Open With"), submenu: always} : undefined});
         } else {
             items.push({id: "openWith", text: qsTr("Open With"), enabled: false});
         }
@@ -1235,6 +1246,10 @@ FocusScope {
     function runAction(id: string, model: var): void {
         if (id.startsWith("app:")) {
             root.app.openWith(id.substring(4), model.selectedUrls());
+            return;
+        }
+        if (id.startsWith("always:")) {
+            root.app.alwaysOpenWith(id.substring(7), model.selectedUrls());
             return;
         }
         if (id === "openWithOther") {

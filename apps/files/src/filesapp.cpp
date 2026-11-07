@@ -38,6 +38,7 @@
 #include <QPair>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
 #include <QStorageInfo>
@@ -990,10 +991,17 @@ QVariantList FilesApp::applicationsFor(const QList<QUrl> &urls) const
     QMimeDatabase db;
     const QMimeType type = first.isLocalFile() ? db.mimeTypeForFile(first.toLocalFile()) : db.mimeTypeForUrl(first);
     const KService::List services = KApplicationTrader::queryByMimeType(type.name());
+    // The default first (the one just chosen, before KService's cache has read it, else KService's first), marked.
+    const QString preferred = defaultApplication(type.name());
     for (const KService::Ptr &s : services) {
         if (s->desktopEntryName() == QLatin1String("org.grassfield.files"))
             continue;
-        out.append(QVariantMap{{QStringLiteral("id"), s->storageId()}, {QStringLiteral("name"), s->name()}});
+        const bool isDefault = s->storageId() == preferred;
+        const QVariantMap entry{{QStringLiteral("id"), s->storageId()}, {QStringLiteral("name"), s->name()}, {QStringLiteral("isDefault"), isDefault}};
+        if (isDefault)
+            out.prepend(entry);
+        else
+            out.append(entry);
     }
     return out;
 }
@@ -2058,6 +2066,9 @@ QString FilesApp::mimeTypeOf(const QUrl &url) const
 
 QString FilesApp::defaultApplication(const QString &mimeType) const
 {
+    const auto chosen = m_chosenDefaults.constFind(mimeType);
+    if (chosen != m_chosenDefaults.constEnd() && !chosen->second.hasExpired())
+        return chosen->first;
     const KService::Ptr service = KApplicationTrader::preferredService(mimeType);
     return service ? service->storageId() : QString();
 }
@@ -2067,9 +2078,57 @@ bool FilesApp::setDefaultApplication(const QString &mimeType, const QString &sto
     const KService::Ptr service = KService::serviceByStorageId(storageId);
     if (!service || mimeType.isEmpty() || !QMimeDatabase().mimeTypeForName(mimeType).isValid())
         return false;
-    // The user's mimeapps.list (XDG): the Finder's Change All… for every document of this type.
-    KApplicationTrader::setPreferredService(mimeType, service);
+    if (DefaultApps::grassfieldDesktop(qEnvironmentVariable("XDG_CURRENT_DESKTOP"))) {
+        // The Grassfield session's own list (decision F-19), read and rewritten whole (a link is written through to its file).
+        const QString dir = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+        QString path = dir + QLatin1Char('/') + QLatin1String(DefaultApps::kListName);
+        const QFileInfo info(path);
+        if (info.isSymLink())
+            path = info.canonicalFilePath();
+        if (path.isEmpty() || (info.exists() && (!QFileInfo(path).isFile() || QFileInfo(path).size() > 1024 * 1024)))
+            return false;
+        QString text;
+        QFile current(path);
+        if (current.exists()) {
+            if (!current.open(QIODevice::ReadOnly))
+                return false;
+            text = QString::fromUtf8(current.readAll());
+            current.close();
+        }
+        const QString next = DefaultApps::withDefault(text, mimeType, service->storageId());
+        if (next == text && DefaultApps::defaults(text).value(mimeType) != service->storageId())
+            return false;
+        if (!QDir().mkpath(dir))
+            return false;
+        QSaveFile out(path);
+        if (!out.open(QIODevice::WriteOnly) || out.write(next.toUtf8()) < 0 || !out.commit())
+            return false;
+    } else {
+        // The user's mimeapps.list (XDG): the Finder's Change All… for every document of this type.
+        KApplicationTrader::setPreferredService(mimeType, service);
+    }
+    m_chosenDefaults.insert(mimeType, {service->storageId(), QDeadlineTimer(5000)});
     return true;
+}
+
+void FilesApp::alwaysOpenWith(const QString &storageId, const QList<QUrl> &urls)
+{
+    const KService::Ptr service = KService::serviceByStorageId(storageId);
+    if (!service) {
+        emit operationFailed(tr("The application is no longer installed."));
+        return;
+    }
+    QSet<QString> types;
+    QMimeDatabase db;
+    for (const QUrl &u : urls) {
+        const QString type = (u.isLocalFile() ? db.mimeTypeForFile(u.toLocalFile()) : db.mimeTypeForUrl(u)).name();
+        if (!types.contains(type) && service->hasMimeType(type)) {
+            types.insert(type);
+            if (!setDefaultApplication(type, storageId))
+                emit operationFailed(tr("The default application couldn’t be changed."));
+        }
+    }
+    openWith(storageId, urls);
 }
 
 void FilesApp::makeFolder(const QUrl &directory, const QString &name, const QJSValue &callback)

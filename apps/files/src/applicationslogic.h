@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QByteArray>
+#include <QHash>
+#include <QPair>
 #include <QList>
 #include <QSet>
 #include <QString>
@@ -132,3 +134,33 @@ QUrl entryUrl(const QString &id);
 QString entryId(const QUrl &url);
 
 } // namespace ApplicationsLogic
+
+// Default applications (owner report 2026-11-07: "there is no way to choose the default app for a file type, and Grassfield's
+// apps come second when opening files"). The XDG MIME applications specification reads, in each configuration directory,
+// <desktop>-mimeapps.list for every name of XDG_CURRENT_DESKTOP (lowercased) before mimeapps.list. The Grassfield session's is
+// "Grassfield:Hyprland" (config/hypr/session.lua), so $XDG_CONFIG_HOME/grassfield-mimeapps.list holds the session's own
+// defaults and the Omarchy session keeps its mimeapps.list. Read by GLib (gio), KService/KIO, xdg-mime and xdg-open on this
+// system (verified 2026-11-07, docs/specs/files.md F-19). Qt Core only.
+namespace DefaultApps
+{
+// The session's own list, in the user's configuration directory.
+inline constexpr const char *kListName = "grassfield-mimeapps.list";
+// Whether a desktop list (XDG_CURRENT_DESKTOP, ':'-separated) names the Grassfield session.
+bool grassfieldDesktop(const QString &currentDesktop);
+// The [Default Applications] entries of a mimeapps.list text: type -> the first desktop id of its list.
+QHash<QString, QString> defaults(const QString &listText);
+// The text with `type` set to `desktopId` in [Default Applications] (the group added when missing); every other line kept.
+QString withDefault(const QString &listText, const QString &type, const QString &desktopId);
+// The text with each seed (type, desktop id) added to [Default Applications] where the type has no entry yet: an entry of the
+// user's is never replaced. The text as it is when every type has one.
+QString withSeeds(const QString &listText, const QList<QPair<QString, QString>> &seeds);
+// The MimeType list of a .desktop file's text (its [Desktop Entry] group).
+QStringList desktopMimeTypes(const QString &desktopText);
+// The types a Grassfield app is the session's default for, among its MimeType list: Preview for its pictures and PDF (the
+// macOS Preview's), Files for folders; none otherwise (text, web pages, audio and video keep the user's editor, browser and
+// player: Preview shows them, the macOS model opens them in their own apps).
+QStringList seededTypes(const QString &desktopId, const QStringList &mimeTypes);
+// Seeds `<configDir>/grassfield-mimeapps.list` with the Grassfield apps found in `applicationDirs` (the first file of each
+// id, as the specification's lookup); the entries the file has are kept. Returns whether the file was written.
+bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs);
+} // namespace DefaultApps
