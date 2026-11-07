@@ -165,20 +165,24 @@ given.
 - **Report (owner, rc6):** "some save or upload windows still show Omarchy's old file dialog instead of Files". That dialog is
   GTK 3's file chooser, which x-d-p-gtk shows in the Omarchy session and which an app shows itself when it does not use the
   portal.
-- **The routing is right (measured 2026-11-07, read-only):** the running frontend has `XDG_CURRENT_DESKTOP=Grassfield:Hyprland`
-  and the link `grassfield-portals.conf` (FileChooser `grassfield;gtk`); in 14 days of the owner's journal the backend showed 6
-  panels (1489 to 3364 ms from the call, the first load included) and forwarded none to x-d-p-gtk.
+- **The routing is right (measured on the owner's session on 2026-11-07, read-only):** the running frontend has
+  `XDG_CURRENT_DESKTOP=Grassfield:Hyprland` and the link `grassfield-portals.conf` (FileChooser `grassfield;gtk`); the owner's
+  journal from 2026-10-24 to 2026-11-07 shows the backend drew 6 panels (1489 to 3364 ms from the call, the first load included)
+  and forwarded none to x-d-p-gtk.
 - **Callers that reach the panel:** GTK 3 apps through `GtkFileChooserNative` with `GTK_USE_PORTAL=1` (present in the
   environment of the session's processes, the browser's included); GTK 4 (4.24 uses the portal by default; it has only a
-  `no-portals` debug key, so `GDK_DEBUG=portals` changes nothing there any more); Chromium 155 and Electron (the portal dialog
-  whenever the frontend answers, `ui/shell_dialogs/select_file_dialog_linux_portal.cc`, GTK's dialog only for a frontend older
-  than FileChooser 3); Firefox (its "auto" mode follows `GTK_USE_PORTAL`; not installed here); Flatpaks; apps that call the
-  portal themselves (Omarchy's hype). The panel takes everything they pass (filters and the current one, the folder, the
+  `no-portals` debug key, so `GDK_DEBUG=portals` changes nothing there any more); Chromium and Electron (the portal dialog
+  whenever the frontend answers, GTK's only for a frontend older than FileChooser 3: read in Chromium's main branch on
+  2026-11-07, `ui/shell_dialogs/select_file_dialog_linux_portal.cc`, not in Chromium 155's own source; the 155 binary has the
+  portal dialog's class and no kdialog arguments); Firefox (its "auto" mode follows `GTK_USE_PORTAL`; not installed here);
+  Flatpaks; apps that call the portal themselves (Omarchy's hype: `org.freedesktop.portal.FileChooser` among its binary's
+  strings). The panel takes everything they pass (filters and the current one, the folder, the
   suggested name or file, several files, a folder, choices, the button's label, modality: chooserlogic, A-FC1).
 - **Callers that do not, each showing GTK 3's chooser in-process:**
   - Qt apps under the session's `gtk3` platform theme (Omarchy's, kept by owner decision Q3): Qt's `QGtk3FileDialogHelper`.
     Measured with a probe on the nested display (the helper a `QFileDialog` gets); on this machine OBS and Kdenlive are such
-    apps (Omarchy's own apps pick the portal themselves: omacut and hype call it, omawrite sets the portal theme for itself).
+    apps (Omarchy's omawrite names the `xdgdesktopportal` theme next to `QT_QPA_PLATFORMTHEME` in its binary's strings, so it
+    likely sets that theme for itself; hype calls the portal, above).
     `QT_QPA_PLATFORMTHEME=xdgdesktopportal` alone is not a fix: in this session its base theme is Qt's generic one,
     measured on the nested display: Fusion's light palette and "Sans Serif 9" instead of the GTK palette, font and dark scheme
     (the reason Q3 kept `gtk3`). A fix that keeps the look, measured with a prototype: a platform-theme plugin under the key
@@ -189,9 +193,11 @@ given.
     amendment of Q3; it needs its own ADR and the owner's agreement.
   - LibreOffice (its GTK 3 plugin builds `GtkFileChooserDialog` itself, with its own controls).
   - Chromium and Electron apps whose first portal call comes while the frontend is still starting: Chromium keeps the failure
-    for the life of the process (`components/dbus/xdg/portal.cc`, a failed setup is never retried) and shows GTK's dialog from
-    then on. At this login the frontend owned its name 26 s after it started, waiting on x-d-p-gtk (31.1 s to 56.6 s;
-    ADR-0041 I-4); on a private bus with the same frontend and x-d-p-gtk it took 0.4 s with and without `GTK_USE_PORTAL=1`, so
+    for the life of the process and shows GTK's dialog from then on (read in Chromium's main branch on 2026-11-07,
+    `components/dbus/xdg/portal.cc`: a failed setup is never retried; not observed here, not checked in Chromium 155's source).
+    At the owner's login of 2026-11-07 (the journal of that boot, monotonic times) the frontend owned its name 26 s after it
+    started, waiting on x-d-p-gtk (31.1 s to 56.6 s; ADR-0041 I-4); on a private bus with the same frontend and x-d-p-gtk it
+    took 0.4 s with and without `GTK_USE_PORTAL=1`, so
     I-4's hypothesis does not explain it and the cause is still open.
 
 ### Known limitations
@@ -327,7 +333,8 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   windows in `XDPH_WINDOW_SHARING_LIST`, grouped by app, title under each, protected windows greyed with "This window can't be
   shared"), "Selection" (crosshair, region relative to its display); the heading "An app wants to share your screen." (the
   picker cannot know which app); "Remember this choice" ticked at opening when xdph passes `--allow-token` (Omarchy's
-  `xdph.conf` sets `allow_token_by_default`), unticked otherwise, as xdph's own picker does (owner decision Q14 amended after
+  `xdph.conf` sets `allow_token_by_default`), unticked otherwise, as xdph intends that flag for its picker's "Allow a restore
+  token" box (owner decision Q14 amended after
   the rc6 bug report, see "Fixed after rc6" below); Cancel / Share (default once something is selected); double-click shares at
   once.
 - SP7 keyboard: arrows move in the grid, Return shares, Esc cancels, Cmd-1/2/3 switch tabs.
@@ -414,9 +421,11 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   Measured with the real xdg-desktop-portal 1.22.1 and xdph 1.4.1 against the nested session
   (`tests/integration/screencast_restore.sh`, case 1: two picker runs; case 2, with `r`: one).
 - **Decision (amends Q14; macOS model: one choice per share, which the app keeps while it shares; lasting access is listed in
-  Settings > Privacy > Screen Sharing, where it is removed):** Remember this choice opens as xdph's `--allow-token` says, as
-  xdph's own picker does: ticked with Omarchy's `xdph.conf`, which Omarchy's own picker also opens ticked; the user may untick it
-  for one share (a browser then asks twice, as before). The alternatives: always answering `r` and dropping the box (no way to
+  Settings > Privacy > Screen Sharing, where it is removed):** Remember this choice opens as xdph's `--allow-token` says (xdph's
+  `allow_token_by_default`, the default it gives its picker's box): ticked with Omarchy's `xdph.conf`. In the Omarchy session
+  that file names `hyprland-preview-share-picker`; it and xdph's stock `hyprland-share-picker` both have an "Allow a restore
+  token" box (their binaries' strings). The user may untick it for one share (a browser then asks twice, as before). The
+  alternatives: always answering `r` and dropping the box (no way to
   refuse a lasting token), or keeping it unticked (the bug).
 - **As built:** the stand-in sends `<id> options {"allowToken": true|false}` (from `--allow-token`) before the list line; the
   shell keeps it for that request (`SharePicker.allowToken`, `SharePicker.js parseOptions`; an older stand-in sends no such line
@@ -429,8 +438,14 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   `share_picker_ipc.sh` cases 1 and 2 (opens ticked with `--allow-token`, unticked without); `share_picker_nested.sh` check 1
   (the nested shell got `--allow-token`; its guard now lists every display's Quickshell instances: Quickshell 0.3.2's
   `list -p` shows only the caller's display, so the guard refused every run from the main session); `screencast_restore.sh`
-  (nested, the real frontend and xdph: the browser's second capture without a picker, pictures not blank, persist_mode 0
-  and 2). The panel's look is not in a nested screenshot (grim did not show it on either output while the test held it
+  (nested, the real frontend and xdph: the browser's second capture without a picker, pictures not blank, persist_mode 0,
+  and persist_mode 2 from a host app the portal cannot name, whose token is stored under the app id ""; each run checked
+  isolated from the machine: WirePlumber's "policy" profile, no X display, no system bus, no X11 bell, JACK or realtime module,
+  GStreamer limited to four plugins, then no device, audio node or host module in the private PipeWire graph and no sound,
+  camera or media device open; every process it starts is stopped on exit, Ctrl-C and SIGTERM). Settings:
+  `tst_systembus.cpp` (privacyState lists an unnamed app's grant under ""), `tst_settingsprivacy.qml` (Other Apps listed,
+  selected and removed by token; no switch for ""), `settings_dbus.sh` (the same over D-Bus, with Delete). The panel's look
+  is not in a nested screenshot (grim did not show it on either output while the test held it
   open): visual NOT verified; its state (ticked, unarmed, then armed) is read by the probe in `share_picker_ipc.sh`.
 - **Owner check (NOT VERIFIED here: needs the real browser):** in Chromium, Google Meet > Present > Entire screen: the
   Grassfield picker shows once, Remember this choice is ticked, Share starts the presentation and Meet's preview shows the
@@ -439,7 +454,11 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
 ### Known limitations
 A browser's token lasts while the browser runs; an app that asks for a lasting one (persist_mode 2: OBS) keeps the choice across
 its launches while Remember this choice is ticked, because xdph passes the picker neither the app nor the mode it asked
-(`tests/integration/screencast_restore.sh` case 4); Settings > Privacy > Screen Sharing lists such apps and removes them.
+(`tests/integration/screencast_restore.sh` case 4); Settings > Privacy > Screen Sharing lists such apps and removes them. A host
+app the portal cannot name (xdg-desktop-portal 1.22 names a host app after its `app-*.scope` or `app-*.service` unit when a
+desktop entry of that name exists, `src/xdp-app-info-host.c`; otherwise its id is "") has its token kept under the app id "",
+measured in case 4: Settings lists those as "Other Apps" and removes them by token (review of the rc6 fix, MINOR 3: it used to
+drop them, leaving a lasting grant out of sight); the raw key of an entry is never shown.
 A user `xdph.conf` naming another picker is respected; xdph blocks its main loop while any picker runs (upstream), for up to
 4 s when the shell dies before connecting and 15 s when it hangs after; the picker and the indicator cannot name the
 requesting app. A shell that hangs with its panel open leaves the panel drawn: the stand-in gives up after 15 s, and if the

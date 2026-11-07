@@ -807,7 +807,8 @@ panel), `tst_folderchooser.cpp`, `tst_fileskiosheets.qml`, `tst_filesglobalmenu.
   and Chromium's WebRTC capturer, which captures once for its picker's preview and again for the page with the token it got,
   ran the picker twice for one share (measured with the real frontend 1.22.1 and xdph 1.4.1,
   `tests/integration/screencast_restore.sh`). A browser's token lasts while it runs (persist_mode 1); an app that asks for a
-  lasting one (persist_mode 2) keeps the choice while the box is ticked, listed in Settings > Privacy > Screen Sharing (known
+  lasting one (persist_mode 2) keeps the choice while the box is ticked, listed in Settings > Privacy > Screen Sharing (one the
+  portal cannot name, app id "", as Other Apps; known
   limitation: xdph passes the picker neither the app nor the mode). The owner may restore Q14 as answered; spec
   system-dialogs.md section 3, "Fixed after rc6".
   Windows that hide themselves from capture (`no_screen_share`, `config/hypr/grassfield/privacy.lua`) are listed but greyed
@@ -1356,9 +1357,10 @@ Decision:
   they use QtQuick.Dialogs; they can call the portal directly), LibreOffice. **Owner decision Q3 (2026-10-27): portal apps +
   GTK 3 through `GTK_USE_PORTAL=1`; Qt keeps `gtk3`.**
   **Audit after the rc6 bug report (2026-11-07; "some save or upload windows still show Omarchy's old file dialog"):** the
-  routing is right and the backend forwarded nothing in 14 days; the callers that show GTK 3's chooser are Qt apps under
-  `gtk3` (Q3), LibreOffice, and Chromium or Electron apps whose first portal call came while the frontend was starting
-  (Chromium keeps that failure for the life of the process; the frontend took 26 s at that login, I-4 of ADR-0041). Qt apps
+  routing is right and, in the owner's journal from 2026-10-24 to 2026-11-07, the backend forwarded nothing; the callers that
+  show GTK 3's chooser are Qt apps under `gtk3` (Q3), LibreOffice, and Chromium or Electron apps whose first portal call came
+  while the frontend was starting (Chromium's main branch, read on 2026-11-07, keeps that failure for the life of the process;
+  at the owner's login of 2026-11-07 the frontend took 26 s, I-4 of ADR-0041). Qt apps
   could reach the panel without losing the GTK look through a platform-theme plugin named after the session (measured with a
   prototype); it is not built: it needs its own ADR and an amendment of Q3. Spec system-dialogs.md section 1, "Which callers
   reach the panel".
