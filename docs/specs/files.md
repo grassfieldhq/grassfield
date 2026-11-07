@@ -677,13 +677,17 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   choice at once), xdg-mime 1.2.1 and xdg-open (its generic path asks xdg-mime) honour the file; Qt hands documents to
   xdg-open or the OpenURI portal (not run here: no compositor). At session start, `grassfield-files --seed-default-apps`
   (config/hypr/grassfield/autostart.lua) adds Grassfield's apps for their types where the user's
-  `grassfield-mimeapps.list` has no entry yet and no explicit choice of the user's names another application: a type is
-  seeded only when the user's own lists (`hyprland-mimeapps.list`, then `mimeapps.list`, in `$XDG_CONFIG_HOME`) name no
-  default for it, or exactly the default Omarchy ships (`$OMARCHY_PATH/default/applications/mimeapps.list` and
+  `grassfield-mimeapps.list` has no entry yet and no explicit choice names another application: a type is seeded only when
+  every list the XDG MIME applications specification reads after the session's own (in its order: `$XDG_CONFIG_HOME`'s
+  `hyprland-mimeapps.list` and `mimeapps.list`, then each `$XDG_CONFIG_DIRS` directory's desktop lists and `mimeapps.list`,
+  e.g. `/etc/xdg`, then the deprecated `$XDG_DATA_HOME/applications` and each `$XDG_DATA_DIRS/applications`; the first list
+  that names the type gives its default) names no default for it, or exactly the default Omarchy ships (`$OMARCHY_PATH/default/applications/mimeapps.list` and
   `config/hyprland-mimeapps.list`, read as data; `/usr/share/omarchy` without the variable). An application chosen earlier
   (rc6's Change All… wrote `mimeapps.list` in the Grassfield session too; xdg-mime; KDE's and GNOME's dialogs) therefore keeps
   its documents, and without Omarchy's shipped list every default the user has counts as a choice (integrator review of
-  c5dac3f3, L2). The apps: Preview for the pictures and PDF of its MimeType list, Files for folders (Memos, Settings, the Store and Activity Monitor
+  c5dac3f3, L2; the full lookup order, re-review of 771cbddc, L3: Omarchy's own copy in `/usr/share/applications`, from
+  omarchy-settings, holds the stock values). Known limit, on the safe side: when Omarchy changes a stock default (Evince to
+  Papers, say), a list still holding the old value counts as a choice and that type is no longer seeded. The apps: Preview for the pictures and PDF of its MimeType list, Files for folders (Memos, Settings, the Store and Activity Monitor
   open no file types); text, web pages, audio and video keep the user's editor, browser and player (Preview shows them, but
   macOS opens them in TextEdit, Safari and QuickTime Player, which Grassfield has no equivalent of). An entry of the user's
   is never replaced, other groups and lines are kept, and nothing is written outside the Grassfield session. Change All…

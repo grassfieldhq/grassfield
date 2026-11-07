@@ -24,18 +24,28 @@ FocusScope {
     property int placesRevision: 0
     readonly property int currentRow: root.tab && root.placesRevision >= 0 ? root.places.rowForUrl(root.tab.url) : -1
 
-    // The last drop at a gap this sidebar sent (FilesApp.addToSidebar's token): a fallback answer for another window's sidebar
-    // is not this one's.
+    // The drops at a gap this sidebar sent and FilesApp has not answered yet (FilesApp.addToSidebar's tokens, newest last):
+    // each fallback answer goes to its own drop, also when a second drop is made before the first one's folder check
+    // returns (integrator re-review of 771cbddc, L1); an answer for another window's sidebar is not this one's. At most
+    // kept: the last 16 (a drop of folders gets no answer).
     property int dropSerial: 0
-    property string dropToken: ""
+    property var pendingDrops: []
+
+    function sendDrop(urls: var, gap: int, fallback: url): void {
+        root.dropSerial += 1;
+        const token = "sidebar-" + root.dropSerial + "-" + Date.now();
+        root.pendingDrops = root.pendingDrops.concat([token]).slice(-16);
+        root.app.addToSidebar(urls, gap, fallback, token);
+    }
 
     Connections {
         target: root.app
         ignoreUnknownSignals: true
         function onSidebarDropFallback(token: string, urls: var, destination: url): void {
-            if (token === "" || token !== root.dropToken || !root.tab)
+            const at = token === "" ? -1 : root.pendingDrops.indexOf(token);
+            if (at < 0 || !root.tab)
                 return;
-            root.dropToken = "";
+            root.pendingDrops = root.pendingDrops.filter(t => t !== token);
             root.tab.dropUrls(urls, destination, null);
         }
     }
@@ -545,9 +555,7 @@ FocusScope {
             if (gap >= 0) {
                 // Folders join Favorites at the line; items with no folder among them go into this place instead, when it
                 // takes items (FilesApp answers with sidebarDropFallback: integrator review, L4).
-                root.dropSerial += 1;
-                root.dropToken = "sidebar-" + root.dropSerial + "-" + Date.now();
-                root.app.addToSidebar(urls, gap, entry.takesItems && !entry.isTag ? entry.url : "", root.dropToken);
+                root.sendDrop(urls, gap, entry.takesItems && !entry.isTag ? entry.url : "");
                 return true;
             }
             if (!into)

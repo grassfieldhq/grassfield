@@ -39,7 +39,14 @@ int main(int argc, char *argv[])
                 dirs << data + QStringLiteral("/applications");
             // Omarchy's shipped defaults, read as data (an explicit choice of the user's is told from them: seedsAllowed).
             const QString omarchy = qEnvironmentVariableIsEmpty("OMARCHY_PATH") ? QStringLiteral("/usr/share/omarchy") : qEnvironmentVariable("OMARCHY_PATH");
-            DefaultApps::seedSessionDefaults(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation), dirs, omarchy);
+            // Every list the lookup reads after the session's own, in the specification's order ($XDG_CONFIG_HOME,
+            // $XDG_CONFIG_DIRS, then the data directories' applications/): a choice in any of them is kept.
+            QStringList desktops;
+            for (const QString &name : qEnvironmentVariable("XDG_CURRENT_DESKTOP").split(QLatin1Char(':'), Qt::SkipEmptyParts))
+                desktops << name.toLower();
+            const QStringList lists = DefaultApps::lookupLists(QStandardPaths::standardLocations(QStandardPaths::GenericConfigLocation),
+                                                               QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation), desktops);
+            DefaultApps::seedSessionDefaults(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation), dirs, omarchy, lists);
         }
         return 0;
     }

@@ -486,6 +486,34 @@ TestCase {
         compare(fakeTab.drops, ["file:///home/u"], "once");
     }
 
+    // Integrator re-review of 771cbddc, L1: a second edge drop made before the first one's folder check returns keeps the first
+    // drop's answer valid; each answer goes to its own drop, in whatever order they come.
+    function test_twoQuickEdgeDropsEachGetTheirAnswer() {
+        const listView = findList(sidebar);
+        fakeTab.drops = [];
+        const dropAtTopOf = row => {
+            const item = listView.itemAtIndex(row);
+            const p = item.mapToItem(tc, item.width / 2, 3);
+            incoming.x = p.x - 2;
+            incoming.y = p.y - 2;
+            incoming.Drag.active = true;
+            incoming.y += 0.5;
+            wait(20);
+            verify(item.dropItems(["file:///home/u/" + row + ".txt"]));
+            incoming.Drag.active = false;
+            return fakeApp.lastToken;
+        };
+        const first = dropAtTopOf(0);
+        const second = dropAtTopOf(5);
+        verify(first !== second, "one token per drop");
+        // The second answer comes first, then the first one: both drops are moved, each into its own place.
+        fakeApp.sidebarDropFallback(second, ["file:///home/u/5.txt"], "file:///home/u/Projects");
+        fakeApp.sidebarDropFallback(first, ["file:///home/u/0.txt"], "file:///home/u");
+        compare(fakeTab.drops, ["file:///home/u/Projects", "file:///home/u"]);
+        fakeApp.sidebarDropFallback(first, ["file:///home/u/0.txt"], "file:///home/u");
+        compare(fakeTab.drops.length, 2, "each answer is taken once");
+    }
+
     // The insertion line (a Rectangle with lineY in the list's content).
     function findLine(): var {
         const stack = [findList(sidebar).contentItem];

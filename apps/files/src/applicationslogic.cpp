@@ -866,7 +866,33 @@ bool readListFile(const QString &path, bool refuseLink, QString *text)
     return true;
 }
 
-bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs, const QString &omarchyDir)
+QStringList lookupLists(const QStringList &configLocations, const QStringList &dataLocations, const QStringList &desktops)
+{
+    QStringList out;
+    const QString own = configLocations.isEmpty() ? QString() : configLocations.first() + QLatin1Char('/') + QLatin1String(kListName);
+    const auto add = [&](const QString &dir) {
+        if (dir.isEmpty() || !QDir::isAbsolutePath(dir))
+            return;
+        for (const QString &desktop : desktops) {
+            const QString name = desktop.trimmed().toLower();
+            if (name.isEmpty() || name.contains(QLatin1Char('/')))
+                continue;
+            const QString path = dir + QLatin1Char('/') + name + QStringLiteral("-mimeapps.list");
+            if (path != own && !out.contains(path))
+                out << path;
+        }
+        const QString path = dir + QStringLiteral("/mimeapps.list");
+        if (!out.contains(path))
+            out << path;
+    };
+    for (const QString &dir : configLocations)
+        add(dir);
+    for (const QString &dir : dataLocations)
+        add(dir.isEmpty() ? QString() : dir + QStringLiteral("/applications"));
+    return out;
+}
+
+bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists)
 {
     if (configDir.isEmpty() || !QDir::isAbsolutePath(configDir))
         return false;
@@ -885,13 +911,13 @@ bool seedSessionDefaults(const QString &configDir, const QStringList &applicatio
             break; // the first file of an id is the one the lookup uses
         }
     }
-    // An explicit choice in the user's own lists keeps its application; Omarchy's stock default does not (seedsAllowed). A list
-    // that cannot be read counts as one that names nothing (Omarchy's) or as a choice for every type (the user's: nothing is
-    // seeded then).
+    // A default in any list the lookup reads after the session's own (the user's, the system's, the deprecated data ones) keeps
+    // its application unless it is Omarchy's stock one (seedsAllowed). A list that cannot be read counts as one that names
+    // nothing (Omarchy's) or as a choice for every type (one of `userLists`: nothing is seeded then).
     QStringList user;
-    for (const char *name : {"hyprland-mimeapps.list", "mimeapps.list"}) {
+    for (const QString &path : userLists) {
         QString text;
-        if (!readListFile(configDir + QLatin1Char('/') + QLatin1String(name), false, &text))
+        if (!readListFile(path, false, &text))
             return false;
         user << text;
     }

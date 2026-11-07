@@ -173,9 +173,15 @@ QList<QPair<QString, QString>> seedsAllowed(const QList<QPair<QString, QString>>
 // a link too when `refuseLink`), cannot be read, or is not valid UTF-8 (rewriting it would re-encode bytes that are not
 // Files'); true with an empty text when it does not exist.
 bool readListFile(const QString &path, bool refuseLink, QString *text);
+// The lists the XDG MIME applications specification reads after the session's own grassfield-mimeapps.list, in its order:
+// for each configuration directory (`configLocations`: $XDG_CONFIG_HOME, then $XDG_CONFIG_DIRS) its <desktop>-mimeapps.list
+// for each name of `desktops` (XDG_CURRENT_DESKTOP, lowercased) then its mimeapps.list; then the same in each data
+// directory's applications/ (`dataLocations`: $XDG_DATA_HOME, deprecated, then $XDG_DATA_DIRS). The session's own list
+// (the first configuration directory's grassfield-mimeapps.list) is left out (integrator re-review of 771cbddc, L3).
+QStringList lookupLists(const QStringList &configLocations, const QStringList &dataLocations, const QStringList &desktops);
 // Seeds `<configDir>/grassfield-mimeapps.list` with the Grassfield apps found in `applicationDirs` (the first file of each
-// id, as the specification's lookup), for the types seedsAllowed keeps, reading the user's lists in `configDir` and
-// Omarchy's shipped ones under `omarchyDir`; the entries the file has are kept, and a linked file is left as it is (only
-// Change All… writes through a link). Returns whether the file was written.
-bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs, const QString &omarchyDir);
+// id, as the specification's lookup), for the types seedsAllowed keeps: a default in any of `userLists` (lookupLists, in
+// that order) counts as a choice unless it is Omarchy's shipped one (its lists under `omarchyDir`); the entries the file has
+// are kept, and a linked file is left as it is (only Change All… writes through a link). Returns whether it was written.
+bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
 } // namespace DefaultApps
