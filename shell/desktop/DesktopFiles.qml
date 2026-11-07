@@ -214,6 +214,8 @@ Scope {
     property var clipboardPaths: []
     // The clipboard's files were cut (Files' Cut, or another file manager's): Paste moves them (IconsLogic.parseClipboardProbe).
     property bool clipboardCut: false
+    // The clipboard's uri list as it was read (IconsLogic.parseClipboardProbe): emptied after a move only if unchanged.
+    property string clipboardUriText: ""
     // Ctrl+V: paste as soon as the clipboard has been read.
     property bool pasteAfterRead: false
 
@@ -230,18 +232,22 @@ Scope {
 
     // Paste Item(s): copies of the clipboard's files on the desktop, under unclaimed names (never overwrites); an item
     // that already lives on the desktop gets a "copy" next to it, as on macOS. Cut items are moved here instead, as
-    // Files' Paste moves them, and the cut is forgotten and the clipboard emptied once one of them has moved (an item
-    // already on the desktop stays where it is; a cut where nothing moved keeps the clipboard).
+    // Files' Paste moves them, and the cut is forgotten once one of them has moved; the clipboard is emptied then only if
+    // it still holds that very list (anything copied while a slow move ran stays). An item already on the desktop stays
+    // where it is; a cut where nothing moved keeps the clipboard.
     function paste(): var {
         if (clipboardCut) {
             let forgotten = false;
+            const expected = clipboardUriText;
             return importPaths(clipboardPaths, true, () => {
                 if (forgotten)
                     return;
                 forgotten = true;
                 clipboardCut = false;
                 clipboardPaths = [];
-                run(["wl-copy", "--clear"], "clear the clipboard after a move", null);
+                clipboardUriText = "";
+                if (expected !== "")
+                    clipboardCheck.createObject(root, {expected: expected}).running = true;
             });
         }
         const here = clipboardPaths.filter(p => Logic.dirName(p) === dir).map(p => Logic.baseName(p)).filter(n => names.indexOf(n) >= 0);
@@ -416,6 +422,7 @@ Scope {
                 const probe = Logic.parseClipboardProbe(text);
                 root.clipboardPaths = probe.paths;
                 root.clipboardCut = probe.cut && probe.paths.length > 0;
+                root.clipboardUriText = probe.uriText;
                 if (root.pasteAfterRead) {
                     root.pasteAfterRead = false;
                     root.paste();
@@ -624,6 +631,24 @@ Scope {
                 const m = /Default application for .*?:\s*(\S+\.desktop)/.exec(text);
                 if (m && textEditor.target !== "")
                     Apps.openDetached(["gtk-launch", m[1].replace(/\.desktop$/, ""), textEditor.target]);
+            }
+        }
+    }
+
+    // After a cut's move: the clipboard's uri list read again; emptied only when it is still the cut's own list.
+    Component {
+        id: clipboardCheck
+
+        Process {
+            id: check
+            property string expected: ""
+            command: ["wl-paste", "--no-newline", "--type", "text/uri-list"]
+            stdout: StdioCollector {
+                onStreamFinished: {
+                    if (check.expected !== "" && text === check.expected)
+                        root.run(["wl-copy", "--clear"], "clear the clipboard after a move", null);
+                    check.destroy();
+                }
             }
         }
     }

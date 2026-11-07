@@ -20,9 +20,11 @@ printf 'desk\n' > "$tmp/desktop/.secret"
 printf 'outside\n' > "$tmp/outside/.secret"
 printf 'one\n' > "$tmp/outside/Dup.txt"
 printf 'two\n' > "$tmp/outside/b/Dup.txt"
-# wl-copy is a recorder: the test sees the clipboard being emptied, and nothing reaches a real clipboard.
+# wl-copy is a recorder and wl-paste prints a fixed list ("SAME"): the test sees when the clipboard is emptied, and
+# nothing reaches a real clipboard.
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\n' "$tmp/wl-copy.log" > "$tmp/bin/wl-copy"
-chmod +x "$tmp/bin/wl-copy"
+printf '#!/bin/sh\nprintf SAME\n' > "$tmp/bin/wl-paste"
+chmod +x "$tmp/bin/wl-copy" "$tmp/bin/wl-paste"
 chmod 700 "$tmp/runtime"
 mkdir -p "$tmp/cfg"
 for entry in shell/*; do
