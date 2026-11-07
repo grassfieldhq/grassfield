@@ -70,8 +70,10 @@ TestCase {
             function rowForUrl(target: url): int {
                 return -1;
             }
+            // The rows that are folders.
+            property var dirRows: []
             function isDirAt(row: int): bool {
-                return false;
+                return folder.dirRows.indexOf(row) >= 0;
             }
             function nameAt(row: int): string {
                 return folder.isApplications ? "App " + row : "";
@@ -116,6 +118,15 @@ TestCase {
     // What Main.qml and the windows read of FilesApp.
     QtObject {
         id: fakeApp
+        // Add to Sidebar (FP-27): what was added, and what the sidebar lists.
+        property var sidebarAdded: []
+        property var inSidebarUrls: []
+        function addToSidebar(urls: var, position: int): void {
+            fakeApp.sidebarAdded = fakeApp.sidebarAdded.concat([{urls: urls.map(u => String(u)), position: position}]);
+        }
+        function inSidebar(target: url): bool {
+            return fakeApp.inSidebarUrls.indexOf(String(target)) >= 0;
+        }
         property bool dark: false
         property bool reduceMotion: false
         property string accentColor: "multicolor"
@@ -1184,5 +1195,39 @@ TestCase {
         // Without a drag, a choice applies at once.
         tab.setViewMode("icons");
         verify(String(tab.view).startsWith("IconView"), "no drag: the view follows at once");
+    }
+
+    // Add to Sidebar (FP-27; owner report 2026-11-07, "there is no way to pin a folder in the sidebar"): the item menu of
+    // folders and File > Add to Sidebar (Ctrl+Super+T) add the selected folders, or the shown folder when nothing is selected;
+    // the item is dimmed when they are all in the sidebar already, and a file has none.
+    function test_addToSidebar() {
+        const files = test.openFiles(false);
+        const tab = files.windows[0].tab;
+        const folder = tab.folder;
+        fakeApp.sidebarAdded = [];
+        fakeApp.inSidebarUrls = [];
+        folder.dirRows = [0];
+        folder.selected = [0];
+        folder.selectedCount = 1;
+        let items = tab.itemMenu(folder);
+        const add = items.find(i => i.id === "addToSidebar");
+        verify(add !== undefined, "Add to Sidebar in a folder's menu");
+        verify(add.enabled);
+        compare(add.shortcut, "Ctrl+Super+T");
+        tab.runAction("addToSidebar", folder);
+        compare(fakeApp.sidebarAdded, [{urls: [String(folder.urlAt(0))], position: -1}]);
+        fakeApp.inSidebarUrls = [String(folder.urlAt(0))];
+        items = tab.itemMenu(folder);
+        verify(!items.find(i => i.id === "addToSidebar").enabled, "dimmed: already in the sidebar");
+        folder.dirRows = [];
+        items = tab.itemMenu(folder);
+        verify(!items.some(i => i.id === "addToSidebar"), "a file has no Add to Sidebar");
+        // Nothing selected: the shown folder, from the keyboard.
+        folder.selected = [];
+        folder.selectedCount = 0;
+        fakeApp.inSidebarUrls = [];
+        fakeApp.sidebarAdded = [];
+        keyClick(Qt.Key_T, Qt.ControlModifier | Qt.MetaModifier);
+        compare(fakeApp.sidebarAdded, [{urls: [String(tab.url)], position: -1}]);
     }
 }

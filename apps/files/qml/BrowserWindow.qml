@@ -623,6 +623,13 @@ Window {
         onActivated: win.app.makeAlias(win.tab.selection(), win.folder)
         onActivatedAmbiguously: activated()
     }
+    // Add to Sidebar (the Finder's ⌃⌘T; FP-27).
+    Shortcut {
+        sequence: "Ctrl+Meta+T"
+        enabled: !win.childIsKey
+        onActivated: win.tab.addToSidebar()
+        onActivatedAmbiguously: activated()
+    }
     Shortcut {
         sequence: "Ctrl+Meta+N"
         enabled: !win.childIsKey

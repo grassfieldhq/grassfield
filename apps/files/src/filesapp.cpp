@@ -69,6 +69,7 @@
 #include <KIO/PasteJob>
 #include <KIO/RestoreJob>
 #include <KIO/SimpleJob>
+#include <KIO/StatJob>
 
 namespace
 {
@@ -257,6 +258,14 @@ FilesApp::FilesApp(const QList<QUrl> &initialUrls, QObject *parent)
     m_knownTags = TagLogic::displayOrder(m_settings.value(QStringLiteral("tags/known")).toStringList()).mid(0, kMaxKnownTags);
     m_hiddenTags = m_settings.value(QStringLiteral("tags/hidden")).toStringList().mid(0, kMaxHiddenTags);
     publishKnownTags();
+    // The sidebar's Favorites as the user edited them (FP-27).
+    m_sidebarFolders = NavLogic::sidebarList(m_settings.value(QStringLiteral("sidebar/favorites")).toStringList());
+    for (const QString &text : m_settings.value(QStringLiteral("sidebar/hidden")).toStringList().mid(0, NavLogic::kMaxSidebarFavorites)) {
+        const QUrl url = NavLogic::sidebarUrl(QUrl(text));
+        if (url.isValid() && !url.scheme().isEmpty() && !m_sidebarHidden.contains(url))
+            m_sidebarHidden.append(url);
+    }
+    m_places->setFavorites(m_sidebarFolders, m_sidebarHidden);
 
     m_folderViewsRetry.setSingleShot(true);
     connect(&m_folderViewsRetry, &QTimer::timeout, this, [this] {
@@ -3168,6 +3177,92 @@ void FilesApp::showTag(const QString &tag)
 void FilesApp::publishKnownTags()
 {
     m_places->setTags(m_knownTags);
+}
+
+void FilesApp::publishSidebar()
+{
+    m_settings.setValue(QStringLiteral("sidebar/favorites"), NavLogic::sidebarStored(m_sidebarFolders));
+    m_settings.setValue(QStringLiteral("sidebar/hidden"), NavLogic::sidebarStored(m_sidebarHidden));
+    m_places->setFavorites(m_sidebarFolders, m_sidebarHidden);
+}
+
+void FilesApp::addToSidebar(const QList<QUrl> &urls, int position)
+{
+    QList<QUrl> asked;
+    bool unhidden = false;
+    for (const QUrl &raw : urls) {
+        const QUrl url = NavLogic::sidebarUrl(raw);
+        if (m_sidebarHidden.removeAll(url) > 0) {
+            unhidden = true; // a standard place removed before: listed again where it belongs
+            continue;
+        }
+        if (m_places->inFavorites(url) || !NavLogic::sidebarCandidate(url) || asked.contains(url))
+            continue;
+        asked.append(url);
+    }
+    if (unhidden)
+        publishSidebar();
+    if (asked.isEmpty())
+        return;
+    // Only folders join Favorites: KIO says which items are (a link to a folder is one); nothing is read on this thread.
+    struct Pending {
+        QList<QUrl> urls;
+        QList<bool> folders;
+        int left = 0;
+    };
+    auto pending = std::make_shared<Pending>();
+    pending->urls = asked;
+    pending->folders = QList<bool>(asked.size(), false);
+    pending->left = int(asked.size());
+    for (int i = 0; i < asked.size(); ++i) {
+        KIO::StatJob *job = KIO::stat(asked.at(i), KIO::StatJob::SourceSide, KIO::StatBasic | KIO::StatResolveSymlink, KIO::HideProgressInfo);
+        attachDelegate(job); // Grassfield's delegate, no automatic error dialog: a failed stat is "not a folder"
+        connect(job, &KJob::result, this, [this, job, pending, i, position] {
+            pending->folders[i] = !job->error() && job->statResult().isDir();
+            if (--pending->left > 0)
+                return;
+            QList<QUrl> folders;
+            for (int k = 0; k < pending->urls.size(); ++k) {
+                if (pending->folders.at(k))
+                    folders.append(pending->urls.at(k));
+            }
+            if (folders.size() < pending->urls.size())
+                emit operationFailed(tr("Only folders can be added to the sidebar."));
+            const QList<QUrl> next = NavLogic::withSidebarFolders(m_sidebarFolders, folders, position);
+            if (next == m_sidebarFolders)
+                return;
+            m_sidebarFolders = next;
+            publishSidebar();
+        });
+    }
+}
+
+void FilesApp::removeFromSidebar(const QUrl &raw)
+{
+    const QUrl url = NavLogic::sidebarUrl(raw);
+    if (m_sidebarFolders.removeAll(url) > 0) {
+        publishSidebar();
+        return;
+    }
+    // A standard place: hidden (the folder and its contents are never touched).
+    if (m_places->inFavorites(url) && !m_sidebarHidden.contains(url) && m_sidebarHidden.size() < NavLogic::kMaxSidebarFavorites) {
+        m_sidebarHidden.append(url);
+        publishSidebar();
+    }
+}
+
+void FilesApp::moveInSidebar(const QUrl &url, int position)
+{
+    const QList<QUrl> next = NavLogic::movedInSidebar(m_sidebarFolders, url, position);
+    if (next == m_sidebarFolders)
+        return;
+    m_sidebarFolders = next;
+    publishSidebar();
+}
+
+bool FilesApp::inSidebar(const QUrl &url) const
+{
+    return m_places->inFavorites(url);
 }
 
 void FilesApp::followAmounts(KJob *tracked, KJob *source)

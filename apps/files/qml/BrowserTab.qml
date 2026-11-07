@@ -743,6 +743,26 @@ FocusScope {
     }
 
     // File > New Folder with Selection (⌃⌘N): the selected items moved into a new folder, then renamed in place.
+    // File > Add to Sidebar (the Finder's ⌃⌘T, Ctrl+Super+T here; FP-27): the selected folders, or the shown folder when
+    // nothing is selected, join the sidebar's Favorites (FilesApp keeps the folders and lists a removed standard place again).
+    function sidebarCandidates(): var {
+        const m = root.activeFolder;
+        if (!m || root.chooser || m.isTrash)
+            return [];
+        if (m.selectedCount === 0)
+            return root.app.inSidebar(root.url) ? [] : [root.url];
+        const rows = m.selectedRows();
+        if (m.isApplications || !rows.every(r => m.isDirAt(r)))
+            return [];
+        return rows.map(r => m.urlAt(r)).filter(u => !root.app.inSidebar(u));
+    }
+
+    function addToSidebar(): void {
+        const urls = root.sidebarCandidates();
+        if (urls.length > 0)
+            root.app.addToSidebar(urls, -1);
+    }
+
     function newFolderWithSelection(): void {
         const m = root.activeFolder;
         const urls = root.selection();
@@ -1013,6 +1033,9 @@ FocusScope {
         }
         if (count === 1 && model.isDirAt(first))
             items.push({id: "newTab", text: qsTr("Open in New Tab")});
+        // Folders: Add to Sidebar (File menu, Ctrl+Super+T), dimmed when they are all there already.
+        if (rows.every(r => model.isDirAt(r)))
+            items.push({id: "addToSidebar", text: qsTr("Add to Sidebar"), shortcut: qsTr("Ctrl+Super+T"), enabled: root.sidebarCandidates().length > 0});
         const editable = root.itemsEditable(model);
         items.push({separator: true});
         items.push({id: "trash", text: qsTr("Move to Trash"), shortcut: qsTr("Ctrl+Backspace"), enabled: editable});
@@ -1234,6 +1257,9 @@ FocusScope {
             break;
         case "newTab":
             root.win.newTab(model.selectedUrls()[0], null);
+            break;
+        case "addToSidebar":
+            root.addToSidebar();
             break;
         case "trash":
             root.trashSelection();

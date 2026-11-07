@@ -443,6 +443,20 @@ public:
     // The way back: lists a tag removed from the sidebar again (Tags section's menu).
     Q_INVOKABLE void showTag(const QString &tag);
 
+    // Sidebar Favorites (FP-27; owner report 2026-11-07, "there is no way to pin a folder in the sidebar"). Add to Sidebar
+    // (File > Add to Sidebar Ctrl+Super+T, the item menu, a drag between Favorites rows): the folders among `urls` (asked of
+    // KIO, never read here; a file is refused with a banner) join the user's own folders at `position` (-1: after them), a
+    // standard place the user removed is listed again, one already listed stays where it is. Kept in QSettings
+    // sidebar/favorites and sidebar/hidden (Files' and the Open and Save panels' sidebar).
+    Q_INVOKABLE void addToSidebar(const QList<QUrl> &urls, int position = -1);
+    // Remove from Sidebar: a folder of the user's leaves the list; a standard place (Home, Applications, a user folder) is
+    // hidden until Add to Sidebar lists it again. The folder itself is never touched.
+    Q_INVOKABLE void removeFromSidebar(const QUrl &url);
+    // A folder of the user's moved to the gap `position` of their list (0: first).
+    Q_INVOKABLE void moveInSidebar(const QUrl &url, int position);
+    // Whether `url` is in Favorites now (Add to Sidebar is offered for the others).
+    Q_INVOKABLE bool inSidebar(const QUrl &url) const;
+
     // Customize Folder (FolderStyleLogic, FolderStyleStore): a folder's own colour and symbol. Only local folders
     // carry one. folderStyleUnavailable() is "" when every item of `urls` is such a folder, else the reason shown in
     // place of the controls (the menu item is disabled for it).
@@ -590,6 +604,11 @@ private:
     QStringList m_knownTags;
     // Tags removed from the sidebar (not listed again when seen), persisted as tags/hidden.
     QStringList m_hiddenTags;
+    // Favorites as the user edited them: their own folders (sidebar/favorites) and the standard places removed
+    // (sidebar/hidden).
+    QList<QUrl> m_sidebarFolders;
+    QList<QUrl> m_sidebarHidden;
+    void publishSidebar();
     // Tag state of the items asked about by the menus (selection), probed once per few seconds.
     mutable TagStore::Cache m_tagCache;
     int m_tagRevision = 0;

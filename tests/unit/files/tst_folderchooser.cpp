@@ -7,6 +7,7 @@
 #include "applicationslogic.h"
 #include "filelogic.h"
 #include "foldermodel.h"
+#include "placesmodel.h"
 
 #include <QCoreApplication>
 #include <QDeadlineTimer>
@@ -14,6 +15,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJSEngine>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
@@ -494,4 +496,54 @@ TEST(ColumnWish, AWishWaitingForTheListingNeverComesBackOverTheUsersChoice)
     // Already listed: at once.
     model.expectAlone(url("chosen"));
     EXPECT_EQ(selectedNames(model), QStringList{QStringLiteral("chosen")});
+}
+
+// Sidebar Favorites (FP-27; owner report 2026-11-07, "there is no way to pin a folder in the sidebar"): Add to Sidebar keeps
+// the folders among the items (KIO says which are; a file is refused with the banner's message), lists them after the standard
+// places and keeps them in QSettings; Remove from Sidebar takes a folder of the user's away and hides a standard place, which
+// Add to Sidebar lists again. The folders themselves are never touched.
+TEST(SidebarFavorites, AddToSidebarKeepsFoldersAndRemoveHidesStandardPlaces)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("Projects")));
+    QFile file(dir.filePath(QStringLiteral("note.txt")));
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.close();
+    const QUrl projects = QUrl::fromLocalFile(dir.filePath(QStringLiteral("Projects")));
+    FilesApp app(QList<QUrl>{});
+    auto *places = qobject_cast<PlacesModel *>(app.places());
+    ASSERT_NE(places, nullptr);
+    QStringList failures;
+    QObject::connect(&app, &FilesApp::operationFailed, &app, [&](const QString &message) { failures << message; });
+
+    app.addToSidebar({projects, QUrl::fromLocalFile(dir.filePath(QStringLiteral("note.txt")))}, -1);
+    ASSERT_TRUE(waitFor([&] { return places->pinnedCount() == 1 && !failures.isEmpty(); }));
+    EXPECT_EQ(failures, QStringList{QStringLiteral("Only folders can be added to the sidebar.")});
+    const QModelIndex row = places->index(places->firstPinnedRow(), 0);
+    EXPECT_EQ(places->data(row, PlacesModel::KindRole).toString(), QStringLiteral("pinned"));
+    EXPECT_EQ(places->data(row, PlacesModel::UrlRole).toUrl(), projects);
+    EXPECT_EQ(places->data(row, PlacesModel::NameRole).toString(), QStringLiteral("Projects"));
+    EXPECT_EQ(places->data(row, PlacesModel::SectionRole).toString(), QStringLiteral("favorites"));
+    EXPECT_TRUE(app.inSidebar(projects));
+    EXPECT_EQ(QSettings(QStringLiteral("Grassfield"), QStringLiteral("Files")).value(QStringLiteral("sidebar/favorites")).toStringList(), QStringList{projects.toString()});
+
+    // Once only; then gone again (the folder stays on disk).
+    app.addToSidebar({QUrl(projects.toString() + QLatin1Char('/'))}, 0);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(places->pinnedCount(), 1);
+    app.removeFromSidebar(projects);
+    EXPECT_EQ(places->pinnedCount(), 0);
+    EXPECT_FALSE(app.inSidebar(projects));
+    EXPECT_TRUE(QFileInfo(projects.toLocalFile()).isDir());
+
+    // A standard place: hidden, then listed again by Add to Sidebar.
+    const QUrl home = QUrl::fromLocalFile(QDir::homePath());
+    ASSERT_TRUE(app.inSidebar(home));
+    app.removeFromSidebar(home);
+    EXPECT_FALSE(app.inSidebar(home));
+    EXPECT_EQ(QSettings(QStringLiteral("Grassfield"), QStringLiteral("Files")).value(QStringLiteral("sidebar/hidden")).toStringList(), QStringList{home.toString()});
+    app.addToSidebar({home}, -1);
+    EXPECT_TRUE(app.inSidebar(home));
+    EXPECT_EQ(places->pinnedCount(), 0) << "listed again in its own place, not as a folder of the user's";
 }

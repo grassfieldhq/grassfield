@@ -2953,6 +2953,14 @@
         <translation>Autre…</translation>
     </message>
     <message>
+        <source>Add to Sidebar</source>
+        <translation>Ajouter à la barre latérale</translation>
+    </message>
+    <message>
+        <source>Ctrl+Super+T</source>
+        <translation>Ctrl+Super+T</translation>
+    </message>
+    <message>
         <source>Duplicate</source>
         <translation>Dupliquer</translation>
     </message>
@@ -5877,6 +5885,10 @@
         <translation>La recherche enregistrée n’a pas pu être modifiée.</translation>
     </message>
     <message>
+        <source>Only folders can be added to the sidebar.</source>
+        <translation>Seuls des dossiers peuvent être ajoutés à la barre latérale.</translation>
+    </message>
+    <message>
         <source>“%1” is no longer there.</source>
         <translation>«&#xa0;%1&#xa0;» n’existe plus.</translation>
     </message>
@@ -6779,6 +6791,10 @@
     <message>
         <source>Show Original</source>
         <translation>Afficher l’original</translation>
+    </message>
+    <message>
+        <source>Add to Sidebar</source>
+        <translation>Ajouter à la barre latérale</translation>
     </message>
     <message>
         <source>Copy %1 Items as Pathnames</source>
@@ -13702,6 +13718,10 @@
     <message>
         <source>Open</source>
         <translation>Ouvrir</translation>
+    </message>
+    <message>
+        <source>Open in New Tab</source>
+        <translation>Ouvrir dans un nouvel onglet</translation>
     </message>
     <message>
         <source>Move to Trash</source>

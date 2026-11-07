@@ -63,6 +63,15 @@ Platform.MenuBar {
         return bar.app.applicationsFor(f.selectedUrls());
     }
 
+    // What Add to Sidebar would add (BrowserTab.sidebarCandidates), read again on every selection and Favorites change.
+    readonly property var sidebarCandidates: {
+        void bar.app.places.pinnedCount;
+        void bar.app.places.firstPinnedRow;
+        const f = bar.folder;
+        void (f ? f.selectedCount : 0);
+        return bar.tab && bar.tab.sidebarCandidates ? bar.tab.sidebarCandidates() : [];
+    }
+
     // Customize Folder applies to a selection of local folders. Read from folder.selectedCount (its NOTIFY fires on every
     // selection change, also from one item to another one: a binding on `count` does not, and canCustomize() reads no
     // property, so the menu item stayed stale: the bug class above) and from the folder style revision.
@@ -239,6 +248,13 @@ Platform.MenuBar {
             shortcut: "Ctrl+R"
             enabled: bar.keysHere && bar.count === 1 && String(bar.app.linkTarget(bar.tab.selection()[0])) !== ""
             onTriggered: bar.tab.showOriginal()
+        }
+        // The Finder's Add to Sidebar (⌃⌘T): the selected folders, or the shown folder with nothing selected (FP-27).
+        Platform.MenuItem {
+            text: qsTr("Add to Sidebar")
+            shortcut: "Ctrl+Meta+T"
+            enabled: bar.keysHere && bar.tab !== null && bar.sidebarCandidates.length > 0
+            onTriggered: bar.tab.addToSidebar()
         }
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("Glance at %1 Items").arg(bar.count) : bar.count === 1 ? qsTr("Glance at “%1”").arg(bar.firstName) : qsTr("Glance")

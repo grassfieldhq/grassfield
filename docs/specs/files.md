@@ -263,7 +263,9 @@ selection").
   `view/sortDescending`, `view/foldersFirst`, `view/showHidden`, `view/galleryInfo` (default true), `view/preview` (the
   preview pane beside the icon and list views, default false), `view/columnPreview` (default true), `view/pathBar` and
   `view/statusBar` (default false), `view/sidebar` (default true), `tags/known` (the sidebar's tags, stored names in display order, at most 64),
-  `tags/hidden` (tags removed from the sidebar, at most 256), `go/recentFolders` (Go > Recent Folders and Go to Folder's
+  `tags/hidden` (tags removed from the sidebar, at most 256), `sidebar/favorites` (the folders the user added to Favorites,
+  URLs in display order, at most 64) and `sidebar/hidden` (the standard places the user removed from it, by URL; F-17),
+  `go/recentFolders` (Go > Recent Folders and Go to Folder's
   list: local folders and servers, newest first, at most 10), `servers/recent` and `servers/favorites` (Connect to Server:
   at most 20 each, the URL without any password, decision F-9).
 - Search location `grassfield-search:/?q=<text>&in=<local folder URL>&c=<attribute>:<op>:<unit>:<value>…` (ADR-0027;
@@ -480,7 +482,7 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
 | FP-24 | View > Customize Toolbar… | missing | none | — | — | later |
 | FP-25 | Title menu: ⌘-click or right-click on the title lists the enclosing folders | done (PR 1) | none | `pathSegments` | — | 1 |
 | FP-26 | Sidebar macOS 27: Recents at the top without a header; Favorites (Applications, Desktop, Documents, Downloads); Locations (the home folder by user name, the system disk, volumes, Network, Trash); Tags | done: Recents at the top without a header (PR 2); Favorites lists Home, Applications (the virtual `grassfield-apps:/` location), Desktop, Documents, Downloads, Pictures, Music, Videos; Locations has Computer, volumes, Network, Trash | Finder-Home, Finder-Gallery | KIO places, Solid | iCloud Drive, Shared and AirDrop: no equivalent (never) | 2 |
-| FP-27 | Sidebar editing: drag a folder in to add it, Remove from Sidebar, reorder, Add to Sidebar ⌃⌘T; collapse a section on hover; Settings > Sidebar choices | partial: tags only (Remove from Sidebar, Show Hidden Tag) | none | KFilePlacesModel bookmarks (`user-places.xbel`) | — | later |
+| FP-27 | Sidebar editing: drag a folder in to add it, Remove from Sidebar, reorder, Add to Sidebar ⌃⌘T; collapse a section on hover; Settings > Sidebar choices | partial (owner report 2026-11-07, decision F-17): Add to Sidebar ⌃⌘T (Ctrl+Super+T) in File and a folder's item menu, folders dragged between Favorites rows (insertion line), a folder of the user's moved or dragged out, Remove from Sidebar on every Favorites folder place (right click, the Menu key); tags: Remove from Sidebar, Show Hidden Tag. Not done: collapsing a section, Settings > Sidebar, files and apps in the sidebar | none | QSettings `sidebar/favorites`, `sidebar/hidden` (decision F-17) | — | owner fix |
 | FP-28 | Sidebar icons in the accent colour, neutral selection with a bold label | done (lot 2) | Finder-Home | — | — | — |
 | FP-29 | Eject button on volumes, Eject ⌘E | done, never exercised | Finder-Eject-Warning | Solid `StorageAccess::teardown` | — | 5 (tests) |
 | FP-30 | Folder banner ("Folder shared with File Sharing") | n/a | Finder-Home | — | no File Sharing state to show | never |
@@ -622,6 +624,23 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   for a drop's items: a column still listing never brings the previous folder back over the user's choice. A click that
   leaves the location as it is no longer leaves the view's "I navigated" flag set for the next location set elsewhere. A
   right click on a row of a column selects it and the next column follows, as a click does, before the menu opens.
+- **F-17 Favorites editing** (owner report 2026-11-07, "there is no way to pin a folder in the sidebar Favorites, neither
+  with right-click nor by drag and drop"): the Finder's model. Add to Sidebar (File menu and a folder's item menu, ⌃⌘T as
+  Ctrl+Super+T, free in `bindings.lua`) adds the selected folders, or the shown folder when nothing is selected; folders
+  dragged to the top or bottom quarter of a Favorites row are added where the accent insertion line shows (the middle of a
+  place still moves or copies the items into it); a folder of the user's is dragged to another gap (moved) or out of the
+  sidebar (removed; the folder itself is never touched); Remove from Sidebar is in the menu of every Favorites folder place
+  (right click, the Menu key or Shift+F10 on the keyboard row), with Open in New Tab. The user's folders are listed after
+  the standard places, in their order (the standard places keep theirs: they cannot be reordered); a removed standard place
+  (Home, Applications, a user folder) is hidden and comes back with Add to Sidebar of that folder. Only folders join
+  (KIO says which items are, never a read on the GUI thread; a file is refused with "Only folders can be added to the
+  sidebar."); Files' own lists (searches, tags, Recents) and the Locations places are never Favorites folders. A folder
+  that is gone or does not answer stays listed, dimmed (asked off the GUI thread with the standard folders, DiskProbe).
+  Kept in Files' QSettings (`sidebar/favorites`, `sidebar/hidden`), which the Open and Save panels read too, rather than in
+  KDE's `user-places.xbel`, which holds KDE's own default places and would bring them into the sidebar. An Open or Save
+  panel's sidebar shows the folders but edits nothing. Tests: `tst_navlogic.cpp` (SidebarFavorites), `tst_folderchooser.cpp`
+  (SidebarFavorites, on KIO), `tst_filessidebar.qml` (menu, insertion line and drop, move and drag out, a panel edits
+  nothing), `tst_filesbrowser.qml` (`test_addToSidebar`).
 
 ### ADRs opened by this step
 - ADR-0026 Files window frames: size by Files, position and cascade by the compositor (cross-module: Files and

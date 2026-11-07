@@ -146,4 +146,72 @@ GoToTarget goToTarget(const QUrl &location)
     return {};
 }
 
+QUrl sidebarUrl(const QUrl &url)
+{
+    if (url.isLocalFile())
+        return QUrl::fromLocalFile(QDir::cleanPath(url.toLocalFile()));
+    return url.adjusted(QUrl::StripTrailingSlash | QUrl::NormalizePathSegments);
+}
+
+bool sidebarCandidate(const QUrl &url)
+{
+    if (!url.isValid() || url.isRelative() || url.scheme().isEmpty())
+        return false;
+    if (url.isLocalFile())
+        return QDir::isAbsolutePath(url.toLocalFile());
+    static const QStringList refused = {QStringLiteral("grassfield-search"), QStringLiteral("grassfield-tag"), QStringLiteral("grassfield-recents"),
+                                        QStringLiteral("grassfield-apps"), QStringLiteral("grassfield-app"), QStringLiteral("trash"), QStringLiteral("remote"),
+                                        QStringLiteral("recentlyused"), QStringLiteral("http"), QStringLiteral("https"), QStringLiteral("data")};
+    return !refused.contains(url.scheme());
+}
+
+QList<QUrl> sidebarList(const QStringList &stored)
+{
+    QList<QUrl> out;
+    for (const QString &text : stored) {
+        const QUrl url = sidebarUrl(QUrl(text));
+        if (sidebarCandidate(url) && !out.contains(url))
+            out.append(url);
+        if (out.size() == kMaxSidebarFavorites)
+            break;
+    }
+    return out;
+}
+
+QStringList sidebarStored(const QList<QUrl> &list)
+{
+    QStringList out;
+    for (const QUrl &url : list)
+        out << url.toString();
+    return out;
+}
+
+QList<QUrl> withSidebarFolders(QList<QUrl> list, const QList<QUrl> &added, int position)
+{
+    if (position < 0 || position > list.size())
+        position = list.size();
+    for (const QUrl &raw : added) {
+        const QUrl url = sidebarUrl(raw);
+        if (!sidebarCandidate(url) || list.contains(url) || list.size() >= kMaxSidebarFavorites)
+            continue;
+        list.insert(position++, url);
+    }
+    return list;
+}
+
+QList<QUrl> movedInSidebar(QList<QUrl> list, const QUrl &raw, int position)
+{
+    const QUrl url = sidebarUrl(raw);
+    const int from = list.indexOf(url);
+    if (from < 0)
+        return list;
+    if (position < 0 || position > list.size())
+        position = list.size();
+    list.removeAt(from);
+    if (position > from)
+        --position;
+    list.insert(position, url);
+    return list;
+}
+
 } // namespace NavLogic

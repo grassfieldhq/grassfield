@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QList>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
@@ -50,5 +51,23 @@ struct GoToTarget {
     QUrl select;
 };
 GoToTarget goToTarget(const QUrl &location);
+
+// Sidebar Favorites editing (FP-27; owner report 2026-11-07: "there is no way to pin a folder in the sidebar"). The user's
+// own folders are a list of URLs in display order (QSettings sidebar/favorites), after the standard places; the standard
+// places the user removed are a list of their URLs (sidebar/hidden).
+constexpr int kMaxSidebarFavorites = 64;
+// The URL as the sidebar keeps it: no trailing slash, normalized path segments.
+QUrl sidebarUrl(const QUrl &url);
+// A location that can be a Favorites folder: a valid absolute URL of a folder location, never one of Files' own lists
+// (a search, a tag search, Recents, Applications) nor a Locations place (the Trash, Network).
+bool sidebarCandidate(const QUrl &url);
+// The stored list read back: cleaned, candidates only, no repeat, at most kMaxSidebarFavorites.
+QList<QUrl> sidebarList(const QStringList &stored);
+QStringList sidebarStored(const QList<QUrl> &list);
+// `added` put at `position` (0..list size; anything else: the end), in their order, those already listed left where they
+// are; at most kMaxSidebarFavorites (the last ones added beyond are not kept).
+QList<QUrl> withSidebarFolders(QList<QUrl> list, const QList<QUrl> &added, int position);
+// `url` moved to the gap `position` of the list as it is shown (0: before the first, size: after the last).
+QList<QUrl> movedInSidebar(QList<QUrl> list, const QUrl &url, int position);
 
 } // namespace NavLogic
