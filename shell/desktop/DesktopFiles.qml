@@ -200,6 +200,8 @@ Scope {
 
     // Files on the clipboard (local paths of a text/uri-list), read when the desktop menu opens (refreshClipboard).
     property var clipboardPaths: []
+    // The clipboard's files were cut (Files' Cut, or another file manager's): Paste moves them (IconsLogic.parseClipboardProbe).
+    property bool clipboardCut: false
     // Ctrl+V: paste as soon as the clipboard has been read.
     property bool pasteAfterRead: false
 
@@ -215,8 +217,19 @@ Scope {
     }
 
     // Paste Item(s): copies of the clipboard's files on the desktop, under unclaimed names (never overwrites); an item
-    // that already lives on the desktop gets a "copy" next to it, as on macOS.
+    // that already lives on the desktop gets a "copy" next to it, as on macOS. Cut items are moved here instead, as
+    // Files' Paste moves them, and the clipboard is emptied once their moves have started (an item already on the
+    // desktop stays where it is, and a cut with nothing to move keeps the clipboard).
     function paste(): var {
+        if (clipboardCut) {
+            const moved = importPaths(clipboardPaths, true);
+            if (moved.length > 0) {
+                clipboardCut = false;
+                clipboardPaths = [];
+                run(["wl-copy", "--clear"], "clear the clipboard after a move", null);
+            }
+            return moved;
+        }
         const here = clipboardPaths.filter(p => Logic.dirName(p) === dir).map(p => Logic.baseName(p)).filter(n => names.indexOf(n) >= 0);
         return importPaths(clipboardPaths, false).concat(duplicate(here));
     }
@@ -371,11 +384,24 @@ Scope {
 
     Process {
         id: clipboardProbe
-        // Only a text/uri-list offer is read; anything else (text, images) leaves Paste out.
-        command: ["sh", "-c", "wl-paste --list-types 2>/dev/null | grep -qx text/uri-list && wl-paste --no-newline --type text/uri-list 2>/dev/null"]
+        // Only a text/uri-list offer is read; anything else (text, images) leaves Paste out. The first line says whether
+        // the files were cut: KDE's application/x-kde-cutselection is "1", or GNOME's x-special/gnome-copied-files
+        // starts with "cut" (Files writes both next to the list, as Dolphin and Nautilus write theirs).
+        command: ["sh", "-c", "t=$(wl-paste --list-types 2>/dev/null) || exit 0\n"
+            + "printf '%s\\n' \"$t\" | grep -qx text/uri-list || exit 0\n"
+            + "cut=0\n"
+            + "if printf '%s\\n' \"$t\" | grep -qx application/x-kde-cutselection; then\n"
+            + "  [ \"$(wl-paste --no-newline --type application/x-kde-cutselection 2>/dev/null)\" = 1 ] && cut=1\n"
+            + "elif printf '%s\\n' \"$t\" | grep -qx x-special/gnome-copied-files; then\n"
+            + "  [ \"$(wl-paste --no-newline --type x-special/gnome-copied-files 2>/dev/null | head -n 1)\" = cut ] && cut=1\n"
+            + "fi\n"
+            + "echo cut=$cut\n"
+            + "wl-paste --no-newline --type text/uri-list 2>/dev/null"]
         stdout: StdioCollector {
             onStreamFinished: {
-                root.clipboardPaths = Logic.parseUriList(text);
+                const probe = Logic.parseClipboardProbe(text);
+                root.clipboardPaths = probe.paths;
+                root.clipboardCut = probe.cut && probe.paths.length > 0;
                 if (root.pasteAfterRead) {
                     root.pasteAfterRead = false;
                     root.paste();

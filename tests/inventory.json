@@ -556,6 +556,7 @@
  {"path": "tests/shell/desktop_icon_wallpaper.sh", "layer": "data"},
  {"path": "tests/shell/desktop_menu_actions.sh", "layer": "headless"},
  {"path": "tests/shell/desktop_new_folder.sh", "layer": "headless"},
+ {"path": "tests/shell/desktop_clipboard_probe.sh", "layer": "logic"},
  {"path": "tests/shell/dev_pidfile.sh", "layer": "logic"},
  {"path": "tests/shell/dockfeel_mutants.sh", "layer": "headless"},
  {"path": "tests/shell/file_types.sh", "layer": "logic"},

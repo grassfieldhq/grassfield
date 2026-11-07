@@ -11,6 +11,10 @@ tmp=$(mktemp -d "$root/.dev/desktop-menu-actions.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/runtime" "$tmp/home" "$tmp/state" "$tmp/desktop/Docs"
 printf 'hello\n' > "$tmp/desktop/Notes.txt"
+# Paste Item: a cut file outside the desktop is moved in, a copied one is copied (its source stays).
+mkdir -p "$tmp/outside"
+printf 'moved\n' > "$tmp/outside/Moved.txt"
+printf 'kept\n' > "$tmp/outside/Kept.txt"
 chmod 700 "$tmp/runtime"
 mkdir -p "$tmp/cfg"
 for entry in shell/*; do
@@ -19,7 +23,7 @@ done
 cp tests/shell/desktop_menu_actions.d/actions.qml "$tmp/cfg/shell.qml"
 out=$(env -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE -u GRASSFIELD_SESSION -u DISPLAY GRASSFIELD_DEV=1 \
   QS_NO_RELOAD_POPUP=1 HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" GRASSFIELD_STATE_HOME="$tmp/state" \
-  GRASSFIELD_DESKTOP_DIR="$tmp/desktop" QT_QPA_PLATFORM=offscreen QML_IMPORT_PATH="$root/ui:$root/.dev/build/qml" \
+  GRASSFIELD_DESKTOP_DIR="$tmp/desktop" GF_TEST_OUTSIDE="$tmp/outside" QT_QPA_PLATFORM=offscreen QML_IMPORT_PATH="$root/ui:$root/.dev/build/qml" \
   GRASSFIELD_LANG=en timeout 60 qs -p "$tmp/cfg" --no-color 2>&1) || true
 if grep -q "desktop-menu-actions: PASS" <<<"$out"; then
   grep "desktop-menu-actions:" <<<"$out"
