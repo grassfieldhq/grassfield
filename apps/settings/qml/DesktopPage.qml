@@ -155,8 +155,11 @@ SettingsPage {
             }
         }
 
+        // Whether apps stay in the Dock after they quit (the owner's question, 2026-11-07): the macOS switch, which says so under
+        // its title. Off, an app that is not kept in the Dock leaves it when it quits; the Dock follows the switch at once.
         SettingsRow {
             title: qsTr("Show recent apps in Dock")
+            subtitle: qsTr("Apps you quit that are not kept in the Dock stay in their own section until newer ones replace them.")
             Toggle {
                 accessibleName: qsTr("Show recent apps in Dock")
                 checked: root.store.value("dock.showRecents")

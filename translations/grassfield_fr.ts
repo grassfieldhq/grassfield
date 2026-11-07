@@ -4245,6 +4245,10 @@
         <translation>Afficher les indicateurs des applications ouvertes</translation>
     </message>
     <message>
+        <source>Apps you quit that are not kept in the Dock stay in their own section until newer ones replace them.</source>
+        <translation>Les apps que vous quittez et qui ne sont pas gardées dans le Dock restent dans leur propre section jusqu’à ce que de plus récentes les remplacent.</translation>
+    </message>
+    <message>
         <source>Show End Task in Dock menus</source>
         <translation>Afficher Fin de tâche dans les menus du Dock</translation>
     </message>
