@@ -334,8 +334,10 @@ namespace {
 
     // Hyprland's misc:animate_mouse_windowdragging (false in the session, config/hypr/grassfield/looknfeel.lua), read at each
     // step: whether a window dragged with the pointer moves through the windowsMove animation or sits under the pointer at once.
+    // Bound once (Hyprland's own idiom: the value follows reloads through CConfigValueBase's registry, and its destructor, run
+    // when this library is unloaded, takes it out of the registry), so a drag step does no lookup by name.
     bool animateWindowDragging() {
-        const CConfigValue<Config::INTEGER> animate("misc:animate_mouse_windowdragging");
+        static const CConfigValue<Config::INTEGER> animate("misc:animate_mouse_windowdragging");
         return animate.good() && *animate != 0;
     }
 
