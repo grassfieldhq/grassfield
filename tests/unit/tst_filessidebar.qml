@@ -136,8 +136,14 @@ TestCase {
         property var added: []
         property var removed: []
         property var moved: []
-        function addToSidebar(urls: var, position: int): void {
+        // A drop at a gap also names the place to fall back to (items with no folder go into it) and the sidebar's token.
+        property var lastFallback: ""
+        property string lastToken: ""
+        signal sidebarDropFallback(string token, var urls, url destination)
+        function addToSidebar(urls: var, position: int, fallback: url, token: string): void {
             fakeApp.added = fakeApp.added.concat([{urls: urls.map(u => String(u)), position: position}]);
+            fakeApp.lastFallback = String(fallback);
+            fakeApp.lastToken = token;
         }
         function removeFromSidebar(url: url): void {
             fakeApp.removed = fakeApp.removed.concat([String(url)]);
@@ -398,6 +404,7 @@ TestCase {
         verify(pinned.dropItems(items));
         incoming.Drag.active = false;
         compare(fakeApp.added, [{urls: items, position: 1}]);
+        compare(fakeApp.lastFallback, "file:///home/u/Projects", "items with no folder would go into Projects itself");
         compare(sidebar.insertGap, -1, "the line goes with the drop");
         verify(!line.visible);
         dragTo(5, 3);
@@ -452,6 +459,31 @@ TestCase {
         fakeApp.removed = [];
         dragAlong(home.mapToItem(tc, 40, home.height / 2), 320, 0);
         compare(fakeApp.removed, []);
+    }
+
+    // Integrator review, L4: items with no folder among them dropped at the edge of a place go into that place (FilesApp answers
+    // with sidebarDropFallback for the token this sidebar sent); an answer for another sidebar's token is not this one's.
+    function test_anEdgeDropWithNoFolderGoesIntoThePlace() {
+        const listView = findList(sidebar);
+        fakeTab.drops = [];
+        const home = listView.itemAtIndex(0);
+        const p = home.mapToItem(tc, home.width / 2, 3);
+        incoming.x = p.x - 2;
+        incoming.y = p.y - 2;
+        incoming.Drag.active = true;
+        incoming.y += 0.5;
+        wait(20);
+        compare(sidebar.insertGap, 0, "Home's top edge is a gap");
+        verify(home.dropItems(["file:///home/u/note.txt"]));
+        incoming.Drag.active = false;
+        compare(fakeApp.lastFallback, "file:///home/u", "Home is the place to fall back to");
+        verify(fakeApp.lastToken !== "", "with this sidebar's token");
+        fakeApp.sidebarDropFallback("another-sidebar", ["file:///home/u/note.txt"], "file:///home/u");
+        compare(fakeTab.drops, [], "another sidebar's answer is ignored");
+        fakeApp.sidebarDropFallback(fakeApp.lastToken, ["file:///home/u/note.txt"], "file:///home/u");
+        compare(fakeTab.drops, ["file:///home/u"], "the items go into Home, as a drop in its middle");
+        fakeApp.sidebarDropFallback(fakeApp.lastToken, ["file:///home/u/note.txt"], "file:///home/u");
+        compare(fakeTab.drops, ["file:///home/u"], "once");
     }
 
     // The insertion line (a Rectangle with lineY in the list's content).

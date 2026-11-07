@@ -570,11 +570,15 @@ TEST(DefaultApps, TheSessionStartSeedsItsOwnListOnly)
     ASSERT_TRUE(write(system + QStringLiteral("/org.grassfield.Files.desktop"), "[Desktop Entry]\nType=Application\nMimeType=inode/directory;\n"));
     // A user's own copy of Files' entry comes first in the lookup: it is the one read.
     ASSERT_TRUE(write(user + QStringLiteral("/org.grassfield.Files.desktop"), "[Desktop Entry]\nType=Application\nMimeType=x-test/none;\n"));
+    // The user's mimeapps.list holds Omarchy's stock defaults (as Omarchy's install writes them), which Omarchy also ships.
     const QByteArray omarchy = "[Default Applications]\nimage/png=imv.desktop;\ninode/directory=org.gnome.Nautilus.desktop;\n";
     ASSERT_TRUE(write(config + QStringLiteral("/mimeapps.list"), omarchy));
+    const QString stock = dir.filePath(QStringLiteral("omarchy"));
+    ASSERT_TRUE(QDir().mkpath(stock + QStringLiteral("/default/applications")));
+    ASSERT_TRUE(write(stock + QStringLiteral("/default/applications/mimeapps.list"), "[Default Applications]\ninode/directory=org.gnome.Nautilus.desktop\n\nimage/png=imv.desktop\n"));
     ASSERT_TRUE(write(config + QStringLiteral("/grassfield-mimeapps.list"), "[Default Applications]\napplication/pdf=okular.desktop;\n"));
 
-    EXPECT_TRUE(DefaultApps::seedSessionDefaults(config, {user, system}));
+    EXPECT_TRUE(DefaultApps::seedSessionDefaults(config, {user, system}, stock));
     QFile list(config + QStringLiteral("/grassfield-mimeapps.list"));
     ASSERT_TRUE(list.open(QIODevice::ReadOnly));
     EXPECT_EQ(list.readAll(), QByteArray("[Default Applications]\napplication/pdf=okular.desktop;\nimage/png=org.grassfield.Preview.desktop;\n"));
@@ -582,6 +586,71 @@ TEST(DefaultApps, TheSessionStartSeedsItsOwnListOnly)
     QFile generic(config + QStringLiteral("/mimeapps.list"));
     ASSERT_TRUE(generic.open(QIODevice::ReadOnly));
     EXPECT_EQ(generic.readAll(), omarchy) << "the Omarchy session's list is never touched";
-    EXPECT_FALSE(DefaultApps::seedSessionDefaults(config, {user, system})) << "nothing new: not written again";
-    EXPECT_FALSE(DefaultApps::seedSessionDefaults(QStringLiteral("relative"), {user, system}));
+    EXPECT_FALSE(DefaultApps::seedSessionDefaults(config, {user, system}, stock)) << "nothing new: not written again";
+    EXPECT_FALSE(DefaultApps::seedSessionDefaults(QStringLiteral("relative"), {user, system}, stock));
+}
+
+// Integrator review of c5dac3f3, L2: the seed tells an explicit choice from Omarchy's stock default. A type is seeded only when
+// the user's own lists (hyprland-mimeapps.list, then mimeapps.list) name no default for it or exactly Omarchy's shipped one;
+// a choice made earlier (rc6's Change All… wrote mimeapps.list, as do xdg-mime and the KDE and GNOME dialogs) keeps its
+// application in the Grassfield session.
+TEST(DefaultApps, AnExplicitChoiceKeepsItsApplicationAndOmarchysStockDefaultDoesNot)
+{
+    const QList<QPair<QString, QString>> seeds = {{QStringLiteral("image/png"), QStringLiteral("org.grassfield.Preview.desktop")},
+                                                  {QStringLiteral("application/pdf"), QStringLiteral("org.grassfield.Preview.desktop")},
+                                                  {QStringLiteral("image/heif"), QStringLiteral("org.grassfield.Preview.desktop")},
+                                                  {QStringLiteral("image/svg+xml"), QStringLiteral("org.grassfield.Preview.desktop")},
+                                                  {QStringLiteral("inode/directory"), QStringLiteral("org.grassfield.Files.desktop")}};
+    const QHash<QString, QString> stock = DefaultApps::mergedDefaults({QStringLiteral(
+        "[Default Applications]\ninode/directory=org.gnome.Nautilus.desktop\nimage/png=imv.desktop\napplication/pdf=org.gnome.Evince.desktop\n")});
+    // The user's lists: hyprland-mimeapps.list first (Omarchy's own http routing, and a folder choice), then mimeapps.list.
+    const QHash<QString, QString> user = DefaultApps::mergedDefaults(
+        {QStringLiteral("[Default Applications]\nx-scheme-handler/http=omarchy-browser.desktop\ninode/directory=org.kde.dolphin.desktop\n"),
+         QStringLiteral("[Default Applications]\nimage/png=imv.desktop;gimp.desktop;\napplication/pdf=org.kde.okular.desktop\ninode/directory=org.gnome.Nautilus.desktop\n"
+                        "image/svg+xml=org.inkscape.Inkscape.desktop\n")});
+    EXPECT_EQ(user.value(QStringLiteral("inode/directory")), QStringLiteral("org.kde.dolphin.desktop")) << "the first list that names a type wins";
+    QStringList allowed;
+    for (const auto &seed : DefaultApps::seedsAllowed(seeds, user, stock))
+        allowed << seed.first;
+    EXPECT_EQ(allowed, (QStringList{QStringLiteral("image/png"), QStringLiteral("image/heif")}))
+        << "png: Omarchy's stock imv (seeded); pdf: Okular chosen (kept); heif: no default (seeded); svg: Inkscape chosen though Omarchy "
+           "ships none (kept); folders: Dolphin chosen in hyprland-mimeapps.list (kept)";
+}
+
+// The same rule on a scratch tree, end to end: GIMP chosen for PNG before (in mimeapps.list) stays GIMP in the Grassfield session,
+// PDF left at Omarchy's Evince gets Preview; a list that is not valid UTF-8 is never rewritten (its bytes are not Files').
+TEST(DefaultApps, TheSessionStartKeepsAnEarlierChoice)
+{
+    QTemporaryDir dir(QDir(qEnvironmentVariableIsEmpty("GRASSFIELD_TEST_TMP") ? QDir::tempPath() : qEnvironmentVariable("GRASSFIELD_TEST_TMP")).filePath(QStringLiteral("seed-XXXXXX")));
+    ASSERT_TRUE(dir.isValid());
+    const QString config = dir.filePath(QStringLiteral("config"));
+    const QString apps = dir.filePath(QStringLiteral("usr/applications"));
+    const QString stock = dir.filePath(QStringLiteral("omarchy"));
+    ASSERT_TRUE(QDir().mkpath(config) && QDir().mkpath(apps) && QDir().mkpath(stock + QStringLiteral("/default/applications")));
+    const auto write = [](const QString &path, const QByteArray &text) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write(text) == text.size();
+    };
+    const auto read = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray("(missing)");
+    };
+    ASSERT_TRUE(write(apps + QStringLiteral("/org.grassfield.Preview.desktop"), "[Desktop Entry]\nType=Application\nMimeType=image/png;application/pdf;\n"));
+    ASSERT_TRUE(write(stock + QStringLiteral("/default/applications/mimeapps.list"), "[Default Applications]\nimage/png=imv.desktop\napplication/pdf=org.gnome.Evince.desktop\n"));
+    ASSERT_TRUE(write(config + QStringLiteral("/mimeapps.list"), "[Default Applications]\nimage/png=gimp.desktop\napplication/pdf=org.gnome.Evince.desktop\n"));
+    EXPECT_TRUE(DefaultApps::seedSessionDefaults(config, {apps}, stock));
+    EXPECT_EQ(read(config + QStringLiteral("/grassfield-mimeapps.list")), QByteArray("[Default Applications]\napplication/pdf=org.grassfield.Preview.desktop;\n"));
+    // Without Omarchy's shipped list every default of the user's counts as a choice: nothing is seeded over it.
+    QFile::remove(config + QStringLiteral("/grassfield-mimeapps.list"));
+    EXPECT_FALSE(DefaultApps::seedSessionDefaults(config, {apps}, dir.filePath(QStringLiteral("nowhere"))));
+    EXPECT_FALSE(QFileInfo::exists(config + QStringLiteral("/grassfield-mimeapps.list")));
+    // A session list in another encoding (Latin-1 bytes) stays byte for byte.
+    const QByteArray latin1 = "# caf\xe9\n[Default Applications]\nimage/tiff=x.desktop\n";
+    ASSERT_TRUE(write(config + QStringLiteral("/grassfield-mimeapps.list"), latin1));
+    EXPECT_FALSE(DefaultApps::seedSessionDefaults(config, {apps}, stock));
+    EXPECT_EQ(read(config + QStringLiteral("/grassfield-mimeapps.list")), latin1);
+    QString text;
+    EXPECT_FALSE(DefaultApps::readListFile(config + QStringLiteral("/grassfield-mimeapps.list"), false, &text));
+    EXPECT_TRUE(DefaultApps::readListFile(dir.filePath(QStringLiteral("absent.list")), false, &text)) << "a missing list is an empty one";
+    EXPECT_TRUE(text.isEmpty());
 }

@@ -3149,6 +3149,10 @@
         <translation>Coller l’élément</translation>
     </message>
     <message>
+        <source>Paste</source>
+        <translation>Coller</translation>
+    </message>
+    <message>
         <source>Move %1 Items Here</source>
         <translation>Déplacer %1 éléments ici</translation>
     </message>

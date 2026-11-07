@@ -81,7 +81,8 @@ class FilesApp : public QObject
     Q_PROPERTY(QString redoText READ redoText NOTIFY undoChanged)
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY clipboardChanged)
     Q_PROPERTY(int clipboardCount READ clipboardCount NOTIFY clipboardChanged)
-    // The clipboard holds items cut and not pasted yet (by Files or another file manager; decision F-18).
+    // The clipboard still holds the items Files cut, not pasted yet (decision F-18); another file manager's cut fades its items
+    // (cut role) but is not Files' to cancel.
     Q_PROPERTY(bool cutPending READ cutPending NOTIFY clipboardChanged)
     Q_PROPERTY(QString activity READ activity NOTIFY activityChanged)
     Q_PROPERTY(int activityPercent READ activityPercent NOTIFY activityChanged)
@@ -157,7 +158,8 @@ public:
     QString redoText() const;
     bool canPaste() const;
     int clipboardCount() const;
-    bool cutPending() const { return !m_cutUrls.isEmpty(); }
+    // A cut Files wrote (its own mark and the same items) is still on the clipboard.
+    bool cutPending() const;
     QString activity() const { return m_activity; }
     int activityPercent() const { return m_activityPercent; }
     QVariantList jobs() const { return m_jobList; }
@@ -286,7 +288,8 @@ public:
     // Copy, or Cut (decision F-18, owner request 2026-11-07): the items fade in every listing until Paste moves them; the
     // clipboard says "cut" the KDE way (application/x-kde-cutselection) and the GNOME way (x-special/gnome-copied-files).
     Q_INVOKABLE void copyToClipboard(const QList<QUrl> &urls, bool cut);
-    // Esc after Cut: the clipboard is emptied when it still holds the cut items (nothing moves; they no longer fade).
+    // Esc after Cut: the clipboard is emptied when it still holds the items Files cut (cutPending; nothing moves, they no
+    // longer fade). Another application's cut, or anything copied since, is left alone.
     Q_INVOKABLE void cancelCut();
     Q_INVOKABLE void paste(const QUrl &destination, QObject *folder);
     // Move Item Here (⌥⌘V, decision F-6): the copied items moved into `destination` (undoable); Files has no Cut.
@@ -463,7 +466,9 @@ public:
     // KIO, never read here; a file is refused with a banner) join the user's own folders at `position` (-1: after them), a
     // standard place the user removed is listed again, one already listed stays where it is. Kept in QSettings
     // sidebar/favorites and sidebar/hidden (Files' and the Open and Save panels' sidebar).
-    Q_INVOKABLE void addToSidebar(const QList<QUrl> &urls, int position = -1);
+    // `fallback`, `token`: a drop at the edge of a place (Sidebar.qml) whose items hold no folder goes into that place instead:
+    // sidebarDropFallback(token, urls, fallback) tells the sidebar that asked (integrator review, L4).
+    Q_INVOKABLE void addToSidebar(const QList<QUrl> &urls, int position = -1, const QUrl &fallback = QUrl(), const QString &token = QString());
     // Remove from Sidebar: a folder of the user's leaves the list; a standard place (Home, Applications, a user folder) is
     // hidden until Add to Sidebar lists it again. The folder itself is never touched.
     Q_INVOKABLE void removeFromSidebar(const QUrl &url);
@@ -471,6 +476,9 @@ public:
     Q_INVOKABLE void moveInSidebar(const QUrl &url, int position);
     // Whether `url` is in Favorites now (Add to Sidebar is offered for the others).
     Q_INVOKABLE bool inSidebar(const QUrl &url) const;
+    // Whether `url` can be added (a folder location, never a search, tag search, Recents or a Locations place; a removed
+    // standard place can): File > Add to Sidebar is dimmed in a search.
+    Q_INVOKABLE bool sidebarCandidate(const QUrl &url) const;
 
     // Customize Folder (FolderStyleLogic, FolderStyleStore): a folder's own colour and symbol. Only local folders
     // carry one. folderStyleUnavailable() is "" when every item of `urls` is such a folder, else the reason shown in
@@ -489,6 +497,8 @@ public:
     int folderStyleRevision() const { return m_folderStyleRevision; }
 
 signals:
+    // A drop at the edge of a sidebar place held no folder: the sidebar that sent `token` drops `urls` into `destination`.
+    void sidebarDropFallback(const QString &token, const QList<QUrl> &urls, const QUrl &destination);
     // The cut items changed (listings fade them).
     void cutUrlsChanged();
     void removableTextChanged();
@@ -626,6 +636,11 @@ private:
     // The items the clipboard holds cut (read on each clipboard change), told to every listing.
     QSet<QUrl> m_cutUrls;
     void readClipboardCut();
+    // Files' own last cut: its items and the token marking its clipboard data.
+    QSet<QUrl> m_ownCutUrls;
+    QByteArray m_ownCutToken;
+    // The clipboard says these very items were cut (any file manager's mark).
+    bool clipboardHoldsCut(const QSet<QUrl> &urls) const;
     // Favorites as the user edited them: their own folders (sidebar/favorites) and the standard places removed
     // (sidebar/hidden).
     QList<QUrl> m_sidebarFolders;

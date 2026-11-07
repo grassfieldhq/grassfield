@@ -160,7 +160,22 @@ QStringList desktopMimeTypes(const QString &desktopText);
 // macOS Preview's), Files for folders; none otherwise (text, web pages, audio and video keep the user's editor, browser and
 // player: Preview shows them, the macOS model opens them in their own apps).
 QStringList seededTypes(const QString &desktopId, const QStringList &mimeTypes);
+// The defaults of several lists in their lookup order: each type's entry from the first list that names one.
+QHash<QString, QString> mergedDefaults(const QStringList &listTexts);
+// The seeds an explicit choice of the user's does not keep out: a type is seeded only when the user's own lists
+// (`userDefaults`: hyprland-mimeapps.list, then mimeapps.list) name no default for it, or name exactly the one Omarchy ships
+// (`stockDefaults`: its default/applications/mimeapps.list and config/hyprland-mimeapps.list), which says nothing of the
+// user's taste. A choice made earlier (rc6's Change All… wrote mimeapps.list in the Grassfield session too; xdg-mime; a KDE or
+// GNOME dialog) keeps its application in the Grassfield session (integrator review of c5dac3f3, L2).
+QList<QPair<QString, QString>> seedsAllowed(const QList<QPair<QString, QString>> &seeds, const QHash<QString, QString> &userDefaults,
+                                            const QHash<QString, QString> &stockDefaults);
+// A key file read whole: false when it exists but is not a regular file of at most 1 MiB (a FIFO, a device, a directory;
+// a link too when `refuseLink`), cannot be read, or is not valid UTF-8 (rewriting it would re-encode bytes that are not
+// Files'); true with an empty text when it does not exist.
+bool readListFile(const QString &path, bool refuseLink, QString *text);
 // Seeds `<configDir>/grassfield-mimeapps.list` with the Grassfield apps found in `applicationDirs` (the first file of each
-// id, as the specification's lookup); the entries the file has are kept. Returns whether the file was written.
-bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs);
+// id, as the specification's lookup), for the types seedsAllowed keeps, reading the user's lists in `configDir` and
+// Omarchy's shipped ones under `omarchyDir`; the entries the file has are kept, and a linked file is left as it is (only
+// Change All… writes through a link). Returns whether the file was written.
+bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs, const QString &omarchyDir);
 } // namespace DefaultApps

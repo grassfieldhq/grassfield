@@ -1,4 +1,5 @@
 #include "applicationslogic.h"
+#include <QStringDecoder>
 #include <QSaveFile>
 
 #include <QCollator>
@@ -818,7 +819,54 @@ QStringList seededTypes(const QString &desktopId, const QStringList &mimeTypes)
     return out;
 }
 
-bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs)
+QHash<QString, QString> mergedDefaults(const QStringList &listTexts)
+{
+    QHash<QString, QString> out;
+    for (const QString &text : listTexts) {
+        const QHash<QString, QString> one = defaults(text);
+        for (auto it = one.cbegin(); it != one.cend(); ++it) {
+            if (!out.contains(it.key()))
+                out.insert(it.key(), it.value());
+        }
+    }
+    return out;
+}
+
+QList<QPair<QString, QString>> seedsAllowed(const QList<QPair<QString, QString>> &seeds, const QHash<QString, QString> &userDefaults,
+                                            const QHash<QString, QString> &stockDefaults)
+{
+    QList<QPair<QString, QString>> out;
+    for (const auto &seed : seeds) {
+        const auto mine = userDefaults.constFind(seed.first);
+        if (mine == userDefaults.constEnd() || (stockDefaults.contains(seed.first) && stockDefaults.value(seed.first) == mine.value()))
+            out.append(seed);
+    }
+    return out;
+}
+
+bool readListFile(const QString &path, bool refuseLink, QString *text)
+{
+    text->clear();
+    const QFileInfo info(path);
+    if (!info.exists() && !info.isSymLink())
+        return true;
+    if (!info.isFile() || (refuseLink && info.isSymLink()) || info.size() > 1024 * 1024)
+        return false;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    const QByteArray bytes = file.read(1024 * 1024 + 1);
+    if (bytes.size() > 1024 * 1024)
+        return false;
+    QStringDecoder utf8(QStringDecoder::Utf8);
+    const QString decoded = utf8(bytes);
+    if (utf8.hasError())
+        return false;
+    *text = decoded;
+    return true;
+}
+
+bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs, const QString &omarchyDir)
 {
     if (configDir.isEmpty() || !QDir::isAbsolutePath(configDir))
         return false;
@@ -837,19 +885,32 @@ bool seedSessionDefaults(const QString &configDir, const QStringList &applicatio
             break; // the first file of an id is the one the lookup uses
         }
     }
+    // An explicit choice in the user's own lists keeps its application; Omarchy's stock default does not (seedsAllowed). A list
+    // that cannot be read counts as one that names nothing (Omarchy's) or as a choice for every type (the user's: nothing is
+    // seeded then).
+    QStringList user;
+    for (const char *name : {"hyprland-mimeapps.list", "mimeapps.list"}) {
+        QString text;
+        if (!readListFile(configDir + QLatin1Char('/') + QLatin1String(name), false, &text))
+            return false;
+        user << text;
+    }
+    QStringList stock;
+    if (!omarchyDir.isEmpty()) {
+        for (const char *rel : {"config/hyprland-mimeapps.list", "default/applications/mimeapps.list"}) {
+            QString text;
+            if (readListFile(omarchyDir + QLatin1Char('/') + QLatin1String(rel), false, &text))
+                stock << text;
+        }
+    }
+    seeds = seedsAllowed(seeds, mergedDefaults(user), mergedDefaults(stock));
     if (seeds.isEmpty())
         return false;
     const QString path = configDir + QLatin1Char('/') + QLatin1String(kListName);
+    // The session's own file: a regular file of a sane size in UTF-8, never through a link (readListFile).
     QString text;
-    QFile current(path);
-    const QFileInfo info(current);
-    if (info.exists()) {
-        // The user's own file: only a regular file of a sane size is read and rewritten.
-        if (!info.isFile() || info.isSymLink() || info.size() > 1024 * 1024 || !current.open(QIODevice::ReadOnly))
-            return false;
-        text = QString::fromUtf8(current.readAll());
-        current.close();
-    }
+    if (!readListFile(path, true, &text))
+        return false;
     const QString next = withSeeds(text, seeds);
     if (next == text)
         return false;

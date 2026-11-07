@@ -640,18 +640,28 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   KDE's `user-places.xbel`, which holds KDE's own default places and would bring them into the sidebar. An Open or Save
   panel's sidebar shows the folders but edits nothing. Tests: `tst_navlogic.cpp` (SidebarFavorites), `tst_folderchooser.cpp`
   (SidebarFavorites, on KIO), `tst_filessidebar.qml` (menu, insertion line and drop, move and drag out, a panel edits
-  nothing), `tst_filesbrowser.qml` (`test_addToSidebar`).
+  nothing), `tst_filesbrowser.qml` (`test_addToSidebar`). Integrator review of c5dac3f3: items with no folder among them
+  dropped at a row's edge go into that place (as a drop in its middle) instead of being refused (L4: FilesApp answers
+  `sidebarDropFallback` to the sidebar that asked); File > Add to Sidebar adds nothing for a search, tag search or Recents
+  location shown with nothing selected (`FilesApp.sidebarCandidate`).
 - **F-18 Cut** (owner request 2026-11-07, "there is no Cut in Files", which wins over the Finder here): Cut ⌘X (Ctrl+X) in
   Edit, in the item menu before Copy ("Cut “name”", "Cut N Items") and on the keyboard, where items can be edited (a
   writable folder or a tag search; not the Trash, the Applications location or an Open or Save panel). The cut items are
   drawn faded, as hidden ones, in every view until Paste ⌘V moves them into the folder (KIO's paste: undo, the conflict
-  sheets, the Copy window's progress); the clipboard is then emptied. Esc in a view cancels a cut not pasted yet (the
-  clipboard is emptied, the items no longer fade), before it clears the selection; a new Copy replaces it. The clipboard
+  sheets, the Copy window's progress); the clipboard is then emptied, only when it still holds that very cut (the cut
+  mark and the same items: a link or a password copied while a slow move ran stays). Cut items pasted into their own
+  folder stay where they are and stay cut (the Finder's Move Item Here does nothing there; KIO would refuse a move onto
+  itself). Esc in a view cancels a cut Files wrote and the clipboard still holds (Files marks its cut,
+  `application/x-grassfield-files-cut`, a token per cut; the clipboard is emptied, the items no longer fade), before it
+  clears the selection; another file manager's cut fades its items here but is not Files' to cancel, so Esc deselects at
+  once there. A new Copy replaces a cut. The clipboard
   says "cut" the KDE way (`application/x-kde-cutselection`) and the GNOME way (`x-special/gnome-copied-files` starting with
   "cut"), so Dolphin, Nautilus and the others move what Files cut, and Files moves (and fades) what they cut. The Finder's
   own way stays: after Copy, Paste is Move Item Here while Alt (Option) is held in the folder's menu (Ctrl+Alt+V; Edit >
-  Move Item Here in the menu bar, which has no Option items). Tests: `tst_folderchooser.cpp` (CutAndPaste, on KIO: Cut
-  fades and Paste moves, a GNOME cut too, Copy and Esc cancel), `tst_filelogic.cpp` (the GNOME list), `tst_filescolumns.qml`
+  Move Item Here in the menu bar, which has no Option items). The folder menu and Edit say "Paste" while the clipboard holds
+  no item, "Paste Item" for one. Tests: `tst_folderchooser.cpp` (CutAndPaste, on KIO: Cut
+  fades and Paste moves, a GNOME cut too, Copy and Esc cancel; TheClipboardIsOnlyEverEmptiedForFilesOwnCut: newer content
+  kept, another manager's cut left alone, the same folder), `tst_filelogic.cpp` (the GNOME list), `tst_filescolumns.qml`
   (a cut item is faded), `tst_filesbrowser.qml` (`test_cutAndMoveItemHere`).
 - **F-19 Default applications** (owner report 2026-11-07, "there is no way to choose the default app for a file type, and
   Grassfield's apps come second when opening files"): the Finder's model. Get Info's "Open with:" pop-up lists the type's
@@ -666,13 +676,22 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   the file changes, in a new process at once and in a running one within 1.5 s, which Files covers by answering its own
   choice at once), xdg-mime 1.2.1 and xdg-open (its generic path asks xdg-mime) honour the file; Qt hands documents to
   xdg-open or the OpenURI portal (not run here: no compositor). At session start, `grassfield-files --seed-default-apps`
-  (config/hypr/grassfield/autostart.lua) adds Grassfield's apps for their types where the user's file has no entry yet:
-  Preview for the pictures and PDF of its MimeType list, Files for folders (Memos, Settings, the Store and Activity Monitor
+  (config/hypr/grassfield/autostart.lua) adds Grassfield's apps for their types where the user's
+  `grassfield-mimeapps.list` has no entry yet and no explicit choice of the user's names another application: a type is
+  seeded only when the user's own lists (`hyprland-mimeapps.list`, then `mimeapps.list`, in `$XDG_CONFIG_HOME`) name no
+  default for it, or exactly the default Omarchy ships (`$OMARCHY_PATH/default/applications/mimeapps.list` and
+  `config/hyprland-mimeapps.list`, read as data; `/usr/share/omarchy` without the variable). An application chosen earlier
+  (rc6's Change All… wrote `mimeapps.list` in the Grassfield session too; xdg-mime; KDE's and GNOME's dialogs) therefore keeps
+  its documents, and without Omarchy's shipped list every default the user has counts as a choice (integrator review of
+  c5dac3f3, L2). The apps: Preview for the pictures and PDF of its MimeType list, Files for folders (Memos, Settings, the Store and Activity Monitor
   open no file types); text, web pages, audio and video keep the user's editor, browser and player (Preview shows them, but
   macOS opens them in TextEdit, Safari and QuickTime Player, which Grassfield has no equivalent of). An entry of the user's
-  is never replaced, other groups and lines are kept, a link is written through to its file, and nothing is written outside
-  the Grassfield session. Tests: `tst_applications.cpp` (DefaultApps: the desktop names, the key file edits, the seeds never
-  replacing the user's, Preview's and Files' types, the seeding of a scratch tree leaving `mimeapps.list` alone),
+  is never replaced, other groups and lines are kept, and nothing is written outside the Grassfield session. Change All…
+  writes through a link to its file; the seeding leaves a linked `grassfield-mimeapps.list` as it is. A list that is not
+  valid UTF-8 is never rewritten (Change All… reports that the default couldn't be changed, the seeding skips it): its bytes
+  are not Files' to re-encode. Tests: `tst_applications.cpp` (DefaultApps: the desktop names, the key file edits, the seeds never
+  replacing the user's, Preview's and Files' types, the seeding of a scratch tree leaving `mimeapps.list` alone; an explicit
+  choice kept and Omarchy's stock default not, the same end to end, a Latin-1 list left byte for byte),
   `tst_folderchooser.cpp` (DefaultApplications, on KIO: Change All… in the session writes the session's list and Open With
   lists it first), `tst_filesbrowser.qml` (`test_openWithListsTheDefaultFirst`).
 

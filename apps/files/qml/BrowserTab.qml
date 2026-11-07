@@ -749,8 +749,9 @@ FocusScope {
         const m = root.activeFolder;
         if (!m || root.chooser || m.isTrash)
             return [];
+        // Nothing selected: the shown folder, never a search, a tag search or Recents (FilesApp.sidebarCandidate).
         if (m.selectedCount === 0)
-            return root.app.inSidebar(root.url) ? [] : [root.url];
+            return root.app.inSidebar(root.url) || !root.app.sidebarCandidate(root.url) ? [] : [root.url];
         const rows = m.selectedRows();
         if (m.isApplications || !rows.every(r => m.isDirAt(r)))
             return [];
@@ -1116,7 +1117,8 @@ FocusScope {
         const pastable = root.app.canPaste && model.writable;
         // Paste copies what was copied and moves what was cut; while Alt (Option) is held it is Move Item Here, which moves what
         // was copied (the Finder's Edit menu).
-        items.push({id: "paste", text: n > 1 ? qsTr("Paste %1 Items").arg(n) : qsTr("Paste Item"), shortcut: qsTr("Ctrl+V"), enabled: pastable,
+        // "Paste" while the clipboard holds no item, as the Finder.
+        items.push({id: "paste", text: n > 1 ? qsTr("Paste %1 Items").arg(n) : n === 1 ? qsTr("Paste Item") : qsTr("Paste"), shortcut: qsTr("Ctrl+V"), enabled: pastable,
                     alternate: {id: "moveHere", text: n > 1 ? qsTr("Move %1 Items Here").arg(n) : qsTr("Move Item Here"), shortcut: qsTr("Ctrl+Alt+V"), enabled: pastable}});
         items.push({separator: true});
         items.push(root.viewSubmenu());

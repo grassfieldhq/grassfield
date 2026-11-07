@@ -24,6 +24,22 @@ FocusScope {
     property int placesRevision: 0
     readonly property int currentRow: root.tab && root.placesRevision >= 0 ? root.places.rowForUrl(root.tab.url) : -1
 
+    // The last drop at a gap this sidebar sent (FilesApp.addToSidebar's token): a fallback answer for another window's sidebar
+    // is not this one's.
+    property int dropSerial: 0
+    property string dropToken: ""
+
+    Connections {
+        target: root.app
+        ignoreUnknownSignals: true
+        function onSidebarDropFallback(token: string, urls: var, destination: url): void {
+            if (token === "" || token !== root.dropToken || !root.tab)
+                return;
+            root.dropToken = "";
+            root.tab.dropUrls(urls, destination, null);
+        }
+    }
+
     Connections {
         target: root.places
         function onModelReset(): void {
@@ -527,7 +543,11 @@ FocusScope {
             if (!root.tab)
                 return false;
             if (gap >= 0) {
-                root.app.addToSidebar(urls, gap);
+                // Folders join Favorites at the line; items with no folder among them go into this place instead, when it
+                // takes items (FilesApp answers with sidebarDropFallback: integrator review, L4).
+                root.dropSerial += 1;
+                root.dropToken = "sidebar-" + root.dropSerial + "-" + Date.now();
+                root.app.addToSidebar(urls, gap, entry.takesItems && !entry.isTag ? entry.url : "", root.dropToken);
                 return true;
             }
             if (!into)

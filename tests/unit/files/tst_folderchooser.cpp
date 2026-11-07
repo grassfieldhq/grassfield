@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <tuple>
 
 namespace {
 
@@ -610,7 +611,7 @@ TEST(CutAndPaste, CutFadesAndPasteMovesWhateverManagerCut)
     gnome->setUrls({url(QStringLiteral("b.txt"))});
     gnome->setData(QStringLiteral("x-special/gnome-copied-files"), "cut\n" + url(QStringLiteral("b.txt")).toEncoded());
     QGuiApplication::clipboard()->setMimeData(gnome);
-    EXPECT_TRUE(app.cutPending());
+    EXPECT_FALSE(app.cutPending()) << "Nautilus's cut fades here but is not Files' to cancel (integrator review, L1)";
     ASSERT_TRUE(waitFor([&] { return cutShown("b.txt"); }));
     app.paste(url(QStringLiteral("to")), nullptr);
     ASSERT_TRUE(waitFor([&] { return here("to/b.txt"); }));
@@ -700,4 +701,114 @@ TEST(DefaultApplications, ChangeAllInTheSessionWritesTheSessionsOwnList)
     QFile::remove(config + QStringLiteral("/mimeapps.list"));
     for (const char *id : {"org.example.ViewerA", "org.example.ViewerB"})
         QFile::remove(apps + QLatin1Char('/') + QString::fromLatin1(id) + QStringLiteral(".desktop"));
+}
+
+// Integrator review of c5dac3f3 (M1, L1, L3): a paste empties the clipboard only when it still holds this very cut (something
+// copied while a slow move ran stays); Esc cancels only a cut Files wrote (another file manager's cut is not Files' to
+// empty); cut items pasted into their own folder stay where they are and stay cut (KIO would refuse a move onto itself).
+TEST(CutAndPaste, TheClipboardIsOnlyEverEmptiedForFilesOwnCut)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    for (const char *name : {"a.txt", "b.txt", "c.txt"}) {
+        QFile f(dir.filePath(QString::fromLatin1(name)));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(name);
+    }
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("to")));
+    const auto url = [&](const QString &rel) { return QUrl::fromLocalFile(dir.filePath(rel)); };
+    const auto here = [&](const char *rel) { return QFileInfo::exists(dir.filePath(QString::fromLatin1(rel))); };
+    FilesApp app(QList<QUrl>{});
+    QStringList told;
+    QObject::connect(&app, &FilesApp::operationFailed, &app, [&](const QString &message) { told << message; });
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    const auto undoMove = [&](const char *back) {
+        if (!waitFor([&] { return app.canUndo(); }))
+            return false;
+        app.undo();
+        return waitFor([&] { return here(back); });
+    };
+
+    // M1: a password copied while the move runs stays on the clipboard.
+    app.copyToClipboard({url(QStringLiteral("a.txt"))}, true);
+    app.paste(url(QStringLiteral("to")), nullptr);
+    clipboard->setText(QStringLiteral("a password copied meanwhile"));
+    ASSERT_TRUE(waitFor([&] { return here("to/a.txt") && !here("a.txt"); }));
+    QCoreApplication::processEvents();
+    ASSERT_TRUE(waitFor([&] { return app.canUndo(); })) << "the move ended";
+    EXPECT_EQ(clipboard->text(), QStringLiteral("a password copied meanwhile")) << "the newer content is not emptied";
+    EXPECT_TRUE(undoMove("a.txt")) << told.join(QLatin1Char('|')).toStdString();
+
+    // L1: another file manager's cut fades its items but is not Files' to cancel.
+    auto *gnome = new QMimeData;
+    gnome->setUrls({url(QStringLiteral("b.txt"))});
+    gnome->setData(QStringLiteral("x-special/gnome-copied-files"), "cut\n" + url(QStringLiteral("b.txt")).toEncoded());
+    clipboard->setMimeData(gnome);
+    EXPECT_FALSE(app.cutPending()) << "Nautilus's cut, not Files'";
+    app.cancelCut();
+    EXPECT_TRUE(app.canPaste()) << "Esc in Files leaves another application's clipboard alone";
+    // Files' own cut is pending, until something else is copied with the same items but without Files' mark.
+    app.copyToClipboard({url(QStringLiteral("b.txt"))}, true);
+    EXPECT_TRUE(app.cutPending());
+    auto *dolphin = new QMimeData;
+    dolphin->setUrls({url(QStringLiteral("b.txt"))});
+    dolphin->setData(QStringLiteral("application/x-kde-cutselection"), "1");
+    clipboard->setMimeData(dolphin);
+    EXPECT_FALSE(app.cutPending()) << "Dolphin's cut of the same item is Dolphin's";
+
+    // L3: cut items pasted into their own folder: nothing moves, no conflict, and the cut stays for another folder.
+    app.copyToClipboard({url(QStringLiteral("c.txt"))}, true);
+    told.clear();
+    const quint64 serial = KIO::FileUndoManager::self()->currentCommandSerialNumber();
+    app.paste(QUrl::fromLocalFile(dir.path()), nullptr);
+    for (int i = 0; i < 20; ++i)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    EXPECT_TRUE(here("c.txt"));
+    EXPECT_TRUE(app.cutPending()) << "still cut";
+    EXPECT_EQ(KIO::FileUndoManager::self()->currentCommandSerialNumber(), serial) << "no move was started";
+    EXPECT_TRUE(told.isEmpty()) << "no conflict: " << told.join(QLatin1Char('|')).toStdString();
+    app.paste(url(QStringLiteral("to")), nullptr);
+    ASSERT_TRUE(waitFor([&] { return here("to/c.txt") && !app.cutPending(); })) << "then pasted elsewhere it moves";
+    EXPECT_FALSE(app.canPaste()) << "and its own cut is consumed";
+    EXPECT_TRUE(told.isEmpty()) << told.join(QLatin1Char('|')).toStdString();
+    EXPECT_TRUE(undoMove("c.txt"));
+}
+
+// Integrator review, L4: items dropped at the edge of a Favorites place (an add-to-sidebar gap) that hold no folder go into
+// that place instead of being refused; folders still join Favorites, and nothing falls back then.
+TEST(SidebarFavorites, AnEdgeDropWithNoFolderGoesIntoThePlace)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    ASSERT_TRUE(QDir(dir.path()).mkdir(QStringLiteral("Folder")));
+    QFile file(dir.filePath(QStringLiteral("note.txt")));
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.close();
+    FilesApp app(QList<QUrl>{});
+    auto *places = qobject_cast<PlacesModel *>(app.places());
+    ASSERT_NE(places, nullptr);
+    QStringList told;
+    QObject::connect(&app, &FilesApp::operationFailed, &app, [&](const QString &message) { told << message; });
+    QList<std::tuple<QString, QList<QUrl>, QUrl>> fallbacks;
+    QObject::connect(&app, &FilesApp::sidebarDropFallback, &app, [&](const QString &token, const QList<QUrl> &urls, const QUrl &destination) {
+        fallbacks.append({token, urls, destination});
+    });
+    const QUrl documents = QUrl::fromLocalFile(QDir::homePath() + QStringLiteral("/Documents"));
+    const QUrl note = QUrl::fromLocalFile(dir.filePath(QStringLiteral("note.txt")));
+    app.addToSidebar({note}, 0, documents, QStringLiteral("t1"));
+    ASSERT_TRUE(waitFor([&] { return !fallbacks.isEmpty(); }));
+    EXPECT_EQ(std::get<0>(fallbacks.first()), QStringLiteral("t1"));
+    EXPECT_EQ(std::get<1>(fallbacks.first()), QList<QUrl>{note});
+    EXPECT_EQ(std::get<2>(fallbacks.first()), documents);
+    EXPECT_TRUE(told.isEmpty()) << "no refusal banner";
+    EXPECT_EQ(places->pinnedCount(), 0);
+    // A folder among them: it joins, nothing falls back.
+    const QUrl folder = QUrl::fromLocalFile(dir.filePath(QStringLiteral("Folder")));
+    app.addToSidebar({folder, note}, 0, documents, QStringLiteral("t2"));
+    ASSERT_TRUE(waitFor([&] { return places->pinnedCount() == 1; }));
+    EXPECT_EQ(fallbacks.size(), 1);
+    app.removeFromSidebar(folder);
+    // A search location is never a sidebar folder (File > Add to Sidebar is dimmed there); a removed standard place is one.
+    EXPECT_FALSE(app.sidebarCandidate(QUrl(QStringLiteral("grassfield-search:/?q=x"))));
+    EXPECT_TRUE(app.sidebarCandidate(folder));
 }

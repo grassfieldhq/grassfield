@@ -121,8 +121,11 @@ TestCase {
         // Add to Sidebar (FP-27): what was added, and what the sidebar lists.
         property var sidebarAdded: []
         property var inSidebarUrls: []
-        function addToSidebar(urls: var, position: int): void {
+        function addToSidebar(urls: var, position: int, fallback: url, token: string): void {
             fakeApp.sidebarAdded = fakeApp.sidebarAdded.concat([{urls: urls.map(u => String(u)), position: position}]);
+        }
+        function sidebarCandidate(target: url): bool {
+            return !String(target).startsWith("grassfield-");
         }
         function inSidebar(target: url): bool {
             return fakeApp.inSidebarUrls.indexOf(String(target)) >= 0;
@@ -1298,5 +1301,27 @@ TestCase {
         fakeApp.openWithApps = [];
         folder.selected = [];
         folder.selectedCount = 0;
+    }
+
+    // Nits of the integrator review: the folder menu says "Paste" while the clipboard holds no item (the Finder), "Paste Item"
+    // for one; Add to Sidebar adds nothing for a search location shown with nothing selected.
+    function test_pasteLabelAndNoAddToSidebarInASearch() {
+        const files = test.openFiles(false);
+        const tab = files.windows[0].tab;
+        const folder = tab.folder;
+        fakeApp.clipboardCount = 0;
+        fakeApp.canPaste = false;
+        compare(tab.backgroundMenu(folder).find(i => i.id === "paste").text, "Paste");
+        fakeApp.clipboardCount = 1;
+        fakeApp.canPaste = true;
+        compare(tab.backgroundMenu(folder).find(i => i.id === "paste").text, "Paste Item");
+        fakeApp.clipboardCount = 0;
+        fakeApp.canPaste = false;
+        folder.selected = [];
+        folder.selectedCount = 0;
+        fakeApp.inSidebarUrls = [];
+        compare(tab.sidebarCandidates().length, 1, "a plain folder shown: Add to Sidebar adds it");
+        tab.navigate("grassfield-search:/?q=report", false);
+        compare(tab.sidebarCandidates(), [], "a search location: nothing to add");
     }
 }

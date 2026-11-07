@@ -357,7 +357,7 @@ Platform.MenuBar {
             onTriggered: bar.app.copyPaths(bar.tab.selection())
         }
         Platform.MenuItem {
-            text: bar.app.clipboardCount > 1 ? qsTr("Paste %1 Items").arg(bar.app.clipboardCount) : qsTr("Paste Item")
+            text: bar.app.clipboardCount > 1 ? qsTr("Paste %1 Items").arg(bar.app.clipboardCount) : bar.app.clipboardCount === 1 ? qsTr("Paste Item") : qsTr("Paste")
             shortcut: "Ctrl+V"
             enabled: bar.keysHere && bar.app.canPaste && bar.writable
             onTriggered: bar.tab.paste()

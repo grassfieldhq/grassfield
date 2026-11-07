@@ -75,6 +75,23 @@
 namespace
 {
 const QString kGnomeCopied = QStringLiteral("x-special/gnome-copied-files");
+// Files' own mark on a cut it put on the clipboard (a token per cut): Esc cancels only such a cut (integrator review, L1).
+const QString kFilesCut = QStringLiteral("application/x-grassfield-files-cut");
+
+// The clipboard says the items were cut, the KDE way or the GNOME way (Nautilus writes only its own list).
+bool clipboardSaysCut(const QMimeData *data)
+{
+    return data && (KIO::isClipboardDataCut(data) || FileLogic::gnomeCopiedFilesCut(data->data(kGnomeCopied)));
+}
+
+// The items of the clipboard as compared for a cut (no trailing slash).
+QSet<QUrl> clipboardItems(const QMimeData *data)
+{
+    QSet<QUrl> out;
+    for (const QUrl &u : KioDialogs::pastableItems(data))
+        out.insert(u.adjusted(QUrl::StripTrailingSlash));
+    return out;
+}
 
 FolderModel *asFolder(QObject *object)
 {
@@ -465,21 +482,33 @@ int FilesApp::clipboardCount() const
 void FilesApp::readClipboardCut()
 {
     const QMimeData *data = QGuiApplication::clipboard()->mimeData();
-    QSet<QUrl> cut;
-    if (data && (KIO::isClipboardDataCut(data) || FileLogic::gnomeCopiedFilesCut(data->data(kGnomeCopied)))) {
-        for (const QUrl &u : KioDialogs::pastableItems(data))
-            cut.insert(u.adjusted(QUrl::StripTrailingSlash));
-    }
+    // Any file manager's cut fades its items here; only Files' own is Esc's (cutPending).
+    const QSet<QUrl> cut = clipboardSaysCut(data) ? clipboardItems(data) : QSet<QUrl>();
     if (cut == m_cutUrls)
         return;
     m_cutUrls = cut;
     emit cutUrlsChanged();
 }
 
+bool FilesApp::clipboardHoldsCut(const QSet<QUrl> &urls) const
+{
+    const QMimeData *data = QGuiApplication::clipboard()->mimeData();
+    return !urls.isEmpty() && clipboardSaysCut(data) && clipboardItems(data) == urls;
+}
+
+bool FilesApp::cutPending() const
+{
+    const QMimeData *data = QGuiApplication::clipboard()->mimeData();
+    return !m_ownCutToken.isEmpty() && data && data->data(kFilesCut) == m_ownCutToken && clipboardHoldsCut(m_ownCutUrls);
+}
+
 void FilesApp::cancelCut()
 {
-    if (m_cutUrls.isEmpty())
+    // Only a cut Files wrote and the clipboard still holds: another file manager's cut, or anything copied since, stays.
+    if (!cutPending())
         return;
+    m_ownCutUrls.clear();
+    m_ownCutToken.clear();
     QGuiApplication::clipboard()->clear();
     // The clipboard tells its change itself; read it now too (a platform may answer later).
     readClipboardCut();
@@ -1282,6 +1311,16 @@ void FilesApp::copyToClipboard(const QList<QUrl> &urlsIn, bool cut)
     auto *data = new QMimeData;
     data->setUrls(urls);
     KIO::setClipboardDataCut(data, cut);
+    // Files' own cut: a fresh token, kept with the items (cutPending, cancelCut).
+    m_ownCutUrls.clear();
+    m_ownCutToken.clear();
+    if (cut) {
+        static quint64 serial = 0;
+        m_ownCutToken = QByteArray::number(QCoreApplication::applicationPid()) + '-' + QByteArray::number(++serial);
+        for (const QUrl &u : std::as_const(urls))
+            m_ownCutUrls.insert(u.adjusted(QUrl::StripTrailingSlash));
+        data->setData(kFilesCut, m_ownCutToken);
+    }
     // GNOME file managers read their own format.
     QStringList gnome{cut ? QStringLiteral("cut") : QStringLiteral("copy")};
     for (const QUrl &u : urls)
@@ -1301,16 +1340,17 @@ void FilesApp::paste(const QUrl &destination, QObject *folder)
     if (urls.isEmpty())
         return;
     // A cut, the KDE way or the GNOME way (Nautilus writes only its own list): the items move.
-    const bool cut = KIO::isClipboardDataCut(data) || FileLogic::gnomeCopiedFilesCut(data->data(kGnomeCopied));
-    // Copying items into their own folder makes "name copy" duplicates instead of a conflict.
-    if (!cut && !urls.isEmpty()) {
-        bool sameFolder = true;
-        for (const QUrl &u : urls)
-            sameFolder &= u.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash) == destination.adjusted(QUrl::StripTrailingSlash);
-        if (sameFolder) {
+    const bool cut = clipboardSaysCut(data);
+    bool sameFolder = true;
+    for (const QUrl &u : urls)
+        sameFolder &= u.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash) == destination.adjusted(QUrl::StripTrailingSlash);
+    if (sameFolder) {
+        // Cut items pasted into their own folder: nothing to move, and the cut stays for another folder (the Finder's Move Item
+        // Here does nothing there either; KIO would refuse a move onto itself with a conflict sheet). Copied ones make "name
+        // copy" duplicates instead of a conflict.
+        if (!cut)
             duplicate(urls, folder);
-            return;
-        }
+        return;
     }
     if (refuseTwin(this, destination, urls))
         return;
@@ -1338,10 +1378,26 @@ void FilesApp::paste(const QUrl &destination, QObject *folder)
     });
     if (cut) {
         const QStringList pending = beginStyleMoves(urls);
-        connect(job, &KJob::result, this, [this, job, urls, destination, created, pending] {
-            // A cut selection is consumed by its paste.
-            if (!job->error())
+        QSet<QUrl> pasted;
+        for (const QUrl &u : urls)
+            pasted.insert(u.adjusted(QUrl::StripTrailingSlash));
+        connect(job, &KJob::result, this, [this, job, urls, destination, created, pending, pasted] {
+            // A cut selection is consumed by its paste, when the clipboard still holds this very cut, or what KIO's paste put
+            // in its place (KF6 swaps a pasted cut for the moved items' new locations, as a copy: a second Paste would copy
+            // them). Anything copied while a slow move ran (a link, a password) stays (integrator review, M1).
+            QSet<QUrl> moved;
+            for (const QUrl &u : std::as_const(*created))
+                moved.insert(u.adjusted(QUrl::StripTrailingSlash));
+            for (const QUrl &u : pasted)
+                moved.insert(childUrl(destination, u.fileName()).adjusted(QUrl::StripTrailingSlash));
+            const QMimeData *now = QGuiApplication::clipboard()->mimeData();
+            QSet<QUrl> held = clipboardItems(now);
+            const bool kiosSwap = !held.isEmpty() && !clipboardSaysCut(now) && held.subtract(moved).isEmpty();
+            if (!job->error() && (clipboardHoldsCut(pasted) || kiosSwap)) {
+                m_ownCutUrls.clear();
+                m_ownCutToken.clear();
                 QGuiApplication::clipboard()->clear();
+            }
             // What the job really created is listed in `created` whatever its verdict (a cancelled conflict or one failed item
             // leaves the other folders moved): their entries follow them before the protection is lifted.
             QList<QPair<QUrl, QUrl>> pairs;
@@ -2085,16 +2141,11 @@ bool FilesApp::setDefaultApplication(const QString &mimeType, const QString &sto
         const QFileInfo info(path);
         if (info.isSymLink())
             path = info.canonicalFilePath();
-        if (path.isEmpty() || (info.exists() && (!QFileInfo(path).isFile() || QFileInfo(path).size() > 1024 * 1024)))
-            return false;
+        // A regular file of a sane size in UTF-8 (one that is not valid UTF-8 is left as it is: rewriting it would re-encode
+        // bytes that are not Files').
         QString text;
-        QFile current(path);
-        if (current.exists()) {
-            if (!current.open(QIODevice::ReadOnly))
-                return false;
-            text = QString::fromUtf8(current.readAll());
-            current.close();
-        }
+        if (path.isEmpty() || !DefaultApps::readListFile(path, false, &text))
+            return false;
         const QString next = DefaultApps::withDefault(text, mimeType, service->storageId());
         if (next == text && DefaultApps::defaults(text).value(mimeType) != service->storageId())
             return false;
@@ -3274,24 +3325,33 @@ void FilesApp::publishSidebar()
     m_places->setFavorites(m_sidebarFolders, m_sidebarHidden);
 }
 
-void FilesApp::addToSidebar(const QList<QUrl> &urls, int position)
+void FilesApp::addToSidebar(const QList<QUrl> &urls, int position, const QUrl &fallback, const QString &token)
 {
     QList<QUrl> asked;
     bool unhidden = false;
+    bool listed = false; // a dropped item is a folder of Favorites already
     for (const QUrl &raw : urls) {
         const QUrl url = NavLogic::sidebarUrl(raw);
         if (m_sidebarHidden.removeAll(url) > 0) {
             unhidden = true; // a standard place removed before: listed again where it belongs
             continue;
         }
-        if (m_places->inFavorites(url) || !NavLogic::sidebarCandidate(url) || asked.contains(url))
+        if (m_places->inFavorites(url)) {
+            listed = true;
+            continue;
+        }
+        if (!NavLogic::sidebarCandidate(url) || asked.contains(url))
             continue;
         asked.append(url);
     }
     if (unhidden)
         publishSidebar();
-    if (asked.isEmpty())
+    if (asked.isEmpty()) {
+        // Nothing to ask about, and no folder among the items: the drop goes into the row it was made on.
+        if (!unhidden && !listed && fallback.isValid() && !urls.isEmpty())
+            emit sidebarDropFallback(token, urls, fallback);
         return;
+    }
     // Only folders join Favorites: KIO says which items are (a link to a folder is one); nothing is read on this thread.
     struct Pending {
         QList<QUrl> urls;
@@ -3305,7 +3365,7 @@ void FilesApp::addToSidebar(const QList<QUrl> &urls, int position)
     for (int i = 0; i < asked.size(); ++i) {
         KIO::StatJob *job = KIO::stat(asked.at(i), KIO::StatJob::SourceSide, KIO::StatBasic | KIO::StatResolveSymlink, KIO::HideProgressInfo);
         attachDelegate(job); // Grassfield's delegate, no automatic error dialog: a failed stat is "not a folder"
-        connect(job, &KJob::result, this, [this, job, pending, i, position] {
+        connect(job, &KJob::result, this, [this, job, pending, i, position, urls, fallback, token, known = unhidden || listed] {
             pending->folders[i] = !job->error() && job->statResult().isDir();
             if (--pending->left > 0)
                 return;
@@ -3313,6 +3373,12 @@ void FilesApp::addToSidebar(const QList<QUrl> &urls, int position)
             for (int k = 0; k < pending->urls.size(); ++k) {
                 if (pending->folders.at(k))
                     folders.append(pending->urls.at(k));
+            }
+            // Items with no folder among them, dropped at the edge of a place: they go into that place, as a drop in its middle
+            // would (integrator review, L4: files dropped at Documents' edge were refused).
+            if (folders.isEmpty() && !known && fallback.isValid()) {
+                emit sidebarDropFallback(token, urls, fallback);
+                return;
             }
             if (folders.size() < pending->urls.size())
                 emit operationFailed(tr("Only folders can be added to the sidebar."));
@@ -3351,6 +3417,12 @@ void FilesApp::moveInSidebar(const QUrl &url, int position)
 bool FilesApp::inSidebar(const QUrl &url) const
 {
     return m_places->inFavorites(url);
+}
+
+bool FilesApp::sidebarCandidate(const QUrl &raw) const
+{
+    const QUrl url = NavLogic::sidebarUrl(raw);
+    return NavLogic::sidebarCandidate(url) || m_sidebarHidden.contains(url);
 }
 
 void FilesApp::followAmounts(KJob *tracked, KJob *source)

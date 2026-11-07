@@ -37,7 +37,9 @@ int main(int argc, char *argv[])
             QStringList dirs;
             for (const QString &data : QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation))
                 dirs << data + QStringLiteral("/applications");
-            DefaultApps::seedSessionDefaults(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation), dirs);
+            // Omarchy's shipped defaults, read as data (an explicit choice of the user's is told from them: seedsAllowed).
+            const QString omarchy = qEnvironmentVariableIsEmpty("OMARCHY_PATH") ? QStringLiteral("/usr/share/omarchy") : qEnvironmentVariable("OMARCHY_PATH");
+            DefaultApps::seedSessionDefaults(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation), dirs, omarchy);
         }
         return 0;
     }
