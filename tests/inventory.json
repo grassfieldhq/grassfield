@@ -675,6 +675,7 @@
  {"path": "tests/integration/secrets_handover.sh", "layer": "headless", "runner": "test.sh"},
  {"path": "tests/integration/portal_settings.sh", "layer": "headless", "runner": "test.sh"},
  {"path": "tests/integration/portal_filechooser.sh", "layer": "headless", "runner": "test.sh"},
+ {"path": "tests/integration/screencast_restore.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/integration/print_cups.sh", "layer": "headless", "runner": "test.sh"},
  {"path": "tests/integration/gtk_themes.sh", "layer": "headless", "runner": "test.sh"},
  {"path": "tests/integration/tray_host.sh", "layer": "headless", "runner": "bare"},
