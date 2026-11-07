@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Screen sharing from a browser asks once (bug report on rc6: "the selection prompt comes back several times"; ADR-0035 D-6 as
-# amended; docs/specs/system-dialogs.md section 3). Nested scenario (L1), bare command: the real xdg-desktop-portal and
+# Why a browser asks twice for one share, and that it asks once when the picker answers the token flag (bug report on rc6:
+# "the selection prompt comes back several times"; ADR-0035 D-6, amendment proposed, held behind followAllowToken until the
+# owner agrees; docs/specs/system-dialogs.md section 3). Nested scenario (L1), bare command: the real xdg-desktop-portal and
 # xdg-desktop-portal-hyprland of this machine on a private D-Bus, a private PipeWire and WirePlumber, captures of this tree's
 # nested Hyprland, and a recording picker in place of the stand-in (custom_picker_binary of a scratch xdph.conf, with
 # allow_token_by_default as Omarchy's has it). The client (screencast_restore.d/client.py) captures as Chromium does: once for
 # its own picker's preview, then again to share, the second with the restore token the first one got.
-#   1 the picker answers without the token flag (the Grassfield panel with Remember this choice unticked, as before the fix):
+#   1 the picker answers without the token flag (the Grassfield panel with Remember this choice unticked, as it opens while followAllowToken is false):
 #     no restore token, and the second capture runs the picker again (the reported bug);
-#   2 the picker answers with the token flag (Remember this choice, ticked when xdph passes --allow-token): a restore token,
+#   2 the picker answers with the token flag (Remember this choice ticked by the user, or opened ticked from --allow-token once followAllowToken is true): a restore token,
 #     the second capture is restored without the picker, and both captures stream pictures that are not blank;
 #   3 an app that asks for no persistence (persist_mode 0): no token, the picker runs each time, whatever the flag;
 #   4 a host app the portal cannot name that asks to persist (persist_mode 2, OBS's way): xdg-desktop-portal 1.22 names a host

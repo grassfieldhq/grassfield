@@ -17,7 +17,7 @@
 #     Socket never connected again after a failed connection): after case 8, after a socket file nobody listens on, and after
 #     a stand-in that gave up because the shell's answer took over 1 s (a slow `qs ipc`: it ran its stock picker), the next
 #     request shows its panel and its answer reaches xdph; each request has its own socket, and none is left once it ended.
-# The panel's defaults (review of PR #83, MINOR 1; ADR-0035 7-8; owner decision Q14 as amended after the rc6 bug report): in
+# The panel's defaults (review of PR #83, MINOR 1; ADR-0035 7-8; owner decision Q14, whose amendment is held behind followAllowToken): in
 # case 1 the panel, as the probe loads it, opens with Remember this choice unticked though xdph passed --allow-token (owner
 # decision Q14 stands until its amendment is agreed: SharePickerPanel.followAllowToken) and unarmed (Share disabled), and is
 # armed after panel.alertArmMs with Remember still unticked; in case 2 (no --allow-token) it opens unticked too.
