@@ -284,6 +284,7 @@ Singleton {
                 path: socket
             };
             root.windows = [];
+            root.allowToken = false;
             root.shown = false;
             connectDeadline.restart();
             root.channel = channelComponent.createObject(root, {
