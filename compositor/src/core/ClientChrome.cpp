@@ -21,6 +21,20 @@ namespace gf::chrome {
         return splitMember ? 0.0 : band(clientChrome);
     }
 
+    bool drawsOwnTitlebar(const DecorationRequest& request) {
+        if (request.xdgObject)
+            return request.xdgRequested == kXdgModeClientSide;
+        if (request.kdeObject)
+            return request.kdeRequested == kKdeModeClient;
+        return true; // negotiated nothing: it decorates itself (xdg-decoration's and KDE's rule)
+    }
+
+    TagChange tagChange(bool drawsOwn, bool tagged, bool ours) {
+        if (drawsOwn)
+            return tagged ? TagChange::None : TagChange::Add;
+        return ours && tagged ? TagChange::Remove : TagChange::None;
+    }
+
     std::vector<uint32_t> wmCapabilities(bool clientChrome, bool minimizeBridged) {
         std::vector<uint32_t> caps{kCapFullscreen, kCapMaximize};
         if (clientChrome && minimizeBridged)
@@ -30,6 +44,10 @@ namespace gf::chrome {
 
     bool capabilityCandidate(std::string_view interfaceName, int version, bool hasUserData) {
         return interfaceName == "xdg_toplevel" && version >= static_cast<int>(kWmCapabilitiesSince) && hasUserData;
+    }
+
+    bool toplevelCandidate(std::string_view interfaceName, bool hasUserData) {
+        return interfaceName == "xdg_toplevel" && hasUserData;
     }
 
     bool needsTell(const CapabilityTell& tell, bool withMinimize) {

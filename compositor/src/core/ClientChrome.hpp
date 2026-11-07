@@ -32,6 +32,45 @@ namespace gf::chrome {
     // is (the pointer at the top edge of its half reveals it, P6): its half is filled from the output's top edge.
     double band(bool clientChrome, bool splitMember);
 
+    // ---- P9: the decoration the client negotiated (owner report on 1.0.0-rc6: two title bars on Telegram and ArtCraft) ----
+    // A Wayland client says whether it draws its own title bar through xdg-decoration (zxdg_toplevel_decoration_v1.set_mode:
+    // client_side 1, server_side 2; unset_mode: the compositor's choice) or KDE's server-decoration
+    // (org_kde_kwin_server_decoration.request_mode: none 0, client 1, server 2; GTK 3 and GTK 4 announce their header bars
+    // there). Hyprland 0.56.2 answers server_side to every request of both (read from the binary: xdgModeOnRequestCSD and
+    // kdeModeOnRequestCSD return 2) and keeps what the client asked (mostRecentlyRequested, public). Both protocols leave a
+    // client that negotiates nothing to decorate itself ("clients continue to self-decorate as they see fit"), which is what a
+    // Qt frameless window (Telegram) does. The values are the protocols' enums.
+    inline constexpr uint32_t kXdgModeClientSide = 1;
+    inline constexpr uint32_t kXdgModeServerSide = 2;
+    inline constexpr uint32_t kKdeModeClient     = 1;
+    inline constexpr uint32_t kKdeModeServer     = 2;
+
+    // What one toplevel negotiated: whether it made each protocol's decoration object, and its latest request there (0 when
+    // it never asked, or unset its mode).
+    struct DecorationRequest {
+        bool     xdgObject    = false;
+        uint32_t xdgRequested = 0;
+        bool     kdeObject    = false;
+        uint32_t kdeRequested = 0;
+    };
+
+    // The client draws its own title bar: it asked for client-side decorations (xdg-decoration first: a toolkit that speaks
+    // both decides there), or it negotiated through neither protocol. A server-side request, an xdg mode left to the
+    // compositor (server-side here) and a KDE object without a client request (0 is both "never asked" and KDE's "none",
+    // which no toolkit seen sends) keep the plugin's titlebar.
+    bool drawsOwnTitlebar(const DecorationRequest& request);
+
+    // Whether the plugin's own Hyprland tag (kTag, static: rules never clear it) should be added to or removed from a window
+    // now. `drawsOwn`: drawsOwnTitlebar; `tagged`: the window carries kTag from anyone; `ours`: the plugin added it.
+    // Add when the client draws its own title bar and nothing tagged it; remove only a tag the plugin added once the client
+    // no longer draws its own (a session rule's tag, the per-app fallback, is never removed).
+    enum class TagChange : uint8_t {
+        None,
+        Add,
+        Remove,
+    };
+    TagChange tagChange(bool drawsOwn, bool tagged, bool ours);
+
     // ---- P8: the minimize capability (GF-056 part 2) ----
     // xdg_toplevel.wm_capabilities (xdg-shell v5) tells a client which window controls work; GTK4 greys the ones that are
     // missing. Hyprland 0.56.2 sends every toplevel fullscreen and maximize, once, from CXDGToplevelResource's
@@ -53,6 +92,8 @@ namespace gf::chrome {
     // has its user data: fromResource reads the user data without a check (read from the 0.56.2 binary), and it is null
     // while the resource is being destroyed (a rule change can run inside another object's destroy chain).
     bool capabilityCandidate(std::string_view interfaceName, int version, bool hasUserData);
+    // P9: the same walk for the key of Hyprland's xdg-decoration map: an xdg_toplevel of any version that still has its user data.
+    bool toplevelCandidate(std::string_view interfaceName, bool hasUserData);
 
     // What one window was told. `unreachable`: its xdg_toplevel resource was not found (older than v5, or going), so it
     // cannot be told anything: no further walk for it (every rule change would repeat it).

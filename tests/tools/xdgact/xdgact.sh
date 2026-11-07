@@ -19,9 +19,11 @@ if [[ ! -x $bin || $src/xdgact.c -nt $bin ]]; then
   wayland-scanner private-code "$protocols/stable/xdg-shell/xdg-shell.xml" "$dev/tools/xdg-shell-protocol.c"
   wayland-scanner client-header "$protocols/staging/xdg-activation/xdg-activation-v1.xml" "$dev/tools/xdg-activation-v1-client-protocol.h"
   wayland-scanner private-code "$protocols/staging/xdg-activation/xdg-activation-v1.xml" "$dev/tools/xdg-activation-v1-protocol.c"
+  wayland-scanner client-header "$protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" "$dev/tools/xdg-decoration-unstable-v1-client-protocol.h"
+  wayland-scanner private-code "$protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml" "$dev/tools/xdg-decoration-unstable-v1-protocol.c"
   # shellcheck disable=SC2046
   gcc -std=gnu11 -O1 -Wall -Wextra -I"$dev/tools" "$src/xdgact.c" "$dev/tools/xdg-shell-protocol.c" "$dev/tools/xdg-activation-v1-protocol.c" \
-    $(pkg-config --cflags --libs wayland-client) -o "$bin"
+    "$dev/tools/xdg-decoration-unstable-v1-protocol.c" $(pkg-config --cflags --libs wayland-client) -o "$bin"
 fi
 [[ ${1:-} == --build ]] && exit 0
 

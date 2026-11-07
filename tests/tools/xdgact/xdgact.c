@@ -17,8 +17,12 @@
 // With WxH the toplevel is of fixed size: its minimum and maximum are both WxH (xdg_toplevel.set_min_size, set_max_size) and it
 // always draws that size, whatever the compositor configures, as a window that cannot be resized does (tests/compositor/tiling.sh:
 // the plugin's titlebar disables its zoom light and the Zoom and Full Screen keys leave it alone, ADR-0040 step 1b's review).
+// Decorations (tests/compositor/decorations.sh): the toplevel asks for server-side decorations through xdg-decoration, as an app
+// that draws no title bar of its own does (foot, Qt, SDL); with XDGACT_DECORATION=client it asks for client-side ones, and with
+// XDGACT_DECORATION=none it negotiates nothing (a Qt frameless window does neither: it decorates itself).
 #define _GNU_SOURCE
 #include "xdg-activation-v1-client-protocol.h"
+#include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
 #include <errno.h>
@@ -38,6 +42,7 @@ static struct wl_compositor*       compositor;
 static struct wl_shm*              shm;
 static struct xdg_wm_base*         wm_base;
 static struct xdg_activation_v1*   activation;
+static struct zxdg_decoration_manager_v1* decoration_manager;
 static struct wl_seat*             seat;
 static struct wl_surface*          surface;
 static struct xdg_surface*         toplevel_xs;
@@ -82,6 +87,8 @@ static void global_add(void* data, struct wl_registry* reg, uint32_t name, const
         activation = wl_registry_bind(reg, name, &xdg_activation_v1_interface, 1);
     else if (strcmp(iface, wl_seat_interface.name) == 0 && !seat)
         seat = wl_registry_bind(reg, name, &wl_seat_interface, 1);
+    else if (strcmp(iface, zxdg_decoration_manager_v1_interface.name) == 0)
+        decoration_manager = wl_registry_bind(reg, name, &zxdg_decoration_manager_v1_interface, 1);
 }
 static void global_remove(void* data, struct wl_registry* reg, uint32_t name) {
     (void)data;
@@ -361,6 +368,12 @@ int main(int argc, char** argv) {
     if (fixed_w > 0) {
         xdg_toplevel_set_min_size(top, fixed_w, fixed_h);
         xdg_toplevel_set_max_size(top, fixed_w, fixed_h);
+    }
+    const char* decoration = getenv("XDGACT_DECORATION");
+    if (decoration_manager && !(decoration && strcmp(decoration, "none") == 0)) {
+        struct zxdg_toplevel_decoration_v1* deco = zxdg_decoration_manager_v1_get_toplevel_decoration(decoration_manager, top);
+        const int client = decoration && strcmp(decoration, "client") == 0;
+        zxdg_toplevel_decoration_v1_set_mode(deco, client ? ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE : ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
     }
     wl_surface_commit(surface);
 
