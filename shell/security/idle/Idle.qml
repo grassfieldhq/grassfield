@@ -28,7 +28,7 @@ import "../../lib/RunMode.js" as RunMode
 // the LOCKED state with the lock secure (an unlocked session is locked first: the one lock it can add), never in the nested
 // dev session.
 //
-// Process (ADR-0041 step 1, S2): instantiated in the security process only (../SecurityHost.qml), with the lock and the sleep
+// Process (ADR-0041 step 1, S2): instantiated in the security process only (../host/SecurityHost.qml), with the lock and the sleep
 // inhibitor, so that the idle lock and the lock before sleep keep working whatever the UI does. What the UI knows of it
 // (the displays switched off, for the polkit agent and the screen saver) goes out with the lock state (Lock.displaysOff,
 // LockPublisher); what it needs from the UI (the applications' org.freedesktop.ScreenSaver inhibitors, which the menu

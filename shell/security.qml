@@ -2,14 +2,14 @@
 // A second Quickshell process of the Grassfield session, `qs -n -p /usr/share/grassfield/shell/security.qml`
 // (grassfield-security.service), beside the UI (`qs -n -p /usr/share/grassfield/shell`, grassfield-shell.service). The
 // file is a root of its own next to shell.qml, so `qs.*` resolves from the same directory as the UI's root and the
-// security modules keep their place. Since S2 it hosts everything that locks (security/SecurityHost.qml: the lock, idle
+// security modules keep their place. Since S2 it hosts everything that locks (security/host/SecurityHost.qml: the lock, idle
 // and the sleep inhibitor, with the publisher of the state the UI reads); S3 adds the polkit agent, S4 safe mode. The UI
 // keeps no lock: every lock request reaches this process over IPC (`lock lock`, `lock lid` on this instance).
 // GF-115: loaded by path from the system tree only (the unit); R12: never reloaded on a file change.
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import qs.security
+import qs.security.host
 
 ShellRoot {
     id: root

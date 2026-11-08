@@ -379,7 +379,7 @@ down, how sleep behaves) is written in the table at the end of this step.
 
 ### S2 as built (2026-11-08, branch feat/safe-mode-s2 from main 8b04383c; everything that locks moves together)
 - **What runs where.** The security process (`shell/security.qml`: `ShellRoot`, one `SecurityHost`, the `security` handler)
-  hosts `shell/security/SecurityHost.qml`: the Translator and the appearance settings the lock follows, `Idle` (dim,
+  hosts `shell/security/host/SecurityHost.qml`: the Translator and the appearance settings the lock follows, `Idle` (dim,
   idle lock, display off, the automatic sleep, and inside it `SleepInhibitor` with its `PrepareForSleep` watcher) and the
   `Lock` singleton (WlSessionLock, `PamContext("omarchy-lock-password")`, the crash-recovery marker, the stranded-lock
   takeover, the ownership check, `LockView`). The UI (`shell/shell.qml`) imports neither `qs.security.lock` nor
@@ -388,7 +388,7 @@ down, how sleep behaves) is written in the table at the end of this step.
   and the secret sheets stay in the UI until S3. IPC on the security instance (`qs ipc -p
   /usr/share/grassfield/shell/security.qml`): `lock lock`, `lock lid`, `lock state` (new, `unlocked|locked` only, ADR-0010
   S3), the lock's dev hooks, `idle inhibit` (new) and idle's dev hooks, `security state` (`lock idle`) and `security
-  heartbeat` (`<public state> <sequence>`). The root's hash and `root_check.py` follow the rule of round 2 (37 mutants).
+  heartbeat` (`<public state> <sequence>`). The root's hash and `root_check.py` follow the rule of round 2 (38 mutants).
 - **Free of the UI's world (ADR-0010 S1, deferred from S1's second part).** `LockView` draws the artwork with
   `Grassfield.Ui`'s `GrassfieldArtwork` (no `qs.desktop`); `Lock.lock()` no longer calls `Popups.close()` (the UI closes its
   popups when it reads the session locked, GF-116); the sleep inhibitor's notice goes through the notification server's

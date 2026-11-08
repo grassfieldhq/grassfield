@@ -330,7 +330,7 @@ if grep -rn 'item\.icon\b\|modelData\.icon\b' shell/menubar --include=*.qml | gr
 if grep -n '\.face\|AccountsService' shell/security/lock/*.qml | grep -v 'facePath: \|^[^:]*:[0-9]*: *//'; then site_ok=0; fi
 # ADR-0041 S2: the lock runs in the security process, which makes its one picture with the same helper (image-copy.py file)
 # and never uses ThemeIcons (whose start empties the UI's copy directory).
-if grep -n 'ThemeIcons' shell/security/lock/*.qml shell/security/idle/*.qml shell/security/SecurityHost.qml | grep -v '^[^:]*:[0-9]*: *//'; then site_ok=0; fi
+if grep -n 'ThemeIcons' shell/security/lock/*.qml shell/security/idle/*.qml shell/security/host/SecurityHost.qml | grep -v '^[^:]*:[0-9]*: *//'; then site_ok=0; fi
 dcheck "Search, the Switcher, the Overview, Stages, Force Quit, About, the Dock, its stacks, the desktop, Now Playing and the tray load such images through ThemeIcons, the lock through the same helper in its own process" "$site_ok"
 
 # ---- Part 4: the policy ----

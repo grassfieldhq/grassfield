@@ -3,7 +3,7 @@ Description=Grassfield security process (the lock, idle and the sleep inhibitor;
 Documentation=file:///usr/share/doc/grassfield/README.md
 # ADR-0041 step 1 (the owner's SQ-1 B, ADR-0010 "Separate security process"): a second Quickshell process beside the UI,
 # so that a crash of the desktop never takes the lock down. S1 started it hosting nothing; since S2 it hosts the lock, idle
-# and the sleep inhibitor (shell/security.qml, shell/security/SecurityHost.qml), and the UI asks it for every lock over
+# and the sleep inhibitor (shell/security.qml, shell/security/host/SecurityHost.qml), and the UI asks it for every lock over
 # IPC; S3 adds the polkit agent, S4 safe mode.
 PartOf=graphical-session.target
 After=graphical-session.target

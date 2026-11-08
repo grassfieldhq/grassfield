@@ -1477,7 +1477,7 @@ same directory and the modules move without moving a file), one step at a time u
   about the lock, the polkit agent, idle or sleep changes at S1. Tests: `tests/security/security_unit.sh` (static),
   `ipc_inventory.sh` (the target and its caller), `unit_restart_limits.sh`, `session_services.sh`.
 - **S2 (built, ADR-0041 "S2 as built"):** the lock, idle and the sleep inhibitor run in the security process only
-  (`shell/security/SecurityHost.qml`); the UI imports neither module and asks for every lock over IPC on the security
+  (`shell/security/host/SecurityHost.qml`); the UI imports neither module and asks for every lock over IPC on the security
   instance (`shell/services/LockClient.qml`); `OnFailure=omarchy-sleep-lock.service`, the sleep-lock gate and the
   stand-in's `lock lock` key on `grassfield-security.service`; the UI reads the lock state fail closed ("Lock state across
   processes" below). The lock and idle use no UI module and only the read-only `qs.services` types `Settings`,
@@ -1530,7 +1530,7 @@ same directory and the modules move without moving a file), one step at a time u
 | `shell/security/PasswordField.qml` | Shared password entry (Password echo, sensitive-data hints, plain-text placeholder, return arrow) |
 | `shell/security/lock/Lock.qml` | Singleton: `WlSessionLock`, `PamContext` (password; fingerprint only if its PAM file exists, paced: "Fingerprint pacing"), crash marker, IPC `lock` |
 | `shell/security/lock/LockView.qml` | Lock surface (display only): the output's wallpaper, sharp (the still LockStill decoded, else its colour or `GrassfieldArtwork`), the banded scrim, date and clock, avatar/initials, name, dark frosted field, one hint line (gate A2, see Decisions); backdrop, name and picture taken once (ADR-0040 step 4a) |
-| `shell/security.qml`, `shell/security/SecurityHost.qml` | The security process's root (ShellRoot, one SecurityHost, the `security` target) and what it hosts: the Translator and the appearance settings the lock follows, Idle (with SleepInhibitor) and the Lock singleton (ADR-0041 S2) |
+| `shell/security.qml`, `shell/security/host/SecurityHost.qml` | The security process's root (ShellRoot, one SecurityHost, the `security` target) and what it hosts: the Translator and the appearance settings the lock follows, Idle (with SleepInhibitor) and the Lock singleton (ADR-0041 S2) |
 | `shell/security/lock/LockPublisher.qml`, `shell/lib/LockState.js` | The lock state the UI reads: one file pushed on every change and with a heartbeat every 2 s; the format, the reader and the UI's fail-closed reading (pure, shared) |
 | `shell/security/lock/LockWallpaper.qml`, `LockAvatar.qml` | The lock's own reader of `wallpaper.json` (bounded, watched) and its account picture made by `services/image-copy.py file` (display only) |
 | `shell/services/LockClient.qml`, `LockClient.js` | The UI's side: reads the published state (SessionState.locked follows it), asks the security process to lock (`lock lock`), leases the screen saver inhibitors (`idle inhibit`) |

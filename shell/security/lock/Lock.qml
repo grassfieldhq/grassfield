@@ -33,7 +33,7 @@ import "../../lib/RunMode.js" as RunMode
 // unlocks; every error, timeout or lost lock keeps the session locked.
 //
 // Process (ADR-0041 step 1, S2): this singleton lives in the security process only (shell/security.qml, through
-// ../SecurityHost.qml), never in the UI (shell/shell.qml): the UI asks for a lock over IPC (`lock lock` on the security
+// ../host/SecurityHost.qml), never in the UI (shell/shell.qml): the UI asks for a lock over IPC (`lock lock` on the security
 // instance) and reads the state this module publishes (LockPublisher.qml: a state file and a heartbeat, ../../lib/LockState.js).
 // A crash of the UI therefore never touches the lock; a crash of this process leaves the compositor's lock in place and the
 // restarted process takes it back (below).

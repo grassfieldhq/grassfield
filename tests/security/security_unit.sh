@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ADR-0041 step 1, S1 (the owner's SQ-1 B): the security process runs beside the UI; since S2 it hosts the lock, idle and
-# the sleep inhibitor (shell/security/SecurityHost.qml) and the UI holds none of them. Static (data layer): the root
+# the sleep inhibitor (shell/security/host/SecurityHost.qml) and the UI holds none of them. Static (data layer): the root
 # shell/security.qml (a root of its own next to shell.qml, imports only QtQuick, Quickshell, Quickshell.Io and
-# qs.security, never reloads on a file change, one SecurityHost, one IpcHandler `security` with `state` and `heartbeat`;
+# qs.security.host, never reloads on a file change, one SecurityHost, one IpcHandler `security` with `state` and `heartbeat`;
 # the reviewed file
 # is pinned by its SHA-256, comments included, so any change needs the opus security review and then the new hash here
 # (the integrator's decision on #75: a static check cannot model all of QML); tests/security/root_check.py stays as the
@@ -29,19 +29,19 @@ desc="root: a root of its own next to shell.qml"
 check bash -c '[[ -f "$1" && -f shell/shell.qml ]]' _ "$qml"
 # The reviewed root, pinned. A change to shell/security.qml, comments included, fails here until the opus security review
 # of that change has passed and the hash below is updated in the same pull request (the integrator's decision on #75).
-pinned=dbcbc622aa3c64d2973d67e10058599249e58f686a14dc0a0ac0d6c1b1f7012b
+pinned=452918e2a1db7b4b9d5ae1c8db8715df2e7e6e63fef5980f9526ec98947f482c
 desc="root: the reviewed file is pinned by its SHA-256 (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum "$1" | cut -d" " -f1)" == "$2" ]] || { echo "shell/security.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$qml" "$pinned"
-desc="root: the readable second check (tests/security/root_check.py): ASCII only, no backslash, no regex literal, template string or bracket outside strings; every identifier one the root uses today; imports QtQuick, Quickshell, Quickshell.Io and qs.security only, wherever they stand; ShellRoot, SecurityHost and IpcHandler the only types; one SecurityHost; one IpcHandler, target security, the functions state and heartbeat only"
+desc="root: the readable second check (tests/security/root_check.py): ASCII only, no backslash, no regex literal, template string or bracket outside strings; every identifier one the root uses today; imports QtQuick, Quickshell, Quickshell.Io and qs.security.host only, wherever they stand; ShellRoot, SecurityHost and IpcHandler the only types; one SecurityHost; one IpcHandler, target security, the functions state and heartbeat only"
 check python3 -I tests/security/root_check.py "$qml"
-desc="root check selftest: the root passes (with LF and with CRLF) and each of the 37 planted mutants (next-line braces, comments before braces, indented imports, a singleton's property, names as strings or through Reflect, a U+2028 ending a comment, Unicode escapes, a second IpcHandler, an animation, Quickshell.reload, a third function, a renamed target, a second SecurityHost, the lock, idle or polkit module imported into the root, ...) is refused"
+desc="root check selftest: the root passes (with LF and with CRLF) and each of the 38 planted mutants (next-line braces, comments before braces, indented imports, a singleton's property, names as strings or through Reflect, a U+2028 ending a comment, Unicode escapes, a second IpcHandler, an animation, Quickshell.reload, a third function, a renamed target, a second SecurityHost, the lock, idle, polkit or qs.security module imported into the root, ...) is refused"
 check python3 -I tests/security/root_check.py --selftest "$qml"
 desc="root: never reloads on a file change (settings.watchFiles: false)"
 check grep -qE '^\s*settings\.watchFiles: false' "$qml"
 desc="root: one IpcHandler, target security, functions state and heartbeat, and nothing else that answers IPC"
 check bash -c '[[ $(grep -c "IpcHandler {" "$1") == 1 ]] && grep -qE "^\s*target: \"security\"" "$1" && grep -qE "^\s*function state\(\): string" "$1" && grep -qE "^\s*function heartbeat\(\): string" "$1" && [[ $(grep -cE "^\s*function " "$1") == 2 ]]' _ "$qml"
-desc="host: logs the ready line the start-time measurement reads (shell/security/SecurityHost.qml, instantiated by the root)"
-check bash -c 'grep -q "grassfield-security: ready" shell/security/SecurityHost.qml && grep -qE "^\s*SecurityHost \{" "$1"' _ "$qml"
+desc="host: logs the ready line the start-time measurement reads (shell/security/host/SecurityHost.qml, instantiated by the root)"
+check bash -c 'grep -q "grassfield-security: ready" shell/security/host/SecurityHost.qml && grep -qE "^\s*SecurityHost \{" "$1"' _ "$qml"
 desc="S2 scan (tests/security/security_process_scan.py): the UI tree imports neither the lock nor idle and names no Lock, Idle or SleepInhibitor (no Lock.lock caller left in the UI); one Idle in the host; the lock and idle use no UI module and only the qs.services types Settings, VisualFixtures, FixedTime and WallClock; one definition of the state file"
 check python3 -I tests/security/security_process_scan.py "$root"
 desc="S2 scan selftest: the tree is clean and each of the 15 planted mutants (a UI caller of Lock.lock, a Connections on Lock, the lock or idle imported into the UI, a second Idle or a window in the host, Popups, ThemeIcons, WallpaperState, Battery, the notification server or the desktop in the security modules, ...) is found"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The security root (shell/security.qml) holds nothing but ShellRoot, one SecurityHost and one IpcHandler (ADR-0041 step 1,
-S1; S2 adds the host of the lock, idle and the sleep inhibitor, shell/security/SecurityHost.qml, reviewed in its own file): a bounded,
+S1; S2 adds the host of the lock, idle and the sleep inhibitor, shell/security/host/SecurityHost.qml, reviewed in its own file): a bounded,
 readable check beside the hash pin of tests/security/security_unit.sh (the integrator's decision on #75, round 2: a static
 check cannot model all of QML, so the reviewed root is pinned by its SHA-256 and every change to it goes through the opus
 security review; this check stays as the second, readable one). Read as the engine reads it, not line by line (round 1: a
@@ -17,7 +17,7 @@ Rules:
   3. every identifier of the code is one the root uses today (ALLOWED_IDENTIFIERS: an allow-list, never a deny-list: a
      window, a loader, a process, Qt, Reflect, reload, an animation or a security module is simply not in it);
   4. every `import` stands at the start of a line (wherever indented) and names QtQuick, Quickshell, Quickshell.Io or
-     qs.security (S2: the module of SecurityHost; never qs.security.lock, .idle, .polkit or .secret, whose types the host
+     qs.security.host (S2: the module of SecurityHost alone; never qs.security, .lock, .idle, .polkit or .secret, whose types the host
      instantiates in its own reviewed file);
   5. every object instantiated (`Name {`, the file joined on whitespace) is ShellRoot, SecurityHost or IpcHandler,
      SecurityHost exactly once (a second host would run a second idle module and sleep inhibitor) and IpcHandler exactly
@@ -26,7 +26,7 @@ Standard library only; no Qt needed."""
 import re
 import sys
 
-ALLOWED_IMPORTS = {"QtQuick", "Quickshell", "Quickshell.Io", "qs.security"}
+ALLOWED_IMPORTS = {"QtQuick", "Quickshell", "Quickshell.Io", "qs.security.host"}
 ALLOWED_TYPES = {"ShellRoot", "SecurityHost", "IpcHandler"}
 ALLOWED_IDENTIFIERS = {"import", "QtQuick", "Quickshell", "Io", "qs", "security", "ShellRoot", "id", "root", "settings",
                        "watchFiles", "false", "SecurityHost", "host", "IpcHandler", "target", "function", "state", "string",
@@ -156,6 +156,7 @@ def mutants(src):
         ("the lock module imported into the root and its singleton named", top("import qs.security.lock\n").replace(body, body + "property bool lk: Lock.locked\n", 1)),
         ("the idle module imported into the root and an Idle", top("import qs.security.idle\n").replace(body, body + "Idle {\n}\n", 1)),
         ("the polkit module imported into the root (S3 goes through the host)", top("import qs.security.polkit\n")),
+        ("the qs.security module imported into the root (the host has a module of its own)", top("import qs.security\n")),
     ]
 
 

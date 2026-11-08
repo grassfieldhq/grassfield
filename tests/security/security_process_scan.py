@@ -5,9 +5,9 @@ Static (data layer), read on the code with comments and string contents removed:
   1. the UI tree (shell/** but shell/security/** and shell/security.qml) never imports qs.security.lock or qs.security.idle
      and never names the Lock singleton, Idle or SleepInhibitor: no `Lock.lock` caller is left in the UI, and referencing
      Lock there would start a second WlSessionLock and a second `lock` IPC target in the UI process;
-  2. shell/security/SecurityHost.qml instantiates Idle exactly once (one idle module, one sleep inhibitor) and only the
+  2. shell/security/host/SecurityHost.qml instantiates Idle exactly once (one idle module, one sleep inhibitor) and only the
      types listed in HOST_TYPES;
-  3. the lock and idle modules (shell/security/lock/**, shell/security/idle/**, shell/security/SecurityHost.qml) import no
+  3. the lock and idle modules (shell/security/lock/**, shell/security/idle/**, shell/security/host/SecurityHost.qml) import no
      UI feature module (qs.desktop, qs.notifications, ...) and name only the qs.services singletons in SERVICES_ALLOWED:
      the others start processes, own bus names, write files or empty directories the UI uses (Popups, ThemeIcons,
      WallpaperState, Battery's power profile, Notifications, MenuBridge, ...) and must not run a second time in the
@@ -25,7 +25,7 @@ import sys
 SERVICES_ALLOWED = {"Settings", "VisualFixtures", "FixedTime", "WallClock"}
 HOST_TYPES = {"Scope", "Binding", "Idle"}
 SECURITY_MODULES = ("shell/security/lock/", "shell/security/idle/")
-HOST = "shell/security/SecurityHost.qml"
+HOST = "shell/security/host/SecurityHost.qml"
 
 
 _CACHE = {}
