@@ -20,3 +20,19 @@ All of them are registered in `tests/inventory.json`; the pure logic is tested o
 | off-machine copy | `just backup DIR` | git bundle of every ref, verified, with its SHA-256 |
 
 P4 (Search latency), R1 to R3 and A1 have no tool yet (GF-008 remains open for them).
+
+## P2 and the security process (ADR-0041 step 1; S2 of 2026-11-08)
+P2 counts both Quickshell processes of the session: the UI (`grassfield-shell`) and the security process
+(`grassfield-security`, the lock, idle and the sleep inhibitor since S2). `just gate-rss --nested` sums the security
+process (this tree's `.dev/security.pid`, started beside the shell by `scripts/dev/shell-run.sh`) with the shell; with
+`--pid` give both. Measurements so far:
+
+| When | Where | Security process | UI | Notes |
+|---|---|---|---|---|
+| S1, 2026-10-31 (#72) | nested, the integrator | 157 MB RSS at idle (root hosting one IPC handler) | not taken | sets `MemoryHigh=320M`, `MemoryMax=640M` |
+| S1 (main 8b04383c), 2026-11-08 | offscreen proxy in the agent's container, 15 s after start, three runs | 64.9-65.1 MB RSS, 27.2-27.5 MB PSS | cannot load offscreen (layer-shell windows) | `qs -p` of the root, `QT_QPA_PLATFORM=offscreen`, isolated homes and runtime directory, `/proc/<pid>/smaps_rollup` |
+| S2 (feat/safe-mode-s2), 2026-11-08 | the same proxy, three runs | 108.4-117.0 MB RSS (median 110.2), 66.3-75.8 MB PSS (median 68.2), lock and idle loaded, unlocked | cannot load offscreen | about +45 MB RSS, +41 MB PSS (medians) moved out of the UI with the lock, idle and the inhibitor; nothing is drawn offscreen (no lock surfaces, no stills) |
+| S2, nested | NOT VERIFIED (the integrator, bare) | expected about 202 MB unlocked; about 268 MB locked on two 4K outputs (stills about 33 MB each) | expected lower than before S2 by the lock module and its stills | `scripts/dev/nested-up.sh`, then `scripts/gates/rss.sh --nested --baseline-mb 458 --samples 6 --interval 10` unlocked, then `tests/visual/ipc.sh lock lock` and the same command locked |
+
+The offscreen rows are a proxy of the QML objects and JavaScript only (no GPU or Wayland buffers); P2's verdict needs the
+nested and real-session rows.
