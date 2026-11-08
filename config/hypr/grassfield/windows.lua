@@ -48,15 +48,17 @@ hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield
 -- and controls are Chromium's, seen here; not run on the dev machine (not installed): the owner checks it.
 -- The traffic lights themselves come from the Grassfield GTK themes (ui/tools/gen-gtk-themes.py, window.* tokens), which
 -- GTK 3 and plain GTK 4 apps and Chromium's GTK appearance read (measured nested at 1.25: tests/compositor/gtk_lights.sh;
--- a fresh Chromium profile is "Classic" and draws plain grey buttons: Chromium gives new profiles its GTK appearance only on
+-- a new Chromium profile is "Classic" and draws plain grey buttons: Chromium gives new profiles its GTK appearance only on
 -- desktops it knows as GNOME-like, which this session's XDG_CURRENT_DESKTOP is not, and changing that would move other
 -- programs too, Chromium's own keyring choice among them). Omarchy's machine policy BrowserThemeColor (color.json, written by
--- its theme switcher) replaced the GTK appearance's lights with its colour theme in every profile, GTK appearance chosen or not
--- (nested, Chromium 155, the policy directory replaced in a mount namespace: lights without color.json, none with it, lights
--- again with color.json and a later file that empties the colour): the package installs that later file,
--- zz-grassfield-gtk.json, into the Chromium and Google Chrome policy directories (packaging/arch/PKGBUILD); machine-wide, so in
--- the Omarchy session the browsers keep their own theme instead of Omarchy's colour too. A profile still in "Classic" shows its
--- lights once Settings > Appearance > Mode is GTK, a choice the profile keeps (not written by Grassfield). Firefox draws them
+-- its theme switcher) replaces the GTK appearance's lights with its colour theme in every profile, GTK appearance chosen or not
+-- (nested, Chromium 155, the policy directory replaced in a mount namespace: lights without color.json, none with it).
+-- The session starts the browsers through a stand-in (packaging/session-bin/chromium: first in PATH in this session only; the
+-- session's entry for Google Chrome, /usr/share/grassfield/xdg/applications, names it): a profile with no Preferences file is
+-- created in the GTK appearance (an existing profile and its later choice are never touched), and the browser runs in a private
+-- mount namespace where only color.json is masked (empty; the files stay). Nothing is installed in /etc: the Omarchy session keeps its
+-- browsers as shipped (R7-OMA-01, tests/shell/browser_session.sh). Without bubblewrap or user namespaces the browser starts as
+-- it is. Firefox draws them
 -- from the GTK theme only with its native titlebar buttons; not verified here (not installed); libadwaita apps (Nautilus) ignore gtk-theme
 -- (ADR-0015 amendment 2026-11-04). Their zoom needs the exemption below (untagged, Evince's zoom request was suppressed), and GTK4's
 -- minimize button needs the plugin to offer minimize in xdg wm_capabilities (plugin work item P8; without the plugin

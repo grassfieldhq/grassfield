@@ -1,0 +1,31 @@
+[Desktop Entry]
+# Grassfield session's entry for Google Chrome (/usr/share/grassfield/xdg is first in XDG_DATA_DIRS in that session only, see
+# packaging/uwsm/env-grassfield): same id as Google's own google-chrome.desktop, so it replaces it there, with the session's
+# stand-in (packaging/session-bin/chromium) in Exec, which Google's entry names by absolute path and so would bypass. TryExec
+# hides it when Chrome is not installed. The Omarchy session never reads this directory.
+Version=1.0
+Name=Google Chrome
+Name[fr]=Google Chrome
+GenericName=Web Browser
+GenericName[fr]=Navigateur web
+Comment=Access the Internet
+Comment[fr]=Accéder à Internet
+Exec=/usr/lib/grassfield/session-bin/google-chrome-stable %U
+TryExec=/usr/bin/google-chrome-stable
+StartupNotify=true
+Terminal=false
+Icon=google-chrome
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=application/pdf;application/rdf+xml;application/rss+xml;application/xhtml+xml;application/xhtml_xml;application/xml;image/gif;image/jpeg;image/png;image/webp;text/html;text/xml;x-scheme-handler/http;x-scheme-handler/https;
+Actions=new-window;new-private-window;
+
+[Desktop Action new-window]
+Name=New Window
+Name[fr]=Nouvelle fenêtre
+Exec=/usr/lib/grassfield/session-bin/google-chrome-stable
+
+[Desktop Action new-private-window]
+Name=New Incognito Window
+Name[fr]=Nouvelle fenêtre de navigation privée
+Exec=/usr/lib/grassfield/session-bin/google-chrome-stable --incognito
