@@ -26,6 +26,9 @@
 #     as carol with its sudo as root and its own /tmp, `migrations ran`, its output root's alone; a failing sudo leaves the
 #     migration pending; a migration that needs a person (gum, or sudo and gum) goes to the terminal; so does one that
 #     needs root and would run code the person can change (sudo and omarchy-hook, rc7 audit R7-SEC-01), its sudo never run;
+#     so does one that is not on Grassfield's reviewed list (/usr/share/grassfield/update/omarchy-migrations.allow, here
+#     the test packages' own migrations), and a listed one with one byte changed: their sudo never runs; the listed ones run;
+#     root commands run from /, never the caller's folder;
 #     root without pkexec's user has no person; the unit's own form is refused outside the unit.
 set -uo pipefail
 
@@ -187,7 +190,7 @@ get() { sed -n "s/^$1=//p" <<<"$out"; }
 expect "the unit's processes are carol's, under the group grassfield-update" test "$(get whoami)" == carol:grassfield-update
 expect "sudo id -u -> 0" test "$(get root)" == 0
 expect "standard input reaches the command (tee as root)" test "$(get tee):$(cat /root/tee-test 2>/dev/null):$(stat -c %U /root/tee-test 2>/dev/null)" == "0:through-stdin:root"
-expect "the working folder is the caller's" test "$(get pwd)" == /tmp
+expect "a root command runs from /, not the caller's folder (rc7 audit R7-SEC-01)" test "$(get pwd)" == /
 expect "the command's exit status is sudo's" test "$(get status)" == 7
 expect "sudo -u root, sudo -u #0 -> root" test "$(get as-root)" == "0:0"
 expect "sudo -u carol, sudo -u #uid -> refused (another target would leave the unit's group; the re-review's MINOR 1)" \
@@ -301,6 +304,24 @@ mkpkg omarchy 8 "${base_files[@]}" "$m700f" \
   "usr/share/omarchy/migrations/750.sh=sudo false" "usr/share/omarchy/migrations/900.sh=sudo touch /root/su-m2-900" \
   "usr/share/omarchy/migrations/950.sh=sudo touch /root/su-m2-950" "usr/share/omarchy/migrations/980.sh=sudo touch /root/su-m2-980" \
   "usr/share/omarchy/migrations/990.sh=sudo touch /root/su-m2-990; omarchy-hook post-update"
+# 996 needs root and is on no list; 997 is listed for content one byte away from what the package ships (R7-SEC-01).
+o7=("${base_files[@]}" "$m700f" "usr/share/omarchy/migrations/750.sh=sudo false" "usr/share/omarchy/migrations/900.sh=sudo touch /root/su-m2-900"
+  "usr/share/omarchy/migrations/950.sh=sudo touch /root/su-m2-950" "usr/share/omarchy/migrations/980.sh=sudo touch /root/su-m2-980")
+mkpkg omarchy 9 "${o7[@]}" "usr/share/omarchy/migrations/996.sh=sudo touch /root/su-m2-996"
+mkpkg omarchy 10 "${o7[@]}" "usr/share/omarchy/migrations/997.sh=sudo touch /root/su-m2-997"
+# Grassfield's reviewed list for these test packages (as scripts/dev/omarchy-migrations-allow.py writes it): every migration
+# of omarchy 1 to 8 by sha256 and name, and 997 with the sha256 of "sudo touch /root/su-m2-997 " (one byte more).
+install -d -m 755 /usr/share/grassfield/update
+{
+  echo "# the test packages' reviewed migrations"
+  for b in "$W"/build/omarchy-[1-8]; do
+    for m in "$b"/usr/share/omarchy/migrations/*.sh; do
+      printf 'allow %s %s test-%s\n' "$(sha256sum "$m" | cut -d" " -f1)" "${m##*/}" "${b##*-}"
+    done
+  done | sort -u -k2,3
+  printf 'allow %s 997.sh test-10\n' "$(printf 'sudo touch /root/su-m2-997 \n' | sha256sum | cut -d" " -f1)"
+} >/usr/share/grassfield/update/omarchy-migrations.allow
+chmod 644 /usr/share/grassfield/update/omarchy-migrations.allow
 publish() {
   rm -f "$W/repo"/*
   cp "$W/keyring.pkg.tar.zst" "$W/repo/archlinux-keyring-$(ver archlinux-keyring)-any.pkg.tar.zst"
@@ -491,6 +512,20 @@ expect "omarchy 8 (990: sudo and omarchy-hook) -> done terminal, needs migration
   bash -c '[[ $1 == "done terminal -:7-1" ]] && grep -qx "needs migration 990" "$2"' _ "$(state carol):$(ver omarchy)" "$D/$op.exit"
 expect "  its log says why, and 990's sudo never ran" \
   bash -c "grep -q '990.sh would run code the person can change' '$D/$op.log' && test ! -e /root/su-m2-990"
+
+say "a migration not on Grassfield's reviewed list, and a listed one with a changed byte (rc7 audit R7-SEC-01)"
+publish grassfield-desktop-1 qt6-base-6.11.0 omarchy-keyring-1 omarchy-9
+runner carol; op=$(last)
+expect "omarchy 9 (996: sudo, on no list) -> done terminal, needs migration 996, omarchy stays 7 ($(state carol))" \
+  bash -c '[[ $1 == "done terminal -:7-1" ]] && grep -qx "needs migration 996" "$2"' _ "$(state carol):$(ver omarchy)" "$D/$op.exit"
+expect "  its log says why, and 996's sudo never ran" \
+  bash -c "grep -q '996.sh not in Grassfield.s list of reviewed Omarchy migrations' '$D/$op.log' && test ! -e /root/su-m2-996"
+publish grassfield-desktop-1 qt6-base-6.11.0 omarchy-keyring-1 omarchy-10
+runner carol; op=$(last)
+expect "omarchy 10 (997: listed for content one byte away) -> done terminal, needs migration 997, omarchy stays 7 ($(state carol))" \
+  bash -c '[[ $1 == "done terminal -:7-1" ]] && grep -qx "needs migration 997" "$2"' _ "$(state carol):$(ver omarchy)" "$D/$op.exit"
+expect "  its log says why, and 997's sudo never ran" \
+  bash -c "grep -q '997.sh not in Grassfield.s list of reviewed Omarchy migrations' '$D/$op.log' && test ! -e /root/su-m2-997"
 
 echo
 if ((fails)); then echo "update_migrate: $fails FAIL"; exit 1; fi
