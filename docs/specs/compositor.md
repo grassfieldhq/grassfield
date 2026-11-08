@@ -1598,14 +1598,27 @@ window still on `special:minimized` (`scripts/nestctl -j clients`), keys typed w
   starts the browsers through `packaging/session-bin/chromium` (first in PATH in that session only, link
   `google-chrome-stable`, and a session-only desktop entry `/usr/share/grassfield/xdg/applications/google-chrome.desktop`,
   because Google's names its binary by absolute path). The stand-in (1) creates `<profile>/Preferences` with
-  `extensions.theme.system_theme` 1 only when that file does not exist (a new profile; the macOS model: the system default
-  until the user chooses; an existing profile and its later choice are never read or written), and (2) runs the browser
-  in a private mount namespace (`bwrap --dev-bind / / --tmpfs <dir> --ro-bind <each other file>`, no privilege) where
-  `color.json` is absent and every other policy file is kept; the files on disk are untouched. Without bubblewrap or user
-  namespaces it starts the browser as it is (colour theme, no lights). Upgrade from rc7: the package no longer holds
-  `zz-grassfield-gtk.json`, which pacman removes as an unmodified `backup=` file of the old package (an edited one stays as
-  `.pacsave`). Not wrapped: a browser started by an absolute path other than the two entries above (a user's own launcher).
-  Evidence: `tests/shell/browser_session.sh`. Edge and Brave (Omarchy writes their policy too) are not handled. Firefox: not verified (not installed on the dev
+  `extensions.theme.system_theme` 1 and `profile.created_by_version` (the installed browser's version, so Chromium does not
+  treat the profile as an old one) only when that file does not exist (a new profile; the macOS model: the system default
+  until the user chooses; an existing profile and its later choice are never read or written; created with noclobber, so a
+  planted link is not followed), and (2) only where a `color.json` exists, runs the browser in a private mount namespace
+  (`/usr/bin/bwrap --dev-bind / / --ro-bind /dev/null <dir>/color.json`, no privilege, absolute paths) where that one file is
+  empty. The policy directory itself stays the real, root-owned one: every other file (dot-named ones, files added or replaced
+  while the browser runs) applies as on any session. Without bubblewrap (a `depends=` of grassfield-desktop) or user
+  namespaces it starts the browser as it is (colour theme, no lights). Known limits: (a) a theme change while the browser
+  runs makes the new `color.json` visible again until the browser restarts; (b) bubblewrap sets `no_new_privs` on the browser
+  and everything it starts (a terminal opened from a link cannot use sudo or pkexec), and it needs it unprivileged: it is paid
+  only where `color.json` exists; (c) the first browser started decides: a Chromium started outside the stand-in (an absolute
+  /usr/bin/chromium, Chromium's own web-app shortcuts, a user's launcher) keeps the policy and no lights until it quits, and a
+  later launch forwards to it; (d) a profile added from Chromium's own profile picker is not seeded (Chromium keeps no
+  default-appearance preference for new profiles, in Local State or elsewhere, that Grassfield could set): it is Classic until
+  Settings > Appearance > Mode: GTK; (e) the test variables of the stand-in are honoured only in a dev run. Upgrade from rc7:
+  the package no longer holds `zz-grassfield-gtk.json`; pacman removes it as an unmodified `backup=` file of the old package,
+  an edited one stays as `.pacsave`, which Chromium still reads (it reads every file of the directory): `post_upgrade` names
+  it and what to do, and never deletes it (no check in Settings or the report: not built). Runtime proof (bare, tests/shell/browser_session.sh):
+  the real bubblewrap's view (dot-named policy seen, policy replaced while running seen, no tmpfs, no_new_privs), and a real
+  Chromium renderer with seccomp 2 (its own sandbox engages inside the wrapper; reviewer measurement 2026-11-08).
+  Edge and Brave (Omarchy writes their policy too) are not handled. Edge and Brave (Omarchy writes their policy too) are not handled. Firefox: not verified (not installed on the dev
   machine). See config/hypr/grassfield/windows.lua.
 - Layer pointer focus (FR51): only the shell's own `grassfield-*` layers are corrected; another client's layer surface that
   takes the keyboard on an output away from the layout origin (a third-party launcher) keeps Hyprland's wrong position until

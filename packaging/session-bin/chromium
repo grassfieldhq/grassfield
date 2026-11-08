@@ -7,21 +7,36 @@
 # It does two things so that the browser draws Grassfield's traffic lights (R7-FUN-04, owner decision 2026-11-08):
 #
 # 1. A profile that has no Preferences file yet (a new profile: macOS model, the system default applies until the user
-#    chooses) is created with the GTK appearance (pref extensions.theme.system_theme 1). Chromium itself picks it only on
+#    chooses) is created with the GTK appearance (pref extensions.theme.system_theme 1) and profile.created_by_version set
+#    to the installed browser's version (so Chromium does not treat it as an old profile). Chromium itself picks GTK only on
 #    desktops it knows as GNOME-like, which this session's XDG_CURRENT_DESKTOP is not. An existing profile is never read or
-#    written, so a user's choice (Classic, or a theme) stays; the browser's own setting still changes it afterwards.
+#    written, so a user's choice stays; the browser's own setting still changes it afterwards. The file is created with
+#    noclobber (O_EXCL), so a planted file or link is never followed or replaced.
 # 2. Omarchy's theme switcher writes the machine policy BrowserThemeColor (color.json) into the browsers' policy directories,
 #    and a colour theme from policy replaces the GTK appearance's lights in every profile. No flag or variable moves
-#    Chromium's policy directory, so the browser runs in its own mount namespace (bubblewrap, no privilege) where that one
-#    file is absent and every other policy file is kept. The files on disk are not touched. Without bubblewrap, or where
-#    user namespaces are off, the browser starts as it is (its colour theme, no lights): nothing is lost but the lights.
+#    Chromium's policy directory, so only when a color.json exists the browser runs in its own mount namespace (bubblewrap,
+#    no privilege) where that one file is an empty read-only file (`--ro-bind /dev/null <dir>/color.json`). The directory
+#    itself stays the real, root-owned one: every other file (dot-named ones too, new or replaced while the browser runs)
+#    applies as on any session. Limits (docs/specs/compositor.md): a theme change while the browser runs makes the new
+#    color.json visible again until the browser restarts; bubblewrap sets no_new_privs on the browser and its children (sudo
+#    and pkexec do not work from a program it starts). Without bubblewrap, or where user namespaces are off, the browser
+#    starts as it is (its colour theme, no lights).
 #
-# GRASSFIELD_BROWSER_REAL, GRASSFIELD_BROWSER_BWRAP and GRASSFIELD_BROWSER_POLICY_ROOT replace the browser, bubblewrap and
-# the root of the policy directories (tests only).
+# The browser and bubblewrap are run by absolute path. GRASSFIELD_BROWSER_REAL, _BWRAP and _POLICY_ROOT replace them for
+# tests only, and only in a dev run (GRASSFIELD_DEV=1 and GRASSFIELD_SESSION not 1), as in hyprland-dialog.
 name=${0##*/}
-real=${GRASSFIELD_BROWSER_REAL:-/usr/bin/$name}
-bwrap=${GRASSFIELD_BROWSER_BWRAP:-bwrap}
-policy_root=${GRASSFIELD_BROWSER_POLICY_ROOT:-}
+case $name in
+  chromium | google-chrome-stable) ;;
+  *) echo "grassfield: $name is not a browser this stand-in knows" >&2; exit 127 ;;
+esac
+real=/usr/bin/$name
+bwrap=/usr/bin/bwrap
+policy_root=
+if [[ ${GRASSFIELD_DEV:-} == 1 && ${GRASSFIELD_SESSION:-} != 1 ]]; then
+  real=${GRASSFIELD_BROWSER_REAL:-$real}
+  bwrap=${GRASSFIELD_BROWSER_BWRAP:-$bwrap}
+  policy_root=${GRASSFIELD_BROWSER_POLICY_ROOT:-}
+fi
 
 case $name in
   google-chrome*) cfg_name=google-chrome ;;
@@ -47,8 +62,12 @@ done
 
 if [[ -n $data_dir && -n $profile && $profile != */* && $profile != .* && ! -e $data_dir/$profile/Preferences ]]; then
   if mkdir -p -- "$data_dir/$profile" 2>/dev/null; then
+    version=$("$real" --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+){3}' | head -n1)
+    created=
+    [[ -n $version ]] && created="\"profile\":{\"created_by_version\":\"$version\"},"
     tmp=$data_dir/$profile/.Preferences.grassfield.$$
-    if printf '{"extensions":{"theme":{"system_theme":1}}}\n' >"$tmp" 2>/dev/null; then
+    # Noclobber: O_EXCL on a name that exists (a planted link included) fails instead of following it.
+    if (set -C; printf '{%s"extensions":{"theme":{"system_theme":1}}}\n' "$created" >"$tmp") 2>/dev/null; then
       # ln fails when a Preferences file appeared meanwhile (another launch): never replace one.
       ln -- "$tmp" "$data_dir/$profile/Preferences" 2>/dev/null
       rm -f -- "$tmp"
@@ -56,16 +75,13 @@ if [[ -n $data_dir && -n $profile && $profile != */* && $profile != .* && ! -e $
   fi
 fi
 
-bind=()
+mask=()
 for dir in "$policy_root/etc/chromium/policies/managed" "$policy_root/etc/opt/chrome/policies/managed"; do
-  [[ -f $dir/color.json ]] || continue
-  bind+=(--tmpfs "$dir")
-  for file in "$dir"/*; do
-    [[ -f $file && ${file##*/} != color.json ]] && bind+=(--ro-bind "$file" "$file")
-  done
+  [[ -f $dir/color.json ]] && mask+=(--ro-bind /dev/null "$dir/color.json")
 done
 
-if ((${#bind[@]})) && command -v "$bwrap" >/dev/null 2>&1 && "$bwrap" --dev-bind / / true 2>/dev/null; then
-  exec "$bwrap" --dev-bind / / "${bind[@]}" -- "$real" "$@"
+# bubblewrap (and its no_new_privs) only where Omarchy's colour policy exists.
+if ((${#mask[@]})) && [[ -x $bwrap ]] && "$bwrap" --dev-bind / / true 2>/dev/null; then
+  exec "$bwrap" --dev-bind / / "${mask[@]}" -- "$real" "$@"
 fi
 exec "$real" "$@"

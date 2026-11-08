@@ -23,6 +23,18 @@ post_upgrade() {
     echo "grassfield: after this upgrade restart the shell once: systemctl --user restart grassfield-shell (or log out and in)"
   fi
   /usr/lib/grassfield/grassfield-login-check 2>&1 | sed 's/^/grassfield: /' || true
+  # 1.0.0-rc7 installed zz-grassfield-gtk.json in the browsers' policy directories (machine-wide). An unmodified copy is
+  # removed by this upgrade; one the administrator edited is kept by pacman as .pacsave and never deleted here. Chromium reads
+  # every file of its policy directory whatever its name (config_dir_policy_loader.cc), so a kept file still applies to
+  # every session, the Omarchy one included: said here, with what to do.
+  for f in /etc/chromium/policies/managed/zz-grassfield-gtk.json /etc/opt/chrome/policies/managed/zz-grassfield-gtk.json; do
+    if [ -e "$f.pacsave" ]; then
+      echo "grassfield: $f.pacsave is the policy file of 1.0.0-rc7 that you edited, kept for you. Grassfield no longer uses it, but the browsers read every file of that directory, so it still applies to every session, Omarchy's included. If you do not need your edits, delete it (sudo rm $f.pacsave); if you do, move them into a file of your own and delete it."
+    fi
+    if [ -e "$f" ]; then
+      echo "grassfield: $f is still there and applies to every session, Omarchy's included, although Grassfield no longer needs it: delete it (sudo rm $f) unless you want it."
+    fi
+  done
   # A /etc/pacman.d/grassfield.conf whose primary Server is a previous host of this build is written again for its channel.
   /usr/lib/grassfield/grassfield-channel-scriptlet upgrade || echo "grassfield: the [grassfield] configuration was not migrated (see above)"
 }

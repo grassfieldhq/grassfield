@@ -56,7 +56,7 @@ hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield
 -- The session starts the browsers through a stand-in (packaging/session-bin/chromium: first in PATH in this session only; the
 -- session's entry for Google Chrome, /usr/share/grassfield/xdg/applications, names it): a profile with no Preferences file is
 -- created in the GTK appearance (an existing profile and its later choice are never touched), and the browser runs in a private
--- mount namespace where color.json is not visible (the files stay). Nothing is installed in /etc: the Omarchy session keeps its
+-- mount namespace where only color.json is masked (empty; the files stay). Nothing is installed in /etc: the Omarchy session keeps its
 -- browsers as shipped (R7-OMA-01, tests/shell/browser_session.sh). Without bubblewrap or user namespaces the browser starts as
 -- it is. Firefox draws them
 -- from the GTK theme only with its native titlebar buttons; not verified here (not installed); libadwaita apps (Nautilus) ignore gtk-theme
