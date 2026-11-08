@@ -7,7 +7,8 @@
 // sender (a cookie is released only by the connection that took it, or when that connection leaves the bus) and tells
 // grassfield-shell ONE boolean (menu/1 "screensaver" line): while it is true the shell's idle module neither dims nor
 // locks on idle (macOS: a power assertion such as "prevent display sleep" while a video plays). Nothing else is served:
-// Lock, SetActive, GetActive, SimulateUserActivity and the rest answer NotSupported; a manual lock, the lid, the lock
+// Lock, SetActive, GetActive, SimulateUserActivity and the other methods of the interface answer NotSupported (a member
+// the interface does not have: UnknownMethod; every other call is answered too, DBusObjects.h); a manual lock, the lid, the lock
 // before sleep and the display power-off on the lock screen are never affected. A bridge that dies drops the boolean
 // in the shell (its socket closes): idle locking works again (fail closed).
 //
@@ -85,7 +86,8 @@ namespace gf::menubridge::screensaver {
         bool         changed = false; // the book's active() may have changed (report it)
     };
 
-    // Pure: Inhibit(ss) -> u, UnInhibit(u) -> (), anything else NotSupported, a wrong signature InvalidArgs.
+    // Pure: Inhibit(ss) -> u, UnInhibit(u) -> (), the other ScreenSaver methods NotSupported, any other member UnknownMethod, a wrong signature InvalidArgs, a sender
+    // without a unique name AccessDenied.
     Answer handle(Book& book, const QString& member, const QString& signature, const QVariantList& args, const QString& sender);
 
     // The <interface> element served for introspection (the two methods only).
