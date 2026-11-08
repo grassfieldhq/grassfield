@@ -24,7 +24,14 @@ xdpg=/usr/lib/xdg-desktop-portal-gtk
 [[ -x $frontend && -x $xdpg ]] || skip "needs $frontend and $xdpg"
 python3 -I -c 'import gi; gi.require_version("Gio", "2.0")' 2>/dev/null || skip "needs PyGObject"
 bridge=${GRASSFIELD_MENU_BRIDGE:-$root/.dev/build/grassfield-menu-bridge}
-if [[ ! -x $bridge || $root/bridges/menu-bridge/src/DBusObjects.cpp -nt $bridge || $root/bridges/menu-bridge/src/ScreenSaver.cpp -nt $bridge ]]; then
+# Rebuild when any bridge source is newer than the binary (a serial build takes several minutes: say so).
+stale=0
+[[ -x $bridge ]] || stale=1
+if (( ! stale )); then
+  for src in "$root"/bridges/menu-bridge/src/*; do [[ $src -nt $bridge ]] && { stale=1; break; }; done
+fi
+if (( stale )); then
+  say "building the bridge from this tree (a serial build: several minutes)"
   "$root/bridges/menu-bridge/build-direct.sh" >/dev/null 2>&1 || skip "the bridge does not build here"
 fi
 tmp=$(mktemp -d "${GRASSFIELD_TEST_TMP:-${TMPDIR:-/tmp}}/portal-ss.XXXXXX")
@@ -82,7 +89,7 @@ measure() {
   d=$tmp/$label
   mkdir -p "$d/services" "$d/home" "$d/run"
   chmod 700 "$d/run"
-  env -i PATH="$PATH" HOME="$d/home" XDG_RUNTIME_DIR="$d/run" broadwayd ":$disp" >"$d/broadway.log" 2>&1 &
+  env -i PATH="$PATH" HOME="$d/home" XDG_RUNTIME_DIR="$d/run" broadwayd -a 127.0.0.1 ":$disp" >"$d/broadway.log" 2>&1 &
   run_pids+=($!)
   sleep 1
   kill -0 "$!" 2>/dev/null || { say "  FAIL broadwayd :$disp started: $(head -n 2 "$d/broadway.log")"; fail=1; return 1; }
