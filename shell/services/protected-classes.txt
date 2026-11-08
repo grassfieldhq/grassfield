@@ -1,0 +1,9 @@
+# The password managers the session hides from screen sharing and whose copies the clipboard history never records (rc7 audit
+# R7-SEC-03): Omarchy 4.5.0's no_screen_share class matches (default/hypr/apps/1password.lua, bitwarden.lua), one regex per
+# line, each covering the 4.0.6 match it replaced. THE ONE LIST: config/hypr/grassfield/privacy.lua applies each line as a
+# no_screen_share window rule (with what it reads from Omarchy's own files), shell/services/Clipboard.qml reads this file at
+# start (ClipboardLogic.parseProtected; unreadable or a line that is not a regex: nothing is recorded).
+# tests/security/screenshare_rules.sh fails when the installed Omarchy protects a window this file does not name.
+^(1[pP]assword|com\.onepassword\.OnePassword)$
+^([bB]itwarden)$
+.*nngceckbapebfimnlniiiahkandclblb.*

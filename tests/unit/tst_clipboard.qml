@@ -18,6 +18,9 @@ TestCase {
         return xhr.responseText;
     }
 
+    // The one list (rc7 audit R7-SEC-03), as Clipboard.qml reads it.
+    readonly property var protectedList: Logic.parseProtected(readRepo("shell/" + Logic.PROTECTED_FILE))
+
     function open(over) {
         const s = {
             enabled: true,
@@ -25,7 +28,8 @@ TestCase {
             helperLocked: false,
             authorizing: false,
             authorizingGrace: false,
-            activeClass: "org.gnome.TextEditor"
+            activeClass: "org.gnome.TextEditor",
+            protectedClasses: protectedList
         };
         for (const k in over)
             s[k] = over[k];
@@ -49,17 +53,37 @@ TestCase {
         verify(!Logic.mayRecord(open({authorizingGrace: undefined})));
         verify(!Logic.mayRecord(open({enabled: "true"})));
         verify(!Logic.mayRecord(null));
+        // The list of password managers unknown (not read yet, unreadable, malformed): nothing is recorded.
+        verify(!Logic.mayRecord(open({protectedClasses: null})), "no list read yet");
+        verify(!Logic.mayRecord(open({protectedClasses: undefined})));
+        verify(!Logic.mayRecord(open({protectedClasses: "^(Bitwarden)$"})), "a string is not the list");
     }
 
-    function test_protectedClassesAreThoseOfPrivacyLua() {
+    // R7-SEC-03, one source: the clipboard reads shell/services/protected-classes.txt (Clipboard.qml's FileView on
+    // Logic.PROTECTED_FILE) and privacy.lua applies the same file; no copy of the list anywhere else.
+    function test_protectedClassesAreOneFile() {
+        compare(protectedList, ["^(1[pP]assword|com\\.onepassword\\.OnePassword)$", "^([bB]itwarden)$", ".*nngceckbapebfimnlniiiahkandclblb.*"]);
         const lua = readRepo("config/hypr/grassfield/privacy.lua");
-        const block = lua.slice(lua.indexOf("local BUILTIN = {"), lua.indexOf("}\n", lua.indexOf("local BUILTIN = {")) + 1);
-        const found = [];
-        const re = /class = "([^"]+)"/g;
-        let m;
-        while ((m = re.exec(block)) !== null)
-            found.push(m[1].replace(/\\(.)/g, "$1")); // the Lua string's value: "\\." is "\."
-        compare(found.join(" "), Logic.PROTECTED_CLASSES.join(" "));
+        verify(lua.indexOf('M.builtin_file = shell_dir .. "/services/protected-classes.txt"') >= 0, "privacy.lua reads the shell's file");
+        verify(lua.indexOf("nngceck") < 0 && lua.indexOf("onepassword") < 0, "privacy.lua holds no copy of the list");
+        const qml = readRepo("shell/services/Clipboard.qml");
+        verify(qml.indexOf("path: Quickshell.shellPath(Logic.PROTECTED_FILE)") >= 0, "Clipboard.qml reads the same file");
+        verify(qml.indexOf("protectedClasses: root.protectedClasses") >= 0, "and decides with it");
+        const js = readRepo("shell/services/ClipboardLogic.js");
+        verify(js.indexOf("nngceck") < 0 && js.indexOf("onepassword") < 0, "ClipboardLogic.js holds no copy of the list");
+    }
+
+    function test_protectedListParsing() {
+        compare(Logic.parseProtected("# a comment\n\n  ^(A)$  \n^(B)$\n"), ["^(A)$", "^(B)$"]);
+        compare(Logic.parseProtected("# only comments\n\n"), null, "no regex line: unknown");
+        compare(Logic.parseProtected("^(A)$\n([unclosed\n"), null, "a line that is not a regex: the whole list is unknown");
+        compare(Logic.parseProtected("x".repeat(257)), null, "a line over 256 characters");
+        let many = "";
+        for (let i = 0; i < 65; i++)
+            many += "^(App" + i + ")$\n";
+        compare(Logic.parseProtected(many), null, "more than 64 lines");
+        compare(Logic.parseProtected(undefined), null);
+        verify(Logic.isProtectedClass("anything", null), "an unknown list protects every window");
     }
 
     // R7-SEC-03: the list is Omarchy 4.5.0's (1Password 8.12's reverse-DNS app id, Bitwarden either case, the Bitwarden
@@ -68,12 +92,12 @@ TestCase {
         for (const cls of ["1Password", "1password", "com.onepassword.OnePassword", "Bitwarden", "bitwarden",
                            "chrome-nngceckbapebfimnlniiiahkandclblb-Default", "chrome-nngceckbapebfimnlniiiahkandclblb-Profile_1",
                            "brave-nngceckbapebfimnlniiiahkandclblb-Default", "msedge-nngceckbapebfimnlniiiahkandclblb-Default"]) {
-            verify(Logic.isProtectedClass(cls), cls + " is a protected password manager");
+            verify(Logic.isProtectedClass(cls, protectedList), cls + " is a protected password manager");
             verify(!Logic.mayRecord(open({activeClass: cls})), "no copy is recorded while " + cls + " is in front");
         }
         for (const cls of ["org.gnome.TextEditor", "com.onepassword.OnePasswordX", "xcom.onepassword.OnePassword", "1Passwords",
                            "Bitwardens", "firefox", "chromium"])
-            verify(!Logic.isProtectedClass(cls), cls + " is not a password manager");
+            verify(!Logic.isProtectedClass(cls, protectedList), cls + " is not a password manager");
     }
 
     function test_terminalTestIsForwardingLuas() {

@@ -52,12 +52,19 @@ for _, rule in ipairs(applied) do
   print(rule.name .. "|" .. tostring(rule.no_screen_share) .. "|" .. table.concat(parts, ";"))
 end
 LUA
-run() { # <OMARCHY_PATH>: evaluates privacy.lua there (its prints go to stdout too)
-  (cd "$tmp" && env OMARCHY_PATH="$1" lua "$tmp/run.lua" "$root/config/hypr/grassfield/privacy.lua")
+run() { # <OMARCHY_PATH> [env...]: evaluates privacy.lua there (its prints go to stdout too), the shell's list from this tree
+  local om=$1
+  shift
+  (cd "$tmp" && env -u GRASSFIELD_SESSION OMARCHY_PATH="$om" GRASSFIELD_DEV=1 GRASSFIELD_SHELL_DIR="$root/shell" "$@" lua "$tmp/run.lua" "$root/config/hypr/grassfield/privacy.lua")
 }
 
-# The built-in matches (privacy.lua BUILTIN: Omarchy 4.5.0's, R7-SEC-03), as run.lua prints them.
-builtin=('class=^(1[pP]assword|com\.onepassword\.OnePassword)$' 'class=^([bB]itwarden)$' 'class=.*nngceckbapebfimnlniiiahkandclblb.*')
+# The password managers always applied: the lines of the shell's protected-classes.txt, the ONE list the clipboard also reads
+# (R7-SEC-03), as run.lua prints them.
+builtin=()
+while IFS= read -r line; do
+  [[ -z ${line//[[:space:]]/} || $line == \#* ]] || builtin+=("class=$line")
+done <"$root/shell/services/protected-classes.txt"
+((${#builtin[@]} == 3)) && pass "the one list: protected-classes.txt holds the 3 password-manager matches" || bad "protected-classes.txt: ${#builtin[@]} lines"
 
 # --- omarchy: the installed rule set ---
 apps=/usr/share/omarchy/default/hypr/apps
@@ -162,8 +169,21 @@ for om in /usr/share/omarchy "$tmp/om" "$tmp/none"; do
   [[ $r == ok ]] && pass "layers ($om): the secret and polkit sheets' layers are hidden from screen sharing" || bad "layers ($om): $r"
 done
 sed 's/^hl\.layer_rule({ name = "gf-no-screen-share-secret".*$//' "$root/config/hypr/grassfield/privacy.lua" >"$tmp/privacy-mutant.lua"
-r=$(cd "$tmp" && env OMARCHY_PATH="$tmp/none" lua "$tmp/run.lua" "$tmp/privacy-mutant.lua" | python3 -I "$tmp/layers.py" "$root")
+r=$(cd "$tmp" && env -u GRASSFIELD_SESSION OMARCHY_PATH="$tmp/none" GRASSFIELD_DEV=1 GRASSFIELD_SHELL_DIR="$root/shell" lua "$tmp/run.lua" "$tmp/privacy-mutant.lua" | python3 -I "$tmp/layers.py" "$root")
 [[ $r != ok ]] && pass "layers: mutation: a copy without the secret sheet's rule fails the check" || bad "layers: mutation not caught"
+
+# --- the one list (R7-SEC-03): read from the shell's file, found as bindings.lua finds the shell ---
+mkdir -p "$tmp/othershell/services"
+printf '# a test list\n^(MarkerVault)$\n' >"$tmp/othershell/services/protected-classes.txt"
+out=$(run "$tmp/none" GRASSFIELD_SHELL_DIR="$tmp/othershell")
+grep -qF '|true|class=^(MarkerVault)$' <<<"$out" && ! grep -qF 'nngceck' <<<"$out" \
+  && pass "one list: a dev session's GRASSFIELD_SHELL_DIR gives the list privacy.lua applies (no copy of it in privacy.lua)" || bad "one list: dev shell dir: $out"
+out=$(run "$tmp/none" GRASSFIELD_SHELL_DIR="$tmp/othershell" GRASSFIELD_SESSION=1)
+! grep -qF 'MarkerVault' <<<"$out" \
+  && pass "one list: a real session ignores GRASSFIELD_SHELL_DIR (the installed shell's file)" || bad "one list: the session read a dev list: $out"
+out=$(run "$tmp/om" GRASSFIELD_SHELL_DIR="$tmp/nowhere")
+grep -q "no password-manager class read from $tmp/nowhere/services/protected-classes.txt" <<<"$out" && grep -qF '|true|class=^(NewVault)$' <<<"$out" \
+  && ! grep -qF 'nngceck' <<<"$out" && pass "one list unreadable: said in the log, Omarchy's own rules still applied" || bad "one list unreadable: $out"
 
 # --- wiring: both sessions load it ---
 grep -qx 'require("grassfield.privacy")' config/hypr/grassfield/core.lua && pass "wiring: core.lua requires grassfield.privacy" || bad "wiring: core.lua"

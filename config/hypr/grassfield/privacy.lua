@@ -10,11 +10,12 @@
 -- count; the stop is printed to Hyprland's log). A new protected app in a later Omarchy release
 -- is picked up without a Grassfield change; tests/security/screenshare_rules.sh compares both sets.
 --
--- The matches Omarchy 4.5.0 ships are always applied as well (duplicates dropped), so a file that stops early, moves or
--- disappears never leaves 1Password or Bitwarden unprotected (fail safe). They also are the clipboard history's list of
--- password managers (shell/services/ClipboardLogic.js PROTECTED_CLASSES, the same strings: tests/unit/tst_clipboard.qml),
--- and tests/security/screenshare_rules.sh fails when the installed Omarchy protects a window they do not name (R7-SEC-03).
--- Loaded by core.lua in both the real and the
+-- The password managers of shell/services/protected-classes.txt (Omarchy 4.5.0's matches, one class regex per line) are
+-- always applied as well (duplicates dropped), so a file that stops early, moves or disappears never leaves 1Password or
+-- Bitwarden unprotected (fail safe). That file is the ONE list the clipboard history also reads (shell/services/Clipboard.qml,
+-- rc7 audit R7-SEC-03); it is the shell's, found the way bindings.lua finds the shell (GRASSFIELD_SHELL_DIR in a dev session
+-- only, else /usr/share/grassfield/shell). tests/security/screenshare_rules.sh fails when the installed Omarchy protects a
+-- window it does not name. Loaded by core.lua in both the real and the
 -- nested session. Returns { source = "omarchy"|"builtin" (nothing read from Omarchy), matches = { <match table>... },
 -- skipped = { "<file>: <error>"... }, layers = { <namespace regex>... } (the shell's sheets, below) }.
 
@@ -26,14 +27,31 @@ if not omarchy_path or omarchy_path == "" then
 end
 local apps_dir = omarchy_path .. "/default/hypr/apps"
 
--- Omarchy 4.5.0 default/hypr/apps/1password.lua and bitwarden.lua, always applied: 1Password before and after 8.12 (app id
--- com.onepassword.OnePassword), Bitwarden, and its browser extension's window in any browser and profile. Each covers the
--- 4.0.6 match it replaces (^(1[p|P]assword)$, ^(Bitwarden)$, chrome-nngceckbapebfimnlniiiahkandclblb-Default).
-local BUILTIN = {
-  { class = "^(1[pP]assword|com\\.onepassword\\.OnePassword)$" },
-  { class = "^([bB]itwarden)$" },
-  { class = ".*nngceckbapebfimnlniiiahkandclblb.*" },
-}
+-- The password managers always applied (shell/services/protected-classes.txt: 1Password before and after 8.12, Bitwarden,
+-- its browser extension's window in any browser and profile). A line is a class regex (at most 256 bytes, 64 lines);
+-- blank lines and lines starting with # are skipped. Unreadable: Omarchy's own rules still apply, and the log says so.
+local dev_session = os.getenv("GRASSFIELD_DEV") == "1" and os.getenv("GRASSFIELD_SESSION") ~= "1"
+local shell_dir = dev_session and os.getenv("GRASSFIELD_SHELL_DIR") or ""
+if shell_dir == "" then
+  shell_dir = "/usr/share/grassfield/shell"
+end
+M.builtin_file = shell_dir .. "/services/protected-classes.txt"
+local BUILTIN = {}
+do
+  local f = io.open(M.builtin_file, "r")
+  if f then
+    for line in f:lines() do
+      local class = line:match("^%s*(.-)%s*$")
+      if class ~= "" and class:sub(1, 1) ~= "#" and #class <= 256 and #BUILTIN < 64 then
+        BUILTIN[#BUILTIN + 1] = { class = class }
+      end
+    end
+    f:close()
+  end
+  if #BUILTIN == 0 then
+    print("grassfield: no password-manager class read from " .. M.builtin_file .. "; only Omarchy's own rules apply")
+  end
+end
 
 -- Copy of a match: a string is a class regex (Omarchy's o.window), a table keeps its plain string/number/boolean fields.
 local function copy_match(match)
@@ -137,7 +155,7 @@ end
 
 if #M.matches == 0 then
   M.source = "builtin"
-  print("grassfield: no screen-share rule read from " .. apps_dir .. "; the built-in password-manager rules still apply")
+  print("grassfield: no screen-share rule read from " .. apps_dir .. "; the password managers of " .. M.builtin_file .. " still apply")
 end
 for _, match in ipairs(BUILTIN) do
   add(copy_match(match))

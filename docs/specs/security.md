@@ -837,13 +837,18 @@ resume with a reader; `Lock.qml` cannot run offscreen (WlSessionLock), and the n
 nothing else of those files runs or applies. Each recorded match becomes `hl.window_rule({ name = "gf-no-screen-share-N",
 match = …, no_screen_share = true })`. With Omarchy 4.0.4/4.0.6: 1Password, Bitwarden and the Bitwarden Chromium extension
 window; with 4.5.0 also 1Password 8.12's app id `com.onepassword.OnePassword`, `bitwarden` and the extension's window in any
-browser and profile. A later Omarchy addition is picked up without a Grassfield change. The three built-in matches (Omarchy
-4.5.0's, each covering the 4.0.6 one it replaced) are always added (duplicates dropped), so a rule file that stops early or
-disappears never leaves a password manager unprotected; when nothing at all is read, Hyprland's log says so. The built-in
-matches are also the clipboard history's password managers (`shell/services/ClipboardLogic.js` `PROTECTED_CLASSES`, the
-same strings, `tests/unit/tst_clipboard.qml`; R7-SEC-03). Tests: `tests/security/screenshare_rules.sh` (at least one rule per
-Omarchy `no_screen_share` rule; every match the installed Omarchy protects is a built-in one, so a new protected app fails
-the test until the built-in list and the clipboard's follow; fixture tree with a new app, a table match, an `os.execute`/`io.open` file whose calls
+browser and profile. A later Omarchy addition is picked up without a Grassfield change. The password managers of
+`shell/services/protected-classes.txt` (Omarchy 4.5.0's three matches, each covering the 4.0.6 one it replaced; one class
+regex per line) are always added (duplicates dropped), so a rule file that stops early or disappears never leaves a password
+manager unprotected; when nothing at all is read, Hyprland's log says so. That file is the ONE list (R7-SEC-03 and its
+security review): privacy.lua reads it from the shell's folder as `bindings.lua` finds the shell (`GRASSFIELD_SHELL_DIR` in a
+dev session only, else `/usr/share/grassfield/shell`; unreadable: Omarchy's own rules still apply and the log says so), and
+the clipboard history reads it at start (`shell/services/Clipboard.qml`, `ClipboardLogic.parseProtected`; not read yet,
+unreadable or a line that is not a regex: no copy is recorded); no copy of the list exists elsewhere
+(`tests/unit/tst_clipboard.qml`). Tests: `tests/security/screenshare_rules.sh` (at least one rule per
+Omarchy `no_screen_share` rule; every match the installed Omarchy protects is in the one list, so a new protected app fails
+the test until the list follows; the list comes from the shell's folder, a real session ignores a dev folder, an unreadable
+list is logged; fixture tree with a new app, a table match, an `os.execute`/`io.open` file whose calls
 never run; a `1password.lua` that stops before its rule still leaves 1Password protected; nothing readable;
 wiring; mutation "keep every rule" fails it), `Hyprland --verify-config` in `just check` (a misspelt key fails it), and
 nested `lock_privacy.sh screenshare` (DT-05: a window with app_id `Bitwarden` is black in a `grim` capture; NOT

@@ -41,6 +41,18 @@ Singleton {
     readonly property string storeDir: Mode.stateDir + "/clipboard"
     readonly property bool runnable: display !== "" && runtimeDir !== ""
 
+    // The password managers whose copies are never recorded: the one list of shell/services/protected-classes.txt, which
+    // config/hypr/grassfield/privacy.lua also applies as no_screen_share rules (rc7 audit R7-SEC-03). null until it is read, or
+    // when it cannot be: then nothing is recorded (Logic.mayRecord).
+    property var protectedClasses: null
+
+    FileView {
+        path: Quickshell.shellPath(Logic.PROTECTED_FILE)
+        printErrors: false
+        onLoaded: root.protectedClasses = Logic.parseProtected(text())
+        onLoadFailed: root.protectedClasses = null
+    }
+
     // No copy is recorded while an authorization request is open and for 2 s after it ended (Q11), timed by a Timer (monotonic: a
     // clock set back never lengthens it).
     readonly property bool authorizing: SessionState.authorizing
@@ -133,7 +145,8 @@ Singleton {
             helperLocked: root.helperLocked,
             authorizing: root.authorizing,
             authorizingGrace: root.authorizingGrace,
-            activeClass: Compositor.focusedAppId
+            activeClass: Compositor.focusedAppId,
+            protectedClasses: root.protectedClasses
         });
         root.send(yes ? ["Y", seq, Compositor.focusedAppId] : ["N", seq]);
     }
