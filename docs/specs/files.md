@@ -97,8 +97,9 @@ selection").
    `setRunExecutables(false)`). Programs are Files' own decision, before KIO, the Gatekeeper way (`src/launchguard.h`,
    `src/programlaunch.h`; GF-070 and DT-10 as amended on 2026-11-08 after the owner's report that AppImages and other
    programs could not be started; ADR-0011 amendment; `docs/specs/security.md` "Files opens apps the Gatekeeper way"):
-   - a native program or AppImage runs, in its own folder, through the Dock's launch path; when it came from the Internet
-     (the browsers' `user.xdg.origin.url` / `user.xdg.referrer.url`) a sheet asks first ("“Tool.AppImage” is an app
+   - a native program or AppImage runs, in the home folder, through the Dock's launch path; when it came from the Internet
+     (the browsers' `user.xdg.origin.url` / `user.xdg.referrer.url`, kept by Expand on what it extracts and written by Files
+     on what it copies from a server) a sheet asks first ("“Tool.AppImage” is an app
      downloaded from the Internet. Are you sure you want to open it?", with the host; Cancel is the default), and once the
      user said Open the approval (`user.grassfield.approved`, bound to inode, modification time and size) keeps it from
      asking again until the file changes; a program without the execute bit gets the same sheet, and Open sets u+x; one that

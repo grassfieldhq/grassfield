@@ -147,8 +147,9 @@ review follows.
 Decision: copy Gatekeeper, from "never run" to "run after consent".
 - Opening a native program or AppImage runs it (`apps/files/src/launchguard.h` `RunProgram`, decided by the ELF header and
   the execute bit, never by the name). It runs through this ADR's path: `grassfield::apps::scopedCommand` (its own
-  `uwsm-app` scope in a real session), `posix_spawnp` without a shell, its own session, stdin and stdout on `/dev/null`, the
-  program's folder as working folder (`apps/files/src/programlaunch.h` `Run`). Its error output is read for one second from
+  `uwsm-app` scope in a real session; a program path uwsm would read as a desktop entry, "…/Tool.desktop:run", is refused),
+  `posix_spawnp` without a shell, its own session, stdin and stdout on `/dev/null`, the home folder as working folder (as
+  the Dock's apps; macOS starts apps in "/") (`apps/files/src/programlaunch.h` `Run`). Its error output is read for one second from
   a datagram socket (closed afterwards: later writes fail without a signal and never block it) so that a start that fails
   gets a plain alert (another computer's program, a missing library, an AppImage without fuse2, a refused start).
 - A program that came from the Internet (Chromium's and Firefox's `user.xdg.origin.url` / `user.xdg.referrer.url`; the
@@ -156,8 +157,13 @@ Decision: copy Gatekeeper, from "never run" to "run after consent".
   the host it came from; Return and Esc cancel. After Open, Files writes `user.grassfield.approved` = `1 <inode> <mtime ns>
   <size>` (macOS clears the quarantine): an approved, unchanged file never asks again, a changed one asks again. A program
   without the user's execute bit gets the same sheet and Open sets u+x (only; ADR-0028's unprivileged path, through the
-  descriptor that was checked); one on a `noexec` or read-only disk is copied to `~/Applications` (macOS: `/Applications`)
-  and run from there.
+  descriptor that was checked, then verified: a FAT mount that ignores it gets the copy); one on a `noexec` or read-only disk
+  is copied to `~/Applications` (macOS: `/Applications`), checked against the approved file, and run from there.
+- Files keeps the download marks on what it makes from a downloaded or remote file (the Archive Utility model, review of
+  0c51550e): Expand copies the archive's marks onto every extracted regular file before the final rename (bsdtar keeps the
+  members' execute bits), and a copy or move from a remote location gets its source address, without credentials, as its
+  `user.xdg.origin.url`. Names are judged after removing trailing spaces and dots and every invisible (format,
+  default-ignorable, bidirectional) character, NFC.
 - Scripts open in the default text editor; Open With > Terminal runs an executable one in the session's terminal
   (decision F-7, `xdg-terminal-exec`), after the same sheet when downloaded. Windows and Java programs are explained and
   never run by opening; their own application (Wine, Bottles, java) runs them after "Open with …" in the sheet. A `.dmg` or
@@ -165,11 +171,12 @@ Decision: copy Gatekeeper, from "never run" to "run after consent".
 - Unchanged: app launchers (`.desktop`) are refused (a launcher outside an applications folder run after a sheet is a
   follow-up), desktop entries never reach KIO, web links go to the default browser only, KIO never runs an executable
   (`setRunExecutables(false)`), nothing runs from a remote KIO location or the Trash, and Files never runs anything with
-  other rights (setuid, setgid, file capabilities, Files as root).
+  other rights (setuid, setgid, file capabilities; Files as root starts nothing on any path: program, Terminal, Java,
+  Wine/Bottles).
 - Security rules held by tests: no name trick (program content shown as a document is refused), a symbolic link follows its
   target's trust, the file must be the one the user decided on after the sheet (path, inode, time, size), one journal line
   per decision without file contents. Spec: `docs/specs/security.md` "Files opens apps the Gatekeeper way" and
   `docs/specs/files.md` F7. Tests: `tests/unit/files/tst_launchguard.cpp`, `tst_programlaunch.cpp`, `tst_fileslaunch.cpp`,
   `tests/unit/tst_fileskiosheets.qml`, nested `tests/apps/files_dt10.sh`.
-- Limits (said in the spec): the download mark is only as present as the browsers make it; files from other tools, archives
-  or FAT volumes carry none.
+- Limits (said in the spec): the download mark is only as present as the browsers and Files make it; files fetched by other
+  tools, extracted by other archive tools or copied from FAT volumes carry none.

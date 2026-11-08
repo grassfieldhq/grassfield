@@ -634,34 +634,54 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
   `DF_1_PIE`; a shared library or an object is a document for KIO), with or without the permission bit; AppImages (the
   "AI" 1/2 magic at offset 8 of the ELF header) are native programs. It is refused when:
   - its shown kind is a document's (`RefuseDisguised`): the MIME type Files shows for it (name first, as KIO picks the
-    handler) is not Executable, Shared library, AppImage or unknown, so "photo.jpg", "notes.txt", "run.sh" or "setup.exe" with
-    ELF program content never runs (banner: "… it is an app, but its name makes it look like a document. If you trust it,
-    rename it first.");
+    handler) is not Executable, Shared library, AppImage or unknown, or the types its cleaned name gives are not all of
+    those (`LaunchGuard::cleanName`: trailing spaces and dots removed, every format character and default-ignorable code
+    point dropped, bidirectional controls included, then NFC; security review of 0c51550e: "Invoice.pdf ", "Invoice.pdf" +
+    U+200B and "Invoice" + U+202E + "fdp.exe" ran without a sheet), so "photo.jpg", "notes.txt", "run.sh" or "setup.exe"
+    with ELF program content never runs, whatever invisible characters follow (banner: "… it is an app, but its name makes it
+    look like a document. If you trust it, rename it first."). Every other name check (launcher, Windows, Java, AppImage,
+    another system's app, remote) is made on the cleaned name too;
+  - uwsm would read its path as a desktop entry (`RefuseLauncher`, `LaunchGuard::uwsmReadsAsEntry`: uwsm 0.27's MainArg takes
+    an argument that ends in ".desktop" or holds ".desktop:" for an entry, so "…/Tool.desktop:run" would start the entry
+    Tool.desktop beside it); `ProgramLaunch::Run::allowed` refuses such an uwsm-app command again at the start;
   - it is made for another computer (`RefuseIncompatible`: ELF class, byte order and machine against `/proc/self/exe`;
     IA-32 runs on x86-64);
   - it would run with other rights (`RefuseElevated`): setuid or setgid bit, a `security.capability` attribute, or Files
-    itself running as root.
+    itself running as root. Files as root starts nothing on any path (`FilesApp::refuseAsRoot` before a program, the
+    Terminal, Java and the Windows handler; `Run::allowed` again at the start).
   Otherwise `LaunchGuard::plan` says what Open does first, and the sheet (`KioSheetsLogic.openProgram`, the window's sheet
   style, Return and Esc cancel) is shown when any of these holds:
   - it came from the Internet: `user.xdg.origin.url` or `user.xdg.referrer.url` (what Chromium and Firefox write on a
     download; Grassfield had no quarantine mark of its own) on the file, or on a symbolic link's final target (a link follows
     its target's trust), and Files' approval `user.grassfield.approved` = `1 <inode> <mtime ns> <size>` does not name the
     file as it is now. Title "“Tool.AppImage” is an app downloaded from the Internet. Are you sure you want to open it?",
-    "This app was downloaded from <host>." (the host only: no path, query or user name);
+    "This app was downloaded from <host>." (the host only: no path, query or user name; a host whose labels mix scripts is
+    shown in ASCII, "xn--…"). Files keeps these marks on what it makes from a downloaded file: Expand copies the archive's
+    marks onto every extracted regular file before anything gets a real name (`ArchiveJob::extracted`, `LaunchGuard::markTree`,
+    O_NOFOLLOW descriptors; a member the user may not read or write, mode 0100 say, gets u+rw for the moment of the write
+    through an O_PATH descriptor and its mode back; the Archive Utility model: bsdtar's
+    `--no-same-permissions` keeps the members' execute bits), and a copy or move from a remote location (sftp, smb, ftp,
+    http, a phone; `FilesApp::markRemoteCopies` on every tracked copy job) gets the source address, without user name or
+    password, as its `user.xdg.origin.url`;
   - the user's execute bit is missing ("Opening it allows it to run on this computer."): Open sets u+x only (`fchmod`
-    through the descriptor that was checked, mode `& 0777 | S_IXUSR`: never setuid, setgid, group or others);
+    through the descriptor that was checked, mode `& 0777 | S_IXUSR`: never setuid, setgid, group or others), then checks it
+    with `fstat`: a FAT, exFAT or fixed-mode NTFS mount that ignores the chmod (`Approval::ExecIgnored`) gets the copy below;
   - it can't run where it is (a `noexec` mount, or not executable on a read-only disk or in another user's file): Open copies
-    it to `~/Applications` (made when missing; a free name "Tool 2.AppImage"; KIO's copy keeps the download marks), allows
-    and approves the copy and runs it ("Copy and Open").
+    it to `~/Applications` (made when missing; a free name "Tool 2.AppImage"; KIO's copy keeps the download marks), then
+    checks that the source is still the approved file (inode, time, size) and that the copy has its size (otherwise the copy
+    is removed and nothing runs), allows and approves the copy and runs it ("Copy and Open").
   After Open the file is inspected again and must be the same file (path, inode, modification time, size) and still a
   program; then `ProgramLaunch::approve` writes the approval (and u+x), through one `O_NOFOLLOW` descriptor, only while the
   identity matches. An approved, unchanged file never asks again; a changed one (other inode, time or size) asks again. A
-  file system without user extended attributes keeps no approval and no download mark.
+  file system without user extended attributes keeps no approval and no download mark. A sheet never shows the system's
+  error text: "It changed while you were deciding…", "It belongs to another user.", "Its permissions couldn’t be changed."
 - The start (`ProgramLaunch::Run`): `posix_spawnp` of the program's absolute path (no shell, no argument), through the
   Dock's launch path (`grassfield::apps::scopedCommand`: `uwsm-app --` in a real session, ADR-0011), in its own session,
-  every signal at its default, stdin and stdout on `/dev/null`, its working folder the program's own folder, Files'
-  environment. Its error output goes to a datagram socket that Files reads for one second and then closes (later writes
-  fail with ECONNREFUSED, never SIGPIPE, and never block the program); the child's pidfd tells its end and it is reaped. A
+  every signal at its default, stdin and stdout on `/dev/null`, the home folder as its working folder (the folder apps
+  started from the Dock have; macOS starts apps in "/"; never the folder it was opened from), Files' environment. Its error
+  output goes to a datagram socket that Files reads for one second, 64 datagrams per wake-up at most, and closes after the
+  second or at 16 KiB (later writes fail with ECONNREFUSED, never SIGPIPE, and never block the program); the child's pidfd
+  tells its end and it is reaped. A
   start that fails within that second gets a plain alert (`KioPrompts::tell`): exec format ("… isn’t made for this
   computer"), a library the loader names ("A component it needs is missing on this computer (libfoo.so.1)."), an AppImage
   without FUSE (`libfuse.so.2`, "AppImages require FUSE", fusermount): `pacman -Qq fuse2` (read-only) decides between "This
@@ -673,8 +693,9 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
   Without the permission bit it is a document for KIO, as before. Open With lists "Terminal" last for one executable script on
   this computer (`applicationsFor(urls, true)`; never in Always Open With or Get Info): it runs in the session's terminal
   (`xdg-terminal-exec -- /bin/bash -c '"$1"; …omarchy-show-done…' grassfield-files <path>`, the path an argument, never
-  command text; decision F-7), after the same sheet when it came from the Internet ("… is a script downloaded from the
-  Internet. Are you sure you want to run it in Terminal?").
+  command text; decision F-7; the script's folder is the terminal's working folder, as Terminal runs a .command file), after
+  the same sheet when it came from the Internet ("… is a script downloaded from the Internet. Are you sure you want to run it
+  in Terminal?").
 - Windows programs and scripts and registry files (`WindowsFile`: `.exe`, `.com`, `.scr`, `.cpl`, `.msi`, `.lnk`, `.bat`,
   `.cmd`, `.ps1`, `.vbs`, `.vbe`, `.wsf`, `.hta`, `.reg`, by type and by name) and Java archives and Web Start files
   (`JavaProgram`: `.jar`, `.jnlp`) never run by opening: a sheet says "This file is a program for Windows; it doesn’t work
@@ -689,17 +710,17 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
 - Remote items (a share, sftp, a phone, the Trash): desktop entries are refused, other systems' apps explained, and Windows,
   Java and AppImage names refused with "… can’t be opened from here. Copy it to a folder on this computer first."
   (`RefuseRemoteProgram`: nothing is ever downloaded and run); everything else goes to KIO as before (which never runs a
-  remote executable).
+  remote executable). A copy made by Files carries the source address as its download mark (above).
 - Opened as before: folders, documents (also with the permission bit: every file of a FAT/NTFS volume has it), scripts
   without the permission bit (text, in their editor, as KIO and macOS do).
 - Refusals are one banner (several: "%1 items were not opened."); the journal gets one line per decision, never the file's
   contents: `grassfield-files: open <decision> (<kind>): "<name>"[ from <host>]` (decisions: refused, run, asked, approved,
-  canceled, changed, explained, in the text editor, run in Terminal, failed).
-- Limits: the download mark is only as present as the browsers make it: a file fetched by another tool, extracted from an
-  archive (Files' own Expand drops extended attributes and permissions, so its programs ask through the execute-bit sheet)
-  or copied from a FAT volume (every file executable, no attribute) carries none, and a program there that is executable
-  runs at once, as it would from a terminal. Between the last check and the exec the program is named by path (the residual
-  race needs write access to its folder, i.e. the user's own rights).
+  canceled, changed, explained, in the text editor, run in Terminal, failed); names and hosts have their C0, C1 and
+  bidirectional control characters and quotes replaced (`LaunchGuard::logName`).
+- Limits: the download mark is only as present as the browsers and Files make it: a file fetched by another tool (curl, a
+  chat or mail client), extracted by another archive tool, or copied from a FAT volume (every file executable, no attribute)
+  carries none, and a program there that is executable runs at once, as it would from a terminal. Between the last check and
+  the exec the program is named by path (the residual race needs write access to its folder, i.e. the user's own rights).
 - The Applications location (`grassfield-apps:/`, macOS: Finder's Applications) is the one place where Files starts an
   application, and it is not an exception to the rule above: its items are not files and have no path. They are the virtual
   urls `grassfield-app:/<id>` of the apps the shell's Apps grid lists (`ApplicationsLogic`); double-click, Ctrl+O/File > Open and Ctrl+Down call `FilesApp::launchApplication` instead of `FilesApp::open` (`BrowserTab.activate`/`openSelection`), so
@@ -757,7 +778,11 @@ fake AppImage asks, Cancel runs and changes nothing, Open allows and runs it, ap
 again; a link follows its target's trust and one named as a document is refused; FUSE 2 missing, a missing library and
 another computer's program get their alert or banner, a program that stays gets none; a script never runs by opening,
 Terminal is listed for an executable script only and asks when downloaded; a remote AppImage, a `.dmg`, an `.exe` and a
-`.jar` are explained and never run), `tests/unit/tst_fileskiosheets.qml` (the sheets' texts and buttons; Return and Esc
+`.jar` are explained and never run; after the security review of 0c51550e: a program from a downloaded zip and tar.gz asks
+after Expand, a program changed while its sheet is open does not run, the copy into ~/Applications runs the copy and leaves the
+original, Open With > Terminal hands the terminal the path as bash's argument, Open in the Java and Windows sheets runs
+`java -jar` and the handler (recorders on the PATH), a remote copy gets its source address as its mark; the unit tests add
+cleaned names, uwsm's entry names, mixed-script hosts, marks copied through no link), `tests/unit/tst_fileskiosheets.qml` (the sheets' texts and buttons; Return and Esc
 cancel, only Open runs), nested `tests/apps/files_dt10.sh` (bare: pass 1 with the launch switch on, the three launchers
 refused and the script stopped at the switch, nothing reaching a launch; pass 2 without it, a downloaded program's sheet
 answered with Return, and the marker the launchers, the script or the program would create never appears).
