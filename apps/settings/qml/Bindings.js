@@ -86,6 +86,7 @@ const DESCRIPTIONS = [
     QT_TRANSLATE_NOOP("Bindings", "Lock screen"),
     QT_TRANSLATE_NOOP("Bindings", "Force Quit Applications"),
     QT_TRANSLATE_NOOP("Bindings", "Focus the menu bar"),
+    QT_TRANSLATE_NOOP("Bindings", "Focus the status menus"),
     QT_TRANSLATE_NOOP("Bindings", "Focus the Dock"),
     QT_TRANSLATE_NOOP("Bindings", "Turn Dock hiding on or off"),
     QT_TRANSLATE_NOOP("Bindings", "Show Desktop"),
