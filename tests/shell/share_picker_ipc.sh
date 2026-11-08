@@ -129,9 +129,13 @@ exec /usr/bin/timeout "$@"
 SH
 chmod +x "$tmp/fake/timeout"
 
+# The probe shell is this script's child, in its cgroup: the stand-in's peer check (rc7 audit R7-SEC-02) is told that this
+# cgroup stands for the shell's unit (GRASSFIELD_PICKER_PEER_UNIT, dev plumbing).
+leaf=$(awk -F: '$1 == "0" {print $3}' /proc/self/cgroup | sed 's#.*/##')
+[[ -n $leaf ]] || { echo "SKIP: share_picker_ipc: this process sits at the root of its cgroup tree (no unit to stand for the shell's)"; exit 0; }
 base_env=(-u WAYLAND_DISPLAY -u GRASSFIELD_SESSION -u DBUS_SESSION_BUS_ADDRESS -u QS_CONFIG_PATH -u QS_CONFIG_NAME -u QS_MANIFEST
   GRASSFIELD_DEV=1 GRASSFIELD_STATE_HOME="$tmp/state" GRASSFIELD_CONFIG_HOME="$tmp/config" HYPRLAND_INSTANCE_SIGNATURE="$sig"
-  XDG_RUNTIME_DIR="$runtime" XDG_CACHE_HOME="$tmp/cache")
+  XDG_RUNTIME_DIR="$runtime" XDG_CACHE_HOME="$tmp/cache" GRASSFIELD_PICKER_PEER_UNIT="$leaf")
 # Qt's offscreen platform names its screen only through its configuration file: two displays, as Hyprland names them.
 printf '{"screens": [{"name": "DP-1", "x": 0, "y": 0, "width": 800, "height": 600, "logicalDpi": 96, "dpr": 1},
   {"name": "HDMI-A-1", "x": 800, "y": 0, "width": 640, "height": 480, "logicalDpi": 96, "dpr": 1}]}\n' >"$tmp/screens.json"

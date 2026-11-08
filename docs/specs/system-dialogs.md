@@ -313,6 +313,14 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
 - SP2 one-time channel: the stand-in creates a Unix socket with a random 128-bit name under
   `$XDG_RUNTIME_DIR/grassfield/picker/` (directory 0700, socket 0600) and a random request id, calls `picker request <id>
   <path>`, and removes the socket file on every exit. The shell answers `accepted`, `busy` or `locked` within 1 s.
+- SP2a only the shell takes the request (rc7 audit R7-SEC-02): a connection is taken only from a peer that runs as the user
+  in `grassfield-shell.service` under the user's own manager, only slices between (`peer_ok`, the rule of
+  `grassfield-prompter`'s socket, `bridges/prompter/src/Peer.cpp`), its cgroup read through `SO_PEERPIDFD` (a peer that
+  has exited is refused; only a kernel without `SO_PEERPIDFD` makes it read the PID of `SO_PEERCRED`). Any other connection
+  is closed before a line is sent (not even the window list) and the wait goes on within SP2b's 2 s. A dev session
+  (ADR-0019) may name the cgroup that stands for the shell's in `GRASSFIELD_PICKER_PEER_UNIT` (one path component, matched
+  by the last component alone, as the prompter in a development run); a real session ignores it. Tests:
+  `tests/shell/share_picker_peer.sh` (the rule, by session, on socket pairs), `tests/shell/share_picker.sh` (end to end).
 - SP2b every wait on the shell is bounded (counter-review of PR #13): after `accepted` the stand-in waits at most 2 s for the
   connection, then removes the socket file and prints nothing (cancelled); after `accepted` the stock picker never starts.
   The shell shows its panel only once connected; a failed connection shows nothing; the panel closes when the stand-in's end

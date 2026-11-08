@@ -1,7 +1,9 @@
 # The screen-sharing picker stand-in (packaging/session-bin/hyprland-share-picker, ADR-0035 D-6, step 7a) against a fake
 # shell, a fake hyprctl and fake stock pickers; run by tests/shell/share_picker.sh as `python3 -I check.py <root> <tmp>`.
 # Its stdout goes through a copy of xdph 1.4.1's parser (promptForScreencopySelection, src/shared/ScreencopyShared.cpp:70-125),
-# so a selection counts only as xdph reads it. Spec system-dialogs.md A-SP1, A-SP2, A-SP2b, A-SP3.
+# so a selection counts only as xdph reads it. Spec system-dialogs.md A-SP1, A-SP2, A-SP2b, A-SP3; the peer check (rc7 audit
+# R7-SEC-02): the fake shell connects from this test's own cgroup, which stands for the shell's unit through the dev
+# plumbing GRASSFIELD_PICKER_PEER_UNIT (a dev session only); another unit, or a real session, refuses it.
 import atexit
 import json
 import os
@@ -16,6 +18,12 @@ import time
 
 root, tmp = sys.argv[1:3]
 failed = False
+# This process's cgroup (its last component) stands for the shell's unit: the fake shell is its child.
+with open("/proc/self/cgroup") as f:
+    leaf = next((l[3:].strip().rstrip("/").rsplit("/", 1)[-1] for l in f if l.startswith("0::")), "")
+if not leaf:
+    print("SKIP: share picker: this process sits at the root of its cgroup tree (no unit to stand for the shell's)")
+    sys.exit(0)
 
 
 def check(ok, desc):
@@ -177,8 +185,13 @@ WINDOWS = ("123456[HC>]org.gnome.TextEditor[HT>]notes.txt[HE>]94371412345678[HA>
 def env_for(**extra):
     env = {"PATH": "%s:/usr/bin:/bin" % fake, "XDG_RUNTIME_DIR": run, "HYPRLAND_INSTANCE_SIGNATURE": "test_sig",
            "XDPH_WINDOW_SHARING_LIST": WINDOWS, "FAKE_MONITORS": TWO, "QS_LOG": logs["qs"], "SHELL_LOG": logs["shell"],
-           "QS_CONFIG_PATH": "/elsewhere", "QS_MANIFEST": "x", "MARKER_PATH": os.path.join(run, "grassfield-lock-test_sig")}
-    env.update({k: v for k, v in extra.items() if v is not None})
+           "QS_CONFIG_PATH": "/elsewhere", "QS_MANIFEST": "x", "MARKER_PATH": os.path.join(run, "grassfield-lock-test_sig"),
+           "GRASSFIELD_DEV": "1", "GRASSFIELD_PICKER_PEER_UNIT": leaf}
+    for k, v in extra.items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
     return env
 
 
@@ -344,6 +357,23 @@ out, _, took = shell_answers(None, ["list"] + ["say:wait", "sleep:4"] * 5 + ["sa
 check(xdph(out) == {"allowToken": False, "type": "output", "output": "DP-1"} and took > 19,
       "a shell that says wait keeps the stand-in waiting past 15 s for the user's choice [%.1f s]" % took)
 
+# R7-SEC-02: only the shell's unit takes the request. The fake shell connects from this test's cgroup: refused when another
+# unit is expected, when the dev name is not one path component, and in a real session (GRASSFIELD_SESSION=1: the dev name
+# is ignored, grassfield-shell.service under the user's manager is expected); refused, it gets nothing (not even the
+# window list) and nothing is printed once the 2 s for the shell's connection are over; never the stock picker.
+for desc, extra in (("another unit is expected", {"GRASSFIELD_PICKER_PEER_UNIT": "not-the-shell-%s.service" % leaf}),
+                    ("the dev unit name is not one path component", {"GRASSFIELD_PICKER_PEER_UNIT": "x/" + leaf}),
+                    ("a real session (the dev name ignored)", {"GRASSFIELD_SESSION": "1"}),
+                    ("no dev session (the dev name ignored)", {"GRASSFIELD_DEV": None})):
+    out, _, took = shell_answers("/screen:DP-1", **extra)
+    seen = [e for e in read("shell") if e["event"] == "list"]
+    check(out == "" and 1.8 <= took < 3.5 and read("stock") == [] and os.listdir(picker_dir) == []
+          and all(not e["line"].strip() for e in seen),
+          "peer refused when %s: no window list sent, nothing printed after the 2 s, no stock picker [%r %.1f s %r]"
+          % (desc, out, took, seen))
+out, _, _ = shell_answers("/screen:DP-1")
+check(out == "[SELECTION]/screen:DP-1\n", "positive control: the shell's unit (this test's cgroup) is taken [%r]" % out)
+
 # xdph gone (its end of stdout closed): the stand-in cancels and the shell's panel closes (its end of the socket ends).
 p = start(FAKE_QS="accept", FAKE_SCRIPT=json.dumps(["list", "eof:6"]))
 deadline = time.monotonic() + 5
@@ -425,7 +455,7 @@ for desc, extra, expected in (
         ("a dev session", {"GRASSFIELD_DEV": "1", "GRASSFIELD_SHELL_DIR": "/repo/shell"}, "/repo/shell"),
         ("the real session", {"GRASSFIELD_DEV": "1", "GRASSFIELD_SESSION": "1", "GRASSFIELD_SHELL_DIR": "/repo/shell"},
          "/usr/share/grassfield/shell"),
-        ("no dev flag", {"GRASSFIELD_SHELL_DIR": "/repo/shell"}, "/usr/share/grassfield/shell"),
+        ("no dev flag", {"GRASSFIELD_DEV": None, "GRASSFIELD_SHELL_DIR": "/repo/shell"}, "/usr/share/grassfield/shell"),
         ("a dev flag other than 1", {"GRASSFIELD_DEV": "yes", "GRASSFIELD_SHELL_DIR": "/repo/shell"}, "/usr/share/grassfield/shell")):
     picker(FAKE_QS="busy", **extra)
     qs = read("qs")

@@ -34,6 +34,10 @@ main=$(cat "$dev/main.instance" 2>/dev/null || true)
 [[ $sig != "$main" && $sock != "${WAYLAND_DISPLAY:-}" ]] || { echo "share_picker: refusing the main session"; exit 2; }
 shell_pid=$(dev_live_pid "$dev/shell.pid" || true)
 [[ -n $shell_pid ]] && kill -0 "$shell_pid" 2>/dev/null || { echo "share_picker: grassfield-shell is not running (scripts/dev/shell-run.sh)"; exit 2; }
+# The dev shell runs in no unit of its own: the stand-in's peer check (rc7 audit R7-SEC-02) is told which cgroup stands for
+# grassfield-shell.service (GRASSFIELD_PICKER_PEER_UNIT, dev plumbing: the last component of the nested shell's cgroup).
+shell_unit=$(awk -F: '$1 == "0" {print $3}' "/proc/$shell_pid/cgroup" 2>/dev/null | sed 's#.*/##')
+[[ -n $shell_unit ]] || { echo "share_picker: the nested shell's cgroup cannot be read"; exit 2; }
 command -v foot >/dev/null && command -v jq >/dev/null || { echo "share_picker: foot and jq are needed"; exit 2; }
 # Nothing of the session this runs from routes a request: no GRASSFIELD_SESSION (the stand-in would ask the installed shell),
 # no GRASSFIELD_SHELL_DIR of another tree, no Quickshell config variable.
@@ -97,6 +101,7 @@ share() { # runs the stand-in as xdph does, at this tree's nested shell only; se
   guard
   : >"$tmp/out"
   env -u GRASSFIELD_SESSION WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" GRASSFIELD_DEV=1 GRASSFIELD_SHELL_DIR="$target" \
+    GRASSFIELD_PICKER_PEER_UNIT="$shell_unit" \
     XDPH_WINDOW_SHARING_LIST="$list" "$tmp/hyprland-share-picker" --allow-token >"$tmp/out" 2>/dev/null &
   standin=$!
 }
