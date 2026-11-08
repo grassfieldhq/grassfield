@@ -93,9 +93,24 @@ selection").
    rename), Rename (`KIO::moveAs`, inline, F2, base name preselected), Duplicate ("name copy.ext", `KIO::copyAs`),
    drop (`KIO::move`/`copy`), undo/redo (`KIO::FileUndoManager`, Ctrl+Z / Ctrl+Shift+Z; one step per command: Rename N Items, Make Alias and New Folder with Selection are kept by Files as `BatchOps` commands, ordered against KIO's by `newCommandSerialNumber`, review of PR #98). Errors show in a banner.
    Pasting copies into the same folder makes duplicates instead of a conflict.
-7. F7 Opening: folders navigate; files open with `KIO::OpenUrlJob` (MIME associations, executables never run: app
-   launchers, scripts and programs are refused by Files itself before KIO, `src/launchguard.h`, GF-070, see
-   `docs/specs/security.md` "Files never runs what it opens");
+7. F7 Opening: folders navigate; documents open with `KIO::OpenUrlJob` (MIME associations; KIO never runs an executable:
+   `setRunExecutables(false)`). Programs are Files' own decision, before KIO, the Gatekeeper way (`src/launchguard.h`,
+   `src/programlaunch.h`; GF-070 and DT-10 as amended on 2026-11-08 after the owner's report that AppImages and other
+   programs could not be started; ADR-0011 amendment; `docs/specs/security.md` "Files opens apps the Gatekeeper way"):
+   - a native program or AppImage runs, in its own folder, through the Dock's launch path; when it came from the Internet
+     (the browsers' `user.xdg.origin.url` / `user.xdg.referrer.url`) a sheet asks first ("“Tool.AppImage” is an app
+     downloaded from the Internet. Are you sure you want to open it?", with the host; Cancel is the default), and once the
+     user said Open the approval (`user.grassfield.approved`, bound to inode, modification time and size) keeps it from
+     asking again until the file changes; a program without the execute bit gets the same sheet, and Open sets u+x; one that
+     can't run where it is (noexec, read-only) is copied to `~/Applications` first; a start that fails in its first second
+     gets a plain alert (another computer's program, a missing library, an AppImage without fuse2);
+   - a script opens in the default text editor; Open With > Terminal runs an executable one in the session's terminal;
+   - Windows and Java programs are explained ("This file is a program for Windows; it doesn’t work directly on Linux."),
+     with "Open with Wine/Bottles/Java" when installed, after the same origin line; a `.dmg` or `.pkg` is explained ("This
+     file contains an app made for another operating system …") with Search the Store;
+   - app launchers (`.desktop`) are still refused (a launcher outside an applications folder run after a sheet is a
+     follow-up); program content under a document's name, another computer's program and anything with other rights are
+     refused; nothing runs from a server or the Trash.
    Open With lists `KApplicationTrader::queryByMimeType` apps and launches with `ApplicationLauncherJob`.
 8. F8 Context menus (Grassfield `PopupMenu`): item menu (Open, Open With, Open in New Tab, Move to Trash, Get Info,
    Rename, Duplicate, Glance, Copy, Cut, Show in Enclosing Folder while searching), Trash item menu
@@ -585,8 +600,9 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   paste's progress). **Amended by F-18** (owner request 2026-11-07): Files has Cut ⌘X as well.
 - **F-7 Terminal**: the session's terminal is `xdg-terminal-exec` (Omarchy; the shell uses it for `Terminal=true` entries,
   ADR-0011). Files starts terminal applications and "New Terminal at Folder" through it, never through KIO's konsole
-  lookup; the working directory is the folder. Launches keep `launchguard.cpp`'s rules (Files never runs a program from a
-  folder; the terminal itself is an application the user chose).
+  lookup; the working directory is the folder. Launches keep `launchguard.cpp`'s rules (the terminal itself is an
+  application the user chose; a script runs there only through Open With > Terminal, after the downloaded-file sheet when it
+  came from the Internet, amendment of 2026-11-08).
 - **F-8 Archives**: Compress makes a `.zip` (Finder's Archive Utility default) and Expand reads zip, tar, tar.gz, tar.bz2,
   tar.xz, tar.zst and 7z with `bsdtar` in a child process (ADR-0029).
 - **F-9 Connect to Server**: Files asks for nothing itself; KIO's worker asks kiod's password server, whose dialog is KDE's

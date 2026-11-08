@@ -610,12 +610,16 @@ after; mutants removing a refusal fail it), `tests/security/lock_surfaces.sh` (s
 close-on-lock, IPC routes, screen corners, the polkit sheet; mutation self-test). Nested (bare, outside the sandbox):
 `tests/security/lock_privacy.sh` step `privacy` tries every surface over the lock and checks the captures (DT-08).
 
-## Files never runs what it opens (GF-070, SEC-12, DT-10)
-macOS model (Gatekeeper): double-clicking a downloaded app, script or launcher does not run it; macOS says it was not
-opened, and only a deliberate "Open Anyway" in System Settings runs it. Grassfield Files decides itself, before KIO
-(`KIO::OpenUrlJob::setRunExecutables(false)` documents executables but not every `.desktop` case; KIO's source is not on
-the host): `apps/files/src/launchguard.{h,cpp}` `LaunchGuard::verdict(inspect(url))` for every item `FilesApp::open`
-gets (double-click, File > Open, Ctrl+Down, the context menu; Return renames), before the scripted-test switch:
+## Files opens apps the Gatekeeper way (GF-070, SEC-12, DT-10; amended 2026-11-08)
+macOS model (Gatekeeper). Until 2026-11-08 Files refused every program, script and AppImage it was asked to open (GF-AUDIT-001
+DT-10, commit e6e75bc3). The owner reported (2026-11-08) that no AppImage "or others" could be started from Files and that a
+`.dmg` did nothing: too strict for a desktop. The rule is now Gatekeeper's (ADR-0011 amendment "Files opens apps the
+Gatekeeper way"): opening a program runs it; a program that came from the Internet runs only after the user said Open in a
+sheet that says where it came from; nothing is run silently because of a name. Grassfield Files decides itself, before KIO
+(`KIO::OpenUrlJob::setRunExecutables(false)` stays on every job it starts; KIO's source is not on the host):
+`apps/files/src/launchguard.{h,cpp}` `LaunchGuard::verdict(inspect(url))` for every item `FilesApp::open` gets (double-click,
+File > Open, Ctrl+Down, the context menu; Return renames), before the scripted-test switch. It decides by content (the ELF
+header, a `#!` line, the MIME type of name and content) and by the execute bit, never by the name alone:
 - A desktop entry (named `*.desktop` / `*.kdelnk` / `.directory`, or of type `application/x-desktop`) is never handed to
   KIO, with or without the permission bit, wherever it is (review of a5646b8: KIO downloads a `Type=Link` target and runs
   the handler of the type the server announces, or the application in `X-KDE-LastOpenedWith`; the reviewer ran an
@@ -624,21 +628,78 @@ gets (double-click, File > Open, Ctrl+Down, the context menu; Return renames), b
   application, `ApplicationLauncherJob` with the URL), nothing else; with no default browser it is refused. Any other
   entry is refused, "app launcher": `Type=Application`, `Service`, a missing or unknown Type, an unreadable file, a link to
   a file or another scheme, and an ambiguous entry (a repeated `Type` or `URL`, also across repeated groups, or `URL` with
-  `URL[$e]`: KConfig keeps the last value; or longer than the 64 KiB read).
-- Refused, "program or script": an executable regular file whose type is a program or script (shared-mime-info:
-  `application/x-executable` and its sub-classes, scripts included; `x-pie-executable`; `x-sharedlib`), or that starts
-  with `#!` or the ELF magic; and, even without the permission bit, types whose handler runs them (by type and by name):
-  Windows programs and scripts (`.exe`, `.com`, `.scr`, `.cpl`, `.msi`, `.lnk`, `.bat`, `.cmd`, `.ps1`, `.vbs`, `.vbe`,
-  `.wsf`, `.hta`), registry files (`.reg`), Java archives and Web Start files (`.jar`, `.jnlp`), AppImages.
-- Remote items (a share, sftp, the Trash): desktop entries and the names above are refused (KIO downloads a remote file
-  and runs the handler of its type); everything else goes to KIO as before.
+  `URL[$e]`: KConfig keeps the last value; or longer than the 64 KiB read). Unchanged by the amendment: a launcher that is
+  not in an applications folder, run after a downloaded-file sheet, is a follow-up (KIO's Exec parsing would run it).
+- A native program (`RunProgram`): an ELF file whose header says it is one (`ET_EXEC`, or `ET_DYN` with an interpreter or
+  `DF_1_PIE`; a shared library or an object is a document for KIO), with or without the permission bit; AppImages (the
+  "AI" 1/2 magic at offset 8 of the ELF header) are native programs. It is refused when:
+  - its shown kind is a document's (`RefuseDisguised`): the MIME type Files shows for it (name first, as KIO picks the
+    handler) is not Executable, Shared library, AppImage or unknown, so "photo.jpg", "notes.txt", "run.sh" or "setup.exe" with
+    ELF program content never runs (banner: "… it is an app, but its name makes it look like a document. If you trust it,
+    rename it first.");
+  - it is made for another computer (`RefuseIncompatible`: ELF class, byte order and machine against `/proc/self/exe`;
+    IA-32 runs on x86-64);
+  - it would run with other rights (`RefuseElevated`): setuid or setgid bit, a `security.capability` attribute, or Files
+    itself running as root.
+  Otherwise `LaunchGuard::plan` says what Open does first, and the sheet (`KioSheetsLogic.openProgram`, the window's sheet
+  style, Return and Esc cancel) is shown when any of these holds:
+  - it came from the Internet: `user.xdg.origin.url` or `user.xdg.referrer.url` (what Chromium and Firefox write on a
+    download; Grassfield had no quarantine mark of its own) on the file, or on a symbolic link's final target (a link follows
+    its target's trust), and Files' approval `user.grassfield.approved` = `1 <inode> <mtime ns> <size>` does not name the
+    file as it is now. Title "“Tool.AppImage” is an app downloaded from the Internet. Are you sure you want to open it?",
+    "This app was downloaded from <host>." (the host only: no path, query or user name);
+  - the user's execute bit is missing ("Opening it allows it to run on this computer."): Open sets u+x only (`fchmod`
+    through the descriptor that was checked, mode `& 0777 | S_IXUSR`: never setuid, setgid, group or others);
+  - it can't run where it is (a `noexec` mount, or not executable on a read-only disk or in another user's file): Open copies
+    it to `~/Applications` (made when missing; a free name "Tool 2.AppImage"; KIO's copy keeps the download marks), allows
+    and approves the copy and runs it ("Copy and Open").
+  After Open the file is inspected again and must be the same file (path, inode, modification time, size) and still a
+  program; then `ProgramLaunch::approve` writes the approval (and u+x), through one `O_NOFOLLOW` descriptor, only while the
+  identity matches. An approved, unchanged file never asks again; a changed one (other inode, time or size) asks again. A
+  file system without user extended attributes keeps no approval and no download mark.
+- The start (`ProgramLaunch::Run`): `posix_spawnp` of the program's absolute path (no shell, no argument), through the
+  Dock's launch path (`grassfield::apps::scopedCommand`: `uwsm-app --` in a real session, ADR-0011), in its own session,
+  every signal at its default, stdin and stdout on `/dev/null`, its working folder the program's own folder, Files'
+  environment. Its error output goes to a datagram socket that Files reads for one second and then closes (later writes
+  fail with ECONNREFUSED, never SIGPIPE, and never block the program); the child's pidfd tells its end and it is reaped. A
+  start that fails within that second gets a plain alert (`KioPrompts::tell`): exec format ("… isn’t made for this
+  computer"), a library the loader names ("A component it needs is missing on this computer (libfoo.so.1)."), an AppImage
+  without FUSE (`libfuse.so.2`, "AppImages require FUSE", fusermount): `pacman -Qq fuse2` (read-only) decides between "This
+  AppImage needs a system component (fuse2)." and "This AppImage couldn’t use FUSE on this computer." (no Store or Software
+  Update path installs a library; never sudo); refused where it is (noexec, permission); an error code ("… quit right after
+  it opened."). A crash (a signal) is grassfield-crash-watch's to tell.
+- A script (`OpenScript`: executable, with a `#!` line or a script type) opens in the default text editor (text/plain's
+  application, through Open With's path; none set: the Choose Application panel), as on macOS; it never runs by opening.
+  Without the permission bit it is a document for KIO, as before. Open With lists "Terminal" last for one executable script on
+  this computer (`applicationsFor(urls, true)`; never in Always Open With or Get Info): it runs in the session's terminal
+  (`xdg-terminal-exec -- /bin/bash -c '"$1"; …omarchy-show-done…' grassfield-files <path>`, the path an argument, never
+  command text; decision F-7), after the same sheet when it came from the Internet ("… is a script downloaded from the
+  Internet. Are you sure you want to run it in Terminal?").
+- Windows programs and scripts and registry files (`WindowsFile`: `.exe`, `.com`, `.scr`, `.cpl`, `.msi`, `.lnk`, `.bat`,
+  `.cmd`, `.ps1`, `.vbs`, `.vbe`, `.wsf`, `.hta`, `.reg`, by type and by name) and Java archives and Web Start files
+  (`JavaProgram`: `.jar`, `.jnlp`) never run by opening: a sheet says "This file is a program for Windows; it doesn’t work
+  directly on Linux." (or "This file is a Java program."). When the default application of its exact type is installed
+  (Wine, Bottles: one that names the type itself, never one inherited from a parent type) or `java`/`javaws` is on the PATH,
+  the sheet offers "Open with <app>" (Return and Esc cancel), with the download origin; Open checks the file again and opens
+  it with that application (Java: `java -jar <path>` through the same start).
+- Another system's app (`ForeignApp`: `.dmg`, `.pkg`, `.mpkg`, `application/x-apple-diskimage`): "This file contains an app
+  made for another operating system, which can’t work on Linux.", with Search the Store (Grassfield Store's
+  `--page=search:<the file's name without version and platform words>`) when the Store is there. The text never names that
+  system (tests/ci/ui_names.py: no Apple trademark in the UI).
+- Remote items (a share, sftp, a phone, the Trash): desktop entries are refused, other systems' apps explained, and Windows,
+  Java and AppImage names refused with "… can’t be opened from here. Copy it to a folder on this computer first."
+  (`RefuseRemoteProgram`: nothing is ever downloaded and run); everything else goes to KIO as before (which never runs a
+  remote executable).
 - Opened as before: folders, documents (also with the permission bit: every file of a FAT/NTFS volume has it), scripts
   without the permission bit (text, in their editor, as KIO and macOS do).
-- The user sees one banner: "“t.desktop” was not opened: it is an app launcher, and Files never starts apps from a folder.
-  Open apps from the Dock, Apps or Search." (programs: "… To run it on purpose, use a terminal."); the journal gets
-  `grassfield-files: open refused (<kind>)`. No "Open Anyway" in Files, on purpose: Grassfield has no signed-app notion to
-  base it on, apps start from the Dock, Apps and Search, and a program the user trusts runs from a terminal. "Open With"
-  is unchanged: it opens the item WITH the chosen app (a launcher in a text editor), it never runs the item.
+- Refusals are one banner (several: "%1 items were not opened."); the journal gets one line per decision, never the file's
+  contents: `grassfield-files: open <decision> (<kind>): "<name>"[ from <host>]` (decisions: refused, run, asked, approved,
+  canceled, changed, explained, in the text editor, run in Terminal, failed).
+- Limits: the download mark is only as present as the browsers make it: a file fetched by another tool, extracted from an
+  archive (Files' own Expand drops extended attributes and permissions, so its programs ask through the execute-bit sheet)
+  or copied from a FAT volume (every file executable, no attribute) carries none, and a program there that is executable
+  runs at once, as it would from a terminal. Between the last check and the exec the program is named by path (the residual
+  race needs write access to its folder, i.e. the user's own rights).
 - The Applications location (`grassfield-apps:/`, macOS: Finder's Applications) is the one place where Files starts an
   application, and it is not an exception to the rule above: its items are not files and have no path. They are the virtual
   urls `grassfield-app:/<id>` of the apps the shell's Apps grid lists (`ApplicationsLogic`); double-click, Ctrl+O/File > Open and Ctrl+Down call `FilesApp::launchApplication` instead of `FilesApp::open` (`BrowserTab.activate`/`openSelection`), so
@@ -681,13 +742,25 @@ gets (double-click, File > Open, Ctrl+Down, the context menu; Return renames), b
   with the permission message.
 - The desktop already never runs `.desktop` files (`DesktopFiles.qml`, DT-11). The shell's `gio open` / `xdg-open` paths
   (Search results, Dock stacks) hand files to their MIME handler; not changed here.
-Tests: `tests/unit/files/tst_launchguard.cpp` (verdicts; DT-10 on real files: `t.desktop` executable and not,
-`Invoice.pdf.desktop`, web links to the browser only (the review's `.msi` link with `X-KDE-LastOpenedWith` included),
-repeated keys, an oversized entry, `.directory`, file links, an unreadable entry, scripts with and without the bit, a
-copied `/usr/bin/true` and a symlink to it, `.exe`, `.jar`, AppImage without +x, `.ps1`, `.vbs`, `.reg`, `.jnlp`, a
-folder; remote items by name), nested `tests/apps/files_dt10.sh` (bare: pass 1 with the launch switch
-on, four "open refused" and nothing reaching the launch path; pass 2 without it, the marker the launchers would create
-never appears).
+Tests: `tests/unit/files/tst_launchguard.cpp` (verdicts and plans; DT-10 on real files as amended: `t.desktop` executable
+and not, `Invoice.pdf.desktop`, web links to the browser only (the review's `.msi` link with `X-KDE-LastOpenedWith`
+included), repeated keys, an oversized entry, `.directory`, file links, an unreadable entry; scripts with and without the bit
+to the editor or KIO; a copied `/usr/bin/true` (runs; without the bit the sheet allows it), named `photo.jpg`, `notes.txt`,
+`run.sh`, `setup.exe` (refused), through a link (the target decides) and a link named `report.pdf` (refused), with another
+machine (refused), setuid (refused); a downloaded fake AppImage asked about until approved, a forged approval of another
+identity ignored, asked again after a change, a link to it following its trust; `.exe` by name and by content, `.jar`, an
+"AppImage" that is no ELF program, `.ps1`, `.vbs`, `.reg`, `.jnlp`, `.dmg`, a folder; remote items by name; the ELF parser
+on synthetic headers), `tests/unit/files/tst_programlaunch.cpp` (the failure a first second shows, the approval through one
+descriptor, `~/Applications` and its free names), `tests/unit/files/tst_fileslaunch.cpp` (FilesApp::open in a scratch home
+with real programs, `launch_fixture.cpp`: a native program runs in its folder without a sheet; a downloaded non-executable
+fake AppImage asks, Cancel runs and changes nothing, Open allows and runs it, approved it runs without a sheet, changed it asks
+again; a link follows its target's trust and one named as a document is refused; FUSE 2 missing, a missing library and
+another computer's program get their alert or banner, a program that stays gets none; a script never runs by opening,
+Terminal is listed for an executable script only and asks when downloaded; a remote AppImage, a `.dmg`, an `.exe` and a
+`.jar` are explained and never run), `tests/unit/tst_fileskiosheets.qml` (the sheets' texts and buttons; Return and Esc
+cancel, only Open runs), nested `tests/apps/files_dt10.sh` (bare: pass 1 with the launch switch on, the three launchers
+refused and the script stopped at the switch, nothing reaching a launch; pass 2 without it, a downloaded program's sheet
+answered with Return, and the marker the launchers, the script or the program would create never appears).
 
 ## Upstream base (GF-031)
 Forks reviewed against Omarchy **v4.0.6** = `basecamp/omarchy@237f1b4071a0bff2296c6d740ba2b9fd695ebfa0`, the installed
