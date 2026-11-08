@@ -83,6 +83,7 @@ echo "2026-11-05T10:00:07+0000 vm grassfield-shell[1]: Displays: DP-3 is Dell In
 echo "2026-11-05T10:00:08+0000 vm grassfield-shell[1]: audio: default sink alsa_output.usb-Focusrite_Scarlett_2i2_USB_Y8ABCDE12345-00.HiFi__Line__sink"
 echo "2026-11-05T10:00:09+0000 vm grassfield-shell[1]: audio routing: connected USB Headset (usb:0x0d8c:0x0014:SN-7Y3K9QX2): personal"
 echo "2026-11-05T10:00:10+0000 vm grassfield-shell[1]: grassfield: display desc:Iiyama PL2792Q 1173930A0284: no such mode"
+echo "2026-11-05T10:00:11+0000 vm grassfield-shell[1]: displays: LG Electronics LG ULTRAFINE 012NTPC1A234 is back"
 SH
 chmod 755 "$tmp/bin"/*
 
@@ -154,6 +155,8 @@ desc="R7-SEC-04 (review): a display not connected now loses every word that coul
 check bash -c '! grep -q "AB12CD34\|EF56" "$1" && grep -qF "$(printf "v1\tdesc:Acme Corp AC27 [serial] [serial]\t2560x1440@60.00")" "$1"' _ "$out"
 desc="R7-SEC-04 (review): a display description anywhere in the journal loses its serial, the display connected or not"
 check bash -c '! grep -q "1173930A0284" "$1" && grep -qF "display desc:Iiyama [serial] [serial]: no such mode" "$1"' _ "$out"
+desc="R7-SEC-04 (second review): a disconnected display's serial written without desc: (its description in the journal) is removed too"
+check bash -c '! grep -q "012NTPC1A234" "$1" && grep -qF "displays: LG Electronics LG ULTRAFINE [serial] is back" "$1"' _ "$out"
 desc="R7-SEC-04 (review): the audio routing key of a USB device (usb:<vendor>:<product>:<serial>) loses its serial"
 check bash -c '! grep -q "SN-7Y3K9QX2" "$1" && grep -qF "(usb:0x0d8c:0x0014:[serial]): personal" "$1"' _ "$out"
 desc="R7-SEC-04: a connected display's serial is removed from the whole report (the journal too)"

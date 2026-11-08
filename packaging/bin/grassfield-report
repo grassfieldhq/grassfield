@@ -333,12 +333,13 @@ def display_serials(displays):
     return out
 
 
-def redact_desc(text, known, pattern=DESC_FIELD):
+def redact_desc(text, known, pattern=DESC_FIELD, found=None):
     """The serial of every `desc:` description removed (ADR-0053: serials never leave). A connected display's (`known`, from
     display_serials) is cut from the end of its description; a connected display without a serial keeps its description; any
     other description (a display not connected now) loses its last word, where Hyprland puts the serial, and every word that
     could be a serial (EDID_LIKE: a serial with a space in it; fail closed: a model name with digits goes too). A description
-    already cut (its last word the mark) is left as it is."""
+    already cut (its last word the mark) is left as it is. The words taken out of a display not connected now are added to
+    `found`, so that redact_serials removes them wherever else they are written without `desc:` (the security review's nit)."""
     def one(m):
         body = m.group(2).rstrip()
         trail = m.group(2)[len(body):]
@@ -351,17 +352,23 @@ def redact_desc(text, known, pattern=DESC_FIELD):
         if not words or words[-1] == SERIAL_MARK:
             return m.group(0)
         kept = [SERIAL_MARK if EDID_LIKE.fullmatch(w.strip(":.,;")) else w for w in words[:-1]]
+        if found is not None:
+            found.update(w.strip(":.,;") for w, k in zip(words, kept + [SERIAL_MARK]) if k == SERIAL_MARK)
         return m.group(1) + " ".join(kept + [SERIAL_MARK]) + trail
     return pattern.sub(one, text)
 
 
-def redact_serials(text, known):
+def redact_serials(text, known, found=None):
     """Hardware serials anywhere in the report: those of the connected displays (SERIAL_MIN characters or more, as a word),
     every `desc:` description's (redact_desc: a display not connected now too), a USB device's serial in the audio routing
-    key (USB_KEY) and the USB ID_SERIAL of ALSA and PipeWire names."""
+    key (USB_KEY) and the USB ID_SERIAL of ALSA and PipeWire names. The words found taken out of a disconnected display's
+    description (`found`) are removed wherever else they are, `desc:` or not."""
+    found = set() if found is None else found
     for serial in sorted({v for v in known.values() if len(v) >= SERIAL_MIN}, key=len, reverse=True):
         text = re.sub(r"(?<![A-Za-z0-9])" + re.escape(serial) + r"(?![A-Za-z0-9])", SERIAL_MARK, text)
-    text = redact_desc(text, known, DESC_ANY)
+    text = redact_desc(text, known, DESC_ANY, found)
+    for word in sorted({w for w in found if len(w) >= SERIAL_MIN and w != SERIAL_MARK}, key=len, reverse=True):
+        text = re.sub(r"(?<![A-Za-z0-9])" + re.escape(word) + r"(?![A-Za-z0-9])", SERIAL_MARK, text)
     text = USB_KEY.sub(lambda m: m.group(1) + SERIAL_MARK, text)
     return USB_ID.sub(lambda m: m.group(1) + "[usb device]" + m.group(3), text)
 
@@ -492,7 +499,7 @@ def config_dir():
     return os.path.join(base, "grassfield")
 
 
-def configuration(known):
+def configuration(known, found=None):
     folder = config_dir()
     try:
         names = sorted(os.listdir(folder))
@@ -520,7 +527,7 @@ def configuration(known):
             types = schema_path_types() if name == "grassfield.json" else {}
             body = json.dumps(scrub_paths(redact_json(data), types, (), wallpaper), indent=1, ensure_ascii=False)
         except ValueError:
-            body = "(not JSON: left out)" if name == "folder-styles.json" else scrub_text(redact_desc(redact_lines(text), known),
+            body = "(not JSON: left out)" if name == "folder-styles.json" else scrub_text(redact_desc(redact_lines(text), known, DESC_FIELD, found),
                                                                                            wallpaper)
         parts.append("--- %s\n%s" % (name, body))
     return "\n".join(parts) if parts else "(the folder is empty)"
@@ -564,6 +571,7 @@ def report(now):
     rel = os_release()
     displays, failed = hypr_monitors()
     known = display_serials(displays)
+    found = set()
     version = (read_file(VERSION_FILE, 200) or "").strip() or "unknown (no %s)" % VERSION_FILE[len(FILE_ROOT):]
     head = [
         "Grassfield diagnostic report",
@@ -586,12 +594,12 @@ def report(now):
         ("Audio devices", redact_device_names(run(["wpctl", "status"])[1], every_line=True)),
         ("Crashes (last 7 days)", crashes()),
         ("Journal of the Grassfield units (this boot)", redact_device_names(journal())),
-        ("Configuration (%s)" % config_dir(), configuration(known)),
+        ("Configuration (%s)" % config_dir(), configuration(known, found)),
     ]
     body = "\n".join(head) + "\n"
     for title, text in sections:
         body += "\n== %s ==\n%s\n" % (title, text.rstrip("\n"))
-    return redact_serials(body, known)
+    return redact_serials(body, known, found)
 
 
 def main(argv):
