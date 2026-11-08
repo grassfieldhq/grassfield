@@ -35,6 +35,13 @@ Variants {
         // item, the surface mapped while that item was created and resized the window under the popup's x and y bindings (a
         // binding loop, integrator nested pass of 12e3dd3).
         readonly property bool hasPopup: open && holder.item !== null
+        // The same, held steady while the Loader swaps one popup for another (Left/Right in a menu: system -> app -> ...). The
+        // old item is destroyed before the new one exists, so `hasPopup` is false for that instant, and each change of the
+        // keyboard mode or of the input mask is committed to the compositor at once: Exclusive -> None -> Exclusive handed
+        // the keys back to the focused window (Hyprland gives the focus back when an Exclusive layer drops to None) and the
+        // walk stopped after one step (R7-FUN-08 / GF-002). A kind the Overlay draws keeps the keyboard and the input
+        // through the swap; a Loader in error does not (an empty overlay never holds the keys).
+        readonly property bool engaged: PopupKinds.holdsKeyboard(open, Popups.kind, holder.status === Loader.Error)
 
         // A left press on the tiling popover's green light is the light's (ADR-0036 D64): released over it, the light's action
         // runs; released elsewhere, the popover closes. The click-outside area and the menu bar strip share it (in a Split View
@@ -77,13 +84,13 @@ Variants {
         exclusionMode: ExclusionMode.Ignore
         color: "transparent"
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: hasPopup && !Popups.pointerHeld ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+        WlrLayershell.keyboardFocus: engaged && !Popups.pointerHeld ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         WlrLayershell.namespace: "grassfield-overlay"
         // The whole output receives input while a popup is open (the bar strip is handed to the bar, below); nothing once
         // it closed: the surface stays mapped a moment for the keyboard release, and a click in that moment belongs to the
         // window under it.
         // qmllint disable missing-type
-        mask: win.hasPopup && !Popups.pointerHeld ? openMask : passThrough
+        mask: win.engaged && !Popups.pointerHeld ? openMask : passThrough
         // Quick Settings is several floating modules: one blur region each. Everything else is one surface.
         BackgroundEffect.blurRegion: Appearance.effectiveTransparency > 0 && win.open && !(Popups.kind === "dockstack" && ((holder.item as StackPopup)?.fan ?? false)) ? (Popups.kind === "controlcenter" ? modulesRegion : blurRegion) : null
         // qmllint enable missing-type
@@ -104,6 +111,18 @@ Variants {
         KeyboardRelease {
             id: release
             shown: win.open
+        }
+
+        // Whether the compositor gave this window the keyboard (read by the dev hook `menubar keyboardHolder`).
+        Item {
+            id: keyboardProbe
+        }
+
+        Binding {
+            target: Popups
+            property: "overlayHasKeyboard"
+            value: keyboardProbe.Window.active
+            when: win.open
         }
 
         // While mapped or open: `open` is computed again when it disagrees with Popups (a value left stale by a binding loop would keep

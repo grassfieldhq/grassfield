@@ -12,6 +12,14 @@ function known(kind) {
     return kinds.indexOf(kind) >= 0;
 }
 
+// Whether the Overlay keeps the keyboard and the output's input: a popup is open, of a kind the Overlay draws, and its Loader is
+// not in error. Not tied to the loaded item: a swap of one popup for another (Left/Right in a menu) destroys the old item
+// before the new one exists, and the keyboard mode and input mask would flap Exclusive -> None -> Exclusive, each change
+// committed to the compositor, which gives the focus back to the window under it (R7-FUN-08 / GF-002).
+function holdsKeyboard(open, kind, loaderFailed) {
+    return open === true && known(kind) && loaderFailed !== true;
+}
+
 // The kinds drawn as a Dialog (shell/overlay/Dialog.qml): an alert or a sheet, each with its own corner. tests/unit/
 // tst_overlayblur.qml holds this list to the Overlay's components: a new kind built on Dialog that is not here fails it.
 const dialogs = ["forcequit", "confirm", "appabout", "notice", "sharePicker"];

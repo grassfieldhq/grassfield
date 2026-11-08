@@ -108,6 +108,11 @@ Singleton {
     // keyboard when the button is up.
     property bool pointerHeld: false
 
+    // True while the open popup's Overlay window is the one the compositor gave the keyboard to (the Wayland window is active:
+    // wl_keyboard.enter). Written by the Overlay of the popup's output; read only by the dev hook `menubar keyboardHolder`
+    // (tests/visual/menubar-macos.sh), which tells the overlay from the focused client window.
+    property bool overlayHasKeyboard: false
+
     // How the open popup was opened: true by the pointer (a press on the bar, the pointer moving onto another title or a
     // press on one while a menu is open, a click on a menu item), false by the keyboard (a shortcut, Left/Right in a menu,
     // Return on an item). A surface that gives an item the focus when it opens hands it to that item's KeyFocus (`pointer`),
