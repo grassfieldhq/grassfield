@@ -12,6 +12,7 @@ import os
 import socket
 import sys
 import tempfile
+import time
 
 root = sys.argv[1]
 failed = False
@@ -194,6 +195,57 @@ finally:
     picker.peer_ok = real_ok
 for s in (second, first_peer, second_peer, third_peer):
     s.close()
+
+# share_picker.sh's "lines with another id" case through the real peer check and conversation (the integrator's A/B run of
+# 2026-11-08 timed out after 2.3 s once): a stray connector first, refused (another uid), then the shell, a child that is the
+# unit's main process by the fake systemctl, writing lines with another id; the stand-in takes the shell and waits the whole
+# silence bound (shortened to 1.5 s here), then gives up: neither the refusal nor the foreign lines end the request early.
+if leaf:
+    carrier, child_end = socket.socketpair()
+    pid = os.fork()
+    if pid == 0:
+        try:
+            carrier.close()
+            mine, theirs = socket.socketpair()
+            socket.send_fds(child_end, [b"x"], [theirs.fileno()])
+            theirs.close()
+            reader = mine.makefile("rb")
+            reader.readline()
+            reader.readline()
+            for _ in range(12):
+                mine.sendall(("0" * 32 + " wait\n").encode())
+                time.sleep(0.25)
+        except OSError:
+            pass
+        finally:
+            os._exit(0)
+    child_end.close()
+    _, fds, _, _ = socket.recv_fds(carrier, 1, 1)
+    shell = socket.socket(fileno=fds[0])
+    stray, stray_peer = socket.socketpair()
+    real_getuid, real_silence = picker.os.getuid, picker.SILENCE_SECONDS
+    picker.SILENCE_SECONDS = 1.5
+    try:
+        class Stray(Server):
+            def accept(self):
+                conn, _ = Server.accept(self)
+                # The stray is refused for its uid, the shell's check runs as this user.
+                picker.os.getuid = (lambda: real_getuid() + 1) if conn is stray else real_getuid
+                return conn, None
+        t0 = time.monotonic()
+        got = with_env({"GRASSFIELD_DEV": "1", "GRASSFIELD_PICKER_PEER_UNIT": leaf, "FAKE_MAINPID": str(pid)},
+                       lambda: picker.accept_shell(Stray([stray, shell])))
+        answer = picker.converse(got, "ab" * 16, [], False) if got is shell else "not taken"
+        took = time.monotonic() - t0
+        check(got is shell and stray.fileno() == -1 and answer is None and 1.4 <= took < 2.6,
+              "a stray connector refused, then the shell writing lines with another id: the request waits the silence bound "
+              "[%r %.1f s]" % (answer, took))
+    finally:
+        picker.os.getuid, picker.SILENCE_SECONDS = real_getuid, real_silence
+        os.kill(pid, 9)
+        os.waitpid(pid, 0)
+        for s in (shell, stray_peer, carrier):
+            s.close()
 
 source = open(os.path.join(root, "packaging/session-bin/hyprland-share-picker")).read()
 check(source.count("    conn = accept_shell(server)\n") == 1 and "server.accept()" not in source.replace("            conn, _ = server.accept()\n", ""),

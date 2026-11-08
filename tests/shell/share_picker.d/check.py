@@ -361,10 +361,18 @@ stocks = read("stock")
 events = [e["event"] for e in read("shell")]
 check(len(stocks) == 1 and stocks[0]["left"] == [] and events == ["connect-failed"],
       "no answer within 1 s: the stock picker runs once the socket file is gone, and a late accepted cannot connect [%r %r]" % (stocks, events))
+def path_taken():
+    # Which way a timed case went, for its message: the fake shell's events (connected, its list, eof...) and whether the stock
+    # picker ran (the stand-in's 1 s question to the shell went unanswered: a loaded machine, not the case under test).
+    return "shell %s, stock picker %s" % ([e["event"] for e in read("shell")], "ran" if read("stock") else "not run")
+
+
 out, _, took = shell_answers(None, ["list", "say:wait", "sleep:30"])
-check(out == "" and 15 <= took < 16.5, "a shell that stops writing: nothing, after 15 s without a line [%.1f s]" % took)
+check(out == "" and 15 <= took < 16.5 and read("stock") == [],
+      "a shell that stops writing: nothing, after 15 s without a line [%.1f s; %s]" % (took, path_taken()))
 out, _, took = shell_answers(None, ["list"] + ["sayas:%s wait" % ("0" * 32), "sleep:4"] * 5 + ["say:/screen:DP-1"])
-check(out == "" and 15 <= took < 16.5, "lines with another id do not keep the stand-in waiting: nothing, after 15 s [%.1f s]" % took)
+check(out == "" and 15 <= took < 16.5 and read("stock") == [],
+      "lines with another id do not keep the stand-in waiting: nothing, after 15 s [%.1f s; %s]" % (took, path_taken()))
 out, _, took = shell_answers(None, ["list"] + ["say:wait", "sleep:4"] * 5 + ["say:/screen:DP-1"])
 check(xdph(out) == {"allowToken": False, "type": "output", "output": "DP-1"} and took > 19,
       "a shell that says wait keeps the stand-in waiting past 15 s for the user's choice [%.1f s]" % took)
