@@ -98,23 +98,31 @@ namespace gf::chrome {
     };
     FrameRead frameRead(const titlebar::Rect& geometry, double surfaceW, double surfaceH);
 
-    // Whether a window draws its own frame, from its frame reads: the read at its map decides at once (its first buffer has
-    // the size its geometry describes); afterwards the answer changes only after kFrameReadsToChange consecutive commits
-    // that contradict it (Unknown reads neither count nor break a run). While the window is zoomed or in full screen
-    // (`sized`), a Whole read does not count against a frame: a client drops its shadow margins there (lib_ui, GTK), and its
-    // title bar stays its own. So a commit caught between a shrinking window's geometry and its buffer (leaving Fill, a
-    // resize) never tags a window that draws nothing, and Telegram coming back from Fill, Whole for a commit before its
-    // margins return, keeps its tag.
+    // Whether a window draws its own frame, from its frame reads.
+    //   Kept: a frame read at the window's first buffer (`firstBuffer`: the map, not the plugin's start over windows already
+    //   mapped), or kFrameReadsToKeep consecutive Inside reads, is the window's for its life: only its negotiation can take
+    //   its tag away. A first buffer has the size its geometry describes, and no geometry-before-buffer transient lasts that
+    //   many commits, so a window that draws nothing is never kept. A client may drop its margins and not restore them (the
+    //   test fixture, a QtWayland window maximized and restored by the compositor, came back without its custom margins:
+    //   frameless_chrome.sh F6, 2026-11-08); its own title bar is still there, and one bar must stay one.
+    //   Otherwise: the answer changes only after kFrameReadsToChange consecutive commits that contradict it (Unknown reads
+    //   neither count nor break a run), and while the window is zoomed or in full screen (`sized`) a Whole read does not
+    //   count against a frame (a client drops its shadow there). So a commit caught between a shrinking window's geometry and
+    //   its buffer (leaving Fill, a resize) never tags a window that draws nothing for good: two bare commits give its
+    //   controls back.
     inline constexpr uint8_t kFrameReadsToChange = 2;
+    inline constexpr uint8_t kFrameReadsToKeep   = 4;
     class CFrameEvidence {
       public:
-        void atMap(FrameRead read);
+        void atMap(FrameRead read, bool firstBuffer);
         // A commit's read; true when framed() changed.
         bool onCommit(FrameRead read, bool sized);
         bool framed() const;
+        bool kept() const;
 
       private:
         bool    m_framed = false;
+        bool    m_kept   = false;
         uint8_t m_inside = 0; // consecutive Inside reads
         uint8_t m_whole  = 0; // consecutive Whole reads that count (not while sized)
     };

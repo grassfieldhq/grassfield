@@ -477,7 +477,7 @@ namespace gf::chrome {
         // into a use after free. It was none (`w`, the caller's shared pointer, and `top` keep both objects alive for the
         // whole call, so the release never reached zero), but a closure without a counted pointer leaves nothing to follow.
         // The price is the entry's lookup, a scan of the watched windows, at every commit (onCommit).
-        void watch(const PHLWINDOW& w) {
+        void watch(const PHLWINDOW& w, bool firstBuffer) {
             auto& s = st();
             std::erase_if(s.watches, [](const SWatch& e) { return e.window.expired() || e.toplevel.expired(); });
             const auto top = toplevelOf(w);
@@ -496,8 +496,9 @@ namespace gf::chrome {
             const auto globals = decorationGlobalsOf(w);
             e.managerBound     = globals.manager;
             e.clientHasObject  = globals.object;
-            // P9 (R7-REQ-01): the frame read at the map decides at once: the first buffer has the size its geometry describes.
-            e.frame.atMap(frameReadOf(w));
+            // P9 (R7-REQ-01): the frame read at the map decides at once, and a frame of the first buffer (window.open, not the
+            // plugin's start over windows already mapped) is kept for the window's life (core CFrameEvidence).
+            e.frame.atMap(frameReadOf(w), firstBuffer);
             // P9: the decoration is read again when the window's frame answer changes or its surface commits a new size or window
             // geometry, not at every commit (review of 3ca47a4b: the request was read at every commit of every window; onCommit
             // says what an unchanged commit still costs); a client that switches later is read at that commit, or at
@@ -592,7 +593,7 @@ namespace gf::chrome {
         if (!bus)
             return false;
         auto& ev = bus->m_events.window;
-        s.listeners.push_back(ev.open.listen([](const PHLWINDOW& w) { guarded("client chrome window.open", [&] { watch(w); }); }));
+        s.listeners.push_back(ev.open.listen([](const PHLWINDOW& w) { guarded("client chrome window.open", [&] { watch(w, true); }); }));
         s.listeners.push_back(ev.close.listen([](const PHLWINDOW& w) { guarded("client chrome window.close", [&] { forget(w); }); }));
         // The tag is a dynamic effect of the session rules: a rule change can make a window client chrome or not (P8).
         s.listeners.push_back(ev.updateRules.listen([](const PHLWINDOW& w) {
@@ -606,7 +607,7 @@ namespace gf::chrome {
         if (Desktop::windowState()) {
             for (const auto& w : Desktop::windowState()->windows()) {
                 if (w && w->m_isMapped)
-                    watch(w);
+                    watch(w, false); // already mapped: not its first buffer
             }
         }
         s.ready = true;

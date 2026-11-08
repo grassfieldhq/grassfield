@@ -170,7 +170,8 @@ for spec in gf-frameless-bare:1 gf-frameless-own:0 gf-frameless-firefox-titlebar
   t=${spec%:*} want=${spec#*:}
   read -r gx gy gw < <(geom_rel "$t")
   got=$(strip_above "$work/strip.png" "${gx:-0}" "${gy:-0}" "${gw:-0}")
-  detail+="$t $got (want $want); "
+  # The tags at the capture: a strip with the tag is a drawing fault, a strip without it the decision (integrator, 2026-11-08).
+  detail+="$t $got (want $want, tags '$(window_of "$t" | cut -d' ' -f2)'); "
   [[ $got == "$want" ]] || verdict=1
 done
 check "F6 one title bar each: the plugin's strip above the frameless window that draws nothing and above Firefox's Title Bar mode, none above the two that draw their own" "$verdict" "${detail}capture $work/strip.png"

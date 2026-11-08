@@ -45,22 +45,27 @@ namespace gf::chrome {
         return std::max({left, top, right, bottom}) >= kFrameInsetMin ? FrameRead::Inside : FrameRead::Whole;
     }
 
-    void CFrameEvidence::atMap(FrameRead read) {
+    void CFrameEvidence::atMap(FrameRead read, bool firstBuffer) {
         m_framed = read == FrameRead::Inside;
+        m_kept   = m_framed && firstBuffer;
         m_inside = 0;
         m_whole  = 0;
     }
 
     bool CFrameEvidence::onCommit(FrameRead read, bool sized) {
+        if (m_kept)
+            return false; // a frame of its first buffer, or a sustained one: the window's for its life
         switch (read) {
             case FrameRead::Unknown: return false;
-            case FrameRead::Inside:
+            case FrameRead::Inside: {
                 m_whole  = 0;
-                m_inside = m_inside < kFrameReadsToChange ? static_cast<uint8_t>(m_inside + 1) : m_inside;
+                m_inside = m_inside < kFrameReadsToKeep ? static_cast<uint8_t>(m_inside + 1) : m_inside;
+                m_kept   = m_inside >= kFrameReadsToKeep;
                 if (m_framed || m_inside < kFrameReadsToChange)
                     return false;
                 m_framed = true;
                 return true;
+            }
             case FrameRead::Whole:
                 m_inside = 0;
                 if (sized) {
@@ -78,6 +83,10 @@ namespace gf::chrome {
 
     bool CFrameEvidence::framed() const {
         return m_framed;
+    }
+
+    bool CFrameEvidence::kept() const {
+        return m_kept;
     }
 
     DecorationInterface decorationInterface(std::string_view interfaceName) {

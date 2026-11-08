@@ -167,7 +167,7 @@ TEST(ClientChromeDecoration, AShrinkingWindowsGeometryBeforeItsBufferDoesNotTagI
     using gf::chrome::frameRead;
     using gf::titlebar::Rect;
     CFrameEvidence e;
-    e.atMap(frameRead(Rect{0, 0, 420, 260}, 420, 260));
+    e.atMap(frameRead(Rect{0, 0, 420, 260}, 420, 260), true);
     EXPECT_FALSE(e.framed()) << "a frameless window that draws nothing, at its map";
     EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 1904, 1040}, 420, 260), false)) << "zooming: the geometry first (Unknown)";
     EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 1904, 1040}, 1904, 1040), true)) << "zoomed: its buffer";
@@ -187,34 +187,76 @@ TEST(ClientChromeDecoration, AFrameDrawnSinceTheMapOrForTwoCommitsTagsTheWindow)
     using gf::chrome::CFrameEvidence;
     using gf::chrome::FrameRead;
     CFrameEvidence atMap;
-    atMap.atMap(FrameRead::Inside);
+    atMap.atMap(FrameRead::Inside, true);
     EXPECT_TRUE(atMap.framed()) << "Telegram: its first buffer already has its shadow margins";
+    EXPECT_TRUE(atMap.kept());
     CFrameEvidence later;
-    later.atMap(FrameRead::Whole);
+    later.atMap(FrameRead::Whole, true);
     EXPECT_FALSE(later.onCommit(FrameRead::Inside, false));
     EXPECT_TRUE(later.onCommit(FrameRead::Inside, false)) << "margins set after the map: two commits";
     CFrameEvidence gap;
-    gap.atMap(FrameRead::Unknown);
+    gap.atMap(FrameRead::Unknown, true);
     EXPECT_FALSE(gap.framed()) << "nothing proved at the map";
     EXPECT_FALSE(gap.onCommit(FrameRead::Inside, false));
     EXPECT_FALSE(gap.onCommit(FrameRead::Unknown, false)) << "an Unknown read neither counts nor breaks the run";
     EXPECT_TRUE(gap.onCommit(FrameRead::Inside, false));
 }
 
-TEST(ClientChromeDecoration, AFrameDroppedWhileZoomedKeepsTheTagAndTwoBareCommitsRemoveIt) {
+// frameless_chrome.sh F3 then F6 (integrator's nested run of 74e35ae6, scale 1): the fixture, a QtWayland frameless window with
+// its own bar and 16 px custom margins, mapped with its margins (Inside), was maximized by Hyprland's dispatcher (its margins
+// dropped: Whole) and restored; it came back without its margins (the capture: its bar at the window's left edge, 452 px
+// wide), so every later commit read Whole, and the move and raise of F6 brought the second one: the two-reads rule took its
+// tag and the plugin's bar came over its own. A frame of the first buffer is the window's for its life.
+TEST(ClientChromeDecoration, AFrameOfTheFirstBufferSurvivesAZoomAndMarginsThatDoNotComeBack) {
     using gf::chrome::CFrameEvidence;
     using gf::chrome::FrameRead;
-    CFrameEvidence e;
-    e.atMap(FrameRead::Inside);
+    for (const bool marginsBack : {false, true}) {
+        CFrameEvidence e;
+        e.atMap(FrameRead::Inside, true);
+        EXPECT_FALSE(e.onCommit(FrameRead::Inside, false)) << "a repaint before the zoom";
+        EXPECT_FALSE(e.onCommit(FrameRead::Unknown, true)) << "maximized: the geometry before the buffer (it grows)";
+        EXPECT_FALSE(e.onCommit(FrameRead::Whole, true)) << "maximized: no margins";
+        EXPECT_FALSE(e.onCommit(FrameRead::Whole, true));
+        EXPECT_FALSE(e.onCommit(marginsBack ? FrameRead::Inside : FrameRead::Whole, false)) << "restored";
+        EXPECT_FALSE(e.onCommit(marginsBack ? FrameRead::Inside : FrameRead::Whole, false)) << "moved";
+        EXPECT_FALSE(e.onCommit(marginsBack ? FrameRead::Inside : FrameRead::Whole, false)) << "raised (activated)";
+        EXPECT_TRUE(e.framed()) << (marginsBack ? "margins back" : "margins never back") << ": still its own bar, one bar";
+    }
+}
+
+TEST(ClientChromeDecoration, AFrameSeenOnlyAfterTheMapIsKeptOnceSustainedAndElseTwoBareCommitsRemoveIt) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence brief;
+    brief.atMap(FrameRead::Whole, true);
+    EXPECT_FALSE(brief.onCommit(FrameRead::Inside, false));
+    EXPECT_TRUE(brief.onCommit(FrameRead::Inside, false)) << "two Inside reads: framed";
+    EXPECT_FALSE(brief.kept()) << "two reads could still be a transient pair";
+    for (int i = 0; i < 3; ++i)
+        EXPECT_FALSE(brief.onCommit(FrameRead::Whole, true)) << "zoomed: dropped shadow, not counted";
+    EXPECT_TRUE(brief.framed());
+    EXPECT_FALSE(brief.onCommit(FrameRead::Whole, false)) << "back from Fill, one commit before its margins return";
+    EXPECT_FALSE(brief.onCommit(FrameRead::Inside, false));
+    EXPECT_TRUE(brief.framed()) << "keeps its tag";
+    EXPECT_FALSE(brief.onCommit(FrameRead::Whole, false));
+    EXPECT_TRUE(brief.onCommit(FrameRead::Whole, false)) << "two bare commits while floating: the plugin's bar again";
+    EXPECT_FALSE(brief.framed());
+
+    CFrameEvidence sustained;
+    sustained.atMap(FrameRead::Whole, true);
     for (int i = 0; i < 4; ++i)
-        EXPECT_FALSE(e.onCommit(FrameRead::Whole, true)) << "zoomed or in full screen: lib_ui and GTK drop their shadow";
-    EXPECT_TRUE(e.framed());
-    EXPECT_FALSE(e.onCommit(FrameRead::Whole, false)) << "back from Fill, one commit before its margins return";
-    EXPECT_FALSE(e.onCommit(FrameRead::Inside, false));
-    EXPECT_TRUE(e.framed()) << "Telegram keeps its tag";
-    EXPECT_FALSE(e.onCommit(FrameRead::Whole, false));
-    EXPECT_TRUE(e.onCommit(FrameRead::Whole, false)) << "two bare commits while floating: no frame any more, the plugin's bar";
-    EXPECT_FALSE(e.framed());
+        sustained.onCommit(FrameRead::Inside, false);
+    EXPECT_TRUE(sustained.kept()) << "four consecutive Inside reads: no transient lasts that long, a frame of its own";
+    sustained.onCommit(FrameRead::Whole, false);
+    sustained.onCommit(FrameRead::Whole, false);
+    EXPECT_TRUE(sustained.framed());
+
+    CFrameEvidence reload;
+    reload.atMap(FrameRead::Inside, false);
+    EXPECT_TRUE(reload.framed()) << "the plugin started over a mapped window with a frame";
+    EXPECT_FALSE(reload.kept()) << "not its first buffer: it could be a commit between a geometry and its buffer";
+    reload.onCommit(FrameRead::Whole, false);
+    EXPECT_TRUE(reload.onCommit(FrameRead::Whole, false)) << "so two bare commits give a window that draws nothing its controls back";
 }
 
 TEST(ClientChromeDecoration, ARequestThatProvesNoBarKeepsThePluginsTitlebar) {
