@@ -181,8 +181,11 @@ EOF
   check grep -qxF 'dot={"A": 1}' "$tmp/probe.out"
   desc="real bubblewrap: a policy file added and one replaced while the browser runs are seen"
   check bash -c 'grep -qxF "new={\"C\": 1}" "$1" && grep -qxF "replaced={\"B\": 2}" "$1"' _ "$tmp/probe.out"
-  desc="real bubblewrap: the policy directory is the real one, not a tmpfs, and only color.json is a mount inside it"
-  check bash -c '! grep -qx "fstype=tmpfs" "$1" && grep -qx "mounts=1" "$1"' _ "$tmp/probe.out"
+  # The test's policy root lives under $TMPDIR, which may itself be a tmpfs: compare with the type seen outside instead of
+  # refusing tmpfs (in production the directory is /etc/chromium/policies/managed).
+  outer_fs=$(stat -f -c %T "$rd")
+  desc="real bubblewrap: the policy directory is the real one (same filesystem as outside, no tmpfs over it), and only color.json is a mount inside it"
+  check bash -c 'grep -qx "fstype=$2" "$1" && grep -qx "mounts=1" "$1"' _ "$tmp/probe.out" "$outer_fs"
   echo "NOTE: no_new_privs in the browser under bubblewrap: $(grep '^nnp=' "$tmp/probe.out")"
   desc="real bubblewrap: no_new_privs is set (the documented limit)"
   check grep -qx 'nnp=1' "$tmp/probe.out"
