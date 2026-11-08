@@ -4,7 +4,8 @@
 #   .dev/build/huge-menu        tests/fixtures/huge-menu      (Qt6DBus + Qt6Network; hostile huge GetLayout)
 #   .dev/build/fake-registrar  tests/fixtures/fake-registrar (Qt6DBus)
 #   .dev/build/appmenu-client   tests/fixtures/appmenu-client (C, wayland-client + wayland-scanner)
-# Usage: tests/fixtures/build.sh [menu-demo|fake-registrar|appmenu-client|huge-menu|all]   (default all)
+#   .dev/build/qt-theme-probe   tests/fixtures/qt-theme-probe (Qt6Widgets + Qt's private QtGui headers, ADR-0054)
+# Usage: tests/fixtures/build.sh [qt-theme-probe|menu-demo|fake-registrar|appmenu-client|huge-menu|all]   (default all)
 set -euo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
@@ -18,6 +19,16 @@ if [[ $what == menu-demo || $what == all ]]; then
   g++ "${flags[@]}" $(pkg-config --cflags Qt6Widgets Qt6DBus) "$root/tests/fixtures/menu-demo/main.cpp" \
     $(pkg-config --libs Qt6Widgets Qt6DBus) -o "$out/menu-demo"
   echo "built $out/menu-demo"
+fi
+
+if [[ $what == qt-theme-probe || $what == all ]]; then
+  # The probe reads the platform theme (QPA, private headers of the Qt that is installed).
+  qtv=$(pkg-config --modversion Qt6Gui)
+  priv=(-I"/usr/include/qt6/QtGui/$qtv" -I"/usr/include/qt6/QtGui/$qtv/QtGui" -I"/usr/include/qt6/QtCore/$qtv" -I"/usr/include/qt6/QtCore/$qtv/QtCore")
+  # shellcheck disable=SC2046
+  g++ "${flags[@]}" -Wno-sfinae-incomplete "${priv[@]}" $(pkg-config --cflags Qt6Widgets) "$root/tests/fixtures/qt-theme-probe/main.cpp" \
+    $(pkg-config --libs Qt6Widgets) -o "$out/qt-theme-probe"
+  echo "built $out/qt-theme-probe"
 fi
 
 if [[ $what == appmenu-client || $what == all ]]; then

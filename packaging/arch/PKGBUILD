@@ -216,6 +216,11 @@ build() {
   cmake -S "$(_root)/bridges/prompter" -B "$srcdir/prompter-build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DGRASSFIELD_BUILD_TESTS=ON
   cmake --build "$srcdir/prompter-build"
+  # Qt platform-theme plugin (ADR-0054): "grassfield", the base theme of Qt's xdgdesktopportal theme, built on Qt's private API
+  # against the qt6-base this build records in BUILD-DEPS; the session uses it only with the same Qt major.minor.
+  cmake -S "$(_root)/packaging/qt-platform-theme" -B "$srcdir/qt-platform-theme-build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build "$srcdir/qt-platform-theme-build"
   # Grassfield cursors (ADR-0014): hyprcursor SVG theme + XCursor fallback from branding/cursors.
   "$(_root)/branding/cursors/build.sh" --out "$srcdir/icons"
   # grassfield-icons (ADR-0017): compose the theme into a scratch directory; the composer fails on pin drift (a listed
@@ -416,6 +421,9 @@ package_grassfield-desktop() {
   # /usr/lib/systemd/user/grassfield-prompter.service (started by the session's autostart.lua);
   # /usr/lib/grassfield/grassfield-askpass (run by udiskie in grassfield-automount.service, step 9c).
   DESTDIR="$pkgdir" cmake --install "$srcdir/prompter-build"
+  # Qt platform-theme plugin (ADR-0054): /usr/lib/qt6/plugins/platformthemes/libgrassfield-qt-theme.so and the Qt release it was
+  # built for, /usr/share/grassfield/qt-platform-theme/qt-version (config/hypr/grassfield/qttheme.lua reads both at login).
+  DESTDIR="$pkgdir" cmake --install "$srcdir/qt-platform-theme-build"
 
   # Grassfield Settings app (M4).
   DESTDIR="$pkgdir" cmake --install "$srcdir/settings-build"
