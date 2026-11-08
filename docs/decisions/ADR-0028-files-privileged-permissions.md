@@ -1,5 +1,6 @@
 # ADR-0028: Ownership and permission changes in Files, privileged ones through polkit
-Status: Proposed (integrator, under owner delegation D-5). The unprivileged part is applied with Files PR 4; the
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (integrator, under owner delegation D-5). The unprivileged part is applied with Files PR 4; the
 privileged part needs an `opus` reviewer PASS on this ADR before any of its code is written, then on that code
 (privileged action, master-prompt R12 spirit). Revised 2026-10-26 after the first opus review (FAIL; see "Review
 history") · Date: 2026-10-26 · Decider: integrator

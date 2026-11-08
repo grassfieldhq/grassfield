@@ -1,5 +1,6 @@
 # ADR-0035: System dialogs in the Grassfield session
-Status: Proposed (cloud session, owner brief 2026-10-27 « toutes les boîtes de dialogue au design Grassfield »; step 0, docs
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (cloud session, owner brief 2026-10-27 « toutes les boîtes de dialogue au design Grassfield »; step 0, docs
 only, no code before the opus PASS; the owner answered Q1–Q17 on 2026-10-27; revised after the opus review of PR #13 (five
 MAJORs and the minors, each marked "review of PR #13" where it changed the text) and after its counter-review (one MAJOR and
 minors, marked "counter-review of PR #13")) · Date: 2026-10-27 · Decider: owner (the questions in "Owner decisions"),
@@ -812,6 +813,8 @@ panel), `tst_folderchooser.cpp`, `tst_fileskiosheets.qml`, `tst_filesglobalmenu.
   portal cannot name, app id "", as Other Apps; known
   limitation: xdph passes the picker neither the app nor the mode). The owner may restore Q14 as answered; spec
   system-dialogs.md section 3, "After rc6".
+  **Owner, 2026-11-08: the amendment is declined for 1.0.** `followAllowToken` stays false; a browser asking twice for
+  one share is an accepted known limitation, listed in the release notes.
   Windows that hide themselves from capture (`no_screen_share`, `config/hypr/grassfield/privacy.lua`) are listed but greyed
   with "This window can't be shared".
 - The picker cannot name the app that asks: xdph receives the app id but passes the picker only `--allow-token` and the window
@@ -3410,7 +3413,7 @@ review.
 | Q11 | KIO and KWallet dialogs (D-12) | K1 Grassfield takes them / K2 Files' dialogs only, KWallet off for the session / K3 KDE's, themed | « Grassfield les prend (Recommandé) » | K1 |
 | Q12 | Wording of the security-rule amendment (D-9) | the proposed text / gcr prompts only, each other protocol later / write it in step 9 | « Texte proposé (Recommandé) » | the text quoted in D-9 |
 | Q13 | Place of steps 6 (print) and 10 (Bluetooth) | as placed / print after the screenshots / both at the end | « Comme placées (Recommandé) » | as placed |
-| Q14 | "Remember this choice" in the screen-sharing picker | unticked every time / follow xdph's `--allow-token` | « Décoché toujours (Recommandé) » | unticked every time (in force); an amendment to follow `--allow-token` was proposed 2026-11-07 after the rc6 bug report (D-6) and is built behind `followAllowToken` = false, pending the owner's agreement |
+| Q14 | "Remember this choice" in the screen-sharing picker | unticked every time / follow xdph's `--allow-token` | « Décoché toujours (Recommandé) » | unticked every time (in force); an amendment to follow `--allow-token` was proposed 2026-11-07 after the rc6 bug report (D-6) and is built behind `followAllowToken` = false; the owner declined it on 2026-11-08 (the double picker in Chrome and Meet is an accepted known limitation of 1.0) |
 | Q15 | Screen-sharing request while the session is locked | cancel / hold until the unlock | « Annuler (Recommandé) » | cancel |
 | Q16 | Rename Quit to "Force Quit" in the app menu of a hung app | no, macOS model / yes | « Non, modèle macOS (Recommandé) » | no |
 | Q17 | Which daemon holds the Secret Service in the Grassfield session (D-12) | Q17-a gnome-keyring started with the session / Q17-b KWallet's takeover off for the session / Q17-c as is | « Bloquer KWallet » | Q17-b (not the recommended option) |

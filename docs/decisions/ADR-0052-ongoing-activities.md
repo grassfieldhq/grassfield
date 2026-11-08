@@ -1,5 +1,6 @@
 # ADR-0052: Ongoing activities ("In Progress" items in the menu bar)
-Status: Proposed (2026-11-05), applied provisionally (owner standing instruction: decide alone, macOS model first) ·
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-11-05), applied provisionally (owner standing instruction: decide alone, macOS model first) ·
 Date: 2026-11-05 · Decider: owner (revisit), integrator (merge) · Number: 0052
 
 Inspired by Project Luma's Live Extensions (`src/luma-platform`: the semantics library, the Semantic Broker's `core.py`,

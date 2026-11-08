@@ -1,5 +1,6 @@
 # ADR-0041: Stability: every process comes back, the session never unlocks by itself, no update installs an untested combination
-Status: Proposed (step 0 of the owner's brief « Stabilité », 2026-10-29; documents only, no code). Six owner questions are
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (step 0 of the owner's brief « Stabilité », 2026-10-29; documents only, no code). Six owner questions are
 open (SQ-1 to SQ-6); every other choice follows the owner's rule of 2026-10-28 ("the closest to macOS 27, no technical
 step for the end user") and is listed in "Decisions taken under the owner's rule" (SD-1 to SD-8), which the owner can
 revisit. Revised after the integrator's opus review of 2c0bd74 (FAIL: one MAJOR, eight MINORs, three NITs), answered in

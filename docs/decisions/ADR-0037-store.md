@@ -1,5 +1,6 @@
 # ADR-0037: Grassfield Store: an app that installs, opens and uninstalls apps through pacman and Omarchy, with a signed catalog
-Status: Proposed (cloud session, owner brief 2026-10-27, step 0; docs only, no code in either repository before the opus
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (cloud session, owner brief 2026-10-27, step 0; docs only, no code in either repository before the opus
 PASS). The owner answered ST1 to ST10 on 2026-10-27, recorded below in the owner's own words. Later questions follow the
 owner's working rule of 2026-10-27: decided in this session, recorded in "Decisions delegated by the owner" (SD1 to SD5,
 then SD6 to SD10 with step 2, SD11 to SD17 with step 3a, SD18 and SD19 with step 3b1, SD20 to SD23 with step 3b2, SD25 to

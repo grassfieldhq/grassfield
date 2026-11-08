@@ -1,5 +1,6 @@
 # ADR-0045: Omarchy's capabilities in the Grassfield session
-Status: Proposed (applied provisionally, owner decision of 2026-11-04: « Applique tout le plan et fait le nécessaire pour tout
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (applied provisionally, owner decision of 2026-11-04: « Applique tout le plan et fait le nécessaire pour tout
 finaliser ») · Date: 2026-11-04 · Decider: owner (plan), integrator (design, merge after review) · Number: 0045 (0044 is the main
 display)
 

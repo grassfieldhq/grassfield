@@ -1,5 +1,6 @@
 # ADR-0030: Settings changes the system only through the system services' own polkit actions
-Status: Proposed (cloud session, owner brief 2026-10-26: "toute action privilégiée passe par polkit et demande un ADR, plus une
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (cloud session, owner brief 2026-10-26: "toute action privilégiée passe par polkit et demande un ADR, plus une
 relecture opus") · Date: 2026-10-26 · Decider: owner (brief), integrator (merge after the opus review) · Number: 0030 (it was 0025,
 then 0026; the integrator gave 0026 to 0029 to the Files decisions of PR #4)
 

@@ -1,5 +1,6 @@
 # ADR-0025: Folder stacks are indexed by a native helper
-Status: Proposed (integrator decision D-5 of counter-review 7, under owner delegation); accepted when it merges after its
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (integrator decision D-5 of counter-review 7, under owner delegation); accepted when it merges after its
 counter-review · Date: 2026-10-25 · Decider: integrator
 
 ## Context

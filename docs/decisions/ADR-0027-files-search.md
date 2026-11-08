@@ -1,5 +1,6 @@
 # ADR-0027: Files search: scopes, backends and saved searches
-Status: Proposed (integrator, under owner delegation D-5); applied with the combined Files PR 3–5 (2026-11-01) · Date: 2026-10-26 · Decider: integrator
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (integrator, under owner delegation D-5); applied with the combined Files PR 3–5 (2026-11-01) · Date: 2026-10-26 · Decider: integrator
 
 ## Context
 - Owner goal (2026-10-26, `docs/specs/files.md` FP-71…FP-74): search as in the Finder: the scope "This Mac" or the shown

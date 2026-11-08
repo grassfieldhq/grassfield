@@ -1,5 +1,6 @@
 # ADR-0048: Apps the person cannot see get less CPU and I/O
-Status: Proposed (2026-11-05), applied provisionally (owner rule: decide alone, recommended option, macOS model first) ·
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-11-05), applied provisionally (owner rule: decide alone, recommended option, macOS model first) ·
 Date: 2026-11-05 · Decider: owner (revisit), integrator (merge) · Number: 0048
 
 Inspired by Project Luma's `luma-energy` service and its GNOME Shell extension (MPL-2.0); no code copied. The mechanism

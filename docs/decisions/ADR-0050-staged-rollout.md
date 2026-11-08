@@ -1,5 +1,6 @@
 # ADR-0050: Staged rollout of Grassfield's own updates, through per-cohort repository paths
-Status: Proposed (2026-11-05), applied provisionally (owner rule: decide alone, the recommended option, macOS model first) ·
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-11-05), applied provisionally (owner rule: decide alone, the recommended option, macOS model first) ·
 Date: 2026-11-05 · Decider: owner (revisit), integrator (merge after the opus security review of the root code below) ·
 Number: 0050 · **Amends ADR-0033** (a, c, d, g, h) and `docs/specs/updates.md` (U34-U38).
 
