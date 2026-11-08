@@ -1359,7 +1359,8 @@ Decision:
   already use the portal; with `GTK_USE_PORTAL=1` also GTK 3 apps that use the native chooser and LocalSend. Still in-process
   (GTK 3 `GtkFileChooserDialog`, themed by the above): Qt apps under the `gtk3` theme (Kdenlive, Grassfield's own Qt apps if
   they use QtQuick.Dialogs; they can call the portal directly), LibreOffice. **Owner decision Q3 (2026-10-27): portal apps +
-  GTK 3 through `GTK_USE_PORTAL=1`; Qt keeps `gtk3`.**
+  GTK 3 through `GTK_USE_PORTAL=1`; Qt keeps `gtk3`.** (Amended 2026-11-08 by ADR-0054: Qt apps use the portal through a
+  `grassfield` platform-theme plugin that keeps the GTK look, and LibreOffice runs its Qt 6 plugin in this session.)
   **Audit after the rc6 bug report (2026-11-07; "some save or upload windows still show Omarchy's old file dialog"):** the
   routing is right and, in the owner's journal from 2026-10-24 to 2026-11-07, the backend forwarded nothing; the callers that
   show GTK 3's chooser are Qt apps under `gtk3` (Q3), LibreOffice, and Chromium or Electron apps whose first portal call came

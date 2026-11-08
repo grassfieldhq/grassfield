@@ -38,6 +38,14 @@ if [ -x /usr/lib/grassfield/omarchy-shims/omarchy-restart-shell ]; then
     export PATH="/usr/lib/grassfield/omarchy-shims:$PATH"
 fi
 
+# LibreOffice (ADR-0054): its Qt 6 VCL plugin, so that it shows Grassfield's Open and Save panels (its GTK 3 plugin never calls the
+# portal) and the global menus. Here, with the rest of the session's environment, because uwsm hands this file's variables to the
+# systemd user manager and D-Bus activation: the Dock, Launchpad, Search and Open With start apps from there. Only in the Grassfield
+# session (the Omarchy session never sources this file), only when the plugin is installed, never written to the user's profile.
+if [ -r /usr/lib/libreoffice/program/libvclplug_qt6lo.so ]; then
+    export SAL_USE_VCLPLUGIN=qt6
+fi
+
 # Qt (the shell, Grassfield Settings/Files/Preview, every other Qt app): QIconLoader reads this variable before the
 # platform theme's hint, so it wins over QT_QPA_PLATFORMTHEME=gtk3 from Omarchy's environment. An empty value is ignored.
 export QT_QPA_SYSTEM_ICON_THEME=grassfield-icons

@@ -57,6 +57,15 @@ TestCase {
             verify(!RunMode.appsGtkPortal(x), JSON.stringify(x));
     }
 
+    function test_qtThemeVectors() {
+        const rows = vectors().qttheme;
+        verify(rows.length >= 5, "vectors read: " + rows.length);
+        for (const p of rows)
+            compare(RunMode.appsQtTheme(p.env.GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME), p.appsQtTheme, p.name + " (appsQtTheme)");
+        for (const x of [undefined, null, "", "gtk3", " xdgdesktopportal", 1, true])
+            compare(RunMode.appsQtTheme(x), "", JSON.stringify(x));
+    }
+
     function test_plumbingVectors() {
         const rows = vectors().plumbing;
         verify(rows.length >= 4, "vectors read: " + rows.length);

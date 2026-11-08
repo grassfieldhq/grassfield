@@ -51,6 +51,10 @@ UnsetEnvironment=QML_IMPORT_PATH QML2_IMPORT_PATH QML_PLUGIN_PATH QML_DISK_CACHE
 # settings synchronously, so the shell's start would wait on xdg-desktop-portal. The shell takes its appearance from
 # grassfield.json itself.
 UnsetEnvironment=GTK_USE_PORTAL
+# ADR-0054: the session sets QT_QPA_PLATFORMTHEME=xdgdesktopportal for the apps (Qt's portal theme makes a blocking portal call
+# when a Qt process starts: the same wait as GTK_USE_PORTAL above, gate P5). This process keeps Omarchy's gtk3, its value before the
+# ADR (Hyprland imports the session's value into the systemd user manager, and Environment= wins over it).
+Environment=QT_QPA_PLATFORMTHEME=gtk3
 # While this shell runs it locks before sleep itself (shell/security/idle/SleepInhibitor.qml). An Omarchy sleep-lock unit
 # that happens to run as well is never stopped from here: it may be in the middle of a sleep it is delaying, and with the
 # stand-in it only ever asks this shell to lock (a second, harmless path).
