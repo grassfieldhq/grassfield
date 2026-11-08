@@ -41,9 +41,12 @@ namespace gf::chrome {
     // protocols' enums. What a request proves (review of 3ca47a4b, nested at 1.25): an xdg client_side request does not prove a
     // title bar (foot -o csd.preferred=client asks it, takes Hyprland's server_side answer and draws nothing; Chromium asks it
     // and draws its tab strip: S1b names it), and neither does the absence of any negotiation (imv binds no decoration manager
-    // and draws nothing). A KDE client request does (GTK's header bars draw themselves whatever the answer), and so does a
-    // client that bound a decoration manager yet made no decoration object at all (Qt does that for a frameless window:
-    // Telegram).
+    // and draws nothing). A KDE client request does (GTK's header bars draw themselves whatever the answer). A client that
+    // bound a decoration manager yet made no decoration object at all (Qt does that for every frameless window) proves only
+    // that it decorates itself or wants no decoration: it draws its own title bar when it also draws its own frame, its
+    // xdg window geometry inside its surface (the shadow margins Telegram's lib_ui sets through QtWayland's custom margins);
+    // a frameless window that draws nothing has none and keeps the plugin's titlebar (rc7 audit R7-REQ-01, owner 2026-11-08:
+    // every window has its controls).
     inline constexpr uint32_t kXdgModeClientSide = 1;
     inline constexpr uint32_t kXdgModeServerSide = 2;
     inline constexpr uint32_t kKdeModeClient     = 1;
@@ -54,6 +57,8 @@ namespace gf::chrome {
     // zxdg_decoration_manager_v1 or org_kde_kwin_server_decoration_manager (it knows the compositor offers server-side
     // decorations); `clientHasObject`: its client holds a decoration object of either protocol, for any of its windows. The
     // last two come from libwayland's public list of the client's resources, so they hold whatever Hyprland keeps privately.
+    // `framed`: the window was seen drawing its own frame (framedInside) at a commit since its map: a client drops its shadow
+    // margins while zoomed or in full screen, and its title bar stays its own.
     struct DecorationRequest {
         bool     xdgObject       = false;
         uint32_t xdgRequested    = 0;
@@ -61,16 +66,28 @@ namespace gf::chrome {
         uint32_t kdeRequested    = 0;
         bool     managerBound    = false;
         bool     clientHasObject = false;
+        bool     framed          = false;
     };
 
-    // The client draws its own title bar, proved by the protocol alone: a KDE client request, or a decoration manager bound
-    // and no decoration object in the whole client. Anything else keeps the plugin's titlebar: any xdg request, client_side
-    // included; a KDE server request or a KDE object without a client request (0 is both "never asked" and KDE's "none", which
-    // no toolkit seen sends); a client that bound no manager; a client that holds an object not found for this window
-    // (another of its windows is decorated, or Hyprland's private containers changed meaning). The invariant: a window the
-    // plugin tags always has a bar of its own; an app whose request proves nothing and that does draw its own goes in the
-    // per-app list S1b.
+    // The client draws its own title bar, proved by the protocol alone: a KDE client request, or a decoration manager bound,
+    // no decoration object in the whole client and a frame of its own drawn (`framed`). Anything else keeps the plugin's
+    // titlebar: any xdg request, client_side included; a KDE server request or a KDE object without a client request (0 is
+    // both "never asked" and KDE's "none", which no toolkit seen sends); a client that bound no manager; a frameless window
+    // that draws no frame of its own (a Qt frameless window that draws nothing: R7-REQ-01); a client that holds an object
+    // not found for this window (another of its windows is decorated, or Hyprland's private containers changed meaning).
+    // The invariant: no window is left with neither the client's bar nor the plugin's; an app whose request proves nothing
+    // and that does draw its own bar goes in the per-app list S1b (a second bar can be fixed by the list, a missing one
+    // cannot be fixed by the user).
     bool drawsOwnTitlebar(const DecorationRequest& request);
+
+    // Whether a window draws its own frame: its xdg window geometry (xdg_surface.set_window_geometry, surface-local, layout px)
+    // lies inside its surface (surfaceW x surfaceH, layout px) by at least kFrameInsetMin on one side or more, and nowhere
+    // outside it. xdg-shell defines the window geometry as the window's visible bounds, without the invisible parts of
+    // client-side decorations such as drop shadows; a client that draws no frame leaves it the whole surface (Qt without
+    // custom margins, foot) or never sets it (an empty geometry: nothing proved). Not a frame either: a geometry that reaches
+    // outside the surface (a client's mistake, or a subsurface beyond the main one), an unknown surface size.
+    inline constexpr double kFrameInsetMin = 2.0;
+    bool                    framedInside(const titlebar::Rect& geometry, double surfaceW, double surfaceH);
 
     // A Wayland interface name, as libwayland lists a client's resources: one of the two decoration managers
     // (DecorationRequest::managerBound: zxdg_decoration_manager_v1, org_kde_kwin_server_decoration_manager), one of their

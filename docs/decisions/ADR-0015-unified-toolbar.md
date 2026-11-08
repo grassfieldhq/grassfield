@@ -953,3 +953,41 @@ of the owner capture 2026-11-04 waited for; Chrome is a Chromium build with the 
 zoom are NOT VERIFIED (not installed on the dev machine). Tests: units `ClientChromeDecoration.*`; nested `decorations.sh`;
 `tests/shell/client_chrome_rules.sh` (google-chrome now in the three lists, its beta and web apps not);
 `tests/shell/session_services.sh` (both policy files in `backup=`).
+
+## Amendment 2026-11-08: every window has its controls; a frameless window draws its own bar only with a frame of its own (rc7 audit)
+The rc7 audit (R7-UX-01, R7-REQ-01) found a Qt frameless window that draws nothing left with no title bar and no window
+controls, and Firefox with its own "Title Bar" option the same. The owner's 1.0 criteria of 2026-11-08 make both a defect,
+not a limit; the one related limit the owner accepts: Chrome and Chromium with "Use system title bar" may have no controls.
+The cause is the 2026-11-07 amendment's case (b): a client that bound a decoration manager and holds no decoration object was
+tagged as drawing its own bar. QtWayland negotiates exactly that for every `Qt::FramelessWindowHint` window, whatever it
+draws, so the rule broke the invariant the same amendment stated (no window with neither bar). Firefox's case is S1b's: a
+static per-app tag cannot follow an app that has two title bar modes.
+
+Signals examined (Hyprland 0.56.2, read in `/usr/include/hyprland`; client sides read as data):
+
+| Signal | What it tells | Used |
+|---|---|---|
+| xdg-decoration mode | Qt: server_side for a plain window, no object at all for a frameless one; Chromium: client_side in both of its modes; `foot -o csd.preferred=client`: client_side, draws nothing | as before: client_side proves nothing, server_side keeps the plugin's bar |
+| KDE server-decoration mode | GTK 3 and 4: client for a header bar or any client-side frame (Firefox's own frame: an empty title bar widget), server for a plain window (Firefox's "Title Bar" mode, which then draws no bar) | as before, and now for Firefox too |
+| Manager bound, no decoration object (libwayland's list of the client's resources) | a frameless Qt window: its own bar, or nothing | no longer proof on its own |
+| xdg window geometry against the surface (`CXDGSurfaceResource::m_current.geometry`, `CWLSurfaceResource::m_current.size`, both public) | xdg-shell: the window's visible bounds, without the invisible parts of client-side decorations such as drop shadows; a geometry inside the surface means the client draws its own frame | **new: the frameless case's proof** |
+| Qt's frameless hint | never on the wire: it shows only as "no decoration object" | (through the line above) |
+| Window rules | match class, title, xdg tag; no decoration key in 0.56.2 | S1b stays for apps whose request proves nothing |
+| The client's later requests (`xdg_toplevel.move`, `set_minimized`) | come only after the user acts; a "drag anywhere" panel asks move too | rejected: late, and no proof of controls |
+| The pixels of the window's top edge | reading client buffers on the compositor thread, a guess from content | rejected |
+
+| Question | Choice | Why |
+|---|---|---|
+| When does a frameless window (manager bound, no decoration object) step the plugin's bar aside? | Only when it also draws its own frame: its xdg window geometry inside its surface by at least 2 px on one side or more, nowhere outside it (core `framedInside`), seen at any commit since its map (kept for the window's life: lib_ui and GTK drop their shadow while zoomed or in full screen, and the bar stays theirs). Read at map and at every commit that changes the surface's size or the window geometry. A frameless window that draws nothing gets the plugin's titlebar. | Telegram's own title bar comes with lib_ui's shadow, declared to QtWayland as custom margins (`SetWindowMargins` calls `QNativeInterface::Private::QWaylandWindow::setCustomMargins` on Wayland, `DefaultWindowHelper::updateWindowMargins` sets them while its own title is shown and not maximized: lib_ui sources read as data, 2026-11-08; Arch's `telegram-desktop` PKGBUILD does not set `DESKTOP_APP_DISABLE_PRIVATE_QT_API`, the switch that turns that path off; Telegram itself NOT VERIFIED here: not installed), so its window geometry lies inside its surface; a Qt frameless window without margins leaves it the whole surface. Closest to macOS: every window has its controls; an app that takes the whole frame, shadow included, is drawing the window itself (as an app that hides its title bar draws its own toolbar), and one that draws nothing gets the system's. |
+| Firefox | Leaves S1b's tag (`gf-client-chrome-third-party`); keeps its maximize exemption. The plugin decides from its negotiation: its own frame (KDE client) is tagged, its "Title Bar" mode (KDE server) gets the plugin's titlebar. | Firefox is GTK 3; its own frame is GTK's client-side decoration with an empty title bar widget, the same request as a header bar (decorations.sh D7), and its Title Bar mode is a plain GTK 3 window (D8). Stand-ins in `frameless_chrome.sh` F4, F5; Firefox itself NOT VERIFIED (not installed on the dev machine: the owner checks both modes on the second machine). |
+| Chrome and Chromium, "Use system title bar" | Unchanged: in S1b, no controls in that mode (limit accepted by the owner on 2026-11-08). | Chromium asks xdg client_side in both modes: no signal tells them apart. |
+| Which windows may still have no bar? | A frameless window that draws its own frame (a shadow) and no controls: a launcher or a panel that took the whole frame. Chromium's system title bar mode (accepted). | Every window that draws no frame of its own gets the plugin's bar. |
+| Which may show two bars? | An app that draws its own title bar without any frame margin and asks nothing that proves it (a frameless window without shadow; an xdg client_side app outside S1b; a Telegram built with `DESKTOP_APP_DISABLE_PRIVATE_QT_API`): the plugin's bar above its own, fixed by adding its app id to S1b. | The 2026-11-07 invariant, now kept: a second bar can be fixed by the list, a missing one cannot be fixed by the user. |
+| Degradation | Without the plugin: unchanged (no plugin bar anywhere; the shell reads the tag only while the plugin advertises client-chrome). Hyprland's private decoration containers changing meaning: as on 2026-11-07 (GTK header bars, Firefox's own frame included, get the plugin's bar above theirs); the frame test reads public members and libwayland's list only, so the frameless case keeps working. Unload: the tags the plugin added go (C2). | Fail toward the plugin's bar. |
+
+Tests: units `ClientChromeDecoration.AFramelessWindowThatDrawsNothingKeepsThePluginsTitlebar` (fails on the 2026-11-07 rule)
+and `ClientChromeDecoration.AFrameIsAWindowGeometryInsideItsSurface`; nested `tests/compositor/decorations.sh` (D4 and D5 now
+keep the plugin's bar, D4c: a frameless xdg client with its own frame is tagged, D9, D10 on it) and the new
+`tests/compositor/frameless_chrome.sh` (F1-F6: a real QtWayland frameless window that draws nothing and one with its own bar
+and custom margins, maximized and back, Firefox's two modes as GTK 3 stand-ins, a capture);
+`tests/shell/client_chrome_rules.sh` (Firefox out of S1b, in both maximize negations).

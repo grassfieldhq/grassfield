@@ -21,7 +21,10 @@
 // that draws no title bar of its own does (foot, Qt, SDL); with XDGACT_DECORATION=client it asks for client-side ones (and still
 // draws no bar, as foot -o csd.preferred=client under Hyprland's server_side answer); with XDGACT_DECORATION=none it binds the
 // manager and makes no decoration object (what Qt does for a frameless window, which decorates itself); with
-// XDGACT_DECORATION=unbound it does not bind the manager at all (imv: it draws no bar either).
+// XDGACT_DECORATION=unbound it does not bind the manager at all (imv: it draws no bar either). XDGACT_INSET=N (1-64) draws a
+// frame of its own around the window: a translucent margin of N px on every side of the configured size, outside its window
+// geometry (xdg_surface.set_window_geometry N, N, width, height), as a client that draws its own shadow does (Telegram's
+// lib_ui through QtWayland's custom margins, GTK's client-side decorations; tests/compositor/decorations.sh D4c).
 #define _GNU_SOURCE
 #include "xdg-activation-v1-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
@@ -64,6 +67,7 @@ static int                         cfg_w = WIDTH, cfg_h = HEIGHT; // the size th
 static int                         min_w = 0;                     // the minimum width asked (0: none)
 static int                         fixed_w = 0, fixed_h = 0;      // a window of fixed size: minimum = maximum (0: none)
 static int                         buf_w, buf_h;
+static int                         inset;                         // XDGACT_INSET: the frame drawn around the window (0: none)
 
 static void on_signal(int sig) {
     if (sig == SIGUSR1)
@@ -115,7 +119,8 @@ static void buffer_release(void* data, struct wl_buffer* buf) {
 }
 static const struct wl_buffer_listener buffer_listener = {buffer_release};
 
-static struct wl_buffer* make_buffer(int width, int height, uint32_t argb) {
+// A buffer of one colour; with `margin`, its outer `margin` px are a translucent shadow instead.
+static struct wl_buffer* make_buffer(int width, int height, uint32_t argb, int margin) {
     const int stride = width * 4;
     const int size   = stride * height;
     int       fd     = memfd_create("xdgact", MFD_CLOEXEC);
@@ -129,8 +134,12 @@ static struct wl_buffer* make_buffer(int width, int height, uint32_t argb) {
         close(fd);
         return NULL;
     }
-    for (int i = 0; i < width * height; i++)
-        px[i] = argb;
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            const int edge  = x < margin || y < margin || x >= width - margin || y >= height - margin;
+            px[y * width + x] = edge ? 0x30000000 : argb;
+        }
+    }
     munmap(px, size);
     struct wl_shm_pool* pool = wl_shm_create_pool(shm, fd, size);
     struct wl_buffer*   buf  = wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
@@ -146,9 +155,11 @@ static void surface_configure(void* data, struct xdg_surface* xs, uint32_t seria
     xdg_surface_ack_configure(xs, serial);
     if (unmapped || (mapped && buf_w == cfg_w && buf_h == cfg_h))
         return;
-    struct wl_buffer* buf = make_buffer(cfg_w, cfg_h, 0xff3a6ea5);
+    struct wl_buffer* buf = make_buffer(cfg_w + 2 * inset, cfg_h + 2 * inset, 0xff3a6ea5, inset);
     if (!buf)
         return;
+    if (inset > 0)
+        xdg_surface_set_window_geometry(toplevel_xs, inset, inset, cfg_w, cfg_h);
     wl_surface_attach(surface, buf, 0, 0);
     wl_surface_commit(surface);
     buf_w = cfg_w;
@@ -204,7 +215,7 @@ static void popup_surface_configure(void* data, struct xdg_surface* xs, uint32_t
     xdg_surface_ack_configure(xs, serial);
     if (popup_mapped)
         return;
-    struct wl_buffer* buf = make_buffer(WIDTH, HEIGHT, 0xffa53a6e);
+    struct wl_buffer* buf = make_buffer(WIDTH, HEIGHT, 0xffa53a6e, 0);
     if (!buf)
         return;
     wl_surface_attach(popup_surface, buf, 0, 0);
@@ -338,6 +349,16 @@ int main(int argc, char** argv) {
         min_w = (int)v;
         if (cfg_w < min_w)
             cfg_w = min_w;
+    }
+    const char* inset_env = getenv("XDGACT_INSET");
+    if (inset_env && *inset_env) {
+        char* end = NULL;
+        long  v   = strtol(inset_env, &end, 10);
+        if (!end || *end != '\0' || v < 1 || v > 64) {
+            fprintf(stderr, "xdgact: XDGACT_INSET must be 1-64\n");
+            return 2;
+        }
+        inset = (int)v;
     }
     display = wl_display_connect(NULL);
     if (!display) {

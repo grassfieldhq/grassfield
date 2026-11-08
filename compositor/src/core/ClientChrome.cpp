@@ -26,9 +26,23 @@ namespace gf::chrome {
             return true; // a GTK header bar
         if (request.xdgObject || request.kdeObject)
             return false; // a request that proves no bar (xdg client_side included) or a server-side one
-        // A manager bound and no decoration object at all in the client: Qt's frameless window. An object the client holds
-        // that was not found for this toplevel (another of its windows, or a Hyprland whose private map changed) proves nothing.
-        return request.managerBound && !request.clientHasObject;
+        // A manager bound and no decoration object at all in the client: Qt's frameless window. It draws its own title bar only
+        // with a frame of its own (Telegram's shadow margins); one that draws nothing keeps the plugin's (R7-REQ-01). An object
+        // the client holds that was not found for this toplevel (another of its windows, or a Hyprland whose private map
+        // changed) proves nothing.
+        return request.managerBound && !request.clientHasObject && request.framed;
+    }
+
+    bool framedInside(const titlebar::Rect& geometry, double surfaceW, double surfaceH) {
+        if (!(geometry.w > 0.0) || !(geometry.h > 0.0) || !(surfaceW > 0.0) || !(surfaceH > 0.0))
+            return false; // never set, or no surface yet (NaN fails every comparison too)
+        const double left   = geometry.x;
+        const double top    = geometry.y;
+        const double right  = surfaceW - (geometry.x + geometry.w);
+        const double bottom = surfaceH - (geometry.y + geometry.h);
+        if (!(left >= 0.0) || !(top >= 0.0) || !(right >= 0.0) || !(bottom >= 0.0))
+            return false; // reaches outside the surface: not a frame drawn inside it
+        return std::max({left, top, right, bottom}) >= kFrameInsetMin;
     }
 
     DecorationInterface decorationInterface(std::string_view interfaceName) {

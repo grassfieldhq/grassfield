@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <vector>
 
 // P8 (GF-056 part 2): a window that draws its own controls is told it can be minimized (GTK4 greys a minimize button the
@@ -118,7 +119,41 @@ TEST(ClientChromeDecoration, OnlyARequestThatProvesABarOfItsOwnTagsTheWindow) {
     using gf::chrome::drawsOwnTitlebar;
     EXPECT_TRUE(drawsOwnTitlebar(DecorationRequest{.kdeObject = true, .kdeRequested = 1, .managerBound = true, .clientHasObject = true}))
         << "KDE client: a GTK header bar";
-    EXPECT_TRUE(drawsOwnTitlebar(DecorationRequest{.managerBound = true})) << "a manager bound, no object in the client: Qt's frameless window (Telegram)";
+    EXPECT_TRUE(drawsOwnTitlebar(DecorationRequest{.managerBound = true, .framed = true}))
+        << "a manager bound, no object in the client, its own frame drawn: Telegram's frameless window and its shadow margins";
+}
+
+// The rc7 audit (R7-REQ-01, R7-UX-01; owner 2026-11-08: not accepted for 1.0): a Qt frameless window that draws nothing was
+// tagged for its negotiation alone (a manager bound, no decoration object) and had neither a bar of its own nor the plugin's.
+// Qt negotiates the same for Telegram, which draws its own bar; what sets them apart is the frame: Telegram's lib_ui draws its
+// shadow and sets QtWayland's custom margins, so its xdg window geometry lies inside its surface.
+TEST(ClientChromeDecoration, AFramelessWindowThatDrawsNothingKeepsThePluginsTitlebar) {
+    using gf::chrome::DecorationRequest;
+    using gf::chrome::drawsOwnTitlebar;
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.managerBound = true}))
+        << "a manager bound, no decoration object, no frame of its own: a Qt frameless window that draws nothing";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.managerBound = true, .clientHasObject = true, .framed = true}))
+        << "framed, but the client holds a decoration object not found for this window: nothing proved";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.framed = true})) << "framed without a manager bound: no negotiation proves a bar";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.xdgObject = true, .xdgRequested = 2, .managerBound = true, .clientHasObject = true, .framed = true}))
+        << "a frame does not outweigh a server_side request";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.xdgObject = true, .xdgRequested = 1, .managerBound = true, .clientHasObject = true, .framed = true}))
+        << "nor an xdg client_side request (Chromium's --app windows stay the plugin's; Chromium is in S1b)";
+}
+
+TEST(ClientChromeDecoration, AFrameIsAWindowGeometryInsideItsSurface) {
+    using gf::chrome::framedInside;
+    using gf::titlebar::Rect;
+    EXPECT_TRUE(framedInside(Rect{16, 16, 420, 260}, 452, 292)) << "shadow margins on every side (lib_ui, GTK CSD)";
+    EXPECT_TRUE(framedInside(Rect{0, 0, 420, 260}, 420, 280)) << "a margin on one side only";
+    EXPECT_TRUE(framedInside(Rect{2, 0, 418, 260}, 420, 260)) << "kFrameInsetMin exactly";
+    EXPECT_FALSE(framedInside(Rect{0, 0, 420, 260}, 420, 260)) << "the whole surface: Qt without custom margins, foot";
+    EXPECT_FALSE(framedInside(Rect{1, 1, 419, 259}, 421, 261)) << "under kFrameInsetMin: a rounding, not a frame";
+    EXPECT_FALSE(framedInside(Rect{}, 420, 260)) << "never set: nothing proved";
+    EXPECT_FALSE(framedInside(Rect{16, 16, 420, 260}, 0, 0)) << "no surface size yet";
+    EXPECT_FALSE(framedInside(Rect{-10, 0, 440, 260}, 420, 260)) << "reaches outside the surface";
+    EXPECT_FALSE(framedInside(Rect{16, 16, 500, 260}, 452, 292)) << "wider than the surface";
+    EXPECT_FALSE(framedInside(Rect{16, 16, 420, 260}, std::numeric_limits<double>::quiet_NaN(), 292)) << "an unknown size";
 }
 
 TEST(ClientChromeDecoration, ARequestThatProvesNoBarKeepsThePluginsTitlebar) {
