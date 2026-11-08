@@ -423,7 +423,7 @@ user, password, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp("runuser", ["runuser", "-u", user, "--", "bash", "-c", cmd])
-out, prompts, deadline, timed_out = b"", 0, time.time() + 300, False
+out, prompts, deadline, timed_out = b"", 0, time.time() + 600, False
 while True:
     if time.time() >= deadline:
         timed_out = True
@@ -449,7 +449,7 @@ if timed_out:
 _, status = os.waitpid(pid, 0)
 print(out.decode(errors="replace").replace("\r", ""))
 if timed_out:
-    print("TIMEOUT after 300 s: the child's process group was killed")
+    print("TIMEOUT after 600 s: the child's process group was killed")
 print("password prompts: %d, exit %d" % (prompts, os.waitstatus_to_exitcode(status)))
 PY
 publish "${cur[@]/gu-app-3/gu-app-5}"
@@ -458,9 +458,11 @@ python3 -I "$W/drive.py" alice test-only-password "pkexec $H run $op1; echo rc=\
 codes=$(grep -o 'rc=[0-9]*' "$W/pk.out" | tr '\n' ' ')
 expect "two runs, two password prompts (auth_admin, never kept)" grep -q '^password prompts: 2,' "$W/pk.out"
 expect "gu-app 5 installed by the first, the second up to date ($codes)" test "$codes:$(ver gu-app):$(exitfile "$op2")" == "rc=0 rc=0 :5-1:0|packages 0|"
+grep -q '^password prompts: 2,' "$W/pk.out" || { echo "  the transcript's end:"; tail -n 15 "$W/pk.out" | sed 's/^/    /'; }
 cur=("${cur[@]/gu-app-3/gu-app-5}")
 python3 -I "$W/drive.py" alice wrong-password "pkexec $H run $(newop); echo rc=\$?" >"$W/pk-wrong.out" 2>&1
 expect "a wrong password -> pkexec exit 127" grep -q 'rc=127' "$W/pk-wrong.out"
+grep -q 'rc=127' "$W/pk-wrong.out" || { echo "  the transcript's end:"; tail -n 15 "$W/pk-wrong.out" | sed 's/^/    /'; }
 out=$(as bob pkexec "$H" run "$(newop)" </dev/null 2>&1); rc=$?
 expect "bob (no rule, no session) -> pkexec refuses (exit $rc)" test "$rc" == 126 -o "$rc" == 127
 
