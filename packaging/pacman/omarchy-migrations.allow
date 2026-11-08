@@ -20,14 +20,14 @@ allow 031a203bbdd78c68564970fcdc4ed69c5cefa7e2cd678486209a8ba5699f2b07 178029477
 exclude 7ec9fc5242d04a7a4ca6517ab8f3092bc5d286018b71d1aef97e0456b0c840c1 1780517689.sh 4.0.6-1 review
 exclude 4171e59eb32d3bc7b79657be59bbf4f174fc64f30b7090713ad0a6124e339c74 1780739888.sh 4.0.6-1 person
 exclude 957f724d6c36697f858c3876365a00b6d226e9712be276c03fdf89650aae3dc2 1781043107.sh 4.0.6-1 person
-allow 90f7139eff4ec9540951b8f26db795e7b826f2a8f2d8f37a8041c68ceb784e0b 1781063758.sh 4.0.6-1 usr/share/omarchy/migrations/1781063758.sh
+exclude df2699b76f61e79fab65f8db3325daff8f172e82e9d94a5869222e4172c1223f 1781063758.sh 4.0.6-1 review
 exclude ba1fa06b0faa1cd8bdc512dc2cd432022155b1272e0bebf6ea1cfd5207a6a306 1781158082.sh 4.0.6-1 person
 allow 825d50c9bba40706a0aababbbbe2782b66cb458a99d85f9b9210d84878b01c25 1781286586.sh 4.0.6-1 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1781286586.sh
-allow 58ae64f313805fba192f2676a5b595c5c3efa610e20249b11eaa572949b9f90b 1781485962.sh 4.0.6-1 usr/share/omarchy/migrations/1781485962.sh
+exclude 92be3a71bb52f634394ac84e3f88902c600024e9924b4c400726b22d9cbeaebe 1781485962.sh 4.0.6-1 review
 exclude ee9db61af45b711885581f8594b21317174e7380b706871e77913b988cceaf8d 1781587663.sh 4.0.6-1 review
 allow 6ac151bfbf3e668e572a826679ed40769974fa11ff206dfd5a9709c8b1960566 1781793381.sh 4.0.6-1 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1781793381.sh
-allow c59c42fa4ff8c9816c7904e7b1970dba60fc50c01072772b0da8aaf4dca06c18 1781984677.sh 4.0.6-1 usr/share/omarchy/migrations/1781984677.sh
-allow 29bfccf0f0deb52d0f1b39ed03091ce930a560d0e822db14d9395d5b862a2898 1782002156.sh 4.0.6-1 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1782002156.sh
+exclude 3a0353ebd4ebae36b1ad664c5dad9f89a18ca7f8cf8face301550b7620043480 1781984677.sh 4.0.6-1 review
+exclude b26d4ac1d5f6fa6c68510319b4981eb56bb446999effe5df905788f02e973691 1782002156.sh 4.0.6-1 review
 allow 025c34d178d827910f3d01eee6c52ad8f49b67ae09ada24f33b2a350d4135e7d 1782049344.sh 4.0.6-1 usr/share/omarchy/migrations/1782049344.sh
 allow 18a69dca54e71c215f96eb6bd201a3fc6c471145f851a90d711f8eb759bda001 1784401744.sh 4.0.6-1 usr/bin/omarchy-hw-match usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/bin/omarchy-restart-tmux usr/bin/omarchy-state usr/share/omarchy/migrations/1784401744.sh
 exclude 0106e33f6dd8aa7261d31b436e1e06378cc9bfb24125a8714eb5db26ee8abe14 1784476564.sh 4.0.6-1 review
@@ -61,8 +61,8 @@ exclude d95d381ec037398e5b16421f3b4c9fb094a03f7ede480c48f0925e2374324de8 1785344
 allow 70c0505dd33f3bfc7731292bc039f7e53337414137cccad3723555824ce70627 1785351479.sh 4.0.6-1 usr/share/omarchy/migrations/1785351479.sh
 allow fecd9cb82da7d22f74d46d8de54da0f4e2efa047699e20df1e7ceeaa3d3970c4 1785424256.sh 4.0.6-1 usr/share/omarchy/migrations/1785424256.sh
 allow e2d550ab76ba08907360a40929182840f4e984312f5136fe70c8799b6c2b515d 1785511354.sh 4.0.6-1 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1785511354.sh
-allow 04df0518a94ae60b14bc2196fd3211f7df0b67c306901de8c6596d9515dfdda4 1785543725.sh 4.0.6-1 usr/share/omarchy/migrations/1785543725.sh
-allow 3599bc5c34dcc20d2331f4e5c57d13b39fa1063cb5420554f23c400d5e9077d5 1785591762.sh 4.0.6-1 usr/share/omarchy/migrations/1785591762.sh
+exclude 79d06a25b5e5f1a3c358cf2908be4c45eebfbd56fb9dc7c8b1941235af3c43cf 1785543725.sh 4.0.6-1 review
+exclude 0f531e530b4a94a7f1d7228c0999b900dbbf8b05211cbae1743deb378696e90f 1785591762.sh 4.0.6-1 review
 exclude e1531373f9479544125dcd9983db417eb4daf47d548a13bef5b4dead8ae38674 1785608166.sh 4.0.6-1 review
 allow 33bc1c80ce7c4500c08198283fcc70a20b1a155f1a3b51c0797dfaf97988d694 1785608251.sh 4.0.6-1 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1785608251.sh
 exclude b3ec0e14f60c28203d99177d4e6e5db769941b1645903db554dfa9d3492c64a6 1785617047.sh 4.0.6-1 person
@@ -70,7 +70,7 @@ allow c45dc149c8f09502f4aed6a63d0e13017a89a2d6e4dc9bca466bfd1cdcdfc695 178563322
 allow 429dd476fd2bbc4d6c4c34507ffb27ba317f75166f047bb684e40516137dc722 1785637426.sh 4.0.6-1 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1785637426.sh
 exclude cd70541bada47a401ad7cc83d609ddc85ba59fb2ece3cd07f11d5f611da66bab 1785846769.sh 4.0.6-1 person
 allow 89d128d9322939597100501784e4cec756105a7bbae967a78caa483a4589f94a 1785944594.sh 4.0.6-1 usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-present usr/share/omarchy/migrations/1785944594.sh
-allow 779e11eff76ee62c54e911545339096dd710e4554db66de829f0b38adc0e6f76 1786098807.sh 4.0.6-1 usr/share/omarchy/migrations/1786098807.sh
+exclude 656f95f07fea01f66ccdec40c06640774500a0f7ded019d3b0dfe2adc87be9e4 1786098807.sh 4.0.6-1 review
 exclude 1f56248f7e8493652620f9e1a27c2655bacc5f0432e86677dabbc69684cccd7b 1786099804.sh 4.0.6-1 review
 allow 8da554b7b18ec0ad2b9d9374ac29f9f7ef091f4e15557a65c128c66a81bd193c 1786137597.sh 4.0.6-1 usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-present usr/share/omarchy/migrations/1785944594.sh usr/share/omarchy/migrations/1786137597.sh
 exclude d0bfc92e590595dda321a8d1dc5c8c854c6780054aeb29b4f8609c1803fba0f6 1786181929.sh 4.0.6-1 home-code
@@ -87,7 +87,7 @@ allow e4e7aa1df77f0f21ec0b6eb5a93468fab9b2f83bbc6b079ffdf0c3ca4b4840ef 178645156
 allow 91b939732579bedea7af5974bef1c44147c25ce0cebb9536f464c051e7447f24 1786482992.sh 4.0.6-1 usr/bin/omarchy-cmd-present usr/share/omarchy/migrations/1786482992.sh
 allow 448af7cb3ede8b812e8ecb9b4148efdc2b553fbddd973bedf9181a89b0b0bd3b 1786517850.sh 4.0.6-1 usr/share/omarchy/migrations/1786517850.sh
 exclude 07a72a24c32bb24cfd1b8607b6dbde2a1d7488abc7b237fedf0eaf6e2eeafeb3 1786539345.sh 4.0.6-1 person
-exclude 54d465910c57a72b43ed5829114e057fcd6e40860f452ce737cfde2010914e4f 1786549201.sh 4.0.6-1 review
+exclude 54d465910c57a72b43ed5829114e057fcd6e40860f452ce737cfde2010914e4f 1786549201.sh 4.0.6-1 person
 allow b1096d59c5305c9542c41ea45aff2a23a2f39fce555af7c84c5b3d26410ae582 1786567036.sh 4.0.6-1 usr/share/omarchy/migrations/1786567036.sh
 exclude 89ef0645ed599c8e1e514c58c216611b166c6b07b4390e2fe645841a26fa148b 1786605598.sh 4.0.6-1 review
 exclude 8be667fe62f5443e34e157f195eba50eac331e68263c2f66591b57fdcb0f07d5 1786643346.sh 4.0.6-1 person
@@ -100,12 +100,12 @@ exclude 75df8e60ac43d0b4994f9a06671cd200f9f07c6b6c50cc04acef2819bcf689ec 1787481
 exclude 0c925531f6be01b92f6dc1e272a380daa512fb64e1358585b9c8edfb141a055d 1787494718.sh 4.0.6-1 review
 exclude 1eea7f579bf104eb9f9c852ae30e001ffb6d86b2f6a2ea02cbdff53ae0e0bb55 1787515927.sh 4.0.6-1 person
 exclude 18ccba2ca014a049b174ab4e4f1918048775d8924f228452a7c34ff35a1b5d60 1787580187.sh 4.0.6-1 person
-allow bf985ed7d8d7699a64e9971416394d54b5295ef8d07eb61ec9a0e2b7be5bb0b8 1787589206.sh 4.0.6-1 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/bin/omarchy-update-keyring usr/bin/omarchy-update-system-pkgs usr/bin/omarchy-update-system-pkgs-when-conflicted usr/share/omarchy/migrations/1787589206.sh
+exclude 63fd8e9a02097d863fd160f0003af724d0086104fff4ab5efb58b560cac0c812 1787589206.sh 4.0.6-1 review
 exclude 3b9adc0d7c9b941b2032e3c035ae2e4cc270b285921c368a317a163b649905a4 1787618700.sh 4.0.6-1 review
 exclude ed5608805fce3477c0cd3798a5e06268a87b7ea708dc8aa84cda6a1614e6fed1 1787691200.sh 4.0.6-1 review
 allow 2de1615aa1631d7def19f080d101c9565892c4b7ef8656667b7279a1bfd5ecef 1787760281.sh 4.0.6-1 usr/share/omarchy/migrations/1787760281.sh
 allow 85565f1fedfdb3ddd118c5a204afd75a2cde313eb4948326b6e38a1c6a41883a 1787815267.sh 4.0.6-1 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-missing usr/bin/omarchy-pkg-present usr/share/omarchy/migrations/1787815267.sh
-allow 7cb2ff3a1dcfbba1023cad23f4e873b836417e5b5d48491b87d6b487a77a199f 1787843905.sh 4.0.6-1 usr/share/omarchy/migrations/1787843905.sh
+exclude 26d382b135be3ceeb06bfd60bb82baaedaed356b95a77502f95b1eb98cd4b6ae 1787843905.sh 4.0.6-1 review
 allow 40344b55273b7a3d869865fb3f5220f98c3e26d7a5076d6bb5a3f887290ed6ea 1787865477.sh 4.0.6-1 usr/bin/omarchy-state usr/share/omarchy/migrations/1787865477.sh
 allow fb482eb1d25a3c687b4d9477d0a0ce516a690a632fb52d5d6c1dac9e79fa5f27 1788009111.sh 4.0.6-1 usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-present usr/share/omarchy/migrations/1788009111.sh
 exclude d29bba2a2839fb3acef89870a9d021aa5965b905f12484266b95cd398692b415 1788025225.sh 4.0.6-1 review
@@ -114,13 +114,13 @@ allow 23bdd30e166f9cc9a498d8f7d1dd46adf69bb89416e7e82a234da88c38b0cf16 178811231
 exclude 7d600316b3146e8b56c65caae393df8222b5cbfdbfffa46e0c9ae8bfde781b5b 1788124236.sh 4.0.6-1 person
 exclude aa3d55480497aabc5bf8ad216513c70074e98de13a20c893151038232c9713ce 1788577553.sh 4.0.6-1 person
 exclude 9b88a155cd4bace42ea1a10f6c12a558544926f00671e1e741b8977b856ca78f 1788619462.sh 4.0.6-1 person
-allow 37b6d2786e4cbd114688e3567eb993ef368d4cc58e7edf23acc903b71150452d 1788662350.sh 4.0.6-1 usr/share/omarchy/migrations/1788662350.sh
+exclude 6c40ba5ec6c0a90c583d6067a733ad315c7a6e0e3ba302c39396eb3e829fe965 1788662350.sh 4.0.6-1 review
 exclude 2ab07d502a4a5c424293204274e43c7b338717392ebaee64cbd53d5c8c3e235e 1788724825.sh 4.0.6-1 person
 exclude 4367fefeeb8efe2d5d070f4d2de904338e4665b54589c89595bfc5e127dcf140 1788745941.sh 4.0.6-1 person
 allow 18d0d470e473b81710f26267f64e38f92e132d61cc7d9d29342864ae79e6ffb9 1788848726.sh 4.0.6-1 usr/share/omarchy/migrations/1788848726.sh
 exclude 31508b271d508f2c60abbef4b50ff4cf8280ea1195290b14c2f359af880ab6ad 1788996284.sh 4.0.6-1 review
 exclude 5d2037abbce10d1dfa1a53f176fbda8ebdb502a546766263590deb24eb8d1c45 1789095456.sh 4.0.6-1 home-code
-allow 85d42d8eea69fdd7adae51c1c67b4f860486d3c72a49e28f9c9b225e98355eda 1789130779.sh 4.0.6-1 usr/bin/omarchy-refresh-config usr/share/omarchy/migrations/1789130779.sh
+exclude ffaed427a09dda6d10b4222913d2eb0046a5d013b994ef98ce398ea54982eddb 1789130779.sh 4.0.6-1 review
 exclude 34f5374c4d92eb0f943a1272b58294c9d7265ca3d91a6b3609a44278f8480955 1789325478.sh 4.0.6-1 review
 allow 0485b1791c3a19be8375100c512c7d54225a3e57afe7af090fe15ec4edfc7814 1789444024.sh 4.0.6-1 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/bin/omarchy-pkg-present usr/share/omarchy/migrations/1789444024.sh
 exclude 7b338f6d7cadc30cc3577b343f7639d51ffbe7c9ddeb0b39dbf352aec6fdffed 1790017600.sh 4.0.6-1 person
@@ -128,10 +128,10 @@ exclude 6123497d64fb4c30823ee6d1868888369e8b3ed4b8f217365a77902f2630f6e7 1790114
 allow e94187e90938ed37aa521b924bc9e6f80b6adab385d01af52616cb55fdaa343b 1790282866.sh 4.0.6-1 usr/bin/omarchy-hw-nvidia usr/bin/omarchy-hw-nvidia-display usr/bin/omarchy-state usr/share/omarchy/migrations/1790282866.sh
 allow f9a414f9eaa5f76d9a249ef6643533bd37e1b55d136ce6215f3c05fdf13eceaf 1790397381.sh 4.0.6-1 usr/share/omarchy/migrations/1790397381.sh
 allow 4b3d9c13a6759b0b8be4c86572f188e7c61cbbe65a5ebf918a112c74955da19e 1791265613.sh 4.0.6-1 usr/bin/omarchy-hw-dell-xps13-dx13260-ptl usr/bin/omarchy-hw-intel-ptl usr/bin/omarchy-hw-match usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/bin/omarchy-state usr/share/omarchy/install/hardware/dell-xps13-ptl-speaker-firmware.sh usr/share/omarchy/migrations/1791265613.sh
-allow 5a8403b0e0dcda5bb1217e627eb5ee826a94f64f313cf4f0e9256d9851be9c43 1791403252.sh 4.0.6-1 usr/bin/omarchy-update-system-pkgs usr/bin/omarchy-update-system-pkgs-when-conflicted usr/share/omarchy/migrations/1791403252.sh
+exclude fb380a285eca3a1f7e38cf3cc88c523f2cf93c6559486ec8bb17302f923aa0e6 1791403252.sh 4.0.6-1 review
 exclude 18066ee208c7db676b78353dd9caca25640bf44fa7663371cea3f1a814fd3eb8 1791581004.sh 4.0.6-1 review
 exclude c0510b53de9daf42f0b82846d309442df53635f1b9695b90d1a3d9f4c0342b3d 1791621765.sh 4.0.6-1 review
-allow b2d97b055d12311ba6b8f32ed77c76c6582884bc8e7b3d9826019082deb81c02 1791934674.sh 4.0.6-1 usr/share/omarchy/migrations/1791934674.sh
+exclude 7675ed4b31835fbe1df8e1cd0c3e0366124fce29d5837919822d746ee977193f 1791934674.sh 4.0.6-1 review
 exclude f281278e5a415f1f8c955d6bca6de0b62bcd6b586ce75bf62b24638ad1f15782 1791935188.sh 4.0.6-1 person
 exclude c65c1650f9087404817348f88afc9e21deb2ded61f4b85b81e1d8361c5cbcdfb 1792334754.sh 4.0.6-1 person
 allow 509bca3393ace2d9e082252642add0dd0dc4bb155ce3012f2c2eb69541944a41 1778623107.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1778623107.sh
@@ -140,14 +140,14 @@ allow 031a203bbdd78c68564970fcdc4ed69c5cefa7e2cd678486209a8ba5699f2b07 178029477
 exclude 7ec9fc5242d04a7a4ca6517ab8f3092bc5d286018b71d1aef97e0456b0c840c1 1780517689.sh 4.5.0-3 person
 exclude 4171e59eb32d3bc7b79657be59bbf4f174fc64f30b7090713ad0a6124e339c74 1780739888.sh 4.5.0-3 person
 exclude 957f724d6c36697f858c3876365a00b6d226e9712be276c03fdf89650aae3dc2 1781043107.sh 4.5.0-3 person
-allow 90f7139eff4ec9540951b8f26db795e7b826f2a8f2d8f37a8041c68ceb784e0b 1781063758.sh 4.5.0-3 usr/share/omarchy/migrations/1781063758.sh
+exclude df2699b76f61e79fab65f8db3325daff8f172e82e9d94a5869222e4172c1223f 1781063758.sh 4.5.0-3 review
 exclude ba1fa06b0faa1cd8bdc512dc2cd432022155b1272e0bebf6ea1cfd5207a6a306 1781158082.sh 4.5.0-3 person
 allow a6b5ed4d6103fdfeb8ebfe4bb776e8be62295c9549be4352e7c50a80613730ac 1781286586.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1781286586.sh
-allow 58ae64f313805fba192f2676a5b595c5c3efa610e20249b11eaa572949b9f90b 1781485962.sh 4.5.0-3 usr/share/omarchy/migrations/1781485962.sh
+exclude 92be3a71bb52f634394ac84e3f88902c600024e9924b4c400726b22d9cbeaebe 1781485962.sh 4.5.0-3 review
 exclude ee9db61af45b711885581f8594b21317174e7380b706871e77913b988cceaf8d 1781587663.sh 4.5.0-3 review
 allow 6ac151bfbf3e668e572a826679ed40769974fa11ff206dfd5a9709c8b1960566 1781793381.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1781793381.sh
-allow c59c42fa4ff8c9816c7904e7b1970dba60fc50c01072772b0da8aaf4dca06c18 1781984677.sh 4.5.0-3 usr/share/omarchy/migrations/1781984677.sh
-allow 29bfccf0f0deb52d0f1b39ed03091ce930a560d0e822db14d9395d5b862a2898 1782002156.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1782002156.sh
+exclude 3a0353ebd4ebae36b1ad664c5dad9f89a18ca7f8cf8face301550b7620043480 1781984677.sh 4.5.0-3 review
+exclude b26d4ac1d5f6fa6c68510319b4981eb56bb446999effe5df905788f02e973691 1782002156.sh 4.5.0-3 review
 allow 025c34d178d827910f3d01eee6c52ad8f49b67ae09ada24f33b2a350d4135e7d 1782049344.sh 4.5.0-3 usr/share/omarchy/migrations/1782049344.sh
 allow 7190de5f2a58deab7fbb95626b844aba2d79820f406ae0d459ed132664d63d2d 1784401744.sh 4.5.0-3 usr/bin/omarchy-hw-match usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/bin/omarchy-restart-tmux usr/bin/omarchy-state usr/share/omarchy/migrations/1784401744.sh
 exclude 0106e33f6dd8aa7261d31b436e1e06378cc9bfb24125a8714eb5db26ee8abe14 1784476564.sh 4.5.0-3 person
@@ -181,8 +181,8 @@ exclude c2620cf320816b82735c244b770b05e8b2cc60c0a70b0bd802fd7c016dfb5775 1785344
 allow 70c0505dd33f3bfc7731292bc039f7e53337414137cccad3723555824ce70627 1785351479.sh 4.5.0-3 usr/share/omarchy/migrations/1785351479.sh
 allow fecd9cb82da7d22f74d46d8de54da0f4e2efa047699e20df1e7ceeaa3d3970c4 1785424256.sh 4.5.0-3 usr/share/omarchy/migrations/1785424256.sh
 allow e2d550ab76ba08907360a40929182840f4e984312f5136fe70c8799b6c2b515d 1785511354.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1785511354.sh
-allow 04df0518a94ae60b14bc2196fd3211f7df0b67c306901de8c6596d9515dfdda4 1785543725.sh 4.5.0-3 usr/share/omarchy/migrations/1785543725.sh
-allow 3599bc5c34dcc20d2331f4e5c57d13b39fa1063cb5420554f23c400d5e9077d5 1785591762.sh 4.5.0-3 usr/share/omarchy/migrations/1785591762.sh
+allow 11acd37b77fad1eb4af983128683019d061f689501923d6837bcab2d11c7d981 1785543725.sh 4.5.0-3 usr/share/omarchy/default/chromium/extensions/whatsapp-slim/manifest.json usr/share/omarchy/default/chromium/extensions/whatsapp-slim/system-theme.js usr/share/omarchy/default/chromium/extensions/whatsapp-slim/whatsapp.css usr/share/omarchy/migrations/1785543725.sh
+allow f319948e4e518adcbb39df93dd94419448cc8f86a65404895cebc0424df764e6 1785591762.sh 4.5.0-3 usr/share/omarchy/default/chromium/extensions/whatsapp-slim/manifest.json usr/share/omarchy/default/chromium/extensions/whatsapp-slim/system-theme.js usr/share/omarchy/default/chromium/extensions/whatsapp-slim/whatsapp.css usr/share/omarchy/migrations/1785591762.sh
 exclude e1531373f9479544125dcd9983db417eb4daf47d548a13bef5b4dead8ae38674 1785608166.sh 4.5.0-3 review
 allow 33bc1c80ce7c4500c08198283fcc70a20b1a155f1a3b51c0797dfaf97988d694 1785608251.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1785608251.sh
 exclude b3ec0e14f60c28203d99177d4e6e5db769941b1645903db554dfa9d3492c64a6 1785617047.sh 4.5.0-3 person
@@ -190,12 +190,12 @@ allow c45dc149c8f09502f4aed6a63d0e13017a89a2d6e4dc9bca466bfd1cdcdfc695 178563322
 allow c1d7a26587ccb03815db548267cf5ecf6f640fdd26590a7d5cc82d66718ccabd 1785637426.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1785637426.sh
 exclude cd70541bada47a401ad7cc83d609ddc85ba59fb2ece3cd07f11d5f611da66bab 1785846769.sh 4.5.0-3 person
 allow 43f80e2b53fac11aab830c220d5cb933faab8ad0350e7c88ea602492fa1d83aa 1785944594.sh 4.5.0-3 usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-present usr/share/omarchy/migrations/1785944594.sh
-allow 779e11eff76ee62c54e911545339096dd710e4554db66de829f0b38adc0e6f76 1786098807.sh 4.5.0-3 usr/share/omarchy/migrations/1786098807.sh
+exclude 656f95f07fea01f66ccdec40c06640774500a0f7ded019d3b0dfe2adc87be9e4 1786098807.sh 4.5.0-3 person
 exclude 1f56248f7e8493652620f9e1a27c2655bacc5f0432e86677dabbc69684cccd7b 1786099804.sh 4.5.0-3 person
 allow 44b2810bbbe5d440eb6a65bf9fb7c570bdef98abfb15e4daddcddee0307534d0 1786137597.sh 4.5.0-3 usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-present usr/share/omarchy/migrations/1785944594.sh usr/share/omarchy/migrations/1786137597.sh
 exclude d0bfc92e590595dda321a8d1dc5c8c854c6780054aeb29b4f8609c1803fba0f6 1786181929.sh 4.5.0-3 home-code
 exclude 0ee0af26131c67a7c6be786316d5da619cb1713c4b38a3fcaa3fab8d0301d6d0 1786183928.sh 4.5.0-3 home-code
-exclude 7c228f6e86c7500a8de429543f1ca7c58f04368c00cee1ee333e2140bb64b4be 1786273938.sh 4.5.0-3 home-code
+exclude 7c228f6e86c7500a8de429543f1ca7c58f04368c00cee1ee333e2140bb64b4be 1786273938.sh 4.5.0-3 person
 allow e738f8f03265dec92a1ef8731b45f50d13d5d9cd42802b611b5adc38594bac23 1786278735.sh 4.5.0-3 usr/share/omarchy/migrations/1786278735.sh
 exclude 6ae8f2e4b0728d636346e357b509a49432b96cf9ed1ebf9f719ccb28c3922339 1786279107.sh 4.5.0-3 person
 allow c928a81d9b48fe59d92a1184f44613391667a58456998091faa375ef12da480e 1786355450.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1786355450.sh
@@ -207,7 +207,7 @@ allow e4e7aa1df77f0f21ec0b6eb5a93468fab9b2f83bbc6b079ffdf0c3ca4b4840ef 178645156
 allow 91b939732579bedea7af5974bef1c44147c25ce0cebb9536f464c051e7447f24 1786482992.sh 4.5.0-3 usr/bin/omarchy-cmd-present usr/share/omarchy/migrations/1786482992.sh
 allow 448af7cb3ede8b812e8ecb9b4148efdc2b553fbddd973bedf9181a89b0b0bd3b 1786517850.sh 4.5.0-3 usr/share/omarchy/migrations/1786517850.sh
 exclude 07a72a24c32bb24cfd1b8607b6dbde2a1d7488abc7b237fedf0eaf6e2eeafeb3 1786539345.sh 4.5.0-3 person
-exclude 54d465910c57a72b43ed5829114e057fcd6e40860f452ce737cfde2010914e4f 1786549201.sh 4.5.0-3 home-code
+exclude 54d465910c57a72b43ed5829114e057fcd6e40860f452ce737cfde2010914e4f 1786549201.sh 4.5.0-3 person
 allow b1096d59c5305c9542c41ea45aff2a23a2f39fce555af7c84c5b3d26410ae582 1786567036.sh 4.5.0-3 usr/share/omarchy/migrations/1786567036.sh
 exclude 4508bd76f3ce2d7d3c655098390f710a59ba556a0e79b7e919ffb78a0b986c83 1786605598.sh 4.5.0-3 review
 allow 78bbe2466f9f5b496179f2fe0d32af1ddbe2afee4368818d7b3c4974657dd9b5 1786609204.sh 4.5.0-3 usr/share/omarchy/migrations/1786609204.sh
@@ -233,14 +233,14 @@ exclude b7e417ef840d46d949b7ac7f9427972ea2cd8ba5f995e70b4026982d84395af9 1787679
 exclude ed5608805fce3477c0cd3798a5e06268a87b7ea708dc8aa84cda6a1614e6fed1 1787691200.sh 4.5.0-3 review
 allow 2de1615aa1631d7def19f080d101c9565892c4b7ef8656667b7279a1bfd5ecef 1787760281.sh 4.5.0-3 usr/share/omarchy/migrations/1787760281.sh
 allow 995eccad56d45f19f97b53b54d7897c1ffd10ced6f89337daa02f11a98072ff0 1787815267.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-missing usr/bin/omarchy-pkg-present usr/share/omarchy/migrations/1787815267.sh
-allow 7cb2ff3a1dcfbba1023cad23f4e873b836417e5b5d48491b87d6b487a77a199f 1787843905.sh 4.5.0-3 usr/share/omarchy/migrations/1787843905.sh
+exclude 26d382b135be3ceeb06bfd60bb82baaedaed356b95a77502f95b1eb98cd4b6ae 1787843905.sh 4.5.0-3 person
 allow 45013f8f06c7df8393aefeeef864dd6fa8e3b1c2a873c122339b52fc49a06365 1787865477.sh 4.5.0-3 usr/bin/omarchy-state usr/share/omarchy/migrations/1787865477.sh
 allow 06b8064c86e35f01c750a5b2be59d34e6ede0559df3598e5edc104fd85341e35 1788009111.sh 4.5.0-3 usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-present usr/share/omarchy/migrations/1788009111.sh
 exclude d29bba2a2839fb3acef89870a9d021aa5965b905f12484266b95cd398692b415 1788025225.sh 4.5.0-3 person
 exclude 022fe18a9cfe38620b647311ca2e93af8e9e9d6cd591471d65fe9b21274c9e7d 1788102906.sh 4.5.0-3 person
 allow 23bdd30e166f9cc9a498d8f7d1dd46adf69bb89416e7e82a234da88c38b0cf16 1788112314.sh 4.5.0-3 usr/share/omarchy/migrations/1788112314.sh
 exclude 7d600316b3146e8b56c65caae393df8222b5cbfdbfffa46e0c9ae8bfde781b5b 1788124236.sh 4.5.0-3 person
-allow d08d61efc4871d832df0a63812610c4a318bdefca8da13f357f50210b74af621 1788129995.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-drop usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1788129995.sh
+exclude 6c41d13d6d10d5cf73b4c38cccdf4a4ad1e860f5b37020ac7a2893d66cd043f4 1788129995.sh 4.5.0-3 review
 exclude 1cc2247352b5284e79c4f59ea75884969f521f23884855a2a38d3ff969be2b53 1788163635.sh 4.5.0-3 person
 allow 3108fbec0326fa7737fc2d531baabdd3337063e6b058f1fa79a7373b6f371f09 1788256455.sh 4.5.0-3 usr/bin/omarchy-hw-laptop-closed usr/share/omarchy/migrations/1788256455.sh
 exclude 3c158ab157792e598c689ce73275b7b3548e04419e350103d1eac52a5170f470 1788261467.sh 4.5.0-3 review
@@ -250,7 +250,7 @@ exclude aa3d55480497aabc5bf8ad216513c70074e98de13a20c893151038232c9713ce 1788577
 exclude 46a933c26be719bf4a8d2b96308ef3d87d8b4a698dfd6bf0f1d8de4db2fd404b 1788595060.sh 4.5.0-3 person
 allow f650a767173d808213ee4c4a618adac192b66f67a300c53f6d3a002e942a8a4b 1788596255.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1788596255.sh
 exclude 9b88a155cd4bace42ea1a10f6c12a558544926f00671e1e741b8977b856ca78f 1788619462.sh 4.5.0-3 person
-allow 37b6d2786e4cbd114688e3567eb993ef368d4cc58e7edf23acc903b71150452d 1788662350.sh 4.5.0-3 usr/share/omarchy/migrations/1788662350.sh
+allow f580c1b60fef7bcf841ca777490e41fbc022c57e610a6061afce33d7952b8ecd 1788662350.sh 4.5.0-3 usr/share/omarchy/default/systemd/system-sleep/force-igpu usr/share/omarchy/default/systemd/system-sleep/keyboard-backlight usr/share/omarchy/default/systemd/system/supergfxd.service.d/delay-start.conf usr/share/omarchy/migrations/1788662350.sh
 exclude 2ab07d502a4a5c424293204274e43c7b338717392ebaee64cbd53d5c8c3e235e 1788724825.sh 4.5.0-3 person
 exclude 4367fefeeb8efe2d5d070f4d2de904338e4665b54589c89595bfc5e127dcf140 1788745941.sh 4.5.0-3 person
 allow 18d0d470e473b81710f26267f64e38f92e132d61cc7d9d29342864ae79e6ffb9 1788848726.sh 4.5.0-3 usr/share/omarchy/migrations/1788848726.sh
@@ -258,7 +258,7 @@ exclude 93cb43601b3790dbe5eb2a944f20774ffdafeb5e7d2fc31b3a54d962b81c04d4 1788862
 exclude 69c83e36764ab8d950c3495cad5cad1c210dded0e7c0523d9c7269603221a3a0 1788941927.sh 4.5.0-3 person
 exclude 31508b271d508f2c60abbef4b50ff4cf8280ea1195290b14c2f359af880ab6ad 1788996284.sh 4.5.0-3 review
 exclude 5d2037abbce10d1dfa1a53f176fbda8ebdb502a546766263590deb24eb8d1c45 1789095456.sh 4.5.0-3 home-code
-allow 85d42d8eea69fdd7adae51c1c67b4f860486d3c72a49e28f9c9b225e98355eda 1789130779.sh 4.5.0-3 usr/bin/omarchy-refresh-config usr/share/omarchy/migrations/1789130779.sh
+exclude ffaed427a09dda6d10b4222913d2eb0046a5d013b994ef98ce398ea54982eddb 1789130779.sh 4.5.0-3 person
 allow da422fa513f947b0ee0333a36ce4f028927a3ad2fbf38b07874f9d6a38a11740 1789294350.sh 4.5.0-3 usr/bin/omarchy-state usr/share/omarchy/migrations/1789294350.sh
 exclude 56dec2bc7baa6e966e1b53348b234ff4fd2383978eb4d7b165c702b82f42e4e8 1789310715.sh 4.5.0-3 person
 exclude 290c3652b45be05f27ebe5ab7b3de519c952dabe2fb3ebdc4d83d885defe53ba 1789325478.sh 4.5.0-3 person
@@ -294,7 +294,7 @@ exclude 487ca616b721e434c667ea1ce368cd74a8e767586a02049e3c111007b0007f17 1791077
 exclude 4247109ee290e113eb223430f878d0c8b461b215ddb447d405fb9d56d5262e4b 1791080527.sh 4.5.0-3 review
 exclude f3f93fc14b31aca294be5aab7a2275237fa0b969d5974a85ec0321b00d2c16de 1791112479.sh 4.5.0-3 home-code
 exclude 36e9b8ff4ecd4a8112d48cf46791f5bcc59a56769803091c56154a449045543c 1791123731.sh 4.5.0-3 review
-allow 72e2cfcbcd98255fc78f0ff5ce5a0cd03c925889bf82b12a201d7a8d51b4e41c 1791125650.sh 4.5.0-3 usr/share/omarchy/migrations/1791125650.sh
+allow a9cae043fd86dbb8129a90579fb7ed5527cd5767b8951d21ce6b03a8252b9e8b 1791125650.sh 4.5.0-3 usr/share/omarchy/default/systemd/system-sleep/fprintd-resume usr/share/omarchy/default/systemd/system/fprintd.service.d/10-stop-timeout.conf usr/share/omarchy/migrations/1791125650.sh
 exclude 022ec0ac088f37e95b9cc116a17c5943bd62e1d3014038b7328edbc34f7e0d3f 1791134093.sh 4.5.0-3 review
 allow 6cc24a736ea5bcd0098617ef0a7afea8f8f95c10413d4987928f18019ad75127 1791147791.sh 4.5.0-3 usr/bin/omarchy-state usr/share/omarchy/migrations/1791147791.sh
 allow f36ec2963deecc418a3c67964d47115b68016f66fc250534bfaff477368ffbaa 1791152480.sh 4.5.0-3 usr/share/omarchy/migrations/1791152480.sh
@@ -325,7 +325,7 @@ exclude 5ca2e4841df2b79b0b33622c6845c595e6c6f89f8d696679217b11079ce7e907 1791784
 exclude 47c240f1ad823ee8851bc31fbc492f377e7ff508680da50743bb5de4da1c4447 1791867831.sh 4.5.0-3 review
 exclude e5afe40f67a7be5ca0f639ac270f23260f53c159eb519302e8193f08ba2afbf4 1791875754.sh 4.5.0-3 person
 allow 12e052d6d5f215f8c051183f50db5ea5a1947eafccb90797b751d503b32b11f6 1791898365.sh 4.5.0-3 usr/share/omarchy/migrations/1791898365.sh
-allow b2d97b055d12311ba6b8f32ed77c76c6582884bc8e7b3d9826019082deb81c02 1791934674.sh 4.5.0-3 usr/share/omarchy/migrations/1791934674.sh
+exclude 7675ed4b31835fbe1df8e1cd0c3e0366124fce29d5837919822d746ee977193f 1791934674.sh 4.5.0-3 person
 exclude f281278e5a415f1f8c955d6bca6de0b62bcd6b586ce75bf62b24638ad1f15782 1791935188.sh 4.5.0-3 person
 allow ed156fe9dbfa4729c5b19a089859c905c372bc1bbd94eebe62d760bc50d01449 1791968925.sh 4.5.0-3 usr/share/omarchy/migrations/1791968925.sh
 exclude 6aca23800c472f8e6c41d972c4b9019cbbd532b9ababcf8d8c2f296fc6f230cb 1791969355.sh 4.5.0-3 review
@@ -345,7 +345,7 @@ exclude 848f0cf1ad03b43499a5ceec6ca3d43155fc82f3361d86cdef76337c8aa06bfe 1792634
 allow 8c536ab0acb2dde79fb20fd003ba156efb405307a97aa4c4fc549e0633a144a3 1792648436.sh 4.5.0-3 usr/share/omarchy/migrations/1792648436.sh
 exclude 7414fb44f035fbdfd4e0068f427524841f309fafe0fb5e883e0cc965ee647679 1792965062.sh 4.5.0-3 person
 exclude 0873cd3a14ec3c3ffb1f707832a100b28e2881fa82cc2af7561f1e893596db7a 1793069744.sh 4.5.0-3 review
-exclude 35aea3b54b5940a7d28a222fc0d469b23f9d3625f80818a928d77ea381b3f75a 1793315076.sh 4.5.0-3 review
+exclude 35aea3b54b5940a7d28a222fc0d469b23f9d3625f80818a928d77ea381b3f75a 1793315076.sh 4.5.0-3 person
 allow be82bfe904583908729d1b499424740d44367d6719a47992c20ba3f7ddd89a7a 1793452544.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1793452544.sh
 exclude 84bc00db899cba7c6533b71446e86c3f9a226a10b072bade4aec66c0d3668d7b 1793477875.sh 4.5.0-3 person
 allow 9d0f84c440d8ac05aa8030ab712b953b0f173b26d5e846d228fd7b4a989b7ef6 1793512402.sh 4.5.0-3 usr/bin/omarchy-pkg-add usr/bin/omarchy-pkg-missing usr/share/omarchy/migrations/1793512402.sh

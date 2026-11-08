@@ -13,18 +13,20 @@ supported release: the drift lock (docs/upstream/omarchy*.lock) whose `# omarchy
 newest migration gives its package version; a tree no lock names is refused (a release Grassfield does not support yet:
 pin its lock first, scripts/dev/upstream-drift.sh).
 
-Each migration is judged with everything it reaches, its CLOSURE: what it sources or runs (`source`, `.`, `bash`, `sh` with a
-file) under /usr/share/omarchy ($OMARCHY_PATH, $OMARCHY_INSTALL), the omarchy-* commands it names, and the same for each of
-those, transitively (the security review of 2026-11-08: 1792474908 sourced an excluded migration). Only files of the
-helper's own extraction count (migrations/, bin/, install/ under usr/share/omarchy, usr/bin/omarchy-*); a source the
-generator cannot resolve to one of them (a variable, `<(...)`, a file of another package) excludes the migration, except a
-file under /etc (root's configuration, read as data). The helper's OWN scans (cut out of
+Each migration is judged with everything it reaches, its CLOSURE: every file of the package a word of it names
+($OMARCHY_PATH/..., $OMARCHY_INSTALL/..., /usr/share/omarchy/..., anywhere, comments too: sourced, run, run directly, through
+env or timeout, or copied; a folder of at most DIR_MAX files with those files), the omarchy-* commands it names, a file under
+/etc it sources (root's configuration: listed, never hashed, the helper requires it root's alone), and the same for each of
+those, transitively (the security reviews of 2026-11-08: 1792474908 sourced an excluded migration; 1781984677 ran an install
+script through `as_root env ... bash`). A package path it cannot resolve (a variable in it, the package root, a larger
+folder), a source it cannot resolve, a pipe into a shell, `exec`, a shell after a prefix word (env, timeout, as_root, sudo),
+or an omarchy-* name built at run time excludes the migration (`review`). The helper's OWN scans (cut out of
 packaging/pacman/grassfield-update-helper, run as written there) and the wider review patterns below are applied to every
 file of the closure: `exclude ... person` when one needs a person, or when the migration relies on its working folder (the
 unit works from /: a relative path, $PWD, `cd -`); `exclude ... home-code` when one reaches code the person can change;
 `exclude ... review` when one reaches a review pattern (other interpreters and package builders, login, interactive or -c
-shells, eval, input read from or code run out of a home path, the XDG folders, /home/) or a source cannot be resolved; else
-`allow`, with the closure's files and the sha256 of their "<file> <sha256>" lines, sorted, which the helper hashes again.
+shells, eval, input read from or code run out of a home path, the XDG folders, /home/); else `allow`, with the closure's
+files and the sha256 of the package files' "<file> <sha256>" lines, sorted, which the helper hashes again.
 A regeneration replaces only the lines of the releases it read.
 --check without a tree: every drift lock has its `release` line, each release has exactly its count of lines, every line
 reads, no name twice in a release. With trees: also their lines are exactly what the generation from that tree gives.
@@ -44,9 +46,13 @@ HELPER = os.path.join(ROOT, "packaging/pacman/grassfield-update-helper")
 LOCKS = os.path.join(ROOT, "docs/upstream")
 NAME = re.compile(r"[0-9]{1,20}\.sh")
 VERSION = r"[A-Za-z0-9._+:-]{1,64}"
-# The files a closure may hold: the helper's GU_CLOSURE_FILE.
-CLOSURE_FILE = re.compile(r"usr/(share/omarchy/(migrations/[0-9]{1,20}\.sh|bin/omarchy-[a-z0-9-]+|install/[A-Za-z0-9._@+-]+"
-                          r"(/[A-Za-z0-9._@+-]+)*)|bin/omarchy-[a-z0-9-]+)")
+# The files a closure may hold: the helper's GU_CLOSURE_FILE. etc/ files are root's configuration a migration sources: listed,
+# never hashed (each machine's own), and the helper requires them root's alone.
+CLOSURE_FILE = re.compile(r"usr/(share/omarchy/[A-Za-z0-9._@+-]+(/[A-Za-z0-9._@+-]+)*|bin/omarchy-[a-z0-9-]+)"
+                          r"|etc/[A-Za-z0-9._@+-]+(/[A-Za-z0-9._@+-]+)*")
+# A directory named by a path word joins the closure with every file under it, up to this many; a larger one (the package
+# root itself) cannot be reviewed as part of one migration.
+DIR_MAX = 64
 ALLOW = re.compile(r"allow ([0-9a-f]{64}) ([0-9]{1,20}\.sh) (" + VERSION + r")((?: \S+)+)")
 EXCLUDE = re.compile(r"exclude ([0-9a-f]{64}) ([0-9]{1,20}\.sh) (" + VERSION + r") (person|home-code|review|unreadable)")
 RELEASE = re.compile(r"release (" + VERSION + r") newest-migration ([0-9]{1,20}) migrations ([0-9]{1,6})")
@@ -64,6 +70,15 @@ CWD = ("(^|[[:space:]\"'=(])\\.\\.?/|(^|[[:space:]\"'=(])\\.(config|local|cache|
 # Where bash starts a command, then source / . / bash / sh and its options, then its first word.
 SOURCE = re.compile(r"(?:^|[;&|({!]|\bthen\b|\bdo\b|\belse\b)\s*(source|\.|bash|sh)\s+((?:-[A-Za-z]+\s+)*)(\S+)")
 COMMAND = re.compile(r"(?<![A-Za-z0-9_.-])(omarchy-[a-z0-9-]+)(?![A-Za-z0-9_.-])")
+# Every word naming a path of the Omarchy package, anywhere (comments too), joins the closure: a script run directly, through
+# env, timeout or exec, or copied, is covered whatever the command around it (the third security review).
+OMARCHY_WORD = re.compile(r"""(\$\{?OMARCHY_PATH\}?|\$\{?OMARCHY_INSTALL\}?|/usr/share/omarchy)((?:/[^\s"'`;|&()<>{}]*)?)""")
+# Ways of running code the closure cannot follow (non-comment lines): a pipe into a shell, exec, a shell after a prefix word
+# (env, timeout, as_root, sudo ... bash), an omarchy-* command named at run time.
+PIPE_SHELL = re.compile(r"\|\s*(?:\S*/)?(bash|sh|zsh|dash|ksh)(?![A-Za-z0-9_.-])")
+EXEC_WORD = re.compile(r"(?<![A-Za-z0-9_.-])exec(?![A-Za-z0-9_.-])")
+SHELL_WORD = re.compile(r"(?<![A-Za-z0-9_.-])(bash|sh|zsh|dash|ksh)(?![A-Za-z0-9_.-])")
+DYNAMIC_COMMAND = re.compile(r"(?<![A-Za-z0-9_.-])omarchy-[a-z0-9-]*[$`]")
 HEADER = """\
 # Omarchy migrations that Software Update may run with root without a person (ADR-0033 s5, owner decision SU-M2; rc7 audit
 # R7-SEC-01 and its security reviews). Installed as /usr/share/grassfield/update/omarchy-migrations.allow (root's alone):
@@ -174,37 +189,80 @@ class Tree:
         return None
 
     def resolve(self, word):
-        """("file", rel) for a file of the closure, ("data", path) for a file under /etc, else ("unresolved", word)."""
+        """("files", [rel...]) for a file or a small folder of the package, ("etc", rel) for a file under /etc, else
+        ("unresolved", word)."""
         a = word.strip("\"'")
-        a = re.sub(r"^\$\{?OMARCHY_INSTALL\}?(?=/)", "usr/share/omarchy/install", a)
-        a = re.sub(r"^(\$\{?OMARCHY_PATH\}?|/usr/share/omarchy)(?=/)", "usr/share/omarchy", a)
-        if "$" not in a and ".." not in a and "`" not in a and CLOSURE_FILE.fullmatch(a):
+        a = re.sub(r"^\$\{?OMARCHY_INSTALL\}?(?=/|$)", "usr/share/omarchy/install", a)
+        a = re.sub(r"^(\$\{?OMARCHY_PATH\}?|/usr/share/omarchy)(?=/|$)", "usr/share/omarchy", a)
+        a = a.rstrip("/")
+        if any(c in a for c in "$`*?[") or ".." in a.split("/"):
+            return "unresolved", word
+        if a.startswith("usr/share/omarchy") and a != "usr/share/omarchy":
             path = os.path.join(self.tree, a)
-            if os.path.isfile(path) and not os.path.islink(path):
-                return "file", a
-        if a.startswith("/etc/") and "$" not in a and ".." not in a and "`" not in a:
-            return "data", a
+            if os.path.islink(path):
+                name = os.path.basename(a)
+                target = self.command_file(name) if a.startswith("usr/share/omarchy/bin/") else None
+                return ("files", [target]) if target else ("unresolved", word)
+            if os.path.isfile(path) and CLOSURE_FILE.fullmatch(a):
+                return "files", [a]
+            if os.path.isdir(path):
+                found = []
+                for top, dirs, names in os.walk(path):
+                    dirs.sort()
+                    for n in sorted(names):
+                        rel = os.path.relpath(os.path.join(top, n), self.tree)
+                        if not os.path.islink(os.path.join(top, n)) and CLOSURE_FILE.fullmatch(rel):
+                            found.append(rel)
+                        else:
+                            return "unresolved", word
+                if 0 < len(found) <= DIR_MAX:
+                    return "files", found
+            return "unresolved", word
+        if a.startswith("/etc/") and CLOSURE_FILE.fullmatch(a[1:]):
+            return "etc", a[1:]
         return "unresolved", word
 
     def reach(self, rel):
-        """(files it sources or names, sources it cannot resolve) of one file."""
+        """(files it reaches, ways of running code the closure cannot follow) of one file."""
         if rel not in self.edges:
             out, bad = set(), []
+            if rel.startswith("etc/"):
+                self.edges[rel] = (out, bad)
+                return self.edges[rel]
             for line in open(os.path.join(self.tree, rel), encoding="utf-8", errors="replace"):
                 for m in COMMAND.finditer(line):
                     f = self.command_file(m.group(1))
                     if f:
                         out.add(f)
+                for m in OMARCHY_WORD.finditer(line):
+                    kind, value = self.resolve(m.group(0))
+                    if kind == "files":
+                        out.update(value)
+                    else:
+                        bad.append("a path of the package it cannot resolve: " + m.group(0))
                 if line.lstrip().startswith("#"):
                     continue
+                starts = set()
                 for m in SOURCE.finditer(line):
+                    starts.add(m.start(1))
                     if re.search(r"-[A-Za-z]*c", m.group(2)):
                         continue  # a command string: the review patterns judge it
                     kind, value = self.resolve(m.group(3))
-                    if kind == "file":
+                    if kind == "files":
+                        out.update(value)
+                    elif kind == "etc":
                         out.add(value)
-                    elif kind == "unresolved":
+                    else:
                         bad.append(m.group(1) + " " + value)
+                if PIPE_SHELL.search(line):
+                    bad.append("a pipe into a shell")
+                if EXEC_WORD.search(line):
+                    bad.append("exec")
+                if DYNAMIC_COMMAND.search(line):
+                    bad.append("an omarchy-* command named at run time")
+                for m in SHELL_WORD.finditer(line):
+                    if m.start(1) not in starts:
+                        bad.append("a shell after a prefix word: " + m.group(1))
             self.edges[rel] = (out, bad)
         return self.edges[rel]
 
@@ -224,7 +282,9 @@ def sha_file(path):
 
 
 def closure_sum(tree, files):
-    return hashlib.sha256("".join("%s %s\n" % (f, sha_file(os.path.join(tree, f))) for f in files).encode()).hexdigest()
+    """The sha256 of the package files' "<file> <sha256>" lines, in order (etc/ files are listed, never hashed)."""
+    return hashlib.sha256("".join("%s %s\n" % (f, sha_file(os.path.join(tree, f))) for f in files
+                                  if not f.startswith("etc/")).encode()).hexdigest()
 
 
 def generate(tree, scratch):
@@ -242,8 +302,8 @@ def generate(tree, scratch):
         rel = "usr/share/omarchy/migrations/" + n
         path = os.path.join(tree, rel)
         closures[n] = t.closure(rel) if os.path.isfile(path) and not os.path.islink(path) else None
-    files = sorted({f for c in closures.values() if c for f in c[0]})
-    scripts = [f for f in files if not CLOSURE_FILE.fullmatch(f).group(0).startswith(("usr/bin/", "usr/share/omarchy/bin/"))]
+    files = sorted({f for c in closures.values() if c for f in c[0] if not f.startswith("etc/")})
+    scripts = [f for f in files if not f.startswith(("usr/bin/", "usr/share/omarchy/bin/"))]
     hits = {"person": matching(person, files, tree), "cwd": matching(CWD, scripts, tree),
             "home-code": matching(home, files, tree), "review": matching(review, files, tree)}
     rows = {}
