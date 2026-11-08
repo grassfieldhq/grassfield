@@ -10,6 +10,7 @@
 #include "launchguard.h"
 #include "navlogic.h"
 #include "permissionlogic.h"
+#include "programlaunch.h"
 #include "foldermodel.h"
 #include "folderstylelogic.h"
 #include "imagerotate.h"
@@ -61,6 +62,7 @@
 #include <KIO/DeleteJob>
 #include <KIO/DirectorySizeJob>
 #include <KIO/EmptyTrashJob>
+#include <KIO/FileCopyJob>
 #include <KIO/FileUndoManager>
 #include <KIO/JobUiDelegateFactory>
 #include <KIO/MkdirJob>
@@ -929,38 +931,139 @@ QUrl FilesApp::locationUrl(const QString &text, const QUrl &base) const
     return QUrl::fromLocalFile(QDir::cleanPath(path));
 }
 
+namespace
+{
+QString storeProgram();
+
+// The Open With menu's Terminal entry (FilesApp::applicationsFor): runs an executable script in the session's terminal.
+const QString kTerminalEntry = QStringLiteral("grassfield:terminal");
+
+// What the terminal runs for Open With > Terminal: the script (its path is $1, never part of the command text), then Omarchy's
+// "Done" prompt so the window stays until a key is pressed (macOS: Terminal keeps the window of a finished script).
+const QString kTerminalHold = QStringLiteral(
+    "\"$1\"; code=$?; if command -v omarchy-show-done >/dev/null 2>&1; then omarchy-show-done \"$code\"; else read -r -s -n 1; fi");
+
+const char *verdictName(LaunchGuard::Verdict v)
+{
+    switch (v) {
+    case LaunchGuard::Verdict::RefuseLauncher:
+        return "app launcher";
+    case LaunchGuard::Verdict::RefuseIncompatible:
+        return "program for another computer";
+    case LaunchGuard::Verdict::RefuseDisguised:
+        return "program named as a document";
+    case LaunchGuard::Verdict::RefuseNotAnApp:
+        return "not an app";
+    case LaunchGuard::Verdict::RefuseRemoteProgram:
+        return "program on a server";
+    case LaunchGuard::Verdict::RefuseElevated:
+        return "program with other rights";
+    case LaunchGuard::Verdict::RunProgram:
+        return "program";
+    case LaunchGuard::Verdict::OpenScript:
+        return "script";
+    case LaunchGuard::Verdict::WindowsFile:
+        return "windows";
+    case LaunchGuard::Verdict::JavaProgram:
+        return "java";
+    case LaunchGuard::Verdict::ForeignApp:
+        return "another system's app";
+    default:
+        return "document";
+    }
+}
+
+// One journal line per decision (name, origin host, decision), never the file's contents.
+void logDecision(const char *decision, LaunchGuard::Verdict v, const LaunchGuard::Facts &facts)
+{
+    const QString host = LaunchGuard::originHost(facts);
+    qInfo("grassfield-files: open %s (%s): \"%s\"%s%s", decision, verdictName(v), qPrintable(LaunchGuard::logName(facts.fileName)),
+          host.isEmpty() ? "" : " from ", qPrintable(LaunchGuard::logName(host)));
+}
+
+// The same file as the one the user decided on (a sheet stays up while the file can change).
+bool sameFile(const LaunchGuard::Facts &a, const LaunchGuard::Facts &b)
+{
+    return a.path == b.path && a.inode == b.inode && a.mtimeNs == b.mtimeNs && a.size == b.size;
+}
+
+// The application that opens a Windows file: the default one for its type that names the type itself (Wine, Bottles), never
+// one that inherits it from a parent type (any program handler, a text editor).
+KService::Ptr windowsHandler(const LaunchGuard::Facts &facts)
+{
+    const KService::Ptr service = KApplicationTrader::preferredService(facts.mimeType);
+    if (!service || service->desktopEntryName() == QLatin1String("org.grassfield.files") || !service->hasMimeType(facts.mimeType))
+        return {};
+    return service;
+}
+
+// java for a Java archive, javaws for a Web Start file; "" when not installed.
+QString javaRunner(const LaunchGuard::Facts &facts)
+{
+    const bool webStart = facts.mimeType == QLatin1String("application/x-java-jnlp-file") || facts.fileName.endsWith(QLatin1String(".jnlp"), Qt::CaseInsensitive);
+    return QStandardPaths::findExecutable(webStart ? QStringLiteral("javaws") : QStringLiteral("java"));
+}
+} // namespace
+
 void FilesApp::open(const QList<QUrl> &urls)
 {
-    // macOS Gatekeeper model (GF-070, DT-10): opening never runs a program, a script or an app launcher; they are refused
-    // here, before KIO sees them, whatever KIO would do. Decided before the test switch below so a scripted test sees it.
+    // The Gatekeeper model (ADR-0011 amendment 2026-11-08; GF-070, DT-10 as amended): LaunchGuard decides every item, by its
+    // content and its execute bit, before KIO sees it and before the test switch below, so a scripted test sees the decision.
     QList<QUrl> allowed;
     QList<QUrl> webLinks; // addresses of web-link files, for the default web browser only
+    QList<QUrl> scripts;
+    QList<QPair<QUrl, LaunchGuard::Facts>> programs;
     QString refusedName;
     LaunchGuard::Verdict refusedKind = LaunchGuard::Verdict::Open;
     int refused = 0;
     for (const QUrl &url : urls) {
         const LaunchGuard::Facts facts = LaunchGuard::inspect(url);
         const LaunchGuard::Verdict v = LaunchGuard::verdict(facts);
-        if (v == LaunchGuard::Verdict::Open) {
+        switch (v) {
+        case LaunchGuard::Verdict::Open:
             allowed << url;
             continue;
-        }
-        if (v == LaunchGuard::Verdict::OpenWebLinkInBrowser) {
+        case LaunchGuard::Verdict::OpenWebLinkInBrowser:
             webLinks << LaunchGuard::webLink(facts);
             continue;
+        case LaunchGuard::Verdict::OpenScript:
+            logDecision("in the text editor", v, facts);
+            scripts << url;
+            continue;
+        case LaunchGuard::Verdict::RunProgram:
+            programs << qMakePair(url, facts);
+            continue;
+        case LaunchGuard::Verdict::WindowsFile:
+        case LaunchGuard::Verdict::JavaProgram:
+        case LaunchGuard::Verdict::ForeignApp:
+            // Explained in a sheet; never run by opening (its button runs it, after the sheet, through its own handler).
+            logDecision("explained", v, facts);
+            explainForeign(url, facts, v);
+            continue;
+        default:
+            break;
         }
-        qInfo("grassfield-files: open refused (%s)", v == LaunchGuard::Verdict::RefuseLauncher ? "app launcher" : "program or script");
+        qInfo("grassfield-files: open refused (%s): \"%s\"", verdictName(v), qPrintable(LaunchGuard::logName(facts.fileName)));
         if (refused++ == 0) {
-            refusedName = url.fileName();
+            refusedName = facts.fileName.isEmpty() ? url.fileName() : facts.fileName;
             refusedKind = v;
         }
     }
-    if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseLauncher)
-        emit operationFailed(tr("“%1” was not opened: it is an app launcher, and Files never starts apps from a folder. Open apps from the Dock, Apps or Search.").arg(FileLogic::displayName(refusedName)));
+    const QString shown = FileLogic::displayName(refusedName);
+    if (refused > 1)
+        emit operationFailed(tr("%1 items were not opened.").arg(refused));
+    else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseLauncher)
+        emit operationFailed(tr("“%1” was not opened: it is an app launcher, and Files never starts apps from a folder. Open apps from the Dock, Apps or Search.").arg(shown));
+    else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseIncompatible)
+        emit operationFailed(tr("“%1” can’t be opened because it isn’t made for this computer.").arg(shown));
+    else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseDisguised)
+        emit operationFailed(tr("“%1” wasn’t opened: it is an app, but its name makes it look like a document. If you trust it, rename it first.").arg(shown));
+    else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseNotAnApp)
+        emit operationFailed(tr("“%1” can’t be opened: it isn’t a valid app.").arg(shown));
+    else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseRemoteProgram)
+        emit operationFailed(tr("“%1” can’t be opened from here. Copy it to a folder on this computer first.").arg(shown));
     else if (refused == 1)
-        emit operationFailed(tr("“%1” was not opened: it is a program or script, and Files never runs programs from a folder. To run it on purpose, use a terminal.").arg(FileLogic::displayName(refusedName)));
-    else if (refused > 1)
-        emit operationFailed(tr("%1 items were not opened: Files never runs programs, scripts or app launchers from a folder.").arg(refused));
+        emit operationFailed(tr("“%1” wasn’t opened: Files doesn’t open programs that run with other rights.").arg(shown));
     // An archive opens by expanding next to itself (the Finder's Archive Utility, ADR-0029); Open With still offers the
     // applications that read it.
     for (auto it = allowed.begin(); it != allowed.end();) {
@@ -971,7 +1074,7 @@ void FilesApp::open(const QList<QUrl> &urls)
             ++it;
         }
     }
-    if (allowed.isEmpty() && webLinks.isEmpty())
+    if (allowed.isEmpty() && webLinks.isEmpty() && scripts.isEmpty() && programs.isEmpty())
         return;
     if (launchingBlocked()) {
         emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
@@ -996,10 +1099,14 @@ void FilesApp::open(const QList<QUrl> &urls)
         });
         job->start();
     }
+    for (const QUrl &url : std::as_const(scripts))
+        openInTextEditor(url);
+    for (const auto &program : std::as_const(programs))
+        requestRun(program.first, program.second);
     for (const QUrl &url : std::as_const(allowed)) {
         auto *job = new KIO::OpenUrlJob(url, this);
         attachDelegate(job);
-        // Never run programs or scripts from the file manager: they open in their associated app.
+        // KIO never runs what Files hands it: programs and scripts were decided above.
         job->setRunExecutables(false);
         connect(job, &KJob::result, this, [this, job] {
             if (job->error() && job->error() != KIO::ERR_USER_CANCELED)
@@ -1009,7 +1116,260 @@ void FilesApp::open(const QList<QUrl> &urls)
     }
 }
 
-QVariantList FilesApp::applicationsFor(const QList<QUrl> &urls) const
+void FilesApp::requestRun(const QUrl &url, const LaunchGuard::Facts &facts)
+{
+    const LaunchGuard::RunPlan plan = LaunchGuard::plan(facts);
+    const QString name = FileLogic::displayName(facts.fileName);
+    if (!plan.ask) {
+        logDecision("run", LaunchGuard::Verdict::RunProgram, facts);
+        startProgram(facts.path, name, facts.appImage, facts.elfInterpreter);
+        return;
+    }
+    logDecision("asked", LaunchGuard::Verdict::RunProgram, facts);
+    // Gatekeeper's sheet (KioSheetsLogic.openProgram): where it came from, what Open will do; Return and Esc cancel.
+    const QVariantMap request{{QStringLiteral("kind"), QStringLiteral("openProgram")},
+                              {QStringLiteral("what"), QStringLiteral("app")},
+                              {QStringLiteral("name"), name},
+                              {QStringLiteral("downloaded"), plan.downloaded},
+                              {QStringLiteral("host"), LaunchGuard::originHost(facts)},
+                              {QStringLiteral("allowRun"), plan.allowRun},
+                              {QStringLiteral("copy"), plan.copy}};
+    m_prompts->ask(request, nullptr, [this, url, facts, plan, name](const QVariantMap &reply) {
+        if (reply.value(QStringLiteral("button")).toString() != QLatin1String("open")) {
+            logDecision("canceled", LaunchGuard::Verdict::RunProgram, facts);
+            return;
+        }
+        // Decided on what the sheet showed: the file must still be that file (and still a program for this computer).
+        const LaunchGuard::Facts now = LaunchGuard::inspect(url);
+        if (LaunchGuard::verdict(now) != LaunchGuard::Verdict::RunProgram || !sameFile(now, facts)) {
+            logDecision("changed", LaunchGuard::Verdict::RunProgram, facts);
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), tr("It changed while you were deciding. Open it again to decide on it as it is now."));
+            return;
+        }
+        logDecision("approved", LaunchGuard::Verdict::RunProgram, facts);
+        if (launchingBlocked()) {
+            emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
+            return;
+        }
+        if (plan.copy) {
+            copyToApplicationsAndRun(now);
+            return;
+        }
+        const QString error = ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, plan.allowRun);
+        if (!error.isEmpty()) {
+            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(name), error);
+            return;
+        }
+        startProgram(now.path, name, now.appImage, now.elfInterpreter);
+    });
+}
+
+void FilesApp::copyToApplicationsAndRun(const LaunchGuard::Facts &facts)
+{
+    const QString name = FileLogic::displayName(facts.fileName);
+    const QString folder = ProgramLaunch::applicationsFolder();
+    const QString free = folder.isEmpty() ? QString() : ProgramLaunch::freeName(folder, facts.fileName);
+    if (free.isEmpty()) {
+        m_prompts->tell(tr("“%1” couldn’t be copied to your Applications folder.").arg(name), QString());
+        return;
+    }
+    const QString destination = QDir(folder).filePath(free);
+    // KIO's copy keeps the download marks (a copy of a downloaded app is still one) and runs off the GUI thread.
+    KIO::FileCopyJob *job = KIO::file_copy(QUrl::fromLocalFile(facts.path), QUrl::fromLocalFile(destination), -1, KIO::HideProgressInfo);
+    attachDelegate(job);
+    connect(job, &KJob::result, this, [this, job, destination, name] {
+        if (job->error()) {
+            m_prompts->tell(tr("“%1” couldn’t be copied to your Applications folder.").arg(name), job->errorString());
+            return;
+        }
+        qInfo("grassfield-files: open copied to the Applications folder: \"%s\"", qPrintable(LaunchGuard::logName(QFileInfo(destination).fileName())));
+        const LaunchGuard::Facts copy = LaunchGuard::inspect(QUrl::fromLocalFile(destination));
+        if (LaunchGuard::verdict(copy) != LaunchGuard::Verdict::RunProgram || copy.noexecMount) {
+            m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(name), tr("This disk doesn’t allow apps to run from it."));
+            return;
+        }
+        const QString error = ProgramLaunch::approve(copy.path, copy.inode, copy.mtimeNs, copy.size, !copy.executable);
+        if (!error.isEmpty()) {
+            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(name), error);
+            return;
+        }
+        startProgram(copy.path, name, copy.appImage, copy.elfInterpreter);
+    });
+}
+
+void FilesApp::startProgram(const QString &path, const QString &name, bool appImage, const QString &interpreter, const QString &program,
+                            const QStringList &args)
+{
+    if (launchingBlocked()) {
+        emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
+        return;
+    }
+    auto *run = new ProgramLaunch::Run(this);
+    connect(run, &ProgramLaunch::Run::finished, this, [this, name](const ProgramLaunch::Outcome &o) {
+        using ProgramLaunch::Failure;
+        if (o.failure == Failure::None)
+            return;
+        static const char *const kFailures[] = {"none", "exec format", "missing library", "fuse", "cannot run here", "start failed", "quit at once"};
+        qInfo("grassfield-files: open failed (%s): \"%s\"", kFailures[qBound(0, int(o.failure), 6)], qPrintable(LaunchGuard::logName(name)));
+        switch (o.failure) {
+        case Failure::ExecFormat:
+            m_prompts->tell(tr("“%1” can’t be opened because it isn’t made for this computer.").arg(name),
+                            tr("It is a program for another kind of computer. Look for the version made for this one where you got it."));
+            break;
+        case Failure::MissingLibrary:
+            m_prompts->tell(tr("“%1” can’t be opened.").arg(name), tr("A component it needs is missing on this computer (%1).").arg(o.library));
+            break;
+        case Failure::Fuse:
+            if (o.componentMissing)
+                m_prompts->tell(tr("This AppImage needs a system component (fuse2)."),
+                                tr("It isn’t installed on this computer, so “%1” can’t be opened.").arg(name));
+            else
+                m_prompts->tell(tr("“%1” can’t be opened.").arg(name), tr("This AppImage couldn’t use FUSE on this computer."));
+            break;
+        case Failure::CannotRunHere:
+            m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(name), tr("This disk doesn’t allow apps to run from it."));
+            break;
+        case Failure::QuitAtOnce:
+            m_prompts->tell(tr("“%1” quit right after it opened.").arg(name), tr("It ended with the error code %1.").arg(o.exitCode));
+            break;
+        default:
+            m_prompts->tell(tr("“%1” could not be started.").arg(name), QString());
+            break;
+        }
+    });
+    // Its working folder is the program's own folder (an AppImage or a game finds its files beside it).
+    run->start(program.isEmpty() ? path : program, args, QFileInfo(path).absolutePath(), appImage, interpreter);
+}
+
+void FilesApp::explainForeign(const QUrl &url, const LaunchGuard::Facts &facts, LaunchGuard::Verdict verdict)
+{
+    const QString name = FileLogic::displayName(facts.fileName.isEmpty() ? url.fileName() : facts.fileName);
+    const LaunchGuard::RunPlan plan = LaunchGuard::plan(facts);
+    QVariantMap request{{QStringLiteral("name"), name},
+                        {QStringLiteral("downloaded"), plan.downloaded},
+                        {QStringLiteral("host"), LaunchGuard::originHost(facts)}};
+    if (verdict == LaunchGuard::Verdict::ForeignApp) {
+        // Another system's app: nothing here runs it. The Store may have an app for this computer that does the same thing.
+        const bool store = !storeProgram().isEmpty();
+        request.insert(QStringLiteral("kind"), QStringLiteral("foreignApp"));
+        request.insert(QStringLiteral("store"), store);
+        const QString term = LaunchGuard::storeSearchTerm(facts.fileName.isEmpty() ? url.fileName() : facts.fileName);
+        m_prompts->ask(request, nullptr, [this, store, term](const QVariantMap &reply) {
+            if (!store || reply.value(QStringLiteral("button")).toString() != QLatin1String("store"))
+                return;
+            const QString program = storeProgram();
+            if (program.isEmpty() || launchingBlocked())
+                return;
+            if (!grassfield::apps::startApplication(program, {QStringLiteral("--page=search:") + term}))
+                emit operationFailed(tr("The Store could not be started."));
+        });
+        return;
+    }
+    // A Windows or Java program: explained; its own handler (Wine or Bottles, java) runs it only after Open in this sheet, and
+    // only from this computer (a remote one never gets here: RefuseRemoteProgram).
+    const bool windows = verdict == LaunchGuard::Verdict::WindowsFile;
+    const KService::Ptr handler = windows && facts.local ? windowsHandler(facts) : KService::Ptr();
+    const QString java = !windows && facts.local ? javaRunner(facts) : QString();
+    request.insert(QStringLiteral("kind"), QStringLiteral("foreignProgram"));
+    request.insert(QStringLiteral("platform"), windows ? QStringLiteral("windows") : QStringLiteral("java"));
+    request.insert(QStringLiteral("handler"), handler ? handler->name() : (java.isEmpty() ? QString() : QStringLiteral("Java"))); // i18n-ignore: product name
+    if (!handler && java.isEmpty()) {
+        m_prompts->ask(request, nullptr, [](const QVariantMap &) {});
+        return;
+    }
+    const QString storageId = handler ? handler->storageId() : QString();
+    m_prompts->ask(request, nullptr, [this, url, facts, verdict, storageId, java, name](const QVariantMap &reply) {
+        if (reply.value(QStringLiteral("button")).toString() != QLatin1String("open")) {
+            logDecision("canceled", verdict, facts);
+            return;
+        }
+        const LaunchGuard::Facts now = LaunchGuard::inspect(url);
+        if (LaunchGuard::verdict(now) != verdict || !sameFile(now, facts)) {
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), tr("It changed while you were deciding. Open it again to decide on it as it is now."));
+            return;
+        }
+        logDecision("approved", verdict, facts);
+        if (!storageId.isEmpty()) {
+            openWith(storageId, {url});
+            return;
+        }
+        const bool webStart = QFileInfo(java).fileName() == QLatin1String("javaws");
+        startProgram(now.path, name, false, QString(), java, webStart ? QStringList{now.path} : QStringList{QStringLiteral("-jar"), now.path});
+    });
+}
+
+void FilesApp::openInTextEditor(const QUrl &url)
+{
+    // macOS opens a script in its editor; here the default text editor (text/plain's application), whatever the script's own
+    // type would choose (a type's application may be the one that runs it). None set: the Choose Application panel.
+    const KService::Ptr editor = KApplicationTrader::preferredService(QStringLiteral("text/plain"));
+    if (editor && editor->desktopEntryName() != QLatin1String("org.grassfield.files")) {
+        openWith(editor->storageId(), {url});
+        return;
+    }
+    chooseApplication({url});
+}
+
+void FilesApp::runInTerminal(const QUrl &url)
+{
+    const LaunchGuard::Facts facts = LaunchGuard::inspect(url);
+    const QString name = FileLogic::displayName(facts.fileName.isEmpty() ? url.fileName() : facts.fileName);
+    if (LaunchGuard::verdict(facts) != LaunchGuard::Verdict::OpenScript) {
+        emit operationFailed(tr("“%1” can’t run in Terminal: only a script on this computer that is allowed to run can.").arg(name));
+        return;
+    }
+    if (launchingBlocked()) {
+        emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
+        return;
+    }
+    const LaunchGuard::RunPlan plan = LaunchGuard::plan(facts);
+    if (!plan.downloaded || facts.approved) {
+        logDecision("run in Terminal", LaunchGuard::Verdict::OpenScript, facts);
+        startScriptInTerminal(facts.path);
+        return;
+    }
+    logDecision("asked", LaunchGuard::Verdict::OpenScript, facts);
+    const QVariantMap request{{QStringLiteral("kind"), QStringLiteral("openProgram")},
+                              {QStringLiteral("what"), QStringLiteral("script")},
+                              {QStringLiteral("name"), name},
+                              {QStringLiteral("downloaded"), true},
+                              {QStringLiteral("host"), LaunchGuard::originHost(facts)},
+                              {QStringLiteral("allowRun"), false},
+                              {QStringLiteral("copy"), false}};
+    m_prompts->ask(request, nullptr, [this, url, facts, name](const QVariantMap &reply) {
+        if (reply.value(QStringLiteral("button")).toString() != QLatin1String("open")) {
+            logDecision("canceled", LaunchGuard::Verdict::OpenScript, facts);
+            return;
+        }
+        const LaunchGuard::Facts now = LaunchGuard::inspect(url);
+        if (LaunchGuard::verdict(now) != LaunchGuard::Verdict::OpenScript || !sameFile(now, facts)) {
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), tr("It changed while you were deciding. Open it again to decide on it as it is now."));
+            return;
+        }
+        logDecision("approved", LaunchGuard::Verdict::OpenScript, facts);
+        ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, false);
+        if (launchingBlocked())
+            return;
+        startScriptInTerminal(now.path);
+    });
+}
+
+void FilesApp::startScriptInTerminal(const QString &path)
+{
+    // Decision F-7: the session's terminal (xdg-terminal-exec), in the uwsm-app scope of a real session; the script's path is
+    // an argument of bash, never part of the command text; its folder is the working folder.
+    const QStringList argv = grassfield::apps::scopedCommand(
+        QStringLiteral("xdg-terminal-exec"), {QStringLiteral("--"), QStringLiteral("/bin/bash"), QStringLiteral("-c"), kTerminalHold, QStringLiteral("grassfield-files"), path},
+        grassfield::apps::scopedLaunch());
+    QProcess process;
+    process.setProgram(argv.first());
+    process.setArguments(argv.mid(1));
+    process.setWorkingDirectory(QFileInfo(path).absolutePath());
+    if (!process.startDetached())
+        emit operationFailed(tr("The terminal couldn’t be started (xdg-terminal-exec)."));
+}
+
+QVariantList FilesApp::applicationsFor(const QList<QUrl> &urls, bool withTerminal) const
 {
     QVariantList out;
     if (urls.isEmpty())
@@ -1032,11 +1392,20 @@ QVariantList FilesApp::applicationsFor(const QList<QUrl> &urls) const
         else
             out.append(entry);
     }
+    // Open With > Terminal (macOS: Terminal is in a script's Open With): one executable script on this computer runs there.
+    if (withTerminal && urls.size() == 1 && first.isLocalFile() && LaunchGuard::verdict(LaunchGuard::inspect(first)) == LaunchGuard::Verdict::OpenScript)
+        out.append(QVariantMap{{QStringLiteral("id"), kTerminalEntry}, {QStringLiteral("name"), tr("Terminal")}, {QStringLiteral("isDefault"), false},
+                               {QStringLiteral("terminal"), true}});
     return out;
 }
 
 void FilesApp::openWith(const QString &storageId, const QList<QUrl> &urls)
 {
+    if (storageId == kTerminalEntry) {
+        if (urls.size() == 1)
+            runInTerminal(urls.first());
+        return;
+    }
     for (const QUrl &u : urls) {
         if (u.scheme() == QLatin1String("grassfield-app") || ApplicationsLogic::isLocationUrl(u)) {
             emit operationFailed(tr("An application is not a file: it cannot be opened with another application."));

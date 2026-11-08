@@ -274,6 +274,92 @@ function noApplication(request) {
     };
 }
 
+// The Gatekeeper sheet before Files runs a program for the first time (FilesApp::requestRun, Open With > Terminal; ADR-0011
+// amendment 2026-11-08): request {name, what: "app"|"script", downloaded, host, allowRun, copy}. Where it came from (the host
+// a browser recorded), what Open does (allow it to run, copy it to the Applications folder). Return and Esc cancel: running is
+// never the default answer.
+function openProgram(request) {
+    const name = request.name;
+    const script = request.what === "script";
+    let title;
+    if (script)
+        title = request.downloaded ? qsTr("“%1” is a script downloaded from the Internet. Are you sure you want to run it in Terminal?").arg(name)
+                                   : qsTr("Are you sure you want to run “%1” in Terminal?").arg(name);
+    else
+        title = request.downloaded ? qsTr("“%1” is an app downloaded from the Internet. Are you sure you want to open it?").arg(name)
+                                   : qsTr("Are you sure you want to open “%1”?").arg(name);
+    const lines = [];
+    if (request.downloaded && request.host)
+        lines.push(script ? qsTr("This script was downloaded from %1.").arg(request.host) : qsTr("This app was downloaded from %1.").arg(request.host));
+    if (request.copy)
+        lines.push(qsTr("It can’t run from this location: it will be copied to your Applications folder and opened from there."));
+    else if (request.allowRun)
+        lines.push(qsTr("Opening it allows it to run on this computer."));
+    return {
+        title: title,
+        message: lines.join(" "),
+        confirmText: request.copy ? qsTr("Copy and Open") : script ? qsTr("Run") : qsTr("Open"),
+        confirmId: "open",
+        destructive: false,
+        showCancel: true,
+        cancelText: qsTr("Cancel"),
+        cancelId: "cancel",
+        returnCancels: true,
+        extras: [],
+        applyToAll: false
+    };
+}
+
+// A Windows or Java program (FilesApp::explainForeign): request {name, platform: "windows"|"java", handler, downloaded, host}.
+// It never runs by opening; when an application on this computer opens it (Wine or Bottles, Java), "Open with …" runs it, and
+// Return and Esc cancel. Without one, the sheet only explains (OK).
+function foreignProgram(request) {
+    const windows = request.platform === "windows";
+    const name = request.name;
+    const handler = request.handler || "";
+    const lines = [];
+    if (handler !== "")
+        lines.push(windows ? qsTr("%1 can open “%2”. Open it only if you trust where it came from.").arg(handler).arg(name)
+                           : qsTr("Java can open “%1”. Open it only if you trust where it came from.").arg(name));
+    else
+        lines.push(windows ? qsTr("“%1” can’t be opened on this computer.").arg(name)
+                           : qsTr("Java isn’t installed on this computer, so “%1” can’t be opened.").arg(name));
+    if (request.downloaded && request.host)
+        lines.push(qsTr("This file was downloaded from %1.").arg(request.host));
+    return {
+        title: windows ? qsTr("This file is a program for Windows; it doesn’t work directly on Linux.") : qsTr("This file is a Java program."),
+        message: lines.join(" "),
+        confirmText: handler !== "" ? qsTr("Open with %1").arg(handler) : qsTr("OK"),
+        confirmId: handler !== "" ? "open" : "ok",
+        destructive: false,
+        showCancel: handler !== "",
+        cancelText: qsTr("Cancel"),
+        cancelId: handler !== "" ? "cancel" : "ok",
+        returnCancels: handler !== "",
+        extras: [],
+        applyToAll: false
+    };
+}
+
+// A disk image or installer of another system's app (.dmg, .pkg; FilesApp::explainForeign): request {name, store}. Nothing here
+// runs it; Search the Store (when Grassfield Store is there) looks for an app for this computer under the file's name.
+function foreignApp(request) {
+    return {
+        title: qsTr("This file contains an app made for another operating system, which can’t work on Linux."),
+        message: request.store ? qsTr("Look in the Store for an app for Linux that does the same thing.")
+                               : qsTr("Look for a version of “%1” made for Linux.").arg(request.name),
+        confirmText: qsTr("OK"),
+        confirmId: "ok",
+        destructive: false,
+        showCancel: false,
+        cancelText: qsTr("Cancel"),
+        cancelId: "ok",
+        returnCancels: false,
+        extras: request.store ? [{id: "store", text: qsTr("Search the Store")}] : [],
+        applyToAll: false
+    };
+}
+
 // The sheet for `request`, or null for none (no question, or a kind this version doesn't know: it stops the operation).
 function sheet(request) {
     if (!request || request.id === undefined)
@@ -293,6 +379,12 @@ function sheet(request) {
         return notice(request);
     case "noApplication":
         return noApplication(request);
+    case "openProgram":
+        return openProgram(request);
+    case "foreignProgram":
+        return foreignProgram(request);
+    case "foreignApp":
+        return foreignApp(request);
     }
     return null;
 }

@@ -32,6 +32,10 @@
 
 class FolderModel;
 class KJob;
+namespace LaunchGuard {
+struct Facts;
+enum class Verdict;
+}
 namespace grassfield::apps {
 class OngoingPublisher;
 }
@@ -252,10 +256,15 @@ public:
     // empty text): the panels ask the disk off the GUI thread (grassfield-portal's FileChooser::probe).
     Q_INVOKABLE QUrl locationUrl(const QString &text, const QUrl &base) const;
 
-    // Opening.
+    // Opening, the Gatekeeper way (LaunchGuard, ProgramLaunch; ADR-0011 amendment 2026-11-08, docs/specs/security.md "Files
+    // opens apps the Gatekeeper way"): folders and documents through KIO; a native program or AppImage runs, after a sheet when
+    // it came from the Internet or must be allowed to run; a script opens in the text editor; Windows and Java programs and
+    // other systems' apps are explained; app launchers are refused.
     Q_INVOKABLE void open(const QList<QUrl> &urls);
-    // [{id, name, isDefault}] of the applications registered for the first item's MIME type, the default first.
-    Q_INVOKABLE QVariantList applicationsFor(const QList<QUrl> &urls) const;
+    // [{id, name, isDefault}] of the applications registered for the first item's MIME type, the default first. withTerminal
+    // (the Open With menus): one executable script on this computer also gets {id: "grassfield:terminal", name: "Terminal",
+    // terminal: true} last, which runs it in the session's terminal (never a default application).
+    Q_INVOKABLE QVariantList applicationsFor(const QList<QUrl> &urls, bool withTerminal = false) const;
     Q_INVOKABLE void openWith(const QString &storageId, const QList<QUrl> &urls);
     // Open With > Other…: the Choose Application panel for `urls`; the application chosen opens them (openWith).
     Q_INVOKABLE void chooseApplication(const QList<QUrl> &urls);
@@ -533,6 +542,23 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    // Opening the Gatekeeper way (open(), openWith() with the Terminal entry).
+    // A RunProgram item: the sheet when LaunchGuard::plan asks, then the execute bit, the approval and the start.
+    void requestRun(const QUrl &url, const LaunchGuard::Facts &facts);
+    // A program that can't run where it is: copied to ~/Applications (KIO), allowed and approved there, then started.
+    void copyToApplicationsAndRun(const LaunchGuard::Facts &facts);
+    // Starts `program` (default: `path`) with `args`, in `path`'s folder, watched for its first second (ProgramLaunch::Run);
+    // a start that fails gets a plain alert named after `name`.
+    void startProgram(const QString &path, const QString &name, bool appImage, const QString &interpreter, const QString &program = QString(),
+                      const QStringList &args = {});
+    // The sheet of a Windows or Java program, or of another system's app, and what its button does.
+    void explainForeign(const QUrl &url, const LaunchGuard::Facts &facts, LaunchGuard::Verdict verdict);
+    // An executable script opens in the default text editor (the Choose Application panel when none is set).
+    void openInTextEditor(const QUrl &url);
+    // Open With > Terminal: an executable script runs in the session's terminal, after the downloaded-file sheet.
+    void runInTerminal(const QUrl &url);
+    void startScriptInTerminal(const QString &path);
+
     // `verb` ("Copying"), `sources` and `destination` (the folder they go to) name the job in the Copy window: "Copying 12
     // items to “Docs”". A job tracked without them is named by KIO's own descriptions.
     void track(KJob *job, const QString &activity, const QString &verb = QString(), const QList<QUrl> &sources = {}, const QUrl &destination = QUrl());

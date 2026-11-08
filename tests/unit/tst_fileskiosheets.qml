@@ -774,6 +774,101 @@ TestCase {
         compare(fakePrompts.replies[2].alwaysTrust, false);
     }
 
+    // --- Files opens apps the Gatekeeper way (FilesApp::requestRun, explainForeign; ADR-0011 amendment 2026-11-08) ----------
+
+    // The sheet before a downloaded program runs: where it came from, what Open does; Return and Esc cancel, only Open runs it.
+    function test_openProgramTexts(): void {
+        let s = KioSheetsLogic.sheet({id: 90, kind: "openProgram", what: "app", name: "Tool.AppImage", downloaded: true, host: "downloads.example.org",
+                                      allowRun: true, copy: false});
+        compare(s.title, "“Tool.AppImage” is an app downloaded from the Internet. Are you sure you want to open it?");
+        compare(s.message, "This app was downloaded from downloads.example.org. Opening it allows it to run on this computer.");
+        compare([s.confirmText, s.confirmId, s.cancelText, s.cancelId], ["Open", "open", "Cancel", "cancel"]);
+        compare([s.destructive, s.returnCancels, s.showCancel], [false, true, true], "running is never the default answer");
+        compare(s.extras, []);
+        s = KioSheetsLogic.sheet({id: 91, kind: "openProgram", what: "app", name: "Tool.AppImage", downloaded: true, host: "", allowRun: false, copy: false});
+        compare(s.message, "", "no host recorded: no origin line");
+        s = KioSheetsLogic.sheet({id: 92, kind: "openProgram", what: "app", name: "tool", downloaded: false, host: "", allowRun: true, copy: false});
+        compare(s.title, "Are you sure you want to open “tool”?");
+        compare(s.message, "Opening it allows it to run on this computer.");
+        s = KioSheetsLogic.sheet({id: 93, kind: "openProgram", what: "app", name: "Tool.AppImage", downloaded: true, host: "example.org", allowRun: true, copy: true});
+        compare(s.message, "This app was downloaded from example.org. It can’t run from this location: it will be copied to your Applications folder and opened from there.");
+        compare([s.confirmText, s.confirmId], ["Copy and Open", "open"]);
+        s = KioSheetsLogic.sheet({id: 94, kind: "openProgram", what: "script", name: "install.sh", downloaded: true, host: "example.org", allowRun: false, copy: false});
+        compare(s.title, "“install.sh” is a script downloaded from the Internet. Are you sure you want to run it in Terminal?");
+        compare(s.message, "This script was downloaded from example.org.");
+        compare(s.confirmText, "Run");
+        s = KioSheetsLogic.sheet({id: 95, kind: "openProgram", what: "script", name: "install.sh", downloaded: false});
+        compare(s.title, "Are you sure you want to run “install.sh” in Terminal?");
+    }
+
+    function test_openProgramReplies(): void {
+        const sheets = test.make();
+        const sheet = test.sheetOf(sheets);
+        const request = {id: 100, kind: "openProgram", what: "app", name: "Tool.AppImage", downloaded: true, host: "example.org", allowRun: true, copy: false};
+        fakePrompts.current = request;
+        test.shown(sheet);
+        compare(sheet.title, "“Tool.AppImage” is an app downloaded from the Internet. Are you sure you want to open it?");
+        keyClick(Qt.Key_Return);
+        compare(fakePrompts.replies[0].button, "cancel", "Return cancels");
+        fakePrompts.current = Object.assign({}, request, {id: 101});
+        test.shown(sheet);
+        keyClick(Qt.Key_Escape);
+        compare(fakePrompts.replies[1].button, "cancel", "Esc cancels");
+        fakePrompts.current = Object.assign({}, request, {id: 102});
+        test.shown(sheet);
+        test.click(sheet, "Open");
+        compare(fakePrompts.replies[2].button, "open", "only Open runs it");
+    }
+
+    // A Windows or Java program: explained; "Open with …" only when an application here opens it, and never the default.
+    function test_foreignProgram(): void {
+        let s = KioSheetsLogic.sheet({id: 110, kind: "foreignProgram", platform: "windows", name: "setup.exe", handler: "", downloaded: true, host: "example.org"});
+        compare(s.title, "This file is a program for Windows; it doesn’t work directly on Linux.");
+        compare(s.message, "“setup.exe” can’t be opened on this computer. This file was downloaded from example.org.");
+        compare([s.confirmText, s.confirmId, s.showCancel, s.returnCancels], ["OK", "ok", false, false]);
+        s = KioSheetsLogic.sheet({id: 111, kind: "foreignProgram", platform: "windows", name: "setup.exe", handler: "Wine", downloaded: false});
+        compare(s.message, "Wine can open “setup.exe”. Open it only if you trust where it came from.");
+        compare([s.confirmText, s.confirmId, s.cancelId, s.showCancel, s.returnCancels], ["Open with Wine", "open", "cancel", true, true]);
+        s = KioSheetsLogic.sheet({id: 112, kind: "foreignProgram", platform: "java", name: "tool.jar", handler: ""});
+        compare(s.title, "This file is a Java program.");
+        compare(s.message, "Java isn’t installed on this computer, so “tool.jar” can’t be opened.");
+        s = KioSheetsLogic.sheet({id: 113, kind: "foreignProgram", platform: "java", name: "tool.jar", handler: "Java"});
+        compare(s.message, "Java can open “tool.jar”. Open it only if you trust where it came from.");
+        compare(s.confirmText, "Open with Java");
+        const sheets = test.make();
+        const sheet = test.sheetOf(sheets);
+        fakePrompts.current = {id: 114, kind: "foreignProgram", platform: "windows", name: "setup.exe", handler: "Wine"};
+        test.shown(sheet);
+        keyClick(Qt.Key_Return);
+        compare(fakePrompts.replies[0].button, "cancel", "Return never runs it");
+        fakePrompts.current = {id: 115, kind: "foreignProgram", platform: "windows", name: "setup.exe", handler: "Wine"};
+        test.shown(sheet);
+        test.click(sheet, "Open with Wine");
+        compare(fakePrompts.replies[1].button, "open");
+    }
+
+    // Another system's app (.dmg, .pkg): explained; Search the Store when the Store is there. The text never names the system.
+    function test_foreignApp(): void {
+        let s = KioSheetsLogic.sheet({id: 120, kind: "foreignApp", name: "Slack.dmg", store: true});
+        compare(s.title, "This file contains an app made for another operating system, which can’t work on Linux.");
+        compare(s.message, "Look in the Store for an app for Linux that does the same thing.");
+        compare(s.extras, [{id: "store", text: "Search the Store"}]);
+        compare([s.confirmText, s.confirmId, s.showCancel], ["OK", "ok", false]);
+        s = KioSheetsLogic.sheet({id: 121, kind: "foreignApp", name: "Slack.dmg", store: false});
+        compare(s.message, "Look for a version of “Slack.dmg” made for Linux.");
+        compare(s.extras, []);
+        const sheets = test.make();
+        const sheet = test.sheetOf(sheets);
+        fakePrompts.current = {id: 122, kind: "foreignApp", name: "Slack.dmg", store: true};
+        test.shown(sheet);
+        test.click(sheet, "Search the Store");
+        compare(fakePrompts.replies[0].button, "store");
+        fakePrompts.current = {id: 123, kind: "foreignApp", name: "Slack.dmg", store: true};
+        test.shown(sheet);
+        keyClick(Qt.Key_Escape);
+        compare(fakePrompts.replies[1].button, "ok");
+    }
+
     function test_unknownKindStops(): void {
         const sheets = test.make();
         const sheet = test.sheetOf(sheets);

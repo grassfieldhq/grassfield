@@ -1025,13 +1025,15 @@ FocusScope {
             // Finder's submenu: the default application first, "(default)", then the type's other applications, then Other…, the
             // Choose Application panel (ADR-0035 5c-1). While Alt (Option) is held it is Always Open With: the chosen application
             // becomes the default for the type (Linux has no per-document choice: decision F-19) and opens the items.
-            const apps = root.app.applicationsFor(model.selectedUrls());
+            // Terminal (an executable script's last entry) runs it there; it is never a default application.
+            const apps = root.app.applicationsFor(model.selectedUrls(), true);
             const sub = [];
             const always = [];
             for (let i = 0; i < apps.length; i++) {
                 const text = apps[i].isDefault ? qsTr("%1 (default)").arg(apps[i].name) : apps[i].name;
                 sub.push({id: "app:" + apps[i].id, text: text});
-                always.push({id: "always:" + apps[i].id, text: text});
+                if (!apps[i].terminal)
+                    always.push({id: "always:" + apps[i].id, text: text});
                 if (apps[i].isDefault && apps.length > 1) {
                     sub.push({separator: true});
                     always.push({separator: true});

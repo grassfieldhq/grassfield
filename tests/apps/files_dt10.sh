@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-# Nested scenario DT-10 (GF-AUDIT-001 SEC-12 / GF-070): Grassfield Files never runs an app launcher, a script or a
-# program that is opened (Return, as a double-click does). A sandbox folder holds t.desktop (Type=Application, executable),
-# u.desktop (the same, not executable), Invoice.pdf.desktop and run.sh (executable); each one's Exec or body would create a
-# marker file. Pass 1 runs Files with GRASSFIELD_FILES_NO_LAUNCH=1: each open must be refused by the guard (log "open
-# refused") before the test switch ("launch blocked" never logged for them). Pass 2 runs Files WITHOUT the switch: the
-# marker must never appear (the original DT-10). Both passes open each item with type-to-select + Return.
+# Nested scenario DT-10 (GF-AUDIT-001 SEC-12 / GF-070), as amended on 2026-11-08 (ADR-0011 amendment, the Gatekeeper
+# model): Grassfield Files never runs an app launcher, never runs a script by opening it, and runs a downloaded program only
+# after the user's Open in its sheet. A sandbox folder holds t.desktop (Type=Application, executable), u.desktop (the same,
+# not executable), Invoice.pdf.desktop, run.sh (executable) and Invoice (a native program carrying a browser's download mark,
+# .dev/build/launch-fixtures/probe, which leaves "launched" in its folder); each launcher's Exec and the script would create
+# a marker file. Pass 1 runs Files with GRASSFIELD_FILES_NO_LAUNCH=1: the three launchers are refused by the guard (log "open
+# refused") before the test switch, the script and the program stop at the switch ("launch blocked", twice) before any editor
+# or sheet. Pass 2 runs Files WITHOUT the switch on the launchers and the program: the launchers are refused, the program's
+# sheet is asked ("open asked (program)") and answered with Return, which cancels ("open canceled (program)"); neither the
+# marker nor "launched" may appear. Items are opened with type-to-select + Ctrl+O (Return renames, as in the Finder).
 #
 # Safety as tests/apps/files_sandbox.sh: everything under .dev/files-dt10, the app through scripts/dev/isolated.sh, a
 # private D-Bus session bus started here (refuses the owner's bus), the nested Wayland socket only. If the guard were broken,
-# pass 2 would only run `touch` on the marker inside the sandbox.
-# Requires: scripts/dev/nested-up.sh running, .dev/build/grassfield-files (apps/files/build-direct.sh), dbus-daemon.
+# pass 2 would only run `touch` on the marker, or the probe, inside the sandbox.
+# Requires: scripts/dev/nested-up.sh running, .dev/build/grassfield-files (apps/files/build-direct.sh), the launch fixtures
+# (apps/files/build-direct.sh --tests), dbus-daemon, python3 (writes the download mark).
 # Usage: tests/apps/files_dt10.sh [output]   (default GF-REF)   Prints PASS/FAIL per check.
 set -uo pipefail
 
@@ -45,6 +50,13 @@ launcher u.desktop 644
 launcher Invoice.pdf.desktop 644
 printf '#!/bin/sh\ntouch %s\n' "$marker" >"$folder/run.sh"
 chmod 755 "$folder/run.sh"
+# A downloaded program: the probe, executable, with the mark Chromium and Firefox write (no real download).
+probe=$dev/build/launch-fixtures/probe
+[[ -x $probe ]] || { echo "FAIL: $probe missing (run apps/files/build-direct.sh --tests)"; exit 1; }
+cp "$probe" "$folder/Invoice"
+chmod 755 "$folder/Invoice"
+python3 -I -c 'import os, sys; os.setxattr(sys.argv[1], "user.xdg.origin.url", b"https://downloads.example.org/Invoice")' "$folder/Invoice" \
+  || { echo "FAIL: no user extended attributes under $folder"; exit 1; }
 
 env -u DISPLAY -u DBUS_SESSION_BUS_ADDRESS WAYLAND_DISPLAY="$sock" GRASSFIELD_DEV=1 HOME="$dev/isolated/$iso_name/home" \
   setsid dbus-daemon --session --nofork --print-address=1 >"$busdir/address" 2>"$busdir/log" </dev/null &
@@ -69,10 +81,11 @@ fails=0
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; fails=$((fails + 1)); }
 
-# run_pass <log> <extra env...>: start Files on the folder, open each item, quit.
+# run_pass <log> <items> <extra env...>: start Files on the folder, open each item (space-separated), quit. A sheet that comes
+# up (the downloaded program's) is answered with Return after the double-click hold: Return cancels it.
 run_pass() {
-  local log=$1
-  shift
+  local log=$1 items=$2
+  shift 2
   "$pointer" output "$output" abs 960 540 sleep 100 click >/dev/null
   env DBUS_SESSION_BUS_ADDRESS="$bus" "$@" QML_IMPORT_PATH="$root/ui" QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=wayland WAYLAND_DISPLAY="$sock" \
     setsid "$root/scripts/dev/isolated.sh" --name "$iso_name" -- "$bin" "$folder" >"$log" 2>&1 </dev/null &
@@ -81,13 +94,19 @@ run_pass() {
   kill -0 "$app" 2>/dev/null || { fail "Files exited at start ($log)"; app=""; return; }
   "$pointer" output "$output" abs 1050 600 sleep 200 click >/dev/null
   local name
-  for name in t.desktop u.desktop Invoice.pdf.desktop run.sh; do
+  for name in $items; do
     sleep 1.2 # the type-to-select buffer expires
     "$keys" "$name"
     sleep 0.4
     # Open (Ctrl+O): Return renames, as in the Finder.
     "$keys" -M ctrl -k o -m ctrl
     sleep 1
+    if [[ $name == Invoice ]]; then
+      # The sheet holds input for the double-click interval; then Return, which cancels it.
+      sleep 1
+      "$keys" -k Return
+      sleep 1
+    fi
   done
   "$keys" -M ctrl -k w -m ctrl
   for _ in $(seq 1 50); do kill -0 "$app" 2>/dev/null || break; sleep 0.1; done
@@ -95,17 +114,24 @@ run_pass() {
   app=""
 }
 
-run_pass "$sandbox/pass1.log" GRASSFIELD_FILES_NO_LAUNCH=1
-n=$(grep -c "grassfield-files: open refused" "$sandbox/pass1.log" || true)
-[[ $n == 4 ]] && pass "pass 1: the guard refused all four items ($n 'open refused')" || fail "pass 1: $n 'open refused' lines, expected 4 ($sandbox/pass1.log)"
+run_pass "$sandbox/pass1.log" "t.desktop u.desktop Invoice.pdf.desktop run.sh Invoice" GRASSFIELD_FILES_NO_LAUNCH=1
+n=$(grep -c "grassfield-files: open refused (app launcher)" "$sandbox/pass1.log" || true)
+[[ $n == 3 ]] && pass "pass 1: the guard refused the three launchers ($n 'open refused')" || fail "pass 1: $n launcher refusals, expected 3 ($sandbox/pass1.log)"
 b=$(grep -c "launch blocked" "$sandbox/pass1.log" || true)
-[[ $b == 0 ]] && pass "pass 1: nothing reached the launch path (no 'launch blocked')" || fail "pass 1: $b item(s) reached the launch path"
+[[ $b == 2 ]] && pass "pass 1: the script and the program stopped at the switch (2 'launch blocked')" || fail "pass 1: $b 'launch blocked', expected 2"
+a=$(grep -c "grassfield-files: open asked" "$sandbox/pass1.log" || true)
+[[ $a == 0 ]] && pass "pass 1: no sheet before the switch" || fail "pass 1: $a sheet(s) asked"
 
-run_pass "$sandbox/pass2.log"
+run_pass "$sandbox/pass2.log" "t.desktop u.desktop Invoice.pdf.desktop Invoice"
 sleep 2
-[[ ! -e $marker ]] && pass "pass 2 (DT-10): no launcher, script or program ran (marker absent)" || fail "pass 2 (DT-10): the marker exists: something was run"
-n=$(grep -c "grassfield-files: open refused" "$sandbox/pass2.log" || true)
-[[ $n == 4 ]] && pass "pass 2: four refusals logged" || fail "pass 2: $n refusals logged, expected 4"
+[[ ! -e $marker ]] && pass "pass 2 (DT-10): no launcher ran (marker absent)" || fail "pass 2 (DT-10): the marker exists: a launcher was run"
+[[ ! -e $folder/launched ]] && pass "pass 2 (DT-10): the downloaded program did not run without Open" || fail "pass 2 (DT-10): the downloaded program ran"
+n=$(grep -c "grassfield-files: open refused (app launcher)" "$sandbox/pass2.log" || true)
+[[ $n == 3 ]] && pass "pass 2: three launcher refusals logged" || fail "pass 2: $n launcher refusals logged, expected 3"
+a=$(grep -c "grassfield-files: open asked (program): \"Invoice\" from downloads.example.org" "$sandbox/pass2.log" || true)
+[[ $a == 1 ]] && pass "pass 2: the downloaded program's sheet was asked, with its origin" || fail "pass 2: $a sheet(s) asked for Invoice, expected 1"
+c=$(grep -c "grassfield-files: open canceled (program)" "$sandbox/pass2.log" || true)
+[[ $c == 1 ]] && pass "pass 2: Return canceled it" || fail "pass 2: $c cancel(s) logged, expected 1"
 
 echo "files_dt10: $fails failure(s)"
 exit $(( fails > 0 ))

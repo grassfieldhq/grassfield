@@ -294,6 +294,8 @@
  {"path": "tests/unit/files/tst_archive.cpp", "layer": "logic"},
  {"path": "tests/unit/files/tst_permissionlogic.cpp", "layer": "logic"},
  {"path": "tests/unit/files/tst_launchguard.cpp", "layer": "logic"},
+ {"path": "tests/unit/files/tst_programlaunch.cpp", "layer": "logic"},
+ {"path": "tests/unit/files/tst_fileslaunch.cpp", "layer": "logic"},
  {"path": "tests/unit/files/tst_kioprompts.cpp", "layer": "logic"},
  {"path": "tests/unit/files/tst_kiodialogs.cpp", "layer": "logic"},
  {"path": "tests/unit/files/tst_batchops.cpp", "layer": "logic"},

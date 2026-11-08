@@ -5413,14 +5413,6 @@
         <translation>«&#xa0;%1&#xa0;» n’a pas été ouvert&#xa0;: c’est un lanceur d’app, et Fichiers ne démarre jamais d’app depuis un dossier. Ouvrez les apps depuis le Dock, Apps ou la recherche.</translation>
     </message>
     <message>
-        <source>“%1” was not opened: it is a program or script, and Files never runs programs from a folder. To run it on purpose, use a terminal.</source>
-        <translation>«&#xa0;%1&#xa0;» n’a pas été ouvert&#xa0;: c’est un programme ou un script, et Fichiers n’exécute jamais de programme depuis un dossier. Pour l’exécuter volontairement, utilisez un terminal.</translation>
-    </message>
-    <message>
-        <source>%1 items were not opened: Files never runs programs, scripts or app launchers from a folder.</source>
-        <translation>%1 éléments n’ont pas été ouverts&#xa0;: Fichiers n’exécute jamais de programme, de script ni de lanceur d’app depuis un dossier.</translation>
-    </message>
-    <message>
         <source>Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH).</source>
         <translation>L’ouverture de fichiers est désactivée dans cette session (GRASSFIELD_FILES_NO_LAUNCH).</translation>
     </message>
@@ -5637,8 +5629,96 @@
         <translation>Le Store ne peut pas désinstaller cette application.</translation>
     </message>
     <message>
+        <source>%1 items were not opened.</source>
+        <translation>%1 éléments n’ont pas été ouverts.</translation>
+    </message>
+    <message>
+        <source>“%1” can’t be opened because it isn’t made for this computer.</source>
+        <translation>«&#xa0;%1&#xa0;» ne peut pas être ouvert, car il n’est pas conçu pour cet ordinateur.</translation>
+    </message>
+    <message>
+        <source>“%1” wasn’t opened: it is an app, but its name makes it look like a document. If you trust it, rename it first.</source>
+        <translation>«&#xa0;%1&#xa0;» n’a pas été ouvert&#xa0;: c’est une app, mais son nom la fait passer pour un document. Si vous lui faites confiance, renommez-la d’abord.</translation>
+    </message>
+    <message>
+        <source>“%1” can’t be opened: it isn’t a valid app.</source>
+        <translation>«&#xa0;%1&#xa0;» ne peut pas être ouvert&#xa0;: ce n’est pas une app valide.</translation>
+    </message>
+    <message>
+        <source>“%1” can’t be opened from here. Copy it to a folder on this computer first.</source>
+        <translation>«&#xa0;%1&#xa0;» ne peut pas être ouvert depuis cet emplacement. Copiez-le d’abord dans un dossier de cet ordinateur.</translation>
+    </message>
+    <message>
+        <source>“%1” wasn’t opened: Files doesn’t open programs that run with other rights.</source>
+        <translation>«&#xa0;%1&#xa0;» n’a pas été ouvert&#xa0;: Fichiers n’ouvre pas les programmes qui s’exécutent avec d’autres droits.</translation>
+    </message>
+    <message>
+        <source>“%1” wasn’t opened.</source>
+        <translation>«&#xa0;%1&#xa0;» n’a pas été ouvert.</translation>
+    </message>
+    <message>
+        <source>It changed while you were deciding. Open it again to decide on it as it is now.</source>
+        <translation>Il a été modifié pendant que vous décidiez. Ouvrez-le à nouveau pour décider de sa version actuelle.</translation>
+    </message>
+    <message>
+        <source>“%1” couldn’t be allowed to run.</source>
+        <translation>«&#xa0;%1&#xa0;» n’a pas pu être autorisé à s’exécuter.</translation>
+    </message>
+    <message>
+        <source>“%1” couldn’t be copied to your Applications folder.</source>
+        <translation>«&#xa0;%1&#xa0;» n’a pas pu être copié dans votre dossier Applications.</translation>
+    </message>
+    <message>
+        <source>“%1” can’t be opened from this location.</source>
+        <translation>«&#xa0;%1&#xa0;» ne peut pas être ouvert depuis cet emplacement.</translation>
+    </message>
+    <message>
+        <source>This disk doesn’t allow apps to run from it.</source>
+        <translation>Ce disque ne permet pas d’y exécuter des apps.</translation>
+    </message>
+    <message>
+        <source>It is a program for another kind of computer. Look for the version made for this one where you got it.</source>
+        <translation>C’est un programme pour un autre type d’ordinateur. Cherchez la version conçue pour celui-ci là où vous l’avez obtenu.</translation>
+    </message>
+    <message>
+        <source>“%1” can’t be opened.</source>
+        <translation>«&#xa0;%1&#xa0;» ne peut pas être ouvert.</translation>
+    </message>
+    <message>
+        <source>A component it needs is missing on this computer (%1).</source>
+        <translation>Un composant dont il a besoin manque sur cet ordinateur (%1).</translation>
+    </message>
+    <message>
+        <source>This AppImage needs a system component (fuse2).</source>
+        <translation>Cette AppImage a besoin d’un composant système (fuse2).</translation>
+    </message>
+    <message>
+        <source>It isn’t installed on this computer, so “%1” can’t be opened.</source>
+        <translation>Il n’est pas installé sur cet ordinateur&#xa0;: «&#xa0;%1&#xa0;» ne peut donc pas être ouvert.</translation>
+    </message>
+    <message>
+        <source>This AppImage couldn’t use FUSE on this computer.</source>
+        <translation>Cette AppImage n’a pas pu utiliser FUSE sur cet ordinateur.</translation>
+    </message>
+    <message>
+        <source>“%1” quit right after it opened.</source>
+        <translation>«&#xa0;%1&#xa0;» s’est fermé juste après son ouverture.</translation>
+    </message>
+    <message>
+        <source>It ended with the error code %1.</source>
+        <translation>Il s’est arrêté avec le code d’erreur %1.</translation>
+    </message>
+    <message>
         <source>The Store could not be started.</source>
         <translation>Le Store n’a pas pu être lancé.</translation>
+    </message>
+    <message>
+        <source>“%1” can’t run in Terminal: only a script on this computer that is allowed to run can.</source>
+        <translation>«&#xa0;%1&#xa0;» ne peut pas s’exécuter dans le Terminal&#xa0;: seul un script de cet ordinateur autorisé à s’exécuter le peut.</translation>
+    </message>
+    <message>
+        <source>Terminal</source>
+        <translation>Terminal</translation>
     </message>
     <message>
         <source>Make Alias</source>
@@ -8214,6 +8294,94 @@
     <message>
         <source>Search the Store</source>
         <translation>Rechercher dans le Store</translation>
+    </message>
+    <message>
+        <source>“%1” is a script downloaded from the Internet. Are you sure you want to run it in Terminal?</source>
+        <translation>«&#xa0;%1&#xa0;» est un script téléchargé sur Internet. Voulez-vous vraiment l’exécuter dans le Terminal&#xa0;?</translation>
+    </message>
+    <message>
+        <source>Are you sure you want to run “%1” in Terminal?</source>
+        <translation>Voulez-vous vraiment exécuter «&#xa0;%1&#xa0;» dans le Terminal&#xa0;?</translation>
+    </message>
+    <message>
+        <source>“%1” is an app downloaded from the Internet. Are you sure you want to open it?</source>
+        <translation>«&#xa0;%1&#xa0;» est une app téléchargée sur Internet. Voulez-vous vraiment l’ouvrir&#xa0;?</translation>
+    </message>
+    <message>
+        <source>Are you sure you want to open “%1”?</source>
+        <translation>Voulez-vous vraiment ouvrir «&#xa0;%1&#xa0;»&#xa0;?</translation>
+    </message>
+    <message>
+        <source>This script was downloaded from %1.</source>
+        <translation>Ce script a été téléchargé depuis %1.</translation>
+    </message>
+    <message>
+        <source>This app was downloaded from %1.</source>
+        <translation>Cette app a été téléchargée depuis %1.</translation>
+    </message>
+    <message>
+        <source>It can’t run from this location: it will be copied to your Applications folder and opened from there.</source>
+        <translation>Elle ne peut pas s’exécuter depuis cet emplacement&#xa0;: elle sera copiée dans votre dossier Applications et ouverte depuis celui-ci.</translation>
+    </message>
+    <message>
+        <source>Opening it allows it to run on this computer.</source>
+        <translation>L’ouvrir l’autorisera à s’exécuter sur cet ordinateur.</translation>
+    </message>
+    <message>
+        <source>Copy and Open</source>
+        <translation>Copier et ouvrir</translation>
+    </message>
+    <message>
+        <source>Run</source>
+        <translation>Exécuter</translation>
+    </message>
+    <message>
+        <source>Open</source>
+        <translation>Ouvrir</translation>
+    </message>
+    <message>
+        <source>%1 can open “%2”. Open it only if you trust where it came from.</source>
+        <translation>%1 peut ouvrir «&#xa0;%2&#xa0;». Ne l’ouvrez que si vous faites confiance à sa provenance.</translation>
+    </message>
+    <message>
+        <source>Java can open “%1”. Open it only if you trust where it came from.</source>
+        <translation>Java peut ouvrir «&#xa0;%1&#xa0;». Ne l’ouvrez que si vous faites confiance à sa provenance.</translation>
+    </message>
+    <message>
+        <source>“%1” can’t be opened on this computer.</source>
+        <translation>«&#xa0;%1&#xa0;» ne peut pas être ouvert sur cet ordinateur.</translation>
+    </message>
+    <message>
+        <source>Java isn’t installed on this computer, so “%1” can’t be opened.</source>
+        <translation>Java n’est pas installé sur cet ordinateur&#xa0;: «&#xa0;%1&#xa0;» ne peut donc pas être ouvert.</translation>
+    </message>
+    <message>
+        <source>This file was downloaded from %1.</source>
+        <translation>Ce fichier a été téléchargé depuis %1.</translation>
+    </message>
+    <message>
+        <source>This file is a program for Windows; it doesn’t work directly on Linux.</source>
+        <translation>Ce fichier est un programme pour Windows&#xa0;; il ne fonctionne pas directement sous Linux.</translation>
+    </message>
+    <message>
+        <source>This file is a Java program.</source>
+        <translation>Ce fichier est un programme Java.</translation>
+    </message>
+    <message>
+        <source>Open with %1</source>
+        <translation>Ouvrir avec %1</translation>
+    </message>
+    <message>
+        <source>This file contains an app made for another operating system, which can’t work on Linux.</source>
+        <translation>Ce fichier contient une app conçue pour un autre système d’exploitation, qui ne peut pas fonctionner sous Linux.</translation>
+    </message>
+    <message>
+        <source>Look in the Store for an app for Linux that does the same thing.</source>
+        <translation>Cherchez dans le Store une app pour Linux qui fait la même chose.</translation>
+    </message>
+    <message>
+        <source>Look for a version of “%1” made for Linux.</source>
+        <translation>Cherchez une version de «&#xa0;%1&#xa0;» conçue pour Linux.</translation>
     </message>
     <message>
         <source>Unnamed certificate</source>

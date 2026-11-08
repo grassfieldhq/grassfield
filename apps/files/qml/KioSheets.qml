@@ -5,7 +5,8 @@ import "KioSheetsLogic.js" as KioSheetsLogic
 
 // KIO's questions in Files as the window's sheets (ADR-0035 D-12 a; docs/specs/system-dialogs.md section 9): a name that
 // already exists, an item the operation can't handle, a deletion, a worker's message, a certificate that can't be
-// verified, a notice. src/kioprompts.h asks them one at a time (FilesApp.prompts.current); the window the user last worked
+// verified, a notice; and Files' own questions before it runs a program, explains a Windows or Java program or another
+// system's app (ADR-0011 amendment 2026-11-08). src/kioprompts.h asks them one at a time (FilesApp.prompts.current); the window the user last worked
 // in shows them (BrowserWindow.qml), and every answer goes back to the job that asked (FilesApp.prompts.reply). A question
 // whose job ends while it is shown goes away by itself, unanswered.
 Item {
