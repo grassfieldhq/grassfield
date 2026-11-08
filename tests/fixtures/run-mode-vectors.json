@@ -111,6 +111,7 @@
  {"name": "unset", "env": {}, "appsQtTheme": ""},
  {"name": "xdgdesktopportal (session.lua, finalized to the user manager)", "env": {"GRASSFIELD_SESSION": "1", "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": "xdgdesktopportal"}, "appsQtTheme": "xdgdesktopportal"},
  {"name": "in a dev session", "env": {"GRASSFIELD_DEV": "1", "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": "xdgdesktopportal"}, "appsQtTheme": "xdgdesktopportal"},
+ {"name": "empty (session.lua kept gtk3 and overwrote a stale value)", "env": {"GRASSFIELD_SESSION": "1", "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": ""}, "appsQtTheme": ""},
  {"name": "gtk3 is not the portal theme", "env": {"GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": "gtk3"}, "appsQtTheme": ""},
  {"name": "a longer value", "env": {"GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": "xdgdesktopportal:gtk3"}, "appsQtTheme": ""}
 ],

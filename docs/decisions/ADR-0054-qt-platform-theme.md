@@ -69,20 +69,21 @@ every unit that runs a Qt GUI process (`qs`, and the apps whose `main.cpp` makes
 if one neither pins nor clears. Every app the shell starts is its child, and `uwsm app` (its default is a
 systemd scope, `-t scope`) runs the command in its caller's environment, not the manager's, so an app would inherit the shell's pin and
 never get the portal theme. The session's choice therefore travels in a second variable: `session.lua` sets
-`GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME` next to `QT_QPA_PLATFORMTHEME` (only when the portal theme is chosen), `autostart.lua`'s
+`GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME` next to `QT_QPA_PLATFORMTHEME` (always defined: empty when gtk3 is kept, so that `uwsm finalize` overwrites a stale value an unclean session end left in the user manager), `autostart.lua`'s
 `uwsm finalize` list names it so that the systemd user manager hands it to the shell, and `Apps.launchEnvironment()` (and
 `ownAppEnvironment()`, for Settings and Glance) gives `QT_QPA_PLATFORMTHEME` back to every app the shell starts, as it already does
 for `GTK_USE_PORTAL` (`AppLaunch.themeEnvironment`, exactly the value `xdgdesktopportal`; every launch path of the shell, Dock,
-Launchpad, Search, Open With, document and folder opens, goes through `launchEnvironment()`). The Launchpad's call to the Store is a
-Grassfield helper that sets its own theme, and the shell's helper tools (`qs ipc`, `grassfield-*`) keep the pin. With the variable
-absent (the login guard fell back to gtk3, a dev session) apps keep the shell's value, which is gtk3 as before. Grassfield's own Qt apps (Files, Settings, Preview) use the portal for `QFileDialog`
+Launchpad, Search, Open With, document and folder opens, goes through `launchEnvironment()`). The Launchpad's call to the Store (its uninstall window) starts without the launch environment: it has no file dialog, and the
+Store sets its own theme only for `--removable`. The shell's helper tools (`qs ipc`, `grassfield-*`) keep the pin. With the variable
+empty or absent (the login guard fell back to gtk3, a dev session) apps keep the shell's value, which is gtk3 as before. Grassfield's own Qt apps (Files, Settings, Preview) use the portal for `QFileDialog`
 too; those that draw their own panels (the QML panels of Files) are unchanged.
 
 The plugin serves the portal theme only. Qt appends the platform's own theme names after `QT_QPA_PLATFORMTHEME` (on Wayland, the
 `XDG_CURRENT_DESKTOP` items), so any Wayland Qt process of the session asks for `grassfield` whatever the variable says. `create()`
 therefore returns nothing unless `QT_QPA_PLATFORMTHEME` is exactly `xdgdesktopportal`, before it touches GTK (a process with the
 variable unset, or naming `qt6ct`, `kde` or `none`, never reaches the plugin's gtk3 path, and the login stamp check does not have
-to cover it). Applications that bundle their own Qt (Flatpaks, AppImages, a vendor's private Qt) do not load this
+to cover it). An app started with Qt's `-platformtheme xdgdesktopportal` command-line option gets Fusion: the plugin reads only the environment.
+Applications that bundle their own Qt (Flatpaks, AppImages, a vendor's private Qt) do not load this
 plugin and lose the gtk3 look under their own platform theme; only apps on the system Qt get it.
 
 ### D-3 The ABI story

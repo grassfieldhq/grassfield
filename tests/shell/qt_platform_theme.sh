@@ -104,13 +104,13 @@ check "plugin installed for this Qt: QT_QPA_PLATFORMTHEME=xdgdesktopportal and i
   test "$out" = "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME=xdgdesktopportal QT_QPA_PLATFORMTHEME=xdgdesktopportal"
 out=$(lua "$tmp/apply.lua" "$cfg" "$tmp/block.lua" stale 2>&1)
 check "plugin built for another Qt minor: Omarchy's gtk3 stays (no QT_QPA_PLATFORMTHEME set), the reason is printed [$out]" \
-  bash -c 'echo "$1" | grep -q "^grassfield: Qt platform theme: gtk3 kept: the plugin was built for Qt 6.12 and Qt 6.13 is installed" && ! echo "$1" | grep -q "QT_QPA_PLATFORMTHEME="' _ "$out"
+  bash -c 'echo "$1" | grep -q "^grassfield: Qt platform theme: gtk3 kept: the plugin was built for Qt 6.12 and Qt 6.13 is installed" && ! echo "$1" | grep -q "\(^\| \)QT_QPA_PLATFORMTHEME="' _ "$out"
 out=$(lua "$tmp/apply.lua" "$cfg" "$tmp/block.lua" bare 2>&1)
 check "nothing installed: no variable is set, the reason is printed [$out]" \
-  bash -c 'echo "$1" | grep -q "gtk3 kept: no platform-theme plugin installed" && ! echo "$1" | grep -q "QT_QPA_PLATFORMTHEME="' _ "$out"
+  bash -c 'echo "$1" | grep -q "gtk3 kept: no platform-theme plugin installed" && ! echo "$1" | grep -q "\(^\| \)QT_QPA_PLATFORMTHEME="' _ "$out"
 check "the block still runs when the module is missing (pcall): gtk3 stays, a line is printed" bash -c '
   printf "package.path = \"/nonexistent/?.lua\"\nhl = { env = function(k) print(\"ENV \" .. k) end }\ndofile(arg[1])\n" >"$2/missing.lua"
-  out=$(lua "$2/missing.lua" "$1" 2>&1); echo "$out" | grep -q "gtk3 kept: module failed" && ! echo "$out" | grep -q "^ENV"' _ "$tmp/block.lua" "$tmp"
+  out=$(lua "$2/missing.lua" "$1" 2>&1); echo "$out" | grep -q "gtk3 kept: module failed" && ! echo "$out" | grep -q "^ENV QT_QPA_PLATFORMTHEME"' _ "$tmp/block.lua" "$tmp"
 check "QT_QPA_PLATFORMTHEME is set by hl.env in session.lua only, and never by the uwsm env (the Omarchy session shares neither)" bash -c '
   cd "$1" && ! grep -rn "hl.env(\"QT_QPA_PLATFORMTHEME\"" config | grep -v "config/hypr/session.lua" | grep . &&
   ! grep -n "QT_QPA_PLATFORMTHEME=" packaging/uwsm/env-grassfield | grep -v "^[0-9]*:#" | grep .' _ "$root"
@@ -181,6 +181,14 @@ check "the settings portal backend (QtCore only) clears it as well" grep -qx 'Un
 # The apps the shell starts: the shell's unit pins gtk3 for itself and an app inherits the shell's environment (uwsm-app's default is a
 # scope, which runs the command in its caller's environment), so the session's choice travels in GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME
 # (compositor environment, named in the finalize list so that the systemd user manager gets it) and Apps.launchEnvironment gives it back.
+out=$(lua "$tmp/apply.lua" "$cfg" "$tmp/block.lua" stale 2>&1)
+check "gtk3 kept: GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME is still defined, empty, so a stale value in the user manager is overwritten [$out]" \
+  bash -c 'echo "$1" | grep -qx "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME="' _ "$out"
+out=$(lua "$tmp/apply.lua" "$cfg" "$tmp/block.lua" bare 2>&1)
+check "nothing installed: the same, empty [$out]" bash -c 'echo "$1" | grep -qx "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME="' _ "$out"
+check "the module missing: the variable is defined empty as well" bash -c '
+  printf "package.path = \"/nonexistent/?.lua\"\nhl = { env = function(k, v) print(\"ENV \" .. k .. \"=\" .. v) end }\ndofile(arg[1])\n" >"$2/missing2.lua"
+  lua "$2/missing2.lua" "$1" 2>&1 | grep -qx "ENV GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME="' _ "$tmp/block.lua" "$tmp"
 check "autostart.lua's finalize list names GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME (the user manager, where the shell's unit reads it)" \
   grep -q 'GRASSFIELD_SESSION GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME"' "$cfg/grassfield/autostart.lua"
 check "no unit clears GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME, and the shell's unit pins gtk3 without touching it" bash -c '

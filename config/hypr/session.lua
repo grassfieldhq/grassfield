@@ -80,19 +80,24 @@ do
   local ok, qttheme = pcall(require, "grassfield.qttheme")
   if ok then
     local chosen, theme, why = pcall(qttheme.choose)
+    -- The shell and the security process pin gtk3 in their units (they must not wait on the portal at start), and every app the
+    -- shell starts inherits the shell's environment: the session's choice travels in GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME (named in
+    -- autostart.lua's finalize list) and the shell gives it back to the apps it starts (shell/services/Apps.qml launchEnvironment).
+    -- Always defined, empty when gtk3 is kept, so that `uwsm finalize` overwrites a value an unclean session end left in the user
+    -- manager (an old "xdgdesktopportal" would load a plugin built for another Qt).
+    local apps_theme = ""
     if chosen and theme == "xdgdesktopportal" then
       hl.env("QT_QPA_PLATFORMTHEME", theme)
-      -- The shell and the security process pin gtk3 in their units (they must not wait on the portal at start), and every app the
-      -- shell starts inherits the shell's environment: the session's choice travels in this variable (named in autostart.lua's
-      -- finalize list) and the shell gives it back to the apps it starts (shell/services/Apps.qml launchEnvironment).
-      hl.env("GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME", theme)
+      apps_theme = theme
     elseif chosen then
       print("grassfield: Qt platform theme: gtk3 kept: " .. tostring(why))
     else
       print("grassfield: Qt platform theme: gtk3 kept: " .. tostring(theme))
     end
+    hl.env("GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME", apps_theme)
   else
     print("grassfield: Qt platform theme: gtk3 kept: module failed: " .. tostring(qttheme))
+    hl.env("GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME", "")
   end
 end
 

@@ -63,6 +63,7 @@ TestCase {
     // that value; the pin (gtk3) never travels.
     function test_themeEnvironment() {
         compare(AppLaunch.themeEnvironment("xdgdesktopportal"), {"QT_QPA_PLATFORMTHEME": "xdgdesktopportal"});
+        // "" is what session.lua defines when it kept gtk3: apps keep the shell's gtk3
         for (const other of ["", "gtk3", "xdgdesktopportal2", "xdgdesktopportal:gtk3", "kde", undefined, null, true, 1])
             compare(AppLaunch.themeEnvironment(other), {}, String(other));
         // What Apps.launchEnvironment() builds: never empty once the session chose the portal theme (so the environment path of
