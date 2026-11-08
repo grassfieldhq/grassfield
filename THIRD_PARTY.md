@@ -10,7 +10,7 @@ Grassfield's own code is MIT (root `LICENSE`, ADR-0005 accepted by the owner 202
 | Package | `license=` | Why |
 |---|---|---|
 | `grassfield-desktop` | `MIT`, `CC-BY-SA-4.0`, `Unicode-3.0`, `BSD-3-Clause`, `LicenseRef-Grassfield-logo-all-rights-reserved` | own code; own art (symbolic icons, cursor templates, `BRANDING.md`), the Grassfield logo excepted: all rights reserved, the owner's mark, installed in the same package (owner decision 2026-10-27); the Unicode-derived grapheme tables (section 5a); the clipboard helper's code generated from `hyprland-lock-notify-v1.xml` (section 2a) |
-| `grassfield-compositor` | `MIT`, `LGPL-2.1-or-later`, `BSD-3-Clause` | own code; server code generated from the KDE appmenu protocol XML; Hyprland headers compiled in |
+| `grassfield-compositor` | `MIT`, `LGPL-2.1-or-later`, `BSD-3-Clause` | own code; server code generated from the KDE appmenu protocol XML; server code generated from wayland-protocols' xdg-toplevel-drag XML (MIT, section 1); Hyprland headers compiled in |
 | `grassfield-icons` | `MIT`, `GPL-3.0-only` | own glyphs; the third-party icon pack (risk accepted by the owner, decision D-9, 2026-10-23; the composed pack accepted for publication at the owner's risk, amendment of 2026-10-27) |
 
 Licence texts shipped with the packages (`/usr/share/licenses/<package>/`):
@@ -20,6 +20,7 @@ Licence texts shipped with the packages (`/usr/share/licenses/<package>/`):
 | `THIRD_PARTY.md` | both | this file |
 | `hyprland-BSD-3-Clause.txt` | grassfield-compositor | Hyprland BSD-3-Clause text, copied from `/usr/share/licenses/hyprland/LICENSE` |
 | `appmenu-LGPL-2.1-or-later.txt` | grassfield-compositor | notice of the KDE appmenu protocol and the LGPL-2.1-or-later text |
+| `compositor-protocols-notices.txt` | grassfield-compositor | the `<copyright>` block of `xdg-toplevel-drag-v1.xml` (MIT), whose generated server code is in `grassfield-compositor.so` (section 1) |
 | `BRANDING.md` | grassfield-desktop | `branding/LICENSES.md`, provenance of icons and wallpaper |
 | `omarchy-MIT.txt` | grassfield-desktop | Omarchy's LICENSE, verbatim (v4.0.4: "Copyright (c) David Heinemeier Hansson"), for Omarchy-derived QML |
 | `unicode-license-v3.txt` | grassfield-desktop | Unicode License v3 notice for the derived grapheme tables (section 5a) |
@@ -58,8 +59,8 @@ Licence texts shipped with the packages (`/usr/share/licenses/<package>/`):
   David Redondo" (the `<copyright>` block of the XML).
 - The server code generated from it by hyprwayland-scanner (`xdg-toplevel-drag-v1.hpp`/`.cpp`, which copy that block) is
   compiled into `grassfield-compositor.so` (ADR-0036 amendment 2026-11-08).
-  **Needs legal review:** whether that MIT block must ship with the plugin package as a notice file, as
-  `clipboard-protocols-notices.txt` does for the desktop package (not added: packaging is outside this change).
+- Notice shipped (integrator decision, 2026-11-08): `compositor-protocols-notices.txt`, that block verbatim, installed with
+  the plugin package as `clipboard-protocols-notices.txt` is with the desktop package.
 
 ### DBusMenu and AppMenu Registrar interfaces
 
