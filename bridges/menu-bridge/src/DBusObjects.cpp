@@ -38,6 +38,78 @@ namespace gf::menubridge {
         return interface == QLatin1String("org.freedesktop.DBus.Introspectable") || interface == QLatin1String("org.freedesktop.DBus.Peer");
     }
 
+    std::optional<ForeignAnswer> answerForeign(const QString& interface, const QString& member, const QString& signature, const QVariantList& args,
+                                               const QString& own) {
+        const auto error = [](const char* name, const QString& text) {
+            ForeignAnswer a;
+            a.error   = QString::fromLatin1(name);
+            a.message = text;
+            return a;
+        };
+        if (interface.isEmpty() || interface == own)
+            return std::nullopt;
+        if (interface == QLatin1String("org.freedesktop.DBus.Properties")) {
+            if (member == QLatin1String("GetAll")) {
+                // (A message built locally has no signature string, one that came off the wire always has: both are accepted
+                // when the arguments fit; a wire message with another signature or count is InvalidArgs.)
+                if ((!signature.isEmpty() && signature != QLatin1String("s")) || args.size() != 1)
+                    return error("org.freedesktop.DBus.Error.InvalidArgs", QStringLiteral("GetAll takes (s interface)"));
+                if (args.at(0).toString() != own && !args.at(0).toString().isEmpty())
+                    return error("org.freedesktop.DBus.Error.UnknownInterface", QStringLiteral("no such interface on this object"));
+                ForeignAnswer a;
+                a.reply  = true;
+                a.values = {QVariant(QVariantMap())}; // a{sv}, empty: this object has no properties
+                return a;
+            }
+            if (member == QLatin1String("Get") || member == QLatin1String("Set")) {
+                const bool isGet = member == QLatin1String("Get");
+                if ((!signature.isEmpty() && signature != (isGet ? QLatin1String("ss") : QLatin1String("ssv"))) || args.size() != (isGet ? 2 : 3))
+                    return error("org.freedesktop.DBus.Error.InvalidArgs", QStringLiteral("wrong arguments"));
+                return error("org.freedesktop.DBus.Error.UnknownProperty", QStringLiteral("this object has no properties"));
+            }
+            return error("org.freedesktop.DBus.Error.UnknownMethod", QStringLiteral("org.freedesktop.DBus.Properties has Get, Set and GetAll"));
+        }
+        return error("org.freedesktop.DBus.Error.UnknownInterface", QStringLiteral("no such interface on this object"));
+    }
+
+    namespace {
+        AnswerSink& sink() {
+            static AnswerSink s;
+            return s;
+        }
+        void deliver(const QDBusConnection& connection, const QDBusMessage& answer) {
+            if (sink())
+                sink()(answer);
+            else
+                connection.send(answer);
+        }
+    } // namespace
+
+    void setAnswerSinkForTests(AnswerSink s) {
+        sink() = std::move(s);
+    }
+
+    void sendReply(const QDBusMessage& call, const QDBusConnection& connection, const QVariantList& values) {
+        if (call.isReplyRequired())
+            deliver(connection, call.createReply(values));
+    }
+
+    void sendError(const QDBusMessage& call, const QDBusConnection& connection, const QString& name, const QString& text) {
+        if (call.isReplyRequired())
+            deliver(connection, call.createErrorReply(name, text));
+    }
+
+    bool answerForeignCall(const QDBusMessage& call, const QDBusConnection& connection, const QString& own) {
+        const auto a = answerForeign(call.interface(), call.member(), call.signature(), call.arguments(), own);
+        if (!a)
+            return false;
+        if (a->reply)
+            sendReply(call, connection, a->values);
+        else
+            sendError(call, connection, a->error, a->message);
+        return true;
+    }
+
     RegistrarObject::RegistrarObject(std::function<void()> changed) : m_changed(std::move(changed)) {}
 
     RegistrarObject::~RegistrarObject() = default;
@@ -56,24 +128,23 @@ namespace gf::menubridge {
             return true; // signals and replies are never for this object
         if (answersByDefault(message.interface()))
             return false;
-        // Only the registrar methods get an answer; any other call on this path is dropped without a reply (the
-        // message is already buffered by libdbus, but nothing is built for it).
-        if (message.interface() != QLatin1String(kRegistrarService))
+        // Every call gets an answer (a caller waits out D-Bus's 25 s for a dropped one, ADR-0041 I-4).
+        if (answerForeignCall(message, connection, QLatin1String(kRegistrarService)))
             return true;
         const QString           sender        = message.service();
         const bool              watchedBefore = m_book.holds(sender);
         const registrar::Answer a             = registrar::handle(m_book, message.member(), message.signature(), message.arguments(), sender);
-        if (a.kind == registrar::Answer::Kind::Drop)
-            return true; // not a registrar method: dropped
-        const QString key = sender + u' ' + message.member();
-        if (!m_logged.contains(key) && m_logged.size() < 256) {
+        // An unknown member is answered without a log line: a client must not be able to use up the 256-line budget with it.
+        const bool    unknownMember = a.kind == registrar::Answer::Kind::Error && a.error == QLatin1String("org.freedesktop.DBus.Error.UnknownMethod");
+        const QString key           = sender + u' ' + message.member();
+        if (!unknownMember && !m_logged.contains(key) && m_logged.size() < 256) {
             m_logged.insert(key);
             log(QStringLiteral("registrar: %1 from %2 %3").arg(message.member(), sender, a.kind == registrar::Answer::Kind::Reply ? QStringLiteral("kept") : QStringLiteral("answered %1").arg(a.error)));
         }
         if (a.kind == registrar::Answer::Kind::Reply)
-            connection.send(message.createReply());
+            sendReply(message, connection);
         else
-            connection.send(message.createErrorReply(a.error, a.message));
+            sendError(message, connection, a.error, a.message);
         // A new sender: watch it, THEN ask its pid (the bus daemon handles one connection's messages in order: either the
         // answer says it is gone, or its later departure is a NameOwnerChanged the watch receives).
         if (a.added && !watchedBefore && m_watcher) {
@@ -132,18 +203,22 @@ namespace gf::menubridge {
             return true;
         if (answersByDefault(message.interface()))
             return false;
-        if (message.interface() != QLatin1String(kDiagnosticsService) || !message.arguments().isEmpty())
-            return true; // dropped
-
-        if (message.member() == QLatin1String("Version")) {
-            connection.send(message.createReply(QStringLiteral("%1 %2").arg(QLatin1String(kBridgeVersion), QLatin1String(kProtocol))));
+        if (answerForeignCall(message, connection, QLatin1String(kDiagnosticsService)))
+            return true;
+        const bool known = message.member() == QLatin1String("Version") || message.member() == QLatin1String("Status");
+        if (!known) {
+            sendError(message, connection, QStringLiteral("org.freedesktop.DBus.Error.UnknownMethod"), QStringLiteral("org.grassfield.MenuBridge1 has Version and Status"));
             return true;
         }
-        if (message.member() == QLatin1String("Status")) {
-            connection.send(message.createReply(QVariant(m_status())));
+        if (!message.arguments().isEmpty()) {
+            sendError(message, connection, QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs"), QStringLiteral("takes no arguments"));
             return true;
         }
-        return true; // unknown member: dropped
+        if (message.member() == QLatin1String("Version"))
+            sendReply(message, connection, {QStringLiteral("%1 %2").arg(QLatin1String(kBridgeVersion), QLatin1String(kProtocol))});
+        else
+            sendReply(message, connection, {QVariant(m_status())});
+        return true;
     }
 
 } // namespace gf::menubridge

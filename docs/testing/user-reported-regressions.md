@@ -407,11 +407,14 @@ None of these reports came with a diagnostic report.
   - Omarchy's theme switcher writes the machine policy BrowserThemeColor, and its colour theme replaces the GTK
     appearance's window buttons in every profile.
   - Chromium gives new profiles its GTK appearance only on desktops it knows as GNOME-like.
-- Fix: cee4a69e, 64debeef (PR #15, merge 23ffea7b): the package installs zz-grassfield-gtk.json with an empty
-  BrowserThemeColor (machine-wide); fb34adcb adds Google Chrome to the client-chrome list; regression test:
-  tests/shell/client_chrome_rules.sh (the policy file has no automated test; measured in nested with Chromium 155)
-- Verification: tests: tests/shell/client_chrome_rules.sh; Chrome needs Settings > Appearance > Mode: GTK once; Firefox
-  not verified (accepted as a known limit by the owner on 2026-11-08); reporter's check pending
+- Fix: cee4a69e, 64debeef (PR #15, merge 23ffea7b) installed zz-grassfield-gtk.json machine-wide: replaced on
+  2026-11-08 (owner decisions R7-OMA-01 and R7-FUN-04) by the session-only browser stand-in
+  packaging/session-bin/chromium: a new profile is created in the GTK appearance, Omarchy's color.json is hidden from
+  the browser in a private mount namespace, nothing is installed in /etc; fb34adcb adds Google Chrome to the
+  client-chrome list; regression tests: tests/shell/browser_session.sh, tests/shell/client_chrome_rules.sh
+- Verification: tests: tests/shell/browser_session.sh (logic; runtime NOT VERIFIED in the Claude sandbox), the lights
+  on screen: tests/compositor/gtk_lights.sh (nested); Firefox not verified (accepted as a known limit by the owner
+  on 2026-11-08); reporter's check pending
 - First shipped version: 1.0.0-rc7
 
 ### URR-029: Chrome with "Use system title bar" lacks window buttons

@@ -109,7 +109,7 @@ namespace gf::menubridge::registrar {
             return error("com.canonical.AppMenu.Registrar.Error.NotFound", QStringLiteral("menus are linked to windows by their process; nothing can be looked up"));
         if (member == QLatin1String("GetMenus"))
             return error("org.freedesktop.DBus.Error.NotSupported", QStringLiteral("GetMenus is not implemented"));
-        return Answer{}; // Drop
+        return error("org.freedesktop.DBus.Error.UnknownMethod", QStringLiteral("not a registrar method"));
     }
 
 } // namespace gf::menubridge::registrar

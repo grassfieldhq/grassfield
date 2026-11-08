@@ -74,9 +74,8 @@ namespace gf::menubridge::registrar {
         enum class Kind {
             Reply, // an empty reply (RegisterWindow, UnregisterWindow done)
             Error, // an error reply
-            Drop,  // no reply at all: not a registrar method (nothing is built for traffic nobody asked for)
         };
-        Kind    kind = Kind::Drop;
+        Kind    kind = Kind::Error;
         QString error;
         QString message;
         bool    added   = false; // a registration was kept (a new sender is watched and its pid asked; settle it later)
@@ -87,7 +86,7 @@ namespace gf::menubridge::registrar {
 
     // Pure: RegisterWindow(uo) -> () kept (LimitsExceeded past the caps, InvalidArgs for a bad path or signature),
     // UnregisterWindow(u) -> (), GetMenuForWindow(u) -> NotFound (nobody can look a registration up), GetMenus() ->
-    // NotSupported, any other member: Drop. `sender` must be a unique name (a well-known one: InvalidArgs).
+    // NotSupported, any other member: UnknownMethod. `sender` must be a unique name (a well-known one: InvalidArgs).
     Answer handle(Book& book, const QString& member, const QString& signature, const QVariantList& args, const QString& sender);
 
 } // namespace gf::menubridge::registrar

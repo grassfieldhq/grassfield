@@ -14011,6 +14011,14 @@
         <translation>Cet ordinateur est à jour</translation>
     </message>
     <message>
+        <source>It&apos;s taking longer than expected. You can allow system updates Grassfield hasn&apos;t tested.</source>
+        <translation>Cela prend plus de temps que prévu. Vous pouvez autoriser les mises à jour du système que Grassfield n&apos;a pas testées.</translation>
+    </message>
+    <message>
+        <source>A compatible Grassfield update is expected soon. Software Update tells you when it&apos;s ready.</source>
+        <translation>Une mise à jour de Grassfield compatible est attendue prochainement. Mise à jour de logiciels vous préviendra quand elle sera prête.</translation>
+    </message>
+    <message>
         <source>Updates are available</source>
         <translation>Des mises à jour sont disponibles</translation>
     </message>
@@ -14091,6 +14099,14 @@
         <translation>Les mises à jour de Grassfield n’ont pas été réparées&#xa0;: %1</translation>
     </message>
     <message>
+        <source>System updates were not allowed: %1</source>
+        <translation>Les mises à jour du système n&apos;ont pas été autorisées : %1</translation>
+    </message>
+    <message>
+        <source>System updates were not held back: %1</source>
+        <translation>Les mises à jour du système n&apos;ont pas été retenues : %1</translation>
+    </message>
+    <message>
         <source>Grassfield updates were not turned off: %1</source>
         <translation>Les mises à jour de Grassfield n’ont pas été désactivées&#xa0;: %1</translation>
     </message>
@@ -14165,6 +14181,30 @@
     <message>
         <source>Beta Updates details</source>
         <translation>Détails des mises à jour bêta</translation>
+    </message>
+    <message>
+        <source>System updates Grassfield hasn&apos;t tested</source>
+        <translation>Mises à jour du système que Grassfield n&apos;a pas testées</translation>
+    </message>
+    <message>
+        <source>They wait until Grassfield is ready for them, so an update can&apos;t stop the desktop from working. Security fixes for Qt and Quickshell wait too.</source>
+        <translation>Elles attendent que Grassfield soit prêt, pour qu&apos;une mise à jour ne puisse pas empêcher le bureau de fonctionner. Les correctifs de sécurité de Qt et de Quickshell attendent aussi.</translation>
+    </message>
+    <message>
+        <source>They are installed with the system&apos;s updates. Grassfield may stop working until its next version arrives.</source>
+        <translation>Elles sont installées avec les mises à jour du système. Grassfield peut cesser de fonctionner jusqu&apos;à l&apos;arrivée de sa prochaine version.</translation>
+    </message>
+    <message>
+        <source>Your system already moved past the versions this Grassfield was built for. Holding comes back with the next Grassfield update.</source>
+        <translation>Votre système a déjà dépassé les versions pour lesquelles cette version de Grassfield a été construite. La retenue reviendra avec la prochaine mise à jour de Grassfield.</translation>
+    </message>
+    <message>
+        <source>Allow…</source>
+        <translation>Autoriser…</translation>
+    </message>
+    <message>
+        <source>Hold Again</source>
+        <translation>Retenir de nouveau</translation>
     </message>
     <message>
         <source>Set Up…</source>
@@ -18369,8 +18409,12 @@
         <translation>Cette mise à jour nécessite une version plus récente de Grassfield</translation>
     </message>
     <message>
-        <source>Software Update checks again later and tells you when it&apos;s ready.</source>
-        <translation>Mise à jour de logiciels vérifiera de nouveau plus tard et vous préviendra quand elle sera prête.</translation>
+        <source>It&apos;s taking longer than expected. Open Software Update to allow system updates Grassfield hasn&apos;t tested.</source>
+        <translation>Cela prend plus de temps que prévu. Ouvrez Mise à jour de logiciels pour autoriser les mises à jour du système que Grassfield n&apos;a pas testées.</translation>
+    </message>
+    <message>
+        <source>A compatible Grassfield update is expected soon. Software Update tells you when it&apos;s ready.</source>
+        <translation>Une mise à jour de Grassfield compatible est attendue prochainement. Mise à jour de logiciels vous préviendra quand elle sera prête.</translation>
     </message>
     <message>
         <source>This update needs Omarchy&apos;s terminal</source>

@@ -75,6 +75,13 @@ function appsGtkPortal(value) {
     return value === "1";
 }
 
+// GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME (always honoured): the session's Qt platform theme for the apps the shell starts (ADR-0054).
+// The shell's own unit pins gtk3, and an app inherits the shell's environment, so session.lua names the session's choice here and
+// the shell gives it back. Exactly "xdgdesktopportal"; "" otherwise.
+function appsQtTheme(value) {
+    return (value === "xdgdesktopportal") ? value : "";
+}
+
 // A raw home override such as GRASSFIELD_STATE_HOME (always honoured): its value, "" when unset or empty.
 function homeOverride(value) {
     return value ? value : "";

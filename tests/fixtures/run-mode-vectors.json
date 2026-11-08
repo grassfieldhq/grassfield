@@ -18,7 +18,8 @@
   "shellDir": ["string", "Quickshell.shellDir"],
   "stateHome": ["string", "RunMode.homeOverride(%(STATE_HOME)s)"],
   "appsTrace": ["bool", "RunMode.appsTrace(%(APPS_TRACE)s)"],
-  "appsGtkPortal": ["bool", "RunMode.appsGtkPortal(%(APPS_GTK_USE_PORTAL)s)"]
+  "appsGtkPortal": ["bool", "RunMode.appsGtkPortal(%(APPS_GTK_USE_PORTAL)s)"],
+  "appsQtTheme": ["string", "RunMode.appsQtTheme(%(APPS_QT_THEME)s)"]
  },
  "functions": {
   "devValue": [["name"], "return RunMode.devPlumbing(%(DEV)s, %(SESSION)s, Quickshell.env((\"GRASSFIELD_\" op0 name)))"]
@@ -34,7 +35,8 @@
   "XDG_STATE_HOME": "Quickshell.env(\"XDG_STATE_HOME\")",
   "HOME": "Quickshell.env(\"HOME\")",
   "APPS_TRACE": "Quickshell.env(\"GRASSFIELD_APPS_TRACE\")",
-  "APPS_GTK_USE_PORTAL": "Quickshell.env(\"GRASSFIELD_APPS_GTK_USE_PORTAL\")"
+  "APPS_GTK_USE_PORTAL": "Quickshell.env(\"GRASSFIELD_APPS_GTK_USE_PORTAL\")",
+  "APPS_QT_THEME": "Quickshell.env(\"GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME\")"
  }
 },
 "runmode": {
@@ -50,6 +52,7 @@
   "stateDir": [["stateHome", "xdgStateHome", "home"], "if (stateHome) return stateHome ; return (((xdgStateHome ? xdgStateHome : (home op0 \"/.local/state\"))) op0 \"/grassfield\")"],
   "appsTrace": [["value"], "return (value op1f \"1\")"],
   "appsGtkPortal": [["value"], "return (value op1f \"1\")"],
+  "appsQtTheme": [["value"], "return (((value op1f \"xdgdesktopportal\")) ? value : \"\")"],
   "homeOverride": [["value"], "return (value ? value : \"\")"]
  },
  "vars": {"REFUSED": "\"refused\""}
@@ -103,6 +106,14 @@
  {"name": "1 in a dev session", "env": {"GRASSFIELD_DEV": "1", "GRASSFIELD_APPS_GTK_USE_PORTAL": "1"}, "appsGtkPortal": true},
  {"name": "true is not 1", "env": {"GRASSFIELD_APPS_GTK_USE_PORTAL": "true"}, "appsGtkPortal": false},
  {"name": "0", "env": {"GRASSFIELD_APPS_GTK_USE_PORTAL": "0"}, "appsGtkPortal": false}
+],
+"qttheme": [
+ {"name": "unset", "env": {}, "appsQtTheme": ""},
+ {"name": "xdgdesktopportal (session.lua, finalized to the user manager)", "env": {"GRASSFIELD_SESSION": "1", "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": "xdgdesktopportal"}, "appsQtTheme": "xdgdesktopportal"},
+ {"name": "in a dev session", "env": {"GRASSFIELD_DEV": "1", "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": "xdgdesktopportal"}, "appsQtTheme": "xdgdesktopportal"},
+ {"name": "empty (session.lua kept gtk3 and overwrote a stale value)", "env": {"GRASSFIELD_SESSION": "1", "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": ""}, "appsQtTheme": ""},
+ {"name": "gtk3 is not the portal theme", "env": {"GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": "gtk3"}, "appsQtTheme": ""},
+ {"name": "a longer value", "env": {"GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME": "xdgdesktopportal:gtk3"}, "appsQtTheme": ""}
 ],
 "plumbing": [
  {"name": "dev: value honoured", "env": {"GRASSFIELD_DEV": "1", "GRASSFIELD_FIXED_TIME": "12:00"}, "variable": "GRASSFIELD_FIXED_TIME", "value": "12:00"},

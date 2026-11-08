@@ -7,6 +7,13 @@
 #   grassfield-channel-set beta      switch to the beta channel (installs nothing; "Update Now" does)
 #   grassfield-channel-set repair    put [grassfield] back after Omarchy rewrote pacman.conf, or rewrite a custom file
 #   grassfield-channel-set off       turn Grassfield updates off: no [grassfield], no Grassfield key left in pacman
+#   grassfield-channel-set unhold    allow system updates Grassfield hasn't tested (ADR-0041 step 2a): grassfield-unhold
+#                                    replaces grassfield-hold in one root transaction, by pkexec grassfield-hold-helper (its own
+#                                    polkit action org.grassfield.packages.hold: a password every time)
+#   grassfield-channel-set hold      hold them again: grassfield-hold replaces grassfield-unhold
+#   grassfield-channel-set hold-state  print (read-only) held, allowed, allowed-moved or none: the hold is installed; its twin
+#                                    is, and the toolkit is still inside the hold's bounds; the same, but the toolkit moved past
+#                                    them (holding again is impossible until the next Grassfield update); neither is installed
 #
 # The user's command, also run by Settings with no terminal; it refuses to run as root. The change itself is made by
 # `pkexec /usr/lib/grassfield/grassfield-channel-helper <verb>` (polkit action org.grassfield.packages.set-channel: an
@@ -22,8 +29,11 @@
 set -uo pipefail
 
 helper=/usr/lib/grassfield/grassfield-channel-helper
+hold_helper=/usr/lib/grassfield/grassfield-hold-helper
 repository=/usr/share/grassfield/pacman/repository.conf
 version_file=/usr/share/grassfield/VERSION
+build_deps=/usr/share/grassfield/BUILD-DEPS
+bounds_lib=/usr/lib/grassfield/grassfield-hold-bounds.sh
 pacman_conf=/etc/pacman.conf
 include=/etc/pacman.d/grassfield.conf
 hook=/usr/share/grassfield/omarchy-hooks/pre-refresh-pacman
@@ -120,18 +130,45 @@ require_no_update() {
   flock -n "$lock" true || fail "an Omarchy update is running: try again when it has finished"
 }
 
-run_helper() {
-  local rc
+# hold-state: what the hold is (see the header). Read-only: pacman -Q of the local database and the build's own record, with
+# the code that computed the hold's bounds (ADR-0041 step 2a; the same rule as U27).
+# By NAME: `pacman -Q grassfield-hold` also answers for the twin, which provides that name (pacman 7.1), so the list of names is read.
+hold_state() {
+  local qs qt names
+  names=$(pacman -Qq 2>/dev/null) || { echo none; return; }
+  if [[ $'\n'$names$'\n' == *$'\n'grassfield-hold$'\n'* ]]; then
+    echo held
+  elif [[ $'\n'$names$'\n' == *$'\n'grassfield-unhold$'\n'* ]]; then
+    # shellcheck source=packaging/arch/hold-bounds.sh
+    if [[ -f $bounds_lib && ! -L $bounds_lib ]] && . "$bounds_lib" &&
+      qs=$(pacman -Q -- quickshell 2>/dev/null | awk '{ print $2; exit }') &&
+      qt=$(pacman -Q -- qt6-base 2>/dev/null | awk '{ print $2; exit }') &&
+      gf_hold_allows "$build_deps" "$qs" "$qt"; then
+      echo allowed
+    else
+      echo allowed-moved
+    fi
+  else
+    echo none
+  fi
+}
+
+# run_helper verb...: the channel helper; run_hold_helper verb: the hold helper (its own polkit action, a password every time).
+run_helper() { run_program "$helper" "$@"; }
+run_hold_helper() { run_program "$hold_helper" "$@"; }
+run_program() {
+  local rc program=$1
+  shift
   if [[ -z $pkexec ]]; then
     echo "grassfield-channel-set: dev guard: $* suppressed in a dev session" >&2
     exit 1
   fi
-  "$pkexec" "$helper" "$@"
+  "$pkexec" "$program" "$@"
   rc=$?
   case $rc in
     0) return 0 ;;
     126 | 127) fail "not allowed: the authentication was cancelled or refused, or no authentication agent answered" ;;
-    *) fail "the change failed (grassfield-channel-helper $*: exit $rc); nothing else was changed" ;;
+    *) fail "the change failed (${program##*/} $*: exit $rc); nothing else was changed" ;;
   esac
 }
 
@@ -166,7 +203,7 @@ if ((EUID == 0)); then
   fail "run it as your user; it asks for permission itself"
 fi
 if (($# > 1)); then
-  echo "usage: grassfield-channel-set [stable|beta|repair|off]" >&2
+  echo "usage: grassfield-channel-set [stable|beta|repair|off|hold|unhold|hold-state]" >&2
   exit 2
 fi
 
@@ -211,8 +248,15 @@ case ${1-} in
     run_helper off
     unlink_hook
     ;;
+  hold | unhold)
+    require_no_update
+    run_hold_helper "$1"
+    ;;
+  hold-state)
+    hold_state
+    ;;
   *)
-    echo "usage: grassfield-channel-set [stable|beta|repair|off]" >&2
+    echo "usage: grassfield-channel-set [stable|beta|repair|off|hold|unhold|hold-state]" >&2
     exit 2
     ;;
 esac

@@ -374,6 +374,8 @@ ShellRoot {
                                     root.run(d, "done", "incompatible", "");
                                     when(() => root.runEnds.length > 2, () => {
                                         root.check(JSON.stringify(root.runEnds) === JSON.stringify(["restart", "", "incompatible"]), "r: an incompatible one is announced (" + JSON.stringify(root.runEnds) + ")");
+                                        root.check(typeof SoftwareUpdate.file.holdRefusedAt === "number" && Math.abs(Date.now() - SoftwareUpdate.file.holdRefusedAt) < 60000, "r: the first refused update starts the 7 days (" + SoftwareUpdate.file.holdRefusedAt + ")");
+                                        root.check(!SoftwareUpdate.holdWaitOver(), "r: and they are not over");
                                         root.check(SoftwareUpdate.file.announced.indexOf("toolkit " + SoftwareUpdate.sessionStartedAt) < 0, "r: an end that asks for no restart covers nothing");
                                         stepJ();
                                     });

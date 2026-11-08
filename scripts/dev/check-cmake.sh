@@ -15,7 +15,7 @@ build=0
 [[ ${1:-} == --build ]] && build=1
 mkdir -p "$out"
 fail=0
-for project in apps/settings apps/wallpaper-tool apps/files apps/preview apps/clipboard-helper apps/store apps/secrets-handover apps/portal-settings apps/portal apps/activity apps/memos bridges/menu-bridge bridges/prompter ui/i18n; do
+for project in apps/settings apps/wallpaper-tool apps/files apps/preview apps/clipboard-helper apps/store apps/secrets-handover apps/portal-settings apps/portal apps/activity apps/memos bridges/menu-bridge bridges/prompter packaging/qt-platform-theme ui/i18n; do
   dir=$out/$(basename "$project")
   log=$out/$(basename "$project").log
   if cmake -S "$root/$project" -B "$dir" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr >"$log" 2>&1 \

@@ -94,23 +94,25 @@ namespace gf::menubridge::ongoing {
     }
 
     void OngoingObject::reply(const QDBusMessage& message, const QVariantList& values) {
-        m_bus.send(message.createReply(values));
+        sendReply(message, m_bus, values);
     }
 
     void OngoingObject::error(const QDBusMessage& message, const QString& name, const QString& text) {
-        m_bus.send(message.createErrorReply(name, text));
+        sendError(message, m_bus, name, text);
     }
 
-    bool OngoingObject::handleMessage(const QDBusMessage& message, const QDBusConnection& /*connection*/) {
+    bool OngoingObject::handleMessage(const QDBusMessage& message, const QDBusConnection& connection) {
         if (message.type() != QDBusMessage::MethodCallMessage)
             return true;
         if (answersByDefault(message.interface()))
             return false;
-        if (!message.interface().isEmpty() && message.interface() != QLatin1String(kInterface))
-            return true; // another interface: dropped
+        if (answerForeignCall(message, connection, QLatin1String(kInterface)))
+            return true; // another interface: answered (never dropped: the caller would wait 25 s)
         const QString sender = message.service();
-        if (!sender.startsWith(u':'))
+        if (!sender.startsWith(u':')) {
+            error(message, kDenied, QStringLiteral("the caller has no unique name"));
             return true;
+        }
         if (message.member() == QLatin1String("Version")) {
             reply(message, {QStringLiteral("%1 ongoing/1").arg(QLatin1String(kBridgeVersion))});
             return true;

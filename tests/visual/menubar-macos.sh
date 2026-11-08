@@ -110,6 +110,77 @@ check "keyboard-walk: Right from the Grassfield menu reaches the Window menu and
   bash -c '[[ " $1 " == *" app "* && " $1 " == *" appwindow "* && " $1 " == *" network "* && " $1 " == *" volume "* && " $1 " == *" controlcenter "* && "$1" == *system ]]' _ "$seen"
 k=$(key_until Left system)
 check "keyboard-walk: Left from the Grassfield menu wraps to the last status menu (got '${k:-none}')" test "$k" = "controlcenter@$VS_OUTPUT"
+# keyboard-focus-walk (R7-FUN-08 / GF-002): the real binding (Ctrl+F2) with the foot window focused, then the whole walk by
+# key, each step asserting WHICH surface has the keyboard (the popup's Overlay window, never the foot window): Right across
+# the titles and the status menus, Left back, Down in the open menu, Escape back to the window that had the keys.
+holder() { vs_ipc menubar keyboardHolder | tr -d '"'; }
+wait_holder() { # want -> waits up to ~6 s for the keyboard holder to be `want`
+  local n
+  for n in $(seq 1 12); do
+    [[ $(holder) == "$1" ]] && return 0
+    vs_sleep 0.5
+  done
+  return 1
+}
+active_title() { "$VS_ROOT/scripts/nestctl" activewindow -j | jq -r '.title // ""'; }
+# Presses `key` until the open kind leaves `from` (the menu takes the keys a moment after it maps), echoes the new kind. A key
+# that arrives while the overlay does NOT hold the keyboard went to the window below: the step fails on that, not on a retry.
+step_key() { # key from-kind
+  local key=$1 from=$2 n
+  for n in 1 2 3 4 5 6 7 8; do
+    [[ $(holder) == overlay ]] || { echo "lost@$(holder)"; return; }
+    "$VS_ROOT/scripts/dev/keys.sh" -k "$key" >/dev/null
+    vs_sleep 0.6
+    [[ $(kind) != "$from@$VS_OUTPUT" ]] && break
+  done
+  kind
+}
+reset_menus
+vs_sleep 1.0
+fw_before=$(active_title)
+# A compositor bind: wtype's modifiers reach apps but never the compositor's binds, so the chord goes through
+# tests/tools/vkbd, as tests/visual/flow-lib.sh fl_chord does.
+timeout 20 "$VS_ROOT/tests/tools/vkbd/vkbd.sh" down Control_L sleep 60 tap F2 sleep 60 up Control_L >/dev/null
+for _ in $(seq 1 10); do [[ $(kind) == "system@$VS_OUTPUT" ]] && break; vs_sleep 0.4; done
+check "focus-walk: Ctrl+F2 with the foot window focused opens the Grassfield menu (got '$(kind)', window '$fw_before')" is_kind system
+check "focus-walk: after Ctrl+F2 the menu bar's popup holds the keyboard, not the window (holder '$(holder)')" wait_holder overlay
+seen=""
+cur=system
+lost=""
+for _ in $(seq 1 14); do
+  nk=$(step_key Right "$cur")
+  if [[ $nk == lost@* ]]; then lost="Right after '$seen': ${nk#lost@}"; break; fi
+  [[ -n $nk ]] || { lost="Right after '$seen': popup closed"; break; }
+  cur=${nk%@*}
+  seen+=" $cur"
+  [[ $(holder) == overlay ]] || { lost="after Right to '$cur': holder '$(holder)'"; break; }
+  [[ $cur == system ]] && break
+done
+check "focus-walk: Right x$(wc -w <<<"$seen") visits app menus and the status area and wraps, the popup keeps the keyboard at every step ($seen${lost:+; LOST $lost})" \
+  bash -c '[[ -z $2 && " $1 " == *" app "* && " $1 " == *" network "* && " $1 " == *" controlcenter "* && "$1" == *system ]]' _ "$seen" "$lost"
+back=""
+cur=system
+lost=""
+for _ in $(seq 1 14); do
+  nk=$(step_key Left "$cur")
+  if [[ $nk == lost@* ]]; then lost="Left after '$back': ${nk#lost@}"; break; fi
+  [[ -n $nk ]] || { lost="Left after '$back': popup closed"; break; }
+  cur=${nk%@*}
+  back+=" $cur"
+  [[ $cur == app ]] && break
+done
+check "focus-walk: Left walks back to the app menu with the popup holding the keyboard ($back${lost:+; LOST $lost})" \
+  bash -c '[[ -z $2 && "$1" == *app ]]' _ "$back" "$lost"
+before=$(kind)
+"$VS_ROOT/scripts/dev/keys.sh" -k Down >/dev/null
+vs_sleep 0.6
+check "focus-walk: Down in the open menu keeps it open and keeps the keyboard (kind '$(kind)', holder '$(holder)')" \
+  bash -c '[[ $1 == "$2" && $3 == overlay ]]' _ "$(kind)" "$before" "$(holder)"
+"$VS_ROOT/scripts/dev/keys.sh" -k Escape >/dev/null
+for _ in $(seq 1 10); do closed && break; vs_sleep 0.4; done
+check "focus-walk: Escape closes the menu (got '$(kind)')" closed
+for _ in $(seq 1 10); do [[ $(active_title) == "$fw_before" ]] && break; vs_sleep 0.5; done
+check "focus-walk: Escape returns the keyboard to the window that had it ('$fw_before', now '$(active_title)')" test "$(active_title)" = "$fw_before"
 # Ctrl+F8 equivalent: the status menus start at the first status item.
 reset_menus
 vs_ipc menubar open status "$VS_OUTPUT" >/dev/null

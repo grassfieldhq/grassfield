@@ -71,6 +71,36 @@ hl.env("XDG_SESSION_DESKTOP", "Grassfield")
 hl.env("XDG_CURRENT_DESKTOP", "Grassfield:Hyprland")
 hl.env("GRASSFIELD_SESSION", "1")
 
+-- ADR-0054 (amends Q3 of ADR-0035): Qt apps get Grassfield's Open and Save panels and keep the GTK look. Omarchy's envs.lua
+-- (above) set QT_QPA_PLATFORMTHEME=gtk3; here the "xdgdesktopportal" theme replaces it when the "grassfield" platform-theme
+-- plugin is installed for the Qt that runs, and gtk3 stays otherwise (the reason goes to the journal). LibreOffice's Qt 6 plugin
+-- (SAL_USE_VCLPLUGIN) is set by packaging/uwsm/env-grassfield, which every launch path of the session sees (the Dock, Launchpad and
+-- Open With start apps from the systemd user manager's environment, not the compositor's).
+do
+  local ok, qttheme = pcall(require, "grassfield.qttheme")
+  if ok then
+    local chosen, theme, why = pcall(qttheme.choose)
+    -- The shell and the security process pin gtk3 in their units (they must not wait on the portal at start), and every app the
+    -- shell starts inherits the shell's environment: the session's choice travels in GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME (named in
+    -- autostart.lua's finalize list) and the shell gives it back to the apps it starts (shell/services/Apps.qml launchEnvironment).
+    -- Always defined, empty when gtk3 is kept, so that `uwsm finalize` overwrites a value an unclean session end left in the user
+    -- manager (an old "xdgdesktopportal" would load a plugin built for another Qt).
+    local apps_theme = ""
+    if chosen and theme == "xdgdesktopportal" then
+      hl.env("QT_QPA_PLATFORMTHEME", theme)
+      apps_theme = theme
+    elseif chosen then
+      print("grassfield: Qt platform theme: gtk3 kept: " .. tostring(why))
+    else
+      print("grassfield: Qt platform theme: gtk3 kept: " .. tostring(theme))
+    end
+    hl.env("GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME", apps_theme)
+  else
+    print("grassfield: Qt platform theme: gtk3 kept: module failed: " .. tostring(qttheme))
+    hl.env("GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME", "")
+  end
+end
+
 require("grassfield.core")
 require("grassfield.autostart")
 require("grassfield.system")

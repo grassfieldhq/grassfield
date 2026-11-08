@@ -22,7 +22,8 @@
 _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 _ver=$(tr -d '[:space:]' <"$_here/../../VERSION")
 pkgbase=grassfield
-pkgname=(grassfield-desktop grassfield-compositor grassfield-icons grassfield-store grassfield-wallpapers grassfield-login-themes)
+pkgname=(grassfield-desktop grassfield-compositor grassfield-icons grassfield-store grassfield-wallpapers grassfield-login-themes
+         grassfield-hold grassfield-unhold)
 pkgver=${_ver//-/}
 if [[ -n ${GRASSFIELD_PKGREL:-} && ! $GRASSFIELD_PKGREL =~ ^[1-9][0-9]*$ ]]; then
   echo "PKGBUILD: GRASSFIELD_PKGREL must be a positive integer, not '$GRASSFIELD_PKGREL'" >&2
@@ -53,6 +54,8 @@ options=(!debug)
 # composer reads src/, links/ and Pebble/ only. The pins live in icon-pins.sh, which scripts/dev/icons.sh sources too
 # (one definition); only the sha256sums below are written here, because makepkg's updpkgsums rewrites them in place.
 source "$_here/icon-pins.sh"
+# The bounds of grassfield-hold, computed from BUILD-DEPS (ADR-0041 step 2a); also installed for grassfield-channel-set.
+source "$_here/hold-bounds.sh"
 _mactahoe_commit=$MT_PIN
 _pebble_commit=$PB_PIN
 source=("mactahoe-icon-theme::git+${MT_REPO}.git#commit=${_mactahoe_commit}"
@@ -216,6 +219,11 @@ build() {
   cmake -S "$(_root)/bridges/prompter" -B "$srcdir/prompter-build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DGRASSFIELD_BUILD_TESTS=ON
   cmake --build "$srcdir/prompter-build"
+  # Qt platform-theme plugin (ADR-0054): "grassfield", the base theme of Qt's xdgdesktopportal theme, built on Qt's private API
+  # against the qt6-base this build records in BUILD-DEPS; the session uses it only with the same Qt major.minor.
+  cmake -S "$(_root)/packaging/qt-platform-theme" -B "$srcdir/qt-platform-theme-build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build "$srcdir/qt-platform-theme-build"
   # Grassfield cursors (ADR-0014): hyprcursor SVG theme + XCursor fallback from branding/cursors.
   "$(_root)/branding/cursors/build.sh" --out "$srcdir/icons"
   # grassfield-icons (ADR-0017): compose the theme into a scratch directory; the composer fails on pin drift (a listed
@@ -269,7 +277,10 @@ package_grassfield-desktop() {
   # already installed with gnome-keyring (probe P15), declared because Grassfield's own binary needs it. libsecret: the
   # bridge's KIO password server keeps remembered network passwords in the Secret Service with it (ADR-0035 D-12 b, step
   # 9e); already installed with gcr-4, declared for the same reason.
-  depends=(hyprland uwsm quickshell qt6-declarative qt6-wayland wayland qt6-svg inter-font kio solid kcoreaddons kservice kwindowsystem qt6-multimedia qt6-imageformats qt6-webengine ffmpeg curl python librsvg hyprcursor breeze-icons grassfield-icons grassfield-wallpapers networkmanager bluez-utils wireplumber pipewire wl-clipboard grim slurp grassfield-keyring pacman-contrib fakeroot gnome-keyring xdg-desktop-portal xdg-desktop-portal-gtk libcups gcr-4 libsecret)
+  depends=(hyprland uwsm bubblewrap quickshell qt6-declarative qt6-wayland wayland qt6-svg inter-font kio solid kcoreaddons kservice kwindowsystem qt6-multimedia qt6-imageformats qt6-webengine ffmpeg curl python librsvg hyprcursor breeze-icons grassfield-icons grassfield-wallpapers networkmanager bluez-utils wireplumber pipewire wl-clipboard grim slurp grassfield-keyring grassfield-hold pacman-contrib fakeroot gnome-keyring xdg-desktop-portal xdg-desktop-portal-gtk libcups gcr-4 libsecret)
+  # grassfield-hold (ADR-0041 step 2a, SQ-3 A, owner decision of 2026-11-08): the bounds of the toolkit this build was made for;
+  # the literal name is what pacman resolves first, and grassfield-unhold provides it without a bound (Software Update's
+  # "Allow system updates Grassfield hasn't tested…"). Never constrain hyprland or kcoreaddons there.
   # Quickshell's v0.3.2 tag lets a session lock the compositor drops go unnoticed (WlSessionLock::unlock() never emits,
   # fixed upstream in 18c95fae, shipped from 0.3.2.r7): the lock would not be taken again (fail-open). That exact version is
   # refused; 0.3.1 and the 0.3.2 snapshots from r7 on are not matched by `=0.3.2`.
@@ -289,12 +300,13 @@ package_grassfield-desktop() {
     'hyprsunset: Night Light (grassfield-nightshift)'
     'kimageformats: HEIF, AVIF and JPEG XL pictures as wallpapers (the helper reads what Qt can read)'
   )
-  # Login screen entry and a login-path check after install and upgrade (GF-015); the SDDM drop-in is a config file, and so are
-  # the browsers' policy files below (an administrator's edit, or an emptied file, is kept across upgrades: pacman writes .pacnew).
+  # Login screen entry and a login-path check after install and upgrade (GF-015); the SDDM drop-in is a config file (an
+  # administrator's edit is kept across upgrades: pacman writes .pacnew). No browser policy file is installed (see the browsers'
+  # stand-in below): 1.0.0-rc7 installed etc/{chromium,opt/chrome}/policies/managed/zz-grassfield-gtk.json, and the upgrade
+  # removes them with the package's own file list (pacman deletes an unmodified backup= file the new package no longer holds,
+  # and keeps an edited one as .pacsave).
   install=grassfield-desktop.install
-  backup=(etc/sddm.conf.d/grassfield.conf
-          etc/chromium/policies/managed/zz-grassfield-gtk.json
-          etc/opt/chrome/policies/managed/zz-grassfield-gtk.json)
+  backup=(etc/sddm.conf.d/grassfield.conf)
   local root
   root=$(_root)
 
@@ -357,9 +369,11 @@ package_grassfield-desktop() {
   # the templates they write /etc/pacman.d/grassfield.conf from; Omarchy's pre-refresh-pacman hook that
   # grassfield-channel-set links. grassfield-channel-set, grassfield-update-check and grassfield-update-run come from
   # packaging/bin above.
-  install -m755 -t "$pkgdir/usr/lib/grassfield/" "$root/packaging/pacman/grassfield-channel-helper" \
+  install -m755 -t "$pkgdir/usr/lib/grassfield/" "$root/packaging/pacman/grassfield-channel-helper" "$root/packaging/pacman/grassfield-hold-helper" \
     "$root/packaging/pacman/grassfield-update-helper" "$root/packaging/pacman/grassfield-channel-scriptlet"
   install -m644 -t "$pkgdir/usr/lib/grassfield/" "$root/packaging/pacman/grassfield-channel.sh"
+  # grassfield-channel-set's `hold-state` reads the hold's bounds with the code the build computed them with.
+  install -Dm644 "$root/packaging/arch/hold-bounds.sh" "$pkgdir/usr/lib/grassfield/grassfield-hold-bounds.sh"
   install -Dm644 "$root/packaging/pacman/org.grassfield.packages.policy" "$pkgdir/usr/share/polkit-1/actions/org.grassfield.packages.policy"
   # Owner decision SU-M2 (ADR-0033 s5; OPUS SECURITY REVIEW): the sudo of Omarchy's migrations that grassfield-update-helper
   # runs, alone in its folder (the first of their PATH), the polkit rule that lets their unit alone start root units, and
@@ -378,21 +392,12 @@ package_grassfield-desktop() {
   install -d "$pkgdir/usr/lib/grassfield/session-bin"
   find "$root/packaging/session-bin" -maxdepth 1 -type f -exec install -m755 -t "$pkgdir/usr/lib/grassfield/session-bin/" {} +
   install -Dm644 "$root/packaging/sddm/grassfield.conf" "$pkgdir/etc/sddm.conf.d/grassfield.conf"
-  # Browsers' traffic lights (owner report on 1.0.0-rc6; config/hypr/grassfield/windows.lua): Omarchy's theme switcher writes
-  # the machine policy BrowserThemeColor (color.json) into the Chromium and Google Chrome policy directories, and a colour
-  # theme from policy replaces the GTK appearance's window buttons in every profile (nested, Chromium 155: no lights with
-  # color.json, the Grassfield lights without it). How Chromium reads it (its source, pinned in docs/specs/compositor.md "Known
-  # limitations"): ConfigDirPolicyLoader merges a directory's files in reverse name order and PolicyMap keeps the entry already
-  # there at equal priority, so the last name wins (color.json's value is kept as a conflict); ThemeColorPolicyHandler rejects a
-  # value that is not #RRGGBB with a policy error and applies nothing, so no colour theme is forced and the profile's own
-  # appearance applies again. Machine-wide, so in the Omarchy session too: there the browsers keep their own theme instead of
-  # Omarchy's colour (accepted in the integrator's review of 3ca47a4b; ADR-0015 amendment 2026-11-07). Root-owned, so Omarchy's policy setup, which removes only files that are
-  # not root's, keeps it.
-  for policy_dir in etc/chromium/policies/managed etc/opt/chrome/policies/managed; do
-    install -d "$pkgdir/$policy_dir"
-    printf '{"BrowserThemeColor": ""}\n' >"$pkgdir/$policy_dir/zz-grassfield-gtk.json"
-    chmod 644 "$pkgdir/$policy_dir/zz-grassfield-gtk.json"
-  done
+  # Browsers' traffic lights (owner reports on 1.0.0-rc6 and rc7; packaging/session-bin/chromium has the reasons): a stand-in
+  # for `chromium` and `google-chrome-stable` that comes first in PATH in the Grassfield session only, with a desktop entry
+  # for Google Chrome that names it. Nothing is installed in /etc (R7-OMA-01: the Omarchy session keeps its browsers as shipped).
+  ln -s chromium "$pkgdir/usr/lib/grassfield/session-bin/google-chrome-stable"
+  install -Dm644 "$root/packaging/xdg/applications/google-chrome.desktop" \
+    "$pkgdir/usr/share/grassfield/xdg/applications/google-chrome.desktop"
   install -Dm644 "$root/packaging/sddm/grassfield-login.desktop" "$pkgdir/usr/share/grassfield/sddm/wayland-sessions/grassfield-login.desktop"
   for unit in crash-watch battery-watch migrate-notify automount secrets-handover portal-settings portal shell-failed security pacman-watch shell-watchdog; do
     install -Dm644 "$root/packaging/systemd/grassfield-$unit.service" "$pkgdir/usr/lib/systemd/user/grassfield-$unit.service"
@@ -416,6 +421,9 @@ package_grassfield-desktop() {
   # /usr/lib/systemd/user/grassfield-prompter.service (started by the session's autostart.lua);
   # /usr/lib/grassfield/grassfield-askpass (run by udiskie in grassfield-automount.service, step 9c).
   DESTDIR="$pkgdir" cmake --install "$srcdir/prompter-build"
+  # Qt platform-theme plugin (ADR-0054): /usr/lib/qt6/plugins/platformthemes/libgrassfield-qt-theme.so and the Qt release it was
+  # built for, /usr/share/grassfield/qt-platform-theme/qt-version (config/hypr/grassfield/qttheme.lua reads both at login).
+  DESTDIR="$pkgdir" cmake --install "$srcdir/qt-platform-theme-build"
 
   # Grassfield Settings app (M4).
   DESTDIR="$pkgdir" cmake --install "$srcdir/settings-build"
@@ -656,4 +664,32 @@ package_grassfield-login-themes() {
   install -m644 "$srcdir"/plymouth-grassfield/*.png "$srcdir/plymouth-grassfield/grassfield.plymouth" "$ply/"
   install -Dm644 "$(_root)/LICENSE" "$pkgdir/usr/share/licenses/grassfield-login-themes/LICENSE"
   install -Dm644 "$(_root)/branding/LICENSES.md" "$pkgdir/usr/share/licenses/grassfield-login-themes/BRANDING.md"
+}
+
+package_grassfield-hold() {
+  pkgdesc="Grassfield: refuses a system update that moves Qt or Quickshell past what this Grassfield was built for (ADR-0041)"
+  arch=(any)
+  license=(MIT)
+  # `depends` and nothing else: no file, no script, no service. The bounds are the toolkit BUILD-DEPS recorded for this build
+  # (quickshell at its version, qt6-base at its major.minor: packaging/arch/hold-bounds.sh), never typed here. pacman then
+  # refuses, on every path (a system upgrade in a terminal, Omarchy's update, Update Now), a transaction that moves either
+  # past them, until the repository carries the grassfield-desktop built for the new toolkit, which joins the same
+  # transaction. Never hyprland (ADR-0009), never kcoreaddons.
+  local bounds
+  bounds=$(gf_hold_depends "$srcdir/BUILD-DEPS") || { echo "PKGBUILD: BUILD-DEPS lacks a quickshell or qt6-base version the hold can bound" >&2; return 1; }
+  mapfile -t depends <<<"$bounds"
+  install -Dm644 "$(_root)/LICENSE" "$pkgdir/usr/share/licenses/grassfield-hold/LICENSE"
+}
+
+package_grassfield-unhold() {
+  pkgdesc="Grassfield: lets the system update past the Qt and Quickshell versions this Grassfield was built for (replaces grassfield-hold)"
+  arch=(any)
+  license=(MIT)
+  # The empty twin of grassfield-hold: the same name provided, no bound, a conflict with it. grassfield-desktop depends on
+  # `grassfield-hold`, which this satisfies, so installing one replaces the other in a single pacman transaction (the channel
+  # helper's `unhold` and `hold` verbs). It is never installed by dependency: pacman resolves the literal name first.
+  depends=()
+  provides=(grassfield-hold)
+  conflicts=(grassfield-hold)
+  install -Dm644 "$(_root)/LICENSE" "$pkgdir/usr/share/licenses/grassfield-unhold/LICENSE"
 }

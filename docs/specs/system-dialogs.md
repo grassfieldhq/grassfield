@@ -180,25 +180,28 @@ given.
   suggested name or file, several files, a folder, choices, the button's label, modality: chooserlogic, A-FC1).
 - **Callers that do not, each showing GTK 3's chooser in-process:**
   - Qt apps under the session's `gtk3` platform theme (Omarchy's, kept by owner decision Q3): Qt's `QGtk3FileDialogHelper`.
-    Measured with a probe on the nested display (the helper a `QFileDialog` gets); on this machine OBS and Kdenlive are such
-    apps (Omarchy's omawrite names the `xdgdesktopportal` theme next to `QT_QPA_PLATFORMTHEME` in its binary's strings, so it
-    likely sets that theme for itself; hype calls the portal, above).
-    `QT_QPA_PLATFORMTHEME=xdgdesktopportal` alone is not a fix: in this session its base theme is Qt's generic one,
-    measured on the nested display: Fusion's light palette and "Sans Serif 9" instead of the GTK palette, font and dark scheme
-    (the reason Q3 kept `gtk3`). A fix that keeps the look, measured with a prototype: a platform-theme plugin under the key
-    `grassfield` (the session's first desktop name, which Qt lower-cases into a theme name) that hands back Qt's `gtk3` theme,
-    under `QT_QPA_PLATFORMTHEME=xdgdesktopportal`: the GTK palette, font and scheme unchanged and `QXdgDesktopPortalFileDialog`
-    for file dialogs. Not built: it is a new Qt plugin on Qt's private plugin API (rebuilt with every Qt minor release, and a
-    plugin that fails to load gives every Qt app the generic look), a change to the session's environment and units, and an
-    amendment of Q3; it needs its own ADR and the owner's agreement.
-  - LibreOffice (its GTK 3 plugin builds `GtkFileChooserDialog` itself, with its own controls).
+    **Amended by ADR-0054 (owner decision of 2026-11-08, applied provisionally):** the Grassfield session now sets
+    `QT_QPA_PLATFORMTHEME=xdgdesktopportal` and ships a platform-theme plugin keyed `grassfield` (the session's first
+    `XDG_CURRENT_DESKTOP` item, lower-cased) that hands Qt's portal theme the `gtk3` theme as its base: the GTK palette, font and
+    colour scheme are unchanged and `QFileDialog` goes to `QXdgDesktopPortalFileDialog`, so Qt apps show the Grassfield panels
+    (`packaging/qt-platform-theme/`, `config/hypr/grassfield/qttheme.lua`). `QT_QPA_PLATFORMTHEME=xdgdesktopportal` alone is
+    not the fix: its base is Qt's generic theme (Fusion, "Sans Serif 9"). The plugin is on Qt's private API and is used only
+    when its stamp matches the installed Qt's major.minor; otherwise the session keeps `gtk3` and the journal says why
+    (`grassfield: Qt platform theme: gtk3 kept: ...`), and those apps show GTK 3's chooser as before. Tests:
+    `tests/shell/qt_platform_theme.sh`, `tests/integration/qt_platform_theme.sh` (a Qt probe on a private bus: the GTK look kept,
+    the backend receives the `QFileDialog`). Nested look at scale 1.25: the integrator's pass (visual NOT verified here).
+  - LibreOffice under its GTK 3 plugin (it builds `GtkFileChooserDialog` itself, with its own controls). **ADR-0054:** the Grassfield
+    session sets `SAL_USE_VCLPLUGIN=qt6` (when `libvclplug_qt6lo.so` is installed; no file of the user's LibreOffice profile is
+    touched), so LibreOffice runs its Qt 6 plugin: `QFileDialog` (the panel above) and the global menus.
   - Chromium and Electron apps whose first portal call comes while the frontend is still starting: Chromium keeps the failure
     for the life of the process and shows GTK's dialog from then on (read in Chromium's main branch on 2026-11-07,
     `components/dbus/xdg/portal.cc`: a failed setup is never retried; not observed here, not checked in Chromium 155's source).
     At the owner's login of 2026-11-07 (the journal of that boot, monotonic times) the frontend owned its name 26 s after it
-    started, waiting on x-d-p-gtk (31.1 s to 56.6 s; ADR-0041 I-4); on a private bus with the same frontend and x-d-p-gtk it
-    took 0.4 s with and without `GTK_USE_PORTAL=1`, so
-    I-4's hypothesis does not explain it and the cause is still open.
+    started, waiting on x-d-p-gtk (31.1 s to 56.6 s; ADR-0041 I-4). Cause (measured 2026-11-08, fixed): not
+    `GTK_USE_PORTAL` (x-d-p-gtk unsets it itself), but x-d-p-gtk's ScreenSaver proxy asking `Properties.GetAll` of
+    grassfield-menu-bridge, which dropped the call and so made x-d-p-gtk wait out D-Bus's 25 s method timeout. The bridge now
+    answers every call (docs/specs/menu-bridge.md MB14); `tests/integration/portal_screensaver.sh` measures the frontend's
+    start with the bridge on a private bus.
 
 ### Known limitations
 Not a true sheet (a modal child window dimming its parent, not a card inside it); remote locations refused (4b-10); apps that

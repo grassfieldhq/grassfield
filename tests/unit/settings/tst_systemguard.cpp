@@ -532,9 +532,10 @@ TEST(ActionGuard, ChannelSetTakesOneVerbOnly)
 {
     const QString set = QStringLiteral("/usr/lib/grassfield/grassfield-channel-set");
     EXPECT_TRUE(isActionProgram(set));
-    for (const char *ok : {"stable", "beta", "repair", "off"})
+    for (const char *ok : {"stable", "beta", "repair", "off", "hold", "unhold"})
         EXPECT_TRUE(isAllowedAction({set, QString::fromLatin1(ok)})) << ok;
-    for (const char *no : {"", "Beta", "beta\n", "custom", "--help", "-h", "set", "stable; rm -rf ~", "restore"})
+    for (const char *no : {"", "Beta", "beta\n", "custom", "--help", "-h", "set", "stable; rm -rf ~", "restore", "Hold", "unhold ",
+                           "hold-state", "grassfield-unhold", "hold\n"})
         EXPECT_FALSE(isAllowedAction({set, QString::fromLatin1(no)})) << no;
     // Printing the channel is a query, not an action; two verbs are no form of the command.
     EXPECT_FALSE(isAllowedAction({set}));
@@ -554,7 +555,10 @@ TEST(QueryGuard, TheChannelIsReadWithNoArgumentOnly)
 {
     const QString set = QStringLiteral("/usr/lib/grassfield/grassfield-channel-set");
     EXPECT_TRUE(isReadOnlyQuery({set}));
-    for (const char *no : {"stable", "beta", "repair", "off", ""})
+    // ADR-0041 step 2a: the hold's state is the one other question, by that exact word and alone.
+    EXPECT_TRUE(isReadOnlyQuery({set, QStringLiteral("hold-state")}));
+    EXPECT_FALSE(isReadOnlyQuery({set, QStringLiteral("hold-state"), QStringLiteral("x")}));
+    for (const char *no : {"stable", "beta", "repair", "off", "", "hold", "unhold", "Hold-state", "hold-state "})
         EXPECT_FALSE(isReadOnlyQuery({set, QString::fromLatin1(no)})) << no;
     EXPECT_FALSE(isReadOnlyQuery({QStringLiteral("grassfield-channel-set")}));
     EXPECT_FALSE(isReadOnlyQuery({QStringLiteral("/usr/bin/grassfield-channel-set")}));
