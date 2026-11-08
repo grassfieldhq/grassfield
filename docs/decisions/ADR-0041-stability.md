@@ -479,7 +479,17 @@ down, how sleep behaves) is written in the table at the end of this step.
   (`lockstate_mutants.sh`); `lock_client.sh` (the real `LockClient` and `SessionState` offscreen: no state, fresh,
   stopped, back, lost push, locking, garbage, restarted writer, gone; 3 mutants of `LockClient.qml`);
   `security_process_scan.py` (from `security_unit.sh`); `security_unit.sh`, `root_check.py`, `sleep_lock_units.sh`,
-  `lock_request_env.sh`, `lock_surfaces.sh`, `ipc_inventory.sh`, `tst_hotcorners.qml`, the nested scripts above updated.
+  `lock_request_env.sh`, `lock_surfaces.sh`, `ipc_inventory.sh`, `tst_lockbackdrop.qml`, `theme_icon_files.sh`,
+  `nested_ready_unit.sh`, `tests/shell/shell_unit.sh`, `lid.sh`, `tst_hotcorners.qml`, `contrast-roles.json` and the nested
+  scripts above updated.
+- Evidence (this container, 2026-11-08/09, after the machine's reboot): `just check-quick`'s recipes each exit 0 (qmllint 847
+  files, 0 warnings; import-graph and run-mode ok once `qs.security.host` and the two variable reads were fixed);
+  `scripts/dev/test.sh --layer data` 24 pass, 0 fail, 1 skip; `--layer logic`: see the report of the pull request (its
+  first run failed `lid.sh`, fixed, and three timing tests under the parallel load, `capture.sh`, `gates.sh` P1 baseline and
+  `hyprland_dialog.sh`, which pass alone); `tests/shell/shell_unit.sh` exit 0; the security QML units (`qmltestrunner` over
+  tests/security: 341 cases after `tst_lockbackdrop` was updated), `dev_gate.sh`, `lock_client.sh` (control and 3 mutants),
+  `lockstate_mutants.sh` (17), `lock_monitor_model.sh` (socket cases SKIP here), `theme_icon_files.sh`, `security_unit.sh`
+  (78 PASS), `sleep_lock_units.sh` (95), `ipc_inventory.sh` (104).
 - NOT VERIFIED (no compositor in this container): every nested proof of the matrix; the lock drawn by the security process
   (L1, L4 captures); the memory nested; the start time to "grassfield-security: ready" (P5); the real session (DT-01,
   DT-21 on both processes, L3, the lid, the notice through D-Bus, the 15 s restart after an upgrade).
