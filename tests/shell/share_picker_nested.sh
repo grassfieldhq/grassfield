@@ -75,8 +75,10 @@ tmp=$(mktemp -d)
 # A scratch copy of the stand-in whose stock picker only records that it ran: a request the nested shell did not answer never
 # opens a real picker, on any display.
 mkdir -p "$tmp/stock"
-sed "s|^STOCK_DIR = \"/usr/bin\"\$|STOCK_DIR = \"$tmp/stock\"|" "$root/packaging/session-bin/hyprland-share-picker" >"$tmp/hyprland-share-picker"
-grep -qx "STOCK_DIR = \"$tmp/stock\"" "$tmp/hyprland-share-picker" || { echo "share_picker: the stand-in's stock picker could not be diverted"; rm -rf "$tmp"; exit 2; }
+sed -e "s|^STOCK_DIR = \"/usr/bin\"\$|STOCK_DIR = \"$tmp/stock\"|" -e "s|^SYSTEMCTL = \"/usr/bin/systemctl\"\$|SYSTEMCTL = \"$sysd/systemctl\"|" \
+  "$root/packaging/session-bin/hyprland-share-picker" >"$tmp/hyprland-share-picker"
+grep -qx "STOCK_DIR = \"$tmp/stock\"" "$tmp/hyprland-share-picker" && grep -qx "SYSTEMCTL = \"$sysd/systemctl\"" "$tmp/hyprland-share-picker" ||
+  { echo "share_picker: the stand-in's stock picker or systemctl could not be diverted"; rm -rf "$tmp"; exit 2; }
 chmod +x "$tmp/hyprland-share-picker"
 for name in hyprland-share-picker hyprland-preview-share-picker; do
   printf '#!/bin/sh\necho %s >>"%s/stock.ran"\n' "$name" "$tmp" >"$tmp/stock/$name"
@@ -105,7 +107,7 @@ share() { # runs the stand-in as xdph does, at this tree's nested shell only; se
   guard
   : >"$tmp/out"
   env -u GRASSFIELD_SESSION WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" GRASSFIELD_DEV=1 GRASSFIELD_SHELL_DIR="$target" \
-    GRASSFIELD_PICKER_PEER_UNIT="$shell_unit" PATH="$sysd:$PATH" \
+    GRASSFIELD_PICKER_PEER_UNIT="$shell_unit" \
     XDPH_WINDOW_SHARING_LIST="$list" "$tmp/hyprland-share-picker" --allow-token >"$tmp/out" 2>/dev/null &
   standin=$!
 }

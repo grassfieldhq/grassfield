@@ -159,7 +159,8 @@ ipc() { env "${base_env[@]}" timeout 5 qs ipc -p "$tmp/cfg" call "$@" 2>&1; }
 state() { ipc picker status | python3 -I -c 'import json, sys; d = json.load(sys.stdin); print(sys.argv[1] % d)' "$1"; }
 
 # The stand-in: its stock pickers are recorders; its hyprctl lists the shell's display, unlocked.
-sed "s|^STOCK_DIR = \"/usr/bin\"\$|STOCK_DIR = \"$tmp/stock\"|" packaging/session-bin/hyprland-share-picker >"$tmp/bin/hyprland-share-picker"
+sed -e "s|^STOCK_DIR = \"/usr/bin\"\$|STOCK_DIR = \"$tmp/stock\"|" -e "s|^SYSTEMCTL = \"/usr/bin/systemctl\"\$|SYSTEMCTL = \"$tmp/sysd/systemctl\"|" \
+  packaging/session-bin/hyprland-share-picker >"$tmp/bin/hyprland-share-picker"
 chmod +x "$tmp/bin/hyprland-share-picker"
 printf '#!/bin/sh\necho ran >"%s/stock.ran"\n' "$tmp" >"$tmp/stock/hyprland-share-picker"
 printf '[{"name": "DP-1", "width": 800, "height": 600, "scale": 1, "transform": 0, "solitaryBlockedBy": []},

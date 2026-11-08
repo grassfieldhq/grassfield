@@ -38,6 +38,8 @@ import sys
 import time
 
 STOCK_DIR = "/usr/bin"
+# The user manager's client, by its path: never one found through PATH (rc7 security review of R7-SEC-02).
+SYSTEMCTL = "/usr/bin/systemctl"
 SUSPEND_STATS = "/sys/power/suspend_stats/success"
 STOCK_NAMES = ("hyprland-share-picker", "hyprland-preview-share-picker")
 SHELL_DIR = "/usr/share/grassfield/shell"
@@ -238,11 +240,11 @@ UNIT_NAME = re.compile(r"[A-Za-z0-9:_.@-]{1,255}")
 
 
 def unit_main_pid(unit):
-    # The main process of `unit` as the user's systemd manager says now (`systemctl --user show`, which asks the manager over
-    # its D-Bus): > 0, or None when there is none or no answer within 1 s (a stopped unit says 0; a scope has no main process).
+    # The main process of `unit` as the user's systemd manager says now (/usr/bin/systemctl --user show, which asks the manager
+    # over its D-Bus): > 0, or None when there is none or no answer within 1 s (a stopped unit says 0; a scope has no main process).
     if not UNIT_NAME.fullmatch(unit) or unit.startswith("-"):
         return None
-    out = run(["systemctl", "--user", "show", "--property=MainPID", "--value", unit], ACK_SECONDS)
+    out = run([SYSTEMCTL, "--user", "show", "--property=MainPID", "--value", unit], ACK_SECONDS)
     text = out.strip() if out is not None else ""
     return int(text) if re.fullmatch(r"[1-9][0-9]{0,9}", text) else None
 

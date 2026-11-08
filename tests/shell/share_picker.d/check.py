@@ -55,9 +55,12 @@ atexit.register(shutil.rmtree, run, True)
 check(len(os.path.join(run, "grassfield", "picker", "0" * 32 + ".sock").encode()) <= 107, "the channel's path fits a Unix socket")
 suspends = os.path.join(tmp, "suspend-success")
 source = open(os.path.join(root, "packaging/session-bin/hyprland-share-picker")).read()
-check(source.count('STOCK_DIR = "/usr/bin"\n') == 1 and source.count('SUSPEND_STATS = "/sys/power/suspend_stats/success"\n') == 1,
+check(source.count('STOCK_DIR = "/usr/bin"\n') == 1 and source.count('SUSPEND_STATS = "/sys/power/suspend_stats/success"\n') == 1
+      and source.count('SYSTEMCTL = "/usr/bin/systemctl"\n') == 1 and source.count('run([SYSTEMCTL, ') == 1
+      and 'run(["systemctl"' not in source,
       "the stand-in runs its stock pickers from /usr/bin and reads the suspends' count from /sys/power")
 write(os.path.join(bindir, "hyprland-share-picker"), source.replace('STOCK_DIR = "/usr/bin"\n', 'STOCK_DIR = %r\n' % stock)
+      .replace('SYSTEMCTL = "/usr/bin/systemctl"\n', 'SYSTEMCTL = %r\n' % os.path.join(fake, "systemctl"))
       .replace('SUSPEND_STATS = "/sys/power/suspend_stats/success"\n', 'SUSPEND_STATS = %r\n' % suspends))
 shutil.copy(os.path.join(root, "packaging/session-bin/hyprland-preview-share-picker"), bindir)
 

@@ -28,6 +28,7 @@ loader = importlib.machinery.SourceFileLoader("picker", os.path.join(root, "pack
 spec = importlib.util.spec_from_loader("picker", loader)
 picker = importlib.util.module_from_spec(spec)
 loader.exec_module(picker)
+check(picker.SYSTEMCTL == "/usr/bin/systemctl", "the stand-in runs systemctl by its path, never through PATH")
 
 uid = os.getuid()
 # systemctl: `systemctl --user show --property=MainPID --value <unit>` prints FAKE_MAINPID (or fails: FAKE_MAINPID=fail).
@@ -36,8 +37,8 @@ with open(os.path.join(fakebin, "systemctl"), "w") as f:
     f.write('#!/bin/sh\n[ "$1 $2 $3 $4" = "--user show --property=MainPID --value" ] || exit 3\n'
             '[ "$FAKE_MAINPID" = fail ] && exit 1\nprintf "%s\\n" "$FAKE_MAINPID"\n')
 os.chmod(os.path.join(fakebin, "systemctl"), 0o755)
-os.environ["PATH"] = fakebin + ":" + os.environ.get("PATH", "/usr/bin:/bin")
 os.environ["FAKE_MAINPID"] = str(os.getpid())
+picker.SYSTEMCTL = os.path.join(fakebin, "systemctl")
 with open("/proc/self/cgroup") as f:
     own = picker.unified_cgroup(f.read())
 leaf = own.rstrip("/").rsplit("/", 1)[-1]
