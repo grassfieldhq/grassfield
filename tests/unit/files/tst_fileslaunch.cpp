@@ -187,8 +187,12 @@ TEST_F(FilesLaunch, Dt10ADownloadedAppImageRunsOnlyAfterOpen)
     // Changed: asked again (and canceled here).
     QFile::remove(mark);
     {
+        // ETXTBSY while the last run has not ended yet (it leaves its mark just before it ends).
+        // (waitFor asks once more after the loop: the open is remembered, never repeated on an open file.)
         QFile f(path);
-        ASSERT_TRUE(f.open(QIODevice::Append));
+        bool opened = false;
+        ASSERT_TRUE(waitFor([&f, &opened] { return opened || (opened = f.open(QIODevice::WriteOnly | QIODevice::Append)); }))
+            << f.errorString().toStdString();
         f.write("changed");
     }
     s.answer = QStringLiteral("cancel");
