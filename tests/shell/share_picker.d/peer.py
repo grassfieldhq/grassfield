@@ -1,14 +1,17 @@
 # The screen-sharing picker stand-in's peer check (packaging/session-bin/hyprland-share-picker, rc7 audit R7-SEC-02; ADR-0035
-# D-6): only a process of the shell's unit takes a request, the rule of grassfield-prompter's socket
+# D-6): only the main process of the shell's unit takes a request, the rule of grassfield-prompter's socket
 # (bridges/prompter/src/Peer.cpp). Run by tests/shell/share_picker_peer.sh as `python3 -I peer.py <root>`. No listening
 # socket (a sandbox may refuse socket()): the stand-in is loaded as a module, its pure functions are checked on fixed
-# inputs, peer_ok on socket pairs (this process, and a child that has exited and been reaped), and accept_shell with a stand-in
-# for the listening socket. The end-to-end cases (a fake shell connecting to the real channel) are share_picker.d/check.py.
+# inputs, peer_ok on socket pairs (this process, and a child that has exited and been reaped) with a fake `systemctl` that
+# answers the unit's MainPID, and accept_shell with a stand-in for the listening socket. Each guard of peer_ok has a case that
+# only it refuses: another uid, another unit, another main process, no main process, a peer gone during the check. The
+# end-to-end cases (a fake shell connecting to the real channel) are share_picker.d/check.py.
 import importlib.machinery
 import importlib.util
 import os
 import socket
 import sys
+import tempfile
 
 root = sys.argv[1]
 failed = False
@@ -27,6 +30,14 @@ picker = importlib.util.module_from_spec(spec)
 loader.exec_module(picker)
 
 uid = os.getuid()
+# systemctl: `systemctl --user show --property=MainPID --value <unit>` prints FAKE_MAINPID (or fails: FAKE_MAINPID=fail).
+fakebin = tempfile.mkdtemp(prefix="picker-peer.", dir=os.environ.get("TMPDIR") or None)
+with open(os.path.join(fakebin, "systemctl"), "w") as f:
+    f.write('#!/bin/sh\n[ "$1 $2 $3 $4" = "--user show --property=MainPID --value" ] || exit 3\n'
+            '[ "$FAKE_MAINPID" = fail ] && exit 1\nprintf "%s\\n" "$FAKE_MAINPID"\n')
+os.chmod(os.path.join(fakebin, "systemctl"), 0o755)
+os.environ["PATH"] = fakebin + ":" + os.environ.get("PATH", "/usr/bin:/bin")
+os.environ["FAKE_MAINPID"] = str(os.getpid())
 with open("/proc/self/cgroup") as f:
     own = picker.unified_cgroup(f.read())
 leaf = own.rstrip("/").rsplit("/", 1)[-1]
@@ -60,9 +71,10 @@ check([picker.pid_from_fdinfo(t) for t in ("pos:\t0\nPid:\t42\n", "Pid:\t-1\n", 
 
 
 def with_env(env, fn):
-    keep = {k: os.environ.get(k) for k in ("GRASSFIELD_DEV", "GRASSFIELD_SESSION", "GRASSFIELD_PICKER_PEER_UNIT")}
+    keep = {k: os.environ.get(k) for k in ("GRASSFIELD_DEV", "GRASSFIELD_SESSION", "GRASSFIELD_PICKER_PEER_UNIT", "FAKE_MAINPID")}
     for k in keep:
-        os.environ.pop(k, None)
+        if k != "FAKE_MAINPID":
+            os.environ.pop(k, None)
     os.environ.update(env)
     try:
         return fn()
@@ -98,6 +110,23 @@ else:
     in_shell = own.endswith("/" + U)
     check(in_shell or not with_env({"GRASSFIELD_SESSION": "1"}, lambda: picker.peer_ok(a)),
           "in a real session a peer outside grassfield-shell.service is refused")
+    dev = {"GRASSFIELD_DEV": "1", "GRASSFIELD_PICKER_PEER_UNIT": leaf}
+    # The main process (rc7 security review of R7-SEC-02): a process of the unit's cgroup that is not its main process is
+    # refused (one that moved itself into the cgroup), and so is any doubt about it.
+    for main, why in ((str(os.getpid() + 1), "another process is the unit's main process"),
+                      ("0", "the unit has no main process (stopped, or a scope)"),
+                      ("fail", "systemd cannot be asked"), ("12x", "systemd's answer does not read")):
+        check(not with_env(dict(dev, FAKE_MAINPID=main), lambda: picker.peer_ok(a)), "refused when %s" % why)
+    check(with_env(dict(dev, FAKE_MAINPID=str(os.getpid())), lambda: picker.peer_ok(a)),
+          "control: the same peer is taken when it is the unit's main process")
+    # The uid guard alone: the peer is this process, of the expected cgroup and the unit's main process, but the stand-in
+    # runs as another user.
+    real_getuid = picker.os.getuid
+    picker.os.getuid = lambda: real_getuid() + 1
+    try:
+        check(not with_env(dev, lambda: picker.peer_ok(a)), "a peer of another uid is refused (everything else matching)")
+    finally:
+        picker.os.getuid = real_getuid
     before = len(os.listdir("/proc/self/fd"))
     for _ in range(20):
         with_env({"GRASSFIELD_DEV": "1", "GRASSFIELD_PICKER_PEER_UNIT": leaf}, lambda: picker.peer_ok(a))
@@ -121,6 +150,15 @@ else:
     gone = socket.socket(fileno=fds[0])
     check(not with_env({"GRASSFIELD_DEV": "1", "GRASSFIELD_PICKER_PEER_UNIT": leaf}, lambda: picker.peer_ok(gone)),
           "a peer that has exited (its PID free to be reused) is refused, even in the expected cgroup")
+    # The liveness guard alone: the pidfd's fdinfo is made to name this process (as if the PID had been read just before the
+    # peer exited and the PID were reused by a process of the unit, its main process too); the pidfd is of the exited peer.
+    real_read = picker.read_small
+    picker.read_small = lambda path: ("Pid:\t%d\n" % os.getpid()) if path.startswith("/proc/self/fdinfo/") else real_read(path)
+    try:
+        check(not with_env({"GRASSFIELD_DEV": "1", "GRASSFIELD_PICKER_PEER_UNIT": leaf}, lambda: picker.peer_ok(gone)),
+              "a pidfd whose process has exited refuses the peer, whatever PID was read (the liveness check after the reads)")
+    finally:
+        picker.read_small = real_read
     gone.close()
     carrier.close()
 
@@ -159,4 +197,6 @@ for s in (second, first_peer, second_peer, third_peer):
 source = open(os.path.join(root, "packaging/session-bin/hyprland-share-picker")).read()
 check(source.count("    conn = accept_shell(server)\n") == 1 and "server.accept()" not in source.replace("            conn, _ = server.accept()\n", ""),
       "main takes the shell's connection only through accept_shell (no other accept)")
+import shutil
+shutil.rmtree(fakebin, ignore_errors=True)
 sys.exit(1 if failed else 0)

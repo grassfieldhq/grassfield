@@ -11,8 +11,9 @@
 # The way (ADR-0035 D-6): the session locked, or its lock unknown, cancels at once (owner decision Q15). Otherwise a one-time
 # Unix socket ($XDG_RUNTIME_DIR/grassfield/picker/<random>.sock, 0600 in a 0700 directory, removed on every exit) and a random
 # request id; the shell is asked with `picker request <id> <socket>` under 1 s. "accepted": the shell connects within 2 s
-# (else cancelled); only a peer that runs as this user in the shell's unit is taken (peer_ok, the prompter's rule: rc7 audit
-# R7-SEC-02), any other connection is closed unanswered and the wait goes on within those 2 s. The shell
+# (else cancelled); only a peer that runs as this user, in the shell's unit, and IS that unit's main process (systemd's
+# MainPID, asked at check time; peer_ok, the prompter's rule: rc7 audit R7-SEC-02 and its security review) is taken; any other
+# connection is closed unanswered and the wait goes on within those 2 s. The shell
 # gets `<id> options {"allowToken": …}` (xdph's --allow-token; the panel opens Remember this choice ticked
 # from it only while SharePickerPanel.followAllowToken is true, pending the owner's agreement to amend Q14, so that xdph gives
 # the app a restore token and a browser that asks again for the same share is not asked twice) and the window list on
@@ -233,6 +234,19 @@ def peer_unit():
     return PEER_UNIT, True
 
 
+UNIT_NAME = re.compile(r"[A-Za-z0-9:_.@-]{1,255}")
+
+
+def unit_main_pid(unit):
+    # The main process of `unit` as the user's systemd manager says now (`systemctl --user show`, which asks the manager over
+    # its D-Bus): > 0, or None when there is none or no answer within 1 s (a stopped unit says 0; a scope has no main process).
+    if not UNIT_NAME.fullmatch(unit) or unit.startswith("-"):
+        return None
+    out = run(["systemctl", "--user", "show", "--property=MainPID", "--value", unit], ACK_SECONDS)
+    text = out.strip() if out is not None else ""
+    return int(text) if re.fullmatch(r"[1-9][0-9]{0,9}", text) else None
+
+
 def unified_cgroup(text):
     # The cgroup v2 path of a /proc/<pid>/cgroup text (its "0::" line), "" when there is none.
     for line in text.splitlines():
@@ -278,10 +292,12 @@ def read_small(path):
 
 
 def peer_ok(conn):
-    # The connected peer runs as this user and in the shell's unit (peer_unit). Its cgroup is read race-free: the kernel's
-    # pidfd of the peer (SO_PEERPIDFD), its PID from the pidfd's fdinfo, /proc/<pid>/cgroup, then the pidfd again: the process
-    # still runs, so the PID was not reused in between. Only a kernel without SO_PEERPIDFD (ENOPROTOOPT, before 6.5) makes it
-    # take SO_PEERCRED's PID instead (the prompter's documented residual race). Any other failure refuses the peer.
+    # The connected peer runs as this user, in the shell's unit (peer_unit), and is that unit's main process (unit_main_pid:
+    # a process of the user's that moved itself into the unit's cgroup, which the user may write, is not; rc7 security review
+    # of R7-SEC-02). Read race-free: the kernel's pidfd of the peer (SO_PEERPIDFD), its PID from the pidfd's fdinfo,
+    # /proc/<pid>/cgroup, systemd's MainPID, then the pidfd again: the process still runs, so the PID was not reused in
+    # between. Only a kernel without SO_PEERPIDFD (ENOPROTOOPT, before 6.5) makes it take SO_PEERCRED's PID instead (the
+    # prompter's documented residual race). Any other failure refuses the peer.
     unit, user_manager = peer_unit()
     if unit is None:
         return False
@@ -296,7 +312,8 @@ def peer_ok(conn):
     except OSError as e:
         if e.errno != errno.ENOPROTOOPT or pid <= 0:
             return False
-        return cgroup_is_unit(unified_cgroup(read_small("/proc/%d/cgroup" % pid)), unit, uid, user_manager)
+        return (cgroup_is_unit(unified_cgroup(read_small("/proc/%d/cgroup" % pid)), unit, uid, user_manager)
+                and unit_main_pid(unit) == pid)
     except struct.error:
         return False
     if pidfd < 0:
@@ -304,12 +321,14 @@ def peer_ok(conn):
     try:
         pid = pid_from_fdinfo(read_small("/proc/self/fdinfo/%d" % pidfd))
         cgroup = unified_cgroup(read_small("/proc/%d/cgroup" % pid)) if pid > 0 else ""
+        if pid <= 0 or not cgroup_is_unit(cgroup, unit, uid, user_manager) or unit_main_pid(unit) != pid:
+            return False
         poller = select.poll()
         poller.register(pidfd, select.POLLIN)
         alive = not poller.poll(0)
     finally:
         os.close(pidfd)
-    return pid > 0 and alive and cgroup_is_unit(cgroup, unit, uid, user_manager)
+    return alive
 
 
 def accept_shell(server):

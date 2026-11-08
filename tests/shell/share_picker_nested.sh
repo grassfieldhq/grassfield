@@ -38,6 +38,10 @@ shell_pid=$(dev_live_pid "$dev/shell.pid" || true)
 # grassfield-shell.service (GRASSFIELD_PICKER_PEER_UNIT, dev plumbing: the last component of the nested shell's cgroup).
 shell_unit=$(awk -F: '$1 == "0" {print $3}' "/proc/$shell_pid/cgroup" 2>/dev/null | sed 's#.*/##')
 [[ -n $shell_unit ]] || { echo "share_picker: the nested shell's cgroup cannot be read"; exit 2; }
+# ... and the stand-in asks systemd for that unit's main process: a systemctl of its own names the nested shell's PID.
+sysd=$(mktemp -d "${TMPDIR:-/tmp}/share-picker-sysd.XXXXXX")
+printf '#!/bin/sh\n[ "$1 $2 $3 $4" = "--user show --property=MainPID --value" ] || exit 3\necho %s\n' "$shell_pid" >"$sysd/systemctl"
+chmod +x "$sysd/systemctl"
 command -v foot >/dev/null && command -v jq >/dev/null || { echo "share_picker: foot and jq are needed"; exit 2; }
 # Nothing of the session this runs from routes a request: no GRASSFIELD_SESSION (the stand-in would ask the installed shell),
 # no GRASSFIELD_SHELL_DIR of another tree, no Quickshell config variable.
@@ -81,7 +85,7 @@ done
 cleanup() {
   [[ -n $standin ]] && kill "$standin" 2>/dev/null
   [[ -n $foot_pid ]] && kill "$foot_pid" 2>/dev/null
-  rm -rf "$tmp"
+  rm -rf "$tmp" "$sysd"
 }
 trap cleanup EXIT
 WAYLAND_DISPLAY=$sock setsid "$root/scripts/dev/isolated.sh" foot --app-id gf-share --title "Shared window" >/dev/null 2>&1 </dev/null &
@@ -101,7 +105,7 @@ share() { # runs the stand-in as xdph does, at this tree's nested shell only; se
   guard
   : >"$tmp/out"
   env -u GRASSFIELD_SESSION WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" GRASSFIELD_DEV=1 GRASSFIELD_SHELL_DIR="$target" \
-    GRASSFIELD_PICKER_PEER_UNIT="$shell_unit" \
+    GRASSFIELD_PICKER_PEER_UNIT="$shell_unit" PATH="$sysd:$PATH" \
     XDPH_WINDOW_SHARING_LIST="$list" "$tmp/hyprland-share-picker" --allow-token >"$tmp/out" 2>/dev/null &
   standin=$!
 }

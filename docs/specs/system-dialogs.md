@@ -313,14 +313,26 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
 - SP2 one-time channel: the stand-in creates a Unix socket with a random 128-bit name under
   `$XDG_RUNTIME_DIR/grassfield/picker/` (directory 0700, socket 0600) and a random request id, calls `picker request <id>
   <path>`, and removes the socket file on every exit. The shell answers `accepted`, `busy` or `locked` within 1 s.
-- SP2a only the shell takes the request (rc7 audit R7-SEC-02): a connection is taken only from a peer that runs as the user
-  in `grassfield-shell.service` under the user's own manager, only slices between (`peer_ok`, the rule of
-  `grassfield-prompter`'s socket, `bridges/prompter/src/Peer.cpp`), its cgroup read through `SO_PEERPIDFD` (a peer that
-  has exited is refused; only a kernel without `SO_PEERPIDFD` makes it read the PID of `SO_PEERCRED`). Any other connection
-  is closed before a line is sent (not even the window list) and the wait goes on within SP2b's 2 s. A dev session
-  (ADR-0019) may name the cgroup that stands for the shell's in `GRASSFIELD_PICKER_PEER_UNIT` (one path component, matched
-  by the last component alone, as the prompter in a development run); a real session ignores it. Tests:
-  `tests/shell/share_picker_peer.sh` (the rule, by session, on socket pairs), `tests/shell/share_picker.sh` (end to end).
+- SP2a only the shell takes the request (rc7 audit R7-SEC-02 and its security review): a connection is taken only from a
+  peer that runs as the user, in `grassfield-shell.service` under the user's own manager, only slices between, and that is
+  that unit's main process as systemd says at check time (`systemctl --user show --property=MainPID`, over the manager's
+  D-Bus) (`peer_ok`, the rule of `grassfield-prompter`'s socket, `bridges/prompter/src/Peer.cpp`). The peer is read through
+  `SO_PEERPIDFD`: its PID from the pidfd, its cgroup, systemd's answer, then the pidfd again (a peer that exited meanwhile is
+  refused; only a kernel without `SO_PEERPIDFD` makes it read the PID of `SO_PEERCRED`). Any other connection is closed
+  before a line is sent (not even the window list) and the wait goes on within SP2b's 2 s. A dev session (ADR-0019) may
+  name the cgroup that stands for the shell's in `GRASSFIELD_PICKER_PEER_UNIT` (one path component, matched by the last
+  component alone, as the prompter in a development run; systemd is asked for that name's main process too, which the
+  tests answer with a `systemctl` of their own); a real session ignores it. Limits, same-uid: the picker cannot tell the
+  shell from the user's own processes. These checks keep out a process of the user's that merely connects first, or that moves itself
+  into the shell's cgroup (the user may write `cgroup.procs` of their units). They do not stop a process of the user's that
+  can act as the shell itself: with `kernel.yama.ptrace_scope` 0 any of them may ptrace the shell (1, Arch's and this
+  machine's setting, limits ptrace to a process's descendants and to a debugger the shell allowed, which it never does; the
+  shell's unit is not a child of the user's other processes), and any of them may replace a socket in the user's runtime
+  folder (the session bus, the manager's private socket) or edit the user's own configuration the shell reads at its next
+  start. A process with those powers can draw over the screen and read the keyboard as well; the session does not claim
+  protection against it.
+  Tests: `tests/shell/share_picker_peer.sh` (the rule, by session, on socket pairs, with a case for each guard: uid, unit,
+  main process, a peer gone during the check), `tests/shell/share_picker.sh` (end to end).
 - SP2b every wait on the shell is bounded (counter-review of PR #13): after `accepted` the stand-in waits at most 2 s for the
   connection, then removes the socket file and prints nothing (cancelled); after `accepted` the stock picker never starts.
   The shell shows its panel only once connected; a failed connection shows nothing; the panel closes when the stand-in's end

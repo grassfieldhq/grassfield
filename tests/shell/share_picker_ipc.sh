@@ -142,6 +142,11 @@ printf '{"screens": [{"name": "DP-1", "x": 0, "y": 0, "width": 800, "height": 60
 env "${base_env[@]}" PATH="$tmp/fake:$PATH" QT_QPA_PLATFORM="offscreen:configfile=$tmp/screens.json" \
   QML_IMPORT_PATH="$root/ui:$root/.dev/build/qml" timeout 300 qs -p "$tmp/cfg" --no-color >"$tmp/shell.log" 2>&1 &
 shell=$!
+# The stand-in asks systemd for the shell unit's main process (rc7 security review of R7-SEC-02): the probe shell is the
+# Quickshell process `timeout` started, its one child. A systemctl of its own, on the stand-in's PATH only.
+mkdir -p "$tmp/sysd"
+printf '#!/bin/sh\n[ "$1 $2 $3 $4" = "--user show --property=MainPID --value" ] || exit 3\nread -r main _ </proc/%s/task/%s/children 2>/dev/null\necho "${main:-0}"\n' "$shell" "$shell" >"$tmp/sysd/systemctl"
+chmod +x "$tmp/sysd/systemctl"
 for _ in $(seq 150); do grep -q 'picker-probe: ready' "$tmp/shell.log" && break; sleep 0.1; done
 ready=$(grep -o 'picker-probe: ready .*' "$tmp/shell.log" | head -1 || true)
 display=$(python3 -I -c 'import json, sys; o = json.loads(sys.argv[1].split(" ")[2]); print(o[-1] if o else "")' "$ready" 2>/dev/null || true)
@@ -166,7 +171,7 @@ share() { # runs the stand-in as xdph does (with --allow-token, as Omarchy's xdp
   local token=--allow-token
   [[ ${1:-} != no-token ]] || token=""
   rm -f "$tmp/stock.ran" "$tmp/standin.out"
-  env "${base_env[@]}" GRASSFIELD_SHELL_DIR="$tmp/cfg" PATH="$tmp/fake:$PATH" XDPH_WINDOW_SHARING_LIST="$windows" \
+  env "${base_env[@]}" GRASSFIELD_SHELL_DIR="$tmp/cfg" PATH="$tmp/sysd:$tmp/fake:$PATH" XDPH_WINDOW_SHARING_LIST="$windows" \
     "$tmp/bin/hyprland-share-picker" ${token:+"$token"} >"$tmp/standin.out" 2>"$tmp/standin.err" &
   standin=$!
 }
@@ -296,7 +301,7 @@ exit $rc
 ' "$(command -v qs)" >"$tmp/slow/qs"
 chmod +x "$tmp/slow/qs"
 rm -f "$tmp/stock.ran" "$tmp/standin.out"
-env "${base_env[@]}" GRASSFIELD_SHELL_DIR="$tmp/cfg" PATH="$tmp/slow:$tmp/fake:$PATH" XDPH_WINDOW_SHARING_LIST="$windows" \
+env "${base_env[@]}" GRASSFIELD_SHELL_DIR="$tmp/cfg" PATH="$tmp/sysd:$tmp/slow:$tmp/fake:$PATH" XDPH_WINDOW_SHARING_LIST="$windows" \
   "$tmp/bin/hyprland-share-picker" --allow-token >"$tmp/standin.out" 2>"$tmp/standin.err" &
 standin=$!
 ended_within "$standin" 5 || true

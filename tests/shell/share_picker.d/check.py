@@ -3,7 +3,8 @@
 # Its stdout goes through a copy of xdph 1.4.1's parser (promptForScreencopySelection, src/shared/ScreencopyShared.cpp:70-125),
 # so a selection counts only as xdph reads it. Spec system-dialogs.md A-SP1, A-SP2, A-SP2b, A-SP3; the peer check (rc7 audit
 # R7-SEC-02): the fake shell connects from this test's own cgroup, which stands for the shell's unit through the dev
-# plumbing GRASSFIELD_PICKER_PEER_UNIT (a dev session only); another unit, or a real session, refuses it.
+# plumbing GRASSFIELD_PICKER_PEER_UNIT (a dev session only), and a fake `systemctl` names it the unit's main process (the
+# shell's own PID, from the file it writes); another unit, another main process, or a real session, refuses it.
 import atexit
 import json
 import os
@@ -117,6 +118,8 @@ def shell(delay):
     for fd in (0, 1, 2):
         os.dup2(devnull, fd)
     time.sleep(delay)
+    with open(os.environ["SHELL_PID_FILE"], "w") as f:
+        f.write(str(os.getpid()))
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         s.connect(path)
@@ -172,6 +175,12 @@ else:
     sys.exit(1)
 """)
 
+# systemctl: the unit's MainPID is the fake shell's PID (from SHELL_PID_FILE), or FAKE_MAINPID when set.
+write(os.path.join(fake, "systemctl"), """#!/bin/sh
+[ "$1 $2 $3 $4" = "--user show --property=MainPID --value" ] || exit 3
+if [ -n "${FAKE_MAINPID:-}" ]; then echo "$FAKE_MAINPID"; else cat "$SHELL_PID_FILE" 2>/dev/null || echo 0; echo; fi
+""")
+
 TWO = json.dumps([
     {"name": "DP-1", "width": 1920, "height": 1080, "scale": 1.0, "transform": 0, "solitaryBlockedBy": [], "disabled": False},
     {"name": "DP-2", "width": 2560, "height": 1440, "scale": 2.0, "transform": 0, "solitaryBlockedBy": []},
@@ -186,7 +195,7 @@ def env_for(**extra):
     env = {"PATH": "%s:/usr/bin:/bin" % fake, "XDG_RUNTIME_DIR": run, "HYPRLAND_INSTANCE_SIGNATURE": "test_sig",
            "XDPH_WINDOW_SHARING_LIST": WINDOWS, "FAKE_MONITORS": TWO, "QS_LOG": logs["qs"], "SHELL_LOG": logs["shell"],
            "QS_CONFIG_PATH": "/elsewhere", "QS_MANIFEST": "x", "MARKER_PATH": os.path.join(run, "grassfield-lock-test_sig"),
-           "GRASSFIELD_DEV": "1", "GRASSFIELD_PICKER_PEER_UNIT": leaf}
+           "GRASSFIELD_DEV": "1", "GRASSFIELD_PICKER_PEER_UNIT": leaf, "SHELL_PID_FILE": os.path.join(tmp, "shell.pid")}
     for k, v in extra.items():
         if v is None:
             env.pop(k, None)
@@ -207,7 +216,7 @@ MARKER = os.path.join(run, "grassfield-lock-test_sig")
 
 def reset(marker=None):
     # Empty logs; the shell's lock marker absent, or holding `marker`, or a directory (a marker that cannot be read) for "".
-    for p in logs.values():
+    for p in list(logs.values()) + [os.path.join(tmp, "shell.pid")]:
         if os.path.exists(p):
             os.unlink(p)
     if os.path.isdir(MARKER):
@@ -362,6 +371,8 @@ check(xdph(out) == {"allowToken": False, "type": "output", "output": "DP-1"} and
 # is ignored, grassfield-shell.service under the user's manager is expected); refused, it gets nothing (not even the
 # window list) and nothing is printed once the 2 s for the shell's connection are over; never the stock picker.
 for desc, extra in (("another unit is expected", {"GRASSFIELD_PICKER_PEER_UNIT": "not-the-shell-%s.service" % leaf}),
+                    ("another process is the unit's main process", {"FAKE_MAINPID": "1"}),
+                    ("the unit has no main process", {"FAKE_MAINPID": "0"}),
                     ("the dev unit name is not one path component", {"GRASSFIELD_PICKER_PEER_UNIT": "x/" + leaf}),
                     ("a real session (the dev name ignored)", {"GRASSFIELD_SESSION": "1"}),
                     ("no dev session (the dev name ignored)", {"GRASSFIELD_DEV": None})):
