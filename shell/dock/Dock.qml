@@ -321,14 +321,15 @@ Scope {
     }
 
     // Removes a tile from the Dock (drag out): unpins it and forgets it as a recent app. A running app is removable too
-    // (macOS): it is no longer kept, its tile stays with its running dot until it quits. True when the tile goes away.
+    // (macOS): it is no longer kept, its tile stays with its running dot until it quits. True when the Dock changed (the pin or
+    // the recent entry went); the caller plays the puff only when the tile is gone, that is when it has no window.
     function removeItem(item: var): bool {
         if (item.kind !== "app")
             return false;
         if (item.pinned)
             Settings.setDockPinned(DockModel.unpinKey(Settings.dockPinned, item.key, Apps.lookup));
         if (item.recent)
-            Settings.setDockRecent(Settings.dockRecent.filter(r => r !== item.key));
+            Settings.setDockRecent(Settings.dockRecent.filter(r => !DockModel.sameApp(r, item.key, Apps.lookup)));
         return item.pinned === true || item.recent === true;
     }
 
@@ -1065,12 +1066,14 @@ Scope {
                 if (!item)
                     return;
                 if (out) {
-                    if (root.removeItem(item)) {
+                    const removed = root.removeItem(item);
+                    if (removed && item.windows.length === 0) {
                         holdLayout = true;
                         holdTimer.restart();
                         win.poof(cx, cy);
                         Sounds.play("dock-remove");
                     } else {
+                        // A running app (macOS): no puff, the icon slides back into the Dock, now not kept.
                         tileItem.glideFrom(dx, dy);
                     }
                     return;

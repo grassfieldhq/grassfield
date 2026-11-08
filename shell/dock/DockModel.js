@@ -148,10 +148,45 @@ function normId(id) {
     return String(id === undefined || id === null ? "" : id).replace(/\.desktop$/i, "").toLowerCase();
 }
 
-function pin(pinned, id) {
-    const list = (pinned ? pinned : []).slice();
-    const want = normId(id);
-    return list.some(p => normId(p) === want) ? list : list.concat([id]);
+// The resolved desktop entry id of a stored or tile id, null when nothing resolves. An app is identified by it: the lookup matches
+// exactly, then without case (it does not strip ".desktop"), so a stored "foot.desktop" is tried as written and then without the suffix.
+function resolvedId(id, lookup) {
+    if (!lookup || id === undefined || id === null || id === "")
+        return null;
+    const entry = lookup(id) || lookup(String(id).replace(/\.desktop$/i, ""));
+    return entry && entry.id ? entry.id : null;
+}
+
+// True when two ids are the same app: the same resolved entry id (two installed entries that differ only by case stay distinct), or,
+// when neither resolves to any entry, the same spelling after normId (cleanup of ids that make no tile: removal only; `strict` compares
+// the exact spelling, as pin and cleanPinned do, so such an id never refuses a pin).
+function sameApp(a, b, lookup, strict) {
+    const ra = resolvedId(a, lookup);
+    const rb = resolvedId(b, lookup);
+    if (ra !== null && rb !== null)
+        return ra === rb;
+    if (ra !== null || rb !== null)
+        return false;
+    return strict === true ? a === b : normId(a) === normId(b);
+}
+
+// The stored list cleaned: an id that resolves only in its normalised form is rewritten to the resolved id, then the apps that appear
+// twice keep their first place. An id that resolves to nothing stays as it is.
+function cleanPinned(pinned, lookup) {
+    const out = [];
+    for (const p of (pinned ? pinned : [])) {
+        const r = resolvedId(p, lookup);
+        const id = r !== null ? r : p;
+        if (!out.some(q => sameApp(q, id, lookup, true)))
+            out.push(id);
+    }
+    return out;
+}
+
+function pin(pinned, id, lookup) {
+    const list = cleanPinned(pinned, lookup);
+    const r = resolvedId(id, lookup);
+    return list.some(p => sameApp(p, id, lookup, true)) ? list : list.concat([r !== null ? r : id]);
 }
 
 function unpin(pinned, id) {
@@ -159,18 +194,10 @@ function unpin(pinned, id) {
     return (pinned ? pinned : []).filter(p => normId(p) !== want);
 }
 
-// Unpin by resolved key: drops every pinned id that is the key in any spelling or that resolves (via lookup) to the key's
-// entry, so the pin goes whatever id the tile is matched by (foot / foot.desktop / Foot, a window app id that differs from
-// the entry id). An empty result stays empty: nothing here re-seeds the defaults (see migratePinned).
+// Unpin by resolved key: drops every pinned id that is the same app as the key (same resolved entry id), so the pin goes whatever
+// spelling the file holds. An emptied list stays empty: nothing here re-seeds the defaults (see migratePinned).
 function unpinKey(pinned, key, lookup) {
-    const want = normId(key);
-    const keyEntry = lookup ? lookup(key) : null;
-    const keyId = keyEntry && keyEntry.id ? normId(keyEntry.id) : want;
-    return (pinned ? pinned : []).filter(p => {
-        const entry = lookup ? lookup(p) : null;
-        const n = normId(p);
-        return n !== want && n !== keyId && (!entry || (normId(entry.id) !== want && normId(entry.id) !== keyId));
-    });
+    return (pinned ? pinned : []).filter(p => !sameApp(p, key, lookup));
 }
 
 // Whether a tile can be dragged out of the Dock (macOS): an app kept in the Dock or listed as recent, running or not. A running

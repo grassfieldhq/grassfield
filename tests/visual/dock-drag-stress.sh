@@ -42,6 +42,7 @@ want='["foot"]'
 
 fail=0
 lost=0
+i=0
 for i in $(seq 1 "$n"); do
   case $(( i % 3 )) in
     0) hold=100 ;;
@@ -178,4 +179,15 @@ if [[ $(vs_ipc dock tiles | jq 'index("foot")') == "null" ]]; then
 else
   echo "running app: the tile stays with its window: ok"
 fi
+# The app quits: its tile goes (or stays once, as a recent app when recents are on), never twice, and the pins stay empty.
+kill_class foot
+sleep 2.5
+copies=$(vs_ipc dock tiles | jq '[.[] | select(. == "foot")] | length')
+if [[ $copies == 0 || ( $copies == 1 && $(jq -r '.dock.showRecents != false' "$cfg") == true ) ]]; then
+  echo "running app: after it quits the Dock holds $copies foot tile(s): ok"
+else
+  echo "running app: after it quits the Dock holds $copies foot tile(s) (0, or 1 as a recent app)"
+  fail=1
+fi
+[[ $(pinned) == "[]" ]] || { echo "running app: pinned is $(pinned) after the quit"; fail=1; }
 exit $fail

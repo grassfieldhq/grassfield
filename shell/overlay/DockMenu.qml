@@ -364,13 +364,13 @@ PopupMenu {
             if (data.pinned)
                 Settings.setDockPinned(DockModel.unpinKey(Settings.dockPinned, data.key, root.lookupFn));
             if (data.recent)
-                Settings.setDockRecent(Settings.dockRecent.filter(r => r !== data.key));
+                Settings.setDockRecent(Settings.dockRecent.filter(r => !DockModel.sameApp(r, data.key, root.lookupFn)));
             break;
         case "keep":
             if (data.pinned)
                 Settings.setDockPinned(DockModel.unpinKey(Settings.dockPinned, data.key, root.lookupFn));
             else
-                Settings.setDockPinned(DockModel.pin(Settings.dockPinned, data.key));
+                Settings.setDockPinned(DockModel.pin(Settings.dockPinned, data.key, root.lookupFn));
             break;
         case "login":
             // Refused (nothing written or removed) for an id that is not a plain file name or a hostile command.

@@ -594,7 +594,7 @@ TestCase {
 
     function test_keepInDockToggle() {
         // Keep in Dock on a running tile pins its key; checked again, it unpins.
-        const pinned = DockModel.pin(DockModel.pin(["chromium"], "foot"), "Foot.desktop");
+        const pinned = DockModel.pin(DockModel.pin(["chromium"], "foot", lookup), "Foot.desktop", lookup);
         compare(pinned.join(","), "chromium,foot");
         compare(DockModel.unpinKey(pinned, "foot", lookup).join(","), "chromium");
     }
@@ -608,8 +608,34 @@ TestCase {
         // An id no entry resolves (a Flatpak or Electron app id) is still removed by the same spelling rule.
         compare(DockModel.unpinKey(["com.example.App.desktop", "foot"], "com.example.app", lookup).join(","), "foot");
         compare(DockModel.unpinKey(["foot"], "foot", null).length, 0, "no lookup function");
-        compare(DockModel.pin(["foot.desktop"], "foot").join(","), "foot.desktop", "pin does not duplicate another spelling");
+        compare(DockModel.pin(["foot.desktop"], "foot", lookup).join(","), "foot", "a stored spelling that resolves is rewritten to the entry id, never a duplicate");
+        compare(DockModel.pin(["ghost.desktop"], "ghost", lookup).join(","), "ghost.desktop,ghost", "ids that resolve to nothing never refuse a pin");
         compare(DockModel.unpin(["Foot", "kate"], "foot.desktop").join(","), "kate");
+    }
+
+    // Review of f27fbcb1: the lookup matches exactly, then without case, and does not strip ".desktop".
+    function exactLookup(id) {
+        const all = {"foot": {id: "foot"}, "Foot": {id: "Foot"}, "chromium": {id: "chromium"}};
+        if (all[id])
+            return all[id];
+        for (const k in all) {
+            if (k.toLowerCase() === String(id).toLowerCase())
+                return all[k];
+        }
+        return null;
+    }
+
+    function test_pinIdentifiesByResolvedEntry() {
+        // A stored "foot.desktop" resolves only after the suffix goes: Keep in Dock on foot must pin, not do nothing.
+        compare(DockModel.pin(["chromium", "foot.desktop"], "foot", exactLookup).join(","), "chromium,foot");
+        // Two installed entries that differ only by case stay distinct.
+        compare(DockModel.pin(["Foot"], "foot", exactLookup).join(","), "Foot,foot");
+        compare(DockModel.unpinKey(["Foot", "foot"], "foot", exactLookup).join(","), "Foot");
+        compare(DockModel.unpinKey(["Foot", "foot"], "Foot", exactLookup).join(","), "foot");
+        verify(DockModel.sameApp("foot.desktop", "foot", exactLookup));
+        verify(!DockModel.sameApp("Foot", "foot", exactLookup));
+        // A stored id that resolves to nothing never blocks a pin of an unrelated id.
+        compare(DockModel.pin(["foot.desktop"], "chromium", function (id) { return null; }).join(","), "foot.desktop,chromium");
     }
 
     function test_removalNeverReseeds() {
