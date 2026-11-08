@@ -73,6 +73,16 @@ Scope {
             return Popups.active && Popups.pointerHeld ? "held" : "";
         }
 
+        // Test hook (tests/visual/menubar-macos.sh): who holds the keyboard while a popup is open: "overlay" (the compositor made
+        // the popup's window active), "other" (a popup is open and a client window, or nothing, has the keys), "" (no popup).
+        function keyboardHolder(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            if (!Popups.active)
+                return "";
+            return Popups.overlayHasKeyboard ? "overlay" : "other";
+        }
+
         // Test hook (tests/visual/flow-capture-defects.sh): the app the bar of `screen` names and how many app menus it carries, as
         // JSON {appId, appName, bridgeMenus}. Read-only, dev session only.
         function shown(screen: string): string {

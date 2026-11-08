@@ -27,6 +27,28 @@ TestCase {
         verify(PopupKinds.known("appabout"));
     }
 
+    // R7-FUN-08 / GF-002: the Overlay's keyboard mode and mask do not follow the loaded item, which is null for an instant at
+    // each swap of one popup for another; they follow the kind.
+    function test_theKeyboardIsHeldThroughASwap() {
+        verify(PopupKinds.holdsKeyboard(true, "system", false));
+        verify(PopupKinds.holdsKeyboard(true, "app", false), "the swap system -> app keeps the keyboard");
+        verify(PopupKinds.holdsKeyboard(true, "appbridge", false));
+        verify(!PopupKinds.holdsKeyboard(false, "system", false), "closed");
+        verify(!PopupKinds.holdsKeyboard(true, "", false), "no kind");
+        verify(!PopupKinds.holdsKeyboard(true, "about", false), "an unknown kind never holds the keyboard");
+        verify(!PopupKinds.holdsKeyboard(true, "system", true), "a Loader in error never holds the keyboard");
+        verify(!PopupKinds.holdsKeyboard(undefined, "system", false));
+    }
+
+    // The Overlay uses it for both the keyboard mode and the input mask (a flapping mask is committed too).
+    function test_theOverlayUsesIt() {
+        const overlay = source("shell/overlay/Overlay.qml");
+        verify(overlay.indexOf("PopupKinds.holdsKeyboard(open, Popups.kind") >= 0);
+        verify(/keyboardFocus: engaged &&/.test(overlay), "keyboard mode follows engaged");
+        verify(/mask: win\.engaged &&/.test(overlay), "mask follows engaged");
+        verify(!/keyboardFocus: hasPopup/.test(overlay), "not the loaded item");
+    }
+
     function test_theListIsTheOverlays() {
         const overlay = source("shell/overlay/Overlay.qml");
         const start = overlay.indexOf("sourceComponent: {");
