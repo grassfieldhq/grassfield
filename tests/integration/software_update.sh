@@ -38,8 +38,11 @@ if [[ ${1:-} != --inside ]]; then
   command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -x $omarchy/bin/omarchy-refresh-pacman && -f $omarchy/migrations/1787589206.sh ]] ||
     { echo "SKIP: no Omarchy 4.0.4 tree at $omarchy (--omarchy DIR)"; exit 0; }
-  args=(--rm --network host -v "$root:/src:ro" -v "$(realpath "$omarchy"):/omarchy:ro")
-  [[ -n $next ]] && args+=(-v "$(realpath "$next"):/omarchy-next:ro")
+  # shellcheck source=omarchy-tree.sh
+  . "$root/tests/integration/omarchy-tree.sh" || exit 2
+  args=(--rm --network host -v "$root:/src:ro")
+  omarchy_mounts "$omarchy" "$root/.dev/software-update-omarchy" /omarchy args || exit 2
+  if [[ -n $next ]]; then omarchy_mounts "$next" "$root/.dev/software-update-omarchy-next" /omarchy-next args || exit 2; fi
   [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
   for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && args+=(-e "$v"); done
   exec docker run "${args[@]}" "$IMAGE" bash /src/tests/integration/software_update.sh --inside

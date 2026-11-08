@@ -4,8 +4,9 @@
 # refuses to run unless it is root in a container with the repository mounted at /src and an Omarchy 4.0.4 tree at /omarchy.
 #
 #   tests/integration/update_helper.sh [--omarchy DIR]
-#     DIR  an Omarchy 4.0.4 tree (default /usr/share/omarchy): its omarchy-migrate, omarchy-hook, omarchy-update-mise and
-#          its update guard (the hook and its program) go into the test's omarchy package, unchanged
+#     DIR  an Omarchy 4.x tree (default /usr/share/omarchy): its omarchy-migrate, omarchy-hook, omarchy-update-mise and
+#          its update guard (the hook and its program) go into the test's omarchy package, unchanged (the tree's bin/ is
+#          staged with its links followed, tests/integration/omarchy-tree.sh)
 #   Runs `docker run --rm --network host` on archlinux:base (digest pinned below) with the repository and the tree mounted
 #   read-only; HTTPS_PROXY/HTTP_PROXY/NO_PROXY are passed through and GRASSFIELD_TEST_CA, when set, is mounted as the
 #   container's CA bundle (for a proxied network). Exit 0 all PASS (or SKIP without docker), 1 a FAIL, 2 usage.
@@ -37,7 +38,10 @@ if [[ ${1:-} != --inside ]]; then
   command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -f $omarchy/bin/omarchy-migrate && -f $omarchy/default/libalpm/hooks/00-omarchy-update-guard.hook ]] ||
     { echo "SKIP: no Omarchy 4.0.4 tree at $omarchy (--omarchy DIR)"; exit 0; }
-  args=(--rm --network host -v "$root:/src:ro" -v "$(realpath "$omarchy"):/omarchy:ro")
+  # shellcheck source=omarchy-tree.sh
+  . "$root/tests/integration/omarchy-tree.sh" || exit 2
+  args=(--rm --network host -v "$root:/src:ro")
+  omarchy_mounts "$omarchy" "$root/.dev/update-helper-omarchy" /omarchy args || exit 2
   [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
   for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && args+=(-e "$v"); done
   exec docker run "${args[@]}" "$IMAGE" bash /src/tests/integration/update_helper.sh --inside
@@ -399,6 +403,10 @@ publish "${cur[@]}" gu-kernel-2; run_helper
 expect "  its update (same file) needs no kernel restart -> exit 0, no restart kernel" bash -c "test $rc:$(ver gu-kernel) == 0:2-1 && ! grep -qx 'restart kernel' $D/$op.exit && grep -qx 'packages 1' $D/$op.exit"
 publish "${cur[@]}" gu-kernel-3; run_helper
 expect "the kernel package now owns only the running kernel's vmlinuz (4.0.6's file) -> exit 0, still no restart kernel" bash -c "test $rc:$(ver gu-kernel) == 0:3-1 && ! grep -qx 'restart kernel' $D/$op.exit"
+# The container again runs no packaged kernel, for the cases below (left installed, gu-kernel would also read as an app
+# from the AUR once the repository stops carrying it: the runner's case "150 done before" got "done done  aur").
+quiet pacman -Rdd --noconfirm gu-kernel
+expect "  gu-kernel removed: the container's kernel rule is back" test -z "$(ver gu-kernel)"
 
 say "the 16 newest operations are kept"
 publish "${cur[@]}"

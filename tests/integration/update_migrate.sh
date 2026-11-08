@@ -42,8 +42,11 @@ if [[ ${1:-} != --inside ]]; then
   done
   command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -f $omarchy/bin/omarchy-migrate ]] || { echo "SKIP: no Omarchy tree at $omarchy (--omarchy DIR)"; exit 0; }
+  # shellcheck source=omarchy-tree.sh
+  . "$root/tests/integration/omarchy-tree.sh" || exit 2
   args=(-d --privileged --cgroupns=private --tmpfs /run --tmpfs /tmp --network host -e container=docker
-    -v "$root:/src:ro" -v "$(realpath "$omarchy"):/omarchy:ro")
+    -v "$root:/src:ro")
+  omarchy_mounts "$omarchy" "$root/.dev/update-migrate-omarchy" /omarchy args || exit 2
   [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
   envs=()
   for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && envs+=(-e "$v"); done

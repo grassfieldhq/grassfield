@@ -37,6 +37,7 @@
  {"path": "tests/visual/run.sh", "reason": "runner of tests/visual/scenarios/*.sh, not a test itself"},
  {"path": "tests/integration/env_lines.sh", "reason": "helper sourced by global_menus.sh (the dev-only log lines that are not issues; tested by tests/shell/gates.sh)"},
  {"path": "tests/compositor/titlebar_geometry.sh", "reason": "helper sourced by the compositor scenarios (titlebar metrics from Theme.hpp)"},
+ {"path": "tests/integration/omarchy-tree.sh", "reason": "helper sourced by the docker tests: the Omarchy tree mounted with bin/ links followed"},
  {"path": "tests/compositor/window_geometry.sh", "reason": "helper sourced by soak.sh and input_consistency.sh (real window geometry from hyprctl clients)"},
  {"path": "scripts/gates/lib.sh", "reason": "helper sourced by the gate scripts (tested by tests/shell/gates.sh)"},
  {"path": "scripts/gates/frame_pacing.py", "reason": "judge of scripts/gates/frame-pacing.sh; --selftest and cases run by tests/shell/gates.sh"},
