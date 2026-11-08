@@ -638,6 +638,17 @@ TestCase {
         compare(DockModel.pin(["foot.desktop"], "chromium", function (id) { return null; }).join(","), "foot.desktop,chromium");
     }
 
+    // Review of eafb07bb: the real lookup falls back to heuristicLookup (StartupWMClass); a stored id is rewritten only for an exact,
+    // case or ".desktop" match.
+    function test_heuristicMatchNeverRewritesAPin() {
+        const heuristic = id => ["firefox", "org.mozilla.firefox"].indexOf(String(id).toLowerCase()) >= 0 ? {id: "org.mozilla.firefox"} : null;
+        compare(DockModel.cleanPinned(["firefox", "chromium"], heuristic).join(","), "firefox,chromium", "the native pin stays");
+        compare(DockModel.pin(["firefox"], "chromium", heuristic).join(","), "firefox,chromium");
+        // Removal still finds a pin that the tile matches through the heuristic.
+        compare(DockModel.unpinKey(["firefox", "kate"], "org.mozilla.firefox", heuristic).join(","), "kate");
+        compare(DockModel.cleanPinned(["Chromium.desktop"], exactLookup).join(","), "chromium", "case and suffix still rewrite");
+    }
+
     function test_removalNeverReseeds() {
         // A list shrunk by a removal is never rewritten by the Dock rules: not to the default, not when it empties.
         compare(DockModel.migratePinned(DockModel.unpinKey(["foot", "chromium", "org.gnome.Nautilus"], "org.gnome.Nautilus", lookup)).join(","), "foot,chromium");

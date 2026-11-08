@@ -1066,15 +1066,17 @@ Scope {
                 if (!item)
                     return;
                 if (out) {
+                    // The rebuild that follows the unpin keeps the layout of the release (as for a tile that goes away).
+                    holdLayout = true;
+                    holdTimer.restart();
                     const removed = root.removeItem(item);
                     if (removed && item.windows.length === 0) {
-                        holdLayout = true;
-                        holdTimer.restart();
                         win.poof(cx, cy);
                         Sounds.play("dock-remove");
                     } else {
-                        // A running app (macOS): no puff, the icon slides back into the Dock, now not kept.
-                        tileItem.glideFrom(dx, dy);
+                        // A running app (macOS): no puff, the icon slides back into the Dock, now not kept. The rebuild already
+                        // glides it along the Dock; only the cross-axis offset of the drop is added.
+                        tileItem.glideFrom(win.vertical ? dx : tileItem.glide, win.vertical ? tileItem.glideY : dy);
                     }
                     return;
                 }

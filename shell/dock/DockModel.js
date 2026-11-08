@@ -150,11 +150,15 @@ function normId(id) {
 
 // The resolved desktop entry id of a stored or tile id, null when nothing resolves. An app is identified by it: the lookup matches
 // exactly, then without case (it does not strip ".desktop"), so a stored "foot.desktop" is tried as written and then without the suffix.
-function resolvedId(id, lookup) {
+// `exact` accepts only an entry whose id is the id in another case or with ".desktop" (never a heuristic match such as a
+// StartupWMClass): the rewrite of a stored id uses it, so an uninstalled native "firefox" is never turned into an installed Flatpak.
+function resolvedId(id, lookup, exact) {
     if (!lookup || id === undefined || id === null || id === "")
         return null;
     const entry = lookup(id) || lookup(String(id).replace(/\.desktop$/i, ""));
-    return entry && entry.id ? entry.id : null;
+    if (!entry || !entry.id)
+        return null;
+    return exact === true && normId(entry.id) !== normId(id) ? null : entry.id;
 }
 
 // True when two ids are the same app: the same resolved entry id (two installed entries that differ only by case stay distinct), or,
@@ -175,7 +179,7 @@ function sameApp(a, b, lookup, strict) {
 function cleanPinned(pinned, lookup) {
     const out = [];
     for (const p of (pinned ? pinned : [])) {
-        const r = resolvedId(p, lookup);
+        const r = resolvedId(p, lookup, true);
         const id = r !== null ? r : p;
         if (!out.some(q => sameApp(q, id, lookup, true)))
             out.push(id);
@@ -185,7 +189,7 @@ function cleanPinned(pinned, lookup) {
 
 function pin(pinned, id, lookup) {
     const list = cleanPinned(pinned, lookup);
-    const r = resolvedId(id, lookup);
+    const r = resolvedId(id, lookup, true);
     return list.some(p => sameApp(p, id, lookup, true)) ? list : list.concat([r !== null ? r : id]);
 }
 
