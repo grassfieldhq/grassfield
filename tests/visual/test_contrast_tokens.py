@@ -42,6 +42,7 @@ material.tintClampUntil (ui/Grassfield/Ui/Appearance.qml tintAlpha()); at the de
 """
 import importlib.util
 import json
+import math
 import os
 import re
 import sys
@@ -82,7 +83,7 @@ def hex_rgb(h):
 
 def round_half_up(x):
     """Math.round of JavaScript (halves go up)."""
-    return int(x + 0.5)
+    return int(math.floor(x + 0.5))
 
 
 def over(fg, alpha, bg):
@@ -150,15 +151,23 @@ def glass_target(target, t, default):
     return 1 - (1 - target) * x / default if x <= default else target * (1 - (x - default) / (1 - default))
 
 
+_GLASS_CACHE = {}
+
+
 def glass_alpha(tok, appearance, target, t, backdrop):
-    """Mirror of GlassTint.alpha: backdrop (lum_min, lum_max) or None for the worst case."""
-    if t <= 0:
-        return 1.0
-    if backdrop is None:
-        floor = glass_floor(tok, appearance, 0.0, 1.0, 4.5)
-    else:
-        floor = glass_floor(tok, appearance, backdrop[0], backdrop[1], 4.5 + tok.path("glass.contrastMargin"))
-    return max(floor, glass_target(target, t, tok.path("material.defaultTransparency")))
+    """Mirror of GlassTint.alpha: backdrop (lum_min, lum_max) or None for the worst case. Cached: the search is slow and the
+    answer depends only on the appearance's tokens, the target, the slider value and the backdrop."""
+    key = (id(tok.data), appearance, target, t, backdrop)
+    if key not in _GLASS_CACHE:
+        if t <= 0:
+            _GLASS_CACHE[key] = 1.0
+        else:
+            if backdrop is None:
+                floor = glass_floor(tok, appearance, 0.0, 1.0, 4.5)
+            else:
+                floor = glass_floor(tok, appearance, backdrop[0], backdrop[1], 4.5 + tok.path("glass.contrastMargin"))
+            _GLASS_CACHE[key] = max(floor, glass_target(target, t, tok.path("material.defaultTransparency")))
+    return _GLASS_CACHE[key]
 
 
 class Tokens:
@@ -182,7 +191,8 @@ class Tokens:
             ink = self.color(palette, appearance, "accentInk")
             text = self.color(palette, appearance, "text")
             mix = self.path("glass.accentInkMix" + ap.capitalize())
-            return tuple(int(round_half_up(ink[i] + (text[i] - ink[i]) * mix)) for i in range(3))
+            # The same arithmetic as the JS, step for step: channels as v / 255, mixed, times 255, Math.round.
+            return tuple(round_half_up((ink[i] / 255 + (text[i] / 255 - ink[i] / 255) * mix) * 255) for i in range(3))
         if name in ("selection", "selectionText"):
             if fixed.get(palette, appearance) == "light":
                 return self.color("lightColors", "light", "accent" if name == "selection" else "accentText")
@@ -211,6 +221,22 @@ class Tokens:
         return clamp + (mn - clamp) * (t - until) / (1 - until)
 
 
+def material_variants(tok, pal, appearance, base):
+    """The tint over the backdrop as it is, and under the fills a tile, a field or a row draws on glass (material.fillOpacity;
+    in the light appearance the chip, button and well fills of Appearance.chipFill, buttonFill, lightWellFill)."""
+    fill = tok.color(pal, appearance, "fill")
+    out = [base, over(fill, tok.path("material.fillOpacity"), base)]
+    if pal == "colors" and appearance == "light":
+        chip = tok.color(pal, appearance, "chipFill")
+        out += [over(chip, tok.path("material.chipFillOpacityLight"), base),
+                over(fill, tok.path("material.fillOpacityLight"), base),
+                over(chip, tok.path("material.wellFillOpacityLight"), base)]
+    return out
+
+
+GLASS_CLASSES = ("menu", "notification", "controls", "apps", "gallery", "widgets")
+
+
 def backdrops(tok, role, appearance, t, wallpaper):
     """Backdrop colours (opaque RGB) behind the text for one role/appearance/transparency/wallpaper colour."""
     kind = role["backdrop"]
@@ -223,16 +249,20 @@ def backdrops(tok, role, appearance, t, wallpaper):
             return [wallpaper] if l <= tok.path("menubar.toneDarkAbove") else []
         return [wallpaper] if l >= tok.path("menubar.toneLightBelow") else []
     if kind == "material":
-        base = over(tok.color(pal, appearance, "materialTint"), tok.tint_alpha(t), wallpaper)
-        fill = tok.color(pal, appearance, "fill")
-        # Without a fill, and with the fill overlay of a tile or field (materialFillOpacity), worst case of the two.
-        out = [base, over(fill, tok.path("material.fillOpacity"), base)]
-        if pal == "colors" and appearance == "light":
-            # The light control fills (Appearance.chipFill, buttonFill, lightWellFill): white chips and wells, a 6 % grey button.
-            chip = tok.color(pal, appearance, "chipFill")
-            out += [over(chip, tok.path("material.chipFillOpacityLight"), base),
-                    over(fill, tok.path("material.fillOpacityLight"), base),
-                    over(chip, tok.path("material.wellFillOpacityLight"), base)]
+        return material_variants(tok, pal, appearance, over(tok.color(pal, appearance, "materialTint"), tok.tint_alpha(t), wallpaper))
+    if kind == "glass":
+        # The shell's real glass (Appearance.glassAlpha, GlassTint.alpha): every glass class at the slider value t, over the
+        # wallpaper colour with the tint alpha the class really gets, in the two cases the shell can be in: the backdrop unknown
+        # (the worst case, black to white) and the backdrop known to be this colour (its own luminance range). Each with the fills
+        # a tile, a field or a hovered row draws over the tint. The tint alpha protects the text and the secondary text only, so
+        # it is thinner than tintAlpha(t) says: 0.79 in the light appearance over a window, not 0.85.
+        out = []
+        for cls in GLASS_CLASSES:
+            target = tok.path("glass." + cls)
+            known = (lum(wallpaper), lum(wallpaper))
+            for backdrop in (None, known):
+                a = glass_alpha(tok, appearance, target, t, backdrop)
+                out += material_variants(tok, pal, appearance, over(tok.color(pal, appearance, "materialTint"), a, wallpaper))
         return out
     if kind in ("window", "window-pane"):
         # window-pane: the same without the search field's grey fill (accent text never sits in a field: a field's own text
@@ -615,7 +645,7 @@ class ContrastTokens(unittest.TestCase):
         for r in self.roles:
             self.assertIn(r["kind"], THRESHOLD)
             self.assertIn(r["backdrop"], ("material", "window", "window-pane", "accent", "selection", "rename-field", "desktop-label",
-                                          "weather-sky") + BAR_TONES + LOCK_BACKDROPS)
+                                          "weather-sky", "glass") + BAR_TONES + LOCK_BACKDROPS)
             for site in r["sites"]:
                 self.assertIn(site["class"], ("secondary", "danger", "alpha", "dynamic", "opacity", "opacity-dynamic", "primary",
                                               "backdrop"))
@@ -727,6 +757,89 @@ class ContrastTokens(unittest.TestCase):
         worst = min(role_ratio(AccentTokens(self.tok.data, a), raw, ap, t, wp) or 99 for a in self.ACCENTS
                     for ap in APPEARANCES for t in TRANSPARENCIES for wp in WALLPAPER_COLORS)
         self.assertLess(worst, 3.0)
+
+    # The 18 colours, pinned (tests/unit/tst_accent.qml pins the same literals, so the two implementations cannot drift apart:
+    # this side does the arithmetic of Accent.glassInk step for step, the QML side runs the function).
+    GLASS_PINNED = {
+        "dark": {"multicolor": "#cfe5d0", "blue": "#d2e1f4", "purple": "#e8dcf0", "pink": "#f6d7e1", "red": "#f7d7d1",
+                 "orange": "#f7e1c8", "yellow": "#f7ecc8", "green": "#deedc9", "graphite": "#e3e2e0"},
+        "light": {"multicolor": "#1b3728", "blue": "#1e3864", "purple": "#442a60", "pink": "#62243d", "red": "#612420",
+                  "orange": "#503011", "yellow": "#473a0e", "green": "#2e401e", "graphite": "#37383b"},
+    }
+
+    def test_accent_glass_colours_are_pinned(self):
+        for ap in APPEARANCES:
+            for accent in self.ACCENTS:
+                got = "#%02x%02x%02x" % AccentTokens(self.tok.data, accent).color("colors", ap, "accentGlass")
+                self.assertEqual(got, self.GLASS_PINNED[ap][accent], "%s %s" % (ap, accent))
+        self.assertEqual(self.tok.path("glass.accentInkMixDark"), 0.76)
+        self.assertEqual(self.tok.path("glass.accentInkMixLight"), 0.58)
+
+    def test_accent_glass_worst_case_per_accent_and_glass_class(self):
+        # The worst ratio of each accent over the shell's real glass (every class at its real tint alpha, worst-case and known
+        # backdrops, bare and under the fills a row or tile draws), per appearance: all hold 4.5:1.
+        role = next(r for r in self.roles if r["id"] == "text and glyphs in the accent colour on material")
+        for accent in self.ACCENTS:
+            tok = AccentTokens(self.tok.data, accent)
+            for ap in APPEARANCES:
+                worst = min(r for t in TRANSPARENCIES for wp in WALLPAPER_COLORS
+                            for r in [role_ratio(tok, role, ap, t, wp)] if r is not None)
+                self.assertGreaterEqual(worst, 4.5, "%s %s: %.3f:1" % (accent, ap, worst))
+
+    @staticmethod
+    def oklch(rgb):
+        def lin(v):
+            v /= 255
+            return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+        r, g, b = (lin(v) for v in rgb)
+        l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ** (1 / 3)
+        m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ** (1 / 3)
+        s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ** (1 / 3)
+        a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s
+        bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+        return math.hypot(a, bb), math.degrees(math.atan2(bb, a)) % 360
+
+    def test_accent_glass_keeps_the_hue_of_the_accent(self):
+        # The variant stays recognisable as its accent: its OKLCH hue within 12 degrees of the ink's and a visible chroma
+        # (0.025 or more; the dark appearance's near-white text leaves 0.03 to 0.05, the light one 0.06 to 0.09). Graphite has none.
+        for ap in APPEARANCES:
+            for accent in self.ACCENTS[:-1]:
+                tok = AccentTokens(self.tok.data, accent)
+                c0, h0 = self.oklch(tok.color("colors", ap, "accentInk"))
+                c1, h1 = self.oklch(tok.color("colors", ap, "accentGlass"))
+                dh = abs((h1 - h0 + 180) % 360 - 180)
+                self.assertLessEqual(dh, 12, "%s %s hue %.0f -> %.0f" % (ap, accent, h0, h1))
+                self.assertGreaterEqual(c1, 0.025, "%s %s chroma %.3f" % (ap, accent, c1))
+
+    # Which text reads which colour (the sites list of the two roles): glass text reads accentGlass, app-window text accentInk.
+    def accent_readers(self, name):
+        found = {}
+        pat = re.compile(r"\bcolors\.%s\b" % name)
+        for sub in ("shell", "apps", "ui/Grassfield"):
+            for d, _, files in os.walk(os.path.join(ROOT, sub)):
+                for fn in sorted(files):
+                    rel = os.path.relpath(os.path.join(d, fn), ROOT)
+                    if not fn.endswith(".qml") or fn == "Tokens.qml" or rel.endswith("Ui/Appearance.qml"):
+                        continue
+                    with open(os.path.join(d, fn), encoding="utf-8") as f:
+                        n = len(pat.findall(qml_scan.strip(f.read(), True)))
+                    if n:
+                        found[rel] = n
+        return found
+
+    def test_accent_text_roles_list_their_real_sites(self):
+        ink = next(r for r in self.roles if r["id"] == "text and glyphs in the accent colour on an app window")
+        glass = next(r for r in self.roles if r["id"] == "text and glyphs in the accent colour on material")
+        declared = lambda r: {s["file"]: s["count"] for s in r["readers"]}
+        self.assertEqual(self.accent_readers("accentInk"), declared(ink))
+        self.assertEqual(self.accent_readers("accentGlass"), declared(glass))
+        # The rule itself: shell glass reads accentGlass, never accentInk; app windows read accentInk, never accentGlass.
+        for f in declared(ink):
+            self.assertTrue(f.startswith("apps/"), f + " reads accentInk but is not an app window")
+        for f in declared(glass):
+            self.assertTrue(f.startswith("shell/") and not f.startswith("shell/security/"), f + " reads accentGlass outside shell glass")
+        # Negative controls: the scan sees a wrong reader.
+        self.assertTrue(re.search(r"\bcolors\.accentInk\b", qml_scan.strip("Text { color: Appearance.colors.accentInk }", True)))
 
     # No exemption anywhere in the role table touches the accent: a role that draws text or glyphs in an accent colour is never exempt.
     def test_no_accent_text_role_is_exempt(self):
@@ -952,8 +1065,6 @@ class ContrastTokens(unittest.TestCase):
             self.assertGreaterEqual(wcag(text, fill), 4.85 if light_text == (255, 255, 255) else 4.5, accent)
             self.assertEqual(text == (255, 255, 255), light_text == (255, 255, 255), accent)
 
-    GLASS_CLASSES = ("menu", "notification", "controls", "apps", "gallery", "widgets")
-
     def test_glass_classes_hold_a2_over_any_backdrop(self):
         # ADR-0024 G-1 to G-3: a glass class whose backdrop the shell does not know takes the worst case; its text and secondary
         # text keep 4.5:1 over every wallpaper colour, with and without the fill overlay, at every slider value tested.
@@ -961,7 +1072,7 @@ class ContrastTokens(unittest.TestCase):
             tint = self.tok.color("colors", ap, "materialTint")
             fill = self.tok.color("colors", ap, "fill")
             inks = [self.tok.color("colors", ap, "text"), self.tok.color("colors", ap, "textSecondary")]
-            for cls in self.GLASS_CLASSES:
+            for cls in GLASS_CLASSES:
                 target = self.tok.path("glass." + cls)
                 for t in TRANSPARENCIES + (self.tok.path("material.defaultTransparency"), 1.0):
                     a = glass_alpha(self.tok, ap, target, t, None)
@@ -978,7 +1089,7 @@ class ContrastTokens(unittest.TestCase):
             tint = self.tok.color("colors", ap, "materialTint")
             fill = self.tok.color("colors", ap, "fill")
             inks = [self.tok.color("colors", ap, "text"), self.tok.color("colors", ap, "textSecondary")]
-            for cls in self.GLASS_CLASSES:
+            for cls in GLASS_CLASSES:
                 target = self.tok.path("glass." + cls)
                 for t in TRANSPARENCIES + (1.0,):
                     for wp in WALLPAPER_COLORS:
