@@ -139,7 +139,13 @@ last=${*: -1}
 spec=${last#grassfield/}
 name=${spec%%=*}
 case $1 in
-  -Q) [[ $2 == -- ]] && { [[ -f $ST/inst/$3 ]] && { echo "$3 $(<"$ST/inst/$3")"; exit 0; }; exit 1; } ;;
+  -Q)
+    # As pacman 7.1 does: a package that PROVIDES the name answers too (the twin provides grassfield-hold).
+    if [[ $2 == -- ]]; then
+      [[ -f $ST/inst/$3 ]] && { echo "$3 $(<"$ST/inst/$3")"; exit 0; }
+      [[ $3 == grassfield-hold && -f $ST/inst/grassfield-unhold ]] && { echo "grassfield-unhold $(<"$ST/inst/grassfield-unhold")"; exit 0; }
+      exit 1
+    fi ;;
 esac
 case $1 in
   -Qq) ls "$ST/inst" ;;
@@ -325,7 +331,7 @@ expect "hold-state runs no helper" "$(ccalls)" ""
 
 echo "== 5. the update helper: pacman's refusal naming the hold is exit 6, and an allowed hold is not compared"
 helper_src=$root/packaging/pacman/grassfield-update-helper
-pattern=$(grep -o 'grep -Eq "[^"]*"' "$helper_src" | head -n 1 | sed 's/^grep -Eq "//; s/"$//')
+pattern=$(grep -o 'grep -E "\[\[:space:\]\]required by[^"]*"' "$helper_src" | head -n 1 | sed 's/^grep -E "//; s/"$//')
 [[ -n $pattern ]] && pass "the helper's pattern: $pattern" || fail "the helper's grep pattern was not found"
 names() { printf '%s\n' "$1" | grep -Eq "$pattern" && echo yes || echo no; }
 expect "a broken bound of the hold" "$(names "error: failed to prepare transaction (could not satisfy dependencies)
@@ -341,15 +347,21 @@ expect "no error" "$(names "")" no
 # The block itself, run with stand-ins: exit 6 only when pacman FAILED and named the hold (a warning on a plan that worked is not a refusal).
 awk '/^plan=\$\(pacman -Su/ { on = 1 } on { print } on && /^\(\(plan_rc == 0\)\) \|\| finish 8/ { exit }' "$helper_src" >"$tmp/planblock.sh"
 [[ $(wc -l <"$tmp/planblock.sh") -gt 5 ]] && pass "the plan block was found in the helper" || fail "the plan block was not found"
-planrun() { # exit-code stderr-text: the helper's plan block with a pacman that fails (or not) and says that
+planrun() { # exit-code text [stdout|stderr]: the helper's plan block with a pacman that fails (or not) and says that, where
   mkdir -p "$tmp/tmpdb"
-  ( tmpdb=$tmp/tmpdb outcome=() PLAN_RC=$1 PLAN_ERR=$2
-    pacman() { printf '%s\n' "$PLAN_ERR" >&2; [[ $PLAN_RC == 0 ]] && echo "hello 1-1 file:///x"; return "$PLAN_RC"; }
+  ( tmpdb=$tmp/tmpdb outcome=() PLAN_RC=$1 PLAN_ERR=$2 PLAN_FD=${3:-stderr}
+    pacman() {
+      if [[ $PLAN_FD == stdout ]]; then printf '%s\n' "$PLAN_ERR"; else printf '%s\n' "$PLAN_ERR" >&2; fi
+      [[ $PLAN_RC == 0 ]] && echo "hello 1-1 file:///x"
+      return "$PLAN_RC"
+    }
     finish() { echo "finish $1 ${outcome[*]:-}"; exit "$1"; }
     . "$tmp/planblock.sh"; echo "went on" ) 2>/dev/null | tail -n 1
 }
 hold_err=":: installing qt6-base (6.13.0-1) breaks dependency 'qt6-base<6.13' required by grassfield-hold"
 expect "plan fails naming the hold -> finish 6 incompatible grassfield-hold" "$(planrun 1 "$hold_err")" "finish 6 incompatible grassfield-hold"
+expect "plan fails naming the hold on STDOUT, as pacman 7.1 does -> finish 6" "$(planrun 1 "$hold_err" stdout)" "finish 6 incompatible grassfield-hold"
+expect "plan fails naming another package on stdout -> finish 8" "$(planrun 1 ":: installing foo (2) breaks dependency 'foo<2' required by bar" stdout)" "finish 8 "
 expect "plan fails naming another package -> finish 8" "$(planrun 1 ":: installing foo (2) breaks dependency 'foo<2' required by bar")" "finish 8 "
 expect "plan fails with no message -> finish 8" "$(planrun 1 "")" "finish 8 "
 expect "plan works and pacman only warned about the hold -> goes on (no exit 6)" "$(planrun 0 "warning: grassfield-hold ... $hold_err")" "went on"

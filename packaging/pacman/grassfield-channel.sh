@@ -352,12 +352,16 @@ gf_off() {
 #      behind to refuse updates with no Grassfield left to undo it;
 #   6. afterwards the set of installed packages differs by the other twin leaving and the target arriving and by nothing else
 #      (anything else is reported loudly, in the helper's log and to the person), and exactly one of the two is installed.
-# pacman -Q names packages only (never provides), which is what steps 2 and 6 need.
+# Steps 2 and 6 ask for a package by its own NAME. `pacman -Q <name>` also answers for a package that PROVIDES the name (pacman
+# 7.1, found by the container test: with only the twin installed, `pacman -Q grassfield-hold` succeeds), so gf_installed reads the
+# list of names (`pacman -Qq`) and matches whole lines.
 GF_HOLD_PKG=grassfield-hold
 GF_UNHOLD_PKG=grassfield-unhold
 
 gf_installed() {
-  pacman -Q -- "$1" >/dev/null 2>&1
+  local names
+  names=$(pacman -Qq 2>/dev/null 9<&-) || return 1
+  [[ $'\n'$names$'\n' == *$'\n'"$1"$'\n'* ]]
 }
 
 # The one-line value of a field of `pacman -Si|-Qi` output on stdin for the package that field belongs to; continuation lines

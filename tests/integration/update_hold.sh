@@ -50,12 +50,18 @@ W=/work
 mkdir -p "$W" && chmod 1777 "$W"
 fails=0
 pass() { echo "PASS: $*"; }
-fail() { echo "FAIL: $*"; fails=$((fails + 1)); }
+fail() {
+  echo "FAIL: $*"
+  fails=$((fails + 1))
+  # What the last helper run said (its own log), for a person reading a failure.
+  if [[ -f /run/grassfield-update/last ]]; then sed 's/^/    | /' "/run/grassfield-update/$(</run/grassfield-update/last).log" 2>/dev/null | tail -n 12; fi
+}
 expect() { local desc=$1; shift; if "$@"; then pass "$desc"; else fail "$desc"; fi; }
 say() { printf '\n== %s\n' "$*"; }
 quiet() { "$@" >>"$W/log" 2>&1; }
-ver() { pacman -Q "$1" 2>/dev/null | cut -d' ' -f2; }
-has() { pacman -Q "$1" >/dev/null 2>&1; }
+# By NAME only: `pacman -Q grassfield-hold` also answers for the twin, which provides that name (pacman 7.1).
+ver() { pacman -Q 2>/dev/null | awk -v n="$1" '$1 == n { print $2 }'; }
+has() { [[ -n $(ver "$1") ]]; }
 newop() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
 HH=/usr/lib/grassfield/grassfield-hold-helper
 CH=/usr/lib/grassfield/grassfield-channel-helper
@@ -71,6 +77,9 @@ sed -i 's/^#\?DisableSandbox.*//; /^\[options\]/a DisableSandbox' /etc/pacman.co
 quiet pacman-key --init
 quiet pacman-key --populate archlinux
 quiet pacman -Syu --noconfirm python || { echo "FAIL: pacman -Syu (see $W/log)"; tail -5 "$W/log"; exit 1; }
+quiet pacman -Sw --noconfirm archlinux-keyring
+cp "/var/cache/pacman/pkg/archlinux-keyring-$(ver archlinux-keyring)-any.pkg.tar.zst" "$W/keyring.pkg.tar.zst" ||
+  { echo "FAIL: the installed archlinux-keyring's package file is not in the cache"; exit 1; }
 install -Dm755 /src/packaging/pacman/grassfield-channel-helper "$CH"
 install -Dm755 /src/packaging/pacman/grassfield-hold-helper "$HH"
 install -Dm755 /src/packaging/pacman/grassfield-update-helper "$UH"
@@ -132,6 +141,7 @@ expect "the bounds of build 1 come from its record (quickshell=0.3.1, qt6-base>=
 
 publish() { # package-file...: [grassfield] holds exactly these
   rm -f "$W/repo"/*
+  cp "$W/keyring.pkg.tar.zst" "$W/repo/archlinux-keyring-$(ver archlinux-keyring)-any.pkg.tar.zst"   # the helper refreshes the installed keyring (--needed)
   local p
   for p in "$@"; do cp "$W/pkgs/$p-1-any.pkg.tar.zst" "$W/repo/"; done
   quiet repo-add -q "$W/repo/grassfield.db.tar.gz" "$W/repo"/*.pkg.tar.zst
@@ -243,7 +253,7 @@ chelper hold >/dev/null; rc=$?
 expect "hold installs grassfield/grassfield-hold 3, not the other repository's 99" test "$rc:$(ver grassfield-hold)" == "0:3-1"
 
 say "both twins are installed as dependencies, and pacman -Rns of grassfield-desktop takes the installed one along"
-reason() { pacman -Qi "$1" 2>/dev/null | awk -F' *: *' '$1 == "Install Reason" { print $2 }'; }
+reason() { pacman -Qi 2>/dev/null | awk -v n="$1" -F' *: *' '$1 == "Name" { cur = $2 } cur == n && $1 == "Install Reason" { print $2; exit }'; }
 expect "the hold of the first install came as a dependency" test "$(reason grassfield-hold)" == "Installed as a dependency for another package"
 quiet pacman -R --noconfirm -dd grassfield-hold
 quiet pacman -S --noconfirm --asdeps grassfield-unhold
@@ -257,7 +267,7 @@ quiet pacman -Rns --noconfirm grassfield-desktop
 expect "pacman -Rns grassfield-desktop removes the twin with it (nothing of the pair is left behind)" test "$(has grassfield-desktop && echo yes || echo no):$(has grassfield-hold && echo yes || echo no):$(has grassfield-unhold && echo yes || echo no)" == "no:no:no"
 
 say "review of 94e5020d: a provider in the way, an epoch, and a desktop built for a newer Qt than the system has"
-cleanup() { quiet pacman -Rdd --noconfirm grassfield-desktop grassfield-hold grassfield-unhold gu-provider; true; }
+cleanup() { local p; for p in grassfield-desktop grassfield-hold grassfield-unhold gu-provider; do has "$p" && quiet pacman -Rdd --noconfirm "$p"; done; true; }
 cleanup
 # (1) An installed package that PROVIDES the hold's name is in the way of the twin: --ask 4 would remove it, so the helper refuses first.
 mkpkg gu-provider 1 "provides = grassfield-hold"

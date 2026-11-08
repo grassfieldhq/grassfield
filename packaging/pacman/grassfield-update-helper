@@ -288,15 +288,19 @@ say "pacman -Sy (a copy of the databases)"
 pacman -Sy --dbpath "$tmpdb" --logfile /dev/null --noprogressbar 9<&- || finish 8 "the package servers could not be reached"
 # pacman's own refusal is read (ADR-0041 step 2a): when grassfield-hold bounds the toolkit and the update moves it past the
 # bound, pacman fails to prepare the transaction and names grassfield-hold. That is "needs a newer Grassfield" (exit 6, the
-# U27 path), not a plan pacman could not make (exit 8). Its error goes to a file in the operation's own folder (root's,
-# 0755, removed with it), then to the log; nothing in it is run or used except the one word search below.
+# U27 path), not a plan pacman could not make (exit 8). Real pacman 7.1 (the container test): its first line, "error: failed to
+# prepare transaction (could not satisfy dependencies)", goes to stderr, and the detail lines (":: installing qt6-base (6.13.0-1)
+# breaks dependency 'qt6-base<6.13' required by grassfield-hold") to STDOUT, so both are read. stderr goes to a file in the
+# operation's own folder (root's, 0755, removed with it), then to the log; nothing in either is run or used except the one word
+# search below.
 plan=$(pacman -Su --print --print-format '%n %v %l' --noconfirm --dbpath "$tmpdb" --logfile /dev/null 2>"$tmpdb/plan.err" 9<&-)
 plan_rc=$?
 if [[ -f $tmpdb/plan.err && ! -L $tmpdb/plan.err ]]; then
   head -c 8192 -- "$tmpdb/plan.err"
+  ((plan_rc == 0)) || printf '%s\n' "$plan" | head -c 8192
   # pacman names the package that requires the broken dependency: "... breaks dependency 'qt6-base<6.13' required by
   # grassfield-hold" (or "unable to satisfy dependency '...' required by grassfield-hold"), in English (LC_ALL=C above).
-  if ((plan_rc != 0)) && head -c 65536 -- "$tmpdb/plan.err" | grep -Eq "[[:space:]]required by grassfield-hold([[:space:]]|$)"; then
+  if ((plan_rc != 0)) && { head -c 65536 -- "$tmpdb/plan.err"; printf '%s\n' "$plan" | head -c 65536; } | grep -E "[[:space:]]required by grassfield-hold([[:space:]]|$)" >/dev/null; then   # no -q: grep reads it all, so no writer meets a closed pipe under pipefail
     outcome+=("incompatible grassfield-hold")
     finish 6 "this update needs a newer Grassfield (grassfield-hold bounds the toolkit): nothing was changed"
   fi

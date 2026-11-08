@@ -132,11 +132,13 @@ require_no_update() {
 
 # hold-state: what the hold is (see the header). Read-only: pacman -Q of the local database and the build's own record, with
 # the code that computed the hold's bounds (ADR-0041 step 2a; the same rule as U27).
+# By NAME: `pacman -Q grassfield-hold` also answers for the twin, which provides that name (pacman 7.1), so the list of names is read.
 hold_state() {
-  local qs qt
-  if pacman -Q -- grassfield-hold >/dev/null 2>&1; then
+  local qs qt names
+  names=$(pacman -Qq 2>/dev/null) || { echo none; return; }
+  if [[ $'\n'$names$'\n' == *$'\n'grassfield-hold$'\n'* ]]; then
     echo held
-  elif pacman -Q -- grassfield-unhold >/dev/null 2>&1; then
+  elif [[ $'\n'$names$'\n' == *$'\n'grassfield-unhold$'\n'* ]]; then
     # shellcheck source=packaging/arch/hold-bounds.sh
     if [[ -f $bounds_lib && ! -L $bounds_lib ]] && . "$bounds_lib" &&
       qs=$(pacman -Q -- quickshell 2>/dev/null | awk '{ print $2; exit }') &&
