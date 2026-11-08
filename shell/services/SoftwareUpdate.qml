@@ -79,6 +79,13 @@ Singleton {
         // Its restart or log out covers the toolkit's log out in this session (U31): that notice is not posted after it.
         if ((kind === "restart" || kind === "logout") && root.loaded)
             root.save(SoftwareUpdateLogic.withToolkitCovered(root.file, root.sessionStartedAt));
+        // ADR-0041 step 2a (R7-INS-03): the first refusal of a toolkit move starts the 7 days; an update that went through ends them.
+        if (root.loaded) {
+            if (kind === "incompatible" && !SoftwareUpdateLogic.holdWaitStarted(root.file))
+                root.save(SoftwareUpdateLogic.withHoldRefused(root.file, Date.now()));
+            else if ((run.result === "done" || run.result === "up-to-date") && SoftwareUpdateLogic.holdWaitStarted(root.file))
+                root.save(SoftwareUpdateLogic.withoutHoldRefused(root.file));
+        }
         root.runEnded(kind);
     }
 
@@ -203,6 +210,11 @@ Singleton {
     function resume(): void {
         if (file.state === "update-running" && !checkProc.running && !waitProc.running)
             run(checkProc, false, checkTimeoutMs);
+    }
+
+    // The 7 days after the first refused update of a toolkit move are over (R7-INS-03): the notice puts "Allow…" forward.
+    function holdWaitOver(): bool {
+        return SoftwareUpdateLogic.holdWaitOver(root.file, Date.now());
     }
 
     function save(next: var): void {

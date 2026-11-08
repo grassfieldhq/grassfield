@@ -788,10 +788,24 @@ restart kernel
     function test_aHeldUpdateOffersAllow() {
         const files = {};
         files[testCase.runFile] = runState("done", "incompatible");
-        const held = make(available(), {runner: true, hold: "held", files: files});
+        // Within the 7 days of the first refusal (R7-INS-03): a compatible update is expected soon; Allow… is the hold row's alone.
+        const day = 24 * 60 * 60 * 1000;
+        for (const age of [0, 3 * day, 7 * day - 60000]) {
+            const soon = make(Object.assign(available(), {holdRefusedAt: Date.now() - age}), {runner: true, hold: "held", files: files});
+            compare(row(soon.page, "This update needs a newer version of Grassfield, which isn't available yet.").subtitle,
+                "A compatible Grassfield update is expected soon. Software Update tells you when it's ready.");
+            const only = [];
+            find(soon.page, i => { if (i.visible && i.text === "Allow…" && i.push === true && only.indexOf(i) < 0) only.push(i); return false; });
+            compare(only.length, 1, "within 7 days only the hold row offers Allow…");
+        }
+        // No record at all: not over either.
+        compare(row(make(available(), {runner: true, hold: "held", files: files}).page, "This update needs a newer version of Grassfield, which isn't available yet.").subtitle,
+            "A compatible Grassfield update is expected soon. Software Update tells you when it's ready.");
+        // From the 7th day on: Allow… comes forward.
+        const held = make(Object.assign(available(), {holdRefusedAt: Date.now() - 7 * day - 60000}), {runner: true, hold: "held", files: files});
         const r = row(held.page, "This update needs a newer version of Grassfield, which isn't available yet.");
         verify(r);
-        compare(r.subtitle, "Software Update checks again later and tells you when it's ready. Or allow system updates Grassfield hasn't tested.");
+        compare(r.subtitle, "It's taking longer than expected. You can allow system updates Grassfield hasn't tested.");
         const buttons = [];
         find(held.page, i => { if (i.visible && i.text === "Allow…" && i.push === true && buttons.indexOf(i) < 0) buttons.push(i); return false; });
         compare(buttons.length, 2, "the outcome's and the hold row's");
@@ -799,7 +813,7 @@ restart kernel
         compare(held.backend.actions[0].argv, ["/usr/lib/grassfield/grassfield-channel-set", "unhold"]);
         // Not held (allowed, no hold installed): the sentence alone.
         for (const h of ["allowed", "none", "allowed-moved"]) {
-            const t = make(available(), {runner: true, hold: h, files: files});
+            const t = make(Object.assign(available(), {holdRefusedAt: Date.now() - 30 * day}), {runner: true, hold: h, files: files});
             compare(row(t.page, "This update needs a newer version of Grassfield, which isn't available yet.").subtitle, "Software Update checks again later and tells you when it's ready.");
         }
     }

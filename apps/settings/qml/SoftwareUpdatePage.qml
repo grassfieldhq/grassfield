@@ -68,6 +68,9 @@ SettingsPage {
         : root.run.phase === "authorizing" || root.run.phase === "" ? qsTr("Enter an administrator's password to start the update.")
         : qsTr("You can keep working; the update goes on if you close Settings.")
 
+    // ADR-0041 step 2a (R7-INS-03): 7 days after the first refused update of a toolkit move (the shell's record), "Allow…" comes forward.
+    readonly property bool holdWaitOver: root.updates.hold === "held" && SoftwareUpdateLogic.holdWaitOver(root.updates.file, Date.now())
+
     // What the last run says (U28-U30): a sentence, the line under it, and its one action ("terminal", "finish" or "").
     readonly property var outcome: {
         const r = root.run.result;
@@ -77,8 +80,9 @@ SettingsPage {
         switch (r) {
         case "incompatible":
             return { title: qsTr("This update needs a newer version of Grassfield, which isn't available yet."),
-                subtitle: root.updates.hold === "held" ? qsTr("Software Update checks again later and tells you when it's ready. Or allow system updates Grassfield hasn't tested.")
-                    : qsTr("Software Update checks again later and tells you when it's ready."), action: root.updates.hold === "held" ? "allow" : "" };
+                subtitle: root.updates.hold !== "held" ? qsTr("Software Update checks again later and tells you when it's ready.")
+                    : root.holdWaitOver ? qsTr("It's taking longer than expected. You can allow system updates Grassfield hasn't tested.")
+                    : qsTr("A compatible Grassfield update is expected soon. Software Update tells you when it's ready."), action: root.holdWaitOver ? "allow" : "" };
         case "terminal":
             return { title: qsTr("This update asks questions that need Omarchy's terminal."),
                 subtitle: root.run.synced ? qsTr("The updates were not installed. Omarchy's update asks them in its terminal and installs everything listed here.")

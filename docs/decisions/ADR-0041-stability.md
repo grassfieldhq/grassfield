@@ -484,8 +484,11 @@ After the transaction the installed set must differ by the twin only, or the hel
   `build-<id>.txt` of build-channel.sh is a CI artifact and is not published), compares Hyprland by its ABI stamp, quickshell and
   qt6-base against the hold's bounds on Omarchy's stable and rc channels, starts `build.yml` with pkgrel + 1 when stable differs, opens
   one issue when only rc differs (build.yml has no rc variant: a person decides), fails when a source cannot be read.
-- **Residual risk (R7-INS-03), unchanged**: while Grassfield lags, every system update is refused and publication waits for the
-  owner's approval; "Allow…" is one click away and named in the pane and the notice. Verified here: the logic and QML tests
+- **Residual risk (R7-INS-03), bounded by the owner on 2026-11-08**: while Grassfield lags, every system update is refused and
+  publication waits for the owner's approval. The target is a rebuild published within 7 days of the Omarchy move. The shell records the
+  first refused update of a toolkit move (`holdRefusedAt` in its own state file, cleared by an update that goes through); within the 7
+  days the pane and the notice say a compatible update is expected soon, from the 7th day on they put "Allow system updates Grassfield
+  hasn't tested…" forward (U39). "Allow…" stays one click away in the hold's row throughout. Verified here: the logic and QML tests
   (`tests/shell/update_hold.sh`, `tests/ci/hold_parity.py`, the Settings and guard tests) and a live read-only run of the watch tool.
   NOT VERIFIED: `tests/integration/update_hold.sh` (docker; the `--ask 4` swap and the exit 6 reading against real pacman), the
   workflow on GitHub, polkit and pkexec around the new verbs, a nested capture of the row (visual NOT verified), the opus review.

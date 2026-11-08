@@ -101,7 +101,38 @@ function combine(file, answer) {
         out.logoutPending = true;
     if (f.toolkitLogout === true)
         out.toolkitLogout = true;
+    if (f.holdRefusedAt !== undefined)
+        out.holdRefusedAt = f.holdRefusedAt;
     return out;
+}
+
+// ADR-0041 step 2a, owner decision of 2026-11-08 (R7-INS-03): a Grassfield rebuild is expected within 7 days of an Omarchy move the hold
+// refuses. The clock (`holdRefusedAt`, ms, in the shell's own state file, never in /etc) starts at the FIRST refused update of the
+// current toolkit move and is never moved by a later refusal; it is cleared when an update goes through (the hold is satisfied again, or
+// the user allowed system updates and the next run installed them). Within the 7 days the sentence says a compatible update is expected
+// soon; from the 7th day on it puts "Allow system updates Grassfield hasn't tested…" forward.
+const HOLD_WAIT_MS = 7 * 24 * 60 * 60 * 1000;
+function validStamp(t) {
+    return typeof t === "number" && isFinite(t) && t > 0;
+}
+function withHoldRefused(file, nowMs) {
+    const out = normalize(file);
+    if (!validStamp(out.holdRefusedAt))
+        out.holdRefusedAt = Math.floor(nowMs);
+    return out;
+}
+function holdWaitStarted(file) {
+    return validStamp(normalize(file).holdRefusedAt);
+}
+function withoutHoldRefused(file) {
+    const out = normalize(file);
+    delete out.holdRefusedAt;
+    return out;
+}
+// The 7 days are over: exactly 7 days after the first refusal counts as over; no stamp, or one in the future, is not.
+function holdWaitOver(file, nowMs) {
+    const t = normalize(file).holdRefusedAt;
+    return validStamp(t) && nowMs - t >= HOLD_WAIT_MS;
 }
 
 // The number of releases available (owner decision O3: Grassfield's and Omarchy's, 0 to 2), from the last success; with

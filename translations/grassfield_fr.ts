@@ -13907,10 +13907,6 @@
         <translation>Cette mise à jour nécessite une version plus récente de Grassfield, qui n’est pas encore disponible.</translation>
     </message>
     <message>
-        <source>Software Update checks again later and tells you when it&apos;s ready. Or allow system updates Grassfield hasn&apos;t tested.</source>
-        <translation>Mise à jour de logiciels vérifiera de nouveau plus tard et vous préviendra quand elle sera prête. Vous pouvez aussi autoriser les mises à jour du système que Grassfield n&apos;a pas testées.</translation>
-    </message>
-    <message>
         <source>Software Update checks again later and tells you when it&apos;s ready.</source>
         <translation>Mise à jour de logiciels vérifiera de nouveau plus tard et vous préviendra quand elle sera prête.</translation>
     </message>
@@ -14013,6 +14009,14 @@
     <message>
         <source>This computer is up to date</source>
         <translation>Cet ordinateur est à jour</translation>
+    </message>
+    <message>
+        <source>It&apos;s taking longer than expected. You can allow system updates Grassfield hasn&apos;t tested.</source>
+        <translation>Cela prend plus de temps que prévu. Vous pouvez autoriser les mises à jour du système que Grassfield n&apos;a pas testées.</translation>
+    </message>
+    <message>
+        <source>A compatible Grassfield update is expected soon. Software Update tells you when it&apos;s ready.</source>
+        <translation>Une mise à jour de Grassfield compatible est attendue prochainement. Mise à jour de logiciels vous préviendra quand elle sera prête.</translation>
     </message>
     <message>
         <source>Updates are available</source>
@@ -18405,6 +18409,14 @@
         <translation>Cette mise à jour nécessite une version plus récente de Grassfield</translation>
     </message>
     <message>
+        <source>It&apos;s taking longer than expected. Open Software Update to allow system updates Grassfield hasn&apos;t tested.</source>
+        <translation>Cela prend plus de temps que prévu. Ouvrez Mise à jour de logiciels pour autoriser les mises à jour du système que Grassfield n&apos;a pas testées.</translation>
+    </message>
+    <message>
+        <source>A compatible Grassfield update is expected soon. Software Update tells you when it&apos;s ready.</source>
+        <translation>Une mise à jour de Grassfield compatible est attendue prochainement. Mise à jour de logiciels vous préviendra quand elle sera prête.</translation>
+    </message>
+    <message>
         <source>This update needs Omarchy&apos;s terminal</source>
         <translation>Cette mise à jour nécessite le terminal d’Omarchy</translation>
     </message>
@@ -18431,10 +18443,6 @@
     <message>
         <source>Some updates finish when you log out. Log out and back in to use them.</source>
         <translation>Certaines mises à jour se terminent à la fermeture de session. Fermez la session, puis rouvrez-la pour les utiliser.</translation>
-    </message>
-    <message>
-        <source>Software Update checks again later and tells you when it&apos;s ready. Open it to allow system updates Grassfield hasn&apos;t tested.</source>
-        <translation>Mise à jour de logiciels vérifiera de nouveau plus tard et vous préviendra quand elle sera prête. Ouvrez-la pour autoriser les mises à jour du système que Grassfield n&apos;a pas testées.</translation>
     </message>
     <message>
         <source>New display arrangement</source>

@@ -272,11 +272,19 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
   longer satisfies would make pacman fetch other versions), and `db.lck`; afterwards the installed set must differ by the twin
   and nothing else, or the helper says so loudly. With the twin installed, U27 does not compare `qt6-base` and `quickshell`
   (the other three keep their comparison), so Update Now installs what pacman now lets through. The helper's other message: "pacman could not install <package>". The pane checks
-  again after either. A system update the hold refuses: the update helper reads pacman's refusal (an error that names
+  again after either. The wait is bounded (owner decision of 2026-11-08, R7-INS-03): the target for publishing a rebuild after an Omarchy move the hold
+  refuses is 7 days. The clock, `holdRefusedAt` (ms) in the shell's own `software-update.json` (never in /etc, nothing root writes), starts
+  at the FIRST refused update of the current toolkit move (a run that ends in exit 6; a later refusal does not move it) and is cleared
+  when an update goes through (a run that installs or finds nothing to do: the hold is satisfied again by the new build, or the user
+  allowed and the next run installed). Within the 7 days the refused-update sentence, in the pane and in the shell's notice, says "A
+  compatible Grassfield update is expected soon. Software Update tells you when it's ready." with "Allow…" only in the hold's own
+  row; from the 7th day on (exactly 7 days counts) it says "It's taking longer than expected. You can allow system updates Grassfield
+  hasn't tested." and the pane's sentence carries "Allow…" itself (the notice's text sends the person to Software Update). No record, or
+  an unreadable one, is within the 7 days.
+  A system update the hold refuses: the update helper reads pacman's refusal (an error that names
   `grassfield-hold` as the package requiring the broken dependency) and exits 6 (`incompatible grassfield-hold`, the U27 path)
-  instead of 8, so the pane says "This update needs a newer version of Grassfield, which isn't available yet." and, while held, "Or
-  allow system updates Grassfield hasn't tested." with "Allow…"; Update Now's end notice says the same and "Open it to allow system
-  updates Grassfield hasn't tested." On Omarchy's update in a terminal pacman's own error names `grassfield-hold` and the bound. The
+  instead of 8, so the pane says "This update needs a newer version of Grassfield, which isn't available yet." with the sentences of the 7-day rule
+  below; Update Now's end notice says the same. On Omarchy's update in a terminal pacman's own error names `grassfield-hold` and the bound. The
   daily watch job of grassfield-packages (ADR-0033 f) starts the rebuild that ends the refusal.
 - U31. A toolkit replaced under the running session (ADR-0041 step 2b). Every check, in every state, lists the toolkit as
   installed (`toolkit`): each package of U27's record (`qt6-base`, `quickshell`, `hyprland`, `aquamarine`, `kcoreaddons`)

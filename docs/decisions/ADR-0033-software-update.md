@@ -1090,7 +1090,8 @@ exits 126 (dismissed) and 127 (not authorized).
 - Amended 2026-11-08 (owner decision, ADR-0041 step 2a, built): `grassfield-hold` now carries exactly that bound for `qt6-base` and
   `quickshell` (never `hyprland`, never `kcoreaddons`), with the watch job of f (daily, ABI stamp, Omarchy stable and rc) to end the refusal
   and Settings' "Allow system updates Grassfield hasn't tested…" as the way out; this check stays as the second line (exit 6 for the
-  hold's own refusal too). The rejection below was the first reading.
+  hold's own refusal too). The wait for a matching build is bounded at 7 days (owner decision of 2026-11-08, ADR-0041 step 2a as built):
+  the shell's state file keeps the first refusal's time, and past 7 days the notice puts "Allow…" forward. The rejection below was the first reading.
 - Rejected: tight versioned `depends` (`qt6-base<6.13`). pacman would then refuse a toolkit update on every path, and an
   `omarchy update` in the terminal would fail with a dependency error until Grassfield rebuilds, blocking security fixes
   (a2's lesson). The check keeps that choice to Update Now, which can say it plainly.
