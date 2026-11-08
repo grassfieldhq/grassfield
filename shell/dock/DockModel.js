@@ -142,21 +142,42 @@ function withFixed(files, items) {
     return [files, {kind: "apps", key: "grid"}].concat(items);
 }
 
+// One spelling of a desktop id for pin, match and remove: without ".desktop", case-folded (the entry lookup and windowsOf
+// compare the same way), so "Foot", "foot.desktop" and "foot" are one app whichever of them the file or the tile holds.
+function normId(id) {
+    return String(id === undefined || id === null ? "" : id).replace(/\.desktop$/i, "").toLowerCase();
+}
+
 function pin(pinned, id) {
     const list = (pinned ? pinned : []).slice();
-    return list.indexOf(id) === -1 ? list.concat([id]) : list;
+    const want = normId(id);
+    return list.some(p => normId(p) === want) ? list : list.concat([id]);
 }
 
 function unpin(pinned, id) {
-    return (pinned ? pinned : []).filter(p => p !== id);
+    const want = normId(id);
+    return (pinned ? pinned : []).filter(p => normId(p) !== want);
 }
 
-// Unpin by resolved key: drops every pinned id that resolves (via lookup) to the given key.
+// Unpin by resolved key: drops every pinned id that is the key in any spelling or that resolves (via lookup) to the key's
+// entry, so the pin goes whatever id the tile is matched by (foot / foot.desktop / Foot, a window app id that differs from
+// the entry id). An empty result stays empty: nothing here re-seeds the defaults (see migratePinned).
 function unpinKey(pinned, key, lookup) {
+    const want = normId(key);
+    const keyEntry = lookup ? lookup(key) : null;
+    const keyId = keyEntry && keyEntry.id ? normId(keyEntry.id) : want;
     return (pinned ? pinned : []).filter(p => {
-        const entry = lookup(p);
-        return p !== key && (!entry || entry.id !== key);
+        const entry = lookup ? lookup(p) : null;
+        const n = normId(p);
+        return n !== want && n !== keyId && (!entry || (normId(entry.id) !== want && normId(entry.id) !== keyId));
     });
+}
+
+// Whether a tile can be dragged out of the Dock (macOS): an app kept in the Dock or listed as recent, running or not. A running
+// app that is removed keeps its tile (not kept any more) until it quits. Files, Apps, folders, minimized windows and the Trash
+// are fixed.
+function removable(item) {
+    return !!item && item.kind === "app" && item.fixed !== true && (item.pinned === true || item.recent === true);
 }
 
 // Dock geometry, the single formula shared by the Dock and by whoever reserves its area (Overview).

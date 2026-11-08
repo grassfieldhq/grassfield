@@ -154,4 +154,28 @@ else
   echo "control: released above the Dock left pinned = $(pinned) (the drag did not engage; see $VS_DEV/shots/dock-drag-stress-control.png)"
   fail=1
 fi
+
+# Running app (owner report 2026-11-08: foot could not be removed while it ran; macOS allows it): kept again and started with its
+# own app id, the tile dragged out and released far above the Dock is unpinned (the file and the live list), and the tile stays
+# with its window until the app quits.
+jq '.dock.pinned = ["foot"]' "$cfg" >"$cfg.new" && mv "$cfg.new" "$cfg"
+sleep 2
+vs_spawn foot
+sleep 3
+vs_park
+[[ $(pinned) == "$want" ]] || { echo "running removal: could not keep foot again: $(pinned)"; fail=1; }
+vs_pointer abs $FOOT_X $DOCK_Y sleep 200 down sleep 200 drag $FOOT_X $UP_Y sleep 1500 up sleep 200 abs "$VS_PARK_X" "$VS_PARK_Y" >/dev/null
+sleep 1.5
+if [[ $(pinned) == "[]" && $(jq -c '.dock.pinned' "$cfg") == "[]" ]]; then
+  echo "running app: released above the Dock unpins it: ok"
+else
+  echo "running app: pinned is $(pinned), file $(jq -c '.dock.pinned' "$cfg") (a running app must be removable)"
+  fail=1
+fi
+if [[ $(vs_ipc dock tiles | jq 'index("foot")') == "null" ]]; then
+  echo "running app: its tile is gone while it still runs"
+  fail=1
+else
+  echo "running app: the tile stays with its window: ok"
+fi
 exit $fail

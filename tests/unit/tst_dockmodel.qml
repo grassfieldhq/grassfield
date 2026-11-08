@@ -571,6 +571,54 @@ TestCase {
         compare(DockModel.DEFAULT_PINNED.join(","), "chromium,foot,org.grassfield.Settings");
     }
 
+    // Owner report 2026-11-08: foot could not be removed from the Dock while it ran.
+    function test_runningAppIsRemovable() {
+        const running = DockModel.merge(["foot"], [{appId: "foot", ref: "w"}], lookup)[0];
+        verify(running.pinned && running.windows.length === 1);
+        verify(DockModel.removable(running), "a running pinned app is dragged out (macOS)");
+        verify(DockModel.removable({kind: "app", pinned: false, recent: true, windows: []}));
+        verify(!DockModel.removable({kind: "app", pinned: false, windows: ["w"]}), "a running app that is not kept has nothing to remove");
+        verify(!DockModel.removable({kind: "files", pinned: true, fixed: true, windows: []}), "Files is fixed");
+        verify(!DockModel.removable({kind: "apps"}));
+        verify(!DockModel.removable({kind: "trash"}));
+        verify(!DockModel.removable(null));
+    }
+
+    function test_removeKeepsTileWhileRunning() {
+        const run = [{appId: "foot", ref: "w"}];
+        const after = DockModel.unpinKey(["chromium", "foot", "Foot.desktop"], "foot", lookup);
+        compare(after.join(","), "chromium");
+        const tiles = DockModel.merge(after, run, lookup);
+        compare(tiles.map(t => t.key + ":" + t.pinned + ":" + t.windows.length).join(","), "chromium:true:0,foot:false:1");
+    }
+
+    function test_keepInDockToggle() {
+        // Keep in Dock on a running tile pins its key; checked again, it unpins.
+        const pinned = DockModel.pin(DockModel.pin(["chromium"], "foot"), "Foot.desktop");
+        compare(pinned.join(","), "chromium,foot");
+        compare(DockModel.unpinKey(pinned, "foot", lookup).join(","), "chromium");
+    }
+
+    function test_removalFindsEveryIdSpelling() {
+        compare(DockModel.normId("Foot.DESKTOP"), "foot");
+        compare(DockModel.unpinKey(["foot.desktop", "chromium"], "foot", lookup).join(","), "chromium", "stored with the suffix");
+        compare(DockModel.unpinKey(["Org.Gnome.nautilus"], "org.gnome.Nautilus", lookup).length, 0, "case");
+        compare(DockModel.unpinKey(["chromium", "foot"], "foot.desktop", lookup).join(","), "chromium", "the tile key with the suffix");
+        compare(DockModel.unpinKey(["foot.desktop", "FOOT", "foot"], "foot", lookup).length, 0, "every duplicate goes");
+        // An id no entry resolves (a Flatpak or Electron app id) is still removed by the same spelling rule.
+        compare(DockModel.unpinKey(["com.example.App.desktop", "foot"], "com.example.app", lookup).join(","), "foot");
+        compare(DockModel.unpinKey(["foot"], "foot", null).length, 0, "no lookup function");
+        compare(DockModel.pin(["foot.desktop"], "foot").join(","), "foot.desktop", "pin does not duplicate another spelling");
+        compare(DockModel.unpin(["Foot", "kate"], "foot.desktop").join(","), "kate");
+    }
+
+    function test_removalNeverReseeds() {
+        // A list shrunk by a removal is never rewritten by the Dock rules: not to the default, not when it empties.
+        compare(DockModel.migratePinned(DockModel.unpinKey(["foot", "chromium", "org.gnome.Nautilus"], "org.gnome.Nautilus", lookup)).join(","), "foot,chromium");
+        compare(DockModel.migratePinned(DockModel.unpinKey(["foot", "foot.desktop"], "foot", lookup)).length, 0, "an emptied list stays empty");
+        compare(DockModel.migratePinned(["chromium", "foot"]).join(","), "chromium,foot");
+    }
+
     function test_oldWithAppsStillWorks() {
         compare(DockModel.withApps([{kind: "app", key: "a"}])[0].kind, "apps");
     }

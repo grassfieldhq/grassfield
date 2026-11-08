@@ -320,8 +320,8 @@ Scope {
             writeRecents(DockModel.pushRecent(Settings.dockRecent, item.key, Tokens.dockRecentMax));
     }
 
-    // Removes a tile from the Dock (drag out): unpins it and forgets it as a recent app. Running apps keep their
-    // tile. True when the tile goes away.
+    // Removes a tile from the Dock (drag out): unpins it and forgets it as a recent app. A running app is removable too
+    // (macOS): it is no longer kept, its tile stays with its running dot until it quits. True when the tile goes away.
     function removeItem(item: var): bool {
         if (item.kind !== "app")
             return false;
@@ -329,7 +329,7 @@ Scope {
             Settings.setDockPinned(DockModel.unpinKey(Settings.dockPinned, item.key, Apps.lookup));
         if (item.recent)
             Settings.setDockRecent(Settings.dockRecent.filter(r => r !== item.key));
-        return item.windows.length === 0;
+        return item.pinned === true || item.recent === true;
     }
 
     Timer {
@@ -1029,7 +1029,7 @@ Scope {
             // then ends the drag with a synthesized release that looks real, so an interrupted drag changes no pins (no removal, no
             // reorder): the tile glides back. A press that was already interrupted when the drag would start does not start it at all.
             property bool dragInterrupted: false
-            readonly property bool dragRemovable: dragFrom >= 0 && !!root.items[dragFrom] && (root.items[dragFrom].pinned || root.items[dragFrom].recent === true) && root.items[dragFrom].windows.length === 0
+            readonly property bool dragRemovable: dragFrom >= 0 && DockModel.removable(root.items[dragFrom])
             property real poofX: 0
             property real poofY: 0
             property real poofProgress: 1
