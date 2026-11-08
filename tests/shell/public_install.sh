@@ -156,7 +156,7 @@ case $1 in
     [[ -f $GF_STUB/install_fail ]] && { echo "error: failed to commit transaction" >&2; exit 1; }
     [[ -f $GF_STUB/install_partial ]] && { echo "grassfield-desktop" >>"$inst"; echo "error: failed to commit transaction (later package)" >&2; exit 1; }
     printf '%s\n' "${pk[@]}" >>"$inst"
-    printf '%s\n' grassfield-icons grassfield-wallpapers grassfield-keyring >>"$inst"
+    printf '%s\n' grassfield-icons grassfield-wallpapers grassfield-keyring grassfield-hold >>"$inst"
     for a in "${pk[@]}"; do
       if [[ $a == grassfield-login-themes ]]; then
         mkdir -p "$rootd/usr/share/sddm/themes/grassfield" "$rootd/usr/share/plymouth/themes/grassfield"
@@ -752,7 +752,7 @@ expect 'uninstall: root commands in order (themes before the packages)' "$(sudo_
 sudo rm -f -- $R/etc/sddm.conf.d/zz-grassfield-theme.conf
 sudo plymouth-set-default-theme omarchy
 sudo limine-mkinitcpio
-sudo pacman -Rns --noconfirm grassfield-login-themes grassfield-store grassfield-compositor grassfield-desktop grassfield-icons grassfield-wallpapers grassfield-keyring
+sudo pacman -Rns --noconfirm grassfield-login-themes grassfield-store grassfield-compositor grassfield-desktop grassfield-icons grassfield-wallpapers grassfield-keyring grassfield-hold
 sudo rm -f -- $R/etc/pacman.conf.grassfield-install-bak.STAMP"
 has 'uninstall end message' 'stock Omarchy' "$W/out"
 has 'uninstall let go of the update lock around Turn Off' 'flock -n 8' "$S/calls"

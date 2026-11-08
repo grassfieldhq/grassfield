@@ -438,7 +438,7 @@ ShellRoot {
                 "aur": [qsTr("Updates installed"), qsTr("Apps from the AUR are updated in Omarchy's terminal. Open Software Update to update them.")],
                 "installed": [qsTr("Updates installed"), qsTr("This computer is up to date.")],
                 "bootimage": [qsTr("Don't restart this computer yet"), qsTr("The update could not prepare the computer's startup files. Open Software Update for details.")],
-                "incompatible": [qsTr("This update needs a newer version of Grassfield"), qsTr("Software Update checks again later and tells you when it's ready.")],
+                "incompatible": [qsTr("This update needs a newer version of Grassfield"), qsTr("Software Update checks again later and tells you when it's ready. Open it to allow system updates Grassfield hasn't tested.")],
                 "terminal": [qsTr("This update needs Omarchy's terminal"), qsTr("Open Software Update to continue it in Omarchy's terminal.")],
                 "stopped": [qsTr("The update stopped before it finished"), qsTr("Open Software Update to try again.")],
                 "failed": [qsTr("The update could not be installed"), qsTr("Open Software Update to see why.")]

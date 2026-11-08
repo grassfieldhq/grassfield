@@ -98,7 +98,7 @@ bool isPrinterUri(const QString &uri);
 // `set-mute <id> 0|1`, for lpoptions exactly `-d <queue>` or `-p <queue> -o PageSize=<keyword>` (the user's
 // ~/.cups/lpoptions; Settings never runs as root, where CUPS would write /etc/cups/lpoptions), for grassfield-channel-set (the
 // installed /usr/lib/grassfield/grassfield-channel-set, never one found on PATH) exactly one of `stable`, `beta`, `repair`,
-// `off` (ADR-0033 c.3; docs/specs/updates.md U12, U13: it runs as the user and asks for the administrator's password itself,
+// `off`, `hold`, `unhold` (the swap of grassfield-hold and its twin, ADR-0041 step 2a; read-only: `hold-state`) (ADR-0033 c.3; docs/specs/updates.md U12, U13: it runs as the user and asks for the administrator's password itself,
 // through pkexec and the polkit action org.grassfield.packages.set-channel), for /usr/lib/grassfield/grassfield-report (About >
 // Create Diagnostic Report…, ADR-0053: read-only commands, one private file in the user's Downloads folder) no argument at all.
 bool isAllowedAction(const QStringList &argv);

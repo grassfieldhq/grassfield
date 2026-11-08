@@ -143,8 +143,9 @@ bool isReadOnlyQuery(const QStringList &argv)
         return args.size() == 3 && args.at(0) == QLatin1String("-p") && isPrinterName(args.at(1)) && args.at(2) == QLatin1String("-l");
     // Software Update (ADR-0033 c.3): the channel, which grassfield-channel-set prints with no argument (read-only: it reads
     // pacman.conf, the included file and the build's repository.conf). The installed file, never one found on PATH.
+    // `hold-state` (ADR-0041 step 2a) is its other read-only question: pacman -Q of the local database and the build's record.
     if (program == QLatin1String("/usr/lib/grassfield/grassfield-channel-set"))
-        return args.isEmpty();
+        return args.isEmpty() || args == QStringList{QStringLiteral("hold-state")};
     // ADR-0045 (OC-6, OC-9, OC-10): Omarchy's own checks, each read in full (v4.0.6) and found to write nothing, so a dev
     // session may run them too; no argument comes from the page.
     //   omarchy-hw-fingerprint         exit status 0 when a USB fingerprint reader is there (it reads sysfs only)
@@ -530,7 +531,7 @@ bool isAllowedAction(const QStringList &argv)
     if (argv.first() == QLatin1String("/usr/lib/grassfield/grassfield-channel-set"))
         return argv.size() == 2
             && (argv.at(1) == QLatin1String("stable") || argv.at(1) == QLatin1String("beta") || argv.at(1) == QLatin1String("repair")
-                || argv.at(1) == QLatin1String("off"));
+                || argv.at(1) == QLatin1String("off") || argv.at(1) == QLatin1String("hold") || argv.at(1) == QLatin1String("unhold"));
     // Printers: the user's default printer, or one queue's paper size (~/.cups/lpoptions).
     if (argv.first() == QLatin1String("lpoptions"))
         return (argv.size() == 3 && argv.at(1) == QLatin1String("-d") && isPrinterName(argv.at(2)))

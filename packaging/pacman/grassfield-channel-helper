@@ -7,6 +7,9 @@
 #                     /etc/pacman.conf, drop pacman's synced [grassfield] files
 #   restore           ("Repair…") the two lines, only when /etc/pacman.d/grassfield.conf exists
 #   off               ("Turn Off…") the lines, the file, the synced files, then the Grassfield keys
+#   unhold            ("Allow system updates Grassfield hasn't tested…", ADR-0041 step 2a) one pacman transaction that replaces
+#                     the package grassfield-hold by grassfield-unhold, both fixed names from [grassfield] only
+#   hold              ("Hold again") the reverse transaction
 # Every verb is refused while pacman runs (its db.lck exists). Exit 0 done, 1 refused or failed (the message says which;
 # a failed step leaves pacman's configuration valid), 2 usage.
 # Its only input is its argument vector. -p keeps bash from reading BASH_ENV or importing a function; then, while its
@@ -36,8 +39,12 @@ case "$#:${1-}:${2-}" in
     gf_require_unlocked
     gf_off
     ;;
+  1:unhold: | 1:hold:)
+    gf_require_unlocked
+    gf_hold_swap "$1"
+    ;;
   *)
-    echo "usage: grassfield-channel-helper set stable|set beta|restore|off (run by grassfield-channel-set through pkexec)" >&2
+    echo "usage: grassfield-channel-helper set stable|set beta|restore|off|hold|unhold (run by grassfield-channel-set through pkexec)" >&2
     exit 2
     ;;
 esac

@@ -174,6 +174,8 @@ TestCase {
         const updates = createTemporaryObject(stateComp, testCase, {backend: backend, system: system});
         if (o.channel !== undefined)
             backend.finished("update.channel", true, o.channel + "\n");
+        if (o.hold !== undefined)
+            backend.finished("update.hold", true, o.hold + "\n");
         const page = o.noPage ? null : createTemporaryObject(pageComp, testCase, {updates: updates, store: store, system: system});
         return {backend: backend, system: system, store: store, updates: updates, page: page};
     }
@@ -739,6 +741,67 @@ restart kernel
         session[helperFile("exit")] = "0\npackages 4\n";
         verify(!make(available(), {runner: true, files: session}).updates.running, "an ended helper shows nothing");
         verify(!make(available(), {runner: true, files: {"/run/grassfield-update/last": "../../etc\n"}}).updates.running, "only an operation id");
+    }
+
+    // ADR-0041 step 2a: the hold on system updates Grassfield hasn't tested. The state is read at start (hold-state, read-only);
+    // "Allow…" runs `unhold`, "Hold Again" runs `hold`, each through its own polkit tag; once the toolkit moved past the
+    // hold's bounds, holding again is greyed with the reason.
+    function test_theHoldRow() {
+        const t0 = make(available(), {hold: undefined});
+        compare(t0.backend.queries.filter(q => q.tag === "update.hold").length, 1);
+        compare(t0.backend.queries.filter(q => q.tag === "update.hold")[0].argv, ["/usr/lib/grassfield/grassfield-channel-set", "hold-state"]);
+        verify(!row(t0.page, "System updates Grassfield hasn't tested"), "nothing is shown until the state is read");
+        for (const none of ["none", "garbage"])
+            verify(!row(make(available(), {hold: none}).page, "System updates Grassfield hasn't tested"), none + " shows no row");
+        // Held: Allow…
+        const t = make(available(), {hold: "held"});
+        verify(row(t.page, "System updates Grassfield hasn't tested"));
+        verify(!button(t.page, "Hold Again"));
+        const allow = button(t.page, "Allow…");
+        verify(allow && allow.enabled);
+        allow.clicked();
+        compare(t.backend.actions, [{argv: ["/usr/lib/grassfield/grassfield-channel-set", "unhold"], tag: "update.hold.act"}]);
+        verify(t.updates.waitingForPermission);
+        compare(row(t.page, "System updates Grassfield hasn't tested").subtitle, "Waiting for permission…");
+        verify(!button(t.page, "Allow…").enabled, "one change at a time");
+        // A refusal: one line, the state read again.
+        t.backend.endAction("update.hold.act", false, "grassfield-channel-set: not allowed: the authentication was cancelled or refused, or no authentication agent answered");
+        verify(shown(t.page, i => i.footnote === "System updates were not allowed: not allowed"));
+        compare(t.backend.queries.filter(q => q.tag === "update.hold").length, 2, "the state read again");
+        t.backend.finished("update.hold", true, "allowed\n");
+        // Allowed: Hold Again, which runs `hold`.
+        verify(!button(t.page, "Allow…"));
+        const again = button(t.page, "Hold Again");
+        verify(again && again.enabled);
+        again.clicked();
+        compare(t.backend.actions[t.backend.actions.length - 1], {argv: ["/usr/lib/grassfield/grassfield-channel-set", "hold"], tag: "update.hold.act"});
+        t.backend.endAction("update.hold.act", false, "grassfield-channel-set: the change failed (grassfield-channel-helper hold: exit 1); nothing else was changed");
+        verify(shown(t.page, i => i.footnote === "System updates were not held back: the change failed (grassfield-channel-helper hold: exit 1); nothing else was changed"));
+        // Moved past the bounds: greyed, with the reason.
+        const m = make(available(), {hold: "allowed-moved"});
+        verify(!button(m.page, "Hold Again").enabled);
+        compare(row(m.page, "System updates Grassfield hasn't tested").subtitle,
+            "Your system already moved past the versions this Grassfield was built for. Holding comes back with the next Grassfield update.");
+    }
+
+    // A refused system update while Grassfield lags says the session's sentence, with Allow… one click away (held only).
+    function test_aHeldUpdateOffersAllow() {
+        const files = {};
+        files[testCase.runFile] = runState("done", "incompatible");
+        const held = make(available(), {runner: true, hold: "held", files: files});
+        const r = row(held.page, "This update needs a newer version of Grassfield, which isn't available yet.");
+        verify(r);
+        compare(r.subtitle, "Software Update checks again later and tells you when it's ready. Or allow system updates Grassfield hasn't tested.");
+        const buttons = [];
+        find(held.page, i => { if (i.visible && i.text === "Allow…" && i.push === true && buttons.indexOf(i) < 0) buttons.push(i); return false; });
+        compare(buttons.length, 2, "the outcome's and the hold row's");
+        buttons[0].clicked();
+        compare(held.backend.actions[0].argv, ["/usr/lib/grassfield/grassfield-channel-set", "unhold"]);
+        // Not held (allowed, no hold installed): the sentence alone.
+        for (const h of ["allowed", "none", "allowed-moved"]) {
+            const t = make(available(), {runner: true, hold: h, files: files});
+            compare(row(t.page, "This update needs a newer version of Grassfield, which isn't available yet.").subtitle, "Software Update checks again later and tells you when it's ready.");
+        }
     }
 
     // U28-U30: what an ended run says, with its one action; the same sentence when Settings opens again.

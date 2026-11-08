@@ -13,7 +13,9 @@
 #     their time set to the epoch by the package scriptlet (ADR-0050 2: never deleted inside a transaction);
 #   - the staged rollout's wariness, /var/lib/grassfield/rollout-wariness (ADR-0050 1);
 #   - the Grassfield keys in pacman's keyring (pacman-key --add/--lsign-key of the pinned key, --populate-from the
-#     private keyring folder of grassfield-keyring, --delete).
+#     private keyring folder of grassfield-keyring, --delete);
+#   - for the helper's `hold` and `unhold` verbs only (gf_hold_swap, ADR-0041 step 2a): one pacman transaction that
+#     replaces the package grassfield-hold by grassfield-unhold, or back; nothing else is written by this program.
 # The lines go last, after the last repository of Omarchy's channel templates (default/pacman/pacman-stable.conf ends
 # with [omarchy] in 4.0.4 and [multilib] in 4.0.6; ADR-0033 a.1-a.2, Q4), so [grassfield] never shadows a package of theirs.
 # Every write to /etc goes through a temporary file in the same folder and a rename (mode and owner kept), so pacman never
@@ -326,6 +328,54 @@ gf_off() {
   gf_paths
   gf_drop_synced
   gf_delete_keys
+}
+
+# --- The hold swap (ADR-0041 step 2a, SQ-3 option A; OPUS SECURITY REVIEW REQUIRED) ----------------------------------------
+# `unhold` and `hold`: one pacman transaction that replaces grassfield-hold (Qt and Quickshell held at the versions this
+# Grassfield was built for) by its empty twin grassfield-unhold, or back. The two packages are fixed names (the verb picks one of
+# two constants: no argument, no package name ever comes from the caller) and are installed only from the [grassfield]
+# repository by its explicit name (`grassfield/<package>`, so a package of the same name in another repository is never taken).
+# Nothing is written outside what pacman writes. The steps, each refusing with nothing changed:
+#   1. [grassfield] is in pacman.conf (the repository is the only source of the two packages);
+#   2. the target is not already installed (then there is nothing to do: success);
+#   3. the synced [grassfield] database lists the target (no network: the list the last check synced);
+#   4. the plan (`pacman -S --print`) is exactly the target and nothing else: a hold whose bounds the installed toolkit no
+#      longer satisfies would make pacman fetch other packages to satisfy them (a downgrade of Qt, say); it is refused here,
+#      never started;
+#   5. `pacman -S --noconfirm --ask 4 --needed grassfield/<target>`: --ask 4 answers pacman's conflict question ("remove
+#      grassfield-hold?", ALPM_QUESTION_CONFLICT_PKG = 1 << 2) with yes and nothing else, so the twin replaces the hold in this
+#      one transaction (grassfield-desktop depends on the name the twin provides, so nothing is half-installed);
+#   6. afterwards exactly one of the two is installed, the target.
+# pacman -Q names packages only (never provides), which is what steps 2 and 6 need.
+GF_HOLD_PKG=grassfield-hold
+GF_UNHOLD_PKG=grassfield-unhold
+
+gf_installed() {
+  pacman -Q -- "$1" >/dev/null 2>&1
+}
+
+gf_hold_swap() { # hold | unhold
+  local target other plan
+  case $1 in
+    hold) target=$GF_HOLD_PKG other=$GF_UNHOLD_PKG ;;
+    unhold) target=$GF_UNHOLD_PKG other=$GF_HOLD_PKG ;;
+    *) gf_fail "unknown hold verb" ;;
+  esac
+  gf_has_section || gf_fail "Grassfield updates are not set up: the [grassfield] repository is missing from pacman's configuration"
+  if gf_installed "$target"; then
+    echo "${GF_PROG}: $target is already installed: nothing to change"
+    return 0
+  fi
+  pacman -Si -- "grassfield/$target" >/dev/null 2>&1 9<&- ||
+    gf_fail "$target is not in the package list of [grassfield] yet: check for updates first; nothing was changed"
+  plan=$(pacman -S --print --print-format '%n' --noconfirm --ask 4 -- "grassfield/$target" 2>/dev/null 9<&-) ||
+    gf_fail "pacman cannot install $target on this system as it is (the versions of Qt or Quickshell it needs are not the ones installed): nothing was changed"
+  [[ $plan == "$target" ]] ||
+    gf_fail "installing $target would also change other packages: refused, nothing was changed"
+  pacman -S --noconfirm --ask 4 --needed -- "grassfield/$target" 9<&- ||
+    gf_fail "pacman could not install $target: nothing else was changed"
+  gf_installed "$target" && ! gf_installed "$other" ||
+    gf_fail "the swap of $other for $target did not complete: run the verb again"
 }
 
 # The scriptlet's upgrade (ADR-0033 h.3, O19): a file whose primary Server is <previous base>/<channel>/$arch (or that base's

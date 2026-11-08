@@ -369,8 +369,10 @@ other option was Omarchy's model, sudo in its floating terminal (A). The pieces:
 2. **The polkit action** `org.grassfield.packages.set-channel`, in `/usr/share/polkit-1/actions/org.grassfield.packages.policy`:
    - `allow_any` and `allow_inactive` are `no`, `allow_active` is `auth_admin_keep`;
    - `org.freedesktop.policykit.exec.path` is the helper;
-   - the message, in English and French: "Authentication is required to change where Grassfield gets its updates" (« Une
-     authentification est nécessaire pour changer la source des mises à jour de Grassfield »).
+   - the message, in English and French: "Authentication is required to change how Grassfield gets its updates" (« Une
+     authentification est nécessaire pour modifier la façon dont Grassfield reçoit ses mises à jour »; reworded on 2026-11-08
+     when the same action took the two verbs `hold` and `unhold`, ADR-0041 step 2a, which swap grassfield-hold and
+     grassfield-unhold in one pacman transaction: no other privilege is added).
    The dialog is Grassfield's polkit sheet in a Grassfield session (SEC6), Omarchy's agent in an Omarchy session, and pkexec
    itself on a text console.
 3. **`grassfield-channel-set [stable|beta|off|repair]`**, in `/usr/bin`, is the user's command; it refuses to run as root.
@@ -1080,6 +1082,10 @@ exits 126 (dismissed) and 127 (not authorized).
   which has no such check.
 - grassfield-desktop's `conflicts=('quickshell=0.3.2')` stays: pacman refuses that version on every path, `omarchy update`
   included.
+- Amended 2026-11-08 (owner decision, ADR-0041 step 2a, built): `grassfield-hold` now carries exactly that bound for `qt6-base` and
+  `quickshell` (never `hyprland`, never `kcoreaddons`), with the watch job of f (daily, ABI stamp, Omarchy stable and rc) to end the refusal
+  and Settings' "Allow system updates Grassfield hasn't tested…" as the way out; this check stays as the second line (exit 6 for the
+  hold's own refusal too). The rejection below was the first reading.
 - Rejected: tight versioned `depends` (`qt6-base<6.13`). pacman would then refuse a toolkit update on every path, and an
   `omarchy update` in the terminal would fail with a dependency error until Grassfield rebuilds, blocking security fixes
   (a2's lesson). The check keeps that choice to Update Now, which can say it plainly.

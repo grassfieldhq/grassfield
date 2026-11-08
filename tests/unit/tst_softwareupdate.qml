@@ -287,6 +287,17 @@ TestCase {
         compare(Logic.channelOf("Beta"), "");
     }
 
+    // ADR-0041 step 2a: what `grassfield-channel-set hold-state` printed; anything else shows no hold row.
+    function test_theHoldAsPrinted() {
+        for (const h of ["held", "allowed", "allowed-moved", "none"])
+            compare(Logic.holdOf(h + "\n"), h);
+        compare(Logic.holdOf("  held  "), "held");
+        compare(Logic.holdOf("held\nallowed"), "held");
+        for (const bad of ["", "Held", "hold", "unheld", "allowed moved", "grassfield-channel-set: pacman failed"])
+            compare(Logic.holdOf(bad), "");
+        compare(Logic.holdOf(undefined), "");
+    }
+
     function test_aPrereleaseBuildSetsUpOnBeta() {
         compare(Logic.defaultChannel("1.0.0-rc2\n"), "beta");
         compare(Logic.defaultChannel("1.1.0-beta3"), "beta");

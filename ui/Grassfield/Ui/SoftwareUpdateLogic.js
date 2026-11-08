@@ -328,6 +328,16 @@ function channelOf(text) {
     return CHANNELS.indexOf(c) >= 0 ? c : "";
 }
 
+// What `grassfield-channel-set hold-state` printed (ADR-0041 step 2a): "held" (grassfield-hold is installed: system updates
+// Grassfield hasn't tested are refused), "allowed" (its twin is, and Qt and Quickshell are still the versions this Grassfield was
+// built for: it can be held again), "allowed-moved" (the twin is, and they moved: holding again waits for the next Grassfield
+// update), "none" (neither is installed: an older install, nothing to show); "" for anything else, which shows nothing.
+const HOLD_STATES = ["held", "allowed", "allowed-moved", "none"];
+function holdOf(text) {
+    const c = String(text || "").split("\n")[0].trim();
+    return HOLD_STATES.indexOf(c) >= 0 ? c : "";
+}
+
 // The build can set Grassfield updates up (grassfield-channel-set's require_build, docs/specs/updates.md Refusals): its
 // repository.conf names a signing key and a base that is file:// or a host outside .invalid.
 function buildReady(repositoryConf) {
