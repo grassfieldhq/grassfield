@@ -182,8 +182,16 @@ out=$(run "$tmp/none" GRASSFIELD_SHELL_DIR="$tmp/othershell" GRASSFIELD_SESSION=
 ! grep -qF 'MarkerVault' <<<"$out" \
   && pass "one list: a real session ignores GRASSFIELD_SHELL_DIR (the installed shell's file)" || bad "one list: the session read a dev list: $out"
 out=$(run "$tmp/om" GRASSFIELD_SHELL_DIR="$tmp/nowhere")
-grep -q "no password-manager class read from $tmp/nowhere/services/protected-classes.txt" <<<"$out" && grep -qF '|true|class=^(NewVault)$' <<<"$out" \
-  && ! grep -qF 'nngceck' <<<"$out" && pass "one list unreadable: said in the log, Omarchy's own rules still applied" || bad "one list unreadable: $out"
+fallback_ok=1
+for m in "${builtin[@]}"; do grep -qF "|true|$m" <<<"$out" || fallback_ok=0; done
+grep -q "WARNING: no password-manager class read from $tmp/nowhere/services/protected-classes.txt; the built-in fallback list applies" <<<"$out" \
+  && grep -qF '|true|class=^(NewVault)$' <<<"$out" && ((fallback_ok)) \
+  && pass "one list unreadable: a warning, the built-in fallback (the file's matches) and Omarchy's own rules applied" || bad "one list unreadable: $out"
+out=$(run "$tmp/none" GRASSFIELD_SHELL_DIR="$tmp/nowhere")
+fallback_ok=1
+for m in "${builtin[@]}"; do grep -qF "|true|$m" <<<"$out" || fallback_ok=0; done
+((fallback_ok)) && [[ $out == *"source builtin"* ]] \
+  && pass "neither the list nor Omarchy's rules readable: the fallback still hides the password managers" || bad "nothing readable: $out"
 
 # --- wiring: both sessions load it ---
 grep -qx 'require("grassfield.privacy")' config/hypr/grassfield/core.lua && pass "wiring: core.lua requires grassfield.privacy" || bad "wiring: core.lua"

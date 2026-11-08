@@ -853,9 +853,11 @@ browser and profile. A later Omarchy addition is picked up without a Grassfield 
 regex per line) are always added (duplicates dropped), so a rule file that stops early or disappears never leaves a password
 manager unprotected; when nothing at all is read, Hyprland's log says so. That file is the ONE list (R7-SEC-03 and its
 security review): privacy.lua reads it from the shell's folder as `bindings.lua` finds the shell (`GRASSFIELD_SHELL_DIR` in a
-dev session only, else `/usr/share/grassfield/shell`; unreadable: Omarchy's own rules still apply and the log says so), and
+dev session only, else `/usr/share/grassfield/shell`; unreadable: a built-in fallback of the same three matches applies, with
+a warning in the log, so a password manager stays hidden even when neither the file nor Omarchy's rules can be read; the
+fallback is kept equal to the file by `tests/unit/tst_clipboard.qml`), and
 the clipboard history reads it at start (`shell/services/Clipboard.qml`, `ClipboardLogic.parseProtected`; not read yet,
-unreadable or a line that is not a regex: no copy is recorded); no copy of the list exists elsewhere
+unreadable or a line that is not a regex: no copy is recorded); no other copy of the list exists
 (`tests/unit/tst_clipboard.qml`). Tests: `tests/security/screenshare_rules.sh` (at least one rule per
 Omarchy `no_screen_share` rule; every match the installed Omarchy protects is in the one list, so a new protected app fails
 the test until the list follows; the list comes from the shell's folder, a real session ignores a dev folder, an unreadable

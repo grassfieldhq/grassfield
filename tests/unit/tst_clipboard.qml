@@ -65,7 +65,16 @@ TestCase {
         compare(protectedList, ["^(1[pP]assword|com\\.onepassword\\.OnePassword)$", "^([bB]itwarden)$", ".*nngceckbapebfimnlniiiahkandclblb.*"]);
         const lua = readRepo("config/hypr/grassfield/privacy.lua");
         verify(lua.indexOf('M.builtin_file = shell_dir .. "/services/protected-classes.txt"') >= 0, "privacy.lua reads the shell's file");
-        verify(lua.indexOf("nngceck") < 0 && lua.indexOf("onepassword") < 0, "privacy.lua holds no copy of the list");
+        // privacy.lua keeps a fallback for an unreadable file (rc7 security review): the same strings as the file, Lua-escaped.
+        const block = lua.slice(lua.indexOf("local FALLBACK = {"), lua.indexOf("}\n", lua.indexOf("local FALLBACK = {")) + 1);
+        const fallback = [];
+        const re = /"([^"]+)"/g;
+        let m;
+        while ((m = re.exec(block)) !== null)
+            fallback.push(m[1].replace(/\\(.)/g, "$1"));
+        compare(fallback, protectedList, "privacy.lua's fallback is the file's list");
+        const outside = lua.slice(0, lua.indexOf("local FALLBACK = {")) + lua.slice(lua.indexOf("}\n", lua.indexOf("local FALLBACK = {")));
+        verify(outside.indexOf("nngceck") < 0 && outside.indexOf("onepassword") < 0, "no other copy in privacy.lua");
         const qml = readRepo("shell/services/Clipboard.qml");
         verify(qml.indexOf("path: Quickshell.shellPath(Logic.PROTECTED_FILE)") >= 0, "Clipboard.qml reads the same file");
         verify(qml.indexOf("protectedClasses: root.protectedClasses") >= 0, "and decides with it");

@@ -14,8 +14,11 @@
 -- always applied as well (duplicates dropped), so a file that stops early, moves or disappears never leaves 1Password or
 -- Bitwarden unprotected (fail safe). That file is the ONE list the clipboard history also reads (shell/services/Clipboard.qml,
 -- rc7 audit R7-SEC-03); it is the shell's, found the way bindings.lua finds the shell (GRASSFIELD_SHELL_DIR in a dev session
--- only, else /usr/share/grassfield/shell). tests/security/screenshare_rules.sh fails when the installed Omarchy protects a
--- window it does not name. Loaded by core.lua in both the real and the
+-- only, else /usr/share/grassfield/shell). When that file cannot be read, a built-in fallback of the same three matches
+-- applies instead, with a warning in the log (FALLBACK below, kept equal to the file by tests/unit/tst_clipboard.qml), so a
+-- password manager is never left unprotected, even when neither the file nor Omarchy's rules can be read (rc7 security
+-- review of R7-SEC-03). tests/security/screenshare_rules.sh fails when the installed Omarchy protects a window the file does
+-- not name. Loaded by core.lua in both the real and the
 -- nested session. Returns { source = "omarchy"|"builtin" (nothing read from Omarchy), matches = { <match table>... },
 -- skipped = { "<file>: <error>"... }, layers = { <namespace regex>... } (the shell's sheets, below) }.
 
@@ -36,6 +39,12 @@ if shell_dir == "" then
   shell_dir = "/usr/share/grassfield/shell"
 end
 M.builtin_file = shell_dir .. "/services/protected-classes.txt"
+-- The fallback, used only when protected-classes.txt gives no line (the file's three matches, Lua-escaped).
+local FALLBACK = {
+  "^(1[pP]assword|com\\.onepassword\\.OnePassword)$",
+  "^([bB]itwarden)$",
+  ".*nngceckbapebfimnlniiiahkandclblb.*",
+}
 local BUILTIN = {}
 do
   local f = io.open(M.builtin_file, "r")
@@ -49,7 +58,10 @@ do
     f:close()
   end
   if #BUILTIN == 0 then
-    print("grassfield: no password-manager class read from " .. M.builtin_file .. "; only Omarchy's own rules apply")
+    print("grassfield: WARNING: no password-manager class read from " .. M.builtin_file .. "; the built-in fallback list applies")
+    for _, class in ipairs(FALLBACK) do
+      BUILTIN[#BUILTIN + 1] = { class = class }
+    end
   end
 end
 
