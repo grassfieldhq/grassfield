@@ -250,6 +250,42 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
   Nothing restarts by itself. When the update could not prepare the startup files (Omarchy's initramfs check), the pane says
   "Don't restart this computer yet" and offers no restart. While a run goes on, the pane's Restart… and Log Out… wait for
   its end (step 4).
+- U39. The update hold (ADR-0041 step 2a, SQ-3 option A, owner decision of 2026-11-08). `grassfield-desktop` depends on
+  `grassfield-hold`: `depends` only, `quickshell=<the version BUILD-DEPS records, without its pkgrel>`, `qt6-base>=<major.minor>`
+  and `qt6-base<<the next minor>` (`packaging/arch/hold-bounds.sh` computes them from BUILD-DEPS at build time, never typed; never
+  `hyprland`, never `kcoreaddons`). pacman then refuses, on every path (a system upgrade in a terminal, Omarchy's update, Update
+  Now), a transaction that moves either past them, unless the plan carries the `grassfield-desktop` built for the new toolkit.
+  `grassfield-unhold` is its empty twin (`provides` and `conflicts` `grassfield-hold`, no `depends`). In Settings > Software Update
+  a row "System updates Grassfield hasn't tested" shows the state `grassfield-channel-set hold-state` prints (read-only: `held`,
+  `allowed`, `allowed-moved`, `none`; `none` or an unreadable answer hides the row): held, "Allow…" runs `grassfield-channel-set
+  unhold`; allowed, "Hold Again" runs `grassfield-channel-set hold`; allowed-moved (the installed Qt or Quickshell is no longer what
+  the installed Grassfield was built for, the same comparison as U27 on the build's own BUILD-DEPS), "Hold Again" is disabled and
+  the row says "Your system already moved past the versions this Grassfield was built for. Holding comes back with the next
+  Grassfield update." (the next build carries a hold whose bounds match). Both verbs run `grassfield-hold-helper hold|unhold`
+  through its own polkit action `org.grassfield.packages.hold` (an administrator's password every time, never kept: it is a
+  package transaction, SU-M1), one pacman transaction each: `pacman -S --noconfirm --ask 4 --needed --asdeps
+  grassfield/<package>=<version>` (`--ask 4` answers the conflict question, so the only conflict allowed is the twin, checked
+  before; the repository is named so no other one can supply the package; the version is the one read, so a database changed in
+  between is not installed; `--asdeps` so `pacman -Rns grassfield-desktop` takes the pair with it), after these refusals with
+  nothing changed: no `[grassfield]` section, the package not in the synced list, a conflict other than the twin (declared by
+  the package or by an installed one), a plan (`pacman -S --print`) that is more than that one package (a hold the toolkit no
+  longer satisfies would make pacman fetch other versions), and `db.lck`; afterwards the installed set must differ by the twin
+  and nothing else, or the helper says so loudly. With the twin installed, U27 does not compare `qt6-base` and `quickshell`
+  (the other three keep their comparison), so Update Now installs what pacman now lets through. The helper's other message: "pacman could not install <package>". The pane checks
+  again after either. The wait is bounded (owner decision of 2026-11-08, R7-INS-03): the target for publishing a rebuild after an Omarchy move the hold
+  refuses is 7 days. The clock, `holdRefusedAt` (ms) in the shell's own `software-update.json` (never in /etc, nothing root writes), starts
+  at the FIRST refused update of the current toolkit move (a run that ends in exit 6; a later refusal does not move it) and is cleared
+  when an update goes through (a run that installs or finds nothing to do: the hold is satisfied again by the new build, or the user
+  allowed and the next run installed). Within the 7 days the refused-update sentence, in the pane and in the shell's notice, says "A
+  compatible Grassfield update is expected soon. Software Update tells you when it's ready." with "Allow…" only in the hold's own
+  row; from the 7th day on (exactly 7 days counts) it says "It's taking longer than expected. You can allow system updates Grassfield
+  hasn't tested." and the pane's sentence carries "Allow…" itself (the notice's text sends the person to Software Update). No record, or
+  an unreadable one, is within the 7 days.
+  A system update the hold refuses: the update helper reads pacman's refusal (an error that names
+  `grassfield-hold` as the package requiring the broken dependency) and exits 6 (`incompatible grassfield-hold`, the U27 path)
+  instead of 8, so the pane says "This update needs a newer version of Grassfield, which isn't available yet." with the sentences of the 7-day rule
+  below; Update Now's end notice says the same. On Omarchy's update in a terminal pacman's own error names `grassfield-hold` and the bound. The
+  daily watch job of grassfield-packages (ADR-0033 f) starts the rebuild that ends the refusal.
 - U31. A toolkit replaced under the running session (ADR-0041 step 2b). Every check, in every state, lists the toolkit as
   installed (`toolkit`): each package of U27's record (`qt6-base`, `quickshell`, `hyprland`, `aquamarine`, `kcoreaddons`)
   pacman names, with its version, the time pacman installed it (`/var/lib/pacman/local/<name>-<version>/desc`,
@@ -331,7 +367,7 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
 |---|---|
 | `grassfield-channel-set` run as root (`sudo grassfield-channel-set …`) | refused: "run it as your user; it asks for permission itself" |
 | The helper started without root, with another verb or more arguments, or (pkexec verbs) while pacman's `db.lck` exists | refused, nothing changed |
-| `grassfield-channel-helper` given a scriptlet verb, or `grassfield-channel-scriptlet` given a helper verb | refused, nothing changed (each program knows only its own verbs) |
+| `grassfield-channel-helper` given a scriptlet verb or a hold verb, or `grassfield-channel-scriptlet` given a helper verb | refused, nothing changed (each program knows only its own verbs) |
 | The polkit dialog cancelled, the password wrong, or no agent | the helper does not run; one line under the row; nothing changed |
 | Unknown channel argument | refused, usage printed, nothing changed |
 | A build without the pinned signing key, or whose `GRASSFIELD_REPO_BASE` is the `.invalid` placeholder (both the case until the owner provides a key and hosting) | refused: "no signing key in this build" / "no package repository in this build"; the pane hides "Set Up…", says that Grassfield's own updates are not available in this build, and still offers the system's updates (the container tests build their own `repository.conf` with a `file://` base and a throwaway key) |
@@ -350,6 +386,9 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
 | A pacman plan line the helper cannot read (a field too many) | nothing changed; "The update could not be installed. Nothing was changed." |
 | An update the compatibility check refuses (U27) | nothing changed, the system's sync databases untouched; "This update needs a newer version of Grassfield…" |
 | An update that needs a person (U28) | nothing installed; "Update in Terminal…" |
+| A system update `grassfield-hold` refuses (U39): the update helper reads pacman's error naming it | exit 6, nothing changed; "This update needs a newer version of Grassfield…" with "Allow…" |
+| `grassfield-hold-helper` with an argument, another verb (the channel verbs included), another word, no `[grassfield]` section, the package not in the synced list, a plan of more than that package, or `db.lck` | refused (exit 2 for usage, 1 otherwise), nothing changed |
+| `hold` after Qt or Quickshell moved past the bounds (U39) | the pane's "Hold Again" is disabled with the reason; the helper's own plan check refuses, nothing changed |
 
 ## Acceptance criteria (each mapped to a test; level)
 | Id | Criterion | Test | Level |
@@ -377,6 +416,7 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
 | A12 | real flows: the polkit dialog of Set Up…, Beta Updates and Turn Off… (cancel once, a wrong password once, then accept), Update in Terminal… in Omarchy's floating terminal | owner, real session | L2 |
 | A13 | the update helper as root: usage and privilege refusals, a hostile environment dropped, up to date without touching the sync databases, a `db.lck` held (busy) or left behind (stale) before anything is read, its own lock busy, Omarchy's key missing (after an incompatible update is said so), a plan line it cannot read, pacman's lock taken for the swap and gone after it, Omarchy's 4.x layout (commands in `usr/bin`, links in `usr/share/omarchy/bin`), a migration reading `/dev/tty`, no command file to scan, a migration that is a link, more than 64 pending (the runner), an update through Omarchy's real guard hook, the compatibility check (a toolkit change refused; joined by a matching Grassfield build; major.minor; Quickshell whole; a build without a record), Omarchy's migrations (a new one that calls a `sudo` command through another; a plain one; one named pending), conflicts inside the transaction, the 16 newest operations kept; through real polkitd and pkexec (a password each time, a wrong one, a user refused); the runner as a user (its state file, migrations run as the user without a terminal, a pending one that asks, Omarchy's lock held) | `tests/integration/update_helper.sh` (throwaway Arch container) | L0 (container) |
 | A14 | the pane's run: Update Now's one launch, each phase and count, the bar, the pane opened again mid-run, a runner gone with or without its helper, a reused process id, each outcome's sentence and action, the end's sheet, no restart after a failed startup image, the dev guard | `tests/unit/tst_softwareupdate.qml` (the run's logic), `tst_settingssoftwareupdate.qml`, `tst_settingsmain.qml`; the launch vectors in `tst_systemguard.cpp`, `tst_backend.cpp`; captures `software-update-run.png` | L0/L1 |
+| A18 | the update hold (U39): the bounds from BUILD-DEPS (quickshell without pkgrel, Qt major.minor, an epoch kept, never hyprland or kcoreaddons, a record that cannot be bounded gives no bound); the helper's verbs and arguments; the swap against a pacman stand-in (every refusal leaves the install unstarted; `--ask 4`; explicit repository); `hold-state`; pacman's refusal read as exit 6 only when it names the hold; the pane's row, its failures, the greyed button; BUILD-DEPS, the hold's depends and the s3.4 table name the same packages; in a container: a first install pulls the hold, a refused upgrade, the update helper's exit 6, the matching build joining the transaction, `unhold` and `hold` in one transaction, a hold of another repository never taken | `tests/shell/update_hold.sh`, `tests/ci/hold_parity.py`, `tests/unit/tst_softwareupdate.qml`, `tst_settingssoftwareupdate.qml`, `tests/unit/settings/tst_systemguard.cpp`; `tests/integration/update_hold.sh` (throwaway Arch container, run bare) | L0 / L0 (container) |
 | A16 | one password (U32): the migrations' sudo inside its unit (root, input, folder, status, arguments, temporary files, options, lookup; other names, verbs and operations refused) and refused everywhere else without a dialog; the person's other processes kept out of the unit's `/proc` entries; the real helper from a runner through pkexec: a non-administrator, a group with a member, an older migration pending, a rule that grants nothing or none, all to the terminal; an administrator's migration as the person with its sudo as root, `migrations ran`, its output root's; a failed sudo left pending; `gum` to the terminal; root without a person; the unit form outside the unit | `tests/integration/update_migrate.sh` (throwaway Arch container run by systemd) | L0 (container) |
 | A17 | staged rollout (U34-U38): the root enrollment (wariness drawn once, kept, a damaged one redrawn, a link refused; a link or another user's state folder refused; cohort bounds; marker present, absent, of another scheme, or no listing: pacman failing or no synced database (unchanged); plain↔cohort; a custom or administrator-changed file untouched; the synced files never deleted inside the transaction, their time set to the epoch on every change of form or cohort and a host migration (GF-045); a previous host's cohort form migrated); the descriptor's schema, bounds, freshness, anti-replay and signature; the reach formula and cohort offering; staged, withdrawn, security; the pane's rows; the battery gate; the Store's channel | `tests/shell/staged_rollout_root.sh`, `tests/shell/update_check.sh`, `tests/shell/channel_set_rule.sh`, `tests/fuzz/fuzz_helpers.py` (update-check), `tests/unit/tst_softwareupdate.qml`, `tst_settingssoftwareupdate.qml`, `tests/unit/store/tst_channel.cpp`; end to end with a publisher: NOT VERIFIED | L0 |
 | A15 | real flow: Update Now with a published test channel (the dialog once, the snapshot, the progress, closing and reopening Settings mid-run, Restart Later then Restart); a toolkit update without a matching build refused; an Omarchy release with a `sudo` migration sent to the terminal | owner, real session (the integrator's L2) | L2 |
@@ -431,6 +471,8 @@ owner decision O22). Omarchy's commands used:
 - Checker unit tests (A8), QML tests (A9), grassfield-packages end-to-end (A10).
 - Step 3 container test (`tests/integration/update_helper.sh [--omarchy DIR]`, a throwaway Arch container with network:
   Arch's mirrors and keys.openpgp.org for Omarchy's public key): A13. Never on the owner's machine.
+- Step 2a container test (`tests/integration/update_hold.sh`, a throwaway Arch container, no network beyond Arch's mirrors): A18's
+  transactions with the real channel helper, update helper and `grassfield-channel-set`. Never on the owner's machine.
 - Owner, real session (L2): Set Up… (Grassfield's polkit sheet), Update Now with a published test channel, Beta
   Updates on and off, an Omarchy channel change with the hook, Log Out… after an update.
 

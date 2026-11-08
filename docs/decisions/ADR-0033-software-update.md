@@ -371,6 +371,13 @@ other option was Omarchy's model, sudo in its floating terminal (A). The pieces:
    - `org.freedesktop.policykit.exec.path` is the helper;
    - the message, in English and French: "Authentication is required to change where Grassfield gets its updates" (« Une
      authentification est nécessaire pour changer la source des mises à jour de Grassfield »).
+   - Amended 2026-11-08 (ADR-0041 step 2a, after the opus review): the swap of grassfield-hold and grassfield-unhold is a package
+     transaction, so it is NOT this action (a kept password, "no other privilege is added") but its own,
+     `org.grassfield.packages.hold`: program `/usr/lib/grassfield/grassfield-hold-helper` (verbs `hold` and `unhold` only;
+     pkexec maps a program path to one action, so the helper runs under that action and no other), `allow_any` and
+     `allow_inactive` `no`, `allow_active` `auth_admin` (a password every time, as for Update Now, SU-M1). Its message says what
+     it does: "Authentication is required to let system updates install versions Grassfield has not tested, or to hold them
+     back again". The channel helper has no hold verb.
    The dialog is Grassfield's polkit sheet in a Grassfield session (SEC6), Omarchy's agent in an Omarchy session, and pkexec
    itself on a text console.
 3. **`grassfield-channel-set [stable|beta|off|repair]`**, in `/usr/bin`, is the user's command; it refuses to run as root.
@@ -1080,6 +1087,11 @@ exits 126 (dismissed) and 127 (not authorized).
   which has no such check.
 - grassfield-desktop's `conflicts=('quickshell=0.3.2')` stays: pacman refuses that version on every path, `omarchy update`
   included.
+- Amended 2026-11-08 (owner decision, ADR-0041 step 2a, built): `grassfield-hold` now carries exactly that bound for `qt6-base` and
+  `quickshell` (never `hyprland`, never `kcoreaddons`), with the watch job of f (daily, ABI stamp, Omarchy stable and rc) to end the refusal
+  and Settings' "Allow system updates Grassfield hasn't tested…" as the way out; this check stays as the second line (exit 6 for the
+  hold's own refusal too). The wait for a matching build is bounded at 7 days (owner decision of 2026-11-08, ADR-0041 step 2a as built):
+  the shell's state file keeps the first refusal's time, and past 7 days the notice puts "Allow…" forward. The rejection below was the first reading.
 - Rejected: tight versioned `depends` (`qt6-base<6.13`). pacman would then refuse a toolkit update on every path, and an
   `omarchy update` in the terminal would fail with a dependency error until Grassfield rebuilds, blocking security fixes
   (a2's lesson). The check keeps that choice to Update Now, which can say it plainly.

@@ -26,7 +26,7 @@
 # HYPRLAND_INSTANCE_SIGNATURE), read from /proc and checked, for that unit only.
 # Exit: 0 done, or up to date (`packages 0`); 1 failed during the transaction (the system can be partly updated); 2 usage,
 # or an operation id used before; 3 busy (another run, or a process holding pacman's db.lck); 4 less than 10 GiB free on /;
-# 5 on battery below 50 %; 6 needs a newer Grassfield (the compatibility check); 7 needs a person (Omarchy's terminal; also a
+# 5 on battery below 50 %; 6 needs a newer Grassfield (the compatibility check, or pacman's own refusal naming grassfield-hold, ADR-0041 step 2a); 7 needs a person (Omarchy's terminal; also a
 # db.lck no process holds: `needs stalelock`); 8 failed before installing anything (`synced` when the checked sync databases
 # had already become the system's). pkexec itself exits 126 (the dialog dismissed) and 127 (not authorized). A run that ran
 # the migrations (SU-M2) says `migrations ran`.
@@ -286,8 +286,26 @@ for repo in "${repos[@]}"; do
 done
 say "pacman -Sy (a copy of the databases)"
 pacman -Sy --dbpath "$tmpdb" --logfile /dev/null --noprogressbar 9<&- || finish 8 "the package servers could not be reached"
-plan=$(pacman -Su --print --print-format '%n %v %l' --noconfirm --dbpath "$tmpdb" --logfile /dev/null 9<&-) ||
-  finish 8 "pacman cannot plan this update"
+# pacman's own refusal is read (ADR-0041 step 2a): when grassfield-hold bounds the toolkit and the update moves it past the
+# bound, pacman fails to prepare the transaction and names grassfield-hold. That is "needs a newer Grassfield" (exit 6, the
+# U27 path), not a plan pacman could not make (exit 8). Real pacman 7.1 (the container test): its first line, "error: failed to
+# prepare transaction (could not satisfy dependencies)", goes to stderr, and the detail lines (":: installing qt6-base (6.13.0-1)
+# breaks dependency 'qt6-base<6.13' required by grassfield-hold") to STDOUT, so both are read. stderr goes to a file in the
+# operation's own folder (root's, 0755, removed with it), then to the log; nothing in either is run or used except the one word
+# search below.
+plan=$(pacman -Su --print --print-format '%n %v %l' --noconfirm --dbpath "$tmpdb" --logfile /dev/null 2>"$tmpdb/plan.err" 9<&-)
+plan_rc=$?
+if [[ -f $tmpdb/plan.err && ! -L $tmpdb/plan.err ]]; then
+  head -c 8192 -- "$tmpdb/plan.err"
+  ((plan_rc == 0)) || printf '%s\n' "$plan" | head -c 8192
+  # pacman names the package that requires the broken dependency: "... breaks dependency 'qt6-base<6.13' required by
+  # grassfield-hold" (or "unable to satisfy dependency '...' required by grassfield-hold"), in English (LC_ALL=C above).
+  if ((plan_rc != 0)) && { head -c 65536 -- "$tmpdb/plan.err"; printf '%s\n' "$plan" | head -c 65536; } | grep -E "[[:space:]]required by grassfield-hold([[:space:]]|$)" >/dev/null; then   # no -q: grep reads it all, so no writer meets a closed pipe under pipefail
+    outcome+=("incompatible grassfield-hold")
+    finish 6 "this update needs a newer Grassfield (grassfield-hold bounds the toolkit): nothing was changed"
+  fi
+fi
+((plan_rc == 0)) || finish 8 "pacman cannot plan this update"
 declare -A after=() url=()
 count=0
 while read -r pkg version location extra; do
@@ -420,6 +438,14 @@ compare_key() { # package version -> the part of the version that must match
        fi ;;
   esac
 }
+# ADR-0041 step 2a: the person chose "Allow system updates Grassfield hasn't tested..." (grassfield-unhold installed, and this plan
+# does not bring the hold back): the two packages the hold bounds, qt6-base and quickshell, are not compared here, or Update Now
+# would still refuse what pacman now lets through. The others (hyprland, aquamarine, kcoreaddons) keep their comparison. Only
+# while the record is the INSTALLED grassfield-desktop's: a plan that carries a grassfield-desktop brings a new record, which must
+# match what is installed after the transaction (a build made for a newer Qt than the system will have is not what "Allow" means).
+u27_exempt() { # package
+  [[ -n ${installed[grassfield-unhold]-} && -z ${after[grassfield-hold]-} && -z ${after[grassfield-desktop]-} && ($1 == qt6-base || $1 == quickshell) ]]
+}
 check_needed=0
 [[ -n ${after[grassfield-desktop]-} ]] && check_needed=1
 for pkg in "${GU_TRACKED[@]}"; do
@@ -444,6 +470,10 @@ if ((check_needed)) && [[ -n ${after[grassfield-desktop]-} || -n ${installed[gra
   for pkg in "${GU_TRACKED[@]}"; do
     now=${after[$pkg]-${installed[$pkg]-}}
     [[ -z $now ]] && continue
+    if u27_exempt "$pkg"; then
+      say "$pkg $now: not compared, grassfield-unhold is installed (the person allowed system updates Grassfield has not tested)"
+      continue
+    fi
     if [[ -z ${built[$pkg]-} ]]; then
       refused+=("$pkg")
       say "$pkg $now: the record does not name it"

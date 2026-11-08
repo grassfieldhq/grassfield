@@ -22,7 +22,7 @@ readonly GF_PKGS=(grassfield-desktop grassfield-compositor grassfield-store)
 readonly GF_THEME_PKG=grassfield-login-themes
 # Installed by those packages or as their dependencies; `--uninstall` removes whichever of them is present.
 readonly GF_ALL_PKGS=(grassfield-login-themes grassfield-store grassfield-compositor grassfield-desktop grassfield-icons
-  grassfield-wallpapers grassfield-keyring)
+  grassfield-wallpapers grassfield-keyring grassfield-hold grassfield-unhold)
 
 GF_ROOT=''
 # @TEST-HOOK@ Test hook of tests/shell/public_install.sh only: a file prefix. render.py deletes these two lines from the published script.

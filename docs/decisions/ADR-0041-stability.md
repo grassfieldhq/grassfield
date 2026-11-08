@@ -447,6 +447,52 @@ of the session, never in a terminal.
   the integrator for the rest; two pull requests at least (2b and 2d need no owner answer, 2a waits for SQ-3 and the
   repository).
 
+### Step 2a as built (2026-11-08, branch feat/update-hold; the owner's decision of 2026-11-08, "required before 1.0.0 stable")
+The owner activated SQ-3 option A: the repository has been published since rc2, and the rc7 audit rated the missing hold and watch
+job as 1.0 blockers (R7-INS-01, R7-INS-02; R7-ARC-01, safe mode, is not part of this step). Built:
+- **The pair** (`packaging/arch/PKGBUILD`, two split packages, `arch=any`): `grassfield-hold` is `depends` only, computed in its
+  package function from `$srcdir/BUILD-DEPS` by `packaging/arch/hold-bounds.sh` (never typed): `quickshell=<the recorded version
+  without its pkgrel>`, `qt6-base>=<major.minor>`, `qt6-base<<next minor>`, an epoch kept; a record that lacks either or cannot be
+  read fails the build. The bound is the same rule as U27 (Quickshell's whole version, not its pkgrel; Qt's major.minor), so a
+  pkgrel-only rebuild by Omarchy never refuses an update that U27 would let through (decision under the owner's rule: fewer
+  refusals with nothing for the user to do). `grassfield-unhold` has `depends=()`, `provides=(grassfield-hold)`,
+  `conflicts=(grassfield-hold)`. `grassfield-desktop` depends on `grassfield-hold` (the literal name pacman resolves first). The
+  install script's `--uninstall` lists both. `tests/ci/hold_parity.py` checks that BUILD-DEPS, GU_TRACKED, ADR-0033's s3.4 table, U27
+  and the hold name the same packages (the hold bounds exactly quickshell and qt6-base, never hyprland or kcoreaddons).
+- **The root verbs** (`grassfield-hold-helper hold|unhold`, `gf_hold_swap` in `grassfield-channel.sh`, behind their own polkit
+  action `org.grassfield.packages.hold`, `auth_admin` every time, never kept: the opus review found that a package transaction
+  under `set-channel`'s kept password broke SU-M1 and ADR-0033's "no other privilege"; the channel helper has no hold verb): the verb picks one
+  of two constants, so no package name ever comes from the caller; one transaction `pacman -S --noconfirm --ask 4 --needed --asdeps
+  grassfield/<package>=<version>` (the repository is named and the version pinned to the one read; `--asdeps`, so removing
+  grassfield-desktop takes the pair along); before it, refusals with nothing changed (no `[grassfield]` section; the package not in
+  the synced list; a conflict other than the twin, since `--ask 4` answers every conflict question yes; a `pacman -S --print` plan that is more than that one
+  package, which is what refuses a `hold` the installed toolkit no longer satisfies instead of letting pacman fetch other
+  versions; `db.lck`); after it, exactly one of the two is installed. The `-Rdd` fallback of 2a is NOT coded: the first container
+  case of `tests/integration/update_hold.sh` decides, and a failed swap changes nothing.
+After the transaction the installed set must differ by the twin only, or the helper says so loudly.
+- **The update helper** reads pacman's refusal of its plan: an error line "required by grassfield-hold" gives exit 6 (`incompatible
+  grassfield-hold`, the U27 path) instead of 8, only when pacman failed. With the twin installed, U27 does not compare `qt6-base` and
+  `quickshell` (`u27_exempt`; review blocker: Update Now would otherwise refuse after "Allow…" what pacman now lets through).
+  Settings shows the existing sentence, plus "Allow…" while held.
+- **Settings** (U39): a row "System updates Grassfield hasn't tested" with "Allow…" or "Hold Again" (disabled with the reason when the
+  installed toolkit is past the bounds of the installed build), from `grassfield-channel-set hold-state` (read-only), and "Allow…" in the
+  refused-update sentence; `grassfield-channel-set` gains `hold`, `unhold`, `hold-state`; the shell's end notice for exit 6 names the way
+  out. The scheduled check's own notice for a hold it cannot install past (ADR-0033 d) is NOT built: the pane and the run's notice are
+  the paths; on a terminal update pacman's error names the hold.
+- **The watch job** (ADR-0033 f, in grassfield-packages; delivered as files under `.dev/update-hold/`, applied by the integrator):
+  daily, reads the published channel's packages (the BUILD-DEPS of grassfield-desktop and the ABI stamp of grassfield-compositor; the
+  `build-<id>.txt` of build-channel.sh is a CI artifact and is not published), compares Hyprland by its ABI stamp, quickshell and
+  qt6-base against the hold's bounds on Omarchy's stable and rc channels, starts `build.yml` with pkgrel + 1 when stable differs, opens
+  one issue when only rc differs (build.yml has no rc variant: a person decides), fails when a source cannot be read.
+- **Residual risk (R7-INS-03), bounded by the owner on 2026-11-08**: while Grassfield lags, every system update is refused and
+  publication waits for the owner's approval. The target is a rebuild published within 7 days of the Omarchy move. The shell records the
+  first refused update of a toolkit move (`holdRefusedAt` in its own state file, cleared by an update that goes through); within the 7
+  days the pane and the notice say a compatible update is expected soon, from the 7th day on they put "Allow system updates Grassfield
+  hasn't tested…" forward (U39). "Allow…" stays one click away in the hold's row throughout. Verified here: the logic and QML tests
+  (`tests/shell/update_hold.sh`, `tests/ci/hold_parity.py`, the Settings and guard tests) and a live read-only run of the watch tool.
+  NOT VERIFIED: `tests/integration/update_hold.sh` (docker; the `--ask 4` swap and the exit 6 reading against real pacman), the
+  workflow on GitHub, polkit and pkexec around the new verbs, a nested capture of the row (visual NOT verified), the opus review.
+
 ### Step 2b as built, first slice (2026-10-31, the branch of the stability lane; the toolkit as installed and the log out)
 - `grassfield-update-check` lists, before every other step and in every state it answers (repair, not-set-up, failed,
   up-to-date, available, blocking), the toolkit as installed (`toolkit`, U31): each tracked package pacman names
@@ -994,7 +1040,7 @@ Goal: no input a process reads from the system, a file or another process can cr
 |---|---|---|
 | SQ-1 safe mode | « Processus sécurité séparé » | **B**: ADR-0010's separate security process now: the lock, polkit, idle and the sleep inhibitor always run apart from the UI; safe mode is "the UI unit failed, the security process is up" (S1-S4 after the review of f018b42: everything that locks moves together at S2) |
 | SQ-2 the loop detector | « 3 plantages en 10 min » | **A** (recommended) |
-| SQ-3 an untested toolkit | « Détecter maintenant, bloquer plus tard » | **B now, A after the `[grassfield]` repository is published** (recommended) |
+| SQ-3 an untested toolkit | « Détecter maintenant, bloquer plus tard » | **B now, A after the `[grassfield]` repository is published** (recommended); **A activated by the owner on 2026-11-08**, built in step 2a as built |
 | SQ-4 crash reports | « Afficher le rapport » | **A** (recommended) |
 | SQ-5 a frozen shell | « Sonde toutes les 30 s » | **A** (recommended) |
 | SQ-6 the extension after a compositor crash | « La couper si elle est en cause » | **A** (recommended) |

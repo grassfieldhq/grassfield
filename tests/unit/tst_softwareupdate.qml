@@ -287,6 +287,41 @@ TestCase {
         compare(Logic.channelOf("Beta"), "");
     }
 
+    // R7-INS-03: the 7 days. The clock starts at the first refusal, is not moved by a later one, and ends with an update that went through.
+    function test_theHoldWaitIsSevenDays() {
+        const day = 24 * 60 * 60 * 1000, t0 = 1700000000000;
+        const none = Logic.normalize(null);
+        verify(!Logic.holdWaitOver(none, t0 + 30 * day), "no refusal recorded: never over");
+        const first = Logic.withHoldRefused(none, t0);
+        compare(first.holdRefusedAt, t0);
+        compare(Logic.withHoldRefused(first, t0 + 3 * day).holdRefusedAt, t0, "a later refusal does not move the clock");
+        verify(!Logic.holdWaitOver(first, t0), "the first moment");
+        verify(!Logic.holdWaitOver(first, t0 + 7 * day - 1), "one millisecond short of 7 days");
+        verify(Logic.holdWaitOver(first, t0 + 7 * day), "exactly 7 days is over");
+        verify(Logic.holdWaitOver(first, t0 + 30 * day));
+        verify(!Logic.holdWaitOver(first, t0 - day), "a stamp in the future is not over");
+        verify(!Logic.holdWaitStarted(Logic.withoutHoldRefused(first)), "cleared by an update that went through");
+        verify(Logic.holdWaitStarted(first));
+        for (const bad of ["x", -5, 0, NaN, null, {}]) {
+            const f = Object.assign({}, none, {holdRefusedAt: bad});
+            verify(!Logic.holdWaitOver(f, t0 + 30 * day), "a garbage stamp is not over: " + JSON.stringify(bad));
+            compare(Logic.withHoldRefused(f, t0).holdRefusedAt, t0, "a garbage stamp is replaced by a real one");
+        }
+        // A checker answer keeps the clock.
+        compare(Logic.combine(first, {version: 1, state: "up-to-date", checkedAt: "2026-11-08T10:00:00Z"}).holdRefusedAt, t0);
+    }
+
+    // ADR-0041 step 2a: what `grassfield-channel-set hold-state` printed; anything else shows no hold row.
+    function test_theHoldAsPrinted() {
+        for (const h of ["held", "allowed", "allowed-moved", "none"])
+            compare(Logic.holdOf(h + "\n"), h);
+        compare(Logic.holdOf("  held  "), "held");
+        compare(Logic.holdOf("held\nallowed"), "held");
+        for (const bad of ["", "Held", "hold", "unheld", "allowed moved", "grassfield-channel-set: pacman failed"])
+            compare(Logic.holdOf(bad), "");
+        compare(Logic.holdOf(undefined), "");
+    }
+
     function test_aPrereleaseBuildSetsUpOnBeta() {
         compare(Logic.defaultChannel("1.0.0-rc2\n"), "beta");
         compare(Logic.defaultChannel("1.1.0-beta3"), "beta");

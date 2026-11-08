@@ -68,6 +68,9 @@ SettingsPage {
         : root.run.phase === "authorizing" || root.run.phase === "" ? qsTr("Enter an administrator's password to start the update.")
         : qsTr("You can keep working; the update goes on if you close Settings.")
 
+    // ADR-0041 step 2a (R7-INS-03): 7 days after the first refused update of a toolkit move (the shell's record), "Allow…" comes forward.
+    readonly property bool holdWaitOver: root.updates.hold === "held" && SoftwareUpdateLogic.holdWaitOver(root.updates.file, Date.now())
+
     // What the last run says (U28-U30): a sentence, the line under it, and its one action ("terminal", "finish" or "").
     readonly property var outcome: {
         const r = root.run.result;
@@ -77,7 +80,9 @@ SettingsPage {
         switch (r) {
         case "incompatible":
             return { title: qsTr("This update needs a newer version of Grassfield, which isn't available yet."),
-                subtitle: qsTr("Software Update checks again later and tells you when it's ready."), action: "" };
+                subtitle: root.updates.hold !== "held" ? qsTr("Software Update checks again later and tells you when it's ready.")
+                    : root.holdWaitOver ? qsTr("It's taking longer than expected. You can allow system updates Grassfield hasn't tested.")
+                    : qsTr("A compatible Grassfield update is expected soon. Software Update tells you when it's ready."), action: root.holdWaitOver ? "allow" : "" };
         case "terminal":
             return { title: qsTr("This update asks questions that need Omarchy's terminal."),
                 subtitle: root.run.synced ? qsTr("The updates were not installed. Omarchy's update asks them in its terminal and installs everything listed here.")
@@ -201,7 +206,7 @@ SettingsPage {
     // One line when a channel change failed (U12: "Beta updates were not changed: not allowed"); the tool's reason, its
     // "not allowed" in the UI language.
     function failure(action: string): string {
-        const raw = root.updates.channelError;
+        const raw = action === "allow" || action === "holdagain" ? root.updates.holdError : root.updates.channelError;
         if (raw === "" || root.updates.lastAction !== action)
             return "";
         const reason = raw === "-" ? qsTr("the change failed") : raw.replace(/^grassfield-channel-set:\s*/, "").indexOf("not allowed") === 0 ? qsTr("not allowed")
@@ -213,6 +218,10 @@ SettingsPage {
             return qsTr("Grassfield updates were not set up: %1").arg(reason);
         case "repair":
             return qsTr("Grassfield updates were not repaired: %1").arg(reason);
+        case "allow":
+            return qsTr("System updates were not allowed: %1").arg(reason);
+        case "holdagain":
+            return qsTr("System updates were not held back: %1").arg(reason);
         }
         return qsTr("Grassfield updates were not turned off: %1").arg(reason);
     }
@@ -271,6 +280,30 @@ SettingsPage {
         }
     }
 
+    // ADR-0041 step 2a: Qt and Quickshell are held at the versions this Grassfield was built for (grassfield-hold), so a system
+    // update that would break the desktop waits for the Grassfield built for it. One row: "Allow…" swaps the hold for its
+    // twin in one root transaction, "Hold Again" swaps back. Once the system moved past the versions, holding again waits for
+    // the next Grassfield update (its hold then matches). Hidden on a build with no hold (an older install).
+    SettingsGroup {
+        visible: root.updates.hold === "held" || root.updates.hold === "allowed" || root.updates.hold === "allowed-moved"
+        footnote: root.failure("allow") || root.failure("holdagain")
+
+        SettingsRow {
+            title: qsTr("System updates Grassfield hasn't tested")
+            subtitle: root.waiting && (root.updates.lastAction === "allow" || root.updates.lastAction === "holdagain") ? qsTr("Waiting for permission…")
+                : root.updates.hold === "held" ? qsTr("They wait until Grassfield is ready for them, so an update can't stop the desktop from working. Security fixes for Qt and Quickshell wait too.")
+                : root.updates.hold === "allowed" ? qsTr("They are installed with the system's updates. Grassfield may stop working until its next version arrives.")
+                : qsTr("Your system already moved past the versions this Grassfield was built for. Holding comes back with the next Grassfield update.")
+
+            Button {
+                enabled: !root.waiting && !root.running && root.updates.hold !== "allowed-moved"
+                push: true
+                text: root.updates.hold === "held" ? qsTr("Allow…") : qsTr("Hold Again")
+                onClicked: root.updates.setHold(root.updates.hold === "held")
+            }
+        }
+    }
+
     SettingsGroup {
         footnote: root.failure("setup") || root.failure("repair") || root.failure("off")
 
@@ -317,11 +350,19 @@ SettingsPage {
             subtitle: root.outcome ? root.outcome.subtitle : ""
 
             Button {
-                visible: root.outcome !== null && root.outcome.action !== "" && root.updates.canUseTerminal
+                visible: root.outcome !== null && root.outcome.action !== "" && root.outcome.action !== "allow" && root.updates.canUseTerminal
                 push: true
                 text: root.outcome && root.outcome.action === "finish" ? qsTr("Finish in Terminal…") : qsTr("Update in Terminal…")
                 enabled: !root.updates.updateRunning
                 onClicked: root.outcome.action === "finish" ? root.updates.finishInTerminal() : root.updates.updateInTerminal()
+            }
+            // ADR-0041 step 2a: what pacman's hold refused, one click from allowed (the same swap as the row below).
+            Button {
+                visible: root.outcome !== null && root.outcome.action === "allow"
+                enabled: !root.waiting
+                push: true
+                text: qsTr("Allow…")
+                onClicked: root.updates.setHold(true)
             }
         }
 

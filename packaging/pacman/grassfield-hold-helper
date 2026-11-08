@@ -1,0 +1,32 @@
+#!/bin/bash -p
+# grassfield-hold-helper: the program of the polkit action org.grassfield.packages.hold (ADR-0041 step 2a, ADR-0033 c.2;
+# docs/specs/updates.md U39). OPUS SECURITY REVIEW REQUIRED: it runs as root and runs a pacman transaction.
+# Started only as `pkexec /usr/lib/grassfield/grassfield-hold-helper <verb>` by grassfield-channel-set. Its action is the only one
+# whose program this is (polkit maps pkexec's program path to one action), an administrator's password every time (as for any
+# package transaction, SU-M1), never for an inactive or remote session:
+#   unhold   ("Allow system updates Grassfield hasn't tested…") grassfield-unhold replaces grassfield-hold in one transaction
+#   hold     ("Hold Again") grassfield-hold replaces grassfield-unhold
+# Both are fixed names installed from [grassfield] only, as dependencies (gf_hold_swap in grassfield-channel.sh). Refused while
+# pacman runs (db.lck) or while a channel change runs (its lock). Exit 0 done, 1 refused or failed (nothing else changed), 2 usage.
+# Its only input is its argument vector; it replaces its environment exactly as grassfield-channel-helper does (-p, then `env -i`
+# while the environment holds anything, then the variables bash exports itself are removed).
+if IFS= read -r -d '' _ 2>/dev/null </proc/$$/environ; then   # stderr first: without /proc, no message
+  exec /usr/bin/env -i /usr/bin/bash -p /usr/lib/grassfield/grassfield-hold-helper "$@"
+fi
+while read -r gf_var; do unset -v "$gf_var" 2>/dev/null; done < <(compgen -e)
+unset -v gf_var
+GF_PROG=grassfield-hold-helper
+. /usr/lib/grassfield/grassfield-channel.sh || exit 1
+gf_start
+gf_lock 0
+
+case "$#:${1-}" in
+  1:unhold | 1:hold)
+    gf_require_unlocked
+    gf_hold_swap "$1"
+    ;;
+  *)
+    echo "usage: grassfield-hold-helper hold|unhold (run by grassfield-channel-set through pkexec)" >&2
+    exit 2
+    ;;
+esac

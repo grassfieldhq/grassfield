@@ -22,7 +22,8 @@
 _here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 _ver=$(tr -d '[:space:]' <"$_here/../../VERSION")
 pkgbase=grassfield
-pkgname=(grassfield-desktop grassfield-compositor grassfield-icons grassfield-store grassfield-wallpapers grassfield-login-themes)
+pkgname=(grassfield-desktop grassfield-compositor grassfield-icons grassfield-store grassfield-wallpapers grassfield-login-themes
+         grassfield-hold grassfield-unhold)
 pkgver=${_ver//-/}
 if [[ -n ${GRASSFIELD_PKGREL:-} && ! $GRASSFIELD_PKGREL =~ ^[1-9][0-9]*$ ]]; then
   echo "PKGBUILD: GRASSFIELD_PKGREL must be a positive integer, not '$GRASSFIELD_PKGREL'" >&2
@@ -53,6 +54,8 @@ options=(!debug)
 # composer reads src/, links/ and Pebble/ only. The pins live in icon-pins.sh, which scripts/dev/icons.sh sources too
 # (one definition); only the sha256sums below are written here, because makepkg's updpkgsums rewrites them in place.
 source "$_here/icon-pins.sh"
+# The bounds of grassfield-hold, computed from BUILD-DEPS (ADR-0041 step 2a); also installed for grassfield-channel-set.
+source "$_here/hold-bounds.sh"
 _mactahoe_commit=$MT_PIN
 _pebble_commit=$PB_PIN
 source=("mactahoe-icon-theme::git+${MT_REPO}.git#commit=${_mactahoe_commit}"
@@ -269,7 +272,10 @@ package_grassfield-desktop() {
   # already installed with gnome-keyring (probe P15), declared because Grassfield's own binary needs it. libsecret: the
   # bridge's KIO password server keeps remembered network passwords in the Secret Service with it (ADR-0035 D-12 b, step
   # 9e); already installed with gcr-4, declared for the same reason.
-  depends=(hyprland uwsm quickshell qt6-declarative qt6-wayland wayland qt6-svg inter-font kio solid kcoreaddons kservice kwindowsystem qt6-multimedia qt6-imageformats qt6-webengine ffmpeg curl python librsvg hyprcursor breeze-icons grassfield-icons grassfield-wallpapers networkmanager bluez-utils wireplumber pipewire wl-clipboard grim slurp grassfield-keyring pacman-contrib fakeroot gnome-keyring xdg-desktop-portal xdg-desktop-portal-gtk libcups gcr-4 libsecret)
+  depends=(hyprland uwsm quickshell qt6-declarative qt6-wayland wayland qt6-svg inter-font kio solid kcoreaddons kservice kwindowsystem qt6-multimedia qt6-imageformats qt6-webengine ffmpeg curl python librsvg hyprcursor breeze-icons grassfield-icons grassfield-wallpapers networkmanager bluez-utils wireplumber pipewire wl-clipboard grim slurp grassfield-keyring grassfield-hold pacman-contrib fakeroot gnome-keyring xdg-desktop-portal xdg-desktop-portal-gtk libcups gcr-4 libsecret)
+  # grassfield-hold (ADR-0041 step 2a, SQ-3 A, owner decision of 2026-11-08): the bounds of the toolkit this build was made for;
+  # the literal name is what pacman resolves first, and grassfield-unhold provides it without a bound (Software Update's
+  # "Allow system updates Grassfield hasn't tested…"). Never constrain hyprland or kcoreaddons there.
   # Quickshell's v0.3.2 tag lets a session lock the compositor drops go unnoticed (WlSessionLock::unlock() never emits,
   # fixed upstream in 18c95fae, shipped from 0.3.2.r7): the lock would not be taken again (fail-open). That exact version is
   # refused; 0.3.1 and the 0.3.2 snapshots from r7 on are not matched by `=0.3.2`.
@@ -357,9 +363,11 @@ package_grassfield-desktop() {
   # the templates they write /etc/pacman.d/grassfield.conf from; Omarchy's pre-refresh-pacman hook that
   # grassfield-channel-set links. grassfield-channel-set, grassfield-update-check and grassfield-update-run come from
   # packaging/bin above.
-  install -m755 -t "$pkgdir/usr/lib/grassfield/" "$root/packaging/pacman/grassfield-channel-helper" \
+  install -m755 -t "$pkgdir/usr/lib/grassfield/" "$root/packaging/pacman/grassfield-channel-helper" "$root/packaging/pacman/grassfield-hold-helper" \
     "$root/packaging/pacman/grassfield-update-helper" "$root/packaging/pacman/grassfield-channel-scriptlet"
   install -m644 -t "$pkgdir/usr/lib/grassfield/" "$root/packaging/pacman/grassfield-channel.sh"
+  # grassfield-channel-set's `hold-state` reads the hold's bounds with the code the build computed them with.
+  install -Dm644 "$root/packaging/arch/hold-bounds.sh" "$pkgdir/usr/lib/grassfield/grassfield-hold-bounds.sh"
   install -Dm644 "$root/packaging/pacman/org.grassfield.packages.policy" "$pkgdir/usr/share/polkit-1/actions/org.grassfield.packages.policy"
   # Owner decision SU-M2 (ADR-0033 s5; OPUS SECURITY REVIEW): the sudo of Omarchy's migrations that grassfield-update-helper
   # runs, alone in its folder (the first of their PATH), the polkit rule that lets their unit alone start root units, and
@@ -656,4 +664,32 @@ package_grassfield-login-themes() {
   install -m644 "$srcdir"/plymouth-grassfield/*.png "$srcdir/plymouth-grassfield/grassfield.plymouth" "$ply/"
   install -Dm644 "$(_root)/LICENSE" "$pkgdir/usr/share/licenses/grassfield-login-themes/LICENSE"
   install -Dm644 "$(_root)/branding/LICENSES.md" "$pkgdir/usr/share/licenses/grassfield-login-themes/BRANDING.md"
+}
+
+package_grassfield-hold() {
+  pkgdesc="Grassfield: refuses a system update that moves Qt or Quickshell past what this Grassfield was built for (ADR-0041)"
+  arch=(any)
+  license=(MIT)
+  # `depends` and nothing else: no file, no script, no service. The bounds are the toolkit BUILD-DEPS recorded for this build
+  # (quickshell at its version, qt6-base at its major.minor: packaging/arch/hold-bounds.sh), never typed here. pacman then
+  # refuses, on every path (a system upgrade in a terminal, Omarchy's update, Update Now), a transaction that moves either
+  # past them, until the repository carries the grassfield-desktop built for the new toolkit, which joins the same
+  # transaction. Never hyprland (ADR-0009), never kcoreaddons.
+  local bounds
+  bounds=$(gf_hold_depends "$srcdir/BUILD-DEPS") || { echo "PKGBUILD: BUILD-DEPS lacks a quickshell or qt6-base version the hold can bound" >&2; return 1; }
+  mapfile -t depends <<<"$bounds"
+  install -Dm644 "$(_root)/LICENSE" "$pkgdir/usr/share/licenses/grassfield-hold/LICENSE"
+}
+
+package_grassfield-unhold() {
+  pkgdesc="Grassfield: lets the system update past the Qt and Quickshell versions this Grassfield was built for (replaces grassfield-hold)"
+  arch=(any)
+  license=(MIT)
+  # The empty twin of grassfield-hold: the same name provided, no bound, a conflict with it. grassfield-desktop depends on
+  # `grassfield-hold`, which this satisfies, so installing one replaces the other in a single pacman transaction (the channel
+  # helper's `unhold` and `hold` verbs). It is never installed by dependency: pacman resolves the literal name first.
+  depends=()
+  provides=(grassfield-hold)
+  conflicts=(grassfield-hold)
+  install -Dm644 "$(_root)/LICENSE" "$pkgdir/usr/share/licenses/grassfield-unhold/LICENSE"
 }

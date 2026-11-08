@@ -49,6 +49,9 @@ QtObject {
     property var askedFile: null
     // stable, beta, custom, repair, off; "" until read or when it cannot be read.
     property string channel: ""
+    // ADR-0041 step 2a: the hold on system updates Grassfield hasn't tested, SoftwareUpdateLogic.holdOf: held, allowed,
+    // allowed-moved, none; "" until read or when it cannot be read (the pane then shows nothing about it).
+    property string hold: ""
     readonly property bool buildReady: SoftwareUpdateLogic.buildReady(root.backend.readText(root.repositoryFile).text)
     // The channel Set Up… chooses: stable on a plain version, beta on a prerelease (-betaN, -rcN) and when it cannot be read.
     readonly property string defaultChannel: SoftwareUpdateLogic.defaultChannel(root.backend.readText(root.versionFile).text)
@@ -86,10 +89,14 @@ QtObject {
     signal runFinished(string result, string restart)
     // The channel change that waits for the polkit dialog (Backend.pendingActions); "" when none.
     readonly property string channelTag: "update.channel.act"
+    // The swap of the hold and its twin has its own tag: one polkit dialog per tag at a time.
+    readonly property string holdTag: "update.hold.act"
     readonly property bool waitingForPermission: (root.backend.pendingActions ?? {})[root.channelTag] !== undefined
-    // What the last channel change was for (its failure sentence names it): "setup", "beta", "repair" or "off".
+        || (root.backend.pendingActions ?? {})[root.holdTag] !== undefined
+    // What the last channel change was for (its failure sentence names it): "setup", "beta", "repair", "off", "allow" or "holdagain".
     property string lastAction: ""
     readonly property string channelError: root.system.errors[root.channelTag] ?? ""
+    readonly property string holdError: root.system.errors[root.holdTag] ?? ""
 
     function read(): void {
         const before = root.file;
@@ -109,6 +116,11 @@ QtObject {
 
     function readChannel(): void {
         root.system.query(["/usr/lib/grassfield/grassfield-channel-set"], "update.channel");
+    }
+
+    // The hold as grassfield-channel-set prints it (read-only: pacman's local database and the build's record).
+    function readHold(): void {
+        root.system.query(["/usr/lib/grassfield/grassfield-channel-set", "hold-state"], "update.hold");
     }
 
     // U14: Omarchy's marker, or the running kernel's modules folder gone (a kernel update): the reboot rule of Omarchy's
@@ -157,6 +169,7 @@ QtObject {
         root.run = SoftwareUpdateLogic.runView(state, runnerAlive, progress, helperAlive);
         if (before === "running" && root.run.state === "done") {
             root.readRestart();
+            root.readHold();
             root.runFinished(root.run.result, root.run.restart);
         }
         root.poll.running = root.running;
@@ -185,6 +198,14 @@ QtObject {
     function setChannel(verb: string, action: string): bool {
         root.lastAction = action;
         return root.system.act("software update: " + action + " (grassfield-channel-set " + verb + ")", ["/usr/lib/grassfield/grassfield-channel-set", verb], root.channelTag);
+    }
+
+    // "Allow system updates Grassfield hasn't tested…" (`allow`) and "Hold again", ADR-0041 step 2a: one root transaction
+    // through the channel helper's polkit action (grassfield-channel-set unhold | hold).
+    function setHold(allow: bool): bool {
+        root.lastAction = allow ? "allow" : "holdagain";
+        const verb = allow ? "unhold" : "hold";
+        return root.system.act("software update: " + (allow ? "allow untested system updates" : "hold untested system updates") + " (grassfield-channel-set " + verb + ")", ["/usr/lib/grassfield/grassfield-channel-set", verb], root.holdTag);
     }
 
     // Update Now (U24): the runner, which asks for the password and owns the run; without it, Omarchy's terminal (U11).
@@ -228,6 +249,7 @@ QtObject {
         root.backend.watch(root.includeFile);
         root.read();
         root.readChannel();
+        root.readHold();
         root.readRestart();
         root.readRun();
     }
@@ -269,6 +291,15 @@ QtObject {
         function onFinished(tag: string, ok: bool, output: string): void {
             if (tag === "update.channel") {
                 root.channel = ok ? SoftwareUpdateLogic.channelOf(output) : "";
+            } else if (tag === "update.hold") {
+                root.hold = ok ? SoftwareUpdateLogic.holdOf(output) : "";
+            } else if (tag === root.holdTag) {
+                // The swap ended: the state is read again, and the pane checks (what Update Now refused may go through now).
+                root.readHold();
+                if (ok) {
+                    root.settle();
+                    root.check();
+                }
             } else if (tag === "update.ask") {
                 // The shell runs (or joins) a check: its answer comes through the file. Anything else: no shell (U10).
                 if (!(ok && output.trim() === "ok")) {
