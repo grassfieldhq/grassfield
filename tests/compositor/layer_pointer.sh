@@ -126,7 +126,7 @@ trap cleanup EXIT
 trap 'exit 130' INT HUP
 trap 'exit 143' TERM
 
-ipcq lock status >/dev/null || { say "setup error: no nested shell answering (tests/visual/ipc.sh lock status)"; exit 2; }
+ipcq lock status >/dev/null && ipcq overview status >/dev/null || { say "setup error: no nested shell answering (tests/visual/ipc.sh lock status: the security process, ADR-0041 S2; overview status: the UI)"; exit 2; }
 read -r mon_x mon_y mon_w mon_h < <(nestctl monitors -j | jq -r --arg o "$out" '.[] | select(.name == $o) | "\(.x) \(.y) \(.width) \(.height)"')
 [[ -n ${mon_w:-} ]] || { say "setup error: output $out not found"; exit 2; }
 app_x=$(ipcq menubar bridgeState "$out" | jq -r '.bar[] | select(.kind == "app") | (.x + .w / 2 | floor)' | head -n 1)

@@ -43,7 +43,8 @@ done
 typed=$dev/lock-keyboard-typed.txt
 status=0
 nested() { env WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" "$@"; }
-ipc() { nested qs ipc -p "$root/shell" call "$@" 2>/dev/null; }
+# The lock lives in the security process since ADR-0041 step 1, S2 (shell/security.qml, started by scripts/dev/shell-run.sh).
+ipc() { nested qs ipc -p "$root/shell/security.qml" call "$@" 2>/dev/null; }
 nestctl() { timeout 10 "$root/scripts/nestctl" "$@"; }
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; status=1; }

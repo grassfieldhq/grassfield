@@ -2,7 +2,8 @@
 # GF-AUDIT-001 GF-116 (DT-08), static part: while the session is locked no shell surface opens, whichever path asks.
 # The runtime part runs the real controllers offscreen (tests/security/lock_surfaces/shell.qml: Search, Apps, Notification
 # Center, Overview, every Popups kind). This script checks, in the sources, what offscreen cannot run:
-#   wiring    shell.qml mirrors Lock.locked into SessionState.locked; Overview and Switcher get the lock state;
+#   wiring    shell.qml mirrors LockClient.locked (the security process's published state read fail closed, ADR-0041
+#             step 1, S2) into SessionState.locked; Overview, Switcher, the capture toolbar and the wallpaper get it;
 #   refusal   each surface's entry point refuses while locked as its first decision: Popups.open, Search.show,
 #             AppsController.show, Overview.show, Notifications.toggleCenter/openWidgetGallery, Dock.enterKeyboardMode,
 #             the four window commands (IPC target "windows"), Switcher.step, the exit cover (ExitCover.cover), Emoji &
@@ -75,10 +76,15 @@ def first_decision(path, name, needle, text=None, lines=4):
     expect(f"{path}: {name}() refuses while locked first ({needle})", needle in head)
 
 shell = read("shell/shell.qml")
-expect("shell.qml binds SessionState.locked to Lock.locked",
-       re.search(r"Binding\s*\{\s*target:\s*SessionState\s*property:\s*\"locked\"\s*value:\s*Lock\.locked\s*\}", shell) is not None)
-expect("shell.qml gives the Overview the lock state", re.search(r"Overview\s*\{[^}]*locked:\s*Lock\.lockState\s*!==\s*\"unlocked\"", shell, re.S) is not None)
-expect("shell.qml gives the Switcher the lock state", re.search(r"Switcher\s*\{[^}]*locked:\s*Lock\.lockState\s*!==\s*\"unlocked\"", shell, re.S) is not None)
+expect("shell.qml binds SessionState.locked to LockClient.locked (ADR-0041 S2: the lock lives in the security process)",
+       re.search(r"Binding\s*\{\s*target:\s*SessionState\s*property:\s*\"locked\"\s*value:\s*LockClient\.locked\s*\}", shell) is not None
+       and len(re.findall(r"property:\s*\"locked\"", code(shell))) == 1)
+expect("shell.qml gives the Overview the lock state", re.search(r"Overview\s*\{[^}]*locked:\s*SessionState\.locked\s", shell, re.S) is not None)
+expect("shell.qml gives the Switcher the lock state", re.search(r"Switcher\s*\{[^}]*locked:\s*SessionState\.locked\s", shell, re.S) is not None)
+expect("shell.qml gives the wallpaper the lock state", re.search(r"Wallpaper\s*\{[^}]*locked:\s*SessionState\.locked\s", shell, re.S) is not None)
+expect("shell.qml imports neither the lock nor idle (ADR-0041 S2: they run in the security process only)",
+       re.search(r"^\s*import\s+qs\.security\.(lock|idle)\b", code(shell), re.M) is None
+       and re.search(r"\bLock\.|\bIdle\s*\{|\bSleepInhibitor\b", code(shell)) is None)
 
 state = read("shell/services/SessionState.qml")
 refuses = function(state, "refuses")
@@ -105,7 +111,7 @@ expect("shell/services/Emoji.qml: place() opens nothing once the session locked"
 # triggered runs only if the session is still unlocked once the toolbar is gone.
 first_decision("shell/capture/Capture.qml", "show", R, lines=1)
 capture = read("shell/capture/Capture.qml")
-expect("shell.qml gives the capture toolbar the lock state", re.search(r"\bCapture\s*\{\s*id:\s*captureSurface\s*locked:\s*Lock\.lockState\s*!==\s*\"unlocked\"\s*\}", code(shell)) is not None)
+expect("shell.qml gives the capture toolbar the lock state", re.search(r"\bCapture\s*\{\s*id:\s*captureSurface\s*locked:\s*SessionState\.locked\s*\}", code(shell)) is not None)
 expect("shell/capture/Capture.qml: toggle() opens only through show()", re.search(r"^\s*else\s+show\(\);\s*$", code(function(capture, "toggle") or ""), re.M) is not None
        and "open = true" not in code(function(capture, "toggle") or ""))
 expect("shell/capture/Capture.qml: the capture runs only if the session is still unlocked when the toolbar is gone",
@@ -434,13 +440,14 @@ expect("polkit sheet: a request Quickshell replaced is watched and, once its PAM
        and len(re.findall(r"\bpriv\.replaced\s*=(?!=)", model)) == 2 and len(re.findall(r"\bpriv\.seen\s*=(?!=)", model)) == 1)
 dialog_model_m = re.search(r"\bAuthDialogModel\s*\{\s*id:\s*dialogModel\b", agent)
 dialog_model = block_after(agent, dialog_model_m.start()) if dialog_model_m else ""
-# Opus re-review 2: not while the displays are off (MINOR-2, SessionState.displaysOff mirrors Idle.displayOff), and a held
+# Opus re-review 2: not while the displays are off (MINOR-2, SessionState.displaysOff mirrors LockClient.displaysOff: idle
+# in the security process since ADR-0041 S2, true without a fresh state), and a held
 # request only when it is held as "right after another one" or clicked past its guard (MINOR-1: not just after an unlock).
 expect("polkit sheet: the agent hands the model every flow Quickshell has open and makes it answerable only while its sheet is on screen in front (unlocked, no screen saver, displays on, not waiting, in the sheet; held only right after another one or once clicked)",
        re.search(r"^\s*request:\s*agent\.flow\s*$", dialog_model, re.M) is not None
        and re.search(r"^\s*answerable:\s*!SessionState\.locked\s*&&\s*!SessionState\.saverShown\s*&&\s*!SessionState\.displaysOff\s*&&\s*!root\.waiting\s*&&\s*root\.requestOpen\s*"
                      r"&&\s*\(!root\.heldByLock\s*\|\|\s*root\.userFocused\s*\|\|\s*root\.heldWhy\s*===\s*\"queued\"\)\s*$", dialog_model, re.M) is not None
-       and re.search(r"Binding\s*\{\s*target:\s*SessionState\s*property:\s*\"displaysOff\"\s*value:\s*idle\.displayOff\s*\}", code(shell)) is not None
+       and re.search(r"Binding\s*\{\s*target:\s*SessionState\s*property:\s*\"displaysOff\"\s*value:\s*LockClient\.displaysOff\s*\}", code(shell)) is not None
        and len(re.findall(r"\"displaysOff\"", code(shell))) == 1
        and len(re.findall(r"\b(?:request|answerable)\s*:", agent)) == 2
        and not re.search(r"\b(?:request|answerable|refusesUnseen)\s*=(?!=)|\.cancelAuthenticationRequest\b", agent))
@@ -812,13 +819,14 @@ for case_ in 'shell/dock/Dock.qml#SessionState.refuses("dock keyboard")#false' \
   'shell/shell.qml#value: authAgent.queuePresent || secretAgent.requestActive || secretAgent.sinkingKeys#value: authAgent.queuePresent || secretAgent.requestActive' \
   'shell/security/polkit/AuthAgent.qml#readonly property bool queuePresent: agent.isActive || root.requestOpen || root.sinkingKeys#readonly property bool queuePresent: agent.isActive || root.requestOpen' \
   'shell/security/polkit/AuthAgent.qml#!SessionState.displaysOff && #' \
-  'shell/shell.qml#        property: "displaysOff"\n        value: idle.displayOff#        property: "displaysOff"\n        value: false' \
+  'shell/shell.qml#        property: "displaysOff"\n        value: LockClient.displaysOff#        property: "displaysOff"\n        value: false' \
   'shell/security/polkit/AuthAgent.qml#root.userFocused || root.heldWhy === "queued")#root.userFocused || root.heldWhy !== "locked")' \
   'shell/security/polkit/AuthAgent.qml#                    && (!root.heldByLock || root.userFocused || root.heldWhy === "queued")#' \
   'shell/capture/Capture.qml#        if (locked)\n            hide();#        ;' \
   'shell/capture/Capture.qml#            if (args && !SessionState.locked)#            if (args)' \
   'shell/capture/Capture.qml#        else\n            show();#        else\n            open = true;' \
-  'shell/shell.qml#        id: captureSurface\n        // The session lock owns the screen and the keyboard: the toolbar closes and does not open.\n        locked: Lock.lockState !== "unlocked"#        id: captureSurface' \
+  'shell/shell.qml#        id: captureSurface\n        // The session lock owns the screen and the keyboard: the toolbar closes and does not open.\n        locked: SessionState.locked#        id: captureSurface' \
+  'shell/shell.qml#        property: "locked"\n        value: LockClient.locked#        property: "locked"\n        value: false' \
   'shell/security/polkit/AuthDialog.qml#            id: identityList\n            enabled: root.inputEnabled#            id: identityList' \
   'shell/security/polkit/AuthDialog.qml#                // No focus while AuthAgent keeps the keys on its sink (as the identity rows).\n                enabled: root.inputEnabled#                // No focus while AuthAgent keeps the keys on its sink (as the identity rows).' \
   'shell/security/polkit/AuthAgent.qml#        const typing = (follows && win.takesKeys) || root.sinkingKeys || (!dialogModel.active && win.takesKeys && !dialogModel.answered);\n        const queued = follows || typing || (dialogModel.active && dialogModel.followsAnother());#        let typing = false;\n        const queued = follows || typing || (dialogModel.active && dialogModel.followsAnother());\n        typing = (follows && win.takesKeys) || root.sinkingKeys || (!dialogModel.active && win.takesKeys && !dialogModel.answered);' \

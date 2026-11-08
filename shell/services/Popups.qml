@@ -266,7 +266,8 @@ Singleton {
         });
     }
 
-    // The session locks: whatever is open closes (Lock.lock() closes it too, before it asks for the lock).
+    // The session locks: whatever is open closes (GF-116; the lock lives in the security process since ADR-0041 S2 and closes
+    // nothing of the UI itself).
     Connections {
         target: SessionState
 

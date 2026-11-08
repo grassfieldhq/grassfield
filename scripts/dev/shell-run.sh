@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # (Re)start grassfield-shell inside the nested instance only. Never against the owner's session (R3).
 #
+# The security process (ADR-0041 step 1, S2: `qs -p shell/security.qml`, the lock, idle and the sleep inhibitor; in a real
+# session grassfield-security.service) runs beside it with the same environment, its own record (.dev/security.pid) and log
+# (.dev/security.log). A plain run starts it when it is not running and leaves a running one alone, as systemd does: a
+# restart of the UI never touches the lock. `--security` (re)starts the security process only, as its unit's Restart=
+# would after a crash (the lock survival tests kill it and bring it back this way); the UI is left alone.
+#
 # Private D-Bus session bus (the default; --session-bus or GRASSFIELD_PRIVATE_BUS=0 keeps the owner's session bus for
 # the rare test that needs it): the shell owns org.freedesktop.Notifications without touching the owner's session, and
 # the bus starts nothing of the machine: scripts/dev/dev-bus.conf has no service folder, so no D-Bus activatable handler,
@@ -22,6 +28,7 @@ set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 
 # Same options as nested-up.sh (bare commands match the sandbox exclusion; env prefixes may not).
+only_security=0
 while [[ $# -gt 0 ]]; do
   case $1 in
     --private-bus) export GRASSFIELD_PRIVATE_BUS=1 ;;
@@ -34,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --desktop-screen) export GRASSFIELD_DESKTOP_SCREEN=${2:?--desktop-screen needs an output name}; shift ;;
     --cursor-theme) export GRASSFIELD_CURSOR_THEME=${2:?--cursor-theme needs a theme name}; shift ;;
     --unit-env) export GRASSFIELD_UNIT_ENV=1 ;;  # the shell gets grassfield-shell.service's own variables (file watcher off, as packaged)
+    --security) only_security=1 ;;  # (re)start the security process only (ADR-0041 S2), the UI left alone
     *) echo "shell-run: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -56,8 +64,13 @@ sig=$DEV_NESTED_SIG
 sock=$DEV_NESTED_SOCK
 
 # The shell runs as a session leader (setsid): its whole group stops, so that no orphaned qs stays behind. Only a record
-# that still matches its process is signalled (scripts/dev/pidfile.sh).
-dev_stop "$dev/shell.pid" grassfield-shell >/dev/null || exit 1
+# that still matches its process is signalled (scripts/dev/pidfile.sh). `--security` stops the security process instead
+# (below); the UI keeps running.
+if ((only_security)); then
+  dev_stop "$dev/security.pid" grassfield-security >/dev/null || exit 1
+else
+  dev_stop "$dev/shell.pid" grassfield-shell >/dev/null || exit 1
+fi
 
 launch=(qs -p "$root/shell" --log-times --no-color)
 private=""
@@ -101,10 +114,13 @@ if [[ ${GRASSFIELD_PRIVATE_BUS:-1} == 1 ]]; then
   bus_env=(DBUS_SESSION_BUS_ADDRESS="$bus")
   private=1
 
-  # grassfield-menu-bridge on the private bus, (re)started with the shell.
-  dev_stop "$dev/menu-bridge.pid" grassfield-menu-bridge >/dev/null || exit 1
+  # grassfield-menu-bridge on the private bus, (re)started with the shell (not by `--security`: it serves the UI).
   bridge=${GRASSFIELD_MENU_BRIDGE:-$dev/build/grassfield-menu-bridge}
-  if [[ -x $bridge ]]; then
+  if ((only_security)); then
+    [[ -S $dev/run/menu-bridge.sock ]] && bridge_sock=$dev/run/menu-bridge.sock
+  elif ! dev_stop "$dev/menu-bridge.pid" grassfield-menu-bridge >/dev/null; then
+    exit 1
+  elif [[ -x $bridge ]]; then
     bridge_sock=$dev/run/menu-bridge.sock
     env -u GRASSFIELD_SESSION DBUS_SESSION_BUS_ADDRESS="$bus" GRASSFIELD_DEV=1 GRASSFIELD_MENU_BRIDGE_SOCKET="$bridge_sock" \
       setsid "$bridge" >"$dev/menu-bridge.log" 2>&1 </dev/null &
@@ -114,7 +130,7 @@ if [[ ${GRASSFIELD_PRIVATE_BUS:-1} == 1 ]]; then
   else
     echo "shell-run: no menu bridge ($bridge; build it with bridges/menu-bridge/build-direct.sh): T0 menus only" >&2
   fi
-else
+elif ((!only_security)); then
   # Without a private bus there is no bridge: a leftover one would serve the wrong shell.
   dev_stop "$dev/menu-bridge.pid" grassfield-menu-bridge >/dev/null || exit 1
 fi
@@ -227,6 +243,38 @@ fi
 # No folder stack by default in dev (the shell's default is ~/Downloads: a nested Dock would pile up the owner's real downloads).
 if jq -e '.dock.folders == null' "$cfg" >/dev/null 2>&1; then
   jq '.dock.folders = []' "$cfg" >"$cfg.new" && mv "$cfg.new" "$cfg"
+fi
+
+# The security process (ADR-0041 S2): the same environment as the shell below (the nested compositor, the private bus, the
+# dev config and state, GRASSFIELD_DEV=1), its own record and log. Started when it is not running (a plain run) or always
+# (`--security`, after the stop above); a restart of the UI leaves a running one alone, unless the settings it was started
+# with changed (the language, the visual fixtures and fixed time, the private bus, the unit environment, the L2 PAM opt-in:
+# .dev/security.sig), as when the visual suite switches language: then it is restarted too.
+security_sig="lang=${GRASSFIELD_LANG:-} fixtures=${GRASSFIELD_VISUAL_FIXTURES:-} time=${GRASSFIELD_FIXED_TIME:-} bus=$private unit=${GRASSFIELD_UNIT_ENV:-} pam=${GRASSFIELD_DEV_ALLOW_PAM:-}"
+start_security() {
+  env "${unit_unset[@]}" "${timing[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/open-shims:$PATH" \
+    WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" \
+    GRASSFIELD_STATE_HOME="$dev/state" GRASSFIELD_CONFIG_HOME="$dev/config" GRASSFIELD_DEV=1 \
+    GRASSFIELD_PRIVATE_BUS="$private" \
+    QT_QPA_PLATFORM=wayland QT_NO_XDG_DESKTOP_PORTAL=1 QML_IMPORT_PATH="$root/ui:$dev/build/qml" GRASSFIELD_TRANSLATIONS_DIR="$dev/translations" \
+    setsid qs -p "$root/shell/security.qml" --log-times --no-color >"$dev/security.log" 2>&1 </dev/null &
+  local security_pid=$!
+  dev_record_pid "$dev/security.pid" "$security_pid"
+  printf '%s\n' "$security_sig" >"$dev/security.sig"
+  echo "shell-run: grassfield-security pid $security_pid (log .dev/security.log)"
+}
+if ((only_security)); then
+  start_security
+  exit 0
+fi
+if dev_live_pid "$dev/security.pid" >/dev/null; then
+  if [[ $(cat "$dev/security.sig" 2>/dev/null) != "$security_sig" ]]; then
+    echo "shell-run: the security process was started with other settings; restarting it too" >&2
+    dev_stop "$dev/security.pid" grassfield-security >/dev/null || exit 1
+    start_security
+  fi
+else
+  start_security
 fi
 
 # The open shims (gio, xdg-open, gtk-launch -> open-policy.sh) come first on the shell's PATH: QProcess resolves a program

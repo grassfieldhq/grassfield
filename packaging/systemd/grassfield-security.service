@@ -1,10 +1,10 @@
 [Unit]
-Description=Grassfield security process (the lock, the polkit agent, idle and the sleep inhibitor, moved in step by step)
+Description=Grassfield security process (the lock, idle and the sleep inhibitor; the polkit agent from S3)
 Documentation=file:///usr/share/doc/grassfield/README.md
 # ADR-0041 step 1 (the owner's SQ-1 B, ADR-0010 "Separate security process"): a second Quickshell process beside the UI,
-# so that a crash of the desktop never takes the lock down. S1 (this unit): the process runs beside the UI and hosts
-# nothing moved yet (shell/security.qml); S2 moves the lock, idle and the sleep inhibitor here (then this unit gets
-# OnFailure=omarchy-sleep-lock.service and the sleep-lock gate is keyed on it), S3 the polkit agent, S4 safe mode.
+# so that a crash of the desktop never takes the lock down. S1 started it hosting nothing; since S2 it hosts the lock, idle
+# and the sleep inhibitor (shell/security.qml, shell/security/SecurityHost.qml), and the UI asks it for every lock over
+# IPC; S3 adds the polkit agent, S4 safe mode.
 PartOf=graphical-session.target
 After=graphical-session.target
 Requisite=graphical-session.target
@@ -14,6 +14,14 @@ ConditionEnvironment=GRASSFIELD_SESSION=1
 # the known limit); with RestartSec=1 a loop faster than one crash every 59 s reaches it (tests/shell/unit_restart_limits.sh).
 StartLimitIntervalSec=300
 StartLimitBurst=5
+# Fail-safe for lock before sleep (D-12), moved here from grassfield-shell.service at S2 with the inhibitor. With the default
+# RestartMode=normal this unit passes through "failed" on every failure (a crash, an exit code, 255 included) before the
+# restart, so OnFailure= starts Omarchy's sleep-lock unit after each one: it holds a logind delay inhibitor while this
+# process restarts or stays failed and, before a sleep, asks it to lock through Grassfield's `omarchy-shell` stand-in
+# (packaging/shims), which starts it again if needed. Its Grassfield drop-in skips it once this process is up again
+# (active/running; packaging/systemd/sleep-lock-gate, keyed on this unit alone). A logout starts it too, and the gate then
+# skips it (the compositor is gone).
+OnFailure=omarchy-sleep-lock.service
 
 [Service]
 Type=simple
@@ -43,7 +51,13 @@ RestartSec=1
 TimeoutStopSec=5
 # Memory guard from the S1 measurement (ADR-0041 step 1; the integrator's nested pass of #72: 157 MB of RSS at idle for
 # the root hosting one IPC handler): MemoryHigh about twice that, MemoryMax about four times, as a slow leak reaches the
-# first after days and a runaway one the second (ADR-0041 R4). S2 measures again with the lock's surfaces and resets both.
+# first after days and a runaway one the second (ADR-0041 R4). S2 (docs/testing/gates.md "P2 and the security process"):
+# offscreen, the root with the lock and idle loaded grows by about 45 MB of RSS over S1's (65 -> 110 MB, medians of three);
+# the lock's surfaces and the stills (about 33 MB per 4K output, decoded once each) come on top when locked:
+# 157 + 45 + 2 x 33 = 268 MB for two 4K outputs,
+# under MemoryHigh, MemoryMax far above it. The nested measurement with the lock drawn decides (NOT VERIFIED at S2's
+# commit: the integrator's `scripts/gates/rss.sh --nested` with both processes); until it, both stay as set at S1. The
+# throttling above MemoryHigh could delay drawing the lock past the sleep delay: the margin above is kept for that reason.
 # CPUQuota as the UI unit's (one and a half cores): a spinning process cannot starve the compositor, while the lock
 # screen's rendering and the PAM exchange (S2) keep a whole core; the 50% of the first version would have throttled them
 # (the integrator's merge review of #72). A loop is caught by the restart limit above and, from S2, by the heartbeat.

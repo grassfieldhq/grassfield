@@ -31,7 +31,10 @@ Scope {
     // `screen`: output name of the corner that fired (surfaces that take a screen open there).
     function run(action: string, screen: string): void {
         if (Actions.isDirect(action)) {
-            Notifications.toggleCenter(screen);
+            if (Actions.normalize(action) === "lock")
+                SessionState.requestLock("corner");
+            else
+                Notifications.toggleCenter(screen);
             return;
         }
         const argv = Actions.command(action, Quickshell.processId);

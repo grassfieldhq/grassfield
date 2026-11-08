@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# GF-AUDIT-001 SEC-02 / GF-030 / D-12: lock coverage never disappears silently.
+# GF-AUDIT-001 SEC-02 / GF-030 / D-12: lock coverage never disappears silently. Since ADR-0041 step 1, S2 the lock, idle and
+# the sleep inhibitor run in the security process (grassfield-security.service), so every check below about "the process
+# that locks" is about that unit, and the UI's unit (grassfield-shell.service) keeps only its restart and the failure counter.
 #   gate     packaging/systemd/sleep-lock-gate (ExecCondition of Omarchy's omarchy-sleep-lock.service) skips Omarchy's
-#            unit only in the Grassfield session while grassfield-shell is up (active/running); it runs in the Omarchy
-#            session and whenever grassfield-shell is starting, waiting to restart after a crash (activating/auto-restart),
-#            stopped, failed or unknown (a stub systemctl answers)
+#            unit only in the Grassfield session while grassfield-security is up (active/running); it runs in the Omarchy
+#            session and whenever grassfield-security is starting, waiting to restart after a crash (activating/auto-restart),
+#            stopped, failed or unknown (a stub systemctl answers); the UI's state is never asked
 #   drop-in  10-grassfield.conf uses the gate and no longer disables Omarchy's unit unconditionally
-#   shell    grassfield-shell.service restarts after ANY exit (Restart=always, not on-failure), has a start limit, starts
-#            Omarchy's unit when it has failed for good (OnFailure=, the fail-safe), never stops that unit (it may be
-#            delaying a sleep), and cannot be restarted once the session target is gone
+#   security grassfield-security.service restarts after ANY exit (Restart=always), has a start limit, starts Omarchy's unit
+#            after every failure (OnFailure=, the fail-safe), never stops that unit (it may be delaying a sleep), and cannot
+#            be restarted once the session target is gone
+#   shell    grassfield-shell.service (the UI) restarts after any exit, keeps the failure counter as its only OnFailure=
+#            (it holds no inhibitor and no lock since S2)
 #   stand-in packaging/shims/omarchy-shell (what Omarchy's sleep-lock calls in this session): `lock lock` starts a
-#            stopped or failed grassfield-shell again and asks it to lock; `lock status` reports secure only when Hyprland
-#            lists LOCK on every monitor; every other call fails; nothing unlocks (stub systemctl, qs, hyprctl)
+#            stopped or failed grassfield-security again and asks it to lock (the security instance's path); `lock status`
+#            reports secure only when Hyprland lists LOCK on every monitor; every other call fails; nothing unlocks (stub
+#            systemctl, qs, hyprctl)
 #   package  the PKGBUILD installs the gate where the drop-in looks for it, executable
 # The runtime proof (SIGTERM / qs kill -> restarted within 3 s) is owner step L2-12 and tests/security/reload_locked.sh
 # `graceful-exit` (nested). Plain shell test: prints PASS/FAIL, exits non-zero on failure.
@@ -29,8 +34,8 @@ cat >"$tmp/bin/systemctl" <<'SH'
 #!/bin/sh
 [ "$STUB_STATE" = "<fail>" ] && exit 1
 case "$*" in
-  "--user show --property=ActiveState --value grassfield-shell.service") printf '%s\n' "$STUB_STATE" ;;
-  "--user show --property=SubState --value grassfield-shell.service") printf '%s\n' "$STUB_SUBSTATE" ;;
+  "--user show --property=ActiveState --value grassfield-security.service") printf '%s\n' "$STUB_STATE" ;;
+  "--user show --property=SubState --value grassfield-security.service") printf '%s\n' "$STUB_SUBSTATE" ;;
   *) echo "unexpected: $*" >&2; exit 9 ;;
 esac
 SH
@@ -66,7 +71,9 @@ rm -rf "$tmp/run/wayland-gone" "$tmp/run/hypr/sig-gone"
 [[ $(cgate failed wayland-gone - unset-runtime) == 0 ]] && pass "gate: undecidable (relative display, no XDG_RUNTIME_DIR) -> runs" || bad "gate: undecidable (no runtime dir) did not run"
 [[ $(cgate failed "$tmp/run/wayland-live" -) == 0 ]] && pass "gate: absolute WAYLAND_DISPLAY that exists -> runs" || bad "gate: absolute live path did not run"
 [[ $(cgate failed "$tmp/run/wayland-gone" -) == 1 ]] && pass "gate: absolute WAYLAND_DISPLAY that is gone -> skipped" || bad "gate: absolute gone path not skipped"
-[[ $(cgate active wayland-live sig-live) == 1 ]] && pass "gate: shell active/running with the compositor live -> skipped (it holds its own inhibitor)" || bad "gate: running shell not skipped"
+[[ $(cgate active wayland-live sig-live) == 1 ]] && pass "gate: security process active/running with the compositor live -> skipped (it holds its own inhibitor)" || bad "gate: running security process not skipped"
+grep -v '^[[:space:]]*#' packaging/systemd/sleep-lock-gate | grep -q "grassfield-shell" && bad "gate: asks the UI's unit (the sleep question is the security process's alone since S2)" \
+  || pass "gate: keyed on grassfield-security alone, never on the UI's grassfield-shell (S2)"
 # "Compositor gone" is decided only when ENOENT is certain (parent searchable, well-formed path of sane length, nothing there, not
 # even a dangling link); every other error is undecidable and arms the lock (review: EACCES must not read as "absent").
 rawgate() { local rc=0; env -i PATH="$tmp/bin:/usr/bin:/bin" STUB_STATE=failed STUB_SUBSTATE=failed GRASSFIELD_SESSION=1 "$@" sh packaging/systemd/sleep-lock-gate || rc=$?; echo "$rc"; }
@@ -94,14 +101,14 @@ mkdir -p "$tmp/run/hypr/stale-1" "$tmp/run/hypr/stale-2"
 [[ $(cgate failed wayland-live sig-gone) == 1 ]] && pass "gate: stale instance directories of other sessions do not count: the session's own instance is absent -> skipped" || bad "gate: stale directories counted as this session"
 [[ $(cgate failed wayland-live stale-1) == 0 ]] && pass "gate: the session's own instance directory is the one checked (present -> runs)" || bad "gate: own instance directory ignored"
 if grep -v '^[[:space:]]*#' packaging/systemd/sleep-lock-gate | grep -q "graphical-session.target"; then bad "gate: reads the session target (it reads inactive at login)"; else pass "gate: never reads graphical-session.target"; fi
-[[ $(gate 1 active running) == 1 ]] && pass "gate: Grassfield session, grassfield-shell active/running -> Omarchy's unit skipped" \
-  || bad "gate: Grassfield session, grassfield-shell active/running -> not skipped"
+[[ $(gate 1 active running) == 1 ]] && pass "gate: Grassfield session, grassfield-security active/running -> Omarchy's unit skipped" \
+  || bad "gate: Grassfield session, grassfield-security active/running -> not skipped"
 # N1: after a crash the shell is activating/auto-restart, then activating/start: no Grassfield inhibitor exists then.
 for pair in "activating auto-restart" "activating start" "active exited" "reloading running" "inactive dead" "failed failed" \
   "deactivating stop-sigterm" "maintenance dead" "<fail> x"; do
   read -r unit_state unit_sub <<<"$pair"
-  [[ $(gate 1 "$unit_state" "$unit_sub") == 0 ]] && pass "gate: Grassfield session, grassfield-shell '$pair' -> Omarchy's unit runs" \
-    || bad "gate: Grassfield session, grassfield-shell '$pair' -> skipped"
+  [[ $(gate 1 "$unit_state" "$unit_sub") == 0 ]] && pass "gate: Grassfield session, grassfield-security '$pair' -> Omarchy's unit runs" \
+    || bad "gate: Grassfield session, grassfield-security '$pair' -> skipped"
 done
 [[ $(gate 1 "" "") == 0 ]] && pass "gate: Grassfield session, no answer -> Omarchy's unit runs" || bad "gate: no answer -> skipped"
 for session in - 0 ""; do
@@ -116,7 +123,18 @@ grep -qx 'ExecCondition=/usr/lib/grassfield/sleep-lock-gate' "$dropin" && pass "
 if grep -v '^#' "$dropin" | grep -q 'ConditionEnvironment'; then bad "drop-in: still disables Omarchy's unit by environment"; else pass "drop-in: no unconditional ConditionEnvironment"; fi
 grep -q '^\[Service\]' "$dropin" && pass "drop-in: [Service] section" || bad "drop-in: ExecCondition outside [Service]"
 
-# --- grassfield-shell.service ---
+# --- grassfield-security.service: the process that locks (S2) ---
+sec=packaging/systemd/grassfield-security.service
+secactive=$(grep -v '^#' "$sec")
+grep -qx 'Restart=always' <<<"$secactive" && grep -qx 'RestartSec=1' <<<"$secactive" && pass "security: Restart=always, RestartSec=1" || bad "security: restart"
+grep -qx 'Requisite=graphical-session.target' <<<"$secactive" && grep -qx 'PartOf=graphical-session.target' <<<"$secactive" \
+  && pass "security: tied to the session target (logout is not fought)" || bad "security: Requisite/PartOf missing"
+awk '/^\[Unit\]/{u=1;next} /^\[/{u=0} u && /^OnFailure=omarchy-sleep-lock\.service$/{found=1} END{exit !found}' "$sec" \
+  && pass "security: every failure of the process that holds the inhibitor starts Omarchy's sleep-lock ([Unit] OnFailure=, S2)" || bad "security: no OnFailure=omarchy-sleep-lock.service in [Unit]"
+grep -q 'stop omarchy-sleep-lock' <<<"$secactive" && bad "security: stops Omarchy's sleep-lock (could cut a sleep it is delaying)" \
+  || pass "security: never stops Omarchy's sleep-lock"
+
+# --- grassfield-shell.service: the UI (holds no lock and no inhibitor since S2) ---
 unit=packaging/systemd/grassfield-shell.service
 active=$(grep -v '^#' "$unit")
 grep -qx 'Restart=always' <<<"$active" && pass "shell: Restart=always (clean exits, SIGTERM and qs kill restart too)" || bad "shell: not Restart=always"
@@ -126,14 +144,14 @@ grep -qE '^StartLimitIntervalSec=[0-9]+$' <<<"$active" && grep -qE '^StartLimitB
   && pass "shell: start limit set (a crash loop ends)" || bad "shell: no start limit"
 grep -qx 'Requisite=graphical-session.target' <<<"$active" && grep -qx 'PartOf=graphical-session.target' <<<"$active" \
   && pass "shell: tied to the session target (logout is not fought)" || bad "shell: Requisite/PartOf missing"
-awk '/^\[Unit\]/{u=1;next} /^\[/{u=0} u && /^OnFailure=omarchy-sleep-lock\.service( |$)/{found=1} END{exit !found}' "$unit" \
-  && pass "shell: a shell failed for good starts Omarchy's sleep-lock (fail-safe, [Unit] OnFailure=)" || bad "shell: no OnFailure=omarchy-sleep-lock.service in [Unit]"
+grep -q '^OnFailure=.*omarchy-sleep-lock' <<<"$active" && bad "shell: the UI still arms Omarchy's sleep-lock (S2 moved it to grassfield-security.service)" \
+  || pass "shell: the UI no longer arms Omarchy's sleep-lock (S2: the security process holds the inhibitor and arms it)"
 # ADR-0041 step 1a (owner decision SQ-2 A): the failure counter is the second OnFailure= unit; it stops a crash loop of any pace
 # at the third failure within 10 minutes and never unlocks (tests/shell/shell_failures.sh has its decisions); the start limit
 # is the backstop (10 starts in 5 minutes). The counter, like the gate, asks session-gone whether the compositor is certainly
 # gone, so a logout's exit 255 counts nothing.
-grep -qx 'OnFailure=omarchy-sleep-lock.service grassfield-shell-failed.service' "$unit" \
-  && pass "shell: the failure counter (grassfield-shell-failed.service) is started after every failure as well" || bad "shell: OnFailure= does not name grassfield-shell-failed.service"
+grep -qx 'OnFailure=grassfield-shell-failed.service' "$unit" \
+  && pass "shell: the failure counter (grassfield-shell-failed.service) is started after every failure" || bad "shell: OnFailure= does not name grassfield-shell-failed.service alone"
 grep -qx 'StartLimitIntervalSec=300' "$unit" && grep -qx 'StartLimitBurst=10' "$unit" \
   && pass "shell: the start limit is the backstop, 10 starts in 5 minutes (SQ-2 A)" || bad "shell: the start limit is not 10 in 300 s"
 [[ -x packaging/systemd/session-gone ]] && grep -q 'dirname "\$0")/session-gone' packaging/systemd/sleep-lock-gate && grep -q 'dirname "\$0")/session-gone' packaging/bin/grassfield-shell-failed \
@@ -153,7 +171,7 @@ cat >"$tmp/sbin/systemctl" <<'SH'
 #!/bin/sh
 echo "systemctl $*" >>"$STUB_LOG"
 case "$*" in
-  "--user show --property=ActiveState --value grassfield-shell.service") printf '%s\n' "$STUB_STATE" ;;
+  "--user show --property=ActiveState --value grassfield-security.service") printf '%s\n' "$STUB_STATE" ;;
 esac
 exit 0
 SH
@@ -161,7 +179,7 @@ cat >"$tmp/sbin/qs" <<'SH'
 #!/bin/sh
 echo "qs $*" >>"$STUB_LOG"
 case "$*" in
-  "ipc -p /usr/share/grassfield/shell call lock lock") ;;
+  "ipc -p /usr/share/grassfield/shell/security.qml call lock lock") ;;
   "ipc -p /usr/share/grassfield/shell call update check omarchy") [ -n "$STUB_QS" ] || exit 1; echo ok; exit 0 ;;
   *) exit 9 ;;
 esac
@@ -196,21 +214,22 @@ locked='[{"name":"eDP-1","solitaryBlockedBy":["LOCK"]},{"name":"DP-1","solitaryB
 half='[{"name":"eDP-1","solitaryBlockedBy":["LOCK"]},{"name":"DP-1","solitaryBlockedBy":["WINDOWED"]}]'
 
 out=$(shimrun active ok "$locked" lock lock; echo "rc=$shim_rc")
-[[ $out == $'ok\nrc=0' ]] && ! grep -q "start\|reset-failed" "$tmp/log" && grep -qx "qs ipc -p /usr/share/grassfield/shell call lock lock" "$tmp/log" \
-  && pass "stand-in: lock lock with grassfield-shell running asks it to lock, starts nothing" || bad "stand-in: running shell: $out / $(tr '\n' ';' <"$tmp/log")"
+[[ $out == $'ok\nrc=0' ]] && ! grep -q "start\|reset-failed" "$tmp/log" && grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock" "$tmp/log" \
+  && pass "stand-in: lock lock with grassfield-security running asks it to lock (the security instance), starts nothing" || bad "stand-in: running security process: $out / $(tr '\n' ';' <"$tmp/log")"
 for state in failed inactive; do
   out=$(shimrun "$state" ok "$locked" lock lock; echo "rc=$shim_rc")
-  grep -qx "systemctl --user reset-failed grassfield-shell.service" "$tmp/log" && grep -qx "systemctl --user start --no-block grassfield-shell.service" "$tmp/log" \
-    && grep -qx "qs ipc -p /usr/share/grassfield/shell call lock lock" "$tmp/log" && [[ $out == $'ok\nrc=0' ]] \
-    && pass "stand-in: lock lock with grassfield-shell $state starts it again (reset-failed, no-block) and asks it to lock" \
-    || bad "stand-in: shell $state: $out / $(tr '\n' ';' <"$tmp/log")"
+  grep -qx "systemctl --user reset-failed grassfield-security.service" "$tmp/log" && grep -qx "systemctl --user start --no-block grassfield-security.service" "$tmp/log" \
+    && grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock" "$tmp/log" && [[ $out == $'ok\nrc=0' ]] \
+    && ! grep -q "grassfield-shell.service" "$tmp/log" \
+    && pass "stand-in: lock lock with grassfield-security $state starts it again (reset-failed, no-block) and asks it to lock; the UI's unit is never touched" \
+    || bad "stand-in: security process $state: $out / $(tr '\n' ';' <"$tmp/log")"
 done
 out=$(shimrun failed "" "$locked" lock lock; echo "rc=$shim_rc")
-tries=$(grep -cx "qs ipc -p /usr/share/grassfield/shell call lock lock" "$tmp/log" || true)
+tries=$(grep -cx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock" "$tmp/log" || true)
 naps=$(grep -cx "sleep 0.1" "$tmp/log" || true)
-others=$(grep -vc "^qs ipc -p /usr/share/grassfield/shell call lock lock$\|^sleep 0.1$\|^systemctl --user " "$tmp/log" || true)
+others=$(grep -vc "^qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock$\|^sleep 0.1$\|^systemctl --user " "$tmp/log" || true)
 [[ $out == "rc=1" && $tries == 100 && $naps == 100 && $others == 0 ]] \
-  && pass "stand-in: a shell that never answers -> failure after exactly 100 tries 0.1 s apart (a bounded 10 s; Omarchy keeps asking, then reports it)" \
+  && pass "stand-in: a security process that never answers -> failure after exactly 100 tries 0.1 s apart (a bounded 10 s; Omarchy keeps asking, then reports it)" \
   || bad "stand-in: no answer gave '$out' after $tries tries and $naps pauses ($others other calls)"
 out=$(shimrun active ok "$locked" lock status)
 [[ $(jq -r '.secure' <<<"$out") == true ]] && pass "stand-in: status secure when Hyprland lists LOCK on every monitor" || bad "stand-in: status '$out' with LOCK everywhere"

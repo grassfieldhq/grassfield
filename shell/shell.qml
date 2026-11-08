@@ -18,8 +18,6 @@ import qs.platform
 import qs.saver
 import qs.search
 import qs.security
-import qs.security.idle
-import qs.security.lock
 import qs.security.polkit
 import qs.security.secret
 import qs.services
@@ -59,11 +57,43 @@ ShellRoot {
         value: Settings.dark
     }
 
-    // Lock state and lock requests for the modules that must not import shell/security (Notifications, Search).
+    // Lock state and lock requests (ADR-0041 step 1, S2): the lock, idle and the sleep inhibitor run in the security process
+    // (shell/security.qml), never here. LockClient reads the state it publishes, fail closed (no state, a stale beat, a lock
+    // being acquired or held, or the compositor's own lock signal read locked), and every refusal of the UI reads it
+    // through SessionState.locked. Nothing in this process imports qs.security.lock or qs.security.idle.
     Binding {
         target: SessionState
         property: "locked"
-        value: Lock.locked
+        value: LockClient.locked
+    }
+    Binding {
+        target: SessionState
+        property: "lockStarting"
+        value: LockClient.lockStarting
+    }
+    // The compositor's own lock signal (hyprland-lock-notify-v1, read by the clipboard helper while it runs): one more input
+    // of LockClient.locked, so a push the UI missed never reads unlocked once the compositor holds a lock.
+    Binding {
+        target: LockClient
+        property: "compositorLocked"
+        value: Clipboard.helperLocked
+    }
+    // Applications' org.freedesktop.ScreenSaver inhibitors (GF-016, served by the menu bridge to this process): leased to the
+    // security process's idle module (`idle inhibit`), renewed while they last.
+    Binding {
+        target: LockClient
+        property: "busInhibited"
+        value: MenuBridge.screenSaverInhibited
+    }
+    // Where the lock's clouds came to rest (published with the lock state): the desktop draws them there (ADR-0040 step 9).
+    Connections {
+        target: LockClient
+
+        function onMotionChanged(): void {
+            const m = LockClient.motion;
+            for (const output of Object.keys(m))
+                WallpaperState.setMotion(output, m[output]);
+        }
     }
     Binding {
         target: SessionState
@@ -85,11 +115,12 @@ ShellRoot {
         property: "authorizing"
         value: authAgent.requestActive || secretAgent.requestActive
     }
-    // The displays are off (Idle): no device answers a polkit request nobody can see (ADR-0045 OC-6).
+    // The displays are off (idle, in the security process; true without a fresh state): no device answers a polkit request
+    // nobody can see (ADR-0045 OC-6).
     Binding {
         target: SessionState
         property: "displaysOff"
-        value: idle.displayOff
+        value: LockClient.displaysOff
     }
     // A security sheet or its key sink may hold the keyboard: the capture toolbar takes none meanwhile.
     Binding {
@@ -110,7 +141,7 @@ ShellRoot {
         target: SessionState
 
         function onLockRequested(reason: string): void {
-            Lock.lock(reason);
+            LockClient.request(reason);
         }
     }
 
@@ -504,7 +535,7 @@ ShellRoot {
 
     Wallpaper {
         // The session lock owns the screen: a video wallpaper pauses (ADR-0016 section 5).
-        locked: Lock.lockState !== "unlocked"
+        locked: SessionState.locked
     }
     HotCorners {}
     DesktopIcons {}
@@ -547,21 +578,17 @@ ShellRoot {
         devSocket: Mode.devValue("PROMPTER_SOCKET")
         shellVersion: SystemInfo.grassfieldVersion
     }
-    Idle {
-        id: idle
-        // Applications' org.freedesktop.ScreenSaver inhibitors, served by the menu bridge (GF-016).
-        busInhibited: MenuBridge.screenSaverInhibited
-    }
-    // The screen saver (ADR-0032): the same inhibitors keep it off; its slideshow stops while the displays are off.
+    // Idle (dim, lock, display off) and the lock before sleep run in the security process (ADR-0041 S2).
+    // The screen saver (ADR-0032): the applications' inhibitors keep it off; its slideshow stops while the displays are off.
     Saver {
         id: saver
         busInhibited: MenuBridge.screenSaverInhibited
-        displaysOff: idle.displayOff
+        displaysOff: LockClient.displaysOff
     }
     Overview {
         id: overviewSurface
         // The session lock owns the screen and the keyboard: the overview closes and focuses nothing.
-        locked: Lock.lockState !== "unlocked"
+        locked: SessionState.locked
     }
     AppsController {
         id: appsSurface
@@ -569,7 +596,7 @@ ShellRoot {
     Switcher {
         id: switcher
         // The session lock owns the screen and the keyboard: the switcher ends and does not start.
-        locked: Lock.lockState !== "unlocked"
+        locked: SessionState.locked
     }
     SwitcherWindow {
         controller: switcher
@@ -578,7 +605,7 @@ ShellRoot {
     Capture {
         id: captureSurface
         // The session lock owns the screen and the keyboard: the toolbar closes and does not open.
-        locked: Lock.lockState !== "unlocked"
+        locked: SessionState.locked
     }
 
     // Opening Overview, Apps, Search, the app switcher or the capture toolbar closes the others: the keyboard follows the visible
@@ -593,8 +620,8 @@ ShellRoot {
         ]
     }
 
-    // Referencing Capabilities instantiates it, which sends the plugin hello; referencing Lock
-    // instantiates the session lock (IPC target "lock", crash-recovery restore); referencing RecentItems makes it listen to
+    // Referencing Capabilities instantiates it, which sends the plugin hello; referencing LockClient
+    // starts reading the lock state the security process publishes (the lock itself lives there, ADR-0041 S2); referencing RecentItems makes it listen to
     // every launch from the start (it would otherwise exist only once the Grassfield menu opened); referencing NotResponding
     // registers its IPC target "anr" for the hyprland-dialog stand-in (ADR-0035 D-3), SharePicker its target "picker" for the
     // screen-sharing picker's stand-in (D-6); referencing TilingHover makes it listen
@@ -606,5 +633,5 @@ ShellRoot {
     // "emoji" for Ctrl+Super+Space and reads Recently Used (ADR-0045 OC-3; Omarchy's list waits for the first opening);
     // referencing Sounds makes it listen to the compositor's bell and the power adapter from the start, and Audio starts its
     // output routing (ADR-0047).
-    Component.onCompleted: console.info("grassfield-shell: started, version", SystemInfo.grassfieldVersion, "plugin protocol", Capabilities.protocol, "lock", Lock.lockState, "recent items", RecentItems.max, "clipboard history", Clipboard.state, "not responding", NotResponding.marks.length, "share picker", SharePicker.current === null ? "idle" : "open", "tiling popover", TilingHover.address === "" ? "closed" : "open", "tiling suggestions", TilingSuggest.shown ? "shown" : "none", "software update", SoftwareUpdate.count, "activity link", ActivityLink.folder !== "" ? "ready" : "no runtime folder", "key window", KeyWindow.path !== "" ? "written" : "no runtime folder", "terminal theme", TerminalTheme.state, "emoji", Emoji.state, "sounds", Sounds.devSession ? "dev: silent" : "on", "audio routing", Audio.routingFile)
+    Component.onCompleted: console.info("grassfield-shell: started, version", SystemInfo.grassfieldVersion, "plugin protocol", Capabilities.protocol, "lock", LockClient.state || "no state yet", "recent items", RecentItems.max, "clipboard history", Clipboard.state, "not responding", NotResponding.marks.length, "share picker", SharePicker.current === null ? "idle" : "open", "tiling popover", TilingHover.address === "" ? "closed" : "open", "tiling suggestions", TilingSuggest.shown ? "shown" : "none", "software update", SoftwareUpdate.count, "activity link", ActivityLink.folder !== "" ? "ready" : "no runtime folder", "key window", KeyWindow.path !== "" ? "written" : "no runtime folder", "terminal theme", TerminalTheme.state, "emoji", Emoji.state, "sounds", Sounds.devSession ? "dev: silent" : "on", "audio routing", Audio.routingFile)
 }

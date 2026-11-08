@@ -5,7 +5,9 @@
 #
 #   scripts/gates/rss.sh [--nested | --real | --pid PID[=label]]... [options]
 #     --nested | --real | --pid   as in idle-cpu.sh (the shell only counts for the verdict: processes named
-#                      grassfield-menu-bridge are listed but not summed, P2 is "grassfield-shell RSS")
+#                      grassfield-menu-bridge are listed but not summed, P2 is "grassfield-shell RSS"; since ADR-0041
+#                      step 1, S1 the security process counts with it: --nested measures this tree's .dev/security.pid
+#                      too, summed with the shell, and --pid takes it as one more process)
 #     --baseline-pid PID   the omarchy-shell process (e.g. `pgrep -f 'quickshell.*omarchy/shell' | head -1` in the
 #                          Omarchy session), measured now
 #     --baseline-mb N      a baseline measured earlier in the Omarchy session (MB of RSS)
@@ -44,6 +46,9 @@ if ((nested)); then
   for rec in shell:grassfield-shell menu-bridge:grassfield-menu-bridge; do
     if p=$(dev_live_pid "$root/.dev/${rec%%:*}.pid"); then pids+=("$p"); labels+=("${rec#*:} (nested)"); else echo "rss: no live ${rec#*:} of this tree's nested session" >&2; exit 2; fi
   done
+  # The security process (ADR-0041 S2: the lock, idle and the sleep inhibitor; scripts/dev/shell-run.sh starts it): P2
+  # counts both Quickshell processes.
+  if p=$(dev_live_pid "$root/.dev/security.pid"); then pids+=("$p"); labels+=("grassfield-security (nested)"); else echo "rss: no live grassfield-security of this tree's nested session (P2 counts both processes)" >&2; exit 2; fi
 fi
 if ((real)); then
   while read -r p; do [[ -n $p ]] && { pids+=("$p"); labels+=("grassfield-shell (real session)"); }; done < <(gate_find 'qs -n -c grassfield')

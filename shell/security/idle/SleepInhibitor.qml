@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import qs.notifications // layering-exception: GF-050
 import qs.security.lock
 import "IdleModel.js" as IdleModel
 import "../../lib/RunMode.js" as RunMode
@@ -25,8 +24,12 @@ import "../../lib/RunMode.js" as RunMode
 // A child that shows no progress within IdleModel.PROGRESS_BUDGET_MS (no "held", no subscription) is hung: it is stopped
 // and counted as a failure like an early exit (review of eee45cc).
 // Neither is ever given up (GF-AUDIT-001 SEC-02/GF-030): after IdleModel.MAX_FAST_FAILURES early exits in a row the
-// user gets a notice (Notifications, "The screen may not lock before sleep") and the child is retried every minute;
-// the notice is withdrawn once it runs again.
+// user gets a notice ("The screen may not lock before sleep") and the child is retried every minute; the notice is
+// withdrawn once it runs again. The notice goes through the notification server's public D-Bus interface (ADR-0041 S2:
+// this module runs in the security process, the server in the UI): `busctl --user --auto-start=no call
+// org.freedesktop.Notifications ... Notify`, never starting another notification daemon by D-Bus activation; while the UI
+// is down the call fails and the journal line above is all there is. In a dev session it is posted only on the dev
+// session's private bus (the rule of RunMode.ownBus), never on the owner's.
 // The sleep delay lasts at most what logind allows (InhibitDelayMaxUSec, IdleModel.sleepBudgetMs).
 // In the nested dev session (RunMode.dev through the relative import, which no QML import path can replace:
 // GRASSFIELD_DEV=1 and no GRASSFIELD_SESSION=1) the inhibitor is never taken: it would delay the owner's real suspend.
@@ -44,7 +47,12 @@ Scope {
     property int watcherFailures: 0
     // Lock before sleep cannot be guaranteed: the user is told (notice) until both children run again.
     readonly property bool degraded: (!dev && IdleModel.degraded(inhibitorFailures)) || IdleModel.degraded(watcherFailures)
-    property string noticeKey: ""
+    // The notice's id from the notification server (0: none shown); "pending" while the Notify call runs.
+    property int noticeId: 0
+    property bool noticeWanted: false
+    // May post on this session bus (always outside dev; in dev only on the private bus of the dev session).
+    // The rule of RunMode.ownBus, from this file's own dev gate (a security module reads GRASSFIELD_DEV only through it).
+    readonly property bool ownBus: !root.dev || Quickshell.env("GRASSFIELD_PRIVATE_BUS") === "1"
     // Longest wait for a confirmed lock before the sleep delay is released (logind's window, read at start).
     property int budgetMs: IdleModel.sleepBudgetMs("")
     // Prefix for long-lived children: die with the shell (PR_SET_PDEATHSIG, kept across exec).
@@ -105,14 +113,55 @@ Scope {
     }
 
     onDegradedChanged: {
-        if (degraded && noticeKey === "") {
+        if (degraded && !noticeWanted) {
             console.warn("grassfield-idle: lock before sleep is not guaranteed (inhibitor failures " + inhibitorFailures + ", watcher failures " + watcherFailures + "); user notified, retrying every " + IdleModel.SLOW_RETRY_MS / 1000 + " s");
-            noticeKey = Notifications.postInternal(qsTr("The screen may not lock before sleep"), IdleModel.degraded(watcherFailures) ? qsTr("Grassfield cannot see when the computer goes to sleep. Lock the screen yourself (Super+Control+Q) before you leave the computer.") : qsTr("Grassfield cannot delay sleep until the screen is locked. Lock the screen yourself (Super+Control+Q) before you close the lid."));
-        } else if (!degraded && noticeKey !== "") {
+            noticeWanted = true;
+            root.postNotice(qsTr("The screen may not lock before sleep"), IdleModel.degraded(watcherFailures) ? qsTr("Grassfield cannot see when the computer goes to sleep. Lock the screen yourself (Super+Control+Q) before you leave the computer.") : qsTr("Grassfield cannot delay sleep until the screen is locked. Lock the screen yourself (Super+Control+Q) before you close the lid."));
+        } else if (!degraded && noticeWanted) {
             console.info("grassfield-idle: lock before sleep available again");
-            Notifications.clear(noticeKey);
-            noticeKey = "";
+            noticeWanted = false;
+            root.closeNotice();
         }
+    }
+
+    // org.freedesktop.Notifications.Notify(app_name, replaces_id, app_icon, summary, body, actions, hints, timeout): no
+    // actions, no hints, the server's default timeout. Argument vector, no shell; --auto-start=no: a session without the UI's
+    // server answers with an error instead of starting another daemon that would then hold the name.
+    function postNotice(summary: string, body: string): void {
+        if (!root.ownBus) {
+            console.info("grassfield-idle: notice not posted (dev session without its private bus): " + summary);
+            return;
+        }
+        notify.command = ["busctl", "--user", "--auto-start=no", "--timeout=5", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "Notify", "susssasa{sv}i", "Grassfield", String(root.noticeId), "", summary, body, "0", "0", "-1"];
+        notify.running = true;
+    }
+
+    function closeNotice(): void {
+        if (root.noticeId === 0 || !root.ownBus)
+            return;
+        closer.command = ["busctl", "--user", "--auto-start=no", "--timeout=5", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "CloseNotification", "u", String(root.noticeId)];
+        root.noticeId = 0;
+        closer.running = true;
+    }
+
+    Process {
+        id: notify
+        stdout: StdioCollector {
+            // "u <id>"
+            onStreamFinished: {
+                const m = String(text).trim().match(/^u ([0-9]{1,10})$/);
+                root.noticeId = m ? Number(m[1]) : 0;
+                if (!m)
+                    console.warn("grassfield-idle: the notice could not be shown (no notification server answered: the shell may be restarting); the journal has it");
+                // Lock before sleep came back while the notice was being posted: withdraw it at once.
+                else if (!root.noticeWanted)
+                    root.closeNotice();
+            }
+        }
+    }
+
+    Process {
+        id: closer
     }
 
     Connections {

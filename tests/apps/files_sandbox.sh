@@ -152,7 +152,7 @@ expect_at() { # NAME STEP
 # nested-up found no output GF-REF for its first click, and the shell, still starting, mapped its own surfaces after the
 # window had the compositor's focus: the window showed inactive (grey traffic lights) and no key reached it.
 has_output() { "$root/scripts/nestctl" monitors -j 2>/dev/null | jq -e --arg n "$output" 'any(.[]; .name == $n)' >/dev/null; }
-shell_ready() { [[ $("$root/tests/visual/ipc.sh" lock status 2>/dev/null) == unlocked ]]; }
+shell_ready() { [[ $("$root/tests/visual/ipc.sh" lock status 2>/dev/null) == unlocked && -n $("$root/tests/visual/ipc.sh" overview status 2>/dev/null) ]]; }  # the lock (security process, ADR-0041 S2) and the UI
 wait_until 60 has_output || { echo "FAIL: the nested session has no output $output (nothing typed)"; exit 1; }
 wait_until 60 shell_ready || { echo "FAIL: the nested shell does not answer, or is locked (nothing typed)"; exit 1; }
 sleep 2

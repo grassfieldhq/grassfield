@@ -52,8 +52,8 @@ env | grep '^QS_' | sed 's/^/env /' >>"$STUB_LOG"
 QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR="$STUB_QSRT" HOME="$STUB_HOME" /usr/bin/qs list -p "$STUB_CFG" >/dev/null 2>&1
 [ $? = 108 ] && { echo "parse 108" >>"$STUB_LOG"; exit 108; }
 case "$*" in
-  "ipc -p /usr/share/grassfield/shell call lock lock") echo ok ;;
-  "ipc -p /usr/share/grassfield/shell call lock lid") [ "${STUB_LID:-ok}" = fail ] && exit 1; echo ok ;;
+  "ipc -p /usr/share/grassfield/shell/security.qml call lock lock") echo ok ;;
+  "ipc -p /usr/share/grassfield/shell/security.qml call lock lid") [ "${STUB_LID:-ok}" = fail ] && exit 1; echo ok ;;
   *) exit 9 ;;
 esac
 SH
@@ -71,7 +71,7 @@ for v in QS_MANIFEST QS_CONFIG_NAME; do
   [[ " ${opts[*]} " == *" $v "* ]] || continue
   : >"$tmp/log"
   rc=0
-  env -i "${base[@]}" "$v=/stray/$v" "$tmp/bin/qs" ipc -p /usr/share/grassfield/shell call lock lock >/dev/null 2>&1 || rc=$?
+  env -i "${base[@]}" "$v=/stray/$v" "$tmp/bin/qs" ipc -p /usr/share/grassfield/shell/security.qml call lock lock >/dev/null 2>&1 || rc=$?
   [[ $rc == 108 ]] && grep -qx "parse 108" "$tmp/log" && pass "control: with $v set, qs's own option parsing refuses the request (exit 108)" \
     || bad "control: with $v set the stub did not reproduce the failure (rc $rc)"
 done
@@ -117,7 +117,7 @@ else
   : >"$tmp/log"
   rc=0
   out=$(env -i "${base[@]}" "${stray[@]}" /bin/sh -c "$lock_cmd" 2>/dev/null) || rc=$?
-  verdict "the lock key (SUPER+CTRL+Q)" "$out" "$rc" "ipc -p /usr/share/grassfield/shell call lock lock"
+  verdict "the lock key (SUPER+CTRL+Q)" "$out" "$rc" "ipc -p /usr/share/grassfield/shell/security.qml call lock lock"
 fi
 uncleared=()
 n=0
@@ -139,8 +139,8 @@ printf 'connected\n' >"$tmp/drm/card1-eDP-1/status"
 rc=0
 env -i "${base[@]}" "${stray[@]}" GRASSFIELD_SESSION=1 bash packaging/bin/grassfield-lid closed >/dev/null 2>&1 || rc=$?
 sleep 0.5 # the fallback would run detached
-if [[ $rc == 0 ]] && grep -qx "qs ipc -p /usr/share/grassfield/shell call lock lid" "$tmp/log" && ! grep -q "^env QS_\|^parse 108\|^fallback" "$tmp/log"; then
-  pass "the lid (grassfield-lid closed) still sends 'ipc -p /usr/share/grassfield/shell call lock lid' with ${opts[*]} set, qs gets none of them, no fallback needed"
+if [[ $rc == 0 ]] && grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lid" "$tmp/log" && ! grep -q "^env QS_\|^parse 108\|^fallback" "$tmp/log"; then
+  pass "the lid (grassfield-lid closed) still sends 'ipc -p /usr/share/grassfield/shell/security.qml call lock lid' with ${opts[*]} set, qs gets none of them, no fallback needed"
 else
   bad "the lid with ${opts[*]} set: rc $rc, calls: $(tr '\n' ';' <"$tmp/log")"
 fi
@@ -149,7 +149,7 @@ fi
 : >"$tmp/log"
 rc=0
 out=$(env -i "${base[@]}" "${stray[@]}" HYPRLAND_INSTANCE_SIGNATURE=sig sh packaging/shims/omarchy-shell lock lock 2>/dev/null) || rc=$?
-verdict "the sleep-lock fallback (omarchy-shell lock lock)" "$out" "$rc" "ipc -p /usr/share/grassfield/shell call lock lock"
+verdict "the sleep-lock fallback (omarchy-shell lock lock)" "$out" "$rc" "ipc -p /usr/share/grassfield/shell/security.qml call lock lock"
 
 # --- dev plumbing leaked into a real session ---
 mkdir -p "$tmp/hproc/LID0" "$tmp/hdrm/card9-eDP-9" "$tmp/hdrm/card9-DP-9"
@@ -170,7 +170,7 @@ for mode in "GRASSFIELD_SESSION=1 GRASSFIELD_DEV=1" "-"; do
   [[ $mode == - ]] && label="no run-mode variable at all"
   read -r -a assign <<<"${mode/#-/}"
   lidrun ok closed "${assign[@]}"
-  grep -qx "qs ipc -p /usr/share/grassfield/shell call lock lid" "$tmp/log" && ! grep -q "^hijacked" "$tmp/log" \
+  grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lid" "$tmp/log" && ! grep -q "^hijacked" "$tmp/log" \
     && pass "the lid in $label ignores GRASSFIELD_LID_LOCK: the installed shell is asked" || bad "the lid in $label: $(tr '\n' ';' <"$tmp/log")"
   lidrun fail closed "${assign[@]}" GRASSFIELD_DRM="$tmp/drm" # no external display there: a fallback would run
   ! grep -q "^hijacked" "$tmp/log" && pass "the lid in $label, shell down: GRASSFIELD_LID_FALLBACK is ignored" \
@@ -212,11 +212,11 @@ for mode in "GRASSFIELD_SESSION=1 GRASSFIELD_DEV=1" "-"; do
   [[ $mode == - ]] && label="no run-mode variable at all"
   read -r -a assign <<<"${mode/#-/}"
   cmd=$(binds GRASSFIELD_SHELL_DIR=/hostile/shell "${assign[@]}" | awk -F'\t' '$1 == "lock" && !done {print $2; done = 1}')
-  [[ $cmd == *"-p '/usr/share/grassfield/shell' call lock lock" && $cmd != *hostile* ]] \
+  [[ $cmd == *"-p '/usr/share/grassfield/shell/security.qml' call lock lock" && $cmd != *hostile* ]] \
     && pass "the lock key in $label ignores GRASSFIELD_SHELL_DIR: it asks the installed shell" || bad "the lock key in $label: '$cmd'"
 done
 cmd=$(binds GRASSFIELD_SHELL_DIR=/dev/shell GRASSFIELD_DEV=1 | awk -F'\t' '$1 == "lock" && !done {print $2; done = 1}')
-[[ $cmd == *"-p '/dev/shell' call lock lock" ]] && pass "control: a dev session sends the lock key to GRASSFIELD_SHELL_DIR" || bad "control: dev lock key '$cmd'"
+[[ $cmd == *"-p '/dev/shell/security.qml' call lock lock" ]] && pass "control: a dev session sends the lock key to the security root in GRASSFIELD_SHELL_DIR" || bad "control: dev lock key '$cmd'"
 
 # session.lua: its modules from its own directory, the stand-ins from the fixed one.
 if grep -v '^[[:space:]]*--' config/hypr/session.lua | grep -q 'GRASSFIELD_CONFIG_DIR\|GRASSFIELD_SHIM_DIR'; then

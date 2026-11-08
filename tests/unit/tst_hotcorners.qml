@@ -244,6 +244,9 @@ TestCase {
         verify(Actions.isDirect("notifications"));
         verify(!Actions.isDirect("overview"));
         compare(Actions.command("notifications", 7), null);
+        // ADR-0041 S2: the lock lives in the security process; the corner asks it in process (SessionState.requestLock).
+        verify(Actions.isDirect("lock"));
+        compare(Actions.command("lock", 7), null);
     }
 
     function test_actionsClampToEnum() {
@@ -254,7 +257,7 @@ TestCase {
 
     function test_commands() {
         compare(Actions.command("overview", 42).join(" "), "qs ipc --pid 42 call overview toggle");
-        compare(Actions.command("lock", 7).join(" "), "qs ipc --pid 7 call lock lock");
+        compare(Actions.command("apps", 7).join(" "), "qs ipc --pid 7 call apps toggle");
         compare(Actions.command("none", 7), null);
         compare(Actions.command("bogus", 7), null);
     }

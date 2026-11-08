@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The security root (shell/security.qml) holds nothing but ShellRoot and IpcHandler (ADR-0041 step 1, S1): a bounded,
+"""The security root (shell/security.qml) holds nothing but ShellRoot, one SecurityHost and one IpcHandler (ADR-0041 step 1,
+S1; S2 adds the host of the lock, idle and the sleep inhibitor, shell/security/SecurityHost.qml, reviewed in its own file): a bounded,
 readable check beside the hash pin of tests/security/security_unit.sh (the integrator's decision on #75, round 2: a static
 check cannot model all of QML, so the reviewed root is pinned by its SHA-256 and every change to it goes through the opus
 security review; this check stays as the second, readable one). Read as the engine reads it, not line by line (round 1: a
@@ -15,18 +16,21 @@ Rules:
      comment) and no `[` (a name written as a string: Qt["createQmlObject"], Quickshell["execDetached"]);
   3. every identifier of the code is one the root uses today (ALLOWED_IDENTIFIERS: an allow-list, never a deny-list: a
      window, a loader, a process, Qt, Reflect, reload, an animation or a security module is simply not in it);
-  4. every `import` stands at the start of a line (wherever indented) and names QtQuick, Quickshell or Quickshell.Io;
-  5. every object instantiated (`Name {`, the file joined on whitespace) is ShellRoot or IpcHandler, and IpcHandler
-     exactly once, with target "security" and the two functions state and heartbeat and no other function.
+  4. every `import` stands at the start of a line (wherever indented) and names QtQuick, Quickshell, Quickshell.Io or
+     qs.security (S2: the module of SecurityHost; never qs.security.lock, .idle, .polkit or .secret, whose types the host
+     instantiates in its own reviewed file);
+  5. every object instantiated (`Name {`, the file joined on whitespace) is ShellRoot, SecurityHost or IpcHandler,
+     SecurityHost exactly once (a second host would run a second idle module and sleep inhibitor) and IpcHandler exactly
+     once, with target "security" and the two functions state and heartbeat and no other function.
 Standard library only; no Qt needed."""
 import re
 import sys
 
-ALLOWED_IMPORTS = {"QtQuick", "Quickshell", "Quickshell.Io"}
-ALLOWED_TYPES = {"ShellRoot", "IpcHandler"}
-ALLOWED_IDENTIFIERS = {"import", "QtQuick", "Quickshell", "Io", "ShellRoot", "id", "root", "settings", "watchFiles", "false",
-                       "readonly", "property", "string", "hosted", "int", "sequence", "Component", "onCompleted", "console",
-                       "info", "IpcHandler", "target", "function", "state", "return", "heartbeat"}
+ALLOWED_IMPORTS = {"QtQuick", "Quickshell", "Quickshell.Io", "qs.security"}
+ALLOWED_TYPES = {"ShellRoot", "SecurityHost", "IpcHandler"}
+ALLOWED_IDENTIFIERS = {"import", "QtQuick", "Quickshell", "Io", "qs", "security", "ShellRoot", "id", "root", "settings",
+                       "watchFiles", "false", "SecurityHost", "host", "IpcHandler", "target", "function", "state", "string",
+                       "return", "hosted", "heartbeat"}
 
 
 def strip(src, blank_strings=True):
@@ -95,6 +99,8 @@ def problems(src):
             out.append(f"{name} instantiated")
     if len(re.findall(r"\bIpcHandler\s*\{", joined)) != 1:
         out.append("not exactly one IpcHandler")
+    if len(re.findall(r"\bSecurityHost\s*\{", joined)) != 1 or len(re.findall(r"\bSecurityHost\b", joined)) != 1:
+        out.append("not exactly one SecurityHost")
     joined_strings = " ".join(with_strings.split())
     if joined_strings.count('target: "security"') != 1 or re.search(r"\btarget\b", joined_strings) is None or len(re.findall(r"\btarget\s*:", joined_strings)) != 1:
         out.append("the IpcHandler's target is not security, once")
@@ -145,6 +151,11 @@ def mutants(src):
         ("a third function in the handler", src.replace("        function state(): string {", "        function third(): string { return \"\"; }\n        function state(): string {", 1)),
         ("the handler's target renamed", src.replace('target: "security"', 'target: "lock"', 1)),
         ("CRLF line endings with a hidden window", into("FloatingWindow\r\n{\r\n}")),
+        ("a second SecurityHost (a second idle module and sleep inhibitor)", into("SecurityHost {\n}")),
+        ("a second SecurityHost with a next-line brace and a comment", into("SecurityHost /* x */\n{\n}")),
+        ("the lock module imported into the root and its singleton named", top("import qs.security.lock\n").replace(body, body + "property bool lk: Lock.locked\n", 1)),
+        ("the idle module imported into the root and an Idle", top("import qs.security.idle\n").replace(body, body + "Idle {\n}\n", 1)),
+        ("the polkit module imported into the root (S3 goes through the host)", top("import qs.security.polkit\n")),
     ]
 
 

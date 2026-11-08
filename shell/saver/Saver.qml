@@ -6,7 +6,6 @@ import Quickshell.Wayland
 import Grassfield.Ui
 import qs.lib
 import qs.services
-import qs.security.lock
 import "SaverModel.js" as SaverModel
 
 // The screen saver (ADR-0032; Settings > Wallpaper > Screen Saver): after screensaver.idleMinutes without input while the
@@ -47,8 +46,8 @@ Scope {
     // surfaces), so the lock is not preceded by a flash of the desktop; at most SaverModel.UNTIL_LOCK_MAX_MS (a lock that
     // never confirms keeps trying on its own). `wasShown` is what was on screen before the lock flipped `locked`.
     property bool wasShown: false
-    readonly property bool lockStarting: Lock.locked && !Lock.holding
-    readonly property bool shown: (root.lockStarting && root.wasShown) || (!Lock.locked && !root.dismissed && (root.devShown || (monitor.enabled && monitor.isIdle)))
+    readonly property bool lockStarting: SessionState.lockStarting
+    readonly property bool shown: (root.lockStarting && root.wasShown) || (!SessionState.locked && !root.dismissed && (root.devShown || (monitor.enabled && monitor.isIdle)))
     onLockStartingChanged: {
         if (root.lockStarting && root.wasShown)
             untilLockBound.restart();
@@ -80,7 +79,7 @@ Scope {
     }
 
     Connections {
-        target: Lock
+        target: SessionState
 
         function onLockedChanged(): void {
             root.devShown = false;
@@ -90,7 +89,7 @@ Scope {
     IdleMonitor {
         id: monitor
         // Armed only once its timeout is the one wanted, so a new delay never arms it with the previous one.
-        enabled: timeout === Math.max(1, root.idleSeconds) && SaverModel.armed(root.idleSeconds, Lock.locked, root.busInhibited, root.rearming)
+        enabled: timeout === Math.max(1, root.idleSeconds) && SaverModel.armed(root.idleSeconds, SessionState.locked, root.busInhibited, root.rearming)
         timeout: Math.max(1, root.idleSeconds)
         respectInhibitors: true
         // Activity ends a saver shown by `devShow` too; the next idle period may show it again.
@@ -216,7 +215,7 @@ Scope {
 
         // Dev hook (dev only, else "refused"): show the saver now (captures); the first input ends it. Refused while locked.
         function devShow(): string {
-            if (!root.devHooks || Lock.locked)
+            if (!root.devHooks || SessionState.locked)
                 return Mode.refused;
             root.dismissed = false;
             root.devShown = true;

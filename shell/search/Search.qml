@@ -86,9 +86,9 @@ Scope {
             "documents": qsTr("Documents")
         })
 
-    // Lock Screen: the lock module (shell/security/lock) exposes the `lock` IPC target and the Lock singleton the System
-    // menu already calls; the command locks through it (SessionState.requestLock, wired to Lock.lock in shell.qml;
-    // REQ-SRCH-PRV-d2). It is always on offer: a failed lock stays locked.
+    // Lock Screen: the lock lives in the security process (ADR-0041 S2); the command asks it through SessionState.requestLock
+    // (LockClient, `lock lock` on the security instance; REQ-SRCH-PRV-d2), as the Grassfield menu does. It is always on offer:
+    // a failed lock stays locked.
     readonly property bool lockAvailable: true
 
     // The pages of Grassfield Settings the provider offers (REQ-SRCH-PRV-d1); ids are the Settings sections.

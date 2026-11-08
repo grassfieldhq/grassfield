@@ -19,6 +19,16 @@ local function shell(target, fn)
   return hl.dsp.exec_cmd(qs_ipc .. " call " .. target .. " " .. fn)
 end
 
+-- The security process (ADR-0041 step 1, S2): the lock lives in its own Quickshell instance, the root security.qml next to
+-- the UI's shell.qml (grassfield-security.service, `qs -n -p /usr/share/grassfield/shell/security.qml`), so the lock key is
+-- sent there, with the same cleared variables and the same dev rule for the directory.
+local security_selector = (shell_dir and shell_dir ~= "") and ("-p '" .. shell_dir .. "/security.qml'") or "-p '/usr/share/grassfield/shell/security.qml'"
+local security_ipc = "env -u QS_CONFIG_PATH -u QS_CONFIG_NAME -u QS_MANIFEST qs ipc " .. security_selector
+
+local function security(target, fn)
+  return hl.dsp.exec_cmd(security_ipc .. " call " .. target .. " " .. fn)
+end
+
 local function bind(keys, description, dispatcher, opts)
   opts = opts or {}
   opts.description = description
@@ -218,7 +228,7 @@ bind("SUPER + CTRL + SPACE", "Emoji & Symbols", shell("emoji", "toggle"))
 -- Apps (the dedicated Apps / Launchpad media key; plain F4 stays with the applications, docs/specs/apps.md A11).
 bind("XF86LaunchA", "Apps", shell("apps", "toggle"))
 bind("CTRL + UP", "Overview", shell("overview", "toggle"))
-bind("SUPER + CTRL + Q", "Lock screen", shell("lock", "lock"))
+bind("SUPER + CTRL + Q", "Lock screen", security("lock", "lock"))
 -- The lid switch is bound once, in system.lua (real session only): /usr/lib/grassfield/grassfield-lid calls `lock lid`.
 bind("SUPER + N", "Notification Center", shell("notifications", "toggleCenter"))
 -- The capture toolbar (macOS Shift-Command-5; ADR-0045 OC-1): a shell surface, so it opens in the nested session too, where it
