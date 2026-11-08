@@ -29,6 +29,10 @@ Environment=QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING=1
 UnsetEnvironment=QML_IMPORT_PATH QML2_IMPORT_PATH QML_PLUGIN_PATH QML_DISK_CACHE_PATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH QS_CONFIG_PATH QS_CONFIG_NAME QS_MANIFEST GTK_MODULES GTK3_MODULES GTK_PATH GIO_EXTRA_MODULES QT_VULKAN_LIB QSG_RHI_BACKEND
 # This process never asks the portal (no GTK platform theme work at start; gate P5, ADR-0035 D-4).
 UnsetEnvironment=GTK_USE_PORTAL
+# ADR-0054: the session sets QT_QPA_PLATFORMTHEME=xdgdesktopportal for the apps (Qt's portal theme makes a blocking portal call
+# when a Qt process starts: the same wait as GTK_USE_PORTAL above, gate P5). This process keeps Omarchy's gtk3, its value before the
+# ADR (Hyprland imports the session's value into the systemd user manager, and Environment= wins over it).
+Environment=QT_QPA_PLATFORMTHEME=gtk3
 # GF-115: the root is loaded by path from the system tree only; `qs.*` resolves from /usr/share/grassfield/shell, the
 # UI root's directory, so the security modules keep their place. Every `qs ipc` caller names this same path.
 ExecStart=/usr/bin/qs -n -p /usr/share/grassfield/shell/security.qml

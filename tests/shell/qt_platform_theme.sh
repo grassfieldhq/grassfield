@@ -4,8 +4,8 @@
 #     major.minor that is installed (a patch release is the same ABI), "gtk3" (Omarchy's value, the GTK look and GTK's chooser)
 #     for every other case, each with its reason;
 #   - config/hypr/session.lua applies it: the block is run with a stub of hl.env, for each case, and sets QT_QPA_PLATFORMTHEME
-#     and SAL_USE_VCLPLUGIN=qt6 (only when LibreOffice's Qt 6 plugin exists) and nothing else; both variables are set only in
-#     session.lua (the Omarchy session never loads it) and never in the user's LibreOffice profile;
+#     and nothing else (never SAL_USE_VCLPLUGIN, which is the uwsm env's, set when LibreOffice's Qt 6 plugin exists and tested
+#     by running that snippet); every Qt GUI unit pins gtk3 or clears the variable; nothing touches the user's LibreOffice profile;
 #   - the session environment, the plugin's CMake and the PKGBUILD agree: the plugin file name, Qt's plugin directory, the
 #     stamp's path, the plugin's key against the first item of XDG_CURRENT_DESKTOP, the build in the PKGBUILD's build() and
 #     package(), BUILD-DEPS recording qt6-base, the project in check-cmake.sh.
@@ -40,7 +40,7 @@ end
 local qt = function(v) return 'set(PACKAGE_VERSION "' .. v .. '")\nif(1)\nendif()\n' end
 local function installed(plugin, stamp, qtv)
   local t = {}
-  if plugin then t[q.plugin] = "ELF" end
+  if plugin then t[q.plugin] = (plugin == "short" and "\127ELF" or plugin == "magic" and string.rep("x", 6000) or "\127ELF" .. string.rep("x", 6000)) end
   if stamp then t[q.stamp] = stamp .. "\n" end
   if qtv then t[q.qt_version_file] = qt(qtv) end
   return t
@@ -51,6 +51,8 @@ case("a newer minor", installed(true, "6.12.0", "6.13.0"), "gtk3", "built for Qt
 case("an older minor", installed(true, "6.12.1", "6.11.2"), "gtk3", "Qt 6.11 is installed")
 case("minor 6.1 is not 6.12", installed(true, "6.1.0", "6.12.0"), "gtk3", "built for Qt 6.1 ")
 case("a newer major", installed(true, "6.12.0", "7.0.0"), "gtk3", "Qt 7.0 is installed")
+case("a truncated plugin (ELF magic, 4 bytes)", installed("short", "6.12.0", "6.12.0"), "gtk3", "not a complete shared object")
+case("a plugin that is not an ELF file", installed("magic", "6.12.0", "6.12.0"), "gtk3", "not a complete shared object")
 case("no plugin", installed(false, "6.12.0", "6.12.0"), "gtk3", "no platform-theme plugin")
 case("no stamp", installed(true, nil, "6.12.0"), "gtk3", "stamp is missing")
 case("a stamp with garbage", installed(true, "banana", "6.12.0"), "gtk3", "stamp is missing")
@@ -80,10 +82,10 @@ local function exists(p) return present[p] == true end
 local texts = {}
 local function read(p) return texts[p] end
 if scenario == "ok" then
-  present[q.plugin] = true; present[q.libreoffice_plugin] = true
+  present[q.plugin] = true; texts[q.plugin] = "\127ELF" .. string.rep("x", 6000)
   texts[q.stamp] = "6.12.0\n"; texts[q.qt_version_file] = 'set(PACKAGE_VERSION "6.12.4")'
 elseif scenario == "stale" then
-  present[q.plugin] = true; present[q.libreoffice_plugin] = true
+  present[q.plugin] = true; texts[q.plugin] = "\127ELF" .. string.rep("x", 6000)
   texts[q.stamp] = "6.12.0\n"; texts[q.qt_version_file] = 'set(PACKAGE_VERSION "6.13.0")'
 elseif scenario == "bare" then
   -- nothing installed
@@ -98,21 +100,32 @@ table.sort(env)
 print(table.concat(env, " "))
 LUA
 out=$(lua "$tmp/apply.lua" "$cfg" "$tmp/block.lua" ok 2>&1)
-check "plugin installed for this Qt: QT_QPA_PLATFORMTHEME=xdgdesktopportal and SAL_USE_VCLPLUGIN=qt6, nothing else [$out]" \
-  test "$out" = "QT_QPA_PLATFORMTHEME=xdgdesktopportal SAL_USE_VCLPLUGIN=qt6"
+check "plugin installed for this Qt: QT_QPA_PLATFORMTHEME=xdgdesktopportal, nothing else (SAL_USE_VCLPLUGIN is the uwsm env's) [$out]" \
+  test "$out" = "QT_QPA_PLATFORMTHEME=xdgdesktopportal"
 out=$(lua "$tmp/apply.lua" "$cfg" "$tmp/block.lua" stale 2>&1)
-check "plugin built for another Qt minor: Omarchy's gtk3 stays (no QT_QPA_PLATFORMTHEME set), the reason is printed, LibreOffice still gets qt6 [$out]" \
-  bash -c 'echo "$1" | grep -q "^grassfield: Qt platform theme: gtk3 kept: the plugin was built for Qt 6.12 and Qt 6.13 is installed" && echo "$1" | grep -qx "SAL_USE_VCLPLUGIN=qt6" && ! echo "$1" | grep -q "QT_QPA_PLATFORMTHEME="' _ "$out"
+check "plugin built for another Qt minor: Omarchy's gtk3 stays (no QT_QPA_PLATFORMTHEME set), the reason is printed [$out]" \
+  bash -c 'echo "$1" | grep -q "^grassfield: Qt platform theme: gtk3 kept: the plugin was built for Qt 6.12 and Qt 6.13 is installed" && ! echo "$1" | grep -q "QT_QPA_PLATFORMTHEME="' _ "$out"
 out=$(lua "$tmp/apply.lua" "$cfg" "$tmp/block.lua" bare 2>&1)
 check "nothing installed: no variable is set, the reason is printed [$out]" \
-  bash -c 'echo "$1" | grep -q "gtk3 kept: no platform-theme plugin installed" && ! echo "$1" | grep -q "SAL_USE_VCLPLUGIN=\|QT_QPA_PLATFORMTHEME="' _ "$out"
+  bash -c 'echo "$1" | grep -q "gtk3 kept: no platform-theme plugin installed" && ! echo "$1" | grep -q "QT_QPA_PLATFORMTHEME="' _ "$out"
 check "the block still runs when the module is missing (pcall): gtk3 stays, a line is printed" bash -c '
   printf "package.path = \"/nonexistent/?.lua\"\nhl = { env = function(k) print(\"ENV \" .. k) end }\ndofile(arg[1])\n" >"$2/missing.lua"
   out=$(lua "$2/missing.lua" "$1" 2>&1); echo "$out" | grep -q "gtk3 kept: module failed" && ! echo "$out" | grep -q "^ENV"' _ "$tmp/block.lua" "$tmp"
-check "QT_QPA_PLATFORMTHEME and SAL_USE_VCLPLUGIN are set in session.lua only (never in the files the Omarchy session shares, nor in the uwsm env)" bash -c '
-  cd "$1" && ! grep -rln "SAL_USE_VCLPLUGIN" config packaging/uwsm packaging/systemd packaging/session-bin shell 2>/dev/null | grep -v "config/hypr/grassfield/qttheme.lua\|config/hypr/session.lua" | grep . &&
-  ! grep -rn "hl.env(\"QT_QPA_PLATFORMTHEME\"" config | grep -v "config/hypr/session.lua" | grep . &&
-  ! grep -n "QT_QPA_PLATFORMTHEME=\|export SAL_USE\|SAL_USE_VCLPLUGIN" packaging/uwsm/env-grassfield | grep -v "^[0-9]*:#" | grep .' _ "$root"
+check "QT_QPA_PLATFORMTHEME is set by hl.env in session.lua only, and never by the uwsm env (the Omarchy session shares neither)" bash -c '
+  cd "$1" && ! grep -rn "hl.env(\"QT_QPA_PLATFORMTHEME\"" config | grep -v "config/hypr/session.lua" | grep . &&
+  ! grep -n "QT_QPA_PLATFORMTHEME=" packaging/uwsm/env-grassfield | grep -v "^[0-9]*:#" | grep .' _ "$root"
+check "SAL_USE_VCLPLUGIN is set in packaging/uwsm/env-grassfield (the environment the systemd user manager and D-Bus activation get, which the Dock, Launchpad and Open With launch from) and nowhere else that runs" bash -c '
+  cd "$1" && grep -q "^    export SAL_USE_VCLPLUGIN=qt6$" packaging/uwsm/env-grassfield &&
+  ! grep -rn "SAL_USE_VCLPLUGIN" config shell packaging/systemd packaging/session-bin | grep -v "^config/hypr/grassfield/qttheme.lua:[0-9]*:--\|^config/hypr/session.lua:[0-9]*:--" | grep .' _ "$root"
+# The env-grassfield snippet, run with the plugin's path replaced: exported when the file is readable, absent otherwise.
+sed -n '/^if \[ -r \/usr\/lib\/libreoffice\/program\/libvclplug_qt6lo.so \]; then$/,/^fi$/p' "$root/packaging/uwsm/env-grassfield" >"$tmp/sal.sh"
+touch "$tmp/vclplug.so"
+sed -i "s|/usr/lib/libreoffice/program/libvclplug_qt6lo.so|$tmp/vclplug.so|" "$tmp/sal.sh"
+check "env-grassfield: with LibreOffice's Qt 6 plugin installed, SAL_USE_VCLPLUGIN=qt6 is exported ($(wc -l <"$tmp/sal.sh") lines)" \
+  test "$(env -u SAL_USE_VCLPLUGIN sh -c '. "$1"; echo "${SAL_USE_VCLPLUGIN:-unset}"' _ "$tmp/sal.sh")" = qt6
+rm -f "$tmp/vclplug.so"
+check "env-grassfield: without it, SAL_USE_VCLPLUGIN is not set (LibreOffice keeps its own choice)" \
+  test "$(env -u SAL_USE_VCLPLUGIN sh -c '. "$1"; echo "${SAL_USE_VCLPLUGIN:-unset}"' _ "$tmp/sal.sh")" = unset
 check "no file of the user's LibreOffice profile is touched (no registrymodifications, no user/config path in the session files)" bash -c '
   cd "$1" && ! grep -rn "registrymodifications\|\.config/libreoffice" config/hypr packaging/uwsm packaging/session-bin shell/services 2>/dev/null | grep -v "^[^:]*:[0-9]*:\s*--\|ADR-0054" | grep .' _ "$root"
 
@@ -145,9 +158,24 @@ check "the PKGBUILD builds the plugin from packaging/qt-platform-theme in build(
 check "BUILD-DEPS records qt6-base (the plugin is built against it; ADR-0033, the update hold pairs on its major.minor)" \
   grep -q 'pacman -Q qt6-base ' "$pkgbuild"
 check "check-cmake.sh configures the plugin's project (just check)" grep -q "packaging/qt-platform-theme" "$root/scripts/dev/check-cmake.sh"
-check "the plugin links Qt's private GUI module and says why" bash -c 'grep -q "Qt6::GuiPrivate" "$1" && grep -q "QPA" "$1"' _ "$cmake"
-check "the plugin source falls back with a warning, never silently (qCWarning on a missing gtk3 theme)" \
-  grep -q 'qCWarning(lcGrassfieldTheme)' "$root/packaging/qt-platform-theme/src/GrassfieldThemePlugin.cpp"
-check "the portal backend's unit still clears QT_QPA_PLATFORMTHEME (the backend must not ask itself)" \
-  grep -qx 'UnsetEnvironment=GTK_USE_PORTAL QT_QPA_PLATFORMTHEME' "$root/packaging/systemd/grassfield-portal.service"
+# Every Grassfield unit that runs a Qt GUI process (qs for the shell and the security process, and the apps whose main.cpp makes a
+# QGuiApplication or QApplication): Qt's portal theme blocks on the portal at start (gate P5), so each pins gtk3 or clears the variable.
+gui_units=0
+for unit in "$root"/packaging/systemd/*.service; do
+  name=$(basename "$unit" .service)
+  exec_line=$(sed -n 's/^ExecStart=\([^ ]*\).*/\1/p' "$unit" | head -n 1)
+  gui=0
+  [[ $exec_line == /usr/bin/qs ]] && gui=1
+  bin=$(basename "${exec_line:-x}")
+  app=${bin#grassfield-}
+  for src in "$root/apps/$app/src/main.cpp" "$root/bridges/$app/src/main.cpp"; do
+    [[ -f $src ]] && grep -qE 'Q(Gui)?Application app|QGuiApplication|QApplication' "$src" && ! grep -q 'QCoreApplication app' "$src" && gui=1
+  done
+  ((gui)) || continue
+  gui_units=$((gui_units + 1))
+  check "$name.service (a Qt GUI process) pins QT_QPA_PLATFORMTHEME=gtk3 or clears it, so it never waits on the portal at start" \
+    bash -c 'grep -qx "Environment=QT_QPA_PLATFORMTHEME=gtk3" "$1" || grep -E "^UnsetEnvironment=.*\bQT_QPA_PLATFORMTHEME\b" "$1" >/dev/null' _ "$unit"
+done
+check "the check found the shell, the security process and the portal backend among the Qt GUI units ($gui_units found)" test "$gui_units" -ge 3
+check "the settings portal backend (QtCore only) clears it as well" grep -qx 'UnsetEnvironment=GTK_USE_PORTAL QT_QPA_PLATFORMTHEME' "$root/packaging/systemd/grassfield-portal-settings.service"
 exit "$fail"

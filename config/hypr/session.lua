@@ -73,9 +73,9 @@ hl.env("GRASSFIELD_SESSION", "1")
 
 -- ADR-0054 (amends Q3 of ADR-0035): Qt apps get Grassfield's Open and Save panels and keep the GTK look. Omarchy's envs.lua
 -- (above) set QT_QPA_PLATFORMTHEME=gtk3; here the "xdgdesktopportal" theme replaces it when the "grassfield" platform-theme
--- plugin is installed for the Qt that runs, and gtk3 stays otherwise (the reason goes to the journal). LibreOffice uses its Qt 6
--- plugin in this session only (its GTK 3 plugin never calls the portal), through an environment variable: no file of the user's
--- LibreOffice profile is read or written.
+-- plugin is installed for the Qt that runs, and gtk3 stays otherwise (the reason goes to the journal). LibreOffice's Qt 6 plugin
+-- (SAL_USE_VCLPLUGIN) is set by packaging/uwsm/env-grassfield, which every launch path of the session sees (the Dock, Launchpad and
+-- Open With start apps from the systemd user manager's environment, not the compositor's).
 do
   local ok, qttheme = pcall(require, "grassfield.qttheme")
   if ok then
@@ -86,10 +86,6 @@ do
       print("grassfield: Qt platform theme: gtk3 kept: " .. tostring(why))
     else
       print("grassfield: Qt platform theme: gtk3 kept: " .. tostring(theme))
-    end
-    local lo = select(2, pcall(qttheme.libreoffice))
-    if lo == "qt6" then
-      hl.env("SAL_USE_VCLPLUGIN", lo)
     end
   else
     print("grassfield: Qt platform theme: gtk3 kept: module failed: " .. tostring(qttheme))

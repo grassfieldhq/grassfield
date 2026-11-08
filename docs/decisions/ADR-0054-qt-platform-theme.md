@@ -57,10 +57,25 @@ into `grassfield-desktop`, `scripts/dev/check-cmake.sh` configures it, `just che
 which decides `QT_QPA_PLATFORMTHEME`: `xdgdesktopportal` when the plugin is installed and stamped for the major.minor of the
 installed Qt, `gtk3` (Omarchy's value, left as it is) otherwise, with the reason printed to the journal (`grassfield: Qt platform
 theme: gtk3 kept: ...`). The plugin's key relies on the first item of `XDG_CURRENT_DESKTOP` being `Grassfield`, which
-`session.lua` sets just before. Units that clear the variable stay as they are: the portal backend and the settings backend
-(`UnsetEnvironment=GTK_USE_PORTAL QT_QPA_PLATFORMTHEME`, ADR-0035) must never ask themselves for a dialog, and grassfield-portal
-clears it in its own `main`. Grassfield's own Qt apps (Files, Settings, Preview) then use the portal for `QFileDialog` too; those
-that draw their own panels (the QML panels of Files) are unchanged.
+`session.lua` sets just before. Hyprland imports the compositor's environment into the systemd user manager and D-Bus
+activation, so every process of the session sees the value, the shell and the security process included. Qt's portal theme makes a
+blocking portal call when a Qt process starts, the same wait as `GTK_USE_PORTAL` (gate P5, ADR-0035 D-4): a slow portal would
+delay the shell and the lock screen's restart after a crash. So every Grassfield unit that runs a Qt GUI process keeps its value
+from before this ADR: `grassfield-shell.service` and `grassfield-security.service` pin `QT_QPA_PLATFORMTHEME=gtk3`
+(`Environment=`, which wins over the manager's), and the portal backend and the settings backend keep
+`UnsetEnvironment=GTK_USE_PORTAL QT_QPA_PLATFORMTHEME` (they must never ask themselves for a dialog; grassfield-portal also clears it
+in its own `main`). The other units run QtCore programs, which load no platform theme. `tests/shell/qt_platform_theme.sh` finds
+every unit that runs a Qt GUI process (`qs`, and the apps whose `main.cpp` makes a `QGuiApplication` or `QApplication`) and fails
+if one neither pins nor clears. The apps the shell starts get the manager's environment (`uwsm-app` scopes); a start that is not
+scoped (a dev session) inherits the shell's pin. Grassfield's own Qt apps (Files, Settings, Preview) use the portal for `QFileDialog`
+too; those that draw their own panels (the QML panels of Files) are unchanged.
+
+The plugin serves the portal theme only. Qt appends the platform's own theme names after `QT_QPA_PLATFORMTHEME` (on Wayland, the
+`XDG_CURRENT_DESKTOP` items), so any Wayland Qt process of the session asks for `grassfield` whatever the variable says. `create()`
+therefore returns nothing unless `QT_QPA_PLATFORMTHEME` is exactly `xdgdesktopportal`, before it touches GTK (a process with the
+variable unset, or naming `qt6ct`, `kde` or `none`, never reaches the plugin's gtk3 path, and the login stamp check does not have
+to cover it). Applications that bundle their own Qt (Flatpaks, AppImages, a vendor's private Qt) do not load this
+plugin and lose the gtk3 look under their own platform theme; only apps on the system Qt get it.
 
 ### D-3 The ABI story
 QPA (`qpa/qplatformtheme.h`, `qplatformthemefactory_p.h`) is private API: Qt promises nothing between minor releases, so the plugin
@@ -90,8 +105,8 @@ is rebuilt with every Qt minor release (6.12 to 6.13), never carried over.
    writes `grassfield.platformtheme: Qt's gtk3 platform theme did not load; the base theme falls back to Qt's generic one` to the app's
    stderr (a Qt logging category, on by default for warnings): never silent. The one failure measured (A4): no GDK display, where Qt's
    own `gtk3` theme makes GTK print "cannot open display" and the process end with status 1. That is what `gtk3` does today, so it is
-   no new risk, and a Qt app on the session's Wayland display always has one; it is why the session sets the variable only for the
-   compositor's own environment and why tests of the offscreen apps unset it.
+   no new risk, and a Qt app on the session's Wayland display always has one; the tests of the offscreen apps unset the variable.
+   The login check also refuses a plugin file that is not a whole shared object (ELF magic, a minimum size).
 3. The one case not caught: a plugin built for Qt N loaded by a Qt N' of the same major.minor whose private classes still differ.
    That does not happen within a minor release by Qt's own policy; the hold and the stamp rest on that policy.
 4. Settings: nothing to show when all is well, and no new pane when the guard falls back: the journal line (1) is the record, and
@@ -99,14 +114,17 @@ is rebuilt with every Qt minor release (6.12 to 6.13), never carried over.
    in the first place.
 
 ### D-5 LibreOffice
-`session.lua` sets `SAL_USE_VCLPLUGIN=qt6` in the Grassfield session's environment, only when `libvclplug_qt6lo.so` exists (a
-named plugin LibreOffice cannot find would otherwise be an error). The variable is read by LibreOffice's VCL at start and chooses
-its toolkit plugin; it is not stored. No file of the user's LibreOffice profile (`registrymodifications.xcu`, `~/.config/libreoffice`)
-is read or written, the Omarchy session never sets it, and a user who runs `SAL_USE_VCLPLUGIN=gtk3 soffice` or unsets it gets
-what they ask for. LibreOffice under `qt6` follows the Qt platform theme (D-2): the GTK look, the portal's panels and, through
-Qt's platform menu bar, the global menus. The same environment reaches launches from the Dock, from Files, from a terminal and
-the shell's launcher, since it is the compositor's. The Qt 6 plugin belongs to `libreoffice-fresh`, an optional package
-(ADR-0046 lists LibreOffice among the removable preinstalls).
+`packaging/uwsm/env-grassfield` sets `SAL_USE_VCLPLUGIN=qt6`, only when `libvclplug_qt6lo.so` exists (a named plugin LibreOffice
+cannot find would otherwise be an error). That file is where it belongs: uwsm hands its variables to the systemd user manager and
+D-Bus activation, which is the environment the Dock, Launchpad, Search and Open With start apps from (`shell/services/Apps.qml`),
+and only the Grassfield session sources it (the Omarchy session never does). The compositor's own environment (`hl.env`) would not
+have reached those launches. The variable is read by LibreOffice's VCL at start and chooses its toolkit plugin; it is not stored. No
+file of the user's LibreOffice profile (`registrymodifications.xcu`, `~/.config/libreoffice`) is read or written, and a user who runs
+`SAL_USE_VCLPLUGIN=gtk3 soffice` gets what they ask for. LibreOffice under `qt6` follows the Qt platform theme (D-2): the GTK look,
+`QFileDialog` and, through Qt's platform menu bar, the global menus. Not verified here: that LibreOffice's Qt 6 plugin sends its
+Open and Save dialogs to the portal (a headless LibreOffice opens no dialog), and its look and menus: owner-checked on the next
+release. The Qt 6 plugin belongs to `libreoffice-fresh`, an optional package (ADR-0046 lists LibreOffice among the removable
+preinstalls).
 
 ### D-6 Settings
 No new setting. The behaviour is the session's, as the portal routing is (ADR-0035); there is no toggle between "Grassfield's
@@ -123,12 +141,16 @@ macOS has no such toggle. Nothing in Settings changes. A user who wants Omarchy'
 - `tests/integration/qt_platform_theme.sh` (headless layer, bare: it needs sockets), on a private bus, a Broadway display for GTK 3
   and the real frontend and backend: a Qt probe (`tests/fixtures/qt-theme-probe`). A: the plugin asked for by name gives the palette,
   font and colour scheme of `gtk3` (a font no system has, set in a scratch GTK file); `xdgdesktopportal` alone gives the generic
-  look; no GTK display ends like `gtk3` does, never a crash or a hang. B: the portal theme's `QFileDialog` helper is the portal's and
+  look; the plugin loaded by `QPluginLoader` returns the `gtk3` palette, text colour and font under `xdgdesktopportal` and nothing for
+  any other value (unset, `gtk3`, `qt6ct`, `kde`, `none`, empty) with GTK never touched; no GTK display ends like `gtk3` does, never a
+  crash or a hang. B: the portal theme's `QFileDialog` helper is the portal's and
   a `QFileDialog` reaches the Grassfield backend (a panel is shown, the application is answered) while x-d-p-gtk receives nothing;
   under `gtk3` the backend sees no call. C, with a nested session of this tree (Qt's Wayland integration, as in the session): the portal
   theme asks the plugin for the session's name by itself, so Qt gets the `gtk3` look and the portal's dialog; with Hyprland first the
   plugin is not asked. Measured finding: under the offscreen integration the portal theme's names do not include the desktop's, so
   offscreen only reaches the plugin by name (A3); the session case is C.
+- D, in the same script: a Qt process under a portal frontend that owns its name and never answers starts at once with `gtk3` pinned
+  (the units' value), and the same start with the portal theme is timed for comparison.
 - Not covered here (the integrator's nested pass): a Qt app's Open panel drawn in the nested session at scale 1.25, LibreOffice's
   window and menus under `qt6`: visual NOT verified.
 

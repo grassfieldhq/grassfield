@@ -14,6 +14,7 @@ local M = {}
 M.plugin = "/usr/lib/qt6/plugins/platformthemes/libgrassfield-qt-theme.so"
 M.stamp = "/usr/share/grassfield/qt-platform-theme/qt-version"
 M.qt_version_file = "/usr/lib/cmake/Qt6Core/Qt6CoreConfigVersionImpl.cmake"
+M.min_size = 4096
 M.libreoffice_plugin = "/usr/lib/libreoffice/program/libvclplug_qt6lo.so"
 
 local function read(path)
@@ -46,6 +47,11 @@ function M.choose(read_text, file_exists)
   read_text = read_text or read
   file_exists = file_exists or exists
   if not file_exists(M.plugin) then return "gtk3", "no platform-theme plugin installed (" .. M.plugin .. ")" end
+  -- A file that is not a whole shared object (a truncated or empty download) would make Qt fall back to Fusion for every app.
+  local binary = read_text(M.plugin)
+  if type(binary) ~= "string" or binary:sub(1, 4) ~= "\127ELF" or #binary < M.min_size then
+    return "gtk3", "the platform-theme plugin is not a complete shared object (" .. M.plugin .. ")"
+  end
   local built = M.minor(read_text(M.stamp))
   if not built then return "gtk3", "the plugin's Qt release stamp is missing or unreadable (" .. M.stamp .. ")" end
   local running = M.minor(read_text(M.qt_version_file))
@@ -56,7 +62,8 @@ function M.choose(read_text, file_exists)
   return "xdgdesktopportal", nil
 end
 
--- LibreOffice's Qt 6 VCL plugin, only where it is installed (SAL_USE_VCLPLUGIN names a plugin LibreOffice then must find).
+-- LibreOffice's Qt 6 VCL plugin, only where it is installed (SAL_USE_VCLPLUGIN names a plugin LibreOffice then must find). The
+-- variable itself is set by packaging/uwsm/env-grassfield (every launch path sees it); this function is the same test in Lua.
 function M.libreoffice(file_exists)
   file_exists = file_exists or exists
   if file_exists(M.libreoffice_plugin) then return "qt6" end

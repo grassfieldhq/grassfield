@@ -4,12 +4,14 @@
 #      "Zzz Probe"):
 #      A1 QT_QPA_PLATFORMTHEME=gtk3 (Omarchy's value): the reference palette, font and colour scheme; GTK's own chooser
 #      A2 xdgdesktopportal with no plugin: Qt's generic base (Fusion, "Sans Serif"): the look this ADR must not give the session
-#      A3 the plugin asked for by name: Qt's gtk3 theme, the palette, font and colour scheme of A1, no warning
+#      A3 the plugin loaded by QPluginLoader: Qt's gtk3 theme (palette, text colour, font of A1) with QT_QPA_PLATFORMTHEME=
+#         xdgdesktopportal; nothing, and GTK never touched, with any other value, none or an empty one
 #      A4 the plugin with no display for GTK: never a crash or a hang
 #   B  file chooser, offscreen, the real xdg-desktop-portal frontend and the real Grassfield backend (offscreen, answering its panel
 #      by the dev hook) on the private bus: the portal theme's QFileDialog helper is the portal's and the probe.s
 #      QFileDialog::getExistingDirectory reaches the backend (a panel is shown); x-d-p-gtk (a stand-in) receives nothing. Under gtk3
 #      Qt's GTK 3 chooser draws in-process and the backend sees no call (the reason of the amendment of Q3).
+#   D  the shell's start: a Qt process under a portal frontend that never answers, with gtk3 pinned (as the units do) and with the portal theme (timed).
 #   C  the Wayland integration, as in the session, only with a nested session of this tree (just nested-up; slot rule): the portal
 #      theme asks the plugin for XDG_CURRENT_DESKTOP's first item ("grassfield"): the look of gtk3 and the portal's dialog; with
 #      another first item (Hyprland) the generic base; QFileDialog reaches the backend. (Offscreen's theme names do not include
@@ -113,17 +115,31 @@ desc="A2 xdgdesktopportal with no plugin: Qt's generic base, the GTK font is los
 check bash -c '[[ $1 == QXdgDesktopPortalTheme && $2 != "Zzz Probe" ]]' _ "$(val theme)" "$(val font)"
 
 # A3 -------------------------------------------------------------------------------------------------------------------------
-# The plugin asked for by name (QT_QPA_PLATFORMTHEME=grassfield): it answers with Qt's gtk3 theme, so the palette, the font and the
-# colour scheme are the reference's. (Under the Wayland integration the portal theme asks for it itself: section C.)
-run_probe "${gdk[@]}" "QT_PLUGIN_PATH=$tmp/plugins" QT_QPA_PLATFORMTHEME=grassfield XDG_CURRENT_DESKTOP=$desktop --
-desc="A3 the plugin answers with Qt's gtk3 theme: GTK's font, palette (window, text, base) and colour scheme of A1 [rc $rc, theme $(val theme): $(val font) $(val window) $(val text) $(val base) scheme $(val color-scheme); A1: $ref_font $ref_window $ref_text $ref_base scheme $ref_scheme]"
-check bash -c '[[ $1 == 0 && $2 == "$3" && $4 == "$5" && $6 == "$7" && $8 == "$9" && ${10} == ${11} ]]' _ "$rc" "$(val font)" "$ref_font" "$(val window)" "$ref_window" "$(val text)" "$ref_text" "$(val base)" "$ref_base" "$(val color-scheme)" "$ref_scheme"
-desc="A3 the plugin loaded without a warning [$(grep -c 'did not load' "$d/probe.err") warning line(s)]"
+# The plugin loaded by QPluginLoader (the probe's --theme-plugin mode) and asked for "grassfield", as Qt's portal theme does: with
+# QT_QPA_PLATFORMTHEME=xdgdesktopportal it returns Qt's gtk3 theme (the palette, text colour and font of A1's reference); with any
+# other value, or none, it returns nothing and GTK is never touched (Qt appends the platform's theme names after the variable, so on
+# Wayland every Qt process of the session asks for "grassfield").
+plug=$tmp/plugins/platformthemes/libgrassfield-qt-theme.so
+run_probe "${gdk[@]}" QT_QPA_PLATFORMTHEME=xdgdesktopportal XDG_CURRENT_DESKTOP=$desktop -- --theme-plugin "$plug"
+desc="A3 xdgdesktopportal: the plugin returns a theme whose palette, text colour and font are gtk3's [rc $rc, created $(val created): $(val font) $(val window) $(val text); A1: $ref_font $ref_window $ref_text]"
+check bash -c '[[ $1 == 0 && $2 == 1 && $3 == "$4" && $5 == "$6" && $7 == "$8" ]]' _ "$rc" "$(val created)" "$(val font)" "$ref_font" "$(val window)" "$ref_window" "$(val text)" "$ref_text"
+desc="A3 ... and it declines any other key [other=$(val other)]"
+check bash -c '[[ $1 == 0 ]]' _ "$(val other)"
+desc="A3 ... without a warning [$(grep -c 'did not load' "$d/probe.err") line(s)]"
 check bash -c '! grep -q "did not load" "$1"' _ "$d/probe.err"
+for v in unset gtk3 qt6ct kde none xdgdesktopportal2 "xdgdesktopportal:gtk3" empty; do
+  case $v in
+    unset) run_probe "${gdk[@]}" XDG_CURRENT_DESKTOP=$desktop -- --theme-plugin "$plug" ;;
+    empty) run_probe "${gdk[@]}" QT_QPA_PLATFORMTHEME= XDG_CURRENT_DESKTOP=$desktop -- --theme-plugin "$plug" ;;
+    *) run_probe "${gdk[@]}" "QT_QPA_PLATFORMTHEME=$v" XDG_CURRENT_DESKTOP=$desktop -- --theme-plugin "$plug" ;;
+  esac
+  desc="A3 QT_QPA_PLATFORMTHEME=$v: the plugin returns nothing and GTK is not initialised [rc $rc, created $(val created), $(grep -ci 'Gtk-\|Gdk-' "$d/probe.err") GTK line(s) on stderr]"
+  check bash -c '[[ $1 == 0 && $2 == 0 ]] && ! grep -qi "Gtk-\|Gdk-" "$3"' _ "$rc" "$(val created)" "$d/probe.err"
+done
 
 # A4 -------------------------------------------------------------------------------------------------------------------------
-run_probe GDK_BACKEND=broadway BROADWAY_DISPLAY=:98 "QT_PLUGIN_PATH=$tmp/plugins" QT_QPA_PLATFORMTHEME=grassfield XDG_CURRENT_DESKTOP=$desktop --
-desc="A4 no display for GTK (what Qt's own gtk3 theme does without one): the application ends or goes on, never a crash or a hang [rc $rc, theme $(val theme), $(grep -m1 -i 'display\|did not load' "$d/probe.err")]"
+run_probe GDK_BACKEND=broadway BROADWAY_DISPLAY=:98 QT_QPA_PLATFORMTHEME=xdgdesktopportal XDG_CURRENT_DESKTOP=$desktop -- --theme-plugin "$plug"
+desc="A4 no display for GTK (what Qt's own gtk3 theme does without one): the process ends or goes on, never a crash or a hang [rc $rc, created $(val created)]"
 check bash -c '[[ $1 -lt 124 ]]' _ "$rc"
 
 # B --------------------------------------------------------------------------------------------------------------------------
@@ -151,10 +167,7 @@ check bash -c '[[ $1 == $2 ]]' _ "$before" "$after"
 # The Wayland integration, as in the session: only with a nested session of this tree (just nested-up; slot rule), through
 # scripts/dev/isolated.sh. The portal theme there asks the plugin for the session's name (XDG_CURRENT_DESKTOP's first item).
 nested_sock=$(cat "$root/.dev/nested.wayland" 2>/dev/null)
-if [[ -z $nested_sock || ! -S ${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/$nested_sock ]]; then
-  echo "SKIP: qt_platform_theme: section C needs the nested session (just nested-up): the Wayland integration is not covered by this run"
-  exit "$fail"
-fi
+section_c() {
 wprobe() { # wprobe <extra env...> -- <args>: the probe on the nested Wayland socket, on this scene's bus (never the owner's)
   local envs=()
   while (($#)) && [[ $1 != -- ]]; do envs+=("$1"); shift
@@ -185,4 +198,40 @@ wprobe "QT_PLUGIN_PATH=$tmp/plugins" QT_QPA_PLATFORMTHEME=xdgdesktopportal XDG_C
 after=$(grep -c 'panel shown' "$d/backend.log" 2>/dev/null)
 desc="C5 Wayland, with the plugin: QFileDialog reaches the Grassfield backend (panels $before -> $after) and the application is answered [rc $rc, $(tr '\n' ' ' <"$d/probe.out")]"
 check bash -c '[[ $3 -gt $2 && $1 == 0 ]] && grep -q "^chosen=" "$4" && ! grep -q TIMEOUT "$4"' _ "$rc" "$before" "$after" "$d/probe.out"
+}
+if [[ -n $nested_sock && -S ${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/$nested_sock ]]; then
+  section_c
+else
+  echo "SKIP: qt_platform_theme: section C needs the nested session (just nested-up): the Wayland integration is not covered by this run"
+fi
+
+# D --------------------------------------------------------------------------------------------------------------------------
+# A Qt GUI process under a portal frontend that owns its name and never answers (ADR-0054 D-2: why the shell and the security
+# process pin gtk3 in their units): Qt's portal theme waits for the portal's reply at start, the pinned value does not. Both
+# starts are timed (offscreen, the probe with no argument).
+stop_bus
+# broadwayd ends (it aborts) when the clients of the earlier sections are gone: a fresh one for this section.
+disp=29
+env -i PATH="$PATH" HOME="$d/home" XDG_RUNTIME_DIR="$d/run" broadwayd -a 127.0.0.1 ":$disp" >"$d/broadway2.log" 2>&1 &
+bw_pid=$!
+disown "$bw_pid"
+sleep 1
+gdk=(GDK_BACKEND=broadway "BROADWAY_DISPLAY=:$disp")
+sd=$tmp/silent
+mkdir -p "$sd/services"
+start_bus "$sd" || { echo "FAIL: a private bus starts: $(head -n 1 "$sd/bus.log")"; exit 1; }
+GF_TEST_BUS=1 GF_TEST_BUS_DIR=$sd DBUS_SESSION_BUS_ADDRESS=$bus python3 -I "$root/tests/fixtures/fake-portal-backend.py" silent-frontend >"$sd/frontend.log" 2>&1 &
+frontend_pid=$!
+wait_until 10 owned org.freedesktop.portal.Desktop || { echo "FAIL: the silent frontend owns its name"; exit 1; }
+timed() { # timed <variable> env...: the probe's start, in whole seconds
+  local t0=$SECONDS
+  probe_timeout=60 run_probe "${@:2}" --
+  printf -v "$1" '%s' "$((SECONDS - t0))"
+}
+timed pinned_s "${gdk[@]}" QT_QPA_PLATFORMTHEME=gtk3 XDG_CURRENT_DESKTOP=$desktop
+desc="D the unit's pinned gtk3 starts at once under a frontend that never answers [${pinned_s} s, rc $rc, broadwayd alive: $(kill -0 "$bw_pid" 2>/dev/null && echo yes || echo no); $(grep -v "Detected locale\|qt.core" "$d/probe.err" | tail -n 3 | tr '\n' ' ')]"
+check bash -c '[[ $1 -le 5 && $2 == 0 ]]' _ "$pinned_s" "$rc"
+timed portal_s "${gdk[@]}" QT_QPA_PLATFORMTHEME=xdgdesktopportal XDG_CURRENT_DESKTOP=$desktop
+echo "INFO: D xdgdesktopportal under the same frontend: ${portal_s} s (rc $rc): the apps accept a wait, the shell and the security process must not"
+stop_bus
 exit "$fail"

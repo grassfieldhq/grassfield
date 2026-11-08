@@ -3,6 +3,7 @@
 // first item of XDG_CURRENT_DESKTOP, lower-cased, which is "grassfield" in this session. This plugin answers that name
 // with Qt's own gtk3 theme, so the look the session had under QT_QPA_PLATFORMTHEME=gtk3 (owner decision Q3) is kept.
 // QPA is private API: this file builds against Qt's private headers and is rebuilt with every Qt minor release.
+#include <QtCore/QByteArray>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QStringList>
 #include <qpa/qplatformtheme.h>
@@ -20,6 +21,12 @@ public:
     QPlatformTheme *create(const QString &key, const QStringList &) override
     {
         if (key.compare(QLatin1String("grassfield"), Qt::CaseInsensitive) != 0) {
+            return nullptr;
+        }
+        // Qt appends the platform's theme names (on Wayland the XDG_CURRENT_DESKTOP items) after QT_QPA_PLATFORMTHEME, so every Wayland
+        // Qt process of the session asks for "grassfield" when the variable is unset or names a theme that failed. The plugin serves
+        // the portal theme only: with any other value it declines before GTK is touched.
+        if (qgetenv("QT_QPA_PLATFORMTHEME") != QByteArrayLiteral("xdgdesktopportal")) {
             return nullptr;
         }
         QPlatformTheme *base = QPlatformThemeFactory::create(QStringLiteral("gtk3"));
