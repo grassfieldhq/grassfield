@@ -1587,25 +1587,25 @@ window still on `special:minimized` (`scripts/nestctl -j clients`), keys typed w
   window only through the `zcr_extended_drag_v1` protocol Hyprland 0.56.2 lacks; the tab comes off into a new window that
   does not follow the pointer, and nothing tiles (measured in nested with Chromium 155). The empty part of the tab strip asks
   Hyprland's move (`xdg_toplevel.move`) and tiles like any window (TL16; `tiling.sh` case chromium).
-- Browsers' traffic lights: Chromium and Google Chrome draw the Grassfield GTK theme's lights only in their GTK appearance
-  (Settings > Appearance > Mode: GTK), and never under Omarchy's machine policy BrowserThemeColor, whose colour theme
-  replaced the lights in every profile (measured in nested with a mount namespace). The package's `zz-grassfield-gtk.json`
-  (`{"BrowserThemeColor": ""}`, in `backup=`) sits next to Omarchy's `color.json` in both policy directories,
-  `/etc/chromium/policies/managed` and `/etc/opt/chrome/policies/managed`. Chromium's behaviour, read in its source
-  (data; `components/policy/core/common/config_dir_policy_loader.cc`, `policy_map.cc`,
-  `chrome/browser/themes/theme_color_policy_handler.cc`): the loader reads the directory's files in lexicographic order and
-  merges each into one map, a later file's value replacing an earlier one's at the same level, scope and source (and the
-  earlier one kept as a conflict, shown in chrome://policy); the empty string then fails the handler's hex colour check
-  (`IDS_POLICY_HEX_COLOR_ERROR`), so the policy sets nothing and the profile's own theme choice applies. Machine-wide: the
-  Omarchy session's browsers no longer take Omarchy's colour either (accepted in the review of 3ca47a4b; owner to
-  confirm). The GTK appearance itself: a new
-  profile's default (`prefs::kSystemTheme`, `ui::GetDefaultSystemTheme()`) is GTK only when
-  `base::nix::GetDesktopEnvironment` reads a GNOME-like desktop from `XDG_CURRENT_DESKTOP` (then `DESKTOP_SESSION`,
-  `GNOME_DESKTOP_SESSION_ID`, `KDE_FULL_SESSION`); the Grassfield session (Hyprland) reads as OTHER, whose default is the
-  Classic appearance. No session-safe switch exists: `initial_preferences` is read only next to the browser's executable
-  (a file of the chromium and google-chrome packages, for new profiles only), no policy sets the system theme, and changing
-  the desktop variables for the browsers is not done (they also drive xdg-utils, Qt and the browsers' key store choice).
-  Owner step, once per profile: Settings > Appearance > Mode: GTK. Firefox: not verified (not installed on the dev
+- Browsers' traffic lights (R7-OMA-01, R7-FUN-04; owner decisions 2026-11-08): Chromium and Google Chrome draw the Grassfield
+  GTK theme's lights only in their GTK appearance, and never under Omarchy's machine policy BrowserThemeColor (`color.json`),
+  whose colour theme replaces the lights in every profile (measured in nested with a mount namespace). A new Chromium
+  profile defaults to GTK only when `base::nix::GetDesktopEnvironment` reads a GNOME-like desktop from `XDG_CURRENT_DESKTOP`
+  (`prefs::kSystemTheme`, `ui::GetDefaultSystemTheme()`; the Grassfield session reads as OTHER, whose default is Classic).
+  Chromium reads its policies only from `/etc/chromium/policies/managed` and `/etc/opt/chrome/policies/managed` (compiled in;
+  no flag or variable moves them) and `initial_preferences` only next to the executable, so a file in either place is
+  machine-wide and reaches the Omarchy session. The package therefore installs nothing in `/etc`: the Grassfield session
+  starts the browsers through `packaging/session-bin/chromium` (first in PATH in that session only, link
+  `google-chrome-stable`, and a session-only desktop entry `/usr/share/grassfield/xdg/applications/google-chrome.desktop`,
+  because Google's names its binary by absolute path). The stand-in (1) creates `<profile>/Preferences` with
+  `extensions.theme.system_theme` 1 only when that file does not exist (a new profile; the macOS model: the system default
+  until the user chooses; an existing profile and its later choice are never read or written), and (2) runs the browser
+  in a private mount namespace (`bwrap --dev-bind / / --tmpfs <dir> --ro-bind <each other file>`, no privilege) where
+  `color.json` is absent and every other policy file is kept; the files on disk are untouched. Without bubblewrap or user
+  namespaces it starts the browser as it is (colour theme, no lights). Upgrade from rc7: the package no longer holds
+  `zz-grassfield-gtk.json`, which pacman removes as an unmodified `backup=` file of the old package (an edited one stays as
+  `.pacsave`). Not wrapped: a browser started by an absolute path other than the two entries above (a user's own launcher).
+  Evidence: `tests/shell/browser_session.sh`. Edge and Brave (Omarchy writes their policy too) are not handled. Firefox: not verified (not installed on the dev
   machine). See config/hypr/grassfield/windows.lua.
 - Layer pointer focus (FR51): only the shell's own `grassfield-*` layers are corrected; another client's layer surface that
   takes the keyboard on an output away from the layout origin (a third-party launcher) keeps Hyprland's wrong position until

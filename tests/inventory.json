@@ -530,6 +530,7 @@
  {"path": "tests/shell/bindings_forward.sh", "layer": "logic"},
  {"path": "tests/compositor/size_keys.sh", "layer": "logic"},
  {"path": "tests/shell/session_services.sh", "layer": "logic"},
+ {"path": "tests/shell/browser_session.sh", "layer": "logic"},
  {"path": "tests/shell/capture.sh", "layer": "logic"},
  {"path": "tests/shell/crash_watch.sh", "layer": "logic"},
  {"path": "tests/shell/diagnostic_report.sh", "layer": "logic"},
