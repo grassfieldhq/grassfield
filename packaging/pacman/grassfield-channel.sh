@@ -377,7 +377,8 @@ gf_info_field() { # field
 }
 
 gf_hold_swap() { # hold | unhold
-  local target other info version conflicts plan before after removed added item bad
+  local target other info version conflicts provides plan before after removed added item bad installed_info
+  local -a conflict_names=() provided_names=()
   case $1 in
     hold) target=$GF_HOLD_PKG other=$GF_UNHOLD_PKG ;;
     unhold) target=$GF_UNHOLD_PKG other=$GF_HOLD_PKG ;;
@@ -390,16 +391,32 @@ gf_hold_swap() { # hold | unhold
   fi
   info=$(pacman -Si -- "grassfield/$target" 2>/dev/null 9<&-) ||
     gf_fail "$target is not in the package list of [grassfield] yet: check for updates first; nothing was changed"
-  version=$(printf '%s\n' "$info" | awk -F' *: *' '$1 == "Version" { print $2; exit }')
+  # The whole value after the first colon of the line: an epoch (1:3-1) keeps its own colon.
+  version=$(printf '%s\n' "$info" | awk '/^Version[ ]*: / { sub(/^Version[ ]*: /, ""); print; exit }')
   [[ $version =~ ^[A-Za-z0-9:._+~-]+-[A-Za-z0-9._+~]+$ ]] || gf_fail "the version of $target in [grassfield] is not one pacman names plainly: nothing was changed"
   conflicts=$(printf '%s\n' "$info" | gf_info_field "Conflicts With" | awk -F'\t' '{ print $2; exit }')
-  for item in $conflicts; do
-    [[ $item == None || $item == "$other" ]] ||
+  provides=$(printf '%s\n' "$info" | gf_info_field "Provides" | awk -F'\t' '{ print $2; exit }')
+  # Arrays read from a pipe (no unquoted expansion, so no glob; no here-string, which bash may write to /tmp).
+  read -r -a conflict_names < <(printf '%s\n' "$conflicts")
+  read -r -a provided_names < <(printf '%s\n' "$provides")
+  [[ ${conflict_names[0]-} != None ]] || conflict_names=()   # pacman writes "None" for an empty field
+  [[ ${provided_names[0]-} != None ]] || provided_names=()
+  for item in "${conflict_names[@]}"; do
+    [[ $item == "$other" ]] ||
       gf_fail "$target in [grassfield] declares a conflict with $item: refused, nothing was changed"
   done
-  bad=$(pacman -Qi 2>/dev/null 9<&- | gf_info_field "Conflicts With" | awk -F'\t' -v t="$target" -v o="$other" '
-    { n = split($2, c, /  */); for (i = 1; i <= n; i++) { w = c[i]; sub(/[<>=].*/, "", w); if (w == t && $1 != o) { print $1; exit } } }')
+  # --ask 4 answers EVERY conflict question yes, so nothing but the twin may be in the way, by name or by what it provides:
+  # an installed package that conflicts with the target or with a name the target provides, and an installed package that
+  # provides a name the target conflicts with. Names lose their version operators.
+  installed_info=$(pacman -Qi 2>/dev/null 9<&-) || gf_fail "cannot read the installed packages: nothing was changed"
+  bad=$(printf '%s\n' "$installed_info" | gf_info_field "Conflicts With" | awk -F'\t' -v names="$target ${provided_names[*]}" -v o="$other" '
+    BEGIN { n = split(names, t, " "); for (i = 1; i <= n; i++) w[t[i]] = 1 }
+    { m = split($2, c, /  */); for (i = 1; i <= m; i++) { x = c[i]; sub(/[<>=].*/, "", x); if ((x in w) && $1 != o) { print $1; exit } } }')
   [[ -z $bad ]] || gf_fail "the installed package $bad conflicts with $target, and --ask 4 would remove it: refused, nothing was changed"
+  bad=$(printf '%s\n' "$installed_info" | gf_info_field "Provides" | awk -F'\t' -v names="${conflict_names[*]}" -v o="$other" '
+    BEGIN { n = split(names, t, " "); for (i = 1; i <= n; i++) w[t[i]] = 1 }
+    { m = split($2, c, /  */); for (i = 1; i <= m; i++) { x = c[i]; sub(/[<>=].*/, "", x); if ((x in w) && $1 != o) { print $1; exit } } }')
+  [[ -z $bad ]] || gf_fail "the installed package $bad provides a name $target conflicts with, and --ask 4 would remove it: refused, nothing was changed"
   plan=$(pacman -S --print --print-format '%n' --noconfirm --ask 4 -- "grassfield/$target=$version" 2>/dev/null 9<&-) ||
     gf_fail "pacman cannot install $target on this system as it is (the versions of Qt or Quickshell it needs are not the ones installed): nothing was changed"
   [[ $plan == "$target" ]] ||

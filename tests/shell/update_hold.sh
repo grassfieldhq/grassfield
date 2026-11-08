@@ -129,7 +129,7 @@ assert "where Grassfield gets its updates" in [x.text for x in a["org.grassfield
 PY
 
 echo "== 3. gf_hold_swap against a pacman stand-in"
-mkdir -p "$tmp/bin" "$tmp/st/inst" "$tmp/st/repo" "$tmp/st/rconf" "$tmp/st/qconf" "$tmp/st/reason"
+mkdir -p "$tmp/bin" "$tmp/st/inst" "$tmp/st/repo" "$tmp/st/rconf" "$tmp/st/qconf" "$tmp/st/reason" "$tmp/st/qprov" "$tmp/st/rprov"
 cat >"$tmp/bin/pacman" <<'SH'
 #!/bin/bash
 # A stand-in: state in $ST (inst/<name> = installed version, repo/<name> = listed in [grassfield] at that version, rconf/<name> and
@@ -146,11 +146,11 @@ case $1 in
   -Qi)
     for f in "$ST/inst"/*; do
       n=${f##*/}
-      printf 'Name            : %s\nVersion         : %s\nConflicts With  : %s\n\n' "$n" "$(<"$f")" "$([[ -f $ST/qconf/$n ]] && cat "$ST/qconf/$n" || echo None)"
+      printf 'Name            : %s\nVersion         : %s\nProvides        : %s\nConflicts With  : %s\n\n' "$n" "$(<"$f")" "$([[ -f $ST/qprov/$n ]] && cat "$ST/qprov/$n" || echo None)" "$([[ -f $ST/qconf/$n ]] && cat "$ST/qconf/$n" || echo None)"
     done ;;
   -Si)
     [[ $last == grassfield/* && -f $ST/repo/$name ]] || exit 1
-    printf 'Repository      : grassfield\nName            : %s\nVersion         : %s\nConflicts With  : %s\n\n' "$name" "$(<"$ST/repo/$name")" "$([[ -f $ST/rconf/$name ]] && cat "$ST/rconf/$name" || echo None)" ;;
+    printf 'Repository      : grassfield\nName            : %s\nVersion         : %s\nProvides        : %s\nConflicts With  : %s\n\n' "$name" "$(<"$ST/repo/$name")" "$([[ -f $ST/rprov/$name ]] && cat "$ST/rprov/$name" || echo None)" "$([[ -f $ST/rconf/$name ]] && cat "$ST/rconf/$name" || echo None)" ;;
   -S)
     [[ $last == grassfield/*=* ]] || exit 1
     [[ $spec == "$name=$(<"$ST/repo/$name")" ]] || exit 1
@@ -182,9 +182,9 @@ swap() { # verb [channel.sh]: runs gf_hold_swap in a subshell with the stand-in;
   rc=$?
 }
 reset() {
-  rm -f "$tmp/st"/inst/* "$tmp/st"/repo/* "$tmp/st"/rconf/* "$tmp/st"/qconf/* "$tmp/st"/reason/* "$tmp/st"/plan_* "$tmp/st"/install_fail "$tmp/st"/swap_incomplete "$tmp/st"/extra_removal
+  rm -f "$tmp/st"/inst/* "$tmp/st"/repo/* "$tmp/st"/rconf/* "$tmp/st"/qconf/* "$tmp/st"/qprov/* "$tmp/st"/rprov/* "$tmp/st"/reason/* "$tmp/st"/plan_* "$tmp/st"/install_fail "$tmp/st"/swap_incomplete "$tmp/st"/extra_removal
   echo 3-1 >"$tmp/st/repo/grassfield-hold"; echo 3-1 >"$tmp/st/repo/grassfield-unhold"
-  echo "grassfield-hold" >"$tmp/st/rconf/grassfield-unhold"; echo 1-1 >"$tmp/st/inst/bystander"
+  echo "grassfield-hold" >"$tmp/st/rconf/grassfield-unhold"; echo "grassfield-hold" >"$tmp/st/rprov/grassfield-unhold"; echo 1-1 >"$tmp/st/inst/bystander"
 }
 installs() { grep -c -- '^-S --noconfirm' "$tmp/st/calls"; }
 reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"
@@ -240,6 +240,24 @@ expect "  also with a version in its conflicts" "$rc:$(installs)" "1:0"
 reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; echo "grassfield-unhold" >"$tmp/st/qconf/grassfield-hold"
 swap unhold
 expect "the hold's own conflict with the twin is the one that is allowed" "$rc" 0
+# Providers: --ask 4 would remove an installed package that provides a name the target conflicts with, or one that conflicts with a
+# name the target provides (the twin provides grassfield-hold): both are refused before the plan, nothing installed.
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; echo "grassfield-hold=2" >"$tmp/st/qprov/bystander"
+swap unhold
+expect "an installed package that provides the name the target conflicts with: refused, nothing installed" "$rc:$(installs):$(grep -c -- '--print' "$tmp/st/calls"):$(ls "$tmp/st/inst" | tr '\n' ' ')" "1:0:0:bystander grassfield-hold "
+[[ $out == *"provides a name grassfield-unhold conflicts with"* ]] && pass "  and says why" || fail "  no reason: $out"
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; echo "grassfield-hold>=1" >"$tmp/st/qconf/bystander"
+swap unhold
+expect "an installed package that conflicts with a name the target provides: refused, nothing installed" "$rc:$(installs)" "1:0"
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; echo "grassfield-hold=2" >"$tmp/st/qprov/grassfield-hold"
+swap unhold
+expect "the hold itself providing its own name is the twin's, allowed" "$rc" 0
+# An epoch is kept whole.
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; echo 1:3-1 >"$tmp/st/repo/grassfield-unhold"
+swap unhold
+expect "a version with an epoch (1:3-1): the swap works, pinned whole" "$rc:$(grep -- '^-S --noconfirm' "$tmp/st/calls" | grep -c 'grassfield-unhold=1:3-1$')" "0:1"
+# The conflicts are read into an array, never expanded unquoted.
+grep -q 'for item in \$conflicts' "$root/packaging/pacman/grassfield-channel.sh" && fail "an unquoted conflicts loop is back" || pass "the conflicts loop is a quoted array"
 # After the transaction: anything but the twin leaving fails loudly.
 reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/st/extra_removal"
 swap unhold
@@ -345,13 +363,16 @@ exempt() { # "installed names" "after names" package -> yes|no
     . "$tmp/exempt.sh"; u27_exempt "$3" && echo yes || echo no )
 }
 expect "twin installed: qt6-base is exempt" "$(exempt "grassfield-unhold" "" qt6-base)" yes
-expect "twin installed: quickshell is exempt" "$(exempt "grassfield-unhold grassfield-desktop" "grassfield-desktop" quickshell)" yes
+expect "twin installed: quickshell is exempt (the installed desktop's record, no new desktop in the plan)" "$(exempt "grassfield-unhold grassfield-desktop" "" quickshell)" yes
 expect "twin installed: hyprland is still compared" "$(exempt "grassfield-unhold" "" hyprland)" no
 expect "twin installed: aquamarine is still compared" "$(exempt "grassfield-unhold" "" aquamarine)" no
 expect "twin installed: kcoreaddons is still compared" "$(exempt "grassfield-unhold" "" kcoreaddons)" no
 expect "the hold installed: nothing is exempt (the hold is the first line, U27 the second)" "$(exempt "grassfield-hold" "" qt6-base)" no
 expect "nothing installed: not exempt" "$(exempt "" "" quickshell)" no
 expect "the plan brings the hold back: not exempt" "$(exempt "grassfield-unhold" "grassfield-hold" qt6-base)" no
+expect "the plan carries a grassfield-desktop (its record must match the system): qt6-base is compared" "$(exempt "grassfield-unhold grassfield-desktop" "grassfield-desktop" qt6-base)" no
+expect "the plan carries a grassfield-desktop: quickshell is compared" "$(exempt "grassfield-unhold grassfield-desktop" "grassfield-desktop" quickshell)" no
+expect "the plan carries another package: still exempt" "$(exempt "grassfield-unhold" "bash" quickshell)" yes
 # And the check really asks it: the comparison loop skips a package u27_exempt names.
 grep -q 'if u27_exempt "\$pkg"; then' "$helper_src" && pass "the compatibility loop asks u27_exempt before it compares" || fail "the compatibility loop does not ask u27_exempt"
 

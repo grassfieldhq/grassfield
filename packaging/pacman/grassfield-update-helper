@@ -436,9 +436,11 @@ compare_key() { # package version -> the part of the version that must match
 }
 # ADR-0041 step 2a: the person chose "Allow system updates Grassfield hasn't tested..." (grassfield-unhold installed, and this plan
 # does not bring the hold back): the two packages the hold bounds, qt6-base and quickshell, are not compared here, or Update Now
-# would still refuse what pacman now lets through. The others (hyprland, aquamarine, kcoreaddons) keep their comparison.
+# would still refuse what pacman now lets through. The others (hyprland, aquamarine, kcoreaddons) keep their comparison. Only
+# while the record is the INSTALLED grassfield-desktop's: a plan that carries a grassfield-desktop brings a new record, which must
+# match what is installed after the transaction (a build made for a newer Qt than the system will have is not what "Allow" means).
 u27_exempt() { # package
-  [[ -n ${installed[grassfield-unhold]-} && -z ${after[grassfield-hold]-} && ($1 == qt6-base || $1 == quickshell) ]]
+  [[ -n ${installed[grassfield-unhold]-} && -z ${after[grassfield-hold]-} && -z ${after[grassfield-desktop]-} && ($1 == qt6-base || $1 == quickshell) ]]
 }
 check_needed=0
 [[ -n ${after[grassfield-desktop]-} ]] && check_needed=1

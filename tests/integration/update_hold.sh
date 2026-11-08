@@ -24,6 +24,8 @@
 #     says allowed-moved; after the next Grassfield build it says allowed and `hold` swaps back;
 #   - both twins are installed as dependencies (`pacman -Qi`: Install Reason), so `pacman -Rns grassfield-desktop` takes the one that
 #     is installed along with it; the channel helper refuses both verbs;
+#   - a package that provides the hold's name is in the way: unhold is refused; an epoch version swaps whole; with the twin installed a
+#     desktop built for a newer Qt than the system has is refused (exit 6, incompatible qt6-base);
 #   - the helper's refusals: no [grassfield] section, an unknown verb, extra arguments, a package not in the list.
 # Not covered here (the owner's L2 or the integrator's nested session): polkit and pkexec around the helper (the action is
 # the existing org.grassfield.packages.set-channel), Settings' buttons, the shell's notice.
@@ -88,7 +90,12 @@ mkpkg() {
   rm -rf "$dir" && mkdir -p "$dir/usr/share/doc/$name"
   echo "$name $version" >"$dir/usr/share/doc/$name/README"
   {
-    printf 'pkgname = %s\npkgbase = %s\npkgver = %s-1\npkgdesc = update hold test\nurl = https://example.invalid\n' "$name" "$name" "$version"
+    # A "pkgver = ..." argument replaces the default (an epoch, for instance).
+    if [[ " $* " == *" pkgver = "* ]]; then
+      printf 'pkgname = %s\npkgbase = %s\npkgdesc = update hold test\nurl = https://example.invalid\n' "$name" "$name"
+    else
+      printf 'pkgname = %s\npkgbase = %s\npkgver = %s-1\npkgdesc = update hold test\nurl = https://example.invalid\n' "$name" "$name" "$version"
+    fi
     printf 'builddate = 1700000000\npackager = test\nsize = 1\narch = any\nlicense = MIT\n'
     for arg in "$@"; do [[ $arg == *' = '* ]] && printf '%s\n' "$arg"; done
   } >"$dir/.PKGINFO"
@@ -248,6 +255,45 @@ expect "unhold: exit 0 ($out)" test "$rc:$(ver grassfield-unhold)" == "0:3-1"
 expect "  the twin the helper installed is a dependency" test "$(reason grassfield-unhold)" == "Installed as a dependency for another package"
 quiet pacman -Rns --noconfirm grassfield-desktop
 expect "pacman -Rns grassfield-desktop removes the twin with it (nothing of the pair is left behind)" test "$(has grassfield-desktop && echo yes || echo no):$(has grassfield-hold && echo yes || echo no):$(has grassfield-unhold && echo yes || echo no)" == "no:no:no"
+
+say "review of 94e5020d: a provider in the way, an epoch, and a desktop built for a newer Qt than the system has"
+cleanup() { quiet pacman -Rdd --noconfirm grassfield-desktop grassfield-hold grassfield-unhold gu-provider; true; }
+cleanup
+# (1) An installed package that PROVIDES the hold's name is in the way of the twin: --ask 4 would remove it, so the helper refuses first.
+mkpkg gu-provider 1 "provides = grassfield-hold"
+publish grassfield-hold-3 grassfield-unhold-3 grassfield-desktop-3 qt6-base-6.13.0 quickshell-0.3.3 gu-provider-1
+quiet pacman -S --noconfirm grassfield-hold gu-provider
+out=$(chelper unhold); rc=$?
+expect "a package that provides grassfield-hold is installed: unhold refused (exit 1), nothing changed ($out)" test "$rc:$(ver grassfield-hold):$(ver gu-provider):$(has grassfield-unhold && echo yes || echo no)" == "1:3-1:1-1:no"
+expect "  and the helper says why" bash -c 'grep -q "provides a name grassfield-unhold conflicts with" <<<"$1"' _ "$out"
+cleanup
+# (2) An epoch in the repository's versions: the swap works, pinned whole, in both directions.
+mkgrassfield_epoch() { # build-number: the hold, twin and desktop of mkgrassfield 3, with an epoch
+  local rec="$W/BUILD-DEPS.3" line deps=()
+  while IFS= read -r line; do deps+=("depend = $line"); done < <(gf_hold_depends "$rec")
+  mkpkg grassfield-hold 4 "pkgver = 1:4-1" "${deps[@]}"
+  mkpkg grassfield-unhold 4 "pkgver = 1:4-1" "provides = grassfield-hold" "conflict = grassfield-hold"
+}
+mkgrassfield_epoch
+publish grassfield-hold-4 grassfield-unhold-4 qt6-base-6.13.0 quickshell-0.3.3
+quiet pacman -S --noconfirm grassfield-hold
+out=$(chelper unhold); rc=$?
+expect "epoch 1:4-1: unhold -> exit 0, the twin installed whole ($out)" test "$rc:$(ver grassfield-unhold):$(has grassfield-hold && echo yes || echo no)" == "0:1:4-1:no"
+out=$(chelper hold); rc=$?
+expect "epoch 1:4-1: hold -> exit 0, the hold back whole ($out)" test "$rc:$(ver grassfield-hold):$(has grassfield-unhold && echo yes || echo no)" == "0:1:4-1:no"
+cleanup
+# (3) With the twin installed, a plan that carries a grassfield-desktop made for a newer Qt than the system will have is refused (exit 6),
+# not exempted: "Allow" lets the system move on, it does not install a build made for a toolkit the system does not have.
+mkgrassfield 5 6.14.0 0.3.3
+publish grassfield-hold-3 grassfield-unhold-3 grassfield-desktop-3 qt6-base-6.13.0 quickshell-0.3.3
+quiet pacman -S --noconfirm grassfield-desktop
+chelper unhold >/dev/null
+publish grassfield-hold-5 grassfield-unhold-5 grassfield-desktop-5 qt6-base-6.13.0 quickshell-0.3.3
+op=$(newop); uhelper run "$op" >/dev/null; rc=$?
+expect "twin installed, desktop 5 (built for Qt 6.14) offered on a system with Qt 6.13: exit 6" test "$rc" == 6
+expect "  incompatible qt6-base (the comparison stayed), not grassfield-hold" bash -c 'grep -qx "incompatible qt6-base" "$1" && ! grep -q grassfield-hold "$1"' _ "$D/$op.exit"
+expect "  nothing installed (desktop 3 stays)" test "$(ver grassfield-desktop)" == "3-1"
+cleanup
 
 echo
 echo "update_hold: $fails failure(s)"
