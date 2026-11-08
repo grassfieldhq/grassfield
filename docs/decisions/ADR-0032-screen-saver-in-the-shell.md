@@ -1,5 +1,6 @@
 # ADR-0032: The screen saver is a shell surface, after inactivity, that never stands in for the lock
-Status: Proposed (cloud session, owner brief 2026-10-26 "Économiseur d'écran", owner choices of 2026-10-26 recorded in
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (cloud session, owner brief 2026-10-26 "Économiseur d'écran", owner choices of 2026-10-26 recorded in
 the maintainers' project log) · Date: 2026-10-26 · Decider: owner (brief and choices), integrator (merge after review) · Number: 0032
 
 ## Context

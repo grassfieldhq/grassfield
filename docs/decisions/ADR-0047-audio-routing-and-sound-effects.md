@@ -1,5 +1,6 @@
 # ADR-0047: Automatic audio output routing, and system sound effects
-Status: Proposed (2026-11-05), applied provisionally (owner rule of 2026-10-28: decide alone, the closest to macOS 27) ·
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-11-05), applied provisionally (owner rule of 2026-10-28: decide alone, the closest to macOS 27) ·
 Date: 2026-11-05 · Decider: owner (revisit), integrator (merge) · Number: 0047
 
 Inspired by Project Luma's `luma-audio-devices` (its routing rules and device classification, MPL-2.0); no code copied, the

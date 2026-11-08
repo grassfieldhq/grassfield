@@ -1,5 +1,6 @@
 # ADR-0053: A diagnostic report for beta testers
-Status: Proposed (2026-11-05), applied provisionally (owner rule of 2026-10-28: decide alone, the recommended option, the
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-11-05), applied provisionally (owner rule of 2026-10-28: decide alone, the recommended option, the
 macOS model first) · Date: 2026-11-05 · Decider: owner (revisit), integrator (merge) · Number: 0053
 
 Inspired by Project Luma's support report (`scripts/support/audio-report.py`, MPL-2.0: local evidence, no sudo, no network,

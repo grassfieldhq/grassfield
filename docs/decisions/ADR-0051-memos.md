@@ -1,5 +1,6 @@
 # ADR-0051: Grassfield Memos, desktop memos as small windows
-Status: Proposed (2026-11-05), applied provisionally (owner rule of 2026-10-28: decide alone, the recommended option, macOS
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-11-05), applied provisionally (owner rule of 2026-10-28: decide alone, the recommended option, macOS
 model first) · Date: 2026-11-05 · Decider: owner (revisit), integrator (merge) · Number: 0051
 
 ## Context

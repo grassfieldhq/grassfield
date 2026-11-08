@@ -1,5 +1,6 @@
 # ADR-0049: What a Flatpak can reach, shown as the App Store shows privacy, and updates that ask for more held back
-Status: Proposed (2026-11-05), applied provisionally (owner's standing instruction: decide alone, the recommended option,
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-11-05), applied provisionally (owner's standing instruction: decide alone, the recommended option,
 macOS first, decisions recorded here) · Date: 2026-11-05 · Decider: owner (revisit), integrator (merge) · Number: 0049
 (amends ADR-0037 SD25 and SD33; spec `docs/specs/store.md` SR11, SR24)
 

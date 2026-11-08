@@ -1,5 +1,6 @@
 # ADR-0026: Files window frames: the size by Files, the position and the cascade by the compositor
-Status: Proposed (integrator, under owner delegation D-5); part 1 is applied with Files PR 1, part 2 waits for its nested
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (integrator, under owner delegation D-5); part 1 is applied with Files PR 1, part 2 waits for its nested
 verification · Date: 2026-10-26 · Decider: integrator
 
 ## Context

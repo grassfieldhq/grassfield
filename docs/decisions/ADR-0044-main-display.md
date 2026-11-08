@@ -1,5 +1,6 @@
 # ADR-0044: The main display, and the wallpaper per display
-Status: Proposed (applied provisionally, owner rule of 2026-10-28: the closest to macOS 27, no technical step for the end
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (applied provisionally, owner rule of 2026-10-28: the closest to macOS 27, no technical step for the end
 user) · Date: 2026-11-04 · Decider: owner (revisit), integrator (merge) · Number: 0044 (0043 is the public installation script)
 
 ## Context
@@ -83,7 +84,8 @@ NOT VERIFIED, no new dependency. GTK/Qt/Wayland-native apps are unaffected.
 - The banners no longer follow the focused output: they stay on the main display (macOS).
 
 ## Amendment A-1 2026-11-05: a combination of displays never seen before
-Status: Proposed (2026-11-05), applied provisionally (owner rule of 2026-10-28: decide alone, the recommended option, the
+Status: Accepted as built (owner ratification of 2026-11-08). Before:
+Proposed (2026-11-05), applied provisionally (owner rule of 2026-10-28: decide alone, the recommended option, the
 macOS model first). Inspired by Project Luma's luma-displays "arrival" (Apache-2.0: wait for the hot-plug to settle, two
 displays or more, an arrangement not known yet); no code copied.
 
@@ -128,7 +130,8 @@ the notice's look, the click opening Displays. Owner L2: plug a monitor never us
 unplug and plug again, no notice; lock, plug a new one, unlock, see it then.
 
 ## Amendment A-2 2026-11-07: "Use as" on every display, the menu bar in Arrange
-Status: Proposed (2026-11-07), applied provisionally (owner rule of 2026-10-28: decide alone, the closest to macOS 27).
+Status: Accepted as built (owner ratification of 2026-11-08). Before:
+Proposed (2026-11-07), applied provisionally (owner rule of 2026-10-28: decide alone, the closest to macOS 27).
 
 Context: the owner (rc6, desktop PC with several displays) reported "there is no way to set the main display". The storage, the
 resolution and the shell side worked (`tests/unit/tst_displayrole.qml`, `tst_settingsdisplays.qml` test_page_mainDisplay), but the

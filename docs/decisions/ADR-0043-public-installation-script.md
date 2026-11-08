@@ -1,6 +1,7 @@
 # ADR-0043 — Public installation script (amends ADR-0033 b.3a)
 
-Status: Proposed (2026-11-03); the owner answered the open questions the same day (section "Owner decisions"). The script is
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-11-03); the owner answered the open questions the same day (section "Owner decisions"). The script is
 **prepared, not published**: hosting (O8) and the signing key (O11) are not chosen, and the legal review comes before any
 public release. Cross-module (packaging, pacman helper contract, session login, boot and login themes, docs), hence its own ADR.
 The script runs as the user and uses `sudo` for root steps, so it needs the opus security review before it ships; review 1

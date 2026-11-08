@@ -410,7 +410,10 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   - `tst_barhide.qml`: the indicator while the bar is away (7-14).
   - The indicator in a real share (Chromium) is the integrator's.
 
-### After rc6: a browser asked several times for one share (fix built, held until the owner agrees)
+### After rc6: a browser asked several times for one share (fix built, declined by the owner on 2026-11-08)
+
+Owner decision of 2026-11-08: Q14 stays as answered (the box opens unticked), so a browser that captures twice still
+shows the picker twice. This is an accepted known limitation of 1.0; the flag below stays false.
 - **Report (owner, rc6):** "when I select the screen to share, the selection prompt comes back several times before it finally
   takes; in Google Meet the preview shows white".
 - **Cause:** Chromium's WebRTC capturer (Chrome, Chromium, Electron) captures twice for one share: once for its own picker's

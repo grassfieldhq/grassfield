@@ -1,5 +1,6 @@
 # ADR-0038: Activity Monitor: a native app that shows the computer's processes and stops the user's own, on macOS 27's model with the best of Windows 11's Task Manager
-Status: Proposed (cloud session, owner brief 2026-10-28, step 0; docs only, no code before the opus PASS). The owner
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (cloud session, owner brief 2026-10-28, step 0; docs only, no code before the opus PASS). The owner
 answered AQ1 to AQ7 on 2026-10-28 (AskUserQuestion), recorded in "Owner decisions". Every other choice follows the owner's
 rule of 2026-10-28 ("the closest to macOS 27, with no technical step for the end user") and is recorded in "Decisions taken
 under the owner's rule" (AD1 to AD52). Revised after the integrator's opus review of e3882de (FAIL: five MAJORs and eight

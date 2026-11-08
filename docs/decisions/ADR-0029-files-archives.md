@@ -1,5 +1,6 @@
 # ADR-0029: Compress and Expand through bsdtar in a child process
-Status: Proposed (integrator, under owner delegation D-5); applied with the combined Files PR 3–5 (2026-11-01) · Date: 2026-10-26 · Decider: integrator
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (integrator, under owner delegation D-5); applied with the combined Files PR 3–5 (2026-11-01) · Date: 2026-10-26 · Decider: integrator
 
 ## Context
 - Owner goal (2026-10-26, `docs/specs/files.md` FP-59): Compress and Expand (zip, tar.*, 7z depending on the tools present).

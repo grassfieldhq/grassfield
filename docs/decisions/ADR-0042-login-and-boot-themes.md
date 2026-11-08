@@ -1,6 +1,7 @@
 # ADR-0042 — Login and boot themes (ADR-0040 step 10, IQ-L1 C)
 
-Status: Proposed (2026-10-31), under the owner's IQ-L1 C (« SDDM et Plymouth », 2026-10-29, with the integrator's
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-10-31), under the owner's IQ-L1 C (« SDDM et Plymouth », 2026-10-29, with the integrator's
 conditions; repeated on 2026-10-31 for the one pull request #79). Needs the opus security review before any merge, and
 the owner runs every root step.
 

@@ -1,6 +1,7 @@
 # ADR-0046 — Uninstalling apps from the launcher and Files (amends ADR-0037 b.1 "What the Store removes")
 
-Status: Proposed (2026-11-04), applied provisionally on `feat/uninstall-apps`. Cross-module (Store, launcher, Files, the root
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (2026-11-04), applied provisionally on `feat/uninstall-apps`. Cross-module (Store, launcher, Files, the root
 helper's deny list), hence its own ADR. The helper's deny list is root code: the opus security review is required before merge.
 Owner report (second machine, rc1-22): "there is no way to uninstall software".
 

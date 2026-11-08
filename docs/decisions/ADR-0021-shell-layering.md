@@ -1,5 +1,6 @@
 # ADR-0021: Shell layering (`qs.lib` < platform < store < services < features < shell.qml)
-Status: Proposed (integrator, under owner delegation D-5); accepted when its first slice merges (L1) · Date: 2026-10-24 ·
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (integrator, under owner delegation D-5); accepted when its first slice merges (L1) · Date: 2026-10-24 ·
 Decider: integrator
 
 ## Context

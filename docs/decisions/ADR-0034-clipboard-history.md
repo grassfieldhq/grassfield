@@ -1,5 +1,6 @@
 # ADR-0034: Clipboard history in Search (macOS presentation, Windows power), served by a native data-control helper
-Status: Proposed (owner decisions of 2026-10-27, clipboard-history cloud session; revised after the opus review FAIL of
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (owner decisions of 2026-10-27, clipboard-history cloud session; revised after the opus review FAIL of
 step 0); accepted after the opus review PASS of step 0 · Date: 2026-10-27 · Decider: owner
 
 ## Context

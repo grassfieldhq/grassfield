@@ -1,5 +1,6 @@
 # ADR-0036: Window tiling: tiles of floating windows placed by the plugin, chrome drawn by the shell
-Status: Proposed (owner brief 2026-10-27, step 0: docs only; the owner answered the decisions T1-T6, then T2a and T2b, of
+Status: Accepted as built (owner ratification of 2026-11-08: every Proposed ADR accepted at once for 1.0). Before:
+Proposed (owner brief 2026-10-27, step 0: docs only; the owner answered the decisions T1-T6, then T2a and T2b, of
 `docs/audits/tiling-2026-10-27/decisions.md` on 2026-10-27, verbatim below; opus review of 0b6f614 FAIL, fixed in this
 revision, counter-review pending) ·
 Date: 2026-10-27 · Decider: owner · Number: 0036 (0033 Software Update, 0034 clipboard, 0035 dialogs are taken by open
