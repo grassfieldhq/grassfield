@@ -158,6 +158,28 @@ TestCase {
         compare(Accent.resolve("multicolor", false, Tokens), null);
     }
 
+    // Accent text on glass reads `accentGlass`: the ink mixed toward the text colour by the glass token (tests/visual/test_contrast_tokens.py
+    // checks the 4.5:1 it buys; this checks the QML computes the same colours).
+    function test_accentGlassIsTheInkMixedTowardTheText() {
+        // The mix of the two channels spelled out for one case: pure black and white halfway is #808080 (Math.round of 127.5).
+        compare(Accent.glassInk("#000000", "#ffffff", 0.5), "#808080");
+        compare(Accent.glassInk("#ffffff", "#000000", 0), "#ffffff");
+        compare(Accent.glassInk("#0a0a0a", "#0a0a0a", 0.7), "#0a0a0a");
+        compare(Accent.glassInk("not a colour", "#ffffff", 0.5), "not a colour");
+        for (const dark of [false, true]) {
+            for (const n of Accent.NAMES) {
+                Appearance.dark = dark;
+                Appearance.accentSetting = n;
+                const c = Appearance.colors;
+                const mix = dark ? Tokens.glassAccentInkMixDark : Tokens.glassAccentInkMixLight;
+                compare(c.accentGlass, Accent.glassInk(c.accentInk, c.text, mix), (dark ? "dark " : "light ") + n);
+                verify(!Qt.colorEqual(c.accentGlass, c.accentInk), n + ": the variant is not the raw ink");
+            }
+        }
+        Appearance.dark = false;
+        Appearance.accentSetting = "multicolor";
+    }
+
     function test_glyphMaskStillWins() {
         Appearance.accentSetting = "green";
         Appearance.devGlyphMode = "white";

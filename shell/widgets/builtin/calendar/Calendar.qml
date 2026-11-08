@@ -37,7 +37,7 @@ WidgetBase {
         WidgetLabel {
             width: parent.width
             text: Qt.locale().toString(root.now, "dddd")
-            color: Appearance.colors.accentInk
+            color: Appearance.colors.accentGlass
             font.weight: Tokens.typographyMenuBoldWeight
         }
 

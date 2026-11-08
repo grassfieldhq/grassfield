@@ -80,6 +80,11 @@ def hex_rgb(h):
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
+def round_half_up(x):
+    """Math.round of JavaScript (halves go up)."""
+    return int(x + 0.5)
+
+
 def over(fg, alpha, bg):
     """fg at alpha composited over the opaque bg (sRGB channels 0-255, floats)."""
     return tuple(fg[i] * alpha + bg[i] * (1 - alpha) for i in range(3))
@@ -171,6 +176,13 @@ class Tokens:
         # selection / selectionText (mirror of Accent.selectionPair): the light palette's accent and accentText in the light
         # appearance, the color.selectionDark pair of the accent in the dark one.
         fixed = {"darkColors": "dark", "lightColors": "light"}
+        if name == "accentGlass":
+            # Mirror of Accent.glassInk: the accent ink mixed toward the palette's text colour (sRGB, rounded to a channel value).
+            ap = fixed.get(palette, appearance)
+            ink = self.color(palette, appearance, "accentInk")
+            text = self.color(palette, appearance, "text")
+            mix = self.path("glass.accentInkMix" + ap.capitalize())
+            return tuple(int(round_half_up(ink[i] + (text[i] - ink[i]) * mix)) for i in range(3))
         if name in ("selection", "selectionText"):
             if fixed.get(palette, appearance) == "light":
                 return self.color("lightColors", "light", "accent" if name == "selection" else "accentText")
@@ -695,24 +707,32 @@ class ContrastTokens(unittest.TestCase):
                             if r is not None:
                                 self.assertGreaterEqual(r, need, "%s / %s / %s t=%s wp=%s: %.2f:1" % (accent, role["id"], ap, t, wp, r))
 
-    # Text and glyphs drawn in the accent colour (Appearance.colors.accentInk; the integrator's review of 5391761): on glass
-    # no accent holds 4.5:1 at the worst wallpaper and transparency (the role is exempt, its reason says why), but none is
-    # worse than the others there: every accent's ink keeps 2.2:1, where the light yellow and green drawn as themselves
-    # fell to 1.01:1 and 1.11:1.
-    def test_accent_ink_on_glass_is_no_worse_than_the_other_accents(self):
+    # Text and glyphs drawn in the accent colour on glass (Appearance.colors.accentGlass, the legibility-adjusted accent that
+    # macOS also draws on vibrancy): every accent holds 4.5:1 on every wallpaper and transparency up to 0.6, in both
+    # appearances. The role carries no exemption (gate A2, audit rc7 R7-A11Y-01).
+    def test_accent_text_on_glass_holds_4_5(self):
         role = next(r for r in self.roles if r["id"] == "text and glyphs in the accent colour on material")
-        self.assertIn("exempt", role)
-        worst = {}
+        self.assertNotIn("exempt", role)
+        self.assertEqual(role["fg"], "colors.accentGlass")
         for accent in self.ACCENTS:
             tok = AccentTokens(self.tok.data, accent)
-            worst[accent] = min(r for ap in APPEARANCES for t in TRANSPARENCIES for wp in WALLPAPER_COLORS
-                                for r in [role_ratio(tok, role, ap, t, wp)] if r is not None)
-            self.assertGreaterEqual(worst[accent], 2.2, "%s: %.2f:1" % (accent, worst[accent]))
-        # Negative control: the light yellow and green drawn as their own accent colour are far below it.
-        for accent in ("yellow", "green"):
-            light = AccentTokens(self.tok.data, accent).color("lightColors", "light", "accent")
-            self.assertNotEqual(light, AccentTokens(self.tok.data, accent).color("lightColors", "light", "accentInk"))
-            self.assertLess(wcag(light, hex_rgb("#FFFFFF")), 3.0, accent)
+            for ap in APPEARANCES:
+                for t in TRANSPARENCIES:
+                    for wp in WALLPAPER_COLORS:
+                        r = role_ratio(tok, role, ap, t, wp)
+                        if r is not None:
+                            self.assertGreaterEqual(r, 4.5, "%s / %s t=%s wp=%s: %.2f:1" % (accent, ap, t, wp, r))
+        # Negative control: the raw accent (what the role read before) is far under it, so the variant is what holds the ratio.
+        raw = dict(role, fg="colors.accentInk")
+        worst = min(role_ratio(AccentTokens(self.tok.data, a), raw, ap, t, wp) or 99 for a in self.ACCENTS
+                    for ap in APPEARANCES for t in TRANSPARENCIES for wp in WALLPAPER_COLORS)
+        self.assertLess(worst, 3.0)
+
+    # No exemption anywhere in the role table touches the accent: a role that draws text or glyphs in an accent colour is never exempt.
+    def test_no_accent_text_role_is_exempt(self):
+        for role in self.roles:
+            if "accent" in role["fg"] and role["kind"] in ("text", "large"):
+                self.assertNotIn("exempt", role, role["id"])
 
     # Text and glyphs never draw in the bare accent colour (a light accent is under 4.5:1 there; the integrator's review of
     # 5391761): they read Appearance.colors.accentInk. Fills, rings, tracks, dots and selections keep the accent.
