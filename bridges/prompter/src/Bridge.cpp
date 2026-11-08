@@ -70,6 +70,44 @@ namespace gf::prompter {
             return g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", method, args, reply,
                                                G_DBUS_CALL_FLAGS_NONE, timeoutMs, nullptr, error);
         }
+
+        // The main process of `unit` as the user's systemd manager says it now (a session run: the bus is the session bus, on
+        // which the manager holds org.freedesktop.systemd1 from login): > 0, 0 when it names none, -1 when it cannot be asked
+        // (Peer.h MainPidQuery; rc7 security review of R7-SEC-02). Two calls of at most 1 s, only for a peer already in the
+        // unit's cgroup.
+        qint64 unitMainPid(GDBusConnection* bus, const QString& unit) {
+            GError*   error = nullptr;
+            GVariant* found = g_dbus_connection_call_sync(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+                                                          "org.freedesktop.systemd1.Manager", "GetUnit",
+                                                          g_variant_new("(s)", unit.toUtf8().constData()), G_VARIANT_TYPE("(o)"),
+                                                          G_DBUS_CALL_FLAGS_NO_AUTO_START, 1000, nullptr, &error);
+            if (!found) {
+                g_clear_error(&error);
+                return -1;
+            }
+            const gchar* path = nullptr;
+            g_variant_get(found, "(&o)", &path);
+            const QByteArray object(path ? path : "");
+            g_variant_unref(found);
+            if (object.isEmpty())
+                return -1;
+            GVariant* reply = g_dbus_connection_call_sync(bus, "org.freedesktop.systemd1", object.constData(), "org.freedesktop.DBus.Properties",
+                                                          "Get", g_variant_new("(ss)", "org.freedesktop.systemd1.Service", "MainPID"),
+                                                          G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 1000, nullptr, &error);
+            if (!reply) {
+                g_clear_error(&error);
+                return -1;
+            }
+            GVariant* value = nullptr;
+            g_variant_get(reply, "(v)", &value);
+            qint64 pid = -1;
+            if (value && g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32))
+                pid = static_cast<qint64>(g_variant_get_uint32(value));
+            if (value)
+                g_variant_unref(value);
+            g_variant_unref(reply);
+            return pid;
+        }
     } // namespace
 
     Bridge::Bridge(GDBusConnection* bus, Options options) : m_bus(G_DBUS_CONNECTION(g_object_ref(bus))), m_options(std::move(options)) {
@@ -722,7 +760,10 @@ namespace gf::prompter {
                     continue;
                 return;
             }
-            const PeerCheck check = checkSocketPeer(fd, m_options.uid, m_options.peerUnit, m_options.requireUserManager);
+            // A session run also asks systemd whether the peer is the unit's main process (Peer.h); a development run, on its
+            // private test bus, has no manager to ask and checks the cgroup alone.
+            const PeerCheck check = checkSocketPeer(fd, m_options.uid, m_options.peerUnit, m_options.requireUserManager, nullptr,
+                                                    [this](const QString& unit) { return unitMainPid(m_bus, unit); });
             // A refused peer can try again at once: the journal gets one line per 10 s, with the count of the others,
             // written when the window ends even if no refusal follows.
             qint64 suppressed = 0;

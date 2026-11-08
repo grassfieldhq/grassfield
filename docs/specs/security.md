@@ -135,7 +135,9 @@ environment:
   `GRASSFIELD_LID_LOCK`, `GRASSFIELD_LID_FALLBACK`, `GRASSFIELD_DRM` (a fake connected display skipped the fallback)
   and `GRASSFIELD_LID_PROC` in `grassfield-lid`, `GRASSFIELD_LID_TOOL` in the clamshell stand-in, and
   `GRASSFIELD_SHELL_DIR` in `bindings.lua` and in `packaging/session-bin/hyprland-dialog` (ADR-0035 D-3; checked by
-  `tests/shell/hyprland_dialog.sh`). `config/hypr/session.lua` takes its modules from its own directory and
+  `tests/shell/hyprland_dialog.sh`), and `GRASSFIELD_SHELL_DIR` and `GRASSFIELD_PICKER_PEER_UNIT` in the screen-sharing
+  picker stand-in `packaging/session-bin/hyprland-share-picker` (ADR-0035 D-6; `tests/shell/share_picker.sh`,
+  `tests/shell/share_picker_peer.sh`). `config/hypr/session.lua` takes its modules from its own directory and
   the stand-ins from `/usr/lib/grassfield/omarchy-shims`, never from `GRASSFIELD_CONFIG_DIR` or `GRASSFIELD_SHIM_DIR`
   (another config could drop the lock key and the lid lock; another shim directory would hand Omarchy's sleep-lock
   Omarchy's own `omarchy-shell`). `lock_request_env.sh` sets hostile values in a real session (with a leaked
@@ -257,7 +259,19 @@ Grassfield processes that serve the security modules over a Unix socket of their
 
 | Socket | Server | Who may connect | What it carries |
 |---|---|---|---|
-| `$XDG_RUNTIME_DIR/grassfield/prompter.sock` (directory 0700, socket 0600) | `grassfield-prompter` (ADR-0035 D-9, step 9a; `grassfield-prompter.service`) | one peer at a time, running as the user, whose cgroup is the unit of the bridge's `--peer-unit` (`grassfield-shell.service`, only slices above it up to the user's manager), read through `SO_PEERPIDFD` (a peer without a pidfd is refused, except on a kernel without `SO_PEERPIDFD`); a refused peer gets `refused` and is closed, the refusals logged once per 10 s | `prompter/1` (docs/specs/system-dialogs.md section 5): the bridge sends the requests of gcr callers (with the requester it resolved from their bus credentials) and, from step 9c, NetworkManager's (kind `nm`, only for calls from the owner of `org.freedesktop.NetworkManager`) and, from step 9e, KIO's (kind `kio`, with the requester resolved from the caller's credentials) and, from step 10, bluetoothd's pairing steps (kind `bluetooth`, only for calls from the owner of `org.bluez`, and `progress` for a code shown), and their withdrawals; the shell sends its hello and its answers, a password once per answer. Nothing it accepts runs a command, unlocks, or reaches polkit; a wrong or unattributable line cancels requests, never invents an answer. The shell's client (`shell/security/secret/PrompterClient.qml`, step 9b) connects in a real session to this socket only, and in a dev session only to the test socket that `GRASSFIELD_PROMPTER_SOCKET` names (ADR-0019 dev plumbing, passed by `shell.qml`; ignored in a real session); it reads the bridge strictly and closes the connection on any line it does not expect |
+| `$XDG_RUNTIME_DIR/grassfield/picker/<128-bit hex>.sock` (directory 0700, socket 0600, one per request, removed on every exit) | the screen-sharing picker stand-in `hyprland-share-picker`, run by xdph (ADR-0035 D-6; docs/specs/system-dialogs.md SP2, SP2a) | one connection, within 2 s of the shell's `accepted`, from a peer running as the user whose cgroup is `grassfield-shell.service` under the user's manager and which is that unit's main process (systemd's MainPID, asked at check time), read through `SO_PEERPIDFD` and checked alive after the answer (the prompter's rule; rc7 audit R7-SEC-02 and its security review); any other peer is closed before a line is sent and the wait goes on; in a dev session only, `GRASSFIELD_PICKER_PEER_UNIT` names the cgroup that stands for the shell's; same-uid limits below the table | the stand-in sends the request's options and xdph's window list; the shell sends `<id> wait` and one answer, which the stand-in checks (a listed window, a display Hyprland lists) before printing it for xdph |
+| `$XDG_RUNTIME_DIR/grassfield/prompter.sock` (directory 0700, socket 0600) | `grassfield-prompter` (ADR-0035 D-9, step 9a; `grassfield-prompter.service`) | one peer at a time, running as the user, whose cgroup is the unit of the bridge's `--peer-unit` (`grassfield-shell.service`, only slices above it up to the user's manager) and which, in a session, is that unit's main process (systemd's MainPID, asked over the session bus at check time: `GetUnit`, then the Service's `MainPID`; rc7 security review of R7-SEC-02; a development run checks the cgroup's last component only), read through `SO_PEERPIDFD` and checked alive after systemd's answer (a peer without a pidfd is refused, except on a kernel without `SO_PEERPIDFD`); same-uid limits below the table; a refused peer gets `refused` and is closed, the refusals logged once per 10 s | `prompter/1` (docs/specs/system-dialogs.md section 5): the bridge sends the requests of gcr callers (with the requester it resolved from their bus credentials) and, from step 9c, NetworkManager's (kind `nm`, only for calls from the owner of `org.freedesktop.NetworkManager`) and, from step 9e, KIO's (kind `kio`, with the requester resolved from the caller's credentials) and, from step 10, bluetoothd's pairing steps (kind `bluetooth`, only for calls from the owner of `org.bluez`, and `progress` for a code shown), and their withdrawals; the shell sends its hello and its answers, a password once per answer. Nothing it accepts runs a command, unlocks, or reaches polkit; a wrong or unattributable line cancels requests, never invents an answer. The shell's client (`shell/security/secret/PrompterClient.qml`, step 9b) connects in a real session to this socket only, and in a dev session only to the test socket that `GRASSFIELD_PROMPTER_SOCKET` names (ADR-0019 dev plumbing, passed by `shell.qml`; ignored in a real session); it reads the bridge strictly and closes the connection on any line it does not expect |
+
+Same-uid limits of both sockets (rc7 security review of R7-SEC-02): their peer checks tell the shell from the user's own processes. These checks keep out a process of the user's that merely connects first, or that moves itself
+into the shell's cgroup (the user may write `cgroup.procs` of their units). They do not stop a process of the user's that
+can act as the shell itself: with `kernel.yama.ptrace_scope` 0 any of them may ptrace the shell (1, Arch's and this
+machine's setting, limits ptrace to a process's descendants and to a debugger the shell allowed, which it never does; the
+shell's unit is not a child of the user's other processes), and any of them may replace a socket in the user's runtime
+folder (the session bus, the manager's private socket) or edit the user's own configuration the shell reads at its next
+start. A process with those powers can draw over the screen and read the keyboard as well; the session does not claim
+protection against it.
+Tests: `tests/shell/share_picker_peer.sh`, `tests/unit/prompter/tst_prompter.cpp` (`PrompterPeer.ASessionPeerMustBeTheUnitsMainProcess`,
+`PrompterPeer.APeerThatExitsDuringTheMainProcessQueryIsRefused`).
 
 ### D-Bus objects of the security modules' processes (not Quickshell IPC)
 What the processes serving the secret sheets export on a message bus (ADR-0035 "Consequences": listed in the step that adds
@@ -833,10 +847,21 @@ resume with a reader; `Lock.qml` cannot run offscreen (WlSessionLock), and the n
 (with their match) and every other `o.*`/`hl.*` call does nothing; `os`, `io`, `require` and the rest are absent, so
 nothing else of those files runs or applies. Each recorded match becomes `hl.window_rule({ name = "gf-no-screen-share-N",
 match = …, no_screen_share = true })`. With Omarchy 4.0.4/4.0.6: 1Password, Bitwarden and the Bitwarden Chromium extension
-window. A later Omarchy addition is picked up without a Grassfield change. The three built-in matches are always added
-(duplicates dropped), so a rule file that stops early or disappears never leaves a password manager unprotected; when
-nothing at all is read, Hyprland's log says so. Tests: `tests/security/screenshare_rules.sh` (at least one rule per
-Omarchy `no_screen_share` rule; fixture tree with a new app, a table match, an `os.execute`/`io.open` file whose calls
+window; with 4.5.0 also 1Password 8.12's app id `com.onepassword.OnePassword`, `bitwarden` and the extension's window in any
+browser and profile. A later Omarchy addition is picked up without a Grassfield change. The password managers of
+`shell/services/protected-classes.txt` (Omarchy 4.5.0's three matches, each covering the 4.0.6 one it replaced; one class
+regex per line) are always added (duplicates dropped), so a rule file that stops early or disappears never leaves a password
+manager unprotected; when nothing at all is read, Hyprland's log says so. That file is the ONE list (R7-SEC-03 and its
+security review): privacy.lua reads it from the shell's folder as `bindings.lua` finds the shell (`GRASSFIELD_SHELL_DIR` in a
+dev session only, else `/usr/share/grassfield/shell`; unreadable: a built-in fallback of the same three matches applies, with
+a warning in the log, so a password manager stays hidden even when neither the file nor Omarchy's rules can be read; the
+fallback is kept equal to the file by `tests/unit/tst_clipboard.qml`), and
+the clipboard history reads it at start (`shell/services/Clipboard.qml`, `ClipboardLogic.parseProtected`; not read yet,
+unreadable or a line that is not a regex: no copy is recorded); no other copy of the list exists
+(`tests/unit/tst_clipboard.qml`). Tests: `tests/security/screenshare_rules.sh` (at least one rule per
+Omarchy `no_screen_share` rule; every match the installed Omarchy protects is in the one list, so a new protected app fails
+the test until the list follows; the list comes from the shell's folder, a real session ignores a dev folder, an unreadable
+list is logged; fixture tree with a new app, a table match, an `os.execute`/`io.open` file whose calls
 never run; a `1password.lua` that stops before its rule still leaves 1Password protected; nothing readable;
 wiring; mutation "keep every rule" fails it), `Hyprland --verify-config` in `just check` (a misspelt key fails it), and
 nested `lock_privacy.sh screenshare` (DT-05: a window with app_id `Bitwarden` is black in a `grim` capture; NOT

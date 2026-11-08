@@ -230,8 +230,10 @@ bind("SUPER + SHIFT + code:14", "Screenshot and recording options", shell("captu
 hl.bind("SUPER + SHIFT + code:84", shell("capture", "toggle"), { description = "Screenshot and recording options" })
 bind("SUPER + ALT + ESCAPE", "Force Quit Applications", shell("menubar", "panel forcequit ''"))
 
--- Keyboard access to the menu bar and the Dock (gate A1), like Ctrl+F2 / Ctrl+F3.
+-- Keyboard access to the menu bar, its status menus and the Dock (gate A1), like macOS's Ctrl+F2, Ctrl+F8 and Ctrl+F3.
 bind("CTRL + F2", "Focus the menu bar", shell("menubar", "open system ''"))
+-- macOS "Move focus to status menus": the first status item's menu (MenuBar.openFirstStatus); Left/Right then walk the bar.
+bind("CTRL + F8", "Focus the status menus", shell("menubar", "open status ''"))
 bind("CTRL + F3", "Focus the Dock", shell("dock", "keyboard"))
 -- Show Desktop (macOS F11 / Command-F3): hides the windows of the Space and gives the desktop icons the keyboard; again, they return.
 bind("SUPER + F3", "Show Desktop", shell("windows", "showDesktop"))

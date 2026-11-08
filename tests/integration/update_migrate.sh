@@ -24,8 +24,12 @@
 #     review's BLOCKER); so does a run while the unit's group has a member, or while a migration from before the update is
 #     pending, or with a rule that grants nothing or none; carol, an administrator: the update installed, the migration run
 #     as carol with its sudo as root and its own /tmp, `migrations ran`, its output root's alone; a failing sudo leaves the
-#     migration pending; a migration that needs a person (gum, or sudo and gum) goes to the terminal; root without
-#     pkexec's user has no person; the unit's own form is refused outside the unit.
+#     migration pending; a migration that needs a person (gum, or sudo and gum) goes to the terminal; so does one that
+#     needs root and would run code the person can change (sudo and omarchy-hook, rc7 audit R7-SEC-01), its sudo never run;
+#     so does one that is not on Grassfield's reviewed list (/usr/share/grassfield/update/omarchy-migrations.allow, here
+#     the test packages' own migrations), and a listed one with one byte changed: their sudo never runs; the listed ones run;
+#     root commands run from /, never the caller's folder;
+#     root without pkexec's user has no person; the unit's own form is refused outside the unit.
 set -uo pipefail
 
 IMAGE=archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
@@ -134,7 +138,7 @@ in_migrate() { # [--no-nnp] [--no-wait] -- program [argument...]
   systemd-run --unit=grassfield-update-migrate --collect --quiet "${wait[@]}" --service-type=exec --expand-environment=no \
     --uid=carol --gid=grassfield-update -p SupplementaryGroups=carol "${props[@]}" -p RestrictNamespaces=yes \
     -p LockPersonality=yes -p RestrictSUIDSGID=yes -p PrivateTmp=yes -p LimitFSIZE=64M -p TimeoutStopSec=5s \
-    -p 'WorkingDirectory=~' --setenv=PATH="/usr/lib/grassfield/update-sudo:/usr/share/omarchy/bin:/usr/bin" "$@"
+    -p WorkingDirectory=/ --setenv=PATH="/usr/lib/grassfield/update-sudo:/usr/share/omarchy/bin:/usr/bin" "$@"
 }
 cat >"$W/channel.sh" <<'EOF'
 #!/bin/bash
@@ -186,7 +190,7 @@ get() { sed -n "s/^$1=//p" <<<"$out"; }
 expect "the unit's processes are carol's, under the group grassfield-update" test "$(get whoami)" == carol:grassfield-update
 expect "sudo id -u -> 0" test "$(get root)" == 0
 expect "standard input reaches the command (tee as root)" test "$(get tee):$(cat /root/tee-test 2>/dev/null):$(stat -c %U /root/tee-test 2>/dev/null)" == "0:through-stdin:root"
-expect "the working folder is the caller's" test "$(get pwd)" == /tmp
+expect "a root command runs from /, not the caller's folder (rc7 audit R7-SEC-01)" test "$(get pwd)" == /
 expect "the command's exit status is sudo's" test "$(get status)" == 7
 expect "sudo -u root, sudo -u #0 -> root" test "$(get as-root)" == "0:0"
 expect "sudo -u carol, sudo -u #uid -> refused (another target would leave the unit's group; the re-review's MINOR 1)" \
@@ -281,7 +285,7 @@ omarchy_commands+=("usr/bin/omarchy-migrate:/omarchy/bin/omarchy-migrate" "usr/s
 base_files=("usr/share/omarchy/version=4.0.4" "${omarchy_commands[@]}" "usr/share/omarchy/migrations/100.sh=echo 100 >>\"\$HOME/migrations.log\"")
 # 700 needs root (sudo, and a command that calls it): it writes on both sides, hands a temporary file to a root command (as
 # 4.0.6's 1791403252 does with mktemp and sudo install), and records its session and group.
-m700='echo 700 >>"$HOME/migrations.log"; echo carol-side >"$HOME/su-m2-user"; echo root-side | sudo tee /root/su-m2-root >/dev/null; sudo install -m 644 /dev/null /etc/su-m2-marker; omarchy-gu-indirect; t=$(mktemp); echo from-tmp >"$t"; sudo install -m 644 "$t" /root/su-m2-tmp; echo "$t" >"$HOME/su-m2-tmppath"; if unshare -U true 2>/dev/null; then echo allowed; else echo refused; fi >"$HOME/su-m2-userns"; echo "${WAYLAND_DISPLAY-} ${HYPRLAND_INSTANCE_SIGNATURE-}" >"$HOME/su-m2-session"; exec 3< <(sleep 12); touch "$HOME/su-m2-holding"; sleep 8'
+m700='echo 700 >>"$HOME/migrations.log"; echo carol-side >"$HOME/su-m2-user"; echo root-side | sudo tee /root/su-m2-root >/dev/null; sudo install -m 644 /dev/null /etc/su-m2-marker; omarchy-gu-indirect; t=$(mktemp); echo from-tmp >"$t"; sudo install -m 644 "$t" /root/su-m2-tmp; echo "$t" >"$HOME/su-m2-tmppath"; if unshare -U true 2>/dev/null; then echo allowed; else echo refused; fi >"$HOME/su-m2-userns"; echo "${WAYLAND_DISPLAY-} ${HYPRLAND_INSTANCE_SIGNATURE-}" >"$HOME/su-m2-session"; echo "$(readlink /proc/$$/cwd) ${PYTHONSAFEPATH-} ${PYTHONNOUSERSITE-}" >"$HOME/su-m2-cwd"; exec 3< <(sleep 12); touch "$HOME/su-m2-holding"; sleep 8'
 m700f="usr/share/omarchy/migrations/700.sh=$m700"
 mkpkg omarchy 1 "${base_files[@]}"
 mkpkg omarchy 2 "${base_files[@]}" "$m700f"
@@ -295,6 +299,29 @@ mkpkg omarchy 6 "${base_files[@]}" "$m700f" "usr/share/omarchy/migrations/750.sh
 GU_WORLD_WRITABLE=usr/share/omarchy/migrations/980.sh mkpkg omarchy 7 "${base_files[@]}" "$m700f" \
   "usr/share/omarchy/migrations/750.sh=sudo false" "usr/share/omarchy/migrations/900.sh=sudo touch /root/su-m2-900" \
   "usr/share/omarchy/migrations/950.sh=sudo touch /root/su-m2-950" "usr/share/omarchy/migrations/980.sh=sudo touch /root/su-m2-980"
+# 990 needs root and runs the person's hooks (R7-SEC-01): in the unit, a hook would get root through its sudo.
+mkpkg omarchy 8 "${base_files[@]}" "$m700f" \
+  "usr/share/omarchy/migrations/750.sh=sudo false" "usr/share/omarchy/migrations/900.sh=sudo touch /root/su-m2-900" \
+  "usr/share/omarchy/migrations/950.sh=sudo touch /root/su-m2-950" "usr/share/omarchy/migrations/980.sh=sudo touch /root/su-m2-980" \
+  "usr/share/omarchy/migrations/990.sh=sudo touch /root/su-m2-990; omarchy-hook post-update"
+# 996 needs root and is on no list; 997 is listed for content one byte away from what the package ships (R7-SEC-01).
+o7=("${base_files[@]}" "$m700f" "usr/share/omarchy/migrations/750.sh=sudo false" "usr/share/omarchy/migrations/900.sh=sudo touch /root/su-m2-900"
+  "usr/share/omarchy/migrations/950.sh=sudo touch /root/su-m2-950" "usr/share/omarchy/migrations/980.sh=sudo touch /root/su-m2-980")
+mkpkg omarchy 9 "${o7[@]}" "usr/share/omarchy/migrations/996.sh=sudo touch /root/su-m2-996"
+mkpkg omarchy 10 "${o7[@]}" "usr/share/omarchy/migrations/997.sh=sudo touch /root/su-m2-997"
+# Grassfield's reviewed list for these test packages, made by the real generator (scripts/dev/omarchy-migrations-allow.py, its
+# --release for a test list): each package version a release, each migration with its closure (700's includes the
+# omarchy-gu-* commands it calls). Omarchy 9 is reviewed without its 996, omarchy 10 with its 997 one byte longer.
+cp -a "$W/build/omarchy-9" "$W/reviewed-9" && rm "$W/reviewed-9/usr/share/omarchy/migrations/996.sh"
+cp -a "$W/build/omarchy-10" "$W/reviewed-10" && printf ' \n' >>"$W/reviewed-10/usr/share/omarchy/migrations/997.sh"
+allow_src=$W/omarchy-migrations.allow
+for n in 1 2 3 4 5 6 7 8 9 10; do
+  tree=$W/build/omarchy-$n
+  [[ $n == 9 || $n == 10 ]] && tree=$W/reviewed-$n
+  python3 -I /src/scripts/dev/omarchy-migrations-allow.py --tree "$tree" --release "$n-1" --list "$allow_src" >>"$W/log" 2>&1 ||
+    { echo "FAIL: the generator on the test package omarchy $n (see $W/log)"; exit 1; }
+done
+install -D -m 644 "$allow_src" /usr/share/grassfield/update/omarchy-migrations.allow
 publish() {
   rm -f "$W/repo"/*
   cp "$W/keyring.pkg.tar.zst" "$W/repo/archlinux-keyring-$(ver archlinux-keyring)-any.pkg.tar.zst"
@@ -414,6 +441,8 @@ expect "  700 ran as carol (its file carol's, group grassfield-update), once, ma
   test "$(stat -c %U:%G /home/carol/su-m2-user 2>/dev/null):$(grep -c 700 /home/carol/migrations.log):$(test -f /home/carol/.local/state/omarchy/migrations/700.sh && echo marked)" == "carol:grassfield-update:1:marked"
 expect "  700 could not make a user namespace (the helper's unit, RestrictNamespaces)" test "$(cat /home/carol/su-m2-userns 2>/dev/null)" == refused
 expect "  700 had carol's session values (Wayland display, Hyprland instance)" test "$(cat /home/carol/su-m2-session 2>/dev/null)" == "wayland-1 gu_test_123"
+expect "  700 ran from /, with PYTHONSAFEPATH=1 and PYTHONNOUSERSITE=1 (rc7 security review: no module of the home folder)" \
+  test "$(cat /home/carol/su-m2-cwd 2>/dev/null)" == "/ 1 1"
 expect "  the migrations' output is root's alone (0600), not in the 0644 log" \
   bash -c "test \"\$(stat -c %U:%a '$D/$op.migrations')\" == root:600 && grep -q 'Running migration (700)' '$D/$op.migrations' && ! grep -q 'Running migration' '$D/$op.log'"
 expect "  the log names the migrations it ran (SU-M2)" logsays "$op" "SU-M2): 700.sh"
@@ -474,6 +503,31 @@ expect "omarchy 7 (950 needs root, 980 installed writable by all) -> done done w
   test "$(state carol):$(ver omarchy):$(grep -cx 'migrations ran' "$D/$op.exit")" == "done done migrations:7-1:0"
 expect "  no migration ran with root (950's sudo did not run), and the log says why" \
   bash -c "test ! -e /root/su-m2-950 && grep -q '980.sh is not root.s alone: no migration runs with root' '$D/$op.log'"
+
+say "a migration that needs root and would run code the person can change (rc7 audit R7-SEC-01)"
+for m in 950 980; do   # Omarchy's terminal finished them: no migration from before the update is pending
+  touch "/home/carol/.local/state/omarchy/migrations/$m.sh" && chown carol: "/home/carol/.local/state/omarchy/migrations/$m.sh"
+done
+publish grassfield-desktop-1 qt6-base-6.11.0 omarchy-keyring-1 omarchy-8
+runner carol; op=$(last)
+expect "omarchy 8 (990: sudo and omarchy-hook) -> done terminal, needs migration 990, omarchy stays 7 ($(state carol))" \
+  bash -c '[[ $1 == "done terminal -:7-1" ]] && grep -qx "needs migration 990" "$2"' _ "$(state carol):$(ver omarchy)" "$D/$op.exit"
+expect "  its log says why, and 990's sudo never ran" \
+  bash -c "grep -q '990.sh not in Grassfield.s list of reviewed Omarchy migrations' '$D/$op.log' && test ! -e /root/su-m2-990"
+
+say "a migration not on Grassfield's reviewed list, and a listed one with a changed byte (rc7 audit R7-SEC-01)"
+publish grassfield-desktop-1 qt6-base-6.11.0 omarchy-keyring-1 omarchy-9
+runner carol; op=$(last)
+expect "omarchy 9 (996: sudo, on no list) -> done terminal, needs migration 996, omarchy stays 7 ($(state carol))" \
+  bash -c '[[ $1 == "done terminal -:7-1" ]] && grep -qx "needs migration 996" "$2"' _ "$(state carol):$(ver omarchy)" "$D/$op.exit"
+expect "  its log says why, and 996's sudo never ran" \
+  bash -c "grep -q '996.sh not in Grassfield.s list of reviewed Omarchy migrations' '$D/$op.log' && test ! -e /root/su-m2-996"
+publish grassfield-desktop-1 qt6-base-6.11.0 omarchy-keyring-1 omarchy-10
+runner carol; op=$(last)
+expect "omarchy 10 (997: listed for content one byte away) -> done terminal, needs migration 997, omarchy stays 7 ($(state carol))" \
+  bash -c '[[ $1 == "done terminal -:7-1" ]] && grep -qx "needs migration 997" "$2"' _ "$(state carol):$(ver omarchy)" "$D/$op.exit"
+expect "  its log says why, and 997's sudo never ran" \
+  bash -c "grep -q '997.sh not in Grassfield.s list of reviewed Omarchy migrations' '$D/$op.log' && test ! -e /root/su-m2-997"
 
 echo
 if ((fails)); then echo "update_migrate: $fails FAIL"; exit 1; fi

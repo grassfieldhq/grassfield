@@ -492,6 +492,21 @@ TestCase {
     }
 
     function test_noteLine() {
-        compare(Logic.describeNote({event: "switched", name: "Buds", key: "bluez:X", reason: "r"}), "audio routing: switched Buds (bluez:X): r");
+        compare(Logic.describeNote({event: "switched", name: "Buds", key: "bluez:A0:B1:C2:D3:E4:F5", reason: "r"}),
+                "audio routing: switched Buds (bluez:XX:XX:XX:XX:XX:XX): r");
+    }
+
+    // rc7 audit R7-SEC-04: the journal never gets a hardware identifier (the key Audio.qml logs through describeNote).
+    function test_noteLineCarriesNoHardwareIdentifier() {
+        const line = Logic.describeNote({event: "connected", name: "USB Headset", key: "usb:0x0d8c:0x0014:SN-7Y3K9QX2", reason: "r"});
+        compare(line, "audio routing: connected USB Headset (usb:0x0d8c:0x0014): r");
+        verify(line.indexOf("SN-7Y3K9QX2") < 0);
+        compare(Logic.logKey("usb:0x1234:0x5678"), "usb:0x1234:0x5678", "a USB device without a serial keeps its ids");
+        compare(Logic.logKey("node:alsa_output.usb-Focusrite_Scarlett_2i2_USB_Y8ABCDE12345-00.HiFi__Line__sink"),
+                "node:alsa_output.usb-[usb device]-00.HiFi__Line__sink");
+        compare(Logic.logKey("node:alsa_output.pci-0000_00_1f.3.analog-stereo"), "node:alsa_output.pci-0000_00_1f.3.analog-stereo");
+        compare(Logic.logKey("network:tunnel.sink"), "network:tunnel.sink");
+        // The key the routing keeps is the whole one: two identical headsets stay two devices.
+        compare(usbHeadset.key, "usb:0x0d8c:0x0014:123");
     }
 }
