@@ -57,10 +57,14 @@ and prints its path:
    `s:<model>|<serial>` of the wallpaper outputs), the `m:` and `n:` keys (connector-bound) staying as they are. Other text
    files have `key = value` / `key: value` lines with such a key redacted, and every `desc:` display description
    (`displays.conf`, ADR-0031: Hyprland's "<make> <model> <serial>") loses its serial: a connected display's is cut from
-   its end, a display not connected now loses the last word, where Hyprland puts the serial (rc7 audit R7-SEC-04). Across
-   the whole report (the journal too) the connected displays' serials (4 characters or more) become `[serial]`, and so does
-   the udev `ID_SERIAL` of a USB device in ALSA and PipeWire names (`alsa_output.usb-[usb device]-00.analog-stereo`: the
-   serial cannot be told from the model there; the device's description stays in the audio devices list); an answer of
+   its end, a display not connected now loses the last word, where Hyprland puts the serial, and every word that could be a
+   serial (6 characters or more with a digit: a serial with a space in it; a model name with digits goes too) (rc7 audit
+   R7-SEC-04 and its security review). Across the whole report (the journal too) every `desc:` description gets the same
+   treatment, the connected displays' serials (4 characters or more) become `[serial]`, and so do a USB device's serial in
+   the shell's audio routing key (`usb:<vendor>:<product>:[serial]`; the shell's log line no longer carries it,
+   `AudioRoutingLogic.logKey`) and the udev `ID_SERIAL` of a USB device in ALSA and PipeWire names
+   (`alsa_output.usb-[usb device]-00.analog-stereo`: the serial cannot be told from the model there; the device's
+   description stays in the audio devices list); an answer of
    `hyprctl -j monitors` that is not JSON is shown only when it does not look like JSON. Paths of the user's own folders stay out
    (security review of the Luma pull request, finding 2): `folder-styles.json` (up to 20,000 folder paths) is replaced by
    the count of its entries, and a wallpaper path (any value under a `wallpaper*` key or in a `wallpaper*` file) keeps only

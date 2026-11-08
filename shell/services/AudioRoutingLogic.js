@@ -414,9 +414,23 @@ function nextDeadline(st) {
     return t;
 }
 
-// The log line of a note.
+// A device key as the journal shows it (rc7 audit R7-SEC-04): never a hardware identifier, since the journal reaches the
+// diagnostic report and the report can reach a public issue. A USB device loses its serial (usb:<vendor>:<product>), a
+// Bluetooth device its address, a node name a USB device's udev ID_SERIAL. The routing keeps the whole key (deviceKey); the
+// log does not need to tell two identical devices apart.
+function logKey(key) {
+    const k = String(key || "");
+    const usb = /^usb:([^:]*):([^:]*)(?::.*)?$/.exec(k);
+    if (usb)
+        return "usb:" + usb[1] + ":" + usb[2];
+    if (k.indexOf("bluez:") === 0)
+        return "bluez:XX:XX:XX:XX:XX:XX";
+    return k.replace(/(\.usb-)[A-Za-z0-9._-]+?(-[0-9]{2})(?=[.]|$)/, "$1[usb device]$2");
+}
+
+// The log line of a note: the key through logKey.
 function describeNote(a) {
-    return "audio routing: " + a.event + " " + a.name + " (" + a.key + "): " + a.reason;
+    return "audio routing: " + a.event + " " + a.name + " (" + logKey(a.key) + "): " + a.reason;
 }
 
 // ---- Persistence (audio-routing.json, state class, ADR-0020) ----------------------------------------------------------------

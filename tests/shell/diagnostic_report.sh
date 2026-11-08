@@ -41,7 +41,7 @@ printf 'theme = dark\npassword = SECRET-FOUR\nauth_token: SECRET-FIVE\npsk '"'"'
 ln -s /etc/hostname "$home/.config/grassfield/linked.json"
 # displays.conf (ADR-0031): the connected DP-3 (Hyprland's description ends with its serial), the built-in panel (no serial)
 # and a display not connected now (R7-SEC-04).
-printf 'v1\tdesc:Dell Inc. U2723QE SERIAL-XYZ-123\t3840x2160@60.00\t0x0\t1.5\t0\nv1\tdesc:BOE NE135\t2256x1504@60.00\t3840x0\t1.25\t0\nv1\tdesc:LG Electronics LG ULTRAFINE 012NTPC1A234\t5120x2880@60.00\t-5120x0\t2\t0\n' >"$home/.config/grassfield/displays.conf"
+printf 'v1\tdesc:Dell Inc. U2723QE SERIAL-XYZ-123\t3840x2160@60.00\t0x0\t1.5\t0\nv1\tdesc:BOE NE135\t2256x1504@60.00\t3840x0\t1.25\t0\nv1\tdesc:LG Electronics LG ULTRAFINE 012NTPC1A234\t5120x2880@60.00\t-5120x0\t2\t0\nv1\tdesc:Acme Corp AC27 AB12CD34 EF56\t2560x1440@60.00\t0x-1440\t1\t0\n' >"$home/.config/grassfield/displays.conf"
 
 cat >"$tmp/bin/pacman" <<'SH'
 #!/bin/sh
@@ -81,6 +81,8 @@ echo "2026-11-05T10:00:05+0000 vm grassfield-shell[1]: the Dock's tile moved; Wa
 echo "2026-11-05T10:00:06+0000 vm grassfield-shell[1]: helper login pass=SECRET-ELEVEN pwd=SECRET-TWELVE"
 echo "2026-11-05T10:00:07+0000 vm grassfield-shell[1]: Displays: DP-3 is Dell Inc. U2723QE SERIAL-XYZ-123"
 echo "2026-11-05T10:00:08+0000 vm grassfield-shell[1]: audio: default sink alsa_output.usb-Focusrite_Scarlett_2i2_USB_Y8ABCDE12345-00.HiFi__Line__sink"
+echo "2026-11-05T10:00:09+0000 vm grassfield-shell[1]: audio routing: connected USB Headset (usb:0x0d8c:0x0014:SN-7Y3K9QX2): personal"
+echo "2026-11-05T10:00:10+0000 vm grassfield-shell[1]: grassfield: display desc:Iiyama PL2792Q 1173930A0284: no such mode"
 SH
 chmod 755 "$tmp/bin"/*
 
@@ -148,6 +150,12 @@ desc="monitor serials never leave through the configuration (displays.main keys,
 check bash -c '! grep -q "SERIAL-" "$1" && grep -qF "\"s:Dell Inc.|U2723QE|present\"" "$1" && grep -qF "\"m:BOE|NE135|eDP-1\"" "$1" && grep -qF "\"s:U2723QE|present\"" "$1" && grep -q "\"serial\": \"present\"" "$1"' _ "$out"
 desc="R7-SEC-04: displays.conf keeps its lines without a serial: the connected display's cut from its description, the built-in panel (none) whole, a display not connected now without its last word; the rest of each line kept"
 check bash -c 'c=$(sed -n "/^--- displays.conf/,/^--- /p" "$1"); ! grep -q "SERIAL-XYZ\|012NTPC1A234" "$1" && grep -qF "$(printf "v1\tdesc:Dell Inc. U2723QE [serial]\t3840x2160@60.00\t0x0\t1.5\t0")" <<<"$c" && grep -qF "$(printf "v1\tdesc:BOE NE135\t2256x1504@60.00")" <<<"$c" && grep -qF "$(printf "v1\tdesc:LG Electronics LG ULTRAFINE [serial]\t5120x2880@60.00\t-5120x0")" <<<"$c"' _ "$out"
+desc="R7-SEC-04 (review): a display not connected now loses every word that could be a serial (a serial with a space in it), in displays.conf"
+check bash -c '! grep -q "AB12CD34\|EF56" "$1" && grep -qF "$(printf "v1\tdesc:Acme Corp AC27 [serial] [serial]\t2560x1440@60.00")" "$1"' _ "$out"
+desc="R7-SEC-04 (review): a display description anywhere in the journal loses its serial, the display connected or not"
+check bash -c '! grep -q "1173930A0284" "$1" && grep -qF "display desc:Iiyama [serial] [serial]: no such mode" "$1"' _ "$out"
+desc="R7-SEC-04 (review): the audio routing key of a USB device (usb:<vendor>:<product>:<serial>) loses its serial"
+check bash -c '! grep -q "SN-7Y3K9QX2" "$1" && grep -qF "(usb:0x0d8c:0x0014:[serial]): personal" "$1"' _ "$out"
 desc="R7-SEC-04: a connected display's serial is removed from the whole report (the journal too)"
 check bash -c '! grep -q "SERIAL-XYZ" "$1" && grep -qF "Displays: DP-3 is Dell Inc. U2723QE [serial]" "$1"' _ "$out"
 desc="R7-SEC-04: a USB device's ID_SERIAL in ALSA and PipeWire names (wpctl status, the journal) is removed, the rest of the name kept"

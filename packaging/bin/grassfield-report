@@ -64,10 +64,18 @@ SERIAL_KEY = re.compile(r"^(s:(?:[^|]*\|){1,2})[^|]+$")
 # config/hypr/grassfield/displays.lua): Hyprland's description is "<make> <model> <serial>", trimmed (R7-SEC-04). The field
 # ends at the next tab or the end of the line.
 DESC_FIELD = re.compile(r"(?<![A-Za-z0-9_])(desc:)([^\t\r\n]*)")
+# The same anywhere else in the report (the journal: a display rule Hyprland or the shell names): up to a tab, the end of the
+# line, a quote, a comma, a semicolon, a parenthesis or a colon followed by a space ("desc:<description>: <message>").
+DESC_ANY = re.compile(r"(?<![A-Za-z0-9_])(desc:)((?:[^\t\r\n\"',;():]|:(?!\s))*)")
+# A word of a description that could be a serial (an EDID serial string or number): 6 characters or more, a digit among them.
+EDID_LIKE = re.compile(r"(?=[^0-9]*[0-9])[A-Za-z0-9._-]{6,}")
 SERIAL_MARK = "[serial]"
 # A serial shorter than this is not replaced across the whole report (it would mangle other words); displays.conf's
 # descriptions still lose it.
 SERIAL_MIN = 4
+# The shell's audio routing key of a USB device, usb:<vendor id>:<product id>:<device.serial> (shell/services/AudioRoutingLogic.js
+# deviceKey; its log line drops the serial since rc7, an older journal or a state file may still hold it): the serial goes.
+USB_KEY = re.compile(r"(\busb:(?:0x)?[0-9A-Fa-f]{1,8}:(?:0x)?[0-9A-Fa-f]{1,8}:)[^\s)\]\"',;]+")
 # A USB device's udev ID_SERIAL (<vendor>_<model>_<serial>) in an ALSA or PipeWire name: alsa_output.usb-<ID_SERIAL>-00.analog-stereo,
 # alsa_card.usb-<ID_SERIAL>-00 (wpctl status lists the default nodes by name; the journal may name them). Replaced whole: the
 # serial cannot be told from the model in it, and the device's own description stays in the audio devices list.
@@ -325,30 +333,36 @@ def display_serials(displays):
     return out
 
 
-def redact_desc(text, known):
+def redact_desc(text, known, pattern=DESC_FIELD):
     """The serial of every `desc:` description removed (ADR-0053: serials never leave). A connected display's (`known`, from
     display_serials) is cut from the end of its description; a connected display without a serial keeps its description; any
-    other description (a display not connected now) loses its last word, where Hyprland puts the serial (fail closed: when
-    that display had none, a model word goes instead)."""
+    other description (a display not connected now) loses its last word, where Hyprland puts the serial, and every word that
+    could be a serial (EDID_LIKE: a serial with a space in it; fail closed: a model name with digits goes too). A description
+    already cut (its last word the mark) is left as it is."""
     def one(m):
         body = m.group(2).rstrip()
+        trail = m.group(2)[len(body):]
         serial = known.get(body)
         if serial == "":
             return m.group(0)
         if serial and body.endswith(serial) and len(body) > len(serial):
-            return m.group(1) + body[:-len(serial)].rstrip() + " " + SERIAL_MARK
+            return m.group(1) + body[:-len(serial)].rstrip() + " " + SERIAL_MARK + trail
         words = body.split()
-        if not words:
+        if not words or words[-1] == SERIAL_MARK:
             return m.group(0)
-        return m.group(1) + " ".join(words[:-1] + [SERIAL_MARK])
-    return DESC_FIELD.sub(one, text)
+        kept = [SERIAL_MARK if EDID_LIKE.fullmatch(w.strip(":.,;")) else w for w in words[:-1]]
+        return m.group(1) + " ".join(kept + [SERIAL_MARK]) + trail
+    return pattern.sub(one, text)
 
 
 def redact_serials(text, known):
-    """Hardware serials anywhere in the report: those of the connected displays (SERIAL_MIN characters or more, as a word)
-    and the USB ID_SERIAL of ALSA and PipeWire names."""
+    """Hardware serials anywhere in the report: those of the connected displays (SERIAL_MIN characters or more, as a word),
+    every `desc:` description's (redact_desc: a display not connected now too), a USB device's serial in the audio routing
+    key (USB_KEY) and the USB ID_SERIAL of ALSA and PipeWire names."""
     for serial in sorted({v for v in known.values() if len(v) >= SERIAL_MIN}, key=len, reverse=True):
         text = re.sub(r"(?<![A-Za-z0-9])" + re.escape(serial) + r"(?![A-Za-z0-9])", SERIAL_MARK, text)
+    text = redact_desc(text, known, DESC_ANY)
+    text = USB_KEY.sub(lambda m: m.group(1) + SERIAL_MARK, text)
     return USB_ID.sub(lambda m: m.group(1) + "[usb device]" + m.group(3), text)
 
 
