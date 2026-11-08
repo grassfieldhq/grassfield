@@ -119,7 +119,7 @@ void main() {
     // that tst_iconmodes checks): +1 in the dark appearance, the pixels above the brightest dark material (pivot 0.38 in linear light) are lifted,
     // v' = P + (1 - P) (1 - (1 - u)^e), u = (v - P) / (1 - P), with e > 1 (an ease-out: continuous, finite slope); -1 over the light material, the pixels below its darkest (0.62) are darkened,
     // v' = P (v / P)^e with e > 1. Continuous and increasing at the pivot, the same for every mode, per channel (the hue is kept).
-    if (isTile && tileToneSide > 0.5) {
+    if (isTile && tileToneSide > 0.5 && modeIndex > 1.5) {   // the lift: Clear and Tinted only (Dark's rule I and S floors are strict, the model costs 16 cells there)
         vec3 u = clamp((lin - vec3(tileTonePivot)) / (1.0 - tileTonePivot), vec3(0.0), vec3(1.0));
         vec3 up = vec3(tileTonePivot) + (1.0 - tileTonePivot) * (vec3(1.0) - pow(vec3(1.0) - u, vec3(tileToneExp)));
         lin = mix(lin, up, step(vec3(tileTonePivot), lin));

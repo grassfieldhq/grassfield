@@ -3093,8 +3093,8 @@ QtObject {
     readonly property real iconModeTintedRampHighLight: 0.2
     // ADR-0014 own-tile rule, tile tone, dark appearance (R7-REQ-13, A2 rule E): relative luminance (linear light) above which the pixels of a tile icon are lifted, and below which nothing moves: the luminance of the brightest material of the dark appearance (the material tint at material.tintAlphaMin over a white wallpaper, transparency 1.0: 0.38), so a lifted pixel never moves towards the material
     readonly property real iconModeTileLiftPivot: 0.38
-    // ADR-0014 own-tile rule, tile tone, dark appearance: exponent q of the lift v' = P + (1 - P) (1 - (1 - u)^q), u = (v - P) / (1 - P), above tileLiftPivot (q > 1, an ease-out: continuous, slope q at the pivot, 1 at the top; 4 takes basecamp's edge from 1.5:1 to 1.96-2.1:1 over a mid-grey material, floor 1.73, modelled on the shader and the A2 fixture, docs/specs/ui.md)
-    readonly property real iconModeTileLiftExponent: 4.0
+    // ADR-0014 own-tile rule, tile tone, dark appearance: exponent q of the lift v' = P + (1 - P) (1 - (1 - u)^q), u = (v - P) / (1 - P), above tileLiftPivot (q > 1, an ease-out: continuous, slope q at the pivot, 1 at the top; 2.5 takes basecamp's edge in Clear and Tinted from 1.5:1 to 1.86-1.95:1 over a mid-grey material, floor 1.73, modelled on the shader and the A2 fixture, docs/specs/ui.md)
+    readonly property real iconModeTileLiftExponent: 2.5
     // ADR-0014 own-tile rule, tile tone, light appearance (R7-REQ-13, A2 rule E): relative luminance (linear light) below which the pixels of a tile icon are darkened, and above which nothing moves: about the darkest solid material of the light appearance (the material tint over a black wallpaper: 0.63 at the default transparency, 0.57 at the end of the clamp, material.tintClampUntil)
     readonly property real iconModeTileDarkenPivot: 0.62
     // ADR-0014 own-tile rule, tile tone, light appearance: exponent e of the darkening v' = P (v / P)^e below tileDarkenPivot (e > 1; 2.0 takes basecamp's edge from 2.0-2.9:1 to 3.1-4.5:1 over the light material, floor 2.17-2.9, modelled on the shader and the A2 fixture, docs/specs/ui.md)

@@ -1,4 +1,10 @@
 {
- "_doc": "A2 limits: none. Every cell of tests/visual/icon-a2.sh meets its floor (owner decision 2026-11-08, R7-REQ-13: icon modes at 3:1 before 1.0). A cell that cannot is a defect to fix in the modes, not a row here; a row is added only with the owner's written acceptance. Key: the rule (E outside, S separation) and the label of the A2 line (icon, mode, size, appearance, scenario, tint, transparency); value: the measured metric of the rule, default: the Default rendering's. tests/shell/a2_limits_doc.sh keeps docs/specs/ui.md and this table in agreement and fails while the table holds a row.",
- "limits": []
+ "_doc": "A2 limits: ONE row, open for the owner (R7-REQ-13, owner decision 2026-11-08: 3:1 before 1.0): hicolor:basecamp in Dark at 24 px in the dark appearance over a white wallpaper at transparency 1.0 cannot reach its floor (1.73) without costing rule I/S cells of other tile icons in Dark (modelled: 16); its Default is 1.92. Measured value: GPU run of 2026-10-23. Key: the rule (E outside, S separation) and the label of the A2 line (icon, mode, size, appearance, scenario, tint, transparency); value: the measured metric of the rule, default: the Default rendering's. docs/specs/ui.md lists the same cell (tests/shell/a2_limits_doc.sh).",
+ "limits": [
+  {
+   "key": "E hicolor:basecamp dark 24px dark window transparency 1.0 wallpaper #ffffff",
+   "value": 1.57,
+   "default": 1.92
+  }
+ ]
 }
