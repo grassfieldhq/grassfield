@@ -138,7 +138,7 @@ in_migrate() { # [--no-nnp] [--no-wait] -- program [argument...]
   systemd-run --unit=grassfield-update-migrate --collect --quiet "${wait[@]}" --service-type=exec --expand-environment=no \
     --uid=carol --gid=grassfield-update -p SupplementaryGroups=carol "${props[@]}" -p RestrictNamespaces=yes \
     -p LockPersonality=yes -p RestrictSUIDSGID=yes -p PrivateTmp=yes -p LimitFSIZE=64M -p TimeoutStopSec=5s \
-    -p 'WorkingDirectory=~' --setenv=PATH="/usr/lib/grassfield/update-sudo:/usr/share/omarchy/bin:/usr/bin" "$@"
+    -p WorkingDirectory=/ --setenv=PATH="/usr/lib/grassfield/update-sudo:/usr/share/omarchy/bin:/usr/bin" "$@"
 }
 cat >"$W/channel.sh" <<'EOF'
 #!/bin/bash
@@ -285,7 +285,7 @@ omarchy_commands+=("usr/bin/omarchy-migrate:/omarchy/bin/omarchy-migrate" "usr/s
 base_files=("usr/share/omarchy/version=4.0.4" "${omarchy_commands[@]}" "usr/share/omarchy/migrations/100.sh=echo 100 >>\"\$HOME/migrations.log\"")
 # 700 needs root (sudo, and a command that calls it): it writes on both sides, hands a temporary file to a root command (as
 # 4.0.6's 1791403252 does with mktemp and sudo install), and records its session and group.
-m700='echo 700 >>"$HOME/migrations.log"; echo carol-side >"$HOME/su-m2-user"; echo root-side | sudo tee /root/su-m2-root >/dev/null; sudo install -m 644 /dev/null /etc/su-m2-marker; omarchy-gu-indirect; t=$(mktemp); echo from-tmp >"$t"; sudo install -m 644 "$t" /root/su-m2-tmp; echo "$t" >"$HOME/su-m2-tmppath"; if unshare -U true 2>/dev/null; then echo allowed; else echo refused; fi >"$HOME/su-m2-userns"; echo "${WAYLAND_DISPLAY-} ${HYPRLAND_INSTANCE_SIGNATURE-}" >"$HOME/su-m2-session"; exec 3< <(sleep 12); touch "$HOME/su-m2-holding"; sleep 8'
+m700='echo 700 >>"$HOME/migrations.log"; echo carol-side >"$HOME/su-m2-user"; echo root-side | sudo tee /root/su-m2-root >/dev/null; sudo install -m 644 /dev/null /etc/su-m2-marker; omarchy-gu-indirect; t=$(mktemp); echo from-tmp >"$t"; sudo install -m 644 "$t" /root/su-m2-tmp; echo "$t" >"$HOME/su-m2-tmppath"; if unshare -U true 2>/dev/null; then echo allowed; else echo refused; fi >"$HOME/su-m2-userns"; echo "${WAYLAND_DISPLAY-} ${HYPRLAND_INSTANCE_SIGNATURE-}" >"$HOME/su-m2-session"; echo "$(readlink /proc/$$/cwd) ${PYTHONSAFEPATH-} ${PYTHONNOUSERSITE-}" >"$HOME/su-m2-cwd"; exec 3< <(sleep 12); touch "$HOME/su-m2-holding"; sleep 8'
 m700f="usr/share/omarchy/migrations/700.sh=$m700"
 mkpkg omarchy 1 "${base_files[@]}"
 mkpkg omarchy 2 "${base_files[@]}" "$m700f"
@@ -309,19 +309,19 @@ o7=("${base_files[@]}" "$m700f" "usr/share/omarchy/migrations/750.sh=sudo false"
   "usr/share/omarchy/migrations/950.sh=sudo touch /root/su-m2-950" "usr/share/omarchy/migrations/980.sh=sudo touch /root/su-m2-980")
 mkpkg omarchy 9 "${o7[@]}" "usr/share/omarchy/migrations/996.sh=sudo touch /root/su-m2-996"
 mkpkg omarchy 10 "${o7[@]}" "usr/share/omarchy/migrations/997.sh=sudo touch /root/su-m2-997"
-# Grassfield's reviewed list for these test packages (as scripts/dev/omarchy-migrations-allow.py writes it): every migration
-# of omarchy 1 to 8 by sha256 and name, and 997 with the sha256 of "sudo touch /root/su-m2-997 " (one byte more).
-install -d -m 755 /usr/share/grassfield/update
-{
-  echo "# the test packages' reviewed migrations"
-  for b in "$W"/build/omarchy-[1-8]; do
-    for m in "$b"/usr/share/omarchy/migrations/*.sh; do
-      printf 'allow %s %s test-%s\n' "$(sha256sum "$m" | cut -d" " -f1)" "${m##*/}" "${b##*-}"
-    done
-  done | sort -u -k2,3
-  printf 'allow %s 997.sh test-10\n' "$(printf 'sudo touch /root/su-m2-997 \n' | sha256sum | cut -d" " -f1)"
-} >/usr/share/grassfield/update/omarchy-migrations.allow
-chmod 644 /usr/share/grassfield/update/omarchy-migrations.allow
+# Grassfield's reviewed list for these test packages, made by the real generator (scripts/dev/omarchy-migrations-allow.py, its
+# --release for a test list): each package version a release, each migration with its closure (700's includes the
+# omarchy-gu-* commands it calls). Omarchy 9 is reviewed without its 996, omarchy 10 with its 997 one byte longer.
+cp -a "$W/build/omarchy-9" "$W/reviewed-9" && rm "$W/reviewed-9/usr/share/omarchy/migrations/996.sh"
+cp -a "$W/build/omarchy-10" "$W/reviewed-10" && printf ' \n' >>"$W/reviewed-10/usr/share/omarchy/migrations/997.sh"
+allow_src=$W/omarchy-migrations.allow
+for n in 1 2 3 4 5 6 7 8 9 10; do
+  tree=$W/build/omarchy-$n
+  [[ $n == 9 || $n == 10 ]] && tree=$W/reviewed-$n
+  python3 -I /src/scripts/dev/omarchy-migrations-allow.py --tree "$tree" --release "$n-1" --list "$allow_src" >>"$W/log" 2>&1 ||
+    { echo "FAIL: the generator on the test package omarchy $n (see $W/log)"; exit 1; }
+done
+install -D -m 644 "$allow_src" /usr/share/grassfield/update/omarchy-migrations.allow
 publish() {
   rm -f "$W/repo"/*
   cp "$W/keyring.pkg.tar.zst" "$W/repo/archlinux-keyring-$(ver archlinux-keyring)-any.pkg.tar.zst"
@@ -441,6 +441,8 @@ expect "  700 ran as carol (its file carol's, group grassfield-update), once, ma
   test "$(stat -c %U:%G /home/carol/su-m2-user 2>/dev/null):$(grep -c 700 /home/carol/migrations.log):$(test -f /home/carol/.local/state/omarchy/migrations/700.sh && echo marked)" == "carol:grassfield-update:1:marked"
 expect "  700 could not make a user namespace (the helper's unit, RestrictNamespaces)" test "$(cat /home/carol/su-m2-userns 2>/dev/null)" == refused
 expect "  700 had carol's session values (Wayland display, Hyprland instance)" test "$(cat /home/carol/su-m2-session 2>/dev/null)" == "wayland-1 gu_test_123"
+expect "  700 ran from /, with PYTHONSAFEPATH=1 and PYTHONNOUSERSITE=1 (rc7 security review: no module of the home folder)" \
+  test "$(cat /home/carol/su-m2-cwd 2>/dev/null)" == "/ 1 1"
 expect "  the migrations' output is root's alone (0600), not in the 0644 log" \
   bash -c "test \"\$(stat -c %U:%a '$D/$op.migrations')\" == root:600 && grep -q 'Running migration (700)' '$D/$op.migrations' && ! grep -q 'Running migration' '$D/$op.log'"
 expect "  the log names the migrations it ran (SU-M2)" logsays "$op" "SU-M2): 700.sh"
@@ -511,7 +513,7 @@ runner carol; op=$(last)
 expect "omarchy 8 (990: sudo and omarchy-hook) -> done terminal, needs migration 990, omarchy stays 7 ($(state carol))" \
   bash -c '[[ $1 == "done terminal -:7-1" ]] && grep -qx "needs migration 990" "$2"' _ "$(state carol):$(ver omarchy)" "$D/$op.exit"
 expect "  its log says why, and 990's sudo never ran" \
-  bash -c "grep -q '990.sh would run code the person can change' '$D/$op.log' && test ! -e /root/su-m2-990"
+  bash -c "grep -q '990.sh not in Grassfield.s list of reviewed Omarchy migrations' '$D/$op.log' && test ! -e /root/su-m2-990"
 
 say "a migration not on Grassfield's reviewed list, and a listed one with a changed byte (rc7 audit R7-SEC-01)"
 publish grassfield-desktop-1 qt6-base-6.11.0 omarchy-keyring-1 omarchy-9

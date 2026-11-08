@@ -20,6 +20,8 @@ gen() { python3 -I "$tool" "$@" >"$tmp/out" 2>&1; }
 
 desc="every supported release is listed whole (static check)"
 check gen --check
+desc="the security review's cases: 1792474908 and 1793069744 source excluded migrations (1786643346, 1787494718) and are excluded with them"
+check bash -c 'grep -qE "^exclude [0-9a-f]{64} 1792474908\\.sh 4\\.5\\.0-3 " "$1" && grep -qE "^exclude [0-9a-f]{64} 1793069744\\.sh 4\\.5\\.0-3 " "$1" && ! grep -qE "^allow .* (1786643346|1787494718)\\.sh" "$1"' _ "$list"
 first_allow=$(grep -m1 -n '^allow ' "$list" | cut -d: -f1)
 sed "${first_allow}d" "$list" >"$tmp/dropped"
 desc="control: a list with one line dropped fails the static check"
@@ -38,7 +40,7 @@ if [[ -n $newest ]] && grep -qx "# omarchy-newest-migration ${newest%.sh}" "$roo
   release=$(sed -n "s/^# omarchy-package //p" "$(grep -lx "# omarchy-newest-migration ${newest%.sh}" "$root"/docs/upstream/omarchy*.lock)")
   python3 -I -c "import re, sys
 lines = open(sys.argv[1]).read().split(chr(10))
-i = next(i for i, l in enumerate(lines) if l.startswith(\"allow \") and l.endswith(\" \" + sys.argv[2]))
+i = next(i for i, l in enumerate(lines) if l.startswith(\"allow \") and l.split()[3] == sys.argv[2])
 lines[i] = re.sub(r\"^allow [0-9a-f]{64}\", \"allow \" + \"0\" * 64, lines[i])
 open(sys.argv[3], \"w\").write(chr(10).join(lines))" "$list" "$release" "$tmp/changed"
   desc="control: one allow line of that release with another sha256 fails the tree check"
