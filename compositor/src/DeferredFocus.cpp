@@ -1,5 +1,6 @@
 #include "DeferredFocus.hpp"
 
+#include "Plugin.hpp"
 #include "Surfaces.hpp"
 
 #include <hyprland/src/desktop/state/FocusState.hpp>
@@ -102,7 +103,8 @@ namespace gf::deferredFocus {
             context.onExclusive = cursorOnExclusiveLayer(at);
             if (!context.onExclusive) {
                 const auto under = Desktop::viewState()->hitTest().windowAt(
-                    at, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING | Desktop::View::FOLLOW_MOUSE_CHECK);
+                    at, static_cast<uint16_t>(gf::flagsOf(Desktop::View::RESERVED_EXTENTS, Desktop::View::INPUT_EXTENTS, Desktop::View::ALLOW_FLOATING,
+                                                          Desktop::View::FOLLOW_MOUSE_CHECK)));
                 context.under = under ? reinterpret_cast<uintptr_t>(under.get()) : 0;
             }
         }

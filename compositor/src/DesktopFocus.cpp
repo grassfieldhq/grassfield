@@ -140,7 +140,7 @@ namespace {
         }
         if (surface)
             return resolve(surface);
-        constexpr auto props = static_cast<uint16_t>(Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
+        constexpr auto props = static_cast<uint16_t>(gf::flagsOf(Desktop::View::RESERVED_EXTENTS, Desktop::View::INPUT_EXTENTS, Desktop::View::ALLOW_FLOATING));
         if (const auto w = Desktop::viewState()->hitTest().windowAt(pos, props)) {
             Vector2D windowLocal;
             if (const auto ws = Desktop::viewState()->hitTest().windowSurfaceAt(pos, w, windowLocal))
@@ -364,6 +364,15 @@ namespace {
         focusDesktop(ls, "after its on_demand commit");
     }
 
+    // The tracked desktop layer of `id` (SDesktopLayer::id), null when it is gone or no longer tracked.
+    PHLLS layerOf(uint64_t id) {
+        for (const auto& d : st().desktops) {
+            if (d.id == id)
+                return d.layer.lock();
+        }
+        return nullptr;
+    }
+
     void attach(const PHLLS& ls) {
         auto& s = st();
         std::erase_if(s.desktops, [](const SDesktopLayer& d) { return !d.layer; }); // gone surfaces
@@ -374,12 +383,18 @@ namespace {
         const auto resource = ls->m_layerSurface.lock();
         if (!resource)
             return;
-        SDesktopLayer d;
+        // The listener holds the layer's id only and finds its entry by it (layerOf). A closure holding a weak pointer of the
+        // layer released that copy at the end of the listen() statement while `ls` was still used below:
+        // clang-analyzer-cplusplus.NewDelete (clang-tidy 23, rc7 Q1) followed the release into a use after free. It was none
+        // (`ls`, the event's shared pointer, keeps the layer alive for the whole call), but a closure without a counted
+        // pointer leaves nothing to follow. Two entries never share an id: gone layers are dropped above, before this one.
+        const uint64_t id = idOf(ls);
+        SDesktopLayer  d;
         d.layer  = ls;
-        d.id     = idOf(ls);
-        d.commit = resource->m_events.commit.listen([ref = PHLLSREF(ls)] { gf::guarded("desktop-focus commit", [&ref] { onDesktopCommit(ref.lock()); }); });
+        d.id     = id;
+        d.commit = resource->m_events.commit.listen([id] { gf::guarded("desktop-focus commit", [id] { onDesktopCommit(layerOf(id)); }); });
         s.desktops.push_back(std::move(d));
-        gf::logRequest(Log::INFO, "desktop-focus: desktop surface {:x} on {} tracked", idOf(ls), monitorName(ls));
+        gf::logRequest(Log::INFO, "desktop-focus: desktop surface {:x} on {} tracked", id, monitorName(ls));
     }
 
     void detach(const PHLLS& ls) {
