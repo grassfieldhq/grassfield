@@ -16,6 +16,14 @@ namespace {
     using gf::toplevelDrag::Phase;
     using gf::toplevelDrag::Point;
 
+    // The value after an ASSERT_TRUE on it (clang-tidy's optional check does not read gtest's assertions).
+    gf::toplevelDrag::Step stepOf(const std::optional<gf::toplevelDrag::Step>& s) {
+        return s.value_or(gf::toplevelDrag::Step{});
+    }
+    gf::toplevelDrag::End endOf(const std::optional<gf::toplevelDrag::End>& e) {
+        return e.value_or(gf::toplevelDrag::End{});
+    }
+
     constexpr gf::toplevelDrag::Id kWindow = 0x1000; // a toplevel
     constexpr gf::toplevelDrag::Id kOther  = 0x2000; // another toplevel
 
@@ -42,12 +50,12 @@ TEST(ToplevelDrag, AToplevelMappedWhileAttachedSitsUnderThePointerAtTheClientsOf
     ASSERT_TRUE(d.follows());
     const auto s = d.step(Point{500, 300}, Point{0, 0}); // wherever Hyprland placed it at the map
     ASSERT_TRUE(s);
-    EXPECT_EQ(s->topLeft, (Point{460, 288}));
-    EXPECT_TRUE(s->first);
-    const auto next = d.step(Point{510, 330}, s->topLeft);
+    EXPECT_EQ(stepOf(s).topLeft, (Point{460, 288}));
+    EXPECT_TRUE(stepOf(s).first);
+    const auto next = d.step(Point{510, 330}, stepOf(s).topLeft);
     ASSERT_TRUE(next);
-    EXPECT_EQ(next->topLeft, (Point{470, 318}));
-    EXPECT_FALSE(next->first);
+    EXPECT_EQ(stepOf(next).topLeft, (Point{470, 318}));
+    EXPECT_FALSE(stepOf(next).first);
 }
 
 TEST(ToplevelDrag, AWindowAlreadyMappedWhenAttachedDoesNotJump) {
@@ -56,10 +64,10 @@ TEST(ToplevelDrag, AWindowAlreadyMappedWhenAttachedDoesNotJump) {
     EXPECT_EQ(d.attach(kWindow, true, 999, 999), Error::None); // the offset is only a hint for an unmapped window
     const auto s = d.step(Point{300, 200}, Point{250, 180});
     ASSERT_TRUE(s);
-    EXPECT_EQ(s->topLeft, (Point{250, 180})); // the grab is measured where the pointer holds it
-    const auto next = d.step(Point{320, 260}, s->topLeft);
+    EXPECT_EQ(stepOf(s).topLeft, (Point{250, 180})); // the grab is measured where the pointer holds it
+    const auto next = d.step(Point{320, 260}, stepOf(s).topLeft);
     ASSERT_TRUE(next);
-    EXPECT_EQ(next->topLeft, (Point{270, 240}));
+    EXPECT_EQ(stepOf(next).topLeft, (Point{270, 240}));
 }
 
 TEST(ToplevelDrag, AWindowHeldAtTheAttachKeepsThatGrabWholeDrag) {
@@ -71,11 +79,11 @@ TEST(ToplevelDrag, AWindowHeldAtTheAttachKeepsThatGrabWholeDrag) {
     ASSERT_TRUE(d.start());
     const auto s = d.step(Point{310, 357}, Point{100, 200});
     ASSERT_TRUE(s);
-    EXPECT_EQ(s->topLeft, (Point{110, 207}));
+    EXPECT_EQ(stepOf(s).topLeft, (Point{110, 207}));
     d.holdAt(Point{0, 0}, Point{0, 0}); // measured already: kept
-    const auto end = d.step(Point{500, 500}, s->topLeft);
+    const auto end = d.step(Point{500, 500}, stepOf(s).topLeft);
     ASSERT_TRUE(end);
-    EXPECT_EQ(end->topLeft, (Point{300, 350}));
+    EXPECT_EQ(stepOf(end).topLeft, (Point{300, 350}));
 }
 
 TEST(ToplevelDrag, AHoldIsOnlyForAMappedAttachedWindow) {
@@ -87,7 +95,7 @@ TEST(ToplevelDrag, AHoldIsOnlyForAMappedAttachedWindow) {
     d.mapped(kWindow);
     const auto s = d.step(Point{500, 300}, Point{0, 0});
     ASSERT_TRUE(s);
-    EXPECT_EQ(s->topLeft, (Point{460, 288}));
+    EXPECT_EQ(stepOf(s).topLeft, (Point{460, 288}));
 }
 
 TEST(ToplevelDrag, ARegrabKeepsTheNewPlaceUnderThePointer) {
@@ -98,7 +106,7 @@ TEST(ToplevelDrag, ARegrabKeepsTheNewPlaceUnderThePointer) {
     d.regrab(Point{300, 200}, Point{200, 190}); // a tiled window back at its size from before under the pointer (TL16)
     const auto s = d.step(Point{310, 210}, Point{200, 190});
     ASSERT_TRUE(s);
-    EXPECT_EQ(s->topLeft, (Point{210, 200}));
+    EXPECT_EQ(stepOf(s).topLeft, (Point{210, 200}));
 }
 
 TEST(ToplevelDrag, AttachingWhileAToplevelIsAttachedIsAProtocolError) {
@@ -122,8 +130,8 @@ TEST(ToplevelDrag, AnUnmappedToplevelIsDetachedAndCanBeAttachedAgainOnceItMaps) 
     d.mapped(kWindow);
     const auto s = d.step(Point{100, 100}, Point{0, 0});
     ASSERT_TRUE(s);
-    EXPECT_EQ(s->topLeft, (Point{80, 95}));
-    EXPECT_TRUE(s->first);
+    EXPECT_EQ(stepOf(s).topLeft, (Point{80, 95}));
+    EXPECT_TRUE(stepOf(s).first);
 }
 
 TEST(ToplevelDrag, ADestroyedRoleDetachesItsToplevel) {
@@ -154,8 +162,8 @@ TEST(ToplevelDrag, ADropEndsTheDragAndNamesTheWindowThatFollowed) {
     auto       d   = tornOff(0, 0);
     const auto end = d.end(EndKind::DropPerformed, true);
     ASSERT_TRUE(end);
-    EXPECT_EQ(end->outcome, Outcome::Drop);
-    EXPECT_EQ(end->toplevel, kWindow);
+    EXPECT_EQ(endOf(end).outcome, Outcome::Drop);
+    EXPECT_EQ(endOf(end).toplevel, kWindow);
     EXPECT_EQ(d.phase(), Phase::Ended);
     EXPECT_FALSE(d.follows());
     EXPECT_EQ(d.attached(), std::nullopt);
@@ -168,22 +176,22 @@ TEST(ToplevelDrag, AWindowReleasedOverNothingIsADropNotARevert) {
     auto       d   = tornOff(0, 0);
     const auto end = d.end(EndKind::Cancelled, true);
     ASSERT_TRUE(end);
-    EXPECT_EQ(end->outcome, Outcome::Drop);
+    EXPECT_EQ(endOf(end).outcome, Outcome::Drop);
 }
 
 TEST(ToplevelDrag, EscapeOrTheClientCancellingOnlyRemovesThePreview) {
     auto       d   = tornOff(0, 0);
     const auto end = d.end(EndKind::Cancelled, false);
     ASSERT_TRUE(end);
-    EXPECT_EQ(end->outcome, Outcome::Cancel);
-    EXPECT_EQ(end->toplevel, kWindow);
+    EXPECT_EQ(endOf(end).outcome, Outcome::Cancel);
+    EXPECT_EQ(endOf(end).toplevel, kWindow);
 }
 
 TEST(ToplevelDrag, ASourceDestroyedDuringTheDragCancels) {
     auto       d   = tornOff(0, 0);
     const auto end = d.end(EndKind::SourceGone, true);
     ASSERT_TRUE(end);
-    EXPECT_EQ(end->outcome, Outcome::Cancel);
+    EXPECT_EQ(endOf(end).outcome, Outcome::Cancel);
 }
 
 TEST(ToplevelDrag, AnEndWithoutAMappedWindowNamesNone) {
@@ -192,7 +200,7 @@ TEST(ToplevelDrag, AnEndWithoutAMappedWindowNamesNone) {
     ASSERT_EQ(d.attach(kWindow, false, 0, 0), Error::None); // never mapped
     const auto end = d.end(EndKind::DropPerformed, true);
     ASSERT_TRUE(end);
-    EXPECT_EQ(end->toplevel, std::nullopt);
+    EXPECT_EQ(endOf(end).toplevel, std::nullopt);
 }
 
 TEST(ToplevelDrag, ASourceCancelledBeforeItsDragBeganEndsQuietly) {
