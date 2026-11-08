@@ -100,8 +100,8 @@ table.sort(env)
 print(table.concat(env, " "))
 LUA
 out=$(lua "$tmp/apply.lua" "$cfg" "$tmp/block.lua" ok 2>&1)
-check "plugin installed for this Qt: QT_QPA_PLATFORMTHEME=xdgdesktopportal, nothing else (SAL_USE_VCLPLUGIN is the uwsm env's) [$out]" \
-  test "$out" = "QT_QPA_PLATFORMTHEME=xdgdesktopportal"
+check "plugin installed for this Qt: QT_QPA_PLATFORMTHEME=xdgdesktopportal and its copy for the shell's launches, nothing else (SAL_USE_VCLPLUGIN is the uwsm env's) [$out]" \
+  test "$out" = "GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME=xdgdesktopportal QT_QPA_PLATFORMTHEME=xdgdesktopportal"
 out=$(lua "$tmp/apply.lua" "$cfg" "$tmp/block.lua" stale 2>&1)
 check "plugin built for another Qt minor: Omarchy's gtk3 stays (no QT_QPA_PLATFORMTHEME set), the reason is printed [$out]" \
   bash -c 'echo "$1" | grep -q "^grassfield: Qt platform theme: gtk3 kept: the plugin was built for Qt 6.12 and Qt 6.13 is installed" && ! echo "$1" | grep -q "QT_QPA_PLATFORMTHEME="' _ "$out"
@@ -178,4 +178,20 @@ for unit in "$root"/packaging/systemd/*.service; do
 done
 check "the check found the shell, the security process and the portal backend among the Qt GUI units ($gui_units found)" test "$gui_units" -ge 3
 check "the settings portal backend (QtCore only) clears it as well" grep -qx 'UnsetEnvironment=GTK_USE_PORTAL QT_QPA_PLATFORMTHEME' "$root/packaging/systemd/grassfield-portal-settings.service"
+# The apps the shell starts: the shell's unit pins gtk3 for itself and an app inherits the shell's environment (uwsm-app's default is a
+# scope, which runs the command in its caller's environment), so the session's choice travels in GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME
+# (compositor environment, named in the finalize list so that the systemd user manager gets it) and Apps.launchEnvironment gives it back.
+check "autostart.lua's finalize list names GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME (the user manager, where the shell's unit reads it)" \
+  grep -q 'GRASSFIELD_SESSION GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME"' "$cfg/grassfield/autostart.lua"
+check "no unit clears GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME, and the shell's unit pins gtk3 without touching it" bash -c '
+  ! grep -h "^UnsetEnvironment=.*GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME" "$1"/packaging/systemd/*.service | grep . &&
+  grep -qx "Environment=QT_QPA_PLATFORMTHEME=gtk3" "$1/packaging/systemd/grassfield-shell.service"' _ "$root"
+check "Apps.qml: launchEnvironment() and ownAppEnvironment() both carry the session's theme (so every launch path of the shell has it)" bash -c '
+  f=$1/shell/services/Apps.qml
+  grep -q "readonly property var themeEnvironment: AppLaunch.themeEnvironment(Mode.appsQtTheme)" "$f" &&
+  grep -qF "RunMode.appsQtTheme(Quickshell.env(\"GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME\"))" "$1/shell/lib/Mode.qml" &&
+  awk "/function launchEnvironment\(\)/ {a=1} a && /themeEnvironment/ {n++} /function ownAppEnvironment\(\)/ {b=1} b && /themeEnvironment/ {m++} END {exit !(n>=1 && m>=1)}" "$f"' _ "$root"
+check "every launch path of Apps.qml (launchNow, runCommands, openDetached, runHelper, devOpen) takes its environment from launchEnvironment()" bash -c '
+  f=$1/shell/services/Apps.qml
+  [[ $(grep -c "launchEnvironment()" "$f") -ge 7 ]]' _ "$root"
 exit "$fail"

@@ -2,7 +2,7 @@
 
 hl.on("hyprland.start", function()
   -- Hand the session environment to systemd and D-Bus activation (uwsm finalizes the compositor unit).
-  local vars = "WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP HYPRLAND_INSTANCE_SIGNATURE GRASSFIELD_SESSION"
+  local vars = "WAYLAND_DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP HYPRLAND_INSTANCE_SIGNATURE GRASSFIELD_SESSION GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME"
   -- Pointer theme (cursor.lua, ADR-0014): uwsm finalize exports only the variables it is given, so the shell and
   -- D-Bus activated apps (systemd user units do not inherit Hyprland's environment) need these named.
   vars = vars .. " XCURSOR_THEME XCURSOR_SIZE HYPRCURSOR_THEME HYPRCURSOR_SIZE"

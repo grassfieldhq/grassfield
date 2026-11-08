@@ -66,8 +66,16 @@ from before this ADR: `grassfield-shell.service` and `grassfield-security.servic
 `UnsetEnvironment=GTK_USE_PORTAL QT_QPA_PLATFORMTHEME` (they must never ask themselves for a dialog; grassfield-portal also clears it
 in its own `main`). The other units run QtCore programs, which load no platform theme. `tests/shell/qt_platform_theme.sh` finds
 every unit that runs a Qt GUI process (`qs`, and the apps whose `main.cpp` makes a `QGuiApplication` or `QApplication`) and fails
-if one neither pins nor clears. The apps the shell starts get the manager's environment (`uwsm-app` scopes); a start that is not
-scoped (a dev session) inherits the shell's pin. Grassfield's own Qt apps (Files, Settings, Preview) use the portal for `QFileDialog`
+if one neither pins nor clears. Every app the shell starts is its child, and `uwsm app` (its default is a
+systemd scope, `-t scope`) runs the command in its caller's environment, not the manager's, so an app would inherit the shell's pin and
+never get the portal theme. The session's choice therefore travels in a second variable: `session.lua` sets
+`GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME` next to `QT_QPA_PLATFORMTHEME` (only when the portal theme is chosen), `autostart.lua`'s
+`uwsm finalize` list names it so that the systemd user manager hands it to the shell, and `Apps.launchEnvironment()` (and
+`ownAppEnvironment()`, for Settings and Glance) gives `QT_QPA_PLATFORMTHEME` back to every app the shell starts, as it already does
+for `GTK_USE_PORTAL` (`AppLaunch.themeEnvironment`, exactly the value `xdgdesktopportal`; every launch path of the shell, Dock,
+Launchpad, Search, Open With, document and folder opens, goes through `launchEnvironment()`). The Launchpad's call to the Store is a
+Grassfield helper that sets its own theme, and the shell's helper tools (`qs ipc`, `grassfield-*`) keep the pin. With the variable
+absent (the login guard fell back to gtk3, a dev session) apps keep the shell's value, which is gtk3 as before. Grassfield's own Qt apps (Files, Settings, Preview) use the portal for `QFileDialog`
 too; those that draw their own panels (the QML panels of Files) are unchanged.
 
 The plugin serves the portal theme only. Qt appends the platform's own theme names after `QT_QPA_PLATFORMTHEME` (on Wayland, the

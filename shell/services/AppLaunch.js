@@ -22,6 +22,14 @@ function portalEnvironment(on) {
     return on === true ? {"GTK_USE_PORTAL": "1"} : {};
 }
 
+// The Qt platform theme the session chose (ADR-0054), given back to the apps the shell starts: the shell's own unit pins gtk3 (Qt's
+// portal theme asks the portal at start, gate P5) and an app inherits the shell's environment (a uwsm-app scope runs the command in
+// its caller's environment), so the session's value travels in GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME. Only the one value the session
+// sets, exactly; anything else leaves the app with the shell's value.
+function themeEnvironment(value) {
+    return value === "xdgdesktopportal" ? {"QT_QPA_PLATFORMTHEME": value} : {};
+}
+
 // `extra` entries added to `base` (a new object, neither input changes).
 function mergeEnvironment(base, extra) {
     const out = {};

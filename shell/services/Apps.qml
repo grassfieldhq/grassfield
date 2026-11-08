@@ -227,6 +227,8 @@ Singleton {
     readonly property bool realSession: Mode.session && !devSession
     // GTK_USE_PORTAL=1 for the apps the shell starts when the session routes GTK to the portal (launchEnvironment).
     readonly property var portalEnvironment: AppLaunch.portalEnvironment(Mode.appsGtkPortal)
+    // QT_QPA_PLATFORMTHEME of the session for the apps the shell starts (ADR-0054; the shell's unit pins gtk3 for itself).
+    readonly property var themeEnvironment: AppLaunch.themeEnvironment(Mode.appsQtTheme)
     property bool uwsmApp: false
     readonly property bool scopedLaunch: realSession && uwsmApp
 
@@ -632,14 +634,15 @@ Singleton {
     // chose when it differs from the session's (XCURSOR_SIZE and HYPRCURSOR_SIZE; applications read them when they start,
     // so open ones keep their size). Never the owner's systemd or uwsm environment.
     function launchEnvironment(): var {
-        const base = AppLaunch.mergeEnvironment(devSession ? AppLaunch.isolatedEnvironment(appsHome) : ({}), portalEnvironment);
+        const session = AppLaunch.mergeEnvironment(portalEnvironment, themeEnvironment);
+        const base = AppLaunch.mergeEnvironment(devSession ? AppLaunch.isolatedEnvironment(appsHome) : ({}), session);
         return AppLaunch.mergeEnvironment(base, Pointer.launchEnvironment());
     }
 
     // Environment of Grassfield's own apps (Settings, Glance): launchEnvironment() without the dev isolation, which they
     // apply themselves.
     function ownAppEnvironment(): var {
-        return AppLaunch.mergeEnvironment(portalEnvironment, Pointer.launchEnvironment());
+        return AppLaunch.mergeEnvironment(AppLaunch.mergeEnvironment(portalEnvironment, themeEnvironment), Pointer.launchEnvironment());
     }
 
     // Open With (desktop menu): the shown apps that can open every one of `paths` (`resolved`: path -> real type, from

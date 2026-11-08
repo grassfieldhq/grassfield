@@ -58,6 +58,21 @@ TestCase {
                 {"GTK_USE_PORTAL": "1", "XCURSOR_SIZE": "48"});
     }
 
+    // The Qt platform theme of the session (ADR-0054) comes back to the apps the shell starts: the shell's unit pins gtk3 for itself
+    // and an app inherits the shell's environment, so GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME carries the session's value. Exactly
+    // that value; the pin (gtk3) never travels.
+    function test_themeEnvironment() {
+        compare(AppLaunch.themeEnvironment("xdgdesktopportal"), {"QT_QPA_PLATFORMTHEME": "xdgdesktopportal"});
+        for (const other of ["", "gtk3", "xdgdesktopportal2", "xdgdesktopportal:gtk3", "kde", undefined, null, true, 1])
+            compare(AppLaunch.themeEnvironment(other), {}, String(other));
+        // What Apps.launchEnvironment() builds: never empty once the session chose the portal theme (so the environment path of
+        // launchNow is taken), the pointer entries and GTK_USE_PORTAL kept, no gtk3 anywhere.
+        const session = AppLaunch.mergeEnvironment(AppLaunch.portalEnvironment(true), AppLaunch.themeEnvironment("xdgdesktopportal"));
+        const all = AppLaunch.mergeEnvironment(AppLaunch.mergeEnvironment({}, session), {"XCURSOR_SIZE": "48"});
+        compare(all, {"GTK_USE_PORTAL": "1", "QT_QPA_PLATFORMTHEME": "xdgdesktopportal", "XCURSOR_SIZE": "48"});
+        verify(Object.keys(all).length > 0);
+    }
+
     function test_appsHomeIsNextToTheStateHome() {
         compare(AppLaunch.appsHomeFor("/w/.dev/state", "/run"), "/w/.dev/apps-home");
         compare(AppLaunch.appsHomeFor("/w/.dev/state/", "/run"), "/w/.dev/apps-home");

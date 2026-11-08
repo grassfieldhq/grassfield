@@ -82,6 +82,10 @@ do
     local chosen, theme, why = pcall(qttheme.choose)
     if chosen and theme == "xdgdesktopportal" then
       hl.env("QT_QPA_PLATFORMTHEME", theme)
+      -- The shell and the security process pin gtk3 in their units (they must not wait on the portal at start), and every app the
+      -- shell starts inherits the shell's environment: the session's choice travels in this variable (named in autostart.lua's
+      -- finalize list) and the shell gives it back to the apps it starts (shell/services/Apps.qml launchEnvironment).
+      hl.env("GRASSFIELD_APPS_QT_QPA_PLATFORMTHEME", theme)
     elseif chosen then
       print("grassfield: Qt platform theme: gtk3 kept: " .. tostring(why))
     else
