@@ -315,7 +315,9 @@ for site in 'shell/overview/MiniDesktop.qml:ThemeIcons.appIcon(Apps.lookup(card.
   'shell/desktop/DesktopIcon.qml:ThemeIcons.fileSource(root.filePath)' \
   'shell/widgets/builtin/nowplaying/NowPlaying.qml:source: root.hasTrack ? ThemeIcons.artSource(Media.artShown) : ""' \
   'shell/overlay/controlcenter/NowPlaying.qml:source: ThemeIcons.artSource(Media.artShown)' 'shell/services/Media.qml:onTriggered: root.artShown = root.artUrl' \
-  'shell/security/lock/Lock.qml:Machine.avatarSource(facePath, Machine.accountsIconPath(loginName), path => ThemeIcons.fileSource(path), path => ThemeIcons.fileState(path))' \
+  'shell/security/lock/Lock.qml:Machine.avatarSource(facePath, Machine.accountsIconPath(loginName), path => avatar.sourceOf(path), path => avatar.stateOf(path))' \
+  'shell/security/lock/LockAvatar.qml:readonly property string helper: Quickshell.shellPath("services/image-copy.py")' \
+  'shell/security/lock/LockAvatar.qml:maker.command = ["timeout", "-k", "2", "20", "setpriv", "--pdeathsig", "KILL", "--", "python3", "-I", root.helper, "file", path, String(root.maxBytes), out];' \
   'shell/menubar/TrayButton.qml:readonly property string own: ThemeIcons.trayIcon(root.item ? root.item.icon : "")'; do
   grep -qF -- "${site#*:}" "${site%%:*}" || { echo "missing: $site"; site_ok=0; }
 done
@@ -326,7 +328,10 @@ done
 if grep -rn 'artUrl\|trackArtUrl' shell --include=*.qml | grep -v '^shell/services/Media.qml:'; then site_ok=0; fi
 if grep -rn 'item\.icon\b\|modelData\.icon\b' shell/menubar --include=*.qml | grep -v 'ThemeIcons.trayIcon('; then site_ok=0; fi
 if grep -n '\.face\|AccountsService' shell/security/lock/*.qml | grep -v 'facePath: \|^[^:]*:[0-9]*: *//'; then site_ok=0; fi
-dcheck "Search, the Switcher, the Overview, Stages, Force Quit, About, the Dock, its stacks, the desktop, Now Playing, the lock and the tray load such images through ThemeIcons" "$site_ok"
+# ADR-0041 S2: the lock runs in the security process, which makes its one picture with the same helper (image-copy.py file)
+# and never uses ThemeIcons (whose start empties the UI's copy directory).
+if grep -n 'ThemeIcons' shell/security/lock/*.qml shell/security/idle/*.qml shell/security/SecurityHost.qml | grep -v '^[^:]*:[0-9]*: *//'; then site_ok=0; fi
+dcheck "Search, the Switcher, the Overview, Stages, Force Quit, About, the Dock, its stacks, the desktop, Now Playing and the tray load such images through ThemeIcons, the lock through the same helper in its own process" "$site_ok"
 
 # ---- Part 4: the policy ----
 if ! command -v gcc >/dev/null; then
