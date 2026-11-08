@@ -3097,8 +3097,14 @@ QtObject {
     readonly property real iconModeTileLiftExponent: 2.5
     // ADR-0014 own-tile rule, tile tone, light appearance (R7-REQ-13, A2 rule E): relative luminance (linear light) below which the pixels of a tile icon are darkened, and above which nothing moves: about the darkest solid material of the light appearance (the material tint over a black wallpaper: 0.63 at the default transparency, 0.57 at the end of the clamp, material.tintClampUntil)
     readonly property real iconModeTileDarkenPivot: 0.62
-    // ADR-0014 own-tile rule, tile tone, light appearance: exponent e of the darkening v' = P (v / P)^e below tileDarkenPivot (e > 1; 2.0 takes basecamp's edge from 2.0-2.9:1 to 3.1-4.5:1 over the light material, floor 2.17-2.9, modelled on the shader and the A2 fixture, docs/specs/ui.md)
-    readonly property real iconModeTileDarkenExponent: 2.0
+    // ADR-0014 own-tile rule, tile tone, light appearance: exponent e of the darkening v' = P (v / P)^e below tileDarkenPivot (e > 1; 1.75 takes basecamp's edge from 2.0-2.9:1 to 2.9-4.1:1 over the light material, floor 2.17-2.9, modelled on the shader and the A2 fixture, docs/specs/ui.md)
+    readonly property real iconModeTileDarkenExponent: 1.75
+    // ADR-0014 Dark, own-tile rule (R7-REQ-13, A2 rule E): width in device pixels of the thin light rim a Dark tile icon carries on its edge in the dark appearance (macOS dark-mode icon tiles have a specular edge); the inner tones are not touched, so rules I, S and N do not move
+    readonly property real iconModeDarkRimWidth: 1.0
+    // ADR-0014 Dark, own-tile rule: how far the rim replaces the tile's own colour at its edge (0..1); 0.9 takes basecamp Dark at 24 px from 1.57:1 to 2.02:1 over a mid-grey material, floor 1.73, modelled (docs/specs/ui.md)
+    readonly property real iconModeDarkRimStrength: 0.9
+    // ADR-0014 Dark, own-tile rule: lightness (sRGB 0..1) of the rim, near white so that it stands out from the brightest material of the dark appearance (relative luminance 0.38) by about 2.3:1
+    readonly property real iconModeDarkRimLuma: 0.95
     // ADR-0014 Clear: from this material transparency (Control Center slider, 0..1) the wallpaper shows through the window material so much that Clear icons are drawn as over the bare wallpaper (smoked plate, opaque rim); A2 at 1.0 holds a floor of 2.0 in every mode, tint and size (docs/specs/ui.md)
     readonly property real iconModeWallpaperLikeTransparency: 0.8
     // estimate: Settings icon mode picker, sample icon edge (macOS 26 style tiles) [ref: docs/testing/f1-reference-gaps.md § Settings; docs/specs/settings.md]

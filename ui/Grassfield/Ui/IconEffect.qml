@@ -70,6 +70,9 @@ ShaderEffect {
     // Tone of a tile icon (shaders/icon.frag, TILE TONE): which side of its pivot the pixels move to, chosen by the pure rule IconModes.tileToneSide.
     readonly property real tileToneSide: IconModes.tileToneSide(root.darkAppearance, root.wallpaper, Appearance.effectiveTransparency, Tokens)
     readonly property real tileTonePivot: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenPivot : Tokens.iconModeTileLiftPivot
+    readonly property real darkRimWidth: Tokens.iconModeDarkRimWidth
+    readonly property real darkRimStrength: Tokens.iconModeDarkRimStrength
+    readonly property real darkRimLuma: Tokens.iconModeDarkRimLuma
     readonly property real tileToneExp: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenExponent : Tokens.iconModeTileLiftExponent
     readonly property color folderTint: Qt.rgba(root.recolorTint.r, root.recolorTint.g, root.recolorTint.b, root.recolor ? 1 : 0)
     readonly property real folderBrightness: Tokens.folderIconBrightness

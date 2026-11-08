@@ -64,3 +64,12 @@ function warnOnce(message) {
     warned = true;
     console.warn("grassfield-ui: " + message);
 }
+
+// Dark rim (R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, DARK RIM). A Dark tile icon in the dark appearance carries a thin light rim on its
+// edge: within `width` device pixels inside the tile's edge (`distance` px, negative outside) the tile's colour is replaced by `strength` of the rim colour.
+// Returns the weight of the rim (0..strength) at that distance; the inner tones (rules I, S, N) are never touched.
+function darkRimWeight(distance, width, strength) {
+    if (distance < -0.5)
+        return 0;
+    return Math.min(1, Math.max(0, width - distance + 0.5)) * strength;
+}

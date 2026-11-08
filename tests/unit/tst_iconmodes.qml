@@ -170,6 +170,34 @@ TestCase {
         verify(best(1, t.iconModeTileLiftPivot, t.iconModeTileLiftExponent, panel) >= 1.73, "dark window at transparency 1.0 over white");
     }
 
+    // The Dark rim: one device pixel of near-white on the edge of a Dark tile in the dark appearance. Pure math of the shader's DARK RIM.
+    function test_darkRimWeight() {
+        const t = Tokens;
+        verify(t.iconModeDarkRimWidth >= 1 && t.iconModeDarkRimWidth <= 2, "a thin rim, at least a device pixel");
+        verify(t.iconModeDarkRimStrength > 0 && t.iconModeDarkRimStrength <= 1 && t.iconModeDarkRimLuma > 0.8 && t.iconModeDarkRimLuma <= 1, "a light rim");
+        const w = d => IconModes.darkRimWeight(d, t.iconModeDarkRimWidth, t.iconModeDarkRimStrength);
+        compare(w(-1), 0, "nothing outside the tile");
+        compare(w(0), t.iconModeDarkRimStrength, "full strength on the edge");
+        compare(w(t.iconModeDarkRimWidth + 0.5), 0, "none past its width");
+        compare(w(t.iconModeDarkRimWidth + 5), 0, "none inside the tile: the inner tones are untouched (rules I, S, N)");
+        for (let d = 0; d < 6; d += 0.25)
+            verify(w(d + 0.25) <= w(d) + 1e-12, "the rim fades inwards");
+    }
+
+    // The rim lifts the edge of a Dark tile out of the brightest dark material (relative luminance 0.38) by at least the floor of basecamp's 24 px cell
+    // (0.9 of Default's 1.92 = 1.73): the rim over a tile pixel of the sky's tone (0.60) or the hill's (0.23).
+    function test_darkRimStandsOutOfAMidGreyMaterial() {
+        const t = Tokens;
+        const panel = lum(materialRgb(true, 1, 1.0));
+        const weight = IconModes.darkRimWeight(0, t.iconModeDarkRimWidth, t.iconModeDarkRimStrength);
+        for (const tone of [0.60, 0.23]) {
+            const tileCoded = Math.pow(tone, 1 / 2.4);
+            const coded = tileCoded * (1 - weight) + t.iconModeDarkRimLuma * weight;
+            const y = lum([coded, coded, coded]);
+            verify(contrast(y, panel) >= 1.73, `rim over a tile tone ${tone}: ${contrast(y, panel).toFixed(2)}:1`);
+        }
+    }
+
     function test_shaderFileExists() {
         // The compiled shader the effect loads sits next to its source (scripts/dev/build-shaders.sh).
         const xhr = new XMLHttpRequest();

@@ -62,6 +62,9 @@ layout(std140, binding = 0) uniform buf {
     float tintedRampHighLight;
     float tileToneSide;       // tile icon tone, see TILE TONE below: +1 lift the pixels above tileTonePivot, -1 darken those below it, 0 none
     float tileTonePivot;      // linear value the tone leaves alone
+    float darkRimWidth;       // Dark tile, dark appearance: width in device pixels of the light rim on the tile's edge (DARK RIM below)
+    float darkRimStrength;
+    float darkRimLuma;
     float tileToneExp;        // exponent of the tone (an ease-out lift above the pivot, a power darkening below it; both > 1)
     vec4 folderTint;          // folder colour step (FolderIcon): a = 1 when the artwork is recoloured, 0 otherwise
     float folderBrightness;   // MultiEffect arithmetic of the folder colour (FolderEffect, tokens folderIcon*)
@@ -187,6 +190,14 @@ void main() {
     float sdf = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - rad;
     float aa = max(fwidth(sdf), 0.0005);
     float mask = 1.0 - smoothstep(-aa, aa, sdf);
+    // DARK RIM (R7-REQ-13, A2 rule E): a Dark tile icon in the dark appearance carries a thin light rim on its edge (macOS dark-mode tiles have a specular
+    // edge), darkRimWidth device pixels wide: it separates the tile from a dark or mid-grey material without touching the tile's inner tones (rules I, S, N).
+    // Within that distance inside the tile's edge (-sdf / aa, in device pixels) the tile's colour is replaced by darkRimStrength of darkRimLuma.
+    if (isTile && modeIndex < 1.5 && dark > 0.5) {
+        float dpx = -sdf / aa;
+        float rim = clamp(darkRimWidth - dpx + 0.5, 0.0, 1.0) * step(-0.5, dpx) * darkRimStrength;
+        artP.rgb = mix(art, vec3(darkRimLuma), rim) * artA;
+    }
     vec3 plateRgb;
     float plateA;
     if (modeIndex < 1.5) {
