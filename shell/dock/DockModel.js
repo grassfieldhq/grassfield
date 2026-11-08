@@ -142,21 +142,73 @@ function withFixed(files, items) {
     return [files, {kind: "apps", key: "grid"}].concat(items);
 }
 
-function pin(pinned, id) {
-    const list = (pinned ? pinned : []).slice();
-    return list.indexOf(id) === -1 ? list.concat([id]) : list;
+// One spelling of a desktop id for pin, match and remove: without ".desktop", case-folded (the entry lookup and windowsOf
+// compare the same way), so "Foot", "foot.desktop" and "foot" are one app whichever of them the file or the tile holds.
+function normId(id) {
+    return String(id === undefined || id === null ? "" : id).replace(/\.desktop$/i, "").toLowerCase();
+}
+
+// The resolved desktop entry id of a stored or tile id, null when nothing resolves. An app is identified by it: the lookup matches
+// exactly, then without case (it does not strip ".desktop"), so a stored "foot.desktop" is tried as written and then without the suffix.
+// `exact` accepts only an entry whose id is the id in another case or with ".desktop" (never a heuristic match such as a
+// StartupWMClass): the rewrite of a stored id uses it, so an uninstalled native "firefox" is never turned into an installed Flatpak.
+function resolvedId(id, lookup, exact) {
+    if (!lookup || id === undefined || id === null || id === "")
+        return null;
+    const entry = lookup(id) || lookup(String(id).replace(/\.desktop$/i, ""));
+    if (!entry || !entry.id)
+        return null;
+    return exact === true && normId(entry.id) !== normId(id) ? null : entry.id;
+}
+
+// True when two ids are the same app: the same resolved entry id (two installed entries that differ only by case stay distinct), or,
+// when neither resolves to any entry, the same spelling after normId (cleanup of ids that make no tile: removal only; `strict` compares
+// the exact spelling, as pin and cleanPinned do, so such an id never refuses a pin).
+function sameApp(a, b, lookup, strict) {
+    const ra = resolvedId(a, lookup);
+    const rb = resolvedId(b, lookup);
+    if (ra !== null && rb !== null)
+        return ra === rb;
+    if (ra !== null || rb !== null)
+        return false;
+    return strict === true ? a === b : normId(a) === normId(b);
+}
+
+// The stored list cleaned: an id that resolves only in its normalised form is rewritten to the resolved id, then the apps that appear
+// twice keep their first place. An id that resolves to nothing stays as it is.
+function cleanPinned(pinned, lookup) {
+    const out = [];
+    for (const p of (pinned ? pinned : [])) {
+        const r = resolvedId(p, lookup, true);
+        const id = r !== null ? r : p;
+        if (!out.some(q => sameApp(q, id, lookup, true)))
+            out.push(id);
+    }
+    return out;
+}
+
+function pin(pinned, id, lookup) {
+    const list = cleanPinned(pinned, lookup);
+    const r = resolvedId(id, lookup, true);
+    return list.some(p => sameApp(p, id, lookup, true)) ? list : list.concat([r !== null ? r : id]);
 }
 
 function unpin(pinned, id) {
-    return (pinned ? pinned : []).filter(p => p !== id);
+    const want = normId(id);
+    return (pinned ? pinned : []).filter(p => normId(p) !== want);
 }
 
-// Unpin by resolved key: drops every pinned id that resolves (via lookup) to the given key.
+// Unpin by resolved key: drops every pinned id that is the same app as the key (same resolved entry id), so the pin goes whatever
+// spelling the file holds. An emptied list stays empty: nothing here re-seeds the defaults (see migratePinned).
 function unpinKey(pinned, key, lookup) {
-    return (pinned ? pinned : []).filter(p => {
-        const entry = lookup(p);
-        return p !== key && (!entry || entry.id !== key);
-    });
+    return (pinned ? pinned : []).filter(p => !sameApp(p, key, lookup));
+}
+
+// Whether a tile can be dragged out of the Dock (macOS): an app kept in the Dock or listed as recent, running or not. A running
+// app that is removed keeps its tile (not kept any more) until it quits. Files, Apps, folders, minimized windows and the Trash
+// are fixed.
+function removable(item) {
+    return !!item && item.kind === "app" && item.fixed !== true && (item.pinned === true || item.recent === true);
 }
 
 // Dock geometry, the single formula shared by the Dock and by whoever reserves its area (Overview).

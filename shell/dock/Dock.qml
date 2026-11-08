@@ -320,16 +320,17 @@ Scope {
             writeRecents(DockModel.pushRecent(Settings.dockRecent, item.key, Tokens.dockRecentMax));
     }
 
-    // Removes a tile from the Dock (drag out): unpins it and forgets it as a recent app. Running apps keep their
-    // tile. True when the tile goes away.
+    // Removes a tile from the Dock (drag out): unpins it and forgets it as a recent app. A running app is removable too
+    // (macOS): it is no longer kept, its tile stays with its running dot until it quits. True when the Dock changed (the pin or
+    // the recent entry went); the caller plays the puff only when the tile is gone, that is when it has no window.
     function removeItem(item: var): bool {
         if (item.kind !== "app")
             return false;
         if (item.pinned)
             Settings.setDockPinned(DockModel.unpinKey(Settings.dockPinned, item.key, Apps.lookup));
         if (item.recent)
-            Settings.setDockRecent(Settings.dockRecent.filter(r => r !== item.key));
-        return item.windows.length === 0;
+            Settings.setDockRecent(Settings.dockRecent.filter(r => !DockModel.sameApp(r, item.key, Apps.lookup)));
+        return item.pinned === true || item.recent === true;
     }
 
     Timer {
@@ -1029,7 +1030,7 @@ Scope {
             // then ends the drag with a synthesized release that looks real, so an interrupted drag changes no pins (no removal, no
             // reorder): the tile glides back. A press that was already interrupted when the drag would start does not start it at all.
             property bool dragInterrupted: false
-            readonly property bool dragRemovable: dragFrom >= 0 && !!root.items[dragFrom] && (root.items[dragFrom].pinned || root.items[dragFrom].recent === true) && root.items[dragFrom].windows.length === 0
+            readonly property bool dragRemovable: dragFrom >= 0 && DockModel.removable(root.items[dragFrom])
             property real poofX: 0
             property real poofY: 0
             property real poofProgress: 1
@@ -1065,13 +1066,17 @@ Scope {
                 if (!item)
                     return;
                 if (out) {
-                    if (root.removeItem(item)) {
-                        holdLayout = true;
-                        holdTimer.restart();
+                    // The rebuild that follows the unpin keeps the layout of the release (as for a tile that goes away).
+                    holdLayout = true;
+                    holdTimer.restart();
+                    const removed = root.removeItem(item);
+                    if (removed && item.windows.length === 0) {
                         win.poof(cx, cy);
                         Sounds.play("dock-remove");
                     } else {
-                        tileItem.glideFrom(dx, dy);
+                        // A running app (macOS): no puff, the icon slides back into the Dock, now not kept. The rebuild already
+                        // glides it along the Dock; only the cross-axis offset of the drop is added.
+                        tileItem.glideFrom(win.vertical ? dx : tileItem.glide, win.vertical ? tileItem.glideY : dy);
                     }
                     return;
                 }

@@ -42,6 +42,7 @@ want='["foot"]'
 
 fail=0
 lost=0
+i=0
 for i in $(seq 1 "$n"); do
   case $(( i % 3 )) in
     0) hold=100 ;;
@@ -154,4 +155,39 @@ else
   echo "control: released above the Dock left pinned = $(pinned) (the drag did not engage; see $VS_DEV/shots/dock-drag-stress-control.png)"
   fail=1
 fi
+
+# Running app (owner report 2026-11-08: foot could not be removed while it ran; macOS allows it): kept again and started with its
+# own app id, the tile dragged out and released far above the Dock is unpinned (the file and the live list), and the tile stays
+# with its window until the app quits.
+jq '.dock.pinned = ["foot"]' "$cfg" >"$cfg.new" && mv "$cfg.new" "$cfg"
+sleep 2
+vs_spawn foot
+sleep 3
+vs_park
+[[ $(pinned) == "$want" ]] || { echo "running removal: could not keep foot again: $(pinned)"; fail=1; }
+vs_pointer abs $FOOT_X $DOCK_Y sleep 200 down sleep 200 drag $FOOT_X $UP_Y sleep 1500 up sleep 200 abs "$VS_PARK_X" "$VS_PARK_Y" >/dev/null
+sleep 1.5
+if [[ $(pinned) == "[]" && $(jq -c '.dock.pinned' "$cfg") == "[]" ]]; then
+  echo "running app: released above the Dock unpins it: ok"
+else
+  echo "running app: pinned is $(pinned), file $(jq -c '.dock.pinned' "$cfg") (a running app must be removable)"
+  fail=1
+fi
+if [[ $(vs_ipc dock tiles | jq 'index("foot")') == "null" ]]; then
+  echo "running app: its tile is gone while it still runs"
+  fail=1
+else
+  echo "running app: the tile stays with its window: ok"
+fi
+# The app quits: its tile goes (or stays once, as a recent app when recents are on), never twice, and the pins stay empty.
+kill_class foot
+sleep 2.5
+copies=$(vs_ipc dock tiles | jq '[.[] | select(. == "foot")] | length')
+if [[ $copies == 0 || ( $copies == 1 && $(jq -r '.dock.showRecents != false' "$cfg") == true ) ]]; then
+  echo "running app: after it quits the Dock holds $copies foot tile(s): ok"
+else
+  echo "running app: after it quits the Dock holds $copies foot tile(s) (0, or 1 as a recent app)"
+  fail=1
+fi
+[[ $(pinned) == "[]" ]] || { echo "running app: pinned is $(pinned) after the quit"; fail=1; }
 exit $fail

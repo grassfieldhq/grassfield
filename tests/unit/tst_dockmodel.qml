@@ -571,6 +571,91 @@ TestCase {
         compare(DockModel.DEFAULT_PINNED.join(","), "chromium,foot,org.grassfield.Settings");
     }
 
+    // Owner report 2026-11-08: foot could not be removed from the Dock while it ran.
+    function test_runningAppIsRemovable() {
+        const running = DockModel.merge(["foot"], [{appId: "foot", ref: "w"}], lookup)[0];
+        verify(running.pinned && running.windows.length === 1);
+        verify(DockModel.removable(running), "a running pinned app is dragged out (macOS)");
+        verify(DockModel.removable({kind: "app", pinned: false, recent: true, windows: []}));
+        verify(!DockModel.removable({kind: "app", pinned: false, windows: ["w"]}), "a running app that is not kept has nothing to remove");
+        verify(!DockModel.removable({kind: "files", pinned: true, fixed: true, windows: []}), "Files is fixed");
+        verify(!DockModel.removable({kind: "apps"}));
+        verify(!DockModel.removable({kind: "trash"}));
+        verify(!DockModel.removable(null));
+    }
+
+    function test_removeKeepsTileWhileRunning() {
+        const run = [{appId: "foot", ref: "w"}];
+        const after = DockModel.unpinKey(["chromium", "foot", "Foot.desktop"], "foot", lookup);
+        compare(after.join(","), "chromium");
+        const tiles = DockModel.merge(after, run, lookup);
+        compare(tiles.map(t => t.key + ":" + t.pinned + ":" + t.windows.length).join(","), "chromium:true:0,foot:false:1");
+    }
+
+    function test_keepInDockToggle() {
+        // Keep in Dock on a running tile pins its key; checked again, it unpins.
+        const pinned = DockModel.pin(DockModel.pin(["chromium"], "foot", lookup), "Foot.desktop", lookup);
+        compare(pinned.join(","), "chromium,foot");
+        compare(DockModel.unpinKey(pinned, "foot", lookup).join(","), "chromium");
+    }
+
+    function test_removalFindsEveryIdSpelling() {
+        compare(DockModel.normId("Foot.DESKTOP"), "foot");
+        compare(DockModel.unpinKey(["foot.desktop", "chromium"], "foot", lookup).join(","), "chromium", "stored with the suffix");
+        compare(DockModel.unpinKey(["Org.Gnome.nautilus"], "org.gnome.Nautilus", lookup).length, 0, "case");
+        compare(DockModel.unpinKey(["chromium", "foot"], "foot.desktop", lookup).join(","), "chromium", "the tile key with the suffix");
+        compare(DockModel.unpinKey(["foot.desktop", "FOOT", "foot"], "foot", lookup).length, 0, "every duplicate goes");
+        // An id no entry resolves (a Flatpak or Electron app id) is still removed by the same spelling rule.
+        compare(DockModel.unpinKey(["com.example.App.desktop", "foot"], "com.example.app", lookup).join(","), "foot");
+        compare(DockModel.unpinKey(["foot"], "foot", null).length, 0, "no lookup function");
+        compare(DockModel.pin(["foot.desktop"], "foot", lookup).join(","), "foot", "a stored spelling that resolves is rewritten to the entry id, never a duplicate");
+        compare(DockModel.pin(["ghost.desktop"], "ghost", lookup).join(","), "ghost.desktop,ghost", "ids that resolve to nothing never refuse a pin");
+        compare(DockModel.unpin(["Foot", "kate"], "foot.desktop").join(","), "kate");
+    }
+
+    // Review of f27fbcb1: the lookup matches exactly, then without case, and does not strip ".desktop".
+    function exactLookup(id) {
+        const all = {"foot": {id: "foot"}, "Foot": {id: "Foot"}, "chromium": {id: "chromium"}};
+        if (all[id])
+            return all[id];
+        for (const k in all) {
+            if (k.toLowerCase() === String(id).toLowerCase())
+                return all[k];
+        }
+        return null;
+    }
+
+    function test_pinIdentifiesByResolvedEntry() {
+        // A stored "foot.desktop" resolves only after the suffix goes: Keep in Dock on foot must pin, not do nothing.
+        compare(DockModel.pin(["chromium", "foot.desktop"], "foot", exactLookup).join(","), "chromium,foot");
+        // Two installed entries that differ only by case stay distinct.
+        compare(DockModel.pin(["Foot"], "foot", exactLookup).join(","), "Foot,foot");
+        compare(DockModel.unpinKey(["Foot", "foot"], "foot", exactLookup).join(","), "Foot");
+        compare(DockModel.unpinKey(["Foot", "foot"], "Foot", exactLookup).join(","), "foot");
+        verify(DockModel.sameApp("foot.desktop", "foot", exactLookup));
+        verify(!DockModel.sameApp("Foot", "foot", exactLookup));
+        // A stored id that resolves to nothing never blocks a pin of an unrelated id.
+        compare(DockModel.pin(["foot.desktop"], "chromium", function (id) { return null; }).join(","), "foot.desktop,chromium");
+    }
+
+    // Review of eafb07bb: the real lookup falls back to heuristicLookup (StartupWMClass); a stored id is rewritten only for an exact,
+    // case or ".desktop" match.
+    function test_heuristicMatchNeverRewritesAPin() {
+        const heuristic = id => ["firefox", "org.mozilla.firefox"].indexOf(String(id).toLowerCase()) >= 0 ? {id: "org.mozilla.firefox"} : null;
+        compare(DockModel.cleanPinned(["firefox", "chromium"], heuristic).join(","), "firefox,chromium", "the native pin stays");
+        compare(DockModel.pin(["firefox"], "chromium", heuristic).join(","), "firefox,chromium");
+        // Removal still finds a pin that the tile matches through the heuristic.
+        compare(DockModel.unpinKey(["firefox", "kate"], "org.mozilla.firefox", heuristic).join(","), "kate");
+        compare(DockModel.cleanPinned(["Chromium.desktop"], exactLookup).join(","), "chromium", "case and suffix still rewrite");
+    }
+
+    function test_removalNeverReseeds() {
+        // A list shrunk by a removal is never rewritten by the Dock rules: not to the default, not when it empties.
+        compare(DockModel.migratePinned(DockModel.unpinKey(["foot", "chromium", "org.gnome.Nautilus"], "org.gnome.Nautilus", lookup)).join(","), "foot,chromium");
+        compare(DockModel.migratePinned(DockModel.unpinKey(["foot", "foot.desktop"], "foot", lookup)).length, 0, "an emptied list stays empty");
+        compare(DockModel.migratePinned(["chromium", "foot"]).join(","), "chromium,foot");
+    }
+
     function test_oldWithAppsStillWorks() {
         compare(DockModel.withApps([{kind: "app", key: "a"}])[0].kind, "apps");
     }
