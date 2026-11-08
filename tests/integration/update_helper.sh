@@ -408,13 +408,18 @@ expect "17 more runs -> 16 started files" test "$(find "$D" -maxdepth 1 -name '*
 say "through pkexec: alice's password each time, bob refused"
 cat >"$W/drive.py" <<'PY'
 # Runs one command in a pseudo-terminal as the user; answers each "Password:" prompt; prints the transcript and the count.
-import os, pty, sys, time, select
+# Bounded: past the deadline the child's process group is killed, so an authentication that never answers fails the case
+# instead of hanging the run (a 2026-11-08 run waited 7 h in os.waitpid after the read loop's deadline).
+import os, pty, signal, sys, time, select
 user, password, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp("runuser", ["runuser", "-u", user, "--", "bash", "-c", cmd])
-out, prompts, deadline = b"", 0, time.time() + 600
-while time.time() < deadline:
+out, prompts, deadline, timed_out = b"", 0, time.time() + 300, False
+while True:
+    if time.time() >= deadline:
+        timed_out = True
+        break
     r, _, _ = select.select([fd], [], [], 1)
     if not r:
         continue
@@ -428,8 +433,15 @@ while time.time() < deadline:
     if out.count(b"Password:") > prompts:
         prompts = out.count(b"Password:")
         os.write(fd, password.encode() + b"\n")
+if timed_out:
+    try:
+        os.killpg(pid, signal.SIGKILL)  # pty.fork made the child a session leader: the group holds runuser, bash and the rest
+    except ProcessLookupError:
+        pass
 _, status = os.waitpid(pid, 0)
 print(out.decode(errors="replace").replace("\r", ""))
+if timed_out:
+    print("TIMEOUT after 300 s: the child's process group was killed")
 print("password prompts: %d, exit %d" % (prompts, os.waitstatus_to_exitcode(status)))
 PY
 publish "${cur[@]/gu-app-3/gu-app-5}"
