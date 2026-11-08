@@ -101,16 +101,18 @@ namespace gf::menubridge::ongoing {
         m_bus.send(message.createErrorReply(name, text));
     }
 
-    bool OngoingObject::handleMessage(const QDBusMessage& message, const QDBusConnection& /*connection*/) {
+    bool OngoingObject::handleMessage(const QDBusMessage& message, const QDBusConnection& connection) {
         if (message.type() != QDBusMessage::MethodCallMessage)
             return true;
         if (answersByDefault(message.interface()))
             return false;
-        if (!message.interface().isEmpty() && message.interface() != QLatin1String(kInterface))
-            return true; // another interface: dropped
+        if (answerForeignCall(message, connection, QLatin1String(kInterface)))
+            return true; // another interface: answered (never dropped: the caller would wait 25 s)
         const QString sender = message.service();
-        if (!sender.startsWith(u':'))
+        if (!sender.startsWith(u':')) {
+            error(message, kDenied, QStringLiteral("the caller has no unique name"));
             return true;
+        }
         if (message.member() == QLatin1String("Version")) {
             reply(message, {QStringLiteral("%1 ongoing/1").arg(QLatin1String(kBridgeVersion))});
             return true;

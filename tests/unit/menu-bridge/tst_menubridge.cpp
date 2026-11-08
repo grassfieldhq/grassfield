@@ -1326,7 +1326,7 @@ TEST(Registrar, MalformedCallsAndOtherMethods) {
         << "only a unique name can register: it is the connection the menu is read from";
     EXPECT_EQ(call(book, "GetMenuForWindow", "u", {QVariant::fromValue(quint32{1})}).error, QStringLiteral("com.canonical.AppMenu.Registrar.Error.NotFound"));
     EXPECT_EQ(call(book, "GetMenus", "", {}).error, QStringLiteral("org.freedesktop.DBus.Error.NotSupported"));
-    EXPECT_EQ(call(book, "Frobnicate", "", {}).kind, registrar::Answer::Kind::Drop) << "nothing is built for unknown members";
+    EXPECT_EQ(call(book, "Frobnicate", "", {}).error, QStringLiteral("org.freedesktop.DBus.Error.UnknownMethod")) << "every call is answered";
     EXPECT_EQ(book.count(), 0);
 }
 

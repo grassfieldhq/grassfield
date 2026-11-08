@@ -29,7 +29,7 @@ top-level menus (Left/Right).
   leaves the bus, and all of them when the registrar name is released. A registration is served only once settled, 300 ms
   after it arrived (`kSettleMs`, estimate: Electron registers before its menu object answers; read at once, Obsidian's
   second window answered `UnknownMethod`). `GetMenuForWindow` → `…Error.NotFound`; `GetMenus` →
-  `org.freedesktop.DBus.Error.NotSupported`; other members are dropped without a reply. Each sender/method pair is
+  `org.freedesktop.DBus.Error.NotSupported`; any other member `UnknownMethod`. Each sender/method pair is
   logged once.
 - **MB3 Socket.** `$XDG_RUNTIME_DIR/grassfield/menu-bridge.sock`, or `--socket PATH` (an argument, never inherited), or
   `GRASSFIELD_MENU_BRIDGE_SOCKET` in a development run only (ADR-0019 dev plumbing: in a session the variable is ignored
@@ -142,10 +142,13 @@ top-level menus (Left/Right).
     for systemd to restart); crashes leave the window an hour after they happened, but a degraded bridge does not
     recover by itself: it stays degraded until the session restarts it.
     systemd's `RestartSteps`/`RestartMaxDelaySec` (1 s growing to 30 s) pace the restarts meanwhile.
-  - **Reduced unsolicited surface.** On the registrar path only the four registrar methods get an answer (a tiny
-    stateless error: X11 clients would otherwise wait for a timeout); every other call, interface or signal on the
-    registrar and diagnostics objects is dropped without a reply (the bridge allocates nothing for it, but QtDBus has
-    already read and buffered the whole message before the drop). Per-menu signal subscriptions
+  - **Every call is answered** (ADR-0041 I-4). A method call that gets no reply makes its caller wait out D-Bus's 25 s
+    method timeout; xdg-desktop-portal-gtk's ScreenSaver proxy (`Properties.GetAll`, sent while it starts) did, and
+    the whole portal frontend started 25 s late on the owner's machine (measured 2026-11-08). So on the registrar,
+    diagnostics, ScreenSaver and Ongoing objects every method call gets a reply, unless it set NoReplyExpected:
+    `Properties.GetAll` an empty `a{sv}`, `Get` and `Set` `UnknownProperty`, another interface `UnknownInterface`, an
+    unknown member `UnknownMethod`, a caller without a unique name `AccessDenied`/`InvalidArgs` (`answerForeign`,
+    `src/DBusObjects.cpp`). Signals and replies are still ignored. Per-menu signal subscriptions
     (`LayoutUpdated`, `ItemsPropertiesUpdated`) are sender-specific match rules (verified unique name + object path),
     and `NameOwnerChanged` is watched per name. A peer with no registered window has no subscription and no object that
     does anything.
@@ -220,7 +223,8 @@ top-level menus (Left/Right).
       that left before its watch existed is dropped by the answer, and no answer within 2 s also drops it (review of
       4b8592d: 11 of 60 clients that sent Inhibit and exited at once kept their cookies for the session);
     - every other member (`Lock`, `SetActive`, `GetActive`, `SimulateUserActivity`, …) answers `NotSupported`, a wrong
-      signature `InvalidArgs`; other interfaces on the paths are dropped, as on the registrar;
+      signature `InvalidArgs`, an unknown member `UnknownMethod`; Properties and other interfaces are answered as on
+      the registrar (an empty `GetAll`; the idle-lock semantics are unchanged);
     - the shell gets `{"type":"screensaver","inhibited":bool,"count":N}` on every change, when it connects, and again
       every 20 s (`kHeartbeatMs`): a bridge that hangs without exiting stops repeating it, and the shell drops
       "inhibited" after 60 s without a line (`MenuBridge.screensaverStaleMs`; review of 4b8592d); the log

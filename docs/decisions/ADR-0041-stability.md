@@ -80,7 +80,7 @@ incompatible combination; no infinite loop, memory leak or hang lasts.
 | The compatibility check, the `[grassfield]` repository, the rc-channel watch job | SQ-3 revisits one rejected option (versioned bounds) with a new shape; the check U27, the a2 "Turn Off" path and the watch job stay as they are | ADR-0033 s3.4, a2, f |
 | The compositor extension's ABI, rebuild and degraded mode | the ABI rule, the user-only rebuild and the degraded mode unchanged; step 2d reverses one line of ADR-0009's amendment ("With the toggle off the notice gives the command"): the notice gives one action, the toggle stays off by default, and 2d amends ADR-0009 explicitly (review of 5a20d19); SQ-6 adds one rule for the login after a compositor crash | ADR-0009 and its amendment |
 | The session configuration under a package upgrade | step 2 adds one guard to the shell's explicit reloads; the watcher stays off | ADR-0001 amendment 2026-10-29 |
-| The portals' start-up and the `GTK_USE_PORTAL` loop | step 7 verifies the 25 s hypothesis (I-4) and, if confirmed, ships one drop-in | ADR-0035 D-4, D-8, 2b-12, 2b-14 |
+| The portals' start-up and the `GTK_USE_PORTAL` loop | step 7 verified the 25 s hypothesis (I-4): refuted (x-d-p-gtk unsets `GTK_USE_PORTAL` itself); the cause was a dropped call in the menu bridge, fixed | ADR-0035 D-4, D-8, 2b-12, 2b-14 |
 | The persisted files and their readers | step 5 fuzzes each reader of the ADR-0020 table and adds the bound every reader must keep | ADR-0020 |
 | The `/proc` and `/sys` readers of Activity Monitor | step 5 fuzzes them with the fixtures the sampler's tests already hold | ADR-0038 |
 | The crash watcher and the "quit unexpectedly" notice | unchanged; SQ-4 adds one action | `docs/compat.md` "What Grassfield provides itself", `tests/shell/crash_watch.sh` |
@@ -824,7 +824,18 @@ Goal: no input a process reads from the system, a file or another process can cr
 - A package-upgrade simulation in nested: replace the installed-layout copy of `config/hypr` under a running session
   (unlink and recreate, as pacman does), then reload: no error bar, every bind present (I-2's proof made repeatable).
 - `tst_wallclock` gains the spring-forward night (the skipped hour): no freeze, no spin; `wall_clock_only.sh` stays.
-- The portal's 25 s (I-4): the owner runs `systemctl --user show-environment | grep GTK_USE_PORTAL` and
+- The portal's 25 s (I-4), RESOLVED 2026-11-08 (the paragraph after this one is the original plan, kept for the record).
+  Measured: `GTK_USE_PORTAL` was not the cause (x-d-p-gtk 1.15.3 calls `g_unsetenv("GTK_USE_PORTAL")` right before
+  `gtk_init`, read in its disassembly; an earlier private-bus run, with no ScreenSaver owner on it,
+  was ready in 0.4 s with it set). The cause: x-d-p-gtk's `OrgFreedesktopScreenSaverProxy` (gdbus-codegen) calls
+  `org.freedesktop.DBus.Properties.GetAll` on `org.freedesktop.ScreenSaver`, which grassfield-menu-bridge owns
+  (since 0c818dc9), and `ScreenSaverObject::handleMessage` dropped every call but Inhibit and UnInhibit without a reply,
+  so x-d-p-gtk (and with it the frontend, which waits for its name) waited out D-Bus's 25 s method timeout (live probe:
+  `busctl --user --timeout=3 call ... Properties GetAll s org.freedesktop.ScreenSaver` timed out, `Peer.Ping`
+  answered). Fix: every virtual object of the bridge answers every method call (empty `GetAll`, `UnknownProperty`,
+  `UnknownInterface`, `UnknownMethod`; docs/specs/menu-bridge.md MB16); proof: `tests/unit/menu-bridge/tst_screensaver.cpp`
+  and `tests/integration/portal_screensaver.sh` (real frontend, real x-d-p-gtk, the bridge on a private bus). No drop-in
+  is shipped. Original plan: the owner runs `systemctl --user show-environment | grep GTK_USE_PORTAL` and
   `journalctl --user -b -u xdg-desktop-portal-gtk -u xdg-desktop-portal -o short-monotonic` (read-only, provided as a
   script `docs/audits/stability-2026-10-29/owner-checks.sh`); if the hypothesis holds (x-d-p-gtk inherits
   `GTK_USE_PORTAL=1` and waits out D-Bus's 25 s method timeout on itself), the fix is one packaged drop-in,

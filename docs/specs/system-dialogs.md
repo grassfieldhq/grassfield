@@ -196,9 +196,11 @@ given.
     for the life of the process and shows GTK's dialog from then on (read in Chromium's main branch on 2026-11-07,
     `components/dbus/xdg/portal.cc`: a failed setup is never retried; not observed here, not checked in Chromium 155's source).
     At the owner's login of 2026-11-07 (the journal of that boot, monotonic times) the frontend owned its name 26 s after it
-    started, waiting on x-d-p-gtk (31.1 s to 56.6 s; ADR-0041 I-4); on a private bus with the same frontend and x-d-p-gtk it
-    took 0.4 s with and without `GTK_USE_PORTAL=1`, so
-    I-4's hypothesis does not explain it and the cause is still open.
+    started, waiting on x-d-p-gtk (31.1 s to 56.6 s; ADR-0041 I-4). Cause (measured 2026-11-08, fixed): not
+    `GTK_USE_PORTAL` (x-d-p-gtk unsets it itself), but x-d-p-gtk's ScreenSaver proxy asking `Properties.GetAll` of
+    grassfield-menu-bridge, which dropped the call and so made x-d-p-gtk wait out D-Bus's 25 s method timeout. The bridge now
+    answers every call (docs/specs/menu-bridge.md MB16); `tests/integration/portal_screensaver.sh` measures the frontend's
+    start with the bridge on a private bus.
 
 ### Known limitations
 Not a true sheet (a modal child window dimming its parent, not a card inside it); remote locations refused (4b-10); apps that

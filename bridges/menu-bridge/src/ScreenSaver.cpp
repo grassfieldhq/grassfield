@@ -88,6 +88,11 @@ namespace gf::menubridge::screensaver {
 
     Answer handle(Book& book, const QString& member, const QString& signature, const QVariantList& args, const QString& sender) {
         Answer a;
+        if (!sender.startsWith(u':')) { // answered, never dropped: the caller would wait out D-Bus's 25 s (ADR-0041 I-4)
+            a.error   = QStringLiteral("org.freedesktop.DBus.Error.AccessDenied");
+            a.message = QStringLiteral("the caller has no unique name");
+            return a;
+        }
         if (member == QLatin1String("Inhibit")) {
             if (signature != QLatin1String("ss") || args.size() != 2) {
                 a.error   = kInvalidArgs;
@@ -116,8 +121,15 @@ namespace gf::menubridge::screensaver {
             a.changed = book.uninhibit(sender, args.at(0).toUInt());
             return a;
         }
-        a.error   = kNotSupported;
-        a.message = QStringLiteral("only Inhibit and UnInhibit are served (Grassfield's lock is not controlled over D-Bus)");
+        for (const char* known : {"Lock", "SetActive", "GetActive", "GetActiveTime", "GetSessionIdleTime", "SimulateUserActivity", "Throttle", "UnThrottle"}) {
+            if (member == QLatin1String(known)) {
+                a.error   = kNotSupported;
+                a.message = QStringLiteral("only Inhibit and UnInhibit are served (Grassfield's lock is not controlled over D-Bus)");
+                return a;
+            }
+        }
+        a.error   = QStringLiteral("org.freedesktop.DBus.Error.UnknownMethod");
+        a.message = QStringLiteral("org.freedesktop.ScreenSaver has no such method");
         return a;
     }
 
@@ -151,12 +163,11 @@ namespace gf::menubridge::screensaver {
             return true; // signals and replies are never for this object
         if (answersByDefault(message.interface()))
             return false;
-        // Calls without an interface are taken as this interface's (libdbus allows it); any other interface is dropped.
-        if (!message.interface().isEmpty() && message.interface() != QLatin1String(kInterface))
+        // Calls without an interface are taken as this interface's (libdbus allows it). Every other call is answered too: a
+        // proxy that asks Properties.GetAll waits out D-Bus's 25 s on a dropped call (ADR-0041 I-4).
+        if (answerForeignCall(message, connection, QLatin1String(kInterface)))
             return true;
         const QString sender = message.service();
-        if (!sender.startsWith(u':'))
-            return true;
         const bool   watchedBefore = m_book.holds(sender);
         const Answer a             = handle(m_book, message.member(), message.signature(), message.arguments(), sender);
         // A new holder: watch it, THEN ask the bus whether it is still there. A sender that left before the watch existed
@@ -169,9 +180,9 @@ namespace gf::menubridge::screensaver {
             confirmPresent(connection, sender);
         }
         if (a.kind == Answer::Kind::Reply)
-            connection.send(message.createReply(a.values));
+            sendReply(message, connection, a.values);
         else
-            connection.send(message.createErrorReply(a.error, a.message));
+            sendError(message, connection, a.error, a.message);
         if (a.changed)
             report();
         return true;

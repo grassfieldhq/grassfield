@@ -1,12 +1,15 @@
 // Unit tests for bridges/menu-bridge/src/ScreenSaver.{h,cpp} and the menu/1 "screensaver" line (gtest; GF-AUDIT-001
 // GF-016 residual). Linked into menu-bridge-unit-tests (main() is in tst_menubridge.cpp). The bus path (owning the name,
 // a sender leaving the bus, the shell line) is tests/integration/screensaver_inhibit.sh (private bus, bare).
+#include "DBusObjects.h"
 #include "Protocol.h"
 #include "ScreenSaver.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+
+#include <optional>
 
 #include <gtest/gtest.h>
 
@@ -146,4 +149,57 @@ TEST(ScreenSaverIntrospection, TwoMethodsOnly) {
     EXPECT_TRUE(xml.contains(QStringLiteral("name=\"Inhibit\"")));
     EXPECT_TRUE(xml.contains(QStringLiteral("name=\"UnInhibit\"")));
     EXPECT_EQ(xml.count(QStringLiteral("<method")), 2);
+}
+
+// ADR-0041 I-4: xdg-desktop-portal-gtk's ScreenSaver proxy (gdbus-codegen) calls Properties.GetAll; the bridge dropped the
+// call and the portal's startup waited out D-Bus's 25 s method timeout. Every call is answered (NoReplyExpected ones aside:
+// sendReply and sendError check isReplyRequired, proven on a bus in tests/integration/screensaver_inhibit.sh).
+namespace {
+    const QString kOwn   = QStringLiteral("org.freedesktop.ScreenSaver");
+    const QString kProps = QStringLiteral("org.freedesktop.DBus.Properties");
+    const QString kUnknownProperty  = QStringLiteral("org.freedesktop.DBus.Error.UnknownProperty");
+    const QString kUnknownInterface = QStringLiteral("org.freedesktop.DBus.Error.UnknownInterface");
+    const QString kUnknownMethod    = QStringLiteral("org.freedesktop.DBus.Error.UnknownMethod");
+    const QString kInvalidArgs      = QStringLiteral("org.freedesktop.DBus.Error.InvalidArgs");
+    std::optional<ForeignAnswer> foreign(const QString& iface, const QString& member, const QString& sig, const QVariantList& args) {
+        return answerForeign(iface, member, sig, args, kOwn);
+    }
+} // namespace
+
+TEST(ScreenSaverEveryCallAnswered, GetAllIsAnEmptyDictionary) {
+    const auto a = foreign(kProps, QStringLiteral("GetAll"), QStringLiteral("s"), {kOwn});
+    ASSERT_TRUE(a.has_value());
+    EXPECT_TRUE(a->reply);
+    ASSERT_EQ(a->values.size(), 1);
+    EXPECT_TRUE(a->values.at(0).toMap().isEmpty());
+    ASSERT_TRUE(foreign(kProps, QStringLiteral("GetAll"), QStringLiteral("s"), {QString()}).has_value());
+    EXPECT_TRUE(foreign(kProps, QStringLiteral("GetAll"), QStringLiteral("s"), {QString()})->reply);
+    EXPECT_EQ(foreign(kProps, QStringLiteral("GetAll"), QStringLiteral("s"), {QStringLiteral("org.other.Thing")})->error, kUnknownInterface);
+    EXPECT_EQ(foreign(kProps, QStringLiteral("GetAll"), QString(), {})->error, kInvalidArgs);
+}
+
+TEST(ScreenSaverEveryCallAnswered, GetAndSetAreUnknownProperty) {
+    EXPECT_EQ(foreign(kProps, QStringLiteral("Get"), QStringLiteral("ss"), {kOwn, QStringLiteral("X")})->error, kUnknownProperty);
+    EXPECT_EQ(foreign(kProps, QStringLiteral("Set"), QStringLiteral("ssv"), {kOwn, QStringLiteral("X"), 1})->error, kUnknownProperty);
+    EXPECT_EQ(foreign(kProps, QStringLiteral("Get"), QStringLiteral("s"), {kOwn})->error, kInvalidArgs);
+    EXPECT_EQ(foreign(kProps, QStringLiteral("Frobnicate"), QString(), {})->error, kUnknownMethod);
+}
+
+TEST(ScreenSaverEveryCallAnswered, UnknownInterfaceAndMember) {
+    const auto a = foreign(QStringLiteral("org.example.Other"), QStringLiteral("Anything"), QString(), {});
+    ASSERT_TRUE(a.has_value());
+    EXPECT_FALSE(a->reply);
+    EXPECT_EQ(a->error, kUnknownInterface);
+    EXPECT_FALSE(foreign(kOwn, QStringLiteral("Inhibit"), QStringLiteral("ss"), {}).has_value()) << "the object's own interface is not foreign";
+    EXPECT_FALSE(foreign(QString(), QStringLiteral("Inhibit"), QStringLiteral("ss"), {}).has_value()) << "no interface: the object's own";
+    Book book;
+    EXPECT_EQ(call(book, QStringLiteral("Frobnicate"), QString(), {}).error, kUnknownMethod);
+}
+
+TEST(ScreenSaverEveryCallAnswered, ANonUniqueSenderIsRefusedNotDropped) {
+    Book         book;
+    const Answer a = call(book, QStringLiteral("Inhibit"), QStringLiteral("ss"), {QStringLiteral("x"), QStringLiteral("y")}, QStringLiteral("org.example.Wellknown"));
+    EXPECT_EQ(a.kind, Answer::Kind::Error);
+    EXPECT_EQ(a.error, QStringLiteral("org.freedesktop.DBus.Error.AccessDenied"));
+    EXPECT_FALSE(book.active()) << "no cookie for it";
 }

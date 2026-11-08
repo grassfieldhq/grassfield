@@ -674,6 +674,7 @@
  {"path": "tests/integration/launcher_entry.sh", "layer": "headless", "runner": "bare"},
  {"path": "tests/integration/ongoing_cli.sh", "layer": "headless", "runner": "bare"},
  {"path": "tests/integration/screensaver_inhibit.sh", "layer": "headless", "runner": "bare"},
+ {"path": "tests/integration/portal_screensaver.sh", "layer": "headless", "runner": "bare"},
  {"path": "tests/integration/settings_dbus.sh", "layer": "headless", "runner": "test.sh"},
  {"path": "tests/integration/menu_bridge_memory.sh", "layer": "headless", "runner": "bare"},
  {"path": "tests/integration/secrets_handover.sh", "layer": "headless", "runner": "test.sh"},
