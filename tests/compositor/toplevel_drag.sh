@@ -21,6 +21,18 @@
 #   T9 chromium    (when chromium is installed) the second tab of a two-tab window dragged down: a new chromium window maps and
 #                  follows the pointer; released at the free edge: tiled. Best effort (tab positions are measured on Chromium
 #                  155): a missing second window is reported NOT VERIFIED, not FAIL
+#   T10 late       (review of aa8211de) released over a target that calls wl_data_offer.finish 2.5 s later (Hyprland 0.56.2
+#                  sends dnd_drop_performed only then): the window's drag ends at the release (the plugin logs it), the pointer
+#                  moves on and the window stays; then the late finish ends the drag without a protocol error
+#   T11 never      the same with a target that never finishes: the window stays where it was released, Hyprland alive; Escape
+#                  then ends Hyprland's drag
+#   T12 source     the client destroys the wl_data_source mid-drag: a cancel (logged), the window follows no more, no error
+#   T13 role       the client destroys the torn window's xdg_toplevel mid-drag: detached (logged), the drag goes on, no error
+#   T14 killed     the client killed (SIGKILL) while its torn window follows the pointer: Hyprland alive, no plugin exception
+#   T15 selection  the drag's source also passed to set_selection: protocol error invalid_source
+#   T16 display    (with a second output) the torn window dragged onto the other output and released there: it takes that
+#                  output (SKIP, NOT VERIFIED, with one output)
+#   Scale: positions are logical (read with the output's scale); run it again after `scripts/dev/nested-up.sh --ref-scale 1.25`.
 #   C1/C2          the plugin unloaded while the torn window follows the pointer: Hyprland alive, the drag ends as Hyprland's
 #                  plain drag and drop, a new fixture sees no global; loaded again: the global is back
 # Usage (bare command, nested session of this tree running with the plugin loaded): tests/compositor/toplevel_drag.sh [--no-c1]
@@ -82,13 +94,17 @@ hypr_alive() { kill -0 "$hypr_pid" 2>/dev/null && nestctl version >/dev/null 2>&
 plugin_loaded() { nestctl -j plugin list 2>/dev/null | jq -e '[.[]? | select(.name == "grassfield-compositor")] | length > 0' >/dev/null; }
 
 plugin_loaded || { echo "toplevel_drag: the plugin is not loaded" >&2; exit 2; }
-read -r mx my mw mh < <(nestctl monitors -j | jq -r --arg o "$out" '.[] | select(.name == $o) | "\(.x) \(.y) \(.width) \(.height)"')
+# Logical sizes (the pixels divided by the scale): the layout, pointer.sh and `clients -j` are logical.
+read -r mx my mw mh mscale < <(nestctl monitors -j | jq -r --arg o "$out" \
+  '.[] | select(.name == $o) | "\(.x) \(.y) \((.width / .scale) | floor) \((.height / .scale) | floor) \(.scale)"')
 [[ -n ${mx:-} ]] || { echo "toplevel_drag: output $out not found" >&2; exit 2; }
 neighbour_on() { # left|right
   nestctl monitors -j | jq -r --arg o "$out" --arg side "$1" --argjson x "$mx" --argjson w "$mw" --argjson y "$my" --argjson h "$mh" \
-    '[.[] | select(.name != $o and .y < ($y + $h) and (.y + .height) > $y
-       and (if $side == "left" then (.x + .width) == $x else .x == ($x + $w) end)) | .name][0] // ""'
+    '[.[] | (.lw = ((.width / .scale) | floor)) | (.lh = ((.height / .scale) | floor))
+       | select(.name != $o and .y < ($y + $h) and (.y + .lh) > $y
+       and (if $side == "left" then (.x + .lw) == $x else .x == ($x + $w) end)) | .name][0] // ""'
 }
+other_output=$(nestctl monitors -j | jq -r --arg o "$out" '[.[] | select(.name != $o and (.disabled | not))][0].name // ""')
 if [[ -z $(neighbour_on right) ]]; then
   side=right edge=$((mw - 2))
 elif [[ -z $(neighbour_on left) ]]; then
@@ -157,7 +173,7 @@ tile_of() { # <address>: "<state> <place>" of its tile record ("none none" witho
   nestctl grassfield-tiling 2>>"$log" | jq -r --arg a "${1#0x}" '[.outputs[].windows[] | select(.address == $a)][0] // {} | "\(.state // "none") \(.place // "none")"'
 }
 
-say "toplevel_drag: nested pid $hypr_pid, instance $sig, output $out ${mw}x${mh} at $mx,$my, free edge: ${side:-none}"
+say "toplevel_drag: nested pid $hypr_pid, instance $sig, output $out ${mw}x${mh} (logical, scale $mscale) at $mx,$my, free edge: ${side:-none}, other output: ${other_output:-none}"
 
 # ---- T0 ----
 check "T0: capabilities list toplevel-drag" bash -c "timeout 10 '$root/scripts/nestctl' -j grassfield 2>/dev/null | jq -e '.features | index(\"toplevel-drag\")' >/dev/null"
@@ -252,7 +268,7 @@ else
 fi
 
 # ---- T8: protocol errors ----
-for pair in "attach-twice:xdg_toplevel_drag_v1 0" "destroy-early:xdg_toplevel_drag_v1 1" "source-twice:xdg_toplevel_drag_manager_v1 0"; do
+for pair in "attach-twice:xdg_toplevel_drag_v1 0" "destroy-early:xdg_toplevel_drag_v1 1" "source-twice:xdg_toplevel_drag_manager_v1 0" "selection:xdg_toplevel_drag_manager_v1 0"; do
   m=${pair%%:*} want=${pair#*:}
   if start_fixture "$m" "$m"; then
     pointer abs 300 350 sleep 200 down sleep 600 up sleep 300
@@ -262,6 +278,102 @@ for pair in "attach-twice:xdg_toplevel_drag_v1 0" "destroy-early:xdg_toplevel_dr
   fi
   check "T8: $m: Hyprland alive" hypr_alive
 done
+stop_fixture
+
+# ---- T10, T11: a target that finishes late, or never (review of aa8211de) ----
+for m in late-finish no-finish; do
+  if start_fixture "$m" "$m"; then
+    pointer abs 300 350 sleep 200 down sleep 600 drag 1200 350 sleep 1200 up sleep 300
+    torn=$(win gf-tdrag-torn | cut -d' ' -f5)
+    check "$m: released over the target: drop there" wait_said "drop target"
+    check "$m: the window's drag ends at the release" plugin_logged "toplevel drag: window ${torn#0x} released: its drag ends here"
+    read -r tx ty _ _ _ < <(win gf-tdrag-torn)
+    pointer abs 700 800 sleep 300 abs 760 840 sleep 300 # the pointer moves on while Hyprland waits for the target
+    check "$m: the pointer moves on, the window stays where it was released" at_xy gf-tdrag-torn "${tx:-0}" "${ty:-0}"
+    if [[ $m == late-finish ]]; then
+      check "late-finish: the target finished late" wait_said "finished late"
+      check "late-finish: then dnd_drop_performed" wait_said "dnd_drop_performed"
+      check "late-finish: the object destroyed after it, no protocol error" bash -c "grep -qx 'drag object destroyed' '$run/tdrag-$m.out' && ! grep -q '^protocol error' '$run/tdrag-$m.out'"
+    else
+      sleep 3
+      check "no-finish: no dnd_drop_performed (the target never finished)" bash -c "! grep -qx 'dnd_drop_performed' '$run/tdrag-$m.out'"
+      check "no-finish: Hyprland alive" hypr_alive
+      keys tap Escape # Hyprland's own way out of a drag it still holds (abortDndIfPresent)
+      sleep 0.5
+    fi
+  else
+    check "$m: the fixture starts" false
+  fi
+done
+
+# ---- T12, T13: the source or the window's role destroyed mid-drag ----
+if start_fixture source-destroy source-destroy; then
+  pointer abs 300 350 sleep 200 down sleep 600 drag 600 600 sleep 1800 drag 700 700 sleep 800 up sleep 300 &
+  p=$!
+  sleep 2.2
+  torn=$(win gf-tdrag-torn | cut -d' ' -f5)
+  check "source-destroy: the client destroyed the source mid-drag" said "source destroyed"
+  check "source-destroy: a cancel for the window (logged)" plugin_logged "toplevel drag: window ${torn#0x} cancelled"
+  read -r tx ty _ _ _ < <(win gf-tdrag-torn)
+  wait "$p"
+  check "source-destroy: the window follows no more" at_xy gf-tdrag-torn "${tx:-0}" "${ty:-0}"
+  check "source-destroy: no protocol error" bash -c "! grep -q '^protocol error' '$run/tdrag-source-destroy.out'"
+  check "source-destroy: Hyprland alive" hypr_alive
+else
+  check "source-destroy: the fixture starts" false
+fi
+if start_fixture role-destroy role-destroy; then
+  pointer abs 300 350 sleep 200 down sleep 600 drag 600 600 sleep 1800 drag 700 700 sleep 800 up sleep 300 &
+  p=$!
+  sleep 0.9
+  torn=$(win gf-tdrag-torn | cut -d' ' -f5)
+  wait "$p"
+  check "role-destroy: the client destroyed the torn window's role mid-drag" said "torn role destroyed"
+  check "role-destroy: detached (logged)" plugin_logged "toplevel drag: window ${torn#0x} unmapped: detached"
+  check "role-destroy: the drag ended as Hyprland's own" bash -c "grep -qxE 'cancelled|dnd_drop_performed' '$run/tdrag-role-destroy.out'"
+  check "role-destroy: no protocol error" bash -c "! grep -q '^protocol error' '$run/tdrag-role-destroy.out'"
+  check "role-destroy: Hyprland alive" hypr_alive
+else
+  check "role-destroy: the fixture starts" false
+fi
+
+# ---- T14: the client killed mid-drag ----
+if start_fixture killed tear; then
+  log_mark=$(grep -ac "" "$hyprlog" 2>/dev/null || echo 0)
+  pointer abs 300 350 sleep 200 down sleep 600 drag 600 600 sleep 1500 drag 700 700 sleep 600 up sleep 300 &
+  p=$!
+  sleep 1.4 # the torn window follows now
+  pkill -9 -P "$fixture_pid" 2>/dev/null; kill -9 "$fixture_pid" 2>/dev/null
+  wait "$p"
+  fixture_pid=""
+  sleep 0.5
+  check "killed: Hyprland alive after the client died mid-drag" hypr_alive
+  no_exception() { ! tail -n +"$((log_mark + 1))" "$hyprlog" 2>/dev/null | grep -a '\[grassfield\]' | grep -aq 'exception in'; }
+  check "killed: no plugin exception" no_exception
+else
+  check "killed: the fixture starts" false
+fi
+
+# ---- T16: a second display ----
+if [[ -n $other_output ]]; then
+  if start_fixture display tear; then
+    timeout 60 "$root/scripts/dev/pointer.sh" output "$out" abs 300 350 sleep 200 down sleep 600 drag 600 600 sleep 300 \
+      output "$other_output" drag 200 200 sleep 1200 up sleep 300 >>"$log" 2>&1
+    sleep 0.8
+    on_other() {
+      local id mon
+      id=$(nestctl monitors -j | jq -r --arg o "$other_output" '.[] | select(.name == $o) | .id')
+      mon=$(nestctl clients -j | jq -r '[.[] | select(.title == "gf-tdrag-torn" and .mapped)][0].monitor // empty')
+      say "  torn window on monitor ${mon:-?} (want $id, $other_output)"
+      [[ -n $mon && $mon == "$id" ]]
+    }
+    check "display: dropped on $other_output, the torn window takes that output" on_other
+  else
+    check "display: the fixture starts" false
+  fi
+else
+  say "SKIP: T16 second display (one output in this nested session): NOT VERIFIED"
+fi
 stop_fixture
 
 # ---- T9: Chromium (best effort) ----

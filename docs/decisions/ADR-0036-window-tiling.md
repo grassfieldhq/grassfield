@@ -453,9 +453,10 @@ macOS: the torn-off window follows the pointer, drops back into a tab bar, and t
    `invalid_source`. `attach` while a toplevel is attached and still has its role: `toplevel_attached` (also for the same
    toplevel again); a toplevel that unmaps while attached is detached (a new `attach` is needed after it maps again), and so
    is one whose role is destroyed. `destroy` after `start_drag` and before `dnd_drop_performed` or `cancelled`:
-   `ongoing_drag`; before `start_drag` it is accepted (the error is "drag has not ended"). Lenient where the spec leaves room:
-   a source later passed to `set_selection` is not refused (Hyprland handles selections; the plugin does not intercept that
-   request); a source destroyed while a toplevel is attached (undefined) ends the drag as a cancel.
+   `ongoing_drag`; before `start_drag` it is accepted (the error is "drag has not ended"). A source passed to
+   `wl_data_device.set_selection` (seen by the same logger) gets `invalid_source` on the manager that made its object, raised
+   from the event loop right after that request (a manager destroyed since cannot carry it: logged only). Lenient where the
+   spec leaves room: a source destroyed while a toplevel is attached (undefined) ends the drag as a cancel.
 4. *Following the pointer.* While its drag runs, a mapped attached window is moved by the plugin as a floating window, as
    the plugin's titlebar drag moves one (`CLayoutManager::setTargetGeom`, a warp, Hyprland's snapping away from a tiling place
    (TL19), the titlebar held below the menu bar (FR56)). A window that maps while attached is placed at the pointer minus the
@@ -463,11 +464,17 @@ macOS: the torn-off window follows the pointer, drops back into a tab bar, and t
    the point the pointer holds (measured at the attach, which follows the press: no jump); a tiled one takes back its size from before under the
    pointer (TL16, `beginMove`). Not moved: a window in full screen, a Split View member (TL33), a window the tiler cannot move.
    Tiling is fed through the same path as every drag: `dragMotion()` at each step (the preview after the delay, at once with
-   Alt), `dragDone()` at the end. **The drop**: a drag the pointer's release ended (`dnd_drop_performed`, or `cancelled` right
-   after that release, since Hyprland cancels a drop no client accepted, such as a window released over the desktop) ends "as
-   if an `xdg_toplevel.move` ended": the place shown tiles (`tile()`), else the window stays where it is and takes the
-   Desktop of the output under it (`followOutput`); a cancel without that release (Escape, the client, the source gone) only
-   removes the preview, the client reverts.
+   Alt), `dragDone()` at the end. **The drop, at the release** (corrected after the review of aa8211de, read in the 0.56.2
+   binary): any pointer button's release makes Hyprland drop (`CWLDataDeviceProtocol::dropDrag`, 0x972b30): it sends
+   `wl_data_device.drop` and `leave` to the target, removes its own input listeners and keeps the drag's source;
+   `dnd_drop_performed` (and `dnd_finished`) come only from `completeDrag` (0x971e00), which the target's
+   `wl_data_offer.finish` runs, late or never; a drop nobody accepted is cancelled at once inside `dropDrag`. So the window's
+   drag ends at the release, seen by the plugin's button listener before the data device's: the window follows no more, the
+   drag's target is Hyprland's own again, and, once Hyprland handled the release, it ends "as if an `xdg_toplevel.move`
+   ended": the place shown tiles (`tile()`), else the window stays where it was released and, if the drag moved it, takes the
+   Desktop of the output under it and fits its work area (`followOutput`, `fitAfterDrop`). The release is kept until the drag
+   ends: a target that finishes late, never, or cancels afterwards changes nothing for the window. A cancel without a
+   release (Escape, the client, the source gone) only removes the preview; the client reverts.
 5. *Not a drag target.* "The attached window does not participate in the selection of the drag target": while a mapped
    toplevel is attached and its drag runs, the plugin's `input.mouse.move` listener (registered at load, so it runs before
    the data-device motion listener Hyprland registers at each drag start) picks the surface under the pointer with Hyprland's
@@ -496,9 +503,12 @@ macOS: the torn-off window follows the pointer, drops back into a tab bar, and t
    its motion listener sends `wl_data_device.motion` relative to `CSeatManager::m_state.dndPointerFocus`'s global box; (c)
    `CSeatManager::setPointerFocus`, while `dndActive()`, only sets `dndPointerFocus` and emits `dndPointerFocusChange`
    (Hyprland's `onDndPointerFocus` then sends leave and enter); (d) hyprutils' `CSignalBase::emitInternal` calls listeners in
-   registration order. Guard: the ABI hash (the Hyprland commit is part of it) keeps the plugin inactive on any other build,
-   so every point release goes through the user rebuild (ADR-0009), which fails to compile when a signature above changes (no
-   global then); (a) to (d) are added to the list re-read on every Hyprland update (gate C3). When one of them drifts silently
+   registration order; (e) `CWLDataDeviceProtocol::dropDrag` drops at any button's release and keeps the source until the
+   target's `wl_data_offer.finish` runs `completeDrag`, the only sender of `dnd_drop_performed` (item 4). Guard: the ABI hash
+   (the Hyprland commit is part of it) keeps the plugin inactive on any other build, so every point release goes through the
+   user rebuild (ADR-0009), which fails to compile when a signature above changes (no global then); (a) to (e) are added to
+   the list re-read on every Hyprland update (gate C3). A Hyprland that serves the protocol itself (its exported
+   `xdg_toplevel_drag_manager_v1_interface`, found with `dlsym`) gets no second global from the plugin. When one of them drifts silently
    the window still follows and tiles, and a tab may not drop back into a strip; nothing crashes: every step is guarded, checks
    `dndActive()` and its weak references, and the logger callback touches no Hyprland object.
 

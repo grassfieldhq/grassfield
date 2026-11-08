@@ -33,7 +33,8 @@ namespace gf::toplevelDrag {
     // The drag of the object's wl_data_source.
     enum class Phase : uint8_t {
         Waiting,  // created; wl_data_device.start_drag naming its source not seen yet
-        Dragging, // start_drag seen; neither dnd_drop_performed nor cancelled yet
+        Dragging, // start_drag seen; neither dnd_drop_performed nor cancelled yet (the pointer may be released already: Hyprland
+                  // 0.56.2 sends dnd_drop_performed only when the target finishes, see release())
         Ended,    // dropped, cancelled or the source gone: nothing moves any more (a source makes one drag)
     };
 
@@ -51,7 +52,8 @@ namespace gf::toplevelDrag {
     };
 
     // A drag that the pointer's release ended is a drop, also when Hyprland cancels it because no client accepted it (a
-    // window released over the desktop); a cancel without that release (Escape, the client, the source gone) is not.
+    // window released over the desktop) or when the target cancels after the release; a cancel without that release (Escape,
+    // the client, the source gone) is not.
     Outcome outcomeOf(EndKind kind, bool releaseSeen);
 
     // One step of the window following the pointer.
@@ -60,10 +62,10 @@ namespace gf::toplevelDrag {
         bool  first = false; // the first step since it follows: the glue may resize it (a tiled window takes back its size)
     };
 
-    // The end of a drag that was running.
+    // The end of the window's part in a drag: at the release (always a drop), or at the drag's end when no release came first.
     struct End {
         Outcome           outcome = Outcome::Cancel;
-        std::optional<Id> toplevel; // the toplevel that followed the pointer (attached and mapped), if any
+        std::optional<Id> toplevel; // the toplevel that followed the pointer until then (attached and mapped), if any
     };
 
     class CDrag {
@@ -89,9 +91,22 @@ namespace gf::toplevelDrag {
         // wl_data_device.start_drag named this object's source and Hyprland's drag runs. False (nothing changes) unless Waiting.
         bool start();
 
-        // The drag ended. Dragging: Ended, with the outcome and the toplevel that followed the pointer (it is detached). Waiting
-        // (a source cancelled before its drag began): Ended, nullopt. Ended: nullopt.
-        std::optional<End> end(EndKind kind, bool releaseSeen);
+        // A pointer button was released during the drag: Hyprland 0.56.2 drops then (CWLDataDeviceProtocol::dropDrag, any
+        // button), but keeps the drag's source until the target finishes (dnd_drop_performed comes from completeDrag, run by
+        // wl_data_offer.finish), which may be late or never. So the window's drag ends here, as a drop: it follows no more and
+        // takes no part in the target any more, whatever comes later. Dragging and not released yet: the release is kept until
+        // the drag ends, and the End names the toplevel that followed (the window to place); otherwise nullopt.
+        std::optional<End> release();
+
+        // A release came during this drag (sticky until it ends).
+        bool released() const {
+            return m_released;
+        }
+
+        // The drag ended. Dragging: Ended, with the outcome (outcomeOf with the release seen) and the toplevel that followed
+        // the pointer, unless the release placed it already (it is detached). Waiting (a source cancelled before its drag
+        // began): Ended, nullopt. Ended: nullopt.
+        std::optional<End> end(EndKind kind);
 
         // The attached toplevel mapped (another toplevel: nothing).
         void mapped(Id toplevel);
@@ -102,7 +117,7 @@ namespace gf::toplevelDrag {
         // The toplevel's role was destroyed: detached when it is the attached one (true then).
         bool gone(Id toplevel);
 
-        // The drag moves the attached toplevel now: Dragging, a toplevel attached and mapped.
+        // The drag moves the attached toplevel now: Dragging, not released, a toplevel attached and mapped.
         bool follows() const;
 
         // Where the window goes with the pointer at `pointer`, the window's top-left being `topLeft` now; nullopt unless
@@ -121,7 +136,8 @@ namespace gf::toplevelDrag {
         Phase                m_phase = Phase::Waiting;
         std::optional<Id>    m_attached;
         bool                 m_mapped  = false;
-        bool                 m_stepped = false; // a step happened since the toplevel follows
+        bool                 m_stepped  = false; // a step happened since the toplevel follows
+        bool                 m_released = false; // a pointer button was released during the drag
         std::optional<Point> m_grab;            // the pointer minus the window's top-left (nullopt: measured at the first step)
     };
 

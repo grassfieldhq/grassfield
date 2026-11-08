@@ -63,6 +63,9 @@ namespace {
     constexpr std::string_view kDataDevice      = "wl_data_device";
     constexpr std::string_view kDropPerformed   = "dnd_drop_performed";
     constexpr std::string_view kCancelled       = "cancelled";
+    // wl_data_device.set_selection is request 1: a toplevel-drag source used as a selection is invalid_source (the spec).
+    constexpr int              kSetSelectionOpcode = 1;
+    constexpr std::string_view kSetSelection       = "set_selection";
 
     struct SObject;
 
@@ -83,7 +86,9 @@ namespace {
         WP<CXDGToplevelResource> toplevel; // the toplevel attached now
         CHyprSignalListener      toplevelGone;
         CBox                     pressBox;         // the window's box at its first step (fitAfterDrop at a drop on another output)
+        wl_resource*             manager   = nullptr; // the manager resource that made it (compared with the live managers)
         bool                     fed       = false; // this drag fed the tiler's preview (dragDone at its end)
+        bool                     moved     = false; // this drag moved the window (followOutput, fitAfterDrop at its end)
         bool                     live      = true;  // false: inert (runtime unload), requests ignored
         bool                     refused   = false; // one log line for a window the drag cannot move
         bool                     logged    = false; // one log line when its drag begins
@@ -119,6 +124,7 @@ namespace {
         PHLWINDOWREF window; // the window that followed the pointer (expired: none, or gone since)
         td::Outcome  outcome = td::Outcome::Cancel;
         bool         fed     = false;
+        bool         moved   = false; // the drag moved the window: only then it takes the Desktop under it and fits there
         CBox         pressBox;
     };
 
@@ -130,9 +136,9 @@ namespace {
         wl_protocol_logger*              logger = nullptr;
         std::vector<CHyprSignalListener> listeners;
         std::vector<SEnd>                ends;
-        bool                             releasePending = false; // a pointer button was released in this event loop pass
+        std::vector<uint64_t>            misused;                // objects whose source went to set_selection (invalid_source)
         gf::deferredFocus::CLater        endLater;               // finishes `ends` (its callback is code of this library)
-        gf::deferredFocus::CLater        releaseLater;           // clears releasePending after the pass
+        gf::deferredFocus::CLater        misuseLater;            // raises invalid_source for `misused` after the request
         gf::deferredFocus::CLater        loggerLater;            // removes the protocol logger once nothing waits for a drag
     };
 
@@ -168,6 +174,12 @@ namespace {
     PHLWINDOW windowOf(const SObject& o) {
         const auto top = o.toplevel.lock();
         return top ? top->m_window.lock() : nullptr;
+    }
+
+    // The pointer as the motion event gives it (CInputManager::mouseMoveUnified emits the floored position): one coordinate
+    // source for every step, so a window placed at its map or attach does not move by a fraction of a pixel at the next motion.
+    Vector2D pointerNow() {
+        return g_pInputManager ? g_pInputManager->getMouseCoordsInternal().floor() : Vector2D{};
     }
 
     // Hyprland runs a drag and drop now (CWLDataDeviceProtocol's current source is alive).
@@ -246,7 +258,7 @@ namespace {
         if (snap && gf::tiler::movable(w))
             tiled = gf::tiler::tile(w, snap->place, snap->monitor.lock());
         gf::tiler::endMove(w); // no-op unless the window is still Moving
-        if (e.outcome == td::Outcome::Drop && !tiled && gf::tiler::movable(w)) {
+        if (e.outcome == td::Outcome::Drop && !tiled && e.moved && gf::tiler::movable(w)) {
             gf::tiler::followOutput(w);
             gf::tiler::fitAfterDrop(w, e.pressBox);
         }
@@ -262,60 +274,105 @@ namespace {
             finish(e);
     }
 
+    // Queues the window's end (the release's or the drag's) for the event loop.
+    void queueEnd(SObject& o, const PHLWINDOW& w, const td::End& end) {
+        auto& s = st();
+        if (!end.toplevel && !o.fed)
+            return;
+        s.ends.push_back(SEnd{.window   = end.toplevel ? PHLWINDOWREF{w} : PHLWINDOWREF{},
+                              .outcome  = end.outcome,
+                              .fed      = std::exchange(o.fed, false),
+                              .moved    = std::exchange(o.moved, false),
+                              .pressBox = o.pressBox});
+        s.endLater.schedule([] { gf::guarded("toplevel drag end", [] { finishEnds(); }); });
+    }
+
     // Records the end and schedules the rest on the event loop: this may run inside the protocol logger's callback (Hyprland is
     // sending the event) or a destroy listener, so nothing here moves a window or sends anything.
     void ended(SObject& o, td::EndKind kind) {
-        auto&      s   = st();
         const auto w   = windowOf(o);
-        const auto end = o.drag.end(kind, s.releasePending);
+        const auto end = o.drag.end(kind);
         o.toplevelGone.reset();
         o.toplevel.reset();
-        if (end && (end->toplevel || o.fed)) {
-            s.ends.push_back(SEnd{.window = end->toplevel ? PHLWINDOWREF{w} : PHLWINDOWREF{}, .outcome = end->outcome, .fed = std::exchange(o.fed, false), .pressBox = o.pressBox});
-            s.endLater.schedule([] { gf::guarded("toplevel drag end", [] { finishEnds(); }); });
-        }
+        if (end)
+            queueEnd(o, w, *end);
         scheduleLoggerCheck();
     }
 
     // ---- the protocol logger (libwayland, public API) -----------------------------------------------------------------
 
+    // Only for the few messages whose name matched: the source map first, then the object it names.
     SObject* objectOfSource(const wl_resource* source) {
-        if (!source)
+        auto& s = st();
+        if (!source || s.sources.empty())
             return nullptr;
-        for (const auto& o : st().live.objects) {
-            if (o->live && o->source == source)
+        const auto object = s.sources.objectOf(idOf(source));
+        if (!object)
+            return nullptr;
+        for (const auto& o : s.live.objects) {
+            if (o->live && o->id() == *object && o->source == source)
                 return o.get();
         }
         return nullptr;
     }
 
-    // Called by libwayland for every request (before its dispatch) and every event while the logger is installed: one
-    // comparison of the opcode or of a few addresses for anything but the three messages a toplevel drag needs. Records only.
+    bool managerAlive(const wl_resource* manager) {
+        return manager && std::ranges::any_of(st().live.managers, [manager](const UP<SManager>& m) { return m->live && m->resource->resource() == manager; });
+    }
+
+    // The source of a toplevel drag went to wl_data_device.set_selection: invalid_source on the manager that made the object,
+    // raised from the event loop (never inside libwayland's logger walk). A manager destroyed since cannot carry it: logged.
+    void raiseMisuse() {
+        auto&      s       = st();
+        const auto misused = std::exchange(s.misused, {});
+        for (const auto id : misused) {
+            const auto it = std::ranges::find_if(s.live.objects, [id](const UP<SObject>& o) { return o->live && o->id() == id; });
+            if (it == s.live.objects.end())
+                continue;
+            if (!managerAlive((*it)->manager)) {
+                gf::logRequest(Log::WARN, "toplevel drag: a source with a toplevel drag used as a selection; its manager is gone: not raised");
+                continue;
+            }
+            gf::logRequest(Log::WARN, "toplevel drag: a source with a toplevel drag used as a selection: protocol error invalid_source");
+            wl_resource_post_error((*it)->manager, XDG_TOPLEVEL_DRAG_MANAGER_V1_ERROR_INVALID_SOURCE, "data_source used for a selection");
+        }
+    }
+
+    // Called by libwayland for every request (before its dispatch) and every event while the logger is installed. The message's
+    // opcode and name are compared first (a few bytes), so a message other than the four a toplevel drag needs costs the same
+    // however many objects clients hold; only then the source map is read. Records only.
     void onProtocolMessage(void* /*data*/, wl_protocol_logger_type direction, const wl_protocol_logger_message* message) {
         try {
             auto& s = st();
-            if (!s.ready || s.live.objects.empty() || !message || !message->resource || !message->message || !message->message->name)
+            if (!s.ready || s.sources.empty() || !message || !message->resource || !message->message || !message->message->name)
                 return;
+            const std::string_view name = message->message->name;
             if (direction == WL_PROTOCOL_LOGGER_REQUEST) {
-                if (message->message_opcode != kStartDragOpcode || message->message->name != kStartDrag)
+                const bool start     = message->message_opcode == kStartDragOpcode && name == kStartDrag;
+                const bool selection = message->message_opcode == kSetSelectionOpcode && name == kSetSelection;
+                if (!start && !selection)
                     return;
                 const char* cls = wl_resource_get_class(message->resource);
                 if (!cls || std::string_view{cls} != kDataDevice || message->arguments_count < 1 || !message->arguments)
                     return;
                 // libwayland's server closures hold object arguments as their wl_resource (its first member is the wl_object).
                 auto* o = objectOfSource(reinterpret_cast<const wl_resource*>(message->arguments[0].o));
-                if (o && o->drag.start() && !std::exchange(o->logged, true))
+                if (!o)
+                    return;
+                if (selection) {
+                    s.misused.push_back(o->id());
+                    s.misuseLater.schedule([] { gf::guarded("toplevel drag invalid_source", [] { raiseMisuse(); }); });
+                    return;
+                }
+                if (o->drag.start() && !std::exchange(o->logged, true))
                     gf::logRequest(Log::INFO, "toplevel drag: drag began (source {:x}, pid {})", idOf(o->source), clientPid(wl_resource_get_client(o->source)));
                 return;
             }
-            auto* o = objectOfSource(message->resource);
-            if (!o)
+            const bool dropped = name == kDropPerformed;
+            if (!dropped && name != kCancelled)
                 return;
-            const std::string_view name = message->message->name;
-            if (name == kDropPerformed)
-                ended(*o, td::EndKind::DropPerformed);
-            else if (name == kCancelled)
-                ended(*o, td::EndKind::Cancelled);
+            if (auto* o = objectOfSource(message->resource))
+                ended(*o, dropped ? td::EndKind::DropPerformed : td::EndKind::Cancelled);
         } catch (...) { // NOLINT(bugprone-empty-catch): called from libwayland; nothing may escape, nothing to report to here
         }
     }
@@ -405,7 +462,8 @@ namespace {
         if (!animateWindowDragging())
             target->warpPositionSize();
         gf::tiler::dragMotion(w, pointer);
-        o.fed = true;
+        o.fed   = true;
+        o.moved = true;
     }
 
     // The drag's target: the surface under the pointer other than the dragged window ("the attached window does not participate
@@ -473,14 +531,27 @@ namespace {
             info.cancelled = true;
     }
 
-    // From the plugin's input.mouse.button listener (before the data device's, which drops or cancels at a release): a cancel
-    // that follows the release in this pass is the drop of a window released over nothing (core outcomeOf).
+    // From the plugin's input.mouse.button listener, before the data device's: any button's release makes Hyprland 0.56.2 drop
+    // (CWLDataDeviceProtocol::dropDrag), which sends drop and leave to the target and keeps the drag's source until the target
+    // finishes (wl_data_offer.finish runs completeDrag, the only sender of dnd_drop_performed), which may be late or never; a
+    // drop nobody accepted is cancelled at once. So the window's drag ends at the release, as a drop (core release()): it follows
+    // no more, the drag's target is Hyprland's own again, and the place shown tiles once Hyprland handled the release. Kept per
+    // drag until it ends (a target that cancels later does not undo the drop).
     void onPointerButton(const IPointer::SButtonEvent& e) {
         auto& s = st();
         if (!s.ready || e.state != WL_POINTER_BUTTON_STATE_RELEASED || !anyDragging())
             return;
-        s.releasePending = true;
-        s.releaseLater.schedule([] { gf::guarded("toplevel drag release", [] { st().releasePending = false; }); });
+        for (const auto& o : s.live.objects) {
+            if (!o->live)
+                continue;
+            const auto w   = windowOf(*o);
+            const auto end = o->drag.release();
+            if (!end)
+                continue;
+            if (end->toplevel && w)
+                gf::logRequest(Log::INFO, "toplevel drag: window {:x} released: its drag ends here (Hyprland waits for the target to finish)", idOf(w.get()));
+            queueEnd(*o, w, *end);
+        }
     }
 
     // ---- windows -------------------------------------------------------------------------------------------------------
@@ -496,7 +567,7 @@ namespace {
             o->drag.mapped(idOf(top.get()));
             // Mapped while attached during its drag (a torn-off tab's new window): under the pointer at once, at the client's offset.
             if (o->drag.follows() && hyprlandDragRunning() && g_pInputManager)
-                follow(*o, w, g_pInputManager->getMouseCoordsInternal());
+                follow(*o, w, pointerNow());
         }
     }
 
@@ -566,7 +637,7 @@ namespace {
             // A window attached while mapped keeps the point the pointer holds now (the press, for a window's only tab).
             if (mapped && g_pInputManager) {
                 if (const auto target = w->layoutTarget()) {
-                    const auto pointer = g_pInputManager->getMouseCoordsInternal();
+                    const auto pointer = pointerNow();
                     const auto box     = target->position();
                     o->drag.holdAt(td::Point{.x = pointer.x, .y = pointer.y}, td::Point{.x = box.x, .y = box.y});
                 }
@@ -628,6 +699,7 @@ namespace {
                 m->resource->error(XDG_TOPLEVEL_DRAG_MANAGER_V1_ERROR_INVALID_SOURCE, "data_source already used for toplevel drag");
                 return;
             }
+            raw->manager                    = m->resource->resource();
             raw->source                     = source;
             raw->sourceGone.owner           = raw;
             raw->sourceGone.listener.notify = onSourceDestroyed;
@@ -688,11 +760,18 @@ namespace gf::toplevelDrag {
             gf::log(Log::ERR, "toplevel drag: no Wayland display");
             return false;
         }
+        // A later Hyprland that serves the protocol itself would compile hyprwayland-scanner's code for it, which exports this
+        // interface symbol as Hyprland exports xdg_toplevel_interface (the plugin's own copy is hidden): clients would then see
+        // two globals and bind either. Hyprland's wins: no global here (Hyprland 0.56.2 exports none, nm -D).
+        if (dlsym(RTLD_DEFAULT, "xdg_toplevel_drag_manager_v1_interface")) {
+            gf::log(Log::WARN, "toplevel drag: Hyprland serves xdg_toplevel_drag_manager_v1 itself: the plugin's global is not created");
+            return false;
+        }
         auto& bus = Event::bus();
         if (!bus)
             return false;
         s.endLater.clear(); // a previous stop() cancelled them
-        s.releaseLater.clear();
+        s.misuseLater.clear();
         s.loggerLater.clear();
         auto& ev = bus->m_events;
         auto& l  = s.listeners;
@@ -716,10 +795,10 @@ namespace gf::toplevelDrag {
         auto& s = st();
         s.listeners.clear();
         s.endLater.cancel();
-        s.releaseLater.cancel();
+        s.misuseLater.cancel();
         s.loggerLater.cancel();
         s.ends.clear();
-        s.releasePending = false;
+        s.misused.clear();
 
         const bool   shuttingDown = !g_pCompositor || g_pCompositor->m_isShuttingDown;
         const size_t clientObjs   = s.live.managers.size() + s.live.objects.size();

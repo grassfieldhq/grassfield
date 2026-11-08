@@ -14,6 +14,11 @@
 //   attach-twice  as tear, then a second attach while the first toplevel is attached (protocol error toplevel_attached)
 //   destroy-early the xdg_toplevel_drag_v1 is destroyed right after start_drag (protocol error ongoing_drag)
 //   source-twice  a second xdg_toplevel_drag_v1 for the same source (protocol error invalid_source)
+//   selection     the drag's source also passed to wl_data_device.set_selection (protocol error invalid_source)
+//   late-finish   as tear, and the target calls wl_data_offer.finish 2.5 s after the drop ("finished late")
+//   no-finish     as tear, and the target never calls wl_data_offer.finish ("drop target" only)
+//   source-destroy as tear, and 1 s after the torn window maps the client destroys the wl_data_source, then its object
+//   role-destroy  as tear, and 1 s after the torn window maps the client destroys its xdg_toplevel and xdg_surface
 // The target accepts the offer (a drop there is dnd_drop_performed); nothing else does (a release elsewhere: cancelled).
 // Prints, one line each: "global xdg_toplevel_drag_manager_v1 V" (or "no xdg_toplevel_drag_manager_v1", exit 4), "drag
 // started", "attached torn|source", "mapped torn", "unmapped torn", "enter source|target|torn|other", "leave", "drop target",
@@ -31,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 #include <wayland-client.h>
 
@@ -66,6 +72,15 @@ static struct wl_surface*                   dnd_focus;
 static const char*                          mode = "tear";
 static volatile sig_atomic_t                want_exit;
 static int                                  ready_printed;
+static struct wl_data_offer*                pending_offer; // a dropped offer whose finish is late (late-finish) or never sent
+static long long                            finish_at;     // when late-finish sends it (ms, CLOCK_MONOTONIC; 0: none)
+static long long                            act_at;        // when source-destroy / role-destroy act (ms; 0: none)
+
+static long long now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
 
 static void say(const char* fmt, const char* arg) {
     printf(fmt, arg);
@@ -174,6 +189,8 @@ static void surface_configure(void* data, struct xdg_surface* xs, uint32_t seria
     win->hidden = 0;
     if (win == &torn_win)
         say("%s", "mapped torn");
+    if (win == &torn_win && (strcmp(mode, "source-destroy") == 0 || strcmp(mode, "role-destroy") == 0) && !act_at)
+        act_at = now_ms() + 1000;
     print_ready();
 }
 static const struct xdg_surface_listener surface_listener = {surface_configure};
@@ -282,6 +299,8 @@ static void start_drag(uint32_t serial) {
     drag = xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(drag_manager, source);
     if (strcmp(mode, "source-twice") == 0)
         xdg_toplevel_drag_manager_v1_get_xdg_toplevel_drag(drag_manager, source); // invalid_source
+    if (strcmp(mode, "selection") == 0)
+        wl_data_device_set_selection(device, source, serial); // invalid_source
     if (strcmp(mode, "existing") == 0) {
         xdg_toplevel_drag_v1_attach(drag, source_win.top, 0, 0); // the mapped window itself, before start_drag
         say("%s", "attached source");
@@ -371,6 +390,13 @@ static void device_drop(void* data, struct wl_data_device* d) {
     (void)data;
     (void)d;
     say("drop %s", name_of(dnd_focus));
+    if (offer && dnd_focus == target_win.surface && (strcmp(mode, "late-finish") == 0 || strcmp(mode, "no-finish") == 0)) {
+        pending_offer = offer; // kept past the leave that follows the drop
+        offer         = NULL;
+        if (strcmp(mode, "late-finish") == 0)
+            finish_at = now_ms() + 2500;
+        return;
+    }
     if (offer && dnd_focus == target_win.surface) {
         wl_data_offer_finish(offer);
     }
@@ -453,7 +479,7 @@ static int report_error(void) {
 
 int main(int argc, char** argv) {
     if (argc != 2) {
-        fprintf(stderr, "usage: tdrag tear|merge|existing|attach-twice|destroy-early|source-twice\n");
+        fprintf(stderr, "usage: tdrag tear|merge|existing|attach-twice|destroy-early|source-twice|selection|late-finish|no-finish|source-destroy|role-destroy\n");
         return 2;
     }
     mode    = argv[1];
@@ -501,6 +527,32 @@ int main(int argc, char** argv) {
             }
         }
         wl_display_flush(display);
+        if (finish_at && now_ms() >= finish_at && pending_offer) {
+            finish_at = 0;
+            wl_data_offer_finish(pending_offer);
+            wl_data_offer_destroy(pending_offer);
+            pending_offer = NULL;
+            say("%s", "finished late");
+        }
+        if (act_at && now_ms() >= act_at) {
+            act_at = 0;
+            if (strcmp(mode, "source-destroy") == 0 && source) {
+                wl_data_source_destroy(source);
+                source = NULL;
+                say("%s", "source destroyed");
+                if (drag) {
+                    xdg_toplevel_drag_v1_destroy(drag);
+                    drag = NULL;
+                    say("%s", "drag object destroyed");
+                }
+            } else if (strcmp(mode, "role-destroy") == 0 && torn_win.top) {
+                xdg_toplevel_destroy(torn_win.top);
+                xdg_surface_destroy(torn_win.xs);
+                torn_win.top = NULL;
+                torn_win.xs  = NULL;
+                say("%s", "torn role destroyed");
+            }
+        }
         int n = poll(&pfd, 1, 50);
         if (n > 0 && (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
             wl_display_cancel_read(display);

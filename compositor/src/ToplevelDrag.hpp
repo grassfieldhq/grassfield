@@ -16,8 +16,9 @@
 // - While its drag runs, a mapped attached window follows the pointer (a floating move as the plugin's titlebar drag does:
 //   snapping, the menu bar clamp, the tiling preview through gf::tiler::dragMotion), and the surface under the pointer
 //   other than that window becomes the drag's target (CViewHitTester::windowAt's ignoreWindow, CSeatManager::setPointerFocus;
-//   Hyprland's own pointer-focus pass for that motion is cancelled on the bus). The end tiles the place shown (a drop) or
-//   only removes the preview (a cancel).
+//   Hyprland's own pointer-focus pass for that motion is cancelled on the bus). The pointer's release ends the window's drag
+//   (Hyprland 0.56.2 drops then but sends dnd_drop_performed only when the target finishes): the place shown tiles. A cancel
+//   without a release only removes the preview.
 // Compositor thread only, nothing blocks.
 
 namespace gf::toplevelDrag {

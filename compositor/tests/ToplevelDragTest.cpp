@@ -154,34 +154,99 @@ TEST(ToplevelDrag, DestroyingTheObjectDuringItsDragIsAProtocolError) {
     EXPECT_EQ(d.destroy(), Error::None); // before start_drag: accepted
     ASSERT_TRUE(d.start());
     EXPECT_EQ(d.destroy(), Error::OngoingDrag);
-    ASSERT_TRUE(d.end(EndKind::DropPerformed, true));
+    ASSERT_TRUE(d.end(EndKind::DropPerformed));
     EXPECT_EQ(d.destroy(), Error::None); // after dnd_drop_performed
 }
 
 TEST(ToplevelDrag, ADropEndsTheDragAndNamesTheWindowThatFollowed) {
     auto       d   = tornOff(0, 0);
-    const auto end = d.end(EndKind::DropPerformed, true);
+    const auto end = d.end(EndKind::DropPerformed);
     ASSERT_TRUE(end);
     EXPECT_EQ(endOf(end).outcome, Outcome::Drop);
     EXPECT_EQ(endOf(end).toplevel, kWindow);
     EXPECT_EQ(d.phase(), Phase::Ended);
     EXPECT_FALSE(d.follows());
     EXPECT_EQ(d.attached(), std::nullopt);
-    EXPECT_EQ(d.end(EndKind::Cancelled, false), std::nullopt); // once
+    EXPECT_EQ(d.end(EndKind::Cancelled), std::nullopt); // once
     EXPECT_FALSE(d.start());                                   // a source makes one drag
 }
 
 TEST(ToplevelDrag, AWindowReleasedOverNothingIsADropNotARevert) {
-    // Hyprland cancels a drop no client accepted (the desktop): right after the pointer's release that is still the drop.
-    auto       d   = tornOff(0, 0);
-    const auto end = d.end(EndKind::Cancelled, true);
+    // Hyprland cancels a drop no client accepted (the desktop) inside its handling of the release: the release placed the
+    // window as a drop already, and the cancel that follows is still the drop's.
+    auto       d       = tornOff(0, 0);
+    const auto release = d.release();
+    ASSERT_TRUE(release);
+    EXPECT_EQ(endOf(release).outcome, Outcome::Drop);
+    EXPECT_EQ(endOf(release).toplevel, kWindow);
+    const auto end = d.end(EndKind::Cancelled);
+    ASSERT_TRUE(end);
+    EXPECT_EQ(endOf(end).outcome, Outcome::Drop);
+    EXPECT_EQ(endOf(end).toplevel, std::nullopt); // placed at the release, not twice
+}
+
+TEST(ToplevelDrag, TheReleaseEndsTheWindowsDragWhenTheTargetFinishesLate) {
+    // Review of aa8211de: Hyprland 0.56.2 sends dnd_drop_performed only when the target calls wl_data_offer.finish. The window
+    // is placed at the release and follows no more meanwhile; the protocol's drag still runs until that event.
+    auto       d       = tornOff(40, 12);
+    const auto step    = d.step(Point{500, 300}, Point{0, 0});
+    const auto release = d.release();
+    ASSERT_TRUE(step);
+    ASSERT_TRUE(release);
+    EXPECT_EQ(endOf(release).outcome, Outcome::Drop);
+    EXPECT_EQ(endOf(release).toplevel, kWindow);
+    EXPECT_TRUE(d.released());
+    EXPECT_FALSE(d.follows());
+    EXPECT_EQ(d.step(Point{900, 700}, stepOf(step).topLeft), std::nullopt); // the pointer moves on, the window stays
+    EXPECT_EQ(d.phase(), Phase::Dragging);
+    EXPECT_EQ(d.destroy(), Error::OngoingDrag); // the drag has not ended for the protocol yet
+    const auto end = d.end(EndKind::DropPerformed);  // the target finished at last
+    ASSERT_TRUE(end);
+    EXPECT_EQ(endOf(end).outcome, Outcome::Drop);
+    EXPECT_EQ(endOf(end).toplevel, std::nullopt);
+    EXPECT_EQ(d.destroy(), Error::None);
+}
+
+TEST(ToplevelDrag, ATargetThatNeverFinishesLeavesTheWindowWhereItWasReleased) {
+    auto d = tornOff(0, 0);
+    ASSERT_TRUE(d.release());
+    for (int i = 0; i < 5; ++i)
+        EXPECT_EQ(d.step(Point{100.0 * i, 50.0 * i}, Point{0, 0}), std::nullopt);
+    EXPECT_FALSE(d.follows());
+    EXPECT_EQ(d.phase(), Phase::Dragging);
+}
+
+TEST(ToplevelDrag, ATargetCancellingAfterTheReleaseIsStillADrop) {
+    // The release is kept until the drag ends, not for one event loop pass: a target that aborts later does not turn the drop
+    // into a cancel.
+    auto d = tornOff(0, 0);
+    ASSERT_TRUE(d.release());
+    const auto end = d.end(EndKind::Cancelled);
     ASSERT_TRUE(end);
     EXPECT_EQ(endOf(end).outcome, Outcome::Drop);
 }
 
+TEST(ToplevelDrag, OneReleasePerDrag) {
+    auto d = tornOff(0, 0);
+    ASSERT_TRUE(d.release());
+    EXPECT_EQ(d.release(), std::nullopt);
+}
+
+TEST(ToplevelDrag, AReleaseWithoutAFollowingWindowPlacesNothing) {
+    CDrag d;
+    EXPECT_EQ(d.release(), std::nullopt); // before start_drag: nothing
+    ASSERT_TRUE(d.start());
+    ASSERT_EQ(d.attach(kWindow, false, 0, 0), Error::None); // never mapped
+    const auto release = d.release();
+    ASSERT_TRUE(release);
+    EXPECT_EQ(endOf(release).toplevel, std::nullopt);
+    d.mapped(kWindow); // mapped after the release: it never follows
+    EXPECT_FALSE(d.follows());
+}
+
 TEST(ToplevelDrag, EscapeOrTheClientCancellingOnlyRemovesThePreview) {
     auto       d   = tornOff(0, 0);
-    const auto end = d.end(EndKind::Cancelled, false);
+    const auto end = d.end(EndKind::Cancelled);
     ASSERT_TRUE(end);
     EXPECT_EQ(endOf(end).outcome, Outcome::Cancel);
     EXPECT_EQ(endOf(end).toplevel, kWindow);
@@ -189,7 +254,7 @@ TEST(ToplevelDrag, EscapeOrTheClientCancellingOnlyRemovesThePreview) {
 
 TEST(ToplevelDrag, ASourceDestroyedDuringTheDragCancels) {
     auto       d   = tornOff(0, 0);
-    const auto end = d.end(EndKind::SourceGone, true);
+    const auto end = d.end(EndKind::SourceGone);
     ASSERT_TRUE(end);
     EXPECT_EQ(endOf(end).outcome, Outcome::Cancel);
 }
@@ -198,14 +263,14 @@ TEST(ToplevelDrag, AnEndWithoutAMappedWindowNamesNone) {
     CDrag d;
     ASSERT_TRUE(d.start());
     ASSERT_EQ(d.attach(kWindow, false, 0, 0), Error::None); // never mapped
-    const auto end = d.end(EndKind::DropPerformed, true);
+    const auto end = d.end(EndKind::DropPerformed);
     ASSERT_TRUE(end);
     EXPECT_EQ(endOf(end).toplevel, std::nullopt);
 }
 
 TEST(ToplevelDrag, ASourceCancelledBeforeItsDragBeganEndsQuietly) {
     CDrag d;
-    EXPECT_EQ(d.end(EndKind::Cancelled, false), std::nullopt);
+    EXPECT_EQ(d.end(EndKind::Cancelled), std::nullopt);
     EXPECT_EQ(d.phase(), Phase::Ended);
     EXPECT_FALSE(d.start());
 }

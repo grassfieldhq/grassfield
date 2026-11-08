@@ -35,11 +35,19 @@ namespace gf::toplevelDrag {
         return true;
     }
 
-    std::optional<End> CDrag::end(EndKind kind, bool releaseSeen) {
+    std::optional<End> CDrag::release() {
+        if (m_phase != Phase::Dragging || m_released)
+            return std::nullopt;
+        const bool followed = follows();
+        m_released          = true;
+        return End{.outcome = Outcome::Drop, .toplevel = followed ? m_attached : std::nullopt};
+    }
+
+    std::optional<End> CDrag::end(EndKind kind) {
         if (m_phase == Phase::Ended)
             return std::nullopt;
         const bool wasDragging = m_phase == Phase::Dragging;
-        const bool followed    = follows();
+        const bool followed    = follows(); // false once released: the release placed the window
         const auto toplevel    = m_attached;
         m_phase                = Phase::Ended;
         m_attached.reset();
@@ -48,7 +56,7 @@ namespace gf::toplevelDrag {
         m_grab.reset();
         if (!wasDragging)
             return std::nullopt;
-        return End{.outcome = outcomeOf(kind, releaseSeen), .toplevel = followed ? toplevel : std::nullopt};
+        return End{.outcome = outcomeOf(kind, m_released), .toplevel = followed ? toplevel : std::nullopt};
     }
 
     void CDrag::mapped(Id toplevel) {
@@ -72,7 +80,7 @@ namespace gf::toplevelDrag {
     }
 
     bool CDrag::follows() const {
-        return m_phase == Phase::Dragging && m_attached && m_mapped;
+        return m_phase == Phase::Dragging && !m_released && m_attached && m_mapped;
     }
 
     std::optional<Step> CDrag::step(Point pointer, Point topLeft) {
