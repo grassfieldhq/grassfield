@@ -55,7 +55,13 @@ and prints its path:
    serials never leave (review fix 2026-11-05): a `serial` field becomes `present`, and so does the serial field of every
    display identity string (`s:<make>|<model>|<serial>` of `displays.main`'s `set` and `main`, ADR-0044 D-2;
    `s:<model>|<serial>` of the wallpaper outputs), the `m:` and `n:` keys (connector-bound) staying as they are. Other text
-   files have `key = value` / `key: value` lines with such a key redacted. Paths of the user's own folders stay out
+   files have `key = value` / `key: value` lines with such a key redacted, and every `desc:` display description
+   (`displays.conf`, ADR-0031: Hyprland's "<make> <model> <serial>") loses its serial: a connected display's is cut from
+   its end, a display not connected now loses the last word, where Hyprland puts the serial (rc7 audit R7-SEC-04). Across
+   the whole report (the journal too) the connected displays' serials (4 characters or more) become `[serial]`, and so does
+   the udev `ID_SERIAL` of a USB device in ALSA and PipeWire names (`alsa_output.usb-[usb device]-00.analog-stereo`: the
+   serial cannot be told from the model there; the device's description stays in the audio devices list); an answer of
+   `hyprctl -j monitors` that is not JSON is shown only when it does not look like JSON. Paths of the user's own folders stay out
    (security review of the Luma pull request, finding 2): `folder-styles.json` (up to 20,000 folder paths) is replaced by
    the count of its entries, and a wallpaper path (any value under a `wallpaper*` key or in a `wallpaper*` file) keeps only
    its file name. The rule is generic (second review fix, 2026-11-06): every setting whose schema type is a path

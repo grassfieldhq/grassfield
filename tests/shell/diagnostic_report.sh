@@ -39,6 +39,9 @@ mkdir -p "$tmp/root/usr/share/grassfield/schema"
 cp "$root/config/schema/grassfield.schema.json" "$tmp/root/usr/share/grassfield/schema/"
 printf 'theme = dark\npassword = SECRET-FOUR\nauth_token: SECRET-FIVE\npsk '"'"'SECRET-SEVEN'"'"'\npass=SECRET-TEN\n' >"$home/.config/grassfield/notes.conf"
 ln -s /etc/hostname "$home/.config/grassfield/linked.json"
+# displays.conf (ADR-0031): the connected DP-3 (Hyprland's description ends with its serial), the built-in panel (no serial)
+# and a display not connected now (R7-SEC-04).
+printf 'v1\tdesc:Dell Inc. U2723QE SERIAL-XYZ-123\t3840x2160@60.00\t0x0\t1.5\t0\nv1\tdesc:BOE NE135\t2256x1504@60.00\t3840x0\t1.25\t0\nv1\tdesc:LG Electronics LG ULTRAFINE 012NTPC1A234\t5120x2880@60.00\t-5120x0\t2\t0\n' >"$home/.config/grassfield/displays.conf"
 
 cat >"$tmp/bin/pacman" <<'SH'
 #!/bin/sh
@@ -48,7 +51,8 @@ SH
 cat >"$tmp/bin/hyprctl" <<'SH'
 #!/bin/sh
 case "$*" in
-  "-j monitors") printf '[{"id":0,"name":"DP-3","description":"Dell Inc. U2723QE SERIAL-XYZ-123","make":"Dell Inc.","model":"U2723QE","serial":"SERIAL-XYZ-123","width":3840,"height":2160,"refreshRate":60.0,"x":0,"y":0,"scale":1.5,"transform":0,"focused":true,"dpmsStatus":true,"vrr":false,"disabled":false},{"name":"eDP-1","make":"BOE","model":"NE135","serial":"","width":2256,"height":1504}]\n' ;;
+  "-j monitors") [ "${FAKE_MONITORS:-ok}" = broken ] && { printf '[{"name":"DP-3","serial":"SERIAL-BROKEN-9","descr'; exit 0; }
+    printf '[{"id":0,"name":"DP-3","description":"Dell Inc. U2723QE SERIAL-XYZ-123","make":"Dell Inc.","model":"U2723QE","serial":"SERIAL-XYZ-123","width":3840,"height":2160,"refreshRate":60.0,"x":0,"y":0,"scale":1.5,"transform":0,"focused":true,"dpmsStatus":true,"vrr":false,"disabled":false},{"name":"eDP-1","description":"BOE NE135","make":"BOE","model":"NE135","serial":"","width":2256,"height":1504}]\n' ;;
   "version") echo "Hyprland 0.56.2 built from branch at commit abc" ;;
   "grassfield") if [ "${FAKE_PLUGIN:-on}" = on ]; then echo "grassfield 0.9.0 gfc/1 ready"; else echo "unknown request"; fi ;;
   *) echo "unexpected hyprctl $*" >&2; exit 3 ;;
@@ -58,6 +62,7 @@ cat >"$tmp/bin/wpctl" <<'SH'
 #!/bin/sh
 [ "$1" = status ] || exit 1
 printf 'Audio\n ├─ Sinks:\n │  *   52. Built-in Audio Analog Stereo [vol: 0.40]\n │      61. Marie’s AirPods [vol: 0.50]\n │      62. Paul'"'"'s Headphones [vol: 0.50]\n'
+printf 'Settings\n └─ Default Configured Devices:\n         0. Audio/Sink    alsa_output.usb-Generic_USB-Audio-01_201405280001-00.analog-stereo\n         1. Audio/Source  alsa_input.usb-Blue_Microphones_Yeti_Stereo_Microphone_REV8-00.analog-stereo\n'
 SH
 cat >"$tmp/bin/coredumpctl" <<SH
 #!/bin/sh
@@ -74,6 +79,8 @@ echo "2026-11-05T10:00:03+0000 vm grassfield-shell[1]: audio: default sink bluez
 echo "2026-11-05T10:00:04+0000 vm grassfield-shell[1]: audio: default output is now Marie’s AirPods"
 echo "2026-11-05T10:00:05+0000 vm grassfield-shell[1]: the Dock's tile moved; Wayland's socket is back; Activity Monitor's list refreshed"
 echo "2026-11-05T10:00:06+0000 vm grassfield-shell[1]: helper login pass=SECRET-ELEVEN pwd=SECRET-TWELVE"
+echo "2026-11-05T10:00:07+0000 vm grassfield-shell[1]: Displays: DP-3 is Dell Inc. U2723QE SERIAL-XYZ-123"
+echo "2026-11-05T10:00:08+0000 vm grassfield-shell[1]: audio: default sink alsa_output.usb-Focusrite_Scarlett_2i2_USB_Y8ABCDE12345-00.HiFi__Line__sink"
 SH
 chmod 755 "$tmp/bin"/*
 
@@ -139,6 +146,12 @@ desc="a symbolic link in the configuration folder is not followed"
 check bash -c '! grep -q -- "--- linked.json" "$1"' _ "$out"
 desc="monitor serials never leave through the configuration (displays.main keys, wallpaper outputs): replaced by present"
 check bash -c '! grep -q "SERIAL-" "$1" && grep -qF "\"s:Dell Inc.|U2723QE|present\"" "$1" && grep -qF "\"m:BOE|NE135|eDP-1\"" "$1" && grep -qF "\"s:U2723QE|present\"" "$1" && grep -q "\"serial\": \"present\"" "$1"' _ "$out"
+desc="R7-SEC-04: displays.conf keeps its lines without a serial: the connected display's cut from its description, the built-in panel (none) whole, a display not connected now without its last word; the rest of each line kept"
+check bash -c 'c=$(sed -n "/^--- displays.conf/,/^--- /p" "$1"); ! grep -q "SERIAL-XYZ\|012NTPC1A234" "$1" && grep -qF "$(printf "v1\tdesc:Dell Inc. U2723QE [serial]\t3840x2160@60.00\t0x0\t1.5\t0")" <<<"$c" && grep -qF "$(printf "v1\tdesc:BOE NE135\t2256x1504@60.00")" <<<"$c" && grep -qF "$(printf "v1\tdesc:LG Electronics LG ULTRAFINE [serial]\t5120x2880@60.00\t-5120x0")" <<<"$c"' _ "$out"
+desc="R7-SEC-04: a connected display's serial is removed from the whole report (the journal too)"
+check bash -c '! grep -q "SERIAL-XYZ" "$1" && grep -qF "Displays: DP-3 is Dell Inc. U2723QE [serial]" "$1"' _ "$out"
+desc="R7-SEC-04: a USB device's ID_SERIAL in ALSA and PipeWire names (wpctl status, the journal) is removed, the rest of the name kept"
+check bash -c '! grep -q "201405280001\|Y8ABCDE12345\|Focusrite\|Yeti_Stereo" "$1" && grep -qF "alsa_output.usb-[usb device]-00.analog-stereo" "$1" && grep -qF "alsa_input.usb-[usb device]-00.analog-stereo" "$1" && grep -qF "alsa_output.usb-[usb device]-00.HiFi__Line__sink" "$1"' _ "$out"
 desc="the lock screen message (free text) is redacted, the lock settings are kept"
 check bash -c '! grep -q "FREE-TEXT-LOCK\|0612345678" "$1" && grep -q "\"showMessage\": true" "$1" && grep -q "\"idleMinutes\": 5" "$1"' _ "$out"
 desc="interface possessives in the journal keep their words (the Dock's tile, Wayland's socket, Activity Monitor's list); an audio line still loses the person's name"
@@ -180,6 +193,10 @@ check test "$rc" = 1 -a -z "$nowhere"
 report -- --bogus >/dev/null 2>&1 && rc=0 || rc=$?
 desc="an unknown argument is a usage error (exit 2)"
 check test "$rc" = 2
+
+outb=$(report FAKE_MONITORS=broken --)
+desc="R7-SEC-04: an answer of hyprctl that is broken JSON is not copied into the report (it would carry the serials)"
+check bash -c 'grep -A1 "== Displays" "$1" | grep -qx "(hyprctl'"'"'s answer is not JSON)" && ! grep -q "SERIAL-BROKEN" "$1"' _ "$outb"
 
 out6=$(report FAKE_PLUGIN=off --)
 desc="a plugin that is not loaded is said so"

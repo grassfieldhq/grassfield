@@ -10,7 +10,8 @@ Writes ONE private text file (mode 0600, never overwriting) and prints its path 
 It holds the versions (Grassfield, its packages, Omarchy, Hyprland, Quickshell, Qt), the compositor plugin's status, the
 displays, the audio devices, the crashes of the last 7 days, this boot's journal of the Grassfield user units (bounded) and
 Grassfield's configuration files with secret-looking values removed. The home path, the user name, the real name and the
-host name are replaced everywhere. The person reads it and decides whether to share it.
+host name are replaced everywhere, and so are hardware serial numbers (the displays', R7-SEC-04; a USB audio device's in
+ALSA and PipeWire names) and Bluetooth or network hardware addresses. The person reads it and decides whether to share it.
 
 Rules: never as root, no sudo, no network, no recording or playback, no configuration change. Every command is read-only,
 run without a shell, with a timeout and LC_ALL=C; a missing tool is one line in the report, never a failure.
@@ -59,6 +60,18 @@ FREE_TEXT = {("lock", "message")}
 # A display identity (ADR-0044 D-2 `s:<make>|<model>|<serial>`, WallpaperConfig.displayKey `s:<model>|<serial>`): the serial is
 # the last field.
 SERIAL_KEY = re.compile(r"^(s:(?:[^|]*\|){1,2})[^|]+$")
+# A display named by its description (displays.conf `v1<TAB>desc:<description><TAB>...`, apps/settings/qml/Displays.js lineFor,
+# config/hypr/grassfield/displays.lua): Hyprland's description is "<make> <model> <serial>", trimmed (R7-SEC-04). The field
+# ends at the next tab or the end of the line.
+DESC_FIELD = re.compile(r"(?<![A-Za-z0-9_])(desc:)([^\t\r\n]*)")
+SERIAL_MARK = "[serial]"
+# A serial shorter than this is not replaced across the whole report (it would mangle other words); displays.conf's
+# descriptions still lose it.
+SERIAL_MIN = 4
+# A USB device's udev ID_SERIAL (<vendor>_<model>_<serial>) in an ALSA or PipeWire name: alsa_output.usb-<ID_SERIAL>-00.analog-stereo,
+# alsa_card.usb-<ID_SERIAL>-00 (wpctl status lists the default nodes by name; the journal may name them). Replaced whole: the
+# serial cannot be told from the model in it, and the device's own description stays in the audio devices list.
+USB_ID = re.compile(r"(\b(?:alsa|v4l2)_[a-z]+\.usb-)([A-Za-z0-9._-]+?)(-[0-9]{2}(?=[.\s\"',;)\]]|$))", re.M)
 
 
 def usage(message=""):
@@ -300,6 +313,45 @@ PRODUCT_NAMES = {"grassfield", "omarchy", "hyprland", "quickshell", "pipewire", 
                  "what", "who"}
 
 
+# ---- hardware serials (R7-SEC-04) -------------------------------------------------------------------------------------
+
+def display_serials(displays):
+    """{description: serial} of Hyprland's displays (serial "" when the display has none); {} without an answer."""
+    out = {}
+    for m in displays or []:
+        desc = str(m.get("description") or "").strip()
+        if desc:
+            out[desc] = str(m.get("serial") or "").strip()
+    return out
+
+
+def redact_desc(text, known):
+    """The serial of every `desc:` description removed (ADR-0053: serials never leave). A connected display's (`known`, from
+    display_serials) is cut from the end of its description; a connected display without a serial keeps its description; any
+    other description (a display not connected now) loses its last word, where Hyprland puts the serial (fail closed: when
+    that display had none, a model word goes instead)."""
+    def one(m):
+        body = m.group(2).rstrip()
+        serial = known.get(body)
+        if serial == "":
+            return m.group(0)
+        if serial and body.endswith(serial) and len(body) > len(serial):
+            return m.group(1) + body[:-len(serial)].rstrip() + " " + SERIAL_MARK
+        words = body.split()
+        if not words:
+            return m.group(0)
+        return m.group(1) + " ".join(words[:-1] + [SERIAL_MARK])
+    return DESC_FIELD.sub(one, text)
+
+
+def redact_serials(text, known):
+    """Hardware serials anywhere in the report: those of the connected displays (SERIAL_MIN characters or more, as a word)
+    and the USB ID_SERIAL of ALSA and PipeWire names."""
+    for serial in sorted({v for v in known.values() if len(v) >= SERIAL_MIN}, key=len, reverse=True):
+        text = re.sub(r"(?<![A-Za-z0-9])" + re.escape(serial) + r"(?![A-Za-z0-9])", SERIAL_MARK, text)
+    return USB_ID.sub(lambda m: m.group(1) + "[usb device]" + m.group(3), text)
+
+
 # ---- identity --------------------------------------------------------------------------------------------------------
 
 def identity():
@@ -364,20 +416,27 @@ def packages():
     return "\n".join(lines) if lines else "(none of the listed packages is installed)"
 
 
-def monitors():
+def hypr_monitors():
+    """Hyprland's displays: ([display, ...], None), or (None, the line the Displays section shows instead). An answer that is
+    not JSON is shown only when it does not look like JSON (a message), never a part of one (it would carry the serials)."""
     ok, text = run(["hyprctl", "-j", "monitors"])
     if not ok:
-        return text
+        return None, text
     try:
         data = json.loads(text)
     except ValueError:
-        return "(hyprctl's answer is not JSON)\n" + text[:2000]
+        shown = "" if text.lstrip()[:1] in ("[", "{") else "\n" + text[:2000]
+        return None, "(hyprctl's answer is not JSON)" + shown
     if not isinstance(data, list):
-        return "(unexpected answer)"
+        return None, "(unexpected answer)"
+    return [m for m in data if isinstance(m, dict)], None
+
+
+def monitors(data, failed):
+    if data is None:
+        return failed
     out = []
     for m in data:
-        if not isinstance(m, dict):
-            continue
         row = {k: m[k] for k in MONITOR_FIELDS if k in m}
         row["serial"] = "present" if str(m.get("serial") or "").strip() else "none"
         out.append(row)
@@ -419,7 +478,7 @@ def config_dir():
     return os.path.join(base, "grassfield")
 
 
-def configuration():
+def configuration(known):
     folder = config_dir()
     try:
         names = sorted(os.listdir(folder))
@@ -447,7 +506,8 @@ def configuration():
             types = schema_path_types() if name == "grassfield.json" else {}
             body = json.dumps(scrub_paths(redact_json(data), types, (), wallpaper), indent=1, ensure_ascii=False)
         except ValueError:
-            body = "(not JSON: left out)" if name == "folder-styles.json" else scrub_text(redact_lines(text), wallpaper)
+            body = "(not JSON: left out)" if name == "folder-styles.json" else scrub_text(redact_desc(redact_lines(text), known),
+                                                                                           wallpaper)
         parts.append("--- %s\n%s" % (name, body))
     return "\n".join(parts) if parts else "(the folder is empty)"
 
@@ -488,12 +548,15 @@ def create(target, stamp):
 
 def report(now):
     rel = os_release()
+    displays, failed = hypr_monitors()
+    known = display_serials(displays)
     version = (read_file(VERSION_FILE, 200) or "").strip() or "unknown (no %s)" % VERSION_FILE[len(FILE_ROOT):]
     head = [
         "Grassfield diagnostic report",
         "Created: %s UTC by grassfield-report (read-only; nothing was sent anywhere)." % now.strftime("%Y-%m-%d %H:%M:%S"),
         "Removed: the home folder (shown as ~), the user name (<user>), the real name (<name>), the computer's name (<host>),",
-        "and values that look like passwords, tokens or keys ([redacted]). Read it before you share it.",
+        "values that look like passwords, tokens or keys ([redacted]) and hardware serial numbers ([serial]). Read it before",
+        "you share it.",
         "",
         "Grassfield version: %s" % version,
         "Session: GRASSFIELD_SESSION=%s XDG_CURRENT_DESKTOP=%s XDG_SESSION_TYPE=%s" % (
@@ -505,16 +568,16 @@ def report(now):
         ("Omarchy", "\n".join("%s=%s" % (k, rel[k]) for k in ("NAME", "VERSION_ID", "BUILD_ID") if k in rel) or "(no os-release)"),
         ("Compositor", run(["hyprctl", "version"])[1]),
         ("Compositor plugin", plugin()),
-        ("Displays", monitors()),
+        ("Displays", monitors(displays, failed)),
         ("Audio devices", redact_device_names(run(["wpctl", "status"])[1], every_line=True)),
         ("Crashes (last 7 days)", crashes()),
         ("Journal of the Grassfield units (this boot)", redact_device_names(journal())),
-        ("Configuration (%s)" % config_dir(), configuration()),
+        ("Configuration (%s)" % config_dir(), configuration(known)),
     ]
     body = "\n".join(head) + "\n"
     for title, text in sections:
         body += "\n== %s ==\n%s\n" % (title, text.rstrip("\n"))
-    return body
+    return redact_serials(body, known)
 
 
 def main(argv):
