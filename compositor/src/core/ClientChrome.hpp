@@ -57,8 +57,7 @@ namespace gf::chrome {
     // zxdg_decoration_manager_v1 or org_kde_kwin_server_decoration_manager (it knows the compositor offers server-side
     // decorations); `clientHasObject`: its client holds a decoration object of either protocol, for any of its windows. The
     // last two come from libwayland's public list of the client's resources, so they hold whatever Hyprland keeps privately.
-    // `framed`: the window was seen drawing its own frame (framedInside) at a commit since its map: a client drops its shadow
-    // margins while zoomed or in full screen, and its title bar stays its own.
+    // `framed`: the window draws its own frame (CFrameEvidence::framed, from its commits' frame reads).
     struct DecorationRequest {
         bool     xdgObject       = false;
         uint32_t xdgRequested    = 0;
@@ -80,14 +79,45 @@ namespace gf::chrome {
     // cannot be fixed by the user).
     bool drawsOwnTitlebar(const DecorationRequest& request);
 
-    // Whether a window draws its own frame: its xdg window geometry (xdg_surface.set_window_geometry, surface-local, layout px)
-    // lies inside its surface (surfaceW x surfaceH, layout px) by at least kFrameInsetMin on one side or more, and nowhere
-    // outside it. xdg-shell defines the window geometry as the window's visible bounds, without the invisible parts of
-    // client-side decorations such as drop shadows; a client that draws no frame leaves it the whole surface (Qt without
-    // custom margins, foot) or never sets it (an empty geometry: nothing proved). Not a frame either: a geometry that reaches
-    // outside the surface (a client's mistake, or a subsurface beyond the main one), an unknown surface size.
+    // What one commit shows of a window's frame: its xdg window geometry (xdg_surface.set_window_geometry, surface-local,
+    // layout px) against its surface (surfaceW x surfaceH, layout px). xdg-shell defines the window geometry as the window's
+    // visible bounds, without the invisible parts of client-side decorations such as drop shadows.
+    //   Inside   the geometry lies inside the surface by at least kFrameInsetMin on one side or more, nowhere outside it: a
+    //            frame drawn around the window (Telegram's lib_ui shadow through QtWayland's custom margins, GTK's CSD);
+    //   Whole    inside the surface by less than kFrameInsetMin on every side: no frame (Qt without custom margins, foot);
+    //   Unknown  nothing proved: never set (empty), no surface size yet, or a geometry that reaches outside the surface (a
+    //            client between a new geometry and the buffer of that size while it grows, or a subsurface beyond the main one).
+    // A single read can mislead: QtWayland sends a new window geometry before the buffer of the new size
+    // (QWaylandXdgSurface::setContentGeometry from setGeometry), so a commit in between, while a window shrinks, reads
+    // Inside for a window that draws nothing (review of c36220a3). CFrameEvidence decides from consecutive reads.
     inline constexpr double kFrameInsetMin = 2.0;
-    bool                    framedInside(const titlebar::Rect& geometry, double surfaceW, double surfaceH);
+    enum class FrameRead : uint8_t {
+        Unknown,
+        Inside,
+        Whole,
+    };
+    FrameRead frameRead(const titlebar::Rect& geometry, double surfaceW, double surfaceH);
+
+    // Whether a window draws its own frame, from its frame reads: the read at its map decides at once (its first buffer has
+    // the size its geometry describes); afterwards the answer changes only after kFrameReadsToChange consecutive commits
+    // that contradict it (Unknown reads neither count nor break a run). While the window is zoomed or in full screen
+    // (`sized`), a Whole read does not count against a frame: a client drops its shadow margins there (lib_ui, GTK), and its
+    // title bar stays its own. So a commit caught between a shrinking window's geometry and its buffer (leaving Fill, a
+    // resize) never tags a window that draws nothing, and Telegram coming back from Fill, Whole for a commit before its
+    // margins return, keeps its tag.
+    inline constexpr uint8_t kFrameReadsToChange = 2;
+    class CFrameEvidence {
+      public:
+        void atMap(FrameRead read);
+        // A commit's read; true when framed() changed.
+        bool onCommit(FrameRead read, bool sized);
+        bool framed() const;
+
+      private:
+        bool    m_framed = false;
+        uint8_t m_inside = 0; // consecutive Inside reads
+        uint8_t m_whole  = 0; // consecutive Whole reads that count (not while sized)
+    };
 
     // A Wayland interface name, as libwayland lists a client's resources: one of the two decoration managers
     // (DecorationRequest::managerBound: zxdg_decoration_manager_v1, org_kde_kwin_server_decoration_manager), one of their

@@ -83,10 +83,10 @@ namespace gf::chrome {
             bool                     clientHasObject  = false; // and held a decoration object of either protocol
             std::optional<bool>      drawsOwn;
             bool                     tagAdded = false;
-            // P9 (R7-REQ-01): the window was seen drawing its own frame (core framedInside) at a commit since its map; kept, since
-            // a client drops its shadow margins while zoomed or in full screen. The surface size and window geometry of the last
-            // commit read, so that an unchanged commit (a video frame, a cursor blink) costs two comparisons.
-            bool                     framed         = false;
+            // P9 (R7-REQ-01): whether the window draws its own frame, from its commits' frame reads (core CFrameEvidence: the
+            // read at the map, then two consecutive contrary reads to change). The surface size and window geometry of the last
+            // decoration read: the negotiation is read again only when either changed (or the frame answer did).
+            CFrameEvidence           frame;
             Vector2D                 lastCommitSize = {-1.0, -1.0};
             CBox                     lastGeometry;
         };
@@ -367,16 +367,16 @@ namespace gf::chrome {
             }
         }
 
-        // P9 (R7-REQ-01): whether the window draws its own frame now (core framedInside): its xdg window geometry (public,
+        // P9 (R7-REQ-01): what the window's current state shows of its frame (core frameRead): its xdg window geometry (public,
         // CXDGSurfaceResource::m_current.geometry) against its surface's size (CWLSurfaceResource::m_current.size), both in
         // layout px.
-        bool framedNow(const PHLWINDOW& w) {
+        FrameRead frameReadOf(const PHLWINDOW& w) {
             const auto xdg     = w ? w->m_xdgSurface.lock() : nullptr;
             const auto surface = w ? w->resource() : nullptr;
             if (!xdg || !surface)
-                return false;
+                return FrameRead::Unknown;
             const CBox& g = xdg->m_current.geometry;
-            return framedInside(titlebar::Rect{g.x, g.y, g.w, g.h}, surface->m_current.size.x, surface->m_current.size.y);
+            return frameRead(titlebar::Rect{g.x, g.y, g.w, g.h}, surface->m_current.size.x, surface->m_current.size.y);
         }
 
         // P9: what the window's client negotiated, read from Hyprland's two decoration protocols (their containers through the
@@ -386,7 +386,7 @@ namespace gf::chrome {
             DecorationRequest r;
             r.managerBound    = e.managerBound;
             r.clientHasObject = e.clientHasObject;
-            r.framed          = e.framed;
+            r.framed          = e.frame.framed();
             if (PROTO::xdgDecoration && e.toplevelResource) {
                 const auto& all = (*PROTO::xdgDecoration).*memberOf(SXdgDecorations{});
                 if (const auto it = all.find(e.toplevelResource); it != all.end() && it->second) {
@@ -419,7 +419,6 @@ namespace gf::chrome {
             const auto top = e.toplevel.lock();
             if (!w || !top || !w->m_isMapped || w->m_isX11 || !w->m_ruleApplicator)
                 return;
-            e.framed           = e.framed || framedNow(w);
             const auto request = requestOf(e, w);
             const bool drawsOwn = drawsOwnTitlebar(request);
             auto&      tags     = w->m_ruleApplicator->m_tagKeeper;
@@ -447,19 +446,25 @@ namespace gf::chrome {
             syncMaximize(e, ownsMaximizeOf(w));
         }
 
-        // P9: a commit of the window's surface. The decoration is read again only when the surface's size or the window geometry
-        // changed since the last commit read (a frame drawn from now on, a client that switches its decorations).
+        // P9: a commit of the window's xdg surface. Every commit costs the entry's lookup (a scan of the watched windows), the
+        // window's and its surfaces' weak-pointer locks, the frame read (a few comparisons) and the size and geometry
+        // comparisons; the decoration is read again only when the frame answer changed (core CFrameEvidence) or the surface's
+        // size or the window geometry changed since the last read (a client that switches its decorations).
         void onCommit(uint64_t key) {
             SWatch* e = watchOfKey(key);
             if (!e)
                 return;
             const auto w       = e->window.lock();
             const auto surface = w ? w->resource() : nullptr;
-            if (!surface)
+            const auto xdg     = w ? w->m_xdgSurface.lock() : nullptr;
+            if (!surface || !xdg)
                 return;
-            const auto xdg      = w->m_xdgSurface.lock();
-            const CBox geometry = xdg ? xdg->m_current.geometry : CBox{};
-            if (surface->m_current.size == e->lastCommitSize && geometry == e->lastGeometry)
+            const CBox& geometry = xdg->m_current.geometry;
+            const auto  read     = frameRead(titlebar::Rect{geometry.x, geometry.y, geometry.w, geometry.h}, surface->m_current.size.x, surface->m_current.size.y);
+            // Zoomed or in full screen: a Whole read is a dropped shadow, not evidence against a frame (only asked when it matters).
+            const bool sized   = read == FrameRead::Whole && e->frame.framed() && modeOf(w) != Fullscreen::FSMODE_NONE;
+            const bool flipped = e->frame.onCommit(read, sized);
+            if (!flipped && surface->m_current.size == e->lastCommitSize && geometry == e->lastGeometry)
                 return;
             e->lastCommitSize = surface->m_current.size;
             e->lastGeometry   = geometry;
@@ -470,8 +475,8 @@ namespace gf::chrome {
         // weak pointer of the window or its toplevel released that copy here, at the end of each listen() statement, while
         // `w` and `top` were still used: clang-analyzer-cplusplus.NewDelete (clang-tidy 23, rc7 Q1) followed that release
         // into a use after free. It was none (`w`, the caller's shared pointer, and `top` keep both objects alive for the
-        // whole call, so the release never reached zero), but a closure without a counted pointer leaves nothing to follow
-        // and costs nothing more: the commit listener already looked its entry up.
+        // whole call, so the release never reached zero), but a closure without a counted pointer leaves nothing to follow.
+        // The price is the entry's lookup, a scan of the watched windows, at every commit (onCommit).
         void watch(const PHLWINDOW& w) {
             auto& s = st();
             std::erase_if(s.watches, [](const SWatch& e) { return e.window.expired() || e.toplevel.expired(); });
@@ -491,10 +496,13 @@ namespace gf::chrome {
             const auto globals = decorationGlobalsOf(w);
             e.managerBound     = globals.manager;
             e.clientHasObject  = globals.object;
-            // P9: the decoration is read again when the window's surface commits a new size or window geometry, so an ordinary
-            // frame costs two comparisons (review of 3ca47a4b: the request was read at every commit of every window); a client
-            // that switches later is read at that commit, or at window.updateRules. The xdg surface's own commit event: it comes
-            // once the xdg surface took the commit's state (its window geometry), which the surface's event may precede.
+            // P9 (R7-REQ-01): the frame read at the map decides at once: the first buffer has the size its geometry describes.
+            e.frame.atMap(frameReadOf(w));
+            // P9: the decoration is read again when the window's frame answer changes or its surface commits a new size or window
+            // geometry, not at every commit (review of 3ca47a4b: the request was read at every commit of every window; onCommit
+            // says what an unchanged commit still costs); a client that switches later is read at that commit, or at
+            // window.updateRules. The xdg surface's own commit event: it comes once the xdg surface took the commit's state (its
+            // window geometry), which the surface's event may precede.
             if (const auto xdg = w->m_xdgSurface.lock())
                 e.commit = xdg->m_events.commit.listen([key] { guarded("client chrome commit", [key] { onCommit(key); }); });
             e.stateChanged = top->m_events.stateChanged.listen([key] {

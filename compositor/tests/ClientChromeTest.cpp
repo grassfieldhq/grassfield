@@ -142,18 +142,79 @@ TEST(ClientChromeDecoration, AFramelessWindowThatDrawsNothingKeepsThePluginsTitl
 }
 
 TEST(ClientChromeDecoration, AFrameIsAWindowGeometryInsideItsSurface) {
-    using gf::chrome::framedInside;
+    using gf::chrome::FrameRead;
+    using gf::chrome::frameRead;
     using gf::titlebar::Rect;
-    EXPECT_TRUE(framedInside(Rect{16, 16, 420, 260}, 452, 292)) << "shadow margins on every side (lib_ui, GTK CSD)";
-    EXPECT_TRUE(framedInside(Rect{0, 0, 420, 260}, 420, 280)) << "a margin on one side only";
-    EXPECT_TRUE(framedInside(Rect{2, 0, 418, 260}, 420, 260)) << "kFrameInsetMin exactly";
-    EXPECT_FALSE(framedInside(Rect{0, 0, 420, 260}, 420, 260)) << "the whole surface: Qt without custom margins, foot";
-    EXPECT_FALSE(framedInside(Rect{1, 1, 419, 259}, 421, 261)) << "under kFrameInsetMin: a rounding, not a frame";
-    EXPECT_FALSE(framedInside(Rect{}, 420, 260)) << "never set: nothing proved";
-    EXPECT_FALSE(framedInside(Rect{16, 16, 420, 260}, 0, 0)) << "no surface size yet";
-    EXPECT_FALSE(framedInside(Rect{-10, 0, 440, 260}, 420, 260)) << "reaches outside the surface";
-    EXPECT_FALSE(framedInside(Rect{16, 16, 500, 260}, 452, 292)) << "wider than the surface";
-    EXPECT_FALSE(framedInside(Rect{16, 16, 420, 260}, std::numeric_limits<double>::quiet_NaN(), 292)) << "an unknown size";
+    EXPECT_EQ(frameRead(Rect{16, 16, 420, 260}, 452, 292), FrameRead::Inside) << "shadow margins on every side (lib_ui, GTK CSD)";
+    EXPECT_EQ(frameRead(Rect{0, 0, 420, 260}, 420, 280), FrameRead::Inside) << "a margin on one side only";
+    EXPECT_EQ(frameRead(Rect{2, 0, 418, 260}, 420, 260), FrameRead::Inside) << "kFrameInsetMin exactly";
+    EXPECT_EQ(frameRead(Rect{0, 0, 420, 260}, 420, 260), FrameRead::Whole) << "the whole surface: Qt without custom margins, foot";
+    EXPECT_EQ(frameRead(Rect{1, 1, 419, 259}, 421, 261), FrameRead::Whole) << "under kFrameInsetMin: a rounding, not a frame";
+    EXPECT_EQ(frameRead(Rect{}, 420, 260), FrameRead::Unknown) << "never set: nothing proved";
+    EXPECT_EQ(frameRead(Rect{16, 16, 420, 260}, 0, 0), FrameRead::Unknown) << "no surface size yet";
+    EXPECT_EQ(frameRead(Rect{-10, 0, 440, 260}, 420, 260), FrameRead::Unknown) << "reaches outside the surface";
+    EXPECT_EQ(frameRead(Rect{0, 0, 1904, 1040}, 420, 260), FrameRead::Unknown)
+        << "a growing window's new geometry before its buffer (zooming to Fill): nothing proved";
+    EXPECT_EQ(frameRead(Rect{16, 16, 420, 260}, std::numeric_limits<double>::quiet_NaN(), 292), FrameRead::Unknown) << "an unknown size";
+}
+
+// Review of c36220a3: QtWayland sends a shrinking window's new geometry before the buffer of that size, so one commit in between
+// reads Inside for a frameless window that draws nothing (leaving Fill at scale 1: geometry 420x260 on the 1904x1040 buffer).
+// Kept for the window's life, as c36220a3 did, that one read would have taken its only bar away for good (R7-REQ-01 again).
+TEST(ClientChromeDecoration, AShrinkingWindowsGeometryBeforeItsBufferDoesNotTagIt) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    using gf::chrome::frameRead;
+    using gf::titlebar::Rect;
+    CFrameEvidence e;
+    e.atMap(frameRead(Rect{0, 0, 420, 260}, 420, 260));
+    EXPECT_FALSE(e.framed()) << "a frameless window that draws nothing, at its map";
+    EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 1904, 1040}, 420, 260), false)) << "zooming: the geometry first (Unknown)";
+    EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 1904, 1040}, 1904, 1040), true)) << "zoomed: its buffer";
+    EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 420, 260}, 1904, 1040), false)) << "leaving Fill: the geometry before the buffer";
+    EXPECT_FALSE(e.framed()) << "one Inside read tags nothing";
+    EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 420, 260}, 420, 260), false)) << "its buffer of that size";
+    EXPECT_FALSE(e.framed());
+    for (int step = 0; step < 5; ++step) { // an interactive shrink: each step's geometry before its buffer
+        const double w = 400.0 - (step * 10.0);
+        e.onCommit(frameRead(Rect{0, 0, w, 250}, w + 10.0, 250), false);
+        e.onCommit(frameRead(Rect{0, 0, w, 250}, w, 250), false);
+    }
+    EXPECT_FALSE(e.framed()) << "a resize never tags it either";
+}
+
+TEST(ClientChromeDecoration, AFrameDrawnSinceTheMapOrForTwoCommitsTagsTheWindow) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence atMap;
+    atMap.atMap(FrameRead::Inside);
+    EXPECT_TRUE(atMap.framed()) << "Telegram: its first buffer already has its shadow margins";
+    CFrameEvidence later;
+    later.atMap(FrameRead::Whole);
+    EXPECT_FALSE(later.onCommit(FrameRead::Inside, false));
+    EXPECT_TRUE(later.onCommit(FrameRead::Inside, false)) << "margins set after the map: two commits";
+    CFrameEvidence gap;
+    gap.atMap(FrameRead::Unknown);
+    EXPECT_FALSE(gap.framed()) << "nothing proved at the map";
+    EXPECT_FALSE(gap.onCommit(FrameRead::Inside, false));
+    EXPECT_FALSE(gap.onCommit(FrameRead::Unknown, false)) << "an Unknown read neither counts nor breaks the run";
+    EXPECT_TRUE(gap.onCommit(FrameRead::Inside, false));
+}
+
+TEST(ClientChromeDecoration, AFrameDroppedWhileZoomedKeepsTheTagAndTwoBareCommitsRemoveIt) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence e;
+    e.atMap(FrameRead::Inside);
+    for (int i = 0; i < 4; ++i)
+        EXPECT_FALSE(e.onCommit(FrameRead::Whole, true)) << "zoomed or in full screen: lib_ui and GTK drop their shadow";
+    EXPECT_TRUE(e.framed());
+    EXPECT_FALSE(e.onCommit(FrameRead::Whole, false)) << "back from Fill, one commit before its margins return";
+    EXPECT_FALSE(e.onCommit(FrameRead::Inside, false));
+    EXPECT_TRUE(e.framed()) << "Telegram keeps its tag";
+    EXPECT_FALSE(e.onCommit(FrameRead::Whole, false));
+    EXPECT_TRUE(e.onCommit(FrameRead::Whole, false)) << "two bare commits while floating: no frame any more, the plugin's bar";
+    EXPECT_FALSE(e.framed());
 }
 
 TEST(ClientChromeDecoration, ARequestThatProvesNoBarKeepsThePluginsTitlebar) {
