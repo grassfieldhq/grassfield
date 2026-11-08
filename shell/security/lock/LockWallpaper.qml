@@ -9,7 +9,7 @@ import "../../lib/RunMode.js" as RunMode
 // What the desktop last showed on each output, as the lock reads it (ADR-0041 step 1, S2; ADR-0040 step 4a's first item left to
 // S2: the security process needs its own watched reader of wallpaper.json `shown`, with the pure WallpaperConfig.lockBackdropOf;
 // the desktop's WallpaperState starts processes and writes files, and lives in the UI). Read-only: it reads
-// $GRASSFIELD_STATE_HOME/wallpaper.json (else $XDG_STATE_HOME/grassfield/wallpaper.json), written by the UI's WallpaperState,
+// $XDG_STATE_HOME/grassfield/wallpaper.json (the UI's state folder; see stateFile), written by the UI's WallpaperState,
 // with a bounded read (one `head` at start and after each change the watch reports), and writes nothing. Display only: nothing here can lock, unlock or keep the lock from engaging; a file that
 // is missing, too large or not JSON gives no record (the lock surfaces then show the ground, then the artwork).
 Scope {
@@ -26,7 +26,10 @@ Scope {
     })
     readonly property string preparedDir: root.cacheDir + "/prepared"
     readonly property string videoDir: root.cacheDir + "/video"
-    readonly property string stateFile: RunMode.stateDir(Quickshell.env("GRASSFIELD_STATE_HOME"), Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME") || "") + "/wallpaper.json"
+    // $XDG_STATE_HOME/grassfield (else ~/.local/state/grassfield), the UI's state folder in a real session. A security module
+    // reads no GRASSFIELD_* variable but the dev gate's (ADR-0019, tests/ci/run_mode.py), so not GRASSFIELD_STATE_HOME: the dev
+    // session gives this process an XDG_STATE_HOME whose grassfield folder is the dev state (scripts/dev/shell-run.sh).
+    readonly property string stateFile: RunMode.stateDir("", Quickshell.env("XDG_STATE_HOME"), Quickshell.env("HOME") || "") + "/wallpaper.json"
     // A real wallpaper.json holds 16 outputs at most; anything larger is not read.
     readonly property int maxBytes: 262144
 

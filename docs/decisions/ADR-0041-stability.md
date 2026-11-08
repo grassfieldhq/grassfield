@@ -393,9 +393,11 @@ down, how sleep behaves) is written in the table at the end of this step.
   `Grassfield.Ui`'s `GrassfieldArtwork` (no `qs.desktop`); `Lock.lock()` no longer calls `Popups.close()` (the UI closes its
   popups when it reads the session locked, GF-116); the sleep inhibitor's notice goes through the notification server's
   public D-Bus interface (`busctl --user --auto-start=no ... Notify`: no other daemon is ever activated; while the UI is
-  down the journal has it; in a dev session only on its private bus); ADR-0040 step 4a's first item: the lock reads
+  down the journal has it; never in a dev session, journal only); ADR-0040 step 4a's first item: the lock reads
   `wallpaper.json` through its own watched, bounded reader (`LockWallpaper.qml`: `head -c` with a timeout, the pure
-  `WallpaperConfig.lockBackdropOf`; the desktop's `WallpaperState` starts processes and writes files); the account picture
+  `WallpaperConfig.lockBackdropOf`; the desktop's `WallpaperState` starts processes and writes files; found under
+  `$XDG_STATE_HOME/grassfield`, since a security module reads no `GRASSFIELD_*` variable but the dev gate's, ADR-0019,
+  and the dev session gives the process an `XDG_STATE_HOME` linked to its state); the account picture
   is made by `services/image-copy.py file` into the process's own file (`LockAvatar.qml`; the UI's `ThemeIcons` empties a
   directory the security process must not touch); the ground before the backdrop is `wallpaper.json`'s `ground`; the power
   source is `UPower.onBattery` (the UI's `Battery` runs a power-profile command on every change). The lock and idle name

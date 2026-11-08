@@ -252,8 +252,12 @@ fi
 # .dev/security.sig), as when the visual suite switches language: then it is restarted too.
 security_sig="lang=${GRASSFIELD_LANG:-} fixtures=${GRASSFIELD_VISUAL_FIXTURES:-} time=${GRASSFIELD_FIXED_TIME:-} bus=$private unit=${GRASSFIELD_UNIT_ENV:-} pam=${GRASSFIELD_DEV_ALLOW_PAM:-}"
 start_security() {
+  # The security modules read no GRASSFIELD_* variable but the dev gate's (ADR-0019): the lock finds the UI's wallpaper.json
+  # under $XDG_STATE_HOME/grassfield, here a link to the dev state the shell writes (.dev/state).
+  mkdir -p "$dev/security-xdg-state"
+  ln -sfn "$dev/state" "$dev/security-xdg-state/grassfield"
   env "${unit_unset[@]}" "${timing[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/open-shims:$PATH" \
-    WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" \
+    WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" XDG_STATE_HOME="$dev/security-xdg-state" \
     GRASSFIELD_STATE_HOME="$dev/state" GRASSFIELD_CONFIG_HOME="$dev/config" GRASSFIELD_DEV=1 \
     GRASSFIELD_PRIVATE_BUS="$private" \
     QT_QPA_PLATFORM=wayland QT_NO_XDG_DESKTOP_PORTAL=1 QML_IMPORT_PATH="$root/ui:$dev/build/qml" GRASSFIELD_TRANSLATIONS_DIR="$dev/translations" \

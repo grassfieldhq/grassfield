@@ -28,8 +28,8 @@ import "../../lib/RunMode.js" as RunMode
 // withdrawn once it runs again. The notice goes through the notification server's public D-Bus interface (ADR-0041 S2:
 // this module runs in the security process, the server in the UI): `busctl --user --auto-start=no call
 // org.freedesktop.Notifications ... Notify`, never starting another notification daemon by D-Bus activation; while the UI
-// is down the call fails and the journal line above is all there is. In a dev session it is posted only on the dev
-// session's private bus (the rule of RunMode.ownBus), never on the owner's.
+// is down the call fails and the journal line above is all there is. In a dev session it is never posted (journal only):
+// nothing of the dev session may reach the owner's notification server.
 // The sleep delay lasts at most what logind allows (InhibitDelayMaxUSec, IdleModel.sleepBudgetMs).
 // In the nested dev session (RunMode.dev through the relative import, which no QML import path can replace:
 // GRASSFIELD_DEV=1 and no GRASSFIELD_SESSION=1) the inhibitor is never taken: it would delay the owner's real suspend.
@@ -50,9 +50,9 @@ Scope {
     // The notice's id from the notification server (0: none shown); "pending" while the Notify call runs.
     property int noticeId: 0
     property bool noticeWanted: false
-    // May post on this session bus (always outside dev; in dev only on the private bus of the dev session).
-    // The rule of RunMode.ownBus, from this file's own dev gate (a security module reads GRASSFIELD_DEV only through it).
-    readonly property bool ownBus: !root.dev || Quickshell.env("GRASSFIELD_PRIVATE_BUS") === "1"
+    // May post on the session bus: always in a real session, never in a dev one (its notices go to the journal only: a
+    // security module reads no GRASSFIELD_* variable but the dev gate's, ADR-0019, so it cannot tell a private bus).
+    readonly property bool ownBus: !root.dev
     // Longest wait for a confirmed lock before the sleep delay is released (logind's window, read at start).
     property int budgetMs: IdleModel.sleepBudgetMs("")
     // Prefix for long-lived children: die with the shell (PR_SET_PDEATHSIG, kept across exec).
@@ -129,7 +129,7 @@ Scope {
     // server answers with an error instead of starting another daemon that would then hold the name.
     function postNotice(summary: string, body: string): void {
         if (!root.ownBus) {
-            console.info("grassfield-idle: notice not posted (dev session without its private bus): " + summary);
+            console.info("grassfield-idle: notice not posted (dev session): " + summary);
             return;
         }
         notify.command = ["busctl", "--user", "--auto-start=no", "--timeout=5", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "Notify", "susssasa{sv}i", "Grassfield", String(root.noticeId), "", summary, body, "0", "0", "-1"];
