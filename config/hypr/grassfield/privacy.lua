@@ -10,8 +10,11 @@
 -- count; the stop is printed to Hyprland's log). A new protected app in a later Omarchy release
 -- is picked up without a Grassfield change; tests/security/screenshare_rules.sh compares both sets.
 --
--- The matches Omarchy 4.0.x ships are always applied as well (duplicates dropped), so a file that stops early, moves or
--- disappears never leaves 1Password or Bitwarden unprotected (fail safe). Loaded by core.lua in both the real and the
+-- The matches Omarchy 4.5.0 ships are always applied as well (duplicates dropped), so a file that stops early, moves or
+-- disappears never leaves 1Password or Bitwarden unprotected (fail safe). They also are the clipboard history's list of
+-- password managers (shell/services/ClipboardLogic.js PROTECTED_CLASSES, the same strings: tests/unit/tst_clipboard.qml),
+-- and tests/security/screenshare_rules.sh fails when the installed Omarchy protects a window they do not name (R7-SEC-03).
+-- Loaded by core.lua in both the real and the
 -- nested session. Returns { source = "omarchy"|"builtin" (nothing read from Omarchy), matches = { <match table>... },
 -- skipped = { "<file>: <error>"... }, layers = { <namespace regex>... } (the shell's sheets, below) }.
 
@@ -23,11 +26,13 @@ if not omarchy_path or omarchy_path == "" then
 end
 local apps_dir = omarchy_path .. "/default/hypr/apps"
 
--- Omarchy 4.0.6 default/hypr/apps/1password.lua and bitwarden.lua (basecamp/omarchy@237f1b4), always applied.
+-- Omarchy 4.5.0 default/hypr/apps/1password.lua and bitwarden.lua, always applied: 1Password before and after 8.12 (app id
+-- com.onepassword.OnePassword), Bitwarden, and its browser extension's window in any browser and profile. Each covers the
+-- 4.0.6 match it replaces (^(1[p|P]assword)$, ^(Bitwarden)$, chrome-nngceckbapebfimnlniiiahkandclblb-Default).
 local BUILTIN = {
-  { class = "^(1[p|P]assword)$" },
-  { class = "^(Bitwarden)$" },
-  { class = "chrome-nngceckbapebfimnlniiiahkandclblb-Default" },
+  { class = "^(1[pP]assword|com\\.onepassword\\.OnePassword)$" },
+  { class = "^([bB]itwarden)$" },
+  { class = ".*nngceckbapebfimnlniiiahkandclblb.*" },
 }
 
 -- Copy of a match: a string is a class regex (Omarchy's o.window), a table keeps its plain string/number/boolean fields.

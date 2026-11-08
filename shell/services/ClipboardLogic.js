@@ -15,9 +15,11 @@ const PASTE_POLL_MS = 50;
 // macOS 27's three durations (Settings > Search), in milliseconds.
 const RETENTION = {"30m": 30 * 60 * 1000, "8h": 8 * 3600 * 1000, "7d": 7 * 24 * 3600 * 1000};
 
-// The windows the session hides from screen sharing (config/hypr/grassfield/privacy.lua, its BUILTIN matches, class regexes):
-// password managers that may set no hint (Bitwarden). A copy is not recorded while one of them is the active window.
-const PROTECTED_CLASSES = ["^(1[p|P]assword)$", "^(Bitwarden)$", "chrome-nngceckbapebfimnlniiiahkandclblb-Default"];
+// The windows the session hides from screen sharing (config/hypr/grassfield/privacy.lua, its BUILTIN matches, class regexes,
+// the same strings: Omarchy 4.5.0's no_screen_share rules): password managers that may set no hint (Bitwarden). A copy is not
+// recorded while one of them is the active window. tests/security/screenshare_rules.sh fails when the installed Omarchy
+// protects a window privacy.lua's list does not name (R7-SEC-03).
+const PROTECTED_CLASSES = ["^(1[pP]assword|com\\.onepassword\\.OnePassword)$", "^([bB]itwarden)$", ".*nngceckbapebfimnlniiiahkandclblb.*"];
 // The terminal test of config/hypr/grassfield/forwarding.lua (terminal_focused), whole: its classes (lower case, exact) and its
 // prefixes. tests/unit/tst_clipboard.qml reads forwarding.lua and checks both lists.
 const TERMINAL_CLASSES = ["alacritty", "kitty", "com.mitchellh.ghostty", "foot", "org.codeberg.dnkl.foot", "wezterm", "org.wezfurlong.wezterm"];

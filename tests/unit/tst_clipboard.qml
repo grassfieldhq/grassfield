@@ -58,8 +58,22 @@ TestCase {
         const re = /class = "([^"]+)"/g;
         let m;
         while ((m = re.exec(block)) !== null)
-            found.push(m[1]);
+            found.push(m[1].replace(/\\(.)/g, "$1")); // the Lua string's value: "\\." is "\."
         compare(found.join(" "), Logic.PROTECTED_CLASSES.join(" "));
+    }
+
+    // R7-SEC-03: the list is Omarchy 4.5.0's (1Password 8.12's reverse-DNS app id, Bitwarden either case, the Bitwarden
+    // extension in any browser and profile), and still covers every class Omarchy 4.0.6's list matched.
+    function test_protectedClassesFollowOmarchy45() {
+        for (const cls of ["1Password", "1password", "com.onepassword.OnePassword", "Bitwarden", "bitwarden",
+                           "chrome-nngceckbapebfimnlniiiahkandclblb-Default", "chrome-nngceckbapebfimnlniiiahkandclblb-Profile_1",
+                           "brave-nngceckbapebfimnlniiiahkandclblb-Default", "msedge-nngceckbapebfimnlniiiahkandclblb-Default"]) {
+            verify(Logic.isProtectedClass(cls), cls + " is a protected password manager");
+            verify(!Logic.mayRecord(open({activeClass: cls})), "no copy is recorded while " + cls + " is in front");
+        }
+        for (const cls of ["org.gnome.TextEditor", "com.onepassword.OnePasswordX", "xcom.onepassword.OnePassword", "1Passwords",
+                           "Bitwardens", "firefox", "chromium"])
+            verify(!Logic.isProtectedClass(cls), cls + " is not a password manager");
     }
 
     function test_terminalTestIsForwardingLuas() {

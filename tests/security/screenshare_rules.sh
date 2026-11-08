@@ -56,6 +56,9 @@ run() { # <OMARCHY_PATH>: evaluates privacy.lua there (its prints go to stdout t
   (cd "$tmp" && env OMARCHY_PATH="$1" lua "$tmp/run.lua" "$root/config/hypr/grassfield/privacy.lua")
 }
 
+# The built-in matches (privacy.lua BUILTIN: Omarchy 4.5.0's, R7-SEC-03), as run.lua prints them.
+builtin=('class=^(1[pP]assword|com\.onepassword\.OnePassword)$' 'class=^([bB]itwarden)$' 'class=.*nngceckbapebfimnlniiiahkandclblb.*')
+
 # --- omarchy: the installed rule set ---
 apps=/usr/share/omarchy/default/hypr/apps
 if [[ -d $apps ]]; then
@@ -64,9 +67,17 @@ if [[ -d $apps ]]; then
   got=$(grep -c '^gf-no-screen-share-[0-9]*|true|' <<<"$out" || true)
   [[ $out == *"source omarchy"* ]] && pass "omarchy: rules read from Omarchy's files" || bad "omarchy: source is not Omarchy: $out"
   ((want > 0 && got >= want)) && pass "omarchy: $got rules for $want no_screen_share rules in $apps (built-in ones merged)" || bad "omarchy: $got rules, Omarchy has $want"
-  for m in 'class=^(1[p|P]assword)$' 'class=^(Bitwarden)$' 'class=chrome-nngceckbapebfimnlniiiahkandclblb-Default'; do
+  for m in "${builtin[@]}"; do
     grep -qF "|true|$m" <<<"$out" && pass "omarchy: protected $m" || bad "omarchy: $m is not protected"
   done
+  # R7-SEC-03: the built-in list is the installed Omarchy's, so that the clipboard history (which takes the built-in list,
+  # shell/services/ClipboardLogic.js, tests/unit/tst_clipboard.qml) skips every password manager screen sharing hides. A
+  # match Omarchy adds is printed: add it to privacy.lua's BUILTIN and to PROTECTED_CLASSES (a class regex), or decide.
+  extra=$(grep '^gf-no-screen-share-[0-9]*|true|' <<<"$out" | sed 's/^[^|]*|true|//' | while IFS= read -r m; do
+    printf '%s\n' "${builtin[@]}" | grep -qxF -- "$m" || printf '%s\n' "$m"
+  done)
+  [[ -z $extra ]] && pass "omarchy: every window the installed Omarchy hides from screen sharing is in the built-in list (the clipboard's)" \
+    || bad "omarchy: the built-in list (and the clipboard's) misses Omarchy's: $(tr '\n' ' ' <<<"$extra")"
 else
   echo "SKIP: screenshare omarchy: $apps not installed (fixture and fallback cases still run)"
 fi
@@ -106,7 +117,7 @@ else
 fi
 n=$(grep -c '^gf-no-screen-share-' <<<"$out" || true)
 ((n == 6)) && pass "fixture: exactly 6 rules (3 read, 3 built-in)" || bad "fixture: $n rules"
-for m in 'class=^(1[p|P]assword)$' 'class=^(Bitwarden)$' 'class=chrome-nngceckbapebfimnlniiiahkandclblb-Default'; do
+for m in "${builtin[@]}"; do
   grep -qF "|true|$m" <<<"$out" && pass "fixture: built-in $m applied although the tree does not declare it" || bad "fixture: built-in $m missing"
 done
 [[ ! -e $tmp/marker-os && ! -e $tmp/marker-io ]] && pass "fixture: os/io calls of an Omarchy file never ran" || bad "fixture: a marker file was created"
@@ -115,10 +126,10 @@ grep -q 'stopped reading .*b-evil.lua' <<<"$out" && grep -q 'stopped reading .*d
 
 # --- a 1password.lua that stops before its rule (reviewer note b): 1Password stays protected ---
 mkdir -p "$tmp/om2/default/hypr/apps"
-printf 'os.execute("touch marker-1p")\no.window("^(1[p|P]assword)$", { no_screen_share = true })\n' >"$tmp/om2/default/hypr/apps/1password.lua"
-printf 'o.window("^(Bitwarden)$", { no_screen_share = true })\n' >"$tmp/om2/default/hypr/apps/bitwarden.lua"
+printf 'os.execute("touch marker-1p")\no.window("^(1[pP]assword|com\\\\.onepassword\\\\.OnePassword)$", { no_screen_share = true })\n' >"$tmp/om2/default/hypr/apps/1password.lua"
+printf 'o.window("^([bB]itwarden)$", { no_screen_share = true })\n' >"$tmp/om2/default/hypr/apps/bitwarden.lua"
 out=$(run "$tmp/om2")
-grep -qF '|true|class=^(1[p|P]assword)$' <<<"$out" && [[ ! -e $tmp/marker-1p ]] \
+grep -qF "|true|${builtin[0]}" <<<"$out" && [[ ! -e $tmp/marker-1p ]] \
   && pass "stopped file: 1Password still protected by the built-in match, nothing of the file ran" || bad "stopped file: 1Password unprotected: $out"
 n=$(grep -c '^gf-no-screen-share-' <<<"$out" || true)
 ((n == 3)) && pass "stopped file: no duplicate rules (3)" || bad "stopped file: $n rules"
@@ -126,7 +137,7 @@ n=$(grep -c '^gf-no-screen-share-' <<<"$out" || true)
 # --- builtin: nothing readable ---
 out=$(run "$tmp/none")
 [[ $out == *"source builtin"* ]] && pass "builtin: reported when no Omarchy rule can be read" || bad "builtin: source: $out"
-for m in 'class=^(1[p|P]assword)$' 'class=^(Bitwarden)$' 'class=chrome-nngceckbapebfimnlniiiahkandclblb-Default'; do
+for m in "${builtin[@]}"; do
   grep -qF "|true|$m" <<<"$out" && pass "builtin: protected $m" || bad "builtin: $m missing"
 done
 
