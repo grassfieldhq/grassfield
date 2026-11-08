@@ -363,7 +363,7 @@ package_grassfield-desktop() {
   # the templates they write /etc/pacman.d/grassfield.conf from; Omarchy's pre-refresh-pacman hook that
   # grassfield-channel-set links. grassfield-channel-set, grassfield-update-check and grassfield-update-run come from
   # packaging/bin above.
-  install -m755 -t "$pkgdir/usr/lib/grassfield/" "$root/packaging/pacman/grassfield-channel-helper" \
+  install -m755 -t "$pkgdir/usr/lib/grassfield/" "$root/packaging/pacman/grassfield-channel-helper" "$root/packaging/pacman/grassfield-hold-helper" \
     "$root/packaging/pacman/grassfield-update-helper" "$root/packaging/pacman/grassfield-channel-scriptlet"
   install -m644 -t "$pkgdir/usr/lib/grassfield/" "$root/packaging/pacman/grassfield-channel.sh"
   # grassfield-channel-set's `hold-state` reads the hold's bounds with the code the build computed them with.

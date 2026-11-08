@@ -459,16 +459,21 @@ job as 1.0 blockers (R7-INS-01, R7-INS-02; R7-ARC-01, safe mode, is not part of 
   `conflicts=(grassfield-hold)`. `grassfield-desktop` depends on `grassfield-hold` (the literal name pacman resolves first). The
   install script's `--uninstall` lists both. `tests/ci/hold_parity.py` checks that BUILD-DEPS, GU_TRACKED, ADR-0033's s3.4 table, U27
   and the hold name the same packages (the hold bounds exactly quickshell and qt6-base, never hyprland or kcoreaddons).
-- **The root verbs** (`grassfield-channel-helper hold|unhold`, `gf_hold_swap` in `grassfield-channel.sh`, behind the existing polkit
-  action `org.grassfield.packages.set-channel`, whose message now says "change how Grassfield gets its updates"): the verb picks one
-  of two constants, so no package name ever comes from the caller; one transaction `pacman -S --noconfirm --ask 4 --needed
-  grassfield/<package>` (the repository is named, so no other one can supply the package); before it, four refusals with nothing
-  changed (no `[grassfield]` section; the package not in the synced list; a `pacman -S --print` plan that is more than that one
+- **The root verbs** (`grassfield-hold-helper hold|unhold`, `gf_hold_swap` in `grassfield-channel.sh`, behind their own polkit
+  action `org.grassfield.packages.hold`, `auth_admin` every time, never kept: the opus review found that a package transaction
+  under `set-channel`'s kept password broke SU-M1 and ADR-0033's "no other privilege"; the channel helper has no hold verb): the verb picks one
+  of two constants, so no package name ever comes from the caller; one transaction `pacman -S --noconfirm --ask 4 --needed --asdeps
+  grassfield/<package>=<version>` (the repository is named and the version pinned to the one read; `--asdeps`, so removing
+  grassfield-desktop takes the pair along); before it, refusals with nothing changed (no `[grassfield]` section; the package not in
+  the synced list; a conflict other than the twin, since `--ask 4` answers every conflict question yes; a `pacman -S --print` plan that is more than that one
   package, which is what refuses a `hold` the installed toolkit no longer satisfies instead of letting pacman fetch other
   versions; `db.lck`); after it, exactly one of the two is installed. The `-Rdd` fallback of 2a is NOT coded: the first container
   case of `tests/integration/update_hold.sh` decides, and a failed swap changes nothing.
+After the transaction the installed set must differ by the twin only, or the helper says so loudly.
 - **The update helper** reads pacman's refusal of its plan: an error line "required by grassfield-hold" gives exit 6 (`incompatible
-  grassfield-hold`, the U27 path) instead of 8. Settings shows the existing sentence, plus "Allow…" while held.
+  grassfield-hold`, the U27 path) instead of 8, only when pacman failed. With the twin installed, U27 does not compare `qt6-base` and
+  `quickshell` (`u27_exempt`; review blocker: Update Now would otherwise refuse after "Allow…" what pacman now lets through).
+  Settings shows the existing sentence, plus "Allow…" while held.
 - **Settings** (U39): a row "System updates Grassfield hasn't tested" with "Allow…" or "Hold Again" (disabled with the reason when the
   installed toolkit is past the bounds of the installed build), from `grassfield-channel-set hold-state` (read-only), and "Allow…" in the
   refused-update sentence; `grassfield-channel-set` gains `hold`, `unhold`, `hold-state`; the shell's end notice for exit 6 names the way

@@ -775,8 +775,8 @@ restart kernel
         verify(again && again.enabled);
         again.clicked();
         compare(t.backend.actions[t.backend.actions.length - 1], {argv: ["/usr/lib/grassfield/grassfield-channel-set", "hold"], tag: "update.hold.act"});
-        t.backend.endAction("update.hold.act", false, "grassfield-channel-set: the change failed (grassfield-channel-helper hold: exit 1); nothing else was changed");
-        verify(shown(t.page, i => i.footnote === "System updates were not held back: the change failed (grassfield-channel-helper hold: exit 1); nothing else was changed"));
+        t.backend.endAction("update.hold.act", false, "grassfield-channel-set: the change failed (grassfield-hold-helper hold: exit 1); nothing else was changed");
+        verify(shown(t.page, i => i.footnote === "System updates were not held back: the change failed (grassfield-hold-helper hold: exit 1); nothing else was changed"));
         // Moved past the bounds: greyed, with the reason.
         const m = make(available(), {hold: "allowed-moved"});
         verify(!button(m.page, "Hold Again").enabled);

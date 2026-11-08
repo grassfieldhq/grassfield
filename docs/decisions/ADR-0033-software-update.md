@@ -369,10 +369,15 @@ other option was Omarchy's model, sudo in its floating terminal (A). The pieces:
 2. **The polkit action** `org.grassfield.packages.set-channel`, in `/usr/share/polkit-1/actions/org.grassfield.packages.policy`:
    - `allow_any` and `allow_inactive` are `no`, `allow_active` is `auth_admin_keep`;
    - `org.freedesktop.policykit.exec.path` is the helper;
-   - the message, in English and French: "Authentication is required to change how Grassfield gets its updates" (« Une
-     authentification est nécessaire pour modifier la façon dont Grassfield reçoit ses mises à jour »; reworded on 2026-11-08
-     when the same action took the two verbs `hold` and `unhold`, ADR-0041 step 2a, which swap grassfield-hold and
-     grassfield-unhold in one pacman transaction: no other privilege is added).
+   - the message, in English and French: "Authentication is required to change where Grassfield gets its updates" (« Une
+     authentification est nécessaire pour changer la source des mises à jour de Grassfield »).
+   - Amended 2026-11-08 (ADR-0041 step 2a, after the opus review): the swap of grassfield-hold and grassfield-unhold is a package
+     transaction, so it is NOT this action (a kept password, "no other privilege is added") but its own,
+     `org.grassfield.packages.hold`: program `/usr/lib/grassfield/grassfield-hold-helper` (verbs `hold` and `unhold` only;
+     pkexec maps a program path to one action, so the helper runs under that action and no other), `allow_any` and
+     `allow_inactive` `no`, `allow_active` `auth_admin` (a password every time, as for Update Now, SU-M1). Its message says what
+     it does: "Authentication is required to let system updates install versions Grassfield has not tested, or to hold them
+     back again". The channel helper has no hold verb.
    The dialog is Grassfield's polkit sheet in a Grassfield session (SEC6), Omarchy's agent in an Omarchy session, and pkexec
    itself on a text console.
 3. **`grassfield-channel-set [stable|beta|off|repair]`**, in `/usr/bin`, is the user's command; it refuses to run as root.

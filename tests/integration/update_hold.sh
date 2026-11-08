@@ -16,12 +16,14 @@
 #   - a system upgrade that moves Qt or Quickshell is REFUSED by pacman, naming grassfield-hold, with nothing installed;
 #   - the REAL grassfield-update-helper, given the same update, exits 6 (`incompatible grassfield-hold`), not 8;
 #   - the same upgrade with the matching grassfield-desktop, hold and twin in the repository goes through in one transaction;
-#   - the REAL grassfield-channel-helper's `unhold` swaps the hold for its twin in ONE pacman transaction (--ask 4: if pacman
+#   - the REAL grassfield-hold-helper's `unhold` swaps the hold for its twin in ONE pacman transaction (--ask 4: if pacman
 #     does not answer its conflict question that way, the case "unhold replaces the hold" fails and ADR-0041 2a's fallback,
 #     `pacman -Rdd grassfield-hold` then the install, is what the verb must do instead), the upgrade then goes through,
 #     grassfield-desktop stays installed;
 #   - `hold` with the toolkit past the bounds is refused with nothing changed, and grassfield-channel-set's `hold-state`
 #     says allowed-moved; after the next Grassfield build it says allowed and `hold` swaps back;
+#   - both twins are installed as dependencies (`pacman -Qi`: Install Reason), so `pacman -Rns grassfield-desktop` takes the one that
+#     is installed along with it; the channel helper refuses both verbs;
 #   - the helper's refusals: no [grassfield] section, an unknown verb, extra arguments, a package not in the list.
 # Not covered here (the owner's L2 or the integrator's nested session): polkit and pkexec around the helper (the action is
 # the existing org.grassfield.packages.set-channel), Settings' buttons, the shell's notice.
@@ -53,11 +55,13 @@ quiet() { "$@" >>"$W/log" 2>&1; }
 ver() { pacman -Q "$1" 2>/dev/null | cut -d' ' -f2; }
 has() { pacman -Q "$1" >/dev/null 2>&1; }
 newop() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
+HH=/usr/lib/grassfield/grassfield-hold-helper
 CH=/usr/lib/grassfield/grassfield-channel-helper
 UH=/usr/lib/grassfield/grassfield-update-helper
 D=/run/grassfield-update
 # The helpers as pkexec leaves them: root, no terminal, stdin and stdout a pipe.
-chelper() { env -i PATH=/usr/sbin:/usr/bin "$CH" "$@" </dev/null 2>&1 | cat; return "${PIPESTATUS[0]}"; }
+chelper() { env -i PATH=/usr/sbin:/usr/bin "$HH" "$@" </dev/null 2>&1 | cat; return "${PIPESTATUS[0]}"; }
+channelhelper() { env -i PATH=/usr/sbin:/usr/bin "$CH" "$@" </dev/null 2>&1 | cat; return "${PIPESTATUS[0]}"; }
 uhelper() { env -i PATH=/usr/sbin:/usr/bin "$UH" "$@" </dev/null 2>&1 | cat; return "${PIPESTATUS[0]}"; }
 
 say "setup: the real helpers, the bounds library, a local [grassfield] repository"
@@ -66,6 +70,7 @@ quiet pacman-key --init
 quiet pacman-key --populate archlinux
 quiet pacman -Syu --noconfirm python || { echo "FAIL: pacman -Syu (see $W/log)"; tail -5 "$W/log"; exit 1; }
 install -Dm755 /src/packaging/pacman/grassfield-channel-helper "$CH"
+install -Dm755 /src/packaging/pacman/grassfield-hold-helper "$HH"
 install -Dm755 /src/packaging/pacman/grassfield-update-helper "$UH"
 install -Dm644 /src/packaging/pacman/grassfield-channel.sh /usr/lib/grassfield/grassfield-channel.sh
 install -Dm644 /src/packaging/arch/hold-bounds.sh /usr/lib/grassfield/grassfield-hold-bounds.sh
@@ -165,6 +170,8 @@ expect "the update helper installs it (exit 0)" test "$rc" == 0
 expect "  desktop 2, hold 2, qt6-base 6.12.0, quickshell 0.3.2.r7, still no twin" test "$(ver grassfield-desktop):$(ver grassfield-hold):$(ver qt6-base):$(ver quickshell):$(has grassfield-unhold && echo yes || echo no)" == "2-1:2-1:6.12.0-1:0.3.2.r7-1:no"
 
 say "the helper's refusals leave everything as it was"
+channelhelper hold >/dev/null; expect "the channel helper knows no hold verb (exit 2)" test "$?" == 2
+channelhelper unhold >/dev/null; expect "  nor unhold (exit 2)" test "$?" == 2
 chelper hold >/dev/null; expect "hold while held: exit 0, nothing to change" test "$?" == 0
 for args in "" "unhold now" "Unhold" "hold-state" "-S grassfield-unhold" "unhold hold"; do
   # shellcheck disable=SC2086
@@ -227,6 +234,20 @@ quiet repo-add -q "$W/other/other.db.tar.gz" "$W/other/grassfield-hold-99-1-any.
 quiet pacman -Syy
 chelper hold >/dev/null; rc=$?
 expect "hold installs grassfield/grassfield-hold 3, not the other repository's 99" test "$rc:$(ver grassfield-hold)" == "0:3-1"
+
+say "both twins are installed as dependencies, and pacman -Rns of grassfield-desktop takes the installed one along"
+reason() { pacman -Qi "$1" 2>/dev/null | awk -F' *: *' '$1 == "Install Reason" { print $2 }'; }
+expect "the hold of the first install came as a dependency" test "$(reason grassfield-hold)" == "Installed as a dependency for another package"
+quiet pacman -R --noconfirm -dd grassfield-hold
+quiet pacman -S --noconfirm --asdeps grassfield-unhold
+out=$(chelper hold); rc=$?
+expect "hold over the twin: exit 0 ($out)" test "$rc:$(ver grassfield-hold)" == "0:3-1"
+expect "  the hold the helper installed is a dependency" test "$(reason grassfield-hold)" == "Installed as a dependency for another package"
+out=$(chelper unhold); rc=$?
+expect "unhold: exit 0 ($out)" test "$rc:$(ver grassfield-unhold)" == "0:3-1"
+expect "  the twin the helper installed is a dependency" test "$(reason grassfield-unhold)" == "Installed as a dependency for another package"
+quiet pacman -Rns --noconfirm grassfield-desktop
+expect "pacman -Rns grassfield-desktop removes the twin with it (nothing of the pair is left behind)" test "$(has grassfield-desktop && echo yes || echo no):$(has grassfield-hold && echo yes || echo no):$(has grassfield-unhold && echo yes || echo no)" == "no:no:no"
 
 echo
 echo "update_hold: $fails failure(s)"

@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
-<!-- Grassfield Software Update's two actions, each the only way to run its helper as root through pkexec.
+<!-- Grassfield Software Update's three actions, each the only way to run its helper as root through pkexec.
      - set-channel (ADR-0033 c.2, owner decision O1): grassfield-channel-set runs grassfield-channel-helper, which accepts
-       only `set stable|beta`, `restore`, `off`, `hold` and `unhold`. It writes only pacman's [grassfield] configuration and
-       trust, and `hold`/`unhold` swap the two fixed packages grassfield-hold and grassfield-unhold in one pacman
-       transaction (ADR-0041 step 2a). An administrator's password, kept for a few minutes.
+       only `set stable|beta`, `restore` and `off` and writes only pacman's [grassfield] configuration and trust. An
+       administrator's password, kept for a few minutes.
+     - hold (ADR-0041 step 2a, ADR-0033 c.2): grassfield-channel-set runs grassfield-hold-helper, which accepts only `hold` and
+       `unhold` and runs one pacman transaction that swaps the two fixed packages grassfield-hold and grassfield-unhold. It
+       changes which system updates will install, so, as for any package transaction (SU-M1), an administrator's password every
+       time, never kept.
      - update-system (ADR-0033 "Step 3", owner decision SU-M1): Update Now's grassfield-update-run runs
        grassfield-update-helper, which accepts only `run <op-id> [<migration>...]` and installs the system's update. An
        administrator's password every time, as for any system update.
@@ -13,16 +16,28 @@
 <policyconfig>
   <vendor>Grassfield</vendor>
   <action id="org.grassfield.packages.set-channel">
-    <description>Change how Grassfield gets its updates</description>
-    <description xml:lang="fr">Modifier la façon dont Grassfield reçoit ses mises à jour</description>
-    <message>Authentication is required to change how Grassfield gets its updates</message>
-    <message xml:lang="fr">Une authentification est nécessaire pour modifier la façon dont Grassfield reçoit ses mises à jour</message>
+    <description>Change where Grassfield gets its updates</description>
+    <description xml:lang="fr">Changer la source des mises à jour de Grassfield</description>
+    <message>Authentication is required to change where Grassfield gets its updates</message>
+    <message xml:lang="fr">Une authentification est nécessaire pour changer la source des mises à jour de Grassfield</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>
       <allow_active>auth_admin_keep</allow_active>
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/grassfield/grassfield-channel-helper</annotate>
+  </action>
+  <action id="org.grassfield.packages.hold">
+    <description>Change which system updates may install</description>
+    <description xml:lang="fr">Modifier les mises à jour du système autorisées</description>
+    <message>Authentication is required to let system updates install versions Grassfield has not tested, or to hold them back again</message>
+    <message xml:lang="fr">Une authentification est nécessaire pour autoriser des mises à jour du système que Grassfield n'a pas testées, ou pour les retenir de nouveau</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/grassfield/grassfield-hold-helper</annotate>
   </action>
   <action id="org.grassfield.packages.update-system">
     <description>Update this computer's software</description>

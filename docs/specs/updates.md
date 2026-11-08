@@ -261,12 +261,17 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
   unhold`; allowed, "Hold Again" runs `grassfield-channel-set hold`; allowed-moved (the installed Qt or Quickshell is no longer what
   the installed Grassfield was built for, the same comparison as U27 on the build's own BUILD-DEPS), "Hold Again" is disabled and
   the row says "Your system already moved past the versions this Grassfield was built for. Holding comes back with the next
-  Grassfield update." (the next build carries a hold whose bounds match). Both verbs run `grassfield-channel-helper hold|unhold`
-  through the existing polkit action (an administrator's password, kept for a few minutes), one pacman transaction each:
-  `pacman -S --noconfirm --ask 4 --needed grassfield/<package>` (`--ask 4` answers the conflict question; the repository is named
-  so no other one can supply the package), after four refusals with nothing changed: no `[grassfield]` section, the package not
-  in the synced list, a plan (`pacman -S --print`) that is more than that one package (a hold the toolkit no longer satisfies would
-  make pacman fetch other versions), and `db.lck`. The helper's other message: "pacman could not install <package>". The pane checks
+  Grassfield update." (the next build carries a hold whose bounds match). Both verbs run `grassfield-hold-helper hold|unhold`
+  through its own polkit action `org.grassfield.packages.hold` (an administrator's password every time, never kept: it is a
+  package transaction, SU-M1), one pacman transaction each: `pacman -S --noconfirm --ask 4 --needed --asdeps
+  grassfield/<package>=<version>` (`--ask 4` answers the conflict question, so the only conflict allowed is the twin, checked
+  before; the repository is named so no other one can supply the package; the version is the one read, so a database changed in
+  between is not installed; `--asdeps` so `pacman -Rns grassfield-desktop` takes the pair with it), after these refusals with
+  nothing changed: no `[grassfield]` section, the package not in the synced list, a conflict other than the twin (declared by
+  the package or by an installed one), a plan (`pacman -S --print`) that is more than that one package (a hold the toolkit no
+  longer satisfies would make pacman fetch other versions), and `db.lck`; afterwards the installed set must differ by the twin
+  and nothing else, or the helper says so loudly. With the twin installed, U27 does not compare `qt6-base` and `quickshell`
+  (the other three keep their comparison), so Update Now installs what pacman now lets through. The helper's other message: "pacman could not install <package>". The pane checks
   again after either. A system update the hold refuses: the update helper reads pacman's refusal (an error that names
   `grassfield-hold` as the package requiring the broken dependency) and exits 6 (`incompatible grassfield-hold`, the U27 path)
   instead of 8, so the pane says "This update needs a newer version of Grassfield, which isn't available yet." and, while held, "Or
@@ -354,7 +359,7 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
 |---|---|
 | `grassfield-channel-set` run as root (`sudo grassfield-channel-set …`) | refused: "run it as your user; it asks for permission itself" |
 | The helper started without root, with another verb or more arguments, or (pkexec verbs) while pacman's `db.lck` exists | refused, nothing changed |
-| `grassfield-channel-helper` given a scriptlet verb, or `grassfield-channel-scriptlet` given a helper verb | refused, nothing changed (each program knows only its own verbs) |
+| `grassfield-channel-helper` given a scriptlet verb or a hold verb, or `grassfield-channel-scriptlet` given a helper verb | refused, nothing changed (each program knows only its own verbs) |
 | The polkit dialog cancelled, the password wrong, or no agent | the helper does not run; one line under the row; nothing changed |
 | Unknown channel argument | refused, usage printed, nothing changed |
 | A build without the pinned signing key, or whose `GRASSFIELD_REPO_BASE` is the `.invalid` placeholder (both the case until the owner provides a key and hosting) | refused: "no signing key in this build" / "no package repository in this build"; the pane hides "Set Up…", says that Grassfield's own updates are not available in this build, and still offers the system's updates (the container tests build their own `repository.conf` with a `file://` base and a throwaway key) |
@@ -374,7 +379,7 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
 | An update the compatibility check refuses (U27) | nothing changed, the system's sync databases untouched; "This update needs a newer version of Grassfield…" |
 | An update that needs a person (U28) | nothing installed; "Update in Terminal…" |
 | A system update `grassfield-hold` refuses (U39): the update helper reads pacman's error naming it | exit 6, nothing changed; "This update needs a newer version of Grassfield…" with "Allow…" |
-| `grassfield-channel-helper hold` or `unhold` with an argument, another word, no `[grassfield]` section, the package not in the synced list, a plan of more than that package, or `db.lck` | refused (exit 2 for usage, 1 otherwise), nothing changed |
+| `grassfield-hold-helper` with an argument, another verb (the channel verbs included), another word, no `[grassfield]` section, the package not in the synced list, a plan of more than that package, or `db.lck` | refused (exit 2 for usage, 1 otherwise), nothing changed |
 | `hold` after Qt or Quickshell moved past the bounds (U39) | the pane's "Hold Again" is disabled with the reason; the helper's own plan check refuses, nothing changed |
 
 ## Acceptance criteria (each mapped to a test; level)

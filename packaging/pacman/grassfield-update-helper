@@ -296,7 +296,7 @@ if [[ -f $tmpdb/plan.err && ! -L $tmpdb/plan.err ]]; then
   head -c 8192 -- "$tmpdb/plan.err"
   # pacman names the package that requires the broken dependency: "... breaks dependency 'qt6-base<6.13' required by
   # grassfield-hold" (or "unable to satisfy dependency '...' required by grassfield-hold"), in English (LC_ALL=C above).
-  if ((plan_rc != 0)) && head -c 65536 -- "$tmpdb/plan.err" | grep -Eq "required by grassfield-hold( |$)"; then
+  if ((plan_rc != 0)) && head -c 65536 -- "$tmpdb/plan.err" | grep -Eq "[[:space:]]required by grassfield-hold([[:space:]]|$)"; then
     outcome+=("incompatible grassfield-hold")
     finish 6 "this update needs a newer Grassfield (grassfield-hold bounds the toolkit): nothing was changed"
   fi
@@ -434,6 +434,12 @@ compare_key() { # package version -> the part of the version that must match
        fi ;;
   esac
 }
+# ADR-0041 step 2a: the person chose "Allow system updates Grassfield hasn't tested..." (grassfield-unhold installed, and this plan
+# does not bring the hold back): the two packages the hold bounds, qt6-base and quickshell, are not compared here, or Update Now
+# would still refuse what pacman now lets through. The others (hyprland, aquamarine, kcoreaddons) keep their comparison.
+u27_exempt() { # package
+  [[ -n ${installed[grassfield-unhold]-} && -z ${after[grassfield-hold]-} && ($1 == qt6-base || $1 == quickshell) ]]
+}
 check_needed=0
 [[ -n ${after[grassfield-desktop]-} ]] && check_needed=1
 for pkg in "${GU_TRACKED[@]}"; do
@@ -458,6 +464,10 @@ if ((check_needed)) && [[ -n ${after[grassfield-desktop]-} || -n ${installed[gra
   for pkg in "${GU_TRACKED[@]}"; do
     now=${after[$pkg]-${installed[$pkg]-}}
     [[ -z $now ]] && continue
+    if u27_exempt "$pkg"; then
+      say "$pkg $now: not compared, grassfield-unhold is installed (the person allowed system updates Grassfield has not tested)"
+      continue
+    fi
     if [[ -z ${built[$pkg]-} ]]; then
       refused+=("$pkg")
       say "$pkg $now: the record does not name it"

@@ -89,6 +89,11 @@ need(not re.search(r"^  (provides|conflicts|install|backup)=", hold, re.M), "PKG
 need('source "$_here/hold-bounds.sh"' in pkgbuild, "PKGBUILD does not source the bounds library")
 need("grassfield-hold-bounds.sh" in desktop, "PKGBUILD: the bounds library is not installed for grassfield-channel-set")
 
+need("grassfield-hold-helper" in desktop, "PKGBUILD: grassfield-hold-helper is not installed")
+need((ROOT / "packaging/pacman/grassfield-hold-helper").stat().st_mode & 0o111 != 0, "grassfield-hold-helper is not executable")
+policy = read("packaging/pacman/org.grassfield.packages.policy")
+need("org.grassfield.packages.hold" in policy and "/usr/lib/grassfield/grassfield-hold-helper" in policy, "the polkit policy lacks the hold's own action")
+
 if errors:
     print("hold parity: FAIL")
     for e in errors:

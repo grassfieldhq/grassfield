@@ -8,7 +8,8 @@
 #   grassfield-channel-set repair    put [grassfield] back after Omarchy rewrote pacman.conf, or rewrite a custom file
 #   grassfield-channel-set off       turn Grassfield updates off: no [grassfield], no Grassfield key left in pacman
 #   grassfield-channel-set unhold    allow system updates Grassfield hasn't tested (ADR-0041 step 2a): grassfield-unhold
-#                                    replaces grassfield-hold in one root transaction
+#                                    replaces grassfield-hold in one root transaction, by pkexec grassfield-hold-helper (its own
+#                                    polkit action org.grassfield.packages.hold: a password every time)
 #   grassfield-channel-set hold      hold them again: grassfield-hold replaces grassfield-unhold
 #   grassfield-channel-set hold-state  print (read-only) held, allowed, allowed-moved or none: the hold is installed; its twin
 #                                    is, and the toolkit is still inside the hold's bounds; the same, but the toolkit moved past
@@ -28,6 +29,7 @@
 set -uo pipefail
 
 helper=/usr/lib/grassfield/grassfield-channel-helper
+hold_helper=/usr/lib/grassfield/grassfield-hold-helper
 repository=/usr/share/grassfield/pacman/repository.conf
 version_file=/usr/share/grassfield/VERSION
 build_deps=/usr/share/grassfield/BUILD-DEPS
@@ -149,18 +151,22 @@ hold_state() {
   fi
 }
 
-run_helper() {
-  local rc
+# run_helper verb...: the channel helper; run_hold_helper verb: the hold helper (its own polkit action, a password every time).
+run_helper() { run_program "$helper" "$@"; }
+run_hold_helper() { run_program "$hold_helper" "$@"; }
+run_program() {
+  local rc program=$1
+  shift
   if [[ -z $pkexec ]]; then
     echo "grassfield-channel-set: dev guard: $* suppressed in a dev session" >&2
     exit 1
   fi
-  "$pkexec" "$helper" "$@"
+  "$pkexec" "$program" "$@"
   rc=$?
   case $rc in
     0) return 0 ;;
     126 | 127) fail "not allowed: the authentication was cancelled or refused, or no authentication agent answered" ;;
-    *) fail "the change failed (grassfield-channel-helper $*: exit $rc); nothing else was changed" ;;
+    *) fail "the change failed (${program##*/} $*: exit $rc); nothing else was changed" ;;
   esac
 }
 
@@ -242,7 +248,7 @@ case ${1-} in
     ;;
   hold | unhold)
     require_no_update
-    run_helper "$1"
+    run_hold_helper "$1"
     ;;
   hold-state)
     hold_state

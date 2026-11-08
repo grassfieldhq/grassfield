@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Shared code of Grassfield's two root programs (ADR-0033 c.1; docs/specs/updates.md U16). OPUS SECURITY REVIEW REQUIRED.
+# Shared code of Grassfield's root programs (the channel helper, its scriptlet program and the hold helper) (ADR-0033 c.1; docs/specs/updates.md U16). OPUS SECURITY REVIEW REQUIRED.
 #   /usr/lib/grassfield/grassfield-channel-helper     run by pkexec (polkit action org.grassfield.packages.set-channel)
 #   /usr/lib/grassfield/grassfield-channel-scriptlet  run by grassfield-desktop's pacman scriptlets
 # Installed as /usr/lib/grassfield/grassfield-channel.sh (not executable) and sourced only by them, after they replaced
@@ -14,14 +14,14 @@
 #   - the staged rollout's wariness, /var/lib/grassfield/rollout-wariness (ADR-0050 1);
 #   - the Grassfield keys in pacman's keyring (pacman-key --add/--lsign-key of the pinned key, --populate-from the
 #     private keyring folder of grassfield-keyring, --delete);
-#   - for the helper's `hold` and `unhold` verbs only (gf_hold_swap, ADR-0041 step 2a): one pacman transaction that
+#   - for grassfield-hold-helper's `hold` and `unhold` verbs only (gf_hold_swap, ADR-0041 step 2a): one pacman transaction that
 #     replaces the package grassfield-hold by grassfield-unhold, or back; nothing else is written by this program.
 # The lines go last, after the last repository of Omarchy's channel templates (default/pacman/pacman-stable.conf ends
 # with [omarchy] in 4.0.4 and [multilib] in 4.0.6; ADR-0033 a.1-a.2, Q4), so [grassfield] never shadows a package of theirs.
 # Every write to /etc goes through a temporary file in the same folder and a rename (mode and owner kept), so pacman never
 # reads a half-written file. The lines are added after the file exists and removed before the file goes: pacman never
-# sees an Include whose file is missing (P2: that stops every pacman command). No network, no package installed,
-# nothing written in a user's home.
+# sees an Include whose file is missing (P2: that stops every pacman command). No network, nothing written in a user's
+# home, and no package installed except by gf_hold_swap (grassfield-hold-helper only: the two fixed hold packages).
 
 GF_PACMAN_CONF=/etc/pacman.conf
 GF_CONF=/etc/pacman.d/grassfield.conf
@@ -331,21 +331,27 @@ gf_off() {
 }
 
 # --- The hold swap (ADR-0041 step 2a, SQ-3 option A; OPUS SECURITY REVIEW REQUIRED) ----------------------------------------
-# `unhold` and `hold`: one pacman transaction that replaces grassfield-hold (Qt and Quickshell held at the versions this
-# Grassfield was built for) by its empty twin grassfield-unhold, or back. The two packages are fixed names (the verb picks one of
-# two constants: no argument, no package name ever comes from the caller) and are installed only from the [grassfield]
-# repository by its explicit name (`grassfield/<package>`, so a package of the same name in another repository is never taken).
-# Nothing is written outside what pacman writes. The steps, each refusing with nothing changed:
+# `unhold` and `hold`, run only by grassfield-hold-helper (its own polkit action, a password every time): one pacman transaction
+# that replaces grassfield-hold (Qt and Quickshell held at the versions this Grassfield was built for) by its empty twin
+# grassfield-unhold, or back. The two packages are fixed names (the verb picks one of two constants: no argument, no package
+# name ever comes from the caller) and are installed only from the [grassfield] repository by its explicit name
+# (`grassfield/<package>=<version>`, so a package of the same name in another repository is never taken, and the version is the one
+# the checks below read). Nothing is written outside what pacman writes. The steps, each refusing with nothing changed:
 #   1. [grassfield] is in pacman.conf (the repository is the only source of the two packages);
 #   2. the target is not already installed (then there is nothing to do: success);
-#   3. the synced [grassfield] database lists the target (no network: the list the last check synced);
-#   4. the plan (`pacman -S --print`) is exactly the target and nothing else: a hold whose bounds the installed toolkit no
-#      longer satisfies would make pacman fetch other packages to satisfy them (a downgrade of Qt, say); it is refused here,
-#      never started;
-#   5. `pacman -S --noconfirm --ask 4 --needed grassfield/<target>`: --ask 4 answers pacman's conflict question ("remove
-#      grassfield-hold?", ALPM_QUESTION_CONFLICT_PKG = 1 << 2) with yes and nothing else, so the twin replaces the hold in this
-#      one transaction (grassfield-desktop depends on the name the twin provides, so nothing is half-installed);
-#   6. afterwards exactly one of the two is installed, the target.
+#   3. the synced [grassfield] database lists the target (no network: the list the last check synced), at one version, and the
+#      conflicts it declares are the other twin and nothing else; no installed package other than the twin declares a conflict
+#      with the target (--ask 4 below answers EVERY conflict question with yes, so no other conflict may exist);
+#   4. the plan (`pacman -S --print`, which takes no lock) is exactly the target at that version and nothing else: a hold whose
+#      bounds the installed toolkit no longer satisfies would make pacman fetch other packages to satisfy them (a downgrade of
+#      Qt, say); it is refused here, never started;
+#   5. `pacman -S --noconfirm --ask 4 --needed --asdeps grassfield/<target>=<version>`: --ask 4 answers pacman's conflict question
+#      ("remove grassfield-hold?", ALPM_QUESTION_CONFLICT_PKG = 1 << 2) with yes and nothing else, so the twin replaces the other in
+#      this one transaction (grassfield-desktop depends on the name the twin provides, so nothing is half-installed); --asdeps
+#      because grassfield-desktop is what needs it: the package is then removed with grassfield-desktop (pacman -Rns), never left
+#      behind to refuse updates with no Grassfield left to undo it;
+#   6. afterwards the set of installed packages differs by the other twin leaving and the target arriving and by nothing else
+#      (anything else is reported loudly, in the helper's log and to the person), and exactly one of the two is installed.
 # pacman -Q names packages only (never provides), which is what steps 2 and 6 need.
 GF_HOLD_PKG=grassfield-hold
 GF_UNHOLD_PKG=grassfield-unhold
@@ -354,8 +360,24 @@ gf_installed() {
   pacman -Q -- "$1" >/dev/null 2>&1
 }
 
+# The one-line value of a field of `pacman -Si|-Qi` output on stdin for the package that field belongs to; continuation lines
+# (no "Field : " prefix) belong to the field before them. Prints "name<TAB>value" for each package block that has the field.
+gf_info_field() { # field
+  awk -v field="$1" '
+    /^[A-Za-z][A-Za-z ]*[^ ] *: / {
+      key = $0; sub(/ *: .*/, "", key); value = $0; sub(/^[^:]*: /, "", value)
+      cur = key
+      if (key == "Name") name = value
+      if (key == field) { got = value; infield = 1 } else infield = 0
+      next
+    }
+    /^[ \t]+[^ \t]/ { if (infield) { v = $0; sub(/^[ \t]+/, "", v); got = got "  " v } next }
+    /^$/ { if (name != "") print name "\t" got; name = ""; got = ""; infield = 0 }
+    END { if (name != "") print name "\t" got }'
+}
+
 gf_hold_swap() { # hold | unhold
-  local target other plan
+  local target other info version conflicts plan before after removed added item bad
   case $1 in
     hold) target=$GF_HOLD_PKG other=$GF_UNHOLD_PKG ;;
     unhold) target=$GF_UNHOLD_PKG other=$GF_HOLD_PKG ;;
@@ -366,14 +388,32 @@ gf_hold_swap() { # hold | unhold
     echo "${GF_PROG}: $target is already installed: nothing to change"
     return 0
   fi
-  pacman -Si -- "grassfield/$target" >/dev/null 2>&1 9<&- ||
+  info=$(pacman -Si -- "grassfield/$target" 2>/dev/null 9<&-) ||
     gf_fail "$target is not in the package list of [grassfield] yet: check for updates first; nothing was changed"
-  plan=$(pacman -S --print --print-format '%n' --noconfirm --ask 4 -- "grassfield/$target" 2>/dev/null 9<&-) ||
+  version=$(printf '%s\n' "$info" | awk -F' *: *' '$1 == "Version" { print $2; exit }')
+  [[ $version =~ ^[A-Za-z0-9:._+~-]+-[A-Za-z0-9._+~]+$ ]] || gf_fail "the version of $target in [grassfield] is not one pacman names plainly: nothing was changed"
+  conflicts=$(printf '%s\n' "$info" | gf_info_field "Conflicts With" | awk -F'\t' '{ print $2; exit }')
+  for item in $conflicts; do
+    [[ $item == None || $item == "$other" ]] ||
+      gf_fail "$target in [grassfield] declares a conflict with $item: refused, nothing was changed"
+  done
+  bad=$(pacman -Qi 2>/dev/null 9<&- | gf_info_field "Conflicts With" | awk -F'\t' -v t="$target" -v o="$other" '
+    { n = split($2, c, /  */); for (i = 1; i <= n; i++) { w = c[i]; sub(/[<>=].*/, "", w); if (w == t && $1 != o) { print $1; exit } } }')
+  [[ -z $bad ]] || gf_fail "the installed package $bad conflicts with $target, and --ask 4 would remove it: refused, nothing was changed"
+  plan=$(pacman -S --print --print-format '%n' --noconfirm --ask 4 -- "grassfield/$target=$version" 2>/dev/null 9<&-) ||
     gf_fail "pacman cannot install $target on this system as it is (the versions of Qt or Quickshell it needs are not the ones installed): nothing was changed"
   [[ $plan == "$target" ]] ||
     gf_fail "installing $target would also change other packages: refused, nothing was changed"
-  pacman -S --noconfirm --ask 4 --needed -- "grassfield/$target" 9<&- ||
+  before=$(pacman -Qq 2>/dev/null 9<&-) || gf_fail "cannot list the installed packages: nothing was changed"
+  pacman -S --noconfirm --ask 4 --needed --asdeps -- "grassfield/$target=$version" 9<&- ||
     gf_fail "pacman could not install $target: nothing else was changed"
+  after=$(pacman -Qq 2>/dev/null 9<&-) || gf_fail "cannot list the installed packages after the swap"
+  removed=$(comm -23 <(printf '%s\n' "$before" | sort) <(printf '%s\n' "$after" | sort))
+  added=$(comm -13 <(printf '%s\n' "$before" | sort) <(printf '%s\n' "$after" | sort))
+  if [[ $added != "$target" || ( -n $removed && $removed != "$other" ) ]]; then
+    echo "${GF_PROG}: UNEXPECTED CHANGE: installed '${added//$'\n'/ }', removed '${removed//$'\n'/ }'; expected only $target in and $other out" >&2
+    gf_fail "the swap changed more than the two hold packages: look at pacman's log"
+  fi
   gf_installed "$target" && ! gf_installed "$other" ||
     gf_fail "the swap of $other for $target did not complete: run the verb again"
 }

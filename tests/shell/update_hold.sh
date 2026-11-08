@@ -3,14 +3,16 @@
 #   1. The bounds the hold's `depends` get from BUILD-DEPS (packaging/arch/hold-bounds.sh): quickshell at its version without
 #      its pkgrel, qt6-base at major.minor (>= and < the next minor), an epoch kept, never hyprland or kcoreaddons, and no
 #      bound at all (the build fails) for a record that cannot be read; the same rule as the update helper's U27 comparison.
-#   2. The root helper's argument validation (packaging/pacman/grassfield-channel-helper): exactly the verbs set stable|beta,
-#      restore, off, hold, unhold, each with no extra argument; the scriptlet program refuses the helper's verbs.
+#   2. The root helpers' argument validation: grassfield-hold-helper takes exactly hold or unhold, grassfield-channel-helper exactly
+#      set stable|beta, restore, off (each with no extra argument), the scriptlet program neither; the polkit policy gives the hold
+#      its own action, a password every time.
 #   3. gf_hold_swap (packaging/pacman/grassfield-channel.sh) against a pacman stand-in: its refusals leave pacman's install step
 #      unstarted (no [grassfield], already installed, not listed, a plan that is more than the one package, a plan that
 #      fails), one transaction with `--ask 4` and the explicit grassfield/<package>, a swap that did not complete.
 #   4. grassfield-channel-set: the verbs hold and unhold go to the helper (recording stand-in), hold-state prints held,
 #      allowed, allowed-moved or none from pacman -Q and BUILD-DEPS.
-#   5. The helper's reading of pacman's refusal (grassfield-update-helper): exit 6 only when the error names grassfield-hold.
+#   5. The update helper: pacman's refusal naming the hold is exit 6 (the plan block run with stand-ins: only when pacman failed),
+#      and with the twin installed Qt and Quickshell are not compared by U27 (u27_exempt) while the others still are.
 # Nothing here touches pacman, polkit or the system: every program is a copy with its paths pointed at a temporary tree, or a
 # stand-in on PATH. The real transactions are tests/integration/update_hold.sh (a throwaway container, run bare).
 set -uo pipefail
@@ -60,10 +62,10 @@ expect "an unreadable record allows nothing" "$(allows 0.3.2.r7-1 6.12.0-1)" no
 # The same rule as the update helper's compatibility check: the helper's compare_key is the rule the bounds restate.
 grep -q 'quickshell) printf' "$root/packaging/pacman/grassfield-update-helper" && pass "U27's quickshell rule (whole version) is still the helper's" || fail "U27's rule moved: restate the hold's bounds"
 
-echo "== 2. the root helper's arguments"
+echo "== 2. the root helpers' arguments"
 lib=$tmp/lib.sh
-# The helper replaces its environment (it runs again under `env -i` when it holds anything), so the stand-in library
-# carries the recording file's path itself and the helper is started with no variable at all.
+# The helpers replace their environment (they run again under `env -i` when they hold anything), so the stand-in library
+# carries the recording file's path itself and they are started with no variable at all.
 cat >"$lib" <<SH
 gf_start() { :; }
 gf_lock() { :; }
@@ -74,118 +76,185 @@ gf_off() { echo off >>"$tmp/calls"; }
 gf_hold_swap() { echo "swap \$1" >>"$tmp/calls"; }
 SH
 sed -e "s#^. /usr/lib/grassfield/grassfield-channel.sh.*#. $lib || exit 1#" "$root/packaging/pacman/grassfield-channel-helper" >"$tmp/helper"
+sed -e "s#^. /usr/lib/grassfield/grassfield-channel.sh.*#. $lib || exit 1#" "$root/packaging/pacman/grassfield-hold-helper" >"$tmp/hold-helper"
 helper() { : >"$tmp/calls"; out=$(env -i /usr/bin/bash -p "$tmp/helper" "$@" 2>&1); rc=$?; }
+hhelper() { : >"$tmp/calls"; out=$(env -i /usr/bin/bash -p "$tmp/hold-helper" "$@" 2>&1); rc=$?; }
 calls() { grep -v '^unlocked-check$' "$tmp/calls" | tr '\n' '|'; }
 for v in hold unhold; do
-  helper "$v"; expect "$v: exit 0" "$rc" 0; expect "  one swap, nothing else" "$(calls)" "swap $v|"
+  hhelper "$v"; expect "hold helper $v: exit 0" "$rc" 0; expect "  one swap, nothing else" "$(calls)" "swap $v|"
+  [[ $(head -n 1 "$tmp/calls") == unlocked-check ]] && pass "  pacman is checked not to be running first" || fail "  $v does not check db.lck first"
 done
-helper set stable; expect "set stable accepted" "$(calls)" "set stable|"
-helper set beta; expect "set beta accepted" "$(calls)" "set beta|"
-helper restore; expect "restore accepted" "$(calls)" "restore|"
-helper off; expect "off accepted" "$(calls)" "off|"
-for args in "" "hold x" "unhold x" "hold unhold" "unhold grassfield-unhold" "Hold" "UNHOLD" "hold-state" "holds" "grassfield-hold" "set hold" "set" "set stable beta" \
-  "-S grassfield-hold" "install grassfield-unhold" "remove" "upgrade" "--help" "off now" "restore x"; do
+for args in "" "hold x" "unhold x" "hold unhold" "unhold grassfield-unhold" "Hold" "UNHOLD" "hold-state" "holds" "grassfield-hold" "set hold" "set stable" "restore" "off" \
+  "-S grassfield-hold" "install grassfield-unhold" "remove" "upgrade" "--help"; do
   # shellcheck disable=SC2086
-  helper $args
-  expect "refused: '$args' (exit 2, nothing run)" "$rc:$(calls)" "2:"
+  hhelper $args
+  expect "hold helper refuses '$args' (exit 2, nothing run)" "$rc:$(calls)" "2:"
 done
-helper ""; expect "an empty argument is refused" "$rc:$(calls)" "2:"
-helper "hold " ; expect "a trailing space is refused" "$rc:$(calls)" "2:"
-helper "hold
-"; expect "a newline is refused" "$rc:$(calls)" "2:"
-# The scriptlet program knows no hold verb (each program knows only its own verbs).
+hhelper ""; expect "hold helper: an empty argument is refused" "$rc:$(calls)" "2:"
+hhelper "hold "; expect "hold helper: a trailing space is refused" "$rc:$(calls)" "2:"
+hhelper "hold
+"; expect "hold helper: a newline is refused" "$rc:$(calls)" "2:"
+# The channel helper knows no hold verb, the hold helper no channel verb (one program, one polkit action).
+for v in hold unhold; do
+  helper "$v"; expect "channel helper refuses $v (exit 2, nothing run)" "$rc:$(calls)" "2:"
+done
+helper set stable; expect "channel helper: set stable accepted" "$(calls)" "set stable|"
+helper set beta; expect "channel helper: set beta accepted" "$(calls)" "set beta|"
+helper restore; expect "channel helper: restore accepted" "$(calls)" "restore|"
+helper off; expect "channel helper: off accepted" "$(calls)" "off|"
+for args in "" "set" "set stable beta" "off now" "restore x" "set hold" "hold-state"; do
+  # shellcheck disable=SC2086
+  helper $args; expect "channel helper refuses '$args' (exit 2, nothing run)" "$rc:$(calls)" "2:"
+done
+# The scriptlet program knows no hold verb.
 if grep -nE '\b(un)?hold\b' "$root/packaging/pacman/grassfield-channel-scriptlet" >/dev/null; then fail "the scriptlet program names a hold verb"; else pass "the scriptlet program names no hold verb"; fi
-# Every verb of the helper takes the unlocked check first (pacman is not running).
-helper hold; [[ $(head -n 1 "$tmp/calls") == unlocked-check ]] && pass "hold checks that pacman is not running first" || fail "hold does not check db.lck first"
-helper unhold; [[ $(head -n 1 "$tmp/calls") == unlocked-check ]] && pass "unhold checks that pacman is not running first" || fail "unhold does not check db.lck first"
-# The helper never takes a package name from its arguments: gf_hold_swap is called with the verb, which picks a constant.
-grep -n 'gf_hold_swap "\$1"' "$root/packaging/pacman/grassfield-channel-helper" >/dev/null && pass "the helper hands gf_hold_swap the verb only" || fail "gf_hold_swap is not called with the verb alone"
+grep -n 'gf_hold_swap "\$1"' "$root/packaging/pacman/grassfield-hold-helper" >/dev/null && pass "the hold helper hands gf_hold_swap the verb only" || fail "gf_hold_swap is not called with the verb alone"
+# The policy: its own action for the hold helper, a password every time, nothing for an inactive or remote session; the channel
+# action keeps its scope and its kept password.
+python3 -I - "$root/packaging/pacman/org.grassfield.packages.policy" <<'PY' && pass "polkit: org.grassfield.packages.hold is auth_admin (never kept), its own program; set-channel unchanged" || fail "polkit policy"
+import sys, xml.etree.ElementTree as ET
+t = ET.parse(sys.argv[1]).getroot()
+a = {x.get("id"): x for x in t.findall("action")}
+def d(i, k): return a[i].find("defaults").find(k).text
+def path(i): return [n.text for n in a[i].findall("annotate") if n.get("key") == "org.freedesktop.policykit.exec.path"][0]
+assert d("org.grassfield.packages.hold", "allow_active") == "auth_admin"
+assert d("org.grassfield.packages.hold", "allow_inactive") == "no" and d("org.grassfield.packages.hold", "allow_any") == "no"
+assert path("org.grassfield.packages.hold") == "/usr/lib/grassfield/grassfield-hold-helper"
+assert d("org.grassfield.packages.set-channel", "allow_active") == "auth_admin_keep"
+assert path("org.grassfield.packages.set-channel") == "/usr/lib/grassfield/grassfield-channel-helper"
+assert len(set(path(i) for i in a)) == len(a), "two actions share a program"
+m = [x.text for x in a["org.grassfield.packages.hold"].findall("message") if not x.attrib][0]
+assert "not tested" in m and "hold them back" in m
+assert "where Grassfield gets its updates" in [x.text for x in a["org.grassfield.packages.set-channel"].findall("message") if not x.attrib][0]
+PY
 
 echo "== 3. gf_hold_swap against a pacman stand-in"
-mkdir -p "$tmp/bin" "$tmp/st/inst" "$tmp/st/repo"
+mkdir -p "$tmp/bin" "$tmp/st/inst" "$tmp/st/repo" "$tmp/st/rconf" "$tmp/st/qconf" "$tmp/st/reason"
 cat >"$tmp/bin/pacman" <<'SH'
 #!/bin/bash
-# A stand-in: state in $ST (inst/<name> = installed, repo/<name> = listed in [grassfield]). Records every call.
+# A stand-in: state in $ST (inst/<name> = installed version, repo/<name> = listed in [grassfield] at that version, rconf/<name> and
+# qconf/<name> = a "Conflicts With" value of a listed or installed package, reason/<name> = install reason). Records every call.
 echo "$*" >>"$ST/calls"
 last=${*: -1}
-name=${last#grassfield/}
+spec=${last#grassfield/}
+name=${spec%%=*}
 case $1 in
-  -Q) [[ -f $ST/inst/$name ]] && { echo "$name $(<"$ST/inst/$name")"; exit 0; }; exit 1 ;;
-  -Si) [[ $last == grassfield/* && -f $ST/repo/$name ]] && exit 0; exit 1 ;;
+  -Q) [[ $2 == -- ]] && { [[ -f $ST/inst/$3 ]] && { echo "$3 $(<"$ST/inst/$3")"; exit 0; }; exit 1; } ;;
+esac
+case $1 in
+  -Qq) ls "$ST/inst" ;;
+  -Qi)
+    for f in "$ST/inst"/*; do
+      n=${f##*/}
+      printf 'Name            : %s\nVersion         : %s\nConflicts With  : %s\n\n' "$n" "$(<"$f")" "$([[ -f $ST/qconf/$n ]] && cat "$ST/qconf/$n" || echo None)"
+    done ;;
+  -Si)
+    [[ $last == grassfield/* && -f $ST/repo/$name ]] || exit 1
+    printf 'Repository      : grassfield\nName            : %s\nVersion         : %s\nConflicts With  : %s\n\n' "$name" "$(<"$ST/repo/$name")" "$([[ -f $ST/rconf/$name ]] && cat "$ST/rconf/$name" || echo None)" ;;
   -S)
-    [[ $last == grassfield/* ]] || exit 1
+    [[ $last == grassfield/*=* ]] || exit 1
+    [[ $spec == "$name=$(<"$ST/repo/$name")" ]] || exit 1
     if [[ " $* " == *" --print "* ]]; then
       [[ -f $ST/plan_fail ]] && { echo "error: could not satisfy dependencies" >&2; exit 1; }
       echo "$name"; [[ -f $ST/plan_extra ]] && echo qt6-base
       exit 0
     fi
     [[ -f $ST/install_fail ]] && exit 1
-    # --ask 4 answers the conflict question: the twin replaces the other in one step.
-    [[ " $* " == *" --ask 4 "* ]] || exit 1
+    # --ask 4 answers the conflict question: the twin replaces the other in one step. The package must come as a dependency.
+    [[ " $* " == *" --ask 4 "* && " $* " == *" --asdeps "* ]] || exit 1
     case $name in grassfield-hold) rm -f "$ST/inst/grassfield-unhold" ;; grassfield-unhold) rm -f "$ST/inst/grassfield-hold" ;; esac
-    [[ -f $ST/swap_incomplete ]] || echo 1 >"$ST/inst/$name"
-    [[ -f $ST/swap_incomplete ]] && echo 1 >"$ST/inst/grassfield-hold"
+    [[ -f $ST/extra_removal ]] && rm -f "$ST/inst/bystander"
+    if [[ -f $ST/swap_incomplete ]]; then echo 1 >"$ST/inst/grassfield-hold"; else cp "$ST/repo/$name" "$ST/inst/$name"; echo dep >"$ST/reason/$name"; fi
     exit 0 ;;
+  *) exit 1 ;;
 esac
-exit 1
 SH
 chmod +x "$tmp/bin/pacman"
 printf '[options]\n\n[grassfield]\nInclude = /etc/pacman.d/grassfield.conf\n' >"$tmp/pacman.conf"
-swap() { # verb: runs gf_hold_swap in a subshell with the stand-in; sets rc and out
+swap() { # verb [channel.sh]: runs gf_hold_swap in a subshell with the stand-in; sets rc and out
   : >"$tmp/st/calls"
   out=$( (
     export ST=$tmp/st PATH=$tmp/bin:/usr/bin
-    . "$root/packaging/pacman/grassfield-channel.sh"
+    . "${2:-$root/packaging/pacman/grassfield-channel.sh}"
     GF_PROG=test GF_PACMAN_CONF=$tmp/pacman.conf
     gf_hold_swap "$1"
   ) 2>&1)
   rc=$?
 }
-reset() { rm -f "$tmp/st"/inst/* "$tmp/st"/repo/* "$tmp/st"/plan_* "$tmp/st"/install_fail "$tmp/st"/swap_incomplete; echo 1 >"$tmp/st/repo/grassfield-hold"; echo 1 >"$tmp/st/repo/grassfield-unhold"; }
+reset() {
+  rm -f "$tmp/st"/inst/* "$tmp/st"/repo/* "$tmp/st"/rconf/* "$tmp/st"/qconf/* "$tmp/st"/reason/* "$tmp/st"/plan_* "$tmp/st"/install_fail "$tmp/st"/swap_incomplete "$tmp/st"/extra_removal
+  echo 3-1 >"$tmp/st/repo/grassfield-hold"; echo 3-1 >"$tmp/st/repo/grassfield-unhold"
+  echo "grassfield-hold" >"$tmp/st/rconf/grassfield-unhold"; echo 1-1 >"$tmp/st/inst/bystander"
+}
 installs() { grep -c -- '^-S --noconfirm' "$tmp/st/calls"; }
-reset; echo 1 >"$tmp/st/inst/grassfield-hold"
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"
 swap unhold
 expect "unhold: exit 0" "$rc" 0
-expect "  the twin replaces the hold" "$(ls "$tmp/st/inst" | tr '\n' ' ')" "grassfield-unhold "
-expect "  one install, explicit repository, --ask 4, --needed" "$(grep -- '^-S --noconfirm' "$tmp/st/calls")" "-S --noconfirm --ask 4 --needed -- grassfield/grassfield-unhold"
-expect "  the plan was read first, for that package only" "$(grep -c -- '--print' "$tmp/st/calls")" 1
+expect "  the twin replaces the hold, the bystander stays" "$(ls "$tmp/st/inst" | tr '\n' ' ')" "bystander grassfield-unhold "
+expect "  one install: explicit repository and version, --ask 4, --needed, --asdeps" "$(grep -- '^-S --noconfirm' "$tmp/st/calls")" "-S --noconfirm --ask 4 --needed --asdeps -- grassfield/grassfield-unhold=3-1"
+expect "  the plan was read first, for that very version" "$(grep -- '--print' "$tmp/st/calls")" "-S --print --print-format %n --noconfirm --ask 4 -- grassfield/grassfield-unhold=3-1"
+expect "  installed as a dependency (so pacman -Rns of grassfield-desktop takes it along)" "$(<"$tmp/st/reason/grassfield-unhold")" dep
 swap hold
-expect "hold: exit 0 and the hold is back" "$rc:$(ls "$tmp/st/inst" | tr '\n' ' ')" "0:grassfield-hold "
-expect "  one install of grassfield/grassfield-hold" "$(grep -- '^-S --noconfirm' "$tmp/st/calls")" "-S --noconfirm --ask 4 --needed -- grassfield/grassfield-hold"
+expect "hold: exit 0 and the hold is back" "$rc:$(ls "$tmp/st/inst" | tr '\n' ' ')" "0:bystander grassfield-hold "
+expect "  one install of grassfield/grassfield-hold=3-1, as a dependency" "$(grep -- '^-S --noconfirm' "$tmp/st/calls"):$(<"$tmp/st/reason/grassfield-hold")" "-S --noconfirm --ask 4 --needed --asdeps -- grassfield/grassfield-hold=3-1:dep"
 swap hold
 expect "already held: success, nothing installed" "$rc:$(installs)" "0:0"
-reset; echo 1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/pacman.conf"
+# The install reason is tested, not only the flag: a copy of the library without --asdeps is refused by the stand-in
+# (a package that came without it would be left behind by a manual removal).
+sed 's/ --asdeps//' "$root/packaging/pacman/grassfield-channel.sh" >"$tmp/channel-noasdeps.sh"
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"
+swap unhold "$tmp/channel-noasdeps.sh"
+expect "mutant without --asdeps: the stand-in refuses it (the test sees the flag)" "$rc:$([[ -f $tmp/st/reason/grassfield-unhold ]] && echo reason || echo none)" "1:none"
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/pacman.conf"
 swap unhold
 expect "no [grassfield] section: refused (exit 1), pacman not asked to install" "$rc:$(installs)" "1:0"
 printf '[options]\n\n# [grassfield]\n' >"$tmp/pacman.conf"
 swap unhold
 expect "a commented [grassfield] is not a section" "$rc:$(installs)" "1:0"
 printf '[options]\n\n[grassfield]\nInclude = /etc/pacman.d/grassfield.conf\n' >"$tmp/pacman.conf"
-rm -f "$tmp/st/repo/grassfield-unhold"
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; rm -f "$tmp/st/repo/grassfield-unhold"
 swap unhold
-expect "not in the synced list: refused, nothing installed" "$rc:$(installs):$(ls "$tmp/st/inst")" "1:0:grassfield-hold"
-reset; echo 1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/st/plan_extra"
+expect "not in the synced list: refused, nothing installed" "$rc:$(installs):$(ls "$tmp/st/inst" | tr '\n' ' ')" "1:0:bystander grassfield-hold "
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/st/plan_extra"
 swap unhold
 expect "a plan that adds another package: refused, nothing installed" "$rc:$(installs)" "1:0"
-reset; echo 1 >"$tmp/st/inst/grassfield-unhold"; : >"$tmp/st/plan_fail"
+reset; echo 2-1 >"$tmp/st/inst/grassfield-unhold"; : >"$tmp/st/plan_fail"
 swap hold
-expect "a plan pacman cannot make (the toolkit moved): refused, nothing installed" "$rc:$(installs):$(ls "$tmp/st/inst")" "1:0:grassfield-unhold"
-reset; echo 1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/st/install_fail"
+expect "a plan pacman cannot make (the toolkit moved): refused, nothing installed" "$rc:$(installs):$(ls "$tmp/st/inst" | tr '\n' ' ')" "1:0:bystander grassfield-unhold "
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/st/install_fail"
 swap unhold
-expect "an install that fails: exit 1, the hold stays" "$rc:$(ls "$tmp/st/inst")" "1:grassfield-hold"
-reset; echo 1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/st/swap_incomplete"
+expect "an install that fails: exit 1, the hold stays" "$rc:$(ls "$tmp/st/inst" | tr '\n' ' ')" "1:bystander grassfield-hold "
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/st/swap_incomplete"
 swap unhold
 expect "a swap that did not complete is reported" "$rc" 1
+# --ask 4 answers every conflict question yes: only the twin may be a conflict.
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; echo "grassfield-hold bystander" >"$tmp/st/rconf/grassfield-unhold"
+swap unhold
+expect "a target that declares another conflict: refused before the plan, nothing installed" "$rc:$(installs):$(grep -c -- '--print' "$tmp/st/calls")" "1:0:0"
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; echo "grassfield-unhold" >"$tmp/st/qconf/bystander"
+swap unhold
+expect "an installed package that conflicts with the target: refused, nothing installed" "$rc:$(installs):$(ls "$tmp/st/inst" | tr '\n' ' ')" "1:0:bystander grassfield-hold "
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; echo "grassfield-unhold<=2" >"$tmp/st/qconf/bystander"
+swap unhold
+expect "  also with a version in its conflicts" "$rc:$(installs)" "1:0"
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; echo "grassfield-unhold" >"$tmp/st/qconf/grassfield-hold"
+swap unhold
+expect "the hold's own conflict with the twin is the one that is allowed" "$rc" 0
+# After the transaction: anything but the twin leaving fails loudly.
+reset; echo 2-1 >"$tmp/st/inst/grassfield-hold"; : >"$tmp/st/extra_removal"
+swap unhold
+expect "another package removed by the transaction: exit 1" "$rc" 1
+[[ $out == *"UNEXPECTED CHANGE"* && $out == *"removed 'bystander grassfield-hold'"* ]] && pass "  said loudly, naming what left" || fail "  no loud message: $out"
 reset
 swap sidegrade
 expect "any other word is refused before pacman runs" "$rc:$(wc -l <"$tmp/st/calls")" "1:0"
 swap ""
 expect "an empty verb is refused before pacman runs" "$rc:$(wc -l <"$tmp/st/calls")" "1:0"
-# The two package names are constants of the library; nothing in gf_hold_swap reads another variable for a package name.
+# The two package names are constants of the library; every installing pacman call names grassfield/$target=$version.
 body=$(awk '/^gf_hold_swap\(\)/ { on = 1 } on { print } on && /^}/ { exit }' "$root/packaging/pacman/grassfield-channel.sh")
-if printf '%s\n' "$body" | grep -E '^[^#]*pacman -S' | grep -v '"grassfield/\$target"' | grep -q .; then
-  fail "a pacman call of gf_hold_swap names a package other than grassfield/\$target"
-else pass "every pacman call of gf_hold_swap names grassfield/\$target"; fi
+if printf '%s\n' "$body" | grep -E '^[^#]*pacman -S[^i]' | grep -v '"grassfield/\$target=\$version"' | grep -q .; then
+  fail "a pacman call of gf_hold_swap names a package other than grassfield/\$target=\$version"
+else pass "every installing pacman call of gf_hold_swap names grassfield/\$target=\$version"; fi
 
 echo "== 4. grassfield-channel-set: hold, unhold and hold-state"
 T=$tmp/tree
@@ -209,15 +278,16 @@ cset() { # args...: as the user in a dev session with the recording runner and t
     CALLS="$tmp/calls" ST="$tmp/st" "$tmp/channel-set" "$@" 2>&1)
   rc=$?
 }
-ccalls() { sed 's#^/usr/lib/grassfield/grassfield-channel-helper ##' "$tmp/calls" | tr '\n' '|'; }
+ccalls() { cat "$tmp/calls" | tr '\n' '|'; }
 for v in hold unhold; do
-  cset "$v"; expect "channel-set $v: exit 0, the helper's $v and nothing else" "$rc:$(ccalls)" "0:$v|"
+  cset "$v"; expect "channel-set $v: exit 0, pkexec runs the HOLD helper with $v and nothing else" "$rc:$(ccalls)" "0:/usr/lib/grassfield/grassfield-hold-helper $v|"
 done
+cset beta; expect "channel-set beta still runs the channel helper" "$rc:$(ccalls)" "0:/usr/lib/grassfield/grassfield-channel-helper set beta|"
 for args in "hold unhold" "hold-state hold" "Hold" "holdstate" "unhold x"; do
   # shellcheck disable=SC2086
   cset $args; expect "channel-set $args: usage (exit 2), no helper" "$rc:$(ccalls)" "2:"
 done
-hs() { : >"$tmp/st/calls"; reset; for p in "$@"; do echo "${p#*=}" >"$tmp/st/inst/${p%%=*}"; done; cset hold-state; }
+hs() { : >"$tmp/st/calls"; reset; rm -f "$tmp/st/inst/bystander"; for p in "$@"; do echo "${p#*=}" >"$tmp/st/inst/${p%%=*}"; done; cset hold-state; }
 hs grassfield-hold=1 quickshell=0.3.2.r7-1 qt6-base=6.12.0-1
 expect "hold-state: the hold installed -> held" "$rc:$out" "0:held"
 hs grassfield-unhold=1 quickshell=0.3.2.r7-2 qt6-base=6.12.3-1
@@ -235,8 +305,9 @@ hs grassfield-unhold=1 quickshell=0.3.2.r7-1 qt6-base=6.12.0-1
 expect "hold-state: no bounds library -> allowed-moved (never offered)" "$rc:$out" "0:allowed-moved"
 expect "hold-state runs no helper" "$(ccalls)" ""
 
-echo "== 5. pacman's refusal naming the hold is exit 6"
-pattern=$(grep -o 'grep -Eq "[^"]*"' "$root/packaging/pacman/grassfield-update-helper" | head -n 1 | sed 's/^grep -Eq "//; s/"$//')
+echo "== 5. the update helper: pacman's refusal naming the hold is exit 6, and an allowed hold is not compared"
+helper_src=$root/packaging/pacman/grassfield-update-helper
+pattern=$(grep -o 'grep -Eq "[^"]*"' "$helper_src" | head -n 1 | sed 's/^grep -Eq "//; s/"$//')
 [[ -n $pattern ]] && pass "the helper's pattern: $pattern" || fail "the helper's grep pattern was not found"
 names() { printf '%s\n' "$1" | grep -Eq "$pattern" && echo yes || echo no; }
 expect "a broken bound of the hold" "$(names "error: failed to prepare transaction (could not satisfy dependencies)
@@ -246,8 +317,43 @@ expect "pacman's other wording" "$(names "error: failed to prepare transaction (
 :: unable to satisfy dependency 'qt6-base>=6.12' required by grassfield-hold")" yes
 expect "a refusal that names another package" "$(names ":: installing foo (2) breaks dependency 'foo<2' required by bar")" no
 expect "a name that only contains the hold's" "$(names ":: installing foo (2) breaks dependency 'foo<2' required by grassfield-hold-extra")" no
+expect "a prefix that is not a word" "$(names ":: installing foo (2) breaks dependency 'foo<2' required bygrassfield-hold")" no
 expect "the hold named as the broken dependency, not the requirer" "$(names ":: installing grassfield-hold (2) breaks dependency 'grassfield-hold' required by bar")" no
 expect "no error" "$(names "")" no
+# The block itself, run with stand-ins: exit 6 only when pacman FAILED and named the hold (a warning on a plan that worked is not a refusal).
+awk '/^plan=\$\(pacman -Su/ { on = 1 } on { print } on && /^\(\(plan_rc == 0\)\) \|\| finish 8/ { exit }' "$helper_src" >"$tmp/planblock.sh"
+[[ $(wc -l <"$tmp/planblock.sh") -gt 5 ]] && pass "the plan block was found in the helper" || fail "the plan block was not found"
+planrun() { # exit-code stderr-text: the helper's plan block with a pacman that fails (or not) and says that
+  mkdir -p "$tmp/tmpdb"
+  ( tmpdb=$tmp/tmpdb outcome=() PLAN_RC=$1 PLAN_ERR=$2
+    pacman() { printf '%s\n' "$PLAN_ERR" >&2; [[ $PLAN_RC == 0 ]] && echo "hello 1-1 file:///x"; return "$PLAN_RC"; }
+    finish() { echo "finish $1 ${outcome[*]:-}"; exit "$1"; }
+    . "$tmp/planblock.sh"; echo "went on" ) 2>/dev/null | tail -n 1
+}
+hold_err=":: installing qt6-base (6.13.0-1) breaks dependency 'qt6-base<6.13' required by grassfield-hold"
+expect "plan fails naming the hold -> finish 6 incompatible grassfield-hold" "$(planrun 1 "$hold_err")" "finish 6 incompatible grassfield-hold"
+expect "plan fails naming another package -> finish 8" "$(planrun 1 ":: installing foo (2) breaks dependency 'foo<2' required by bar")" "finish 8 "
+expect "plan fails with no message -> finish 8" "$(planrun 1 "")" "finish 8 "
+expect "plan works and pacman only warned about the hold -> goes on (no exit 6)" "$(planrun 0 "warning: grassfield-hold ... $hold_err")" "went on"
+# u27_exempt: with the twin installed and the hold not coming back, Qt and Quickshell are not compared; the others are.
+awk '/^u27_exempt\(\)/ { on = 1 } on { print } on && /^}/ { exit }' "$helper_src" >"$tmp/exempt.sh"
+[[ -s $tmp/exempt.sh ]] && pass "u27_exempt exists in the update helper" || fail "u27_exempt is missing from the update helper"
+exempt() { # "installed names" "after names" package -> yes|no
+  ( declare -A installed=() after=()
+    for n in $1; do installed[$n]=1; done
+    for n in $2; do after[$n]=1; done
+    . "$tmp/exempt.sh"; u27_exempt "$3" && echo yes || echo no )
+}
+expect "twin installed: qt6-base is exempt" "$(exempt "grassfield-unhold" "" qt6-base)" yes
+expect "twin installed: quickshell is exempt" "$(exempt "grassfield-unhold grassfield-desktop" "grassfield-desktop" quickshell)" yes
+expect "twin installed: hyprland is still compared" "$(exempt "grassfield-unhold" "" hyprland)" no
+expect "twin installed: aquamarine is still compared" "$(exempt "grassfield-unhold" "" aquamarine)" no
+expect "twin installed: kcoreaddons is still compared" "$(exempt "grassfield-unhold" "" kcoreaddons)" no
+expect "the hold installed: nothing is exempt (the hold is the first line, U27 the second)" "$(exempt "grassfield-hold" "" qt6-base)" no
+expect "nothing installed: not exempt" "$(exempt "" "" quickshell)" no
+expect "the plan brings the hold back: not exempt" "$(exempt "grassfield-unhold" "grassfield-hold" qt6-base)" no
+# And the check really asks it: the comparison loop skips a package u27_exempt names.
+grep -q 'if u27_exempt "\$pkg"; then' "$helper_src" && pass "the compatibility loop asks u27_exempt before it compares" || fail "the compatibility loop does not ask u27_exempt"
 
 echo
 if ((fails)); then echo "FAIL: update hold ($fails)"; exit 1; fi
