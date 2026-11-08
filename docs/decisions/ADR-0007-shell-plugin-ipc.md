@@ -241,6 +241,9 @@ Option 1 adapted to the Lua config, versioned `gfc/1`:
   same, with no new argument. A plugin before D78 rejects the place, so a D78 plugin advertises feature `zoom-fill`,
   always right after `window-tiling`, and the shell's Window > Zoom (and the green light clicked under its popover, D64)
   sends `zoom` only with it, Hyprland's maximized dispatcher otherwise. No new verb, event field or reply field.
+- Toplevel drag (2026-11-08, additive, ADR-0036 amendment 2026-11-08, docs/specs/compositor.md FR58, URR-030): the plugin
+  serves the Wayland global `xdg_toplevel_drag_manager_v1` and advertises feature `toplevel-drag` while it is up, last in
+  the list. Informational: the shell needs nothing and sends nothing for it. No new verb, event field or reply field.
 - The shell only calls verbs listed in `shell/platform/Minimized.js` `isPluginVerb`.
 - All arguments are validated by the plugin (untrusted). Payloads never carry window contents.
 - Unknown `v` major → the shell treats the plugin as absent.
@@ -285,7 +288,7 @@ enum tile-hover.state: enter leave open
 feature decorations minimize config appmenu overview desktop-focus desktop-focus-v2 stages-available stages
 feature cursor-refresh overview-focus minimize-effect window-tiling layer-pointer appearance client-chrome frame-times
 feature keyboard-focus tiling-arrange tiling-layouts tile-hover tiling-groups tiling-shared-edge tiling-split tiling-split-rows
-feature tiling-split-titles zoom-fill
+feature tiling-split-titles zoom-fill toplevel-drag
 verb hello minimize restore config appmenu overview stages cursor_refresh overview_focus tile arrange tile_popover move_to group_front split unsplit window_size
 ```
 
