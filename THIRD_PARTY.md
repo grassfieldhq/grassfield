@@ -51,6 +51,16 @@ Licence texts shipped with the packages (`/usr/share/licenses/<package>/`):
 - Notice and licence text shipped: `appmenu-LGPL-2.1-or-later.txt`.
   **Needs legal review:** obligations for the MIT plugin that compiles code generated from this XML.
 
+### xdg-toplevel-drag protocol and generated code
+
+- `staging/xdg-toplevel-drag/xdg-toplevel-drag-v1.xml` of the installed wayland-protocols (1.49 when written; not copied
+  into the repository: the build reads it through `pkg-config --variable=pkgdatadir wayland-protocols`): MIT, "Copyright 2023
+  David Redondo" (the `<copyright>` block of the XML).
+- The server code generated from it by hyprwayland-scanner (`xdg-toplevel-drag-v1.hpp`/`.cpp`, which copy that block) is
+  compiled into `grassfield-compositor.so` (ADR-0036 amendment 2026-11-08).
+  **Needs legal review:** whether that MIT block must ship with the plugin package as a notice file, as
+  `clipboard-protocols-notices.txt` does for the desktop package (not added: packaging is outside this change).
+
 ### DBusMenu and AppMenu Registrar interfaces
 
 The menu bridge calls `com.canonical.dbusmenu` and implements `com.canonical.AppMenu.Registrar` from interface names

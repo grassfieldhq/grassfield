@@ -430,16 +430,20 @@ None of these reports came with a diagnostic report.
 - First shipped version:
 
 ### URR-030: Tiling did not react to dragging a tab of Chrome's title bar
-- Status: open
-- Severity (1.0 threshold): medium
+- Status: fixed in source
+- Severity (1.0 threshold): medium; the owner decided on 2026-11-08 that it is fixed before 1.0
 - Reported: 2026-11-07, owner, Grassfield 1.0.0-rc6 (diagnostic report: no)
 - Reproduction: Chromium or Google Chrome; drag a tab (also the only one) to a screen edge or the menu bar; nothing
   tiles, and the tab comes off into a window that does not follow the pointer.
-- Cause: a tab drag is Chromium's own drag and drop, which moves a window only through the `zcr_extended_drag_v1`
-  protocol; Hyprland 0.56.2 does not have it.
-- Fix: none yet; the empty part of the tab strip uses Hyprland's move and tiles (workaround); the limit is written in
-  docs/specs/compositor.md
-- Verification: measured in nested with Chromium 155 (PR #15)
+- Cause: a tab drag is Chromium's own drag and drop, which moves the window a tab carries only through
+  `xdg_toplevel_drag_v1` (preferred) or `zcr_extended_drag_v1` (`wayland_window_drag_controller.cc`); Hyprland 0.56.2 has
+  neither, and Chromium has no fallback.
+- Fix: the plugin serves `xdg_toplevel_drag_manager_v1` v1 (ADR-0036 amendment 2026-11-08, docs/specs/compositor.md FR58
+  and "Toplevel drag (xdg_toplevel_drag_v1)"; branch feat/toplevel-drag): the torn-off window follows the pointer, is never
+  the drag's target (the tab drops back into another window's tab strip), shows the tiling preview, and tiles at the
+  release; Escape only removes the preview. Without the plugin Chromium behaves as before.
+- Verification: unit `ToplevelDrag.*` PASS (2026-11-08); nested `tests/compositor/toplevel_drag.sh` (fixture client and a
+  Chromium case) pending the integrator's run on Hyprland 0.56.2
 - First shipped version:
 
 ### URR-031: Telegram and the ArtCraft suite showed two title bars
@@ -697,7 +701,7 @@ None of these reports came with a diagnostic report.
 | URR-027 | A window could still end up with its title bar under the menu bar | high | fixed in source |
 | URR-028 | Chromium, Google Chrome and Firefox showed no traffic lights by default | medium | fixed in source |
 | URR-029 | Chrome with "Use system title bar" lacks window buttons | medium | accepted limitation (owner, 2026-11-08) |
-| URR-030 | Tiling did not react to dragging a tab of Chrome's title bar | medium | open |
+| URR-030 | Tiling did not react to dragging a tab of Chrome's title bar | medium | fixed in source |
 | URR-031 | Telegram and the ArtCraft suite showed two title bars | medium | fixed in source |
 | URR-032 | A Qt frameless window that draws nothing has no title bar | medium | open |
 | URR-033 | The translucent menu bar was nearly opaque on some displays | low | fixed in source |

@@ -770,6 +770,16 @@ rendering DBusMenu menus (that is `grassfield-menu-bridge` and the shell, step B
   `ui/tools/gen-tokens.py` into `compositor/src/core/ThemeTokens.hpp` (`--check` fails on a stale header, run by `just
   check-shell`), read by `core/Theme.hpp titlebarPalette`. Until the shell pushes it the appearance is dark (Grassfield's
   default); an older shell never sends the key, an older plugin rejects it (the shell sends it only with the feature).
+- **FR58** A browser tab torn off moves with the pointer (URR-030; ADR-0036 amendment 2026-11-08; feature `toplevel-drag`, no
+  verb): the plugin serves `xdg_toplevel_drag_manager_v1` version 1 (wayland-protocols staging), the protocol Chromium and
+  Google Chrome use to move the window a dragged tab carries. While the tab's drag and drop runs, an attached window follows
+  the pointer as a floating move (a window mapped while attached at the pointer minus the client's offset; one mapped already
+  without jumping; a tiled one at its size from before, TL16), snaps away from a tiling place (TL19) and keeps its top below
+  the menu bar (FR56); it is never the drag's target, so the tab can drop back into another window's tab strip; the tiling
+  preview shows as for any drag (TL17), and a drag ended by the release tiles the place shown or leaves the window where it
+  is, on that output's Desktop; Escape (a cancel without the release) only removes the preview. Protocol errors as the spec
+  mandates (`invalid_source`, `toplevel_attached`, `ongoing_drag`). Mechanism and limits: "Toplevel drag
+  (xdg_toplevel_drag_v1)" below.
 
 ## Acceptance criteria (each mapped to a test or scenario; level L0/L1/L2)
 
@@ -831,6 +841,7 @@ not bound for the virtual keyboard in nested: foot received `ESC TAB`). Fixed bu
 | tiling.md TL17, TL21, FR56 (1.0.0-rc6 report: slow fill, overflow on a smaller display, titlebar under the menu bar; review of 3ca47a4b: fit on every Desktop move) | unit `TilingDwell.TheMenuBarFillsAtOnceWhenNothingIsAbove`, `TilingFitIntoArea.*` (4, `OnlyAMoveFromAnotherOutputsDesktopFits` included); nested `tiling.sh` cases menu-bar-at-once and drag-follows, `tests/compositor/display_fit.sh` (F1-F7) | L0 / L1 | 2026-11-07, Hyprland 0.56.2: display_fit.sh `--source WAYLAND-1 --target GF-REF` PASS 7/7 at scale 1.25, GF-REF (1536x864 logical, work area 1536x840) the smaller target (F3: the moved window 1520x792 at 1448,64, the frame of a window filled there); the earlier claim of a 1.25 run with GF-REF the smaller target was wrong (those runs had GF-REF as the source, review of 3ca47a4b); at scale 1 F1-F5 PASS before the review (WAYLAND-1 the target). tiling.sh A/B at scale 1 (GF-REF alone: the owner's screen asleep, no WAYLAND-1), two runs each: this tree 343 and 341 PASS, main f85396e8 347 and 342 PASS; every case that fails on this tree also fails in a main run (the split, popover, hover, covered, fixed-keys and group-front cases, after a shell overlay that Esc does not close), and main fails menu-bar-at-once and drag-follows in both runs, which this tree passes; the fixed-keys cases checked alone on this tree: Super+Alt+F fills and unfills, the zoom light fills. drag-follows capture shows the window under the pointer right after a jump (the measure's first run had a format bug, fixed). Same day: top_clamp.sh PASS 11/11 at 1.25; minimize.sh 5 repeats at 1, this tree and main alike: everything but 2b, which needs a second display |
 | FR56 | unit `TopClamp.*` (11: the move and resize rules, the output under the frame's top edge (level outputs above the edge: the one sharing most of its width, review of 9ba1d40), the review cases of e0a3734 on stacked and bottom-aligned outputs: SUPER+drag ending on the lower output, bottom-edge and right-edge resizes, a top-edge resize and a move into the lower output's menu bar); nested `tests/compositor/top_clamp.sh` (P foot titlebar drag, C Chromium tab strip, R bottom-edge resize with the titlebar under the menu bar) | L0 / L1 | unit 393/393 PASS (2026-10-25, branch m7-clamp-fix; clang-tidy clean on the changed files); nested top_clamp.sh after the fix 2026-10-26 PASS, 8/8 (Hyprland 0.56.2 efb50993; P1-P3, R0 height 400 -> 500 with R1 top 24 -> 24 (titlebar at -8, under the 24 px bar, left alone), C0-C2); C1 soak shortened to 300 s PASS (103 rounds, every action effective but restore 7/9, no coredump, no plugin exception; RSS slopes not judged at that length); C2: plugin unloaded, a window still maps, plugin loaded again. These nested runs used the build of the Electron branch, which merges this one. 2026-10-26 after the review of 9ba1d40 (tie rule, keyboard-focus events): unit 394/394, top_clamp.sh 8/8 PASS again |
 | FR57 | unit `WindowRim.*` (15: the tokens, the dark appearance only and after the shell's push, none in full screen, the width in whole device pixels and macOS 27's light per point at 1, 1.25, 1.5 and 2, the frame with the titlebar, the snapping, the ring's box and radii, and through Hyprland 0.56.2's border and rounding shader arithmetic: the straight sides' first device pixels, never outside the window's shape, continuous round the arcs); nested `tests/compositor/window_edge.sh` (checks 4 to 6, with and without the plugin), `window_edge.sh c2`, `window_edge.sh cost` | L0 / L1 | 2026-11-03, Hyprland 0.56.2 (efb50993), GF-REF 1920x1080 at 1.25: unit 524/524; `window_edge.sh` PASS with the plugin (200 checks: Settings 66 over 39 on its sides and 65-66 on its arcs, inactive 61 and 60-61; foot's bar top 67 over 40, its sides 63 over 36, no second line under the hairline; Evince, dark theme, 78 over 53; none in light) and without it (no rim, no titlebar); `c2` PASS (unload with two windows open: Hyprland alive, rim and titlebar gone; reload: the shell's push, the rim back at 27 levels; 0 plugin exceptions); `cost 6`: render CPU median 2.17 ms with the rim, 2.13 ms without (p95 2.98 / 2.80 ms), 60 Hz either way; C1 `soak.sh 480` PASS (481 s, 166 rounds, every action type effective, minimize 15/20 and restore 15/15, 0 plugin exceptions, no core dump, the shell kept its PID; RSS slopes not judged at that length) |
+| FR58 | unit `ToplevelDrag.*`, `ToplevelDragSources.*` (19: the client's offset for a window mapped while attached, no jump for one mapped already (the grab held at the attach), the regrab, the protocol errors, unmap and role destruction detaching, attach again after a remap, drop, release-then-cancel as a drop, Escape and a destroyed source as a cancel, one live object per source); `Protocol.*` (the feature); nested `tests/compositor/toplevel_drag.sh` (T0-T9, C1/C2) with the fixture client `tests/compositor/toplevel-drag-fixture/tdrag.c` | L0 / L1 | unit PASS (2026-11-08, branch feat/toplevel-drag, Hyprland 0.56.2 efb50993); nested NOT RUN (the agent sandbox cannot start a nested session): pending the integrator's run |
 
 ## Interfaces / contracts (versions)
 
@@ -849,6 +860,7 @@ not bound for the virtual keyboard in nested: foot received `ESC TAB`). Fixed bu
 | plugin → shell | socket2 event `grassfield` (the seat's keyboard focus entered a mapped window; feature `keyboard-focus`) | `{"v":"gfc/1","type":"keyboard-focus","address":"<hex>"}` (FR20) |
 | shell → plugin | `hl.plugin.grassfield.appmenu("0x<hex>")` | re-posts that window's appmenu event (FR22) |
 | client → plugin | Wayland global `org_kde_kwin_appmenu_manager` v2 (`create(new_id, wl_surface)`, `release` since 2); `org_kde_kwin_appmenu.set_address(s, s)`, `release` | FR18–FR21 |
+| client → plugin | Wayland global `xdg_toplevel_drag_manager_v1` v1 (wayland-protocols staging: `get_xdg_toplevel_drag(new_id, wl_data_source)`, `destroy`); `xdg_toplevel_drag_v1.attach(xdg_toplevel, i, i)`, `destroy`; feature `toplevel-drag` while it is up | FR58 |
 | shell → plugin | `hl.plugin.grassfield.overview("<json>")` | `{"on":bool,"durationMs":int,"curve":[x1,y1,x2,y2]?,"windows":[{"address":"0x<hex>","x","y","w","h"}…]}` (FR25-FR27) |
 | plugin → shell | socket2 event `grassfield` (overview state) | `{"v":"gfc/1","type":"overview","state":"opening\|open\|closing\|closed","windows":N}` (+ `"reason"`: `invalid`, `no-windows`, `no-chrome`, `unavailable`, `interrupted`, `fullscreen`; FR27) |
 | plugin → shell | socket2 event `grassfield` at unload (FR32) | `{"v":"gfc/1","type":"capabilities","features":[]}` |
@@ -920,6 +932,44 @@ Feasibility in Hyprland 0.56.2 (headers in `/usr/include/hyprland`, exported sym
   © 2017 David Edmundson, notice kept in the file); the generated server code is compiled into the MIT plugin,
   as Hyprland (BSD-3-Clause) does with KDE's LGPL-2.1-or-later server-decoration protocol. To list in
   `THIRD_PARTY.md` and to cover in the §14 legal review (ADR-0005). Not a legal conclusion.
+
+## Toplevel drag (xdg_toplevel_drag_v1): mechanism
+
+FR58, ADR-0036 amendment 2026-11-08 (the decision, its errors, its ABI risk), URR-030. Code: `ToplevelDrag.*` (glue),
+`core/ToplevelDrag.*` (the state machine, unit-tested). Read in the 0.56.2 headers and binary (efb50993):
+
+- **Global.** As the appmenu global above (plain libwayland, generated server code compiled with `-fvisibility=hidden`, FR23
+  at unload). The XML is the installed wayland-protocols' (`pkg-config --variable=pkgdatadir wayland-protocols`, a
+  dependency of Arch's `hyprland`); a build without it defines `GF_TOPLEVEL_DRAG_PROTOCOL=0` and serves nothing. The generated
+  code references `xdg_toplevel_interface` and `wl_data_source_interface`, exported by `/usr/bin/Hyprland` (`nm -D`).
+- **Seeing the drag without patching Hyprland.** No function hook (the project's rule; `CWLDataDeviceProtocol::initiateDrag`
+  and its end are private). libwayland's public protocol logger (`wl_display_add_protocol_logger`,
+  `wayland-server-core.h:713-736`) is installed while an object waits for or runs its drag: the request
+  `wl_data_device.start_drag` (opcode 0, class `wl_data_device`) naming the object's source begins it; the events
+  `dnd_drop_performed` and `cancelled` on that source end it. Its callback compares an opcode or a few addresses for every
+  other message, records only, and schedules the rest on Hyprland's event loop (`doLater`, `deferredFocus::CLater`). A
+  libwayland destroy listener on the source's `wl_resource` forgets it (and ends the drag); `PROTO::data->dndActive()`
+  (`DataDevice.hpp:145`, which reads `m_dnd.currentSource`) is checked at every step.
+- **Following.** The plugin's `input.mouse.move` listener (bus listeners run in registration order, hyprutils
+  `CSignalBase::emitInternal`; the plugin's is registered at load) moves the window as the titlebar drag does
+  (`setTargetGeom`, `warpPositionSize`, `performSnap`, `topClamp::heldMove`) and calls `gf::tiler::dragMotion`.
+- **Not a drag target.** In the same listener: the surface under the pointer in Hyprland's order (layer popups, Overlay,
+  Top, `CViewHitTester::windowAt(pos, FOCUS_PRIORITY, ignoreWindow = the dragged window)` then `windowSurfaceAt`, Bottom,
+  Background; `mouseMoveUnified` passes `FOCUS_PRIORITY` with no ignored window), handed to `CSeatManager::setPointerFocus`.
+  While `dndActive()` that function only sets `m_state.dndPointerFocus` and emits `dndPointerFocusChange` (Hyprland's
+  `onDndPointerFocus` then sends leave and enter), and the event is cancelled: `mouseMoveUnified` returns right after the
+  bus for a cancelled event, so its own pass does not run. `initiateDrag` registers the data device's motion listener on the
+  same bus event at each drag start, after the plugin's: it still runs and sends `wl_data_device.motion` relative to
+  `dndPointerFocus`'s global box. Under the lock or an Exclusive layer the plugin leaves the focus to Hyprland.
+- **The end.** A release seen by the plugin's button listener (before the data device's, which drops) marks a cancel in the
+  same pass as a drop (Hyprland cancels a drop nobody accepted). From the event loop: the place shown tiles (`tile()`), else
+  `followOutput` and `fitAfterDrop`; a cancel only calls `dragDone()`. A window that unmaps while attached is detached
+  (`window.close`), as is one whose role goes (`CXDGToplevelResource::m_events.destroy`).
+- **Logs** (request budget, FR24): `toplevel drag: drag began`, `attached window <hex>`, `window <hex> follows the pointer`,
+  `window <hex> unmapped: detached`, `window <hex> dropped: tiled into the place shown | stays where it is`, `window <hex>
+  cancelled`, protocol errors at WARN.
+- **Re-verify on every Hyprland update** (gate C3; ADR-0036 amendment item 7): the cancel return of `mouseMoveUnified`, the bus
+  listeners of `initiateDrag` and its motion's reference surface, `setPointerFocus`'s drag branch, the listener order.
 
 ## S5 results
 
@@ -1262,6 +1312,10 @@ plugin observes `input.mouse.button` and never cancels it, for presses and relea
   open) until the pointer moves by one pixel; a real mouse moves, a trackpad tap may not. Measured:
   `tests/compositor/layer_pointer.sh` with the plugin unloaded (map cases KNOWN, the others PASS) and the same with
   `--expect plugin` (FAIL, the defect shown).
+- Without `toplevel-drag` (plugin absent, mismatched, built without wayland-protocols' XML, the global failed, or unloaded):
+  no `xdg_toplevel_drag_manager_v1` global; Chromium and Google Chrome behave as before FR58 (a tab comes off into a window
+  that does not follow the pointer, nothing tiles; the empty part of the tab strip still moves and tiles the window). A drag
+  in progress at the unload goes on as Hyprland's plain drag and drop; the shell needs nothing.
 
 ## Automated tests · Manual verification steps
 
@@ -1584,9 +1638,12 @@ window still on `special:minimized` (`scripts/nestctl -j clients`), keys typed w
   lookups miss, and then GTK header bars get two bars again (Evince, Nautilus are in S1b) while every other window keeps
   the plugin's bar: never none. See ADR-0015's amendment of 2026-11-07.
 - Chromium and Google Chrome on Wayland: dragging a tab (also the only one) is Chromium's own drag and drop, which moves a
-  window only through the `zcr_extended_drag_v1` protocol Hyprland 0.56.2 lacks; the tab comes off into a new window that
-  does not follow the pointer, and nothing tiles (measured in nested with Chromium 155). The empty part of the tab strip asks
-  Hyprland's move (`xdg_toplevel.move`) and tiles like any window (TL16; `tiling.sh` case chromium).
+  window only through `xdg_toplevel_drag_v1` or `zcr_extended_drag_v1`; Hyprland 0.56.2 has neither, so the tab came off into
+  a new window that did not follow the pointer and nothing tiled (measured in nested with Chromium 155, URR-030). Since FR58
+  the plugin serves `xdg_toplevel_drag_v1` (verification pending the integrator's nested run). What stays: touch and tablet
+  drags move nothing (the plugin follows the pointer only); a window dragged across outputs takes the Desktop of the output
+  it is dropped on only at the drop. The empty part of the tab strip asks Hyprland's move (`xdg_toplevel.move`) and tiles
+  like any window (TL16; `tiling.sh` case chromium).
 - Browsers' traffic lights (R7-OMA-01, R7-FUN-04; owner decisions 2026-11-08): Chromium and Google Chrome draw the Grassfield
   GTK theme's lights only in their GTK appearance, and never under Omarchy's machine policy BrowserThemeColor (`color.json`),
   whose colour theme replaces the lights in every profile (measured in nested with a mount namespace). A new Chromium
