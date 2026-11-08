@@ -50,7 +50,9 @@ namespace gf::menubridge {
             return std::nullopt;
         if (interface == QLatin1String("org.freedesktop.DBus.Properties")) {
             if (member == QLatin1String("GetAll")) {
-                if (signature != QLatin1String("s") || args.size() != 1)
+                // (A message built locally has no signature string, one that came off the wire always has: both are accepted
+                // when the arguments fit; a wire message with another signature or count is InvalidArgs.)
+                if ((!signature.isEmpty() && signature != QLatin1String("s")) || args.size() != 1)
                     return error("org.freedesktop.DBus.Error.InvalidArgs", QStringLiteral("GetAll takes (s interface)"));
                 if (args.at(0).toString() != own && !args.at(0).toString().isEmpty())
                     return error("org.freedesktop.DBus.Error.UnknownInterface", QStringLiteral("no such interface on this object"));
@@ -60,7 +62,8 @@ namespace gf::menubridge {
                 return a;
             }
             if (member == QLatin1String("Get") || member == QLatin1String("Set")) {
-                if (signature != (member == QLatin1String("Get") ? QLatin1String("ss") : QLatin1String("ssv")))
+                const bool isGet = member == QLatin1String("Get");
+                if ((!signature.isEmpty() && signature != (isGet ? QLatin1String("ss") : QLatin1String("ssv"))) || args.size() != (isGet ? 2 : 3))
                     return error("org.freedesktop.DBus.Error.InvalidArgs", QStringLiteral("wrong arguments"));
                 return error("org.freedesktop.DBus.Error.UnknownProperty", QStringLiteral("this object has no properties"));
             }
@@ -69,14 +72,31 @@ namespace gf::menubridge {
         return error("org.freedesktop.DBus.Error.UnknownInterface", QStringLiteral("no such interface on this object"));
     }
 
+    namespace {
+        AnswerSink& sink() {
+            static AnswerSink s;
+            return s;
+        }
+        void deliver(const QDBusConnection& connection, const QDBusMessage& answer) {
+            if (sink())
+                sink()(answer);
+            else
+                connection.send(answer);
+        }
+    } // namespace
+
+    void setAnswerSinkForTests(AnswerSink s) {
+        sink() = std::move(s);
+    }
+
     void sendReply(const QDBusMessage& call, const QDBusConnection& connection, const QVariantList& values) {
         if (call.isReplyRequired())
-            connection.send(call.createReply(values));
+            deliver(connection, call.createReply(values));
     }
 
     void sendError(const QDBusMessage& call, const QDBusConnection& connection, const QString& name, const QString& text) {
         if (call.isReplyRequired())
-            connection.send(call.createErrorReply(name, text));
+            deliver(connection, call.createErrorReply(name, text));
     }
 
     bool answerForeignCall(const QDBusMessage& call, const QDBusConnection& connection, const QString& own) {
@@ -114,8 +134,10 @@ namespace gf::menubridge {
         const QString           sender        = message.service();
         const bool              watchedBefore = m_book.holds(sender);
         const registrar::Answer a             = registrar::handle(m_book, message.member(), message.signature(), message.arguments(), sender);
-        const QString key = sender + u' ' + message.member();
-        if (!m_logged.contains(key) && m_logged.size() < 256) {
+        // An unknown member is answered without a log line: a client must not be able to use up the 256-line budget with it.
+        const bool    unknownMember = a.kind == registrar::Answer::Kind::Error && a.error == QLatin1String("org.freedesktop.DBus.Error.UnknownMethod");
+        const QString key           = sender + u' ' + message.member();
+        if (!unknownMember && !m_logged.contains(key) && m_logged.size() < 256) {
             m_logged.insert(key);
             log(QStringLiteral("registrar: %1 from %2 %3").arg(message.member(), sender, a.kind == registrar::Answer::Kind::Reply ? QStringLiteral("kept") : QStringLiteral("answered %1").arg(a.error)));
         }

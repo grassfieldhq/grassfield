@@ -199,7 +199,7 @@ given.
     started, waiting on x-d-p-gtk (31.1 s to 56.6 s; ADR-0041 I-4). Cause (measured 2026-11-08, fixed): not
     `GTK_USE_PORTAL` (x-d-p-gtk unsets it itself), but x-d-p-gtk's ScreenSaver proxy asking `Properties.GetAll` of
     grassfield-menu-bridge, which dropped the call and so made x-d-p-gtk wait out D-Bus's 25 s method timeout. The bridge now
-    answers every call (docs/specs/menu-bridge.md MB16); `tests/integration/portal_screensaver.sh` measures the frontend's
+    answers every call (docs/specs/menu-bridge.md MB14); `tests/integration/portal_screensaver.sh` measures the frontend's
     start with the bridge on a private bus.
 
 ### Known limitations

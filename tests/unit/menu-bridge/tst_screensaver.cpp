@@ -2,9 +2,12 @@
 // GF-016 residual). Linked into menu-bridge-unit-tests (main() is in tst_menubridge.cpp). The bus path (owning the name,
 // a sender leaving the bus, the shell line) is tests/integration/screensaver_inhibit.sh (private bus, bare).
 #include "DBusObjects.h"
+#include "OngoingObject.h"
 #include "Protocol.h"
 #include "ScreenSaver.h"
 
+#include <QDBusConnection>
+#include <QDBusMessage>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
@@ -153,7 +156,7 @@ TEST(ScreenSaverIntrospection, TwoMethodsOnly) {
 
 // ADR-0041 I-4: xdg-desktop-portal-gtk's ScreenSaver proxy (gdbus-codegen) calls Properties.GetAll; the bridge dropped the
 // call and the portal's startup waited out D-Bus's 25 s method timeout. Every call is answered (NoReplyExpected ones aside:
-// sendReply and sendError check isReplyRequired, proven on a bus in tests/integration/screensaver_inhibit.sh).
+// sendReply and sendError check isReplyRequired, proven on a bus in tests/integration/portal_screensaver.sh [3]).
 namespace {
     const QString kOwn   = QStringLiteral("org.freedesktop.ScreenSaver");
     const QString kProps = QStringLiteral("org.freedesktop.DBus.Properties");
@@ -202,4 +205,68 @@ TEST(ScreenSaverEveryCallAnswered, ANonUniqueSenderIsRefusedNotDropped) {
     EXPECT_EQ(a.kind, Answer::Kind::Error);
     EXPECT_EQ(a.error, QStringLiteral("org.freedesktop.DBus.Error.AccessDenied"));
     EXPECT_FALSE(book.active()) << "no cookie for it";
+}
+
+// Each object's own handleMessage, not only the pure decision: a drop that comes back in any of them (the registrar, the
+// diagnostics object, ScreenSaver, Ongoing) leaves the caller waiting out D-Bus's 25 s. No bus is needed: the call is a
+// QDBusMessage built here (from a unique name) and the answers are caught by setAnswerSinkForTests.
+namespace {
+    struct SinkGuard {
+        QList<QDBusMessage> got;
+        SinkGuard() {
+            setAnswerSinkForTests([this](const QDBusMessage& m) { got.append(m); });
+        }
+        ~SinkGuard() {
+            setAnswerSinkForTests({});
+        }
+    };
+
+    // One call to `object`: the answers it gave (exactly one is expected).
+    QList<QDBusMessage> ask(QDBusVirtualObject& object, const QString& path, const QString& iface, const QString& member, const QVariantList& args = {}) {
+        SinkGuard         guard;
+        QDBusMessage      m = QDBusMessage::createMethodCall(QStringLiteral(":1.50"), path, iface, member);
+        m.setArguments(args);
+        const QDBusConnection none(QStringLiteral("gf-test-not-connected"));
+        EXPECT_TRUE(object.handleMessage(m, none)) << qPrintable(iface + QLatin1Char('.') + member);
+        return guard.got;
+    }
+
+    void expectError(const QList<QDBusMessage>& got, const QString& name, const char* what) {
+        ASSERT_EQ(got.size(), 1) << what << ": the call got no reply (or two)";
+        EXPECT_EQ(got.at(0).type(), QDBusMessage::ErrorMessage) << what;
+        EXPECT_EQ(got.at(0).errorName(), name) << what;
+    }
+
+    void everyCallAnswered(QDBusVirtualObject& object, const QString& path, const QString& own) {
+        const QString props = QStringLiteral("org.freedesktop.DBus.Properties");
+        const auto    all   = ask(object, path, props, QStringLiteral("GetAll"), {own});
+        ASSERT_EQ(all.size(), 1) << "GetAll got no reply";
+        EXPECT_EQ(all.at(0).type(), QDBusMessage::ReplyMessage);
+        ASSERT_EQ(all.at(0).arguments().size(), 1);
+        EXPECT_TRUE(all.at(0).arguments().at(0).toMap().isEmpty());
+        expectError(ask(object, path, props, QStringLiteral("Get"), {own, QStringLiteral("X")}), kUnknownProperty, "Get");
+        expectError(ask(object, path, props, QStringLiteral("Set"), {own, QStringLiteral("X"), 1}), kUnknownProperty, "Set");
+        expectError(ask(object, path, QStringLiteral("org.example.Other"), QStringLiteral("Anything")), kUnknownInterface, "unknown interface");
+        expectError(ask(object, path, own, QStringLiteral("Frobnicate")), kUnknownMethod, "unknown member");
+    }
+} // namespace
+
+TEST(EveryCallAnswered, Registrar) {
+    gf::menubridge::RegistrarObject object;
+    everyCallAnswered(object, QLatin1String(gf::menubridge::kRegistrarPath), QLatin1String(gf::menubridge::kRegistrarService));
+}
+
+TEST(EveryCallAnswered, Diagnostics) {
+    gf::menubridge::DiagnosticsObject object([] { return QVariantMap(); });
+    everyCallAnswered(object, QLatin1String(gf::menubridge::kDiagnosticsPath), QLatin1String(gf::menubridge::kDiagnosticsService));
+}
+
+TEST(EveryCallAnswered, ScreenSaver) {
+    gf::menubridge::screensaver::ScreenSaverObject object(gf::menubridge::screensaver::ScreenSaverObject::Changed{});
+    everyCallAnswered(object, QStringLiteral("/org/freedesktop/ScreenSaver"), QLatin1String(gf::menubridge::screensaver::kInterface));
+}
+
+TEST(EveryCallAnswered, Ongoing) {
+    gf::menubridge::ongoing::OngoingObject object([](const QByteArray&) {});
+    everyCallAnswered(object, QStringLiteral("/org/grassfield/Ongoing1"), QStringLiteral("org.grassfield.Ongoing1"));
 }

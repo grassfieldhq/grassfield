@@ -833,7 +833,7 @@ Goal: no input a process reads from the system, a file or another process can cr
   so x-d-p-gtk (and with it the frontend, which waits for its name) waited out D-Bus's 25 s method timeout (live probe:
   `busctl --user --timeout=3 call ... Properties GetAll s org.freedesktop.ScreenSaver` timed out, `Peer.Ping`
   answered). Fix: every virtual object of the bridge answers every method call (empty `GetAll`, `UnknownProperty`,
-  `UnknownInterface`, `UnknownMethod`; docs/specs/menu-bridge.md MB16); proof: `tests/unit/menu-bridge/tst_screensaver.cpp`
+  `UnknownInterface`, `UnknownMethod`; docs/specs/menu-bridge.md MB14); proof: `tests/unit/menu-bridge/tst_screensaver.cpp`
   and `tests/integration/portal_screensaver.sh` (real frontend, real x-d-p-gtk, the bridge on a private bus). No drop-in
   is shipped. Original plan: the owner runs `systemctl --user show-environment | grep GTK_USE_PORTAL` and
   `journalctl --user -b -u xdg-desktop-portal-gtk -u xdg-desktop-portal -o short-monotonic` (read-only, provided as a

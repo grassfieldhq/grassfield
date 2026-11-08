@@ -142,12 +142,15 @@ top-level menus (Left/Right).
     for systemd to restart); crashes leave the window an hour after they happened, but a degraded bridge does not
     recover by itself: it stays degraded until the session restarts it.
     systemd's `RestartSteps`/`RestartMaxDelaySec` (1 s growing to 30 s) pace the restarts meanwhile.
-  - **Every call is answered** (ADR-0041 I-4). A method call that gets no reply makes its caller wait out D-Bus's 25 s
+  - **Every call is answered** (MB14, ADR-0041 I-4). A method call that gets no reply makes its caller wait out D-Bus's 25 s
     method timeout; xdg-desktop-portal-gtk's ScreenSaver proxy (`Properties.GetAll`, sent while it starts) did, and
     the whole portal frontend started 25 s late on the owner's machine (measured 2026-11-08). So on the registrar,
     diagnostics, ScreenSaver and Ongoing objects every method call gets a reply, unless it set NoReplyExpected:
     `Properties.GetAll` an empty `a{sv}`, `Get` and `Set` `UnknownProperty`, another interface `UnknownInterface`, an
-    unknown member `UnknownMethod`, a caller without a unique name `AccessDenied`/`InvalidArgs` (`answerForeign`,
+    unknown member `UnknownMethod`, a caller without a unique name `InvalidArgs` on the registrar and `AccessDenied` on
+    the ScreenSaver and Ongoing objects; a call with no interface name is served as the object's own on the registrar,
+    diagnostics, ScreenSaver and Ongoing objects (libdbus allows it; it was dropped on the first two before); a registrar
+    unknown member is not logged (the log budget is for registrar traffic) (`answerForeign`,
     `src/DBusObjects.cpp`). Signals and replies are still ignored. Per-menu signal subscriptions
     (`LayoutUpdated`, `ItemsPropertiesUpdated`) are sender-specific match rules (verified unique name + object path),
     and `NameOwnerChanged` is watched per name. A peer with no registered window has no subscription and no object that
@@ -222,8 +225,9 @@ top-level menus (Left/Right).
       is watched first and then checked with `NameHasOwner` (the bus handles the AddMatch before the question): a sender
       that left before its watch existed is dropped by the answer, and no answer within 2 s also drops it (review of
       4b8592d: 11 of 60 clients that sent Inhibit and exited at once kept their cookies for the session);
-    - every other member (`Lock`, `SetActive`, `GetActive`, `SimulateUserActivity`, …) answers `NotSupported`, a wrong
-      signature `InvalidArgs`, an unknown member `UnknownMethod`; Properties and other interfaces are answered as on
+    - the other methods of the interface (`Lock`, `SetActive`, `GetActive`, `GetActiveTime`, `GetSessionIdleTime`,
+      `SimulateUserActivity`, `Throttle`, `UnThrottle`) answer `NotSupported`, a wrong signature `InvalidArgs`, a member the
+      interface does not have `UnknownMethod`; Properties and other interfaces are answered as on
       the registrar (an empty `GetAll`; the idle-lock semantics are unchanged);
     - the shell gets `{"type":"screensaver","inhibited":bool,"count":N}` on every change, when it connects, and again
       every 20 s (`kHeartbeatMs`): a bridge that hangs without exiting stops repeating it, and the shell drops
@@ -276,6 +280,7 @@ top-level menus (Left/Right).
 | MB15 (logic) | `tests/unit/menu-bridge/tst_menubridge.cpp` `LauncherUri`, `LauncherParse`, `LauncherBook`, `LauncherProtocol` (17 cases: uri and id charset, count clamp, finite progress, wrong types, 64 apps and senders, 20 per second and coalescing, sender gone, replay, message shape), plain and ASan/UBSan builds (`scripts/dev/test.sh`); shell parser and state: `tests/unit/tst_menubridge.qml` `test_launcher*` | L0 | 2026-10-22: 64 passed, 4 skipped (no Unix sockets in the sandbox), plain and ASan |
 | MB15 (D-Bus) | `tests/integration/launcher_entry.sh` (bare; private bus, bridge, socket tap as the shell, `tests/fixtures/launcher-entry.py` as applications): count and clamp, count-visible, progress and clamp, progress-visible, urgent, flood (21 lines for 300 updates, last state arrives), sender disconnect, replay to a new shell, invalid uri and wrong signature (penalty logged, sender refused then served again). Fails on the bridge before ADR-0018 | L1 | 2026-10-22: PASS (and every behaviour check FAILs against the previous bridge) |
 | MB16 (logic) | `tests/unit/menu-bridge/tst_screensaver.cpp` (cookies distinct and non-zero, owner-only release, sender gone, limits, clean names, only two methods served, `SetActive` refused, wrong signatures, the line and its clamp, introspection); shell: `tests/unit/tst_menubridge.qml` `test_screensaverLines`, `tests/security/tst_idlemodel.qml` `test_idleArmed` | L0 | 2026-10-24: see the security report |
+| MB14 (every call answered) | `tests/unit/menu-bridge/tst_screensaver.cpp` `ScreenSaverEveryCallAnswered.*` (the pure decision) and `EveryCallAnswered.*` (each object's `handleMessage`, Registrar, Diagnostics, ScreenSaver, Ongoing: `GetAll`, `Get`, an unknown interface, an unknown member, each answered; no bus: the answers are caught by `setAnswerSinkForTests`); `tests/integration/portal_screensaver.sh` (bare; the real frontend and x-d-p-gtk, the old drop measured at 20 s or more, the bridge under 10 s, NoReplyExpected gets none) | L0, L1 | see the maintainers' project log |
 | MB16 (D-Bus) | `tests/integration/screensaver_inhibit.sh` (bare; private bus, bridge, socket tap, `tests/fixtures/screensaver-client.py`): name owned, first state, Inhibit on both paths, other/unknown cookies, owner release, sender leaving, NotSupported members, 16-cookie limit, replay to a new shell, bridge exit | L1 | NOT VERIFIED (needs Unix sockets: bare, outside the sandbox) |
 | MB18 (logic) | `tests/unit/menu-bridge/tst_ongoing.cpp` (30, incl. the host without the bus: redaction before the first lock report and after a new shell, buttons only unlocked and declared, `/proc` reads failing closed (unreadable root, pidfd), admission (refusal memory, End exempt and Publish rate-limited, cap before rate, only verified connections holding nothing evicted); 13 review mutants all killed; text cleaning, ids, every state field and limit, unit names and escapes, `.flatpak-info`, `Exec` parsing and XDG precedence, identity verdicts, ownership, per-app and total caps, sender gone, expiry, rate, full and redacted lines, the two shell lines, the XML, the apps' client); shell: `tests/unit/tst_ongoing.qml` | L0 | 2026-11-05: 124/124 PASS (30 ongoing), plain and ASan/UBSan |
 | MB18 (D-Bus) | private bus, bridge in a development run: `Version`, introspection, `Publish` from outside an app scope is `AccessDenied`, other members `UnknownMethod`, an unknown `ongoing-action` answered `unknown-activity` (scratch run, not committed) | L1 | 2026-11-05: PASS for the refusal path; the accepted path NOT VERIFIED (needs systemd app scopes) |

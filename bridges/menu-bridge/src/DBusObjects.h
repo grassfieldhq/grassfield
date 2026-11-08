@@ -56,6 +56,11 @@ namespace gf::menubridge {
     std::optional<ForeignAnswer> answerForeign(const QString& interface, const QString& member, const QString& signature, const QVariantList& args,
                                                const QString& own);
 
+    // Tests only: when set, every answer goes to `sink` instead of the connection (a unit test drives handleMessage with a
+    // QDBusMessage it built, without any bus). Pass an empty function to clear it.
+    using AnswerSink = std::function<void(const QDBusMessage&)>;
+    void setAnswerSinkForTests(AnswerSink sink);
+
     // Sends the answer to a method call, except when the caller asked for none (NoReplyExpected).
     void sendReply(const QDBusMessage& call, const QDBusConnection& connection, const QVariantList& values = {});
     void sendError(const QDBusMessage& call, const QDBusConnection& connection, const QString& name, const QString& text);

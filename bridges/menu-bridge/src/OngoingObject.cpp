@@ -94,11 +94,11 @@ namespace gf::menubridge::ongoing {
     }
 
     void OngoingObject::reply(const QDBusMessage& message, const QVariantList& values) {
-        m_bus.send(message.createReply(values));
+        sendReply(message, m_bus, values);
     }
 
     void OngoingObject::error(const QDBusMessage& message, const QString& name, const QString& text) {
-        m_bus.send(message.createErrorReply(name, text));
+        sendError(message, m_bus, name, text);
     }
 
     bool OngoingObject::handleMessage(const QDBusMessage& message, const QDBusConnection& connection) {
