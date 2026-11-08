@@ -60,6 +60,9 @@ layout(std140, binding = 0) uniform buf {
     float tintedRampHighDark;
     float tintedRampLowLight;
     float tintedRampHighLight;
+    float tileToneSide;       // tile icon tone, see TILE TONE below: +1 lift the pixels above tileTonePivot, -1 darken those below it, 0 none
+    float tileTonePivot;      // linear value the tone leaves alone
+    float tileToneExp;        // exponent of the tone (an ease-out lift above the pivot, a power darkening below it; both > 1)
     vec4 folderTint;          // folder colour step (FolderIcon): a = 1 when the artwork is recoloured, 0 otherwise
     float folderBrightness;   // MultiEffect arithmetic of the folder colour (FolderEffect, tokens folderIcon*)
     float folderContrast;
@@ -110,6 +113,20 @@ void main() {
     vec3 c = px.rgb / max(a, 0.0001);
     bool isTile = tile > 0.5;
     vec3 lin = isTile ? srgbToLinear(c) : toLinear(c);
+    // TILE TONE (R7-REQ-13, A2 rule E). A tile keeps the luminance of its pixels, so over a material of a similar luminance its edge is no better
+    // than Default's, and scaling a full-bleed tile onto the plate moves the measured edge onto other art. The tone pushes the pixels AWAY from the
+    // material, on one side of a pivot only, so that no pixel ever moves towards it: IconEffect chooses the side (IconModes.tileToneSide, the pure rule
+    // that tst_iconmodes checks): +1 in the dark appearance, the pixels above the brightest dark material (pivot 0.38 in linear light) are lifted,
+    // v' = P + (1 - P) (1 - (1 - u)^e), u = (v - P) / (1 - P), with e > 1 (an ease-out: continuous, finite slope); -1 over the light material, the pixels below its darkest (0.62) are darkened,
+    // v' = P (v / P)^e with e > 1. Continuous and increasing at the pivot, the same for every mode, per channel (the hue is kept).
+    if (isTile && tileToneSide > 0.5) {
+        vec3 u = clamp((lin - vec3(tileTonePivot)) / (1.0 - tileTonePivot), vec3(0.0), vec3(1.0));
+        vec3 up = vec3(tileTonePivot) + (1.0 - tileTonePivot) * (vec3(1.0) - pow(vec3(1.0) - u, vec3(tileToneExp)));
+        lin = mix(lin, up, step(vec3(tileTonePivot), lin));
+    } else if (isTile && tileToneSide < -0.5) {
+        vec3 down = vec3(tileTonePivot) * pow(min(lin / tileTonePivot, vec3(1.0)), vec3(tileToneExp));
+        lin = mix(down, lin, step(vec3(tileTonePivot), lin));
+    }
     float Y = dot(lin, vec3(0.2126, 0.7152, 0.0722));   // relative luminance of the artwork pixel
 
     // Per-mode transform of the artwork: rgb (straight) and the opacity it is drawn with.
