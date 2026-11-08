@@ -2,6 +2,7 @@
 
 #include "archivelogic.h"
 #include "filelogic.h"
+#include "launchguard.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -181,6 +182,12 @@ void ArchiveJob::extracted()
         fail(tr("“%1” holds nothing to expand.").arg(FileLogic::displayName(subject())));
         return;
     }
+    // The Archive Utility model: what came from the Internet inside an archive still did. bsdtar drops the archive's
+    // extended attributes (--no-xattrs) but keeps its members' execute bits, so the archive's download marks are copied onto
+    // every extracted regular file (O_NOFOLLOW, no link followed) before anything gets a real name; LaunchGuard then asks.
+    const LaunchGuard::DownloadMarks marks = LaunchGuard::downloadMarks(m_archive);
+    if (marks.any())
+        LaunchGuard::markTree(m_temp, marks);
     const auto exists = [this](const QString &name) { return QFileInfo::exists(m_folder + QLatin1Char('/') + name) || QFileInfo(m_folder + QLatin1Char('/') + name).isSymLink(); };
     const QString name = ArchiveLogic::expandName(QFileInfo(m_archive).fileName(), top, exists);
     const QString target = m_folder + QLatin1Char('/') + name;

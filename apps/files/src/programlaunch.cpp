@@ -117,12 +117,17 @@ Outcome classify(const Start &s)
     return o;
 }
 
-QString approve(const QString &path, quint64 inode, qint64 mtimeNs, qint64 size, bool allowRun)
+bool filesRunsAsRoot()
+{
+    return ::geteuid() == 0;
+}
+
+Approval approve(const QString &path, quint64 inode, qint64 mtimeNs, qint64 size, bool allowRun)
 {
     const QByteArray native = QFile::encodeName(path);
     const int fd = ::open(native.constData(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NOCTTY | O_NONBLOCK);
     if (fd < 0)
-        return QString::fromLocal8Bit(strerror(errno));
+        return Approval::Failed;
     struct stat st{};
     auto same = [&] {
         return ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && quint64(st.st_ino) == inode
@@ -130,29 +135,33 @@ QString approve(const QString &path, quint64 inode, qint64 mtimeNs, qint64 size,
     };
     if (!same()) {
         ::close(fd);
-        return QStringLiteral("changed");
+        return Approval::Changed;
     }
     if (allowRun) {
         if (st.st_uid != ::geteuid()) {
             ::close(fd);
-            return QString::fromLocal8Bit(strerror(EPERM));
+            return Approval::NotOwner;
         }
         // The user's execute bit only: the permissions it has, without setuid and setgid, plus u+x.
         if (::fchmod(fd, (st.st_mode & 0777) | S_IXUSR) != 0) {
-            const int error = errno;
             ::close(fd);
-            return QString::fromLocal8Bit(strerror(error));
+            return Approval::Failed;
         }
         if (!same()) {
             ::close(fd);
-            return QStringLiteral("changed");
+            return Approval::Changed;
+        }
+        // A FAT, exFAT or fixed-mode NTFS mount accepts the chmod and keeps its own modes: the bit must really be there.
+        if (!(st.st_mode & S_IXUSR)) {
+            ::close(fd);
+            return Approval::ExecIgnored;
         }
     }
     const QByteArray value = LaunchGuard::approvalValue(quint64(st.st_ino), qint64(st.st_mtim.tv_sec) * 1000000000 + st.st_mtim.tv_nsec, qint64(st.st_size));
     // No user extended attributes here (FAT, some network file systems): no approval kept, the next open asks again.
     ::fsetxattr(fd, "user.grassfield.approved", value.constData(), size_t(value.size()), 0);
     ::close(fd);
-    return {};
+    return Approval::Approved;
 }
 
 QString applicationsFolder()
@@ -200,12 +209,33 @@ QStringList Run::command(const QString &program, const QStringList &args)
     return grassfield::apps::scopedCommand(program, args, grassfield::apps::scopedLaunch());
 }
 
+bool Run::allowed(const QStringList &argv)
+{
+    if (argv.isEmpty() || filesRunsAsRoot())
+        return false;
+    // uwsm-app -- <main argument> ...: a main argument uwsm reads as a desktop entry would start that entry instead.
+    if (argv.at(0) == QLatin1String("uwsm-app") || argv.at(0).endsWith(QLatin1String("/uwsm-app")))
+        return argv.size() > 2 && !LaunchGuard::uwsmReadsAsEntry(argv.at(2));
+    return true;
+}
+
 void Run::start(const QString &program, const QStringList &args, const QString &workingDirectory, bool appImage, const QString &interpreter)
 {
     m_start = Start{};
     m_start.appImage = appImage;
     m_start.interpreter = interpreter;
     const QStringList argv = command(program, args);
+    if (!allowed(argv)) {
+        m_start.spawned = false;
+        m_start.spawnErrno = EPERM;
+        m_ended = true;
+        QTimer::singleShot(0, this, [this] {
+            Outcome refused;
+            refused.failure = Failure::StartFailed;
+            report(refused);
+        });
+        return;
+    }
 
     int pair[2] = {-1, -1};
     if (::socketpair(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0, pair) == 0) {
@@ -286,7 +316,7 @@ void Run::readErrors()
     if (m_errors < 0)
         return;
     char buffer[8192];
-    for (;;) {
+    for (int reads = 0; reads < kMaxErrorReads; ++reads) {
         const ssize_t n = ::recv(m_errors, buffer, sizeof buffer, MSG_DONTWAIT);
         if (n <= 0)
             break;
@@ -294,6 +324,9 @@ void Run::readErrors()
         if (room > 0)
             m_start.errors.append(buffer, int(qMin<qint64>(room, n)));
     }
+    // Enough read: stop listening at once (its next writes fail without a signal instead of filling the queue).
+    if (m_start.errors.size() >= kMaxErrorBytes)
+        closeErrors();
 }
 
 void Run::childEnded()

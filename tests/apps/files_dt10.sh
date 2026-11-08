@@ -3,12 +3,13 @@
 # model): Grassfield Files never runs an app launcher, never runs a script by opening it, and runs a downloaded program only
 # after the user's Open in its sheet. A sandbox folder holds t.desktop (Type=Application, executable), u.desktop (the same,
 # not executable), Invoice.pdf.desktop, run.sh (executable) and Invoice (a native program carrying a browser's download mark,
-# .dev/build/launch-fixtures/probe, which leaves "launched" in its folder); each launcher's Exec and the script would create
+# .dev/build/launch-fixtures/probe, which leaves "Invoice.launched" in its working folder, the isolated home); each
+# launcher's Exec and the script would create
 # a marker file. Pass 1 runs Files with GRASSFIELD_FILES_NO_LAUNCH=1: the three launchers are refused by the guard (log "open
 # refused") before the test switch, the script and the program stop at the switch ("launch blocked", twice) before any editor
 # or sheet. Pass 2 runs Files WITHOUT the switch on the launchers and the program: the launchers are refused, the program's
 # sheet is asked ("open asked (program)") and answered with Return, which cancels ("open canceled (program)"); neither the
-# marker nor "launched" may appear. Items are opened with type-to-select + Ctrl+O (Return renames, as in the Finder).
+# marker nor "Invoice.launched" may appear. Items are opened with type-to-select + Ctrl+O (Return renames, as in the Finder).
 #
 # Safety as tests/apps/files_sandbox.sh: everything under .dev/files-dt10, the app through scripts/dev/isolated.sh, a
 # private D-Bus session bus started here (refuses the owner's bus), the nested Wayland socket only. If the guard were broken,
@@ -125,7 +126,7 @@ a=$(grep -c "grassfield-files: open asked" "$sandbox/pass1.log" || true)
 run_pass "$sandbox/pass2.log" "t.desktop u.desktop Invoice.pdf.desktop Invoice"
 sleep 2
 [[ ! -e $marker ]] && pass "pass 2 (DT-10): no launcher ran (marker absent)" || fail "pass 2 (DT-10): the marker exists: a launcher was run"
-[[ ! -e $folder/launched ]] && pass "pass 2 (DT-10): the downloaded program did not run without Open" || fail "pass 2 (DT-10): the downloaded program ran"
+[[ ! -e $dev/isolated/$iso_name/home/Invoice.launched && ! -e $folder/Invoice.launched ]] && pass "pass 2 (DT-10): the downloaded program did not run without Open" || fail "pass 2 (DT-10): the downloaded program ran"
 n=$(grep -c "grassfield-files: open refused (app launcher)" "$sandbox/pass2.log" || true)
 [[ $n == 3 ]] && pass "pass 2: three launcher refusals logged" || fail "pass 2: $n launcher refusals logged, expected 3"
 a=$(grep -c "grassfield-files: open asked (program): \"Invoice\" from downloads.example.org" "$sandbox/pass2.log" || true)

@@ -133,7 +133,7 @@ TEST_F(Approve, OpenSetsOnlyTheUsersExecuteBitAndRecordsTheIdentity)
     ASSERT_TRUE(dir.isValid());
     const QString path = file(QStringLiteral("Tool.AppImage"), 04640);
     const LaunchGuard::Facts f = LaunchGuard::inspect(QUrl::fromLocalFile(path));
-    ASSERT_EQ(approve(f.path, f.inode, f.mtimeNs, f.size, true), QString());
+    ASSERT_EQ(approve(f.path, f.inode, f.mtimeNs, f.size, true), Approval::Approved);
     EXPECT_EQ(modeOf(path), 0740u) << "u+x added, setuid dropped, group and others unchanged";
     const QByteArray approval = approvalOf(path);
     if (approval.isEmpty() && errno == ENOTSUP)
@@ -147,16 +147,16 @@ TEST_F(Approve, ADifferentFileOrALinkIsNeverApproved)
     ASSERT_TRUE(dir.isValid());
     const QString path = file(QStringLiteral("tool"), 0644);
     const LaunchGuard::Facts f = LaunchGuard::inspect(QUrl::fromLocalFile(path));
-    EXPECT_EQ(approve(f.path, f.inode, f.mtimeNs, f.size + 1, true), QStringLiteral("changed"));
-    EXPECT_EQ(approve(f.path, f.inode + 1, f.mtimeNs, f.size, true), QStringLiteral("changed"));
+    EXPECT_EQ(approve(f.path, f.inode, f.mtimeNs, f.size + 1, true), Approval::Changed);
+    EXPECT_EQ(approve(f.path, f.inode + 1, f.mtimeNs, f.size, true), Approval::Changed);
     EXPECT_EQ(modeOf(path), 0644u) << "nothing changed on a file the user did not decide on";
     EXPECT_TRUE(approvalOf(path).isEmpty());
     const QString link = dir.filePath(QStringLiteral("link"));
     ASSERT_TRUE(QFile::link(path, link));
-    EXPECT_FALSE(approve(link, f.inode, f.mtimeNs, f.size, true).isEmpty()) << "O_NOFOLLOW: a link is not the file";
+    EXPECT_EQ(approve(link, f.inode, f.mtimeNs, f.size, true), Approval::Failed) << "O_NOFOLLOW: a link is not the file";
     EXPECT_EQ(modeOf(path), 0644u);
     // Approval only (a script run in Terminal): no permission change.
-    ASSERT_EQ(approve(f.path, f.inode, f.mtimeNs, f.size, false), QString());
+    ASSERT_EQ(approve(f.path, f.inode, f.mtimeNs, f.size, false), Approval::Approved);
     EXPECT_EQ(modeOf(path), 0644u);
 }
 

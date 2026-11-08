@@ -1,11 +1,14 @@
 #include "launchguard.h"
 
+#include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QMimeDatabase>
 #include <QMimeType>
 #include <QRegularExpression>
 
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -93,7 +96,7 @@ bool foreignAppName(const QString &name)
 
 bool foreignApp(const Facts &f)
 {
-    return f.mimeType == QLatin1String("application/x-apple-diskimage") || foreignAppName(f.fileName);
+    return f.mimeType == QLatin1String("application/x-apple-diskimage");
 }
 
 // Scripts: shared-mime-info makes them (shell, Python, Perl, Ruby, Lua, ...) sub-classes of application/x-executable.
@@ -114,6 +117,33 @@ bool showsAsProgram(const QString &mimeType)
             return true;
     }
     return mimeType.isEmpty();
+}
+
+// The (cleaned) name alone says nothing, or only a program's kind: every type its patterns give must be one.
+bool nameShowsAsProgram(const QString &name)
+{
+    const QList<QMimeType> types = QMimeDatabase().mimeTypesForFileName(name);
+    for (const QMimeType &t : types) {
+        if (!showsAsProgram(t.name()))
+            return false;
+    }
+    return true;
+}
+
+// Unicode's Default_Ignorable_Code_Point ranges (DerivedCoreProperties.txt, Unicode 15) that are not format characters (Cf).
+bool defaultIgnorable(char32_t c)
+{
+    return c == 0x034F || c == 0x115F || c == 0x1160 || c == 0x17B4 || c == 0x17B5 || (c >= 0x180B && c <= 0x180F) || c == 0x3164
+        || (c >= 0xFE00 && c <= 0xFE0F) || c == 0xFFA0 || (c >= 0xFFF0 && c <= 0xFFF8) || (c >= 0x1BCA0 && c <= 0x1BCA3)
+        || (c >= 0x1D173 && c <= 0x1D17A) || (c >= 0xE0000 && c <= 0xE0FFF) || (c >= 0x2060 && c <= 0x206F) || (c >= 0x200B && c <= 0x200F)
+        || (c >= 0x202A && c <= 0x202E) || c == 0x00AD || c == 0x061C || c == 0xFEFF;
+}
+
+// Characters a journal line never carries as they are: C0, DEL, C1, the quote and the bidirectional controls.
+bool unloggable(char16_t c)
+{
+    return c < 0x20 || (c >= 0x7F && c <= 0x9F) || c == u'"' || c == 0x061C || c == 0x200E || c == 0x200F || (c >= 0x202A && c <= 0x202E)
+        || (c >= 0x2066 && c <= 0x2069);
 }
 
 bool desktopName(const QString &name)
@@ -309,15 +339,17 @@ QUrl webLink(const Facts &f)
 
 Verdict verdict(const Facts &f)
 {
+    // Every name check is made on the cleaned name: "Invoice.pdf " or "Invoice.pdf<U+200B>" is a PDF's name to the eye.
+    const QString name = cleanName(f.fileName);
     // Remote items (a share, sftp, a phone, the Trash): KIO never runs a remote executable, but it downloads a remote file and
     // runs the handler of its type, so what runs when opened is refused by name; desktop entries too (never handed to KIO).
     // Nothing is run from there: the user copies it to this computer first (Gatekeeper's rule for apps it can't check).
     if (!f.local) {
-        if (desktopName(f.fileName))
+        if (desktopName(name) || desktopName(f.fileName))
             return Verdict::RefuseLauncher;
-        if (foreignAppName(f.fileName))
+        if (foreignAppName(name))
             return Verdict::ForeignApp;
-        if (windowsName(f.fileName) || javaName(f.fileName) || appImageName(f.fileName))
+        if (windowsName(name) || javaName(name) || appImageName(name))
             return Verdict::RefuseRemoteProgram;
         return Verdict::Open;
     }
@@ -327,13 +359,17 @@ Verdict verdict(const Facts &f)
     // the type the server announces, or the application named in X-KDE-LastOpenedWith (review of a5646b8). A web link
     // (a .webloc on macOS) opens its address in the default web browser only (FilesApp::open); everything else is refused.
     if (f.desktopEntry || f.mimeType == QLatin1String("application/x-desktop") || f.mimeAncestors.contains(QLatin1String("application/x-desktop"))
-        || desktopName(f.fileName))
+        || desktopName(name) || desktopName(f.fileName))
         return webLink(f).isValid() ? Verdict::OpenWebLinkInBrowser : Verdict::RefuseLauncher;
     // A native program or AppImage, by its ELF header (not its name, not its permission bit). Its kind must say so: program
-    // content shown as a document ("photo.jpg", "notes.txt", "run.sh", "setup.exe") is never run.
+    // content shown as a document ("photo.jpg", "notes.txt", "run.sh", "setup.exe", and the same names with invisible
+    // characters or trailing spaces) is never run.
     if (f.elf && f.elfProgram) {
-        if (!showsAsProgram(f.mimeType))
+        if (!showsAsProgram(f.mimeType) || !nameShowsAsProgram(name))
             return Verdict::RefuseDisguised;
+        // uwsm would start a desktop entry instead of the program (a launcher's way round the refusal above).
+        if (uwsmReadsAsEntry(f.path) || uwsmReadsAsEntry(name))
+            return Verdict::RefuseLauncher;
         if (!f.elfCompatible)
             return Verdict::RefuseIncompatible;
         // Files never starts anything with rights other than the user's own.
@@ -341,11 +377,11 @@ Verdict verdict(const Facts &f)
             return Verdict::RefuseElevated;
         return Verdict::RunProgram;
     }
-    if (foreignApp(f))
+    if (foreignApp(f) || foreignAppName(name))
         return Verdict::ForeignApp;
-    if (javaType(f) || javaName(f.fileName))
+    if (javaType(f) || javaName(name))
         return Verdict::JavaProgram;
-    if (windowsType(f) || windowsName(f.fileName))
+    if (windowsType(f) || windowsName(name))
         return Verdict::WindowsFile;
     // An executable script opens in the text editor, as on macOS (a .sh or .py opens in its editor; Open With > Terminal runs
     // it). Without the permission bit it is a document for KIO, which opens it in its type's application. An ELF file is never
@@ -353,7 +389,7 @@ Verdict verdict(const Facts &f)
     if (f.executable && !f.elf && (f.shebang || scriptType(f)))
         return Verdict::OpenScript;
     // Named or typed as an AppImage, but not an ELF program: nothing to run (an AppImage launcher would try).
-    if (appImageType(f) || appImageName(f.fileName))
+    if (appImageType(f) || appImageName(name))
         return Verdict::RefuseNotAnApp;
     // Documents, also with the permission bit (every file of a FAT or NTFS volume has it), open in their app; so do ELF shared
     // libraries and objects (KIO's job never runs an executable: setRunExecutables(false)).
@@ -384,10 +420,136 @@ QString originHost(const Facts &f)
             url = QUrl(url.path(), QUrl::StrictMode);
         const QString host = url.host(QUrl::FullyDecoded).toLower();
         static const QRegularExpression valid(QStringLiteral(R"(\A[\p{L}\p{N}.:\[\]-]{1,253}\z)"));
-        if (!host.isEmpty() && valid.match(host).hasMatch())
-            return host;
+        if (host.isEmpty() || !valid.match(host).hasMatch())
+            continue;
+        // A label that mixes scripts (a homograph: Cyrillic "а" in "pаypal") is shown as the browsers show it, in ASCII.
+        for (const QString &label : host.split(QLatin1Char('.'))) {
+            QChar::Script seen = QChar::Script_Unknown;
+            for (const char32_t c : label.toUcs4()) {
+                const QChar::Script s = QChar::script(c);
+                if (s == QChar::Script_Common || s == QChar::Script_Inherited || s == QChar::Script_Unknown)
+                    continue;
+                if (seen != QChar::Script_Unknown && s != seen)
+                    return QString::fromLatin1(QUrl::toAce(host));
+                seen = s;
+            }
+        }
+        return host;
     }
     return {};
+}
+
+QString cleanName(const QString &name)
+{
+    QString out;
+    out.reserve(name.size());
+    for (const char32_t c : name.toUcs4()) {
+        if (QChar::category(c) == QChar::Other_Format || defaultIgnorable(c))
+            continue;
+        out += QString::fromUcs4(&c, 1);
+    }
+    // Trailing spaces (any space separator) and dots are not seen in a list and do not change the kind to the eye.
+    while (!out.isEmpty() && (out.back().isSpace() || out.back() == QLatin1Char('.')))
+        out.chop(1);
+    return out.normalized(QString::NormalizationForm_C);
+}
+
+bool uwsmReadsAsEntry(const QString &argument)
+{
+    // uwsm's MainArg (uwsm 0.27, /usr/share/uwsm/modules/uwsm/main.py): arg.endswith(".desktop") or ".desktop:" in arg.
+    return argument.endsWith(QLatin1String(".desktop")) || argument.contains(QLatin1String(".desktop:"));
+}
+
+DownloadMarks downloadMarks(const QString &path)
+{
+    DownloadMarks marks;
+    const int fd = ::open(QFile::encodeName(path).constData(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
+    if (fd < 0)
+        return marks;
+    marks.origin = attribute(fd, "user.xdg.origin.url");
+    marks.referrer = attribute(fd, "user.xdg.referrer.url");
+    ::close(fd);
+    return marks;
+}
+
+bool markFile(const QString &path, const DownloadMarks &marks)
+{
+    if (!marks.any())
+        return false;
+    const QByteArray native = QFile::encodeName(path);
+    const int fd = ::open(native.constData(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK | O_NOFOLLOW);
+    struct stat st{};
+    bool ok = true;
+    if (fd >= 0) {
+        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+            ::close(fd);
+            return false;
+        }
+        if (!marks.origin.isEmpty())
+            ok = ::fsetxattr(fd, "user.xdg.origin.url", marks.origin.constData(), size_t(marks.origin.size()), 0) == 0 && ok;
+        if (!marks.referrer.isEmpty())
+            ok = ::fsetxattr(fd, "user.xdg.referrer.url", marks.referrer.constData(), size_t(marks.referrer.size()), 0) == 0 && ok;
+        ::close(fd);
+        return ok;
+    }
+    // Not readable by the user (an archive member of mode 0100 can still be executed, and setting a user attribute needs write
+    // access): the user's own regular file, pinned by an O_PATH descriptor that follows no link, gets u+rw for the moment of
+    // the write through its /proc/self/fd entry, then its mode back.
+    if (errno != EACCES)
+        return false;
+    const int pinned = ::open(native.constData(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    if (pinned < 0)
+        return false;
+    if (::fstat(pinned, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != ::geteuid()) {
+        ::close(pinned);
+        return false;
+    }
+    const QByteArray self = "/proc/self/fd/" + QByteArray::number(pinned);
+    if (::chmod(self.constData(), (st.st_mode & 07777) | S_IRUSR | S_IWUSR) != 0) {
+        ::close(pinned);
+        return false;
+    }
+    const int writable = ::open(self.constData(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
+    if (writable >= 0) {
+        if (!marks.origin.isEmpty())
+            ok = ::fsetxattr(writable, "user.xdg.origin.url", marks.origin.constData(), size_t(marks.origin.size()), 0) == 0 && ok;
+        if (!marks.referrer.isEmpty())
+            ok = ::fsetxattr(writable, "user.xdg.referrer.url", marks.referrer.constData(), size_t(marks.referrer.size()), 0) == 0 && ok;
+        ::close(writable);
+    } else {
+        ok = false;
+    }
+    ::chmod(self.constData(), st.st_mode & 07777);
+    ::close(pinned);
+    return ok;
+}
+
+int markTree(const QString &root, const DownloadMarks &marks)
+{
+    if (!marks.any())
+        return 0;
+    int marked = 0;
+    if (markFile(root, marks))
+        ++marked;
+    // No link is followed (QDirIterator's default), hidden and system entries included.
+    QDirIterator it(root, QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    for (int seen = 0; it.hasNext() && seen < 100000; ++seen) {
+        const QString path = it.next();
+        if (markFile(path, marks))
+            ++marked;
+    }
+    return marked;
+}
+
+QByteArray remoteOrigin(const QUrl &source)
+{
+    static const QStringList local = {QStringLiteral("file"),        QStringLiteral("trash"),         QStringLiteral("desktop"),
+                                      QStringLiteral("recentlyused"), QStringLiteral("tags"),          QStringLiteral("filenamesearch"),
+                                      QStringLiteral("baloosearch"), QStringLiteral("timeline"),      QStringLiteral("grassfield-apps"),
+                                      QStringLiteral("grassfield-app")};
+    if (!source.isValid() || source.scheme().isEmpty() || local.contains(source.scheme().toLower()))
+        return {};
+    return source.adjusted(QUrl::RemoveUserInfo).toEncoded();
 }
 
 QByteArray approvalValue(quint64 inode, qint64 mtimeNs, qint64 size)
@@ -426,7 +588,7 @@ QString logName(const QString &name)
 {
     QString out = name.left(120);
     for (QChar &ch : out) {
-        if (ch.unicode() < 0x20 || ch.unicode() == 0x7f || ch == QLatin1Char('"'))
+        if (unloggable(ch.unicode()))
             ch = QLatin1Char('?');
     }
     return out;
@@ -443,7 +605,6 @@ Facts inspect(const QUrl &url)
     const QString itemPath = url.toLocalFile();
     const QFileInfo item(itemPath);
     f.fileName = item.fileName();
-    f.symlink = item.isSymLink();
     f.regularFile = item.isFile();
     f.executable = f.regularFile && item.isExecutable();
     if (!f.regularFile)

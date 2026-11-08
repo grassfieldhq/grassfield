@@ -33,6 +33,7 @@ enum class Verdict {
     RefuseRemoteProgram,  // a program, Windows or Java file on a server or in the Trash: never run from there
     RefuseElevated,       // a program that would run with other rights (setuid, setgid, file capabilities), or Files as root
 };
+// Name checks (a disguise, a launcher's or a Windows program's name) are made on cleanName(fileName), never on the raw name.
 
 // What inspect() learned about an item. For a symbolic link, the facts are its final target's (the target's trust, its
 // permission bits, its folder), except fileName, which stays the name the user sees.
@@ -40,7 +41,6 @@ struct Facts {
     bool local = false;        // a file: URL
     bool regularFile = false;  // a regular file (symlinks followed)
     bool executable = false;   // the user may execute it (symlinks followed)
-    bool symlink = false;      // the item itself is a symbolic link
     QString fileName;          // the item's own name (a link's name, not its target's)
     QString path;              // the file decided on: the item, or its link's final target (absolute, canonical)
     QString mimeType;          // QMimeDatabase::mimeTypeForFile (name, then content): the kind Files shows for it
@@ -109,8 +109,36 @@ RunPlan plan(const Facts &facts);
 QUrl webLink(const Facts &facts);
 
 // The host a downloaded file came from (the origin's, else the referrer's), "" when unknown. Only a host: no path, query or
-// user name ever reaches the sheet or the journal.
+// user name ever reaches the sheet or the journal. An internationalised host whose labels mix scripts (a Cyrillic "а" among
+// Latin letters) is shown in its ASCII form (punycode, "xn--…"), as browsers do.
 QString originHost(const Facts &facts);
+
+// The name a file's kind is decided on: trailing spaces and dots removed (they are invisible in a list, and "Invoice.pdf "
+// is still "a PDF" to the eye), every format character and default-ignorable code point dropped (zero-width space, joiners,
+// bidirectional controls such as U+202E: "Invoice<U+202E>fdp.exe" shows as "Invoiceexe.pdf" and is an .exe), then NFC.
+QString cleanName(const QString &name);
+
+// uwsm (uwsm-app, the Dock's launch path) reads a main argument that ends in ".desktop" or holds ".desktop:" as a desktop
+// entry ("…/Tool.desktop:run" is the entry Tool.desktop with its action "run"), so such a program path is never passed to it.
+bool uwsmReadsAsEntry(const QString &argument);
+
+// The browsers' download marks of a file (user.xdg.origin.url, user.xdg.referrer.url).
+struct DownloadMarks {
+    QByteArray origin;
+    QByteArray referrer;
+    bool any() const { return !origin.isEmpty() || !referrer.isEmpty(); }
+};
+// Those of `path` (symbolic links followed: a link's target's), empty when it has none or can't be read.
+DownloadMarks downloadMarks(const QString &path);
+// Writes `marks` on `path` when it is a regular file, through an O_NOFOLLOW descriptor (a link is never followed; a file the
+// user may not read or write, their own, gets u+rw for the moment of the write through an O_PATH descriptor, then its mode
+// back). False when nothing was written.
+bool markFile(const QString &path, const DownloadMarks &marks);
+// markFile on every regular file under `root` (no link followed, at most 100000 entries); the number of files marked.
+int markTree(const QString &root, const DownloadMarks &marks);
+// The download mark a copy from `source` gets: the address without user name or password, for a remote location (sftp, smb,
+// ftp, http, a phone…); "" for this computer's own locations (file:, the Trash, Recent, tags, searches).
+QByteArray remoteOrigin(const QUrl &source);
 
 // The value of user.grassfield.approved for a file of this identity ("1 <inode> <mtime ns> <size>").
 QByteArray approvalValue(quint64 inode, qint64 mtimeNs, qint64 size);
@@ -118,7 +146,8 @@ QByteArray approvalValue(quint64 inode, qint64 mtimeNs, qint64 size);
 // The words to search the Store for, for another system's app ("Slack-4.36.140-macOS.dmg" -> "Slack").
 QString storeSearchTerm(const QString &fileName);
 
-// One line for the journal: control characters replaced, at most 120 characters.
+// One line for the journal: control characters (C0, DEL, C1), bidirectional controls and quotes replaced, at most 120
+// characters.
 QString logName(const QString &name);
 
 // The ELF header of a file: `readAt(offset, length)` returns the bytes there (fewer at the end of the file). Bounded: at most

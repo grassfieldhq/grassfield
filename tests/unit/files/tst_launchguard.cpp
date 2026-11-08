@@ -398,6 +398,7 @@ TEST(LaunchGuardText, OriginHostIsAHostOnly)
     f.referrerUrl.clear();
     EXPECT_TRUE(originHost(f).isEmpty());
     EXPECT_EQ(logName(QStringLiteral("a\nb\x01\"c")), QStringLiteral("a?b??c"));
+    EXPECT_EQ(logName(QString::fromUtf8("x\u202Eexe.pdf\u0085y\u2066z")), QStringLiteral("x?exe.pdf?y?z")) << "bidi controls and C1 too";
     EXPECT_EQ(logName(QString(300, QLatin1Char('x'))).size(), 120);
     EXPECT_EQ(approvalValue(42, 1700000000123456789, 4096), QByteArray("1 42 1700000000123456789 4096"));
 }
@@ -547,7 +548,6 @@ TEST_F(Files, NativeProgramsByContentAndThroughLinks)
     ASSERT_TRUE(QFile::link(tool, link));
     const Facts linked = inspect(QUrl::fromLocalFile(link));
     EXPECT_EQ(verdict(linked), Verdict::RunProgram);
-    EXPECT_TRUE(linked.symlink);
     EXPECT_EQ(linked.fileName, QStringLiteral("report"));
     EXPECT_EQ(linked.path, QFileInfo(tool).canonicalFilePath());
     const QString disguisedLink = dir.filePath(QStringLiteral("report.pdf"));
@@ -594,7 +594,7 @@ TEST_F(Files, Dt10DownloadedProgramRunsOnlyAfterConsentAndAsksAgainWhenChanged)
     ASSERT_EQ(::setxattr(QFile::encodeName(path).constData(), "user.grassfield.approved", forged.constData(), size_t(forged.size()), 0), 0);
     EXPECT_FALSE(inspect(QUrl::fromLocalFile(path)).approved);
     // The user's Open: execute bit and approval.
-    ASSERT_EQ(ProgramLaunch::approve(f.path, f.inode, f.mtimeNs, f.size, p.allowRun), QString());
+    ASSERT_EQ(ProgramLaunch::approve(f.path, f.inode, f.mtimeNs, f.size, p.allowRun), ProgramLaunch::Approval::Approved);
     f = inspect(QUrl::fromLocalFile(path));
     EXPECT_TRUE(f.executable);
     EXPECT_TRUE(f.approved);
@@ -614,4 +614,131 @@ TEST_F(Files, Dt10DownloadedProgramRunsOnlyAfterConsentAndAsksAgainWhenChanged)
     const Facts linked = inspect(QUrl::fromLocalFile(link));
     EXPECT_EQ(originHost(linked), QStringLiteral("downloads.example.org"));
     EXPECT_TRUE(plan(linked).ask);
+}
+
+// Review of 0c51550e (MAJOR): invisible characters never get round the disguise refusal. Names are decided on cleanName():
+// trailing spaces and dots go, format and default-ignorable characters go, NFC.
+TEST(LaunchGuardNames, CleanNameDropsWhatTheEyeDoesNotSee)
+{
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice.pdf ")), QStringLiteral("Invoice.pdf"));
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice.pdf. . ")), QStringLiteral("Invoice.pdf"));
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice.pdf\u00a0")), QStringLiteral("Invoice.pdf")) << "a no-break space";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice.pdf\u3000")), QStringLiteral("Invoice.pdf")) << "an ideographic space";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice.pdf\u200b")), QStringLiteral("Invoice.pdf")) << "a zero-width space";
+    EXPECT_EQ(cleanName(QStringLiteral("Inv\u200doice.p\u00addf\ufeff")), QStringLiteral("Invoice.pdf")) << "joiner, soft hyphen, BOM";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice.pd\u034ff\u2060")), QStringLiteral("Invoice.pdf")) << "grapheme joiner, word joiner";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice\u202efdp.exe")), QStringLiteral("Invoicefdp.exe")) << "RLO: the real name is an .exe";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice\u2066.pdf\u2069")), QStringLiteral("Invoice.pdf"));
+    EXPECT_EQ(cleanName(QString::fromUcs4(U"Invoice.pdf\U000E0001", -1)), QStringLiteral("Invoice.pdf")) << "a tag character";
+    EXPECT_EQ(cleanName(QStringLiteral("Cafe\u0301.pdf")), QStringLiteral("Caf\u00e9.pdf")) << "NFC";
+    EXPECT_EQ(cleanName(QStringLiteral("Tool")), QStringLiteral("Tool"));
+}
+
+TEST(LaunchGuardNames, InvisibleCharactersDoNotHideADisguise)
+{
+    for (const QString &name : {QStringLiteral("Invoice.pdf"), QStringLiteral("Invoice.pdf "), QStringLiteral("Invoice.pdf\u200b"), QStringLiteral("Invoice.pdf\u00a0"),
+                                QStringLiteral("Invoice.pdf."), QStringLiteral("Invoice\u202efdp.exe"), QStringLiteral("photo.jpg\u2060"), QStringLiteral("run.sh\ufeff")}) {
+        // The kind Files shows may already be a program's (the name's pattern no longer matches): the cleaned name decides.
+        Facts f = program(name, QStringLiteral("application/x-executable"));
+        EXPECT_EQ(verdict(f), Verdict::RefuseDisguised) << name.toStdString();
+        f.originUrl = QStringLiteral("https://example.org/");
+        f.approved = true;
+        EXPECT_EQ(verdict(f), Verdict::RefuseDisguised) << name.toStdString() << " approved";
+    }
+    EXPECT_EQ(verdict(program(QStringLiteral("Tool "))), Verdict::RunProgram) << "no kind behind the space: a program";
+    EXPECT_EQ(verdict(program(QStringLiteral("Tool.AppImage "), QStringLiteral("application/octet-stream"))), Verdict::RunProgram);
+    // Not a program: the cleaned name still decides what it is.
+    EXPECT_EQ(verdict(localFile(QStringLiteral("setup.exe "), QStringLiteral("application/octet-stream"))), Verdict::WindowsFile);
+    EXPECT_EQ(verdict(localFile(QStringLiteral("t.desktop\u200b"), QStringLiteral("application/octet-stream"))), Verdict::RefuseLauncher);
+    EXPECT_EQ(verdict(localFile(QStringLiteral("Slack.dmg\u200b"), QStringLiteral("application/octet-stream"))), Verdict::ForeignApp);
+    Facts remote;
+    remote.fileName = QStringLiteral("Tool.AppImage\u200b");
+    EXPECT_EQ(verdict(remote), Verdict::RefuseRemoteProgram);
+}
+
+// Review of 0c51550e (MINOR 1): uwsm reads "…/Tool.desktop:run" as the desktop entry Tool.desktop with its action "run".
+TEST(LaunchGuardNames, WhatUwsmReadsAsADesktopEntryIsNeverRun)
+{
+    EXPECT_TRUE(uwsmReadsAsEntry(QStringLiteral("/home/u/Tool.desktop:run")));
+    EXPECT_TRUE(uwsmReadsAsEntry(QStringLiteral("/home/u/a.desktop:x/tool")));
+    EXPECT_TRUE(uwsmReadsAsEntry(QStringLiteral("/home/u/Tool.desktop")));
+    EXPECT_FALSE(uwsmReadsAsEntry(QStringLiteral("/home/u/Tool.AppImage")));
+    EXPECT_FALSE(uwsmReadsAsEntry(QStringLiteral("/home/u/desktop/tool")));
+    Facts f = program(QStringLiteral("Tool.desktop:run"));
+    f.path = QStringLiteral("/home/u/Tool.desktop:run");
+    EXPECT_EQ(verdict(f), Verdict::RefuseLauncher);
+    f = program(QStringLiteral("tool"));
+    f.path = QStringLiteral("/home/u/apps.desktop:x/tool");
+    EXPECT_EQ(verdict(f), Verdict::RefuseLauncher) << "the whole path is uwsm's main argument";
+    EXPECT_FALSE(ProgramLaunch::Run::allowed({QStringLiteral("uwsm-app"), QStringLiteral("--"), QStringLiteral("/home/u/Tool.desktop:run")}));
+    EXPECT_FALSE(ProgramLaunch::Run::allowed({QStringLiteral("/usr/bin/uwsm-app"), QStringLiteral("--"), QStringLiteral("/home/u/x.desktop")}));
+    EXPECT_TRUE(ProgramLaunch::Run::allowed({QStringLiteral("uwsm-app"), QStringLiteral("--"), QStringLiteral("/home/u/Tool.AppImage")}));
+    EXPECT_TRUE(ProgramLaunch::Run::allowed({QStringLiteral("/home/u/Tool.desktop:run")})) << "without uwsm the path is only a path";
+    EXPECT_FALSE(ProgramLaunch::Run::allowed({}));
+}
+
+TEST(LaunchGuardText, AHostThatMixesScriptsIsShownInAscii)
+{
+    Facts f;
+    f.originUrl = QStringLiteral("https://p\u0430ypal.example/"); // a Cyrillic "a" among Latin letters
+    EXPECT_EQ(originHost(f), QString::fromLatin1(QUrl::toAce(QStringLiteral("p\u0430ypal.example"))));
+    EXPECT_TRUE(originHost(f).startsWith(QStringLiteral("xn--")));
+    for (const char *tld : {"example", "com", "de"}) {
+        f.originUrl = QStringLiteral("https://p\u0430ypal.") + QLatin1String(tld) + QStringLiteral("/");
+        EXPECT_TRUE(originHost(f).startsWith(QStringLiteral("xn--"))) << tld << ": " << originHost(f).toStdString();
+    }
+    // One script per label: Qt's own form (Unicode for the TLDs it trusts with IDN, ASCII for the others), unchanged.
+    for (const QString &host : {QStringLiteral("b\u00fccher.de"), QStringLiteral("\u043f\u0440\u0438\u043c\u0435\u0440.com"), QStringLiteral("b\u00fccher.example")}) {
+        f.originUrl = QStringLiteral("https://") + host + QStringLiteral("/");
+        EXPECT_EQ(originHost(f), QUrl(f.originUrl).host(QUrl::FullyDecoded).toLower()) << host.toStdString();
+    }
+}
+
+// Review of 0c51550e (BLOCKER and MINOR 5): the download marks follow a file out of an archive and from a server.
+TEST_F(Files, DownloadMarksAreCopiedOntoEveryFileButNeverThroughALink)
+{
+    ASSERT_TRUE(dir.isValid());
+    const QString archive = write(QStringLiteral("Tool.zip"), "PK", false);
+    const DownloadMarks marks{"https://downloads.example.org/Tool.zip", "https://www.example.org/"};
+    if (::setxattr(QFile::encodeName(archive).constData(), "user.xdg.origin.url", marks.origin.constData(), size_t(marks.origin.size()), 0) != 0)
+        GTEST_SKIP() << "no user extended attributes on " << dir.path().toStdString();
+    ::setxattr(QFile::encodeName(archive).constData(), "user.xdg.referrer.url", marks.referrer.constData(), size_t(marks.referrer.size()), 0);
+    const DownloadMarks read = downloadMarks(archive);
+    EXPECT_EQ(read.origin, marks.origin);
+    EXPECT_EQ(read.referrer, marks.referrer);
+    EXPECT_FALSE(downloadMarks(dir.filePath(QStringLiteral("missing"))).any());
+
+    // An extracted tree: files at two levels, one the user can't read, a link to a file outside the tree.
+    QDir().mkpath(dir.filePath(QStringLiteral("tree/bin")));
+    const QString top = write(QStringLiteral("tree/README"), "x", false);
+    const QString deep = write(QStringLiteral("tree/bin/tool"), "\x7f" "ELF", true);
+    const QString locked = write(QStringLiteral("tree/bin/locked"), "\x7f" "ELF", false);
+    ASSERT_EQ(::chmod(QFile::encodeName(locked).constData(), 0100), 0); // execute only
+    const QString outside = write(QStringLiteral("outside"), "y", false);
+    ASSERT_TRUE(QFile::link(outside, dir.filePath(QStringLiteral("tree/link"))));
+    EXPECT_EQ(markTree(dir.filePath(QStringLiteral("tree")), read), 3);
+    struct stat st{};
+    ASSERT_EQ(::stat(QFile::encodeName(locked).constData(), &st), 0);
+    EXPECT_EQ(unsigned(st.st_mode & 07777), 0100u) << "its mode is back";
+    ASSERT_EQ(::chmod(QFile::encodeName(locked).constData(), 0600), 0); // to read its attribute here
+    for (const QString &path : {top, deep, locked}) {
+        char value[256];
+        const ssize_t n = ::getxattr(QFile::encodeName(path).constData(), "user.xdg.origin.url", value, sizeof value);
+        EXPECT_EQ(QByteArray(value, int(qMax<ssize_t>(n, 0))), marks.origin) << path.toStdString();
+    }
+    ::chmod(QFile::encodeName(locked).constData(), 0600);
+    EXPECT_FALSE(downloadMarks(outside).any()) << "a link is never followed";
+    EXPECT_TRUE(plan(inspect(QUrl::fromLocalFile(deep))).downloaded) << "a marked file is a downloaded one";
+    EXPECT_EQ(markTree(dir.filePath(QStringLiteral("tree")), DownloadMarks{}), 0) << "nothing to copy";
+}
+
+TEST(LaunchGuardMarks, RemoteSourcesGiveTheirAddressWithoutCredentials)
+{
+    EXPECT_EQ(remoteOrigin(QUrl(QStringLiteral("sftp://user:secret@host.example/home/u/Tool.AppImage"))), QByteArray("sftp://host.example/home/u/Tool.AppImage"));
+    EXPECT_EQ(remoteOrigin(QUrl(QStringLiteral("smb://nas/share/setup.exe"))), QByteArray("smb://nas/share/setup.exe"));
+    EXPECT_EQ(remoteOrigin(QUrl(QStringLiteral("https://example.org/a"))), QByteArray("https://example.org/a"));
+    EXPECT_EQ(remoteOrigin(QUrl(QStringLiteral("mtp:/Phone/Download/tool"))), QByteArray("mtp:/Phone/Download/tool"));
+    for (const char *local : {"file:///home/u/tool", "trash:/0-tool", "recentlyused:/files", "tags:/red", "desktop:/tool"})
+        EXPECT_TRUE(remoteOrigin(QUrl(QLatin1String(local))).isEmpty()) << local;
+    EXPECT_TRUE(remoteOrigin(QUrl()).isEmpty());
 }

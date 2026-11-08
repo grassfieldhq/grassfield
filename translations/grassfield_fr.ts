@@ -5661,6 +5661,18 @@
         <translation>Il a été modifié pendant que vous décidiez. Ouvrez-le à nouveau pour décider de sa version actuelle.</translation>
     </message>
     <message>
+        <source>“%1” wasn’t opened: Files doesn’t open programs while it runs as the administrator (root).</source>
+        <translation>«&#xa0;%1&#xa0;» n’a pas été ouvert&#xa0;: Fichiers n’ouvre pas de programmes lorsqu’il s’exécute en tant qu’administrateur (root).</translation>
+    </message>
+    <message>
+        <source>It belongs to another user.</source>
+        <translation>Il appartient à un autre utilisateur.</translation>
+    </message>
+    <message>
+        <source>Its permissions couldn’t be changed.</source>
+        <translation>Ses autorisations n’ont pas pu être modifiées.</translation>
+    </message>
+    <message>
         <source>“%1” couldn’t be allowed to run.</source>
         <translation>«&#xa0;%1&#xa0;» n’a pas pu être autorisé à s’exécuter.</translation>
     </message>

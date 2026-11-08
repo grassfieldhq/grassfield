@@ -1116,10 +1116,41 @@ void FilesApp::open(const QList<QUrl> &urls)
     }
 }
 
+void FilesApp::setRunPlanAdjusterForTests(const std::function<void(LaunchGuard::RunPlan &)> &adjuster)
+{
+    m_runPlanAdjuster = adjuster;
+}
+
+bool FilesApp::refuseAsRoot(const QString &name)
+{
+    // ADR-0011 amendment: Files never starts a program with rights other than the user's own, on any path.
+    if (!ProgramLaunch::filesRunsAsRoot())
+        return false;
+    qInfo("grassfield-files: open refused (Files runs as root): \"%s\"", qPrintable(LaunchGuard::logName(name)));
+    emit operationFailed(tr("“%1” wasn’t opened: Files doesn’t open programs while it runs as the administrator (root).").arg(name));
+    return true;
+}
+
+QString FilesApp::approvalProblem(ProgramLaunch::Approval approval) const
+{
+    switch (approval) {
+    case ProgramLaunch::Approval::Changed:
+        return tr("It changed while you were deciding. Open it again to decide on it as it is now.");
+    case ProgramLaunch::Approval::NotOwner:
+        return tr("It belongs to another user.");
+    default:
+        return tr("Its permissions couldn’t be changed.");
+    }
+}
+
 void FilesApp::requestRun(const QUrl &url, const LaunchGuard::Facts &facts)
 {
-    const LaunchGuard::RunPlan plan = LaunchGuard::plan(facts);
+    LaunchGuard::RunPlan plan = LaunchGuard::plan(facts);
+    if (m_runPlanAdjuster)
+        m_runPlanAdjuster(plan);
     const QString name = FileLogic::displayName(facts.fileName);
+    if (refuseAsRoot(name))
+        return;
     if (!plan.ask) {
         logDecision("run", LaunchGuard::Verdict::RunProgram, facts);
         startProgram(facts.path, name, facts.appImage, facts.elfInterpreter);
@@ -1143,7 +1174,7 @@ void FilesApp::requestRun(const QUrl &url, const LaunchGuard::Facts &facts)
         const LaunchGuard::Facts now = LaunchGuard::inspect(url);
         if (LaunchGuard::verdict(now) != LaunchGuard::Verdict::RunProgram || !sameFile(now, facts)) {
             logDecision("changed", LaunchGuard::Verdict::RunProgram, facts);
-            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), tr("It changed while you were deciding. Open it again to decide on it as it is now."));
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
             return;
         }
         logDecision("approved", LaunchGuard::Verdict::RunProgram, facts);
@@ -1155,9 +1186,15 @@ void FilesApp::requestRun(const QUrl &url, const LaunchGuard::Facts &facts)
             copyToApplicationsAndRun(now);
             return;
         }
-        const QString error = ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, plan.allowRun);
-        if (!error.isEmpty()) {
-            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(name), error);
+        const ProgramLaunch::Approval approval = ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, plan.allowRun);
+        if (approval == ProgramLaunch::Approval::ExecIgnored) {
+            // A FAT or exFAT disk keeps its own modes: the program runs from a copy in the Applications folder.
+            logDecision("copied (no execute bit here)", LaunchGuard::Verdict::RunProgram, facts);
+            copyToApplicationsAndRun(now);
+            return;
+        }
+        if (approval != ProgramLaunch::Approval::Approved) {
+            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(name), approvalProblem(approval));
             return;
         }
         startProgram(now.path, name, now.appImage, now.elfInterpreter);
@@ -1177,20 +1214,33 @@ void FilesApp::copyToApplicationsAndRun(const LaunchGuard::Facts &facts)
     // KIO's copy keeps the download marks (a copy of a downloaded app is still one) and runs off the GUI thread.
     KIO::FileCopyJob *job = KIO::file_copy(QUrl::fromLocalFile(facts.path), QUrl::fromLocalFile(destination), -1, KIO::HideProgressInfo);
     attachDelegate(job);
-    connect(job, &KJob::result, this, [this, job, destination, name] {
+    connect(job, &KJob::result, this, [this, job, destination, name, facts] {
         if (job->error()) {
-            m_prompts->tell(tr("“%1” couldn’t be copied to your Applications folder.").arg(name), job->errorString());
+            m_prompts->tell(tr("“%1” couldn’t be copied to your Applications folder.").arg(name), QString());
+            return;
+        }
+        // The copy is of the file the user approved: the source is still that file (inode, time, size) and the copy has its
+        // size; otherwise the copy goes and nothing runs.
+        const LaunchGuard::Facts source = LaunchGuard::inspect(QUrl::fromLocalFile(facts.path));
+        const LaunchGuard::Facts copy = LaunchGuard::inspect(QUrl::fromLocalFile(destination));
+        if (!sameFile(source, facts) || copy.size != facts.size || copy.path.isEmpty()) {
+            QFile::remove(destination);
+            logDecision("changed", LaunchGuard::Verdict::RunProgram, facts);
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
             return;
         }
         qInfo("grassfield-files: open copied to the Applications folder: \"%s\"", qPrintable(LaunchGuard::logName(QFileInfo(destination).fileName())));
-        const LaunchGuard::Facts copy = LaunchGuard::inspect(QUrl::fromLocalFile(destination));
         if (LaunchGuard::verdict(copy) != LaunchGuard::Verdict::RunProgram || copy.noexecMount) {
             m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(name), tr("This disk doesn’t allow apps to run from it."));
             return;
         }
-        const QString error = ProgramLaunch::approve(copy.path, copy.inode, copy.mtimeNs, copy.size, !copy.executable);
-        if (!error.isEmpty()) {
-            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(name), error);
+        const ProgramLaunch::Approval approval = ProgramLaunch::approve(copy.path, copy.inode, copy.mtimeNs, copy.size, !copy.executable);
+        if (approval == ProgramLaunch::Approval::ExecIgnored) {
+            m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(name), tr("This disk doesn’t allow apps to run from it."));
+            return;
+        }
+        if (approval != ProgramLaunch::Approval::Approved) {
+            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(name), approvalProblem(approval));
             return;
         }
         startProgram(copy.path, name, copy.appImage, copy.elfInterpreter);
@@ -1200,6 +1250,8 @@ void FilesApp::copyToApplicationsAndRun(const LaunchGuard::Facts &facts)
 void FilesApp::startProgram(const QString &path, const QString &name, bool appImage, const QString &interpreter, const QString &program,
                             const QStringList &args)
 {
+    if (refuseAsRoot(name))
+        return;
     if (launchingBlocked()) {
         emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
         return;
@@ -1237,8 +1289,9 @@ void FilesApp::startProgram(const QString &path, const QString &name, bool appIm
             break;
         }
     });
-    // Its working folder is the program's own folder (an AppImage or a game finds its files beside it).
-    run->start(program.isEmpty() ? path : program, args, QFileInfo(path).absolutePath(), appImage, interpreter);
+    // Its working folder is the home folder, the one apps started from the Dock have (macOS starts apps in "/"): never the
+    // folder it was opened from, so a program finds nothing planted next to it by the folder it happens to be in.
+    run->start(program.isEmpty() ? path : program, args, QDir::homePath(), appImage, interpreter);
 }
 
 void FilesApp::explainForeign(const QUrl &url, const LaunchGuard::Facts &facts, LaunchGuard::Verdict verdict)
@@ -1285,9 +1338,11 @@ void FilesApp::explainForeign(const QUrl &url, const LaunchGuard::Facts &facts, 
         }
         const LaunchGuard::Facts now = LaunchGuard::inspect(url);
         if (LaunchGuard::verdict(now) != verdict || !sameFile(now, facts)) {
-            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), tr("It changed while you were deciding. Open it again to decide on it as it is now."));
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
             return;
         }
+        if (refuseAsRoot(name))
+            return;
         logDecision("approved", verdict, facts);
         if (!storageId.isEmpty()) {
             openWith(storageId, {url});
@@ -1318,6 +1373,8 @@ void FilesApp::runInTerminal(const QUrl &url)
         emit operationFailed(tr("“%1” can’t run in Terminal: only a script on this computer that is allowed to run can.").arg(name));
         return;
     }
+    if (refuseAsRoot(name))
+        return;
     if (launchingBlocked()) {
         emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
         return;
@@ -1343,7 +1400,7 @@ void FilesApp::runInTerminal(const QUrl &url)
         }
         const LaunchGuard::Facts now = LaunchGuard::inspect(url);
         if (LaunchGuard::verdict(now) != LaunchGuard::Verdict::OpenScript || !sameFile(now, facts)) {
-            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), tr("It changed while you were deciding. Open it again to decide on it as it is now."));
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
             return;
         }
         logDecision("approved", LaunchGuard::Verdict::OpenScript, facts);
@@ -1356,8 +1413,11 @@ void FilesApp::runInTerminal(const QUrl &url)
 
 void FilesApp::startScriptInTerminal(const QString &path)
 {
+    if (refuseAsRoot(FileLogic::displayName(QFileInfo(path).fileName())))
+        return;
     // Decision F-7: the session's terminal (xdg-terminal-exec), in the uwsm-app scope of a real session; the script's path is
-    // an argument of bash, never part of the command text; its folder is the working folder.
+    // an argument of bash, never part of the command text; its folder is the working folder (a script is run where it is,
+    // as Terminal runs a .command file).
     const QStringList argv = grassfield::apps::scopedCommand(
         QStringLiteral("xdg-terminal-exec"), {QStringLiteral("--"), QStringLiteral("/bin/bash"), QStringLiteral("-c"), kTerminalHold, QStringLiteral("grassfield-files"), path},
         grassfield::apps::scopedLaunch());
@@ -3840,8 +3900,28 @@ void FilesApp::forwardSubjobAmounts(const QPointer<KJob> &job, int tries)
         QTimer::singleShot(50, this, [this, job, tries] { forwardSubjobAmounts(job, tries - 1); });
 }
 
+void FilesApp::markRemoteCopies(KJob *job)
+{
+    // A copy or move from a server, a phone or the web lands with the server's permissions and no browser's mark: the copy gets
+    // the source's address (without user name or password) as its download mark, so a program among them asks before it runs.
+    auto follow = [](KIO::CopyJob *copy) {
+        QObject::connect(copy, &KIO::CopyJob::copyingDone, copy, [](KIO::Job *, const QUrl &from, const QUrl &to, const QDateTime &, bool directory, bool) {
+            if (directory || !to.isLocalFile())
+                return;
+            const QByteArray origin = LaunchGuard::remoteOrigin(from);
+            if (!origin.isEmpty())
+                LaunchGuard::markFile(to.toLocalFile(), LaunchGuard::DownloadMarks{origin, QByteArray()});
+        });
+    };
+    if (auto *copy = qobject_cast<KIO::CopyJob *>(job))
+        follow(copy);
+    else if (auto *paste = qobject_cast<KIO::PasteJob *>(job))
+        connect(paste, &KIO::PasteJob::copyJobStarted, this, follow);
+}
+
 void FilesApp::track(KJob *job, const QString &activity, const QString &verb, const QList<QUrl> &sources, const QUrl &destination)
 {
+    markRemoteCopies(job);
     m_jobs.append(job);
     m_activity = activity;
     m_activityPercent = -1;
