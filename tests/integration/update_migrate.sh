@@ -24,8 +24,9 @@
 #     review's BLOCKER); so does a run while the unit's group has a member, or while a migration from before the update is
 #     pending, or with a rule that grants nothing or none; carol, an administrator: the update installed, the migration run
 #     as carol with its sudo as root and its own /tmp, `migrations ran`, its output root's alone; a failing sudo leaves the
-#     migration pending; a migration that needs a person (gum, or sudo and gum) goes to the terminal; root without
-#     pkexec's user has no person; the unit's own form is refused outside the unit.
+#     migration pending; a migration that needs a person (gum, or sudo and gum) goes to the terminal; so does one that
+#     needs root and would run code the person can change (sudo and omarchy-hook, rc7 audit R7-SEC-01), its sudo never run;
+#     root without pkexec's user has no person; the unit's own form is refused outside the unit.
 set -uo pipefail
 
 IMAGE=archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
@@ -295,6 +296,11 @@ mkpkg omarchy 6 "${base_files[@]}" "$m700f" "usr/share/omarchy/migrations/750.sh
 GU_WORLD_WRITABLE=usr/share/omarchy/migrations/980.sh mkpkg omarchy 7 "${base_files[@]}" "$m700f" \
   "usr/share/omarchy/migrations/750.sh=sudo false" "usr/share/omarchy/migrations/900.sh=sudo touch /root/su-m2-900" \
   "usr/share/omarchy/migrations/950.sh=sudo touch /root/su-m2-950" "usr/share/omarchy/migrations/980.sh=sudo touch /root/su-m2-980"
+# 990 needs root and runs the person's hooks (R7-SEC-01): in the unit, a hook would get root through its sudo.
+mkpkg omarchy 8 "${base_files[@]}" "$m700f" \
+  "usr/share/omarchy/migrations/750.sh=sudo false" "usr/share/omarchy/migrations/900.sh=sudo touch /root/su-m2-900" \
+  "usr/share/omarchy/migrations/950.sh=sudo touch /root/su-m2-950" "usr/share/omarchy/migrations/980.sh=sudo touch /root/su-m2-980" \
+  "usr/share/omarchy/migrations/990.sh=sudo touch /root/su-m2-990; omarchy-hook post-update"
 publish() {
   rm -f "$W/repo"/*
   cp "$W/keyring.pkg.tar.zst" "$W/repo/archlinux-keyring-$(ver archlinux-keyring)-any.pkg.tar.zst"
@@ -474,6 +480,17 @@ expect "omarchy 7 (950 needs root, 980 installed writable by all) -> done done w
   test "$(state carol):$(ver omarchy):$(grep -cx 'migrations ran' "$D/$op.exit")" == "done done migrations:7-1:0"
 expect "  no migration ran with root (950's sudo did not run), and the log says why" \
   bash -c "test ! -e /root/su-m2-950 && grep -q '980.sh is not root.s alone: no migration runs with root' '$D/$op.log'"
+
+say "a migration that needs root and would run code the person can change (rc7 audit R7-SEC-01)"
+for m in 950 980; do   # Omarchy's terminal finished them: no migration from before the update is pending
+  touch "/home/carol/.local/state/omarchy/migrations/$m.sh" && chown carol: "/home/carol/.local/state/omarchy/migrations/$m.sh"
+done
+publish grassfield-desktop-1 qt6-base-6.11.0 omarchy-keyring-1 omarchy-8
+runner carol; op=$(last)
+expect "omarchy 8 (990: sudo and omarchy-hook) -> done terminal, needs migration 990, omarchy stays 7 ($(state carol))" \
+  bash -c '[[ $1 == "done terminal -:7-1" ]] && grep -qx "needs migration 990" "$2"' _ "$(state carol):$(ver omarchy)" "$D/$op.exit"
+expect "  its log says why, and 990's sudo never ran" \
+  bash -c "grep -q '990.sh would run code the person can change' '$D/$op.log' && test ! -e /root/su-m2-990"
 
 echo
 if ((fails)); then echo "update_migrate: $fails FAIL"; exit 1; fi

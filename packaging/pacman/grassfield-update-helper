@@ -23,7 +23,12 @@
 # entries), whose `sudo` (/usr/lib/grassfield/update-sudo/sudo) gets each command a transient root unit from systemd,
 # granted by polkit to that unit alone (/usr/share/polkit-1/rules.d/49-grassfield-update.rules). That person is pkexec's
 # caller, this process's parent: its real uid, and two values of its session (WAYLAND_DISPLAY,
-# HYPRLAND_INSTANCE_SIGNATURE), read from /proc and checked, for that unit only.
+# HYPRLAND_INSTANCE_SIGNATURE), read from /proc and checked, for that unit only. Every migration of the run goes into that
+# unit, so none may run code the person can change (rc7 audit R7-SEC-01): a migration that reaches omarchy-hook (it runs
+# ~/.config/omarchy/hooks), an interpreter or tool that reads the home folder's code or settings (python, git, npm, npx,
+# mise), or a `source`/`.`/shell of a home path, sends the run to Omarchy's terminal like a person's step would; in the unit
+# PYTHONNOUSERSITE=1 and GIT_CONFIG_GLOBAL=/dev/null also keep a program the scan does not see from the person's Python
+# packages and git settings.
 # Exit: 0 done, or up to date (`packages 0`); 1 failed during the transaction (the system can be partly updated); 2 usage,
 # or an operation id used before; 3 busy (another run, or a process holding pacman's db.lck); 4 less than 10 GiB free on /;
 # 5 on battery below 50 %; 6 needs a newer Grassfield (the compatibility check); 7 needs a person (Omarchy's terminal; also a
@@ -87,6 +92,15 @@ GU_TOOLKIT=(qt6-base quickshell aquamarine kcoreaddons)
 GU_PERSON_WORDS='pkexec|su|run0|doas|gum'
 GU_PERSON_EXTRA='/dev/tty|/(usr/)?s?bin/sudo([^[:alnum:]_.-]|$)'   # a sudo by its path is not the unit's sudo
 GU_ROOT_WORDS='sudo'
+# s5 (rc7 audit R7-SEC-01): what makes a migration run code the person can change, which the unit's sudo would then make root:
+# Omarchy's hook runner (bash ~/.config/omarchy/hooks/<name> and <name>.d/*), interpreters and tools that load code or
+# settings from the home folder (Python's user site-packages and .pth files, a repository's or ~/.gitconfig's commands, npm's
+# ~/.npmrc and scripts, mise's config and plugins), and a script of the home folder sourced or run by a shell. Scanned as the
+# person words are (the commands that reach them too, comments count); they matter only when the run would give root: then
+# any migration of the run that matches keeps the whole run out of the unit (Omarchy's terminal runs them). Bare `node` is
+# not a word (PipeWire's "node" is in Omarchy's audio commands): a migration that runs node through npm or npx is caught.
+GU_USER_WORDS='omarchy-hook|python3?(\.[0-9]+)?|git|npm|npx|mise'
+GU_USER_EXTRA='(^|[^[:alnum:]_.-])(source|\.|bash|sh|zsh)[[:space:]]+["'"'"']?(~|\$HOME|\$\{HOME\}|\$XDG_CONFIG_HOME|\$\{XDG_CONFIG_HOME)'
 # s5 (SU-M2): the migrations' unit, its primary group (sysusers.d, no member: the kernel lets a process open another's /proc
 # entries, descriptors included, or attach to it, only when all its uids AND gids match), its sudo, the polkit rule that
 # lets that unit alone start root units, and the group of the administrators (Arch's polkit rule, Omarchy's sudoers).
@@ -370,6 +384,7 @@ root_alone() { # path
 migrations=$GU_DIR/$op.migrations
 migrate_unit() { # program [argument...]
   local env=(--setenv=PATH="$GU_SUDO_DIR:/usr/share/omarchy/bin:/usr/bin" --setenv=OMARCHY_PATH=/usr/share/omarchy
+    --setenv=PYTHONNOUSERSITE=1 --setenv=GIT_CONFIG_GLOBAL=/dev/null
     --setenv=XDG_RUNTIME_DIR="/run/user/$caller_uid" --setenv=DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$caller_uid/bus")
   [[ $caller_wayland != - ]] && env+=(--setenv=WAYLAND_DISPLAY="$caller_wayland")
   [[ $caller_hypr != - ]] && env+=(--setenv=HYPRLAND_INSTANCE_SIGNATURE="$caller_hypr")
@@ -543,10 +558,12 @@ if ((${#pending[@]})); then
   }
   person_words=$(reach "$GU_PERSON_WORDS" "$GU_PERSON_EXTRA") || finish 8 "the scan failed"
   root_words=$(reach "$GU_ROOT_WORDS" 'omarchy:requires-sudo=true') || finish 8 "the scan failed"
+  user_words=$(reach "$GU_USER_WORDS" "$GU_USER_EXTRA") || finish 8 "the scan failed"
   person_pattern="(^|[^[:alnum:]_.-])($person_words)([^[:alnum:]_.-]|\$)|$GU_PERSON_EXTRA"
   root_pattern="(^|[^[:alnum:]_.-])($root_words)([^[:alnum:]_.-]|\$)"
+  user_pattern="(^|[^[:alnum:]_.-])($user_words)([^[:alnum:]_.-]|\$)|$GU_USER_EXTRA"
   declare -A seen=()
-  needs=() rooted=()
+  needs=() rooted=() usercode=()
   for name in "${pending[@]}"; do
     [[ -n ${seen[$name]-} ]] && continue
     seen[$name]=1
@@ -558,6 +575,9 @@ if ((${#pending[@]})); then
     elif grep -qE -- "$root_pattern" "$path"; then
       rooted+=("$name")
     fi
+    # R7-SEC-01: rooted or not, it would run in the unit with the others. A file grep cannot read counts (fails closed).
+    grep -qE -- "$user_pattern" "$path"
+    (($? == 1)) || usercode+=("$name")
   done
   if ((${#needs[@]})); then
     for name in "${needs[@]}" "${rooted[@]}"; do outcome+=("needs migration ${name%.sh}"); done
@@ -579,6 +599,8 @@ if ((${#pending[@]})); then
     IFS=: read -r _ migrate_password _ < <(getent gshadow "$GU_MIGRATE_GROUP" 2>/dev/null 9<&-)
     if ! in_unit; then
       why="no systemd unit for this run"
+    elif ((${#usercode[@]})); then
+      why="${usercode[*]} would run code the person can change: a hook, an interpreter or a tool that reads the home folder"
     elif [[ ! $caller_name =~ ^[a-z_][a-z0-9_-]{0,31}\$?$ || ! $caller_gid =~ ^[0-9]{1,10}$ ]]; then
       why="no person to run them as"
     elif ! id -Gn -- "$caller_name" 2>/dev/null 9<&- | tr ' ' '\n' | grep -qx -- "$GU_ADMIN_GROUP"; then
