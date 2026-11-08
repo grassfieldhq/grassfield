@@ -138,7 +138,9 @@ step_key() { # key from-kind
 reset_menus
 vs_sleep 1.0
 fw_before=$(active_title)
-"$VS_ROOT/scripts/dev/keys.sh" -M ctrl -k F2 -m ctrl >/dev/null
+# A compositor bind: wtype's modifiers reach apps but never the compositor's binds, so the chord goes through
+# tests/tools/vkbd, as tests/visual/flow-lib.sh fl_chord does.
+timeout 20 "$VS_ROOT/tests/tools/vkbd/vkbd.sh" down Control_L sleep 60 tap F2 sleep 60 up Control_L >/dev/null
 for _ in $(seq 1 10); do [[ $(kind) == "system@$VS_OUTPUT" ]] && break; vs_sleep 0.4; done
 check "focus-walk: Ctrl+F2 with the foot window focused opens the Grassfield menu (got '$(kind)', window '$fw_before')" is_kind system
 check "focus-walk: after Ctrl+F2 the menu bar's popup holds the keyboard, not the window (holder '$(holder)')" wait_holder overlay
