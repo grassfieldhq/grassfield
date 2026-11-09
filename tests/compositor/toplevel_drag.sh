@@ -96,16 +96,30 @@ plugin_logged() {
   return 1
 }
 hypr_alive() { kill -0 "$hypr_pid" 2>/dev/null && nestctl version >/dev/null 2>&1; }
-# A check of a plugin log line: the plugin's request log budget (FR24: 20 lines at once, then 1 per second) may hold a line back
-# during a burst; a missing line is then a NOTE, not a FAIL (the case's behaviour has its own checks). Integrator nested run of
-# 1c576658 (T4 at load 22-28).
-check_log() { # <name> <pattern>
-  if plugin_logged "$2"; then say "PASS: $1"; return; fi
-  if { nestctl rollinglog 2>/dev/null; tail -n 600 "$hyprlog" 2>/dev/null; } | grep -aq "similar line(s) held back"; then
-    say "NOTE: $1: not in the log; the plugin's request log budget held lines back (FR24)"
+# A check of a plugin log line. The plugin's request log budget (FR24: 20 lines at once, then 1 per second) may hold a line back
+# during a burst, and says so only on the next line it writes ("N similar line(s) held back"), which may come after the check or
+# never (integrator nested run of aa1f0ba8: T4 at scale 1.25, its tile record PASS, its log line missing, no "held back" yet).
+# With a proof (a command checking what the line reports, such as the tile record), a missing line is a NOTE when the proof
+# holds, and a FAIL only when neither the log nor the proof shows it. Without a proof, a missing line is a NOTE when the log
+# shows lines held back (nested run of 1c576658, T4 at load 22-28). The plugin's last toplevel-drag lines go to the run log.
+check_log() { # <name> <pattern> [<proof command> [<args>...]]
+  local name=$1 pattern=$2
+  shift 2
+  if plugin_logged "$pattern"; then say "PASS: $name"; return; fi
+  {
+    echo "  $name: not in the log; the plugin's last toplevel-drag lines:"
+    { nestctl rollinglog 2>/dev/null; tail -n 600 "$hyprlog" 2>/dev/null; } | grep -a 'toplevel drag: ' | tail -n 12 | sed 's/^/    /'
+  } >>"$log"
+  if (($# > 0)); then
+    if "$@"; then
+      say "NOTE: $name: not in the log (the plugin's request log budget, FR24); what it reports is proven by: $*"
+      return
+    fi
+  elif { nestctl rollinglog 2>/dev/null; tail -n 600 "$hyprlog" 2>/dev/null; } | grep -aq "similar line(s) held back"; then
+    say "NOTE: $name: not in the log; the plugin's request log budget held lines back (FR24)"
     return
   fi
-  say "FAIL: $1"
+  say "FAIL: $name"
   fail=1
 }
 plugin_loaded() { nestctl -j plugin list 2>/dev/null | jq -e '[.[]? | select(.name == "grassfield-compositor")] | length > 0' >/dev/null; }
@@ -226,7 +240,7 @@ if start_fixture tear tear; then
   torn=$(win gf-tdrag-torn | cut -d' ' -f5)
   tile_untiled() { local t; t=$(tile_of "$torn"); say "  tile record: $t"; [[ $t != tiled* ]]; }
   check "T3: not tiled" tile_untiled
-  check_log "T3: the plugin logged the drop" "toplevel drag: window ${torn#0x} dropped: stays where it is"
+  check_log "T3: the plugin logged the drop" "toplevel drag: window ${torn#0x} dropped: stays where it is" tile_untiled
 else
   check "T1: the fixture starts" false
 fi
@@ -256,7 +270,7 @@ elif start_fixture tile tear; then
   check "T4: dnd_drop_performed before cancelled (a drop, not a revert)" drop_then_cancel tile
   tiled_side() { local t; t=$(tile_of "$torn"); say "  tile record: $t (want tiled $side)"; [[ $t == "tiled $side" ]]; }
   check "T4: the torn window takes the $side half (tile record)" tiled_side
-  check_log "T4: the plugin logged the tile" "toplevel drag: window ${torn#0x} dropped: tiled into the place shown"
+  check_log "T4: the plugin logged the tile" "toplevel drag: window ${torn#0x} dropped: tiled into the place shown" tiled_side
 else
   check "T4: the fixture starts" false
 fi
