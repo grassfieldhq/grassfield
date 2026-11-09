@@ -197,8 +197,8 @@ does not check its gate.
 | idle | inhibit | action | on the security instance: the UI's lease of the applications' org.freedesktop.ScreenSaver inhibitors, which the menu bridge serves to the UI (`shell/services/LockClient.js`: 150 s, renewed every 60 s while one is held, 0 ends it; the security side bounds it at 150 s, `IdleModel.inhibitLeaseMs`). Only ever keeps the idle dim and lock off for one lease, as an application's own Wayland idle inhibitor does; a manual lock, the lid and the lock before sleep are unaffected; a UI that crashed cannot keep it on |
 | idle | status, devSleep, devDisplayOff, devAutoSleep | dev | on the security instance: `reload_locked.sh`, `lock_privacy.sh`; `devAutoSleep` shortens the automatic sleep delay (the dev session never suspends) |
 | saver | status, devDelay, devShow | dev | the screen saver's nested checks (ADR-0032): `devDelay` arms it after a test's delay, `devShow` shows it at once (refused while locked); off in a dev session otherwise |
-| polkit | status | dev | registration state (the journal has it in a real session) |
-| secrets | state | dev | the secret sheets' state (ADR-0035 D-9, step 9b): the bridge connection, the name's state, counts of the shown, held, waiting and lingering requests; never a requester or a text (`tests/security/secret_bridge.sh`) |
+| polkit | status | dev | on the security instance since ADR-0041 S3: registration state (the journal has it in a real session) |
+| secrets | state | dev | on the security instance since ADR-0041 S3: the secret sheets' state (ADR-0035 D-9, step 9b): the bridge connection, the name's state, counts of the shown, held, waiting and lingering requests; never a requester or a text (`tests/security/secret_bridge.sh`) |
 | search | toggle | action | SUPER+SPACE |
 | search | clipboard | action | SUPER+CTRL+V (Search in its Clipboard view, ADR-0034; again closes it; refused while locked through `show()`) |
 | search | open, close, query, status | dev | `status` returns what the user types; `query`/`open` inject a query |
@@ -245,7 +245,7 @@ does not check its gate.
 | capabilities | status, devBlock | dev | visual tests wait on `status`; `packaging/bin/grassfield-shell-watchdog` asks `status` as the shell's liveness question (ADR-0041 step 6a) and reads no answer: any answer, this `refused` of a real session included, is the GUI thread answering, so the gate stays and nothing is returned to it. `devBlock` holds the GUI thread 1 to 300 s (the probe's nested proof) |
 | session | cover, lift | action | `packaging/bin/grassfield-session-end` once every window has gone (ADR-0040 ID-10): `cover` brings up the exit cover, one opaque fade to the ground over every output (it answers the fade's length and lifts itself after `session.exitCoverHoldMs`), `lift` takes it down when the session could not be ended. Neither ends the session; another process of the user can hide the desktop for that long at most |
 | session | state | dev | the exit cover's nested check (`shown` or `hidden`) |
-| security | state, heartbeat | action | the security process's own target (`shell/security.qml`, ADR-0041 step 1, a second `qs` instance at `/usr/share/grassfield/shell/security.qml`): what it hosts (`starting` at S1, `lock idle` since S2) and the lock's public state with the publisher's sequence number (`locked 42`); read by `packaging/bin/grassfield-security-status` and the measurements; never private state, nothing locks or unlocks |
+| security | state, heartbeat | action | the security process's own target (`shell/security.qml`, ADR-0041 step 1, a second `qs` instance at `/usr/share/grassfield/shell/security.qml`): what it hosts (`starting` at S1, `lock idle` since S2, `lock idle polkit secrets` since S3 once the sheets are made) and the lock's public state with the publisher's sequence number (`locked 42`); read by `packaging/bin/grassfield-security-status` and the measurements; never private state, nothing locks or unlocks |
 | stages | activate, newStage | action | SUPER+ALT+1..4 (the n-th recent stage forward), SUPER+ALT+S (focused window to a stage of its own); they do nothing while Stages is off |
 | stages | status, enable | dev | `tests/visual/scenarios/stages.sh`; `enable` changes the persisted setting |
 | bartone | status | dev | visual tests |
@@ -259,7 +259,7 @@ Grassfield processes that serve the security modules over a Unix socket of their
 
 | Socket | Server | Who may connect | What it carries |
 |---|---|---|---|
-| `$XDG_RUNTIME_DIR/grassfield/prompter.sock` (directory 0700, socket 0600) | `grassfield-prompter` (ADR-0035 D-9, step 9a; `grassfield-prompter.service`) | one peer at a time, running as the user, whose cgroup is the unit of the bridge's `--peer-unit` (`grassfield-shell.service`, only slices above it up to the user's manager), read through `SO_PEERPIDFD` (a peer without a pidfd is refused, except on a kernel without `SO_PEERPIDFD`); a refused peer gets `refused` and is closed, the refusals logged once per 10 s | `prompter/1` (docs/specs/system-dialogs.md section 5): the bridge sends the requests of gcr callers (with the requester it resolved from their bus credentials) and, from step 9c, NetworkManager's (kind `nm`, only for calls from the owner of `org.freedesktop.NetworkManager`) and, from step 9e, KIO's (kind `kio`, with the requester resolved from the caller's credentials) and, from step 10, bluetoothd's pairing steps (kind `bluetooth`, only for calls from the owner of `org.bluez`, and `progress` for a code shown), and their withdrawals; the shell sends its hello and its answers, a password once per answer. Nothing it accepts runs a command, unlocks, or reaches polkit; a wrong or unattributable line cancels requests, never invents an answer. The shell's client (`shell/security/secret/PrompterClient.qml`, step 9b) connects in a real session to this socket only, and in a dev session only to the test socket that `GRASSFIELD_PROMPTER_SOCKET` names (ADR-0019 dev plumbing, passed by `shell.qml`; ignored in a real session); it reads the bridge strictly and closes the connection on any line it does not expect |
+| `$XDG_RUNTIME_DIR/grassfield/prompter.sock` (directory 0700, socket 0600) | `grassfield-prompter` (ADR-0035 D-9, step 9a; `grassfield-prompter.service`) | one peer at a time, running as the user, whose cgroup is the unit of the bridge's `--peer-unit` (`grassfield-security.service` since ADR-0041 S3, where the secret sheets run beside the polkit agent, ADR-0035 decision 9-7; `grassfield-shell.service` before; only slices above it up to the user's manager), read through `SO_PEERPIDFD` (a peer without a pidfd is refused, except on a kernel without `SO_PEERPIDFD`); a refused peer gets `refused` and is closed, the refusals logged once per 10 s | `prompter/1` (docs/specs/system-dialogs.md section 5): the bridge sends the requests of gcr callers (with the requester it resolved from their bus credentials) and, from step 9c, NetworkManager's (kind `nm`, only for calls from the owner of `org.freedesktop.NetworkManager`) and, from step 9e, KIO's (kind `kio`, with the requester resolved from the caller's credentials) and, from step 10, bluetoothd's pairing steps (kind `bluetooth`, only for calls from the owner of `org.bluez`, and `progress` for a code shown), and their withdrawals; the shell sends its hello and its answers, a password once per answer. Nothing it accepts runs a command, unlocks, or reaches polkit; a wrong or unattributable line cancels requests, never invents an answer. The shell's client (`shell/security/secret/PrompterClient.qml`, step 9b) connects in a real session to this socket only, and in a dev session only to the test socket that `GRASSFIELD_PROMPTER_SOCKET` names (ADR-0019 dev plumbing, passed by the security process's `shell/security/host/SheetHost.qml`; ignored in a real session); it reads the bridge strictly and closes the connection on any line it does not expect |
 
 ### D-Bus objects of the security modules' processes (not Quickshell IPC)
 What the processes serving the secret sheets export on a message bus (ADR-0035 "Consequences": listed in the step that adds
@@ -540,7 +540,8 @@ shell no longer relies on that alone:
   the Overview (through its keyboard release), the Switcher, Dock keyboard mode, the desktop menu and card (the desktop
   lets the keyboard go), the widget menu. `Lock.lock()` also closes popups first.
 - Polkit: a request that arrives while locked waits (macOS shows the authorization sheet after the unlock): the sheet is
-  neither mapped nor given the keyboard until `SessionState.locked` is false; text typed into an open sheet is dropped when
+  neither mapped nor given the keyboard until the lock is released (`SheetSession.locked`, which the security process binds
+  from its own `Lock.locked` since ADR-0041 S3); text typed into an open sheet is dropped when
   the lock hides it. Nothing is answered meanwhile (polkit keeps the request pending; Cancel/Esc work once shown).
   A held request (it arrived, or was open, while locked, or arrived within 1 s after an unlock,
   `AuthDialogModel.heldAfterUnlockMs`, review of d8e654c) appears WITHOUT the keyboard (review of 1d2c856: keys typed right
@@ -552,7 +553,8 @@ shell no longer relies on that alone:
   or end a hold); a click before the sheet was ever noted as shown does not count. polkit gives no program name to the agent
   (only the message, which names the program for pkexec). The screen saver holds a request the same way (ADR-0032, owner
   decision 2026-10-26: over the opaque saver an unheld sheet looked like the lock's prompt and took the keys at once): one
-  that arrives while `SessionState.saverShown` (a mirror of the saver, set in shell.qml), or is open when the saver comes up
+  that arrives while `SheetSession.saverShown` (since ADR-0041 S3 the security process's own count of the saver's idle time,
+  `Idle.saverShown`, by the saver's rule `SaverModel.armed`: it reads nothing from the UI), or is open when the saver comes up
   (its field emptied), is held and says "…and waited while the screen saver was on"; while the saver shows a press (any
   button) or the wheel on the sheet goes nowhere (the waking input), and when the saver ends the click guard starts over
   (`noteUncovered`), so no click in the next 500 ms gives the sheet the keyboard, whichever of the press and the saver's end
@@ -560,8 +562,10 @@ shell no longer relies on that alone:
   field does nothing). The saver keeps the keyboard meanwhile (the held sheet takes none). Fail mode: a wrong
   `saverShown` never releases a hold; a wrong false (the Binding lost) brings back a sheet that takes the keyboard over the
   saver, a wrong true holds every request and swallows every press on the sheet until the requester gives up (only the
-  shell.qml Binding writes it; `lock_surfaces.sh` checks that it is the only writer in shell/, apps/ and ui/: no
-  assignment, no other Binding or object property, no other quoted name). Two requests close together (reviews of f513b3b and
+  security host's Binding writes it, from `Idle.saverShown`; `lock_surfaces.sh` checks that it is the only writer in shell/,
+  apps/ and ui/: no assignment, no other Binding or object property, no other quoted name). The count differs from the
+  saver only on the holding side: while the UI is down, or for the moment between the input that dismisses the saver and
+  the compositor's activity report; `saver devShow` (dev only) is the UI's alone. Two requests close together (reviews of f513b3b and
   b5d7657): Quickshell 0.3.1 never queues; a request that arrives while one is open replaces it at once (the flow
   switches without `active` changing; the replaced one is abandoned, never answered, which fails closed), and one that
   arrives after the previous ended passes through no request. Both are held, "…right after another one": the replacing
@@ -1034,14 +1038,16 @@ request: the message (polkit's text; for `pkexec` it names the program and its a
 identity, and now the action's `iconName` (from the root-installed `.policy` file) with the lock as a badge, macOS style.
 That icon describes the action, not the program that asked: polkit does not tell the agent which process requested it
 through this API (`AuthDialogModel.iconName`: plain theme names only, by the one rule notification icons use,
-`NotificationPrefs.safeIconName`, review of 2dfd992; `AuthAgent` shows it through `ThemeIcons.source`: the system
-theme's icon (Qt searches only directories the user cannot change, `ui/i18n/iconsearchpaths.h`) or a PNG the shell made
-from a user icon of that name (see security-images.md, `tests/security/theme_icon_files.sh`); else the lock alone; the Image
-loads asynchronously, review of 100692f). Unit-tested (`tst_authdialogmodel` `test_iconNameIsAPlainThemeName`, `tst_authdialog`
+`NotificationPrefs.safeIconName`, review of 2dfd992; `AuthAgent` shows it through the security process's lookup,
+`SheetHost.themeIcon` since ADR-0041 S3: the system theme's icon only (Qt searches only directories the user cannot
+change, `ui/i18n/iconsearchpaths.h`), never a copy of a user's icon (the UI's `ThemeIcons` made one before S3: it belongs
+to the UI and empties a directory of its own; `tests/security/theme_icon_files.sh`, "polkit=none"); else the lock alone;
+the Image loads asynchronously, review of 100692f). The secret sheets' requester icon follows the same rule. Unit-tested (`tst_authdialogmodel` `test_iconNameIsAPlainThemeName`, `tst_authdialog`
 `test_10_programIconWithLockBadge`); visual NOT verified (a nested shell cannot register an agent: L5).
 
 **One queue with the secret sheets (ADR-0035 D-9, step 9b, decision 9-15).** The polkit sheet and the secret sheets of
-`shell/security/secret` share one queue (`shell/security/SheetQueue.qml`, made by `shell.qml`): one sheet on screen at a time,
+`shell/security/secret` share one queue (`shell/security/SheetQueue.qml`, made by `shell/security/host/SheetHost.qml` in
+the security process since ADR-0041 S3, `shell.qml` before): one sheet on screen at a time,
 in arrival order. While a secret sheet came first, the polkit agent hands its model no request (`AuthAgent.waiting`, the gated
 `flow`): nothing of it is mapped, focused or held, and nothing is answered meanwhile. When the secret sheet is gone, the queue
 tells the polkit model a sheet ended before it hands the request over, so the request arrives held ("right after another
@@ -1056,12 +1062,16 @@ holder again (a layer mapped as Exclusive takes the keyboard; one turned Exclusi
 polkit or secret sheet such a mapping would take the keyboard from the sheet and send the rest of a password to the toolbar.
 While `SessionState.securityKeyboard` (the polkit sheet or a secret sheet is present, or one of their key sinks still holds
 the keyboard after a request ended under the user's typing: `AuthAgent.queuePresent || SecretAgent.requestActive ||
-SecretAgent.sinkingKeys`, shell.qml's Binding; opus re-review 2, MINOR-3) the toolbar makes nothing Exclusive: no hand-over,
+SecretAgent.sinkingKeys`, opus re-review 2, MINOR-3; since ADR-0041 S3 computed in the security process, `SheetHost.qml`,
+published with the lock state and read by the UI fail closed, `LockClient.securityKeyboard`: true without a fresh state;
+shell.qml's Binding) the toolbar makes nothing Exclusive: no hand-over,
 no remapping, and a toolbar opened then maps without the keyboard; a hand-over under way when a sheet opens maps without it;
 once the sheet is gone the display that wants the keyboard maps again as Exclusive (`CaptureToolbar.qml` `sheetOpen`,
 `followKeyboard`). `lock_surfaces.sh` pins it with mutations (QML with PanelWindow cannot run offscreen). The key sinks'
-linger (at most 3 s) is covered, so the rest of a password never reaches the toolbar, where Return captures. Nested: NOT
-VERIFIED.
+linger (at most 3 s) is covered, so the rest of a password never reaches the toolbar, where Return captures. Since S3 the
+UI learns of a sheet through the file's push (an inotify watch, milliseconds) and its own read every 2 s: a toolbar
+hand-over in that moment could still map as Exclusive over a sheet that has just appeared (residual, as narrow as a push's
+delivery). Nested: NOT VERIFIED.
 
 **A device before the password (ADR-0045 OC-6, security review of the Settings setups, 2026-11-04).** Once Omarchy's
 fingerprint or security key setup ran, `/etc/pam.d/polkit-1` starts with `pam_fprintd` (behind Omarchy's lid-closed gate) or
@@ -1117,7 +1127,8 @@ the event loop (`Qt.callLater(refuseUnseen)`, which checks again), never inside 
 the request inside the cancel, which changes what the binding reads; done inline, QML reported a binding loop and could keep
 the binding stale, leaving the next request unguarded (found by `flows.qml` test_27, whose mock ends the request inside the
 cancel as Quickshell does). `answerable` (default false) is the agent's rule: its sheet is on screen in front, that is not
-locked, no screen saver, the displays on (`SessionState.displaysOff`, a Binding in shell.qml from `Idle.displayOff`: off for
+locked, no screen saver, the displays on (`SheetSession.displaysOff`, bound by the security process's host from `Idle.displayOff`
+in the same process since ADR-0041 S3, a Binding in shell.qml before: off for
 inactivity while unlocked counts too, a reader in the power button pressed to wake the screen must not answer a sheet nobody
 sees; opus re-review 2, MINOR-2), not waiting behind another sheet, in the sheet (`requestOpen`), and not held unless it is
 held as "right after another one" or the user clicked past its guard (`!heldByLock || userFocused || heldWhy === "queued"`).
@@ -1186,7 +1197,10 @@ above ("Upstream base", 4.5.0 review). The device-first assumptions of the two p
 ## L5 polkit (owner, real session)
 Never `pkexec` a real program for this test; `pkcheck` only asks polkit whether this terminal's shell may run the action
 and runs nothing as root. In a terminal of the Grassfield session:
-1. `journalctl --user -u grassfield-shell -b -o cat | grep -c 'authentication agent registered'` → `1`.
+1. `journalctl --user -u grassfield-security -b -o cat | grep -c 'authentication agent registered'` → `1` (since ADR-0041
+   S3 the agent runs in the security process: one more line after each restart of that process, each after an
+   `unregistered` or a crash; `journalctl --user -u grassfield-shell -b -o cat | grep -c 'grassfield-polkit'` → `0`, the UI
+   holds no agent).
 2. `pkcheck --action-id org.freedesktop.policykit.exec --process $$ --allow-user-interaction; echo "exit $?"`. The
    Grassfield sheet appears over a dimmed screen: the message, "Action: org.freedesktop.policykit.exec", "User: <you>",
    a password field and Cancel / Allow. Press Esc → the sheet closes, `exit 3` (dismissed), nothing approved.
@@ -1194,9 +1208,15 @@ and runs nothing as root. In a terminal of the Grassfield session:
    is empty, nothing approved; then Cancel → `exit 3`. (One wrong attempt counts once in faillock, shared with sudo.)
 4. Optional, only if the owner wants the success path: step 2 with the right password → `exit 0`; polkit may then keep
    the authorization for this shell for a few minutes (`auth_admin_keep`): close that terminal afterwards.
-5. Clicking outside the sheet never cancels or approves; `journalctl --user -u grassfield-shell -b -o cat | grep -i
+5. Clicking outside the sheet never cancels or approves; `journalctl --user -u grassfield-security -b -o cat | grep -i
    polkit` shows no password and no "approved" line.
-PASS: 1–3 (and 5) as described. FAIL: any approval without the right password, a second agent, or the sheet missing.
+6. The restart (ADR-0041 S3): run step 2, and while the sheet is open (nothing typed), in another terminal `systemctl --user
+   kill -s SIGSEGV grassfield-security.service` → the sheet disappears, step 2's terminal prints `exit 1` or `exit 3` (not
+   authorized or dismissed: polkitd ends the request with the agent's bus name), nothing approved; within about 2 s the
+   journal shows the agent registered again, and step 2 run once more shows the sheet. A request asked during that restart
+   is not authorized (no agent to ask), as while the UI restarted before S3. The session stays as it was (a lock held
+   stays held: the lock's own restart rules).
+PASS: 1–3 (and 5, 6) as described. FAIL: any approval without the right password, a second agent, or the sheet missing.
 
 ## Lock survival (crash, reload) — fail closed
 Found in R12 review: a Quickshell soft reload while locked unlocked the session when the marker was missing or not
@@ -1511,16 +1531,35 @@ same directory and the modules move without moving a file), one step at a time u
   through the notification server's D-Bus interface (`busctl --user --auto-start=no`), the wallpaper through the lock's own
   bounded reader of `wallpaper.json`, the account picture through `services/image-copy.py file`. In the dev session
   `scripts/dev/shell-run.sh` starts it beside the UI (`.dev/security.pid`, `.dev/security.log`; `--security` restarts it
-  alone). **S3:** the polkit agent. **S4:** safe mode. The invariant of each state (who locks, either process down,
-  sleep) is the table at the end of ADR-0041 step 1.
+  alone).
+- **S3 (built, ADR-0041 "S3 as built"):** the session's polkit agent (`AuthAgent`, its sheet `AuthDialog`), the secret
+  sheets fed by `grassfield-prompter` (`SecretAgent`: gcr's prompts, NetworkManager's secrets, KIO's passwords, Bluetooth
+  pairing; ADR-0035 decision 9-7: one queue with the polkit sheet, so in its process) and their one queue run in the security
+  process (`shell/security/host/SheetHost.qml`, created at run time by `SecurityHost.qml` so that a sheet that cannot load
+  never keeps the lock from loading: then no agent registers, polkitd answers every authorization "not authorized", the
+  bridge answers every secret request "cancelled"), drawn with `Grassfield.Ui` and `qs.security` only (no `qs.services`
+  type). The sheets read the session in process: `shell/security/SheetSession.qml`, written only by the host's Bindings
+  from `Lock.locked`, `Idle.displayOff` and `Idle.saverShown` (the saver's idle time counted here by the saver's rule).
+  `grassfield-prompter.service` accepts a peer of `grassfield-security.service` only (`--peer-unit`). The UI imports no
+  security module and names none of their types (`security_process_scan.py`); what it knows of the sheets comes with the
+  lock state (`authorizing`, `securityKeyboard`, below), and it closes its menus when a sheet is published open (the agent
+  closed them in process before). One agent in the session: one `PolkitAgent` in the tree, in `AuthAgent.qml`, made once,
+  in the security process; polkitd refuses a second registration for the session anyway. An authorization asked while the
+  security process restarts finds no agent and is not authorized, and one open when it ends is ended by polkitd with the
+  agent's bus name, never approved (as while the UI restarted before S3; `authagent_flows.d` test_35, L5 step 6). The
+  `polkit` and `secrets` dev hooks answer on the security instance. **S4:** safe mode. The invariant of each state (who
+  locks, either process down, sleep) is the table at the end of ADR-0041 step 1.
 
 ### Lock state across processes (ADR-0041 S2; ADR-0010 risk 2)
 - The security process publishes one file, `$XDG_RUNTIME_DIR/grassfield-lock-state-<compositor instance>` (the marker's
   instance id; `shell/lib/LockState.js` is the one definition): one line of JSON, `{v, state, seq, writer, displaysOff,
-  motion}`, `state` one of `unlocked`, `locking` (requested, not confirmed by the compositor) and `locked` (confirmed; also
-  while a password is checked and during the release fade). Written atomically on every change (before the compositor is
-  asked for the lock) and every 2 s with a new sequence number (`shell/security/lock/LockPublisher.qml`). Never private
-  state: no name, message, attempt count or typed text.
+  motion, authorizing, securityKeyboard}`, `state` one of `unlocked`, `locking` (requested, not confirmed by the compositor)
+  and `locked` (confirmed; also while a password is checked and during the release fade); since S3 `authorizing` (the polkit
+  sheet or a secret sheet is open, shown or held) and `securityKeyboard` (one of them or its key sink may hold the
+  keyboard), booleans, absent in a file of a security process from before S3 (read false: it hosts no sheet), any other
+  type no state. Written atomically on every change (before the compositor is asked for the lock) and every 2 s with a new
+  sequence number (`shell/security/lock/LockPublisher.qml`). Never private state: no name, message, attempt count, typed
+  text, requester or anything a sheet shows.
 - The UI (`shell/services/LockClient.qml`) watches the file and reads it every 2 s whatever the watch says; it never writes
   it, and the security process reads nothing from the UI through it (no socket, no process per beat). `SessionState.locked`,
   which every refusal reads (GF-116, "Show previews: When Unlocked", Overview, Switcher, the capture toolbar, the Dock's
@@ -1529,7 +1568,11 @@ same directory and the modules move without moving a file), one step at a time u
   clipboard helper reads it, `Clipboard.helperLocked`). A security process that is stopped, restarting, failed at its start
   limit or hung writes no beat, so the UI reads locked within 5 s. The first read is no beat: a file may be the last line
   of a dead writer, so only a second, different write proves a live one (a UI started next to a dead writer's `unlocked`
-  reads locked). `SessionState.displaysOff` (the polkit agent's device rule) is true without a fresh state.
+  reads locked). `LockClient.displaysOff` (the screen saver's slideshow) is true without a fresh state. Since S3
+  `SessionState.authorizing` (the clipboard history records nothing, the tiling popover waits) and
+  `SessionState.securityKeyboard` (the capture toolbar maps nothing as Exclusive) follow `LockClient.authorizing` and
+  `securityKeyboard` (`LockState.uiSheet`): the published value of a known, fresh state, true otherwise; the menus close
+  when a sheet is published open in a fresh state (`LockState.sheetPublished`), never on a missing or stale one.
 - `SessionState.lockConfirmed` (`LockState.uiLockConfirmed`) is true when the compositor reports a lock or the last state
   published, fresh or stale, is `locking` or `locked`; false while the UI reads locked only because the state is missing,
   unreadable or stale after an `unlocked` (the security process stopped while the session was unlocked). The paths that
@@ -1543,14 +1586,13 @@ same directory and the modules move without moving a file), one step at a time u
   With the clipboard history off the helper does not run and that signal is absent: the push and the beat alone.
 - A same-user process can write the file, as it can call any IPC target: a forged `unlocked` can make the UI's own
   refusals open while the session is locked, never the session (the compositor keeps input and rendering on the lock
-  surfaces). Until S3 it also reaches the two security modules that stay in the UI: the polkit agent's device rule
-  (`AuthAgent.qml`, `answerable` reads `SessionState.locked` and `displaysOff`), so a touch on a fingerprint reader at the
-  lock screen could answer a polkit request that same-user code started (the request's sheet is under the lock surface,
-  unseen), and the secret sheets' hold (`SecretAgent.qml` `heldWhy`/`heldByLock`, the same inputs). It cannot be closed in
-  the UI: every input it has besides the file (the compositor's signal through the clipboard helper, which holds both
-  while the history is on) is as reachable to same-user code. Same-user code is out of scope (above), as it was before
-  S2 for the marker and the IPC targets; S3 moves the polkit agent into the security process, where it reads the lock in
-  process and this goes away.
+  surfaces). Before S3 it also reached the two security modules that stayed in the UI: the polkit agent's device rule
+  (`answerable` read `SessionState.locked` and `displaysOff`) and the secret sheets' hold (the opus review of 77a0ceb3,
+  MINOR-4). Closed by S3: both run in the security process and read the lock and idle of that process
+  (`SheetSession`, bound by the host from `Lock.locked`, `Idle.displayOff` and `Idle.saverShown`); the file is never read
+  there, and `security_process_scan.py` holds it (no security module names `SessionState` or `LockClient`; `SheetSession`
+  has no other writer). A forged `authorizing: false` can make the UI's clipboard history record or its capture toolbar
+  take the keyboard while a sheet is open: same-user code, out of scope as above, and the sheet itself is unaffected.
 - The UI asks for a lock with `lock lock` on the security instance (`qs ipc -p <shell dir>/security.qml`), each try
   bounded at 5 s, retried every 250 ms for 10 s while it does not answer, and in a real session hands the request once to
   the stand-in, which starts a stopped security unit. A UI that finds no published state 15 s after its start restarts the security unit once (an
@@ -1559,9 +1601,9 @@ same directory and the modules move without moving a file), one step at a time u
 - The applications' org.freedesktop.ScreenSaver inhibitors, which the menu bridge serves to the UI, reach idle as a lease:
   `idle inhibit 150`, renewed every 60 s while one is held, `0` when none; the security side bounds it at 150 s
   (`IdleModel.inhibitLeaseMs`), so a UI that crashed during a video keeps the idle lock off for one lease at most.
-- Tests: `tests/security/tst_lockstate.qml` with `lockstate_mutants.sh` (21 mutants), `lock_client.sh` (the real
-  `LockClient` offscreen, two starts next to an existing file, 6 mutants), `security_process_scan.py` (through
-  `security_unit.sh`, 21 mutants), `lock_surfaces.sh` (the unconfirmed lock paths), `lock_request_env.sh` (the lock key's
+- Tests: `tests/security/tst_lockstate.qml` with `lockstate_mutants.sh` (29 mutants since S3), `lock_client.sh` (the real
+  `LockClient` offscreen, two starts next to an existing file, the sheets' fields fresh, missing and stale, 9 mutants),
+  `security_process_scan.py` (through `security_unit.sh`, 53 mutants since S3), `lock_surfaces.sh` (the unconfirmed lock paths), `lock_request_env.sh` (the lock key's
   fallback), `dev_gate.sh` (the first publication); nested: `reload_locked.sh ui-crash`, `ui-down-sleep`, `ui-down-idle`.
 
 ## Implementation (M2)
@@ -1573,13 +1615,14 @@ same directory and the modules move without moving a file), one step at a time u
 | `shell/security/PasswordField.qml` | Shared password entry (Password echo, sensitive-data hints, plain-text placeholder, return arrow) |
 | `shell/security/lock/Lock.qml` | Singleton: `WlSessionLock`, `PamContext` (password; fingerprint only if its PAM file exists, paced: "Fingerprint pacing"), crash marker, IPC `lock` |
 | `shell/security/lock/LockView.qml` | Lock surface (display only): the output's wallpaper, sharp (the still LockStill decoded, else its colour or `GrassfieldArtwork`), the banded scrim, date and clock, avatar/initials, name, dark frosted field, one hint line (gate A2, see Decisions); backdrop, name and picture taken once (ADR-0040 step 4a) |
-| `shell/security.qml`, `shell/security/host/SecurityHost.qml` | The security process's root (ShellRoot, one SecurityHost, the `security` target) and what it hosts: the Translator and the appearance settings the lock follows, Idle (with SleepInhibitor) and the Lock singleton (ADR-0041 S2) |
+| `shell/security.qml`, `shell/security/host/SecurityHost.qml` | The security process's root (ShellRoot, one SecurityHost, the `security` target) and what it hosts: the Translator and the appearance settings the lock follows, Idle (with SleepInhibitor) and the Lock singleton (ADR-0041 S2), the sheets' session (SheetSession's Bindings) and, made at run time, SheetHost (S3) |
+| `shell/security/host/SheetHost.qml`, `shell/security/SheetSession.qml` | The polkit agent, the secret agent and their one queue in the security process (ADR-0041 S3), their icon lookup (the system theme only) and what the UI may know of them (`authorizing`, `securityKeyboard`); what the sheets read of the session (locked, displays off, the saver), written only by the host from the process's own lock and idle |
 | `shell/security/lock/LockPublisher.qml`, `shell/lib/LockState.js` | The lock state the UI reads: one file pushed on every change and with a heartbeat every 2 s; the format, the reader and the UI's fail-closed reading (pure, shared) |
 | `shell/security/lock/LockWallpaper.qml`, `LockAvatar.qml` | The lock's own reader of `wallpaper.json` (bounded, watched) and its account picture made by `services/image-copy.py file` (display only) |
 | `shell/services/LockClient.qml`, `LockClient.js` | The UI's side: reads the published state (SessionState.locked follows it), asks the security process to lock (`lock lock`), leases the screen saver inhibitors (`idle inhibit`) |
 | `shell/security/lock/LockStill.qml` | Per output (display only): the lock's backdrop decided while unlocked from `LockWallpaper.lockBackdrop`; a picture checked (`/usr/bin/realpath -m`: a plain cache name in the real prepared or video folder; `/usr/bin/stat %f`: a regular file of at most `wallpaper.lockStillMaxBytes`) and decoded into Qt's pixmap cache before any lock (ADR-0040 ID-7, ADR-0016 W8) |
 | `shell/security/lock/LockStills.qml` | The display data the lock surfaces take (one LockStill per output, the account picture decoded ahead), created by `Lock.qml` at run time so that it can never keep the lock from loading |
-| `shell/security/polkit/` | `AuthAgent` (PolkitAgent + overlay window, IPC `polkit status`), `AuthDialog`, `AuthDialogModel` |
+| `shell/security/polkit/` | `AuthAgent` (PolkitAgent + overlay window, IPC `polkit status` on the security instance since ADR-0041 S3), `AuthDialog`, `AuthDialogModel` |
 | `shell/security/idle/` | `Idle` (IdleMonitor, dim layer, idle lock, display power-off on the lock screen, IPC `idle`), `SleepInhibitor` (delay inhibitor, PrepareForSleep watcher, retry and notice, logind budget), `IdleModel.js` |
 | `config/hypr/grassfield/privacy.lua` | Omarchy's `no_screen_share` rules read from Omarchy's own files (SEC-01) |
 | `packaging/systemd/sleep-lock-gate` | `ExecCondition` of Omarchy's sleep-lock unit (D-12), installed to `/usr/lib/grassfield/` |
@@ -1597,7 +1640,7 @@ same directory and the modules move without moving a file), one step at a time u
 | `tests/security/nested_ready.sh`, `nested_ready_unit.sh` | Readiness wait of `reload_locked.sh` and `lock_privacy.sh` (bounded, `READY_SECONDS`, default 60): GF-REF listed and a lock state from the shell, before any step and after each shell restart; an empty answer is never a state, a timeout FAILs. Offline test with stub `hyprctl` and `qs` |
 
 IPC (the `lock` and `idle` targets on the security instance since ADR-0041 S2, `qs ipc -p
-/usr/share/grassfield/shell/security.qml`; `polkit` on the shell instance until S3; classes in "IPC surface"): `lock lock` → `ok` / `already-locked` / `refused: missing-pam`
+/usr/share/grassfield/shell/security.qml`; `polkit` and `secrets` there too since S3; classes in "IPC surface"): `lock lock` → `ok` / `already-locked` / `refused: missing-pam`
 (when already locked, the session lock is re-verified, see "Lock ownership"); `lock lid` → the same or `docked`. Dev
 hooks, only in a dev session (else `refused`): `lock status` → `unlocked|locking|locked|authenticating|releasing`;
 `lock devReload` → `reloading` (soft reload), `lock devPauseOwnershipCheck` → `paused` (periodic ownership check off

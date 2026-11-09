@@ -617,6 +617,88 @@ down, how sleep behaves) is written in the table at the end of this step.
     (test_theConfirmationWaitsForTheGroundOnly). The nested time to a confirmed lock with this change: NOT VERIFIED
     (the integrator's next run).
 
+### S3 as built (2026-11-09, branch feat/safe-mode-s3 from main 9c77a4f1; the polkit agent moves, and the secret sheets with it)
+- **What moved, and why the secret sheets too.** The session's polkit agent (`AuthAgent`, its sheet `AuthDialog` and model)
+  and the secret sheets fed by `grassfield-prompter` (`SecretAgent`: gcr's prompts, NetworkManager's secrets, KIO's
+  passwords, Bluetooth pairing), with the one queue they share (`SheetQueue`), run in the security process. The sheets are
+  not a choice of this step: ADR-0010's amendment of 2026-10-31 (owner decision Q12) puts every secret sheet and the polkit
+  sheet in one queue, a QML object of one process, and ADR-0035 decision 9-7 says it in so many words ("when ADR-0041 S3
+  moves the agent to `grassfield-security.service`, the sheets and `--peer-unit` move with it"); S2 as built had kept them in
+  the UI "until S3". `grassfield-prompter.service` now accepts a peer of `grassfield-security.service` only (`--peer-unit`,
+  and the bridge's default), so the UI's unit is refused. Nothing stayed: the UI (`shell/shell.qml`) imports no security
+  module at all and names none of their types.
+- **How they are hosted.** `shell/security/host/SheetHost.qml` (the queue, the two agents, the sheets' icon lookup and the
+  two booleans the UI may know) is created at run time by `SecurityHost.qml`, at the end of its `Component.onCompleted`,
+  never declared, as the lock's `LockStills` (S2): a sheet module that cannot be loaded or created leaves the lock, idle and
+  the sleep inhibitor running. Measured offscreen (no window backend there): the root logs "the polkit agent and the secret
+  sheets cannot be loaded (... No PanelWindow backend loaded); authorizations and password requests are refused, the lock
+  is unaffected", then "grassfield-security: ready (hosting lock idle, ...)", and publishes its state; declared, the same
+  failure took the whole root down ("Type AuthAgent unavailable", "Failed to load configuration"): no lock at all. Without
+  the sheets no agent registers (polkitd answers "not authorized"), the bridge has no client (it answers "cancelled"):
+  a failure denies, never approves. `security state` answers `lock idle polkit secrets` once the sheets are made, `lock idle`
+  otherwise. `SecurityHost.qml` is pinned by its new hash (`security_unit.sh`); `shell/security.qml` is unchanged.
+- **What the sheets read (MINOR-4 closed).** `shell/security/SheetSession.qml`, a singleton of `qs.security` with `locked`,
+  `displaysOff` and `saverShown`, written only by three Bindings of the host: `Lock.locked`, `Idle.displayOff` and
+  `Idle.saverShown`, all of the same process; it fails closed without them (locked, displays off). The state file is never
+  read there, so a forged `unlocked` reaches only the UI's own refusals now. The screen saver stays the UI's (ADR-0032);
+  the security process cannot see it and reads nothing from the UI (S2's rule), so idle counts the same idle time by the
+  saver's own rule (`IdleModel.saverArmed`, compared with `SaverModel.armed` over every input by `tst_idlemodel`; the same
+  Wayland inhibitors, the applications' through S2's lease): it differs from the saver only on the holding side (the UI
+  down; the moment between a dismissing input and the compositor's activity report), and `saver devShow` is the UI's alone.
+- **What the UI knows of the sheets.** Two booleans published with the lock state (`LockState.format`, absent from a file of
+  a process before S3: read false; any other type: no state): `authorizing` (a sheet open, shown or held) and
+  `securityKeyboard` (a sheet or its key sink may hold the keyboard). `LockClient.authorizing` and `securityKeyboard`
+  (`LockState.uiSheet`) are the published value of a known, fresh state and true otherwise: `SessionState.authorizing` (the
+  clipboard history, ADR-0034 Q11; the tiling popover) and `securityKeyboard` (the capture toolbar) follow them, so a
+  stopped security process makes them wait, as it makes everything refuse. The menus close when a sheet is published open in
+  a fresh state (`LockState.sheetPublished`), as the agent closed them in process before (`Popups.close()` was the agent's
+  one UI call). The push is an inotify watch, milliseconds: a capture-toolbar hand-over in that moment could still map as
+  Exclusive over a sheet that just appeared (residual, as narrow as the push).
+- **The icon.** The UI's `ThemeIcons` (which copies icons found in the user's folders into a directory it empties at start)
+  is the UI's: the sheets show the system theme's icon only (`SheetHost.themeIcon`, the name sanitized by
+  `NotificationPrefs.safeIconName`, `Quickshell.hasThemeIcon` over the root-owned search paths `Grassfield.I18n` sets), never
+  a copy of a user's icon; a requester whose icon lives only in the user's folders (a flatpak user export) shows the sheet's
+  generic icon (`theme_icon_files.sh`: "polkit=none" in every case).
+- **Exactly one agent.** One `PolkitAgent` in the tree, in `AuthAgent.qml`, the one file importing
+  `Quickshell.Services.Polkit`; one `AuthAgent`, one `SecretAgent` and one `SheetQueue` in `SheetHost.qml`, which only
+  `SecurityHost.qml` makes, once, by its URL; none of these types in the UI (`security_process_scan.py`, 53 planted mutants:
+  a second agent, a prompter client, a queue or a raw `PolkitAgent` in the UI, a second agent or queue in the sheets, the
+  sheets declared or made twice, `SheetSession` bound to anything else, elsewhere or assigned, the sheets reading
+  `SessionState` or `LockClient` or importing `qs.services`, ...). polkitd itself refuses a second registration for the
+  session. Nested, no agent registers (the owner's agent holds the session, as before S3); the real session's count is L5
+  step 1 (`journalctl --user -u grassfield-security`).
+- **The restart.** While the security process restarts no agent is registered: polkitd answers an authorization asked
+  then "not authorized" (no agent), and ends one that was open with the agent's bus name (not authorized or dismissed),
+  never approved, as while the UI restarted before S3. The agent answers nothing when its process ends (no password goes out,
+  `authagent_flows.d` test_35: the agent destroyed with a password half typed sends nothing, the agent made again has no
+  request, no sheet and no keys), and the polkit module keeps nothing across a restart (no file, process, socket or setting:
+  `security_unit.sh`). The secret sheets: the bridge sees its client go and answers its open requests "cancelled"
+  (`SecretAgent.dropAll`'s premise), owns gcr's prompter name only while a client is connected (so a gcr prompt in that
+  second goes to the stock prompter, as while the UI restarted before S3), and accepts the restarted process's connection
+  (its client retries after 1 s). Owner, real session: L5 step 6 (`docs/specs/security.md`).
+- **The invariant table** (step 1, row S3) holds as written: the security process locks; with the UI down the sheets keep
+  working (their window is the security process's), with the security process down there is no polkit agent and no secret
+  sheet until its restart, and sleep is as S2.
+- **Units and dev session.** `grassfield-security.service` keeps no `NoNewPrivileges` (polkit-agent-helper-1 is setuid),
+  `LimitCORE=0` now also covers the sheets' passwords; the UI's unit keeps no `NoNewPrivileges` because the applications it
+  starts inherit it. `scripts/dev/shell-run.sh` restarts the dev security process when `GRASSFIELD_PROMPTER_SOCKET` changes;
+  `tests/visual/ipc.sh` sends `polkit` and `secrets` to it.
+- Tests: `authagent_flows.sh` and `secret_sheets.sh` run the agents with `qs.security` and `qs.lib` only (no `qs.services`:
+  the security process's world), `SheetSession` set as the host would; `authagent_flows.d` test_35 (the restart);
+  `tst_lockstate.qml` (the sheets' fields, `uiSheet`, `sheetPublished`) with 8 more mutants in `lockstate_mutants.sh`;
+  `lock_client.sh` (fresh, missing, stale and a dead writer's sheet; 3 more mutants); `tst_idlemodel.qml` (the saver's rule);
+  `security_process_scan.py` (53 mutants); `lock_surfaces.sh` (the agent's inputs, the host's Bindings, the published
+  keyboard; mutations); `theme_icon_files.sh` (the sheets' icon); `security_unit.sh`, `sleep_lock_units.sh` (an S3 answer
+  restarts nothing), `session_services.sh` (the peer unit), `secret_bridge.sh` (the probe sets `SheetSession` as the host).
+- NOT VERIFIED here: the agent's registration and L5 in a real session (a nested session cannot register an agent: the
+  owner's holds the session), the restart's polkitd answers (L5 step 6), the sheets drawn by the security process nested
+  (`just shot secret-sheet` and a polkit sheet need the owner's L5 or the dev prompter run of docs/specs/system-dialogs.md
+  A-SC7), the security process's memory with the sheets loaded (gate P2).
+- Residual risks: the capture toolbar's hand-over in the push's milliseconds (above); a user-folder icon no longer shown on
+  a sheet (display only); the saver count's holding-side differences (above); a Quickshell without its polkit service now
+  leaves the session without an agent but locked and lockable, where before S2 it took the whole shell down.
+- Review: opus security (R12), by the integrator.
+
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words
 of the session, never in a terminal.
