@@ -282,9 +282,16 @@ step_ui_crash() {
   pid=$(ui_pid) || { fail "ui-crash: no live UI record (.dev/shell.pid)"; return; }
   lockpid=$(lock_pid) || { fail "ui-crash: no live security process record (.dev/security.pid)"; return; }
   dev_may_signal "$pid" || { fail "ui-crash: refusing to signal PID $pid"; return; }
+  [[ $pid != "$lockpid" ]] || { fail "ui-crash: the UI's record names the security process (PID $pid)"; return; }
   kill -SEGV "$pid"
   for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
-  if kill -0 "$pid" 2>/dev/null; then fail "ui-crash: the UI did not exit after SIGSEGV"; return; fi
+  # Quickshell's crash handler would keep the crashed process alive under a relaunched child (QS_DISABLE_CRASH_HANDLER=1 in
+  # the units and in scripts/dev/shell-run.sh turns it off): named here if it ever comes back.
+  if kill -0 "$pid" 2>/dev/null; then
+    fail "ui-crash: the UI did not exit after SIGSEGV (children: $(pgrep -P "$pid" -a 2>/dev/null | tr '\n' ';' | cut -c1-200); QS_DISABLE_CRASH_HANDLER in its environment: $(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -c '^QS_DISABLE_CRASH_HANDLER=1$'))"
+    return
+  fi
+  pass "ui-crash: the UI ended on SIGSEGV (no crash handler kept it alive)"
   sleep 0.5
   echo "compositor after the UI's crash: $(compositor_lock)"
   if compositor_locked; then pass "ui-crash: Hyprland still reports LOCK on every monitor"; else fail "ui-crash: the session is UNLOCKED after a crash of the UI"; fi

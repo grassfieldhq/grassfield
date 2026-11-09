@@ -26,6 +26,13 @@ Type=simple
 Slice=session.slice
 # Quickshell's own reload is off: package upgrades must not hot-reload a half-written tree.
 Environment=QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1
+# Quickshell's crash handler off (ADR-0041 S2, the integrator's nested run of e1a3ff4c, ui-crash): with it, a crash 10 s or
+# more after the start leaves the crashed process alive, blocked in its signal handler while a reporter it forked relaunches
+# the shell as its own child ("Quickshell has been restarted"), so systemd sees no failure: no restart of its own, no
+# OnFailure=, no count toward safe mode, and the crashed process keeps its memory charged to this unit. Without it the
+# process ends on the signal, systemd restarts it after RestartSec= and counts the failure, and systemd-coredump keeps the
+# dump (coredumpctl), as for any process (macOS: the process dies, launchd restarts it, ReportCrash writes the report).
+Environment=QS_DISABLE_CRASH_HANDLER=1
 # Qt's "@2x" image lookup off (review of cbd6ef05): a file:// picture is decoded from the very path the shell asked for (the
 # lock checks its wallpaper still by that path), never from a "<name>@2x.<ext>" beside it. The shell ships no such file.
 Environment=QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING=1

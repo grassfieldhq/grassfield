@@ -171,6 +171,11 @@ timing=()
 # ... and its UnsetEnvironment= (review of 360d6fa): the QML and Qt plugin search paths and Quickshell's config selectors
 # of the calling environment are dropped. QML_IMPORT_PATH below is then only this tree's own module roots, standing in
 # for the packaged shell's Qt built-in import path (/usr/lib/qt6/qml).
+# Quickshell's crash handler is off in both units (packaging/systemd/grassfield-*.service, ADR-0041 S2), and here always:
+# with it, a SIGSEGV leaves the recorded process alive while a child it forked runs a relaunched shell, so .dev/*.pid no
+# longer names the running instance and the crash steps of tests/security/reload_locked.sh (ui-crash) see no exit. The dump
+# goes to systemd-coredump (coredumpctl; scripts/dev/coredump-summary.py).
+crash_env=(QS_DISABLE_CRASH_HANDLER=1)
 unit_unset=()
 if [[ ${GRASSFIELD_UNIT_ENV:-} == 1 ]]; then
   for var in $(sed -n 's/^UnsetEnvironment=//p' "$root/packaging/systemd/grassfield-shell.service"); do
@@ -256,7 +261,7 @@ start_security() {
   # under $XDG_STATE_HOME/grassfield, here a link to the dev state the shell writes (.dev/state).
   mkdir -p "$dev/security-xdg-state"
   ln -sfn "$dev/state" "$dev/security-xdg-state/grassfield"
-  env "${unit_unset[@]}" "${timing[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/open-shims:$PATH" \
+  env "${unit_unset[@]}" "${timing[@]}" "${crash_env[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/open-shims:$PATH" \
     WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" XDG_STATE_HOME="$dev/security-xdg-state" \
     GRASSFIELD_STATE_HOME="$dev/state" GRASSFIELD_CONFIG_HOME="$dev/config" GRASSFIELD_DEV=1 \
     GRASSFIELD_PRIVATE_BUS="$private" \
@@ -283,7 +288,7 @@ fi
 
 # The open shims (gio, xdg-open, gtk-launch -> open-policy.sh) come first on the shell's PATH: QProcess resolves a program
 # on the PATH of its parent, so code that runs `gio open` in a Process (shell/desktop/DesktopFiles.qml) gets the policy too.
-env "${unit_unset[@]}" "${timing[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/open-shims:$PATH" GRASSFIELD_MENU_BRIDGE_SOCKET="$bridge_sock" \
+env "${unit_unset[@]}" "${timing[@]}" "${crash_env[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/open-shims:$PATH" GRASSFIELD_MENU_BRIDGE_SOCKET="$bridge_sock" \
   GRASSFIELD_DESKTOP_DIR="$desktop_dir" WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" \
   GRASSFIELD_STATE_HOME="$dev/state" GRASSFIELD_CONFIG_HOME="$dev/config" GRASSFIELD_DEV=1 \
   GRASSFIELD_PRIVATE_BUS="$private" GRASSFIELD_SETTINGS_CMD="$settings_cmd" GRASSFIELD_PREVIEW_CMD="$preview_cmd" \

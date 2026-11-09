@@ -555,6 +555,26 @@ down, how sleep behaves) is written in the table at the end of this step.
   - Residual: a hung (not crashed) security process while unlocked answers nothing and systemd does not restart it: the
     key's fallback and `LockClient` reach a stand-in that finds the unit active and waits; no lock until it recovers
     (before S2 a hung UI had the same property until step 6a's watchdog; the security process has no watchdog yet).
+- The integrator's nested run of e1a3ff4c (2026-11-09, bare, a frozen checkout): `reload_locked.sh` 87 PASS, 1 FAIL
+  (ui-crash: "the UI did not exit after SIGSEGV"); `ui-down-idle` 3/3; `lock_privacy.sh` 38/38; `lock_monitor_model.sh`
+  18/18; `lock_keyboard_replaced.sh` 4 FAIL (the field not emptied by Escape after a replaced keyboard; nothing reached
+  the probe window, the session stayed locked; held until the same test on main is known); `rss.sh --nested` exit 2.
+  - ui-crash, cause: Quickshell's crash handler. Measured offscreen on Quickshell 0.3.2 (a scratch config, SIGSEGV 12 s
+    after the start): the crashed process stays alive, blocked in its handler while a reporter it forked relaunches the
+    shell as its own child ("Quickshell has been restarted"); SIGSEGV within 10 s of the start: "Not restarting", exit
+    255. Without the handler (`QS_DISABLE_CRASH_HANDLER=1`, "Crash handling disabled."): the process ends on the signal
+    (wait status 139). With the handler, systemd never saw a crash 10 s or more after a start: no restart of its own, no
+    `OnFailure=` (the safe-mode counter, Omarchy's sleep lock), the crashed process kept its memory charged to the unit,
+    and for the security process a frozen lock client stayed beside its relaunched copy. Decision (macOS: the process
+    dies, launchd restarts it, ReportCrash writes the report): both units set `Environment=QS_DISABLE_CRASH_HANDLER=1`,
+    and `scripts/dev/shell-run.sh` sets it for both processes, so a crash ends the process, systemd restarts it after
+    `RestartSec=` and counts it, and systemd-coredump keeps the dump. Quickshell's own report folder
+    (`~/.cache/quickshell/crashes`) is no longer written. Tests: `security_unit.sh`, `tests/shell/shell_unit.sh`;
+    `reload_locked.sh ui-crash` now passes the step "the UI ended on SIGSEGV" and names the handler if it comes back.
+  - `rss.sh --nested` required a running menu bridge, which P2 does not count and a nested session without its build
+    does not run: it is now listed when it runs and never required; `--real` finds both Quickshell processes by their
+    units' MainPID (it still looked for `qs -n -c grassfield`, a command line gone since GF-115, and missed the security
+    process).
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words

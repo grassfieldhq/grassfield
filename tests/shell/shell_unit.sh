@@ -15,6 +15,10 @@ exec_line=$(grep -E '^ExecStart=' "$unit")
 
 desc="ExecStart loads the shell by path from $SYSTEM_PATH (qs -n -p), never by name"
 check test "$exec_line" = "ExecStart=/usr/bin/qs -n -p $SYSTEM_PATH"
+# ADR-0041 S2: a crash ends the process, so systemd restarts it and OnFailure= counts it (Quickshell's handler kept the crashed
+# process alive under a relaunched child).
+desc="Quickshell's crash handler is off (Environment=QS_DISABLE_CRASH_HANDLER=1): a crash ends the process and systemd restarts it"
+check grep -qx 'Environment=QS_DISABLE_CRASH_HANDLER=1' "$unit"
 # Known limits of these scans (the cheap forms are covered, the rest is documented): an argument list split over several lines
 # (a QML array with "qs", then "ipc" on the next line), a command assembled from variables or systemd specifiers (%t), and a
 # path built at run time are not seen; review such a caller by hand.

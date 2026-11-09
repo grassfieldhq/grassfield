@@ -429,6 +429,10 @@ Read in the sources (Quickshell v0.3.1, `quickshell-mirror/quickshell@v0.3.1`; H
   `unlock_and_destroy` sets it false (`src/protocols/SessionLock.cpp`). The session stays locked.
 - SIGTERM: Quickshell installs crash handlers for SIGSEGV/SIGABRT/SIGFPE/SIGILL/SIGBUS/SIGTRAP only
   (`src/crash/handler.cpp`); SIGTERM's default action ends the process at once, which Hyprland sees as a dead client.
+  Since ADR-0041 S2 both units set `QS_DISABLE_CRASH_HANDLER=1` (the integrator's nested run of e1a3ff4c): with the
+  handler a crash 10 s or more after a start left the crashed process alive under a relaunched child, invisible to systemd
+  (no restart, no `OnFailure=`); without it a crash ends the process like SIGTERM does, Hyprland keeps the lock for the
+  dead client, systemd restarts it and the marker brings the lock back.
 - Either way the restarted shell (`Restart=always`) finds the marker `locked` and takes the lock back.
 Expected: locked in both cases. NOT VERIFIED at runtime until the nested `graceful-exit` step of
 `tests/security/reload_locked.sh` runs (bare, outside the sandbox): (a) `kill -TERM`, (b) `qs kill --pid`; after each,
