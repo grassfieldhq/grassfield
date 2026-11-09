@@ -269,9 +269,6 @@ public:
     // (the Open With menus): one executable script on this computer also gets {id: "grassfield:terminal", name: "Terminal",
     // terminal: true} last, which runs it in the session's terminal (never a default application).
     Q_INVOKABLE QVariantList applicationsFor(const QList<QUrl> &urls, bool withTerminal = false) const;
-    // Tests only (C++, never QML): changes the plan of the next program runs (tst_fileslaunch forces the copy to
-    // ~/Applications, which needs a noexec or read-only disk otherwise).
-    void setRunPlanAdjusterForTests(const std::function<void(LaunchGuard::RunPlan &)> &adjuster);
     Q_INVOKABLE void openWith(const QString &storageId, const QList<QUrl> &urls);
     // Open With > Other…: the Choose Application panel for `urls`; the application chosen opens them (openWith).
     Q_INVOKABLE void chooseApplication(const QList<QUrl> &urls);
@@ -565,11 +562,16 @@ private:
     // Open With > Terminal: an executable script runs in the session's terminal, after the downloaded-file sheet.
     void runInTerminal(const QUrl &url);
     void startScriptInTerminal(const QString &path);
+    // Open With after the open rule: a downloaded Windows or Java program asks first (`consented`: the items already agreed to).
+    void openWithChecked(const QString &storageId, const QList<QUrl> &urls, const QList<QUrl> &consented);
     // True (with a banner) when Files runs as root: no run path starts anything then.
     bool refuseAsRoot(const QString &name);
     // What the sheet says when an approval could not be written (never the system's error text).
     QString approvalProblem(ProgramLaunch::Approval approval) const;
+    // Changes the plan of the next program runs; set only by tst_fileslaunch.cpp through its FilesAppTestAccess (the copy to
+    // ~/Applications needs a noexec or read-only disk otherwise). Never set in the app.
     std::function<void(LaunchGuard::RunPlan &)> m_runPlanAdjuster;
+    friend class FilesAppTestAccess;
     // Remote copies (sftp, smb, a phone…) into this computer get the download mark of their source (LaunchGuard::remoteOrigin).
     void markRemoteCopies(KJob *job);
 

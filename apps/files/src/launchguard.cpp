@@ -1,7 +1,5 @@
 #include "launchguard.h"
 
-#include <QDir>
-#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QMimeDatabase>
@@ -9,6 +7,8 @@
 #include <QRegularExpression>
 
 #include <cerrno>
+#include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -137,6 +137,40 @@ bool defaultIgnorable(char32_t c)
         || (c >= 0xFE00 && c <= 0xFE0F) || c == 0xFFA0 || (c >= 0xFFF0 && c <= 0xFFF8) || (c >= 0x1BCA0 && c <= 0x1BCA3)
         || (c >= 0x1D173 && c <= 0x1D17A) || (c >= 0xE0000 && c <= 0xE0FFF) || (c >= 0x2060 && c <= 0x206F) || (c >= 0x200B && c <= 0x200F)
         || (c >= 0x202A && c <= 0x202E) || c == 0x00AD || c == 0x061C || c == 0xFEFF;
+}
+
+// Characters drawn as nothing at all that are neither format characters nor default-ignorable: the braille blank and the
+// Hangul fillers (U+3164 and U+FFA0 are also in defaultIgnorable()).
+bool blankGlyph(char32_t c)
+{
+    return c == 0x2800 || c == 0x115F || c == 0x1160 || c == 0x3164 || c == 0xFFA0;
+}
+
+// Characters drawn as a full stop on the baseline or near it, the ones NFKC leaves alone (UTS #39 confusables of "." and the
+// other scripts' full stops): read as "." before the extension is taken.
+bool dotLookalike(char32_t c)
+{
+    static const char32_t kDots[] = {0x00B7, 0x0387, 0x0589, 0x0660, 0x06D4, 0x06F0, 0x0701, 0x0702, 0x1362, 0x2024, 0x2027, 0x2219, 0x22C5,
+                                     0x2E31, 0x2E33, 0x3002, 0x30FB, 0xA4F8, 0xA60E, 0xFE12, 0xFE52, 0xFF0E, 0xFF61, 0xFF65, 0x10A50, 0x1D16D};
+    for (const char32_t d : kDots) {
+        if (c == d)
+            return true;
+    }
+    return false;
+}
+
+// The extension the eye reads (after the cleaned name's last dot) is plain ASCII. A program's always is: an extension with
+// any other character is a lookalike ("pdf" with a Cyrillic er U+0440, "exe" in Cyrillic ie and ha, "pdf" with a Greek rho).
+bool asciiExtension(const QString &cleanedName)
+{
+    const qsizetype dot = cleanedName.lastIndexOf(QLatin1Char('.'));
+    if (dot < 0)
+        return true;
+    for (qsizetype i = dot + 1; i < cleanedName.size(); ++i) {
+        if (cleanedName.at(i).unicode() > 0x7F)
+            return false;
+    }
+    return true;
 }
 
 // Characters a journal line never carries as they are: C0, DEL, C1, the quote and the bidirectional controls.
@@ -365,7 +399,7 @@ Verdict verdict(const Facts &f)
     // content shown as a document ("photo.jpg", "notes.txt", "run.sh", "setup.exe", and the same names with invisible
     // characters or trailing spaces) is never run.
     if (f.elf && f.elfProgram) {
-        if (!showsAsProgram(f.mimeType) || !nameShowsAsProgram(name))
+        if (!showsAsProgram(f.mimeType) || !nameShowsAsProgram(name) || !asciiExtension(name))
             return Verdict::RefuseDisguised;
         // uwsm would start a desktop entry instead of the program (a launcher's way round the refusal above).
         if (uwsmReadsAsEntry(f.path) || uwsmReadsAsEntry(name))
@@ -422,7 +456,7 @@ QString originHost(const Facts &f)
         static const QRegularExpression valid(QStringLiteral(R"(\A[\p{L}\p{N}.:\[\]-]{1,253}\z)"));
         if (host.isEmpty() || !valid.match(host).hasMatch())
             continue;
-        // A label that mixes scripts (a homograph: Cyrillic "а" in "pаypal") is shown as the browsers show it, in ASCII.
+        // A label that mixes scripts (a homograph: a Cyrillic a, U+0430, among Latin letters) is shown as the browsers show it, in ASCII.
         for (const QString &label : host.split(QLatin1Char('.'))) {
             QChar::Script seen = QChar::Script_Unknown;
             for (const char32_t c : label.toUcs4()) {
@@ -441,11 +475,20 @@ QString originHost(const Facts &f)
 
 QString cleanName(const QString &name)
 {
+    // Compatibility forms folded first (NFKC: fullwidth letters, and the dots U+2024, U+FE52, U+FF0E become "."), then
+    // decomposed (NFKD) so that combining marks can be dropped: "pdf" with an acute or a dot below is "pdf" to the eye.
+    const QString folded = name.normalized(QString::NormalizationForm_KC).normalized(QString::NormalizationForm_KD);
     QString out;
-    out.reserve(name.size());
-    for (const char32_t c : name.toUcs4()) {
-        if (QChar::category(c) == QChar::Other_Format || defaultIgnorable(c))
+    out.reserve(folded.size());
+    for (const char32_t c : folded.toUcs4()) {
+        const QChar::Category category = QChar::category(c);
+        if (category == QChar::Other_Format || category == QChar::Mark_NonSpacing || category == QChar::Mark_Enclosing || defaultIgnorable(c)
+            || blankGlyph(c))
             continue;
+        if (dotLookalike(c)) {
+            out += QLatin1Char('.');
+            continue;
+        }
         out += QString::fromUcs4(&c, 1);
     }
     // Trailing spaces (any space separator) and dots are not seen in a list and do not change the kind to the eye.
@@ -472,73 +515,184 @@ DownloadMarks downloadMarks(const QString &path)
     return marks;
 }
 
+namespace
+{
+constexpr int kMaxTreeDepth = 256;
+
+bool setMarks(int fd, const DownloadMarks &marks)
+{
+    bool ok = true;
+    if (!marks.origin.isEmpty())
+        ok = ::fsetxattr(fd, "user.xdg.origin.url", marks.origin.constData(), size_t(marks.origin.size()), 0) == 0 && ok;
+    if (!marks.referrer.isEmpty())
+        ok = ::fsetxattr(fd, "user.xdg.referrer.url", marks.referrer.constData(), size_t(marks.referrer.size()), 0) == 0 && ok;
+    return ok;
+}
+
+// A regular file pinned by an O_PATH descriptor (no link followed): the marks are written through a descriptor opened from its
+// /proc/self/fd entry (the same inode, never a path looked up again). Writing a user attribute needs read and write access:
+// when the user's bits lack one (an archive member of mode 0500, 0555 or 0100), the user's own file gets u+rw for the moment
+// of the write, then its mode back. False when the marks are not both written (fail closed).
+bool markPinnedFile(int pinned, const struct stat &st, const DownloadMarks &marks)
+{
+    const QByteArray self = "/proc/self/fd/" + QByteArray::number(pinned);
+    const mode_t mode = st.st_mode & 07777;
+    const bool opened = (mode & (S_IRUSR | S_IWUSR)) == (S_IRUSR | S_IWUSR);
+    if (!opened && (st.st_uid != ::geteuid() || ::chmod(self.constData(), mode | S_IRUSR | S_IWUSR) != 0))
+        return false;
+    bool ok = false;
+    const int fd = ::open(self.constData(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
+    if (fd >= 0) {
+        ok = setMarks(fd, marks);
+        ::close(fd);
+    }
+    if (!opened)
+        ok = ::chmod(self.constData(), mode) == 0 && ok;
+    return ok;
+}
+
+struct TreeWalk {
+    const DownloadMarks &marks;
+    qint64 cap;
+    const std::function<bool(qint64)> &keepGoing;
+    TreeMarks result;
+};
+
+// A folder pinned by an O_PATH descriptor: listed through a descriptor opened from its /proc/self/fd entry. A folder the user
+// may not list or enter (mode 0100, 0300) gets u+rx while its entries are walked, then its mode back. Entries are reached with
+// openat(O_PATH | O_NOFOLLOW): links are never followed and nothing is looked up by path twice.
+bool walkPinnedFolder(int pinned, const struct stat &st, TreeWalk &w, int depth)
+{
+    if (depth > kMaxTreeDepth)
+        return false;
+    const QByteArray self = "/proc/self/fd/" + QByteArray::number(pinned);
+    const mode_t mode = st.st_mode & 07777;
+    const bool opened = (mode & (S_IRUSR | S_IXUSR)) == (S_IRUSR | S_IXUSR);
+    if (!opened && (st.st_uid != ::geteuid() || ::chmod(self.constData(), mode | S_IRUSR | S_IXUSR) != 0))
+        return false;
+    bool ok = true;
+    const int listing = ::open(self.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    DIR *dir = listing >= 0 ? ::fdopendir(listing) : nullptr;
+    if (!dir) {
+        if (listing >= 0)
+            ::close(listing);
+        ok = false;
+    }
+    while (ok) {
+        errno = 0;
+        const dirent *entry = ::readdir(dir);
+        if (!entry) {
+            ok = errno == 0;
+            break;
+        }
+        if (std::strcmp(entry->d_name, ".") == 0 || std::strcmp(entry->d_name, "..") == 0)
+            continue;
+        ++w.result.entries;
+        if ((w.cap > 0 && w.result.entries > w.cap) || (w.keepGoing && !w.keepGoing(w.result.entries))) {
+            ok = false;
+            break;
+        }
+        const int child = ::openat(::dirfd(dir), entry->d_name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+        struct stat cs{};
+        if (child < 0 || ::fstat(child, &cs) != 0) {
+            ok = false;
+        } else if (S_ISDIR(cs.st_mode)) {
+            ok = walkPinnedFolder(child, cs, w, depth + 1);
+        } else if (S_ISREG(cs.st_mode)) {
+            ok = markPinnedFile(child, cs, w.marks);
+            if (ok)
+                ++w.result.files;
+        }
+        if (child >= 0)
+            ::close(child);
+    }
+    if (dir)
+        ::closedir(dir);
+    if (!opened)
+        ok = ::chmod(self.constData(), mode) == 0 && ok;
+    return ok;
+}
+} // namespace
+
 bool markFile(const QString &path, const DownloadMarks &marks)
 {
     if (!marks.any())
         return false;
-    const QByteArray native = QFile::encodeName(path);
-    const int fd = ::open(native.constData(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK | O_NOFOLLOW);
-    struct stat st{};
-    bool ok = true;
-    if (fd >= 0) {
-        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
-            ::close(fd);
-            return false;
-        }
-        if (!marks.origin.isEmpty())
-            ok = ::fsetxattr(fd, "user.xdg.origin.url", marks.origin.constData(), size_t(marks.origin.size()), 0) == 0 && ok;
-        if (!marks.referrer.isEmpty())
-            ok = ::fsetxattr(fd, "user.xdg.referrer.url", marks.referrer.constData(), size_t(marks.referrer.size()), 0) == 0 && ok;
-        ::close(fd);
-        return ok;
-    }
-    // Not readable by the user (an archive member of mode 0100 can still be executed, and setting a user attribute needs write
-    // access): the user's own regular file, pinned by an O_PATH descriptor that follows no link, gets u+rw for the moment of
-    // the write through its /proc/self/fd entry, then its mode back.
-    if (errno != EACCES)
-        return false;
-    const int pinned = ::open(native.constData(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    const int pinned = ::open(QFile::encodeName(path).constData(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
     if (pinned < 0)
         return false;
-    if (::fstat(pinned, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != ::geteuid()) {
-        ::close(pinned);
-        return false;
-    }
-    const QByteArray self = "/proc/self/fd/" + QByteArray::number(pinned);
-    if (::chmod(self.constData(), (st.st_mode & 07777) | S_IRUSR | S_IWUSR) != 0) {
-        ::close(pinned);
-        return false;
-    }
-    const int writable = ::open(self.constData(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
-    if (writable >= 0) {
-        if (!marks.origin.isEmpty())
-            ok = ::fsetxattr(writable, "user.xdg.origin.url", marks.origin.constData(), size_t(marks.origin.size()), 0) == 0 && ok;
-        if (!marks.referrer.isEmpty())
-            ok = ::fsetxattr(writable, "user.xdg.referrer.url", marks.referrer.constData(), size_t(marks.referrer.size()), 0) == 0 && ok;
-        ::close(writable);
-    } else {
-        ok = false;
-    }
-    ::chmod(self.constData(), st.st_mode & 07777);
+    struct stat st{};
+    const bool ok = ::fstat(pinned, &st) == 0 && S_ISREG(st.st_mode) && markPinnedFile(pinned, st, marks);
     ::close(pinned);
     return ok;
 }
 
-int markTree(const QString &root, const DownloadMarks &marks)
+TreeMarks markTree(const QString &root, const DownloadMarks &marks, qint64 cap, const std::function<bool(qint64)> &keepGoing)
 {
-    if (!marks.any())
-        return 0;
-    int marked = 0;
-    if (markFile(root, marks))
-        ++marked;
-    // No link is followed (QDirIterator's default), hidden and system entries included.
-    QDirIterator it(root, QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-    for (int seen = 0; it.hasNext() && seen < 100000; ++seen) {
-        const QString path = it.next();
-        if (markFile(path, marks))
-            ++marked;
+    TreeWalk w{marks, cap, keepGoing, TreeMarks{}};
+    if (!marks.any()) {
+        w.result.complete = true;
+        return w.result;
     }
-    return marked;
+    const int pinned = ::open(QFile::encodeName(root).constData(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    if (pinned < 0)
+        return w.result;
+    struct stat st{};
+    if (::fstat(pinned, &st) == 0) {
+        if (S_ISDIR(st.st_mode)) {
+            w.result.complete = walkPinnedFolder(pinned, st, w, 0);
+        } else if (S_ISREG(st.st_mode)) {
+            w.result.complete = markPinnedFile(pinned, st, marks);
+            w.result.files = w.result.complete ? 1 : 0;
+        } else {
+            w.result.complete = true; // a link or a special file: nothing to run, nothing to mark
+        }
+    }
+    ::close(pinned);
+    return w.result;
+}
+
+bool openTree(const QString &root)
+{
+    // Every folder under root (the root included) gets u+rwx, so that a staging tree with folders of mode 0100 or 0500 can be
+    // removed; files are left as they are. No link is followed.
+    std::function<bool(int, int)> walk = [&walk](int pinned, int depth) -> bool {
+        if (depth > kMaxTreeDepth)
+            return false;
+        struct stat st{};
+        if (::fstat(pinned, &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != ::geteuid())
+            return false;
+        const QByteArray self = "/proc/self/fd/" + QByteArray::number(pinned);
+        if ((st.st_mode & S_IRWXU) != S_IRWXU && ::chmod(self.constData(), (st.st_mode & 07777) | S_IRWXU) != 0)
+            return false;
+        const int listing = ::open(self.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        DIR *dir = listing >= 0 ? ::fdopendir(listing) : nullptr;
+        if (!dir) {
+            if (listing >= 0)
+                ::close(listing);
+            return false;
+        }
+        bool ok = true;
+        while (const dirent *entry = ::readdir(dir)) {
+            if (std::strcmp(entry->d_name, ".") == 0 || std::strcmp(entry->d_name, "..") == 0)
+                continue;
+            const int child = ::openat(::dirfd(dir), entry->d_name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+            if (child < 0)
+                continue;
+            struct stat cs{};
+            if (::fstat(child, &cs) == 0 && S_ISDIR(cs.st_mode))
+                ok = walk(child, depth + 1) && ok;
+            ::close(child);
+        }
+        ::closedir(dir);
+        return ok;
+    };
+    const int pinned = ::open(QFile::encodeName(root).constData(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    if (pinned < 0)
+        return false;
+    const bool ok = walk(pinned, 0);
+    ::close(pinned);
+    return ok;
 }
 
 QByteArray remoteOrigin(const QUrl &source)
@@ -630,6 +784,7 @@ Facts inspect(const QUrl &url)
     }
     f.inode = quint64(st.st_ino);
     f.mtimeNs = qint64(st.st_mtim.tv_sec) * 1000000000 + st.st_mtim.tv_nsec;
+    f.ctimeNs = qint64(st.st_ctim.tv_sec) * 1000000000 + st.st_ctim.tv_nsec;
     f.size = qint64(st.st_size);
     f.ownedByUser = st.st_uid == ::geteuid();
     f.elevated = (st.st_mode & (S_ISUID | S_ISGID)) || ::geteuid() == 0 || ::fgetxattr(fd, "security.capability", nullptr, 0) > 0;

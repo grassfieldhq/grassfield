@@ -7,6 +7,11 @@
 #include <QStringList>
 #include <QTimer>
 
+#include <atomic>
+#include <memory>
+
+class QThread;
+
 // One Compress or Expand (ADR-0029): bsdtar in a child process (ArchiveLogic's command lines), into a hidden temporary
 // name next to the items, then renamed to the Finder's name. A cancel, a failure or a disk that fills up kills the child
 // and removes the temporary file or folder; nothing half-written is ever left under a real name. Expand first lists the
@@ -37,6 +42,9 @@ public:
     Kind kind() const { return m_kind; }
     // The item it names in the user's words ("Archive.zip" being made, "photos.zip" being expanded).
     QString subject() const;
+    // The Expand failed because the archive's download marks could not be copied onto every extracted file: nothing was kept
+    // (the Archive Utility model, fail closed). FilesApp says so in a sheet.
+    bool unsafe() const { return m_unsafe; }
 
 signals:
     // `error` is "" on success and on a cancel; `result` the new archive or the expanded item.
@@ -47,6 +55,8 @@ private:
     void run(const QStringList &args);
     void listed();
     void extracted();
+    void finishExpand(const QStringList &top);
+    void stopMarking();
     void compressed();
     void fail(const QString &error);
     void cleanUp();
@@ -64,4 +74,11 @@ private:
     bool m_done = false;
     QByteArray m_output;
     QByteArray m_errors;
+    // Expand of a downloaded archive: the worker that copies its marks onto the staging tree, and its stop flag.
+    QThread *m_marking = nullptr;
+    std::shared_ptr<std::atomic_bool> m_stop = std::make_shared<std::atomic_bool>(false);
+    bool m_unsafe = false;
+    // Entries the marking may walk (0: no cap); only a test changes it (ArchiveJobTestAccess, tst_fileslaunch.cpp).
+    static inline qint64 s_markCap = 0;
+    friend class ArchiveJobTestAccess;
 };

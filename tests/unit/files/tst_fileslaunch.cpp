@@ -6,6 +6,7 @@
 // AppImage (the AppImage magic written into its header), one that fails as an AppImage without FUSE 2 does, one whose library
 // is missing. java, xdg-terminal-exec, pacman and a Windows handler are scripts of the test that record what they were given.
 // Part of files-kio-tests (its main makes the home).
+#include "archivejob.h"
 #include "filesapp.h"
 #include "kioprompts.h"
 #include "launchguard.h"
@@ -29,6 +30,20 @@
 
 #include <sys/stat.h>
 #include <sys/xattr.h>
+
+// The tests' own access to two hooks the app never sets (friends of FilesApp and ArchiveJob): the run plan, and the number of
+// entries Expand may mark.
+class FilesAppTestAccess
+{
+public:
+    static void adjustRunPlan(FilesApp &app, const std::function<void(LaunchGuard::RunPlan &)> &adjust) { app.m_runPlanAdjuster = adjust; }
+};
+
+class ArchiveJobTestAccess
+{
+public:
+    static void setMarkCap(qint64 cap) { ArchiveJob::s_markCap = cap; }
+};
 
 namespace
 {
@@ -125,6 +140,9 @@ protected:
     }
     void TearDown() override
     {
+        ArchiveJobTestAccess::setMarkCap(0);
+        // Folders of mode 0100 or 0300 from an archive: opened up so that the scratch folder can go.
+        LaunchGuard::openTree(m_dir.path());
         qunsetenv("GRASSFIELD_FILES_NO_LAUNCH");
         qputenv("PATH", m_path);
         if (!m_session.isNull())
@@ -325,7 +343,7 @@ TEST_F(FilesLaunch, AProgramThatCantRunWhereItIsRunsFromACopyInApplications)
     FilesApp app(QList<QUrl>{});
     Session s(app);
     // The copy is what a noexec or read-only disk gets (no such disk in a test).
-    app.setRunPlanAdjusterForTests([](LaunchGuard::RunPlan &plan) {
+    FilesAppTestAccess::adjustRunPlan(app, [](LaunchGuard::RunPlan &plan) {
         plan.copy = true;
         plan.allowRun = false;
         plan.ask = true;
@@ -579,4 +597,162 @@ TEST_F(FilesLaunch, ARemoteCopyGetsADownloadMark)
     if (copied.isEmpty())
         GTEST_SKIP() << "KIO did not copy the data: address here (" << s.told.join(QLatin1Char('|')).toStdString() << ")";
     EXPECT_EQ(attributeOf(copied, "user.xdg.origin.url"), source.toEncoded());
+}
+
+namespace
+{
+// A downloaded tar.gz whose members have the modes bsdtar keeps (counter-review of 48475cf6, B1): programs of mode 0500 and
+// 0555, and programs inside folders of mode 0100 and 0300. Python's tarfile writes the modes; `program` is the bytes of each.
+bool writeLockedArchive(const QString &archive, const QString &program)
+{
+    static const char kScript[] = R"(import io, sys, tarfile
+out, prog = sys.argv[1], open(sys.argv[2], "rb").read()
+with tarfile.open(out, "w:gz") as t:
+    def add(name, mode, data=None):
+        info = tarfile.TarInfo(name)
+        info.mode = mode
+        if data is None:
+            info.type = tarfile.DIRTYPE
+            t.addfile(info)
+        else:
+            info.size = len(data)
+            t.addfile(info, io.BytesIO(data))
+    add("Kit", 0o755)
+    add("Kit/readonly", 0o500, prog)
+    add("Kit/everyone", 0o555, prog)
+    add("Kit/locked", 0o100)
+    add("Kit/locked/prog", 0o755, prog)
+    add("Kit/blind", 0o300)
+    add("Kit/blind/prog", 0o755, prog)
+)";
+    return QProcess::execute(QStringLiteral("python3"), {QStringLiteral("-I"), QStringLiteral("-c"), QString::fromLatin1(kScript), archive, program}) == 0;
+}
+} // namespace
+
+// Counter-review of 48475cf6 (B1): every regular file of a downloaded archive keeps its marks, whatever its mode or its
+// folder's, and opening any of its programs asks.
+TEST_F(FilesLaunch, EveryProgramOfADownloadedArchiveAsksWhateverItsMode)
+{
+    if (QStandardPaths::findExecutable(QStringLiteral("bsdtar")).isEmpty() || QStandardPaths::findExecutable(QStringLiteral("python3")).isEmpty())
+        GTEST_SKIP() << "bsdtar or python3 is not installed";
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    QDir().mkpath(d(QStringLiteral("Downloads")));
+    const QString archive = d(QStringLiteral("Downloads/Kit.tar.gz"));
+    ASSERT_TRUE(writeLockedArchive(archive, fixture("probe")));
+    if (!markDownloaded(archive))
+        GTEST_SKIP() << "no user extended attributes in " << m_dir.path().toStdString();
+    app.open(urls(archive));
+    const QString kit = d(QStringLiteral("Downloads/Kit"));
+    ASSERT_TRUE(waitFor([&] { return QFileInfo(kit + QStringLiteral("/blind/prog")).isFile(); }, 15000)) << s.told.join(QLatin1Char('|')).toStdString();
+    // bsdtar gave the folders their modes back: 0100 and 0300 (the folder 0300 can't be listed, its program is still reached).
+    EXPECT_EQ(modeOf(kit + QStringLiteral("/locked")), 0100u);
+    EXPECT_EQ(modeOf(kit + QStringLiteral("/blind")), 0300u);
+    s.answer = QStringLiteral("cancel");
+    int asked = 0;
+    for (const QString &program : {QStringLiteral("readonly"), QStringLiteral("everyone"), QStringLiteral("locked/prog"), QStringLiteral("blind/prog")}) {
+        const QString path = kit + QLatin1Char('/') + program;
+        EXPECT_EQ(attributeOf(path, "user.xdg.origin.url"), QByteArray("https://downloads.example.org/files/Tool.AppImage?token=secret")) << program.toStdString();
+        app.open(urls(path));
+        ++asked;
+        ASSERT_TRUE(waitFor([&] { return int(s.ofKind(QStringLiteral("openProgram")).size()) == asked; })) << program.toStdString();
+        EXPECT_TRUE(s.ofKind(QStringLiteral("openProgram")).last().value(QStringLiteral("downloaded")).toBool()) << program.toStdString();
+    }
+    EXPECT_EQ(modeOf(kit + QStringLiteral("/readonly")), 0500u) << "the marks were written, the mode given back";
+    EXPECT_EQ(modeOf(kit + QStringLiteral("/everyone")), 0555u);
+}
+
+// Fail closed: an Expand of a downloaded archive whose files can't all be marked keeps nothing and says so in a sheet (here the
+// test's cap of 2 entries; in the app there is no cap, and a file that can't be marked does the same).
+TEST_F(FilesLaunch, ADownloadedArchiveThatCantBeMarkedEverywhereIsNotExpanded)
+{
+    const QString bsdtar = QStandardPaths::findExecutable(QStringLiteral("bsdtar"));
+    if (bsdtar.isEmpty())
+        GTEST_SKIP() << "bsdtar is not installed";
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    const QString staging = d(QStringLiteral("staging"));
+    place("probe", QStringLiteral("staging/Pack/tool"), 0755);
+    place("probe", QStringLiteral("staging/Pack/other"), 0755);
+    place("probe", QStringLiteral("staging/Pack/third"), 0755);
+    QDir().mkpath(d(QStringLiteral("Downloads")));
+    const QString archive = d(QStringLiteral("Downloads/Pack.zip"));
+    ASSERT_EQ(QProcess::execute(bsdtar, {QStringLiteral("-a"), QStringLiteral("-cf"), archive, QStringLiteral("-C"), staging, QStringLiteral("Pack")}), 0);
+    if (!markDownloaded(archive))
+        GTEST_SKIP() << "no user extended attributes in " << m_dir.path().toStdString();
+    ArchiveJobTestAccess::setMarkCap(2);
+    app.open(urls(archive));
+    ASSERT_TRUE(waitFor([&] { return !s.ofKind(QStringLiteral("notice")).isEmpty(); }, 15000)) << s.told.join(QLatin1Char('|')).toStdString();
+    const QVariantMap notice = s.ofKind(QStringLiteral("notice")).first();
+    EXPECT_EQ(notice.value(QStringLiteral("title")).toString(), QStringLiteral("“Pack.zip” couldn’t be expanded safely."));
+    EXPECT_TRUE(notice.value(QStringLiteral("text")).toString().contains(QStringLiteral("nothing was expanded")));
+    settle(500);
+    const QStringList left = QDir(d(QStringLiteral("Downloads"))).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot);
+    EXPECT_EQ(left, QStringList{QStringLiteral("Pack.zip")}) << "no expanded item, no staging folder: " << left.join(QLatin1Char('|')).toStdString();
+}
+
+// Counter-review of 48475cf6 (m1): Open With > Wine or Java runs the program it is given, so a downloaded .exe or .jar asks
+// first there too (and never as root); Cancel runs nothing, Open runs it, approved it does not ask again.
+TEST_F(FilesLaunch, OpenWithAWindowsOrJavaHandlerAsksForADownloadedProgram)
+{
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    const QString wine = recorder(QStringLiteral("gf-wine2"));
+    const QString java = recorder(QStringLiteral("gf-java2"));
+    const QString apps = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/applications");
+    QDir().mkpath(apps);
+    const QList<QPair<QString, QString>> handlers = {{QStringLiteral("org.example.GfWineTwo"), QStringLiteral("gf-wine2|application/x-msdownload;application/x-ms-dos-executable;")},
+                                                     {QStringLiteral("org.example.GfJavaTwo"), QStringLiteral("gf-java2|application/x-java-archive;application/java-archive;")}};
+    for (const auto &h : handlers) {
+        QFile entry(apps + QLatin1Char('/') + h.first + QStringLiteral(".desktop"));
+        ASSERT_TRUE(entry.open(QIODevice::WriteOnly));
+        entry.write(QStringLiteral("[Desktop Entry]\nType=Application\nName=%1\nExec=\"%2\" %f\nMimeType=%3\n")
+                        .arg(h.first, QDir(d(QStringLiteral("bin"))).filePath(h.second.section(QLatin1Char('|'), 0, 0)), h.second.section(QLatin1Char('|'), 1))
+                        .toUtf8());
+    }
+    QDeadlineTimer cache(15000);
+    while ((!KService::serviceByMenuId(QStringLiteral("org.example.GfWineTwo.desktop")) || !KService::serviceByMenuId(QStringLiteral("org.example.GfJavaTwo.desktop")))
+           && !cache.hasExpired()) {
+        settle(200);
+        KSycoca::self()->ensureCacheValid();
+    }
+    ASSERT_TRUE(KService::serviceByMenuId(QStringLiteral("org.example.GfWineTwo.desktop")));
+    ASSERT_TRUE(KService::serviceByMenuId(QStringLiteral("org.example.GfJavaTwo.desktop")));
+
+    const QString exe = d(QStringLiteral("Downloads/setup.exe"));
+    const QString jar = d(QStringLiteral("Downloads/tool.jar"));
+    QDir().mkpath(d(QStringLiteral("Downloads")));
+    {
+        QFile f(exe);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray("MZ\x90\x00", 4) + QByteArray(200, '\0'));
+        QFile g(jar);
+        ASSERT_TRUE(g.open(QIODevice::WriteOnly));
+        g.write(QByteArray("PK\x03\x04", 4) + QByteArray(60, '\0'));
+    }
+    if (!markDownloaded(exe) || !markDownloaded(jar))
+        GTEST_SKIP() << "no user extended attributes in " << m_dir.path().toStdString();
+    const QList<QPair<QString, QString>> cases = {{QStringLiteral("org.example.GfWineTwo.desktop"), exe}, {QStringLiteral("org.example.GfJavaTwo.desktop"), jar}};
+    const QStringList records = {wine, java};
+    for (int i = 0; i < cases.size(); ++i) {
+        const int before = int(s.ofKind(QStringLiteral("foreignProgram")).size());
+        s.answer = QStringLiteral("cancel");
+        app.openWith(cases.at(i).first, urls(cases.at(i).second));
+        ASSERT_TRUE(waitFor([&] { return int(s.ofKind(QStringLiteral("foreignProgram")).size()) == before + 1; })) << cases.at(i).first.toStdString();
+        EXPECT_TRUE(s.ofKind(QStringLiteral("foreignProgram")).last().value(QStringLiteral("downloaded")).toBool());
+        settle(500);
+        EXPECT_FALSE(QFileInfo::exists(records.at(i))) << "Cancel: the handler never ran";
+        s.answer = QStringLiteral("open");
+        app.openWith(cases.at(i).first, urls(cases.at(i).second));
+        ASSERT_TRUE(waitFor([&] { return !lines(records.at(i)).isEmpty() && lines(records.at(i)).last() == cases.at(i).second; }, 10000))
+            << cases.at(i).first.toStdString();
+        // Approved as it is now: no second sheet.
+        QFile::remove(records.at(i));
+        const int asked = int(s.ofKind(QStringLiteral("foreignProgram")).size());
+        app.openWith(cases.at(i).first, urls(cases.at(i).second));
+        ASSERT_TRUE(waitFor([&] { return !lines(records.at(i)).isEmpty(); }, 10000));
+        EXPECT_EQ(int(s.ofKind(QStringLiteral("foreignProgram")).size()), asked) << "approved: no second sheet";
+    }
+    for (const auto &h : handlers)
+        QFile::remove(apps + QLatin1Char('/') + h.first + QStringLiteral(".desktop"));
 }

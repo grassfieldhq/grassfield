@@ -984,7 +984,7 @@ void logDecision(const char *decision, LaunchGuard::Verdict v, const LaunchGuard
 // The same file as the one the user decided on (a sheet stays up while the file can change).
 bool sameFile(const LaunchGuard::Facts &a, const LaunchGuard::Facts &b)
 {
-    return a.path == b.path && a.inode == b.inode && a.mtimeNs == b.mtimeNs && a.size == b.size;
+    return a.path == b.path && a.inode == b.inode && a.mtimeNs == b.mtimeNs && a.ctimeNs == b.ctimeNs && a.size == b.size;
 }
 
 // The application that opens a Windows file: the default one for its type that names the type itself (Wine, Bottles), never
@@ -1114,11 +1114,6 @@ void FilesApp::open(const QList<QUrl> &urls)
         });
         job->start();
     }
-}
-
-void FilesApp::setRunPlanAdjusterForTests(const std::function<void(LaunchGuard::RunPlan &)> &adjuster)
-{
-    m_runPlanAdjuster = adjuster;
 }
 
 bool FilesApp::refuseAsRoot(const QString &name)
@@ -1345,7 +1340,9 @@ void FilesApp::explainForeign(const QUrl &url, const LaunchGuard::Facts &facts, 
             return;
         logDecision("approved", verdict, facts);
         if (!storageId.isEmpty()) {
-            openWith(storageId, {url});
+            // Consent given in this sheet: Open With's own check does not ask a second time.
+            ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, false);
+            openWithChecked(storageId, {url}, {url});
             return;
         }
         const bool webStart = QFileInfo(java).fileName() == QLatin1String("javaws");
@@ -1461,6 +1458,11 @@ QVariantList FilesApp::applicationsFor(const QList<QUrl> &urls, bool withTermina
 
 void FilesApp::openWith(const QString &storageId, const QList<QUrl> &urls)
 {
+    openWithChecked(storageId, urls, {});
+}
+
+void FilesApp::openWithChecked(const QString &storageId, const QList<QUrl> &urls, const QList<QUrl> &consented)
+{
     if (storageId == kTerminalEntry) {
         if (urls.size() == 1)
             runInTerminal(urls.first());
@@ -1479,6 +1481,44 @@ void FilesApp::openWith(const QString &storageId, const QList<QUrl> &urls)
     }
     if (launchingBlocked()) {
         emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
+        return;
+    }
+    // A Windows or Java program opened with an application (Wine, Bottles, java) is run by it: the open rule applies (ADR-0011
+    // amendment, review of 48475cf6): never as root, and a downloaded one only after Open in its sheet, unless it was approved
+    // as it is now. One sheet per such item, in turn.
+    for (const QUrl &u : urls) {
+        if (consented.contains(u))
+            continue;
+        const LaunchGuard::Facts facts = LaunchGuard::inspect(u);
+        const LaunchGuard::Verdict v = LaunchGuard::verdict(facts);
+        if (v != LaunchGuard::Verdict::WindowsFile && v != LaunchGuard::Verdict::JavaProgram)
+            continue;
+        const QString name = FileLogic::displayName(facts.fileName.isEmpty() ? u.fileName() : facts.fileName);
+        if (refuseAsRoot(name))
+            return;
+        if (!LaunchGuard::plan(facts).downloaded || facts.approved)
+            continue;
+        logDecision("asked", v, facts);
+        const QVariantMap request{{QStringLiteral("kind"), QStringLiteral("foreignProgram")},
+                                  {QStringLiteral("platform"), v == LaunchGuard::Verdict::WindowsFile ? QStringLiteral("windows") : QStringLiteral("java")},
+                                  {QStringLiteral("name"), name},
+                                  {QStringLiteral("handler"), service->name()},
+                                  {QStringLiteral("downloaded"), true},
+                                  {QStringLiteral("host"), LaunchGuard::originHost(facts)}};
+        m_prompts->ask(request, nullptr, [this, storageId, urls, consented, u, facts, v, name](const QVariantMap &reply) {
+            if (reply.value(QStringLiteral("button")).toString() != QLatin1String("open")) {
+                logDecision("canceled", v, facts);
+                return;
+            }
+            const LaunchGuard::Facts now = LaunchGuard::inspect(u);
+            if (LaunchGuard::verdict(now) != v || !sameFile(now, facts)) {
+                m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
+                return;
+            }
+            logDecision("approved", v, facts);
+            ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, false);
+            openWithChecked(storageId, urls, consented + QList<QUrl>{u});
+        });
         return;
     }
     // A terminal application (Terminal=true: nvim, htop…) runs in the session's terminal (decision F-7, FP-80):
@@ -2244,7 +2284,10 @@ void FilesApp::startArchiveJob(ArchiveJob *job, const QString &activity, QObject
     emit activityChanged();
     QPointer<QObject> target = folder;
     connect(job, &ArchiveJob::finished, this, [this, job, target](bool ok, const QString &error, const QString &result) {
-        if (!ok && !error.isEmpty())
+        // A downloaded archive whose marks could not be copied onto every file: nothing was kept, and a sheet says why.
+        if (!ok && job->unsafe())
+            m_prompts->tell(error, tr("Files couldn’t keep the mark that says its contents came from the Internet on every file it holds, so nothing was expanded."));
+        else if (!ok && !error.isEmpty())
             emit operationFailed(error);
         if (ok) {
             if (auto *f = asFolder(target))

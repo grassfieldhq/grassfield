@@ -630,7 +630,8 @@ TEST(LaunchGuardNames, CleanNameDropsWhatTheEyeDoesNotSee)
     EXPECT_EQ(cleanName(QStringLiteral("Invoice\u202efdp.exe")), QStringLiteral("Invoicefdp.exe")) << "RLO: the real name is an .exe";
     EXPECT_EQ(cleanName(QStringLiteral("Invoice\u2066.pdf\u2069")), QStringLiteral("Invoice.pdf"));
     EXPECT_EQ(cleanName(QString::fromUcs4(U"Invoice.pdf\U000E0001", -1)), QStringLiteral("Invoice.pdf")) << "a tag character";
-    EXPECT_EQ(cleanName(QStringLiteral("Cafe\u0301.pdf")), QStringLiteral("Caf\u00e9.pdf")) << "NFC";
+    EXPECT_EQ(cleanName(QStringLiteral("Cafe\u0301.pdf")), QStringLiteral("Cafe.pdf")) << "combining marks are dropped";
+    EXPECT_EQ(cleanName(QStringLiteral("Caf\u00e9.pdf")), QStringLiteral("Cafe.pdf")) << "also from a precomposed letter (NFKD)";
     EXPECT_EQ(cleanName(QStringLiteral("Tool")), QStringLiteral("Tool"));
 }
 
@@ -708,28 +709,77 @@ TEST_F(Files, DownloadMarksAreCopiedOntoEveryFileButNeverThroughALink)
     EXPECT_EQ(read.referrer, marks.referrer);
     EXPECT_FALSE(downloadMarks(dir.filePath(QStringLiteral("missing"))).any());
 
-    // An extracted tree: files at two levels, one the user can't read, a link to a file outside the tree.
+    // An extracted tree as bsdtar leaves it (counter-review of 48475cf6, B1): files of mode 0100, 0500 and 0555, folders of mode
+    // 0100 and 0300 with programs inside, and a link to a file outside the tree.
     QDir().mkpath(dir.filePath(QStringLiteral("tree/bin")));
-    const QString top = write(QStringLiteral("tree/README"), "x", false);
-    const QString deep = write(QStringLiteral("tree/bin/tool"), "\x7f" "ELF", true);
-    const QString locked = write(QStringLiteral("tree/bin/locked"), "\x7f" "ELF", false);
-    ASSERT_EQ(::chmod(QFile::encodeName(locked).constData(), 0100), 0); // execute only
+    QDir().mkpath(dir.filePath(QStringLiteral("tree/locked")));
+    QDir().mkpath(dir.filePath(QStringLiteral("tree/blind")));
+    struct Item {
+        QString path;
+        unsigned mode;
+    };
+    const QList<Item> files = {{write(QStringLiteral("tree/README"), "x", false), 0600},
+                               {write(QStringLiteral("tree/bin/tool"), "\x7f" "ELF", true), 0700},
+                               {write(QStringLiteral("tree/bin/locked"), "\x7f" "ELF", false), 0100},
+                               {write(QStringLiteral("tree/bin/readonly"), "\x7f" "ELF", false), 0500},
+                               {write(QStringLiteral("tree/bin/everyone"), "\x7f" "ELF", false), 0555},
+                               {write(QStringLiteral("tree/locked/prog"), "\x7f" "ELF", true), 0755},
+                               {write(QStringLiteral("tree/blind/prog"), "\x7f" "ELF", true), 0755}};
+    for (const Item &item : files)
+        ASSERT_EQ(::chmod(QFile::encodeName(item.path).constData(), item.mode), 0) << item.path.toStdString();
     const QString outside = write(QStringLiteral("outside"), "y", false);
     ASSERT_TRUE(QFile::link(outside, dir.filePath(QStringLiteral("tree/link"))));
-    EXPECT_EQ(markTree(dir.filePath(QStringLiteral("tree")), read), 3);
-    struct stat st{};
-    ASSERT_EQ(::stat(QFile::encodeName(locked).constData(), &st), 0);
-    EXPECT_EQ(unsigned(st.st_mode & 07777), 0100u) << "its mode is back";
-    ASSERT_EQ(::chmod(QFile::encodeName(locked).constData(), 0600), 0); // to read its attribute here
-    for (const QString &path : {top, deep, locked}) {
-        char value[256];
-        const ssize_t n = ::getxattr(QFile::encodeName(path).constData(), "user.xdg.origin.url", value, sizeof value);
-        EXPECT_EQ(QByteArray(value, int(qMax<ssize_t>(n, 0))), marks.origin) << path.toStdString();
+    ASSERT_EQ(::chmod(QFile::encodeName(dir.filePath(QStringLiteral("tree/locked"))).constData(), 0100), 0);
+    ASSERT_EQ(::chmod(QFile::encodeName(dir.filePath(QStringLiteral("tree/blind"))).constData(), 0300), 0);
+
+    const TreeMarks result = markTree(dir.filePath(QStringLiteral("tree")), read);
+    EXPECT_TRUE(result.complete);
+    EXPECT_EQ(result.files, 7);
+    // Modes are given back, folders included.
+    auto modeOf = [](const QString &path) {
+        struct stat st{};
+        return ::lstat(QFile::encodeName(path).constData(), &st) == 0 ? unsigned(st.st_mode & 07777) : 0xffffffffu;
+    };
+    for (const Item &item : files)
+        EXPECT_EQ(modeOf(item.path), item.mode) << item.path.toStdString();
+    EXPECT_EQ(modeOf(dir.filePath(QStringLiteral("tree/locked"))), 0100u);
+    EXPECT_EQ(modeOf(dir.filePath(QStringLiteral("tree/blind"))), 0300u);
+    // Every file carries the marks (opened up here only to read them).
+    EXPECT_TRUE(openTree(dir.filePath(QStringLiteral("tree"))));
+    for (const Item &item : files) {
+        ::chmod(QFile::encodeName(item.path).constData(), 0600);
+        EXPECT_EQ(downloadMarks(item.path).origin, marks.origin) << item.path.toStdString();
+        EXPECT_EQ(downloadMarks(item.path).referrer, marks.referrer) << item.path.toStdString();
     }
-    ::chmod(QFile::encodeName(locked).constData(), 0600);
     EXPECT_FALSE(downloadMarks(outside).any()) << "a link is never followed";
-    EXPECT_TRUE(plan(inspect(QUrl::fromLocalFile(deep))).downloaded) << "a marked file is a downloaded one";
-    EXPECT_EQ(markTree(dir.filePath(QStringLiteral("tree")), DownloadMarks{}), 0) << "nothing to copy";
+    EXPECT_TRUE(markTree(dir.filePath(QStringLiteral("tree")), DownloadMarks{}).complete) << "nothing to copy: nothing to fail";
+    EXPECT_EQ(markTree(dir.filePath(QStringLiteral("tree")), DownloadMarks{}).files, 0);
+}
+
+// Fail closed: past the cap, a refused walk or a tree deeper than 256 folders, the marking is not complete (and Expand keeps
+// nothing).
+TEST_F(Files, MarkTreeFailsClosed)
+{
+    ASSERT_TRUE(dir.isValid());
+    const DownloadMarks marks{"https://downloads.example.org/Kit.zip", QByteArray()};
+    QDir().mkpath(dir.filePath(QStringLiteral("kit")));
+    for (int i = 0; i < 5; ++i)
+        write(QStringLiteral("kit/f%1").arg(i), "x", false);
+    if (!markFile(dir.filePath(QStringLiteral("kit/f0")), marks))
+        GTEST_SKIP() << "no user extended attributes on " << dir.path().toStdString();
+    EXPECT_TRUE(markTree(dir.filePath(QStringLiteral("kit")), marks, 5).complete) << "five entries, a cap of five";
+    const TreeMarks capped = markTree(dir.filePath(QStringLiteral("kit")), marks, 4);
+    EXPECT_FALSE(capped.complete) << "past the cap";
+    EXPECT_EQ(capped.entries, 5);
+    EXPECT_FALSE(markTree(dir.filePath(QStringLiteral("kit")), marks, 0, [](qint64) { return false; }).complete) << "stopped (a cancel)";
+    // 257 folders deep.
+    QString deep = dir.filePath(QStringLiteral("deep"));
+    for (int i = 0; i < 257; ++i)
+        deep += QStringLiteral("/d");
+    ASSERT_TRUE(QDir().mkpath(deep));
+    write(QStringLiteral("deep") + QString(257, QLatin1Char('/')).replace(QLatin1Char('/'), QStringLiteral("/d")).mid(0) + QStringLiteral("/tool"), "\x7f" "ELF", true);
+    EXPECT_FALSE(markTree(dir.filePath(QStringLiteral("deep")), marks).complete) << "deeper than 256 folders";
+    EXPECT_FALSE(markTree(dir.filePath(QStringLiteral("missing")), marks).complete) << "no tree";
 }
 
 TEST(LaunchGuardMarks, RemoteSourcesGiveTheirAddressWithoutCredentials)
@@ -741,4 +791,46 @@ TEST(LaunchGuardMarks, RemoteSourcesGiveTheirAddressWithoutCredentials)
     for (const char *local : {"file:///home/u/tool", "trash:/0-tool", "recentlyused:/files", "tags:/red", "desktop:/tool"})
         EXPECT_TRUE(remoteOrigin(QUrl(QLatin1String(local))).isEmpty()) << local;
     EXPECT_TRUE(remoteOrigin(QUrl()).isEmpty());
+}
+
+// Counter-review of 48475cf6 (M1): no lookalike dot, blank glyph, combining mark or lookalike letter hides a document's name on
+// a program. The UTS #39 skeleton is not used (it would need ICU's i18n library directly): a program whose cleaned name's
+// extension is not plain ASCII is refused, which covers every lookalike letter.
+TEST(LaunchGuardNames, LookalikesNeverHideADocumentsName)
+{
+    // Folded to the plain name.
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice.pdf\u2800")), QStringLiteral("Invoice.pdf")) << "a braille blank";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice\u2024pdf")), QStringLiteral("Invoice.pdf")) << "one dot leader";
+    EXPECT_EQ(cleanName(QStringLiteral("photo\uff0ejpg")), QStringLiteral("photo.jpg")) << "a fullwidth full stop";
+    EXPECT_EQ(cleanName(QStringLiteral("photo\ufe52jpg")), QStringLiteral("photo.jpg")) << "a small full stop";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice\u3002pdf")), QStringLiteral("Invoice.pdf")) << "an ideographic full stop";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice\u0701pdf")), QStringLiteral("Invoice.pdf")) << "a Syriac supralinear full stop";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice\u00b7pdf")), QStringLiteral("Invoice.pdf")) << "a middle dot";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice.pdf\u0301")), QStringLiteral("Invoice.pdf")) << "a combining acute";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice.pdf\u0323\u0301")), QStringLiteral("Invoice.pdf")) << "combining marks";
+    EXPECT_EQ(cleanName(QStringLiteral("\uff29nvoice.pdf")), QStringLiteral("Invoice.pdf")) << "a fullwidth letter";
+    EXPECT_EQ(cleanName(QStringLiteral("Invoice\u115f\u1160.pdf\uffa0")), QStringLiteral("Invoice.pdf")) << "Hangul fillers";
+
+    // On program content, each is refused as a disguise, approved or not.
+    for (const QString &name : {QStringLiteral("Invoice.pdf\u2800"), QStringLiteral("Invoice\u2024pdf"), QStringLiteral("photo\uff0ejpg"),
+                                QStringLiteral("photo\ufe52jpg"), QStringLiteral("Invoice\u3002pdf"), QStringLiteral("Invoice\u0701pdf"),
+                                QStringLiteral("Invoice.pdf\u0301"), QStringLiteral("Invoice.pdf\u0323"),
+                                // Lookalike letters: Cyrillic er in "pdf", Greek rho in "pdf", Cyrillic ie and ha in "exe", Greek epsilon in
+                                // "exe", Cyrillic je and er in "jpg", Greek omicron-free "jpg" with a Cyrillic er.
+                                QStringLiteral("Invoice.\u0440df"), QStringLiteral("Invoice.\u03c1df"), QStringLiteral("setup.\u0435x\u0435"),
+                                QStringLiteral("setup.\u0435\u0445\u0435"), QStringLiteral("setup.\u03b5x\u03b5"), QStringLiteral("photo.\u0458pg"),
+                                QStringLiteral("photo.j\u0440g"), QStringLiteral("Invoice\u2024\u0440df")}) {
+        Facts f = program(name, QStringLiteral("application/x-executable"));
+        EXPECT_EQ(verdict(f), Verdict::RefuseDisguised) << name.toStdString();
+        f.originUrl = QStringLiteral("https://example.org/");
+        f.approved = true;
+        EXPECT_EQ(verdict(f), Verdict::RefuseDisguised) << name.toStdString() << " approved";
+    }
+
+    // A program's own names still run: no extension, an ASCII one, letters with accents before the extension.
+    for (const QString &name : {QStringLiteral("Tool"), QStringLiteral("\u00c9diteur"), QStringLiteral("Lecteur-vid\u00e9o"), QStringLiteral("Spiel.x86_64"),
+                                QStringLiteral("Lecteur-vid\u00e9o.AppImage"), QStringLiteral("\u65e5\u672c")}) {
+        Facts f = program(name, QStringLiteral("application/x-executable"));
+        EXPECT_EQ(verdict(f), Verdict::RunProgram) << name.toStdString();
+    }
 }

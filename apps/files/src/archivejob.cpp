@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QRandomGenerator>
 #include <QStorageInfo>
+#include <QThread>
 
 namespace
 {
@@ -60,6 +61,7 @@ ArchiveJob *ArchiveJob::expand(const QString &bsdtar, const QString &archive, QO
 
 ArchiveJob::~ArchiveJob()
 {
+    stopMarking();
     if (!m_done) {
         m_done = true;
         if (m_process) {
@@ -184,10 +186,40 @@ void ArchiveJob::extracted()
     }
     // The Archive Utility model: what came from the Internet inside an archive still did. bsdtar drops the archive's
     // extended attributes (--no-xattrs) but keeps its members' execute bits, so the archive's download marks are copied onto
-    // every extracted regular file (O_NOFOLLOW, no link followed) before anything gets a real name; LaunchGuard then asks.
+    // every extracted regular file in the private staging folder, before anything gets a real name, on a worker thread (a
+    // large tree takes seconds). Fail closed: one file left without them and nothing is kept (finishExpand).
     const LaunchGuard::DownloadMarks marks = LaunchGuard::downloadMarks(m_archive);
-    if (marks.any())
-        LaunchGuard::markTree(m_temp, marks);
+    if (!marks.any()) {
+        finishExpand(top);
+        return;
+    }
+    const QString temp = m_temp;
+    const qint64 cap = s_markCap;
+    const std::shared_ptr<std::atomic_bool> stop = m_stop;
+    const auto result = std::make_shared<LaunchGuard::TreeMarks>();
+    m_marking = QThread::create([temp, marks, cap, stop, result] {
+        *result = LaunchGuard::markTree(temp, marks, cap, [stop](qint64) { return !stop->load(); });
+    });
+    m_marking->setParent(this); // destroyed with the job, after stopMarking() waited for it
+    connect(m_marking, &QThread::finished, this, [this, top, result] {
+        m_marking->deleteLater();
+        m_marking = nullptr;
+        if (m_done)
+            return; // canceled meanwhile (fail() waited for the worker and cleaned up)
+        if (!result->complete) {
+            qInfo("grassfield-files: expand refused: the download marks could not be copied onto every file (%lld marked, %lld entries)",
+                  static_cast<long long>(result->files), static_cast<long long>(result->entries));
+            m_unsafe = true;
+            fail(tr("“%1” couldn’t be expanded safely.").arg(FileLogic::displayName(subject())));
+            return;
+        }
+        finishExpand(top);
+    });
+    m_marking->start();
+}
+
+void ArchiveJob::finishExpand(const QStringList &top)
+{
     const auto exists = [this](const QString &name) { return QFileInfo::exists(m_folder + QLatin1Char('/') + name) || QFileInfo(m_folder + QLatin1Char('/') + name).isSymLink(); };
     const QString name = ArchiveLogic::expandName(QFileInfo(m_archive).fileName(), top, exists);
     const QString target = m_folder + QLatin1Char('/') + name;
@@ -222,6 +254,15 @@ void ArchiveJob::compressed()
     emit finished(true, QString(), target);
 }
 
+void ArchiveJob::stopMarking()
+{
+    // The marking worker stops at its next entry; the staging folder is only removed once it has.
+    if (!m_marking)
+        return;
+    m_stop->store(true);
+    m_marking->wait();
+}
+
 void ArchiveJob::cancel()
 {
     if (m_done)
@@ -235,6 +276,7 @@ void ArchiveJob::fail(const QString &error)
         return;
     m_done = true;
     m_poll.stop();
+    stopMarking();
     if (m_process) {
         m_process->disconnect(this);
         m_process->kill();
@@ -253,8 +295,11 @@ void ArchiveJob::cleanUp()
     // Only the job's own hidden temporary name (".grassfield-compress-…" or ".grassfield-expand-…" in the folder).
     const QFileInfo info(m_temp);
     if (info.fileName().startsWith(QStringLiteral(".grassfield-")) && QFileInfo(info.absolutePath()) == QFileInfo(m_folder)) {
-        if (info.isDir() && !info.isSymLink())
+        if (info.isDir() && !info.isSymLink()) {
+            // Folders of mode 0100 or 0500 from the archive would keep their entries: opened up first (no link followed).
+            LaunchGuard::openTree(m_temp);
             QDir(m_temp).removeRecursively();
+        }
         else
             QFile::remove(m_temp);
     }

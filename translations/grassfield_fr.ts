@@ -1707,6 +1707,10 @@
         <source>“%1” holds nothing to expand.</source>
         <translation>« %1 » ne contient rien à décompresser.</translation>
     </message>
+    <message>
+        <source>“%1” couldn’t be expanded safely.</source>
+        <translation>«&#xa0;%1&#xa0;» n’a pas pu être décompressé en toute sécurité.</translation>
+    </message>
 </context>
 <context>
     <name>ArrangeSheet</name>
@@ -5771,6 +5775,10 @@
     <message>
         <source>Rename 1 Item</source>
         <translation>Renommer 1 élément</translation>
+    </message>
+    <message>
+        <source>Files couldn’t keep the mark that says its contents came from the Internet on every file it holds, so nothing was expanded.</source>
+        <translation>Fichiers n’a pas pu conserver sur chacun de ses fichiers la marque indiquant qu’ils viennent d’Internet&#xa0;: rien n’a été décompressé.</translation>
     </message>
     <message>
         <source>Stop</source>

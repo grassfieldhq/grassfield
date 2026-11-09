@@ -60,6 +60,7 @@ struct Facts {
     // The file's identity, for approvals and for the check after a sheet (inode, modification time in ns, size)
     quint64 inode = 0;
     qint64 mtimeNs = 0;
+    qint64 ctimeNs = 0; // the status change time: no one sets it back (an mtime can be restored after a same-size swap)
     qint64 size = 0;
     // Where it is
     bool ownedByUser = false; // st_uid is the user's
@@ -109,13 +110,16 @@ RunPlan plan(const Facts &facts);
 QUrl webLink(const Facts &facts);
 
 // The host a downloaded file came from (the origin's, else the referrer's), "" when unknown. Only a host: no path, query or
-// user name ever reaches the sheet or the journal. An internationalised host whose labels mix scripts (a Cyrillic "а" among
+// user name ever reaches the sheet or the journal. An internationalised host whose labels mix scripts (a Cyrillic a, U+0430, among
 // Latin letters) is shown in its ASCII form (punycode, "xn--…"), as browsers do.
 QString originHost(const Facts &facts);
 
-// The name a file's kind is decided on: trailing spaces and dots removed (they are invisible in a list, and "Invoice.pdf "
-// is still "a PDF" to the eye), every format character and default-ignorable code point dropped (zero-width space, joiners,
-// bidirectional controls such as U+202E: "Invoice<U+202E>fdp.exe" shows as "Invoiceexe.pdf" and is an .exe), then NFC.
+// The name a file's kind is decided on, as the eye reads it: NFKC (fullwidth forms and the dots U+2024, U+FE52, U+FF0E folded
+// to ASCII), then NFKD with every combining mark dropped; every format character, default-ignorable code point and blank glyph
+// dropped (zero-width space, joiners, bidirectional controls such as U+202E: "Invoice<U+202E>fdp.exe" shows as
+// "Invoiceexe.pdf" and is an .exe; the braille blank U+2800, the Hangul fillers); the other full stops and dot lookalikes
+// (U+3002, U+0701, U+00B7, ...) read as "."; trailing spaces and dots removed ("Invoice.pdf " is still a PDF to the eye);
+// then NFC. A program whose cleaned name's extension is not plain ASCII is refused as a disguise (a lookalike "pdf").
 QString cleanName(const QString &name);
 
 // uwsm (uwsm-app, the Dock's launch path) reads a main argument that ends in ".desktop" or holds ".desktop:" as a desktop
@@ -134,8 +138,20 @@ DownloadMarks downloadMarks(const QString &path);
 // user may not read or write, their own, gets u+rw for the moment of the write through an O_PATH descriptor, then its mode
 // back). False when nothing was written.
 bool markFile(const QString &path, const DownloadMarks &marks);
-// markFile on every regular file under `root` (no link followed, at most 100000 entries); the number of files marked.
-int markTree(const QString &root, const DownloadMarks &marks);
+// The marks on every regular file under `root`, fail closed (Expand of a downloaded archive, the Archive Utility model):
+// entries are reached through descriptors (openat with O_PATH | O_NOFOLLOW, no link followed, nothing looked up by path
+// twice); a file whose user bits lack read or write, and a folder the user may not list or enter (0100, 0300), are opened up
+// for the moment of the walk and given their mode back; complete is false as soon as one regular file could not be marked,
+// a folder could not be walked, the tree is deeper than 256 folders, `cap` entries are passed (0: no cap) or `keepGoing`
+// (called with the entries seen so far) returns false. Slow on a large tree: never on the GUI thread.
+struct TreeMarks {
+    bool complete = false;
+    qint64 files = 0;   // regular files marked
+    qint64 entries = 0; // entries seen
+};
+TreeMarks markTree(const QString &root, const DownloadMarks &marks, qint64 cap = 0, const std::function<bool(qint64)> &keepGoing = {});
+// Gives every folder under `root` (the root included) u+rwx, no link followed, so that a staging tree can be removed.
+bool openTree(const QString &root);
 // The download mark a copy from `source` gets: the address without user name or password, for a remote location (sftp, smb,
 // ftp, http, a phone…); "" for this computer's own locations (file:, the Trash, Recent, tags, searches).
 QByteArray remoteOrigin(const QUrl &source);
