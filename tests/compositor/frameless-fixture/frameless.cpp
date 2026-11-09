@@ -7,10 +7,15 @@
 //   frameless --own-bar N TITLE     draws its own title bar with three lights and an N px shadow around the window, and tells
 //                                   QtWayland about the shadow through its custom margins (QNativeInterface::Private::
 //                                   QWaylandWindow::setCustomMargins), which QtWayland turns into an xdg window geometry inside
-//                                   the surface; while maximized or in full screen it drops the shadow and the margins. That
+//                                   the surface; while maximized or in full screen it drops the shadow and the margins, and
+//                                   restores them when it comes back (the state the windowStateChanged signal carries). That
 //                                   is what Telegram Desktop's lib_ui does for its own title bar (ui/platform/linux/
 //                                   ui_utility_linux.cpp SetWindowMargins; ui/platform/ui_platform_window.cpp
-//                                   DefaultWindowHelper::updateWindowMargins and resizeArea; read as data, 2026-11-08).
+//                                   DefaultWindowHelper::updateWindowMargins and resizeArea; read as data, 2026-11-08);
+//   frameless --own-bar N --drop-margins-on-restore TITLE
+//                                   the same, but a lossy client: once maximized or in full screen it never restores its shadow
+//                                   and margins (what the first version of this fixture did by reading windowStates() in the
+//                                   state handler instead of the signal's state: frameless_chrome.sh F6, 2026-11-08).
 // Built by frameless_chrome.sh into .dev/tools/ (Qt 6 Gui and its private headers; no moc). Never run it on the owner's
 // session: the test starts it on the verified nested socket only.
 #include <QColor>
@@ -32,17 +37,19 @@ namespace {
 
     class CFramelessWindow final : public QRasterWindow {
       public:
-        explicit CFramelessWindow(int shadow) : m_shadow(shadow), m_inset(shadow) {}
+        CFramelessWindow(int shadow, bool dropMarginsOnRestore) : m_shadow(shadow), m_inset(shadow), m_lossy(dropMarginsOnRestore) {}
 
-        // The shadow and the custom margins, dropped while maximized or in full screen (lib_ui's resizeArea).
-        bool applyMargins() {
+        // The shadow and the custom margins for the window state `state` (the windowStateChanged signal's argument): dropped
+        // while maximized or in full screen (lib_ui's resizeArea), back otherwise, unless the lossy mode already dropped them.
+        bool applyMargins(Qt::WindowState state) {
             if (m_shadow == 0)
                 return true;
             auto* native = nativeInterface<QNativeInterface::Private::QWaylandWindow>();
             if (!native)
                 return false;
-            const bool sized = (windowStates() & (Qt::WindowMaximized | Qt::WindowFullScreen)) != 0;
-            m_inset          = sized ? 0 : m_shadow;
+            const bool sized = state == Qt::WindowMaximized || state == Qt::WindowFullScreen;
+            m_dropped        = m_dropped || (m_lossy && sized);
+            m_inset          = sized || m_dropped ? 0 : m_shadow;
             native->setCustomMargins(QMargins(m_inset, m_inset, m_inset, m_inset));
             update();
             return true;
@@ -71,17 +78,20 @@ namespace {
         }
 
       private:
-        int m_shadow = 0; // the shadow asked for (0: a window that draws nothing)
-        int m_inset  = 0; // the shadow drawn now
+        int  m_shadow  = 0;     // the shadow asked for (0: a window that draws nothing)
+        int  m_inset   = 0;     // the shadow drawn now
+        bool m_lossy   = false; // --drop-margins-on-restore
+        bool m_dropped = false; // the lossy mode dropped its margins for good
     };
 } // namespace
 
 int main(int argc, char** argv) {
     int         shadow = 0;
+    bool        lossy  = false;
     const char* title  = nullptr;
     if (argc == 2) {
         title = argv[1];
-    } else if (argc == 4 && std::strcmp(argv[1], "--own-bar") == 0) {
+    } else if ((argc == 4 || (argc == 5 && std::strcmp(argv[3], "--drop-margins-on-restore") == 0)) && std::strcmp(argv[1], "--own-bar") == 0) {
         char*      end = nullptr;
         const long v   = std::strtol(argv[2], &end, 10);
         if (!end || *end != '\0' || v < 1 || v > 64) {
@@ -89,13 +99,14 @@ int main(int argc, char** argv) {
             return 2;
         }
         shadow = static_cast<int>(v);
-        title  = argv[3];
+        lossy  = argc == 5;
+        title  = argv[argc - 1];
     } else {
-        std::fprintf(stderr, "usage: frameless [--own-bar SHADOW_PX] TITLE\n");
+        std::fprintf(stderr, "usage: frameless [--own-bar SHADOW_PX [--drop-margins-on-restore]] TITLE\n");
         return 2;
     }
     QGuiApplication  app(argc, argv);
-    CFramelessWindow window(shadow);
+    CFramelessWindow window(shadow, lossy);
     QSurfaceFormat   format = window.format();
     format.setAlphaBufferSize(8);
     window.setFormat(format);
@@ -103,11 +114,11 @@ int main(int argc, char** argv) {
     window.setTitle(QString::fromLocal8Bit(title));
     window.resize(kWidth + 2 * shadow, kHeight + 2 * shadow);
     window.create();
-    if (!window.applyMargins()) {
+    if (!window.applyMargins(window.windowState())) {
         std::fprintf(stderr, "frameless: not a QtWayland window (QT_QPA_PLATFORM=wayland needed)\n");
         return 1;
     }
-    QObject::connect(&window, &QWindow::windowStateChanged, &window, [&window](Qt::WindowState /*state*/) { window.applyMargins(); });
+    QObject::connect(&window, &QWindow::windowStateChanged, &window, [&window](Qt::WindowState state) { window.applyMargins(state); });
     window.show();
     std::printf("READY\n");
     std::fflush(stdout);

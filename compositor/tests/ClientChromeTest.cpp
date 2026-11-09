@@ -259,6 +259,68 @@ TEST(ClientChromeDecoration, AFrameSeenOnlyAfterTheMapIsKeptOnceSustainedAndElse
     EXPECT_TRUE(reload.onCommit(FrameRead::Whole, false)) << "so two bare commits give a window that draws nothing its controls back";
 }
 
+// The accepted exception of "decided at the first buffer, kept for life" (delta review of 364b812d; ADR-0015 amendment
+// 2026-11-08): a window that declares a frame at its first buffer and then draws nothing, a splash screen with a shadow that
+// becomes a plain window in the same toplevel or a client with a wrong geometry, stays tagged: no plugin bar, as macOS keeps a
+// borderless window borderless. It reverses the 2026-11-07 "when unsure, the plugin's bar stays" for this case only; keyboard
+// close, the Dock's Quit and Force Quit remain.
+TEST(ClientChromeDecoration, AcceptedExceptionAWindowFramedAtItsFirstBufferThatThenDrawsNothingStaysTagged) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence e;
+    e.atMap(FrameRead::Inside, true);
+    for (int i = 0; i < 20; ++i)
+        EXPECT_FALSE(e.onCommit(FrameRead::Whole, false)) << "bare for good while floating";
+    EXPECT_TRUE(e.framed()) << "accepted: tagged, no plugin bar";
+    EXPECT_TRUE(e.kept());
+}
+
+TEST(ClientChromeDecoration, ThreeInsideReadsAfterABareMapAreNotKept) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    using gf::chrome::kFrameReadsToKeep;
+    static_assert(kFrameReadsToKeep == 4, "the boundary this test pins");
+    CFrameEvidence e;
+    e.atMap(FrameRead::Whole, true);
+    for (int i = 0; i < 3; ++i)
+        e.onCommit(FrameRead::Inside, false);
+    EXPECT_TRUE(e.framed()) << "framed after two";
+    EXPECT_FALSE(e.kept()) << "three reads are not four";
+    e.onCommit(FrameRead::Whole, false);
+    EXPECT_TRUE(e.onCommit(FrameRead::Whole, false)) << "still removable: two bare commits";
+    EXPECT_FALSE(e.framed());
+}
+
+// Accepted trade-off (ADR-0015 amendment 2026-11-08, two bars): a frameless app with margins that maps already zoomed or in full
+// screen shows no frame at its first buffer; it gets the plugin's bar above its own until two consecutive commits show its
+// margins, and keeps it as long as they never come back.
+TEST(ClientChromeDecoration, AWindowMappedZoomedWithoutItsMarginsGetsThePluginsBarUntilTheyCome) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence e;
+    e.atMap(FrameRead::Whole, true);
+    for (int i = 0; i < 3; ++i)
+        EXPECT_FALSE(e.onCommit(FrameRead::Whole, true)) << "zoomed: no frame at its first buffer, none since";
+    EXPECT_FALSE(e.framed()) << "accepted: two bars while its margins stay away";
+    EXPECT_FALSE(e.onCommit(FrameRead::Inside, false)) << "unzoomed, its margins back";
+    EXPECT_TRUE(e.onCommit(FrameRead::Inside, false)) << "two commits with them: one bar";
+}
+
+// Accepted trade-off (ADR-0015 amendment 2026-11-08, two bars): a window already mapped when the plugin starts or reloads has no
+// first buffer seen; its frame stays removable, so if its margins then go for good it gets the plugin's bar above its own.
+TEST(ClientChromeDecoration, AWindowSeenOnlyAtThePluginsStartLosesItsTagWhenItsMarginsGo) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence e;
+    e.atMap(FrameRead::Inside, false);
+    EXPECT_TRUE(e.framed()) << "framed at the plugin's start";
+    EXPECT_FALSE(e.kept());
+    EXPECT_FALSE(e.onCommit(FrameRead::Whole, true)) << "zoomed: not counted";
+    EXPECT_FALSE(e.onCommit(FrameRead::Whole, false)) << "restored without its margins";
+    EXPECT_TRUE(e.onCommit(FrameRead::Whole, false)) << "accepted: the second bare commit takes its tag (two bars)";
+    EXPECT_FALSE(e.framed());
+}
+
 TEST(ClientChromeDecoration, ARequestThatProvesNoBarKeepsThePluginsTitlebar) {
     using gf::chrome::DecorationRequest;
     using gf::chrome::drawsOwnTitlebar;

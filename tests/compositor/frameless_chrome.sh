@@ -10,12 +10,15 @@
 # NESTED only, bare: needs scripts/dev/nested-up.sh with the plugin loaded. Clients start through scripts/dev/isolated.sh on
 # the nested socket; hyprctl only through scripts/nestctl (read-only, plus window moves, raises and Hyprland's maximize).
 #   F1 a Qt frameless window that draws nothing (tests/compositor/frameless-fixture/frameless.cpp): no client-chrome tag
-#   F2 a Qt frameless window that draws its own title bar and shadow, with QtWayland's custom margins (Telegram's way): the tag
-#   F3 F2 maximized by Hyprland's own dispatcher (it drops its shadow and margins, as lib_ui does): still tagged; and back
+#   F2 a Qt frameless window that draws its own title bar and shadow, with QtWayland's custom margins (Telegram's way): the tag;
+#      and the same in the fixture's lossy mode (--drop-margins-on-restore): the tag
+#   F3 both maximized by Hyprland's own dispatcher (they drop their shadow and margins, as lib_ui does): still tagged; and back
+#      (the correct client restores its margins, the lossy one never does): still tagged, one bar each (decided at the first
+#      buffer, kept for the window's life: ADR-0015 amendment 2026-11-08)
 #   F4 Firefox's own frame (a GTK 3 window of app id firefox whose title bar is client-side, Firefox's gtk_window_set_titlebar
 #      with an empty widget: KDE server-decoration client): the tag
 #   F5 Firefox with its "Title Bar" option on (a plain GTK 3 window of app id firefox: KDE server): no tag
-#   F6 a capture (each window raised): the plugin's strip above F1 and F5, none above F2 and F4 (the row 4 px under the strip's
+#   F6 a capture (each window raised): the plugin's strip above F1 and F5, none above F2 (both modes) and F4 (the row 4 px under the strip's
 #      top and 4 px above the window, at 20-80 % of its width, against the strip's colours, as decorations.sh D9 measures)
 # Exit: 0 PASS, 1 FAIL, 2 usage or environment error. Log: .dev/frameless-chrome/run-<timestamp>.log.
 set -uo pipefail
@@ -134,23 +137,30 @@ run_client qt-bare "$bin" gf-frameless-bare
 expect_tag gf-frameless-bare 0 F1 "a Qt frameless window that draws nothing keeps the plugin's titlebar"
 run_client qt-own "$bin" --own-bar 16 gf-frameless-own
 expect_tag gf-frameless-own 1 F2 "a Qt frameless window that draws its own title bar and shadow (Telegram's custom margins): the plugin steps aside"
+run_client qt-lossy "$bin" --own-bar 16 --drop-margins-on-restore gf-frameless-lossy
+expect_tag gf-frameless-lossy 1 F2 "the same, a lossy client (its margins never come back once maximized): the plugin steps aside"
 
 # F3: maximized by Hyprland's own dispatcher, the window drops its shadow and margins (a commit of a new size and geometry):
-# its title bar is still its own.
-own=$(window_of gf-frameless-own | cut -d' ' -f1)
-if [[ -n $own ]]; then
-  ctl dispatch "hl.dsp.window.fullscreen({ mode = \"maximized\", window = \"address:$own\" })" >>"$log" 2>&1
+# its title bar is still its own. Back: the correct client restores its margins, the lossy one never does; one bar each.
+zoom_round() { # <title> <what>
+  local a zoomed
+  a=$(window_of "$1" | cut -d' ' -f1)
+  if [[ -z $a ]]; then
+    check "F3 $2 maximized" 1 "no window $1"
+    return
+  fi
+  ctl dispatch "hl.dsp.window.fullscreen({ mode = \"maximized\", window = \"address:$a\" })" >>"$log" 2>&1
   sleep 1
-  zoomed=$(fullscreen_of gf-frameless-own)
-  has_tag gf-frameless-own
-  check "F3 maximized (no shadow, no margins): still the client's own title bar" $? "fullscreen state '${zoomed:-?}', tags '$(window_of gf-frameless-own | cut -d' ' -f2)'"
-  ctl dispatch "hl.dsp.window.fullscreen({ mode = \"maximized\", window = \"address:$own\" })" >>"$log" 2>&1
+  zoomed=$(fullscreen_of "$1")
+  has_tag "$1"
+  check "F3 $2 maximized (no shadow, no margins): still the client's own title bar" $? "fullscreen state '${zoomed:-?}', tags '$(window_of "$1" | cut -d' ' -f2)'"
+  ctl dispatch "hl.dsp.window.fullscreen({ mode = \"maximized\", window = \"address:$a\" })" >>"$log" 2>&1
   sleep 1
-  has_tag gf-frameless-own
-  check "F3 back from maximized: still tagged" $? "fullscreen state '$(fullscreen_of gf-frameless-own)', tags '$(window_of gf-frameless-own | cut -d' ' -f2)'"
-else
-  check "F3 maximized" 1 "no window gf-frameless-own"
-fi
+  has_tag "$1"
+  check "F3 $2 back from maximized: still tagged" $? "fullscreen state '$(fullscreen_of "$1")', tags '$(window_of "$1" | cut -d' ' -f2)'"
+}
+zoom_round gf-frameless-own "correct client"
+zoom_round gf-frameless-lossy "lossy client"
 
 gtk=$root/tests/compositor/frameless-fixture/gtk-window.py
 run_client firefox-csd python3 -I "$gtk" firefox gf-frameless-firefox-own 1
@@ -160,13 +170,14 @@ expect_tag gf-frameless-firefox-titlebar 0 F5 "Firefox with its Title Bar option
 
 # F6: the strip, measured on a capture with the windows apart and raised. The invariant: one bar per window.
 place_raise gf-frameless-bare 40 80
-place_raise gf-frameless-own 700 80
+place_raise gf-frameless-own 520 80
+place_raise gf-frameless-lossy 1020 80
 place_raise gf-frameless-firefox-titlebar 40 500
 place_raise gf-frameless-firefox-own 700 500
 sleep 0.8
 WAYLAND_DISPLAY=$sock timeout 10 grim -o "$out" "$work/strip.png" 2>>"$log"
 verdict=0 detail=""
-for spec in gf-frameless-bare:1 gf-frameless-own:0 gf-frameless-firefox-titlebar:1 gf-frameless-firefox-own:0; do
+for spec in gf-frameless-bare:1 gf-frameless-own:0 gf-frameless-lossy:0 gf-frameless-firefox-titlebar:1 gf-frameless-firefox-own:0; do
   t=${spec%:*} want=${spec#*:}
   read -r gx gy gw < <(geom_rel "$t")
   got=$(strip_above "$work/strip.png" "${gx:-0}" "${gy:-0}" "${gw:-0}")
@@ -174,7 +185,7 @@ for spec in gf-frameless-bare:1 gf-frameless-own:0 gf-frameless-firefox-titlebar
   detail+="$t $got (want $want, tags '$(window_of "$t" | cut -d' ' -f2)'); "
   [[ $got == "$want" ]] || verdict=1
 done
-check "F6 one title bar each: the plugin's strip above the frameless window that draws nothing and above Firefox's Title Bar mode, none above the two that draw their own" "$verdict" "${detail}capture $work/strip.png"
+check "F6 one title bar each: the plugin's strip above the frameless window that draws nothing and above Firefox's Title Bar mode, none above the three that draw their own (the lossy client included)" "$verdict" "${detail}capture $work/strip.png"
 
 say "frameless_chrome: plugin log: $(ctl rollinglog 2>/dev/null | grep -a 'negotiated' | tail -n 8 | sed 's/.*\[grassfield\] //' | tr '\n' ';')"
 say "frameless_chrome: $([[ $fail == 0 ]] && echo PASS || echo FAIL)"

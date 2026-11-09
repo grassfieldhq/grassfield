@@ -101,10 +101,13 @@ namespace gf::chrome {
     // Whether a window draws its own frame, from its frame reads.
     //   Kept: a frame read at the window's first buffer (`firstBuffer`: the map, not the plugin's start over windows already
     //   mapped), or kFrameReadsToKeep consecutive Inside reads, is the window's for its life: only its negotiation can take
-    //   its tag away. A first buffer has the size its geometry describes, and no geometry-before-buffer transient lasts that
-    //   many commits, so a window that draws nothing is never kept. A client may drop its margins and not restore them (the
-    //   test fixture, a QtWayland window maximized and restored by the compositor, came back without its custom margins:
-    //   frameless_chrome.sh F6, 2026-11-08); its own title bar is still there, and one bar must stay one.
+    //   its tag away, as macOS keeps the style mask a window was created with. A first buffer has the size its geometry
+    //   describes, and we assume (not measured) that no geometry-before-buffer transient lasts kFrameReadsToKeep commits; so a
+    //   window that draws nothing is never kept unless the client itself declares a frame (an inset geometry) at its first
+    //   buffer or keeps declaring one. Accepted exception (ADR-0015 amendment 2026-11-08): a window framed at its first buffer
+    //   that later draws nothing stays without the plugin's bar (keyboard close, the Dock's Quit and Force Quit remain). A
+    //   client that drops its margins and never restores them keeps its tag: its own title bar is still there, and one bar
+    //   must stay one (frameless_chrome.sh F3, F6, both fixture modes).
     //   Otherwise: the answer changes only after kFrameReadsToChange consecutive commits that contradict it (Unknown reads
     //   neither count nor break a run), and while the window is zoomed or in full screen (`sized`) a Whole read does not
     //   count against a frame (a client drops its shadow there). So a commit caught between a shrinking window's geometry and
