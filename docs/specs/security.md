@@ -646,20 +646,28 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
     U+2024 + "pdf", a Cyrillic er in "pdf" and trailing combining marks all ran without a sheet. A list of dot lookalikes
     can't be complete (second counter-review of fd5823de: U+A78F, U+16EB, U+1427 and U+10101, the UTS #39 lookalikes of the
     middle dot, and U+2022, U+2981, U+02D9, U+0F0B, U+2E30, U+2E3C, U+1803 and a combining dot below still ran), so the rule
-    also fails closed (`LaunchGuard::documentTailAfterOtherThanDot`): a program whose name ends in ASCII letters or digits
-    (one letter at least) that name a document or archive type (1 to 5 that "x." plus them gives such a MIME type, or a
-    longer document extension: torrent, sqlite, sqlite3, numbers, markdown, keynote, sketch, drawio, gnumeric, kdenlive,
-    parquet, webarchive, flatpakref, flatpakrepo), right after any character but an ASCII dot, is refused. It is read on the
-    cleaned name and on the name as drawn: nothing folded or decomposed, so a "TM" sign stays a sign, and every combining mark
-    kept, so a mark right before the letters (a dot below, a nukta, a Myanmar dot below, a Hebrew hiriq, an Arabic kasra, a
-    Thai sara u, a dot above, an accent) is a character other than a dot (third counter-review of fd5823de, m-b: the marks
-    outside combining class 220, and "Movie" + a lookalike + "torrent", still ran). So "photo.jpg", "notes.txt", "run.sh" or
-    "setup.exe" with ELF program content, "Invoice" + any punctuation, symbol or mark + "pdf", and "photo-jpg" never run
-    (banner: "… it is an app, but its name makes it look like a document. If you trust it, rename it first."). The cost,
-    accepted: a program named like "nvim-qt" or "qemu-img" (a document type after a hyphen), or with an accented letter right
-    before a document's letters ("Lecteur-vidéo": ".o" is an object file), must be renamed to run from Files; digits only
-    ("x86_64", "1.95"), a longer last word ("linux64", "signal-desktop") and accents inside a word ("Créateur") are not
-    affected. Every other name check (launcher, Windows, Java, AppImage, another system's app, remote) is
+    also fails closed (`LaunchGuard::documentTailAfterOtherThanDot`) for a program whose name ends in ASCII letters or digits
+    (one letter at least) right after a character that is not an ASCII dot. What comes before those letters decides; a
+    combining mark is judged with the character it sits on, so a decomposed "é" or "ẹ" is the letter it draws:
+    - a letter of any script (U+A78F, a precomposed or decomposed dot below, an accented letter): refused only when the
+      letters are a lure extension of 2 letters or more (`lureExtension`: pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp,
+      rtf, txt, csv, md, html, xml, json, epub, jpg, jpeg, png, gif, webp, heic, svg, mp3, mp4, mov, avi, mkv, webm, zip,
+      rar, 7z, gz, tar, iso, img, dmg, pkg, deb, rpm, apk, jar, exe, msi, the long extensions below, desktop, backup...).
+      Fourth check of fd5823de, m-b': refusing every document type there refused "Vidéo", "Météo" (".o"), "Démo", "Mémo"
+      (".mo") and "Tiếng-Việt" (".t"); these run now, and "Invoice" + U+A78F + "pdf", "Invoicẹpdf" and "photo" + U+A78F +
+      "jpg" stay refused;
+    - anything else (punctuation, a symbol, a space, a mark on no letter): refused when the letters name a document or an
+      archive (1 to 5 that "x." plus them gives such a MIME type, or a long extension: torrent, sqlite, sqlite3, numbers,
+      markdown, keynote, sketch, drawio, gnumeric, kdenlive, parquet, webarchive, flatpak, flatpakref, flatpakrepo), or, after a
+      character outside ASCII, a lure extension ("App" + U+2981 + "desktop").
+    It is read on the cleaned name and on the name as drawn: nothing folded or decomposed, so a "TM" sign stays a sign, and
+    every combining mark kept (third counter-review of fd5823de, m-b: the marks outside combining class 220, and "Movie" + a
+    lookalike + "torrent", still ran). So "photo.jpg", "notes.txt", "run.sh" or "setup.exe" with ELF program content,
+    "Invoice" + any punctuation, symbol, mark or lookalike letter + "pdf", and "photo-jpg" never run (banner: "… it is an
+    app, but its name makes it look like a document. If you trust it, rename it first."). The cost, accepted: a program named
+    like "nvim-qt" or "qemu-img" (a document type after a hyphen) must be renamed to run from Files; digits only ("x86_64",
+    "1.95"), a longer last word after a hyphen ("linux64", "signal-desktop", "timeshift-backup") and accented names
+    ("Lecteur-vidéo", "Tiếng-Việt", "Créateur") are not affected. Every other name check (launcher, Windows, Java, AppImage, another system's app, remote) is
     made on the cleaned name too;
   - uwsm would read its path as a desktop entry (`RefuseLauncher`, `LaunchGuard::uwsmReadsAsEntry`: uwsm 0.27's MainArg takes
     an argument that ends in ".desktop" or holds ".desktop:" for an entry, so "…/Tool.desktop:run" would start the entry

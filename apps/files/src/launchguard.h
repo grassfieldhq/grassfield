@@ -172,11 +172,13 @@ class RemoveTreeHooks
 // An Expand or Compress staging name (".grassfield-expand-<8 hex>", ".grassfield-compress-<8 hex>.zip") is a component of
 // `path`: Files opens, runs and lists nothing there (its files are not marked yet).
 bool insideStaging(const QString &path);
-// A program's name ends in ASCII letters or digits (one letter at least) that name a document or archive type (1 to 5 that
-// give such a MIME type, or a longer document extension: "torrent", "sqlite", "markdown"...), right after a character that
-// is not an ASCII dot ("Invoice" + any lookalike of a dot + "pdf", "photo-jpg", "Invoice" + any combining mark + "pdf"): a
-// disguise, whatever that character is (counter-reviews of fd5823de). Read on cleanName(name) and on the name as drawn
-// (nothing folded or decomposed, every combining mark kept).
+// A program's name ends in ASCII letters or digits (one letter at least) that make it look like a document, right after a
+// character that is not an ASCII dot (counter-reviews of fd5823de). After a letter of any script (U+A78F, "ẹ", "é", a
+// combining mark judged with the letter it sits on): only a lure extension of 2 letters or more ("Invoice" + U+A78F + "pdf",
+// "Invoice" + a dot below + "pdf"; "Vidéo", "Mémo" and "Tiếng-Việt" run). After anything else (punctuation, a symbol, a
+// space): any document or archive type (1 to 5 letters that give such a MIME type, or a long extension: "torrent",
+// "sqlite"...; "photo-jpg", "nvim-qt"), and a lure extension after a character outside ASCII. Read on cleanName(name) and on
+// the name as drawn (nothing folded or decomposed, every combining mark kept).
 bool documentTailAfterOtherThanDot(const QString &name);
 // The download mark a copy from `source` gets: the address without user name or password, for a remote location (sftp, smb,
 // ftp, http, a phone…); "" for this computer's own locations (file:, the Trash, Recent, tags, searches).

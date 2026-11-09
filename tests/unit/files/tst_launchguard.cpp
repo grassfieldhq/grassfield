@@ -994,10 +994,9 @@ TEST_F(Files, AnItemUnderAStagingNameOrALinkToOneIsRefused)
     EXPECT_EQ(of(dir.filePath(QStringLiteral(".grassfield-expand-0a1b2c3d"))), Verdict::RefuseStaging) << "the folder itself";
 }
 
-// Third counter-review of fd5823de (m-b): every combining mark right before a document's letters is a character other than a
-// dot (a nukta, a Myanmar dot below, a Hebrew hiriq, an Arabic kasra, a Thai sara u, a dot above), and longer document
-// extensions count too ("torrent", "sqlite", "numbers", "markdown"). The cost, accepted and documented: an accented letter
-// right before a document's letters ("Lecteur-vid" + e acute + "o": ".o" is an object file) is refused too.
+// Third counter-review of fd5823de (m-b): a combining mark right before a document's letters (a nukta, a Myanmar dot below, a
+// Hebrew hiriq, an Arabic kasra, a Thai sara u, a dot above) never hides them, and longer document extensions count too
+// ("torrent", "sqlite", "numbers", "markdown").
 TEST(LaunchGuardNames, AnyMarkOrALongDocumentExtensionIsADisguise)
 {
     for (const QString &mark : {QStringLiteral("\u093c"), QStringLiteral("\u09bc"), QStringLiteral("\u1037"), QStringLiteral("\u05b4"),
@@ -1018,8 +1017,6 @@ TEST(LaunchGuardNames, AnyMarkOrALongDocumentExtensionIsADisguise)
             EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << name.toStdString();
         }
     }
-    EXPECT_EQ(verdict(program(QStringLiteral("Lecteur-vid\u00e9o"))), Verdict::RefuseDisguised) << "the documented cost";
-    EXPECT_EQ(verdict(program(QStringLiteral("Lecteur-vide\u0301o"))), Verdict::RefuseDisguised) << "the same, decomposed";
 }
 
 class LaunchGuardTestAccess
@@ -1058,4 +1055,34 @@ TEST_F(Files, RemoveTreeNeverEmptiesAFolderItDidNotComeFrom)
     // Unmoved, the same tree goes entirely.
     EXPECT_TRUE(removeTree(root));
     EXPECT_FALSE(QFileInfo::exists(root));
+}
+
+// Fourth check of fd5823de (m-b'): after a letter of any script (U+A78F, a precomposed or decomposed dot below, an accented
+// letter) only a lure extension of 2 letters or more makes a disguise, so French and Vietnamese names run ("Vidéo", "Météo",
+// "Démo", "Mémo", "Lecteur-vidéo", "Tiếng-Việt", precomposed or decomposed); after anything else the rule stays whole
+// ("nvim-qt", "qemu-img" are still refused).
+TEST(LaunchGuardNames, AfterALetterOnlyALureExtensionIsADisguise)
+{
+    for (const QString &name : {QStringLiteral("Invoice\ua78fpdf"), QStringLiteral("Invoic\u1eb9pdf"), QStringLiteral("Invoice\u0323pdf"),
+                                QStringLiteral("photo\ua78fjpg"), QStringLiteral("Movie\ua78ftorrent"), QStringLiteral("Repor\u1e0ddocx"),
+                                QStringLiteral("Report\u00e9pdf"), QStringLiteral("Clip\u00e9mp4"), QStringLiteral("Backup\ua78fzip"),
+                                QStringLiteral("Disk\u00e9iso"), QStringLiteral("Book\ua78fepub"), QStringLiteral("Sheet\ua78fxlsx"),
+                                QStringLiteral("Image\ua78fpng"), QStringLiteral("App\ua78fdesktop"), QStringLiteral("App\u2981desktop"),
+                                QStringLiteral("Tool\ua78fflatpak"), QStringLiteral("Tool\ua78fflatpakref"), QStringLiteral("Data\ua78fbackup"),
+                                QStringLiteral("Invoice\ua78fpdf ")}) {
+        EXPECT_TRUE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+        EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << name.toStdString();
+    }
+    for (const QString &name : {QStringLiteral("Vid\u00e9o"), QStringLiteral("M\u00e9t\u00e9o"), QStringLiteral("D\u00e9mo"), QStringLiteral("M\u00e9mo"),
+                                QStringLiteral("Lecteur-vid\u00e9o"), QStringLiteral("Ti\u1ebfng-Vi\u1ec7t"), QStringLiteral("Vide\u0301o"),
+                                QStringLiteral("Me\u0301te\u0301o"), QStringLiteral("Lecteur-vide\u0301o"), QStringLiteral("Tie\u0302\u0301ng-Vie\u0323\u0302t"),
+                                QStringLiteral("Pok\u00e9mon"), QStringLiteral("M\u00fasica"), QStringLiteral("signal-desktop"), QStringLiteral("timeshift-backup")}) {
+        EXPECT_FALSE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+        EXPECT_EQ(verdict(program(name)), Verdict::RunProgram) << name.toStdString();
+    }
+    for (const QString &name : {QStringLiteral("nvim-qt"), QStringLiteral("qemu-img"), QStringLiteral("Tool-flatpak")})
+        EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << name.toStdString() << ": after a hyphen, the whole rule";
+    // A lookalike Files already reads as a dot: "App" + U+2027 + "desktop" is the name of a launcher, refused as one.
+    EXPECT_TRUE(documentTailAfterOtherThanDot(QStringLiteral("App\u2027desktop")));
+    EXPECT_EQ(verdict(program(QStringLiteral("App\u2027desktop"))), Verdict::RefuseLauncher);
 }

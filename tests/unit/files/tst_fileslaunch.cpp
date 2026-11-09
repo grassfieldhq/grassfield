@@ -1185,3 +1185,14 @@ TEST_F(FilesLaunch, AnExpandThatCantRecordItsStagingNameDoesNotStart)
     const QStringList left = QDir(d(QStringLiteral("Downloads"))).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot);
     EXPECT_EQ(left, QStringList{QStringLiteral("Kit.zip")}) << left.join(QLatin1Char('|')).toStdString();
 }
+
+// Fourth check of fd5823de (nit): GRASSFIELD_STATE_HOME and GRASSFIELD_CONFIG_HOME win over the XDG folders (runmode.h), and
+// the dev shells set them to .dev paths; the tests' main points both at the scratch home, so the staging registry and Files'
+// state and config are never written outside it.
+TEST(FilesKioHome, GrassfieldHomesAreTheScratchOnes)
+{
+    const QString scratch = QFileInfo(QDir::homePath()).absolutePath();
+    EXPECT_EQ(qEnvironmentVariable("GRASSFIELD_STATE_HOME"), scratch + QStringLiteral("/GRASSFIELD_STATE_HOME"));
+    EXPECT_EQ(qEnvironmentVariable("GRASSFIELD_CONFIG_HOME"), scratch + QStringLiteral("/GRASSFIELD_CONFIG_HOME"));
+    EXPECT_TRUE(ArchiveJob::stagingRegistry().startsWith(scratch + QLatin1Char('/'))) << ArchiveJob::stagingRegistry().toStdString();
+}

@@ -837,22 +837,49 @@ bool insideStaging(const QString &path)
 
 namespace
 {
-// Document and archive extensions of 6 letters or more (the MIME rule below covers 1 to 5): a program's name never ends in one
-// of them after anything but a dot (third counter-review of fd5823de, m-b: "Movie" + a lookalike + "torrent" ran).
-bool longDocumentExtension(const QString &tail)
+bool inList(const QString &tail, std::initializer_list<const char *> list)
 {
-    static const char *const kLong[] = {"torrent", "sqlite", "sqlite3", "numbers", "markdown", "keynote", "sketch", "drawio",
-                                        "gnumeric", "kdenlive", "parquet", "webarchive", "flatpakref", "flatpakrepo"};
-    for (const char *e : kLong) {
+    for (const char *e : list) {
         if (tail.compare(QLatin1String(e), Qt::CaseInsensitive) == 0)
             return true;
     }
     return false;
 }
 
+// Document, archive and package extensions of 6 letters or more (the MIME rule covers 1 to 5): a program's name never ends in
+// one of them after a character that is neither a dot nor a letter (third counter-review of fd5823de, m-b: "Movie" + a
+// lookalike + "torrent" ran).
+bool longDocumentExtension(const QString &tail)
+{
+    return inList(tail, {"torrent", "sqlite", "sqlite3", "numbers", "markdown", "keynote", "sketch", "drawio", "gnumeric", "kdenlive",
+                         "parquet", "webarchive", "flatpak", "flatpakref", "flatpakrepo"});
+}
+
+// The extensions a disguise shows to the eye (2 letters or more): documents, pictures, sounds and films, archives, packages and
+// disk images, other systems' programs, the long ones above, and two that name a program after a plain hyphen ("signal-desktop",
+// "timeshift-backup") but read as a launcher or a backup after a lookalike ("App" + U+A78F + "desktop"). Fourth check of
+// fd5823de, m-b': after a letter only these are refused, so that "Vidéo", "Mémo" or "Tiếng-Việt" (".o", ".mo", ".t") run.
+bool lureExtension(const QString &tail)
+{
+    return longDocumentExtension(tail) || inList(tail, {"desktop", "backup"})
+        || inList(tail, {"pdf", "doc", "docx", "docm", "dot", "dotx", "xls", "xlsx", "xlsm", "ppt", "pptx", "pps", "ppsx", "odt",
+                         "ods", "odp", "odg", "rtf", "txt", "csv", "tsv", "md", "htm", "html", "xhtml", "mhtml", "xml", "json", "epub",
+                         "mobi", "azw", "azw3", "djvu", "pages", "key", "ics", "vcf", "eml", "msg", "ipynb", "tex",
+                         "jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "avif", "bmp", "tif", "tiff", "svg", "psd", "ico",
+                         "mp3", "mp4", "m4a", "m4v", "wav", "flac", "ogg", "opus", "aac", "wma", "mov", "avi", "mkv", "webm",
+                         "wmv", "mpg", "mpeg", "zip", "rar", "7z", "gz", "tgz", "bz2", "xz", "zst", "tar", "iso", "img",
+                         "dmg", "pkg", "deb", "rpm", "apk", "appx", "msix", "jar", "exe", "msi", "bat", "cmd", "scr", "lnk", "ps1",
+                         "vbs"});
+}
+
 // `name` ends (after its trailing spaces and dots) in ASCII letters or digits, one letter at least, right after a character
-// that is not an ASCII dot, and they name a document or an archive: 1 to 5 of them that "x." plus them gives such a type (no
-// type of a program's own), or a longer extension of longDocumentExtension().
+// that is not an ASCII dot, and they make it a disguise. What comes before them decides (a combining mark is judged with the
+// character it sits on, so a decomposed "é" is the letter it draws):
+// - a letter of any script (U+A78F, a precomposed or decomposed "ẹ", "é"): only a lure extension of 2 letters or more
+//   (lureExtension: "Invoice" + U+A78F + "pdf", "Invoice" + a dot below + "pdf"; never "Vidéo" or "Démo");
+// - anything else (punctuation, a symbol, a space, a mark on no letter): 1 to 5 of them that "x." plus them gives a document's
+//   or an archive's MIME type (no type of a program's own), or a long extension (longDocumentExtension), or, after a
+//   character outside ASCII, a lure extension.
 bool documentTail(QString name)
 {
     while (!name.isEmpty() && (name.back().isSpace() || name.back() == QLatin1Char('.')))
@@ -870,8 +897,18 @@ bool documentTail(QString name)
     if (length < 1 || !letter || start == 0 || name.at(start - 1) == QLatin1Char('.'))
         return false;
     const QString tail = name.mid(start);
+    // The character before the letters, through the combining marks to the character they sit on.
+    const QList<uint> before = name.left(start).toUcs4();
+    qsizetype i = before.size() - 1;
+    while (i > 0 && QChar::isMark(before.at(i)))
+        --i;
+    const char32_t base = char32_t(before.at(i));
+    if (QChar::isLetter(base))
+        return length >= 2 && lureExtension(tail);
     if (length > 5)
-        return longDocumentExtension(tail);
+        return longDocumentExtension(tail) || (before.last() > 0x7F && lureExtension(tail));
+    if (before.last() > 0x7F && lureExtension(tail))
+        return true;
     const QList<QMimeType> types = QMimeDatabase().mimeTypesForFileName(QStringLiteral("x.") + tail);
     if (types.isEmpty())
         return false;
@@ -889,8 +926,8 @@ bool documentTailAfterOtherThanDot(const QString &name)
     if (documentTail(cleanName(name)))
         return true;
     // ... and the way it is drawn: invisible characters dropped, blank glyphs as spaces, nothing folded or decomposed, every
-    // combining mark kept. A "TM" sign stays a sign, never the letters T and M joined to what follows, and any mark right before
-    // the letters (a dot below, a nukta, a Thai sara u, a dot above, an accent) is a character other than a dot (third
+    // combining mark kept. A "TM" sign stays a sign, never the letters T and M joined to what follows, and a mark right before
+    // the letters (a dot below, a nukta, a Thai sara u, a dot above) is judged with the character it sits on (third
     // counter-review of fd5823de, m-b: marks outside combining class 220 were dropped and ran).
     QString drawn;
     for (const char32_t c : name.toUcs4()) {
