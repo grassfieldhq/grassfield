@@ -365,8 +365,8 @@ def saver_writes():
     return found
 writes = saver_writes()
 expect("SheetSession.saverShown has one writer, the host's Binding, from idle's own (" + "; ".join(writes) + ")",
-       writes == ['shell/security/host/SecurityHost.qml: property: "saverShown"',
-                  'shell/security/idle/Idle.qml: readonly property bool saverShown: saverMonitor.enabled && saverMonitor.isIdle'])
+       sorted(writes) == ['shell/security/host/SecurityHost.qml: property: "saverShown"',
+                          'shell/security/idle/Idle.qml: readonly property bool saverShown: saverMonitor.enabled && saverMonitor.isIdle'])
 expect("polkit sheet: only a click past the guard gives the keyboard (one userFocused = true), and an arrival, a lock and the saver take it back (three userFocused = false)",
        len(re.findall(r"userFocused\s*=\s*true", agent)) == 1 and len(re.findall(r"userFocused\s*=\s*false", agent)) == 3)
 # Re-check of b5d7657 (MEDIUM-3): the sheet, then the held click's guard over it, then the saver's swallowing area on top.
