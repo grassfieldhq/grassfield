@@ -1,10 +1,12 @@
 [Unit]
-Description=Grassfield security process (the lock, idle and the sleep inhibitor; the polkit agent from S3)
+Description=Grassfield security process (the lock, idle, the sleep inhibitor, the polkit agent and the password sheets)
 Documentation=file:///usr/share/doc/grassfield/README.md
 # ADR-0041 step 1 (the owner's SQ-1 B, ADR-0010 "Separate security process"): a second Quickshell process beside the UI,
 # so that a crash of the desktop never takes the lock down. S1 started it hosting nothing; since S2 it hosts the lock, idle
 # and the sleep inhibitor (shell/security.qml, shell/security/host/SecurityHost.qml), and the UI asks it for every lock over
-# IPC; S3 adds the polkit agent, S4 safe mode.
+# IPC; since S3 also the session's polkit agent and the secret sheets of grassfield-prompter (which accepts this unit's
+# processes only, --peer-unit); S4 adds safe mode. While this process restarts no polkit agent is registered: polkit
+# answers an authorization asked meanwhile "not authorized" (no agent to ask), as it did while the UI restarted before S3.
 PartOf=graphical-session.target
 After=graphical-session.target
 Requisite=graphical-session.target
@@ -41,7 +43,8 @@ Environment=QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1
 Environment=QS_DISABLE_CRASH_HANDLER=1
 # No core file (the opus delta review of 122f8d67, MAJOR): systemd-coredump stores a crashed process's whole memory under
 # /var/lib/systemd/coredump, readable by its user through an ACL, and this process's memory may hold the typed password (the lock's field, the PAM
-# response, freed strings), which on Omarchy is also the administrator's password.
+# response, freed strings; since S3 also the polkit sheet's and the secret sheets' fields: polkit, Wi-Fi, network-share
+# and keyring passwords), which on Omarchy is also the administrator's password.
 # A same-user process that Yama keeps from reading this one's memory could crash it and read the dump instead. With
 # LimitCORE=0, systemd-coredump honours the limit: it records the crash in the journal (signal, PID, unit: coredumpctl list
 # shows it, without a file and without a stack) and stores nothing. The process still dies by the signal, so Restart=,
@@ -86,7 +89,7 @@ TimeoutStopSec=5
 MemoryHigh=1536M
 MemoryMax=3G
 CPUQuota=150%
-# No NoNewPrivileges/ProtectSystem here on purpose, as for the UI's unit: from S2 the lock and from S3 the polkit agent
+# No NoNewPrivileges/ProtectSystem here on purpose: from S2 the lock and from S3 the polkit agent
 # rely on the setuid/setgid helpers unix_chkpwd and polkit-agent-helper-1, which NoNewPrivileges would break, leaving the
 # session unable to unlock.
 

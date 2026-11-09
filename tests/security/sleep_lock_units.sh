@@ -226,10 +226,10 @@ grep -qx "systemctl --user restart --no-block grassfield-security.service" "$tmp
   && grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock" "$tmp/log" && [[ $out == $'ok\nrc=0' ]] \
   && pass "stand-in: lock lock next to a security process from before S2 (security state: starting) restarts it (no-block), then asks it to lock" \
   || bad "stand-in: pre-S2 security process: $out / $(tr '\n' ';' <"$tmp/log")"
-for secstate in "lock idle" "lock sleep" ""; do
+for secstate in "lock idle" "lock idle polkit secrets" "lock sleep" ""; do
   out=$(shimrun active ok "$locked" lock lock; echo "rc=$shim_rc")
   ! grep -q "restart\|reset-failed" "$tmp/log" && [[ $out == $'ok\nrc=0' ]] \
-    && pass "stand-in: lock lock next to a security process of S2 (security state: '${secstate:-no answer}') restarts nothing" \
+    && pass "stand-in: lock lock next to a security process of S2 or S3 (security state: '${secstate:-no answer}') restarts nothing" \
     || bad "stand-in: S2 security process '${secstate}': $out / $(tr '\n' ';' <"$tmp/log")"
 done
 secstate=

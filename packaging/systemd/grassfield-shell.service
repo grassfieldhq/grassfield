@@ -35,8 +35,8 @@ Environment=QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1
 # (LimitCORE= below) (macOS: the process dies, launchd restarts it, ReportCrash writes the report).
 Environment=QS_DISABLE_CRASH_HANDLER=1
 # No core file (the opus delta review of 122f8d67, MAJOR): systemd-coredump stores a crashed process's whole memory under
-# /var/lib/systemd/coredump, readable by its user through an ACL, and this process hosts the polkit agent and the secret sheets until ADR-0041 S3/S4
-# move them (polkit, Wi-Fi, network-share and keyring passwords).
+# /var/lib/systemd/coredump, readable by its user through an ACL, and this process hosted the polkit agent and the secret sheets until ADR-0041 S3
+# moved them to grassfield-security (its Wi-Fi password field in Quick Settings stays here).
 # A same-user process that Yama keeps from reading this one's memory could crash it and read the dump instead. With
 # LimitCORE=0, systemd-coredump honours the limit: it records the crash in the journal (signal, PID, unit: coredumpctl list
 # shows it, without a file and without a stack) and stores nothing. The process still dies by the signal, so Restart=,
@@ -107,8 +107,9 @@ TimeoutStopSec=5
 MemoryHigh=1536M
 MemoryMax=3G
 CPUQuota=150%
-# No NoNewPrivileges/ProtectSystem here on purpose: the polkit agent (until S3) relies on the setuid helper
-# polkit-agent-helper-1, which NoNewPrivileges would break (the lock's unix_chkpwd is the security process's since S2).
+# No NoNewPrivileges/ProtectSystem here on purpose: the applications this process starts run in its tree (uwsm-app) and
+# would inherit it, so a setuid program run in a terminal opened from the Dock would stop working. The setuid helpers of
+# the lock (unix_chkpwd, since S2) and of the polkit agent (polkit-agent-helper-1, since S3) are the security process's.
 
 [Install]
 WantedBy=graphical-session.target

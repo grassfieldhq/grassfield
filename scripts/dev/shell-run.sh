@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # (Re)start grassfield-shell inside the nested instance only. Never against the owner's session (R3).
 #
-# The security process (ADR-0041 step 1, S2: `qs -p shell/security.qml`, the lock, idle and the sleep inhibitor; in a real
-# session grassfield-security.service) runs beside it with the same environment, its own record (.dev/security.pid) and log
-# (.dev/security.log). A plain run starts it when it is not running and leaves a running one alone, as systemd does: a
+# The security process (ADR-0041 step 1, S2 and S3: `qs -p shell/security.qml`, the lock, idle, the sleep inhibitor, the
+# polkit agent and the secret sheets; in a real session grassfield-security.service) runs beside it with the same
+# environment, its own record (.dev/security.pid) and log (.dev/security.log). A plain run starts it when it is not running and leaves a running one alone, as systemd does: a
 # restart of the UI never touches the lock. `--security` (re)starts the security process only, as its unit's Restart=
 # would after a crash (the lock survival tests kill it and bring it back this way); the UI is left alone.
 #
@@ -255,9 +255,10 @@ fi
 # The security process (ADR-0041 S2): the same environment as the shell below (the nested compositor, the private bus, the
 # dev config and state, GRASSFIELD_DEV=1), its own record and log. Started when it is not running (a plain run) or always
 # (`--security`, after the stop above); a restart of the UI leaves a running one alone, unless the settings it was started
-# with changed (the language, the visual fixtures and fixed time, the private bus, the unit environment, the L2 PAM opt-in:
-# .dev/security.sig), as when the visual suite switches language: then it is restarted too.
-security_sig="lang=${GRASSFIELD_LANG:-} fixtures=${GRASSFIELD_VISUAL_FIXTURES:-} time=${GRASSFIELD_FIXED_TIME:-} bus=$private unit=${GRASSFIELD_UNIT_ENV:-} pam=${GRASSFIELD_DEV_ALLOW_PAM:-}"
+# with changed (the language, the visual fixtures and fixed time, the private bus, the unit environment, the L2 PAM opt-in,
+# the secret sheets' test socket since S3: .dev/security.sig), as when the visual suite switches language: then it is
+# restarted too.
+security_sig="lang=${GRASSFIELD_LANG:-} fixtures=${GRASSFIELD_VISUAL_FIXTURES:-} time=${GRASSFIELD_FIXED_TIME:-} bus=$private unit=${GRASSFIELD_UNIT_ENV:-} pam=${GRASSFIELD_DEV_ALLOW_PAM:-} prompter=${GRASSFIELD_PROMPTER_SOCKET:-}"
 start_security() {
   # The security modules read no GRASSFIELD_* variable but the dev gate's (ADR-0019): the lock finds the UI's wallpaper.json
   # under $XDG_STATE_HOME/grassfield, here a link to the dev state the shell writes (.dev/state).

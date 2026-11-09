@@ -968,7 +968,7 @@ def selftest(files):
         ("a security gate with a look-alike function", LOCK_QML, "devHooks: " + SEC_CALL, "devHooks: " + SEC_CALL.replace("RunMode.dev(", "RunMode.devx(")),
         ("a security gate behind a look-alike alias", idle, "devHooks: " + SEC_CALL, "devHooks: My" + SEC_CALL),
         ("a security module on the Mode singleton", idle, "devHooks: " + SEC_CALL, "devHooks: Mode.dev"),
-        ("a security module importing qs.lib", aa, "import qs.services\n", "import qs.services\nimport qs.lib\n"),
+        ("a security module importing qs.lib", aa, "import qs.security\n", "import qs.security\nimport qs.lib\n"),
         ("a security module on a local RunMode.js", LOCK_QML, 'import "../../lib/RunMode.js" as RunMode', 'import "RunMode.js" as RunMode'),
         ("a non-security gate on a look-alike property", bt, "if (!Mode.dev)", "if (!Mode.devMode)"),
         ("a non-security gate behind a look-alike singleton", "shell/platform/Capabilities.qml", "if (!Mode.dev)", "if (!MyMode.dev)"),

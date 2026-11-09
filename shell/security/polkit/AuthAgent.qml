@@ -9,23 +9,27 @@ import Quickshell.Services.Polkit
 import Quickshell.Wayland
 import Grassfield.Ui
 import qs.security
-import qs.services
 import "../../lib/RunMode.js" as RunMode
 
 // The session's polkit authentication agent (SEC6, ADR-0010): Quickshell.Services.Polkit,
-// one instance per shell. polkit allows one agent per session; when another one already owns
+// one instance per session. polkit allows one agent per session; when another one already owns
 // the session (expected in the nested dev session, where the owner's shell has it), registration
 // fails: that is logged once, no dialog is ever shown and nothing is approved — requests keep
 // going to the other agent.
+// Process (ADR-0041 step 1, S3): instantiated in the security process only (../host/SheetHost.qml, made by SecurityHost.qml),
+// beside the lock it reads in process (SheetSession, fed there by Lock and Idle); the UI never instantiates it, so the
+// session has one agent, and a crash of the UI leaves it registered. The sheet is drawn with Grassfield.Ui and qs.security
+// only.
 Scope {
     id: root
 
     readonly property bool registered: agent.isRegistered
-    // A request is open: its sheet shown, or held (behind the lock or the screen saver, or queued). Read only by shell.qml for
-    // SessionState.authorizing (the clipboard history records nothing while it is true and 2 s after, ADR-0034 Q11).
+    // A request is open: its sheet shown, or held (behind the lock or the screen saver, or queued). Published by the host with
+    // the lock state for the UI's SessionState.authorizing (the clipboard history records nothing while it is true and 2 s
+    // after, ADR-0034 Q11; the UI closes its menus when a sheet opens).
     readonly property bool requestActive: dialogModel.active
 
-    // The one queue of the polkit sheet and the secret sheets (ADR-0035 D-9, step 9b; SheetQueue), given by shell.qml; null
+    // The one queue of the polkit sheet and the secret sheets (ADR-0035 D-9, step 9b; SheetQueue), given by the host; null
     // outside it (this agent's own harness), where nothing waits.
     property SheetQueue queue: null
     // A secret sheet came first: the request waits (ADR-0035 D-9: no sheet takes the keyboard from another). The model is
@@ -34,8 +38,11 @@ Scope {
     // another one", without the keyboard until a click past the guard.
     readonly property bool waiting: root.queue !== null && root.queue.polkitWaits
     // The polkit sheet's place in the queue: from a request's arrival (while it waits too) until its sheet is gone, the key
-    // sink's linger included (shell.qml binds SheetQueue.polkitPresent to it).
+    // sink's linger included (the host binds SheetQueue.polkitPresent to it).
     readonly property bool queuePresent: agent.isActive || root.requestOpen || root.sinkingKeys
+    // The URL of a plain theme icon name for the sheet ("" for none: the sheet shows its lock alone). The host gives the
+    // security process's lookup (the system theme only, whose directories the user cannot change); a harness gives none.
+    property var iconSource: name => ""
 
     PolkitAgent {
         id: agent
@@ -47,7 +54,6 @@ Scope {
             else
                 console.warn("grassfield-polkit: authentication agent unregistered");
         }
-        onAuthenticationRequestStarted: Popups.close()
     }
 
     AuthDialogModel {
@@ -65,7 +71,7 @@ Scope {
         // answer it, and the lock marker tells any process of the user's when to ask (opus re-review, MINOR-1).
         request: agent.flow
         // qmllint enable unresolved-type
-        answerable: !SessionState.locked && !SessionState.saverShown && !SessionState.displaysOff && !root.waiting && root.requestOpen
+        answerable: !SheetSession.locked && !SheetSession.saverShown && !SheetSession.displaysOff && !root.waiting && root.requestOpen
                     && (!root.heldByLock || root.userFocused || root.heldWhy === "queued")
 
         // A request arrived, or none is left.
@@ -110,8 +116,8 @@ Scope {
         root.sinkingKeys = typing;
         if (!dialogModel.active)
             root.requestOpen = false;
-        root.heldWhy = SessionState.locked ? "locked" : SessionState.saverShown ? "saver" : queued ? "queued" : "unlock";
-        root.heldByLock = dialogModel.active && (follows || typing || dialogModel.arrivesHeld(SessionState.locked || SessionState.saverShown));
+        root.heldWhy = SheetSession.locked ? "locked" : SheetSession.saverShown ? "saver" : queued ? "queued" : "unlock";
+        root.heldByLock = dialogModel.active && (follows || typing || dialogModel.arrivesHeld(SheetSession.locked || SheetSession.saverShown));
         root.userFocused = false;
         if (dialogModel.active)
             root.requestOpen = true;
@@ -120,7 +126,7 @@ Scope {
             dialogModel.noteEnded();
         // The linger starts: from the base state, never `lingering`, whose binding may not have seen this change of `active`
         // yet (check of c1ca44f: its timers then never started, and with no key after the end the linger never ended).
-        if (typing && !dialogModel.active && !SessionState.locked) {
+        if (typing && !dialogModel.active && !SheetSession.locked) {
             sinkIdle.restart();
             sinkCap.restart();
         }
@@ -163,16 +169,16 @@ Scope {
     // request it replaced completed): the window stays mapped, with the keyboard on the sink and a notice where the sheet was
     // (endedNotice), until no key came for heldAfterUnlockMs (sinkIdle), at most sinkLingerMaxMs (sinkCap), or a click, the
     // lock or the screen saver ends it (check of 38dbfe8, MEDIUM-B; security counter-review of f9e24e1, LOW-1 and LOW-3).
-    readonly property bool lingering: root.sinkingKeys && !dialogModel.active && !SessionState.locked
+    readonly property bool lingering: root.sinkingKeys && !dialogModel.active && !SheetSession.locked
     property bool userFocused: false
     property var requestStartedAt: null
 
     Connections {
-        target: SessionState
+        target: SheetSession
 
         // The lock has the keyboard now: the sink lets go (a linger ends), and an open request is held.
         function onLockedChanged(): void {
-            if (!SessionState.locked) {
+            if (!SheetSession.locked) {
                 dialogModel.noteUnlock();
                 return;
             }
@@ -189,11 +195,11 @@ Scope {
         // heldGuardMs gives the sheet the keyboard (such a click still reaches the control it hits, as after an unlock: Cancel
         // at worst).
         function onSaverShownChanged(): void {
-            if (SessionState.saverShown)
+            if (SheetSession.saverShown)
                 root.sinkingKeys = false;
-            if (!dialogModel.active || SessionState.locked)
+            if (!dialogModel.active || SheetSession.locked)
                 return;
-            if (SessionState.saverShown) {
+            if (SheetSession.saverShown) {
                 if (!root.heldByLock || root.userFocused)
                     root.heldWhy = "saver";
                 root.heldByLock = true;
@@ -239,7 +245,7 @@ Scope {
         // A request that arrives while the session is locked waits behind the lock (macOS: the authorization sheet shows
         // once the user is back): the sheet is mapped, and takes the keyboard, only after the unlock (GF-116). The request
         // itself stays pending; nothing is answered or approved meanwhile.
-        readonly property bool shown: dialogModel.active && !SessionState.locked
+        readonly property bool shown: dialogModel.active && !SheetSession.locked
         // The window holds the keyboard: the sheet is shown and not a held request the user has not clicked yet, or the keys
         // are on the sink (a held request's, or lingering after the request ended). Both this and `visible` read the base
         // state only, never `shown` or `lingering`: when a request ends while the sink has the keys, an intermediate binding
@@ -247,10 +253,10 @@ Scope {
         // the keyboard to the window underneath meanwhile (check of c1ca44f, M1). The request is `requestOpen`, not the
         // model's `active`: arrive alone moves it, after the sink, so a request that ends unanswered under the user's typing
         // never unmaps the window before the sink holds the keys (security counter-review of f9e24e1, LOW-1).
-        readonly property bool takesKeys: !SessionState.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)
+        readonly property bool takesKeys: !SheetSession.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)
 
         // Mapped with the sheet, and while the sink lingers (no sheet then, no dimming: the notice below says why).
-        visible: !SessionState.locked && (root.requestOpen || root.sinkingKeys)
+        visible: !SheetSession.locked && (root.requestOpen || root.sinkingKeys)
         // Hidden by the lock: whatever was typed is dropped (as after every attempt). Shown again: a request that was not
         // held takes the keys at once; a held one waits for a click (takesKeys) with an empty field.
         onShownChanged: {
@@ -342,9 +348,9 @@ Scope {
 
             sourceComponent: AuthDialog {
                 model: dialogModel
-                // The action's theme icon (sanitized by the model), only when the theme has it (no broken image) and every
-                // file Qt could read for it is a regular file of bounded size (ThemeIcons, review of 2dfd992).
-                appIconSource: ThemeIcons.source(dialogModel.iconName)
+                // The action's theme icon (sanitized by the model), only when the system theme has it (no broken image;
+                // the host's lookup, review of 2dfd992).
+                appIconSource: root.iconSource(dialogModel.iconName)
                 heldNotice: root.heldByLock ? dialogModel.heldNotice(root.requestStartedAt, root.heldWhy) : ""
                 inputEnabled: !root.sinkingKeys
                 // The sheet got the focus while the sink has the keys (a press on one of its controls within the guard, its
@@ -429,7 +435,7 @@ Scope {
         // the screen (the saver ends on it), never an answer, the field's focus or a middle-click paste into it.
         MouseArea {
             anchors.fill: parent
-            enabled: SessionState.saverShown
+            enabled: SheetSession.saverShown
             acceptedButtons: Qt.AllButtons
             onPressed: mouse => mouse.accepted = true
             onWheel: wheel => wheel.accepted = true

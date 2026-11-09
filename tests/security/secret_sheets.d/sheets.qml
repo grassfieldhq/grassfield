@@ -1,7 +1,6 @@
 import QtQuick
 import QtTest
 import qs.security
-import qs.services
 
 // The secret sheets and the one queue (tests/security/secret_sheets.sh runs this as tst_sheets.qml beside the generated
 // agents): the real SecretAgent and AuthAgent (Quickshell types replaced, logic untouched), the real SecretSheet,
@@ -67,8 +66,9 @@ Item {
         property var shownIds: []
 
         function init() {
-            SessionState.locked = false;
-            SessionState.saverShown = false;
+            SheetSession.locked = false;
+            SheetSession.saverShown = false;
+            SheetSession.displaysOff = false;
             compare(top.secretC.status, Component.Ready, top.secretC.errorString());
             compare(top.polkitC.status, Component.Ready, top.polkitC.errorString());
             rig = createTemporaryObject(rigC, top);
@@ -288,13 +288,13 @@ Item {
         // Nothing over the lock: a request that arrives while locked is neither mapped nor given the keyboard; after the
         // unlock it is held until a click past the guard.
         function test_08_locked() {
-            SessionState.locked = true;
+            SheetSession.locked = true;
             client.prompt("p1", {});
             shown("p1");
             compare(rig.secret.sheet.shown, false);
             compare(rig.secret.sheet.visible, false);
             compare(rig.secret.sheet.takesKeys, false);
-            SessionState.locked = false;
+            SheetSession.locked = false;
             compare(rig.secret.sheet.shown, true);
             compare(rig.secret.heldByLock, true);
             compare(rig.secret.heldWhy, "locked");
@@ -310,12 +310,12 @@ Item {
         // Never a password for a request not on screen with the keyboard: behind the lock, or held within the guard, an
         // "ok" is not sent (a new password may be empty, so a stray click on OK must not answer); Cancel still cancels.
         function test_09_noAnswerOffScreen() {
-            SessionState.locked = true;
+            SheetSession.locked = true;
             client.prompt("p1", {passwordNew: true, strength: true});
             shown("p1");
             compare(rig.secret.model.submit("x", "x"), false, "behind the lock: nothing sent");
             compare(client.answers.length, 0);
-            SessionState.locked = false;
+            SheetSession.locked = false;
             mouseClick(named("secretOk"));
             compare(client.answers.length, 0, "OK on a held sheet within the guard sends nothing");
             compare(rig.secret.model.submit("y", "y"), false, "held, no keyboard: nothing sent");
@@ -327,8 +327,8 @@ Item {
 
         // Shown after an unlock: held ("just as the screen was unlocked").
         function test_10_afterUnlock() {
-            SessionState.locked = true;
-            SessionState.locked = false;
+            SheetSession.locked = true;
+            SheetSession.locked = false;
             client.prompt("p1", {});
             shown("p1");
             compare(rig.secret.heldByLock, true);
@@ -340,13 +340,13 @@ Item {
         function test_11_saver() {
             client.prompt("p1", {});
             shown("p1");
-            SessionState.saverShown = true;
+            SheetSession.saverShown = true;
             compare(rig.secret.heldByLock, true);
             compare(rig.secret.heldWhy, "saver");
             wait(600);
             mouseClick(named("secretCancel"));
             compare(client.answers.length, 0, "the saver swallows the click");
-            SessionState.saverShown = false;
+            SheetSession.saverShown = false;
             compare(rig.secret.model.heldClickAccepted(), false, "guard restarted");
         }
 
@@ -667,8 +667,8 @@ Item {
             tryVerify(() => named("secretField").activeFocus);
             mouseClick(named("secretShowPassword"));
             compare(named("secretField").reveal, true);
-            SessionState.locked = true;
-            SessionState.locked = false;
+            SheetSession.locked = true;
+            SheetSession.locked = false;
             compare(rig.secret.heldByLock, true);
             compare(named("secretField").reveal, false, "hidden again");
         }

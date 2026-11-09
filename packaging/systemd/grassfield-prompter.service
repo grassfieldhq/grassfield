@@ -16,14 +16,15 @@ ConditionEnvironment=GRASSFIELD_SESSION=1
 Type=simple
 Slice=session.slice
 # --peer-unit: the only process that may connect as the shell runs in this unit's cgroup (an argument, never an
-# environment variable). The secret sheets share one queue with the polkit sheet, so they follow the polkit agent: when it
-# moves to grassfield-security.service (ADR-0041 step 1, S3), so does this value (ADR-0035 decision 9-7).
+# environment variable). The secret sheets share one queue with the polkit sheet, so they follow the polkit agent: since
+# ADR-0041 step 1, S3, both run in grassfield-security.service, the security process, and so does this value (ADR-0035
+# decision 9-7); the UI's grassfield-shell.service is refused.
 # Omarchy's pairing agent must not run beside this one (ADR-0035 decision 10-1): one left running from an Omarchy session
 # in the same user manager is stopped first ("-": nothing to stop on a system without it). Not Conflicts=, which works both
 # ways: a `systemctl --user start bt-agent.service` in this session would stop this unit even though bt-agent's own
 # drop-in condition then skips it (checked under a systemd 262 user manager, ADR-0035 decision 10-1).
 ExecStartPre=-/usr/bin/systemctl --user stop bt-agent.service
-ExecStart=/usr/lib/grassfield/grassfield-prompter --peer-unit grassfield-shell.service
+ExecStart=/usr/lib/grassfield/grassfield-prompter --peer-unit grassfield-security.service
 Restart=on-failure
 # Back-off between restarts (systemd >= 254): 1 s, growing to 30 s.
 RestartSec=1

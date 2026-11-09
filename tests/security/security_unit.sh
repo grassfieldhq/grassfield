@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ADR-0041 step 1, S1 (the owner's SQ-1 B): the security process runs beside the UI; since S2 it hosts the lock, idle and
-# the sleep inhibitor (shell/security/host/SecurityHost.qml) and the UI holds none of them. Static (data layer): the root
+# the sleep inhibitor (shell/security/host/SecurityHost.qml), since S3 the polkit agent and the secret sheets with their
+# one queue, and the UI holds none of them. Static (data layer): the root
 # shell/security.qml (a root of its own next to shell.qml, imports only QtQuick, Quickshell, Quickshell.Io and
 # qs.security.host, never reloads on a file change, one SecurityHost, one IpcHandler `security` with `state` and `heartbeat`;
 # the reviewed file
@@ -12,9 +13,11 @@
 # unit, Restart=always with a start limit a loop reaches, session-only, no NoNewPrivileges for the helpers of S2/S3, memory
 # guards from the measurement and the UI unit's CPU quota, OnFailure=omarchy-sleep-lock.service since S2 while the UI's
 # unit lost it), the autostart (started just before the shell, --no-block), the PKGBUILD, grassfield-security-status
-# (read-only, calls the targets by the unit's path), the IPC surface table, and the S2 scan
-# (tests/security/security_process_scan.py: no lock or idle in the UI tree, one Idle in the host, no UI service in the
-# security process). qmllint parses the root when it is installed. Plain shell test: PASS/FAIL lines, non-zero on failure.
+# (read-only, calls the targets by the unit's path), the IPC surface table, and the S2/S3 scan
+# (tests/security/security_process_scan.py: no lock, idle, polkit agent or secret sheet in the UI tree, one Idle, one
+# AuthAgent, one SecretAgent and one queue in the host, one PolkitAgent in the tree, no UI service in the security process,
+# the sheets reading the lock in process). S3: grassfield-prompter accepts this unit's processes only, and the polkit
+# module keeps nothing across a restart. qmllint parses the root when it is installed. Plain shell test: PASS/FAIL lines, non-zero on failure.
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root"
@@ -32,9 +35,10 @@ check bash -c '[[ -f "$1" && -f shell/shell.qml ]]' _ "$qml"
 pinned=452918e2a1db7b4b9d5ae1c8db8715df2e7e6e63fef5980f9526ec98947f482c
 desc="root: the reviewed file is pinned by its SHA-256 (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum "$1" | cut -d" " -f1)" == "$2" ]] || { echo "shell/security.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$qml" "$pinned"
-# What the root instantiates (S2: the security process's whole content, its one Idle and the lock singleton's first use),
-# pinned the same way (the opus review of 77a0ceb3, NIT: the root's pin alone left the host free to change).
-host_pinned=ec8c4f0edb55bbf3baed7571da8902263d8652d22c7d2607c613abadb5174375
+# What the root instantiates (S2: the security process's whole content, its one Idle and the lock singleton's first use;
+# S3: the sheets' session and the run-time creation of SheetHost.qml), pinned the same way (the opus review of 77a0ceb3,
+# NIT: the root's pin alone left the host free to change).
+host_pinned=51bc839bacdc3c991f7544aa12e0f8e0e57ed12c43b19344af4bc18213c88d91
 desc="host: the reviewed shell/security/host/SecurityHost.qml is pinned by its SHA-256 too (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum shell/security/host/SecurityHost.qml | cut -d" " -f1)" == "$1" ]] || { echo "shell/security/host/SecurityHost.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$host_pinned"
 desc="root: the readable second check (tests/security/root_check.py): ASCII only, no backslash, no regex literal, template string or bracket outside strings; every identifier one the root uses today; imports QtQuick, Quickshell, Quickshell.Io and qs.security.host only, wherever they stand; ShellRoot, SecurityHost and IpcHandler the only types; one SecurityHost; one IpcHandler, target security, the functions state and heartbeat only"
@@ -47,10 +51,19 @@ desc="root: one IpcHandler, target security, functions state and heartbeat, and 
 check bash -c '[[ $(grep -c "IpcHandler {" "$1") == 1 ]] && grep -qE "^\s*target: \"security\"" "$1" && grep -qE "^\s*function state\(\): string" "$1" && grep -qE "^\s*function heartbeat\(\): string" "$1" && [[ $(grep -cE "^\s*function " "$1") == 2 ]]' _ "$qml"
 desc="host: logs the ready line the start-time measurement reads (shell/security/host/SecurityHost.qml, instantiated by the root)"
 check bash -c 'grep -q "grassfield-security: ready" shell/security/host/SecurityHost.qml && grep -qE "^\s*SecurityHost \{" "$1"' _ "$qml"
-desc="S2 scan (tests/security/security_process_scan.py): the UI tree imports neither the lock nor idle and names no Lock, Idle or SleepInhibitor (no Lock.lock caller left in the UI); one Idle in the host; the lock and idle use no UI module and only the qs.services types Settings, VisualFixtures, FixedTime and WallClock; one definition of the state file; the UI never writes it (no FileView write, write option, adapter or process with its path in LockClient.qml, its path named nowhere else in the UI)"
+desc="S2/S3 scan (tests/security/security_process_scan.py): the UI tree imports no security module and names no Lock, Idle, SleepInhibitor, AuthAgent, SecretAgent, SheetQueue, SheetSession, PrompterClient or PolkitAgent (no Lock.lock caller, no second polkit agent or prompter client in the UI); one Idle, one AuthAgent, one SecretAgent and one SheetQueue in the host; one PolkitAgent in the tree, in AuthAgent.qml; the security modules use no UI module, the lock and idle only the qs.services types Settings, VisualFixtures, FixedTime and WallClock, the sheets none; SessionState and LockClient named by no security module, SheetSession bound by the host alone from Lock.locked, idle.displayOff and idle.saverShown (MINOR-4); one definition of the state file; the UI never writes it (no FileView write, write option, adapter or process with its path in LockClient.qml, its path named nowhere else in the UI)"
 check python3 -I tests/security/security_process_scan.py "$root"
-desc="S2 scan selftest: the tree is clean and each of the 21 planted mutants (a UI caller of Lock.lock, a Connections on Lock, the lock or idle imported into the UI, a second Idle or a window in the host, Popups, ThemeIcons, WallpaperState, Battery, the notification server or the desktop in the security modules, a write of the state file from the UI, ...) is found"
+desc="S2/S3 scan selftest: the tree is clean and each of the 46 planted mutants (a UI caller of Lock.lock, a Connections on Lock, the lock, idle, polkit, secret or qs.security module imported into the UI, a second polkit agent, a prompter client, a queue or a raw PolkitAgent in the UI, a second Idle, AuthAgent or queue, no SecretAgent or a window in the host, a second PolkitAgent, the sheets reading SessionState or LockClient or importing qs.services, Popups, ThemeIcons, WallpaperState, Battery, the notification server or the desktop in the security modules, SheetSession bound to anything else, elsewhere, or assigned, a write of the state file from the UI, ...) is found"
 check python3 -I tests/security/security_process_scan.py --selftest "$root"
+# ADR-0041 S3: the polkit agent and the secret sheets run here.
+desc="S3: the host says what it hosts (security state: lock idle, and polkit secrets once the sheets are made), and makes the sheets at run time so that a sheet that cannot load never keeps the lock from loading (the scan holds the one creation)"
+check bash -c 'grep -qx "    readonly property string hosted: \"lock idle\" + (root.sheets !== null ? \" polkit secrets\" : \"\")" shell/security/host/SecurityHost.qml && ! grep -qE "^\s*SheetHost\s*\{" shell/security/host/SecurityHost.qml'
+desc="S3: grassfield-prompter accepts a peer of this unit only (--peer-unit grassfield-security.service in its unit and as its default): the secret sheets share one queue with the polkit sheet (ADR-0035 decision 9-7); the UI's unit is refused"
+check bash -c 'grep -qx "ExecStart=/usr/lib/grassfield/grassfield-prompter --peer-unit grassfield-security.service" packaging/systemd/grassfield-prompter.service && grep -q "peerUnit    = QStringLiteral(\"grassfield-security.service\");" bridges/prompter/src/main.cpp && ! grep -q "peer-unit grassfield-shell.service" packaging/systemd/grassfield-prompter.service'
+desc="S3: an authorization asked while this process restarts fails (no agent until the restart: polkitd answers it not authorized), and nothing of the polkit module outlives the process: no file, process, socket or setting written by shell/security/polkit/ (a restarted agent starts with no request; tests/security/authagent_flows.d test_35)"
+check bash -c 'grep -qx "Restart=always" "$1" && grep -qx "RestartSec=1" "$1" && ! grep -nE "\b(FileView|Process|Socket|SocketServer|JsonAdapter|PersistentProperties|LocalStorage)\s*\{|setText\(|\bSettings\.set|execDetached" shell/security/polkit/*.qml' _ "$unit"
+desc="S3: the polkit and secret sheets' passwords live in this process: no core file here (LimitCORE=0, above), and the UI no longer instantiates either agent (the scan)"
+check bash -c 'grep -qx "LimitCORE=0" "$1" && ! grep -nE "^\s*(AuthAgent|SecretAgent|SheetQueue)\s*\{" shell/shell.qml' _ "$unit"
 if [[ -x /usr/lib/qt6/bin/qmllint ]]; then
   desc="root: qmllint parses it (unknown-module warnings aside)"
   check bash -c '/usr/lib/qt6/bin/qmllint "$1" 2>&1 | grep -v -i -E "warning" | grep -qi "error" && exit 1; exit 0' _ "$qml"

@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import QtTest
-import qs.services
+import qs.security
 
 // The polkit agent in a window that behaves like Quickshell's PanelWindow (FakePanel.qml: made again each time it is shown,
 // given the keyboard only once mapped; authagent_flows.sh runs this file as tst_window.qml with the --panel harness), beside
@@ -56,8 +56,9 @@ Item {
         property var ag: null
 
         function init() {
-            SessionState.locked = false;
-            SessionState.saverShown = false;
+            SheetSession.locked = false;
+            SheetSession.saverShown = false;
+            SheetSession.displaysOff = false;
             under.text = "";
             compare(top.agentC.status, Component.Ready, top.agentC.errorString());
             ag = createTemporaryObject(top.agentC, top);

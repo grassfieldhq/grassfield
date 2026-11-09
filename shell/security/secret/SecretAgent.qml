@@ -5,7 +5,6 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Grassfield.Ui
 import qs.security
-import qs.services
 import "../../lib/RunMode.js" as RunMode
 import "Prompter.js" as Prompter
 
@@ -24,22 +23,30 @@ import "Prompter.js" as Prompter
 // caller asks again at once after a wrong password, as a new request). A confirmation, a NetworkManager request, a KIO
 // request and a Bluetooth pairing step are always held (decisions 9-23, 9-28, 9-38 and 10-7); a Bluetooth code shown on the
 // screen follows the digits typed on the device without touching the keyboard (10-8).
+// Process (ADR-0041 step 1, S3; ADR-0035 decision 9-7): the secret sheets share one queue with the polkit sheet, so they live
+// in the polkit agent's process, the security process (../host/SheetHost.qml), where they read the lock in process
+// (SheetSession); grassfield-prompter accepts a peer of grassfield-security.service only (`--peer-unit`). The UI never
+// instantiates this file.
 Scope {
     id: root
 
-    // The one queue (shell.qml's SheetQueue, shared with the polkit agent). Without one no request is taken: each is
+    // The one queue (the host's SheetQueue, shared with the polkit agent). Without one no request is taken: each is
     // answered "cancelled".
     property SheetQueue queue: null
-    // The test socket of a dev session (shell.qml passes the dev plumbing value PROMPTER_SOCKET); never read outside one.
+    // The test socket of a dev session (the host passes the dev plumbing value PROMPTER_SOCKET); never read outside one.
     property string devSocket: ""
     // The shell's version, for the bridge's log.
     property string shellVersion: ""
+    // The URL of a plain theme icon name for the sheet ("" for none: the sheet's generic icon). The host gives the security
+    // process's lookup (the system theme only, whose directories the user cannot change); a harness gives none.
+    property var iconSource: name => ""
 
     // Test hooks and the dev socket (ADR-0019): a dev session only.
     readonly property bool dev: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))
     readonly property string socketPath: Prompter.socketPath(root.dev, Quickshell.env("XDG_RUNTIME_DIR"), root.devSocket)
 
-    // A secret sheet is open (shown, or held behind the lock or the saver). Read by shell.qml for SessionState.authorizing.
+    // A secret sheet is open (shown, or held behind the lock or the saver). Published by the host with the lock state for the
+    // UI's SessionState.authorizing.
     readonly property bool requestActive: sheetModel.active
 
     // The requests this shell holds (shown or waiting), by id; the request whose sheet occupies the window (shown, or its
@@ -231,8 +238,8 @@ Scope {
         root.sinkingKeys = typing;
         if (!sheetModel.active)
             root.requestOpen = false;
-        root.heldWhy = SessionState.locked ? "locked" : SessionState.saverShown ? "saver" : waited ? "waited" : queued ? "queued" : network && !sheetModel.arrivesHeld(false) ? "network" : server && !sheetModel.arrivesHeld(false) ? "server" : pairing && !sheetModel.arrivesHeld(false) ? sheetModel.pairingHeldWhyOf(sheetModel.request.pairing.mode) : confirm && !sheetModel.arrivesHeld(false) ? "confirm" : "unlock";
-        root.heldByLock = sheetModel.active && (typing || waited || confirm || network || server || pairing || sheetModel.arrivesHeld(SessionState.locked || SessionState.saverShown));
+        root.heldWhy = SheetSession.locked ? "locked" : SheetSession.saverShown ? "saver" : waited ? "waited" : queued ? "queued" : network && !sheetModel.arrivesHeld(false) ? "network" : server && !sheetModel.arrivesHeld(false) ? "server" : pairing && !sheetModel.arrivesHeld(false) ? sheetModel.pairingHeldWhyOf(sheetModel.request.pairing.mode) : confirm && !sheetModel.arrivesHeld(false) ? "confirm" : "unlock";
+        root.heldByLock = sheetModel.active && (typing || waited || confirm || network || server || pairing || sheetModel.arrivesHeld(SheetSession.locked || SheetSession.saverShown));
         root.userFocused = false;
         if (sheetModel.active)
             root.requestOpen = true;
@@ -240,7 +247,7 @@ Scope {
         if (!sheetModel.active)
             sheetModel.noteEnded();
         // The linger starts: from the base state, never `lingering`.
-        if (typing && !sheetModel.active && !SessionState.locked) {
+        if (typing && !sheetModel.active && !SheetSession.locked) {
             root.lingerWhy = answered ? (root.answeredCode ? "code" : "sent") : "cancelled";
             sinkIdle.restart();
             sinkCap.restart();
@@ -266,7 +273,7 @@ Scope {
     // The request ended while the sink or the sheet had the keys: the window stays mapped, the keyboard on the sink and a
     // notice where the sheet was, until no key came for heldAfterUnlockMs, at most sinkLingerMaxMs, or a click, the lock or
     // the screen saver ends it. Its place in the queue is kept meanwhile: no other sheet shows during a linger.
-    readonly property bool lingering: root.sinkingKeys && !sheetModel.active && !SessionState.locked
+    readonly property bool lingering: root.sinkingKeys && !sheetModel.active && !SheetSession.locked
     // Why the window lingers: "cancelled" (the request ended unanswered), "sent" (a password was sent) or "code" (a Bluetooth
     // code was sent).
     property string lingerWhy: "cancelled"
@@ -274,11 +281,11 @@ Scope {
     property var requestStartedAt: null
 
     Connections {
-        target: SessionState
+        target: SheetSession
 
         // The lock has the keyboard now: the sink lets go (a linger ends), and an open request is held.
         function onLockedChanged(): void {
-            if (!SessionState.locked) {
+            if (!SheetSession.locked) {
                 sheetModel.noteUnlock();
                 return;
             }
@@ -293,11 +300,11 @@ Scope {
         // The screen saver came up: it holds the keyboard, so the sink lets go; an open request is held as by the lock, its
         // fields emptied. It ended over a held one: the click guard starts over.
         function onSaverShownChanged(): void {
-            if (SessionState.saverShown)
+            if (SheetSession.saverShown)
                 root.sinkingKeys = false;
-            if (!sheetModel.active || SessionState.locked)
+            if (!sheetModel.active || SheetSession.locked)
                 return;
-            if (SessionState.saverShown) {
+            if (SheetSession.saverShown) {
                 if (!root.heldByLock || root.userFocused)
                     root.heldWhy = "saver";
                 root.heldByLock = true;
@@ -330,12 +337,12 @@ Scope {
 
         // A request that arrives while the session is locked waits behind the lock: mapped, and given the keyboard, only
         // after the unlock. Nothing is answered meanwhile.
-        readonly property bool shown: sheetModel.active && !SessionState.locked
+        readonly property bool shown: sheetModel.active && !SheetSession.locked
         // The window holds the keyboard: the sheet is shown and not a held request the user has not clicked yet, or the keys
         // are on the sink. Both this and `visible` read the base state only (AuthAgent's rule).
-        readonly property bool takesKeys: !SessionState.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)
+        readonly property bool takesKeys: !SheetSession.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)
 
-        visible: !SessionState.locked && (root.requestOpen || root.sinkingKeys)
+        visible: !SheetSession.locked && (root.requestOpen || root.sinkingKeys)
         // Hidden by the lock: whatever was typed is dropped. Shown again: a request that was not held takes the keys at
         // once; a held one waits for a click with empty fields.
         onShownChanged: {
@@ -405,9 +412,9 @@ Scope {
             anchors.centerIn: parent
             sourceComponent: SecretSheet {
                 model: sheetModel
-                // An app's theme icon (a plain name, SecretSheetModel.appIcon), only when the theme has it and every file Qt
-                // could read for it is a regular file of bounded size (ThemeIcons, as the polkit sheet's icon).
-                appIconSource: ThemeIcons.source(sheetModel.appIcon)
+                // An app's theme icon (a plain name, SecretSheetModel.appIcon), only when the system theme has it (the host's
+                // lookup, as the polkit sheet's icon).
+                appIconSource: root.iconSource(sheetModel.appIcon)
                 heldNotice: root.heldByLock ? sheetModel.heldNotice(root.requestStartedAt, root.heldWhy) : ""
                 inputEnabled: !root.sinkingKeys
                 // The sheet got the focus while the sink has the keys: the sink takes it back.
@@ -484,7 +491,7 @@ Scope {
         // While the screen saver shows, a press (any button) or the wheel on the sheet goes nowhere.
         MouseArea {
             anchors.fill: parent
-            enabled: SessionState.saverShown
+            enabled: SheetSession.saverShown
             acceptedButtons: Qt.AllButtons
             onPressed: mouse => mouse.accepted = true
             onWheel: wheel => wheel.accepted = true

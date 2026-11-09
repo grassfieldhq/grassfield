@@ -11,6 +11,9 @@
 # a request the user cannot see (locked, saver, displays off, held other than right after another one, waiting behind a
 # secret sheet, replaced) is refused once PAM talks without asking, as for a fingerprint reader (ADR-0045 OC-6, security
 # review of e3542510 and its re-reviews). No compositor, no polkit, no PAM.
+# Against the security process (ADR-0041 step 1, S3): the agent runs there, beside the lock it reads in process
+# (qs.security's SheetSession, which the tests set as SecurityHost's Bindings would), so the harness gives it qs.security and
+# qs.lib only: no qs.services, nothing of the UI (an import of the UI's world fails to load here).
 #
 #   tests/security/authagent_flows.sh              the tests: PASS / FAIL
 #   tests/security/authagent_flows.sh --mutants    also each mutant below, which the tests must catch ("MUTANT <name>: CAUGHT")
@@ -37,12 +40,10 @@ trap 'exit 143' TERM
 unset QT_QPA_PLATFORMTHEME
 export QT_QPA_PLATFORM=offscreen
 
-# qs.security and qs.lib are the real folders; qs.services holds the real SessionState and a ThemeIcons that finds no icon.
-mkdir -p "$scratch/qsroot/qs/services"
+# qs.security and qs.lib are the real folders, and the only qs modules (the security process's world, ADR-0041 S3).
+mkdir -p "$scratch/qsroot/qs"
 ln -s "$root/shell/security" "$scratch/qsroot/qs/security"
 ln -s "$root/shell/lib" "$scratch/qsroot/qs/lib"
-cp "$root/shell/services/SessionState.qml" "$d/ThemeIcons.qml" "$scratch/qsroot/qs/services/"
-printf 'module qs.services\nsingleton SessionState 1.0 SessionState.qml\nsingleton ThemeIcons 1.0 ThemeIcons.qml\n' >"$scratch/qsroot/qs/services/qmldir"
 
 # run <dir with AuthAgent.qml, AuthDialog.qml, AuthDialogModel.qml>: generates the harness and runs the tests; the output on
 # stdout, 0 when every case passed and no QML runtime error was printed (gate Q2's failures, in the generated copies too).
@@ -112,11 +113,11 @@ no-focus-taken-back, field focused while disabled (c1ca44f M2)#AuthAgent.qml#   
 typing-read-late (38dbfe8 LOW-2 M1)#AuthAgent.qml#const typing = (follows && win.takesKeys) || root.sinkingKeys || (!dialogModel.active && win.takesKeys && !dialogModel.answered);#let typing = false;#AuthAgent.qml#        root.userFocused = false;\n        if (dialogModel.active)\n            root.requestOpen = true;#        root.userFocused = false;\n        typing = (follows && win.takesKeys) || root.sinkingKeys || (!dialogModel.active && win.takesKeys && !dialogModel.answered);\n        root.sinkingKeys = typing;\n        if (dialogModel.active)\n            root.requestOpen = true;
 lock-keeps-sink (38dbfe8 LOW-2 M2)#AuthAgent.qml#            root.sinkingKeys = false;\n            if (dialogModel.active) {#            if (dialogModel.active) {
 no-linger (38dbfe8 MEDIUM-B)#AuthAgent.qml#const typing = (follows && win.takesKeys) || root.sinkingKeys || (!dialogModel.active && win.takesKeys && !dialogModel.answered);#const typing = (follows && win.takesKeys) || (!dialogModel.active && win.takesKeys && !dialogModel.answered);
-unmapped-linger (38dbfe8 MEDIUM-B)#AuthAgent.qml#visible: !SessionState.locked && (root.requestOpen || root.sinkingKeys)#visible: shown
-visible-through-lingering (c1ca44f M1)#AuthAgent.qml#visible: !SessionState.locked && (root.requestOpen || root.sinkingKeys)#visible: shown || root.lingering
-keys-through-lingering (c1ca44f M1)#AuthAgent.qml#readonly property bool takesKeys: !SessionState.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)#readonly property bool takesKeys: (shown && (!root.heldByLock || root.userFocused || root.sinkingKeys)) || root.lingering
+unmapped-linger (38dbfe8 MEDIUM-B)#AuthAgent.qml#visible: !SheetSession.locked && (root.requestOpen || root.sinkingKeys)#visible: shown
+visible-through-lingering (c1ca44f M1)#AuthAgent.qml#visible: !SheetSession.locked && (root.requestOpen || root.sinkingKeys)#visible: shown || root.lingering
+keys-through-lingering (c1ca44f M1)#AuthAgent.qml#readonly property bool takesKeys: !SheetSession.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)#readonly property bool takesKeys: (shown && (!root.heldByLock || root.userFocused || root.sinkingKeys)) || root.lingering
 input-enabled-while-sinking (c1ca44f M2)#AuthAgent.qml#                inputEnabled: !root.sinkingKeys#                inputEnabled: true
-linger-start-read-stale (c1ca44f)#AuthAgent.qml#        if (typing && !dialogModel.active && !SessionState.locked) {#        if (root.lingering) {
+linger-start-read-stale (c1ca44f)#AuthAgent.qml#        if (typing && !dialogModel.active && !SheetSession.locked) {#        if (root.lingering) {
 cap-never-started (c1ca44f L1)#AuthAgent.qml#            sinkIdle.restart();\n            sinkCap.restart();#            sinkIdle.restart();
 cap-ends-request-sink (c1ca44f L1)#AuthAgent.qml#        interval: dialogModel.sinkLingerMaxMs\n        onTriggered: if (root.lingering)#        interval: dialogModel.sinkLingerMaxMs\n        onTriggered: if (true)
 linger-ends-request-sink#AuthAgent.qml#        interval: dialogModel.heldAfterUnlockMs\n        onTriggered: if (root.lingering)#        interval: dialogModel.heldAfterUnlockMs\n        onTriggered: if (true)
@@ -135,16 +136,16 @@ no-ended-notice (f9e24e1 LOW-3)#AuthAgent.qml#            visible: root.lingerin
 ended-notice-over-a-sheet (f9e24e1 LOW-3)#AuthAgent.qml#            visible: root.lingering#            visible: root.sinkingKeys
 device-answers-unseen (e3542510 MAJOR-2)#AuthDialogModel.qml#        if (refusesUnseen)\n            request.cancelAuthenticationRequest();#        if (refusesUnseen)\n            console.info("refused");
 refusal-inside-the-binding (e3542510 MAJOR-2, binding loop)#AuthDialogModel.qml#        Qt.callLater(root.refuseUnseen)#        root.refuseUnseen()
-device-answers-behind-lock-and-saver (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SessionState.locked && !SessionState.saverShown && #        answerable:
+device-answers-behind-lock-and-saver (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SheetSession.locked && !SheetSession.saverShown && #        answerable:
 held-shown-request-refused (re-review: Remote Login, Add Printer)#AuthAgent.qml#root.userFocused || root.heldWhy === "queued")#root.userFocused)
 unlock-held-answerable (re-review 2 MINOR-1)#AuthAgent.qml#                    && (!root.heldByLock || root.userFocused || root.heldWhy === "queued")#                    && true
-displays-off-ignored (re-review 2 MINOR-2)#AuthAgent.qml#!SessionState.displaysOff && #true &&
+displays-off-ignored (re-review 2 MINOR-2)#AuthAgent.qml#!SheetSession.displaysOff && #true &&
 replaced-not-watched (re-review MAJOR-1)#AuthDialogModel.qml#            priv.replaced = liveReplaced().concat([before]);#            ;
 replaced-alone-refused (re-review MAJOR-1)#AuthDialogModel.qml#        if (request && request.isCompleted !== true && replaced.indexOf(request) < 0)\n            request.cancelAuthenticationRequest();#        ;
 replaced-refused-first (re-review MAJOR-1)#AuthDialogModel.qml#        if (request && request.isCompleted !== true && replaced.indexOf(request) < 0)\n            request.cancelAuthenticationRequest();\n        for (const f of replaced)\n            f.cancelAuthenticationRequest();#        for (const f of replaced)\n            f.cancelAuthenticationRequest();\n        if (request && request.isCompleted !== true && replaced.indexOf(request) < 0)\n            request.cancelAuthenticationRequest();
 replaced-refusal-inside-the-binding (re-review MAJOR-1)#AuthDialogModel.qml#        Qt.callLater(root.refuseReplaced)#        root.refuseReplaced()
 device-answers-a-waiting-request (e3542510 MAJOR-2)#AuthAgent.qml#        request: agent.flow#        request: agent.isActive && !root.waiting ? agent.flow : null
-device-answers-always (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SessionState.locked#        answerable: true || !SessionState.locked
+device-answers-always (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SheetSession.locked#        answerable: true || !SheetSession.locked
 EOF_MUTANTS
 ((status == 0)) && echo "PASS: authagent_flows (and every mutant caught)" || echo "FAIL: authagent_flows mutants"
 exit "$status"

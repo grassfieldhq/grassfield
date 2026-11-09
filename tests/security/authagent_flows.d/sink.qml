@@ -1,6 +1,6 @@
 import QtQuick
 import QtTest
-import qs.services
+import qs.security
 
 // The polkit agent's key sink (AuthAgent.qml in the harness authagent_flows.sh generates; it runs this file as tst_sink.qml).
 // When a request replaces the one the user was typing into, the keyboard stays with the window, on the sink: nothing typed
@@ -49,8 +49,9 @@ Item {
         property var ag: null
 
         function init() {
-            SessionState.locked = false;
-            SessionState.saverShown = false;
+            SheetSession.locked = false;
+            SheetSession.saverShown = false;
+            SheetSession.displaysOff = false;
             compare(top.agentC.status, Component.Ready, top.agentC.errorString());
             ag = createTemporaryObject(top.agentC, top);
             verify(ag);
@@ -223,17 +224,17 @@ Item {
         function test_06d_lockEndsLinger() {
             const [a, b] = sinkB();
             endAll();
-            SessionState.locked = true;
+            SheetSession.locked = true;
             compare(ag.lingering, false);
             compare(ag.sheet.takesKeys, false);
-            SessionState.locked = false;
+            SheetSession.locked = false;
             compare(ag.lingering, false, "not back after the unlock");
             compare(ag.sheet.visible, false);
         }
         function test_06e_saverEndsLinger() {
             const [a, b] = sinkB();
             endAll();
-            SessionState.saverShown = true;
+            SheetSession.saverShown = true;
             compare(ag.lingering, false);
             compare(ag.sheet.takesKeys, false);
         }
@@ -261,10 +262,10 @@ Item {
         // The lock takes the sink's keys; after the unlock B is held without the keyboard, answered after a click.
         function test_09_lockWhileSinking() {
             const [a, b] = sinkB();
-            SessionState.locked = true;
+            SheetSession.locked = true;
             compare(ag.sinkingKeys, false);
             compare(ag.sheet.shown, false);
-            SessionState.locked = false;
+            SheetSession.locked = false;
             compare(ag.sheet.takesKeys, false);
             compare(ag.heldByLock, true);
             wait(600);
@@ -280,10 +281,10 @@ Item {
         // The screen saver takes the sink's keys; after it, a click past the guard gives the keyboard.
         function test_10_saverWhileSinking() {
             const [a, b] = sinkB();
-            SessionState.saverShown = true;
+            SheetSession.saverShown = true;
             compare(ag.sinkingKeys, false);
             compare(ag.sheet.takesKeys, false);
-            SessionState.saverShown = false;
+            SheetSession.saverShown = false;
             compare(ag.sheet.takesKeys, false);
             compare(ag.model.heldClickAccepted(), false);
             wait(600);
@@ -350,11 +351,11 @@ Item {
             const a = mkflow("A"), b = mkflow("B");
             arriveFlow(a);
             endAll();
-            SessionState.locked = true;
+            SheetSession.locked = true;
             arriveFlow(b);
             compare(ag.heldByLock, true);
             compare(ag.heldWhy, "locked");
-            SessionState.locked = false;
+            SheetSession.locked = false;
             compare(ag.sheet.takesKeys, false);
         }
 
@@ -569,15 +570,15 @@ Item {
             } else if (d.how === "noticeClick") {
                 mouseClick(notice());
             } else if (d.how === "lock") {
-                SessionState.locked = true;
+                SheetSession.locked = true;
             } else {
-                SessionState.saverShown = true;
+                SheetSession.saverShown = true;
             }
             compare(ag.lingering, false, "the linger ended");
             compare(ag.sheet.takesKeys, false);
             compare(notice().visible, false, "the notice goes with it");
-            SessionState.locked = false;
-            SessionState.saverShown = false;
+            SheetSession.locked = false;
+            SheetSession.saverShown = false;
             compare(ag.sheet.visible, false, "nothing mapped after it");
         }
 

@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
-"""ADR-0041 step 1, S2: everything that locks lives in the security process, and nothing of the UI's world runs there.
-Static (data layer), read on the code with comments and string contents removed:
+"""ADR-0041 step 1, S2 and S3: everything that locks, the polkit agent and the secret sheets live in the security process,
+and nothing of the UI's world runs there. Static (data layer), read on the code with comments and string contents removed:
 
-  1. the UI tree (shell/** but shell/security/** and shell/security.qml) never imports qs.security.lock or qs.security.idle
-     and never names the Lock singleton, Idle or SleepInhibitor: no `Lock.lock` caller is left in the UI, and referencing
-     Lock there would start a second WlSessionLock and a second `lock` IPC target in the UI process;
+  1. the UI tree (shell/** but shell/security/** and shell/security.qml) imports no security module at all (qs.security and
+     every qs.security.*, by name or by path; S3) and never names the Lock singleton, Idle, SleepInhibitor, AuthAgent,
+     SecretAgent, SheetQueue, SheetSession, PrompterClient or PolkitAgent: no `Lock.lock` caller is left in the UI, and
+     referencing Lock there would start a second WlSessionLock and a second `lock` IPC target in the UI process; an
+     AuthAgent there would be a second polkit agent of the session, a SecretAgent a second client of grassfield-prompter;
   2. shell/security/host/SecurityHost.qml instantiates Idle exactly once (one idle module, one sleep inhibitor) and only the
-     types listed in HOST_TYPES;
-  3. the lock and idle modules (shell/security/lock/**, shell/security/idle/**, shell/security/host/SecurityHost.qml) import no
-     UI feature module (qs.desktop, qs.notifications, ...) and name only the qs.services singletons in SERVICES_ALLOWED:
-     the others start processes, own bus names, write files or empty directories the UI uses (Popups, ThemeIcons,
-     WallpaperState, Battery's power profile, Notifications, MenuBridge, ...) and must not run a second time in the
-     security process;
+     types listed in HOST_TYPES, and makes the sheets at run time (S3: shell/security/host/SheetHost.qml, created once by
+     its URL, never declared, so that a sheet that cannot load never keeps the lock from loading); SheetHost.qml instantiates
+     AuthAgent, SecretAgent and SheetQueue exactly once each (one polkit agent, one prompter client, one queue for all their
+     sheets) and only the types listed in SHEET_HOST_TYPES, and nothing else names it;
+  3. the security modules (shell/security/lock/**, idle/**, polkit/**, secret/**, the shared shell/security/*.qml and
+     shell/security/host/SecurityHost.qml) import no UI feature module (qs.desktop, qs.notifications, ...) and name only the
+     qs.services singletons in SERVICES_ALLOWED; the polkit and secret modules none at all (S3: they read the session from
+     SheetSession only): the others start processes, own bus names, write files or empty directories the UI uses (Popups,
+     ThemeIcons, WallpaperState, Battery's power profile, Notifications, MenuBridge, ...) and must not run a second time in
+     the security process;
+  3b. exactly one PolkitAgent in the tree, in shell/security/polkit/AuthAgent.qml, the one file that imports
+     Quickshell.Services.Polkit (S3: "exactly one agent in the session");
+  3c. the sheets read the session in process (the opus review of 77a0ceb3, MINOR-4): SessionState and LockClient are named
+     by no security module, and SheetSession is written only by the host's three Bindings, each from the lock or idle of
+     the same process (locked <- Lock.locked, displaysOff <- idle.displayOff, saverShown <- idle.saverShown): no other
+     Binding targets it and no file assigns one of its properties;
   4. shell/lib/LockState.js is the one definition of the state file: the publisher and LockClient import it by a relative
      path, and nothing else writes a file named grassfield-lock-state-*;
   5. the UI never writes the state file (the opus review of 77a0ceb3, MINOR-5): shell/services/LockClient.qml, the one UI file
@@ -27,7 +39,22 @@ import sys
 
 SERVICES_ALLOWED = {"Settings", "VisualFixtures", "FixedTime", "WallClock"}
 HOST_TYPES = {"Scope", "Binding", "Idle"}
-SECURITY_MODULES = ("shell/security/lock/", "shell/security/idle/")
+SHEET_HOST = "shell/security/host/SheetHost.qml"
+SHEET_HOST_TYPES = {"Scope", "SheetQueue", "AuthAgent", "SecretAgent", "FileView"}
+# Exactly once in SheetHost.qml each.
+SHEET_HOST_ONCE = ("AuthAgent", "SecretAgent", "SheetQueue")
+SHEET_HOST_URL = 'Qt.createComponent(Qt.resolvedUrl("SheetHost.qml"))'
+SECURITY_MODULES = ("shell/security/lock/", "shell/security/idle/", "shell/security/polkit/", "shell/security/secret/")
+# The sheets: no qs.services type at all (S3).
+SHEET_MODULES = ("shell/security/polkit/", "shell/security/secret/")
+SECURITY_SHARED = ("shell/security/SheetQueue.qml", "shell/security/SheetSession.qml", "shell/security/PasswordField.qml",
+                   "shell/security/LockController.qml")
+AGENT = "shell/security/polkit/AuthAgent.qml"
+# Named nowhere in the UI (rule 1).
+SECURITY_NAMES = ("Lock", "SleepInhibitor", "AuthAgent", "SecretAgent", "SheetQueue", "SheetSession", "PrompterClient",
+                  "PolkitAgent")
+# SheetSession's one writer and what each property is bound to (rule 3c).
+SHEET_BINDINGS = {"locked": "Lock.locked", "displaysOff": "idle.displayOff", "saverShown": "idle.saverShown"}
 HOST = "shell/security/host/SecurityHost.qml"
 CLIENT = "shell/services/LockClient.qml"
 # What would write a file from LockClient.qml: a FileView write, its write options or an adapter, or a process given the path.
@@ -115,22 +142,40 @@ def file_findings(path, src, singletons):
     mods, paths = imports_of(src)
     if ui:
         for m in mods:
-            if m in ("qs.security.lock", "qs.security.idle"):
-                out.append(f"{path}: imports {m} (the lock and idle run in the security process only)")
+            if m == "qs.security" or m.startswith("qs.security."):
+                out.append(f"{path}: imports {m} (the lock, idle, the polkit agent and the secret sheets run in the security process only)")
         for p in paths:
-            if re.search(r"(^|/)security/(lock|idle)(/|$)", p):
-                out.append(f"{path}: imports {p} (the lock and idle run in the security process only)")
-        if re.search(r"\bLock\b", code) or re.search(r"\bIdle\s*\{", code) or re.search(r"\bSleepInhibitor\b", code):
-            out.append(f"{path}: names the Lock singleton, Idle or SleepInhibitor (the UI asks the security process over IPC)")
+            if re.search(r"(^|/)security(/|$)", p):
+                out.append(f"{path}: imports {p} (the security modules run in the security process only)")
+        if re.search(r"\bIdle\s*\{", code) or any(re.search(r"\b" + n + r"\b", code) for n in SECURITY_NAMES):
+            out.append(f"{path}: names a security module's type ({', '.join(SECURITY_NAMES)} or Idle): the UI asks the security process over IPC and reads what it publishes")
         if path.endswith(".qml") and re.search(r"\bSecurityHost\s*\{", code):
             out.append(f"{path}: instantiates SecurityHost (shell/security.qml only)")
-    if path.startswith(SECURITY_MODULES) or path == HOST:
+    security = path.startswith(SECURITY_MODULES) or path in (HOST, SHEET_HOST) or path in SECURITY_SHARED
+    if security:
         for m in mods:
-            if m.startswith("qs.") and m not in ("qs.services", "qs.security", "qs.security.lock", "qs.security.idle"):
+            if m.startswith("qs.") and m not in ("qs.services", "qs.security", "qs.security.lock", "qs.security.idle", "qs.security.polkit", "qs.security.secret"):
                 out.append(f"{path}: imports {m} (a UI module in the security process)")
         used = set(re.findall(r"\b([A-Z]\w*)\s*\.", code)) | set(re.findall(r"\b([A-Z]\w*)\s*\{", code))
-        for name in sorted((used & singletons) - SERVICES_ALLOWED):
-            out.append(f"{path}: uses the qs.services type {name}, which must not run in the security process (allowed: {', '.join(sorted(SERVICES_ALLOWED))})")
+        sheets = path.startswith(SHEET_MODULES) or path in SECURITY_SHARED or path == SHEET_HOST
+        allowed = set() if sheets else SERVICES_ALLOWED
+        for name in sorted((used & singletons) - allowed):
+            out.append(f"{path}: uses the qs.services type {name}, which must not run in the security process (allowed here: {', '.join(sorted(allowed)) or 'none'})")
+        if sheets and "qs.services" in mods:
+            out.append(f"{path}: imports qs.services (the sheets read the session from SheetSession only, ADR-0041 S3)")
+        for name in ("SessionState", "LockClient"):
+            if re.search(r"\b" + name + r"\b", code):
+                out.append(f"{path}: names {name}, the UI's reading of the lock (the security process reads its own lock: MINOR-4)")
+    if path.endswith(".qml") and path != HOST:
+        if re.search(r"\bBinding\s*\{[^{}]*?\btarget\s*:\s*SheetSession\b", code):
+            out.append(f"{path}: binds SheetSession (only the host does, from its own lock and idle)")
+    if re.search(r"\bSheetSession\s*\.\s*\w+\s*(=(?!=)|\+=|-=|\+\+|--)", code) or re.search(r"(\+\+|--)\s*SheetSession\s*\.", code):
+        out.append(f"{path}: assigns a SheetSession property (only the host's Bindings write it)")
+    if path != AGENT:
+        if re.search(r"\bPolkitAgent\s*\{", code):
+            out.append(f"{path}: instantiates a PolkitAgent (the session's one agent is AuthAgent.qml's, in the security process)")
+        if "Quickshell.Services.Polkit" in mods:
+            out.append(f"{path}: imports Quickshell.Services.Polkit (only AuthAgent.qml does)")
     if "grassfield-lock-state-" in strip(src, keep_strings=True) and path != "shell/lib/LockState.js":
         out.append(f"{path}: spells the state file's name (shell/lib/LockState.js is its one definition)")
     if path == CLIENT:
@@ -154,6 +199,36 @@ def global_findings(files):
             out.append(f"{HOST}: instantiates {', '.join(sorted(types - HOST_TYPES))} (allowed: {', '.join(sorted(HOST_TYPES))})")
         if len(re.findall(r"\bIdle\s*\{", code)) != 1:
             out.append(f"{HOST}: not exactly one Idle (one idle module, one sleep inhibitor)")
+        made = strip(host, keep_strings=True)
+        if made.count(SHEET_HOST_URL) != 1 or len(re.findall(r"\bcreateObject\s*\(", code)) != 1 or len(re.findall(r"\bcreateComponent\s*\(", code)) != 1:
+            out.append(f"{HOST}: does not make SheetHost.qml exactly once, by its URL ({SHEET_HOST_URL}, one createObject)")
+        if not re.search(r"Binding\s*\{\s*target\s*:\s*Lock\s*property\s*:\s*\"authorizing\"\s*value\s*:\s*root\.sheets\s*!==\s*null\s*&&\s*root\.sheets\.authorizing\s*===\s*true\s*\}", made) \
+                or not re.search(r"Binding\s*\{\s*target\s*:\s*Lock\s*property\s*:\s*\"securityKeyboard\"\s*value\s*:\s*root\.sheets\s*!==\s*null\s*&&\s*root\.sheets\.securityKeyboard\s*===\s*true\s*\}", made):
+            out.append(f"{HOST}: does not publish the sheets' authorizing and securityKeyboard (false without sheets)")
+        bound = re.findall(r"Binding\s*\{\s*target\s*:\s*SheetSession\s*property\s*:\s*\"\"\s*value\s*:\s*([^\n}]*?)\s*\}", code)
+        named = re.findall(r"Binding\s*\{\s*target\s*:\s*SheetSession\s*property\s*:\s*\"(\w+)\"\s*value\s*:\s*([^\n}]*?)\s*\}", strip(host, keep_strings=True))
+        if len(re.findall(r"\bBinding\s*\{[^{}]*?\btarget\s*:\s*SheetSession\b", code)) != len(SHEET_BINDINGS) or len(bound) != len(SHEET_BINDINGS) \
+                or dict(named) != SHEET_BINDINGS:
+            out.append(f"{HOST}: SheetSession is not bound exactly as {SHEET_BINDINGS} (the sheets read the lock and idle of this process)")
+    sheet_host = files.get(SHEET_HOST)
+    if sheet_host is None:
+        out.append(f"{SHEET_HOST}: missing")
+    else:
+        code = strip(sheet_host)
+        types = set(re.findall(r"\b([A-Z]\w*)\s*\{", code))
+        if types - SHEET_HOST_TYPES:
+            out.append(f"{SHEET_HOST}: instantiates {', '.join(sorted(types - SHEET_HOST_TYPES))} (allowed: {', '.join(sorted(SHEET_HOST_TYPES))})")
+        for name in SHEET_HOST_ONCE:
+            if len(re.findall(r"\b" + name + r"\s*\{", code)) != 1:
+                out.append(f"{SHEET_HOST}: not exactly one {name} (one polkit agent, one prompter client, one queue)")
+    for path, src in files.items():
+        if path in (HOST, SHEET_HOST):
+            continue
+        if re.search(r"\bSheetHost\b", strip(src, keep_strings=True)):
+            out.append(f"{path}: names SheetHost (the host makes it, once)")
+    agent = files.get(AGENT, "")
+    if len(re.findall(r"\bPolkitAgent\s*\{", strip(agent))) != 1:
+        out.append(f"{AGENT}: not exactly one PolkitAgent")
     for path, needle in (("shell/security/lock/LockPublisher.qml", '"../../lib/LockState.js" as LockState'),
                          ("shell/services/LockClient.qml", '"../lib/LockState.js" as LockState')):
         if needle not in files.get(path, ""):
@@ -172,7 +247,40 @@ def main(argv):
         mutants = [
             ("a UI caller of Lock.lock", "shell/overlay/SystemMenu.qml", lambda s: s.replace("SessionState.requestLock(\"menu\");", "Lock.lock(\"menu\");", 1)),
             ("a Connections on Lock in the UI", "shell/saver/Saver.qml", lambda s: s.replace("    Connections {\n        target: SessionState\n", "    Connections {\n        target: Lock\n", 1)),
-            ("the UI importing the lock module", "shell/shell.qml", lambda s: s.replace("import qs.security.polkit\n", "import qs.security.polkit\nimport qs.security.lock\n", 1)),
+            ("the UI importing the lock module", "shell/shell.qml", lambda s: s.replace("import qs.services\n", "import qs.services\nimport qs.security.lock\n", 1)),
+            # ADR-0041 S3: the polkit agent and the secret sheets, in the security process only.
+            ("the UI importing the polkit module", "shell/shell.qml", lambda s: s.replace("import qs.services\n", "import qs.services\nimport qs.security.polkit\n", 1)),
+            ("the UI importing the secret module", "shell/shell.qml", lambda s: s.replace("import qs.services\n", "import qs.services\nimport qs.security.secret\n", 1)),
+            ("the UI importing qs.security", "shell/shell.qml", lambda s: s.replace("import qs.services\n", "import qs.services\nimport qs.security\n", 1)),
+            ("the UI importing the polkit module by path", "shell/saver/Saver.qml", lambda s: s.replace("import \"SaverModel.js\" as SaverModel\n", "import \"SaverModel.js\" as SaverModel\nimport \"../security/polkit\"\n", 1)),
+            ("a second polkit agent in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    AuthAgent {\n    }\n    Saver {\n", 1)),
+            ("a prompter client in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    SecretAgent {\n    }\n    Saver {\n", 1)),
+            ("a queue in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    SheetQueue {\n    }\n    Saver {\n", 1)),
+            ("the UI writing SheetSession", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Binding {\n        target: SheetSession\n        property: \"locked\"\n        value: false\n    }\n    Saver {\n", 1)),
+            ("a raw PolkitAgent in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    PolkitAgent {\n    }\n    Saver {\n", 1)),
+            ("a second AuthAgent in the sheets", SHEET_HOST, lambda s: s.replace("    // The session's one polkit authentication agent", "    AuthAgent {\n    }\n    // The session's one polkit authentication agent", 1)),
+            ("no SecretAgent in the sheets", SHEET_HOST, lambda s: s.replace("    SecretAgent {\n        id: secretAgent\n", "    Item {\n        id: secretAgent\n", 1)),
+            ("a second queue in the sheets", SHEET_HOST, lambda s: s.replace("    // The session's one polkit authentication agent", "    SheetQueue {\n    }\n    // The session's one polkit authentication agent", 1)),
+            ("a window in the sheets", SHEET_HOST, lambda s: s.replace("    // The session's one polkit authentication agent", "    FloatingWindow {\n    }\n    // The session's one polkit authentication agent", 1)),
+            ("Settings in the sheets", SHEET_HOST, lambda s: s.replace("readonly property bool authorizing: authAgent.requestActive", "readonly property bool authorizing: Settings.reduceMotion || authAgent.requestActive", 1)),
+            ("the sheets declared in the host (a load failure would take the lock down)", HOST, lambda s: s.replace("    Idle {\n        id: idle\n    }\n", "    Idle {\n        id: idle\n    }\n    SheetHost {\n    }\n", 1)),
+            ("the sheets declared in the host instead of made", HOST, lambda s: s.replace('Qt.createComponent(Qt.resolvedUrl("SheetHost.qml"))', 'Qt.createComponent(Qt.resolvedUrl("Other.qml"))', 1).replace("    Idle {\n        id: idle\n    }\n", "    Idle {\n        id: idle\n    }\n    SheetHost {\n    }\n", 1)),
+            ("the sheets made twice", HOST, lambda s: s.replace("            root.sheets = o;\n", "            root.sheets = o;\n            c.createObject(root);\n", 1)),
+            ("the sheets made by another file", "shell/security/idle/Idle.qml", lambda s: s.replace("    IdleMonitor {\n        id: saverMonitor\n", "    property var extra: Qt.createComponent(Qt.resolvedUrl(\"../host/SheetHost.qml\"))\n    IdleMonitor {\n        id: saverMonitor\n", 1)),
+            ("the sheets' state published from a constant", HOST, lambda s: s.replace("        value: root.sheets !== null && root.sheets.authorizing === true\n", "        value: false\n", 1)),
+            ("a second PolkitAgent in AuthAgent.qml", "shell/security/polkit/AuthAgent.qml", lambda s: s.replace("    AuthDialogModel {\n        id: dialogModel\n", "    PolkitAgent {\n    }\n    AuthDialogModel {\n        id: dialogModel\n", 1)),
+            ("a PolkitAgent in the secret agent", "shell/security/secret/SecretAgent.qml", lambda s: s.replace("    SecretSheetModel {\n        id: sheetModel\n", "    PolkitAgent {\n    }\n    SecretSheetModel {\n        id: sheetModel\n", 1).replace("import Quickshell.Io\n", "import Quickshell.Io\nimport Quickshell.Services.Polkit\n", 1)),
+            ("the polkit agent reading the UI's SessionState (MINOR-4)", "shell/security/polkit/AuthAgent.qml", lambda s: s.replace("answerable: !SheetSession.locked", "answerable: !SessionState.locked", 1)),
+            ("the secret agent reading LockClient (MINOR-4)", "shell/security/secret/SecretAgent.qml", lambda s: s.replace("readonly property bool shown: sheetModel.active && !SheetSession.locked", "readonly property bool shown: sheetModel.active && !LockClient.locked", 1)),
+            ("the polkit agent importing qs.services", "shell/security/polkit/AuthAgent.qml", lambda s: s.replace("import qs.security\n", "import qs.security\nimport qs.services\n", 1)),
+            ("ThemeIcons in the secret agent", "shell/security/secret/SecretAgent.qml", lambda s: s.replace("appIconSource: root.iconSource(sheetModel.appIcon)", "appIconSource: ThemeIcons.source(sheetModel.appIcon)", 1)),
+            ("Popups in the polkit agent", "shell/security/polkit/AuthAgent.qml", lambda s: s.replace("        onIsRegisteredChanged: {\n", "        onAuthenticationRequestStarted: Popups.close()\n        onIsRegisteredChanged: {\n", 1)),
+            ("Settings in the queue", "shell/security/SheetQueue.qml", lambda s: s.replace("    property bool polkitPresent: false\n", "    property bool polkitPresent: Settings.reduceMotion\n", 1)),
+            ("SheetSession bound to a constant in the host", HOST, lambda s: s.replace("        property: \"locked\"\n        value: Lock.locked\n", "        property: \"locked\"\n        value: false\n", 1)),
+            ("SheetSession's displays bound to the lock in the host", HOST, lambda s: s.replace("        property: \"displaysOff\"\n        value: idle.displayOff\n", "        property: \"displaysOff\"\n        value: Lock.displaysOff\n", 1)),
+            ("SheetSession's saver unbound in the host", HOST, lambda s: s.replace("    Binding {\n        target: SheetSession\n        property: \"saverShown\"\n        value: idle.saverShown\n    }\n", "", 1)),
+            ("SheetSession bound in idle", "shell/security/idle/Idle.qml", lambda s: s.replace("    IdleMonitor {\n        id: saverMonitor\n", "    Binding {\n        target: SheetSession\n        property: \"saverShown\"\n        value: false\n    }\n    IdleMonitor {\n        id: saverMonitor\n", 1)),
+            ("SheetSession assigned by the secret agent", "shell/security/secret/SecretAgent.qml", lambda s: s.replace("        root.serial++;\n", "        root.serial++;\n        SheetSession.locked = false;\n", 1)),
             ("the UI instantiating Idle", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Idle {\n    }\n    Saver {\n", 1)),
             ("the UI importing the idle module by path", "shell/saver/Saver.qml", lambda s: s.replace("import \"SaverModel.js\" as SaverModel\n", "import \"SaverModel.js\" as SaverModel\nimport \"../security/idle\"\n", 1)),
             ("a second Idle in the host", HOST, lambda s: s.replace("    Idle {\n        id: idle\n    }\n", "    Idle {\n        id: idle\n    }\n    Idle {\n    }\n", 1)),
