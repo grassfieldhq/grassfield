@@ -1536,8 +1536,9 @@ same directory and the modules move without moving a file), one step at a time u
   sheets fed by `grassfield-prompter` (`SecretAgent`: gcr's prompts, NetworkManager's secrets, KIO's passwords, Bluetooth
   pairing; ADR-0035 decision 9-7: one queue with the polkit sheet, so in its process) and their one queue run in the security
   process (`shell/security/host/SheetHost.qml`, created at run time by `SecurityHost.qml` so that a sheet that cannot load
-  never keeps the lock from loading: then no agent registers, polkitd answers every authorization "not authorized", the
-  bridge answers every secret request "cancelled"), drawn with `Grassfield.Ui` and `qs.security` only (no `qs.services`
+  never keeps the lock from loading: then no agent registers, polkitd answers every authorization "not authorized", and
+  the bridge, with no client, releases its names so password prompts fall back to the stock prompters, SC6 of
+  system-dialogs.md), drawn with `Grassfield.Ui` and `qs.security` only (no `qs.services`
   type). The sheets read the session in process: `shell/security/SheetSession.qml`, written only by the host's Bindings
   from `Lock.locked`, `Idle.displayOff` and `Idle.saverShown` (the saver's idle time counted here by the saver's rule).
   `grassfield-prompter.service` accepts a peer of `grassfield-security.service` only (`--peer-unit`). The UI imports no

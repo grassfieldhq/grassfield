@@ -38,7 +38,7 @@ check bash -c '[[ "$(sha256sum "$1" | cut -d" " -f1)" == "$2" ]] || { echo "shel
 # What the root instantiates (S2: the security process's whole content, its one Idle and the lock singleton's first use;
 # S3: the sheets' session and the run-time creation of SheetHost.qml), pinned the same way (the opus review of 77a0ceb3,
 # NIT: the root's pin alone left the host free to change).
-host_pinned=51bc839bacdc3c991f7544aa12e0f8e0e57ed12c43b19344af4bc18213c88d91
+host_pinned=bf1175f06f5a086567fc11042adeb884da806f1dd3889e21a51798bb4aa76f9b
 desc="host: the reviewed shell/security/host/SecurityHost.qml is pinned by its SHA-256 too (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum shell/security/host/SecurityHost.qml | cut -d" " -f1)" == "$1" ]] || { echo "shell/security/host/SecurityHost.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$host_pinned"
 desc="root: the readable second check (tests/security/root_check.py): ASCII only, no backslash, no regex literal, template string or bracket outside strings; every identifier one the root uses today; imports QtQuick, Quickshell, Quickshell.Io and qs.security.host only, wherever they stand; ShellRoot, SecurityHost and IpcHandler the only types; one SecurityHost; one IpcHandler, target security, the functions state and heartbeat only"

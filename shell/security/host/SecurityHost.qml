@@ -101,7 +101,8 @@ Scope {
     // of Component.onCompleted, never a declared child (as the lock's LockStills): a sheet module that cannot be loaded or
     // created (a Quickshell without its polkit service, no window backend) leaves the lock, idle and the sleep inhibitor
     // running. Then no polkit agent is registered, so polkitd answers every authorization "not authorized", and
-    // grassfield-prompter has no client, so it answers every secret request "cancelled": a failure denies, never approves.
+    // grassfield-prompter has no client: it releases its names and the password prompts fall back to the stock prompters, as
+    // with no shell before (docs/specs/system-dialogs.md SC6). A failure denies an authorization, never approves one.
     property var sheets: null
     function prepareSheets(): void {
         try {
@@ -115,23 +116,23 @@ Scope {
             }
             root.finishSheets(c);
         } catch (e) {
-            console.warn("grassfield-security: the polkit agent and the secret sheets failed (" + e + "); authorizations and password requests are refused, the lock is unaffected");
+            console.warn("grassfield-security: the polkit agent and the secret sheets failed (" + e + "); no polkit agent (authorizations are refused) and no secret sheet (password prompts fall back to the stock prompters); the lock is unaffected");
         }
     }
     function finishSheets(c: var): void {
         try {
             if (c.status !== Component.Ready) {
-                console.warn("grassfield-security: the polkit agent and the secret sheets cannot be loaded (" + c.errorString() + "); authorizations and password requests are refused, the lock is unaffected");
+                console.warn("grassfield-security: the polkit agent and the secret sheets cannot be loaded (" + c.errorString() + "); no polkit agent (authorizations are refused) and no secret sheet (password prompts fall back to the stock prompters); the lock is unaffected");
                 return;
             }
             const o = c.createObject(root);
             if (o === null) {
-                console.warn("grassfield-security: the polkit agent and the secret sheets cannot be created; authorizations and password requests are refused, the lock is unaffected");
+                console.warn("grassfield-security: the polkit agent and the secret sheets cannot be created; no polkit agent (authorizations are refused) and no secret sheet (password prompts fall back to the stock prompters); the lock is unaffected");
                 return;
             }
             root.sheets = o;
         } catch (e) {
-            console.warn("grassfield-security: the polkit agent and the secret sheets failed (" + e + "); authorizations and password requests are refused, the lock is unaffected");
+            console.warn("grassfield-security: the polkit agent and the secret sheets failed (" + e + "); no polkit agent (authorizations are refused) and no secret sheet (password prompts fall back to the stock prompters); the lock is unaffected");
         }
     }
 
