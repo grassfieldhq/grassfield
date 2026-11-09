@@ -39,6 +39,10 @@ printf 'pragma Singleton\nimport QtQuick\nimport Quickshell\nSingleton {\n    re
 unit=packaging/systemd/grassfield-shell.service
 mapfile -t unit_unset < <(sed -n 's/^UnsetEnvironment=//p' "$unit" | tr ' ' '\n' | sed '/^$/d')
 mapfile -t unit_set < <(sed -n 's/^Environment=//p' "$unit" | tr ' ' '\n' | sed '/^$/d')
+# The unit's gtk3 platform theme (Environment=QT_QPA_PLATFORMTHEME=gtk3, #25) needs a display: offscreen with no display,
+# GTK fails ("cannot open display") and qs exits 1 before the probe runs. The probe and argument runs below take the
+# unit's environment without it (it changes no QML import or qs option); the GTK module runs keep it, it is what they test.
+mapfile -t unit_set_offscreen < <(printf '%s\n' "${unit_set[@]}" | grep -v '^QT_QPA_PLATFORMTHEME=')
 dev_roots="$root/ui:$root/.dev/build/qml"
 
 fail=0
@@ -65,7 +69,7 @@ run() { # <label> <expect hostile|real> <unit|raw> env...: one probe run; the ho
         kept+=("$kv")
       fi
     done
-    calling=("${kept[@]}" "${unit_set[@]}" QML_IMPORT_PATH="${surviving:+$surviving:}$dev_roots")
+    calling=("${kept[@]}" "${unit_set_offscreen[@]}" QML_IMPORT_PATH="${surviving:+$surviving:}$dev_roots")
     for u in "${unit_unset[@]}"; do envs+=(-u "$u"); done
   fi
   out=$("${envs[@]}" HOME="$tmp/home" GRASSFIELD_DEV=1 GRASSFIELD_STATE_HOME="$tmp/state" GRASSFIELD_CONFIG_HOME="$tmp/config" \
@@ -105,7 +109,7 @@ argrun() { # <unit|raw> VAR=value...: the packaged arguments (-n -p <tree>); pri
   if [[ $mode == unit ]]; then
     mapfile -t vars < <(without_unit_unset "$@")
     for u in "${unit_unset[@]}"; do envs+=(-u "$u"); done
-    vars+=("${unit_set[@]}")
+    vars+=("${unit_set_offscreen[@]}")
   fi
   out=$("${envs[@]}" HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/runtime" XDG_CACHE_HOME="$tmp/cache" QT_QPA_PLATFORM=offscreen "${vars[@]}" \
     timeout 30 qs -n -p "$tmp/argcfg" --no-color 2>&1) || rc=$?
