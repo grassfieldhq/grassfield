@@ -32,6 +32,11 @@ check bash -c '[[ -f "$1" && -f shell/shell.qml ]]' _ "$qml"
 pinned=452918e2a1db7b4b9d5ae1c8db8715df2e7e6e63fef5980f9526ec98947f482c
 desc="root: the reviewed file is pinned by its SHA-256 (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum "$1" | cut -d" " -f1)" == "$2" ]] || { echo "shell/security.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$qml" "$pinned"
+# What the root instantiates (S2: the security process's whole content, its one Idle and the lock singleton's first use),
+# pinned the same way (the opus review of 77a0ceb3, NIT: the root's pin alone left the host free to change).
+host_pinned=ec8c4f0edb55bbf3baed7571da8902263d8652d22c7d2607c613abadb5174375
+desc="host: the reviewed shell/security/host/SecurityHost.qml is pinned by its SHA-256 too (any change: security review required, then update the pinned hash)"
+check bash -c '[[ "$(sha256sum shell/security/host/SecurityHost.qml | cut -d" " -f1)" == "$1" ]] || { echo "shell/security/host/SecurityHost.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$host_pinned"
 desc="root: the readable second check (tests/security/root_check.py): ASCII only, no backslash, no regex literal, template string or bracket outside strings; every identifier one the root uses today; imports QtQuick, Quickshell, Quickshell.Io and qs.security.host only, wherever they stand; ShellRoot, SecurityHost and IpcHandler the only types; one SecurityHost; one IpcHandler, target security, the functions state and heartbeat only"
 check python3 -I tests/security/root_check.py "$qml"
 desc="root check selftest: the root passes (with LF and with CRLF) and each of the 38 planted mutants (next-line braces, comments before braces, indented imports, a singleton's property, names as strings or through Reflect, a U+2028 ending a comment, Unicode escapes, a second IpcHandler, an animation, Quickshell.reload, a third function, a renamed target, a second SecurityHost, the lock, idle, polkit or qs.security module imported into the root, ...) is refused"
@@ -42,9 +47,9 @@ desc="root: one IpcHandler, target security, functions state and heartbeat, and 
 check bash -c '[[ $(grep -c "IpcHandler {" "$1") == 1 ]] && grep -qE "^\s*target: \"security\"" "$1" && grep -qE "^\s*function state\(\): string" "$1" && grep -qE "^\s*function heartbeat\(\): string" "$1" && [[ $(grep -cE "^\s*function " "$1") == 2 ]]' _ "$qml"
 desc="host: logs the ready line the start-time measurement reads (shell/security/host/SecurityHost.qml, instantiated by the root)"
 check bash -c 'grep -q "grassfield-security: ready" shell/security/host/SecurityHost.qml && grep -qE "^\s*SecurityHost \{" "$1"' _ "$qml"
-desc="S2 scan (tests/security/security_process_scan.py): the UI tree imports neither the lock nor idle and names no Lock, Idle or SleepInhibitor (no Lock.lock caller left in the UI); one Idle in the host; the lock and idle use no UI module and only the qs.services types Settings, VisualFixtures, FixedTime and WallClock; one definition of the state file"
+desc="S2 scan (tests/security/security_process_scan.py): the UI tree imports neither the lock nor idle and names no Lock, Idle or SleepInhibitor (no Lock.lock caller left in the UI); one Idle in the host; the lock and idle use no UI module and only the qs.services types Settings, VisualFixtures, FixedTime and WallClock; one definition of the state file; the UI never writes it (no FileView write, write option, adapter or process with its path in LockClient.qml, its path named nowhere else in the UI)"
 check python3 -I tests/security/security_process_scan.py "$root"
-desc="S2 scan selftest: the tree is clean and each of the 15 planted mutants (a UI caller of Lock.lock, a Connections on Lock, the lock or idle imported into the UI, a second Idle or a window in the host, Popups, ThemeIcons, WallpaperState, Battery, the notification server or the desktop in the security modules, ...) is found"
+desc="S2 scan selftest: the tree is clean and each of the 21 planted mutants (a UI caller of Lock.lock, a Connections on Lock, the lock or idle imported into the UI, a second Idle or a window in the host, Popups, ThemeIcons, WallpaperState, Battery, the notification server or the desktop in the security modules, a write of the state file from the UI, ...) is found"
 check python3 -I tests/security/security_process_scan.py --selftest "$root"
 if [[ -x /usr/lib/qt6/bin/qmllint ]]; then
   desc="root: qmllint parses it (unknown-module warnings aside)"

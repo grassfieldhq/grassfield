@@ -13,7 +13,10 @@ Static (data layer), read on the code with comments and string contents removed:
      WallpaperState, Battery's power profile, Notifications, MenuBridge, ...) and must not run a second time in the
      security process;
   4. shell/lib/LockState.js is the one definition of the state file: the publisher and LockClient import it by a relative
-     path, and nothing else writes a file named grassfield-lock-state-*.
+     path, and nothing else writes a file named grassfield-lock-state-*;
+  5. the UI never writes the state file (the opus review of 77a0ceb3, MINOR-5): shell/services/LockClient.qml, the one UI file
+     that knows its path, has no write of a FileView (setText, setData, atomicWrites, blockWrites, an adapter), starts no
+     process with its path, and no other UI file names LockClient.path or LockState.filePath.
 
   python3 -I tests/security/security_process_scan.py <repo>             "ok" or one line per finding, exit 1
   python3 -I tests/security/security_process_scan.py --selftest <repo>   each planted mutant is found, the tree is clean
@@ -26,6 +29,16 @@ SERVICES_ALLOWED = {"Settings", "VisualFixtures", "FixedTime", "WallClock"}
 HOST_TYPES = {"Scope", "Binding", "Idle"}
 SECURITY_MODULES = ("shell/security/lock/", "shell/security/idle/")
 HOST = "shell/security/host/SecurityHost.qml"
+CLIENT = "shell/services/LockClient.qml"
+# What would write a file from LockClient.qml: a FileView write, its write options or an adapter, or a process given the path.
+CLIENT_WRITES = (
+    ("writes a FileView (setText)", r"\.\s*setText\s*\("),
+    ("writes a FileView (setData)", r"\.\s*setData\s*\("),
+    ("sets a FileView write option (atomicWrites)", r"\batomicWrites\s*:"),
+    ("sets a FileView write option (blockWrites)", r"\bblockWrites\s*:"),
+    ("gives a FileView an adapter (writeAdapter, JsonAdapter)", r"\bwriteAdapter\b|\bJsonAdapter\b|\badapter\s*:"),
+    ("passes the state file's path to a process", r"command\s*:[^\n]*\b(root\.)?path\b|\[[^\]\n]*\b(root\.|file\.)path\b[^\]\n]*\]"),
+)
 
 
 _CACHE = {}
@@ -120,6 +133,12 @@ def file_findings(path, src, singletons):
             out.append(f"{path}: uses the qs.services type {name}, which must not run in the security process (allowed: {', '.join(sorted(SERVICES_ALLOWED))})")
     if "grassfield-lock-state-" in strip(src, keep_strings=True) and path != "shell/lib/LockState.js":
         out.append(f"{path}: spells the state file's name (shell/lib/LockState.js is its one definition)")
+    if path == CLIENT:
+        for what, pattern in CLIENT_WRITES:
+            if re.search(pattern, code):
+                out.append(f"{path}: {what} (the UI never writes the state file; only the security process does)")
+    elif ui and (re.search(r"\bLockClient\s*\.\s*path\b", code) or re.search(r"\bLockState\s*\.\s*filePath\b", code)):
+        out.append(f"{path}: names the state file's path (LockClient.qml reads it, the UI writes it nowhere)")
     return out
 
 
@@ -166,6 +185,12 @@ def main(argv):
             ("the desktop in the lock view", "shell/security/lock/LockView.qml", lambda s: s.replace("import qs.security\n", "import qs.security\nimport qs.desktop\n", 1)),
             ("the state file's name spelled in the UI", "shell/services/LockClient.qml", lambda s: s.replace("readonly property string path:", "readonly property string other: \"grassfield-lock-state-x\"\n    readonly property string path:", 1)),
             ("the client not importing LockState.js", "shell/services/LockClient.qml", lambda s: s.replace('"../lib/LockState.js" as LockState', '"LockState.js" as LockState', 1)),
+            ("the client writing the state file (setText)", CLIENT, lambda s: s.replace("        file.reload();\n", "        file.setText(\"{}\");\n        file.reload();\n", 1)),
+            ("the client's FileView with atomicWrites", CLIENT, lambda s: s.replace("        watchChanges: true\n", "        watchChanges: true\n        atomicWrites: true\n", 1)),
+            ("the client's FileView with blockWrites", CLIENT, lambda s: s.replace("        watchChanges: true\n", "        watchChanges: true\n        blockWrites: true\n", 1)),
+            ("the client's FileView with an adapter", CLIENT, lambda s: s.replace("        watchChanges: true\n", "        watchChanges: true\n        adapter: JsonAdapter {}\n", 1)),
+            ("the client removing the state file", CLIENT, lambda s: s.replace("    // ---- asking for a lock ----\n", "    Process {\n        command: [\"rm\", \"-f\", root.path]\n    }\n\n    // ---- asking for a lock ----\n", 1)),
+            ("another UI file with the state file's path", "shell/saver/Saver.qml", lambda s: s.replace("import \"SaverModel.js\" as SaverModel\n", "import \"SaverModel.js\" as SaverModel\n", 1).replace("    Connections {\n        target: SessionState\n", "    FileView {\n        path: LockClient.path\n    }\n    Connections {\n        target: SessionState\n", 1)),
         ]
         for what, path, change in mutants:
             before = files[path]
