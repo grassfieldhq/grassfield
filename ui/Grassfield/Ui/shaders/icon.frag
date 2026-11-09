@@ -60,12 +60,12 @@ layout(std140, binding = 0) uniform buf {
     float tintedRampHighDark;
     float tintedRampLowLight;
     float tintedRampHighLight;
-    float tileToneSide;       // tile icon tone, see TILE TONE below: +1 lift the pixels above tileTonePivot, -1 darken those below it, 0 none
+    float tileToneSide;       // tile icon tone, see TILE TONE below: -1 darken the pixels below tileTonePivot, 0 none
     float tileTonePivot;      // linear value the tone leaves alone
-    float darkRimWidth;       // Dark tile, dark appearance: width in device pixels of the light rim on the tile's edge (DARK RIM below)
+    float darkRimWidth;       // tile, dark appearance: width in device pixels of the light rim on the tile's edge (DARK RIM below)
     float darkRimStrength;
     float darkRimLuma;
-    float tileToneExp;        // exponent of the tone (an ease-out lift above the pivot, a power darkening below it; both > 1)
+    float tileToneExp;        // exponent of the darkening below the pivot (> 1)
     vec4 folderTint;          // folder colour step (FolderIcon): a = 1 when the artwork is recoloured, 0 otherwise
     float folderBrightness;   // MultiEffect arithmetic of the folder colour (FolderEffect, tokens folderIcon*)
     float folderContrast;
@@ -116,17 +116,12 @@ void main() {
     vec3 c = px.rgb / max(a, 0.0001);
     bool isTile = tile > 0.5;
     vec3 lin = isTile ? srgbToLinear(c) : toLinear(c);
-    // TILE TONE (R7-REQ-13, A2 rule E). A tile keeps the luminance of its pixels, so over a material of a similar luminance its edge is no better
-    // than Default's, and scaling a full-bleed tile onto the plate moves the measured edge onto other art. The tone pushes the pixels AWAY from the
-    // material, on one side of a pivot only, so that no pixel ever moves towards it: IconEffect chooses the side (IconModes.tileToneSide, the pure rule
-    // that tst_iconmodes checks): +1 in the dark appearance, the pixels above the brightest dark material (pivot 0.38 in linear light) are lifted,
-    // v' = P + (1 - P) (1 - (1 - u)^e), u = (v - P) / (1 - P), with e > 1 (an ease-out: continuous, finite slope); -1 over the light material, the pixels below its darkest (0.62) are darkened,
-    // v' = P (v / P)^e with e > 1. Continuous and increasing at the pivot, the same for every mode, per channel (the hue is kept).
-    if (isTile && tileToneSide > 0.5 && modeIndex > 1.5) {   // the lift: Clear and Tinted only (Dark's rule I and S floors are strict, the model costs 16 cells there)
-        vec3 u = clamp((lin - vec3(tileTonePivot)) / (1.0 - tileTonePivot), vec3(0.0), vec3(1.0));
-        vec3 up = vec3(tileTonePivot) + (1.0 - tileTonePivot) * (vec3(1.0) - pow(vec3(1.0) - u, vec3(tileToneExp)));
-        lin = mix(lin, up, step(vec3(tileTonePivot), lin));
-    } else if (isTile && tileToneSide < -0.5) {
+    // TILE TONE (R7-REQ-13, A2 rule E). A tile keeps the luminance of its pixels, so over a light material its edge is no better than Default's, and scaling a
+    // full-bleed tile onto the plate moves the measured edge onto other art. In the light appearance, while the material is solid (IconModes.tileToneSide, the
+    // pure rule that tst_iconmodes checks: -1, else 0), the pixels below the darkest material (pivot 0.62 in linear light) are darkened,
+    // v' = P (v / P)^e with e > 1: continuous and increasing, the same for every mode, per channel (the hue is kept), and no pixel ever moves towards the material.
+    // (The dark appearance has the DARK RIM below: a lift of the bright tones was tried and cost rule I and S cells, measured on the GPU.)
+    if (isTile && tileToneSide < -0.5) {
         vec3 down = vec3(tileTonePivot) * pow(min(lin / tileTonePivot, vec3(1.0)), vec3(tileToneExp));
         lin = mix(down, lin, step(vec3(tileTonePivot), lin));
     }
@@ -190,10 +185,10 @@ void main() {
     float sdf = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - rad;
     float aa = max(fwidth(sdf), 0.0005);
     float mask = 1.0 - smoothstep(-aa, aa, sdf);
-    // DARK RIM (R7-REQ-13, A2 rule E): a Dark tile icon in the dark appearance carries a thin light rim on its edge (macOS dark-mode tiles have a specular
+    // DARK RIM (R7-REQ-13, A2 rule E): a tile icon in the dark appearance (Dark, Clear and Tinted) carries a thin light rim on its edge (macOS dark-mode tiles have a specular
     // edge), darkRimWidth device pixels wide: it separates the tile from a dark or mid-grey material without touching the tile's inner tones (rules I, S, N).
     // Within that distance inside the tile's edge (-sdf / aa, in device pixels) the tile's colour is replaced by darkRimStrength of darkRimLuma.
-    if (isTile && modeIndex < 1.5 && dark > 0.5) {
+    if (isTile && dark > 0.5) {
         float dpx = -sdf / aa;
         float rim = clamp(darkRimWidth - dpx + 0.5, 0.0, 1.0) * step(-0.5, dpx) * darkRimStrength;
         artP.rgb = mix(art, vec3(darkRimLuma), rim) * artA;

@@ -3084,24 +3084,20 @@ QtObject {
     // ADR-0014 Tinted, light appearance: the plate is the tint colour mixed this far to white (a light tinted plate)
     readonly property real iconModeTintedPlateMixLight: 0.88
     // ADR-0014 Tinted, dark appearance: the artwork's darkest tone is the tint at this fraction of its brightness (was 0.55; raised with tintedRampHighDark so that a glyph whose lightest tone is a mid one still stands 3:1 out of a dark material: R7-REQ-13, A2 rule E, docs/specs/ui.md)
-    readonly property real iconModeTintedRampLowDark: 0.7
+    readonly property real iconModeTintedRampLowDark: 0.62
     // ADR-0014 Tinted, dark appearance: the artwork's lightest tone is the tint mixed this far to white (was 0.8; R7-REQ-13: the glyphs of kdenlive, obs and the terminal stood 2.5-2.8:1 out of a dark material at 24 px, A2 rule E)
-    readonly property real iconModeTintedRampHighDark: 0.96
+    readonly property real iconModeTintedRampHighDark: 1.0
     // ADR-0014 Tinted, light appearance: the artwork's darkest tone is the tint at this fraction of its brightness (dark on the light plate)
     readonly property real iconModeTintedRampLowLight: 0.12
     // ADR-0014 Tinted, light appearance: the artwork's lightest tone is the tint mixed this far to white (a wide ramp keeps the internal contrast of the icon)
     readonly property real iconModeTintedRampHighLight: 0.2
-    // ADR-0014 own-tile rule, tile tone, dark appearance (R7-REQ-13, A2 rule E): relative luminance (linear light) above which the pixels of a tile icon are lifted, and below which nothing moves: the luminance of the brightest material of the dark appearance (the material tint at material.tintAlphaMin over a white wallpaper, transparency 1.0: 0.38), so a lifted pixel never moves towards the material
-    readonly property real iconModeTileLiftPivot: 0.38
-    // ADR-0014 own-tile rule, tile tone, dark appearance: exponent q of the lift v' = P + (1 - P) (1 - (1 - u)^q), u = (v - P) / (1 - P), above tileLiftPivot (q > 1, an ease-out: continuous, slope q at the pivot, 1 at the top; 2.5 takes basecamp's edge in Clear and Tinted from 1.5:1 to 1.86-1.95:1 over a mid-grey material, floor 1.73, modelled on the shader and the A2 fixture, docs/specs/ui.md)
-    readonly property real iconModeTileLiftExponent: 2.5
     // ADR-0014 own-tile rule, tile tone, light appearance (R7-REQ-13, A2 rule E): relative luminance (linear light) below which the pixels of a tile icon are darkened, and above which nothing moves: about the darkest solid material of the light appearance (the material tint over a black wallpaper: 0.63 at the default transparency, 0.57 at the end of the clamp, material.tintClampUntil)
     readonly property real iconModeTileDarkenPivot: 0.62
     // ADR-0014 own-tile rule, tile tone, light appearance: exponent e of the darkening v' = P (v / P)^e below tileDarkenPivot (e > 1; 1.75 takes basecamp's edge from 2.0-2.9:1 to 2.9-4.1:1 over the light material, floor 2.17-2.9, modelled on the shader and the A2 fixture, docs/specs/ui.md)
     readonly property real iconModeTileDarkenExponent: 1.75
-    // ADR-0014 Dark, own-tile rule (R7-REQ-13, A2 rule E): width in device pixels of the thin light rim a Dark tile icon carries on its edge in the dark appearance (macOS dark-mode icon tiles have a specular edge); the inner tones are not touched, so rules I, S and N do not move
-    readonly property real iconModeDarkRimWidth: 1.0
-    // ADR-0014 Dark, own-tile rule: how far the rim replaces the tile's own colour at its edge (0..1); 0.9 takes basecamp Dark at 24 px from 1.57:1 to 2.02:1 over a mid-grey material, floor 1.73, modelled (docs/specs/ui.md)
+    // ADR-0014 own-tile rule, dark appearance (R7-REQ-13, A2 rule E): width in device pixels of the thin light rim a tile icon carries on its edge in Dark, Clear and Tinted (macOS dark-mode and Clear icon tiles have a specular edge); the inner tones are not touched, so rules I, S and N do not move. 1.5 because 1 px is too thin at 32 px (modelled 1.73:1 on basecamp Tinted yellow, floor 1.73; 2.0 at 1.5 px)
+    readonly property real iconModeDarkRimWidth: 1.5
+    // ADR-0014 own-tile rule: how far the rim replaces the tile's own colour at its edge (0..1); with darkRimWidth takes basecamp from 1.5:1 to 2.0-2.1:1 over a mid-grey material at 24 and 32 px, floor 1.73, modelled (docs/specs/ui.md)
     readonly property real iconModeDarkRimStrength: 0.9
     // ADR-0014 Dark, own-tile rule: lightness (sRGB 0..1) of the rim, near white so that it stands out from the brightest material of the dark appearance (relative luminance 0.38) by about 2.3:1
     readonly property real iconModeDarkRimLuma: 0.95

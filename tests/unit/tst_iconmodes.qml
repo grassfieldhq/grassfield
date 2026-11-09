@@ -91,60 +91,46 @@ TestCase {
 
     function test_tileToneSide() {
         const t = Tokens;
-        compare(IconModes.tileToneSide(true, false, 0.25, t), 1, "dark appearance: lift");
-        compare(IconModes.tileToneSide(true, false, 1.0, t), 1, "dark appearance, wallpaper through: lift");
         compare(IconModes.tileToneSide(false, false, 0.25, t), -1, "light appearance, default material: darken");
         compare(IconModes.tileToneSide(false, false, t.materialTintClampUntil, t), -1, "up to the A2 clamp the material is solid");
         compare(IconModes.tileToneSide(false, false, t.materialTintClampUntil + 0.01, t), 0, "past the clamp the wallpaper shows through: no tone");
         compare(IconModes.tileToneSide(false, false, 1.0, t), 0);
+        compare(IconModes.tileToneSide(true, false, 0.25, t), 0, "dark appearance: no tone (the rim)");
+        compare(IconModes.tileToneSide(true, false, 1.0, t), 0);
         compare(IconModes.tileToneSide(true, true, 0.25, t), 0, "bare wallpaper (desktop icons): no tone");
         compare(IconModes.tileToneSide(false, true, 0.25, t), 0);
     }
 
-    function test_tileToneMapsAreOneSided() {
+    function test_tileToneMapIsOneSided() {
         const t = Tokens;
-        const lift = v => IconModes.tileTone(v, 1, t.iconModeTileLiftPivot, t.iconModeTileLiftExponent);
         const dark = v => IconModes.tileTone(v, -1, t.iconModeTileDarkenPivot, t.iconModeTileDarkenExponent);
-        verify(t.iconModeTileLiftExponent > 1, "the lift exponent lifts (an ease-out)");
         verify(t.iconModeTileDarkenExponent > 1, "the darken exponent darkens");
         compare(IconModes.tileTone(0.5, 0, 0.3, 2), 0.5, "no side: unchanged");
-        let lastL = -1, lastD = -1;
+        let last = -1;
         for (let i = 0; i <= 200; i++) {
             const v = i / 200;
-            verify(lift(v) >= v - 1e-12 && lift(v) <= 1 + 1e-12, "lift never darkens: " + v);
             verify(dark(v) <= v + 1e-12 && dark(v) >= 0, "darken never lifts: " + v);
-            if (v <= t.iconModeTileLiftPivot)
-                compare(lift(v), v, "the lift leaves what is below its pivot alone");
             if (v >= t.iconModeTileDarkenPivot)
                 compare(dark(v), v, "the darkening leaves what is above its pivot alone");
-            verify(lift(v) >= lastL && dark(v) >= lastD, "both maps are increasing: " + v);
-            lastL = lift(v);
-            lastD = dark(v);
+            verify(dark(v) >= last, "the map is increasing: " + v);
+            last = dark(v);
         }
-        compare(lift(1), 1);
         compare(dark(0), 0);
-        verify(Math.abs(lift(t.iconModeTileLiftPivot + 1e-6) - t.iconModeTileLiftPivot) < 1e-4 * t.iconModeTileLiftExponent, "the lift is continuous at its pivot, with a finite slope");
-        verify(Math.abs(dark(t.iconModeTileDarkenPivot - 1e-9) - t.iconModeTileDarkenPivot) < 1e-6, "the darkening is continuous at its pivot");
+        verify(Math.abs(dark(t.iconModeTileDarkenPivot - 1e-9) - t.iconModeTileDarkenPivot) < 1e-6, "continuous at its pivot");
     }
 
-    // The pivots are the luminance of the materials they are for, so a moved pixel never moves towards its material: over every material the dark
-    // appearance can have (its brightest is the tint at tintAlphaMin over a white wallpaper) a lifted pixel gains contrast, and over every solid light material
-    // (tint opacity at least the A2 clamp) a darkened pixel does.
-    function test_tileTonePivotsFollowTheMaterials() {
+    // The pivot is the luminance of the material it is for, so a darkened pixel never moves towards it: over every solid light material (tint opacity at least
+    // the A2 clamp) a darkened pixel gains contrast.
+    function test_tileTonePivotFollowsTheMaterial() {
         const t = Tokens;
-        const brightestDark = lum(materialRgb(true, 1, 1.0));
-        verify(Math.abs(brightestDark - t.iconModeTileLiftPivot) < 0.01, `the lift pivot ${t.iconModeTileLiftPivot} is the brightest dark material ${brightestDark.toFixed(3)}`);
-        const darkestLight = Math.min(lum(materialRgb(false, 0, t.materialTintClampUntil)), lum(materialRgb(false, 0, t.materialDefaultTransparency)));
-        verify(t.iconModeTileDarkenPivot >= darkestLight - 0.01 && t.iconModeTileDarkenPivot <= lum(materialRgb(false, 0, t.materialDefaultTransparency)) + 0.01,
-               `the darken pivot ${t.iconModeTileDarkenPivot} lies at the darkest solid light material ${darkestLight.toFixed(3)}`);
+        const atDefault = lum(materialRgb(false, 0, t.materialDefaultTransparency));
+        const atClamp = lum(materialRgb(false, 0, t.materialTintClampUntil));
+        verify(t.iconModeTileDarkenPivot >= atClamp - 0.01 && t.iconModeTileDarkenPivot <= atDefault + 0.01,
+               `the darken pivot ${t.iconModeTileDarkenPivot} lies between the darkest solid light materials ${atClamp.toFixed(3)} and ${atDefault.toFixed(3)}`);
         for (const wp of [0, 0.5, 1]) {
-            const dm = lum(materialRgb(true, wp, 1.0));
             const lm = lum(materialRgb(false, wp, t.materialTintClampUntil));
             for (let i = 0; i <= 100; i++) {
                 const v = i / 100;
-                const l = IconModes.tileTone(v, 1, t.iconModeTileLiftPivot, t.iconModeTileLiftExponent);
-                if (v > dm)
-                    verify(contrast(l, dm) >= contrast(v, dm) - 1e-9, `lift: ${v} over a dark material ${dm.toFixed(3)}`);
                 const d = IconModes.tileTone(v, -1, t.iconModeTileDarkenPivot, t.iconModeTileDarkenExponent);
                 if (v < lm - 0.05)
                     verify(contrast(d, lm) >= contrast(v, lm) - 1e-9, `darken: ${v} over a light material ${lm.toFixed(3)}`);
@@ -152,22 +138,18 @@ TestCase {
         }
     }
 
-    // Family 2 (hicolor:basecamp, a full-bleed tile of a pale sky and a green hill): the edge tones of the tile (sky 0.60, hill 0.23 in relative luminance, the
-    // two tones the edge band holds; the shader keeps a tile's luminance) against the three light materials of tests/unit/tst_iconshader.qml, 48 px, and the
-    // brightest dark material (24 px, transparency 1.0 over white). The expected values of docs/specs/ui.md: the better of the two tones, after the tone, reaches
-    // the Default's floor (0.9 of Default's 1.92 there, 2.9 where Default has 3).
+    // Family 2 (hicolor:basecamp, a full-bleed tile of a pale sky and a green hill), light appearance: the edge tones of the tile (sky 0.60, hill 0.23 in
+    // relative luminance; the shader keeps a tile's luminance) against the three light materials of tests/unit/tst_iconshader.qml, 48 px. The better of the
+    // two tones after the tone reaches the Default's floor (0.9 of Default's 2.41, 2.90 and 3.45, and 2.9 from 3:1).
     function test_basecampEdgeTonesAfterTheTileTone() {
         const t = Tokens;
-        const sky = 0.60, hill = 0.23;
-        const best = (side, pivot, exp, panel) => Math.max(contrast(IconModes.tileTone(sky, side, pivot, exp), panel), contrast(IconModes.tileTone(hill, side, pivot, exp), panel));
-        const lightFloors = {"0": 2.17, "0.5": 2.61, "1": 2.9};
+        const best = panel => Math.max(contrast(IconModes.tileTone(0.60, -1, t.iconModeTileDarkenPivot, t.iconModeTileDarkenExponent), panel),
+                                       contrast(IconModes.tileTone(0.23, -1, t.iconModeTileDarkenPivot, t.iconModeTileDarkenExponent), panel));
+        const floors = {"0": 2.17, "0.5": 2.61, "1": 2.9};
         for (const wp of [0, 0.5, 1]) {
-            const panel = lum(materialRgb(false, wp, t.materialDefaultTransparency));
-            const got = best(-1, t.iconModeTileDarkenPivot, t.iconModeTileDarkenExponent, panel);
-            verify(got >= lightFloors[String(wp)], `light window over ${wp}: ${got.toFixed(2)} against ${lightFloors[String(wp)]}`);
+            const got = best(lum(materialRgb(false, wp, t.materialDefaultTransparency)));
+            verify(got >= floors[String(wp)], `light window over ${wp}: ${got.toFixed(2)} against ${floors[String(wp)]}`);
         }
-        const panel = lum(materialRgb(true, 1, 1.0));
-        verify(best(1, t.iconModeTileLiftPivot, t.iconModeTileLiftExponent, panel) >= 1.73, "dark window at transparency 1.0 over white");
     }
 
     // The Dark rim: one device pixel of near-white on the edge of a Dark tile in the dark appearance. Pure math of the shader's DARK RIM.

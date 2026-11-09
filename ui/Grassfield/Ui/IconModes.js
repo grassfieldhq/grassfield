@@ -30,27 +30,19 @@ function effect(mode, tint) {
 }
 
 // Tone of a tile icon (own-tile rule, R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, TILE TONE). A tile keeps the luminance of its pixels, so
-// its edge stands off the material only as far as the icon's own tones do; a full-bleed tile of mid tones over a mid-grey material has none. The tone moves
-// the pixels of a tile away from the material, on one side of a pivot, so no pixel moves towards it:
-//   +1  the dark appearance: the pixels above `iconModeTileLiftPivot` (0.38, the brightest material of the dark appearance: the material tint at
-//       `material.tintAlphaMin` over a white wallpaper) are lifted by the ease-out `iconModeTileLiftExponent` (> 1: v' = P + (1 - P) (1 - (1 - u)^q), u = (v - P) / (1 - P));
-//   -1  the light appearance while the material is solid (transparency up to `material.tintClampUntil`, tint opacity at least `tintAlphaClamp`): the pixels
-//       below `iconModeTileDarkenPivot` (0.62, the darkest material of the light appearance: the material tint at the clamp over a black wallpaper)
-//       are darkened by `iconModeTileDarkenExponent` (> 1);
-//    0  over the bare wallpaper (desktop icons: any luminance), and in the light appearance once the wallpaper shows through (its luminance is then
-//       the wallpaper's, which may be below the pivot).
+// its edge stands off a light material only as far as its own tones do. In the light appearance, while the material is solid (transparency up to
+// `material.tintClampUntil`, tint opacity at least `tintAlphaClamp`), the pixels below `iconModeTileDarkenPivot` (0.62, about the darkest solid light material: the
+// material tint over a black wallpaper, 0.63 at the default transparency, 0.57 at the clamp) are darkened by the power `iconModeTileDarkenExponent`, so no
+// pixel moves towards the material. Side -1; 0 (nothing moves) in the dark appearance (it has the dark rim instead: a lift of the bright tones was tried and
+// measured on the GPU to cost rule I and S cells), over the bare wallpaper (desktop icons: any luminance) and once the wallpaper shows through the light material.
 function tileToneSide(dark, wallpaper, transparency, t) {
-    if (wallpaper)
+    if (wallpaper || dark)
         return 0;
-    if (dark)
-        return 1;
     return transparency <= t.materialTintClampUntil ? -1 : 0;
 }
 
-// The tone of one linear value `v` (0..1): `side` as above, `pivot` and `exponent` the tokens of that side.
+// The tone of one linear value `v` (0..1): `side` as above, `pivot` and `exponent` the tokens.
 function tileTone(v, side, pivot, exponent) {
-    if (side > 0)
-        return v <= pivot ? v : pivot + (1 - pivot) * (1 - Math.pow(1 - (v - pivot) / (1 - pivot), exponent));
     if (side < 0)
         return v >= pivot ? v : pivot * Math.pow(v / pivot, exponent);
     return v;
@@ -65,7 +57,7 @@ function warnOnce(message) {
     console.warn("grassfield-ui: " + message);
 }
 
-// Dark rim (R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, DARK RIM). A Dark tile icon in the dark appearance carries a thin light rim on its
+// Dark rim (R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, DARK RIM). A tile icon in the dark appearance (Dark, Clear and Tinted) carries a thin light rim on its
 // edge: within `width` device pixels inside the tile's edge (`distance` px, negative outside) the tile's colour is replaced by `strength` of the rim colour.
 // Returns the weight of the rim (0..strength) at that distance; the inner tones (rules I, S, N) are never touched.
 function darkRimWeight(distance, width, strength) {
