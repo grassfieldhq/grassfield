@@ -24,3 +24,5 @@ docs/audits/finder-parity-2026-10-26/tools/cache/
 /.claude/
 /branding/concepts/
 /docs/legal/visual-review.md
+# Local MCP client configuration: never committed
+/.mcp.json

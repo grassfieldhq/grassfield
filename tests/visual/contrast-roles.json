@@ -190,7 +190,13 @@
     {"file": "ui/Grassfield/Ui/RimmedCapsule.qml", "class": "alpha", "count": 1},
     {"file": "shell/search/SearchPanel.qml", "class": "secondary", "count": 1}
   ]},
-  {"id": "text and glyphs in the accent colour on an app window", "fg": "colors.accentInk", "backdrop": "window-pane", "kind": "text", "sites": []},
-  {"id": "text and glyphs in the accent colour on material", "fg": "colors.accentInk", "backdrop": "material", "kind": "text", "exempt": "accent-coloured text on glass over any wallpaper: no accent holds 4.5:1 at the worst wallpaper and transparency, the Grassfield green itself 2.36:1 (macOS draws such text on vibrancy too); every accent's ink keeps at least 2.2:1 there, no accent worse than the others (test_accent_ink_on_glass_is_no_worse_than_the_other_accents)", "sites": []}
+  {"id": "text and glyphs in the accent colour on an app window", "fg": "colors.accentInk", "backdrop": "window-pane", "kind": "text", "sites": [],
+   "readers": [{"file": "apps/files/qml/IconView.qml", "count": 1}, {"file": "apps/files/qml/PreviewPane.qml", "count": 1},
+               {"file": "apps/files/qml/Sidebar.qml", "count": 1}, {"file": "apps/settings/qml/FingerprintEnrollSheet.qml", "count": 1},
+               {"file": "apps/store/qml/CategoriesPage.qml", "count": 1}, {"file": "apps/store/qml/PermissionCards.qml", "count": 1},
+               {"file": "apps/store/qml/Sidebar.qml", "count": 1}, {"file": "apps/store/qml/StoreButton.qml", "count": 1}]},
+  {"id": "text and glyphs in the accent colour on material", "fg": "colors.accentGlass", "backdrop": "glass", "kind": "text", "sites": [],
+   "readers": [{"file": "shell/overlay/Dialog.qml", "count": 1}, {"file": "shell/overlay/controlcenter/ListRow.qml", "count": 1},
+               {"file": "shell/widgets/builtin/calendar/Calendar.qml", "count": 1}, {"file": "shell/widgets/builtin/clock/Clock.qml", "count": 1}]}
  ]
 }
