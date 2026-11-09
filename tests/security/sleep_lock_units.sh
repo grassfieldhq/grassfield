@@ -139,7 +139,7 @@ unit=packaging/systemd/grassfield-shell.service
 active=$(grep -v '^#' "$unit")
 grep -qx 'Restart=always' <<<"$active" && pass "shell: Restart=always (clean exits, SIGTERM and qs kill restart too)" || bad "shell: not Restart=always"
 grep -q '^Restart=on-failure' <<<"$active" && bad "shell: Restart=on-failure left" || pass "shell: no Restart=on-failure"
-grep -qx 'RestartSec=1' <<<"$active" && pass "shell: RestartSec=1 (gate R1: back within 3 s)" || bad "shell: RestartSec"
+grep -qx 'RestartSec=100ms' <<<"$active" && pass "shell: RestartSec=100ms (gate R1: the start is what is left of the 3 s)" || bad "shell: RestartSec"
 grep -qE '^StartLimitIntervalSec=[0-9]+$' <<<"$active" && grep -qE '^StartLimitBurst=[0-9]+$' <<<"$active" \
   && pass "shell: start limit set (a crash loop ends)" || bad "shell: no start limit"
 grep -qx 'Requisite=graphical-session.target' <<<"$active" && grep -qx 'PartOf=graphical-session.target' <<<"$active" \

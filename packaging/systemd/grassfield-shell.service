@@ -83,12 +83,12 @@ ExecStart=/usr/bin/qs -n -p /usr/share/grassfield/shell
 # ADR-0048 D-4: the CPU and I/O limits the shell set on apps the person could not see are lifted when it stops or crashes
 # (the restarted shell resets them again at start). "-": a failure here never marks the unit failed.
 ExecStopPost=-/usr/lib/grassfield/grassfield-energy reset
-# Gate R1 and GF-030: back within ~1 s after ANY exit while the session runs: a crash, SIGTERM, `qs kill`, exit 0. The
+# Gate R1 and GF-030: back after 100 ms after ANY exit (the start itself is what gate R1 measures; ADR-0056; a loop is still ended by the start limit above, 10 starts x (0.1 s + the 10 s of the slowest loop the model knows) = 101 s < 300 s, and by the failure counter at the third failure) while the session runs: a crash, SIGTERM, `qs kill`, exit 0. The
 # session lock is the security process's (ADR-0041 S2): a lock shown when this shell goes away stays drawn and keeps the
 # keyboard. A stop through systemd is never restarted: logout (graphical-session.target stops, PartOf=) or
 # `systemctl --user stop`; Requisite= refuses a start once the session target is gone.
 Restart=always
-RestartSec=1
+RestartSec=100ms
 TimeoutStopSec=5
 # GF-081: Quickshell exits 255 when the compositor goes away first, which is how EVERY session end looks, but ALSO on "Failed
 # to load configuration" and a missing path. So 255 stays a failure (SuccessExitStatus=255 would hide a broken shell from
