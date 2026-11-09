@@ -228,7 +228,7 @@ TestCase {
         verify(/LockPublisher \{\s*id: publisher\s*state: root\.publicState\s*displaysOff: root\.displaysOff\s*motion: root\.motion\s*\}/.test(lock));
         verify(/^\s*moving: root\.moving\n\s*motionHeld: root\.displaysOff \|\| !controller\.locked\n\s*motionStart: root\.motionOf\(surface\.screen \? surface\.screen\.name : ""\)\n\s*onMotionRestChanged: root\.restMotion\(surface\.screen \? surface\.screen\.name : "", view\.motionRest\)\n/m.test(lock), "each line to its end");
         compare((lock.match(/onMotionRestChanged/g) || []).length, 1);
-        const instance = block(lock, "            LockView {");
+        const instance = block(lock, "sourceComponent: LockView {");
         compare(handlers(instance), ["Component.onDestruction", "onEdited", "onFieldEmptyChanged", "onMotionRestChanged", "onSubmitted"]);
         compare(instance.match(/controller\.\w+\(/g), ["controller.submit(", "controller.clearMessage("], "the instance calls the controller twice: a password, a cleared message");
         verify(!/WallpaperState/.test(lock), "Lock.qml itself reads no wallpaper state");
@@ -252,5 +252,17 @@ TestCase {
         }
         // The backdrops only feed the view.
         compare((lock.match(/root\.backdropOf\(/g) || []).length, 1);
+    }
+
+    // The integrator's nested run of 122f8d67 (sleep-desync): Hyprland confirms the lock once every lock surface drew a frame.
+    // The surface's first frame is its opaque ground; LockView, its one view, is incubated after it by an asynchronous Loader,
+    // so the confirmation never waits for the view's creation or its effects.
+    function test_theConfirmationWaitsForTheGroundOnly() {
+        const lock = source("shell/security/lock/Lock.qml").replace(/\r/g, "");
+        verify(/WlSessionLockSurface \{\s*id: surface\s*color: Tokens\.colorDark\.shadow/.test(lock), "the surface has its own opaque colour");
+        verify(/\n\s*Loader \{\n\s*id: content\n\s*anchors\.fill: parent\n\s*asynchronous: true\n\s*sourceComponent: LockView \{\n\s*id: view\n/.test(lock), "LockView is loaded asynchronously");
+        compare((lock.match(/\bLockView \{/g) || []).length, 1, "one LockView, inside the Loader");
+        // The controller's shake and clear reach the view from inside it (no reference to an item that may not exist yet).
+        verify(/sourceComponent: LockView \{[^]*Connections \{\s*target: controller\s*function onFailed\(\): void \{\s*view\.shake\(\);/.test(lock));
     }
 }

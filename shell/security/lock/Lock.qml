@@ -735,49 +735,61 @@ Singleton {
                 }
             }
 
-            LockView {
-                id: view
+            // The surface's ground first, its content after (the integrator's nested run of 122f8d67, sleep-desync: a fresh
+            // lock taken under load was confirmed 5 s after the request, past the 4 s sleep delay of a dev session). Hyprland
+            // confirms the lock (`locked`, WlSessionLock.secure) once every lock surface has drawn a frame. Created in the
+            // surface at once, LockView's creation and its first frame (its effects, the artwork) came before that frame:
+            // offscreen, 653 ms cold and about 50 ms warm, against about 25 ms for the ground alone. The Loader incubates it
+            // after the surface's first frame, the opaque ground colour (`color` above), so the confirmation waits for that
+            // frame only. Nothing behind the lock shows meanwhile (the surface is opaque); a key typed before the content exists
+            // reaches no item and is dropped; LockView takes the keyboard focus when it completes (focusField()).
+            Loader {
+                id: content
                 anchors.fill: parent
-                userName: root.userName
-                avatarSource: root.avatarReady
-                offeredBackdrop: root.backdrops >= 0 ? root.backdropOf(surface.screen ? surface.screen.name : "") : null
-                moving: root.moving
-                motionHeld: root.displaysOff || !controller.locked
-                motionStart: root.motionOf(surface.screen ? surface.screen.name : "")
-                onMotionRestChanged: root.restMotion(surface.screen ? surface.screen.name : "", view.motionRest)
-                resumes: root.resumes
-                showUser: Settings.lockShowUser
-                lockMessage: Settings.lockShowMessage ? Settings.lockMessage : ""
-                authenticating: controller.authenticating
-                releasing: controller.releasing
-                startDim: root.fromDim ? Tokens.idleDimOpacity : 0
-                inputEnabled: controller.pamAvailable && !controller.releasing
-                message: controller.pamAvailable ? controller.message : qsTr("Authentication service unavailable. The session stays locked.")
-                // In dev, a visible hint that password checks are off (PAM suppressed), so a GRASSFIELD_DEV value that
-                // leaked into a real session is obvious; the lock still fails closed.
-                notice: {
-                    const recovery = root.recoveryDegraded ? qsTr("Crash recovery unavailable: the lock state could not be saved.") : "";
-                    const dev = controller.pamSuppressed ? qsTr("dev: password checks disabled") : "";
-                    return recovery !== "" && dev !== "" ? qsTr("%1 · %2").arg(dev).arg(recovery) : recovery + dev;
-                }
-                onSubmitted: password => controller.submit(password)
-                onEdited: controller.clearMessage()
-                onFieldEmptyChanged: root.filledFields = Math.max(0, root.filledFields + (fieldEmpty ? -1 : 1))
-                Component.onDestruction: {
-                    if (!fieldEmpty)
-                        root.filledFields = Math.max(0, root.filledFields - 1);
-                }
-            }
+                asynchronous: true
+                sourceComponent: LockView {
+                    id: view
+                    userName: root.userName
+                    avatarSource: root.avatarReady
+                    offeredBackdrop: root.backdrops >= 0 ? root.backdropOf(surface.screen ? surface.screen.name : "") : null
+                    moving: root.moving
+                    motionHeld: root.displaysOff || !controller.locked
+                    motionStart: root.motionOf(surface.screen ? surface.screen.name : "")
+                    onMotionRestChanged: root.restMotion(surface.screen ? surface.screen.name : "", view.motionRest)
+                    resumes: root.resumes
+                    showUser: Settings.lockShowUser
+                    lockMessage: Settings.lockShowMessage ? Settings.lockMessage : ""
+                    authenticating: controller.authenticating
+                    releasing: controller.releasing
+                    startDim: root.fromDim ? Tokens.idleDimOpacity : 0
+                    inputEnabled: controller.pamAvailable && !controller.releasing
+                    message: controller.pamAvailable ? controller.message : qsTr("Authentication service unavailable. The session stays locked.")
+                    // In dev, a visible hint that password checks are off (PAM suppressed), so a GRASSFIELD_DEV value that
+                    // leaked into a real session is obvious; the lock still fails closed.
+                    notice: {
+                        const recovery = root.recoveryDegraded ? qsTr("Crash recovery unavailable: the lock state could not be saved.") : "";
+                        const dev = controller.pamSuppressed ? qsTr("dev: password checks disabled") : "";
+                        return recovery !== "" && dev !== "" ? qsTr("%1 · %2").arg(dev).arg(recovery) : recovery + dev;
+                    }
+                    onSubmitted: password => controller.submit(password)
+                    onEdited: controller.clearMessage()
+                    onFieldEmptyChanged: root.filledFields = Math.max(0, root.filledFields + (fieldEmpty ? -1 : 1))
+                    Component.onDestruction: {
+                        if (!fieldEmpty)
+                            root.filledFields = Math.max(0, root.filledFields - 1);
+                    }
 
-            Connections {
-                target: controller
+                    Connections {
+                        target: controller
 
-                function onFailed(): void {
-                    view.shake();
-                }
+                        function onFailed(): void {
+                            view.shake();
+                        }
 
-                function onClearRequested(): void {
-                    view.clear();
+                        function onClearRequested(): void {
+                            view.clear();
+                        }
+                    }
                 }
             }
         }
