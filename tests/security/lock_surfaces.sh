@@ -90,9 +90,25 @@ state = read("shell/services/SessionState.qml")
 refuses = function(state, "refuses")
 expect("SessionState.refuses() returns true while locked", refuses is not None and re.search(r"if\s*\(!locked\)\s*return false;", refuses) is not None and "return true;" in refuses)
 
+# ADR-0041 S2 (the opus review of 77a0ceb3, MAJOR-1): a lock request always ends in a locked session. The paths that only
+# lock or end the session (the Grassfield menu, its session confirmations, Search with its Lock Screen command, the lock
+# corner) ask SessionState.refusesConfirmed, which refuses only while the lock is confirmed (shell.qml binds lockConfirmed to
+# LockClient.lockConfirmed); every other surface keeps SessionState.refuses.
+confirmed = function(state, "refusesConfirmed")
+expect("SessionState.refusesConfirmed() opens only while locked without a confirmed lock, else asks refuses()",
+       confirmed is not None and re.fullmatch(r"\s*if\s*\(!locked\s*\|\|\s*!lockConfirmed\)\s*return false;\s*return refuses\(surface\);\s*", code(confirmed)) is not None)
+expect("SessionState.lockConfirmed is true by default (a harness that sets locked gets every refusal)",
+       re.search(r"^\s*property bool lockConfirmed: true$", state, re.M) is not None)
+expect("shell.qml binds SessionState.lockConfirmed to LockClient.lockConfirmed, once",
+       re.search(r"Binding\s*\{\s*target:\s*SessionState\s*property:\s*\"lockConfirmed\"\s*value:\s*LockClient\.lockConfirmed\s*\}", shell) is not None
+       and len(re.findall(r"property:\s*\"lockConfirmed\"", code(shell))) == 1)
 R = "SessionState.refuses("
-first_decision("shell/services/Popups.qml", "open", R)
-first_decision("shell/search/Search.qml", "show", R)
+first_decision("shell/services/Popups.qml", "open", 'if (PopupKinds.endsOrLocks(popupKind, payload) ? SessionState.refusesConfirmed("popup " + popupKind) : SessionState.refuses("popup " + popupKind))', lines=1)
+kinds_js = read("shell/services/PopupKinds.js")
+expect("PopupKinds.endsOrLocks: the Grassfield menu, and a confirmation of logout, restart or shutdown only",
+       'const sessionActions = ["logout", "restart", "shutdown"];' in kinds_js
+       and re.search(r'if \(kind === "system"\)\s*return true;\s*return kind === "confirm" && payload !== null && typeof payload === "object" && sessionActions\.indexOf\(payload\.action\) >= 0;', code(function(kinds_js, "endsOrLocks") or "")) is not None)
+first_decision("shell/search/Search.qml", "show", 'SessionState.refusesConfirmed("search")', lines=1)
 first_decision("shell/search/Search.qml", "enterClipboard", R, lines=1)
 first_decision("shell/launchpad/AppsController.qml", "show", R)
 first_decision("shell/overview/Overview.qml", "show", R)
@@ -712,7 +728,7 @@ for f in shell/shell.qml shell/services/SessionState.qml shell/services/Popups.q
   shell/menubar/MenuBar.qml shell/desktop/HotCornerActions.js shell/security/polkit/AuthAgent.qml shell/security/polkit/AuthDialogModel.qml \
   shell/desktop/IconsView.qml shell/desktop/DesktopWidgets.qml shell/platform/Displays.qml shell/services/TilingHover.qml \
   shell/services/TilingSuggest.qml shell/menubar/AppMenus.qml shell/overlay/DockMenu.qml shell/overlay/ExitCover.qml \
-  shell/services/Emoji.qml shell/capture/Capture.qml shell/capture/CaptureToolbar.qml; do
+  shell/services/Emoji.qml shell/capture/Capture.qml shell/capture/CaptureToolbar.qml shell/services/PopupKinds.js; do
   mkdir -p "$mut/$(dirname "$f")"
   cp "$root/$f" "$mut/$f"
 done
@@ -751,6 +767,15 @@ for case_ in 'shell/dock/Dock.qml#SessionState.refuses("dock keyboard")#false' \
   'shell/overlay/DockMenu.qml#Compositor.showTileGroupAfterLayer(item.ref, "grassfield-overlay", item.members)#Compositor.activateAfterLayer(item.ref, "grassfield-overlay")' \
   'shell/platform/Compositor.qml#SessionState.refuses("windows minimize request")#false' \
   'shell/services/Popups.qml#SessionState.refuses("popup " + popupKind)#false' \
+  'shell/services/Popups.qml#SessionState.refusesConfirmed("popup " + popupKind)#false' \
+  'shell/services/Popups.qml#PopupKinds.endsOrLocks(popupKind, payload) ?#true ?' \
+  'shell/search/Search.qml#SessionState.refusesConfirmed("search")#false' \
+  'shell/services/SessionState.qml#if (!locked || !lockConfirmed)#if (!locked)' \
+  'shell/services/SessionState.qml#if (!locked || !lockConfirmed)\n            return false;\n        return refuses(surface);#return false;' \
+  'shell/services/SessionState.qml#    property bool lockConfirmed: true#    property bool lockConfirmed: false' \
+  'shell/services/PopupKinds.js#const sessionActions = ["logout", "restart", "shutdown"];#const sessionActions = ["logout", "restart", "shutdown", "emptytrash"];' \
+  'shell/services/PopupKinds.js#    return kind === "confirm" && payload#    return payload' \
+  'shell/shell.qml#        property: "lockConfirmed"\n        value: LockClient.lockConfirmed#        property: "lockConfirmed"\n        value: false' \
   'shell/security/polkit/AuthAgent.qml#dialogModel.active && !SessionState.locked#dialogModel.active' \
   'shell/security/polkit/AuthAgent.qml#((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)#(root.requestOpen || root.sinkingKeys)' \
   'shell/security/polkit/AuthAgent.qml#const typing = (follows && win.takesKeys) || root.sinkingKeys || (!dialogModel.active && win.takesKeys && !dialogModel.answered);#const typing = false;' \

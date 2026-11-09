@@ -35,9 +35,13 @@ function command(action, pid) {
 }
 
 // No firing while the session is locked (every target refuses then too) or while the Notification Center that the
-// "notifications" action toggles is open.
-function isBlocked(action, notificationsOpen, locked) {
-    return locked === true || (normalize(action) === "notifications" && notificationsOpen === true);
+// "notifications" action toggles is open. The "lock" action is blocked by the lock only while it is confirmed
+// (`lockConfirmed`, SessionState.lockConfirmed; absent means confirmed): while the UI reads locked only because the security
+// process is down, the corner still sends its lock request (ADR-0041 S2, the opus review of 77a0ceb3, MAJOR-1).
+function isBlocked(action, notificationsOpen, locked, lockConfirmed) {
+    if (locked === true && (normalize(action) !== "lock" || lockConfirmed !== false))
+        return true;
+    return normalize(action) === "notifications" && notificationsOpen === true;
 }
 
 // {x, y} of `hyprctl cursorpos -j` (the pointer in layout coordinates), null for anything else.

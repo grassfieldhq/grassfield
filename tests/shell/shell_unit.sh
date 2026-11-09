@@ -51,7 +51,7 @@ bare_qs() {
   grep -rnIHE "([\"']?(/usr/bin/)?(qs|quickshell)[\"']?([[:space:]]*,[[:space:]]*|[[:space:]]+)[\"']?(ipc|kill|log)[\"']?([^[:alnum:]_]|$))" "$@" 2>/dev/null |
     grep -vE '^[^:]*:[0-9]*:[[:space:]]*(#|--|//|\*)' |
     grep -vE "(--pid|[\"']--pid[\"']|(-p|[\"']-p[\"'][[:space:]]*,)[[:space:]]+[\"']?/usr/share/grassfield/shell(/security\.qml)?([\"' ]|$))" | grep -v shell_selector | grep -v security_selector |
-    grep -vE '/shell/services/LockClient\.js:[0-9]+:    var argv = \["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "qs", "ipc", "-p", root, "call", target\[0\], target\[1\]\];$' |
+    grep -vE '/shell/services/LockClient\.js:[0-9]+:    var argv = \["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "timeout", "-k", "1", "5", "qs", "ipc", "-p", root, "call", target\[0\], target\[1\]\];$' |
     grep -vE '/packaging/session-bin/hyprland-dialog:[0-9]+:answer=\$\(timeout -k 1 10 qs ipc -p "\$shell_dir" call anr report ' |
     grep -vE '/packaging/bin/grassfield-security-status:[0-9]+:(state|beat)=\$\(timeout -k 0\.2 2 qs ipc \$display -p "\$path" call security (state|heartbeat) ' |
     grep -vE '/packaging/bin/grassfield-security-status:[0-9]+:lock=\$\(timeout -k 0\.2 2 qs ipc \$display -p "\$path" call lock state ' |
@@ -82,7 +82,7 @@ check bash -c '[ -n "$(bare_qs "$1")" ]' _ "$mut/packaging/bin/anr"
 printf 'state=$(timeout -k 0.2 2 qs ipc $display -p "$path" call security state 2>/dev/null)\n' >"$mut/packaging/bin/sec"
 desc="mutation: the security status form anywhere but grassfield-security-status is caught"
 check bash -c '[ -n "$(bare_qs "$1")" ]' _ "$mut/packaging/bin/sec"
-printf 'var argv = ["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "qs", "ipc", "-p", root, "call", target[0], target[1]];\n' >"$mut/shell/services/L.js"
+printf 'var argv = ["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "timeout", "-k", "1", "5", "qs", "ipc", "-p", root, "call", target[0], target[1]];\n' >"$mut/shell/services/L.js"
 desc="mutation: the UI's argv builder anywhere but shell/services/LockClient.js is caught"
 check bash -c '[ -n "$(bare_qs "$1")" ]' _ "$mut/shell/services/L.js"
 desc="LockClient's root is the security root next to the UI's own root (Quickshell.shellDir: the system path in a real session), never a name or another path (ADR-0041 S2)"

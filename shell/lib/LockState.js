@@ -124,12 +124,15 @@ function parse(text) {
     return {ok: true, state: o.state, seq: o.seq, writer: o.writer, displaysOff: o.displaysOff, motion: cleanMotion(o.motion)};
 }
 
-// A read is a new beat when its writer or its sequence differs from the last one taken.
+// A read is a new beat when its writer or its sequence differs from the last one taken. The first read is never one: a file
+// may be the last line of a writer that is dead or hung, so only a second, different write proves a live writer (the opus
+// review of 77a0ceb3, MINOR-3: a UI started next to a dead writer's "unlocked" read unlocked for up to 5 s). The UI reads
+// locked until then, at most one beat at its start.
 function isNewBeat(last, read) {
     if (read === null || read === undefined || read.ok !== true)
         return false;
     if (last === null || last === undefined || last.ok !== true)
-        return true;
+        return false;
     return read.writer !== last.writer || read.seq !== last.seq;
 }
 
@@ -147,6 +150,18 @@ function uiLocked(known, stale, state, compositorLocked) {
     if (compositorLocked === true)
         return true;
     return state !== "unlocked";
+}
+
+// The lock is known to be held or being acquired: the compositor reports a lock, or the last state the security process
+// published (fresh or stale) says "locking" or "locked". False while the UI reads locked only because the state is missing,
+// unreadable, or stale after an "unlocked": the security process stopped beating while the session was unlocked (or has not
+// published yet). Then a lock request must still reach it, through the stand-in that starts it (ADR-0041 S2, the opus review
+// of 77a0ceb3 MAJOR-1: "a lock request always ends in a locked session"): the paths that only lock or end the session are
+// refused only while this is true (SessionState.refusesConfirmed).
+function uiLockConfirmed(known, state, compositorLocked) {
+    if (compositorLocked === true)
+        return true;
+    return known === true && (state === "locking" || state === "locked");
 }
 
 // The lock is being acquired (the UI's screen saver stays up meanwhile, so no desktop flashes before the lock surface).

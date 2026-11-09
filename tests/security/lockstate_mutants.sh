@@ -69,13 +69,17 @@ while IFS='|' read -r name file find replace; do
 done <<'EOF'
 no-state-reads-unlocked|shell/lib/LockState.js|if (known !== true || stale !== false)|if (stale === true)
 stale-reads-unlocked|shell/lib/LockState.js|if (known !== true || stale !== false)|if (known !== true)
-compositor-signal-ignored|shell/lib/LockState.js|    if (compositorLocked === true)\n        return true;\n|
+compositor-signal-ignored|shell/lib/LockState.js|    if (compositorLocked === true)\n        return true;\n    return state !== "unlocked";|    return state !== "unlocked";
 locking-reads-unlocked|shell/lib/LockState.js|    return state !== "unlocked";|    return state === "locked";
 unknown-state-reads-unlocked|shell/lib/LockState.js|    return state !== "unlocked";|    return state === "locked" || state === "locking";
 public-locking-as-unlocked|shell/lib/LockState.js|    return holding === true ? "locked" : "locking";|    return holding === true ? "locked" : "unlocked";
 stale-never|shell/lib/LockState.js|sinceBeatMs < STALE_MS);|sinceBeatMs < STALE_MS * 1000);
 same-beat-counts|shell/lib/LockState.js|    return read.writer !== last.writer || read.seq !== last.seq;|    return true;
 restart-not-a-beat|shell/lib/LockState.js|    return read.writer !== last.writer || read.seq !== last.seq;|    return read.seq !== last.seq;
+first-read-is-a-beat|shell/lib/LockState.js|    if (last === null || last === undefined || last.ok !== true)\n        return false;\n    return read.writer|    if (last === null || last === undefined || last.ok !== true)\n        return true;\n    return read.writer
+unconfirmed-when-locked|shell/lib/LockState.js|    return known === true && (state === "locking" || state === "locked");|    return known === true && state === "locked";
+confirmed-on-stale-unlocked|shell/lib/LockState.js|    return known === true && (state === "locking" || state === "locked");|    return known === true;
+compositor-not-confirming|shell/lib/LockState.js|    if (compositorLocked === true)\n        return true;\n    return known === true &&|    return known === true &&
 unreadable-is-a-beat|shell/lib/LockState.js|    if (read === null || read === undefined || read.ok !== true)\n        return false;|    if (read === null || read === undefined)\n        return false;
 parse-any-state|shell/lib/LockState.js|    if (o.state !== "unlocked" && o.state !== "locking" && o.state !== "locked")\n        return bad;|
 parse-no-length-bound|shell/lib/LockState.js|    if (s.length === 0 || s.length > MAX_BYTES)|    if (s.length === 0)

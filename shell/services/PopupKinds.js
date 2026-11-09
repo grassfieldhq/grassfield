@@ -12,6 +12,19 @@ function known(kind) {
     return kinds.indexOf(kind) >= 0;
 }
 
+// The popups that only lock or end the session: the Grassfield menu (Lock Screen, Log Out, Restart, Shut Down) and the
+// confirmation those last three ask (a "confirm" whose action is one of them; Empty Trash and Force Quit confirmations are
+// not). Popups.open refuses them only while the lock is confirmed (SessionState.refusesConfirmed): while the UI reads locked
+// only because the security process is down, Lock Screen must still reach it (ADR-0041 S2, the opus review of 77a0ceb3,
+// MAJOR-1). Unit-tested in tests/unit/tst_popupkinds.qml.
+const sessionActions = ["logout", "restart", "shutdown"];
+
+function endsOrLocks(kind, payload) {
+    if (kind === "system")
+        return true;
+    return kind === "confirm" && payload !== null && typeof payload === "object" && sessionActions.indexOf(payload.action) >= 0;
+}
+
 // Whether the Overlay keeps the keyboard and the output's input: a popup is open, of a kind the Overlay draws, and its Loader is
 // not in error. Not tied to the loaded item: a swap of one popup for another (Left/Right in a menu) destroys the old item
 // before the new one exists, and the keyboard mode and input mask would flap Exclusive -> None -> Exclusive, each change

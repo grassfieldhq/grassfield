@@ -155,8 +155,10 @@ Singleton {
     property int openCount: 0
 
     function open(popupKind: string, screen: string, x: real, y: real, alignment: string, payload: var): void {
-        // Nothing opens over the lock screen (GF-116): menus, Control Center, panels and sheets included.
-        if (SessionState.refuses("popup " + popupKind))
+        // Nothing opens over the lock screen (GF-116): menus, Control Center, panels and sheets included. The Grassfield menu
+        // and its confirmation (Lock Screen, Log Out, Restart, Shut Down) are refused only while the lock is confirmed: while
+        // the UI reads locked only because the security process is down, Lock Screen must still reach it (ADR-0041 S2).
+        if (PopupKinds.endsOrLocks(popupKind, payload) ? SessionState.refusesConfirmed("popup " + popupKind) : SessionState.refuses("popup " + popupKind))
             return;
         // Only a kind the Overlay draws: another would map an empty overlay that takes the keyboard (review of ce69dc6).
         if (!PopupKinds.known(popupKind)) {
@@ -273,6 +275,12 @@ Singleton {
 
         function onLockedChanged(): void {
             if (SessionState.locked)
+                root.close();
+        }
+
+        // A menu opened while the lock was unconfirmed (the security process down) closes once the lock is confirmed.
+        function onLockConfirmedChanged(): void {
+            if (SessionState.locked && SessionState.lockConfirmed)
                 root.close();
         }
     }

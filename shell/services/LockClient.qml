@@ -48,6 +48,10 @@ Singleton {
     readonly property bool locked: LockState.uiLocked(root.known, root.stale, root.state, root.compositorLocked)
     // The lock is being acquired (the screen saver stays up meanwhile).
     readonly property bool lockStarting: LockState.uiLockStarting(root.known, root.stale, root.state)
+    // The lock is known to be held or being acquired (LockState.uiLockConfirmed): false while the UI reads locked only because
+    // the state is missing or stale after an "unlocked" (the security process is down): the lock requests then still go out
+    // (SessionState.refusesConfirmed; the opus review of 77a0ceb3, MAJOR-1).
+    readonly property bool lockConfirmed: LockState.uiLockConfirmed(root.known, root.state, root.compositorLocked)
     // The displays are off (idle, in the security process); without a fresh state, true: the polkit agent then lets no device
     // answer a request nobody might see (ADR-0045 OC-6), the restrictive side.
     readonly property bool displaysOff: !root.known || root.stale || (root.last !== null && root.last.displaysOff === true)

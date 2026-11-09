@@ -203,6 +203,14 @@ TestCase {
     function test_theLockBlocksEveryCorner() {
         verify(Actions.isBlocked("overview", false, true));
         verify(Actions.isBlocked("lock", false, true));
+        // ADR-0041 S2 (review MAJOR-1): the lock corner still fires while the UI reads locked only because the security
+        // process is down (the lock is not confirmed); every other action stays blocked; absent means confirmed.
+        verify(!Actions.isBlocked("lock", false, true, false));
+        verify(Actions.isBlocked("lock", false, true, true));
+        verify(Actions.isBlocked("lock", false, true, undefined));
+        verify(Actions.isBlocked("overview", false, true, false));
+        verify(Actions.isBlocked("notifications", false, true, false));
+        verify(Actions.isBlocked("apps", false, true, false));
         verify(!Actions.isBlocked("overview", true, false));
         verify(Actions.isBlocked("notifications", true, false));
         verify(!Actions.isBlocked("notifications", false, false));

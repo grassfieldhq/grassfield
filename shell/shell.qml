@@ -71,6 +71,13 @@ ShellRoot {
         property: "lockStarting"
         value: LockClient.lockStarting
     }
+    // Whether the lock is known to be held: the paths that only lock or end the session stay open while it is not (the
+    // security process is down while the session was unlocked: a lock request must still reach it).
+    Binding {
+        target: SessionState
+        property: "lockConfirmed"
+        value: LockClient.lockConfirmed
+    }
     // The compositor's own lock signal (hyprland-lock-notify-v1, read by the clipboard helper while it runs): one more input
     // of LockClient.locked, so a push the UI missed never reads unlocked once the compositor holds a lock.
     Binding {

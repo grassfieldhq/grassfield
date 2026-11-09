@@ -43,6 +43,29 @@ TestCase {
         verify(LockState.uiLocked(true, false, "locked", false));
     }
 
+    // ADR-0041 S2 (the opus review of 77a0ceb3, MAJOR-1): the lock is confirmed only by the compositor's signal or a last
+    // published state of "locking" or "locked" (fresh or stale); with no state, an unreadable one, or a stale "unlocked" (the
+    // security process stopped while the session was unlocked), the paths that only lock stay open so a lock request goes out.
+    function test_uiLockConfirmed() {
+        verify(LockState.uiLockConfirmed(true, "locked", false));
+        verify(LockState.uiLockConfirmed(true, "locking", false));
+        verify(!LockState.uiLockConfirmed(true, "unlocked", false), "a stale or fresh unlocked: not confirmed");
+        verify(!LockState.uiLockConfirmed(false, "", false), "no state: not confirmed");
+        verify(!LockState.uiLockConfirmed(false, "locked", false), "an unreadable file: not confirmed");
+        verify(LockState.uiLockConfirmed(false, "", true), "the compositor's signal confirms it");
+        verify(LockState.uiLockConfirmed(true, "unlocked", true));
+        verify(!LockState.uiLockConfirmed(1, "locked", false), "known must be exactly true");
+        verify(!LockState.uiLockConfirmed(true, "LOCKED", false), "an unknown state");
+        verify(!LockState.uiLockConfirmed(false, "", "true"), "only an exact true is the compositor's signal");
+        // Whenever the lock is confirmed the UI also reads locked (a confirmed lock never opens anything).
+        for (const known of [true, false])
+            for (const stale of [true, false])
+                for (const state of ["unlocked", "locking", "locked", ""])
+                    for (const comp of [true, false])
+                        if (LockState.uiLockConfirmed(known, state, comp))
+                            verify(LockState.uiLocked(known, stale, state, comp), [known, stale, state, comp].join(","));
+    }
+
     function test_uiLockStarting() {
         verify(LockState.uiLockStarting(true, false, "locking"));
         verify(!LockState.uiLockStarting(true, false, "locked"));
@@ -151,7 +174,8 @@ TestCase {
         const sameAgain = LockState.parse(line("unlocked", 5, 100, false, {}));
         const next = LockState.parse(line("unlocked", 6, 100, false, {}));
         const restarted = LockState.parse(line("unlocked", 5, 200, false, {}));
-        verify(LockState.isNewBeat(null, a), "the first read is a beat");
+        verify(!LockState.isNewBeat(null, a), "the first read is no beat: only a second write proves a live writer");
+        verify(!LockState.isNewBeat({ok: false}, a), "nor a read after an unreadable one");
         verify(!LockState.isNewBeat(a, sameAgain), "the same sequence of the same writer is no beat (a hung process)");
         verify(LockState.isNewBeat(a, next), "the next sequence");
         verify(LockState.isNewBeat(a, restarted), "a restarted writer with the same sequence is a beat");
@@ -179,8 +203,9 @@ TestCase {
     }
 
     function test_commands() {
-        compare(Client.command("lock", "/r/security.qml", []).join(" "), "env -u QS_CONFIG_PATH -u QS_CONFIG_NAME -u QS_MANIFEST qs ipc -p /r/security.qml call lock lock");
-        compare(Client.command("inhibit", "/r/security.qml", [150]).join(" "), "env -u QS_CONFIG_PATH -u QS_CONFIG_NAME -u QS_MANIFEST qs ipc -p /r/security.qml call idle inhibit 150");
+        // Bounded: a hung security process answers nothing within 5 s (the request is tried again, then handed to the stand-in).
+        compare(Client.command("lock", "/r/security.qml", []).join(" "), "env -u QS_CONFIG_PATH -u QS_CONFIG_NAME -u QS_MANIFEST timeout -k 1 5 qs ipc -p /r/security.qml call lock lock");
+        compare(Client.command("inhibit", "/r/security.qml", [150]).join(" "), "env -u QS_CONFIG_PATH -u QS_CONFIG_NAME -u QS_MANIFEST timeout -k 1 5 qs ipc -p /r/security.qml call idle inhibit 150");
         compare(Client.command("lock", "", []), null, "no root, no call");
         compare(Client.command("unlock", "/r/security.qml", []), null, "no other call exists");
         compare(JSON.stringify(Client.IPC), JSON.stringify({lock: ["lock", "lock"], inhibit: ["idle", "inhibit"]}), "the only calls: lock and the lease");

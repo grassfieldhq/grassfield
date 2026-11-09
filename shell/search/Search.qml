@@ -181,8 +181,10 @@ Scope {
     }
 
     function show(text: string): void {
-        // Nothing opens over the lock screen (GF-116): SUPER+SPACE, the menu bar item and IPC alike.
-        if (SessionState.refuses("search"))
+        // Nothing opens over the lock screen (GF-116): SUPER+SPACE, the menu bar item and IPC alike. Refused only while the lock
+        // is confirmed: while the UI reads locked only because the security process is down, Search opens, so that its Lock
+        // Screen command reaches it (ADR-0041 S2, the opus review of 77a0ceb3, MAJOR-1).
+        if (SessionState.refusesConfirmed("search"))
             return;
         openStartMs = Date.now();
         if (Popups.active)
@@ -925,6 +927,14 @@ Scope {
 
         function onLockedChanged(): void {
             if (SessionState.locked && root.open) {
+                root.hide();
+                root.setQuery("");
+            }
+        }
+
+        // Search opened while the lock was unconfirmed (the security process down) closes once the lock is confirmed.
+        function onLockConfirmedChanged(): void {
+            if (SessionState.locked && SessionState.lockConfirmed && root.open) {
                 root.hide();
                 root.setQuery("");
             }

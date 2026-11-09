@@ -5,7 +5,8 @@
 // applications' org.freedesktop.ScreenSaver inhibitors, which the menu bridge serves to the UI. Each call is one `qs ipc`
 // process against the security root by its path (the UI's own shellDir + "/security.qml": the packaged
 // /usr/share/grassfield/shell/security.qml, or the dev tree's), with Quickshell's option variables cleared as every
-// `qs ipc` caller of the session does (a stray QS_MANIFEST made `qs ipc -p` exit 108: the re-review of bf9e280).
+// `qs ipc` caller of the session does (a stray QS_MANIFEST made `qs ipc -p` exit 108: the re-review of bf9e280), and bounded
+// (a hung security process answers nothing within 5 s: the request is tried again, then handed to the stand-in).
 
 // IPC target and function of each call (tests/security/ipc_inventory.sh reads this table as a real-session caller).
 var IPC = {
@@ -31,7 +32,7 @@ function command(name, root, args) {
     var target = IPC[name];
     if (!target || root === "")
         return null;
-    var argv = ["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "qs", "ipc", "-p", root, "call", target[0], target[1]];
+    var argv = ["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "timeout", "-k", "1", "5", "qs", "ipc", "-p", root, "call", target[0], target[1]];
     var extra = args || [];
     for (var i = 0; i < extra.length; i++)
         argv.push(String(extra[i]));

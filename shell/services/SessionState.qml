@@ -13,6 +13,10 @@ QtObject {
     id: root
 
     property bool locked: false
+    // The lock is known to be held or being acquired (LockClient.lockConfirmed, a Binding in shell.qml): false while `locked`
+    // is true only because the security process's state is missing or stale after an "unlocked" (it is down). True by
+    // default, so that a harness that sets `locked` gets every GF-116 refusal.
+    property bool lockConfirmed: true
     // A lock is being acquired: the security process asked the compositor and has no confirmation yet (LockClient.lockStarting,
     // a Binding in shell.qml). The screen saver stays up meanwhile, so no desktop flashes before the lock surface.
     property bool lockStarting: false
@@ -45,6 +49,17 @@ QtObject {
         console.info("grassfield: " + surface + " refused: the session is locked");
         root.lastRefused = surface;
         return true;
+    }
+
+    // GF-116 for the paths that lock or end the session (the Grassfield menu and its confirmation, Search with its Lock Screen
+    // command, the lock corner): refused only while the lock is confirmed (`lockConfirmed`). While the UI reads locked only
+    // because the security process is down, they open, so that a lock request reaches it (LockClient hands it to the stand-in,
+    // which starts the unit): a lock request always ends in a locked session (ADR-0041 S2, the opus review of 77a0ceb3,
+    // MAJOR-1). Everything else keeps `refuses`.
+    function refusesConfirmed(surface: string): bool {
+        if (!locked || !lockConfirmed)
+            return false;
+        return refuses(surface);
     }
 
     // The surface the last refusal named (tests/shell harnesses check that a call was refused by its own gate).

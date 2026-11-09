@@ -8,6 +8,10 @@
 #                       of Hyprland's hl table; the command it would exec runs under /bin/sh as Hyprland runs it
 #   the lid             packaging/bin/grassfield-lid closed (its default lock command; fake /proc and /sys)
 #   the fallback        packaging/shims/omarchy-shell lock lock (Omarchy's sleep-lock calls it in this session)
+# A lock request always ends in a locked session (ADR-0041 S2, the opus review of 77a0ceb3, MAJOR-1): when the security
+# process fails `lock lock` or hangs past 5 s, the lock key hands the request to the stand-in (its installed path replaced by
+# a recorder here), which starts the unit; an answer (ok, already-locked, refused:*) is final; a dev session has no
+# fallback (the installed stand-in would act on the owner's units).
 # A stub qs records each call and the QS_* variables it received, and decides as the real qs would: it runs the REAL
 # qs's option parsing (`qs list -p` on a scratch directory, a private runtime directory: nothing can reach a running
 # shell) in the environment the caller gave it; exit 108 there is the failure guarded against. Control: the stub with the
@@ -52,7 +56,13 @@ env | grep '^QS_' | sed 's/^/env /' >>"$STUB_LOG"
 QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR="$STUB_QSRT" HOME="$STUB_HOME" /usr/bin/qs list -p "$STUB_CFG" >/dev/null 2>&1
 [ $? = 108 ] && { echo "parse 108" >>"$STUB_LOG"; exit 108; }
 case "$*" in
-  "ipc -p /usr/share/grassfield/shell/security.qml call lock lock") echo ok ;;
+  "ipc -p /usr/share/grassfield/shell/security.qml call lock lock")
+    case ${STUB_LOCK:-ok} in
+      fail) exit 1 ;;
+      hang) exec sleep 30 ;;
+      refused) echo "refused: no outputs" ;;
+      *) echo ok ;;
+    esac ;;
   "ipc -p /usr/share/grassfield/shell/security.qml call lock lid") [ "${STUB_LID:-ok}" = fail ] && exit 1; echo ok ;;
   *) exit 9 ;;
 esac
@@ -116,9 +126,38 @@ if [[ -z $lock_cmd ]]; then
 else
   : >"$tmp/log"
   rc=0
-  out=$(env -i "${base[@]}" "${stray[@]}" /bin/sh -c "$lock_cmd" 2>/dev/null) || rc=$?
+  standin=/usr/lib/grassfield/omarchy-shims/omarchy-shell
+  key_cmd=${lock_cmd//"$standin"/"$tmp/bin/fallback"}
+  out=$(env -i "${base[@]}" "${stray[@]}" /bin/sh -c "$key_cmd" 2>/dev/null) || rc=$?
   verdict "the lock key (SUPER+CTRL+Q)" "$out" "$rc" "ipc -p /usr/share/grassfield/shell/security.qml call lock lock"
+  ! grep -q "^fallback" "$tmp/log" && pass "the lock key: an answered request goes no further (no fallback)" \
+    || bad "the lock key ran the fallback after an answer: $(tr '\n' ';' <"$tmp/log")"
+  if [[ $key_cmd == "$lock_cmd" ]]; then
+    bad "the lock key of a real session names no fallback ($standin): '$lock_cmd'"
+  fi
+  for answer in fail hang refused; do
+    : >"$tmp/log"
+    start=$SECONDS
+    out=$(env -i "${base[@]}" "${stray[@]}" STUB_LOCK=$answer timeout 20 /bin/sh -c "$key_cmd" 2>/dev/null) || true
+    took=$((SECONDS - start))
+    case $answer in
+      refused)
+        [[ $out == "refused: no outputs" ]] && ! grep -q "^fallback" "$tmp/log" \
+          && pass "the lock key: a refusal of the security process is its answer (no fallback)" \
+          || bad "the lock key, refused: '$out', calls: $(tr '\n' ';' <"$tmp/log")" ;;
+      *)
+        if grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock" "$tmp/log" && grep -qx "fallback lock lock" "$tmp/log" \
+          && ! grep -q "^env QS_\|^parse 108" "$tmp/log" && ((took <= 8)); then
+          pass "the lock key: a security process that ${answer}s (${took} s) hands the request to the stand-in ('lock lock'), which starts the unit"
+        else
+          bad "the lock key, security process ${answer}s: ${took} s, calls: $(tr '\n' ';' <"$tmp/log")"
+        fi ;;
+    esac
+  done
 fi
+dev_key=$(binds GRASSFIELD_DEV=1 | awk -F'\t' '$1 == "lock" {print $2; exit}')
+[[ -n $dev_key && $dev_key != *omarchy-shims* && $dev_key != *timeout* ]] \
+  && pass "control: the lock key of a dev session has no fallback to the installed stand-in" || bad "the dev lock key: '$dev_key'"
 uncleared=()
 n=0
 while IFS=$'\t' read -r _ cmd; do
@@ -212,7 +251,7 @@ for mode in "GRASSFIELD_SESSION=1 GRASSFIELD_DEV=1" "-"; do
   [[ $mode == - ]] && label="no run-mode variable at all"
   read -r -a assign <<<"${mode/#-/}"
   cmd=$(binds GRASSFIELD_SHELL_DIR=/hostile/shell "${assign[@]}" | awk -F'\t' '$1 == "lock" && !done {print $2; done = 1}')
-  [[ $cmd == *"-p '/usr/share/grassfield/shell/security.qml' call lock lock" && $cmd != *hostile* ]] \
+  [[ $cmd == *"-p '/usr/share/grassfield/shell/security.qml' call lock lock "* && $cmd != *hostile* ]] \
     && pass "the lock key in $label ignores GRASSFIELD_SHELL_DIR: it asks the installed shell" || bad "the lock key in $label: '$cmd'"
 done
 cmd=$(binds GRASSFIELD_SHELL_DIR=/dev/shell GRASSFIELD_DEV=1 | awk -F'\t' '$1 == "lock" && !done {print $2; done = 1}')
