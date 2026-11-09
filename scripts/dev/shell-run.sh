@@ -29,6 +29,7 @@ root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 
 # Same options as nested-up.sh (bare commands match the sandbox exclusion; env prefixes may not).
 only_security=0
+migrated=${GRASSFIELD_MIGRATED:-0}
 while [[ $# -gt 0 ]]; do
   case $1 in
     --private-bus) export GRASSFIELD_PRIVATE_BUS=1 ;;
@@ -40,6 +41,8 @@ while [[ $# -gt 0 ]]; do
     --menu-bridge) export GRASSFIELD_MENU_BRIDGE=${2:?--menu-bridge needs a path}; shift ;;
     --desktop-screen) export GRASSFIELD_DESKTOP_SCREEN=${2:?--desktop-screen needs an output name}; shift ;;
     --cursor-theme) export GRASSFIELD_CURSOR_THEME=${2:?--cursor-theme needs a theme name}; shift ;;
+    --migrated) migrated=1 ;;  # the UI runs the packaged form (ADR-0056): .dev/migrated/shell, rebuilt when shell/ changes. The key bindings
+                               # still address -p <repo>/shell: use `qs ipc --pid $(cat .dev/shell.pid)` (tests/visual/ipc.sh) with it.
     --unit-env) export GRASSFIELD_UNIT_ENV=1 ;;  # the shell gets grassfield-shell.service's own variables (file watcher off, as packaged)
     --security) only_security=1 ;;  # (re)start the security process only (ADR-0041 S2), the UI left alone
     *) echo "shell-run: unknown option $1" >&2; exit 2 ;;
@@ -72,7 +75,24 @@ else
   dev_stop "$dev/shell.pid" grassfield-shell >/dev/null || exit 1
 fi
 
-launch=(qs -p "$root/shell" --log-times --no-color)
+shell_dir=$root/shell
+if [[ $migrated == 1 ]] && ((!only_security)); then
+  # The packaged form of the UI tree (scripts/dev/migrate-qs-imports.py, ADR-0056): file: URLs, so Qt's QML disk cache serves
+  # it. The parents of shell/ that dev code reaches (../VERSION, ../packaging, ../branding, ../.dev) are links to the repository.
+  mig=$dev/migrated
+  if [[ ! -f $mig/.stamp || -n $(find "$root/shell" "$root/scripts/dev/migrate-qs-imports.py" -newer "$mig/.stamp" -print -quit 2>/dev/null) ]]; then
+    rm -rf "$mig"
+    mkdir -p "$mig"
+    "$root/scripts/dev/migrate-qs-imports.py" --out "$mig/shell" >&2 || { echo "shell-run: the migrated tree did not build" >&2; exit 1; }
+    for e in "$root"/* "$root"/.dev; do
+      [[ $(basename "$e") == shell ]] && continue
+      ln -s "$e" "$mig/$(basename "$e")"
+    done
+    touch "$mig/.stamp"
+  fi
+  shell_dir=$mig/shell
+fi
+launch=(qs -p "$shell_dir" --log-times --no-color)
 private=""
 bus_env=()
 bridge_sock=""

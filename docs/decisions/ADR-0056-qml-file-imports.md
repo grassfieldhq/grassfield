@@ -34,22 +34,47 @@ later start with the same cache folder):
 
 D-1 `scripts/dev/migrate-qs-imports.py` makes the transformation. It is deterministic and idempotent. The source tree keeps the
 `import qs.<module>` form (the layering and security checkers, ADR-0021, read it unchanged, and the open pull requests do not
-conflict); the packaged tree is the migrated copy (`--out`, run by the package build: not done by this ADR, it is in
-`packaging/`). The development launcher (`scripts/dev/shell-run.sh`) and the QML tests keep loading the source tree through
-`qs:`: the dev loop does not get the cache until it also runs the migrated copy.
+conflict); the packaged tree is the migrated copy (`packaging/arch/PKGBUILD` runs `--in-place` on the copy it installs).
+`just check-quick` runs `--dry-run` (check-migrate): the whole tree must migrate, twice with the same result, so a new file whose
+import cannot be migrated fails CI. The QML test layers keep testing the source modules (the files differ only by their import
+lines). `scripts/dev/shell-run.sh --migrated` runs the UI from `.dev/migrated/shell` (rebuilt when `shell/` changes); it is not
+the default yet, because the dev key bindings and the nested security tests address instances by path (`qs ipc -p <repo>/shell`,
+`-p <repo>/shell/security.qml`: Quickshell identifies an instance by its config path), so the default flips together with
+`config/hypr/grassfield/bindings.lua` and those tests, in a change the compositor and security owners review.
 
 D-2 Singletons stay single. A directory import uses the directory's `qmldir`, whose `singleton` entries are the same files; every
 document of the process is then reached by exactly one `file:` URL, and nothing in the process is loaded through `qs:` (the
 stub roots hold no `qs.*` import). A tree where one file was reached by both forms would hold two instances of its singletons:
 the script refuses an import of `qs` it cannot rewrite and leaves none behind (`--check`), and `tests/shell/migrate_qs_imports.sh`
-asserts it for every import. The UI process and the security process each have their own root and their own stub
-(`shell.qml`, `security.qml`); they share no instance (they are two processes).
+asserts it for every import.
 
 D-3 The stub root keeps the safety the former root had: `settings.watchFiles: false` (R12), the root's `//@ pragma` lines, the same
-file name (the units' `-p` paths are unchanged). A core that did not load ends the process after 10 s with an error line
-(Quickshell has no non-zero exit from QML); the security owner reviews that behaviour for `security.qml` before it ships.
+file name (the unit's `-p` path is unchanged). A core that did not load must END AS A FAILURE, never with status 0 (the unit's
+`Restart=` and `OnFailure=`, the failure counter and safe mode, ADR-0041 step 1a, act on failures only). Quickshell has no exit
+with a code from QML (`Qt.quit()` is status 0, `Qt.exit(n)` has no receiver: the qmltypes of Quickshell 0.3.2 name no other), so
+after 10 s the stub runs `kill -ABRT $PPID` through a `Process`: the process dies by a signal, a failed unit (`Result: signal`),
+with no report run (`QS_DISABLE_CRASH_HANDLER=1`) and no core file (`LimitCORE=0`), the journal records the crash.
+`tests/shell/migrate_qs_imports.sh` shows status 134 on a tree with a missing core, and, where a user manager exists, the
+failed unit state (`systemd-run --user --wait`).
 
 D-4 The load path is `Quickshell.shellDir` (the system tree, GF-115): no environment variable, no import path.
+
+D-5 UI process only for now. The migration covers `shell.qml`; `security.qml` and the security process stay as they are (loaded by
+`qs:`, no stub) until an opus security review of this approach. The modules the security process imports (transitively:
+`lib`, `services`, `platform`, `store`, `security`, `security.host`, `security.idle`, `security.lock`) are shared files: in the
+packaged copy their imports are relative, which a document loaded through `qs:` resolves through `qs:` as well, so the security
+process loads the same files by the same scheme as today and holds its own singletons (checked: `qs -p security.qml` on the
+migrated tree logs `grassfield-security: ready (hosting lock idle ...)`). The source of `shell/security/**` is not changed.
+
+D-6 Two invisible surfaces are built right after "started" (`LazyLoader { activeAsync: true }` in `shell.qml`): the capture toolbar
+and the exit cover. Nothing asks for them at login; a capture key pressed in the first tick does nothing, the exit cover's IPC
+target exists a tick after the first frame. The saver stays (its state is pinned by `tests/security/lock_surfaces.sh`), and Search,
+Apps, Overview and the Switcher stay (P4, A10).
+
+D-7 `grassfield-shell.service` restarts after 100 ms (`RestartSec=100ms`). The loop bounds hold: the start limit (10 in 300 s) is
+reached by any loop the lifetime model knows (10 x (0.1 + 10) s = 101 s < 300 s, `tests/shell/unit_restart_limits.sh`), and the
+failure counter (`grassfield-shell-failed`, third failure within 10 minutes, ADR-0041 step 1a) counts failures, not time, so it
+stops a loop of any pace, a faster one sooner. `grassfield-security.service` is unchanged.
 
 ## Rule for new files
 Write `import qs.<module>` exactly as before and nothing else about loading: no `qs:` URL in a string, no second import form in
@@ -59,6 +84,7 @@ the same tree, no new root file without a line in the script's roots (every `.qm
 ## Consequences
 - First start after an install or upgrade is as slow as today (cold cache); later starts save about half the CPU. A warm-up at
   package install is possible and not part of this ADR.
-- Not enough alone for R1: `RestartSec=1` and the remaining start still exceed 3 s (see the report).
+- Not proven for R1 until measured: the proxy start is 8.0 s CPU before and 3.5 s after the cache, the two surfaces and a restart
+  delay of 100 ms (see the report for the nested commands).
 - Open until measured in a nested session: that windows created under a `LazyLoader` behave as under the root (the proxy has no
   Wayland); that the cache folder is the one Quickshell sets under the unit's `UnsetEnvironment=QML_DISK_CACHE_PATH`.
