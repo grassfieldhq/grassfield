@@ -965,13 +965,17 @@ FR58, ADR-0036 amendment 2026-11-08 (the decision, its errors, its ABI risk), UR
   (`CWLDataDeviceProtocol::dropDrag`, 0x972b30: drop and leave to the target, its input listeners removed, the source kept)
   and sends `dnd_drop_performed` only from `completeDrag` (0x971e00), run by the target's `wl_data_offer.finish`, late or
   never; a drop nobody accepted is cancelled inside `dropDrag`. So the plugin's button listener (before the data device's)
-  ends the window's drag at the release (core `release()`, kept until the drag ends): no more following or target picking;
+  ends the window's drag at the release (core `release()`, kept until the drag ends): no more following; the target is still
+  picked without the window while it stays attached and Hyprland's drag runs (core `excludes()`: Hyprland's own pass would
+  send it an enter for its own drag, counter-review of 2dcae1f2);
   from the event loop, the place shown tiles (`tile()`), else, when the drag moved the window, `followOutput` and
   `fitAfterDrop`. The drag's own end (`dnd_drop_performed`, `cancelled`, the source gone) changes nothing more for a released
   window; without a release (Escape, the client, the source gone) it only calls `dragDone()`. A window that unmaps while
   attached is detached (`window.close`), as is one whose role goes (`CXDGToplevelResource::m_events.destroy`).
 - **invalid_source for a selection.** The logger also sees `wl_data_device.set_selection` (opcode 1) naming a toplevel-drag
-  source; `invalid_source` is posted on the manager that made the object from the event loop (never inside the logger walk).
+  source; `invalid_source` is posted on the manager that made the object from the event loop (never inside the logger walk),
+  only while that manager lives (its back reference is cleared when it goes) and belongs to the object's and the source's
+  client (core `misuseRaisable`: one client's misuse never disconnects another).
 - **A Hyprland that serves the protocol.** `dlsym(RTLD_DEFAULT, "xdg_toplevel_drag_manager_v1_interface")` finds its exported
   interface (the plugin's copy is hidden); the plugin then creates no global (logged) and does not advertise the feature.
 - **Logs** (request budget, FR24): `toplevel drag: drag began`, `attached window <hex>`, `window <hex> follows the pointer`,

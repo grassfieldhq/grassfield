@@ -83,6 +83,10 @@ namespace gf::toplevelDrag {
         return m_phase == Phase::Dragging && !m_released && m_attached && m_mapped;
     }
 
+    bool CDrag::excludes() const {
+        return m_phase == Phase::Dragging && m_attached && m_mapped;
+    }
+
     std::optional<Step> CDrag::step(Point pointer, Point topLeft) {
         if (!follows())
             return std::nullopt;
@@ -103,6 +107,10 @@ namespace gf::toplevelDrag {
         if (!m_attached || !m_mapped || m_grab)
             return;
         m_grab = Point{.x = pointer.x - topLeft.x, .y = pointer.y - topLeft.y};
+    }
+
+    bool misuseRaisable(std::optional<Id> managerClient, Id objectClient, std::optional<Id> sourceClient) {
+        return managerClient && *managerClient == objectClient && (!sourceClient || *sourceClient == objectClient);
     }
 
     Error CSources::add(Id source, Id object) {

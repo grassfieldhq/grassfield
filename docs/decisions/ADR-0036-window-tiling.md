@@ -455,7 +455,8 @@ macOS: the torn-off window follows the pointer, drops back into a tab bar, and t
    is one whose role is destroyed. `destroy` after `start_drag` and before `dnd_drop_performed` or `cancelled`:
    `ongoing_drag`; before `start_drag` it is accepted (the error is "drag has not ended"). A source passed to
    `wl_data_device.set_selection` (seen by the same logger) gets `invalid_source` on the manager that made its object, raised
-   from the event loop right after that request (a manager destroyed since cannot carry it: logged only). Lenient where the
+   from the event loop right after that request, only while that manager lives and belongs to the same client as the object
+   and the source (a manager destroyed since cannot carry it: logged only). Lenient where the
    spec leaves room: a source destroyed while a toplevel is attached (undefined) ends the drag as a cancel.
 4. *Following the pointer.* While its drag runs, a mapped attached window is moved by the plugin as a floating window, as
    the plugin's titlebar drag moves one (`CLayoutManager::setTargetGeom`, a warp, Hyprland's snapping away from a tiling place
@@ -469,14 +470,14 @@ macOS: the torn-off window follows the pointer, drops back into a tab bar, and t
    `wl_data_device.drop` and `leave` to the target, removes its own input listeners and keeps the drag's source;
    `dnd_drop_performed` (and `dnd_finished`) come only from `completeDrag` (0x971e00), which the target's
    `wl_data_offer.finish` runs, late or never; a drop nobody accepted is cancelled at once inside `dropDrag`. So the window's
-   drag ends at the release, seen by the plugin's button listener before the data device's: the window follows no more, the
-   drag's target is Hyprland's own again, and, once Hyprland handled the release, it ends "as if an `xdg_toplevel.move`
+   drag ends at the release, seen by the plugin's button listener before the data device's: the window follows no more (it
+   stays out of the target's selection while attached until the drag ends, item 5), and, once Hyprland handled the release, it ends "as if an `xdg_toplevel.move`
    ended": the place shown tiles (`tile()`), else the window stays where it was released and, if the drag moved it, takes the
    Desktop of the output under it and fits its work area (`followOutput`, `fitAfterDrop`). The release is kept until the drag
    ends: a target that finishes late, never, or cancels afterwards changes nothing for the window. A cancel without a
    release (Escape, the client, the source gone) only removes the preview; the client reverts.
 5. *Not a drag target.* "The attached window does not participate in the selection of the drag target": while a mapped
-   toplevel is attached and its drag runs, the plugin's `input.mouse.move` listener (registered at load, so it runs before
+   toplevel is attached and its drag runs (after the release too, until Hyprland's drag ends), the plugin's `input.mouse.move` listener (registered at load, so it runs before
    the data-device motion listener Hyprland registers at each drag start) picks the surface under the pointer with Hyprland's
    public hit tester in Hyprland's order (layer popups, Overlay and Top layers, windows through `CViewHitTester::windowAt`
    with the attached window as its `ignoreWindow`, Bottom and Background layers), gives it to `CSeatManager::setPointerFocus`

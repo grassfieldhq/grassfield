@@ -22,8 +22,9 @@
 #                  follows the pointer; released at the free edge: tiled. Best effort (tab positions are measured on Chromium
 #                  155): a missing second window is reported NOT VERIFIED, not FAIL
 #   T10 late       (review of aa8211de) released over a target that calls wl_data_offer.finish 2.5 s later (Hyprland 0.56.2
-#                  sends dnd_drop_performed only then): the window's drag ends at the release (the plugin logs it), the pointer
-#                  moves on and the window stays; then the late finish ends the drag without a protocol error
+#                  sends dnd_drop_performed only then): the window's drag ends at the release (the plugin logs it); the pointer
+#                  moved 2 px under the still-attached window gives it no enter (counter-review of 2dcae1f2); the pointer moves
+#                  on and the window stays; then the late finish ends the drag without a protocol error
 #   T11 never      the same with a target that never finishes: the window stays where it was released, Hyprland alive; Escape
 #                  then ends Hyprland's drag
 #   T12 source     the client destroys the wl_data_source mid-drag: a cancel (logged), the window follows no more, no error
@@ -288,6 +289,10 @@ for m in late-finish no-finish; do
     check "$m: released over the target: drop there" wait_said "drop target"
     check "$m: the window's drag ends at the release" plugin_logged "toplevel drag: window ${torn#0x} released: its drag ends here"
     read -r tx ty _ _ _ < <(win gf-tdrag-torn)
+    # Counter-review of 2dcae1f2: Hyprland keeps its drag until the target finishes; the torn window, under the pointer and
+    # still attached, must never get an enter for its own drag meanwhile.
+    pointer abs 1202 350 sleep 200 abs 1204 352 sleep 200
+    check "$m: 2 px after the release, the torn window is not the drag's target" bash -c "! grep -qx 'enter torn' '$run/tdrag-$m.out'"
     pointer abs 700 800 sleep 300 abs 760 840 sleep 300 # the pointer moves on while Hyprland waits for the target
     check "$m: the pointer moves on, the window stays where it was released" at_xy gf-tdrag-torn "${tx:-0}" "${ty:-0}"
     if [[ $m == late-finish ]]; then

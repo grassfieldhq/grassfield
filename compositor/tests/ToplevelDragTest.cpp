@@ -226,6 +226,31 @@ TEST(ToplevelDrag, ATargetCancellingAfterTheReleaseIsStillADrop) {
     EXPECT_EQ(endOf(end).outcome, Outcome::Drop);
 }
 
+TEST(ToplevelDrag, AReleasedWindowStaysOutOfTheTargetUntilTheDragEnds) {
+    // Counter-review of 2dcae1f2: after the release Hyprland keeps the drag until the target finishes; the window, still
+    // attached, never becomes the target (no enter for its own drag), though it no longer moves.
+    auto d = tornOff(0, 0);
+    EXPECT_TRUE(d.excludes());
+    ASSERT_TRUE(d.release());
+    EXPECT_FALSE(d.follows());
+    EXPECT_TRUE(d.excludes());
+    ASSERT_TRUE(d.end(EndKind::DropPerformed));
+    EXPECT_FALSE(d.excludes()); // the drag ended: Hyprland's own target choice again
+}
+
+TEST(ToplevelDrag, AnUnmappedOrUnattachedWindowIsNotExcluded) {
+    CDrag d;
+    ASSERT_TRUE(d.start());
+    EXPECT_FALSE(d.excludes()); // nothing attached
+    ASSERT_EQ(d.attach(kWindow, false, 0, 0), Error::None);
+    EXPECT_FALSE(d.excludes()); // not mapped: Hyprland cannot pick it anyway
+    d.mapped(kWindow);
+    ASSERT_TRUE(d.release());
+    EXPECT_TRUE(d.excludes());
+    EXPECT_TRUE(d.unmapped(kWindow)); // the tab joined a strip after the release
+    EXPECT_FALSE(d.excludes());
+}
+
 TEST(ToplevelDrag, OneReleasePerDrag) {
     auto d = tornOff(0, 0);
     ASSERT_TRUE(d.release());
@@ -283,6 +308,17 @@ TEST(ToplevelDrag, OutcomesFollowTheRelease) {
     EXPECT_EQ(outcomeOf(EndKind::Cancelled, false), Outcome::Cancel);
     EXPECT_EQ(outcomeOf(EndKind::SourceGone, true), Outcome::Cancel);
     EXPECT_EQ(outcomeOf(EndKind::SourceGone, false), Outcome::Cancel);
+}
+
+TEST(ToplevelDragMisuse, InvalidSourceGoesOnlyToTheObjectsOwnLiveManager) {
+    using gf::toplevelDrag::misuseRaisable;
+    constexpr gf::toplevelDrag::Id kClientA = 0xA0, kClientB = 0xB0;
+    EXPECT_TRUE(misuseRaisable(kClientA, kClientA, kClientA));
+    EXPECT_TRUE(misuseRaisable(kClientA, kClientA, std::nullopt)); // the source destroyed since: the object's client decides
+    EXPECT_FALSE(misuseRaisable(std::nullopt, kClientA, kClientA)); // the manager destroyed: nothing to raise it on
+    // Client A's manager gone and its address reused by client B's: A's misuse never disconnects B.
+    EXPECT_FALSE(misuseRaisable(kClientB, kClientA, kClientA));
+    EXPECT_FALSE(misuseRaisable(kClientA, kClientA, kClientB));
 }
 
 TEST(ToplevelDragSources, ASourceTakesOneLiveObject) {

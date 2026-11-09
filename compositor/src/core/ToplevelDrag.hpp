@@ -120,6 +120,12 @@ namespace gf::toplevelDrag {
         // The drag moves the attached toplevel now: Dragging, not released, a toplevel attached and mapped.
         bool follows() const;
 
+        // The attached toplevel takes no part in the selection of the drag target (the spec, until the drag ends): Dragging, a
+        // toplevel attached and mapped, released or not. After the release Hyprland 0.56.2 keeps its drag until the target
+        // finishes, and its own pointer-focus pass would send the window an enter for its own drag (counter-review of
+        // 2dcae1f2): the glue keeps picking the target without it, without moving it.
+        bool excludes() const;
+
         // Where the window goes with the pointer at `pointer`, the window's top-left being `topLeft` now; nullopt unless
         // follows(). The first step measures the grab of a window that was mapped when attached.
         std::optional<Step> step(Point pointer, Point topLeft);
@@ -140,6 +146,12 @@ namespace gf::toplevelDrag {
         bool                 m_released = false; // a pointer button was released during the drag
         std::optional<Point> m_grab;            // the pointer minus the window's top-left (nullopt: measured at the first step)
     };
+
+    // A source used as a selection: invalid_source goes on the manager that made the object only while that manager lives
+    // (`managerClient`, nullopt once it is destroyed: never an address that may be reused by another client's manager) and
+    // belongs to the object's client, as does the source when it still exists (counter-review of 2dcae1f2: one client's misuse
+    // must never disconnect another). Clients are compared by address.
+    bool misuseRaisable(std::optional<Id> managerClient, Id objectClient, std::optional<Id> sourceClient);
 
     // One live toplevel-drag object per wl_data_source (invalid_source while it lives; a source whose object is destroyed may
     // get another one, as KWin allows).

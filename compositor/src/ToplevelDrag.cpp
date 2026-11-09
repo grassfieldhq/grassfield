@@ -111,6 +111,7 @@ namespace {
     // One binding of the xdg_toplevel_drag_manager_v1 global.
     struct SManager {
         UP<CXdgToplevelDragManagerV1> resource;
+        wl_resource*                  raw  = nullptr; // its wl_resource, kept for the objects' back reference (cleared with it)
         bool                          live = true;
     };
 
@@ -187,20 +188,21 @@ namespace {
         return PROTO::data && PROTO::data->dndActive();
     }
 
-    // The object whose drag moves its attached window now (one seat: at most one runs). A window Hyprland mapped already but
-    // whose window.open has not come yet (CWindow::onMap sets m_isMapped first, and a pointer motion Hyprland simulates on the
-    // way can come before the event) counts as mapped: it is never the drag's target either.
-    SObject* following() {
+    // The object whose attached window is out of the drag target's selection now (core excludes(): its drag runs, the window
+    // attached and mapped; it also follows the pointer until the release). One seat: at most one drag runs. A window Hyprland
+    // mapped already but whose window.open has not come yet (CWindow::onMap sets m_isMapped first, and a pointer motion
+    // Hyprland simulates on the way can come before the event) counts as mapped: it is never the drag's target either.
+    SObject* excluding() {
         for (const auto& o : st().live.objects) {
             if (!o->live || o->drag.phase() != td::Phase::Dragging || !o->drag.attached())
                 continue;
-            if (!o->drag.follows()) {
+            if (!o->drag.excludes()) {
                 const auto top = o->toplevel.lock();
                 const auto w   = top ? top->m_window.lock() : nullptr;
                 if (w && w->m_isMapped)
                     o->drag.mapped(idOf(top.get()));
             }
-            if (o->drag.follows())
+            if (o->drag.excludes())
                 return o.get();
         }
         return nullptr;
@@ -316,8 +318,11 @@ namespace {
         return nullptr;
     }
 
-    bool managerAlive(const wl_resource* manager) {
-        return manager && std::ranges::any_of(st().live.managers, [manager](const UP<SManager>& m) { return m->live && m->resource->resource() == manager; });
+    // The client of the object's manager while that manager lives (its back reference is cleared when it goes, managerGone).
+    std::optional<uint64_t> managerClient(wl_resource* manager) {
+        if (!manager || !std::ranges::any_of(st().live.managers, [manager](const UP<SManager>& m) { return m->live && m->raw == manager; }))
+            return std::nullopt;
+        return idOf(wl_resource_get_client(manager));
     }
 
     // The source of a toplevel drag went to wl_data_device.set_selection: invalid_source on the manager that made the object,
@@ -329,8 +334,13 @@ namespace {
             const auto it = std::ranges::find_if(s.live.objects, [id](const UP<SObject>& o) { return o->live && o->id() == id; });
             if (it == s.live.objects.end())
                 continue;
-            if (!managerAlive((*it)->manager)) {
-                gf::logRequest(Log::WARN, "toplevel drag: a source with a toplevel drag used as a selection; its manager is gone: not raised");
+            const auto& o      = **it;
+            const auto  object = o.resource->resource();
+            if (!object)
+                continue;
+            const auto source = o.source ? std::optional<uint64_t>{idOf(wl_resource_get_client(o.source))} : std::nullopt;
+            if (!td::misuseRaisable(managerClient(o.manager), idOf(wl_resource_get_client(object)), source)) {
+                gf::logRequest(Log::WARN, "toplevel drag: a source with a toplevel drag used as a selection; its manager is gone or another client's: not raised");
                 continue;
             }
             gf::logRequest(Log::WARN, "toplevel drag: a source with a toplevel drag used as a selection: protocol error invalid_source");
@@ -516,7 +526,7 @@ namespace {
         auto& s = st();
         if (!s.ready || s.live.objects.empty())
             return;
-        auto* o = following();
+        auto* o = excluding();
         if (!o)
             return;
         if (!hyprlandDragRunning()) {
@@ -526,7 +536,8 @@ namespace {
         const auto w = windowOf(*o);
         if (!w || !w->m_isMapped)
             return;
-        follow(*o, w, pos);
+        if (o->drag.follows())
+            follow(*o, w, pos); // after the release it stays where it was released, still out of the target's selection
         if (pickTarget(w, pos))
             info.cancelled = true;
     }
@@ -668,7 +679,14 @@ namespace {
 
     // ---- xdg_toplevel_drag_manager_v1 requests --------------------------------------------------------------------------
 
+    // The objects' back references to this manager are cleared first: a manager made later (by any client) may get its address.
     void managerGone(SManager* m) {
+        if (m->live) {
+            for (const auto& o : st().live.objects) {
+                if (o->manager == m->raw)
+                    o->manager = nullptr;
+            }
+        }
         eraseFrom(m->live ? st().live.managers : retired().managers, m);
     }
 
@@ -699,7 +717,7 @@ namespace {
                 m->resource->error(XDG_TOPLEVEL_DRAG_MANAGER_V1_ERROR_INVALID_SOURCE, "data_source already used for toplevel drag");
                 return;
             }
-            raw->manager                    = m->resource->resource();
+            raw->manager                    = m->raw;
             raw->source                     = source;
             raw->sourceGone.owner           = raw;
             raw->sourceGone.listener.notify = onSourceDestroyed;
@@ -726,6 +744,7 @@ namespace {
                 wl_client_post_no_memory(client);
                 return;
             }
+            m->raw    = m->resource->resource();
             m->live   = st().ready;
             auto* raw = m.get();
             raw->resource->setGetXdgToplevelDrag([raw](CXdgToplevelDragManagerV1* /*r*/, uint32_t newId, wl_resource* source) { onGetDrag(raw, newId, source); });
