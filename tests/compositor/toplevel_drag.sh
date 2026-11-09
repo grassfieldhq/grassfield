@@ -21,6 +21,8 @@
 #   T9 chromium    (when chromium is installed) the second tab of a two-tab window dragged down: a new chromium window maps and
 #                  follows the pointer; released at the free edge: tiled. Best effort (tab positions are measured on Chromium
 #                  155): a missing second window is reported NOT VERIFIED, not FAIL
+#   T10b finish    a target that finishes without receiving, as Chromium's tab drag (Hyprland 0.56.2 then cancels): the
+#                  source gets dnd_drop_performed before that cancel (the plugin's), so Chromium keeps the drop
 #   T10 late       (review of aa8211de) released over a target that calls wl_data_offer.finish 2.5 s later (Hyprland 0.56.2
 #                  sends dnd_drop_performed only then): the window's drag ends at the release (the plugin logs it); the pointer
 #                  moved 2 px under the still-attached window gives it no enter (counter-review of 2dcae1f2); the pointer moves
@@ -170,6 +172,8 @@ at_xy() { # <title> <x> <y>
   say "  $1 at ${x:-?},${y:-?} (want $2,$3)"
   [[ -n ${x:-} ]] && ((x - $2 <= 2 && $2 - x <= 2 && y - $3 <= 2 && $3 - y <= 2))
 }
+# The fixture of case $1 printed dnd_drop_performed, then cancelled (the protocol's order for a drop nobody completed).
+drop_then_cancel() { awk '/^dnd_drop_performed$/ { d = NR } /^cancelled$/ { c = NR } END { exit !(d && c && d < c) }' "$run/tdrag-$1.out"; }
 tile_of() { # <address>: "<state> <place>" of its tile record ("none none" without one)
   nestctl grassfield-tiling 2>>"$log" | jq -r --arg a "${1#0x}" '[.outputs[].windows[] | select(.address == $a)][0] // {} | "\(.state // "none") \(.place // "none")"'
 }
@@ -200,7 +204,8 @@ if start_fixture tear tear; then
   check "T2: the torn window never becomes the drag's target" bash -c "! grep -qx 'enter torn' '$run/tdrag-tear.out'"
   wait "$p"
   check "T3: released over the target: drop there" wait_said "drop target"
-  check "T3: dnd_drop_performed" said "dnd_drop_performed"
+  check "T3: dnd_drop_performed" wait_said "dnd_drop_performed"
+  check "T3: dnd_finished (Hyprland completed the drop)" wait_said "dnd_finished"
   check "T3: the client destroys its object after the drag ended (no protocol error)" wait_said "drag object destroyed"
   sleep 0.6
   check "T3: the torn window stays where it was released" at_xy gf-tdrag-torn 1160 338
@@ -220,6 +225,9 @@ elif start_fixture tile tear; then
   sleep 1
   torn=$(win gf-tdrag-torn | cut -d' ' -f5)
   check "T4: released over nothing at the edge: Hyprland ended the drag (cancelled or dropped)" bash -c "grep -qxE 'cancelled|dnd_drop_performed' '$run/tdrag-tile.out'"
+  # Hyprland 0.56.2 cancels a drop nobody accepted without dnd_drop_performed; Chromium reads a lone cancel as Escape and puts
+  # the tab back. The plugin sends dnd_drop_performed first (the user dropped): the protocol's order.
+  check "T4: dnd_drop_performed before cancelled (a drop, not a revert)" drop_then_cancel tile
   tiled_side() { local t; t=$(tile_of "$torn"); say "  tile record: $t (want tiled $side)"; [[ $t == "tiled $side" ]]; }
   check "T4: the torn window takes the $side half (tile record)" tiled_side
   check "T4: the plugin logged the tile" plugin_logged "toplevel drag: window ${torn#0x} dropped: tiled into the place shown"
@@ -237,6 +245,7 @@ if [[ -n $side ]] && start_fixture escape tear; then
   sleep 0.8
   torn=$(win gf-tdrag-torn | cut -d' ' -f5)
   check "T5: Escape cancels the drag" said "cancelled"
+  check "T5: no dnd_drop_performed (a cancel, the client reverts)" bash -c "! grep -qx 'dnd_drop_performed' '$run/tdrag-escape.out'"
   tile_none() { local t; t=$(tile_of "$torn"); say "  tile record: $t"; [[ $t != tiled* ]]; }
   check "T5: no tile" tile_none
   check "T5: the plugin logged the cancel" plugin_logged "toplevel drag: window ${torn#0x} cancelled"
@@ -310,6 +319,16 @@ for m in late-finish no-finish; do
     check "$m: the fixture starts" false
   fi
 done
+
+# ---- T10b: a target that finishes without receiving (Chromium's tab drag): Hyprland cancels, the plugin's drop comes first ----
+if start_fixture finish-only finish-only; then
+  pointer abs 300 350 sleep 200 down sleep 600 drag 1200 350 sleep 1200 up sleep 600
+  check "finish-only: released over the target: drop there" wait_said "drop target"
+  sleep 0.5
+  check "finish-only: dnd_drop_performed before Hyprland's cancel" drop_then_cancel finish-only
+else
+  check "finish-only: the fixture starts" false
+fi
 
 # ---- T12, T13: the source or the window's role destroyed mid-drag ----
 if start_fixture source-destroy source-destroy; then
@@ -386,11 +405,13 @@ if command -v chromium >/dev/null && [[ -n $side ]]; then
   dead_proxy=127.0.0.1:9
   rm -rf "$run/chromium-profile"
   http_proxy=http://$dead_proxy https_proxy=http://$dead_proxy all_proxy=http://$dead_proxy no_proxy='' \
-    env -u DISPLAY WAYLAND_DISPLAY="$sock" DBUS_SESSION_BUS_ADDRESS="$bus" GDK_BACKEND=wayland setsid "$root/scripts/dev/isolated.sh" --name tdrag-chromium -- \
+    env -u DISPLAY WAYLAND_DISPLAY="$sock" WAYLAND_DEBUG=1 DBUS_SESSION_BUS_ADDRESS="$bus" GDK_BACKEND=wayland setsid "$root/scripts/dev/isolated.sh" --name tdrag-chromium -- \
     chromium --user-data-dir="$run/chromium-profile" --no-first-run --no-default-browser-check --password-store=basic --disable-background-networking \
     --disable-component-update --disable-sync --proxy-server="$dead_proxy" --ozone-platform=wayland --window-size=1000,640 about:blank about:blank \
     >>"$run/chromium.out" 2>&1 </dev/null &
   chromium_pid=$!
+  # WAYLAND_DEBUG=1 (set on the launch above) writes Chromium's protocol trace to chromium.out: the drag's
+  # wl_data_source.dnd_drop_performed / cancelled order is read there when T9 fails.
   chromes() { nestctl clients -j | jq -r --argjson mx "$mx" --argjson my "$my" '[.[] | select(.class == "chromium" and .mapped)] | .[] | "\(.at[0] - $mx) \(.at[1] - $my) \(.size[0]) \(.size[1]) \(.address)"'; }
   for _ in $(seq 1 80); do [[ -n $(chromes) ]] && break; sleep 0.25; done
   read -r _ _ _ _ caddr < <(chromes | head -n 1)

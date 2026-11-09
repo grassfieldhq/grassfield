@@ -253,6 +253,38 @@ TEST(ToplevelDrag, AnUnmappedOrUnattachedWindowIsNotExcluded) {
     EXPECT_FALSE(d.excludes());
 }
 
+TEST(ToplevelDrag, ADroppedSourceGetsItsDropBeforeHyprlandsCancel) {
+    // Integrator nested run of 000240ef (T9): Hyprland cancelled a drop nobody accepted without dnd_drop_performed, and
+    // Chromium put the tab back as after Escape.
+    auto d = tornOff(0, 0);
+    ASSERT_TRUE(d.release());
+    EXPECT_TRUE(d.dropBeforeCancel());
+    EXPECT_FALSE(d.dropBeforeCancel()); // once
+    const auto end = d.end(EndKind::Cancelled);
+    ASSERT_TRUE(end);
+    EXPECT_EQ(endOf(end).outcome, Outcome::Drop);
+}
+
+TEST(ToplevelDrag, EscapeGetsNoDrop) {
+    auto d = tornOff(0, 0);
+    EXPECT_FALSE(d.dropBeforeCancel()); // no release: the cancel stays a cancel, the client reverts
+}
+
+TEST(ToplevelDrag, HyprlandsOwnDropNeedsNoSecond) {
+    auto d = tornOff(0, 0);
+    ASSERT_TRUE(d.release());
+    ASSERT_TRUE(d.end(EndKind::DropPerformed)); // a target that received and finished
+    EXPECT_FALSE(d.dropBeforeCancel());
+}
+
+TEST(ToplevelDrag, AReleaseWithoutAWindowStillDrops) {
+    // A tab moved within its strip (nothing attached): its release is a drop too, never a revert.
+    CDrag d;
+    ASSERT_TRUE(d.start());
+    ASSERT_TRUE(d.release());
+    EXPECT_TRUE(d.dropBeforeCancel());
+}
+
 TEST(ToplevelDrag, OneReleasePerDrag) {
     auto d = tornOff(0, 0);
     ASSERT_TRUE(d.release());
@@ -328,6 +360,7 @@ namespace {
         std::vector<SFakeWindow> stack; // top first
         bool                     popup = false;
         std::vector<TargetKind>  layers;
+        bool                     honoursIgnore = true; // false: a windowAt path that returns the ignored window anyway
 
         bool                     layerPopup() override {
             return popup;
@@ -337,7 +370,7 @@ namespace {
         }
         std::optional<gf::toplevelDrag::Id> window(uint16_t properties, gf::toplevelDrag::Id ignore) override {
             for (const auto& w : stack) {
-                if (w.id == ignore || (w.floating && !(properties & gf::toplevelDrag::kAllowFloating)))
+                if ((honoursIgnore && w.id == ignore) || (w.floating && !(properties & gf::toplevelDrag::kAllowFloating)))
                     continue;
                 return w.id;
             }
@@ -356,14 +389,24 @@ TEST(ToplevelDragTarget, TheFloatingWindowUnderTheDraggedOneIsTheTarget) {
     scene.stack  = {SFakeWindow{.id = kWindow}, SFakeWindow{.id = kOther}};
     scene.layers = {TargetKind::Background};
     EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow), (Target{.kind = TargetKind::Window, .window = kOther}));
-    EXPECT_NE(gf::toplevelDrag::kTargetWindowProperties & gf::toplevelDrag::kAllowFloating, 0);
-    EXPECT_EQ(gf::toplevelDrag::kTargetWindowProperties, 0x113) << "CInputManager::mouseMoveUnified's own lookup (0x6b9729)";
+    EXPECT_NE(gf::toplevelDrag::kTargetWindowProperties & gf::toplevelDrag::kAllowFloating, 0U);
+    EXPECT_EQ(gf::toplevelDrag::kTargetWindowProperties, 0x113U) << "CInputManager::mouseMoveUnified's own lookup (0x6b9729)";
 }
 
 TEST(ToplevelDragTarget, TheDraggedWindowIsNeverTheTarget) {
     CFakeScene scene;
     scene.stack  = {SFakeWindow{.id = kWindow}};
     scene.layers = {TargetKind::Background};
+    EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow), (Target{.kind = TargetKind::Background, .window = std::nullopt}));
+}
+
+TEST(ToplevelDragTarget, ALookupThatReturnsTheDraggedWindowCountsAsNoWindow) {
+    // Delta review of 000240ef: should a windowAt path ignore the exclusion, the dragged window still never becomes the target;
+    // the layers below are looked at as when no window is there.
+    CFakeScene scene;
+    scene.honoursIgnore = false;
+    scene.stack         = {SFakeWindow{.id = kWindow}, SFakeWindow{.id = kOther}};
+    scene.layers        = {TargetKind::Background};
     EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow), (Target{.kind = TargetKind::Background, .window = std::nullopt}));
 }
 

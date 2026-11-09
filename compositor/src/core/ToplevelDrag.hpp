@@ -103,6 +103,14 @@ namespace gf::toplevelDrag {
             return m_released;
         }
 
+        // Hyprland 0.56.2 sends wl_data_source.cancelled without dnd_drop_performed first for a drop nobody accepted, and for
+        // one whose target finished without receiving (Chromium's tab drag); Chromium reads a cancel without a drop as Escape
+        // and puts the tab back (wayland_window_drag_controller.cc HandleDragEnd, HandleDropAndResetState). The core protocol
+        // sends dnd_drop_performed when the user performs the drop, cancelled possibly after it. Called as Hyprland's
+        // cancelled for this source is being sent: true once when the drag was released and no dnd_drop_performed went to the
+        // source yet; the glue then sends dnd_drop_performed first. Never for a cancel without a release (Escape: a revert).
+        bool dropBeforeCancel();
+
         // The drag ended. Dragging: Ended, with the outcome (outcomeOf with the release seen) and the toplevel that followed
         // the pointer, unless the release placed it already (it is detached). Waiting (a source cancelled before its drag
         // began): Ended, nullopt. Ended: nullopt.
@@ -144,6 +152,7 @@ namespace gf::toplevelDrag {
         bool                 m_mapped  = false;
         bool                 m_stepped  = false; // a step happened since the toplevel follows
         bool                 m_released = false; // a pointer button was released during the drag
+        bool                 m_dropSent = false; // the source got dnd_drop_performed (Hyprland's or the plugin's)
         std::optional<Point> m_grab;            // the pointer minus the window's top-left (nullopt: measured at the first step)
     };
 
@@ -157,15 +166,16 @@ namespace gf::toplevelDrag {
 
     // The eGetWindowProperties bits (Desktop::View, Window.hpp:63-74) of the target's window lookup; the glue checks them
     // against Hyprland's enum at compile time.
-    inline constexpr uint16_t kReservedExtents  = 1U << 0;
-    inline constexpr uint16_t kInputExtents     = 1U << 1;
-    inline constexpr uint16_t kAllowFloating    = 1U << 4;
-    inline constexpr uint16_t kFollowMouseCheck = 1U << 8;
+    // Unsigned throughout (bugprone-signed-bitwise: a uint16_t operand is promoted to int).
+    inline constexpr unsigned kReservedExtents  = 0x1U;
+    inline constexpr unsigned kInputExtents     = 0x2U;
+    inline constexpr unsigned kAllowFloating    = 0x10U;
+    inline constexpr unsigned kFollowMouseCheck = 0x100U;
     // What CInputManager::mouseMoveUnified's window hit test passes to CViewHitTester::windowAt (its helper at 0x6b96a0 loads
     // 0x113): floating windows count, and every Grassfield window floats. The first build passed FOCUS_PRIORITY alone, which
     // finds no floating window: the drag never entered the window under the pointer, only the wallpaper below it (integrator
     // nested run of 3ae753c2, T2, T3, T6).
-    inline constexpr uint16_t kTargetWindowProperties = kReservedExtents | kInputExtents | kAllowFloating | kFollowMouseCheck;
+    inline constexpr uint16_t kTargetWindowProperties = static_cast<uint16_t>(kReservedExtents | kInputExtents | kAllowFloating | kFollowMouseCheck);
 
     enum class TargetKind : uint8_t {
         None,         // nothing under the pointer
@@ -205,7 +215,8 @@ namespace gf::toplevelDrag {
     };
 
     // The surface the drag targets: layer popups, the Overlay and Top layers, windows (kTargetWindowProperties, the dragged one
-    // ignored), the Bottom and Background layers. The dragged window never takes part (the spec).
+    // ignored), the Bottom and Background layers. The dragged window never takes part (the spec): a lookup that returns it
+    // anyway (a path of windowAt that would not honour ignoreWindow) counts as no window, and the layers below are looked at.
     Target pickTarget(ITargetScene& scene, Id dragged);
 
     // One live toplevel-drag object per wl_data_source (invalid_source while it lives; a source whose object is destroyed may

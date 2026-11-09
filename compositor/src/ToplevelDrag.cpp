@@ -382,8 +382,20 @@ namespace {
             const bool dropped = name == kDropPerformed;
             if (!dropped && name != kCancelled)
                 return;
-            if (auto* o = objectOfSource(message->resource))
-                ended(*o, dropped ? td::EndKind::DropPerformed : td::EndKind::Cancelled);
+            auto* o = objectOfSource(message->resource);
+            if (!o)
+                return;
+            // Hyprland is sending cancelled to a source whose drag was released, with no dnd_drop_performed before it (a drop
+            // nobody accepted, or a target that finished without receiving): dnd_drop_performed goes first, as the core
+            // protocol orders them, so that Chromium keeps the drop instead of reading Escape (core dropBeforeCancel). Posted
+            // from here, it is marshalled before the cancelled being sent; libwayland calls this logger again for it, which
+            // ends the drag as a drop.
+            if (!dropped && o->source && o->drag.dropBeforeCancel() &&
+                wl_resource_get_version(o->source) >= static_cast<int>(WL_DATA_SOURCE_DND_DROP_PERFORMED_SINCE_VERSION)) {
+                gf::logRequest(Log::INFO, "toplevel drag: the drop was released: dnd_drop_performed sent before Hyprland's cancel (source {:x})", idOf(o->source));
+                wl_data_source_send_dnd_drop_performed(o->source);
+            }
+            ended(*o, dropped ? td::EndKind::DropPerformed : td::EndKind::Cancelled);
         } catch (...) { // NOLINT(bugprone-empty-catch): called from libwayland; nothing may escape, nothing to report to here
         }
     }

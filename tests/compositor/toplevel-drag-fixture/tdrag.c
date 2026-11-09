@@ -8,18 +8,23 @@
 // A left press on the source starts a drag and drop, as a tab drag does: a wl_data_source offering "application/x-gf-tdrag"
 // (action move), an xdg_toplevel_drag_v1 for it, wl_data_device.start_drag with the press's serial; then, by MODE:
 //   tear          a new toplevel "gf-tdrag-torn" (320x200) is attached at offset 40,12 before it maps (a torn-off tab)
-//   merge         as tear, and the torn window unmaps itself when the drag enters the target (the tab joins its strip),
-//                 then is attached again and maps when the drag leaves it (pulled out again)
+//   merge         as tear, and the torn window goes when the drag enters the target (the tab joins its strip: its toplevel,
+//                 xdg_surface and wl_surface destroyed, as Chromium hides a window), then a new one is attached and maps
+//                 when the drag leaves it (pulled out again)
 //   existing      no new window: the source itself is attached (mapped) before start_drag (dragging a window's only tab)
 //   attach-twice  as tear, then a second attach while the first toplevel is attached (protocol error toplevel_attached)
 //   destroy-early the xdg_toplevel_drag_v1 is destroyed right after start_drag (protocol error ongoing_drag)
 //   source-twice  a second xdg_toplevel_drag_v1 for the same source (protocol error invalid_source)
 //   selection     the drag's source also passed to wl_data_device.set_selection (protocol error invalid_source)
 //   late-finish   as tear, and the target calls wl_data_offer.finish 2.5 s after the drop ("finished late")
+//   finish-only   as tear, and the target calls wl_data_offer.finish without wl_data_offer.receive, as Chromium's tab drag
+//                 does (Hyprland 0.56.2 then cancels the drop)
 //   no-finish     as tear, and the target never calls wl_data_offer.finish ("drop target" only)
 //   source-destroy as tear, and 1 s after the torn window maps the client destroys the wl_data_source, then its object
 //   role-destroy  as tear, and 1 s after the torn window maps the client destroys its xdg_toplevel and xdg_surface
-// The target accepts the offer (a drop there is dnd_drop_performed); nothing else does (a release elsewhere: cancelled).
+// The target accepts the offer and, at the drop, receives the data then finishes, as a data target does (Hyprland 0.56.2
+// completes a drop only for an offer that was received: dnd_drop_performed, dnd_finished); nothing else accepts (a release
+// elsewhere: cancelled).
 // Prints, one line each: "global xdg_toplevel_drag_manager_v1 V" (or "no xdg_toplevel_drag_manager_v1", exit 4), "drag
 // started", "attached torn|source", "mapped torn", "unmapped torn", "enter source|target|torn|other", "leave", "drop target",
 // "dnd_drop_performed", "dnd_finished", "cancelled", "drag object destroyed", "protocol error <interface> <code>" (exit 3).
@@ -223,13 +228,20 @@ static void request_map(struct window* win) {
     wl_surface_commit(win->surface);
 }
 
-static void hide(struct window* win) {
-    wl_surface_attach(win->surface, NULL, 0, 0);
-    wl_surface_commit(win->surface);
-    win->mapped = 0;
-    win->hidden = 1;
-    if (win == &torn_win)
-        say("%s", "unmapped torn");
+// The torn window goes as Chromium hides a window: its toplevel, xdg_surface and wl_surface destroyed (a later attach_torn
+// makes a new one).
+static void retire_torn(void) {
+    if (!torn_win.surface)
+        return;
+    xdg_toplevel_destroy(torn_win.top);
+    xdg_surface_destroy(torn_win.xs);
+    wl_surface_destroy(torn_win.surface);
+    torn_win.top     = NULL;
+    torn_win.xs      = NULL;
+    torn_win.surface = NULL;
+    torn_win.mapped  = 0;
+    torn_win.hidden  = 1;
+    say("%s", "unmapped torn");
 }
 
 // ---- wl_data_source --------------------------------------------------------------------------------------------------
@@ -284,6 +296,8 @@ static const struct wl_data_source_listener source_listener = {
     .dnd_finished = source_finished, .action = source_action};
 
 static void attach_torn(void) {
+    if (!torn_win.surface)
+        create_window(&torn_win);
     xdg_toplevel_drag_v1_attach(drag, torn_win.top, 40, 12);
     say("%s", "attached torn");
     request_map(&torn_win);
@@ -315,8 +329,6 @@ static void start_drag(uint32_t serial) {
     }
     if (strcmp(mode, "existing") == 0)
         return;
-    if (!torn_win.surface)
-        create_window(&torn_win);
     attach_torn();
     if (strcmp(mode, "attach-twice") == 0)
         xdg_toplevel_drag_v1_attach(drag, target_win.top, 0, 0); // toplevel_attached
@@ -362,7 +374,7 @@ static void device_enter(void* data, struct wl_data_device* d, uint32_t serial, 
         wl_data_offer_accept(o, serial, kMime);
         wl_data_offer_set_actions(o, WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE, WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
         if (strcmp(mode, "merge") == 0 && drag && torn_win.mapped)
-            hide(&torn_win); // the tab joins the target's strip: the torn window goes (the compositor detaches it)
+            retire_torn(); // the tab joins the target's strip: the torn window goes (the compositor detaches it)
     } else {
         wl_data_offer_accept(o, serial, NULL);
         wl_data_offer_set_actions(o, 0, 0);
@@ -387,6 +399,17 @@ static void device_motion(void* data, struct wl_data_device* d, uint32_t time, w
     (void)x;
     (void)y;
 }
+// A data target's end of a drop: the data received (here a pipe closed at once), then finish.
+static void receive_and_finish(struct wl_data_offer* o) {
+    int fds[2];
+    if (pipe(fds) == 0) {
+        wl_data_offer_receive(o, kMime, fds[1]);
+        close(fds[1]);
+        close(fds[0]);
+    }
+    wl_data_offer_finish(o);
+}
+
 static void device_drop(void* data, struct wl_data_device* d) {
     (void)data;
     (void)d;
@@ -399,7 +422,10 @@ static void device_drop(void* data, struct wl_data_device* d) {
         return;
     }
     if (offer && dnd_focus == target_win.surface) {
-        wl_data_offer_finish(offer);
+        if (strcmp(mode, "finish-only") == 0)
+            wl_data_offer_finish(offer); // Chromium: no receive
+        else
+            receive_and_finish(offer);
     }
     if (offer) {
         wl_data_offer_destroy(offer);
@@ -480,7 +506,7 @@ static int report_error(void) {
 
 int main(int argc, char** argv) {
     if (argc != 2) {
-        fprintf(stderr, "usage: tdrag tear|merge|existing|attach-twice|destroy-early|source-twice|selection|late-finish|no-finish|source-destroy|role-destroy\n");
+        fprintf(stderr, "usage: tdrag tear|merge|existing|attach-twice|destroy-early|source-twice|selection|late-finish|finish-only|no-finish|source-destroy|role-destroy\n");
         return 2;
     }
     mode    = argv[1];
@@ -530,7 +556,7 @@ int main(int argc, char** argv) {
         wl_display_flush(display);
         if (finish_at && now_ms() >= finish_at && pending_offer) {
             finish_at = 0;
-            wl_data_offer_finish(pending_offer);
+            receive_and_finish(pending_offer);
             wl_data_offer_destroy(pending_offer);
             pending_offer = NULL;
             say("%s", "finished late");

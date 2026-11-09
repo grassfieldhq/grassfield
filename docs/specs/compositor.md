@@ -975,6 +975,15 @@ FR58, ADR-0036 amendment 2026-11-08 (the decision, its errors, its ABI risk), UR
   `fitAfterDrop`. The drag's own end (`dnd_drop_performed`, `cancelled`, the source gone) changes nothing more for a released
   window; without a release (Escape, the client, the source gone) it only calls `dragDone()`. A window that unmaps while
   attached is detached (`window.close`), as is one whose role goes (`CXDGToplevelResource::m_events.destroy`).
+- **A released drag is a drop for the client.** Hyprland 0.56.2 sends `wl_data_source.cancelled` without
+  `dnd_drop_performed` for a drop nobody accepted, and for a target that finishes without `wl_data_offer.receive`
+  (its `finish` handler, 0x972ee0, completes only an offer both accepted and received, else `abortDrag`); Chromium's tab drag
+  does not receive, and reads a lone cancel as Escape: the tab goes back (`wayland_window_drag_controller.cc`, `HandleDragEnd`:
+  kCancelled, then a synthesized Escape). The core protocol sends `dnd_drop_performed` when the user performs the drop and
+  `cancelled` possibly after it. So, for a toplevel-drag source whose drag was released, the plugin posts
+  `dnd_drop_performed` from the protocol logger as Hyprland's `cancelled` is being sent (it is marshalled first; core
+  `dropBeforeCancel`, once, never without a release: Escape stays a cancel). Hyprland's own `dnd_drop_performed` (a target
+  that received and finished) needs none.
 - **invalid_source for a selection.** The logger also sees `wl_data_device.set_selection` (opcode 1) naming a toplevel-drag
   source; `invalid_source` is posted on the manager that made the object from the event loop (never inside the logger walk),
   only while that manager lives (its back reference is cleared when it goes) and belongs to the object's and the source's

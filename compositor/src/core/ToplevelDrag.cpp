@@ -43,7 +43,16 @@ namespace gf::toplevelDrag {
         return End{.outcome = Outcome::Drop, .toplevel = followed ? m_attached : std::nullopt};
     }
 
+    bool CDrag::dropBeforeCancel() {
+        if (m_phase != Phase::Dragging || !m_released || m_dropSent)
+            return false;
+        m_dropSent = true;
+        return true;
+    }
+
     std::optional<End> CDrag::end(EndKind kind) {
+        if (kind == EndKind::DropPerformed)
+            m_dropSent = true;
         if (m_phase == Phase::Ended)
             return std::nullopt;
         const bool wasDragging = m_phase == Phase::Dragging;
@@ -120,7 +129,7 @@ namespace gf::toplevelDrag {
             if (scene.layer(level))
                 return Target{.kind = level, .window = std::nullopt};
         }
-        if (const auto w = scene.window(kTargetWindowProperties, dragged))
+        if (const auto w = scene.window(kTargetWindowProperties, dragged); w && *w != dragged)
             return Target{.kind = scene.windowSurface(*w) ? TargetKind::Window : TargetKind::WindowBorder, .window = w};
         for (const auto level : {TargetKind::Bottom, TargetKind::Background}) {
             if (scene.layer(level))

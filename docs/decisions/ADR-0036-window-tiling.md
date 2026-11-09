@@ -475,7 +475,15 @@ macOS: the torn-off window follows the pointer, drops back into a tab bar, and t
    ended": the place shown tiles (`tile()`), else the window stays where it was released and, if the drag moved it, takes the
    Desktop of the output under it and fits its work area (`followOutput`, `fitAfterDrop`). The release is kept until the drag
    ends: a target that finishes late, never, or cancels afterwards changes nothing for the window. A cancel without a
-   release (Escape, the client, the source gone) only removes the preview; the client reverts.
+   release (Escape, the client, the source gone) only removes the preview; the client reverts. **The client's side of the
+   drop** (integrator nested run of 000240ef, Chromium's source read): Hyprland 0.56.2 sends `cancelled` without
+   `dnd_drop_performed` for a drop nobody accepted and for a target that finishes without receiving (its `finish` handler,
+   0x972ee0, completes only an offer accepted and received), and Chromium, which does not receive, reads that lone cancel as
+   Escape and puts the tab back. The core protocol sends `dnd_drop_performed` at the user's drop, `cancelled` possibly
+   after it, and this protocol ends a drag "as indicated by dnd_drop_performed". So for a toplevel-drag source whose drag
+   was released, the plugin posts `dnd_drop_performed` from its protocol logger as Hyprland's `cancelled` is being sent
+   (marshalled first), once, never without a release (Escape stays a cancel); Hyprland's own `dnd_drop_performed` needs
+   none.
 5. *Not a drag target.* "The attached window does not participate in the selection of the drag target": while a mapped
    toplevel is attached and its drag runs (after the release too, until Hyprland's drag ends), the plugin's `input.mouse.move` listener (registered at load, so it runs before
    the data-device motion listener Hyprland registers at each drag start) picks the surface under the pointer with Hyprland's
@@ -509,7 +517,8 @@ macOS: the torn-off window follows the pointer, drops back into a tab bar, and t
    target's `wl_data_offer.finish` runs `completeDrag`, the only sender of `dnd_drop_performed` (item 4). Guard: the ABI hash
    (the Hyprland commit is part of it) keeps the plugin inactive on any other build, so every point release goes through the
    user rebuild (ADR-0009), which fails to compile when a signature above changes (no global then); (a) to (e) are added to
-   the list re-read on every Hyprland update (gate C3). A Hyprland that serves the protocol itself (its exported
+   the list re-read on every Hyprland update (gate C3), with (f) the `wl_data_offer.finish` handler completing only an
+   offer accepted and received (else `cancelled` without `dnd_drop_performed`). A Hyprland that serves the protocol itself (its exported
    `xdg_toplevel_drag_manager_v1_interface`, found with `dlsym`) gets no second global from the plugin. When one of them drifts silently
    the window still follows and tiles, and a tab may not drop back into a strip; nothing crashes: every step is guarded, checks
    `dndActive()` and its weak references, and the logger callback touches no Hyprland object.
