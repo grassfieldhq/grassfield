@@ -49,20 +49,20 @@ ExecStart=/usr/bin/qs -n -p /usr/share/grassfield/shell/security.qml
 Restart=always
 RestartSec=1
 TimeoutStopSec=5
-# Memory guard from the S1 measurement (ADR-0041 step 1; the integrator's nested pass of #72: 157 MB of RSS at idle for
-# the root hosting one IPC handler): MemoryHigh about twice that, MemoryMax about four times, as a slow leak reaches the
-# first after days and a runaway one the second (ADR-0041 R4). S2 (docs/testing/gates.md "P2 and the security process"):
-# offscreen, the root with the lock and idle loaded grows by about 45 MB of RSS over S1's (65 -> 110 MB, medians of three);
-# the lock's surfaces and the stills (about 33 MB per 4K output, decoded once each) come on top when locked:
-# 157 + 45 + 2 x 33 = 268 MB for two 4K outputs,
-# under MemoryHigh, MemoryMax far above it. The nested measurement with the lock drawn decides (NOT VERIFIED at S2's
-# commit: the integrator's `scripts/gates/rss.sh --nested` with both processes); until it, both stay as set at S1. The
-# throttling above MemoryHigh could delay drawing the lock past the sleep delay: the margin above is kept for that reason.
+# Memory guard: the lock keeps the headroom it had in the UI's unit before S2 (MemoryHigh=1536M, MemoryMax=3G,
+# grassfield-shell.service at main 8b04383c), the integrator's decision on the opus review of 77a0ceb3 (MAJOR-2): the
+# process that draws the lock and runs the PAM exchange must never be throttled, nor killed into its start limit, before its
+# footprint is measured with the lock drawn. S1 measured 157 MB of RSS at idle for the root hosting one IPC handler (#72);
+# S2 adds about 45 MB offscreen (docs/testing/gates.md "P2 and the security process"), and drawing the lock adds its
+# surfaces' buffers, the stills (about 33 MB per 4K output, 81 MB for a 6K panel), page cache and kernel memory, all charged
+# to this cgroup's memory.current: none of it is measured yet. These values stay until the nested measurement
+# (`scripts/gates/rss.sh --nested`, locked and unlocked) and the owner's MemoryPeak after a lock and an unlock exist; then
+# MemoryHigh is set to at least twice the locked peak.
 # CPUQuota as the UI unit's (one and a half cores): a spinning process cannot starve the compositor, while the lock
 # screen's rendering and the PAM exchange (S2) keep a whole core; the 50% of the first version would have throttled them
 # (the integrator's merge review of #72). A loop is caught by the restart limit above and, from S2, by the heartbeat.
-MemoryHigh=320M
-MemoryMax=640M
+MemoryHigh=1536M
+MemoryMax=3G
 CPUQuota=150%
 # No NoNewPrivileges/ProtectSystem here on purpose, as for the UI's unit: from S2 the lock and from S3 the polkit agent
 # rely on the setuid/setgid helpers unix_chkpwd and polkit-agent-helper-1, which NoNewPrivileges would break, leaving the

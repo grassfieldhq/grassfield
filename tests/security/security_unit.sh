@@ -63,8 +63,11 @@ desc="unit: no NoNewPrivileges, ProtectSystem or sandbox that would break unix_c
 check bash -c '! grep -qE "^(NoNewPrivileges|ProtectSystem|ProtectHome|PrivateUsers|SystemCallFilter|CapabilityBoundingSet)=" "$1"' _ "$unit"
 desc="unit: OnFailure=omarchy-sleep-lock.service (S2: the sleep lock armed after every failure of the process that holds the inhibitor), and the UI's unit no longer arms it (its OnFailure= is the failure counter alone)"
 check bash -c '[[ $(grep -c "^OnFailure=" "$1") == 1 ]] && grep -qx "OnFailure=omarchy-sleep-lock.service" "$1" && grep -qx "OnFailure=grassfield-shell-failed.service" "$2" && ! grep -q "omarchy-sleep-lock" <(grep "^OnFailure=" "$2")' _ "$unit" "$ui"
-desc="unit: memory guards from the measurement (157 MB nested: MemoryHigh at least twice it, MemoryMax above MemoryHigh); CPUQuota at least a whole core, as the UI unit's"
-check bash -c 'high=$(sed -nE "s/^MemoryHigh=([0-9]+)M$/\1/p" "$1") && max=$(sed -nE "s/^MemoryMax=([0-9]+)M$/\1/p" "$1") && cpu=$(sed -nE "s/^CPUQuota=([0-9]+)%$/\1/p" "$1") && [[ -n $high && -n $max && -n $cpu ]] && ((high >= 314 && max > high && cpu >= 100)) && [[ $cpu == "$(sed -nE "s/^CPUQuota=([0-9]+)%$/\1/p" "$2")" ]] && grep -q "157 MB" "$1"' _ "$unit" "$ui"
+desc="unit: the lock keeps at least the headroom it had in the UI's unit (MemoryHigh and MemoryMax at least the UI unit's: never throttled before it is measured, the opus review of 77a0ceb3 MAJOR-2); CPUQuota as the UI unit's, at least a whole core"
+check bash -c 'mb() { sed -nE "s/^$1=([0-9]+)([MG])$/\1 \2/p" "$2" | awk "{ print (\$2 == \"G\") ? \$1 * 1024 : \$1 }"; }
+  high=$(mb MemoryHigh "$1") && max=$(mb MemoryMax "$1") && uihigh=$(mb MemoryHigh "$2") && uimax=$(mb MemoryMax "$2") && cpu=$(sed -nE "s/^CPUQuota=([0-9]+)%$/\1/p" "$1") &&
+  [[ -n $high && -n $max && -n $uihigh && -n $uimax && -n $cpu ]] && ((high >= uihigh && max >= uimax && max > high && cpu >= 100)) &&
+  [[ $cpu == "$(sed -nE "s/^CPUQuota=([0-9]+)%$/\1/p" "$2")" ]] && grep -q "157 MB" "$1" && grep -q "MemoryPeak" "$1"' _ "$unit" "$ui"
 desc="autostart: started just before the shell, without waiting for it (--no-block), and the shell still starts if it failed"
 check bash -c 'grep -q "systemctl --user start --no-block grassfield-security.service; systemctl --user start grassfield-shell.service" "$1"' _ config/hypr/grassfield/autostart.lua
 desc="package: the unit is installed with the session units; the root ships with the shell tree; the helper from packaging/bin"

@@ -36,3 +36,11 @@ process (this tree's `.dev/security.pid`, started beside the shell by `scripts/d
 
 The offscreen rows are a proxy of the QML objects and JavaScript only (no GPU or Wayland buffers); P2's verdict needs the
 nested and real-session rows.
+
+The security process's memory guard keeps the lock's former headroom until those rows exist: `grassfield-security.service`
+has `MemoryHigh=1536M`, `MemoryMax=3G`, the values `grassfield-shell.service` gave the lock before S2 (the integrator's
+decision on the opus review of 77a0ceb3, MAJOR-2: the lock is never throttled before it is measured). It is lowered only
+after the nested `scripts/gates/rss.sh --nested`, locked and unlocked on two outputs, and the owner's
+`systemctl --user show -p MemoryPeak,MemoryCurrent grassfield-security.service` after a lock and an unlock: then
+`MemoryHigh` is set to at least twice the locked peak (memory.current counts page cache, kernel memory and the lock
+surfaces' buffers, which RSS misses).
