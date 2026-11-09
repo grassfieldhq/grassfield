@@ -77,7 +77,10 @@ Amendment (slice M4, 2026-10-25): the QML half of the enforcement exists as `tes
 `just test`). It reads every .qml file outside `shell/lib` from Qt's syntax tree and refuses any string literal that starts with
 `GRASSFIELD_` and any `env` call whose name is not one string literal; a .js file that imports Quickshell is refused. The security
 exception is by name: `shell/security/**` may spell `GRASSFIELD_DEV`, `GRASSFIELD_SESSION` and (the lock) `GRASSFIELD_DEV_ALLOW_PAM`, and
-nothing else; it goes away when the packaged shell's import path is fixed. `Mode` also offers `stateHome` (the raw
+nothing else (amendment of 2026-11-09, ADR-0041 S3: the secret sheets moved into the security process, which cannot ask `Mode`
+either, so `shell/security/host/SheetHost.qml` alone may also spell `GRASSFIELD_PROMPTER_SOCKET`, the dev plumbing value
+`Mode.devValue("PROMPTER_SOCKET")` gave the UI before, read behind that file's own `RunMode.dev` gate and ignored by
+`Prompter.socketPath` outside a dev session); it goes away when the packaged shell's import path is fixed. `Mode` also offers `stateHome` (the raw
 `GRASSFIELD_STATE_HOME`, for Apps and Capabilities) and `appsTrace`. The C++ half (`qEnvironmentVariable("GRASSFIELD_` outside
 `apps/runmode.h`) stays with M6/M8.
 

@@ -682,7 +682,9 @@ down, how sleep behaves) is written in the table at the end of this step.
 - **Units and dev session.** `grassfield-security.service` keeps no `NoNewPrivileges` (polkit-agent-helper-1 is setuid),
   `LimitCORE=0` now also covers the sheets' passwords; the UI's unit keeps no `NoNewPrivileges` because the applications it
   starts inherit it. `scripts/dev/shell-run.sh` restarts the dev security process when `GRASSFIELD_PROMPTER_SOCKET` changes;
-  `tests/visual/ipc.sh` sends `polkit` and `secrets` to it.
+  `tests/visual/ipc.sh` sends `polkit` and `secrets` to it. That dev plumbing value, which the UI read with
+  `Mode.devValue("PROMPTER_SOCKET")`, is read by `SheetHost.qml` behind its own `RunMode.dev` gate (the security modules
+  cannot ask `Mode`): `tests/ci/run_mode.py` allows that one name in that one file (ADR-0019's amendment of 2026-11-09).
 - Tests: `authagent_flows.sh` and `secret_sheets.sh` run the agents with `qs.security` and `qs.lib` only (no `qs.services`:
   the security process's world), `SheetSession` set as the host would; `authagent_flows.d` test_35 (the restart);
   `tst_lockstate.qml` (the sheets' fields, `uiSheet`, `sheetPublished`) with 8 more mutants in `lockstate_mutants.sh`;
