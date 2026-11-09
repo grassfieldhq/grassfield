@@ -16,6 +16,10 @@
 #      remaining case's attempts. Restart the nested session (scripts/dev/nested-down.sh, scripts/dev/nested-up.sh) and run the
 #      remaining cases by name.
 #   3. a heavy case (several scenarios: desktop, transparency, tints, accent row) gets a longer limit than a size case.
+#   4. a WARM-UP before the first case: on main (2026-11-09, load 1.7) the very first case after nested-up stalled and the health probe
+#      stalled with it, so the first GPU client of a fresh nested session is slow or wedges. The pure data case runs first under a long
+#      limit (GRASSFIELD_ICONS_WARMUP, default 300 s, TERM then a 60 s grace before KILL so the client can leave cleanly); if it does
+#      not finish the session is unusable and the run stops at once (exit 3) before any case starts.
 #
 #   tests/visual/icon-a2.sh [test_function ...]
 #
@@ -40,6 +44,8 @@ probe_limit=${GRASSFIELD_ICONS_PROBE_TIMEOUT:-60}
 attempts=${GRASSFIELD_ICONS_ATTEMPTS:-2}
 kill_after=${GRASSFIELD_ICONS_KILL:-10}
 probe_fn=test_a2_limitKeysAreWellFormed
+warmup=${GRASSFIELD_ICONS_WARMUP:-300}
+warm_kill=${GRASSFIELD_ICONS_WARMUP_KILL:-60}
 cases=("$@")
 [[ ${#cases[@]} -gt 0 ]] || cases=(test_a2_size48 test_a2_size32 test_a2_size24 test_a2_size16 test_a2_desktop test_a2_transparent48 test_a2_transparent24 test_a2_transparent16 test_a2_tintYellow32 test_a2_tintPink32 test_a2_accentRow test_a2_filesSelectedRow test_a2_limitKeysAreWellFormed test_folderModelMatchesTheShader test_blackFolderKeepsItsPlateOnBlack test_missingShaderDrawsThePlainIcon)
 
@@ -74,6 +80,15 @@ healthy() {
   status=$?
   [[ $status != 124 && $status != 137 ]] && grep -q 'Totals' <<<"$out"
 }
+
+# Warm-up: the first GPU client of a fresh nested session.
+out=$(kill_after=$warm_kill run_one "$probe_fn" "$warmup")
+status=$?
+if [[ $status == 124 || $status == 137 ]] || ! grep -q 'Totals' <<<"$out"; then
+  echo "test-icons: the warm-up ($probe_fn, ${warmup}s) did not finish: the nested session is unusable before any case ran (exit $status)." >&2
+  echo "test-icons: restart it (scripts/dev/nested-down.sh, scripts/dev/nested-up.sh) and run again." >&2
+  exit 3
+fi
 
 overall=0
 remaining=("${cases[@]}")

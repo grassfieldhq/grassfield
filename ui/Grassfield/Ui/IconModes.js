@@ -65,3 +65,8 @@ function darkRimWeight(distance, width, strength) {
         return 0;
     return Math.min(1, Math.max(0, width - distance + 0.5)) * strength;
 }
+
+// The rim's width in device pixels for an icon of `box` device pixels: the token is a fraction of the box, never under one pixel.
+function darkRimWidthPx(box, fraction) {
+    return Math.max(1, fraction * box);
+}

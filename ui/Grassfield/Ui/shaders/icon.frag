@@ -62,7 +62,8 @@ layout(std140, binding = 0) uniform buf {
     float tintedRampHighLight;
     float tileToneSide;       // tile icon tone, see TILE TONE below: -1 darken the pixels below tileTonePivot, 0 none
     float tileTonePivot;      // linear value the tone leaves alone
-    float darkRimWidth;       // tile, dark appearance: width in device pixels of the light rim on the tile's edge (DARK RIM below)
+    float darkPlateLumaOnDarkAccent;  // Dark over a dark accent fill of a selected row: lightness of the plate
+    float darkRimWidth;       // tile, dark appearance: width of the light rim on the tile's edge as a fraction of the box, at least one device pixel (DARK RIM below)
     float darkRimStrength;
     float darkRimLuma;
     float tileToneExp;        // exponent of the darkening below the pivot (> 1)
@@ -186,17 +187,18 @@ void main() {
     float aa = max(fwidth(sdf), 0.0005);
     float mask = 1.0 - smoothstep(-aa, aa, sdf);
     // DARK RIM (R7-REQ-13, A2 rule E): a tile icon in the dark appearance (Dark, Clear and Tinted) carries a thin light rim on its edge (macOS dark-mode tiles have a specular
-    // edge), darkRimWidth device pixels wide: it separates the tile from a dark or mid-grey material without touching the tile's inner tones (rules I, S, N).
+    // edge), darkRimWidth of the box wide (at least one device pixel): it separates the tile from a dark or mid-grey material without touching the tile's inner tones (rules I, S, N).
     // Within that distance inside the tile's edge (-sdf / aa, in device pixels) the tile's colour is replaced by darkRimStrength of darkRimLuma.
     if (isTile && dark > 0.5) {
         float dpx = -sdf / aa;
-        float rim = clamp(darkRimWidth - dpx + 0.5, 0.0, 1.0) * step(-0.5, dpx) * darkRimStrength;
+        float rimPx = max(1.0, darkRimWidth / aa);   // 1 / aa is the box in device pixels
+        float rim = clamp(rimPx - dpx + 0.5, 0.0, 1.0) * step(-0.5, dpx) * darkRimStrength;
         artP.rgb = mix(art, vec3(darkRimLuma), rim) * artA;
     }
     vec3 plateRgb;
     float plateA;
     if (modeIndex < 1.5) {
-        plateRgb = vec3(darkPlateLuma);
+        plateRgb = vec3(accent && !accentBright ? darkPlateLumaOnDarkAccent : darkPlateLuma);
         plateA = 1.0;
     } else if (modeIndex < 2.5) {
         // Light glass on a dark material; smoked glass on a light one, and over the bare wallpaper (any brightness).

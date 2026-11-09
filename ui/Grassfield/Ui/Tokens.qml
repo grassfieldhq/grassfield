@@ -3078,7 +3078,7 @@ QtObject {
     // ADR-0014 Clear: share of the ink (in linear light, between the glass and the ink) that even black artwork gets, so that a dark monochrome glyph (Breeze network-wired, fcitx: 1.2:1 on a dark panel) stays distinguishable from the glass: about 2:1 against the plate; part of the black-vs-white internal contrast is traded for it
     readonly property real iconModeClearInkFloor: 0.15
     // ADR-0014 Clear over the accent fill of a selected row (Search, Force Quit): opacity of the plate, dark on a bright accent and light on a dark one, so that the plate and the ink keep 4.5:1 against the accent (A2 accent row)
-    readonly property real iconModeClearPlateAlphaAccent: 0.9
+    readonly property real iconModeClearPlateAlphaAccent: 1.0
     // ADR-0014 Tinted, dark appearance: the plate is the tint colour at this fraction of its brightness (a dark tinted plate, macOS 26)
     readonly property real iconModeTintedPlateScale: 0.3
     // ADR-0014 Tinted, light appearance: the plate is the tint colour mixed this far to white (a light tinted plate)
@@ -3095,12 +3095,14 @@ QtObject {
     readonly property real iconModeTileDarkenPivot: 0.62
     // ADR-0014 own-tile rule, tile tone, light appearance: exponent e of the darkening v' = P (v / P)^e below tileDarkenPivot (e > 1; 1.75 takes basecamp's edge from 2.0-2.9:1 to 2.9-4.1:1 over the light material, floor 2.17-2.9, modelled on the shader and the A2 fixture, docs/specs/ui.md)
     readonly property real iconModeTileDarkenExponent: 1.75
-    // ADR-0014 own-tile rule, dark appearance (R7-REQ-13, A2 rule E): width in device pixels of the thin light rim a tile icon carries on its edge in Dark, Clear and Tinted (macOS dark-mode and Clear icon tiles have a specular edge); the inner tones are not touched, so rules I, S and N do not move. 1.5 because 1 px is too thin at 32 px (modelled 1.73:1 on basecamp Tinted yellow, floor 1.73; 2.0 at 1.5 px)
-    readonly property real iconModeDarkRimWidth: 1.5
+    // ADR-0014 own-tile rule, dark appearance (R7-REQ-13, A2 rule E): width of the thin light rim a tile icon carries on its edge in Dark, Clear and Tinted (macOS dark-mode and Clear icon tiles have a specular edge), as a fraction of the icon box, at least one device pixel (24 px: 1.0, 32 px: 1.3, 48 px: 1.9); the inner tones are not touched. GPU run of 2026-11-09: a fixed 1.5 px reached into the 2 to 4 px ring that rule I reads at 24 px and cost 30 cells (own-tile-shadow 2.43 to 1.87 modelled, 1.69 measured on the squircle); at 0.04 the model leaves rule I where it was
+    readonly property real iconModeDarkRimWidth: 0.04
     // ADR-0014 own-tile rule: how far the rim replaces the tile's own colour at its edge (0..1); with darkRimWidth takes basecamp from 1.5:1 to 2.0-2.1:1 over a mid-grey material at 24 and 32 px, floor 1.73, modelled (docs/specs/ui.md)
     readonly property real iconModeDarkRimStrength: 0.9
     // ADR-0014 Dark, own-tile rule: lightness (sRGB 0..1) of the rim, near white so that it stands out from the brightest material of the dark appearance (relative luminance 0.38) by about 2.3:1
     readonly property real iconModeDarkRimLuma: 0.95
+    // ADR-0014 Dark over a DARK accent fill of a selected row (the selection of the light appearance, #195E3F: relative luminance 0.09): lightness of the plate, black, so that the plate keeps 2.5:1 against the fill (graphite 0.13 measured 2.08:1 on the GPU run of 2026-11-09; black is 2.8:1); over a bright accent the graphite plate is unchanged
+    readonly property real iconModeDarkPlateLumaOnDarkAccent: 0.0
     // ADR-0014 Clear: from this material transparency (Control Center slider, 0..1) the wallpaper shows through the window material so much that Clear icons are drawn as over the bare wallpaper (smoked plate, opaque rim); A2 at 1.0 holds a floor of 2.0 in every mode, tint and size (docs/specs/ui.md)
     readonly property real iconModeWallpaperLikeTransparency: 0.8
     // estimate: Settings icon mode picker, sample icon edge (macOS 26 style tiles) [ref: docs/testing/f1-reference-gaps.md § Settings; docs/specs/settings.md]

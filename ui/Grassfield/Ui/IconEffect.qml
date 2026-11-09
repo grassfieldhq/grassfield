@@ -71,7 +71,9 @@ ShaderEffect {
     readonly property real tileToneSide: IconModes.tileToneSide(root.darkAppearance, root.wallpaper, Appearance.effectiveTransparency, Tokens)
     readonly property real tileTonePivot: Tokens.iconModeTileDarkenPivot
     readonly property real darkRimWidth: Tokens.iconModeDarkRimWidth
-    readonly property real darkRimStrength: Tokens.iconModeDarkRimStrength
+    // No rim over the bare wallpaper (desktop icons): the rim is light, the wallpaper may be too.
+    readonly property real darkRimStrength: root.wallpaper ? 0 : Tokens.iconModeDarkRimStrength
+    readonly property real darkPlateLumaOnDarkAccent: Tokens.iconModeDarkPlateLumaOnDarkAccent
     readonly property real darkRimLuma: Tokens.iconModeDarkRimLuma
     readonly property real tileToneExp: Tokens.iconModeTileDarkenExponent
     readonly property color folderTint: Qt.rgba(root.recolorTint.r, root.recolorTint.g, root.recolorTint.b, root.recolor ? 1 : 0)

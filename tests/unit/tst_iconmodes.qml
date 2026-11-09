@@ -155,13 +155,16 @@ TestCase {
     // The Dark rim: one device pixel of near-white on the edge of a Dark tile in the dark appearance. Pure math of the shader's DARK RIM.
     function test_darkRimWeight() {
         const t = Tokens;
-        verify(t.iconModeDarkRimWidth >= 1 && t.iconModeDarkRimWidth <= 2, "a thin rim, at least a device pixel");
+        verify(t.iconModeDarkRimWidth > 0.02 && t.iconModeDarkRimWidth < 0.06, "a thin rim, a few percent of the box");
+        compare(IconModes.darkRimWidthPx(24, t.iconModeDarkRimWidth), 1, "one device pixel at 24 px: rule I reads the ring from 2 px in");
+        verify(IconModes.darkRimWidthPx(48, t.iconModeDarkRimWidth) < 2.5, "under the 4 px ring of 48 px icons");
         verify(t.iconModeDarkRimStrength > 0 && t.iconModeDarkRimStrength <= 1 && t.iconModeDarkRimLuma > 0.8 && t.iconModeDarkRimLuma <= 1, "a light rim");
-        const w = d => IconModes.darkRimWeight(d, t.iconModeDarkRimWidth, t.iconModeDarkRimStrength);
+        const px = IconModes.darkRimWidthPx(32, t.iconModeDarkRimWidth);
+        const w = d => IconModes.darkRimWeight(d, px, t.iconModeDarkRimStrength);
         compare(w(-1), 0, "nothing outside the tile");
         compare(w(0), t.iconModeDarkRimStrength, "full strength on the edge");
-        compare(w(t.iconModeDarkRimWidth + 0.5), 0, "none past its width");
-        compare(w(t.iconModeDarkRimWidth + 5), 0, "none inside the tile: the inner tones are untouched (rules I, S, N)");
+        compare(w(px + 0.5), 0, "none past its width");
+        compare(w(px + 5), 0, "none inside the tile: the inner tones are untouched (rules I, S, N)");
         for (let d = 0; d < 6; d += 0.25)
             verify(w(d + 0.25) <= w(d) + 1e-12, "the rim fades inwards");
     }
@@ -171,12 +174,28 @@ TestCase {
     function test_darkRimStandsOutOfAMidGreyMaterial() {
         const t = Tokens;
         const panel = lum(materialRgb(true, 1, 1.0));
-        const weight = IconModes.darkRimWeight(0, t.iconModeDarkRimWidth, t.iconModeDarkRimStrength);
+        const weight = IconModes.darkRimWeight(0, 1, t.iconModeDarkRimStrength);
         for (const tone of [0.60, 0.23]) {
             const tileCoded = Math.pow(tone, 1 / 2.4);
             const coded = tileCoded * (1 - weight) + t.iconModeDarkRimLuma * weight;
             const y = lum([coded, coded, coded]);
             verify(contrast(y, panel) >= 1.73, `rim over a tile tone ${tone}: ${contrast(y, panel).toFixed(2)}:1`);
+        }
+    }
+
+    // Selected rows (rule A, tests/unit/tst_iconshader.qml test_a2_accentRow): the plate over the accent fill keeps 4.5:1 in Clear and 2.5:1 in Dark. Both selection
+    // fills of the app are DARK accents (the text on them is light, TintedIcon.accentBright is false): #2E8049 in the dark appearance, #195E3F in the light one. Over
+    // a dark accent the Clear plate is white at `clearPlateAlphaAccent` and the Dark plate is `darkPlateLumaOnDarkAccent`. The GPU run of 2026-11-09 measured 4.28
+    // (Clear, opacity 0.9) and 2.08 (Dark, graphite) there, which these formulas reproduce.
+    function test_accentRowPlates() {
+        const t = Tokens;
+        const a = t.iconModeClearPlateAlphaAccent;
+        for (const fill of ["#2E8049", "#195E3F"]) {
+            const acc = lum(FolderStyle.rgbOf(fill));
+            const clearPlate = 1.0 * a + acc * (1 - a);
+            verify(contrast(clearPlate, acc) >= 4.5, `Clear plate over ${fill}: ${contrast(clearPlate, acc).toFixed(2)}:1`);
+            const c = t.iconModeDarkPlateLumaOnDarkAccent;
+            verify(contrast(lum([c, c, c]), acc) >= 2.5, `Dark plate over ${fill}: ${contrast(lum([c, c, c]), acc).toFixed(2)}:1`);
         }
     }
 

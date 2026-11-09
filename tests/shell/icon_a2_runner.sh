@@ -36,16 +36,22 @@ run() { # name stall wedge -> sets out, status, secs, log
   : >"$FAKE_LOG"
   local t0=$SECONDS
   out=$(GRASSFIELD_ICONS_RUNNER=$tmp/fake.sh GRASSFIELD_ICONS_TIMEOUT=2 GRASSFIELD_ICONS_TIMEOUT_HEAVY=2 GRASSFIELD_ICONS_PROBE_TIMEOUT=2 \
-    GRASSFIELD_ICONS_KILL=1 GRASSFIELD_ICONS_ATTEMPTS=2 "$root/tests/visual/icon-a2.sh" test_a2_size48 test_a2_desktop test_a2_size16 test_a2_limitKeysAreWellFormed 2>&1)
+    GRASSFIELD_ICONS_KILL=1 GRASSFIELD_ICONS_WARMUP=2 GRASSFIELD_ICONS_WARMUP_KILL=1 GRASSFIELD_ICONS_ATTEMPTS=2 "$root/tests/visual/icon-a2.sh" test_a2_size48 test_a2_desktop test_a2_size16 test_a2_limitKeysAreWellFormed 2>&1)
   status=$?
   secs=$((SECONDS - t0))
   log=$(cat "$FAKE_LOG")
 }
 
+# 4. a session that wedges on the very first client (main, 2026-11-09): the warm-up fails, no case starts
+run cold test_a2_limitKeysAreWellFormed ""
+[[ $status == 3 ]] && ok "a cold session that never answers: exit 3 from the warm-up" || bad "cold: exit $status: $out"
+[[ $(grep -c . <<<"$log") == 1 ]] && ok "only the warm-up ran, no case" || bad "cold: ran $log"
+grep -q "warm-up" <<<"$out" && ok "the message names the warm-up" || bad "no warm-up message: $out"
+
 # 3. clean
 run clean "" ""
 [[ $status == 0 ]] && ok "a clean run exits 0" || bad "a clean run exits $status: $out"
-[[ $(grep -c . <<<"$log") == 4 ]] && ok "a clean run starts each case once" || bad "a clean run started: $log"
+[[ $(grep -c . <<<"$log") == 5 ]] && ok "a clean run: one warm-up and each case once" || bad "a clean run started: $log"
 
 # 1. one stalled case, healthy session
 run stall test_a2_desktop ""
