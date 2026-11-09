@@ -662,6 +662,16 @@ QStringList Backend::systemAutostartDirs() const
     return out;
 }
 
+QString Backend::xdgConfigDir() const
+{
+    return QDir::cleanPath(grassfield::settings::xdgHome(qEnvironmentVariable("XDG_CONFIG_HOME"), QDir::homePath() + QStringLiteral("/.config")));
+}
+
+QString Backend::grassfieldStateDir() const
+{
+    return QDir::cleanPath(grassfield::apps::runmode::stateDir());
+}
+
 QStringList Backend::applicationDirs() const
 {
     // The XDG Base Directory folders of the desktop entries: $XDG_DATA_HOME (default ~/.local/share) first, then $XDG_DATA_DIRS

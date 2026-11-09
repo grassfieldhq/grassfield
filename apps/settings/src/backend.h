@@ -49,6 +49,10 @@ class Backend : public QObject
     Q_PROPERTY(QString autostartDir READ autostartDir CONSTANT)
     Q_PROPERTY(QStringList systemAutostartDirs READ systemAutostartDirs CONSTANT)
     Q_PROPERTY(QStringList applicationDirs READ applicationDirs CONSTANT)
+    // Default web browser (ADR-0055 D-6): $XDG_CONFIG_HOME, where the session's grassfield-mimeapps.list and the user's mimeapps.list
+    // are; and Grassfield's own state folder (runmode.h), where Files' seed keeps default-apps.state.
+    Q_PROPERTY(QString xdgConfigDir READ xdgConfigDir CONSTANT)
+    Q_PROPERTY(QString grassfieldStateDir READ grassfieldStateDir CONSTANT)
     Q_PROPERTY(QStringList currentDesktops READ currentDesktops CONSTANT)
     // Storage: the folders whose size the pane shows lie in the home.
     Q_PROPERTY(QString homeDir READ homeDir CONSTANT)
@@ -99,6 +103,8 @@ public:
     QString autostartDir() const;
     QStringList systemAutostartDirs() const;
     QStringList applicationDirs() const;
+    QString xdgConfigDir() const;
+    QString grassfieldStateDir() const;
     QStringList currentDesktops() const;
     QString homeDir() const { return QDir::cleanPath(QDir::homePath()); }
     QString stateDir() const

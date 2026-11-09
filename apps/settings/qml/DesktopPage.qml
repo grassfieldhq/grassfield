@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Dialogs
 import Grassfield.Ui
+import "DefaultBrowser.js" as DefaultBrowser
 
 // Settings > Desktop & Dock as macOS 27 lays it out (docs/audits/settings-parity-2026-10-26.md § Desktop & Dock): Dock (Size
 // and Magnification side by side; the Dock's position, the minimize animation, the title bar's double click and minimizing
@@ -11,6 +12,8 @@ SettingsPage {
     id: root
 
     required property var store
+    // The Settings backend (files and folders); null in a test of the rest of the page: the browser row is then not shown.
+    property var backend: null
 
     signal screenCornersRequested
 
@@ -265,6 +268,71 @@ SettingsPage {
     }
 
     // TL32: the tiling switches in this order; each reaches the plugin once it offers the feature (Compositor.pushPluginConfig).
+    // Default web browser (macOS 27, ADR-0055 D-6): the installed browsers, never Omarchy's routing entry nor a launcher that
+    // resolves the default again. The choice is written to the session's own list and recorded as the user's (DefaultBrowser.js).
+    property var browserChoices: []
+    property string browserCurrent: ""
+
+    function entriesOf(dir: string): var {
+        return root.backend.desktopEntries(dir).map(f => ({file: f, text: root.backend.readText(dir + "/" + f).text}));
+    }
+
+    function readBrowsers(): void {
+        if (!root.backend) {
+            root.browserChoices = [];
+            return;
+        }
+        let all = [];
+        for (const dir of root.backend.applicationDirs)
+            all = all.concat(root.entriesOf(dir));
+        root.browserChoices = DefaultBrowser.browsers(all, Qt.locale().name);
+        const config = root.backend.xdgConfigDir;
+        const texts = [];
+        for (const name of [DefaultBrowser.LIST_NAME, "hyprland-mimeapps.list", "mimeapps.list"])
+            texts.push(root.backend.readText(config + "/" + name).text);
+        root.browserCurrent = DefaultBrowser.current(texts);
+    }
+
+    // Records the choice as the user's first, then writes the session's list: a failure of the first leaves the list as it was.
+    function setBrowser(id: string): bool {
+        if (!root.backend || !root.browserChoices.some(b => b.id === id))
+            return false;
+        const config = root.backend.xdgConfigDir;
+        const list = root.backend.readText(config + "/" + DefaultBrowser.LIST_NAME);
+        if (list.exists && !list.ok)
+            return false;
+        const next = DefaultBrowser.withBrowser(list.text, id);
+        if (next === null)
+            return false;
+        const statePath = root.backend.grassfieldStateDir + "/" + DefaultBrowser.STATE_NAME;
+        const record = root.backend.readText(statePath);
+        if (record.exists && !record.ok)
+            return false;
+        if (root.backend.writeText(statePath, DefaultBrowser.stateWithUser(record.text)) !== "")
+            return false;
+        if (root.backend.writeText(config + "/" + DefaultBrowser.LIST_NAME, next) !== "")
+            return false;
+        root.browserCurrent = id;
+        return true;
+    }
+
+    Component.onCompleted: readBrowsers()
+
+    SettingsGroup {
+        visible: root.browserChoices.length > 0
+
+        SettingsRow {
+            title: qsTr("Default web browser")
+            ComboBox {
+                inline: true
+                accessibleName: qsTr("Default web browser")
+                model: root.browserChoices.map(b => ({id: b.id, text: b.name}))
+                value: root.browserCurrent
+                onPicked: id => root.setBrowser(id)
+            }
+        }
+    }
+
     SettingsGroup {
         caption: qsTr("Windows")
         footnote: qsTr("Needs the Grassfield compositor extension.")
