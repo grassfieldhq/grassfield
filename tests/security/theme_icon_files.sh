@@ -9,7 +9,9 @@
 # writer waiting on them: any open for reading (the helper, librsvg or Qt) releases it and fails the case. Every file in
 # the copy directory must be a PNG of at most 256 x 256 pixels.
 #
-# Part 1, files for the theme icon name "evil" in the user's icon folders (the notification icon and the polkit sheet's):
+# Part 1, files for the theme icon name "evil" in the user's icon folders (the notification icon and the polkit sheet's; the
+# polkit and secret sheets run in the security process since ADR-0041 S3, whose host shows the system theme's icon only,
+# never a copy of a user's icon: "polkit=none" in every case):
 #   reg         a regular PNG                                   -> shown, as a PNG the shell made
 #   fifo        a FIFO                                          -> the generic icon
 #   link        a symlink to a FIFO elsewhere                   -> the generic icon
@@ -183,7 +185,7 @@ for kind in reg fifo link zero devnull svgfifo svgref gzsvg u16svg bompng commen
   ((rc == 0)) || ok=0
   [[ $line == *" has=false "* && $line == *" ctl=1"* ]] || ok=0
   case $kind in
-    reg | svgref | gzsvg | u16svg | bompng | commentpng) [[ $line == *" state=ok notif=copy polkit=copy evil=1 "* ]] || ok=0 ;;
+    reg | svgref | gzsvg | u16svg | bompng | commentpng) [[ $line == *" state=ok notif=copy polkit=none evil=1 "* ]] || ok=0 ;;
     swap) [[ $line == *" before=ok:shown state=no notif=none polkit=none evil=0 "* ]] || ok=0 ;;
     *) [[ $line == *" state=no notif=none polkit=none evil=0 "* ]] || ok=0 ;;
   esac
@@ -331,7 +333,21 @@ if grep -n '\.face\|AccountsService' shell/security/lock/*.qml | grep -v 'facePa
 # ADR-0041 S2: the lock runs in the security process, which makes its one picture with the same helper (image-copy.py file)
 # and never uses ThemeIcons (whose start empties the UI's copy directory).
 if grep -n 'ThemeIcons' shell/security/lock/*.qml shell/security/idle/*.qml shell/security/host/SecurityHost.qml | grep -v '^[^:]*:[0-9]*: *//'; then site_ok=0; fi
-dcheck "Search, the Switcher, the Overview, Stages, Force Quit, About, the Dock, its stacks, the desktop, Now Playing and the tray load such images through ThemeIcons, the lock through the same helper in its own process" "$site_ok"
+# ADR-0041 S3: the polkit and secret sheets run there too: no ThemeIcons, their icon through SheetHost.themeIcon (the system
+# theme only, the expression the probe of part 1 runs), handed to each agent.
+if grep -n 'ThemeIcons' shell/security/polkit/*.qml shell/security/secret/*.qml shell/security/host/SheetHost.qml | grep -v '^[^:]*:[0-9]*: *//'; then site_ok=0; fi
+python3 -I - <<'PY' || site_ok=0
+import re, sys
+host = open("shell/security/host/SheetHost.qml").read()
+m = re.search(r"function themeIcon\(name: string\): string \{(.*?)\n    \}", host, re.S)
+body = re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+ok = body == 'const safe = NotificationPrefs.safeIconName(name); return safe !== "" && Quickshell.hasThemeIcon(safe) ? Quickshell.iconPath(safe) : "";'
+ok = ok and len(re.findall(r"iconSource: name => root\.themeIcon\(name\)", host)) == 2
+for f in ("shell/security/polkit/AuthAgent.qml", "shell/security/secret/SecretAgent.qml"):
+    ok = ok and re.search(r'^\s*property var iconSource: name => ""\s*$', open(f).read(), re.M) is not None
+sys.exit(0 if ok else 1)
+PY
+dcheck "Search, the Switcher, the Overview, Stages, Force Quit, About, the Dock, its stacks, the desktop, Now Playing and the tray load such images through ThemeIcons, the lock through the same helper in its own process, the polkit and secret sheets the system theme's icon only (SheetHost.themeIcon)" "$site_ok"
 
 # ---- Part 4: the policy ----
 if ! command -v gcc >/dev/null; then
