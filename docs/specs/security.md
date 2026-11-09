@@ -635,12 +635,18 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
   "AI" 1/2 magic at offset 8 of the ELF header) are native programs. It is refused when:
   - its shown kind is a document's (`RefuseDisguised`): the MIME type Files shows for it (name first, as KIO picks the
     handler) is not Executable, Shared library, AppImage or unknown, or the types its cleaned name gives are not all of
-    those (`LaunchGuard::cleanName`: trailing spaces and dots removed, every format character and default-ignorable code
-    point dropped, bidirectional controls included, then NFC; security review of 0c51550e: "Invoice.pdf ", "Invoice.pdf" +
-    U+200B and "Invoice" + U+202E + "fdp.exe" ran without a sheet), so "photo.jpg", "notes.txt", "run.sh" or "setup.exe"
-    with ELF program content never runs, whatever invisible characters follow (banner: "… it is an app, but its name makes it
-    look like a document. If you trust it, rename it first."). Every other name check (launcher, Windows, Java, AppImage,
-    another system's app, remote) is made on the cleaned name too;
+    those, or the cleaned name's extension (after its last dot) is not plain ASCII. `LaunchGuard::cleanName` reads the name
+    as the eye does: NFKC (fullwidth forms and the dots U+2024, U+FE52, U+FF0E become "."), then NFKD with every combining
+    mark dropped; every format character, default-ignorable code point and blank glyph dropped (bidirectional controls, the
+    braille blank U+2800, the Hangul fillers); the other full stops and dot lookalikes (U+3002, U+FF61, U+0701, U+0702,
+    U+06D4, U+00B7, ...) read as "."; trailing spaces and dots removed; then NFC. A program has no business with a non-ASCII
+    extension, so a lookalike letter ("pdf" with a Cyrillic er, "exe" in Cyrillic, a Greek rho) is refused without a
+    confusables table (the UTS #39 skeleton would need ICU's i18n library linked directly: not done). Security reviews of
+    0c51550e and 48475cf6: "Invoice.pdf " and + U+200B, "Invoice" + U+202E + "fdp.exe", a trailing U+2800, "Invoice" +
+    U+2024 + "pdf", a Cyrillic er in "pdf" and trailing combining marks all ran without a sheet. So "photo.jpg", "notes.txt",
+    "run.sh" or "setup.exe" with ELF program content never runs, however it is spelled (banner: "… it is an app, but its name
+    makes it look like a document. If you trust it, rename it first."). Every other name check (launcher, Windows, Java,
+    AppImage, another system's app, remote) is made on the cleaned name too;
   - uwsm would read its path as a desktop entry (`RefuseLauncher`, `LaunchGuard::uwsmReadsAsEntry`: uwsm 0.27's MainArg takes
     an argument that ends in ".desktop" or holds ".desktop:" for an entry, so "…/Tool.desktop:run" would start the entry
     Tool.desktop beside it); `ProgramLaunch::Run::allowed` refuses such an uwsm-app command again at the start;
@@ -648,7 +654,7 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
     IA-32 runs on x86-64);
   - it would run with other rights (`RefuseElevated`): setuid or setgid bit, a `security.capability` attribute, or Files
     itself running as root. Files as root starts nothing on any path (`FilesApp::refuseAsRoot` before a program, the
-    Terminal, Java and the Windows handler; `Run::allowed` again at the start).
+    Terminal, Java, the Windows handler and Open With a Windows or Java program; `Run::allowed` again at the start).
   Otherwise `LaunchGuard::plan` says what Open does first, and the sheet (`KioSheetsLogic.openProgram`, the window's sheet
   style, Return and Esc cancel) is shown when any of these holds:
   - it came from the Internet: `user.xdg.origin.url` or `user.xdg.referrer.url` (what Chromium and Firefox write on a
@@ -656,21 +662,29 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
     its target's trust), and Files' approval `user.grassfield.approved` = `1 <inode> <mtime ns> <size>` does not name the
     file as it is now. Title "“Tool.AppImage” is an app downloaded from the Internet. Are you sure you want to open it?",
     "This app was downloaded from <host>." (the host only: no path, query or user name; a host whose labels mix scripts is
-    shown in ASCII, "xn--…"). Files keeps these marks on what it makes from a downloaded file: Expand copies the archive's
-    marks onto every extracted regular file before anything gets a real name (`ArchiveJob::extracted`, `LaunchGuard::markTree`,
-    O_NOFOLLOW descriptors; a member the user may not read or write, mode 0100 say, gets u+rw for the moment of the write
-    through an O_PATH descriptor and its mode back; the Archive Utility model: bsdtar's
-    `--no-same-permissions` keeps the members' execute bits), and a copy or move from a remote location (sftp, smb, ftp,
-    http, a phone; `FilesApp::markRemoteCopies` on every tracked copy job) gets the source address, without user name or
-    password, as its `user.xdg.origin.url`;
+    shown in ASCII, "xn--…"). Files keeps these marks on what it makes from a downloaded file:
+    - Expand of an archive that carries a download mark (the Archive Utility model; bsdtar's `--no-same-permissions` keeps
+      the members' execute bits) completes only if every extracted regular file got the archive's marks, fail closed: the
+      marks are written in the private staging folder before anything gets a real name, by `LaunchGuard::markTree` on a
+      worker thread (`ArchiveJob::extracted`); entries are reached through descriptors (openat with O_PATH | O_NOFOLLOW, no
+      link followed, nothing looked up by path twice); a file whose user bits lack read or write (0100, 0500, 0555) gets u+rw
+      for the moment of the write and its mode back; a folder the user may not list or enter (0100, 0300) gets u+rx while
+      its entries are walked and its mode back; there is no entry cap. One regular file left unmarked, a folder that can't
+      be walked, a tree deeper than 256 folders or a cancel, and the staging folder is removed (its folders opened up
+      first), nothing is kept, and a sheet says "“Kit.zip” couldn’t be expanded safely." (security review of 48475cf6:
+      members of mode 0500 and 0555, members in folders of mode 0100 and 0300, and archives of more than 100000 entries were
+      expanded with programs left unmarked);
+    - a copy or move from a remote location (sftp, smb, ftp, http, a phone; `FilesApp::markRemoteCopies` on every tracked
+      copy job) gets the source address, without user name or password, as its `user.xdg.origin.url`;
   - the user's execute bit is missing ("Opening it allows it to run on this computer."): Open sets u+x only (`fchmod`
     through the descriptor that was checked, mode `& 0777 | S_IXUSR`: never setuid, setgid, group or others), then checks it
     with `fstat`: a FAT, exFAT or fixed-mode NTFS mount that ignores the chmod (`Approval::ExecIgnored`) gets the copy below;
   - it can't run where it is (a `noexec` mount, or not executable on a read-only disk or in another user's file): Open copies
     it to `~/Applications` (made when missing; a free name "Tool 2.AppImage"; KIO's copy keeps the download marks), then
-    checks that the source is still the approved file (inode, time, size) and that the copy has its size (otherwise the copy
+    checks that the source is still the approved file (inode, modification and status change times, size: the owner can set an
+    mtime back after a same-size swap, not a ctime) and that the copy has its size (otherwise the copy
     is removed and nothing runs), allows and approves the copy and runs it ("Copy and Open").
-  After Open the file is inspected again and must be the same file (path, inode, modification time, size) and still a
+  After Open the file is inspected again and must be the same file (path, inode, modification and status change times, size) and still a
   program; then `ProgramLaunch::approve` writes the approval (and u+x), through one `O_NOFOLLOW` descriptor, only while the
   identity matches. An approved, unchanged file never asks again; a changed one (other inode, time or size) asks again. A
   file system without user extended attributes keeps no approval and no download mark. A sheet never shows the system's
@@ -702,7 +716,10 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
   directly on Linux." (or "This file is a Java program."). When the default application of its exact type is installed
   (Wine, Bottles: one that names the type itself, never one inherited from a parent type) or `java`/`javaws` is on the PATH,
   the sheet offers "Open with <app>" (Return and Esc cancel), with the download origin; Open checks the file again and opens
-  it with that application (Java: `java -jar <path>` through the same start).
+  it with that application (Java: `java -jar <path>` through the same start). Open With > Wine, Bottles or a Java entry runs
+  the program it is given, so it follows the same rule (`FilesApp::openWithChecked`, security review of 48475cf6): never as
+  root, and a downloaded Windows or Java program gets the sheet first (one per item, "Open with <app>"), unless it was
+  approved as it is now; Open in the sheet writes the approval.
 - Another system's app (`ForeignApp`: `.dmg`, `.pkg`, `.mpkg`, `application/x-apple-diskimage`): "This file contains an app
   made for another operating system, which can’t work on Linux.", with Search the Store (Grassfield Store's
   `--page=search:<the file's name without version and platform words>`) when the Store is there. The text never names that

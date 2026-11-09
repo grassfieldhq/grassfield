@@ -159,11 +159,17 @@ Decision: copy Gatekeeper, from "never run" to "run after consent".
   without the user's execute bit gets the same sheet and Open sets u+x (only; ADR-0028's unprivileged path, through the
   descriptor that was checked, then verified: a FAT mount that ignores it gets the copy); one on a `noexec` or read-only disk
   is copied to `~/Applications` (macOS: `/Applications`), checked against the approved file, and run from there.
-- Files keeps the download marks on what it makes from a downloaded or remote file (the Archive Utility model, review of
-  0c51550e): Expand copies the archive's marks onto every extracted regular file before the final rename (bsdtar keeps the
-  members' execute bits), and a copy or move from a remote location gets its source address, without credentials, as its
-  `user.xdg.origin.url`. Names are judged after removing trailing spaces and dots and every invisible (format,
-  default-ignorable, bidirectional) character, NFC.
+- Files keeps the download marks on what it makes from a downloaded or remote file (the Archive Utility model, reviews of
+  0c51550e and 48475cf6). Expand of an archive that carries a download mark completes only if every extracted regular file
+  got the archive's marks, fail closed: they are written in the private staging folder before the final rename, on a worker
+  thread, through descriptors that follow no link; files and folders whose user bits keep the marks out (files 0100, 0500,
+  0555; folders 0100, 0300) are opened up for the moment of the walk and given their mode back; there is no entry cap; one
+  file left unmarked, a folder that can't be walked, a tree deeper than 256 folders or a cancel, and nothing is kept and a
+  sheet says the archive couldn't be expanded safely (bsdtar keeps the members' execute bits, so an unmarked program would
+  run with no sheet). A copy or move from a remote location gets its source address, without credentials, as its
+  `user.xdg.origin.url`. Names are judged as the eye reads them (NFKC, combining marks, format, default-ignorable and blank
+  characters dropped, dot lookalikes read as "."), and a program whose extension is not plain ASCII is refused as a
+  disguise. Open With > Wine, Bottles or Java follows the open rule (root refused, the sheet first when downloaded).
 - Scripts open in the default text editor; Open With > Terminal runs an executable one in the session's terminal
   (decision F-7, `xdg-terminal-exec`), after the same sheet when downloaded. Windows and Java programs are explained and
   never run by opening; their own application (Wine, Bottles, java) runs them after "Open with …" in the sheet. A `.dmg` or
