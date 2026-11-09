@@ -6,6 +6,8 @@
 #   T0 global      the fixture sees xdg_toplevel_drag_manager_v1 version 1; the capabilities list toplevel-drag
 #   T1 follows     a press on the source starts the drag; the torn window maps under the pointer at the client's offset (40,12)
 #                  and follows it to two more places (2 px slack, far from every edge so that nothing snaps)
+#   T1b geometry   Chromium's torn window (980x620, its window geometry changing right after its map): it stays under the
+#                  resting pointer (Hyprland fitted it into the work area; the plugin puts it back at its commit)
 #   T2 target      over the target window, with the torn window under the pointer, the drag enters the TARGET, and never the
 #                  torn window: the attached window takes no part in the selection of the drag target
 #   T3 drop        released over the target: drop on the target, dnd_drop_performed, the object destroyed after it; the torn
@@ -94,6 +96,18 @@ plugin_logged() {
   return 1
 }
 hypr_alive() { kill -0 "$hypr_pid" 2>/dev/null && nestctl version >/dev/null 2>&1; }
+# A check of a plugin log line: the plugin's request log budget (FR24: 20 lines at once, then 1 per second) may hold a line back
+# during a burst; a missing line is then a NOTE, not a FAIL (the case's behaviour has its own checks). Integrator nested run of
+# 1c576658 (T4 at load 22-28).
+check_log() { # <name> <pattern>
+  if plugin_logged "$2"; then say "PASS: $1"; return; fi
+  if { nestctl rollinglog 2>/dev/null; tail -n 600 "$hyprlog" 2>/dev/null; } | grep -aq "similar line(s) held back"; then
+    say "NOTE: $1: not in the log; the plugin's request log budget held lines back (FR24)"
+    return
+  fi
+  say "FAIL: $1"
+  fail=1
+}
 plugin_loaded() { nestctl -j plugin list 2>/dev/null | jq -e '[.[]? | select(.name == "grassfield-compositor")] | length > 0' >/dev/null; }
 
 plugin_loaded || { echo "toplevel_drag: the plugin is not loaded" >&2; exit 2; }
@@ -212,9 +226,21 @@ if start_fixture tear tear; then
   torn=$(win gf-tdrag-torn | cut -d' ' -f5)
   tile_untiled() { local t; t=$(tile_of "$torn"); say "  tile record: $t"; [[ $t != tiled* ]]; }
   check "T3: not tiled" tile_untiled
-  check "T3: the plugin logged the drop" plugin_logged "toplevel drag: window ${torn#0x} dropped: stays where it is"
+  check_log "T3: the plugin logged the drop" "toplevel drag: window ${torn#0x} dropped: stays where it is"
 else
   check "T1: the fixture starts" false
+fi
+
+# ---- T1b: Chromium's torn window (its window geometry changes right after its map) stays under the resting pointer ----
+if start_fixture geometry geometry; then
+  # Low enough that the 980x620 window overhangs the work area's bottom (what made Hyprland fit Chromium's window).
+  pointer abs 300 350 sleep 200 down sleep 600 drag 600 560 sleep 1800 up sleep 300 &
+  p=$!
+  sleep 2.2 # mapped, then its geometry changed, the pointer at rest at 600,560 since about 1 s
+  check "T1b: a window whose geometry changes after its map stays under the resting pointer" at_xy gf-tdrag-torn 560 548
+  wait "$p"
+else
+  check "T1b: the fixture starts" false
 fi
 
 # ---- T4: tiles at the free edge ----
@@ -230,7 +256,7 @@ elif start_fixture tile tear; then
   check "T4: dnd_drop_performed before cancelled (a drop, not a revert)" drop_then_cancel tile
   tiled_side() { local t; t=$(tile_of "$torn"); say "  tile record: $t (want tiled $side)"; [[ $t == "tiled $side" ]]; }
   check "T4: the torn window takes the $side half (tile record)" tiled_side
-  check "T4: the plugin logged the tile" plugin_logged "toplevel drag: window ${torn#0x} dropped: tiled into the place shown"
+  check_log "T4: the plugin logged the tile" "toplevel drag: window ${torn#0x} dropped: tiled into the place shown"
 else
   check "T4: the fixture starts" false
 fi
@@ -248,7 +274,7 @@ if [[ -n $side ]] && start_fixture escape tear; then
   check "T5: no dnd_drop_performed (a cancel, the client reverts)" bash -c "! grep -qx 'dnd_drop_performed' '$run/tdrag-escape.out'"
   tile_none() { local t; t=$(tile_of "$torn"); say "  tile record: $t"; [[ $t != tiled* ]]; }
   check "T5: no tile" tile_none
-  check "T5: the plugin logged the cancel" plugin_logged "toplevel drag: window ${torn#0x} cancelled"
+  check_log "T5: the plugin logged the cancel" "toplevel drag: window ${torn#0x} cancelled"
 fi
 
 # ---- T6: merge (unmap detaches, attach again follows) ----
@@ -257,7 +283,7 @@ if start_fixture merge merge; then
   p=$!
   sleep 1.6 # over the target since about 0.8 s
   check "T6: over the target the torn window unmaps itself" said "unmapped torn"
-  check "T6: the plugin detaches it" plugin_logged "unmapped: detached"
+  check_log "T6: the plugin detaches it" "unmapped: detached"
   sleep 1.3 # pulled out at about 2.0 s, the pointer at rest at 700,750 until about 3.5 s
   check "T6: pulled out again, it maps again" bash -c "[[ \$(grep -cx 'mapped torn' '$run/tdrag-merge.out') -ge 2 ]]"
   check "T6: and follows the pointer again (at the client's offset)" at_xy gf-tdrag-torn 660 738
@@ -296,7 +322,7 @@ for m in late-finish no-finish; do
     pointer abs 300 350 sleep 200 down sleep 600 drag 1200 350 sleep 1200 up sleep 300
     torn=$(win gf-tdrag-torn | cut -d' ' -f5)
     check "$m: released over the target: drop there" wait_said "drop target"
-    check "$m: the window's drag ends at the release" plugin_logged "toplevel drag: window ${torn#0x} released: its drag ends here"
+    check_log "$m: the window's drag ends at the release" "toplevel drag: window ${torn#0x} released: its drag ends here"
     read -r tx ty _ _ _ < <(win gf-tdrag-torn)
     # Counter-review of 2dcae1f2: Hyprland keeps its drag until the target finishes; the torn window, under the pointer and
     # still attached, must never get an enter for its own drag meanwhile.
@@ -337,7 +363,7 @@ if start_fixture source-destroy source-destroy; then
   sleep 2.2
   torn=$(win gf-tdrag-torn | cut -d' ' -f5)
   check "source-destroy: the client destroyed the source mid-drag" said "source destroyed"
-  check "source-destroy: a cancel for the window (logged)" plugin_logged "toplevel drag: window ${torn#0x} cancelled"
+  check_log "source-destroy: a cancel for the window (logged)" "toplevel drag: window ${torn#0x} cancelled"
   read -r tx ty _ _ _ < <(win gf-tdrag-torn)
   wait "$p"
   check "source-destroy: the window follows no more" at_xy gf-tdrag-torn "${tx:-0}" "${ty:-0}"
@@ -353,7 +379,7 @@ if start_fixture role-destroy role-destroy; then
   torn=$(win gf-tdrag-torn | cut -d' ' -f5)
   wait "$p"
   check "role-destroy: the client destroyed the torn window's role mid-drag" said "torn role destroyed"
-  check "role-destroy: detached (logged)" plugin_logged "toplevel drag: window ${torn#0x} unmapped: detached"
+  check_log "role-destroy: detached (logged)" "toplevel drag: window ${torn#0x} unmapped: detached"
   check "role-destroy: the drag ended as Hyprland's own" bash -c "grep -qxE 'cancelled|dnd_drop_performed' '$run/tdrag-role-destroy.out'"
   check "role-destroy: no protocol error" bash -c "! grep -q '^protocol error' '$run/tdrag-role-destroy.out'"
   check "role-destroy: Hyprland alive" hypr_alive

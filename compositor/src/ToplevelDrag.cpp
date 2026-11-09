@@ -86,6 +86,9 @@ namespace {
         WP<CXDGToplevelResource> toplevel; // the toplevel attached now
         CHyprSignalListener      toplevelGone;
         CBox                     pressBox;         // the window's box at its first step (fitAfterDrop at a drop on another output)
+        CBox                     placed;           // the box the drag gave the window last
+        CHyprSignalListener      windowCommit;     // the following window's commits: put it back if something moved it
+        int                      corrections = 0;  // since the last pointer motion (core needsCorrection)
         wl_resource*             manager   = nullptr; // the manager resource that made it (compared with the live managers)
         bool                     fed       = false; // this drag fed the tiler's preview (dragDone at its end)
         bool                     moved     = false; // this drag moved the window (followOutput, fitAfterDrop at its end)
@@ -142,6 +145,7 @@ namespace {
         gf::deferredFocus::CLater        endLater;               // finishes `ends` (its callback is code of this library)
         gf::deferredFocus::CLater        misuseLater;            // raises invalid_source for `misused` after the request
         gf::deferredFocus::CLater        loggerLater;            // removes the protocol logger once nothing waits for a drag
+        gf::deferredFocus::CLater        placeLater;             // puts a following window back under the pointer after a commit
     };
 
     // Constructed on first use inside a guarded call (R13). Emptied by stop() before dlclose.
@@ -220,6 +224,7 @@ namespace {
     }
 
     void onProtocolMessage(void* data, wl_protocol_logger_type direction, const wl_protocol_logger_message* message);
+    void onFollowingCommit(SObject* o);
 
     void dropLoggerIfIdle() {
         auto& s = st();
@@ -297,6 +302,7 @@ namespace {
         const auto end = o.drag.end(kind);
         o.toplevelGone.reset();
         o.toplevel.reset();
+        o.windowCommit.reset();
         if (end)
             queueEnd(o, w, *end);
         scheduleLoggerCheck();
@@ -484,6 +490,13 @@ namespace {
         g_layoutManager->setTargetGeom(box, target);
         if (!animateWindowDragging())
             target->warpPositionSize();
+        o.placed = box;
+        if (!o.windowCommit) {
+            if (const auto surface = w->resource()) {
+                auto* raw      = &o;
+                o.windowCommit = surface->m_events.commit.listen([raw] { gf::guarded("toplevel drag commit", [raw] { onFollowingCommit(raw); }); });
+            }
+        }
         // The box of the drag's start is the one under the pointer, on the output the drag began on: not where Hyprland mapped a
         // torn-off window before the first step (fitAfterDrop compares the outputs of the two).
         if (step->first)
@@ -491,6 +504,31 @@ namespace {
         gf::tiler::dragMotion(w, pointer);
         o.fed   = true;
         o.moved = true;
+    }
+
+    // A commit of the following window: if something moved it away from where the drag put it (Chromium's torn window, fitted
+    // into the work area by Hyprland when it changed its window geometry right after its map), it goes back under the pointer
+    // once Hyprland handled the commit; at most core kMaxCorrectionsBetweenMotions times between two motions.
+    void putBackUnderThePointer() {
+        auto* o = excluding();
+        if (!o || !o->drag.follows() || !hyprlandDragRunning())
+            return;
+        const auto w      = windowOf(*o);
+        const auto target = w && w->m_isMapped ? w->layoutTarget() : nullptr;
+        if (!target)
+            return;
+        const auto now = target->position();
+        if (!td::needsCorrection(td::Point{.x = o->placed.x, .y = o->placed.y}, td::Point{.x = now.x, .y = now.y}, o->corrections))
+            return;
+        ++o->corrections;
+        gf::logRequest(Log::DEBUG, "toplevel drag: window {:x} was moved to {:.0f},{:.0f}: back under the pointer", idOf(w.get()), now.x, now.y);
+        follow(*o, w, pointerNow());
+    }
+
+    void onFollowingCommit(SObject* o) {
+        if (!o->live || !o->drag.follows())
+            return;
+        st().placeLater.schedule([] { gf::guarded("toplevel drag put back", [] { putBackUnderThePointer(); }); });
     }
 
     // The drag's target: the surface under the pointer other than the dragged window ("the attached window does not participate
@@ -593,8 +631,10 @@ namespace {
         const auto w = windowOf(*o);
         if (!w || !w->m_isMapped)
             return;
-        if (o->drag.follows())
+        if (o->drag.follows()) {
+            o->corrections = 0;
             follow(*o, w, pos); // after the release it stays where it was released, still out of the target's selection
+        }
         if (pickTarget(w, pos))
             info.cancelled = true;
     }
@@ -616,6 +656,7 @@ namespace {
             const auto end = o->drag.release();
             if (!end)
                 continue;
+            o->windowCommit.reset();
             if (end->toplevel && w)
                 gf::logRequest(Log::INFO, "toplevel drag: window {:x} released: its drag ends here (Hyprland waits for the target to finish)", idOf(w.get()));
             queueEnd(*o, w, *end);
@@ -644,6 +685,7 @@ namespace {
     void detached(SObject& o, const PHLWINDOW& w) {
         o.toplevelGone.reset();
         o.toplevel.reset();
+        o.windowCommit.reset();
         if (std::exchange(o.fed, false))
             gf::tiler::dragDone();
         if (w)
@@ -851,6 +893,7 @@ namespace gf::toplevelDrag {
             return false;
         s.endLater.clear(); // a previous stop() cancelled them
         s.misuseLater.clear();
+        s.placeLater.clear();
         s.loggerLater.clear();
         auto& ev = bus->m_events;
         auto& l  = s.listeners;
@@ -875,6 +918,7 @@ namespace gf::toplevelDrag {
         s.listeners.clear();
         s.endLater.cancel();
         s.misuseLater.cancel();
+        s.placeLater.cancel();
         s.loggerLater.cancel();
         s.ends.clear();
         s.misused.clear();
@@ -896,6 +940,7 @@ namespace gf::toplevelDrag {
             o->source = nullptr;
             o->toplevelGone.reset();
             o->toplevel.reset();
+            o->windowCommit.reset();
             o->fed = false;
         }
         s.sources = td::CSources{};

@@ -433,6 +433,17 @@ TEST(ToplevelDragTarget, AWindowsBorderIsNoTargetAndHidesTheLayersBelow) {
     EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow), (Target{.kind = TargetKind::WindowBorder, .window = kOther}));
 }
 
+TEST(ToplevelDragFollow, AWindowMovedAwayFromThePointerGoesBackALimitedNumberOfTimes) {
+    // Integrator nested run of 1c576658: Chromium's torn window was moved 116 px up after its map; it goes back under the
+    // pointer at its next commit, without fighting whoever moves it for ever.
+    using gf::toplevelDrag::kMaxCorrectionsBetweenMotions;
+    using gf::toplevelDrag::needsCorrection;
+    EXPECT_TRUE(needsCorrection(Point{433, 502}, Point{433, 386}, 0));
+    EXPECT_FALSE(needsCorrection(Point{433, 502}, Point{433.4, 502.3}, 0)); // where it was put: nothing to do
+    EXPECT_TRUE(needsCorrection(Point{433, 502}, Point{433, 386}, kMaxCorrectionsBetweenMotions - 1));
+    EXPECT_FALSE(needsCorrection(Point{433, 502}, Point{433, 386}, kMaxCorrectionsBetweenMotions)); // the next motion decides
+}
+
 TEST(ToplevelDragMisuse, InvalidSourceGoesOnlyToTheObjectsOwnLiveManager) {
     using gf::toplevelDrag::misuseRaisable;
     constexpr gf::toplevelDrag::Id kClientA = 0xA0, kClientB = 0xB0;

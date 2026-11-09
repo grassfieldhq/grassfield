@@ -1,5 +1,6 @@
 #include "ToplevelDrag.hpp"
 
+#include <cmath>
 #include <iterator>
 
 namespace gf::toplevelDrag {
@@ -120,6 +121,11 @@ namespace gf::toplevelDrag {
 
     bool misuseRaisable(std::optional<Id> managerClient, Id objectClient, std::optional<Id> sourceClient) {
         return managerClient && *managerClient == objectClient && (!sourceClient || *sourceClient == objectClient);
+    }
+
+    bool needsCorrection(Point placed, Point now, int correctionsSinceMotion) {
+        const bool moved = std::abs(placed.x - now.x) > 0.5 || std::abs(placed.y - now.y) > 0.5;
+        return moved && correctionsSinceMotion < kMaxCorrectionsBetweenMotions;
     }
 
     Target pickTarget(ITargetScene& scene, Id dragged) {

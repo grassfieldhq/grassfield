@@ -162,6 +162,16 @@ namespace gf::toplevelDrag {
     // must never disconnect another). Clients are compared by address.
     bool misuseRaisable(std::optional<Id> managerClient, Id objectClient, std::optional<Id> sourceClient);
 
+    // While a window follows the pointer, something else may move it with no pointer motion (integrator nested run of
+    // 1c576658: Chromium's torn window, mapped at the pointer, moved 116 px up to fit the work area when it changed its
+    // window geometry right after its map, and stayed there until the next motion). The glue puts it back under the pointer
+    // at its next commit, at most this many times between two motions: never a tug of war with whoever moved it.
+    inline constexpr int kMaxCorrectionsBetweenMotions = 3;
+
+    // Whether the window at `now` must be put back where the drag placed it (`placed`): it moved by more than half a
+    // logical pixel, and fewer than kMaxCorrectionsBetweenMotions corrections were made since the last motion.
+    bool needsCorrection(Point placed, Point now, int correctionsSinceMotion);
+
     // ---- the drag's target, in Hyprland 0.56.2's pointer-focus order ----
 
     // The eGetWindowProperties bits (Desktop::View, Window.hpp:63-74) of the target's window lookup; the glue checks them

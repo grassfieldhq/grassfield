@@ -17,6 +17,9 @@
 //   source-twice  a second xdg_toplevel_drag_v1 for the same source (protocol error invalid_source)
 //   selection     the drag's source also passed to wl_data_device.set_selection (protocol error invalid_source)
 //   late-finish   as tear, and the target calls wl_data_offer.finish 2.5 s after the drop ("finished late")
+//   geometry      as tear, with Chromium's torn window: it comes off 0.8 s after the press (the pointer has moved on), 980x620
+//                 with a window geometry inset by 10 px at its map (shadows), the whole surface right after its first frame
+//                 (integrator nested run of 1c576658)
 //   finish-only   as tear, and the target calls wl_data_offer.finish without wl_data_offer.receive, as Chromium's tab drag
 //                 does (Hyprland 0.56.2 then cancels the drop)
 //   no-finish     as tear, and the target never calls wl_data_offer.finish ("drop target" only)
@@ -80,6 +83,7 @@ static int                                  ready_printed;
 static struct wl_data_offer*                pending_offer; // a dropped offer whose finish is late (late-finish) or never sent
 static long long                            finish_at;     // when late-finish sends it (ms, CLOCK_MONOTONIC; 0: none)
 static long long                            act_at;        // when source-destroy / role-destroy act (ms; 0: none)
+static long long                            tear_at;       // geometry: when the tab comes off, as Chromium once the pointer left the strip
 
 static long long now_ms(void) {
     struct timespec ts;
@@ -188,8 +192,15 @@ static void surface_configure(void* data, struct xdg_surface* xs, uint32_t seria
     struct wl_buffer* buf = make_buffer(win->w, win->h, colour);
     if (!buf)
         return;
+    const int chromium = win == &torn_win && strcmp(mode, "geometry") == 0;
+    if (chromium)
+        xdg_surface_set_window_geometry(xs, 10, 10, win->w - 20, win->h - 20);
     wl_surface_attach(win->surface, buf, 0, 0);
     wl_surface_commit(win->surface);
+    if (chromium) {
+        xdg_surface_set_window_geometry(xs, 0, 0, win->w, win->h); // Chromium's change right after its map
+        wl_surface_commit(win->surface);
+    }
     win->mapped = 1;
     win->hidden = 0;
     if (win == &torn_win)
@@ -329,6 +340,10 @@ static void start_drag(uint32_t serial) {
     }
     if (strcmp(mode, "existing") == 0)
         return;
+    if (strcmp(mode, "geometry") == 0) {
+        tear_at = now_ms() + 800;
+        return;
+    }
     attach_torn();
     if (strcmp(mode, "attach-twice") == 0)
         xdg_toplevel_drag_v1_attach(drag, target_win.top, 0, 0); // toplevel_attached
@@ -506,10 +521,14 @@ static int report_error(void) {
 
 int main(int argc, char** argv) {
     if (argc != 2) {
-        fprintf(stderr, "usage: tdrag tear|merge|existing|attach-twice|destroy-early|source-twice|selection|late-finish|finish-only|no-finish|source-destroy|role-destroy\n");
+        fprintf(stderr, "usage: tdrag tear|merge|existing|geometry|attach-twice|destroy-early|source-twice|selection|late-finish|finish-only|no-finish|source-destroy|role-destroy\n");
         return 2;
     }
     mode    = argv[1];
+    if (strcmp(mode, "geometry") == 0) {
+        torn_win.w = 980;
+        torn_win.h = 620;
+    }
     display = wl_display_connect(NULL);
     if (!display) {
         fprintf(stderr, "tdrag: no wayland display\n");
@@ -554,6 +573,10 @@ int main(int argc, char** argv) {
             }
         }
         wl_display_flush(display);
+        if (tear_at && now_ms() >= tear_at && drag) {
+            tear_at = 0;
+            attach_torn();
+        }
         if (finish_at && now_ms() >= finish_at && pending_offer) {
             finish_at = 0;
             receive_and_finish(pending_offer);

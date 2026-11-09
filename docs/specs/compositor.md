@@ -975,6 +975,11 @@ FR58, ADR-0036 amendment 2026-11-08 (the decision, its errors, its ABI risk), UR
   `fitAfterDrop`. The drag's own end (`dnd_drop_performed`, `cancelled`, the source gone) changes nothing more for a released
   window; without a release (Escape, the client, the source gone) it only calls `dragDone()`. A window that unmaps while
   attached is detached (`window.close`), as is one whose role goes (`CXDGToplevelResource::m_events.destroy`).
+- **Kept under the pointer.** Chromium attaches its new tab window before mapping it (`attach(toplevel, 267, 18)` in its
+  `WAYLAND_DEBUG` trace) and changes its window geometry right after the map (10,10 to 0,0, shadows); Hyprland then fitted the
+  980x620 window into the work area, 116 px above the pointer, until the next motion (integrator nested run of 1c576658, T9).
+  At each commit of the following window the plugin puts it back where the drag placed it, at most core
+  `kMaxCorrectionsBetweenMotions` times between two motions (never a tug of war with whoever moved it).
 - **A released drag is a drop for the client.** Hyprland 0.56.2 sends `wl_data_source.cancelled` without
   `dnd_drop_performed` for a drop nobody accepted, and for a target that finishes without `wl_data_offer.receive`
   (its `finish` handler, 0x972ee0, completes only an offer both accepted and received, else `abortDrag`); Chromium's tab drag
