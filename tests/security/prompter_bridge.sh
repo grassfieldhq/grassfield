@@ -8,7 +8,8 @@
 #    a socket directory that is a symlink, a --peer-unit that is not a service name in a session
 #  2 the socket's directory is 0700 and the socket 0600; the bridge is not dumpable; the name is not taken without a shell,
 #    and a request that reaches the bridge (by its unique name) with no shell connected at all is answered "cancelled" at once
-#  3 a socket peer outside the expected unit is refused (the fake shell runs outside --peer-unit grassfield-shell.service),
+#  3 a socket peer outside the expected unit is refused (the fake shell runs outside --peer-unit grassfield-shell.service, and
+#    outside the built-in default, grassfield-security.service, ADR-0041 S3, when no --peer-unit is given),
 #    and ten more at once leave one line in the bridge's output;
 #    a second shell connection is refused while one is connected; a hello of another version closes the connection
 #  4 a connected shell that has not said hello: the bridge does not take the name yet, and a request that reaches the
@@ -64,7 +65,7 @@ case ${1:-} in
 esac
 tmp=$(mktemp -d "${GRASSFIELD_TEST_TMP:-${TMPDIR:-/tmp}}/prompter-bridge.XXXXXX")
 # Unix socket paths stay under 108 bytes: the bus and the bridge's socket live in a short directory of their own.
-d=$(mktemp -d /tmp/gfp.XXXXXX)
+d=$(mktemp -d /tmp/gfp.XXXXXX) || { echo "ENVIRONMENT: no short scratch directory under /tmp (Unix socket paths stay under 108 bytes)"; exit 2; }
 bus_pid=""
 pids=()
 stop_all() {
@@ -191,6 +192,17 @@ desc="a request that reaches the bridge (by its unique name) with no shell conne
 check wait_until 10 bash -c 'grep -q "^cancelled" "$1" && grep -q "a password request answered \"cancelled\": no shell" "$2"' _ "$d/noshell.out" "$d/main.log"
 
 # --- 3 who may connect ---------------------------------------------------------------------------------------------------
+# The built-in default (ADR-0041 S3; the opus review of S3, NIT): with no --peer-unit the bridge expects the security process's
+# unit, where the secret sheets run, and refuses any other peer.
+start_bridge default --socket "$d/run/grassfield/default.sock"
+default_pid=$bridge_pid
+wait_until 5 test -S "$d/run/grassfield/default.sock"
+shell_up outdefault "$d/run/grassfield/default.sock"
+say outdefault hello
+desc="with no --peer-unit the bridge expects grassfield-security.service (its built-in default) and refuses a peer outside it"
+check wait_until 5 bash -c 'grep -q "listening on .* for grassfield-security.service " "$1" && grep -q "\"code\":\"refused\"" "$2" && grep -q "peer is not in grassfield-security.service" "$1"' _ "$d/default.log" "$d/outdefault.shell"
+kill "$default_pid" 2>/dev/null
+wait "$default_pid" 2>/dev/null
 start_bridge strict --socket "$d/run/grassfield/strict.sock" --peer-unit grassfield-shell.service
 strict_pid=$bridge_pid
 wait_until 5 test -S "$d/run/grassfield/strict.sock"
