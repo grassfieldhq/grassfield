@@ -850,7 +850,7 @@ for case_ in 'shell/dock/Dock.qml#SessionState.refuses("dock keyboard")#false' \
   'shell/capture/Capture.qml#        if (locked)\n            hide();#        ;' \
   'shell/capture/Capture.qml#            if (args && !SessionState.locked)#            if (args)' \
   'shell/capture/Capture.qml#        else\n            show();#        else\n            open = true;' \
-  'shell/shell.qml#        id: captureSurface\n        // The session lock owns the screen and the keyboard: the toolbar closes and does not open.\n        locked: SessionState.locked#        id: captureSurface' \
+  'shell/shell.qml#            id: captureSurface\n            // The session lock owns the screen and the keyboard: the toolbar closes and does not open.\n            locked: SessionState.locked#            id: captureSurface' \
   'shell/shell.qml#        property: "locked"\n        value: LockClient.locked#        property: "locked"\n        value: false' \
   'shell/security/polkit/AuthDialog.qml#            id: identityList\n            enabled: root.inputEnabled#            id: identityList' \
   'shell/security/polkit/AuthDialog.qml#                // No focus while AuthAgent keeps the keys on its sink (as the identity rows).\n                enabled: root.inputEnabled#                // No focus while AuthAgent keeps the keys on its sink (as the identity rows).' \
