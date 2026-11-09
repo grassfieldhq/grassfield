@@ -480,7 +480,8 @@ macOS: the torn-off window follows the pointer, drops back into a tab bar, and t
    toplevel is attached and its drag runs (after the release too, until Hyprland's drag ends), the plugin's `input.mouse.move` listener (registered at load, so it runs before
    the data-device motion listener Hyprland registers at each drag start) picks the surface under the pointer with Hyprland's
    public hit tester in Hyprland's order (layer popups, Overlay and Top layers, windows through `CViewHitTester::windowAt`
-   with the attached window as its `ignoreWindow`, Bottom and Background layers), gives it to `CSeatManager::setPointerFocus`
+   with Hyprland's own properties (0x113: floating windows admitted) and the attached window as its `ignoreWindow`, Bottom
+   and Background layers), gives it to `CSeatManager::setPointerFocus`
    (during a drag Hyprland only moves the drag focus there and its data device sends leave and enter), and cancels the motion
    event so that Hyprland's own pointer-focus pass, which would pick the dragged window, does not run; Hyprland's data-device
    motion listener still runs and sends the motion relative to that focus. That is what lets a tab drop back into another

@@ -89,6 +89,7 @@ namespace {
         wl_resource*             manager   = nullptr; // the manager resource that made it (compared with the live managers)
         bool                     fed       = false; // this drag fed the tiler's preview (dragDone at its end)
         bool                     moved     = false; // this drag moved the window (followOutput, fitAfterDrop at its end)
+        uint64_t                 windowId  = 0;     // the attached window's address, for the log (compared, never followed)
         bool                     live      = true;  // false: inert (runtime unload), requests ignored
         bool                     refused   = false; // one log line for a window the drag cannot move
         bool                     logged    = false; // one log line when its drag begins
@@ -447,7 +448,7 @@ namespace {
         if (!step)
             return;
         if (step->first) {
-            o.pressBox = box;
+            o.windowId = idOf(w.get());
             gf::logRequest(Log::INFO, "toplevel drag: window {:x} follows the pointer", idOf(w.get()));
         }
         const auto before = step->first ? gf::tiler::beginMove(w) : std::nullopt;
@@ -471,6 +472,10 @@ namespace {
         g_layoutManager->setTargetGeom(box, target);
         if (!animateWindowDragging())
             target->warpPositionSize();
+        // The box of the drag's start is the one under the pointer, on the output the drag began on: not where Hyprland mapped a
+        // torn-off window before the first step (fitAfterDrop compares the outputs of the two).
+        if (step->first)
+            o.pressBox = box;
         gf::tiler::dragMotion(w, pointer);
         o.fed   = true;
         o.moved = true;
@@ -481,6 +486,59 @@ namespace {
     // layers, windows, the Bottom and Background layers; DesktopFocus.cpp underCursor) with the window as windowAt's
     // ignoreWindow, then given to CSeatManager::setPointerFocus, which during a drag moves the drag focus there (Hyprland's data
     // device sends leave and enter). False when Hyprland keeps the focus decision (the lock, an Exclusive layer, no output).
+    // Hyprland's eGetWindowProperties bits, as core/ToplevelDrag.hpp mirrors them (kTargetWindowProperties).
+    static_assert(td::kReservedExtents == Desktop::View::RESERVED_EXTENTS && td::kInputExtents == Desktop::View::INPUT_EXTENTS &&
+                  td::kAllowFloating == Desktop::View::ALLOW_FLOATING && td::kFollowMouseCheck == Desktop::View::FOLLOW_MOUSE_CHECK);
+
+    // core ITargetScene over Hyprland's hit tester at `pos` on `mon`: the surface found last and its local position.
+    class CHyprlandScene final : public td::ITargetScene {
+      public:
+        CHyprlandScene(const Desktop::CViewHitTester& tester, const PHLMONITOR& mon, const Vector2D& pos) : m_tester(tester), m_mon(mon), m_pos(pos) {}
+
+        bool layerPopup() override {
+            m_surface = m_tester.layerPopupSurfaceAt(m_pos, m_mon, &m_local, &m_layer);
+            return m_surface != nullptr;
+        }
+        bool layer(td::TargetKind level) override {
+            const auto l = level == td::TargetKind::Overlay ? ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY :
+                level == td::TargetKind::Top                ? ZWLR_LAYER_SHELL_V1_LAYER_TOP :
+                level == td::TargetKind::Bottom             ? ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM :
+                                                              ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
+            m_surface = m_tester.layerSurfaceAt(m_pos, &m_mon->m_layerSurfaceLayers[l], &m_local, &m_layer);
+            return m_surface != nullptr;
+        }
+        std::optional<td::Id> window(uint16_t properties, td::Id ignore) override {
+            m_window = m_tester.windowAt(m_pos, properties, ignore == m_ignoredId ? m_ignored : nullptr);
+            return m_window ? std::optional<td::Id>{idOf(m_window.get())} : std::nullopt;
+        }
+        bool windowSurface(td::Id window) override {
+            m_surface = m_window && idOf(m_window.get()) == window ? m_tester.windowSurfaceAt(m_pos, m_window, m_local) : nullptr;
+            return m_surface != nullptr;
+        }
+
+        void ignore(const PHLWINDOW& w) {
+            m_ignored   = w;
+            m_ignoredId = idOf(w.get());
+        }
+        const SP<CWLSurfaceResource>& surface() const {
+            return m_surface;
+        }
+        const Vector2D& local() const {
+            return m_local;
+        }
+
+      private:
+        const Desktop::CViewHitTester& m_tester;
+        PHLMONITOR                     m_mon;
+        Vector2D                       m_pos;
+        PHLWINDOW                      m_ignored;
+        td::Id                         m_ignoredId = 0;
+        PHLWINDOW                      m_window;
+        SP<CWLSurfaceResource>         m_surface;
+        Vector2D                       m_local;
+        PHLLS                          m_layer;
+    };
+
     bool pickTarget(const PHLWINDOW& dragged, const Vector2D& pos) {
         if (!g_pSeatManager || !Desktop::viewState() || !State::monitorState())
             return false;
@@ -489,26 +547,13 @@ namespace {
         const auto mon = State::monitorState()->query().vec(pos).run();
         if (!mon)
             return false;
-        const auto             tester = Desktop::viewState()->hitTest();
-        Vector2D               local;
-        PHLLS                  layer;
-        SP<CWLSurfaceResource> surface = tester.layerPopupSurfaceAt(pos, mon, &local, &layer);
-        for (const auto level : {ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ZWLR_LAYER_SHELL_V1_LAYER_TOP}) {
-            if (!surface)
-                surface = tester.layerSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer);
-        }
-        bool onWindow = false;
-        if (!surface) {
-            if (const auto under = tester.windowAt(pos, Desktop::View::FOCUS_PRIORITY, dragged)) {
-                onWindow = true; // its surface, or nothing on its border (as Hyprland)
-                surface  = tester.windowSurfaceAt(pos, under, local);
-            }
-        }
-        for (const auto level : {ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM, ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND}) {
-            if (!surface && !onWindow)
-                surface = tester.layerSurfaceAt(pos, &mon->m_layerSurfaceLayers[level], &local, &layer);
-        }
-        g_pSeatManager->setPointerFocus(surface, local);
+        const auto     tester = Desktop::viewState()->hitTest();
+        CHyprlandScene scene(tester, mon, pos);
+        scene.ignore(dragged);
+        const auto target = td::pickTarget(scene, idOf(dragged.get()));
+        // Nothing (a window's border, or no surface at all): as Hyprland, no surface; the drag keeps its last target.
+        const bool found = target.kind != td::TargetKind::None && target.kind != td::TargetKind::WindowBorder;
+        g_pSeatManager->setPointerFocus(found ? scene.surface() : nullptr, found ? scene.local() : Vector2D{});
         return true;
     }
 
@@ -608,9 +653,12 @@ namespace {
         }
     }
 
+    // The role goes before Hyprland's window.close for it (the toplevel's WP is expired then): logged here, with the window
+    // known from the drag's steps.
     void onToplevelGone(SObject* o, uint64_t toplevel) {
         if (!o->live || !o->drag.gone(toplevel))
             return;
+        gf::logRequest(Log::INFO, "toplevel drag: window {:x} unmapped: detached (its role was destroyed)", o->windowId);
         detached(*o, nullptr);
     }
 

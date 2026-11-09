@@ -153,6 +153,61 @@ namespace gf::toplevelDrag {
     // must never disconnect another). Clients are compared by address.
     bool misuseRaisable(std::optional<Id> managerClient, Id objectClient, std::optional<Id> sourceClient);
 
+    // ---- the drag's target, in Hyprland 0.56.2's pointer-focus order ----
+
+    // The eGetWindowProperties bits (Desktop::View, Window.hpp:63-74) of the target's window lookup; the glue checks them
+    // against Hyprland's enum at compile time.
+    inline constexpr uint16_t kReservedExtents  = 1U << 0;
+    inline constexpr uint16_t kInputExtents     = 1U << 1;
+    inline constexpr uint16_t kAllowFloating    = 1U << 4;
+    inline constexpr uint16_t kFollowMouseCheck = 1U << 8;
+    // What CInputManager::mouseMoveUnified's window hit test passes to CViewHitTester::windowAt (its helper at 0x6b96a0 loads
+    // 0x113): floating windows count, and every Grassfield window floats. The first build passed FOCUS_PRIORITY alone, which
+    // finds no floating window: the drag never entered the window under the pointer, only the wallpaper below it (integrator
+    // nested run of 3ae753c2, T2, T3, T6).
+    inline constexpr uint16_t kTargetWindowProperties = kReservedExtents | kInputExtents | kAllowFloating | kFollowMouseCheck;
+
+    enum class TargetKind : uint8_t {
+        None,         // nothing under the pointer
+        LayerPopup,   // a popup of a layer surface
+        Overlay,      // a layer surface of the Overlay layer
+        Top,          // a layer surface of the Top layer
+        Window,       // a window's surface (one of its popups or subsurfaces included)
+        WindowBorder, // a window, but none of its surfaces there (its border or titlebar): no target, as Hyprland
+        Bottom,       // a layer surface of the Bottom layer
+        Background,   // a layer surface of the Background layer (the wallpaper)
+    };
+
+    // What lies under the pointer, asked of Hyprland's hit tester by the glue (a fake scene in the unit tests).
+    class ITargetScene {
+      public:
+        ITargetScene()                               = default;
+        ITargetScene(const ITargetScene&)            = delete;
+        ITargetScene& operator=(const ITargetScene&) = delete;
+        ITargetScene(ITargetScene&&)                 = delete;
+        ITargetScene& operator=(ITargetScene&&)      = delete;
+        virtual ~ITargetScene()                      = default;
+
+        virtual bool layerPopup() = 0;
+        // `level`: Overlay, Top, Bottom or Background.
+        virtual bool layer(TargetKind level) = 0;
+        // The topmost window under the pointer that `properties` admit, never `ignore`.
+        virtual std::optional<Id> window(uint16_t properties, Id ignore) = 0;
+        // `window` has a surface (or a popup, a subsurface) under the pointer.
+        virtual bool windowSurface(Id window) = 0;
+    };
+
+    struct Target {
+        TargetKind        kind = TargetKind::None;
+        std::optional<Id> window; // Window, WindowBorder: the window
+
+        bool              operator==(const Target&) const = default;
+    };
+
+    // The surface the drag targets: layer popups, the Overlay and Top layers, windows (kTargetWindowProperties, the dragged one
+    // ignored), the Bottom and Background layers. The dragged window never takes part (the spec).
+    Target pickTarget(ITargetScene& scene, Id dragged);
+
     // One live toplevel-drag object per wl_data_source (invalid_source while it lives; a source whose object is destroyed may
     // get another one, as KWin allows).
     class CSources {

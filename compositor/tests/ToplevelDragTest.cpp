@@ -5,7 +5,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <optional>
+#include <vector>
 
 namespace {
     using gf::toplevelDrag::CDrag;
@@ -308,6 +310,84 @@ TEST(ToplevelDrag, OutcomesFollowTheRelease) {
     EXPECT_EQ(outcomeOf(EndKind::Cancelled, false), Outcome::Cancel);
     EXPECT_EQ(outcomeOf(EndKind::SourceGone, true), Outcome::Cancel);
     EXPECT_EQ(outcomeOf(EndKind::SourceGone, false), Outcome::Cancel);
+}
+
+namespace {
+    using gf::toplevelDrag::Target;
+    using gf::toplevelDrag::TargetKind;
+
+    // A scene as Hyprland's hit tester sees it: windows from the top of the stack, floating ones admitted only with
+    // ALLOW_FLOATING (CViewHitTester::windowAt), layers by level.
+    struct SFakeWindow {
+        gf::toplevelDrag::Id id       = 0;
+        bool                 floating = true;
+        bool                 surface  = true; // a surface under the pointer (else its border)
+    };
+    class CFakeScene : public gf::toplevelDrag::ITargetScene {
+      public:
+        std::vector<SFakeWindow> stack; // top first
+        bool                     popup = false;
+        std::vector<TargetKind>  layers;
+
+        bool                     layerPopup() override {
+            return popup;
+        }
+        bool layer(TargetKind level) override {
+            return std::ranges::find(layers, level) != layers.end();
+        }
+        std::optional<gf::toplevelDrag::Id> window(uint16_t properties, gf::toplevelDrag::Id ignore) override {
+            for (const auto& w : stack) {
+                if (w.id == ignore || (w.floating && !(properties & gf::toplevelDrag::kAllowFloating)))
+                    continue;
+                return w.id;
+            }
+            return std::nullopt;
+        }
+        bool windowSurface(gf::toplevelDrag::Id window) override {
+            return std::ranges::any_of(stack, [window](const SFakeWindow& w) { return w.id == window && w.surface; });
+        }
+    };
+} // namespace
+
+TEST(ToplevelDragTarget, TheFloatingWindowUnderTheDraggedOneIsTheTarget) {
+    // Integrator nested run of 3ae753c2: every Grassfield window floats; a lookup without ALLOW_FLOATING went through to the
+    // wallpaper, and the tab could never drop back into a strip.
+    CFakeScene scene;
+    scene.stack  = {SFakeWindow{.id = kWindow}, SFakeWindow{.id = kOther}};
+    scene.layers = {TargetKind::Background};
+    EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow), (Target{.kind = TargetKind::Window, .window = kOther}));
+    EXPECT_NE(gf::toplevelDrag::kTargetWindowProperties & gf::toplevelDrag::kAllowFloating, 0);
+    EXPECT_EQ(gf::toplevelDrag::kTargetWindowProperties, 0x113) << "CInputManager::mouseMoveUnified's own lookup (0x6b9729)";
+}
+
+TEST(ToplevelDragTarget, TheDraggedWindowIsNeverTheTarget) {
+    CFakeScene scene;
+    scene.stack  = {SFakeWindow{.id = kWindow}};
+    scene.layers = {TargetKind::Background};
+    EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow), (Target{.kind = TargetKind::Background, .window = std::nullopt}));
+}
+
+TEST(ToplevelDragTarget, LayersAboveWindowsComeFirstAndThoseBelowLast) {
+    CFakeScene scene;
+    scene.stack  = {SFakeWindow{.id = kOther}};
+    scene.layers = {TargetKind::Top, TargetKind::Bottom};
+    EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow).kind, TargetKind::Top);
+    scene.popup = true;
+    EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow).kind, TargetKind::LayerPopup);
+    scene.popup  = false;
+    scene.layers = {TargetKind::Bottom, TargetKind::Background};
+    EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow).kind, TargetKind::Window);
+    scene.stack.clear();
+    EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow).kind, TargetKind::Bottom);
+    scene.layers.clear();
+    EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow), Target{});
+}
+
+TEST(ToplevelDragTarget, AWindowsBorderIsNoTargetAndHidesTheLayersBelow) {
+    CFakeScene scene;
+    scene.stack  = {SFakeWindow{.id = kOther, .floating = true, .surface = false}};
+    scene.layers = {TargetKind::Background};
+    EXPECT_EQ(gf::toplevelDrag::pickTarget(scene, kWindow), (Target{.kind = TargetKind::WindowBorder, .window = kOther}));
 }
 
 TEST(ToplevelDragMisuse, InvalidSourceGoesOnlyToTheObjectsOwnLiveManager) {

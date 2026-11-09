@@ -308,8 +308,9 @@ static void start_drag(uint32_t serial) {
     wl_data_device_start_drag(device, source, source_win.surface, NULL, serial);
     say("%s", "drag started");
     if (strcmp(mode, "destroy-early") == 0) {
-        xdg_toplevel_drag_v1_destroy(drag); // ongoing_drag
-        drag = NULL;
+        // The destroy request (ongoing_drag) sent without destroying the proxy here: the error then names its interface
+        // (libwayland-client reports an error on a destroyed proxy without one).
+        wl_proxy_marshal_flags((struct wl_proxy*)drag, XDG_TOPLEVEL_DRAG_V1_DESTROY, NULL, wl_proxy_get_version((struct wl_proxy*)drag), 0);
         return;
     }
     if (strcmp(mode, "existing") == 0)
@@ -469,8 +470,8 @@ static int report_error(void) {
     const struct wl_interface* iface = NULL;
     uint32_t                   id    = 0;
     const uint32_t             code  = wl_display_get_protocol_error(display, &iface, &id);
-    if (wl_display_get_error(display) == EPROTO && iface) {
-        printf("protocol error %s %u\n", iface->name, code);
+    if (wl_display_get_error(display) == EPROTO) {
+        printf("protocol error %s %u\n", iface ? iface->name : "unknown", code);
         fflush(stdout);
         return 3;
     }

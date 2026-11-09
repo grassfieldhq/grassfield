@@ -113,6 +113,22 @@ namespace gf::toplevelDrag {
         return managerClient && *managerClient == objectClient && (!sourceClient || *sourceClient == objectClient);
     }
 
+    Target pickTarget(ITargetScene& scene, Id dragged) {
+        if (scene.layerPopup())
+            return Target{.kind = TargetKind::LayerPopup, .window = std::nullopt};
+        for (const auto level : {TargetKind::Overlay, TargetKind::Top}) {
+            if (scene.layer(level))
+                return Target{.kind = level, .window = std::nullopt};
+        }
+        if (const auto w = scene.window(kTargetWindowProperties, dragged))
+            return Target{.kind = scene.windowSurface(*w) ? TargetKind::Window : TargetKind::WindowBorder, .window = w};
+        for (const auto level : {TargetKind::Bottom, TargetKind::Background}) {
+            if (scene.layer(level))
+                return Target{.kind = level, .window = std::nullopt};
+        }
+        return Target{};
+    }
+
     Error CSources::add(Id source, Id object) {
         if (m_bySource.contains(source))
             return Error::InvalidSource;
