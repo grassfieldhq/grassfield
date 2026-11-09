@@ -1456,7 +1456,11 @@ Display only: nothing below can lock, unlock, delay engaging the lock or keep it
   its first character, so one wrong password attempt. Owner check (L2, real session): with only an external keyboard,
   lock, unplug and replug the keyboard, then type the password; it must unlock at the first attempt.
   `tests/security/lock_keyboard_replaced.sh` (nested, bare) checks it in a session with no keyboard of its own and SKIPs
-  otherwise: the condition depends on the parent seat at nested start and cannot be produced through scripts/nestctl.
+  otherwise: the condition depends on the parent seat at nested start and cannot be produced through scripts/nestctl. It
+  SKIPs too when grassfield-compositor is not loaded (`nested-up: ... plugin none`): then the limit above applies, and
+  the integrator's keyboard-less run of S2 (e1a3ff4c), without the plugin, showed exactly it (every Escape after the
+  first burst lost, the field left filled; nothing reached another window, the session stayed locked), as main 8b04383c
+  did. With the plugin: NOT VERIFIED.
 - A foreign locker that takes over a live Grassfield lock and then dies (no release) leaves the session locked behind
   Hyprland's "lockscreen app died" screen (fail closed); Grassfield's own lock object is no longer used, so the session
   can only be unlocked after the security process restarts (its crash recovery takes the dead lock over).
