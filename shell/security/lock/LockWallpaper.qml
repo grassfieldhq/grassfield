@@ -82,7 +82,7 @@ Scope {
 
     Process {
         id: reader
-        command: ["timeout", "-k", "1", "5", "head", "-c", String(root.maxBytes + 1), "--", root.stateFile]
+        command: ["/usr/bin/timeout", "-k", "1", "5", "/usr/bin/head", "-c", String(root.maxBytes + 1), "--", root.stateFile]
         stdout: StdioCollector {
             onStreamFinished: root.take(String(text))
         }

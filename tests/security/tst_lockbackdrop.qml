@@ -47,7 +47,7 @@ TestCase {
         verify(/readonly property var wanted: root\.wallpaper \? root\.wallpaper\.lockBackdrop\(root\.output\) : null/.test(s));
         // The reader: bounded (head -c, a timeout), watched without reading (preload: false), the pure lockBackdropOf.
         const r = source("shell/security/lock/LockWallpaper.qml");
-        verify(r.indexOf('command: ["timeout", "-k", "1", "5", "head", "-c", String(root.maxBytes + 1), "--", root.stateFile]') >= 0);
+        verify(r.indexOf('command: ["/usr/bin/timeout", "-k", "1", "5", "/usr/bin/head", "-c", String(root.maxBytes + 1), "--", root.stateFile]') >= 0);
         verify(/watchChanges: true\s*preload: false/.test(r) && /return WallpaperConfig\.lockBackdropOf\(root\.saved, output, root\.preparedDir, root\.videoDir\);/.test(r));
         verify(!/setText|atomicWrites|WallpaperState|execDetached/.test(r), "it writes nothing and starts nothing else");
         verify(s.indexOf('root.run("stat", ["/usr/bin/stat", "--printf", "%f|%s", "--", real]);') >= 0);

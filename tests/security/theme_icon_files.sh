@@ -317,7 +317,7 @@ for site in 'shell/overview/MiniDesktop.qml:ThemeIcons.appIcon(Apps.lookup(card.
   'shell/overlay/controlcenter/NowPlaying.qml:source: ThemeIcons.artSource(Media.artShown)' 'shell/services/Media.qml:onTriggered: root.artShown = root.artUrl' \
   'shell/security/lock/Lock.qml:Machine.avatarSource(facePath, Machine.accountsIconPath(loginName), path => avatar.sourceOf(path), path => avatar.stateOf(path))' \
   'shell/security/lock/LockAvatar.qml:readonly property string helper: Quickshell.shellPath("services/image-copy.py")' \
-  'shell/security/lock/LockAvatar.qml:maker.command = ["timeout", "-k", "2", "20", "setpriv", "--pdeathsig", "KILL", "--", "python3", "-I", root.helper, "file", path, String(root.maxBytes), out];' \
+  'shell/security/lock/LockAvatar.qml:maker.command = ["/usr/bin/timeout", "-k", "2", "20", "/usr/bin/setpriv", "--pdeathsig", "KILL", "--", "/usr/bin/python3", "-I", root.helper, "file", path, String(root.maxBytes), out];' \
   'shell/menubar/TrayButton.qml:readonly property string own: ThemeIcons.trayIcon(root.item ? root.item.icon : "")'; do
   grep -qF -- "${site#*:}" "${site%%:*}" || { echo "missing: $site"; site_ok=0; }
 done

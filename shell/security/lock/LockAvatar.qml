@@ -76,7 +76,7 @@ Scope {
         maker.path = path;
         maker.out = out;
         // The helper creates the copy (O_EXCL, 0600). Argument vector, no shell.
-        maker.command = ["timeout", "-k", "2", "20", "setpriv", "--pdeathsig", "KILL", "--", "python3", "-I", root.helper, "file", path, String(root.maxBytes), out];
+        maker.command = ["/usr/bin/timeout", "-k", "2", "20", "/usr/bin/setpriv", "--pdeathsig", "KILL", "--", "/usr/bin/python3", "-I", root.helper, "file", path, String(root.maxBytes), out];
         // The first copy of this process waits for the copies of earlier runs to be deleted (a restart leaves its own).
         if (root.cleaned)
             maker.running = true;
@@ -101,7 +101,7 @@ Scope {
     // The copies of earlier runs of this process (same display), deleted once before the first copy is made.
     Process {
         id: cleaner
-        command: ["sh", "-c", "case $1 in /*/grassfield-lock-avatar-*) ;; *) exit 1 ;; esac; for f in \"$1\"-*.png; do [ -e \"$f\" ] && rm -f -- \"$f\"; done; exit 0", "gf-lock-avatar-clean", root.base]
+        command: ["/usr/bin/sh", "-c", "case $1 in /*/grassfield-lock-avatar-*) ;; *) exit 1 ;; esac; for f in \"$1\"-*.png; do [ -e \"$f\" ] && /usr/bin/rm -f -- \"$f\"; done; exit 0", "gf-lock-avatar-clean", root.base]
         // qmllint disable signal-handler-parameters
         onExited: () => {
             // qmllint enable signal-handler-parameters
