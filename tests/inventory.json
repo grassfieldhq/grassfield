@@ -532,6 +532,7 @@
  {"path": "tests/security/bluez_agent.sh", "layer": "headless"},
  {"path": "tests/security/tst_prompter.qml", "layer": "headless"},
  {"path": "tests/security/tst_sheetqueue.qml", "layer": "headless"},
+ {"path": "tests/security/tst_sheetsession.qml", "layer": "headless"},
  {"path": "tests/security/tst_secretsheetmodel.qml", "layer": "headless"},
  {"path": "tests/security/tst_passwordfield.qml", "layer": "headless"},
  {"path": "tests/shell/bindings_forward.sh", "layer": "logic"},
