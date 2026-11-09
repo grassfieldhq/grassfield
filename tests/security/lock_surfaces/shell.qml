@@ -241,6 +241,52 @@ ShellRoot {
         check("locked: the tiling suggestions do not open (" + lockedWhy + ")", lockedWhy === "lock" && !Popups.active);
         check("locked: nothing is open at all (" + anyOpen() + ")", anyOpen() === "");
 
+        // ADR-0041 S2 (the opus review of 77a0ceb3, MAJOR-1): the UI reads locked only because the security process is down
+        // (no state, or a stale "unlocked"): the paths that lock or end the session open, so that a lock request reaches it
+        // (LockClient hands it to the stand-in, which starts the unit); every other surface stays refused.
+        SessionState.lockConfirmed = false;
+        let requested = "";
+        const onRequest = reason => requested = reason;
+        SessionState.lockRequested.connect(onRequest);
+        Popups.open("system", "", 0, 0, "left", {});
+        check("unconfirmed: the Grassfield menu opens (its Lock Screen reaches the security process)", Popups.kind === "system");
+        Popups.close();
+        Popups.confirm("t", "m", "OK", "logout", {}, true);
+        check("unconfirmed: the session confirmation opens", Popups.kind === "confirm");
+        Popups.close();
+        Popups.confirm("t", "m", "Empty Trash", "emptytrash", {}, true);
+        check("unconfirmed: another confirmation (Empty Trash) stays refused", !Popups.active);
+        Popups.close();
+        search.show("");
+        check("unconfirmed: Search opens (its Lock Screen command)", search.open);
+        search.enterClipboard();
+        check("unconfirmed: Search's clipboard view stays refused", !search.clipboardView);
+        SessionState.requestLock("probe");
+        check("unconfirmed: a lock request goes out", requested === "probe");
+        SessionState.lockRequested.disconnect(onRequest);
+        SessionState.lockConfirmed = true;
+        check("unconfirmed -> confirmed: Search closes", !search.open);
+        SessionState.lockConfirmed = false;
+        Popups.open("system", "", 0, 0, "left", {});
+        SessionState.lockConfirmed = true;
+        check("unconfirmed -> confirmed: the menu closes", !Popups.active);
+        SessionState.lockConfirmed = false;
+        const still = [];
+        for (const k of kinds) {
+            if (k === "system" || k === "confirm")
+                continue;
+            Popups.open(k, "", 0, 0, "left", {});
+            if (Popups.active)
+                still.push(k);
+            Popups.close();
+        }
+        apps.show();
+        overview.show();
+        Notifications.toggleCenter("");
+        Emoji.toggle();
+        check("unconfirmed: every other surface stays refused (" + still.join(", ") + (anyOpen() ? "; " + anyOpen() : "") + ")", still.length === 0 && anyOpen() === "" && !Emoji.placing);
+        SessionState.lockConfirmed = true;
+
         // Unlock: back to normal.
         SessionState.locked = false;
         openAll();

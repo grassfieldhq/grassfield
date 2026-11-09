@@ -5,7 +5,13 @@
 #
 #   scripts/gates/rss.sh [--nested | --real | --pid PID[=label]]... [options]
 #     --nested | --real | --pid   as in idle-cpu.sh (the shell only counts for the verdict: processes named
-#                      grassfield-menu-bridge are listed but not summed, P2 is "grassfield-shell RSS")
+#                      grassfield-menu-bridge are listed but not summed, P2 is "grassfield-shell RSS"; since ADR-0041
+#                      step 1, S1 the security process counts with it: --nested measures this tree's .dev/security.pid
+#                      too, summed with the shell, and --pid takes it as one more process). The menu bridge is listed
+#                      when it runs and never required (a nested session without its build runs T0 menus only); the
+#                      shell and the security process are required. --real finds both Quickshell processes by their
+#                      units' MainPID (grassfield-shell.service, grassfield-security.service), else by their command
+#                      lines (qs -n -p /usr/share/grassfield/shell, .../security.qml)
 #     --baseline-pid PID   the omarchy-shell process (e.g. `pgrep -f 'quickshell.*omarchy/shell' | head -1` in the
 #                          Omarchy session), measured now
 #     --baseline-mb N      a baseline measured earlier in the Omarchy session (MB of RSS)
@@ -41,14 +47,25 @@ done
 if ((nested)); then
   # shellcheck source=../dev/pidfile.sh
   . "$root/scripts/dev/pidfile.sh"
-  for rec in shell:grassfield-shell menu-bridge:grassfield-menu-bridge; do
-    if p=$(dev_live_pid "$root/.dev/${rec%%:*}.pid"); then pids+=("$p"); labels+=("${rec#*:} (nested)"); else echo "rss: no live ${rec#*:} of this tree's nested session" >&2; exit 2; fi
-  done
+  if p=$(dev_live_pid "$root/.dev/shell.pid"); then pids+=("$p"); labels+=("grassfield-shell (nested)"); else echo "rss: no live grassfield-shell of this tree's nested session" >&2; exit 2; fi
+  # Listed only (never summed, never required): a nested session whose bridge is not built runs without it (the integrator's
+  # nested run of e1a3ff4c stopped here, exit 2, although P2 does not count it).
+  if p=$(dev_live_pid "$root/.dev/menu-bridge.pid"); then pids+=("$p"); labels+=("grassfield-menu-bridge (nested)"); else echo "rss: note: no live grassfield-menu-bridge in this tree's nested session (listed only, not counted)" >&2; fi
+  # The security process (ADR-0041 S2: the lock, idle and the sleep inhibitor; scripts/dev/shell-run.sh starts it): P2
+  # counts both Quickshell processes.
+  if p=$(dev_live_pid "$root/.dev/security.pid"); then pids+=("$p"); labels+=("grassfield-security (nested)"); else echo "rss: no live grassfield-security of this tree's nested session (P2 counts both processes)" >&2; exit 2; fi
 fi
 if ((real)); then
-  while read -r p; do [[ -n $p ]] && { pids+=("$p"); labels+=("grassfield-shell (real session)"); }; done < <(gate_find 'qs -n -c grassfield')
+  # The shell is started by path since GF-115 (`qs -n -c grassfield` matched nothing any more), and the security process counts
+  # with it (ADR-0041 S2). Read-only: the units' MainPID, else the exact command lines.
+  for rec in grassfield-shell:/usr/share/grassfield/shell grassfield-security:/usr/share/grassfield/shell/security.qml; do
+    p=$(systemctl --user show -p MainPID --value "${rec%%:*}.service" 2>/dev/null)
+    [[ $p =~ ^[1-9][0-9]*$ ]] || p=$(gate_find "^/usr/bin/qs -n -p ${rec#*:}\$" | head -n 1)
+    if [[ $p =~ ^[1-9][0-9]*$ ]]; then pids+=("$p"); labels+=("${rec%%:*} (real session)"); else echo "rss: no ${rec%%:*} found in this user's processes" >&2; fi
+  done
   while read -r p; do [[ -n $p ]] && { pids+=("$p"); labels+=("grassfield-menu-bridge (real session)"); }; done < <(pgrep -u "$(id -u)" -x grassfield-menu-bridge 2>/dev/null)
   ((${#pids[@]} > 0)) || { echo "rss: no grassfield-shell found in this user's processes (run as a bare command)" >&2; exit 2; }
+  [[ " ${labels[*]} " == *"grassfield-security (real session)"* ]] || { echo "rss: the security process was not found: P2 counts both processes (ADR-0041 S2): INCONCLUSIVE" >&2; exit 2; }
 fi
 ((${#pids[@]} > 0)) || { echo "rss: nothing to measure (--nested, --real or --pid)" >&2; exit 2; }
 

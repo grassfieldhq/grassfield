@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop the nested shell, menu bridge, private bus and compositor started by nested-up.sh / shell-run.sh and
+# Stop the nested shell, security process, menu bridge, private bus and compositor started by nested-up.sh / shell-run.sh and
 # remove their records. Only processes whose record still matches are signalled (scripts/dev/pidfile.sh), never the
 # owner's compositor, its group or session.
 set -uo pipefail
@@ -28,10 +28,12 @@ fi
 
 status=0
 dev_stop "$dev/shell.pid" grassfield-shell || status=1
+# The security process (ADR-0041 S2) after the UI: it holds the nested session lock, if any (the compositor goes next).
+dev_stop "$dev/security.pid" grassfield-security || status=1
 # The menu bridge releases com.canonical.AppMenu.Registrar on SIGTERM, then the private bus goes (shell-run.sh).
 dev_stop "$dev/menu-bridge.pid" grassfield-menu-bridge || status=1
 dev_stop "$dev/bus.pid" "private D-Bus bus" || status=1
-rm -f "$dev/bus.address" "$dev/run/menu-bridge.sock"
+rm -f "$dev/bus.address" "$dev/run/menu-bridge.sock" "$dev/security.sig"
 if [[ -n $nested ]]; then
   dev_stop "$dev/nested.pid" "nested Hyprland" "$nested" || status=1
 else

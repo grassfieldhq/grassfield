@@ -77,9 +77,9 @@ Singleton {
     // The last window whose fill was sent ("" none; tests/shell/split_view).
     property string lastSent: ""
 
-    // At the end of the event that changed it: the shell's own lock closes its popups, the picker with them, just before its
-    // lock state changes (Lock.lock()), so a fill sent at once went out as the lock began instead of at the unlock (#48 nested
-    // pass, MINOR B). Read then, `lonely` is empty under the lock.
+    // At the end of the event that changed it: the popups close, the picker with them, as the session reads locked (GF-116;
+    // before ADR-0041 S2 the lock closed them just before its state changed), so a fill sent at once went out as the lock began
+    // instead of at the unlock (#48 nested pass, MINOR B). Read then, `lonely` is empty under the lock.
     onLonelyChanged: Qt.callLater(root.fillLonely)
 
     function fillLonely(): void {

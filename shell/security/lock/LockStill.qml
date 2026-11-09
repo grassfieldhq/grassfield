@@ -3,13 +3,12 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Grassfield.Ui
-import qs.services
 
 // The lock's backdrop for one output, ready before it is needed (ADR-0040 step 4a, ID-7; ADR-0016 section 6, W8). Display
 // only: nothing here can lock, unlock or keep the lock from engaging, and no lock waits for it.
 //
-// What the desktop last showed on the output (WallpaperState.lockBackdrop: wallpaper.json `shown`, a plain cache name in the
-// prepared or video folder for a picture) is decided while the session is unlocked, when the wallpaper changes, never when it
+// What the desktop last showed on the output (LockWallpaper.lockBackdrop, the security process's own reader of wallpaper.json
+// `shown`: a plain cache name in the prepared or video folder for a picture) is decided while the session is unlocked, when the wallpaper changes, never when it
 // locks: a picture is checked here (its real path, `realpath -m` with the two cache folders' own real paths, a plain cache
 // name directly in one of them; a regular file of at most wallpaper.lockStillMaxBytes, `stat %f|%s`, the raw mode, which
 // no locale translates; both run by absolute path, by argument vector, never a shell) and then decoded by the
@@ -26,9 +25,11 @@ Item {
     id: root
 
     required property ShellScreen modelData
+    // The reader of wallpaper.json (LockWallpaper, one for every output: LockStills).
+    required property var wallpaper
     readonly property string output: modelData ? modelData.name : ""
     // What the desktop shows on this output now (null: nothing yet).
-    readonly property var wanted: WallpaperState.lockBackdrop(root.output)
+    readonly property var wanted: root.wallpaper ? root.wallpaper.lockBackdrop(root.output) : null
 
     property var backdrop: null
     // The picture asked for (the record's file), its real path once checked, and the request they belong to (a newer one
@@ -62,7 +63,7 @@ Item {
         root.reset();
         root.requested = w.file;
         root.pending = w.file;
-        root.run("real", ["/usr/bin/realpath", "-m", "--", WallpaperState.preparedDir, WallpaperState.videoDir, w.file]);
+        root.run("real", ["/usr/bin/realpath", "-m", "--", root.wallpaper.preparedDir, root.wallpaper.videoDir, w.file]);
         checkTimeout.restart();
     }
 

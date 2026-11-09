@@ -6,8 +6,14 @@
 # its request with none of them:
 #   the lock key        config/hypr/grassfield/bindings.lua (SUPER+CTRL+Q), run by a plain Lua interpreter against a stub
 #                       of Hyprland's hl table; the command it would exec runs under /bin/sh as Hyprland runs it
-#   the lid             packaging/bin/grassfield-lid closed (its default lock command; fake /proc and /sys)
+#   the lid             packaging/bin/grassfield-lid closed (its default lock command), run from a copy whose fixed lid
+#                       and display paths are scratch ones and whose installed stand-in path is a recorder: a test never
+#                       starts the installed stand-in (the opus counter-review of 657ecf00, GATE-2)
 #   the fallback        packaging/shims/omarchy-shell lock lock (Omarchy's sleep-lock calls it in this session)
+# A lock request always ends in a locked session (ADR-0041 S2, the opus review of 77a0ceb3, MAJOR-1): when the security
+# process fails `lock lock` or hangs past 5 s, the lock key hands the request to the stand-in (its installed path replaced by
+# a recorder here), which starts the unit; an answer (ok, already-locked, refused:*) is final; a dev session has no
+# fallback (the installed stand-in would act on the owner's units).
 # A stub qs records each call and the QS_* variables it received, and decides as the real qs would: it runs the REAL
 # qs's option parsing (`qs list -p` on a scratch directory, a private runtime directory: nothing can reach a running
 # shell) in the environment the caller gave it; exit 108 there is the failure guarded against. Control: the stub with the
@@ -29,7 +35,10 @@ if ! command -v qs >/dev/null || ! command -v lua >/dev/null; then
   exit 0
 fi
 tmp=$(mktemp -d "${GRASSFIELD_TEST_TMP:-${TMPDIR:-/tmp}}/lock-request-env.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT
+# A detached child (grassfield-lid starts its fallback with setsid -f) never outlives the test: anything still running from
+# the scratch directory is killed before it is removed.
+trap 'pkill -KILL -f -- "$tmp/" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+standin=/usr/lib/grassfield/omarchy-shims/omarchy-shell
 fail=0
 pass() { echo "PASS: lock request env $*"; }
 bad() { echo "FAIL: lock request env $*"; fail=1; }
@@ -52,8 +61,14 @@ env | grep '^QS_' | sed 's/^/env /' >>"$STUB_LOG"
 QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR="$STUB_QSRT" HOME="$STUB_HOME" /usr/bin/qs list -p "$STUB_CFG" >/dev/null 2>&1
 [ $? = 108 ] && { echo "parse 108" >>"$STUB_LOG"; exit 108; }
 case "$*" in
-  "ipc -p /usr/share/grassfield/shell call lock lock") echo ok ;;
-  "ipc -p /usr/share/grassfield/shell call lock lid") [ "${STUB_LID:-ok}" = fail ] && exit 1; echo ok ;;
+  "ipc -p /usr/share/grassfield/shell/security.qml call lock lock")
+    case ${STUB_LOCK:-ok} in
+      fail) exit 1 ;;
+      hang) exec sleep 30 ;;
+      refused) echo "refused: no outputs" ;;
+      *) echo ok ;;
+    esac ;;
+  "ipc -p /usr/share/grassfield/shell/security.qml call lock lid") [ "${STUB_LID:-ok}" = fail ] && exit 1; echo ok ;;
   *) exit 9 ;;
 esac
 SH
@@ -71,7 +86,7 @@ for v in QS_MANIFEST QS_CONFIG_NAME; do
   [[ " ${opts[*]} " == *" $v "* ]] || continue
   : >"$tmp/log"
   rc=0
-  env -i "${base[@]}" "$v=/stray/$v" "$tmp/bin/qs" ipc -p /usr/share/grassfield/shell call lock lock >/dev/null 2>&1 || rc=$?
+  env -i "${base[@]}" "$v=/stray/$v" "$tmp/bin/qs" ipc -p /usr/share/grassfield/shell/security.qml call lock lock >/dev/null 2>&1 || rc=$?
   [[ $rc == 108 ]] && grep -qx "parse 108" "$tmp/log" && pass "control: with $v set, qs's own option parsing refuses the request (exit 108)" \
     || bad "control: with $v set the stub did not reproduce the failure (rc $rc)"
 done
@@ -116,9 +131,39 @@ if [[ -z $lock_cmd ]]; then
 else
   : >"$tmp/log"
   rc=0
-  out=$(env -i "${base[@]}" "${stray[@]}" /bin/sh -c "$lock_cmd" 2>/dev/null) || rc=$?
-  verdict "the lock key (SUPER+CTRL+Q)" "$out" "$rc" "ipc -p /usr/share/grassfield/shell call lock lock"
+  key_cmd=${lock_cmd//"$standin"/"$tmp/bin/fallback"}
+  out=$(env -i "${base[@]}" "${stray[@]}" /bin/sh -c "$key_cmd" 2>/dev/null) || rc=$?
+  verdict "the lock key (SUPER+CTRL+Q)" "$out" "$rc" "ipc -p /usr/share/grassfield/shell/security.qml call lock lock"
+  ! grep -q "^fallback" "$tmp/log" && pass "the lock key: an answered request goes no further (no fallback)" \
+    || bad "the lock key ran the fallback after an answer: $(tr '\n' ';' <"$tmp/log")"
+  if [[ $key_cmd == "$lock_cmd" ]]; then
+    bad "the lock key of a real session names no fallback ($standin): '$lock_cmd'"
+  fi
+  for answer in fail hang refused; do
+    : >"$tmp/log"
+    start=$SECONDS
+    out=$(env -i "${base[@]}" "${stray[@]}" STUB_LOCK=$answer timeout 20 /bin/sh -c "$key_cmd" 2>/dev/null) || true
+    took=$((SECONDS - start))
+    case $answer in
+      refused)
+        [[ $out == "refused: no outputs" ]] && ! grep -q "^fallback" "$tmp/log" \
+          && pass "the lock key: a refusal of the security process is its answer (no fallback)" \
+          || bad "the lock key, refused: '$out', calls: $(tr '\n' ';' <"$tmp/log")" ;;
+      *)
+        if grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock" "$tmp/log" && grep -qx "fallback lock lock" "$tmp/log" \
+          && ! grep -q "^env QS_\|^parse 108" "$tmp/log" && ((took <= 8)); then
+          pass "the lock key: a security process that ${answer}s (${took} s) hands the request to the stand-in ('lock lock'), which starts the unit"
+        else
+          bad "the lock key, security process ${answer}s: ${took} s, calls: $(tr '\n' ';' <"$tmp/log")"
+        fi ;;
+    esac
+  done
 fi
+# awk reads the whole stream ("&& !done", not "exit"): under pipefail an early exit gives the Lua stub's next write SIGPIPE
+# (exit 141) and set -e ends the script (the opus counter-review of 657ecf00, GATE-1).
+dev_key=$(binds GRASSFIELD_DEV=1 | awk -F'\t' '$1 == "lock" && !done {print $2; done = 1}')
+[[ -n $dev_key && $dev_key != *omarchy-shims* && $dev_key != *timeout* ]] \
+  && pass "control: the lock key of a dev session has no fallback to the installed stand-in" || bad "the dev lock key: '$dev_key'"
 uncleared=()
 n=0
 while IFS=$'\t' read -r _ cmd; do
@@ -133,14 +178,45 @@ done <<<"$lua_out"
   || bad "bindings.lua builds a qs ipc command outside qs_ipc: $(grep -n '"qs ipc' config/hypr/grassfield/bindings.lua | tr '\n' ' ')"
 
 # --- the lid (grassfield-lid closed, no external display: the shell is asked to lock) ---
+# grassfield-lid's fixed paths, which no variable can change outside a dev session, point at scratch ones in a copy: the
+# lid and display state of a "real" session are $tmp/realproc (the lid open) and $tmp/realdrm (the built-in panel only:
+# no external display, so a lid close whose lock request fails starts the fallback), and the installed stand-in is the
+# recorder $tmp/bin/fallback. The installed stand-in never runs here: it ran detached and, a pre-S2 build on a machine with
+# Grassfield installed, kept writing into the next cases' log (the opus counter-review of 657ecf00, GATE-2).
+lid=$tmp/grassfield-lid
+mkdir -p "$tmp/realproc/LID0" "$tmp/realdrm/card0-eDP-1"
+printf 'state:      open\n' >"$tmp/realproc/LID0/state"
+printf 'connected\n' >"$tmp/realdrm/card0-eDP-1/status"
+src=packaging/bin/grassfield-lid
+if [[ $(grep -cx 'LID_PROC=/proc/acpi/button/lid' "$src") == 1 && $(grep -cx 'DRM=/sys/class/drm' "$src") == 1 && $(grep -cxF "FALLBACK=$standin" "$src") == 1 ]]; then
+  sed -e "s|^LID_PROC=/proc/acpi/button/lid\$|LID_PROC=$tmp/realproc|" -e "s|^DRM=/sys/class/drm\$|DRM=$tmp/realdrm|" \
+    -e "s|^FALLBACK=$standin\$|FALLBACK=$tmp/bin/fallback|" "$src" >"$lid"
+else
+  bad "grassfield-lid has not exactly one line each of LID_PROC=/proc/acpi/button/lid, DRM=/sys/class/drm and FALLBACK=$standin"
+  exit 1
+fi
+if grep -qF "$standin" "$lid" || ! grep -qxF "FALLBACK=$tmp/bin/fallback" "$lid"; then
+  bad "the copy of grassfield-lid still names the installed stand-in"
+  exit 1
+fi
+# The fallback runs detached (setsid -f): wait until the recorder has written its line (it exits right after), at most
+# 5 s, so that nothing it does lands in the next case's log.
+wait_line() { # <exact line>: 0 once it is in the log
+  local _
+  for _ in $(seq 1 50); do
+    grep -qxF -- "$1" "$tmp/log" && return 0
+    sleep 0.1
+  done
+  return 1
+}
 printf 'state:      closed\n' >"$tmp/proc/LID0/state"
 printf 'connected\n' >"$tmp/drm/card1-eDP-1/status"
 : >"$tmp/log"
 rc=0
-env -i "${base[@]}" "${stray[@]}" GRASSFIELD_SESSION=1 bash packaging/bin/grassfield-lid closed >/dev/null 2>&1 || rc=$?
-sleep 0.5 # the fallback would run detached
-if [[ $rc == 0 ]] && grep -qx "qs ipc -p /usr/share/grassfield/shell call lock lid" "$tmp/log" && ! grep -q "^env QS_\|^parse 108\|^fallback" "$tmp/log"; then
-  pass "the lid (grassfield-lid closed) still sends 'ipc -p /usr/share/grassfield/shell call lock lid' with ${opts[*]} set, qs gets none of them, no fallback needed"
+env -i "${base[@]}" "${stray[@]}" GRASSFIELD_SESSION=1 bash "$lid" closed >/dev/null 2>&1 || rc=$?
+sleep 0.5 # a fallback (none expected: the stub answers ok) would run detached
+if [[ $rc == 0 ]] && grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lid" "$tmp/log" && ! grep -q "^env QS_\|^parse 108\|^fallback" "$tmp/log"; then
+  pass "the lid (grassfield-lid closed) still sends 'ipc -p /usr/share/grassfield/shell/security.qml call lock lid' with ${opts[*]} set, qs gets none of them, no fallback needed"
 else
   bad "the lid with ${opts[*]} set: rc $rc, calls: $(tr '\n' ';' <"$tmp/log")"
 fi
@@ -149,7 +225,7 @@ fi
 : >"$tmp/log"
 rc=0
 out=$(env -i "${base[@]}" "${stray[@]}" HYPRLAND_INSTANCE_SIGNATURE=sig sh packaging/shims/omarchy-shell lock lock 2>/dev/null) || rc=$?
-verdict "the sleep-lock fallback (omarchy-shell lock lock)" "$out" "$rc" "ipc -p /usr/share/grassfield/shell call lock lock"
+verdict "the sleep-lock fallback (omarchy-shell lock lock)" "$out" "$rc" "ipc -p /usr/share/grassfield/shell/security.qml call lock lock"
 
 # --- dev plumbing leaked into a real session ---
 mkdir -p "$tmp/hproc/LID0" "$tmp/hdrm/card9-eDP-9" "$tmp/hdrm/card9-DP-9"
@@ -162,18 +238,19 @@ lidrun() { # <answer of lock lid: ok|fail> <subcommand> <run-mode assignments...
   shift 2
   : >"$tmp/log"
   rm -f "$tmp/run/grassfield-lid-internal-off" # each run starts with the laptop panel on
-  env -i "${base[@]}" "${lid_hooks[@]}" STUB_LID="$answer" "$@" bash packaging/bin/grassfield-lid "$sub" >/dev/null 2>&1 || true
-  sleep 1 # a fallback would run detached
+  env -i "${base[@]}" "${lid_hooks[@]}" STUB_LID="$answer" "$@" bash "$lid" "$sub" >/dev/null 2>&1 || true
+  sleep 0.5 # a fallback would run detached (the cases that expect one wait for its line)
 }
 for mode in "GRASSFIELD_SESSION=1 GRASSFIELD_DEV=1" "-"; do
   label="a real session (GRASSFIELD_SESSION=1, a leaked GRASSFIELD_DEV=1)"
   [[ $mode == - ]] && label="no run-mode variable at all"
   read -r -a assign <<<"${mode/#-/}"
   lidrun ok closed "${assign[@]}"
-  grep -qx "qs ipc -p /usr/share/grassfield/shell call lock lid" "$tmp/log" && ! grep -q "^hijacked" "$tmp/log" \
+  grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lid" "$tmp/log" && ! grep -q "^hijacked" "$tmp/log" \
     && pass "the lid in $label ignores GRASSFIELD_LID_LOCK: the installed shell is asked" || bad "the lid in $label: $(tr '\n' ';' <"$tmp/log")"
-  lidrun fail closed "${assign[@]}" GRASSFIELD_DRM="$tmp/drm" # no external display there: a fallback would run
-  ! grep -q "^hijacked" "$tmp/log" && pass "the lid in $label, shell down: GRASSFIELD_LID_FALLBACK is ignored" \
+  lidrun fail closed "${assign[@]}" GRASSFIELD_DRM="$tmp/drm" # no external display in either: the fallback runs
+  wait_line "fallback lock lock" && ! grep -q "^hijacked" "$tmp/log" \
+    && pass "the lid in $label, shell down: GRASSFIELD_LID_FALLBACK is ignored, the installed stand-in's path is asked to lock (recorder)" \
     || bad "the lid in $label, shell down: $(tr '\n' ';' <"$tmp/log")"
   lidrun ok reconcile "${assign[@]}"
   ! grep -q "eDP-9" "$tmp/log" && pass "the lid in $label ignores GRASSFIELD_LID_PROC and GRASSFIELD_DRM (no panel switch for their fake lid and displays)" \
@@ -182,7 +259,7 @@ done
 lidrun ok closed GRASSFIELD_DEV=1
 grep -q "^hijacked lock" "$tmp/log" && pass "control: a dev session honours GRASSFIELD_LID_LOCK" || bad "control: dev session did not use GRASSFIELD_LID_LOCK: $(tr '\n' ';' <"$tmp/log")"
 lidrun fail closed GRASSFIELD_DEV=1 GRASSFIELD_DRM="$tmp/drm" GRASSFIELD_LID_LOCK=false # a lock command that fails
-grep -q "^hijacked fallback lock lock" "$tmp/log" && pass "control: a dev session honours GRASSFIELD_LID_FALLBACK" || bad "control: dev session did not use GRASSFIELD_LID_FALLBACK: $(tr '\n' ';' <"$tmp/log")"
+wait_line "hijacked fallback lock lock" && ! grep -qx "fallback lock lock" "$tmp/log" && pass "control: a dev session honours GRASSFIELD_LID_FALLBACK" || bad "control: dev session did not use GRASSFIELD_LID_FALLBACK: $(tr '\n' ';' <"$tmp/log")"
 lidrun ok reconcile GRASSFIELD_DEV=1
 grep -q "eDP-9" "$tmp/log" && pass "control: a dev session honours GRASSFIELD_LID_PROC and GRASSFIELD_DRM" || bad "control: dev session ignored the lid and display hooks: $(tr '\n' ';' <"$tmp/log")"
 
@@ -212,11 +289,11 @@ for mode in "GRASSFIELD_SESSION=1 GRASSFIELD_DEV=1" "-"; do
   [[ $mode == - ]] && label="no run-mode variable at all"
   read -r -a assign <<<"${mode/#-/}"
   cmd=$(binds GRASSFIELD_SHELL_DIR=/hostile/shell "${assign[@]}" | awk -F'\t' '$1 == "lock" && !done {print $2; done = 1}')
-  [[ $cmd == *"-p '/usr/share/grassfield/shell' call lock lock" && $cmd != *hostile* ]] \
+  [[ $cmd == *"-p '/usr/share/grassfield/shell/security.qml' call lock lock "* && $cmd != *hostile* ]] \
     && pass "the lock key in $label ignores GRASSFIELD_SHELL_DIR: it asks the installed shell" || bad "the lock key in $label: '$cmd'"
 done
 cmd=$(binds GRASSFIELD_SHELL_DIR=/dev/shell GRASSFIELD_DEV=1 | awk -F'\t' '$1 == "lock" && !done {print $2; done = 1}')
-[[ $cmd == *"-p '/dev/shell' call lock lock" ]] && pass "control: a dev session sends the lock key to GRASSFIELD_SHELL_DIR" || bad "control: dev lock key '$cmd'"
+[[ $cmd == *"-p '/dev/shell/security.qml' call lock lock" ]] && pass "control: a dev session sends the lock key to the security root in GRASSFIELD_SHELL_DIR" || bad "control: dev lock key '$cmd'"
 
 # session.lua: its modules from its own directory, the stand-ins from the fixed one.
 if grep -v '^[[:space:]]*--' config/hypr/session.lua | grep -q 'GRASSFIELD_CONFIG_DIR\|GRASSFIELD_SHIM_DIR'; then

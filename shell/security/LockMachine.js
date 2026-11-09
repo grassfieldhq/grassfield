@@ -288,6 +288,11 @@ function ownershipAction(compositorState, unlockedBefore) {
 var PROBE_INTERVAL_MS = 1000;
 var PROBE_SUSPECTED_MS = 100;
 
+// The lock surface's view loads after the surface's first frame (LockViewLoader.qml, ADR-0041 S2); a load still under way
+// this long after the surface was created is completed at once, so that a person is never left without a password field
+// (the opus gate of d151cace). Offscreen the view loads in 31 to 75 ms warm and about 0.6 s cold.
+var VIEW_SYNC_FALLBACK_MS = 3000;
+
 // A takeover is suspected, i.e. another client may hold or have held the session lock, so that its release can unlock
 // the session under this shell's lock, while
 //   - no lock surface of this shell has the keyboard (another client's lock surface took it, or the session was

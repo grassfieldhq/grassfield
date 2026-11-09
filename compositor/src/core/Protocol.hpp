@@ -143,6 +143,10 @@ namespace gf::gfc {
     // ADR-0036 step 6e (tiling.md TL33, D73): a Split View member's titlebar is away (revealed at the top edge of its half) and
     // no band is kept above it. Always right after tiling-split-rows: the shell's Overview lays a member out without a strip.
     inline constexpr std::string_view kFeatureTilingSplitTitles = "tiling-split-titles";
+    // No verb (ADR-0036 amendment 2026-11-08, URR-030): the plugin serves xdg_toplevel_drag_manager_v1, so a browser tab torn
+    // off moves with the pointer, drops back into a tab strip and tiles like any dragged window. Informational: the shell needs
+    // nothing; advertised while the global is up.
+    inline constexpr std::string_view kFeatureToplevelDrag = "toplevel-drag";
     inline constexpr std::string_view kFeatures[]         = {kFeatureDecorations}; // always on
 
     // The advertised list, in a stable order: decorations, then minimize, config, appmenu, overview, desktop-focus and
@@ -150,12 +154,12 @@ namespace gf::gfc {
     // overview-focus, minimize-effect, window-tiling with zoom-fill, layer-pointer, appearance, client-chrome, frame-times, keyboard-focus,
     // tiling-arrange with tiling-layouts, tile-hover (each only together with window-tiling), tiling-groups,
     // tiling-shared-edge and tiling-split (each only together with tiling-arrange; tiling-split with tiling-split-rows and
-    // tiling-split-titles).
+    // tiling-split-titles), toplevel-drag.
     std::vector<std::string_view> features(bool minimize, bool config, bool appmenu, bool overview = false, bool desktopFocus = false, bool stagesAvailable = false,
                                            bool stagesEnabled = false, bool cursorRefresh = false, bool overviewFocus = false, bool minimizeEffect = false,
                                            bool windowTiling = false, bool layerPointer = false, bool appearance = false, bool clientChrome = false,
                                            bool frameTimes = false, bool keyboardFocus = false, bool tilingArrange = false, bool tileHover = false,
-                                           bool tilingGroups = false, bool sharedEdge = false, bool split = false);
+                                           bool tilingGroups = false, bool sharedEdge = false, bool split = false, bool toplevelDrag = false);
 
     // Settings the shell pushes with hl.plugin.grassfield.config(key, value). Allowlist: this key, appearance (below),
     // stagesEnabled (core/Stages.hpp), minimizeEffect (core/Minimize.hpp) and the tiling keys (core/Tiling.hpp).

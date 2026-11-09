@@ -1,21 +1,23 @@
 #!/bin/sh
 # ExecCondition of Omarchy's omarchy-sleep-lock.service, through the Grassfield drop-in 10-grassfield.conf (D-12,
 # GF-AUDIT-001 SEC-02 / GF-030). Installed to /usr/lib/grassfield/sleep-lock-gate.
-#   exit 0  run Omarchy's sleep-lock (the Omarchy session; or grassfield-shell not up and running: stopped, failed,
+#   exit 0  run Omarchy's sleep-lock (the Omarchy session; or grassfield-security not up and running: stopped, failed,
 #           starting, waiting to restart after a crash, unknown)
-#   exit 1  skip it (systemd: condition not met, not a failure): the Grassfield session, and grassfield-shell is up
+#   exit 1  skip it (systemd: condition not met, not a failure): the Grassfield session, and grassfield-security is up
 #           (ActiveState=active, SubState=running), so Grassfield holds its own inhibitor and locks before sleep itself.
-# "activating" is never enough: it includes the auto-restart wait after a crash and the shell's start-up, when no
+# Keyed on the security process alone (ADR-0041 step 1, S2): the lock, idle and the sleep inhibitor live there; whether
+# the UI (grassfield-shell) runs is no longer part of the sleep question.
+# "activating" is never enough: it includes the auto-restart wait after a crash and the process's start-up, when no
 # Grassfield inhibitor exists yet (a sleep then would not wait for a lock).
 # Read-only: two `systemctl --user show` queries and two file tests. Any doubt lets Omarchy's unit run (with Grassfield's omarchy-shell
-# stand-in it only ever asks grassfield-shell to lock).
+# stand-in it only ever asks grassfield-security to lock).
 [ "${GRASSFIELD_SESSION:-}" = 1 ] || exit 0
-# A session that is ending (GF-081): grassfield-shell exits 255 when the compositor goes away first, which is every logout, and
-# that failure starts this unit through OnFailure=. A logout should not arm the sleep lock, and the only signal that the session
+# A session that is ending (GF-081): grassfield-security (like the UI) exits 255 when the compositor goes away first, which is
+# every logout, and that failure starts this unit through OnFailure=. A logout should not arm the sleep lock, and the only signal that the session
 # is ending is "the compositor is gone": the session's own Wayland socket, or its own Hyprland instance directory (never "some
 # instance directory exists": stale ones from earlier sessions pile up in $XDG_RUNTIME_DIR/hypr), is definitely absent. The
 # graphical-session.target state is NOT used: this unit starts before the target is reached, at login, when it still reads
-# inactive, and D-12 must hold from login until the shell takes its own inhibitor. At login the socket is live (runs); after a
+# inactive, and D-12 must hold from login until the security process takes its own inhibitor. At login the socket is live (runs); after a
 # crash mid-session it is live (runs); at logout the compositor goes first (skipped).
 #
 # "Definitely absent" is decided by session-gone next to this script (packaging/systemd/session-gone, shared with the
@@ -26,7 +28,7 @@
 # the compositor has not yet removed its socket when this runs, the lock is armed at logout, which is harmless; the
 # opposite error (skipping while the session lives) is what this avoids.
 if "$(dirname "$0")/session-gone"; then exit 1; fi
-state=$(systemctl --user show --property=ActiveState --value grassfield-shell.service 2>/dev/null) || exit 0
-sub=$(systemctl --user show --property=SubState --value grassfield-shell.service 2>/dev/null) || exit 0
+state=$(systemctl --user show --property=ActiveState --value grassfield-security.service 2>/dev/null) || exit 0
+sub=$(systemctl --user show --property=SubState --value grassfield-security.service 2>/dev/null) || exit 0
 [ "$state" = active ] && [ "$sub" = running ] && exit 1
 exit 0

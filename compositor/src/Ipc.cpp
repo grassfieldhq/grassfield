@@ -14,6 +14,7 @@
 #include "Stages.hpp"
 #include "Tiling.hpp"
 #include "Titlebar.hpp"
+#include "ToplevelDrag.hpp"
 #include "WindowRim.hpp"
 #include "core/Minimize.hpp"
 #include "core/Overview.hpp"
@@ -214,7 +215,7 @@ namespace gf::ipc {
                                                 tilingAvailable(), layerPointer::ready(), state().luaConfigRegistered, chrome::ready(),
                                                 frameProbe::ready() && state().hyprctlFramesCommand != nullptr && state().hyprctlFramesStartCommand != nullptr,
                                                 appmenuAvailable(), tilingArrangeAvailable(), tileHoverAvailable(), tilingGroupsAvailable(),
-                                                sharedEdgeAvailable(), tilingSplitAvailable());
+                                                sharedEdgeAvailable(), tilingSplitAvailable(), toplevelDrag::ready());
             return gfc::capabilitiesJson(features);
         }
     } // namespace

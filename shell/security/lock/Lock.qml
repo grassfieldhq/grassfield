@@ -25,11 +25,18 @@ import Grassfield.Ui
 import qs.security
 import qs.services
 import "../LockMachine.js" as Machine
+import "../../lib/LockState.js" as LockState
 import "../../lib/RunMode.js" as RunMode
 
 // Session lock (ADR-0010, master-prompt R12): ext-session-lock through WlSessionLock, password
 // checked by PAM service "omarchy-lock-password" (no PAM file of ours). Only a PAM success
 // unlocks; every error, timeout or lost lock keeps the session locked.
+//
+// Process (ADR-0041 step 1, S2): this singleton lives in the security process only (shell/security.qml, through
+// ../host/SecurityHost.qml), never in the UI (shell/shell.qml): the UI asks for a lock over IPC (`lock lock` on the security
+// instance) and reads the state this module publishes (LockPublisher.qml: a state file and a heartbeat, ../../lib/LockState.js).
+// A crash of the UI therefore never touches the lock; a crash of this process leaves the compositor's lock in place and the
+// restarted process takes it back (below).
 //
 // Lock survival, fail closed (docs/specs/security.md "Lock survival"):
 // - Crash: Hyprland keeps the session locked when this process dies (ext-session-lock; its
@@ -66,6 +73,12 @@ Singleton {
     // locked)
     readonly property string lockState: controller.lockState
     readonly property bool locked: controller.locked
+    // What the UI may know (ADR-0041 S2, LockState.publicState): "unlocked", "locking" (not confirmed by the compositor yet) or
+    // "locked". Published by LockPublisher on every change and with every heartbeat.
+    readonly property string publicState: LockState.publicState(controller.locked, root.holding)
+    // The publisher's sequence number: one more for every push and every heartbeat (the security process's `security
+    // heartbeat` answers it with the public state).
+    readonly property int beat: publisher.sequence
     // This shell holds a lock the compositor confirmed (its `locked` event: every output shows a
     // lock surface). On Hyprland the lock may since have been taken over: see `secure`.
     readonly property bool holding: Machine.isHolding(controller.lockState) && sessionLock.secure
@@ -88,11 +101,11 @@ Singleton {
     readonly property string loginName: Quickshell.env("USER")
     property string userName: loginName
     // Account picture: ~/.face, else the AccountsService icon, else "" (initials). Never loaded where it lies: shown only
-    // as a PNG the shell made from it (ThemeIcons.fileSource, services/image-copy.py; review of 423766f: a ~/.face that is
-    // a FIFO, or an SVG naming one, stalled the image loader). Cosmetic only: until the PNG exists, and when it is refused,
-    // the initials show; nothing here can unlock or keep the lock from engaging.
+    // as a PNG this process made from it (LockAvatar.qml: services/image-copy.py `file`, the helper the UI's ThemeIcons uses;
+    // review of 423766f: a ~/.face that is a FIFO, or an SVG naming one, stalled the image loader). Cosmetic only: until the
+    // PNG exists, and when it is refused, the initials show; nothing here can unlock or keep the lock from engaging.
     readonly property string facePath: Quickshell.env("HOME") ? Quickshell.env("HOME") + "/.face" : ""
-    readonly property string avatarSource: Machine.avatarSource(facePath, Machine.accountsIconPath(loginName), path => ThemeIcons.fileSource(path), path => ThemeIcons.fileState(path))
+    readonly property string avatarSource: Machine.avatarSource(facePath, Machine.accountsIconPath(loginName), path => avatar.sourceOf(path), path => avatar.stateOf(path))
 
     // ---- ready before it is needed (ADR-0040 step 4a, ID-7; display only) ----
     // LockStills.qml, created at run time at the end of Component.onCompleted (never a declared child: if it cannot be
@@ -113,6 +126,10 @@ Singleton {
     // data through the stills like the backdrops (without them: off, from 0, nothing given back); a surface takes the first
     // two once (LockView).
     readonly property bool moving: root.stills ? root.stills.moving : false
+    // Where the clouds rest on each output ({<output>: ms of motion}, WallpaperConfig.motionIn): the lock's own (ADR-0041 S2: the
+    // desktop's WallpaperState lives in the UI), published with the lock state so that the desktop under the lock draws the
+    // frame the lock came to rest on (LockPublisher); taken back from the last published state when this process restarts.
+    property var motion: ({})
     // Set by Idle (its displayOff): the displays are off, the clouds hold where they are (LockView.motionHeld, which also holds
     // them once the session is unlocked, should a surface outlive the unlock), and no new fingerprint attempt starts (the
     // reader is not held awake all night; the wake offers it again: onDisplaysOffChanged). Nothing that locks or unlocks reads
@@ -125,15 +142,19 @@ Singleton {
             root.startFingerprint();
     }
     function motionOf(output: string): real {
-        return root.stills ? root.stills.motionOf(output) : 0;
+        return WallpaperConfig.motionIn(root.motion, output);
     }
     function restMotion(output: string, at: real): void {
         try {
-            if (root.stills && output !== "" && at >= 0)
-                root.stills.restMotion(output, at);
+            if (output !== "" && at >= 0)
+                root.motion = WallpaperConfig.withMotion(root.motion, output, at);
         } catch (e) {
             console.warn("grassfield-lock: the desktop's clouds were not updated (" + e + ")");
         }
+    }
+    // The colour a lock surface shows before its backdrop is decided (the ground the compositor was last given; display only).
+    function groundOf(output: string): string {
+        return root.stills ? root.stills.ground : Tokens.sessionGround;
     }
     function prepareStills(): void {
         try {
@@ -270,7 +291,8 @@ Singleton {
         strandedUndecided = false;
         console.info("grassfield-lock: lock requested (" + reason + ")");
         inheritedLock = reason === "restore";
-        Popups.close();
+        // The UI closes its popups itself when it reads the session locked (GF-116, shell/services/Popups.qml): nothing of the UI
+        // is called from here (ADR-0041 S2).
         writeMarker("locked");
         controller.requestLock();
         engage();
@@ -682,7 +704,7 @@ Singleton {
                 if (surface.groundTaken || !surface.screen)
                     return;
                 surface.groundTaken = true;
-                surface.color = Ground.of(surface.screen.name);
+                surface.color = root.groundOf(surface.screen.name);
             }
             onScreenChanged: surface.takeGround()
             Component.onCompleted: surface.takeGround()
@@ -713,49 +735,62 @@ Singleton {
                 }
             }
 
-            LockView {
-                id: view
+            // The surface's ground first, its content after (the integrator's nested run of 122f8d67, sleep-desync: a fresh
+            // lock taken under load was confirmed 5 s after the request, past the 4 s sleep delay of a dev session). Hyprland
+            // confirms the lock (`locked`, WlSessionLock.secure) once every lock surface has drawn a frame. Created in the
+            // surface at once, LockView's creation and its first frame (its effects, the artwork) came before that frame:
+            // offscreen, 653 ms cold and about 50 ms warm, against about 25 ms for the ground alone. The Loader incubates it
+            // after the surface's first frame, the opaque ground colour (`color` above), so the confirmation waits for that
+            // frame only. Nothing behind the lock shows meanwhile (the surface is opaque); a key typed before the content exists
+            // reaches no item and is dropped; LockView takes the keyboard focus when it completes (focusField()). The
+            // loader retries a failed load once, synchronously, and completes one still under way after
+            // LockMachine.VIEW_SYNC_FALLBACK_MS (LockViewLoader.qml, the opus gate of d151cace).
+            LockViewLoader {
+                id: content
                 anchors.fill: parent
-                userName: root.userName
-                avatarSource: root.avatarReady
-                offeredBackdrop: root.backdrops >= 0 ? root.backdropOf(surface.screen ? surface.screen.name : "") : null
-                moving: root.moving
-                motionHeld: root.displaysOff || !controller.locked
-                motionStart: root.motionOf(surface.screen ? surface.screen.name : "")
-                onMotionRestChanged: root.restMotion(surface.screen ? surface.screen.name : "", view.motionRest)
-                resumes: root.resumes
-                showUser: Settings.lockShowUser
-                lockMessage: Settings.lockShowMessage ? Settings.lockMessage : ""
-                authenticating: controller.authenticating
-                releasing: controller.releasing
-                startDim: root.fromDim ? Tokens.idleDimOpacity : 0
-                inputEnabled: controller.pamAvailable && !controller.releasing
-                message: controller.pamAvailable ? controller.message : qsTr("Authentication service unavailable. The session stays locked.")
-                // In dev, a visible hint that password checks are off (PAM suppressed), so a GRASSFIELD_DEV value that
-                // leaked into a real session is obvious; the lock still fails closed.
-                notice: {
-                    const recovery = root.recoveryDegraded ? qsTr("Crash recovery unavailable: the lock state could not be saved.") : "";
-                    const dev = controller.pamSuppressed ? qsTr("dev: password checks disabled") : "";
-                    return recovery !== "" && dev !== "" ? qsTr("%1 · %2").arg(dev).arg(recovery) : recovery + dev;
-                }
-                onSubmitted: password => controller.submit(password)
-                onEdited: controller.clearMessage()
-                onFieldEmptyChanged: root.filledFields = Math.max(0, root.filledFields + (fieldEmpty ? -1 : 1))
-                Component.onDestruction: {
-                    if (!fieldEmpty)
-                        root.filledFields = Math.max(0, root.filledFields - 1);
-                }
-            }
+                sourceComponent: LockView {
+                    id: view
+                    userName: root.userName
+                    avatarSource: root.avatarReady
+                    offeredBackdrop: root.backdrops >= 0 ? root.backdropOf(surface.screen ? surface.screen.name : "") : null
+                    moving: root.moving
+                    motionHeld: root.displaysOff || !controller.locked
+                    motionStart: root.motionOf(surface.screen ? surface.screen.name : "")
+                    onMotionRestChanged: root.restMotion(surface.screen ? surface.screen.name : "", view.motionRest)
+                    resumes: root.resumes
+                    showUser: Settings.lockShowUser
+                    lockMessage: Settings.lockShowMessage ? Settings.lockMessage : ""
+                    authenticating: controller.authenticating
+                    releasing: controller.releasing
+                    startDim: root.fromDim ? Tokens.idleDimOpacity : 0
+                    inputEnabled: controller.pamAvailable && !controller.releasing
+                    message: controller.pamAvailable ? controller.message : qsTr("Authentication service unavailable. The session stays locked.")
+                    // In dev, a visible hint that password checks are off (PAM suppressed), so a GRASSFIELD_DEV value that
+                    // leaked into a real session is obvious; the lock still fails closed.
+                    notice: {
+                        const recovery = root.recoveryDegraded ? qsTr("Crash recovery unavailable: the lock state could not be saved.") : "";
+                        const dev = controller.pamSuppressed ? qsTr("dev: password checks disabled") : "";
+                        return recovery !== "" && dev !== "" ? qsTr("%1 · %2").arg(dev).arg(recovery) : recovery + dev;
+                    }
+                    onSubmitted: password => controller.submit(password)
+                    onEdited: controller.clearMessage()
+                    onFieldEmptyChanged: root.filledFields = Math.max(0, root.filledFields + (fieldEmpty ? -1 : 1))
+                    Component.onDestruction: {
+                        if (!fieldEmpty)
+                            root.filledFields = Math.max(0, root.filledFields - 1);
+                    }
 
-            Connections {
-                target: controller
+                    Connections {
+                        target: controller
 
-                function onFailed(): void {
-                    view.shake();
-                }
+                        function onFailed(): void {
+                            view.shake();
+                        }
 
-                function onClearRequested(): void {
-                    view.clear();
+                        function onClearRequested(): void {
+                            view.clear();
+                        }
+                    }
                 }
             }
         }
@@ -971,6 +1006,20 @@ Singleton {
         }
     }
 
+    // The state the UI reads (ADR-0041 S2): pushed on every change, with a heartbeat. Declared after sessionLock: nothing of
+    // the reload order above depends on it.
+    LockPublisher {
+        id: publisher
+        state: root.publicState
+        displaysOff: root.displaysOff
+        motion: root.motion
+    }
+
+    // The account picture, made by this process (display only).
+    LockAvatar {
+        id: avatar
+    }
+
     // Runs before the reload pass (persist.onLoaded): a marker that says locked, or no
     // XDG_RUNTIME_DIR, restores the lock even if the carried intent were lost.
     Component.onCompleted: {
@@ -983,11 +1032,18 @@ Singleton {
             console.warn("grassfield-lock: GRASSFIELD_DEV=1 ignored in a real session (GRASSFIELD_SESSION=1): no dev hook, PAM not suppressed");
         if (controller.pamSuppressed)
             console.warn("grassfield-lock: dev: PAM is suppressed on the lock (no real authentication; set GRASSFIELD_DEV_ALLOW_PAM=1 for the L2 failure-path test)");
+        // Where the clouds rested in the state the previous instance of this process published (display only, ADR-0041 S2).
+        if (publisher.previousMotion !== null)
+            root.motion = publisher.previousMotion;
         restore(false, "start");
         if (!controller.locked && root.hyprland) {
             strandedUndecided = true;
             strandedProbe.start();
         }
+        // The first publication, explicitly after the restore above (the opus review of 77a0ceb3, MINOR-2: Qt leaves the order
+        // of Component.onCompleted handlers unspecified): a restarted process with a "locked" marker publishes "locking" first,
+        // never "unlocked".
+        publisher.start();
         // Last, after everything the lock itself needs (ADR-0040 step 4a): the display data.
         prepareStills();
     }
@@ -1046,12 +1102,20 @@ Singleton {
         });
     }
 
+    // On the security instance only (ADR-0041 S2: `qs ipc -p /usr/share/grassfield/shell/security.qml call lock ...`).
     IpcHandler {
         target: "lock"
 
-        // Used by the Hyprland binding (SUPER+CTRL+Q), the screen corners and the Grassfield menu. Only ever locks.
+        // Used by the Hyprland binding (SUPER+CTRL+Q), Omarchy's sleep lock through the stand-in, and the UI's requests (the
+        // Grassfield menu, the screen corners, Search: shell/services/LockClient.js). Only ever locks.
         function lock(): string {
             return root.lock("ipc");
+        }
+
+        // "unlocked" or "locked" ("locking" answers "locked"; ADR-0010 S3, LockState.ipcState). Read-only, never private state;
+        // read by grassfield-security-status. The UI reads the published state file instead (LockPublisher).
+        function state(): string {
+            return LockState.ipcState(root.publicState);
         }
 
         // Used by /usr/lib/grassfield/grassfield-lid, run by the lid switch binding of system.lua. Only ever locks

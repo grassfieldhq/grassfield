@@ -18,6 +18,21 @@ TestCase {
         return xhr.responseText.replace(/\/\/.*$/gm, "");
     }
 
+    // ADR-0041 S2 (the opus review of 77a0ceb3, MAJOR-1): only the Grassfield menu and its confirmation open while the UI reads
+    // locked only because the security process is down; every other kind keeps the GF-116 refusal.
+    function test_onlyTheSessionKindsLockOrEnd() {
+        verify(PopupKinds.endsOrLocks("system", {}));
+        verify(PopupKinds.endsOrLocks("system", null));
+        for (const a of ["logout", "restart", "shutdown"])
+            verify(PopupKinds.endsOrLocks("confirm", {action: a}), a);
+        for (const a of ["emptytrash", "forcequit", "", "LOGOUT", undefined])
+            verify(!PopupKinds.endsOrLocks("confirm", {action: a}), "confirm " + a);
+        verify(!PopupKinds.endsOrLocks("confirm", null));
+        verify(!PopupKinds.endsOrLocks("confirm", "logout"));
+        for (const k of ["app", "controlcenter", "notice", "dock", "tray", "nowplaying", "emoji", "sharePicker", "screenshare", "forcequit", "", "bogus"])
+            verify(!PopupKinds.endsOrLocks(k, {action: "logout"}), k);
+    }
+
     function test_unknownKindsAreRefused() {
         verify(!PopupKinds.known("about"));
         verify(!PopupKinds.known(""));

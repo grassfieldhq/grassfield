@@ -147,7 +147,7 @@
   {"id": "lock password selection band against the field", "fg": "darkColors.accent", "backdrop": "lock-field", "kind": "icon", "sites": []},
   {"id": "idle dim layer (no text)", "fg": "darkColors.text", "backdrop": "lock", "kind": "text",
    "exempt": "the idle dim fades the session to the shadow colour for the last seconds before the lock and draws no text of its own",
-   "sites": [{"file": "shell/security/idle/Idle.qml", "class": "backdrop", "count": 1}]},
+   "sites": [{"file": "shell/security/idle/IdleDim.qml", "class": "backdrop", "count": 1}]},
   {"id": "menu bar of an output that is not the active one, light foreground (dimmed, macOS)", "fg": "darkColors.barText", "opacity": ["menubar.inactiveOpacity"], "backdrop": "bar-light-tone", "kind": "icon", "sites": [
    {"file": "shell/menubar/MenuBar.qml", "class": "opacity-dynamic", "count": 10}
   ]},

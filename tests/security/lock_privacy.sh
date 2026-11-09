@@ -77,7 +77,13 @@ nested() { env WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" "$@"; 
 # nested output the host does not draw never sends grim a frame (an integrator run hung 25 min on WAYLAND-1, the nested
 # window on the owner's screen), a stuck shell never answers IPC, a busy notification server never replies.
 hypr() { nested timeout -k 2 5 hyprctl "$@" 2>/dev/null; }
-ipc() { nested timeout -k 2 5 qs ipc -p "$root/shell" call "$@" 2>/dev/null; }
+# The lock and idle targets are on the security instance since ADR-0041 step 1, S2 (shell/security.qml, started beside the
+# shell by scripts/dev/shell-run.sh); every other target on the shell.
+ipc() {
+  local where="$root/shell"
+  case $1 in lock | idle | security) where="$root/shell/security.qml" ;; esac
+  nested timeout -k 2 5 qs ipc -p "$where" call "$@" 2>/dev/null
+}
 pointer() { timeout -k 2 20 "$root/scripts/dev/pointer.sh" output "$@" >/dev/null 2>&1; }
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; status=1; }
@@ -685,7 +691,7 @@ needs_shell=0
 for s in "${steps[@]}"; do [[ $s == cleanup ]] || needs_shell=1; done
 if ((needs_shell)); then
   ready_rc=0
-  nested_ready "$sig" "$sock" "$root/shell" "${READY_SECONDS:-60}" || ready_rc=$?
+  nested_ready "$sig" "$sock" "$root/shell/security.qml" "${READY_SECONDS:-60}" || ready_rc=$?
   case $ready_rc in
     0) echo "ready: GF-REF listed, lock status $nested_ready_state, after $nested_ready_ms ms" ;;
     2) echo "lock_privacy: $nested_ready_why" >&2; exit 2 ;;
@@ -708,8 +714,16 @@ if [[ " ${steps[*]} " == *" setup "* ]]; then
     echo "main display: the nested shell runs without GRASSFIELD_DESKTOP_SCREEN=$out (banners on '$(banners_output)'); restarting it with --desktop-screen $out"
     "$root/scripts/dev/shell-run.sh" --desktop-screen "$out" >/dev/null || { echo "FAIL ready: scripts/dev/shell-run.sh --desktop-screen $out failed"; exit 1; }
     ready_rc=0
-    nested_ready "$sig" "$sock" "$root/shell" "${READY_SECONDS:-60}" || ready_rc=$?
+    nested_ready "$sig" "$sock" "$root/shell/security.qml" "${READY_SECONDS:-60}" || ready_rc=$?
     ((ready_rc == 0)) || { echo "FAIL ready: after the restart with --desktop-screen $out: $nested_ready_why"; exit 1; }
+    # The lock is the security process's (ADR-0041 S2), which the UI's restart leaves alone: wait for the UI itself too, until
+    # it answers a dev query of its own (its configuration has loaded).
+    ui_up=0
+    for _ in $(seq 1 $((${READY_SECONDS:-60} * 4))); do
+      [[ -n $(ipc overview status) ]] && { ui_up=1; break; }
+      sleep 0.25
+    done
+    ((ui_up)) || { echo "FAIL ready: the restarted shell did not answer \`overview status\` within ${READY_SECONDS:-60} s"; exit 1; }
     [[ $nested_ready_state == unlocked || " ${steps[*]} " != *" lock "* ]] \
       || { echo "FAIL ready: the restarted shell is $nested_ready_state, not unlocked"; exit 1; }
     [[ $(shell_env GRASSFIELD_DESKTOP_SCREEN) == "$out" ]] \

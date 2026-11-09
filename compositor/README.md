@@ -33,6 +33,10 @@ Hyprland plugin for the Grassfield session (master-prompt §5.6):
   under a resting pointer, Hyprland's pointer focus is re-run at the cursor (what one pixel of motion does), so a click
   without motion reaches it at the right place (Hyprland 0.56.2 places the pointer wrongly on an output away from the
   layout origin);
+- toplevel drag (feature `toplevel-drag`, FR58, ADR-0036 amendment 2026-11-08, URR-030): the `xdg_toplevel_drag_manager_v1`
+  global (version 1), so a browser tab torn off follows the pointer, drops back into a tab strip (the dragged window is never
+  the drag's target) and tiles like any dragged window; Hyprland's own drag and drop is observed through libwayland's protocol
+  logger, never patched;
 - shell IPC `gfc/1`: capabilities event on Hyprland's socket2, `hl.plugin.grassfield.{hello, minimize,
   restore, config, appmenu, overview, stages, cursor_refresh, overview_focus}()`, `hyprctl grassfield`.
 
@@ -45,7 +49,9 @@ Spec: [`docs/specs/compositor.md`](../docs/specs/compositor.md).
 - Hyprland **0.56.2** headers (`pkg-config --modversion hyprland`), built with the same compiler (GCC).
 - C++23 (the 0.56.2 headers use `std::expected` and `std::string_view::contains`).
 - Lua 5.5 headers (`pkg-config lua`); Lua symbols resolve at load time from Hyprland's own `liblua`.
-- `hyprwayland-scanner` (0.4.6 tested): generates the appmenu server code from `protocols/appmenu.xml`.
+- `hyprwayland-scanner` (0.4.6 tested): generates the appmenu server code from `protocols/appmenu.xml`, and the toplevel-drag
+  server code from the installed wayland-protocols' `staging/xdg-toplevel-drag/xdg-toplevel-drag-v1.xml` (`pkg-config
+  --variable=pkgdatadir wayland-protocols`; without it the plugin builds without that global).
 - Tests: GoogleTest (`gtest`).
 
 ## Build

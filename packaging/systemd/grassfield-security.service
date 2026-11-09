@@ -1,10 +1,10 @@
 [Unit]
-Description=Grassfield security process (the lock, the polkit agent, idle and the sleep inhibitor, moved in step by step)
+Description=Grassfield security process (the lock, idle and the sleep inhibitor; the polkit agent from S3)
 Documentation=file:///usr/share/doc/grassfield/README.md
 # ADR-0041 step 1 (the owner's SQ-1 B, ADR-0010 "Separate security process"): a second Quickshell process beside the UI,
-# so that a crash of the desktop never takes the lock down. S1 (this unit): the process runs beside the UI and hosts
-# nothing moved yet (shell/security.qml); S2 moves the lock, idle and the sleep inhibitor here (then this unit gets
-# OnFailure=omarchy-sleep-lock.service and the sleep-lock gate is keyed on it), S3 the polkit agent, S4 safe mode.
+# so that a crash of the desktop never takes the lock down. S1 started it hosting nothing; since S2 it hosts the lock, idle
+# and the sleep inhibitor (shell/security.qml, shell/security/host/SecurityHost.qml), and the UI asks it for every lock over
+# IPC; S3 adds the polkit agent, S4 safe mode.
 PartOf=graphical-session.target
 After=graphical-session.target
 Requisite=graphical-session.target
@@ -14,12 +14,42 @@ ConditionEnvironment=GRASSFIELD_SESSION=1
 # the known limit); with RestartSec=1 a loop faster than one crash every 59 s reaches it (tests/shell/unit_restart_limits.sh).
 StartLimitIntervalSec=300
 StartLimitBurst=5
+# Fail-safe for lock before sleep (D-12), moved here from grassfield-shell.service at S2 with the inhibitor. With the default
+# RestartMode=normal this unit passes through "failed" on every failure (a crash, an exit code, 255 included) before the
+# restart, so OnFailure= starts Omarchy's sleep-lock unit after each one: it holds a logind delay inhibitor while this
+# process restarts or stays failed and, before a sleep, asks it to lock through Grassfield's `omarchy-shell` stand-in
+# (packaging/shims), which starts it again if needed. Its Grassfield drop-in skips it once this process is up again
+# (active/running; packaging/systemd/sleep-lock-gate, keyed on this unit alone). A logout starts it too, and the gate then
+# skips it (the compositor is gone).
+OnFailure=omarchy-sleep-lock.service
 
 [Service]
 Type=simple
 Slice=session.slice
 # Quickshell's own reload is off: package upgrades must not hot-reload a half-written tree (as the UI's unit).
 Environment=QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1
+# Quickshell's crash handler off (ADR-0041 S2, the integrator's nested run of e1a3ff4c, ui-crash): with it, a crash 10 s or
+# more after the start leaves the crashed process alive, blocked in its signal handler while a reporter it forked relaunches
+# the shell as its own child ("Quickshell has been restarted"), so systemd sees no failure: no restart of its own, no
+# OnFailure=, no count toward safe mode, and the crashed process keeps its memory charged to this unit. Without it the
+# process ends on the signal: a failure (unlike SIGTERM, which leaves the unit inactive), so systemd restarts it after
+# RestartSec=, runs OnFailure= and counts it, and the journal records the crash (coredumpctl list), with no core file
+# (LimitCORE= below) (macOS: the process dies, launchd restarts it, ReportCrash writes the report).
+# For the lock: Hyprland keeps the session locked for a dead lock client, OnFailure= arms Omarchy's sleep lock, and the
+# restarted process takes the lock back from the crash-recovery marker (with the handler, a crash within 10 s of the start
+# ended the process with 255 anyway, and a later one left a frozen lock client alive beside its relaunched copy).
+Environment=QS_DISABLE_CRASH_HANDLER=1
+# No core file (the opus delta review of 122f8d67, MAJOR): systemd-coredump stores a crashed process's whole memory under
+# /var/lib/systemd/coredump, readable by its user through an ACL, and this process's memory may hold the typed password (the lock's field, the PAM
+# response, freed strings), which on Omarchy is also the administrator's password.
+# A same-user process that Yama keeps from reading this one's memory could crash it and read the dump instead. With
+# LimitCORE=0, systemd-coredump honours the limit: it records the crash in the journal (signal, PID, unit: coredumpctl list
+# shows it, without a file and without a stack) and stores nothing. The process still dies by the signal, so Restart=,
+# OnFailure= and the failure counter are unchanged.
+# Exactly 0, the hard limit included: never `0:infinity` or any soft-only form. With a hard limit above 0, a same-user process
+# can raise the soft one with prlimit, crash this process and read the dump (the opus gate of 55bfea41). The tests pin this
+# exact line (tests/security/security_unit.sh, tests/shell/shell_unit.sh).
+LimitCORE=0
 # Qt's "@2x" image lookup off, as in the UI's unit (review of cbd6ef05): a file:// picture is decoded from the path asked
 # for, never from a "<name>@2x.<ext>" beside it (the lock checks its wallpaper still by that path).
 Environment=QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING=1
@@ -41,14 +71,20 @@ ExecStart=/usr/bin/qs -n -p /usr/share/grassfield/shell/security.qml
 Restart=always
 RestartSec=1
 TimeoutStopSec=5
-# Memory guard from the S1 measurement (ADR-0041 step 1; the integrator's nested pass of #72: 157 MB of RSS at idle for
-# the root hosting one IPC handler): MemoryHigh about twice that, MemoryMax about four times, as a slow leak reaches the
-# first after days and a runaway one the second (ADR-0041 R4). S2 measures again with the lock's surfaces and resets both.
+# Memory guard: the lock keeps the headroom it had in the UI's unit before S2 (MemoryHigh=1536M, MemoryMax=3G,
+# grassfield-shell.service at main 8b04383c), the integrator's decision on the opus review of 77a0ceb3 (MAJOR-2): the
+# process that draws the lock and runs the PAM exchange must never be throttled, nor killed into its start limit, before its
+# footprint is measured with the lock drawn. S1 measured 157 MB of RSS at idle for the root hosting one IPC handler (#72);
+# S2 adds about 45 MB offscreen (docs/testing/gates.md "P2 and the security process"), and drawing the lock adds its
+# surfaces' buffers, the stills (about 33 MB per 4K output, 81 MB for a 6K panel), page cache and kernel memory, all charged
+# to this cgroup's memory.current: none of it is measured yet. These values stay until the nested measurement
+# (`scripts/gates/rss.sh --nested`, locked and unlocked) and the owner's MemoryPeak after a lock and an unlock exist; then
+# MemoryHigh is set to at least twice the locked peak.
 # CPUQuota as the UI unit's (one and a half cores): a spinning process cannot starve the compositor, while the lock
 # screen's rendering and the PAM exchange (S2) keep a whole core; the 50% of the first version would have throttled them
 # (the integrator's merge review of #72). A loop is caught by the restart limit above and, from S2, by the heartbeat.
-MemoryHigh=320M
-MemoryMax=640M
+MemoryHigh=1536M
+MemoryMax=3G
 CPUQuota=150%
 # No NoNewPrivileges/ProtectSystem here on purpose, as for the UI's unit: from S2 the lock and from S3 the polkit agent
 # rely on the setuid/setgid helpers unix_chkpwd and polkit-agent-helper-1, which NoNewPrivileges would break, leaving the

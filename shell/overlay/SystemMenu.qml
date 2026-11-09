@@ -1,6 +1,5 @@
 import QtQuick
 import Grassfield.Ui
-import qs.security.lock
 import qs.services
 
 // Grassfield menu (the Grassfield mark): About, Settings, Recent Items (RecentItems), Force Quit, Sleep/Restart/Shut Down, Lock Screen,
@@ -74,7 +73,7 @@ PopupMenu {
             break;
         case "lock":
             Popups.close();
-            Lock.lock("menu");
+            SessionState.requestLock("menu");
             break;
         case "logout":
             Popups.confirm(qsTranslate("SystemMenu", "Are you sure you want to quit all applications and log out %1?").arg(SystemInfo.user), "", qsTranslate("SystemMenu", "Log Out"), "logout", {}, true);

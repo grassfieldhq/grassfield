@@ -1,17 +1,25 @@
 pragma Singleton
 import QtQuick
 
-// What the rest of the shell may know about the session lock without importing the security module: `locked` mirrors
-// shell/security/lock (set by a Binding in shell.qml), and `requestLock()` asks that module to lock (shell.qml calls
-// `Lock.lock(reason)`, the same function as the `lock` IPC target and the System menu). Notifications read `locked` (previews
-// "When Unlocked"); Search calls `requestLock` (Lock Screen command). `saverShown` mirrors the screen saver (shell/saver, a
-// Binding in shell.qml) for the polkit agent, which holds a request while it shows (ADR-0032); true when it is not would only
-// hold a request. Without the shell's wiring (a test harness) the session counts as unlocked, no saver shows and a lock
-// request does nothing.
+// What the rest of the shell may know about the session lock: `locked` follows LockClient.locked (a Binding in shell.qml),
+// the state the security process publishes read fail closed (ADR-0041 step 1, S2: the lock lives in that process, never in
+// the UI; no state, a stale beat, a lock being acquired or held, or the compositor's own lock signal each read locked), and
+// `requestLock()` asks it to lock (shell.qml hands it to LockClient.request, `lock lock` on the security instance).
+// Notifications read `locked` (previews "When Unlocked"); Search, the Grassfield menu and the screen corners call
+// `requestLock`. `saverShown` mirrors the screen saver (shell/saver, a Binding in shell.qml) for the polkit agent, which holds
+// a request while it shows (ADR-0032); true when it is not would only hold a request. Without the shell's wiring (a test
+// harness) the session counts as unlocked, no saver shows and a lock request does nothing.
 QtObject {
     id: root
 
     property bool locked: false
+    // The lock is known to be held or being acquired (LockClient.lockConfirmed, a Binding in shell.qml): false while `locked`
+    // is true only because the security process's state is missing or stale after an "unlocked" (it is down). True by
+    // default, so that a harness that sets `locked` gets every GF-116 refusal.
+    property bool lockConfirmed: true
+    // A lock is being acquired: the security process asked the compositor and has no confirmation yet (LockClient.lockStarting,
+    // a Binding in shell.qml). The screen saver stays up meanwhile, so no desktop flashes before the lock surface.
+    property bool lockStarting: false
     property bool saverShown: false
     // An authorization (polkit) request is open (shell/security/polkit AuthAgent.requestActive, set by a Binding in shell.qml).
     // The clipboard history records nothing while it is true and for 2 s after (ADR-0034 Q11): an echo-on answer is copyable.
@@ -41,6 +49,17 @@ QtObject {
         console.info("grassfield: " + surface + " refused: the session is locked");
         root.lastRefused = surface;
         return true;
+    }
+
+    // GF-116 for the paths that lock or end the session (the Grassfield menu and its confirmation, Search with its Lock Screen
+    // command, the lock corner): refused only while the lock is confirmed (`lockConfirmed`). While the UI reads locked only
+    // because the security process is down, they open, so that a lock request reaches it (LockClient hands it to the stand-in,
+    // which starts the unit): a lock request always ends in a locked session (ADR-0041 S2, the opus review of 77a0ceb3,
+    // MAJOR-1). Everything else keeps `refuses`.
+    function refusesConfirmed(surface: string): bool {
+        if (!locked || !lockConfirmed)
+            return false;
+        return refuses(surface);
     }
 
     // The surface the last refusal named (tests/shell harnesses check that a call was refused by its own gate).

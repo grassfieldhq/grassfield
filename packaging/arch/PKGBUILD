@@ -521,7 +521,8 @@ package_grassfield-compositor() {
   # Stages event): this package needs the desktop of exactly its own version, so pacman upgrades the pair together and
   # refuses a partial upgrade of either. The desktop does not depend on this package: it runs without the plugin (C2).
   depends=(hyprland "grassfield-desktop=$pkgver-$pkgrel")
-  # Own code MIT; the server code generated from the KDE appmenu protocol XML LGPL-2.1-or-later; Hyprland's headers BSD-3-Clause.
+  # Own code MIT; the server code generated from the KDE appmenu protocol XML LGPL-2.1-or-later; Hyprland's headers BSD-3-Clause;
+  # the server code generated from wayland-protocols' xdg-toplevel-drag XML MIT (packaging/licenses/compositor-protocols-notices.txt).
   license=(MIT LGPL-2.1-or-later BSD-3-Clause)
   # Debug symbols stay in the .so (built RelWithDebInfo): a crash inside Hyprland has to be readable. No split package.
   options=(!strip)
@@ -575,6 +576,7 @@ package_grassfield-compositor() {
   install -Dm644 "$root/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/grassfield-compositor/THIRD_PARTY.md"
   install -Dm644 "$root/packaging/licenses/hyprland-BSD-3-Clause.txt" "$pkgdir/usr/share/licenses/grassfield-compositor/hyprland-BSD-3-Clause.txt"
   install -Dm644 "$root/packaging/licenses/appmenu-LGPL-2.1-or-later.txt" "$pkgdir/usr/share/licenses/grassfield-compositor/appmenu-LGPL-2.1-or-later.txt"
+  install -Dm644 "$root/packaging/licenses/compositor-protocols-notices.txt" "$pkgdir/usr/share/licenses/grassfield-compositor/compositor-protocols-notices.txt"
 }
 
 package_grassfield-store() {

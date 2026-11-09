@@ -86,9 +86,9 @@ Scope {
             "documents": qsTr("Documents")
         })
 
-    // Lock Screen: the lock module (shell/security/lock) exposes the `lock` IPC target and the Lock singleton the System
-    // menu already calls; the command locks through it (SessionState.requestLock, wired to Lock.lock in shell.qml;
-    // REQ-SRCH-PRV-d2). It is always on offer: a failed lock stays locked.
+    // Lock Screen: the lock lives in the security process (ADR-0041 S2); the command asks it through SessionState.requestLock
+    // (LockClient, `lock lock` on the security instance; REQ-SRCH-PRV-d2), as the Grassfield menu does. It is always on offer:
+    // a failed lock stays locked.
     readonly property bool lockAvailable: true
 
     // The pages of Grassfield Settings the provider offers (REQ-SRCH-PRV-d1); ids are the Settings sections.
@@ -181,8 +181,10 @@ Scope {
     }
 
     function show(text: string): void {
-        // Nothing opens over the lock screen (GF-116): SUPER+SPACE, the menu bar item and IPC alike.
-        if (SessionState.refuses("search"))
+        // Nothing opens over the lock screen (GF-116): SUPER+SPACE, the menu bar item and IPC alike. Refused only while the lock
+        // is confirmed: while the UI reads locked only because the security process is down, Search opens, so that its Lock
+        // Screen command reaches it (ADR-0041 S2, the opus review of 77a0ceb3, MAJOR-1).
+        if (SessionState.refusesConfirmed("search"))
             return;
         openStartMs = Date.now();
         if (Popups.active)
@@ -925,6 +927,14 @@ Scope {
 
         function onLockedChanged(): void {
             if (SessionState.locked && root.open) {
+                root.hide();
+                root.setQuery("");
+            }
+        }
+
+        // Search opened while the lock was unconfirmed (the security process down) closes once the lock is confirmed.
+        function onLockConfirmedChanged(): void {
+            if (SessionState.locked && SessionState.lockConfirmed && root.open) {
                 root.hide();
                 root.setQuery("");
             }
