@@ -315,9 +315,12 @@ TestCase {
         const l = loaderOf(broken);
         tryVerify(() => l.retried, 2000, "the error leads to a retry");
         tryCompare(l, "asynchronous", false, 2000, "the retry is synchronous");
-        wait(100);
+        // Long enough for a loop to show (the opus gate of c80c55b3: without the guard, 677 retries were logged): one retry.
+        wait(300);
         compare(l.status, Loader.Error, "the same broken view fails again");
-        verify(l.retried, "and is not retried a second time (no loop)");
+        // qmllint disable missing-property
+        compare(l.retries, 1, "exactly one retry, never a loop");
+        // qmllint enable missing-property
         l.destroy();
     }
 

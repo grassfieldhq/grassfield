@@ -17,8 +17,11 @@ Loader {
     property int fallbackMs: Machine.VIEW_SYNC_FALLBACK_MS
     // The one synchronous retry after an error was made.
     property bool retried: false
+    // How many retries ran (at most 1; the test of the guard above, tests/security/tst_lockbackdrop.qml).
+    property int retries: 0
 
     function retry(): void {
+        root.retries += 1;
         const view = root.sourceComponent;
         root.asynchronous = false;
         root.sourceComponent = null;
