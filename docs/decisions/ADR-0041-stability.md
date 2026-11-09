@@ -689,7 +689,9 @@ down, how sleep behaves) is written in the table at the end of this step.
   `lock_client.sh` (fresh, missing, stale and a dead writer's sheet; 3 more mutants); `tst_idlemodel.qml` (the saver's rule);
   `security_process_scan.py` (53 mutants); `lock_surfaces.sh` (the agent's inputs, the host's Bindings, the published
   keyboard; mutations); `theme_icon_files.sh` (the sheets' icon); `security_unit.sh`, `sleep_lock_units.sh` (an S3 answer
-  restarts nothing), `session_services.sh` (the peer unit), `secret_bridge.sh` (the probe sets `SheetSession` as the host).
+  restarts nothing), `session_services.sh` (the peer unit), `secret_bridge.sh` (the probe sets `SheetSession` as the host);
+  nested, `sheets_process.sh` (the `polkit` and `secrets` targets answer on the security instance and not on the UI's, one
+  registration attempt per start of the security process, a restart of it leaves the UI alone and attempts once more).
 - NOT VERIFIED here: the agent's registration and L5 in a real session (a nested session cannot register an agent: the
   owner's holds the session), the restart's polkitd answers (L5 step 6), the sheets drawn by the security process nested
   (`just shot secret-sheet` and a polkit sheet need the owner's L5 or the dev prompter run of docs/specs/system-dialogs.md

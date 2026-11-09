@@ -399,6 +399,7 @@
  {"path": "tests/security/marker_read/shell.qml", "layer": "headless"},
  {"path": "tests/security/reload_order/shell.qml", "layer": "headless"},
  {"path": "tests/security/reload_locked.sh", "layer": "nested", "runner": "bare"},
+ {"path": "tests/security/sheets_process.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/security/screenshare_rules.sh", "layer": "data"},
  {"path": "tests/security/sleep_lock_units.sh", "layer": "data"},
  {"path": "tests/security/ipc_inventory.sh", "layer": "data"},
