@@ -1228,3 +1228,60 @@ TEST_F(FilesLaunch, ANameDrawnInAnotherOrderAlwaysAsks)
     EXPECT_TRUE(waitFor([&] { return QFileInfo::exists(mark(arabic)); }, 10000));
     EXPECT_EQ(s.ofKind(QStringLiteral("openProgram")).size(), 3) << "asked again: the name is never trusted as drawn";
 }
+
+// Sixth check of fd5823de (m1): Open With an application that may run it (an AppImage helper, a terminal for scripts) shows the
+// sheet for a program whose name can be drawn in another order, even made here and approved; Cancel runs nothing. An approved
+// program with a plain name opens there without a sheet, as before.
+TEST_F(FilesLaunch, OpenWithABidiNamedProgramAlwaysAsks)
+{
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    const QString helper = recorder(QStringLiteral("gf-bidi-helper"));
+    const QString apps = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/applications");
+    QDir().mkpath(apps);
+    const QString entryPath = apps + QStringLiteral("/org.example.GfBidiHelper.desktop");
+    {
+        QFile entry(entryPath);
+        ASSERT_TRUE(entry.open(QIODevice::WriteOnly));
+        entry.write(QStringLiteral("[Desktop Entry]\nType=Application\nName=Bidi Helper\nExec=\"%1\" %f\nMimeType=application/x-executable;application/x-pie-executable;\n")
+                        .arg(QDir(d(QStringLiteral("bin"))).filePath(QStringLiteral("gf-bidi-helper")))
+                        .toUtf8());
+    }
+    const QString id = QStringLiteral("org.example.GfBidiHelper.desktop");
+    QDeadlineTimer cache(15000);
+    while (!KService::serviceByMenuId(id) && !cache.hasExpired()) {
+        settle(200);
+        KSycoca::self()->ensureCacheValid();
+    }
+    ASSERT_TRUE(KService::serviceByMenuId(id));
+
+    const QString swapped = place("probe", QStringLiteral("Work/\u200fpdf.\u200fInvoice"), 0755);
+    const QString plain = place("probe", QStringLiteral("Work/Plain"), 0755);
+    for (const QString &path : {swapped, plain}) {
+        const LaunchGuard::Facts f = LaunchGuard::inspect(QUrl::fromLocalFile(path));
+        ASSERT_EQ(ProgramLaunch::approve(f.path, f.inode, f.mtimeNs, f.size, false), ProgramLaunch::Approval::Approved);
+        ASSERT_TRUE(LaunchGuard::inspect(QUrl::fromLocalFile(path)).approved);
+    }
+
+    s.answer = QStringLiteral("cancel");
+    app.openWith(id, urls(swapped));
+    ASSERT_TRUE(waitFor([&] { return !s.ofKind(QStringLiteral("openProgram")).isEmpty(); }));
+    const QVariantMap sheet = s.ofKind(QStringLiteral("openProgram")).first();
+    EXPECT_TRUE(sheet.value(QStringLiteral("nameUntrusted")).toBool());
+    EXPECT_FALSE(sheet.value(QStringLiteral("downloaded")).toBool());
+    EXPECT_EQ(sheet.value(QStringLiteral("handler")).toString(), QStringLiteral("Bidi Helper"));
+    EXPECT_EQ(sheet.value(QStringLiteral("name")).toString(), QStringLiteral("<U+200F>pdf.<U+200F>Invoice"));
+    settle(800);
+    EXPECT_FALSE(QFileInfo::exists(helper)) << "Cancel: the application never ran";
+
+    s.answer = QStringLiteral("open");
+    app.openWith(id, urls(swapped));
+    ASSERT_TRUE(waitFor([&] { return !lines(helper).isEmpty() && lines(helper).last() == swapped; }, 10000)) << "Open: handed to it";
+    EXPECT_EQ(s.ofKind(QStringLiteral("openProgram")).size(), 2);
+
+    QFile::remove(helper);
+    app.openWith(id, urls(plain));
+    ASSERT_TRUE(waitFor([&] { return !lines(helper).isEmpty() && lines(helper).last() == plain; }, 10000));
+    EXPECT_EQ(s.ofKind(QStringLiteral("openProgram")).size(), 2) << "a plain, approved program: no sheet";
+    QFile::remove(entryPath);
+}

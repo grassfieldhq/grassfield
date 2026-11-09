@@ -854,6 +854,8 @@ TestCase {
         s = KioSheetsLogic.sheet({id: 113, kind: "foreignProgram", platform: "java", name: "tool.jar", handler: "Java"});
         compare(s.message, "Java can open “tool.jar”. Open it only if you trust where it came from.");
         compare(s.confirmText, "Open with Java");
+        s = KioSheetsLogic.sheet({id: 116, kind: "foreignProgram", platform: "windows", name: "<U+200F>fdp.setup", handler: "Wine", nameUntrusted: true});
+        compare(s.message, "Wine can open “<U+200F>fdp.setup”. Open it only if you trust where it came from. Its name contains right-to-left text, which can change the way it is shown: it may not be what its name suggests.");
         const sheets = test.make();
         const sheet = test.sheetOf(sheets);
         fakePrompts.current = {id: 114, kind: "foreignProgram", platform: "windows", name: "setup.exe", handler: "Wine"};

@@ -652,7 +652,8 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
     - a letter of any script (U+A78F, a precomposed or decomposed dot below, an accented letter): refused only when the
       letters are a lure extension of 2 letters or more (`lureExtension`: pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp,
       rtf, txt, csv, md, html, xml, json, epub, jpg, jpeg, png, gif, webp, heic, svg, mp3, mp4, mov, avi, mkv, webm, zip,
-      rar, 7z, gz, tar, iso, img, dmg, pkg, deb, rpm, apk, jar, exe, msi, sh, py, js, ps, ai, kdbx, ofx, the long extensions
+      rar, 7z, gz, tar, iso, img, dmg, pkg, deb, rpm, apk, jar, exe, msi, sh, py, js, ps, ai, kdbx, ofx, ts, qt, rm, crt, pem,
+      p12, ovpn, url, kml, gpx, mbox, the long extensions
       below, desktop, backup...), or, for 3 letters or more, any user type (`userType`, from the shared MIME database:
       pictures, sounds, films and fonts; archives; PDF, PostScript, office and ebook files; shell, Python and JavaScript
       scripts; text documents such as logs, YAML, SQL and subtitles). Fourth check of fd5823de, m-b': refusing every document
@@ -782,8 +783,9 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
   `application/vnd.appimage`, a terminal registered for scripts), so Open With follows the open rule for programs,
   AppImages, scripts, and Windows and Java programs (`FilesApp::openWithChecked`; security review of 48475cf6, second
   counter-review of fd5823de, m3): never as root, never a remote program or a staging item (the open banners), and a
-  downloaded one gets a sheet first, one per item, unless it was approved as it is now: "Open with <app>" for a Windows or
-  Java program; for a program or a script `KioSheetsLogic.openProgram` with the application's name ("“Tool.AppImage” is an
+  downloaded one gets a sheet first, one per item, unless it was approved as it is now, and a program whose name can be
+  drawn in another order (`nameUntrusted`) gets it every time, downloaded or not, approved or not (sixth check of
+  fd5823de, m1): "Open with <app>" for a Windows or Java program; for a program or a script `KioSheetsLogic.openProgram` with the application's name ("“Tool.AppImage” is an
   app downloaded from the Internet. Are you sure you want to open it with <app>?", Return and Esc cancel). Open writes the
   approval for a Windows or Java program (only such an application runs it); for a program or a script it covers that open
   only (no execute bit, no approval: the next Open With asks again, and a double-click has its own sheet). The text editor

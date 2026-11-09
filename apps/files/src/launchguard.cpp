@@ -872,8 +872,9 @@ bool longDocumentExtension(const QString &tail)
                          "parquet", "webarchive", "flatpak", "flatpakref", "flatpakrepo"});
 }
 
-// The extensions a disguise shows to the eye (2 letters or more): documents, pictures, sounds and films, archives, packages and
-// disk images, other systems' programs, the long ones above, and two that name a program after a plain hyphen ("signal-desktop",
+// The extensions a disguise shows to the eye (2 letters or more): documents, pictures, sounds and films (ts, qt and rm too),
+// archives, packages and disk images, other systems' programs, certificates, VPN profiles, internet shortcuts, maps and mailboxes
+// (sixth check of fd5823de), the long ones above, and two that name a program after a plain hyphen ("signal-desktop",
 // "timeshift-backup") but read as a launcher or a backup after a lookalike ("App" + U+A78F + "desktop"). Fourth check of
 // fd5823de, m-b': after a letter only these are refused, so that "Vidéo", "Mémo" or "Tiếng-Việt" (".o", ".mo", ".t") run.
 bool lureExtension(const QString &tail)
@@ -886,7 +887,8 @@ bool lureExtension(const QString &tail)
                          "mp3", "mp4", "m4a", "m4v", "wav", "flac", "ogg", "opus", "aac", "wma", "mov", "avi", "mkv", "webm",
                          "wmv", "mpg", "mpeg", "zip", "rar", "7z", "gz", "tgz", "bz2", "xz", "zst", "tar", "iso", "img",
                          "dmg", "pkg", "deb", "rpm", "apk", "appx", "msix", "jar", "exe", "msi", "bat", "cmd", "scr", "lnk", "ps1",
-                         "vbs", "sh", "py", "js", "ps", "ai", "kdbx", "ofx", "qif"});
+                         "vbs", "sh", "py", "js", "ps", "ai", "kdbx", "ofx", "qif", "ts", "qt", "rm", "crt", "pem", "p12", "pfx",
+                         "ovpn", "url", "kml", "kmz", "gpx", "mbox"});
 }
 
 bool startsWithAny(const QString &type, std::initializer_list<const char *> prefixes)

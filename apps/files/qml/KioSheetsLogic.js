@@ -321,7 +321,8 @@ function openProgram(request) {
     };
 }
 
-// A Windows or Java program (FilesApp::explainForeign): request {name, platform: "windows"|"java", handler, downloaded, host}.
+// A Windows or Java program (FilesApp::explainForeign, Open With): request {name, platform: "windows"|"java", handler, downloaded,
+// host, nameUntrusted}.
 // It never runs by opening; when an application on this computer opens it (Wine or Bottles, Java), "Open with …" runs it, and
 // Return and Esc cancel. Without one, the sheet only explains (OK).
 function foreignProgram(request) {
@@ -337,6 +338,8 @@ function foreignProgram(request) {
                            : qsTr("Java isn’t installed on this computer, so “%1” can’t be opened.").arg(name));
     if (request.downloaded && request.host)
         lines.push(qsTr("This file was downloaded from %1.").arg(request.host));
+    if (request.nameUntrusted)
+        lines.push(qsTr("Its name contains right-to-left text, which can change the way it is shown: it may not be what its name suggests."));
     return {
         title: windows ? qsTr("This file is a program for Windows; it doesn’t work directly on Linux.") : qsTr("This file is a Java program."),
         message: lines.join(" "),

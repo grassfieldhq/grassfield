@@ -1529,13 +1529,17 @@ void FilesApp::openWithChecked(const QString &storageId, const QList<QUrl> &urls
             continue;
         if (refuseAsRoot(name))
             return;
-        if (!LaunchGuard::plan(facts).downloaded || facts.approved)
+        // Downloaded and not approved as it is now, or a name that can be drawn in another order (sixth check of fd5823de, m1:
+        // the bidi sheet applies here too, approved or not).
+        const LaunchGuard::RunPlan plan = LaunchGuard::plan(facts);
+        if ((!plan.downloaded || facts.approved) && !plan.nameUntrusted)
             continue;
         logDecision("asked", v, facts);
         QVariantMap request{{QStringLiteral("name"), name},
                             {QStringLiteral("handler"), service->name()},
-                            {QStringLiteral("downloaded"), true},
-                            {QStringLiteral("host"), LaunchGuard::originHost(facts)}};
+                            {QStringLiteral("downloaded"), plan.downloaded},
+                            {QStringLiteral("host"), LaunchGuard::originHost(facts)},
+                            {QStringLiteral("nameUntrusted"), plan.nameUntrusted}};
         if (foreign) {
             request.insert(QStringLiteral("kind"), QStringLiteral("foreignProgram"));
             request.insert(QStringLiteral("platform"), v == LaunchGuard::Verdict::WindowsFile ? QStringLiteral("windows") : QStringLiteral("java"));

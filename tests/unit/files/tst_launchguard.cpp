@@ -1150,3 +1150,23 @@ TEST(LaunchGuardNames, AHangulFillerIsDrawnAsASpace)
         EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << name.toStdString();
     }
 }
+
+// Sixth check of fd5823de (nits): after a dot-like letter, the 2-letter media lures (ts, qt, rm) and certificates, VPN profiles,
+// internet shortcuts, maps and mailboxes are disguises; the accented names stay allowed.
+TEST(LaunchGuardNames, MediaCertificateMapAndMailLuresAfterALetter)
+{
+    for (const QString &pair : {QStringLiteral("Recording|ts"), QStringLiteral("Movie|qt"), QStringLiteral("Movie|rm"), QStringLiteral("Bank|crt"),
+                                QStringLiteral("Server|pem"), QStringLiteral("Identity|p12"), QStringLiteral("Office|ovpn"), QStringLiteral("Bank|url"),
+                                QStringLiteral("Route|kml"), QStringLiteral("Hike|gpx"), QStringLiteral("Archive|mbox")}) {
+        for (const QString &letter : {QStringLiteral("\ua78f"), QStringLiteral("\u1427")}) {
+            const QString name = pair.section(QLatin1Char('|'), 0, 0) + letter + pair.section(QLatin1Char('|'), 1, 1);
+            EXPECT_TRUE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+            EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << name.toStdString();
+        }
+    }
+    for (const QString &name : {QStringLiteral("Cam\u00e9ra"), QStringLiteral("D\u00e9mo"), QStringLiteral("Di\u00e9go"), QStringLiteral("Syst\u00e8me"),
+                                QStringLiteral("Vid\u00e9o"), QStringLiteral("M\u00e9mo")}) {
+        EXPECT_FALSE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+        EXPECT_EQ(verdict(program(name)), Verdict::RunProgram) << name.toStdString();
+    }
+}
