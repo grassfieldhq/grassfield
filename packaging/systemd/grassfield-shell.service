@@ -30,9 +30,18 @@ Environment=QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1
 # more after the start leaves the crashed process alive, blocked in its signal handler while a reporter it forked relaunches
 # the shell as its own child ("Quickshell has been restarted"), so systemd sees no failure: no restart of its own, no
 # OnFailure=, no count toward safe mode, and the crashed process keeps its memory charged to this unit. Without it the
-# process ends on the signal, systemd restarts it after RestartSec= and counts the failure, and systemd-coredump keeps the
-# dump (coredumpctl), as for any process (macOS: the process dies, launchd restarts it, ReportCrash writes the report).
+# process ends on the signal: a failure (unlike SIGTERM, which leaves the unit inactive), so systemd restarts it after
+# RestartSec=, runs OnFailure= and counts it, and the journal records the crash (coredumpctl list), with no core file
+# (LimitCORE= below) (macOS: the process dies, launchd restarts it, ReportCrash writes the report).
 Environment=QS_DISABLE_CRASH_HANDLER=1
+# No core file (the opus delta review of 122f8d67, MAJOR): systemd-coredump stores a crashed process's whole memory under
+# /var/lib/systemd/coredump, readable by its user through an ACL, and this process hosts the polkit agent and the secret sheets until ADR-0041 S3/S4
+# move them (polkit, Wi-Fi, network-share and keyring passwords).
+# A same-user process that Yama keeps from reading this one's memory could crash it and read the dump instead. With
+# LimitCORE=0, systemd-coredump honours the limit: it records the crash in the journal (signal, PID, unit: coredumpctl list
+# shows it, without a file and without a stack) and stores nothing. The process still dies by the signal, so Restart=,
+# OnFailure= and the failure counter are unchanged.
+LimitCORE=0
 # Qt's "@2x" image lookup off (review of cbd6ef05): a file:// picture is decoded from the very path the shell asked for (the
 # lock checks its wallpaper still by that path), never from a "<name>@2x.<ext>" beside it. The shell ships no such file.
 Environment=QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING=1

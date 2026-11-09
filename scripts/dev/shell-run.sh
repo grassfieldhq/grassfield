@@ -173,9 +173,11 @@ timing=()
 # for the packaged shell's Qt built-in import path (/usr/lib/qt6/qml).
 # Quickshell's crash handler is off in both units (packaging/systemd/grassfield-*.service, ADR-0041 S2), and here always:
 # with it, a SIGSEGV leaves the recorded process alive while a child it forked runs a relaunched shell, so .dev/*.pid no
-# longer names the running instance and the crash steps of tests/security/reload_locked.sh (ui-crash) see no exit. The dump
-# goes to systemd-coredump (coredumpctl; scripts/dev/coredump-summary.py).
+# longer names the running instance and the crash steps of tests/security/reload_locked.sh (ui-crash) see no exit. As in
+# the units' LimitCORE=0 (the opus delta review of 122f8d67), both processes started below write no core file: the journal
+# keeps the crash (coredumpctl list), without a stack (run qs by hand to debug a crash with a core).
 crash_env=(QS_DISABLE_CRASH_HANDLER=1)
+ulimit -c 0
 unit_unset=()
 if [[ ${GRASSFIELD_UNIT_ENV:-} == 1 ]]; then
   for var in $(sed -n 's/^UnsetEnvironment=//p' "$root/packaging/systemd/grassfield-shell.service"); do

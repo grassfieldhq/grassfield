@@ -567,9 +567,17 @@ down, how sleep behaves) is written in the table at the end of this step.
     `OnFailure=` (the safe-mode counter, Omarchy's sleep lock), the crashed process kept its memory charged to the unit,
     and for the security process a frozen lock client stayed beside its relaunched copy. Decision (macOS: the process
     dies, launchd restarts it, ReportCrash writes the report): both units set `Environment=QS_DISABLE_CRASH_HANDLER=1`,
-    and `scripts/dev/shell-run.sh` sets it for both processes, so a crash ends the process, systemd restarts it after
-    `RestartSec=` and counts it, and systemd-coredump keeps the dump. Quickshell's own report folder
-    (`~/.cache/quickshell/crashes`) is no longer written. Tests: `security_unit.sh`, `tests/shell/shell_unit.sh`;
+    and `scripts/dev/shell-run.sh` sets it for both processes, so a crash ends the process on the signal: a failure
+    (unlike SIGTERM, which leaves the unit inactive with no `OnFailure=`), so systemd restarts it after `RestartSec=`,
+    runs `OnFailure=` and counts it. No core file is kept (the opus delta review of 122f8d67, MAJOR): systemd-coredump
+    stores a full core under /var/lib/systemd/coredump, readable by the user through an ACL, and the security process's
+    memory may hold the typed password (also the administrator's on Omarchy), the UI's the polkit and secret-sheet
+    passwords until S3/S4; a same-user process kept from reading the live memory by Yama could crash the process and read
+    the core. Both units set `LimitCORE=0` and the dev launcher `ulimit -c 0`: systemd-coredump then records the crash
+    in the journal (signal, PID, unit; `coredumpctl list` shows it without a file or a stack) and stores nothing.
+    Nothing of Grassfield reads a core file: `grassfield-crash-watch` follows the journal entries (and gives no notice
+    for these units), `grassfield-report` lists `coredumpctl list`, which shows these entries without a file, and the
+    1a counter is `OnFailure=`. Quickshell's own report folder (`~/.cache/quickshell/crashes`) is no longer written. Tests: `security_unit.sh`, `tests/shell/shell_unit.sh`;
     `reload_locked.sh ui-crash` now passes the step "the UI ended on SIGSEGV" and names the handler if it comes back.
   - `rss.sh --nested` required a running menu bridge, which P2 does not count and a nested session without its build
     does not run: it is now listed when it runs and never required; `--real` finds both Quickshell processes by their

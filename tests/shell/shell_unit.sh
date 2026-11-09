@@ -19,6 +19,10 @@ check test "$exec_line" = "ExecStart=/usr/bin/qs -n -p $SYSTEM_PATH"
 # process alive under a relaunched child).
 desc="Quickshell's crash handler is off (Environment=QS_DISABLE_CRASH_HANDLER=1): a crash ends the process and systemd restarts it"
 check grep -qx 'Environment=QS_DISABLE_CRASH_HANDLER=1' "$unit"
+# The opus delta review of 122f8d67 (MAJOR): this process hosts the polkit agent and the secret sheets; its core would keep
+# their passwords in a user-readable file.
+desc="no core file (LimitCORE=0, once): a crash is logged in the journal, its memory never stored"
+check bash -c '[[ $(grep -c "^LimitCORE=" "$1") == 1 ]] && grep -qx "LimitCORE=0" "$1"' _ "$unit"
 # Known limits of these scans (the cheap forms are covered, the rest is documented): an argument list split over several lines
 # (a QML array with "qs", then "ipc" on the next line), a command assembled from variables or systemd specifiers (%t), and a
 # path built at run time are not seen; review such a caller by hand.

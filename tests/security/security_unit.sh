@@ -67,7 +67,10 @@ check bash -c 'grep -qx "Restart=always" "$1" && grep -qx "RestartSec=1" "$1" &&
 desc="unit: no NoNewPrivileges, ProtectSystem or sandbox that would break unix_chkpwd and polkit-agent-helper-1 (S2, S3), as the UI's unit"
 check bash -c '! grep -qE "^(NoNewPrivileges|ProtectSystem|ProtectHome|PrivateUsers|SystemCallFilter|CapabilityBoundingSet)=" "$1"' _ "$unit"
 # Quickshell's crash handler kept a crashed process alive under a relaunched child: systemd saw no failure, OnFailure= never ran
-# (the integrator's nested run of e1a3ff4c). Off in both units and in the dev launcher, so a crash ends the process.
+# (the integrator's nested run of e1a3ff4c). Off in both units and in the dev launcher, so a crash ends the process. And no
+# core file (the opus delta review of 122f8d67, MAJOR): a dump of the process that reads the password is user-readable.
+desc="unit: no core file (LimitCORE=0) in this unit and the UI's (the polkit agent and the secret sheets), and none from the dev launcher (ulimit -c 0 before both processes): a crash is logged, its memory never stored"
+check bash -c 'grep -qx "LimitCORE=0" "$1" && grep -qx "LimitCORE=0" "$2" && [[ $(grep -c "^LimitCORE=" "$1") == 1 && $(grep -c "^LimitCORE=" "$2") == 1 ]] && grep -A1 -x "crash_env=(QS_DISABLE_CRASH_HANDLER=1)" scripts/dev/shell-run.sh | grep -qx "ulimit -c 0"' _ "$unit" "$ui"
 desc="unit: Quickshell's crash handler off (Environment=QS_DISABLE_CRASH_HANDLER=1) in this unit and the UI's, and in scripts/dev/shell-run.sh for both processes: a crash ends the process, systemd restarts it and OnFailure= runs"
 check bash -c 'grep -qx "Environment=QS_DISABLE_CRASH_HANDLER=1" "$1" && grep -qx "Environment=QS_DISABLE_CRASH_HANDLER=1" "$2" && grep -qx "crash_env=(QS_DISABLE_CRASH_HANDLER=1)" scripts/dev/shell-run.sh && [[ $(grep -c "^ *env \"\${unit_unset\[@\]}\" \"\${timing\[@\]}\" \"\${crash_env\[@\]}\"" scripts/dev/shell-run.sh) == 2 ]]' _ "$unit" "$ui"
 desc="unit: OnFailure=omarchy-sleep-lock.service (S2: the sleep lock armed after every failure of the process that holds the inhibitor), and the UI's unit no longer arms it (its OnFailure= is the failure counter alone)"
