@@ -1027,6 +1027,10 @@ Singleton {
             strandedUndecided = true;
             strandedProbe.start();
         }
+        // The first publication, explicitly after the restore above (the opus review of 77a0ceb3, MINOR-2: Qt leaves the order
+        // of Component.onCompleted handlers unspecified): a restarted process with a "locked" marker publishes "locking" first,
+        // never "unlocked".
+        publisher.start();
         // Last, after everything the lock itself needs (ADR-0040 step 4a): the display data.
         prepareStills();
     }

@@ -30,7 +30,7 @@ Scope {
     // published (a restart keeps the desktop's and the lock's clouds together). null when there was none.
     property var previousMotion: null
 
-    // Set once this object is complete: the bindings above change during its creation, before the file's path is set.
+    // Set by start(): the bindings above change during the creation of Lock.qml, before the restore has decided the state.
     property bool ready: false
 
     function publish(why: string): void {
@@ -89,11 +89,15 @@ Scope {
     Timer {
         interval: LockState.HEARTBEAT_MS
         repeat: true
-        running: true
+        running: root.ready
         onTriggered: root.publish("beat")
     }
 
-    Component.onCompleted: {
+    // Started by Lock.qml at the end of its own Component.onCompleted, after the crash-recovery restore (the order of
+    // onCompleted handlers is unspecified in Qt: the opus review of 77a0ceb3, MINOR-2). Nothing is written before.
+    function start(): void {
+        if (root.ready)
+            return;
         root.ready = true;
         root.publish("start");
     }
