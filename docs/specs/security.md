@@ -563,9 +563,14 @@ shell no longer relies on that alone:
   `saverShown` never releases a hold; a wrong false (the Binding lost) brings back a sheet that takes the keyboard over the
   saver, a wrong true holds every request and swallows every press on the sheet until the requester gives up (only the
   security host's Binding writes it, from `Idle.saverShown`; `lock_surfaces.sh` checks that it is the only writer in shell/,
-  apps/ and ui/: no assignment, no other Binding or object property, no other quoted name). The count differs from the
-  saver only on the holding side: while the UI is down, or for the moment between the input that dismisses the saver and
-  the compositor's activity report; `saver devShow` (dev only) is the UI's alone. Two requests close together (reviews of f513b3b and
+  apps/ and ui/: no assignment, no other Binding or object property, no other quoted name). The count is only ever early,
+  never late (the opus review of S3, MINOR-1): it leaves out the applications' ScreenSaver inhibitors (they reach the
+  security process only as the UI's `idle inhibit` lease, which a lost `idle inhibit 0` or a same-user caller can keep),
+  and it reads the saver as possibly shown from the process's start until the user is seen active (an input after a 1 s
+  pause; Hyprland starts a new idle notification's timer from zero, so a process restarted during idle would read "no
+  saver" while the UI's saver is on screen). It differs from the saver on the holding side only: while the UI is down, an
+  application's inhibitor, the start, and the moment between the input that dismisses the saver and the compositor's
+  activity report; `saver devShow` (dev only) is the UI's alone. Two requests close together (reviews of f513b3b and
   b5d7657): Quickshell 0.3.1 never queues; a request that arrives while one is open replaces it at once (the flow
   switches without `active` changing; the replaced one is abandoned, never answered, which fails closed), and one that
   arrives after the previous ended passes through no request. Both are held, "…right after another one": the replacing
@@ -1547,7 +1552,10 @@ same directory and the modules move without moving a file), one step at a time u
   closed them in process before). One agent in the session: one `PolkitAgent` in the tree, in `AuthAgent.qml`, made once,
   in the security process; polkitd refuses a second registration for the session anyway. An authorization asked while the
   security process restarts finds no agent and is not authorized, and one open when it ends is ended by polkitd with the
-  agent's bus name, never approved (as while the UI restarted before S3; `authagent_flows.d` test_35, L5 step 6). The
+  agent's bus name after a crash, or cancelled by Quickshell itself on a graceful stop (dismissed), never approved (as
+  while the UI restarted before S3; `authagent_flows.d` test_35 for the QML side, L5 step 6). A refused registration (the
+  UI's earlier agent still held the session) is asked again with a backoff, never in a dev session; the sheets also count
+  the start-up probe of a stranded or foreign lock as locked (the opus review of S3, MINOR-3 and LOW-4). The
   `polkit` and `secrets` dev hooks answer on the security instance. **S4:** safe mode. The invariant of each state (who
   locks, either process down, sleep) is the table at the end of ADR-0041 step 1.
 
@@ -1589,9 +1597,11 @@ same directory and the modules move without moving a file), one step at a time u
   refusals open while the session is locked, never the session (the compositor keeps input and rendering on the lock
   surfaces). Before S3 it also reached the two security modules that stayed in the UI: the polkit agent's device rule
   (`answerable` read `SessionState.locked` and `displaysOff`) and the secret sheets' hold (the opus review of 77a0ceb3,
-  MINOR-4). Closed by S3: both run in the security process and read the lock and idle of that process
-  (`SheetSession`, bound by the host from `Lock.locked`, `Idle.displayOff` and `Idle.saverShown`); the file is never read
-  there, and `security_process_scan.py` holds it (no security module names `SessionState` or `LockClient`; `SheetSession`
+  MINOR-4). Closed by S3 for the lock and the displays: both run in the security process and read the lock and idle of
+  that process (`SheetSession`, bound by the host from `Lock.locked` and the start-up stranded-lock probe,
+  `Idle.displayOff` and `Idle.saverShown`); the file is never read there. The screen saver is the UI's: idle counts its
+  idle time early and never late (above, "Nothing opens over the lock"), so neither a restart during idle nor the lease
+  can open a hold; and `security_process_scan.py` holds it (no security module names `SessionState` or `LockClient`; `SheetSession`
   has no other writer). A forged `authorizing: false` can make the UI's clipboard history record or its capture toolbar
   take the keyboard while a sheet is open: same-user code, out of scope as above, and the sheet itself is unaffected.
 - The UI asks for a lock with `lock lock` on the security instance (`qs ipc -p <shell dir>/security.qml`), each try

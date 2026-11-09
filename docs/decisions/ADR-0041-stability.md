@@ -637,14 +637,21 @@ down, how sleep behaves) is written in the table at the end of this step.
   password prompts fall back to the stock prompters, as with no shell before, system-dialogs.md SC6): a failure denies an
   authorization, never approves one. `security state` answers `lock idle polkit secrets` once the sheets are made, `lock idle`
   otherwise. `SecurityHost.qml` is pinned by its new hash (`security_unit.sh`); `shell/security.qml` is unchanged.
-- **What the sheets read (MINOR-4 closed).** `shell/security/SheetSession.qml`, a singleton of `qs.security` with `locked`,
-  `displaysOff` and `saverShown`, written only by three Bindings of the host: `Lock.locked`, `Idle.displayOff` and
-  `Idle.saverShown`, all of the same process; it fails closed without them (locked, displays off). The state file is never
-  read there, so a forged `unlocked` reaches only the UI's own refusals now. The screen saver stays the UI's (ADR-0032);
-  the security process cannot see it and reads nothing from the UI (S2's rule), so idle counts the same idle time by the
-  saver's own rule (`IdleModel.saverArmed`, compared with `SaverModel.armed` over every input by `tst_idlemodel`; the same
-  Wayland inhibitors, the applications' through S2's lease): it differs from the saver only on the holding side (the UI
-  down; the moment between a dismissing input and the compositor's activity report), and `saver devShow` is the UI's alone.
+- **What the sheets read (MINOR-4 closed for the lock and the displays).** `shell/security/SheetSession.qml`, a singleton of
+  `qs.security` with `locked`, `displaysOff` and `saverShown`, written only by three Bindings of the host: `Lock.locked` (and
+  the start-up stranded-lock probe while it runs, `Lock.strandedProbing`: review 1, LOW-4), `Idle.displayOff` and
+  `Idle.saverShown`, all of the same process; it fails closed without them (locked, displays off; `tst_sheetsession`). The
+  state file is never read there, so a forged `unlocked` reaches only the UI's own refusals now. The screen saver stays
+  the UI's (ADR-0032); the security process cannot see it and reads nothing from the UI (S2's rule), so idle counts the
+  same idle time by the saver's own rule and the same Wayland inhibitors, early and never late (review 1, MINOR-1: the
+  first version could be late): without the applications' ScreenSaver inhibitors, which reach this process only as the
+  UI's `idle inhibit` lease (a lost `idle inhibit 0` or a same-user caller kept it for 150 s while the UI's saver showed),
+  and possibly shown from the process's start until the user is seen active (an input after a 1 s pause: Hyprland starts
+  a new idle notification's timer from zero, so a process restarted while the user was away read "no saver" while the
+  UI's saver was on screen). It differs from the saver on the holding side only (`IdleModel.sheetsSaverArmed`,
+  `sheetsSaverShown`, `sheetsActivitySeen`; `tst_idlemodel` test_sheetsSaverRestartDuringIdle), and `saver devShow` is the
+  UI's alone. Same-user code can still keep the displays on through the lease (they then are on), or restart this process
+  (the saver then counts as shown until activity).
 - **What the UI knows of the sheets.** Two booleans published with the lock state (`LockState.format`, absent from a file of
   a process before S3: read false; any other type: no state): `authorizing` (a sheet open, shown or held) and
   `securityKeyboard` (a sheet or its key sink may hold the keyboard). `LockClient.authorizing` and `securityKeyboard`
@@ -669,10 +676,11 @@ down, how sleep behaves) is written in the table at the end of this step.
   step 1 (`journalctl --user -u grassfield-security`).
 - **The restart.** While the security process restarts no agent is registered: polkitd answers an authorization asked
   then "not authorized" (no agent), and ends one that was open with the agent's bus name (not authorized or dismissed),
-  never approved, as while the UI restarted before S3. The agent answers nothing when its process ends (no password goes out,
-  `authagent_flows.d` test_35: the agent destroyed with a password half typed sends nothing, the agent made again has no
-  request, no sheet and no keys), and the polkit module keeps nothing across a restart (no file, process, socket or setting:
-  `security_unit.sh`). The secret sheets: the bridge sees its client go and answers its open requests "cancelled"
+  never approved, as while the UI restarted before S3. On a crash the agent answers nothing (no password goes out,
+  `authagent_flows.d` test_35, which shows the QML side only: the agent destroyed with a password half typed sends nothing,
+  the agent made again has no request, no sheet and no keys); on a graceful stop Quickshell itself cancels the open request
+  before it unregisters (upstream `cancelAllRequests`: dismissed). The polkit module keeps nothing across a restart (no
+  file, process, socket or setting: `security_unit.sh`). The secret sheets: the bridge sees its client go and answers its open requests "cancelled"
   (`SecretAgent.dropAll`'s premise), owns gcr's prompter name only while a client is connected (so a gcr prompt in that
   second goes to the stock prompter, as while the UI restarted before S3), and accepts the restarted process's connection
   (its client retries after 1 s). Owner, real session: L5 step 6 (`docs/specs/security.md`).
@@ -702,6 +710,26 @@ down, how sleep behaves) is written in the table at the end of this step.
   a sheet (display only); the saver count's holding-side differences (above); a Quickshell without its polkit service now
   leaves the session without an agent but locked and lockable, where before S2 it took the whole shell down.
 - Review: opus security (R12), by the integrator.
+- Review round 1 (2026-11-09, the opus security review of 1223adc2: PASS, three MINOR, one LOW, NITs), each fixed on the
+  branch:
+  - MINOR-1, the sheets' saver input could be late (a restart during idle; the lease): early and never late now (above).
+  - MINOR-2, the one-agent scan missed code built from strings: `security_process_scan.py` reads `ui/` too and refuses, in
+    the UI tree and Grassfield.Ui, `Qt.createQmlObject`, a Loader/LazyLoader source or a `createComponent` that is not one
+    plain string literal (the desktop widgets' `Registry.source(root.widgetId)` alone, while `Registry.source` returns only
+    `Qt.resolvedUrl("builtin/....qml")` literals), and any string naming `security/`, `qs.security`,
+    Quickshell.Services.Polkit or a security type. The reviewer's M1 and M2 are among the 68 planted mutants.
+  - MINOR-3, the agent never asked again: `AuthAgent` asks again while it is not registered (a new object path makes
+    Quickshell register again), after 3 s doubling to 60 s, never in a dev session (the nested agent must not take the
+    owner's session when the owner's agent restarts); `authagent_flows.d` test_36, test_37 and four mutants. The upgrade
+    note's restart line restarts the UI alone first, then the bridge and the security process (`session_services.sh`).
+  - LOW-4: the sheets count the start-up probe of a stranded or foreign lock as locked, at most its 20 ticks
+    (`Lock.strandedProbing`; the scan's binding table, `lock_surfaces.sh` and its mutations, `security_unit.sh`).
+  - NITs: SheetSession's fail-closed defaults tested (`tst_sheetsession.qml`, and the scan with the reviewer's M3); the
+    scan's mutant count; the bridge's built-in `--peer-unit` default tested (`prompter_bridge.sh`, a bridge without the
+    argument refuses a peer outside grassfield-security.service); `secret_bridge.sh` and `prompter_bridge.sh` exit
+    ENVIRONMENT (2) when `/tmp` cannot hold their short socket directory; the restart's wording (above).
+  - Residual, not new since S2: a restarted process starts with `displayOff` false while the displays may be dark (the
+    saver's hold above covers the sheets until the user is active).
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words
