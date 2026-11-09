@@ -1,9 +1,10 @@
 #!/bin/sh
-# grassfield-security-status: what the Grassfield security process answers (ADR-0041 step 1, S1). Read-only, needs no
-# privileges; the measurements of S1 and the owner's checks run it.
-#   grassfield-security-status        prints one line: state=<what the process hosts> heartbeat=<state and sequence>
+# grassfield-security-status: what the Grassfield security process answers (ADR-0041 step 1, S1; the lock since S2).
+# Read-only, needs no privileges; the measurements and the owner's checks run it.
+#   grassfield-security-status        prints one line: state=<what the process hosts> lock=<unlocked|locked>
+#                                     heartbeat=<public lock state and sequence>
 #                                     unit=<ActiveState SubState MainPID MemoryCurrent of grassfield-security.service>
-# Exit 0 when the process answers, 1 when it does not ("not running"). It calls the security instance's IPC target by its
+# Exit 0 when the process answers, 1 when it does not ("not running"). It calls the security instance's IPC targets by its
 # path (the unit's ExecStart path), with Quickshell's option variables cleared as every `qs ipc` caller of the session
 # does (a stray QS_MANIFEST made `qs ipc -p` exit 108: the re-review of bf9e280). From a TTY (no WAYLAND_DISPLAY) the
 # instance is on another display connection than the caller's, which `qs ipc` filters out: --any-display lifts the
@@ -16,7 +17,9 @@ display=""
 # shellcheck disable=SC2086  # $display is empty or one option
 state=$(timeout -k 0.2 2 qs ipc $display -p "$path" call security state 2>/dev/null) || { echo "security: not running (no answer from $path)" >&2; exit 1; }
 # shellcheck disable=SC2086
+lock=$(timeout -k 0.2 2 qs ipc $display -p "$path" call lock state 2>/dev/null) || lock="?"
+# shellcheck disable=SC2086
 beat=$(timeout -k 0.2 2 qs ipc $display -p "$path" call security heartbeat 2>/dev/null) || beat="?"
 unit=$(systemctl --user show -p ActiveState -p SubState -p MainPID -p MemoryCurrent --value grassfield-security.service 2>/dev/null | tr '\n' ' ')
-printf 'state=%s heartbeat="%s" unit="%s"\n' "$state" "$beat" "${unit% }"
+printf 'state=%s lock=%s heartbeat="%s" unit="%s"\n' "$state" "$lock" "$beat" "${unit% }"
 exit 0

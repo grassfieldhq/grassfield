@@ -226,6 +226,12 @@ if command -v vercmp >/dev/null; then
   check bash -c 'grep -q "restart the shell once" <<<"$1" && grep -q "restart the shell once" <<<"$2"' _ "$(up 0.4.0-13 0.4.0-12)" "$(up 0.4.0-13 0.3.9-1)"
   desc="...and not on later upgrades (1.0.0rc1-1 to 1.0.0rc1-2, 1.0.0 to 1.0.1) nor on a fresh upgrade call without an old version"
   check bash -c '! grep -q "restart the shell once" <<<"$1$2$3$4"' _ "$(up 1.0.0rc1-2 1.0.0rc1-1)" "$(up 0.4.0-14 0.4.0-13)" "$(up 1.0.1-1 1.0.0-1)" "$(up 1.0.1-1 "")"
+  # ADR-0041 S2 (the opus review of 77a0ceb3, MINOR-1): the lock moved into grassfield-security; processes started before the
+  # upgrade keep the earlier split until the next login.
+  desc="the .install log-out note for the lock's own process is printed when upgrading from any build of 1.0.0rc7 or earlier (1.0.0rc7-1, 1.0.0rc7-4, 1.0.0rc6-2 to 1.0.0rc8-1; 1.0.0rc7-3 to 1.0.0-1)"
+  check bash -c 'for o in "$@"; do grep -q "lock screen now runs in its own process" <<<"$o" || exit 1; done' _ "$(up 1.0.0rc8-1 1.0.0rc7-1)" "$(up 1.0.0rc8-1 1.0.0rc7-4)" "$(up 1.0.0rc8-1 1.0.0rc6-2)" "$(up 1.0.0-1 1.0.0rc7-3)"
+  desc="...and not on later upgrades (1.0.0rc8-1 to 1.0.0rc8-2 or 1.0.0rc9-1, 1.0.0 to 1.0.1) nor without an old version"
+  check bash -c '! grep -q "lock screen now runs in its own process" <<<"$1$2$3$4"' _ "$(up 1.0.0rc8-2 1.0.0rc8-1)" "$(up 1.0.0rc9-1 1.0.0rc8-1)" "$(up 1.0.1-1 1.0.0-1)" "$(up 1.0.0rc8-1 "")"
 else
   echo "SKIP: vercmp not installed (the .install upgrade note)"
 fi

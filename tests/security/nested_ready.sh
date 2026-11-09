@@ -9,16 +9,18 @@
 # lock_privacy.sh read the shell's empty `lock status` answer as "already locked" and stopped, and reload_locked.sh opened
 # its probe window before GF-REF existed (the window never appeared).
 #
-# nested_ready <instance> <socket> <shell dir> <seconds>
-#   Waits at most <seconds> (each query bounded by timeout(1)) until the nested compositor lists GF-REF and the shell
-#   answers `lock status` with a lock state. An empty or unknown answer means "not ready", never a lock state.
+# nested_ready <instance> <socket> <lock root> <seconds>
+#   Waits at most <seconds> (each query bounded by timeout(1)) until the nested compositor lists GF-REF and the process
+#   that holds the lock answers `lock status` with a lock state. <lock root> is the path its `qs ipc -p` names: since
+#   ADR-0041 step 1, S2 the security process's root, <tree>/shell/security.qml (scripts/dev/shell-run.sh starts it beside
+#   the shell). An empty or unknown answer means "not ready", never a lock state.
 #   Returns 0 when ready (nested_ready_state: the state, nested_ready_ms: the time waited); 1 on timeout and 2 when the
-#   shell refuses the dev hooks (not a dev session), with the reason in nested_ready_why. Callers FAIL and stop on
+#   process refuses the dev hooks (not a dev session), with the reason in nested_ready_why. Callers FAIL and stop on
 #   anything but 0: no scenario runs on an unknown lock state.
 
 nested_ready_state="" nested_ready_ms="" nested_ready_why=""
 
-nested_ready() { # <instance> <socket> <shell dir> <seconds>
+nested_ready() { # <instance> <socket> <lock root> <seconds>
   local sig=$1 sock=$2 shell=$3 secs=$4 start deadline output=0 answer="" monitors
   nested_ready_state="" nested_ready_ms="" nested_ready_why=""
   [[ $secs =~ ^[0-9]+$ ]] || { nested_ready_why="bad timeout '$secs'"; return 1; }
@@ -38,7 +40,7 @@ nested_ready() { # <instance> <socket> <shell dir> <seconds>
           return 0
           ;;
         refused)
-          nested_ready_why="the shell refuses the dev hooks (lock status -> refused): not a dev session (GRASSFIELD_DEV=1 without GRASSFIELD_SESSION=1)"
+          nested_ready_why="the security process refuses the dev hooks (lock status -> refused): not a dev session (GRASSFIELD_DEV=1 without GRASSFIELD_SESSION=1)"
           return 2
           ;;
       esac
@@ -49,7 +51,7 @@ nested_ready() { # <instance> <socket> <shell dir> <seconds>
   if ((!output)); then
     nested_ready_why="the nested compositor did not list the output GF-REF within $secs s (see .dev/hyprland.log)"
   else
-    nested_ready_why="the nested shell did not answer \`lock status\` with a lock state within $secs s (last answer '${answer:-none}'; see .dev/shell.log)"
+    nested_ready_why="the nested security process did not answer \`lock status\` with a lock state within $secs s (last answer '${answer:-none}'; see .dev/security.log)"
   fi
   return 1
 }

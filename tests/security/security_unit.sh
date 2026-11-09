@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# ADR-0041 step 1, S1 (the owner's SQ-1 B): the security process runs beside the UI and hosts nothing moved yet. Static
-# (data layer): the root shell/security.qml (a root of its own next to shell.qml, imports only QtQuick, Quickshell and
-# Quickshell.Io, never reloads on a file change, one IpcHandler `security` with `state` and `heartbeat`; the reviewed file
+# ADR-0041 step 1, S1 (the owner's SQ-1 B): the security process runs beside the UI; since S2 it hosts the lock, idle and
+# the sleep inhibitor (shell/security/host/SecurityHost.qml) and the UI holds none of them. Static (data layer): the root
+# shell/security.qml (a root of its own next to shell.qml, imports only QtQuick, Quickshell, Quickshell.Io and
+# qs.security.host, never reloads on a file change, one SecurityHost, one IpcHandler `security` with `state` and `heartbeat`;
+# the reviewed file
 # is pinned by its SHA-256, comments included, so any change needs the opus security review and then the new hash here
 # (the integrator's decision on #75: a static check cannot model all of QML); tests/security/root_check.py stays as the
 # readable second check, an allow-list of identifiers, imports and types read as the engine reads them, with a selftest of
 # planted mutants),
 # grassfield-security.service (loads that root by path from the system tree, the same cleared environment as the UI's
 # unit, Restart=always with a start limit a loop reaches, session-only, no NoNewPrivileges for the helpers of S2/S3, memory
-# guards from the measurement and the UI unit's CPU quota), the autostart (started just before
-# the shell, --no-block), the PKGBUILD, grassfield-security-status (read-only, calls the target by the unit's path), and the
-# IPC surface table. qmllint parses the root when it is installed. Plain shell test: PASS/FAIL lines, non-zero on failure.
+# guards from the measurement and the UI unit's CPU quota, OnFailure=omarchy-sleep-lock.service since S2 while the UI's
+# unit lost it), the autostart (started just before the shell, --no-block), the PKGBUILD, grassfield-security-status
+# (read-only, calls the targets by the unit's path), the IPC surface table, and the S2 scan
+# (tests/security/security_process_scan.py: no lock or idle in the UI tree, one Idle in the host, no UI service in the
+# security process). qmllint parses the root when it is installed. Plain shell test: PASS/FAIL lines, non-zero on failure.
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root"
@@ -25,19 +29,28 @@ desc="root: a root of its own next to shell.qml"
 check bash -c '[[ -f "$1" && -f shell/shell.qml ]]' _ "$qml"
 # The reviewed root, pinned. A change to shell/security.qml, comments included, fails here until the opus security review
 # of that change has passed and the hash below is updated in the same pull request (the integrator's decision on #75).
-pinned=00762fd65e6269da891dc98a56e17a9940a8759377a79f11cc2c163260f14eef
+pinned=452918e2a1db7b4b9d5ae1c8db8715df2e7e6e63fef5980f9526ec98947f482c
 desc="root: the reviewed file is pinned by its SHA-256 (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum "$1" | cut -d" " -f1)" == "$2" ]] || { echo "shell/security.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$qml" "$pinned"
-desc="root: the readable second check (tests/security/root_check.py): ASCII only, no backslash, no regex literal, template string or bracket outside strings; every identifier one the root uses today; imports QtQuick, Quickshell and Quickshell.Io only, wherever they stand; ShellRoot and IpcHandler the only types; one IpcHandler, target security, the functions state and heartbeat only"
+# What the root instantiates (S2: the security process's whole content, its one Idle and the lock singleton's first use),
+# pinned the same way (the opus review of 77a0ceb3, NIT: the root's pin alone left the host free to change).
+host_pinned=ec8c4f0edb55bbf3baed7571da8902263d8652d22c7d2607c613abadb5174375
+desc="host: the reviewed shell/security/host/SecurityHost.qml is pinned by its SHA-256 too (any change: security review required, then update the pinned hash)"
+check bash -c '[[ "$(sha256sum shell/security/host/SecurityHost.qml | cut -d" " -f1)" == "$1" ]] || { echo "shell/security/host/SecurityHost.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$host_pinned"
+desc="root: the readable second check (tests/security/root_check.py): ASCII only, no backslash, no regex literal, template string or bracket outside strings; every identifier one the root uses today; imports QtQuick, Quickshell, Quickshell.Io and qs.security.host only, wherever they stand; ShellRoot, SecurityHost and IpcHandler the only types; one SecurityHost; one IpcHandler, target security, the functions state and heartbeat only"
 check python3 -I tests/security/root_check.py "$qml"
-desc="root check selftest: the root passes (with LF and with CRLF) and each of the 32 planted mutants (next-line braces, comments before braces, indented imports, a singleton's property, names as strings or through Reflect, a U+2028 ending a comment, Unicode escapes, a second IpcHandler, an animation, Quickshell.reload, a third function, a renamed target, ...) is refused"
+desc="root check selftest: the root passes (with LF and with CRLF) and each of the 38 planted mutants (next-line braces, comments before braces, indented imports, a singleton's property, names as strings or through Reflect, a U+2028 ending a comment, Unicode escapes, a second IpcHandler, an animation, Quickshell.reload, a third function, a renamed target, a second SecurityHost, the lock, idle, polkit or qs.security module imported into the root, ...) is refused"
 check python3 -I tests/security/root_check.py --selftest "$qml"
 desc="root: never reloads on a file change (settings.watchFiles: false)"
 check grep -qE '^\s*settings\.watchFiles: false' "$qml"
 desc="root: one IpcHandler, target security, functions state and heartbeat, and nothing else that answers IPC"
 check bash -c '[[ $(grep -c "IpcHandler {" "$1") == 1 ]] && grep -qE "^\s*target: \"security\"" "$1" && grep -qE "^\s*function state\(\): string" "$1" && grep -qE "^\s*function heartbeat\(\): string" "$1" && [[ $(grep -cE "^\s*function " "$1") == 2 ]]' _ "$qml"
-desc="root: logs its ready line for the start-time measurement"
-check grep -q 'grassfield-security: ready' "$qml"
+desc="host: logs the ready line the start-time measurement reads (shell/security/host/SecurityHost.qml, instantiated by the root)"
+check bash -c 'grep -q "grassfield-security: ready" shell/security/host/SecurityHost.qml && grep -qE "^\s*SecurityHost \{" "$1"' _ "$qml"
+desc="S2 scan (tests/security/security_process_scan.py): the UI tree imports neither the lock nor idle and names no Lock, Idle or SleepInhibitor (no Lock.lock caller left in the UI); one Idle in the host; the lock and idle use no UI module and only the qs.services types Settings, VisualFixtures, FixedTime and WallClock; one definition of the state file; the UI never writes it (no FileView write, write option, adapter or process with its path in LockClient.qml, its path named nowhere else in the UI)"
+check python3 -I tests/security/security_process_scan.py "$root"
+desc="S2 scan selftest: the tree is clean and each of the 21 planted mutants (a UI caller of Lock.lock, a Connections on Lock, the lock or idle imported into the UI, a second Idle or a window in the host, Popups, ThemeIcons, WallpaperState, Battery, the notification server or the desktop in the security modules, a write of the state file from the UI, ...) is found"
+check python3 -I tests/security/security_process_scan.py --selftest "$root"
 if [[ -x /usr/lib/qt6/bin/qmllint ]]; then
   desc="root: qmllint parses it (unknown-module warnings aside)"
   check bash -c '/usr/lib/qt6/bin/qmllint "$1" 2>&1 | grep -v -i -E "warning" | grep -qi "error" && exit 1; exit 0' _ "$qml"
@@ -53,16 +66,28 @@ desc="unit: Restart=always, RestartSec=1, a start limit a loop reaches (5 in 300
 check bash -c 'grep -qx "Restart=always" "$1" && grep -qx "RestartSec=1" "$1" && grep -qx "StartLimitIntervalSec=300" "$1" && grep -qx "StartLimitBurst=5" "$1" && grep -qx "ConditionEnvironment=GRASSFIELD_SESSION=1" "$1" && grep -qx "PartOf=graphical-session.target" "$1" && grep -qx "Requisite=graphical-session.target" "$1" && grep -qx "Slice=session.slice" "$1"' _ "$unit"
 desc="unit: no NoNewPrivileges, ProtectSystem or sandbox that would break unix_chkpwd and polkit-agent-helper-1 (S2, S3), as the UI's unit"
 check bash -c '! grep -qE "^(NoNewPrivileges|ProtectSystem|ProtectHome|PrivateUsers|SystemCallFilter|CapabilityBoundingSet)=" "$1"' _ "$unit"
-desc="unit: no OnFailure= yet (S2 moves the sleep lock here with the inhibitor); memory guards from the measurement (157 MB nested: MemoryHigh at least twice it, MemoryMax above MemoryHigh); CPUQuota at least a whole core, as the UI unit's"
-check bash -c '! grep -q "^OnFailure=" "$1" && high=$(sed -nE "s/^MemoryHigh=([0-9]+)M$/\1/p" "$1") && max=$(sed -nE "s/^MemoryMax=([0-9]+)M$/\1/p" "$1") && cpu=$(sed -nE "s/^CPUQuota=([0-9]+)%$/\1/p" "$1") && [[ -n $high && -n $max && -n $cpu ]] && ((high >= 314 && max > high && cpu >= 100)) && [[ $cpu == "$(sed -nE "s/^CPUQuota=([0-9]+)%$/\1/p" "$2")" ]] && grep -q "157 MB" "$1"' _ "$unit" "$ui"
+# Quickshell's crash handler kept a crashed process alive under a relaunched child: systemd saw no failure, OnFailure= never ran
+# (the integrator's nested run of e1a3ff4c). Off in both units and in the dev launcher, so a crash ends the process. And no
+# core file (the opus delta review of 122f8d67, MAJOR): a dump of the process that reads the password is user-readable.
+desc="unit: no core file (LimitCORE=0) in this unit and the UI's (the polkit agent and the secret sheets), and none from the dev launcher (ulimit -c 0 before both processes): a crash is logged, its memory never stored"
+check bash -c 'grep -qx "LimitCORE=0" "$1" && grep -qx "LimitCORE=0" "$2" && [[ $(grep -c "^LimitCORE=" "$1") == 1 && $(grep -c "^LimitCORE=" "$2") == 1 ]] && grep -A1 -x "crash_env=(QS_DISABLE_CRASH_HANDLER=1)" scripts/dev/shell-run.sh | grep -qx "ulimit -c 0"' _ "$unit" "$ui"
+desc="unit: Quickshell's crash handler off (Environment=QS_DISABLE_CRASH_HANDLER=1) in this unit and the UI's, and in scripts/dev/shell-run.sh for both processes: a crash ends the process, systemd restarts it and OnFailure= runs"
+check bash -c 'grep -qx "Environment=QS_DISABLE_CRASH_HANDLER=1" "$1" && grep -qx "Environment=QS_DISABLE_CRASH_HANDLER=1" "$2" && grep -qx "crash_env=(QS_DISABLE_CRASH_HANDLER=1)" scripts/dev/shell-run.sh && [[ $(grep -c "^ *env \"\${unit_unset\[@\]}\" \"\${timing\[@\]}\" \"\${crash_env\[@\]}\"" scripts/dev/shell-run.sh) == 2 ]]' _ "$unit" "$ui"
+desc="unit: OnFailure=omarchy-sleep-lock.service (S2: the sleep lock armed after every failure of the process that holds the inhibitor), and the UI's unit no longer arms it (its OnFailure= is the failure counter alone)"
+check bash -c '[[ $(grep -c "^OnFailure=" "$1") == 1 ]] && grep -qx "OnFailure=omarchy-sleep-lock.service" "$1" && grep -qx "OnFailure=grassfield-shell-failed.service" "$2" && ! grep -q "omarchy-sleep-lock" <(grep "^OnFailure=" "$2")' _ "$unit" "$ui"
+desc="unit: the lock keeps at least the headroom it had in the UI's unit (MemoryHigh and MemoryMax at least the UI unit's: never throttled before it is measured, the opus review of 77a0ceb3 MAJOR-2); CPUQuota as the UI unit's, at least a whole core"
+check bash -c 'mb() { sed -nE "s/^$1=([0-9]+)([MG])$/\1 \2/p" "$2" | awk "{ print (\$2 == \"G\") ? \$1 * 1024 : \$1 }"; }
+  high=$(mb MemoryHigh "$1") && max=$(mb MemoryMax "$1") && uihigh=$(mb MemoryHigh "$2") && uimax=$(mb MemoryMax "$2") && cpu=$(sed -nE "s/^CPUQuota=([0-9]+)%$/\1/p" "$1") &&
+  [[ -n $high && -n $max && -n $uihigh && -n $uimax && -n $cpu ]] && ((high >= uihigh && max >= uimax && max > high && cpu >= 100)) &&
+  [[ $cpu == "$(sed -nE "s/^CPUQuota=([0-9]+)%$/\1/p" "$2")" ]] && grep -q "157 MB" "$1" && grep -q "MemoryPeak" "$1"' _ "$unit" "$ui"
 desc="autostart: started just before the shell, without waiting for it (--no-block), and the shell still starts if it failed"
 check bash -c 'grep -q "systemctl --user start --no-block grassfield-security.service; systemctl --user start grassfield-shell.service" "$1"' _ config/hypr/grassfield/autostart.lua
 desc="package: the unit is installed with the session units; the root ships with the shell tree; the helper from packaging/bin"
 check bash -c 'grep -q "for unit in .*security" "$1" && grep -q "cp -a --no-preserve=ownership \"\$root/shell\" \"\$pkgdir/usr/share/grassfield/shell\"" "$1"' _ packaging/arch/PKGBUILD
-desc="helper: read-only, calls the target by the unit's path with Quickshell's option variables cleared, never start, stop, kill or unlock"
-check bash -c '[[ -x "$1" ]] && grep -q "unset QS_CONFIG_PATH QS_CONFIG_NAME QS_MANIFEST" "$1" && grep -q "call security state" "$1" && grep -q "call security heartbeat" "$1" && ! grep -v "^#" "$1" | grep -qE "systemctl --user (start|stop|kill|restart|reset-failed)|unlock|kill "' _ "$helper"
+desc="helper: read-only, calls the targets by the unit's path with Quickshell's option variables cleared (security state and heartbeat, lock state), never start, stop, kill or unlock"
+check bash -c '[[ -x "$1" ]] && grep -q "unset QS_CONFIG_PATH QS_CONFIG_NAME QS_MANIFEST" "$1" && grep -q "call security state" "$1" && grep -q "call security heartbeat" "$1" && grep -q "call lock state" "$1" && ! grep -v "^#" "$1" | grep -qE "systemctl --user (start|stop|kill|restart|reset-failed)|unlock|kill "' _ "$helper"
 desc="helper: works from a TTY: --any-display when WAYLAND_DISPLAY is not set (the instance is on another display connection), never inside the session"
-check bash -c 'grep -q "\[ -n \"\${WAYLAND_DISPLAY:-}\" \] || display=\"--any-display\"" "$1" && [[ $(grep -c "qs ipc \$display -p" "$1") == 2 ]]' _ "$helper"
+check bash -c 'grep -q "\[ -n \"\${WAYLAND_DISPLAY:-}\" \] || display=\"--any-display\"" "$1" && [[ $(grep -c "qs ipc \$display -p" "$1") == 3 ]]' _ "$helper"
 desc="IPC surface: the table lists target security with state and heartbeat as actions with their caller (tests/security/ipc_inventory.sh holds it to the code)"
 check grep -qE '^\| security \| state, heartbeat \| action \|' docs/specs/security.md
 desc="restart limits: the unit passes the lifetime model (a 10 s loop ends at its limit: 5 x (1 + 10) = 55 <= 300)"

@@ -5,12 +5,15 @@
 #
 # Omarchy's sleep-lock unit (omarchy-sleep-lock.service: a logind delay inhibitor and a PrepareForSleep monitor, whose
 # omarchy-system-sleep-lock asks the shell to lock with `omarchy-shell lock lock` and polls `omarchy-shell lock status`
-# until it reports {"secure": true}) is the fail-safe of the Grassfield session: grassfield-shell.service starts it
-# (OnFailure=) when the shell has failed for good. This stand-in answers those two calls with Grassfield's own lock
-# (WlSessionLock + PamContext("omarchy-lock-password") in grassfield-shell), never with another locker:
-#   lock lock     when grassfield-shell is not running, starts it again (reset-failed first: a shell at its start limit
-#                 is tried once more before sleep), waits for its IPC, then `qs ipc -p /usr/share/grassfield/shell call lock lock`
-#   lock status   {"secure": <Hyprland reports LOCK on every monitor>, "requested": <grassfield-shell's crash-recovery
+# until it reports {"secure": true}) is the fail-safe of the Grassfield session: grassfield-security.service starts it
+# (OnFailure=) after every failure of the security process (ADR-0041 step 1, S2: the lock, idle and the sleep inhibitor
+# live there; the UI's unit no longer holds an inhibitor). This stand-in answers those two calls with Grassfield's own lock
+# (WlSessionLock + PamContext("omarchy-lock-password") in grassfield-security), never with another locker:
+#   lock lock     when grassfield-security is not running, starts it again (reset-failed first: a process at its start
+#                 limit is tried once more before sleep), waits for its IPC, then
+#                 `qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock`; also the UI's way to a stopped
+#                 security process when it asks for a lock (shell/services/LockClient.qml)
+#   lock status   {"secure": <Hyprland reports LOCK on every monitor>, "requested": <grassfield-security's crash-recovery
 #                 marker says "locked">} (read-only: hyprctl -j monitors, the marker file)
 # It also forwards Omarchy's update status (omarchy-update-status, called by `omarchy update` while its lock is held:
 # `omarchy.system-update refresh|clear`) as a check request to Grassfield's Software Update (ADR-0033 d.5, U9): only the
@@ -35,7 +38,7 @@ fail() {
   exit 1
 }
 
-# grassfield-shell's crash-recovery marker (shell/security/LockMachine.js markerName): "locked" once a lock was requested.
+# grassfield-security's crash-recovery marker (shell/security/LockMachine.js markerName): "locked" once a lock was requested.
 marker() {
   id=${HYPRLAND_INSTANCE_SIGNATURE:-${WAYLAND_DISPLAY:-default}}
   id=$(printf '%s' "$id" | tr -c 'A-Za-z0-9_.-' '_')
@@ -43,17 +46,24 @@ marker() {
 }
 
 lock_lock() {
-  case $(systemctl --user show --property=ActiveState --value grassfield-shell.service 2>/dev/null) in
-    active | activating | reloading) ;;
+  case $(systemctl --user show --property=ActiveState --value grassfield-security.service 2>/dev/null) in
+    active | activating | reloading)
+      # An upgrade from a build before ADR-0041 S2 leaves the earlier security process running, which hosts no lock (its
+      # `security state` answers "starting"): restarted, the new one hosts the lock and restores it from the marker (the opus
+      # review of 77a0ceb3, MINOR-1). Anything else (an answer of S2, no answer yet) is left alone.
+      if [ "$(timeout -k 0.2 2 qs ipc -p /usr/share/grassfield/shell/security.qml call security state 2>/dev/null)" = starting ]; then
+        systemctl --user restart --no-block grassfield-security.service >/dev/null 2>&1
+      fi
+      ;;
     *)
-      systemctl --user reset-failed grassfield-shell.service >/dev/null 2>&1
-      systemctl --user start --no-block grassfield-shell.service >/dev/null 2>&1
+      systemctl --user reset-failed grassfield-security.service >/dev/null 2>&1
+      systemctl --user start --no-block grassfield-security.service >/dev/null 2>&1
       ;;
   esac
   # The caller bounds this with its own timeout (omarchy-system-sleep-lock: what is left of logind's window).
   tries=0
   while [ "$tries" -lt 100 ]; do
-    out=$(qs ipc -p /usr/share/grassfield/shell call lock lock 2>/dev/null) && case $out in
+    out=$(qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock 2>/dev/null) && case $out in
       ok | already-locked | refused:*)
         echo "$out"
         exit 0
@@ -62,7 +72,7 @@ lock_lock() {
     tries=$((tries + 1))
     sleep 0.1
   done
-  fail "grassfield-shell is not running"
+  fail "grassfield-security is not running"
 }
 
 lock_status() {

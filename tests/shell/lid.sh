@@ -52,8 +52,8 @@ check bash -c 'grep -qx lock "$1/calls.log" && grep -q "hyprctl eval hl.monitor(
 desc="the lock request is sent first, before the panel changes (logind may suspend right after the close)"
 check bash -c '[[ $(head -n 1 "$1/calls.log") == lock ]]' _ "$tmp"
 
-desc="the default lock command is the shell's lid entry point (lock lid), never an unlock or another locker"
-check bash -c 'grep -qx "LOCK_CMD=\"qs ipc -p /usr/share/grassfield/shell call lock lid\"" "$1"' _ "$root/packaging/bin/grassfield-lid"
+desc="the default lock command is the security process's lid entry point (lock lid on /usr/share/grassfield/shell/security.qml, ADR-0041 S2), never an unlock or another locker"
+check bash -c 'grep -qx "LOCK_CMD=\"qs ipc -p /usr/share/grassfield/shell/security.qml call lock lid\"" "$1"' _ "$root/packaging/bin/grassfield-lid"
 
 desc="the lid switch is bound once: system.lua, not bindings.lua"
 check bash -c '[[ $(grep -c "switch:on:Lid Switch" "$1") == 1 ]] && ! grep -q "Lid Switch" "$2"' _ "$root/config/hypr/grassfield/system.lua" "$root/config/hypr/grassfield/bindings.lua"

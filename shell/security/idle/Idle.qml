@@ -6,6 +6,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland // layering-exception: ADR-0021 security
 import Quickshell.Io
+import Quickshell.Services.UPower
 import Quickshell.Wayland
 import Grassfield.Ui
 import qs.services
@@ -26,6 +27,13 @@ import "../../lib/RunMode.js" as RunMode
 // lack of input, the computer sleeps, unless energy.preventSleep is on (default; battery and power adapter alike); only in
 // the LOCKED state with the lock secure (an unlocked session is locked first: the one lock it can add), never in the nested
 // dev session.
+//
+// Process (ADR-0041 step 1, S2): instantiated in the security process only (../host/SecurityHost.qml), with the lock and the sleep
+// inhibitor, so that the idle lock and the lock before sleep keep working whatever the UI does. What the UI knows of it
+// (the displays switched off, for the polkit agent and the screen saver) goes out with the lock state (Lock.displaysOff,
+// LockPublisher); what it needs from the UI (the applications' org.freedesktop.ScreenSaver inhibitors, which the menu
+// bridge serves to the UI) comes in as a lease (`idle inhibit <seconds>`, below), which ends by itself when the UI stops
+// renewing it: a UI that crashed while a video played cannot keep the idle lock off.
 Scope {
     id: root
 
@@ -43,7 +51,7 @@ Scope {
     onDisplayOffChanged: Lock.displaysOff = root.displayOff
     // Seconds without input before the displays go off while unlocked, for the power source in use; 0 = never. Always off in
     // the nested dev session (a dark nested output would spoil every capture; no test needs it there).
-    readonly property int inactiveOffSeconds: devHooks ? 0 : IdleModel.inactiveDisplayOffSeconds(Settings.lockDisplayOffBattery, Settings.lockDisplayOffPower, Battery.onBattery)
+    readonly property int inactiveOffSeconds: devHooks ? 0 : IdleModel.inactiveDisplayOffSeconds(Settings.lockDisplayOffBattery, Settings.lockDisplayOffPower, UPower.onBattery)
     // The unlocked monitor turned the displays off and no input came since.
     property bool offForInactivity: false
     property bool rearmingInactive: false
@@ -167,11 +175,30 @@ Scope {
     // every timeout change so the new value applies.
     property bool rearming: false
 
-    // Applications hold org.freedesktop.ScreenSaver idle inhibitors (GF-016; set from shell.qml, the menu bridge's
-    // screensaver lines; false without a bridge). While true the screen neither dims nor locks on idle, as on macOS
-    // while a video plays; a manual lock, the lid and the lock before sleep are unaffected.
-    property bool busInhibited: false
-    onBusInhibitedChanged: console.info("grassfield-idle: " + (busInhibited ? "idle inhibited by an application (org.freedesktop.ScreenSaver)" : "no application inhibits idle (org.freedesktop.ScreenSaver)"))
+    // Applications hold org.freedesktop.ScreenSaver idle inhibitors (GF-016: the menu bridge serves them to the UI, which
+    // renews a lease here while one is held: `idle inhibit <seconds>`, IdleModel.inhibitLeaseMs). While true the screen
+    // neither dims nor locks on idle, as on macOS while a video plays; a manual lock, the lid and the lock before sleep are
+    // unaffected. The lease ends by itself (the UI renews it every IdleModel.INHIBIT_RENEW_MS while the inhibitor lasts), so
+    // a UI that stopped or crashed cannot keep the idle lock off for longer than one lease.
+    readonly property bool busInhibited: inhibitLease.running
+    onBusInhibitedChanged: console.info("grassfield-idle: " + (busInhibited ? "idle inhibited by an application (org.freedesktop.ScreenSaver, through the shell)" : "no application inhibits idle (org.freedesktop.ScreenSaver)"))
+
+    // Sets or ends the lease: `seconds` 0 ends it, anything else is bounded by IdleModel.inhibitLeaseMs.
+    function inhibitFor(seconds: int): string {
+        const ms = IdleModel.inhibitLeaseMs(seconds);
+        if (ms === 0) {
+            inhibitLease.stop();
+            return "ok";
+        }
+        inhibitLease.interval = ms;
+        inhibitLease.restart();
+        return "ok";
+    }
+
+    Timer {
+        id: inhibitLease
+        onTriggered: console.info("grassfield-idle: the screen saver inhibitor lease ended without renewal")
+    }
 
     IdleMonitor {
         id: monitor
@@ -433,53 +460,48 @@ Scope {
         onResumed: resumeWake.restart()
     }
 
-    // Dim layer: no input region, so pointer motion reaches the compositor and counts as activity.
-    Variants {
-        model: Quickshell.screens
-
-        // Quickshell qmltypes mark PanelWindow uncreatable (metadata quirk); suppress just this warning.
-        // qmllint disable uncreatable-type
-        PanelWindow {
-            // qmllint enable uncreatable-type
-            id: win
-
-            required property ShellScreen modelData
-
-            screen: modelData
-            visible: root.dimmed || shade.opacity > 0
-            anchors {
-                top: true
-                bottom: true
-                left: true
-                right: true
-            }
-            exclusionMode: ExclusionMode.Ignore
-            focusable: false
-            color: "transparent"
-            WlrLayershell.layer: WlrLayer.Overlay
-            WlrLayershell.namespace: "grassfield-idle-dim"
-            WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-            // qmllint disable missing-type
-            mask: Region {}
-            // qmllint enable missing-type
-
-            Rectangle {
-                id: shade
-                anchors.fill: parent
-                color: Tokens.colorDark.shadow
-                opacity: root.dimmed ? Tokens.idleDimOpacity : 0
-
-                Behavior on opacity {
-                    NumberAnimation {
-                        duration: Appearance.duration(root.dimmed ? Tokens.idleDimFade : Tokens.motionFast)
-                    }
-                }
-            }
+    // Dim layer (IdleDim.qml): no input region, so pointer motion reaches the compositor and counts as activity. Its windows exist only
+    // while the screens dim and for the fade that follows (ADR-0041 S2: no layer surface per output kept by the security
+    // process the rest of the time; display only, nothing locks or waits for it).
+    property bool dimShown: false
+    onDimmedChanged: {
+        if (root.dimmed) {
+            dimHide.stop();
+            root.dimShown = true;
+        } else {
+            dimHide.restart();
         }
     }
+    Timer {
+        id: dimHide
+        interval: Appearance.duration(Tokens.motionFast) + 100
+        onTriggered: root.dimShown = root.dimmed
+    }
 
+    LazyLoader {
+        id: dimLayer
+        active: root.dimShown
+        source: Qt.resolvedUrl("IdleDim.qml")
+    }
+    // The dim's level follows `dimmed` once the windows exist (they are created at false: the dim fades in).
+    Binding {
+        target: dimLayer.item
+        property: "dimmed"
+        value: root.dimmed
+        when: dimLayer.item !== null
+    }
+
+    // On the security instance only (ADR-0041 S2).
     IpcHandler {
         target: "idle"
+
+        // The UI's lease of the applications' org.freedesktop.ScreenSaver inhibitors (shell/services/LockClient.js): `seconds`
+        // bounded by IdleModel.inhibitLeaseMs, 0 ends it. Answers "ok". Only ever keeps the idle dim and lock from starting
+        // for that long, as an application's own Wayland idle inhibitor does; a manual lock, the lid and the lock before sleep
+        // are unaffected.
+        function inhibit(seconds: int): string {
+            return root.inhibitFor(seconds);
+        }
 
         // Test hook (dev only, else "refused"): idle state as JSON.
         function status(): string {

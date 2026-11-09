@@ -241,3 +241,19 @@ function prepareForSleep(line) {
     var m = String(line || "").match(/org\.freedesktop\.login1\.Manager\.PrepareForSleep \((true|false),?\)/);
     return m ? m[1] === "true" : null;
 }
+
+// ---- The applications' org.freedesktop.ScreenSaver inhibitors, leased by the UI (ADR-0041 step 1, S2) ----
+// The menu bridge serves those inhibitors to the UI process; the idle module runs in the security process. The UI renews a
+// lease every INHIBIT_RENEW_MS while an application holds one (`idle inhibit <seconds>`), and the lease ends by itself
+// INHIBIT_MAX_SECONDS at most after the last renewal: a UI that stopped or crashed while a video played keeps the idle lock
+// off for one lease at most, never for good.
+var INHIBIT_RENEW_MS = 60000;
+var INHIBIT_MAX_SECONDS = 150;
+
+// The lease in ms for `idle inhibit <seconds>`: 0 (ends it) for 0, a negative value or anything that is not a whole number;
+// otherwise bounded by INHIBIT_MAX_SECONDS.
+function inhibitLeaseMs(seconds) {
+    if (typeof seconds !== "number" || !isFinite(seconds) || Math.floor(seconds) !== seconds || seconds <= 0)
+        return 0;
+    return Math.min(seconds, INHIBIT_MAX_SECONDS) * 1000;
+}

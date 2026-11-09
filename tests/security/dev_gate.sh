@@ -69,4 +69,23 @@ if [[ $sleeps =~ ^[0-9]+$ ]]; then
 else
   echo "SKIP: dev gate sleep cases (/sys/power/suspend_stats/success unreadable here)"
 fi
+
+# ADR-0041 S2 (the opus review of 77a0ceb3, MINOR-2): a restarted security process whose marker says "locked" publishes
+# "locking" as its first state, never "unlocked" (the first publication comes after the restore, explicitly).
+printf 'locked\n' >"$marker"
+out=$(env -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE -u DISPLAY -u DBUS_SESSION_BUS_ADDRESS \
+  -u GRASSFIELD_DEV -u GRASSFIELD_DEV_ALLOW_PAM -u GRASSFIELD_VISUAL_FIXTURES DEV_GATE_EXPECT=slept GRASSFIELD_SESSION=1 \
+  HOME="$tmp/home" GRASSFIELD_STATE_HOME="$tmp/state" GRASSFIELD_CONFIG_HOME="$tmp/config" \
+  XDG_RUNTIME_DIR="$tmp/runtime" XDG_CACHE_HOME="$tmp/cache" \
+  QT_QPA_PLATFORM=offscreen QML_IMPORT_PATH="$root/ui:$root/.dev/build/qml" GRASSFIELD_LANG=en \
+  GRASSFIELD_TRANSLATIONS_DIR="$root/.dev/translations" \
+  timeout 60 qs -p "$tmp/cfg" --no-color 2>&1) || true
+first=$(grep -m1 -o 'grassfield-lock: published [a-z]* ([a-z]*, beat [0-9]*)' <<<"$out")
+if [[ $first == "grassfield-lock: published locking (start, beat 1)" ]] && grep -q "dev-gate: PASS" <<<"$out"; then
+  echo "PASS: dev gate restart with a locked marker -> the first published state is locking (beat 1), never unlocked"
+else
+  echo "FAIL: dev gate restart with a locked marker: first publication '${first:-none}'"
+  fail=1
+fi
+rm -f "$marker"
 exit $fail

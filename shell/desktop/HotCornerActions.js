@@ -5,12 +5,12 @@
 
 const ACTIONS = ["none", "overview", "notifications", "apps", "lock"];
 
-// IPC target and function of each action.
+// IPC target and function of each action on this shell instance. "lock" is not one: the session lock lives in the security
+// process (ADR-0041 S2), and the corner asks it through SessionState.requestLock (in process, then LockClient over IPC).
 const IPC = {
     overview: ["overview", "toggle"],
     notifications: ["notifications", "toggleCenter"],
-    apps: ["apps", "toggle"],
-    lock: ["lock", "lock"]
+    apps: ["apps", "toggle"]
 };
 
 // Action name clamped to the enum; unknown values mean "none".
@@ -18,10 +18,12 @@ function normalize(action) {
     return ACTIONS.indexOf(action) >= 0 ? action : "none";
 }
 
-// Actions that need the corner's screen and so are called in-process (the IPC handler takes no
-// argument): HotCorners calls Notifications.toggleCenter(screen) itself.
+// Actions called in-process: "notifications" needs the corner's screen (the IPC handler takes no argument), HotCorners calls
+// Notifications.toggleCenter(screen) itself; "lock" goes to SessionState.requestLock("corner"), which LockClient sends to the
+// security process (ADR-0041 S2).
 function isDirect(action) {
-    return normalize(action) === "notifications";
+    const name = normalize(action);
+    return name === "notifications" || name === "lock";
 }
 
 // argv of the IPC call for an action against the shell process `pid`, or null for none and for
@@ -33,9 +35,13 @@ function command(action, pid) {
 }
 
 // No firing while the session is locked (every target refuses then too) or while the Notification Center that the
-// "notifications" action toggles is open.
-function isBlocked(action, notificationsOpen, locked) {
-    return locked === true || (normalize(action) === "notifications" && notificationsOpen === true);
+// "notifications" action toggles is open. The "lock" action is blocked by the lock only while it is confirmed
+// (`lockConfirmed`, SessionState.lockConfirmed; absent means confirmed): while the UI reads locked only because the security
+// process is down, the corner still sends its lock request (ADR-0041 S2, the opus review of 77a0ceb3, MAJOR-1).
+function isBlocked(action, notificationsOpen, locked, lockConfirmed) {
+    if (locked === true && (normalize(action) !== "lock" || lockConfirmed !== false))
+        return true;
+    return normalize(action) === "notifications" && notificationsOpen === true;
 }
 
 // {x, y} of `hyprctl cursorpos -j` (the pointer in layout coordinates), null for anything else.

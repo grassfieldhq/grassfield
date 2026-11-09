@@ -190,10 +190,12 @@ does not check its gate.
 <!-- ipc-inventory:begin -->
 | Target | Functions | Class | Caller, or why it is gated |
 |---|---|---|---|
-| lock | lock | action | SUPER+CTRL+Q, screen corner, Grassfield menu (in process). Only ever locks |
-| lock | lid | action | lid switch: `config/hypr/grassfield/system.lua` → `/usr/lib/grassfield/grassfield-lid closed` (D-4). Only ever locks; `docked` in clamshell mode |
+| lock | lock | action | on the security instance (ADR-0041 S2, `qs ipc -p /usr/share/grassfield/shell/security.qml`): SUPER+CTRL+Q, Omarchy's sleep lock through the stand-in (`packaging/shims/omarchy-shell lock lock`), and the UI's requests (Grassfield menu, screen corner, Search) through `shell/services/LockClient.js`. Only ever locks |
+| lock | lid | action | on the security instance: lid switch: `config/hypr/grassfield/system.lua` → `/usr/lib/grassfield/grassfield-lid closed` (D-4). Only ever locks; `docked` in clamshell mode |
+| lock | state | action | on the security instance: `packaging/bin/grassfield-security-status`. `unlocked` or `locked` only (ADR-0010 S3; `locking` answers `locked`), never private state; read-only. The UI reads the published state file instead ("Lock state across processes") |
 | lock | status, devReload, devPauseOwnershipCheck, devForgeUnlockedAnswer, devLockView | dev | `reload_locked.sh`, `l2_wrong_password.sh`; the pause widens the foreign-release window |
-| idle | status, devSleep, devDisplayOff, devAutoSleep | dev | `reload_locked.sh`, `lock_privacy.sh`; `devAutoSleep` shortens the automatic sleep delay (the dev session never suspends) |
+| idle | inhibit | action | on the security instance: the UI's lease of the applications' org.freedesktop.ScreenSaver inhibitors, which the menu bridge serves to the UI (`shell/services/LockClient.js`: 150 s, renewed every 60 s while one is held, 0 ends it; the security side bounds it at 150 s, `IdleModel.inhibitLeaseMs`). Only ever keeps the idle dim and lock off for one lease, as an application's own Wayland idle inhibitor does; a manual lock, the lid and the lock before sleep are unaffected; a UI that crashed cannot keep it on |
+| idle | status, devSleep, devDisplayOff, devAutoSleep | dev | on the security instance: `reload_locked.sh`, `lock_privacy.sh`; `devAutoSleep` shortens the automatic sleep delay (the dev session never suspends) |
 | saver | status, devDelay, devShow | dev | the screen saver's nested checks (ADR-0032): `devDelay` arms it after a test's delay, `devShow` shows it at once (refused while locked); off in a dev session otherwise |
 | polkit | status | dev | registration state (the journal has it in a real session) |
 | secrets | state | dev | the secret sheets' state (ADR-0035 D-9, step 9b): the bridge connection, the name's state, counts of the shown, held, waiting and lingering requests; never a requester or a text (`tests/security/secret_bridge.sh`) |
@@ -243,7 +245,7 @@ does not check its gate.
 | capabilities | status, devBlock | dev | visual tests wait on `status`; `packaging/bin/grassfield-shell-watchdog` asks `status` as the shell's liveness question (ADR-0041 step 6a) and reads no answer: any answer, this `refused` of a real session included, is the GUI thread answering, so the gate stays and nothing is returned to it. `devBlock` holds the GUI thread 1 to 300 s (the probe's nested proof) |
 | session | cover, lift | action | `packaging/bin/grassfield-session-end` once every window has gone (ADR-0040 ID-10): `cover` brings up the exit cover, one opaque fade to the ground over every output (it answers the fade's length and lifts itself after `session.exitCoverHoldMs`), `lift` takes it down when the session could not be ended. Neither ends the session; another process of the user can hide the desktop for that long at most |
 | session | state | dev | the exit cover's nested check (`shown` or `hidden`) |
-| security | state, heartbeat | action | the security process's own target (`shell/security.qml`, ADR-0041 step 1 S1, a second `qs` instance at `/usr/share/grassfield/shell/security.qml`): what it hosts (`starting` at S1) and a sequence number; read by `packaging/bin/grassfield-security-status` and the S1 measurements; never private state, nothing locks or unlocks |
+| security | state, heartbeat | action | the security process's own target (`shell/security.qml`, ADR-0041 step 1, a second `qs` instance at `/usr/share/grassfield/shell/security.qml`): what it hosts (`starting` at S1, `lock idle` since S2) and the lock's public state with the publisher's sequence number (`locked 42`); read by `packaging/bin/grassfield-security-status` and the measurements; never private state, nothing locks or unlocks |
 | stages | activate, newStage | action | SUPER+ALT+1..4 (the n-th recent stage forward), SUPER+ALT+S (focused window to a stage of its own); they do nothing while Stages is off |
 | stages | status, enable | dev | `tests/visual/scenarios/stages.sh`; `enable` changes the persisted setting |
 | bartone | status | dev | visual tests |
@@ -275,6 +277,19 @@ the passphrase on its standard output to udiskie, its parent (never to a termina
 
 ## Lock coverage: restart, Omarchy's sleep-lock, failing inhibitor (GF-030, D-12)
 macOS model: the screen always locks before sleep, and the lock never silently goes away.
+- Since ADR-0041 S2 the lock, idle and the sleep inhibitor run in `grassfield-security.service` (`Restart=always`,
+  `RestartSec=1`, 5 starts in 300 s): its `OnFailure=omarchy-sleep-lock.service` arms Omarchy's sleep lock after every
+  failure, the sleep-lock gate below asks its state alone, and the stand-in's `lock lock` starts it. What this section says
+  of "the shell" holding the lock, the inhibitor or the lock key's target, before S2, is now the security process's; the
+  UI's unit keeps its restart and the failure counter only (it holds no inhibitor and no lock). At its start limit the
+  compositor keeps the lock with no client: closing and opening the lid or a sleep (the stand-in resets and starts the
+  unit, which restores the lock from the marker) bring it back; on a desktop without sleep a TTY remains (SQ-1 B's known
+  limit). Unlocked, every lock request ends in a locked session (the opus review of 77a0ceb3, MAJOR-1): the lock key hands
+  a request the security process does not answer within 5 s to the stand-in (`bindings.lua`, a real session only), as
+  `grassfield-lid` does; the Grassfield menu, its Log Out, Restart and Shut Down confirmations, Search and the lock corner
+  stay open while the UI reads locked only because the state is missing, unreadable or stale after an `unlocked`
+  (`SessionState.refusesConfirmed`, "Lock state across processes"), and `LockClient` hands their request to the stand-in
+  (a real session). Only the idle lock is missing until then.
 - `grassfield-shell.service`: `Restart=always` (was `on-failure`: systemd does not restart a unit that exits 0 or is
   stopped by SIGTERM/SIGINT/SIGHUP/SIGPIPE), `RestartSec=1`, start limit 10 starts in 5 minutes (ADR-0041 step 1a: the
   backstop of a crash loop; the first limit, 10 in 30 s, needed a crash within 2 s of each start and never tripped the
@@ -414,6 +429,18 @@ Read in the sources (Quickshell v0.3.1, `quickshell-mirror/quickshell@v0.3.1`; H
   `unlock_and_destroy` sets it false (`src/protocols/SessionLock.cpp`). The session stays locked.
 - SIGTERM: Quickshell installs crash handlers for SIGSEGV/SIGABRT/SIGFPE/SIGILL/SIGBUS/SIGTRAP only
   (`src/crash/handler.cpp`); SIGTERM's default action ends the process at once, which Hyprland sees as a dead client.
+  Since ADR-0041 S2 both units set `QS_DISABLE_CRASH_HANDLER=1` (the integrator's nested run of e1a3ff4c): with the
+  handler a crash 10 s or more after a start left the crashed process alive under a relaunched child, invisible to systemd
+  (no restart, no `OnFailure=`); without it a crash ends the process on the signal, which Hyprland sees as a dead client
+  and keeps the lock for, and which systemd counts as a failure (unlike SIGTERM, which leaves the unit inactive):
+  `OnFailure=` runs, the unit restarts and the marker brings the lock back. Both units also set `LimitCORE=0` (the opus
+  delta review of 122f8d67): the crash is recorded in the journal and no core file is stored, since a core of the
+  security process may hold the typed password, and one of the UI the polkit and secret-sheet passwords. Exactly 0, the
+  hard limit included, never `0:infinity`: a hard limit above 0 lets a same-user process raise the soft one with prlimit,
+  crash the process and read the dump. The applications the shell starts (`uwsm-app --` from the Dock, Search and
+  Launchpad, a scope in the shell's process tree) inherit the hard limit of 0: their crashes still give a notice, but no
+  core file, a terminal opened from the Dock included (ADR-0041 S2: to revisit, by starting them through the user
+  manager).
 - Either way the restarted shell (`Restart=always`) finds the marker `locked` and takes the lock back.
 Expected: locked in both cases. NOT VERIFIED at runtime until the nested `graceful-exit` step of
 `tests/security/reload_locked.sh` runs (bare, outside the sandbox): (a) `kill -TERM`, (b) `qs kill --pid`; after each,
@@ -1434,10 +1461,28 @@ Display only: nothing below can lock, unlock, delay engaging the lock or keep it
   its first character, so one wrong password attempt. Owner check (L2, real session): with only an external keyboard,
   lock, unplug and replug the keyboard, then type the password; it must unlock at the first attempt.
   `tests/security/lock_keyboard_replaced.sh` (nested, bare) checks it in a session with no keyboard of its own and SKIPs
-  otherwise: the condition depends on the parent seat at nested start and cannot be produced through scripts/nestctl.
+  otherwise: the condition depends on the parent seat at nested start and cannot be produced through scripts/nestctl. It
+  SKIPs too when grassfield-compositor is not loaded (`nested-up: ... plugin none`): then the limit above applies, and
+  the integrator's keyboard-less run of S2 (e1a3ff4c), without the plugin, showed exactly it (every Escape after the
+  first burst lost, the field left filled; nothing reached another window, the session stayed locked), as main 8b04383c
+  did. With the plugin: NOT VERIFIED.
 - A foreign locker that takes over a live Grassfield lock and then dies (no release) leaves the session locked behind
   Hyprland's "lockscreen app died" screen (fail closed); Grassfield's own lock object is no longer used, so the session
-  can only be unlocked after the shell restarts (its crash recovery takes the dead lock over).
+  can only be unlocked after the security process restarts (its crash recovery takes the dead lock over).
+- ADR-0041 S2: a Quickshell bug that takes the security process down in a loop ends at its start limit with the
+  compositor's lock in place and no client: the lid or a sleep start it again, and unlocked any lock request does (the
+  lock key, the lid, the Grassfield menu, Search, the lock corner, through the stand-in); a desktop without sleep needs a
+  TTY once locked there. Meanwhile no idle lock runs. While it restarts the UI reads the session locked (refusals closed,
+  previews hidden) for up to 5 s plus its start, and the paths that only lock stay open.
+- ADR-0041 S2: a security process that hangs (alive, its event loop blocked) while the session is unlocked answers no lock
+  request and systemd does not restart it: the lock key's fallback and the UI reach a stand-in that finds the unit active
+  and waits, so nothing locks until it recovers (no watchdog of the security process yet; step 6a's covers the UI).
+- ADR-0041 S2: an upgrade from a build before S2 runs the earlier and the new halves until both restart: a UI that finds no
+  published state within 15 s restarts the security unit, and the stand-in (the lock key, the lid, a sleep) restarts a
+  security process that answers `security state` with S1's `starting`; a UI still running earlier code keeps its own lock
+  and idle until it restarts. `post_upgrade` asks for one log-out when the old version is 1.0.0rc7 or earlier.
+- ADR-0041 S2, ADR-0040 step 4a (3): the lock's still is decoded by Qt from the path it checked (no per-process restriction
+  to the JPEG plugin, no descriptor handed over); a race between the check and the decode needs code running as the user.
 
 ## The security process (ADR-0041 step 1; the owner's SQ-1 B, ADR-0010 "Separate security process")
 macOS keeps loginwindow (the lock screen and authorization) apart from the Dock and the menu bar; Grassfield moves its
@@ -1457,11 +1502,67 @@ same directory and the modules move without moving a file), one step at a time u
   `autostart.lua` starts it just before the shell without waiting for it. Every security module stays in the UI: nothing
   about the lock, the polkit agent, idle or sleep changes at S1. Tests: `tests/security/security_unit.sh` (static),
   `ipc_inventory.sh` (the target and its caller), `unit_restart_limits.sh`, `session_services.sh`.
-- **S2:** the lock, idle and the sleep inhibitor move together, every `Lock.lock` caller switches to the security instance,
-  `OnFailure=omarchy-sleep-lock.service` and the sleep-lock gate key on the security unit, the UI reads the lock state
-  fail closed (the pushed state OR the compositor's own lock signal OR no state, a stale heartbeat or a stopped security
-  unit). **S3:** the polkit agent. **S4:** safe mode. The invariant of each state (who locks, either process down, sleep)
-  is the table at the end of ADR-0041 step 1.
+- **S2 (built, ADR-0041 "S2 as built"):** the lock, idle and the sleep inhibitor run in the security process only
+  (`shell/security/host/SecurityHost.qml`); the UI imports neither module and asks for every lock over IPC on the security
+  instance (`shell/services/LockClient.qml`); `OnFailure=omarchy-sleep-lock.service`, the sleep-lock gate and the
+  stand-in's `lock lock` key on `grassfield-security.service`; the UI reads the lock state fail closed ("Lock state across
+  processes" below). The lock and idle use no UI module and only the read-only `qs.services` types `Settings`,
+  `VisualFixtures`, `FixedTime` and `WallClock` (`tests/security/security_process_scan.py`); the sleep notice goes
+  through the notification server's D-Bus interface (`busctl --user --auto-start=no`), the wallpaper through the lock's own
+  bounded reader of `wallpaper.json`, the account picture through `services/image-copy.py file`. In the dev session
+  `scripts/dev/shell-run.sh` starts it beside the UI (`.dev/security.pid`, `.dev/security.log`; `--security` restarts it
+  alone). **S3:** the polkit agent. **S4:** safe mode. The invariant of each state (who locks, either process down,
+  sleep) is the table at the end of ADR-0041 step 1.
+
+### Lock state across processes (ADR-0041 S2; ADR-0010 risk 2)
+- The security process publishes one file, `$XDG_RUNTIME_DIR/grassfield-lock-state-<compositor instance>` (the marker's
+  instance id; `shell/lib/LockState.js` is the one definition): one line of JSON, `{v, state, seq, writer, displaysOff,
+  motion}`, `state` one of `unlocked`, `locking` (requested, not confirmed by the compositor) and `locked` (confirmed; also
+  while a password is checked and during the release fade). Written atomically on every change (before the compositor is
+  asked for the lock) and every 2 s with a new sequence number (`shell/security/lock/LockPublisher.qml`). Never private
+  state: no name, message, attempt count or typed text.
+- The UI (`shell/services/LockClient.qml`) watches the file and reads it every 2 s whatever the watch says; it never writes
+  it, and the security process reads nothing from the UI through it (no socket, no process per beat). `SessionState.locked`,
+  which every refusal reads (GF-116, "Show previews: When Unlocked", Overview, Switcher, the capture toolbar, the Dock's
+  reopen), is locked unless a state is known, fresh (a new beat, by sequence or by a new writer, within 5 s: a Timer, and a
+  synchronous read before deciding), says `unlocked`, and the compositor reports no lock (hyprland-lock-notify-v1 as the
+  clipboard helper reads it, `Clipboard.helperLocked`). A security process that is stopped, restarting, failed at its start
+  limit or hung writes no beat, so the UI reads locked within 5 s. The first read is no beat: a file may be the last line
+  of a dead writer, so only a second, different write proves a live one (a UI started next to a dead writer's `unlocked`
+  reads locked). `SessionState.displaysOff` (the polkit agent's device rule) is true without a fresh state.
+- `SessionState.lockConfirmed` (`LockState.uiLockConfirmed`) is true when the compositor reports a lock or the last state
+  published, fresh or stale, is `locking` or `locked`; false while the UI reads locked only because the state is missing,
+  unreadable or stale after an `unlocked` (the security process stopped while the session was unlocked). The paths that
+  only lock or end the session ask `SessionState.refusesConfirmed` instead of `refuses`: the Grassfield menu
+  (`Popups.open("system")`), a confirmation of Log Out, Restart or Shut Down (`PopupKinds.endsOrLocks`), `Search.show`
+  (its Lock Screen command; the clipboard view keeps `refuses`) and the lock corner (`HotCornerActions.isBlocked`). They
+  open while the lock is not confirmed, so that a lock request reaches the stand-in, and close once it is; every other
+  surface keeps refusing. Refusing is right for anything that is not a lock request; never for a lock request.
+- A push the UI missed is corrected by the next beat or the UI's own read (2 s); until then the compositor's signal reads
+  locked once the lock is drawn, and the lock surface covers every output and holds the keyboard whatever the UI reads.
+  With the clipboard history off the helper does not run and that signal is absent: the push and the beat alone.
+- A same-user process can write the file, as it can call any IPC target: a forged `unlocked` can make the UI's own
+  refusals open while the session is locked, never the session (the compositor keeps input and rendering on the lock
+  surfaces). Until S3 it also reaches the two security modules that stay in the UI: the polkit agent's device rule
+  (`AuthAgent.qml`, `answerable` reads `SessionState.locked` and `displaysOff`), so a touch on a fingerprint reader at the
+  lock screen could answer a polkit request that same-user code started (the request's sheet is under the lock surface,
+  unseen), and the secret sheets' hold (`SecretAgent.qml` `heldWhy`/`heldByLock`, the same inputs). It cannot be closed in
+  the UI: every input it has besides the file (the compositor's signal through the clipboard helper, which holds both
+  while the history is on) is as reachable to same-user code. Same-user code is out of scope (above), as it was before
+  S2 for the marker and the IPC targets; S3 moves the polkit agent into the security process, where it reads the lock in
+  process and this goes away.
+- The UI asks for a lock with `lock lock` on the security instance (`qs ipc -p <shell dir>/security.qml`), each try
+  bounded at 5 s, retried every 250 ms for 10 s while it does not answer, and in a real session hands the request once to
+  the stand-in, which starts a stopped security unit. A UI that finds no published state 15 s after its start restarts the security unit once (an
+  upgrade from a build before S2 leaves the earlier, empty process running; or it is hung): never in a dev session, never
+  past its start limit; the restarted process takes any lock back from the marker.
+- The applications' org.freedesktop.ScreenSaver inhibitors, which the menu bridge serves to the UI, reach idle as a lease:
+  `idle inhibit 150`, renewed every 60 s while one is held, `0` when none; the security side bounds it at 150 s
+  (`IdleModel.inhibitLeaseMs`), so a UI that crashed during a video keeps the idle lock off for one lease at most.
+- Tests: `tests/security/tst_lockstate.qml` with `lockstate_mutants.sh` (21 mutants), `lock_client.sh` (the real
+  `LockClient` offscreen, two starts next to an existing file, 6 mutants), `security_process_scan.py` (through
+  `security_unit.sh`, 21 mutants), `lock_surfaces.sh` (the unconfirmed lock paths), `lock_request_env.sh` (the lock key's
+  fallback), `dev_gate.sh` (the first publication); nested: `reload_locked.sh ui-crash`, `ui-down-sleep`, `ui-down-idle`.
 
 ## Implementation (M2)
 | Path | Role |
@@ -1471,8 +1572,12 @@ same directory and the modules move without moving a file), one step at a time u
 | `shell/security/LockController.qml` | Auth controller over an injected PAM backend: one prompt answered, 30 s timeout, secret dropped on every outcome |
 | `shell/security/PasswordField.qml` | Shared password entry (Password echo, sensitive-data hints, plain-text placeholder, return arrow) |
 | `shell/security/lock/Lock.qml` | Singleton: `WlSessionLock`, `PamContext` (password; fingerprint only if its PAM file exists, paced: "Fingerprint pacing"), crash marker, IPC `lock` |
-| `shell/security/lock/LockView.qml` | Lock surface (display only): the output's wallpaper, sharp (the still LockStill decoded, else its colour or `WallpaperArt`), the banded scrim, date and clock, avatar/initials, name, dark frosted field, one hint line (gate A2, see Decisions); backdrop, name and picture taken once (ADR-0040 step 4a) |
-| `shell/security/lock/LockStill.qml` | Per output (display only): the lock's backdrop decided while unlocked from `WallpaperState.lockBackdrop`; a picture checked (`/usr/bin/realpath -m`: a plain cache name in the real prepared or video folder; `/usr/bin/stat %f`: a regular file of at most `wallpaper.lockStillMaxBytes`) and decoded into Qt's pixmap cache before any lock (ADR-0040 ID-7, ADR-0016 W8) |
+| `shell/security/lock/LockView.qml` | Lock surface (display only): the output's wallpaper, sharp (the still LockStill decoded, else its colour or `GrassfieldArtwork`), the banded scrim, date and clock, avatar/initials, name, dark frosted field, one hint line (gate A2, see Decisions); backdrop, name and picture taken once (ADR-0040 step 4a) |
+| `shell/security.qml`, `shell/security/host/SecurityHost.qml` | The security process's root (ShellRoot, one SecurityHost, the `security` target) and what it hosts: the Translator and the appearance settings the lock follows, Idle (with SleepInhibitor) and the Lock singleton (ADR-0041 S2) |
+| `shell/security/lock/LockPublisher.qml`, `shell/lib/LockState.js` | The lock state the UI reads: one file pushed on every change and with a heartbeat every 2 s; the format, the reader and the UI's fail-closed reading (pure, shared) |
+| `shell/security/lock/LockWallpaper.qml`, `LockAvatar.qml` | The lock's own reader of `wallpaper.json` (bounded, watched) and its account picture made by `services/image-copy.py file` (display only) |
+| `shell/services/LockClient.qml`, `LockClient.js` | The UI's side: reads the published state (SessionState.locked follows it), asks the security process to lock (`lock lock`), leases the screen saver inhibitors (`idle inhibit`) |
+| `shell/security/lock/LockStill.qml` | Per output (display only): the lock's backdrop decided while unlocked from `LockWallpaper.lockBackdrop`; a picture checked (`/usr/bin/realpath -m`: a plain cache name in the real prepared or video folder; `/usr/bin/stat %f`: a regular file of at most `wallpaper.lockStillMaxBytes`) and decoded into Qt's pixmap cache before any lock (ADR-0040 ID-7, ADR-0016 W8) |
 | `shell/security/lock/LockStills.qml` | The display data the lock surfaces take (one LockStill per output, the account picture decoded ahead), created by `Lock.qml` at run time so that it can never keep the lock from loading |
 | `shell/security/polkit/` | `AuthAgent` (PolkitAgent + overlay window, IPC `polkit status`), `AuthDialog`, `AuthDialogModel` |
 | `shell/security/idle/` | `Idle` (IdleMonitor, dim layer, idle lock, display power-off on the lock screen, IPC `idle`), `SleepInhibitor` (delay inhibitor, PrepareForSleep watcher, retry and notice, logind budget), `IdleModel.js` |
@@ -1491,7 +1596,8 @@ same directory and the modules move without moving a file), one step at a time u
 | `tests/security/pam_audit.sh` | Read-only PAM attempt audit over every Quickshell instance log of this tree (sourced by `reload_locked.sh`) |
 | `tests/security/nested_ready.sh`, `nested_ready_unit.sh` | Readiness wait of `reload_locked.sh` and `lock_privacy.sh` (bounded, `READY_SECONDS`, default 60): GF-REF listed and a lock state from the shell, before any step and after each shell restart; an empty answer is never a state, a timeout FAILs. Offline test with stub `hyprctl` and `qs` |
 
-IPC (all on the shell instance; classes in "IPC surface"): `lock lock` → `ok` / `already-locked` / `refused: missing-pam`
+IPC (the `lock` and `idle` targets on the security instance since ADR-0041 S2, `qs ipc -p
+/usr/share/grassfield/shell/security.qml`; `polkit` on the shell instance until S3; classes in "IPC surface"): `lock lock` → `ok` / `already-locked` / `refused: missing-pam`
 (when already locked, the session lock is re-verified, see "Lock ownership"); `lock lid` → the same or `docked`. Dev
 hooks, only in a dev session (else `refused`): `lock status` → `unlocked|locking|locked|authenticating|releasing`;
 `lock devReload` → `reloading` (soft reload), `lock devPauseOwnershipCheck` → `paused` (periodic ownership check off

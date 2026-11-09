@@ -203,6 +203,14 @@ TestCase {
     function test_theLockBlocksEveryCorner() {
         verify(Actions.isBlocked("overview", false, true));
         verify(Actions.isBlocked("lock", false, true));
+        // ADR-0041 S2 (review MAJOR-1): the lock corner still fires while the UI reads locked only because the security
+        // process is down (the lock is not confirmed); every other action stays blocked; absent means confirmed.
+        verify(!Actions.isBlocked("lock", false, true, false));
+        verify(Actions.isBlocked("lock", false, true, true));
+        verify(Actions.isBlocked("lock", false, true, undefined));
+        verify(Actions.isBlocked("overview", false, true, false));
+        verify(Actions.isBlocked("notifications", false, true, false));
+        verify(Actions.isBlocked("apps", false, true, false));
         verify(!Actions.isBlocked("overview", true, false));
         verify(Actions.isBlocked("notifications", true, false));
         verify(!Actions.isBlocked("notifications", false, false));
@@ -244,6 +252,9 @@ TestCase {
         verify(Actions.isDirect("notifications"));
         verify(!Actions.isDirect("overview"));
         compare(Actions.command("notifications", 7), null);
+        // ADR-0041 S2: the lock lives in the security process; the corner asks it in process (SessionState.requestLock).
+        verify(Actions.isDirect("lock"));
+        compare(Actions.command("lock", 7), null);
     }
 
     function test_actionsClampToEnum() {
@@ -254,7 +265,7 @@ TestCase {
 
     function test_commands() {
         compare(Actions.command("overview", 42).join(" "), "qs ipc --pid 42 call overview toggle");
-        compare(Actions.command("lock", 7).join(" "), "qs ipc --pid 7 call lock lock");
+        compare(Actions.command("apps", 7).join(" "), "qs ipc --pid 7 call apps toggle");
         compare(Actions.command("none", 7), null);
         compare(Actions.command("bogus", 7), null);
     }

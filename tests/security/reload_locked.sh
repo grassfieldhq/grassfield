@@ -1,18 +1,29 @@
 #!/usr/bin/env bash
-# Nested scenario (L1 only): the session lock survives soft reloads and shell crashes (R12, gate L1).
+# Nested scenario (L1 only): the session lock survives soft reloads and crashes (R12, gate L1).
 # Never targets the owner's session. Never types a password and never presses Return: the probe
 # words typed with wtype land in the lock screen's field without being submitted (no PAM attempt).
 #
+# The lock lives in the security process (ADR-0041 step 1, S2: `qs -p shell/security.qml`, started beside the UI by
+# scripts/dev/shell-run.sh, record .dev/security.pid, log .dev/security.log): every `lock` and `idle` IPC call below goes
+# there, and the crash steps (l1, forged-crash, graceful-exit, foreign-restart) kill and restart THAT process
+# (`shell-run.sh --security`, as its unit's Restart= would). The UI (`qs -p shell`, .dev/shell.pid) holds no lock: the
+# ui-* steps crash or stop it and check that nothing about the lock changes.
+#
 # Usage: tests/security/reload_locked.sh [step...]   (default: every step, in this order)
 #   setup           foot probe window in the nested session; typing reaches it while unlocked (control)
-#   nowatch         touching a shell QML file does not reload the configuration (file watcher off)
-#   lock            lock through IPC
+#   nowatch         touching a shell QML file reloads neither process (file watcher off)
+#   ui-down-sleep   (S2) the UI stopped while unlocked: the before-sleep path (dev hook `idle devSleep`) still locks,
+#                   nothing reaches foot; the UI is started again (it reads the session locked)
+#   lock            lock through IPC (already locked after ui-down-sleep: `already-locked`)
+#   ui-crash        (S2, ADR-0010's crash-injection test, DT-01) SIGSEGV to the UI while locked -> Hyprland keeps LOCK,
+#                   the same security process keeps its lock (no lockdead screen: its client is alive and answers
+#                   `locked`), nothing reaches foot; the restarted UI reads the session locked
 #   marker-missing  remove the crash marker, soft reload  -> still locked, nothing reaches foot
 #   marker-unlocked forge the marker to "unlocked", soft reload -> still locked, nothing reaches foot
-#   l1              kill -9 the shell -> nothing reaches foot; restart the shell -> locked again
-#   forged-crash    forge the marker to "unlocked", kill -9, restart -> the shell re-acquires the lock
-#   graceful-exit   DT-21 (SEC-18): SIGTERM, then `qs kill --pid`, while locked -> Hyprland keeps LOCK, nothing
-#                   reaches foot; the restarted shell is locked
+#   l1              kill -9 the security process -> nothing reaches foot; restart it -> locked again (DT-21 for S2)
+#   forged-crash    forge the marker to "unlocked", kill -9, restart -> the security process re-acquires the lock
+#   graceful-exit   DT-21 (SEC-18): SIGTERM, then `qs kill --pid`, to the security process while locked -> Hyprland keeps
+#                   LOCK, nothing reaches foot; the restarted security process is locked
 #   foreign-takeover (b) a foreign locker takes over the live Grassfield lock -> still locked; it
 #                   releases and exits -> Grassfield takes a fresh lock, nothing reaches foot
 #   foreign-restart (a) foreign locker holding the lock + marker forged "unlocked" + shell restart ->
@@ -40,6 +51,9 @@
 #   probe-cost      CPU of the shell and the nested Hyprland with the 1 s check (plain lock) and the 100 ms
 #                   check (a foreign locker holding the lock over Grassfield's); fails above +5 % CPU
 #   cleanup         close the foot probe window and any foreign locker (run after the default sequence)
+#   ui-down-idle    (S2, explicit only: about 75 s, on a fresh nested session before anything locks) the UI stopped while
+#                   unlocked, lock.idleMinutes set to 1 in the dev config: the idle lock still fires (security process),
+#                   nothing reaches foot; lock.idleMinutes back to 0 and the UI started again
 #
 # Foreign locker: tests/security/foreign_locker/ForeignLocker.qml (Quickshell WlSessionLock client,
 # released over its IPC). Hyprland 0.56.2 (misc.allow_session_lock_restore = true) hands a live lock
@@ -78,6 +92,9 @@ instances=$(hyprctl instances -j 2>/dev/null)
   || { echo "reload_locked: refusing: $sock is not the nested instance's socket" >&2; exit 2; }
 
 marker=$XDG_RUNTIME_DIR/grassfield-lock-${sig//[^A-Za-z0-9_.-]/_}
+# The process that holds the lock (ADR-0041 S2): its root (what its `qs ipc -p` names), log and record.
+lock_root=$root/shell/security.qml
+lock_log=$dev/security.log
 typed=$dev/reload-typed.txt
 foreign=$root/tests/security/foreign_locker/ForeignLocker.qml
 status=0
@@ -87,8 +104,9 @@ ready_secs=${READY_SECONDS:-60}
 . "$root/tests/security/nested_ready.sh"
 
 nested() { env WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" "$@"; }
-# Bounded: a stuck shell answers nothing (empty, never a state) instead of hanging the run.
-ipc() { nested timeout -k 2 10 qs ipc -p "$root/shell" call "$@" 2>/dev/null; }
+# Bounded: a stuck process answers nothing (empty, never a state) instead of hanging the run. The lock's and idle's targets
+# are on the security instance.
+ipc() { nested timeout -k 2 10 qs ipc -p "$lock_root" call "$@" 2>/dev/null; }
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; status=1; }
 # Captures are evidence only (no check reads them), so each has a deadline and a missing one is a note. grim waits for
@@ -124,7 +142,7 @@ wait_status() { # <expected> <seconds>
 # ready. Hyprland keeps the session locked meanwhile (the dead client's or the foreign locker's lock): the callers check
 # that separately (compositor_lock, no_leak).
 restarted_status() { # <seconds>
-  nested_ready "$sig" "$sock" "$root/shell" "$ready_secs" || { echo "not ready: $nested_ready_why"; return 1; }
+  nested_ready "$sig" "$sock" "$lock_root" "$ready_secs" || { echo "not ready: $nested_ready_why"; return 1; }
   wait_status locked "$1"
 }
 
@@ -189,8 +207,12 @@ no_leak() { # <word> <step>
   if grep -q "$1" "$typed" 2>/dev/null; then fail "$2: typed text reached the foot window ($1)"; else pass "$2: nothing reached the foot window"; fi
 }
 
-# Only a record that still matches its process (scripts/dev/pidfile.sh): a stale PID may name an owner process.
-shell_pid() { dev_live_pid "$dev/shell.pid"; }
+# Only a record that still matches its process (scripts/dev/pidfile.sh): a stale PID may name an owner process. The lock's
+# holder is the security process (ADR-0041 S2); the UI is the shell.
+lock_pid() { dev_live_pid "$dev/security.pid"; }
+ui_pid() { dev_live_pid "$dev/shell.pid"; }
+# The security process again, as its unit's Restart= would bring it back (the UI is left alone).
+restart_lock() { "$root/scripts/dev/shell-run.sh" --security; }
 
 step_setup() {
   : >"$typed"
@@ -227,12 +249,128 @@ step_setup() {
 }
 
 step_nowatch() {
-  local before after
+  local before after sbefore safter
   before=$(grep -c "Reloading configuration" "$dev/shell.log" 2>/dev/null)
-  touch "$root/shell/security/lock/LockView.qml"
+  sbefore=$(grep -c "Reloading configuration" "$lock_log" 2>/dev/null)
+  touch "$root/shell/security/lock/LockView.qml" "$root/shell/security.qml"
   sleep 3
   after=$(grep -c "Reloading configuration" "$dev/shell.log" 2>/dev/null)
+  safter=$(grep -c "Reloading configuration" "$lock_log" 2>/dev/null)
   if [[ $before == "$after" ]]; then pass "nowatch: a touched QML file did not reload the shell"; else fail "nowatch: the shell reloaded after a file change"; fi
+  if [[ $sbefore == "$safter" ]]; then pass "nowatch: a touched QML file did not reload the security process"; else fail "nowatch: the security process reloaded after a file change"; fi
+}
+
+# The UI's own reading of the lock, from its log: the start line names LockClient's state ("lock locked") and every change
+# of what it reads is logged ("the session reads locked").
+ui_reads_locked() { # <seconds>: 0 once the restarted UI logged its start with the lock state "locked"
+  local deadline=$((SECONDS + $1)) line
+  while ((SECONDS < deadline)); do
+    line=$(grep -m1 "grassfield-shell: started" "$dev/shell.log" 2>/dev/null)
+    if [[ -n $line ]]; then
+      [[ $line == *" lock locked "* ]] && return 0
+      grep -q "grassfield: the session reads locked" "$dev/shell.log" 2>/dev/null && return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+# ADR-0041 S2, ADR-0010's crash-injection test (DT-01): a crash of the UI while locked changes nothing about the lock.
+step_ui_crash() {
+  local s pid lockpid
+  s=$(wait_status locked 5) || { fail "ui-crash: precondition: status $s (run the lock step first)"; return; }
+  pid=$(ui_pid) || { fail "ui-crash: no live UI record (.dev/shell.pid)"; return; }
+  lockpid=$(lock_pid) || { fail "ui-crash: no live security process record (.dev/security.pid)"; return; }
+  dev_may_signal "$pid" || { fail "ui-crash: refusing to signal PID $pid"; return; }
+  [[ $pid != "$lockpid" ]] || { fail "ui-crash: the UI's record names the security process (PID $pid)"; return; }
+  # The UI writes no core (shell-run.sh: ulimit -c 0, as the units' LimitCORE=0). The integrator's nested run of 122f8d67,
+  # before that limit, saw the SIGSEGV'd UI still alive after 5 s: the kernel was writing its core (hundreds of MB) to
+  # systemd-coredump, and a process is gone only once its dump is written. Its Process children (inotifywait, gio monitor)
+  # were listed as if they kept it alive; they did not.
+  local core_limit
+  core_limit=$(awk '/^Max core file size/ {print $5 " " $6}' "/proc/$pid/limits" 2>/dev/null)
+  [[ $core_limit == "0 0" ]] && pass "ui-crash: the UI runs with no core file (soft and hard limit 0)" \
+    || fail "ui-crash: the UI's core file limit is '${core_limit:-unknown}' (want 0 0: scripts/dev/shell-run.sh ulimit -c 0)"
+  local t0=$SECONDS dumping=0
+  kill -SEGV "$pid"
+  for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  # A core being written: wait for the dump to end (at most 60 s more), and say so.
+  while kill -0 "$pid" 2>/dev/null && grep -qx $'CoreDumping:\t1' "/proc/$pid/status" 2>/dev/null && ((SECONDS - t0 < 65)); do
+    dumping=1
+    sleep 0.5
+  done
+  # Quickshell's crash handler would keep the crashed process alive under a relaunched child (QS_DISABLE_CRASH_HANDLER=1 in
+  # the units and in scripts/dev/shell-run.sh turns it off): named here if it ever comes back.
+  if kill -0 "$pid" 2>/dev/null; then
+    fail "ui-crash: the UI did not exit after SIGSEGV ($((SECONDS - t0)) s; state $(awk '/^State:/ {print $2 $3}' "/proc/$pid/status" 2>/dev/null); children: $(pgrep -P "$pid" -a 2>/dev/null | tr '\n' ';' | cut -c1-200); QS_DISABLE_CRASH_HANDLER in its environment: $(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -c '^QS_DISABLE_CRASH_HANDLER=1$'))"
+    # The later steps need a UI: this one is ended and replaced, so that one failure does not run the rest without it.
+    kill -KILL "$pid" 2>/dev/null
+    for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    "$root/scripts/dev/shell-run.sh"
+    return
+  fi
+  if ((dumping)); then
+    fail "ui-crash: the UI ended on SIGSEGV only after $((SECONDS - t0)) s in its core dump (the kernel hands the core to systemd-coredump whatever the limit; with a limit of 0 it must end at once)"
+  else
+    pass "ui-crash: the UI ended on SIGSEGV within $((SECONDS - t0)) s (no crash handler kept it alive, no core written)"
+  fi
+  sleep 0.5
+  echo "compositor after the UI's crash: $(compositor_lock)"
+  if compositor_locked; then pass "ui-crash: Hyprland still reports LOCK on every monitor"; else fail "ui-crash: the session is UNLOCKED after a crash of the UI"; fi
+  if [[ $(lock_pid) == "$lockpid" ]]; then pass "ui-crash: the security process is untouched (PID $lockpid)"; else fail "ui-crash: the security process changed or stopped"; fi
+  s=$(ipc lock status)
+  if [[ $s == locked ]]; then pass "ui-crash: the lock's client is alive and holds its lock (status locked: no lockdead screen)"; else fail "ui-crash: status '$s' after a crash of the UI"; fi
+  shot ui-crash-dead
+  no_leak uicrash "ui-crash (UI gone)"
+  "$root/scripts/dev/shell-run.sh"
+  if ui_reads_locked 60; then pass "ui-crash: the restarted UI reads the session locked"; else fail "ui-crash: the restarted UI did not log the session locked within 60 s (.dev/shell.log)"; fi
+  if [[ $(lock_pid) == "$lockpid" ]]; then pass "ui-crash: the UI's restart left the security process alone"; else fail "ui-crash: the UI's restart restarted the security process"; fi
+  s=$(wait_status locked 3) && pass "ui-crash: still locked after the UI's restart" || fail "ui-crash: status $s after the UI's restart"
+  shot ui-crash-restarted
+  no_leak uiback "ui-crash (UI restarted)"
+}
+
+# Stops the UI (SIGKILL: no clean exit) and waits until it is gone. 0 when it is.
+stop_ui() { # <step>
+  local pid
+  pid=$(ui_pid) || { fail "$1: no live UI record (.dev/shell.pid)"; return 1; }
+  dev_may_signal "$pid" || { fail "$1: refusing to signal PID $pid"; return 1; }
+  kill -9 "$pid"
+  for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  if kill -0 "$pid" 2>/dev/null; then fail "$1: the UI did not exit"; return 1; fi
+  return 0
+}
+
+# ADR-0041 S2: with the UI down and the session unlocked, a sleep still locks first (the inhibitor's before-sleep path,
+# through the dev hook: the dev session holds no logind inhibitor).
+step_ui_down_sleep() {
+  local s
+  s=$(ipc lock status)
+  [[ $s == unlocked ]] || { fail "ui-down-sleep: precondition: status '$s' (run it on a fresh nested session, before lock)"; return; }
+  stop_ui ui-down-sleep || return
+  echo "idle devSleep before -> $(ipc idle devSleep before)"
+  if s=$(wait_status locked 10); then pass "ui-down-sleep: the before-sleep path locked with the UI down (status $s)"; else fail "ui-down-sleep: status $s with the UI down"; fi
+  if compositor_locked; then pass "ui-down-sleep: Hyprland reports LOCK"; else fail "ui-down-sleep: Hyprland does not report LOCK"; fi
+  echo "idle devSleep after -> $(ipc idle devSleep after)"
+  no_leak uidownsleep "ui-down-sleep (UI down)"
+  "$root/scripts/dev/shell-run.sh"
+  if ui_reads_locked 60; then pass "ui-down-sleep: the started UI reads the session locked"; else fail "ui-down-sleep: the started UI did not log the session locked within 60 s"; fi
+}
+
+# ADR-0041 S2: with the UI down and the session unlocked, the idle lock still fires (lock.idleMinutes 1: the dim at 50 s,
+# the lock at 60 s without input). Explicit only (about 75 s).
+step_ui_down_idle() {
+  local s cfg=$dev/config/grassfield.json
+  s=$(ipc lock status)
+  [[ $s == unlocked ]] || { fail "ui-down-idle: precondition: status '$s' (run it on a fresh nested session, before anything locks)"; return; }
+  [[ -s $cfg ]] || { fail "ui-down-idle: no dev config ($cfg)"; return; }
+  stop_ui ui-down-idle || return
+  jq '.lock.idleMinutes = 1' "$cfg" >"$cfg.new" && mv "$cfg.new" "$cfg"
+  echo "lock.idleMinutes: $(jq '.lock.idleMinutes' "$cfg") (the security process's settings watch picks it up)"
+  if s=$(wait_status locked 80); then pass "ui-down-idle: the idle lock fired with the UI down (status $s)"; else fail "ui-down-idle: status $s 80 s after lock.idleMinutes 1 with the UI down"; fi
+  jq '.lock.idleMinutes = 0' "$cfg" >"$cfg.new" && mv "$cfg.new" "$cfg"
+  no_leak uidownidle "ui-down-idle (UI down)"
+  "$root/scripts/dev/shell-run.sh"
 }
 
 step_lock() {
@@ -265,16 +403,17 @@ step_marker_unlocked() { reload_case marker-unlocked unlocked; }
 
 crash_and_restart() { # <name> <wait seconds>
   local name=$1 pid s
-  pid=$(shell_pid)
-  [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null || { fail "$name: shell not running"; return; }
+  pid=$(lock_pid)
+  [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null || { fail "$name: security process not running"; return; }
   dev_may_signal "$pid" || { fail "$name: refusing to signal PID $pid"; return; }
   kill -9 "$pid"
   sleep 1.5
   echo "compositor after kill -9: $(compositor_lock)"
+  if compositor_locked; then pass "$name: Hyprland keeps LOCK while the security process is dead"; else fail "$name: the session is UNLOCKED while the security process is dead"; fi
   shot "$name-dead"
-  no_leak "dead${name//-/}" "$name (shell dead)"
-  "$root/scripts/dev/shell-run.sh"
-  if s=$(restarted_status "$2"); then pass "$name: restarted shell status $s"; else fail "$name: restarted shell status $s"; fi
+  no_leak "dead${name//-/}" "$name (security process dead)"
+  restart_lock
+  if s=$(restarted_status "$2"); then pass "$name: restarted security process status $s"; else fail "$name: restarted security process status $s"; fi
   shot "$name-restarted"
   no_leak "back${name//-/}" "$name (restarted)"
 }
@@ -288,22 +427,22 @@ step_l1() { crash_and_restart l1 10; }
 graceful_case() { # <term|qskill>
   local how=$1 pid s
   s=$(wait_status locked 5) || { fail "graceful-exit ($how): precondition: status $s (run the lock step first)"; return; }
-  pid=$(shell_pid)
-  [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null || { fail "graceful-exit ($how): shell not running"; return; }
+  pid=$(lock_pid)
+  [[ -n $pid ]] && kill -0 "$pid" 2>/dev/null || { fail "graceful-exit ($how): security process not running"; return; }
   dev_may_signal "$pid" || { fail "graceful-exit ($how): refusing to signal PID $pid"; return; }
   case $how in
     term) kill -TERM "$pid" ;;
     qskill) echo "qs kill -> $(qs kill --pid "$pid" 2>&1 | tr '\n' ' ')" ;;
   esac
   for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
-  if kill -0 "$pid" 2>/dev/null; then fail "graceful-exit ($how): the shell did not exit within 5 s"; return; fi
+  if kill -0 "$pid" 2>/dev/null; then fail "graceful-exit ($how): the security process did not exit within 5 s"; return; fi
   sleep 0.5
   echo "compositor after the $how exit: $(compositor_lock)"
   if compositor_locked; then pass "graceful-exit ($how): Hyprland still reports LOCK on every monitor"; else fail "graceful-exit ($how): the session is UNLOCKED after a graceful exit (SEC-18: re-rate MEDIUM)"; fi
   shot "graceful-$how-dead"
-  no_leak "graceful${how}" "graceful-exit ($how, shell gone)"
-  "$root/scripts/dev/shell-run.sh"
-  if s=$(restarted_status 15); then pass "graceful-exit ($how): restarted shell status $s"; else fail "graceful-exit ($how): restarted shell status $s"; fi
+  no_leak "graceful${how}" "graceful-exit ($how, security process gone)"
+  restart_lock
+  if s=$(restarted_status 15); then pass "graceful-exit ($how): restarted security process status $s"; else fail "graceful-exit ($how): restarted security process status $s"; fi
   no_leak "gracefulback${how}" "graceful-exit ($how, restarted)"
 }
 
@@ -354,17 +493,17 @@ foreign_wait_exit() { # <step>: the foreign locker exits after its release
 relock_reaction_ms() { # <shell.log line count before the release>
   local released relocked
   released=$(grep -o "unlocking on request at [0-9]*" "$dev/foreign-locker.log" | tail -n 1 | grep -o "[0-9]*$")
-  relocked=$(tail -n +"$(($1 + 1))" "$dev/shell.log" | grep -m1 "taking a fresh lock" | cut -c1-23)
+  relocked=$(tail -n +"$(($1 + 1))" "$lock_log" | grep -m1 "taking a fresh lock" | cut -c1-23)
   [[ -n $released && -n $relocked ]] && echo $(($(date -d "$relocked" +%s%3N) - released))
 }
 
 # The shell is in the suspected state now (100 ms check): its last suspicion line says so.
-suspected_now() { grep -E "takeover suspected \(|no takeover suspected" "$dev/shell.log" | tail -n 1 | grep -q "takeover suspected ("; }
+suspected_now() { grep -E "takeover suspected \(|no takeover suspected" "$lock_log" | tail -n 1 | grep -q "takeover suspected ("; }
 
 last_react=""
 foreign_release_and_wait() { # <step>
   local t0 now first="" s from
-  from=$(wc -l <"$dev/shell.log")
+  from=$(wc -l <"$lock_log")
   t0=${EPOCHREALTIME/./}
   echo "foreign unlock -> $(foreign_ipc unlock)"
   for _ in $(seq 1 60); do
@@ -376,10 +515,18 @@ foreign_release_and_wait() { # <step>
     sleep 0.05
   done
   if [[ -n $first ]]; then echo "unlocked window: <= ${first} ms (foreign release -> Hyprland reports LOCK again)"; fi
-  if [[ -n $first ]] && s=$(wait_status locked 3); then pass "$1: locked again by Grassfield after the foreign release (status $s)"; else fail "$1: not re-locked after the foreign release (status ${s:-?}, compositor $(compositor_lock))"; fi
+  # Hyprland lists LOCK as soon as a session lock exists; the shell's status becomes "locked" only on Hyprland's `locked`
+  # event, sent once every enabled monitor has drawn a frame of its lock surface (WlSessionLock.secure, Lock.qml
+  # onSecureStateChanged). In the nested session WAYLAND-1 draws only when the parent presents the nested window, so the
+  # confirmation can come late (the integrator's run of c80c55b3: "locking" 3 s after a release whose LOCK came back in
+  # 221 ms, with no WAYLAND-1 capture all run long). Meanwhile the session is locked (LOCK) and the UI reads "locking" as
+  # locked (LockState.uiLocked, uiLockConfirmed). So: LOCK back within 3 s (above), the confirmed "locked" within 10 s,
+  # and the time to the confirmation printed.
+  if [[ -n $first ]] && s=$(wait_status locked 10); then pass "$1: locked again by Grassfield after the foreign release (status $s)"; else fail "$1: not re-locked after the foreign release (status ${s:-?} after 10 s, compositor $(compositor_lock); a 'locking' with LOCK on every monitor waits for a lock frame on each: is the nested window shown?)"; fi
+  confirm_time "$1" "$from"
   foreign_wait_exit "$1"
   echo "compositor: $(compositor_lock)"
-  grep "grassfield-lock: the session is unlocked although" "$dev/shell.log" | tail -n 1
+  grep "grassfield-lock: the session is unlocked although" "$lock_log" | tail -n 1
   last_react=$(relock_reaction_ms "$from")
   echo "$1: foreign release -> fresh lock request ${last_react:-?} ms (fixture and shell logs)"
 }
@@ -408,8 +555,9 @@ step_foreign_takeover() {
 # and a restarted shell's start-up holds that loop: in the integrator's run of 2026-11-04 each locked restart logged
 # nothing for 1.2-2.1 s after its entrance (shell/services/Entrance.qml: the menu bar, the Dock and the icons appear), and
 # a foreign release ~1.5 s after the takeover fell inside it: the fresh lock came 1350 ms (1616 ms on main) after the
-# release, the 100 ms check in force throughout. Waits at most <seconds> until the entrance is logged (it always is, within
-# its hard bound; shell-run.sh rewrites .dev/shell.log) and then until the shell answers `lock status` within 500 ms (qs
+# release, the 100 ms check in force throughout. Since ADR-0041 S2 the lock's process is the security process, whose start
+# draws no desktop: the wait is for its "grassfield-security: ready" line (shell-run.sh --security rewrites
+# .dev/security.log) instead of the UI's entrance, then until it answers `lock status` within 500 ms (qs
 # client start included, about 0.1 s) five times in a row: its IPC is served on that same loop, so a held loop answers
 # late and restarts the count. Prints "<ms from this shell's lock to settled> <slowest answer in ms>" (the slowest answer
 # is the width of the hold it saw); on timeout, what it saw, and fails.
@@ -417,7 +565,7 @@ shell_settled() { # <seconds>
   local deadline=$((SECONDS + $1)) entrance="" streak=0 t0 ms slowest=0 answer acquired settled=""
   while ((SECONDS < deadline)); do
     if [[ -z $entrance ]]; then
-      entrance=$(grep -m1 "grassfield-shell: entrance (" "$dev/shell.log" 2>/dev/null)
+      entrance=$(grep -m1 "grassfield-security: ready" "$lock_log" 2>/dev/null)
       [[ -n $entrance ]] || { sleep 0.25; continue; }
     fi
     t0=${EPOCHREALTIME/./}
@@ -429,7 +577,7 @@ shell_settled() { # <seconds>
     sleep 0.1
   done
   [[ -n $settled ]] || { echo "${entrance:+entrance logged, }slowest IPC answer $slowest ms"; return 1; }
-  acquired=$(grep -m1 "grassfield-lock: locking -> locked (acquired)" "$dev/shell.log" 2>/dev/null | cut -c1-23)
+  acquired=$(grep -m1 "grassfield-lock: locking -> locked (acquired)" "$lock_log" 2>/dev/null | cut -c1-23)
   if [[ -n $acquired ]]; then echo "$((settled / 1000 - $(date -d "$acquired" +%s%3N))) $slowest"; else echo "? $slowest"; fi
 }
 
@@ -454,9 +602,9 @@ step_foreign_restart() {
   foreign_start foreign-restart
   printf 'unlocked\n' >"$marker"
   echo "marker forged: $(cat "$marker")"
-  "$root/scripts/dev/shell-run.sh"
-  if s=$(restarted_status 15); then pass "foreign-restart: restarted shell status $s (took the foreign-held lock over)"; else fail "foreign-restart: restarted shell status $s"; fi
-  grep "this shell did not take" "$dev/shell.log" | tail -n 1
+  restart_lock
+  if s=$(restarted_status 15); then pass "foreign-restart: restarted security process status $s (took the foreign-held lock over)"; else fail "foreign-restart: restarted security process status $s"; fi
+  grep "this shell did not take" "$lock_log" | tail -n 1
   # The release waits for the end of the restarted shell's start-up, so that the 150 ms bound below measures the ownership
   # check and not the start-up. A release inside the start-up is a residual risk (docs/specs/security.md, "Known
   # limitations"): its width is printed here, run after run.
@@ -466,7 +614,7 @@ step_foreign_restart() {
     # The documented gap must not widen unnoticed (security review of 4e742050): the slowest answer is the hold's width.
     hold_budget foreign-restart "$slowest" "${HOLD_MAX_MS:-3000}"
   else
-    fail "foreign-restart: the restarted shell's event loop did not settle within 30 s ($settled; .dev/shell.log): the release below may measure its start-up"
+    fail "foreign-restart: the restarted security process's event loop did not settle within 30 s ($settled; .dev/security.log): the release below may measure its start-up"
   fi
   if s=$(wait_status locked 3); then pass "foreign-restart: status $s once the restarted shell settled"; else fail "foreign-restart: status $s once the restarted shell settled"; fi
   echo "foreign locker: $(foreign_ipc status)"
@@ -488,7 +636,7 @@ desync_from=0
 make_desync() { # <step>
   foreign_start "$1"
   echo "lock devPauseOwnershipCheck -> $(ipc lock devPauseOwnershipCheck)"
-  desync_from=$(wc -l <"$dev/shell.log")
+  desync_from=$(wc -l <"$lock_log")
   echo "foreign unlock -> $(foreign_ipc unlock)"
   foreign_wait_exit "$1"
   sleep 0.3
@@ -504,12 +652,26 @@ make_desync() { # <step>
 # The fresh lock must be triggered by <request> (logged before the re-lock), not by the paused check.
 check_triggered_by() { # <step> <request log pattern>
   local order
-  order=$(tail -n +"$((desync_from + 1))" "$dev/shell.log" | grep -o -E "$2|taking a fresh lock" | head -n 2 | tr '\n' '|')
+  order=$(tail -n +"$((desync_from + 1))" "$lock_log" | grep -o -E "$2|taking a fresh lock" | head -n 2 | tr '\n' '|')
   if [[ $order == *"|taking a fresh lock|" && $order != "taking a fresh lock|"* ]]; then
     pass "$1: the fresh lock followed the request ($order)"
   else
     fail "$1: order '$order'"
   fi
+}
+
+# The time from "taking a fresh lock" to "locking -> locked (acquired)" (Hyprland's confirmation: every lock surface drew a
+# frame) in the security log since line <from>: printed for the integrator's comparison (the nested run of 122f8d67 measured
+# 5.05 s under load where the run of e1a3ff4c measured 0.43 s; since the surface draws its ground before LockView, the
+# confirmation waits for that frame only).
+confirm_time() { # <step> <log line count before>
+  local ms
+  ms=$(tail -n +"$(($2 + 1))" "$lock_log" | awk '
+    function t(s,  a) { split(s, a, ":"); return ((a[1] * 60 + a[2]) * 60 + a[3]) * 1000 }
+    /taking a fresh lock/ && from == "" { from = t($2) }
+    /locking -> locked \(acquired\)/ && from != "" && to == "" { to = t($2) }
+    END { if (from != "" && to != "") printf "%d", to - from }')
+  if [[ -n $ms ]]; then echo "$1: fresh lock confirmed by Hyprland in $ms ms"; else echo "$1: no confirmation of the fresh lock in the log"; fi
 }
 
 step_lock_desync() {
@@ -520,7 +682,8 @@ step_lock_desync() {
   for _ in $(seq 1 60); do compositor_locked && break; sleep 0.05; done
   if compositor_locked && s=$(wait_status locked 3); then pass "lock-desync: real lock after lock lock (status $s, compositor $(compositor_lock))"; else fail "lock-desync: status ${s:-?}, compositor $(compositor_lock)"; fi
   check_triggered_by lock-desync "lock requested \(ipc\) while locked"
-  tail -n +"$((desync_from + 1))" "$dev/shell.log" | grep -E "grassfield-lock"
+  tail -n +"$((desync_from + 1))" "$lock_log" | grep -E "grassfield-lock"
+  confirm_time lock-desync "$desync_from"
   shot lock-desync
   no_leak afterdesync "lock-desync"
 }
@@ -532,7 +695,7 @@ sleep_new=""
 sleep_wait() { # <name> <shell.log line count before>: sets sleep_new (log lines since), checks the ready line
   local ready=""
   for _ in $(seq 1 40); do
-    sleep_new=$(tail -n +"$(($2 + 1))" "$dev/shell.log")
+    sleep_new=$(tail -n +"$(($2 + 1))" "$lock_log")
     ready=$(grep -m1 "grassfield-idle: ready for sleep" <<<"$sleep_new")
     [[ -n $ready ]] && break
     sleep 0.1
@@ -544,12 +707,13 @@ sleep_wait() { # <name> <shell.log line count before>: sets sleep_new (log lines
 
 step_sleep_desync() {
   local from order
-  from=$(wc -l <"$dev/shell.log")
+  from=$(wc -l <"$lock_log")
   echo "idle devSleep before -> $(ipc idle devSleep before)"
   sleep_wait sleep-control "$from"
   make_desync sleep-desync
   echo "idle devSleep before -> $(ipc idle devSleep before)"
   sleep_wait sleep-desync "$desync_from"
+  confirm_time sleep-desync "$desync_from"
   check_triggered_by sleep-desync "lock requested \(sleep\) while locked"
   order=$(grep -o -E "taking a fresh lock|locking -> locked \(acquired\)|ready for sleep" <<<"$sleep_new" | head -n 3 | tr '\n' '|')
   if [[ $order == "taking a fresh lock|locking -> locked (acquired)|ready for sleep|" ]]; then
@@ -590,7 +754,7 @@ step_relock_confirm() {
   for i in $(seq 1 "$runs"); do
     wait_status locked 3 >/dev/null || { fail "relock-confirm run $i: status $(ipc lock status)"; continue; }
     sleep 0.6 # past the 500 ms grace of a lock just acquired
-    from=$(wc -l <"$dev/shell.log")
+    from=$(wc -l <"$lock_log")
     before=$(typed_bytes)
     ipc lock devPauseOwnershipCheck >/dev/null
     answer=$(ipc lock devForgeUnlockedAnswer)
@@ -612,7 +776,7 @@ step_relock_confirm() {
     wait "$typer"
     sleep 0.4
     after=$(typed_bytes)
-    if tail -n +"$((from + 1))" "$dev/shell.log" | grep -q "taking a fresh lock"; then relocks=$((relocks + 1)); fi
+    if tail -n +"$((from + 1))" "$lock_log" | grep -q "taking a fresh lock"; then relocks=$((relocks + 1)); fi
     ((after > before)) && leaks=$((leaks + 1))
     ((unlocked > 0)) && opened=$((opened + 1))
     echo "run $i: lock lock -> $answer; compositor answers without LOCK: $unlocked (no valid answer: $unknown); bytes that reached foot: $((after - before))"
@@ -620,7 +784,7 @@ step_relock_confirm() {
   press_key Escape # empty the lock field (Escape clears it; nothing is ever submitted)
   # The last dev pause (10 s) ends before the next step relies on the periodic check.
   for _ in $(seq 1 120); do
-    tail -n +"$((from + 1))" "$dev/shell.log" | grep -q "dev pause of the lock ownership check ended" && break
+    tail -n +"$((from + 1))" "$lock_log" | grep -q "dev pause of the lock ownership check ended" && break
     sleep 0.1
   done
   echo "relock-confirm: $runs runs: relocks $relocks, runs with a key in foot $leaks, runs with an unlocked compositor answer $opened"
@@ -641,7 +805,7 @@ step_foreign_gap() {
     word=$(probe_word gap "$i")
     bg_type "$word$word$word$word$word$word$word$word$word$word$word$word$word$word$word$word"
     sleep 0.05
-    from=$(wc -l <"$dev/shell.log")
+    from=$(wc -l <"$lock_log")
     t0=${EPOCHREALTIME/./}
     foreign_ipc unlock >/dev/null
     t1=${EPOCHREALTIME/./}
@@ -659,7 +823,7 @@ step_foreign_gap() {
     # Precise window: the fixture logs the epoch ms of its release, the shell log the time of its fresh lock request.
     react=""
     released=$(grep -o "unlocking on request at [0-9]*" "$dev/foreign-locker.log" | tail -n 1 | grep -o "[0-9]*$")
-    relocked=$(tail -n +"$((from + 1))" "$dev/shell.log" | grep -m1 "taking a fresh lock" | cut -c1-23)
+    relocked=$(tail -n +"$((from + 1))" "$lock_log" | grep -m1 "taking a fresh lock" | cut -c1-23)
     [[ -n $released && -n $relocked ]] && react=$(($(date -d "$relocked" +%s%3N) - released))
     if [[ -z $react ]]; then fail "foreign-gap run $i: no release time or no fresh lock in the logs"; continue; fi
     ((react > worst)) && worst=$react
@@ -707,7 +871,7 @@ cpu_percent() { # <seconds> <pid>...: CPU % of each process over the interval, s
 # against the 1 s check of a plain lock: CPU of the shell and of the nested Hyprland over PROBE_COST_SECONDS (10).
 step_probe_cost() {
   local secs=${PROBE_COST_SECONDS:-10} shellPid hyprPid plain held s from extra
-  shellPid=$(dev_live_pid "$dev/shell.pid") && hyprPid=$(dev_live_pid "$dev/nested.pid") || { fail "probe-cost: no live shell or compositor record"; return; }
+  shellPid=$(lock_pid) && hyprPid=$(dev_live_pid "$dev/nested.pid") || { fail "probe-cost: no live security process or compositor record"; return; }
   s=$(wait_status locked 3) || { fail "probe-cost: precondition: status $s"; return; }
   sleep 1.5
   # A lock inherited at start (or one whose surface has no keyboard) already runs the 100 ms check: then there is no
@@ -736,12 +900,12 @@ rss_mb() { awk '/^VmRSS:/ { printf "%.1f", $2 / 1024 }' "/proc/$1/status" 2>/dev
 # Fails when the retained growth reaches PROBE_MEMORY_MAX_RETAINED_MB (default 5). Not in the default sequence (10 min).
 step_probe_memory() {
   local secs=${PROBE_MEMORY_SECONDS:-600} maxRetained=${PROBE_MEMORY_MAX_RETAINED_MB:-5} shellPid s from t0 now series="" stats rate retained
-  shellPid=$(dev_live_pid "$dev/shell.pid") || { fail "probe-memory: no live shell record"; return; }
+  shellPid=$(lock_pid) || { fail "probe-memory: no live security process record"; return; }
   s=$(wait_status locked 3) || { fail "probe-memory: precondition: status $s"; return; }
-  from=$(wc -l <"$dev/shell.log")
+  from=$(wc -l <"$lock_log")
   foreign_start probe-memory
   sleep 1
-  if ! tail -n +"$((from + 1))" "$dev/shell.log" | grep -q "takeover suspected"; then
+  if ! tail -n +"$((from + 1))" "$lock_log" | grep -q "takeover suspected"; then
     [[ $(ipc lock status) == locked ]] && echo "probe-memory: (the shell was already in the suspected state)"
   fi
   t0=$SECONDS
@@ -790,7 +954,7 @@ step_pam_audit() {
 }
 
 steps=("$@")
-[[ ${#steps[@]} -gt 0 ]] || steps=(setup nowatch lock relock-confirm foreign-gap probe-cost marker-missing marker-unlocked l1 forged-crash graceful-exit foreign-takeover foreign-restart lock-desync sleep-desync cleanup pam-audit)
+[[ ${#steps[@]} -gt 0 ]] || steps=(setup nowatch ui-down-sleep lock ui-crash relock-confirm foreign-gap probe-cost marker-missing marker-unlocked l1 forged-crash graceful-exit foreign-takeover foreign-restart lock-desync sleep-desync cleanup pam-audit)
 assert_no_pam "before the run"
 # Ready first (tests/security/nested_ready.sh): GF-REF listed (setup opens its window there) and a lock state from the
 # shell. Right after nested-up the shell does not answer yet and GF-REF may not exist (the probe window once never
@@ -799,7 +963,7 @@ needs_shell=0
 for s in "${steps[@]}"; do [[ $s == cleanup || $s == pam-audit ]] || needs_shell=1; done
 if ((needs_shell)); then
   ready_rc=0
-  nested_ready "$sig" "$sock" "$root/shell" "$ready_secs" || ready_rc=$?
+  nested_ready "$sig" "$sock" "$lock_root" "$ready_secs" || ready_rc=$?
   case $ready_rc in
     0) echo "ready: GF-REF listed, lock status $nested_ready_state, after $nested_ready_ms ms" ;;
     2) echo "reload_locked: $nested_ready_why" >&2; exit 2 ;;

@@ -1,5 +1,5 @@
 [Unit]
-Description=Grassfield shell (menu bar, Dock, notifications, lock, polkit agent)
+Description=Grassfield shell (menu bar, Dock, notifications, polkit agent)
 Documentation=file:///usr/share/doc/grassfield/README.md
 PartOf=graphical-session.target
 After=graphical-session.target
@@ -13,22 +13,41 @@ ConditionEnvironment=GRASSFIELD_SESSION=1
 # 10 minutes.
 StartLimitIntervalSec=300
 StartLimitBurst=10
-# Fail-safe for lock before sleep (D-12). With the default RestartMode=normal (systemd 254+) this unit passes through
-# "failed" on EVERY failure (a crash, an exit code, 255 included), before the restart, so OnFailure= starts Omarchy's
-# sleep-lock unit after each one, not only at the start limit (a clean exit 0, SIGTERM or `qs kill` ends "inactive" and does
-# not; a logout starts it too, and its gate then skips it). That unit holds a
-# logind delay inhibitor while this shell restarts or stays failed and, before a sleep, asks this shell to lock
-# through Grassfield's `omarchy-shell` stand-in (packaging/shims), starting it again if needed. Its Grassfield
-# drop-in skips it once this shell is up again (active/running), at its next start.
-# grassfield-shell-failed.service (ADR-0041 step 1a): the failure counter, started after every failure as well. At the
-# third failure within 10 minutes it cancels the pending restart and writes the safe-mode state; a logout counts nothing.
-OnFailure=omarchy-sleep-lock.service grassfield-shell-failed.service
+# grassfield-shell-failed.service (ADR-0041 step 1a): the failure counter, started after every failure (with the default
+# RestartMode=normal, systemd 254+, this unit passes through "failed" on EVERY failure, before the restart; a clean exit 0,
+# SIGTERM or `qs kill` ends "inactive" and does not). At the third failure within 10 minutes it cancels the pending restart
+# and writes the safe-mode state; a logout counts nothing. Omarchy's sleep lock is no longer started from here (ADR-0041
+# step 1, S2): the lock, idle and the sleep inhibitor run in grassfield-security.service, whose OnFailure= arms it; a crash
+# of this UI changes nothing about the lock or sleep.
+OnFailure=grassfield-shell-failed.service
 
 [Service]
 Type=simple
 Slice=session.slice
 # Quickshell's own reload is off: package upgrades must not hot-reload a half-written tree.
 Environment=QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1
+# Quickshell's crash handler off (ADR-0041 S2, the integrator's nested run of e1a3ff4c, ui-crash): with it, a crash 10 s or
+# more after the start leaves the crashed process alive, blocked in its signal handler while a reporter it forked relaunches
+# the shell as its own child ("Quickshell has been restarted"), so systemd sees no failure: no restart of its own, no
+# OnFailure=, no count toward safe mode, and the crashed process keeps its memory charged to this unit. Without it the
+# process ends on the signal: a failure (unlike SIGTERM, which leaves the unit inactive), so systemd restarts it after
+# RestartSec=, runs OnFailure= and counts it, and the journal records the crash (coredumpctl list), with no core file
+# (LimitCORE= below) (macOS: the process dies, launchd restarts it, ReportCrash writes the report).
+Environment=QS_DISABLE_CRASH_HANDLER=1
+# No core file (the opus delta review of 122f8d67, MAJOR): systemd-coredump stores a crashed process's whole memory under
+# /var/lib/systemd/coredump, readable by its user through an ACL, and this process hosts the polkit agent and the secret sheets until ADR-0041 S3/S4
+# move them (polkit, Wi-Fi, network-share and keyring passwords).
+# A same-user process that Yama keeps from reading this one's memory could crash it and read the dump instead. With
+# LimitCORE=0, systemd-coredump honours the limit: it records the crash in the journal (signal, PID, unit: coredumpctl list
+# shows it, without a file and without a stack) and stores nothing. The process still dies by the signal, so Restart=,
+# OnFailure= and the failure counter are unchanged.
+# Exactly 0, the hard limit included: never `0:infinity` or any soft-only form. With a hard limit above 0, a same-user process
+# can raise the soft one with prlimit, crash this process and read the dump (the opus gate of 55bfea41). The tests pin this
+# exact line (tests/security/security_unit.sh, tests/shell/shell_unit.sh). The applications this shell starts (the Dock,
+# Search, Launchpad: `uwsm-app --`, a scope that runs in this process's tree) inherit the hard limit of 0: their crashes
+# still give a notice (the journal entry), but no core file, a terminal opened from the Dock included (ADR-0041 S2: a
+# decision to revisit, starting the applications through the user manager instead).
+LimitCORE=0
 # Qt's "@2x" image lookup off (review of cbd6ef05): a file:// picture is decoded from the very path the shell asked for (the
 # lock checks its wallpaper still by that path), never from a "<name>@2x.<ext>" beside it. The shell ships no such file.
 Environment=QT_HIGHDPI_DISABLE_2X_IMAGE_LOADING=1
@@ -55,19 +74,18 @@ UnsetEnvironment=GTK_USE_PORTAL
 # when a Qt process starts: the same wait as GTK_USE_PORTAL above, gate P5). This process keeps Omarchy's gtk3, its value before the
 # ADR (Hyprland imports the session's value into the systemd user manager, and Environment= wins over it).
 Environment=QT_QPA_PLATFORMTHEME=gtk3
-# While this shell runs it locks before sleep itself (shell/security/idle/SleepInhibitor.qml). An Omarchy sleep-lock unit
-# that happens to run as well is never stopped from here: it may be in the middle of a sleep it is delaying, and with the
-# stand-in it only ever asks this shell to lock (a second, harmless path).
+# The lock before sleep is grassfield-security's (ADR-0041 S2); this shell holds no inhibitor and no session lock.
 # GF-115: the shell loads ONLY from the system location. `-c grassfield` would also search $XDG_CONFIG_HOME/quickshell, a
-# user-writable directory, and a copy there would replace the lock screen and the polkit agent. Every `qs ipc` caller
-# (bindings, lid, sleep-lock stand-in) names the same path. tests/shell/session_services.sh keeps them in step.
+# user-writable directory, and a copy there would replace the polkit agent (and, through the same tree, the security
+# process's lock screen). Every `qs ipc` caller (bindings, stand-ins, apps) names the same path, the lock's callers the
+# security root next to it. tests/shell/session_services.sh keeps them in step.
 ExecStart=/usr/bin/qs -n -p /usr/share/grassfield/shell
 # ADR-0048 D-4: the CPU and I/O limits the shell set on apps the person could not see are lifted when it stops or crashes
 # (the restarted shell resets them again at start). "-": a failure here never marks the unit failed.
 ExecStopPost=-/usr/lib/grassfield/grassfield-energy reset
-# Gate R1 and GF-030: back within ~1 s after ANY exit while the session runs: a crash, SIGTERM, `qs kill`, exit 0.
-# Hyprland keeps a lock alive while the shell is away (ext-session-lock) and the restarted shell takes it back
-# (ADR-0010). A stop through systemd is never restarted: logout (graphical-session.target stops, PartOf=) or
+# Gate R1 and GF-030: back within ~1 s after ANY exit while the session runs: a crash, SIGTERM, `qs kill`, exit 0. The
+# session lock is the security process's (ADR-0041 S2): a lock shown when this shell goes away stays drawn and keeps the
+# keyboard. A stop through systemd is never restarted: logout (graphical-session.target stops, PartOf=) or
 # `systemctl --user stop`; Requisite= refuses a start once the session target is gone.
 Restart=always
 RestartSec=1
@@ -83,15 +101,14 @@ TimeoutStopSec=5
 #   MemoryHigh=1536M  soft ceiling, about 2x the worst healthy peak: above it the kernel reclaims and throttles the shell
 #                     instead of letting it grow, and the pressure shows in `systemctl --user status`.
 #   MemoryMax=3G      hard ceiling (a third of the runaway): the shell is killed and Restart=always brings it back in
-#                     1 s, the compositor keeps any lock alive meanwhile (ADR-0010); OnFailure= then arms the sleep lock.
+#                     1 s; the lock lives in the security process and is not touched (ADR-0041 S2).
 #   CPUQuota=150%     one and a half cores: a spinning shell cannot starve the compositor, while the Overview and
 #                     Stage animations (a GUI thread plus the render thread) keep their headroom.
 MemoryHigh=1536M
 MemoryMax=3G
 CPUQuota=150%
-# No NoNewPrivileges/ProtectSystem here on purpose: the lock screen and polkit agent rely on the
-# setuid/setgid helpers unix_chkpwd and polkit-agent-helper-1, which NoNewPrivileges would break,
-# leaving the session unable to unlock.
+# No NoNewPrivileges/ProtectSystem here on purpose: the polkit agent (until S3) relies on the setuid helper
+# polkit-agent-helper-1, which NoNewPrivileges would break (the lock's unix_chkpwd is the security process's since S2).
 
 [Install]
 WantedBy=graphical-session.target
