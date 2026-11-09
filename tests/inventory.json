@@ -691,6 +691,7 @@
  {"path": "tests/integration/secrets_handover.sh", "layer": "headless", "runner": "test.sh"},
  {"path": "tests/integration/portal_settings.sh", "layer": "headless", "runner": "test.sh"},
  {"path": "tests/integration/portal_filechooser.sh", "layer": "headless", "runner": "test.sh"},
+ {"path": "tests/integration/bundled_apps.sh", "layer": "data"},
  {"path": "tests/integration/qt_platform_theme.sh", "layer": "headless", "runner": "bare"},
  {"path": "tests/integration/screencast_restore.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/integration/print_cups.sh", "layer": "headless", "runner": "test.sh"},

@@ -562,13 +562,17 @@ TestCase {
     }
 
     function test_defaultPinsMigrate() {
-        compare(DockModel.migratePinned(["foot", "chromium", "org.gnome.Nautilus"]).join(","), "chromium,foot,org.grassfield.Settings");
+        const bundled = "sanaga,grassfield-notes,foot,org.grassfield.Settings";
+        compare(DockModel.migratePinned(["foot", "chromium", "org.gnome.Nautilus"]).join(","), bundled);
+        // The default of the releases before ADR-0055 reads as the current default; a variation of it is the user's.
+        compare(DockModel.migratePinned(["chromium", "foot", "org.grassfield.Settings"]).join(","), bundled);
+        compare(DockModel.migratePinned(["chromium", "foot", "org.grassfield.Settings", "kate"]).join(","), "chromium,foot,org.grassfield.Settings,kate");
         // A customised list, even a small variation of the old default, is not touched.
         compare(DockModel.migratePinned(["foot", "chromium", "org.gnome.Nautilus", "kate"]).join(","), "foot,chromium,org.gnome.Nautilus,kate");
         compare(DockModel.migratePinned(["chromium", "foot"]).join(","), "chromium,foot");
         compare(DockModel.migratePinned([]).length, 0);
         compare(DockModel.migratePinned(undefined).length, 0);
-        compare(DockModel.DEFAULT_PINNED.join(","), "chromium,foot,org.grassfield.Settings");
+        compare(DockModel.DEFAULT_PINNED.join(","), bundled);
     }
 
     // Owner report 2026-11-08: foot could not be removed from the Dock while it ran.
