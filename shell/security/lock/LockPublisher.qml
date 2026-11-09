@@ -7,7 +7,8 @@ import "../../lib/LockState.js" as LockState
 // The lock state the UI reads (ADR-0041 step 1, S2; ADR-0010 risk 2: "a missed or stale push makes the UI refusals fail
 // open"): one file, $XDG_RUNTIME_DIR/grassfield-lock-state-<compositor instance> (LockState.filePath), rewritten atomically
 // on every change of what is published (the push: the lock's public state, the displays idle switched off, where the lock's
-// clouds came to rest) and every LockState.HEARTBEAT_MS with a new sequence number (the heartbeat: a push the UI missed is
+// clouds came to rest, whether a security sheet is open and may hold the keyboard, ADR-0041 S3) and every
+// LockState.HEARTBEAT_MS with a new sequence number (the heartbeat: a push the UI missed is
 // corrected by the next beat, and a process that stopped writing reads as stale, hence locked, within LockState.STALE_MS).
 // Only this process writes it; nothing is read back from the UI. A write that fails is logged once and retried by the
 // next beat: the lock itself never depends on it (the UI reads "locked" from a missing or stale state, fail closed).
@@ -19,6 +20,8 @@ Scope {
     property string state: "locking"
     property bool displaysOff: false
     property var motion: ({})
+    property bool authorizing: false
+    property bool securityKeyboard: false
 
     readonly property string path: LockState.filePath(Quickshell.env("XDG_RUNTIME_DIR"), Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE"), Quickshell.env("WAYLAND_DISPLAY"))
     // One more for every write (push or beat), from 1; the writer's process id tells a restarted process apart.
@@ -43,7 +46,7 @@ Scope {
             return;
         }
         root.sequence += 1;
-        const text = LockState.format(root.state, root.sequence, root.writer, root.displaysOff, root.motion) + "\n";
+        const text = LockState.format(root.state, root.sequence, root.writer, root.displaysOff, root.motion, root.authorizing, root.securityKeyboard) + "\n";
         file.setText(text);
         if (why !== "beat")
             console.info("grassfield-lock: published " + root.state + " (" + why + ", beat " + root.sequence + ")");
@@ -52,6 +55,8 @@ Scope {
     onStateChanged: root.publish("state")
     onDisplaysOffChanged: root.publish("displays")
     onMotionChanged: root.publish("clouds")
+    onAuthorizingChanged: root.publish("sheets")
+    onSecurityKeyboardChanged: root.publish("sheets")
 
     FileView {
         id: file

@@ -135,6 +135,12 @@ Singleton {
     // reader is not held awake all night; the wake offers it again: onDisplaysOffChanged). Nothing that locks or unlocks reads
     // it.
     property bool displaysOff: false
+    // Set by the host (ADR-0041 S3, SecurityHost.qml) from the polkit agent and the secret sheets that run beside the lock:
+    // a security sheet is open (shown or held), and a sheet or its key sink may hold the keyboard. Published with the lock
+    // state for the UI (its clipboard history and capture toolbar wait meanwhile, its menus close); never private state, and
+    // nothing that locks or unlocks reads them.
+    property bool authorizing: false
+    property bool securityKeyboard: false
     onDisplaysOffChanged: {
         if (root.displaysOff)
             fingerprintRetry.stop();
@@ -1013,6 +1019,8 @@ Singleton {
         state: root.publicState
         displaysOff: root.displaysOff
         motion: root.motion
+        authorizing: root.authorizing
+        securityKeyboard: root.securityKeyboard
     }
 
     // The account picture, made by this process (display only).

@@ -8,7 +8,9 @@
 # SessionState.refusesConfirmed) only on the compositor's signal or a published "locking"/"locked" (ADR-0041 S2, the opus
 # review of 77a0ceb3, MAJOR-1); the first read is no beat (MINOR-3). Two starts next to an existing file (MINOR-5): a "locked"
 # line reads locked and confirmed; a dead writer's "unlocked" reads locked, unconfirmed, past the stale bound. Then the
-# control probe against copies of LockClient.qml with one fail-closed input removed each (mutants): each must make it FAIL. XDG_RUNTIME_DIR is a scratch directory under .dev/; no compositor, no bus, no lock.
+# control probe against copies of LockClient.qml with one fail-closed input removed each (mutants): each must make it FAIL.
+# ADR-0041 S3: the security sheets' state comes with it (a sheet open, its keyboard): fail closed without a fresh state, and
+# "shown" (the menus close) only on a fresh one. XDG_RUNTIME_DIR is a scratch directory under .dev/; no compositor, no bus, no lock.
 # Plain shell test: PASS/FAIL lines, non-zero on failure. LOCK_CLIENT_ONLY=control runs the control alone.
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
@@ -72,9 +74,10 @@ fi
 # A UI that starts next to a state file nothing writes any more (the probe writes nothing in these modes).
 for mode in existing-locked existing-dead-unlocked; do
   tree "$tmp/$mode"
-  state=locked
-  [[ $mode == existing-dead-unlocked ]] && state=unlocked
-  printf '{"v":1,"state":"%s","seq":41,"writer":4242,"displaysOff":false,"motion":{}}\n' "$state" >"$tmp/$mode/runtime/grassfield-lock-state-default"
+  state=locked sheet=
+  # The dead writer's line also says a sheet was open (ADR-0041 S3): with no beat it is never "shown" (no menu closes on it).
+  [[ $mode == existing-dead-unlocked ]] && state=unlocked sheet=',"authorizing":true,"securityKeyboard":true'
+  printf '{"v":1,"state":"%s","seq":41,"writer":4242,"displaysOff":false,"motion":{}%s}\n' "$state" "$sheet" >"$tmp/$mode/runtime/grassfield-lock-state-default"
   out=$(run "$tmp/$mode" "$mode")
   if [[ $out == *"lock-client: PASS"* ]]; then
     echo "PASS: lock client: a UI started next to $([[ $state == locked ]] && echo "a locked state reads locked and confirmed at once" || echo "a dead writer's unlocked state reads locked, unconfirmed, past the stale bound")"
@@ -106,5 +109,8 @@ garbage-keeps-last#            root.known = false;\n            return;\n       
 displaysoff-open#    readonly property bool displaysOff: !root.known || root.stale || (root.last !== null && root.last.displaysOff === true)#    readonly property bool displaysOff: root.known && !root.stale && (root.last !== null && root.last.displaysOff === true)
 confirmed-is-locked#    readonly property bool lockConfirmed: LockState.uiLockConfirmed(root.known, root.state, root.compositorLocked)#    readonly property bool lockConfirmed: root.locked
 confirmed-never#    readonly property bool lockConfirmed: LockState.uiLockConfirmed(root.known, root.state, root.compositorLocked)#    readonly property bool lockConfirmed: false
+sheet-open-when-stale#    readonly property bool authorizing: LockState.uiSheet(root.known, root.stale, root.last, "authorizing")#    readonly property bool authorizing: root.known && root.last !== null && root.last.authorizing === true
+sheet-keys-when-stale#    readonly property bool securityKeyboard: LockState.uiSheet(root.known, root.stale, root.last, "securityKeyboard")#    readonly property bool securityKeyboard: root.known && root.last !== null && root.last.securityKeyboard === true
+sheet-shown-when-stale#    readonly property bool sheetShown: LockState.sheetPublished(root.known, root.stale, root.last)#    readonly property bool sheetShown: root.known && root.last !== null && root.last.authorizing === true
 EOF
 exit "$fail"

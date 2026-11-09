@@ -7,7 +7,7 @@
 // The channel is one file, $XDG_RUNTIME_DIR/grassfield-lock-state-<compositor instance>, written atomically by the
 // security process only:
 //   - on every change of what it publishes (the lock's public state, the displays switched off by idle, where the lock's
-//     clouds came to rest): the push;
+//     clouds came to rest, and since S3 whether a security sheet is open and may hold the keyboard): the push;
 //   - every HEARTBEAT_MS with a new sequence number: the heartbeat, so a push the UI missed is corrected by the next beat.
 // The UI watches the file and reads it again at every beat it expects. It never writes it and never answers it: the
 // security process reads nothing from the UI through this channel. What the UI derives from it is fail closed
@@ -81,15 +81,19 @@ function cleanMotion(motion) {
 }
 
 // The file's text: one line of JSON. `writer` is the writing process's id (Quickshell.processId), so that a restarted
-// process whose sequence starts again counts as a new beat.
-function format(state, seq, writer, displaysOff, motion) {
+// process whose sequence starts again counts as a new beat. `authorizing` (the polkit sheet or a secret sheet is open,
+// shown or held) and `securityKeyboard` (one of them, or its key sink, may hold the keyboard) come from the sheets that run
+// beside the lock since ADR-0041 S3: booleans only, never what a sheet shows.
+function format(state, seq, writer, displaysOff, motion, authorizing, securityKeyboard) {
     return JSON.stringify({
         v: VERSION,
         state: state,
         seq: seq,
         writer: writer,
         displaysOff: displaysOff === true,
-        motion: cleanMotion(motion)
+        motion: cleanMotion(motion),
+        authorizing: authorizing === true,
+        securityKeyboard: securityKeyboard === true
     });
 }
 
@@ -97,9 +101,11 @@ function isCount(n) {
     return typeof n === "number" && isFinite(n) && Math.floor(n) === n && n >= 0 && n <= 9007199254740991;
 }
 
-// The file's text read back: {ok: true, state, seq, writer, displaysOff, motion}, or {ok: false} for anything else (empty,
-// too long, not one JSON object, an unknown version or state, a sequence or writer that is not a whole number, a field
-// of the wrong type). An unknown motion entry is dropped, never the state.
+// The file's text read back: {ok: true, state, seq, writer, displaysOff, motion, authorizing, securityKeyboard}, or
+// {ok: false} for anything else (empty, too long, not one JSON object, an unknown version or state, a sequence or writer
+// that is not a whole number, a field of the wrong type). An unknown motion entry is dropped, never the state. `authorizing`
+// and `securityKeyboard` may be absent (a security process from before S3, which hosts no sheet: read false); present, they
+// must be booleans.
 function parse(text) {
     var bad = {ok: false};
     var s = String(text === undefined || text === null ? "" : text);
@@ -121,7 +127,12 @@ function parse(text) {
         return bad;
     if (typeof o.displaysOff !== "boolean")
         return bad;
-    return {ok: true, state: o.state, seq: o.seq, writer: o.writer, displaysOff: o.displaysOff, motion: cleanMotion(o.motion)};
+    if (o.authorizing !== undefined && typeof o.authorizing !== "boolean")
+        return bad;
+    if (o.securityKeyboard !== undefined && typeof o.securityKeyboard !== "boolean")
+        return bad;
+    return {ok: true, state: o.state, seq: o.seq, writer: o.writer, displaysOff: o.displaysOff, motion: cleanMotion(o.motion),
+        authorizing: o.authorizing === true, securityKeyboard: o.securityKeyboard === true};
 }
 
 // A read is a new beat when its writer or its sequence differs from the last one taken. The first read is never one: a file
@@ -167,4 +178,21 @@ function uiLockConfirmed(known, state, compositorLocked) {
 // The lock is being acquired (the UI's screen saver stays up meanwhile, so no desktop flashes before the lock surface).
 function uiLockStarting(known, stale, state) {
     return known === true && stale === false && state === "locking";
+}
+
+// What the UI's clipboard history, tiling popover (SessionState.authorizing) and capture toolbar (SessionState.securityKeyboard)
+// read of the security sheets (ADR-0041 S3: they run in the security process): `field` ("authorizing" or "securityKeyboard")
+// of a known, fresh state; true otherwise (no state, a state that cannot be read, a stale beat), the side on which they wait.
+// The session reads locked in each of those cases too.
+function uiSheet(known, stale, read, field) {
+    var fresh = known === true && stale === false && read !== null && read !== undefined && read.ok === true;
+    if (!fresh)
+        return true;
+    return read[field] !== false;
+}
+
+// A sheet was published open: the last state taken says a sheet is open and is known and fresh (what the UI's menus close on;
+// never a stale or missing state, which says nothing about a sheet).
+function sheetPublished(known, stale, read) {
+    return known === true && stale === false && read !== null && read !== undefined && read.ok === true && read.authorizing === true;
 }

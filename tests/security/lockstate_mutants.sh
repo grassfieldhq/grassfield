@@ -88,5 +88,13 @@ heartbeat-too-slow|shell/lib/LockState.js|var HEARTBEAT_MS = 2000;|var HEARTBEAT
 no-runtime-dir-path|shell/lib/LockState.js|    if (dir === "" || dir.charAt(0) !== "/")|    if (dir.charAt(0) !== "/" && dir !== "")
 lease-unbounded|shell/security/idle/IdleModel.js|    return Math.min(seconds, INHIBIT_MAX_SECONDS) * 1000;|    return seconds * 1000;
 client-extra-call|shell/services/LockClient.js|    inhibit: ["idle", "inhibit"]|    inhibit: ["idle", "inhibit"],\n    unlock: ["lock", "unlock"]
+sheet-stale-reads-closed|shell/lib/LockState.js|var fresh = known === true && stale === false && read|var fresh = known === true && read
+sheet-unknown-reads-closed|shell/lib/LockState.js|    if (!fresh)\n        return true;|    if (!fresh)\n        return false;
+sheet-unknown-field-reads-closed|shell/lib/LockState.js|    return read[field] !== false;|    return read[field] === true;
+sheet-not-published|shell/lib/LockState.js|        authorizing: authorizing === true,|        authorizing: false,
+sheet-keyboard-not-published|shell/lib/LockState.js|        securityKeyboard: securityKeyboard === true|        securityKeyboard: false
+sheet-field-loose|shell/lib/LockState.js|    if (o.authorizing !== undefined && typeof o.authorizing !== "boolean")\n        return bad;|
+sheet-keyboard-field-loose|shell/lib/LockState.js|    if (o.securityKeyboard !== undefined && typeof o.securityKeyboard !== "boolean")\n        return bad;|
+sheet-shown-when-stale|shell/lib/LockState.js|    return known === true && stale === false && read !== null|    return known === true && read !== null
 EOF
 exit "$fail"
