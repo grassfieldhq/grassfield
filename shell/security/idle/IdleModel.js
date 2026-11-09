@@ -257,3 +257,21 @@ function inhibitLeaseMs(seconds) {
         return 0;
     return Math.min(seconds, INHIBIT_MAX_SECONDS) * 1000;
 }
+
+// ---- The UI's screen saver, as the security process counts it (ADR-0041 step 1, S3) ----
+// The screen saver is the UI's (shell/saver, ADR-0032): after screensaver.idleMinutes without input while the session is
+// unlocked, no application inhibits idle and the monitor is not being re-armed. The polkit sheet and the secret sheets run
+// in the security process and hold a request while it may show; that process counts the same idle time by the same rule
+// (shell/saver/SaverModel.js `armed`; tests/security/tst_idlemodel.qml compares the two), so it reads nothing from the UI.
+var SAVER_MAX_SECONDS = 240 * 60;
+
+// The saver's delay in seconds for screensaver.idleMinutes (Settings normalizes it; as the saver, minutes x 60): 0 (never)
+// for anything that is not a finite number.
+function saverSeconds(minutes) {
+    return typeof minutes === "number" && isFinite(minutes) ? minutes * 60 : 0;
+}
+
+// The saver's monitor counts (SaverModel.armed's rule).
+function saverArmed(seconds, locked, busInhibited, rearming) {
+    return seconds > 0 && seconds <= SAVER_MAX_SECONDS && locked !== true && busInhibited !== true && rearming !== true;
+}

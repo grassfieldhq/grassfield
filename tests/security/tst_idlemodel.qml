@@ -2,6 +2,7 @@ import QtQuick
 import QtTest
 import "../../shell/security/idle/IdleModel.js" as IdleModel
 import "../../shell/security/LockMachine.js" as Machine
+import "../../shell/saver/SaverModel.js" as SaverModel
 
 TestCase {
     name: "IdleModel"
@@ -521,5 +522,39 @@ TestCase {
         // logind's own suspend, never with --ignore-inhibitors (-i) and never asking for authorization behind the lock.
         verify(text.indexOf('command: ["systemctl", "--no-ask-password", "suspend"]') >= 0);
         verify(!/systemctl[^\n]*(-i\b|--ignore-inhibitors|--force|-f\b)/.test(text));
+    }
+
+    // ADR-0041 S3: the polkit and secret sheets run in the security process and hold a request while the UI's screen saver
+    // may show; idle counts the same idle time by the saver's own rule (SaverModel.armed), never by anything the UI says.
+    function test_saverRuleIsTheSaversOwn() {
+        compare(IdleModel.SAVER_MAX_SECONDS, SaverModel.MAX_SECONDS);
+        const seconds = [-60, 0, 1, 60, 300, SaverModel.MAX_SECONDS, SaverModel.MAX_SECONDS + 1, NaN];
+        const flags = [true, false, undefined, "true"];
+        for (const s of seconds)
+            for (const locked of flags)
+                for (const inhibited of flags)
+                    for (const rearming of flags)
+                        compare(IdleModel.saverArmed(s, locked, inhibited, rearming), SaverModel.armed(s, locked, inhibited, rearming),
+                                [s, locked, inhibited, rearming].join(" "));
+        // The delay: Settings' minutes x 60, as the saver's idleSeconds; anything that is not a number is never.
+        compare(IdleModel.saverSeconds(5), 300);
+        compare(IdleModel.saverSeconds(0), 0);
+        compare(IdleModel.saverSeconds("5"), 0);
+        compare(IdleModel.saverSeconds(undefined), 0);
+        compare(IdleModel.saverSeconds(Infinity), 0);
+        verify(!IdleModel.saverArmed(IdleModel.saverSeconds(undefined), false, false, false), "no delay: never shown");
+        // The sheets hold more, never less: the count is off while locked (the lock holds them anyway).
+        verify(!IdleModel.saverArmed(300, true, false, false));
+    }
+
+    // Idle.qml counts it with an IdleMonitor armed by that rule from Settings' delay and this process's lock and lease, and
+    // the host binds it into the sheets' SheetSession (static: the monitor needs a compositor).
+    function test_saverCountWiring() {
+        const idle = source();
+        verify(/readonly property int saverSeconds: devHooks \? 0 : IdleModel\.saverSeconds\(Settings\.screenSaverIdleMinutes\)/.test(idle));
+        verify(/enabled: timeout === Math\.max\(1, root\.saverSeconds\) && IdleModel\.saverArmed\(root\.saverSeconds, Lock\.locked, root\.busInhibited, root\.rearmingSaver\)/.test(idle));
+        verify(/readonly property bool saverShown: saverMonitor\.enabled && saverMonitor\.isIdle\n/.test(idle));
+        const saver = read("../../shell/saver/Saver.qml");
+        verify(/respectInhibitors: true/.test(saver) && /id: saverMonitor[\s\S]*?respectInhibitors: true/.test(idle), "the same Wayland inhibitors as the saver");
     }
 }

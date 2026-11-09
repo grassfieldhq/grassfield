@@ -30,10 +30,11 @@ import "../../lib/RunMode.js" as RunMode
 //
 // Process (ADR-0041 step 1, S2): instantiated in the security process only (../host/SecurityHost.qml), with the lock and the sleep
 // inhibitor, so that the idle lock and the lock before sleep keep working whatever the UI does. What the UI knows of it
-// (the displays switched off, for the polkit agent and the screen saver) goes out with the lock state (Lock.displaysOff,
-// LockPublisher); what it needs from the UI (the applications' org.freedesktop.ScreenSaver inhibitors, which the menu
-// bridge serves to the UI) comes in as a lease (`idle inhibit <seconds>`, below), which ends by itself when the UI stops
-// renewing it: a UI that crashed while a video played cannot keep the idle lock off.
+// (the displays switched off, for the screen saver) goes out with the lock state (Lock.displaysOff, LockPublisher); the
+// polkit and secret sheets beside it (S3) read `displayOff` and `saverShown` in process (SheetSession, bound by the host);
+// what it needs from the UI (the applications' org.freedesktop.ScreenSaver inhibitors, which the menu bridge serves to the
+// UI) comes in as a lease (`idle inhibit <seconds>`, below), which ends by itself when the UI stops renewing it: a UI that
+// crashed while a video played cannot keep the idle lock off.
 Scope {
     id: root
 
@@ -198,6 +199,30 @@ Scope {
     Timer {
         id: inhibitLease
         onTriggered: console.info("grassfield-idle: the screen saver inhibitor lease ended without renewal")
+    }
+
+    // ---- The UI's screen saver, as this process counts it (ADR-0041 step 1, S3). The UI draws the saver (shell/saver,
+    // ADR-0032) after screensaver.idleMinutes without input; the polkit sheet and the secret sheets, which run here, hold a
+    // request while it may show (SheetSession.saverShown, bound by the host). This monitor counts the same idle time by the
+    // same rule (IdleModel.saverArmed, SaverModel.armed's; the same Wayland inhibitors, and the applications' through the
+    // lease above), so nothing the UI says is read. It differs from the saver only on the holding side: while the UI is down,
+    // or for the moment between an input that dismisses the saver and the compositor's activity report. Off in a dev session,
+    // as the saver's own delay (no test of the sheets needs it there; `saver devShow` is the UI's alone). It never locks,
+    // unlocks or dims. ----
+    readonly property int saverSeconds: devHooks ? 0 : IdleModel.saverSeconds(Settings.screenSaverIdleMinutes)
+    property bool rearmingSaver: false
+    readonly property bool saverShown: saverMonitor.enabled && saverMonitor.isIdle
+
+    IdleMonitor {
+        id: saverMonitor
+        // Armed only once its timeout is the one wanted (Quickshell keeps the timeout it was enabled with, see `rearming`).
+        enabled: timeout === Math.max(1, root.saverSeconds) && IdleModel.saverArmed(root.saverSeconds, Lock.locked, root.busInhibited, root.rearmingSaver)
+        timeout: Math.max(1, root.saverSeconds)
+        respectInhibitors: true
+        onTimeoutChanged: {
+            root.rearmingSaver = true;
+            Qt.callLater(() => root.rearmingSaver = false);
+        }
     }
 
     IdleMonitor {
@@ -522,6 +547,8 @@ Scope {
                 inactiveOffArmed: inactiveMonitor.enabled,
                 offForInactivity: root.offForInactivity,
                 busInhibited: root.busInhibited,
+                saverSeconds: root.saverSeconds,
+                saver: root.saverShown,
                 sleepPrevented: root.sleepPrevented,
                 autoSleepArmed: root.autoSleepArmed,
                 autoSleepSeconds: root.autoSleepSeconds,
