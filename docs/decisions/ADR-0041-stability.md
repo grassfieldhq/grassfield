@@ -631,8 +631,8 @@ down, how sleep behaves) is written in the table at the end of this step.
   two booleans the UI may know) is created at run time by `SecurityHost.qml`, at the end of its `Component.onCompleted`,
   never declared, as the lock's `LockStills` (S2): a sheet module that cannot be loaded or created leaves the lock, idle and
   the sleep inhibitor running. Measured offscreen (no window backend there): the root logs "the polkit agent and the secret
-  sheets cannot be loaded (... No PanelWindow backend loaded); ... the lock is unaffected", then "grassfield-security: ready (hosting lock idle, ...)", and publishes its state; declared, the same
-  failure took the whole root down ("Type AuthAgent unavailable", "Failed to load configuration"): no lock at all. Without
+  sheets cannot be loaded (... No PanelWindow backend loaded); ... the lock is unaffected", then "grassfield-security:
+  ready (hosting lock idle, ...)", and publishes its state; declared, the same failure took the whole root down ("Type AuthAgent unavailable", "Failed to load configuration"): no lock at all. Without
   the sheets no agent registers (polkitd answers "not authorized") and the bridge has no client (it releases its names:
   password prompts fall back to the stock prompters, as with no shell before, system-dialogs.md SC6): a failure denies an
   authorization, never approves one. `security state` answers `lock idle polkit secrets` once the sheets are made, `lock idle`
