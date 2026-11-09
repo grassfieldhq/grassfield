@@ -742,11 +742,12 @@ Singleton {
             // offscreen, 653 ms cold and about 50 ms warm, against about 25 ms for the ground alone. The Loader incubates it
             // after the surface's first frame, the opaque ground colour (`color` above), so the confirmation waits for that
             // frame only. Nothing behind the lock shows meanwhile (the surface is opaque); a key typed before the content exists
-            // reaches no item and is dropped; LockView takes the keyboard focus when it completes (focusField()).
-            Loader {
+            // reaches no item and is dropped; LockView takes the keyboard focus when it completes (focusField()). The
+            // loader retries a failed load once, synchronously, and completes one still under way after
+            // LockMachine.VIEW_SYNC_FALLBACK_MS (LockViewLoader.qml, the opus gate of d151cace).
+            LockViewLoader {
                 id: content
                 anchors.fill: parent
-                asynchronous: true
                 sourceComponent: LockView {
                     id: view
                     userName: root.userName

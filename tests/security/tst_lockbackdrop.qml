@@ -260,9 +260,81 @@ TestCase {
     function test_theConfirmationWaitsForTheGroundOnly() {
         const lock = source("shell/security/lock/Lock.qml").replace(/\r/g, "");
         verify(/WlSessionLockSurface \{\s*id: surface\s*color: Tokens\.colorDark\.shadow/.test(lock), "the surface has its own opaque colour");
-        verify(/\n\s*Loader \{\n\s*id: content\n\s*anchors\.fill: parent\n\s*asynchronous: true\n\s*sourceComponent: LockView \{\n\s*id: view\n/.test(lock), "LockView is loaded asynchronously");
+        verify(/\n\s*LockViewLoader \{\n\s*id: content\n\s*anchors\.fill: parent\n\s*sourceComponent: LockView \{\n\s*id: view\n/.test(lock), "LockView is loaded by LockViewLoader");
+        const loader = source("shell/security/lock/LockViewLoader.qml");
+        verify(/^Loader \{\n\s*id: root\n\n\s*asynchronous: true\n/m.test(loader), "asynchronously");
         compare((lock.match(/\bLockView \{/g) || []).length, 1, "one LockView, inside the Loader");
         // The controller's shake and clear reach the view from inside it (no reference to an item that may not exist yet).
         verify(/sourceComponent: LockView \{[^]*Connections \{\s*target: controller\s*function onFailed\(\): void \{\s*view\.shake\(\);/.test(lock));
+    }
+
+    // The opus gate of d151cace: the person always gets a field. LockViewLoader retries a failed load once, synchronously, and
+    // completes a load still under way after its bound. Run here on the real file's text (QtQuick and LockMachine.js only),
+    // created outside the lock module's directory, whose other types need Quickshell: only its relative import of
+    // LockMachine.js is made absolute.
+    function loaderOf(sourceComponent, fallbackMs) {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../shell/security/lock/LockViewLoader.qml"), false);
+        xhr.send();
+        const imp = 'import "../LockMachine.js" as Machine';
+        verify(xhr.responseText.indexOf(imp) >= 0);
+        const text = xhr.responseText.replace(imp, 'import "' + Qt.resolvedUrl("../../shell/security/LockMachine.js") + '" as Machine');
+        const l = Qt.createQmlObject(text, testRoot, Qt.resolvedUrl("LockViewLoaderUnderTest.qml"));
+        verify(l !== null);
+        // createQmlObject returns a QObject to the linter: the loader's own properties are set unchecked.
+        // qmllint disable missing-property
+        if (fallbackMs !== undefined)
+            l.fallbackMs = fallbackMs;
+        l.sourceComponent = sourceComponent;
+        // qmllint enable missing-property
+        return l;
+    }
+
+    Item {
+        id: testRoot
+    }
+
+    Component {
+        id: heavyView
+        Item {
+            Repeater {
+                model: 3000
+                Rectangle {
+                    width: 1
+                    height: 1
+                }
+            }
+        }
+    }
+
+    function test_aFailedViewIsRetriedOnceSynchronously() {
+        // A forced error: a component that cannot be created.
+        const broken = Qt.createComponent(Qt.resolvedUrl("tst_lockbackdrop.d/NoSuchView.qml"));
+        compare(broken.status, Component.Error);
+        ignoreWarning(/the lock view did not load; trying once more, synchronously/);
+        const l = loaderOf(broken);
+        tryVerify(() => l.retried, 2000, "the error leads to a retry");
+        tryCompare(l, "asynchronous", false, 2000, "the retry is synchronous");
+        wait(100);
+        compare(l.status, Loader.Error, "the same broken view fails again");
+        verify(l.retried, "and is not retried a second time (no loop)");
+        l.destroy();
+    }
+
+    function test_aViewStillLoadingIsCompletedAtOnce() {
+        ignoreWarning(/the lock view was still loading after 1 ms; completing it now/);
+        const l = loaderOf(heavyView, 1);
+        tryCompare(l, "status", Loader.Ready, 5000, "the fallback completes the load");
+        compare(l.asynchronous, false, "by turning the load synchronous");
+        verify(!l.retried);
+        l.destroy();
+    }
+
+    function test_aViewThatLoadsInTimeIsLeftAlone() {
+        const l = loaderOf(heavyView);
+        tryCompare(l, "status", Loader.Ready, 5000);
+        verify(l.asynchronous, "no fallback: the load stayed asynchronous");
+        verify(!l.retried);
+        l.destroy();
     }
 }
