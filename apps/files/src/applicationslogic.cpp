@@ -949,3 +949,231 @@ bool seedSessionDefaults(const QString &configDir, const QStringList &applicatio
     return out.commit();
 }
 } // namespace DefaultApps
+
+// ---- Bundled apps (ADR-0055 D-6): Sanaga for the web, Notes for Markdown ------------------------------------------------------
+namespace DefaultApps
+{
+namespace
+{
+// Omarchy's routing entry: it runs omarchy-launch-browser, which reads the default browser again.
+const QString kRouting = QStringLiteral("omarchy-browser.desktop");
+
+// The texts of the lists, or false when one cannot be read as a list (nothing is decided then).
+bool readLists(const QStringList &paths, QStringList *texts)
+{
+    for (const QString &path : paths) {
+        QString text;
+        if (!readListFile(path, false, &text))
+            return false;
+        texts->append(text);
+    }
+    return true;
+}
+
+// The desktop id the lookup gives `type` in the user's lists, in their order, leaving out the routing entry (as Omarchy's
+// omarchy-cmd-default-browser does); "" when none names one.
+QString lookedUp(const QStringList &texts, const QString &type)
+{
+    for (const QString &text : texts) {
+        const QString id = defaults(text).value(type);
+        if (!id.isEmpty() && id != kRouting)
+            return id;
+    }
+    return {};
+}
+
+// Whether the first file of `id` in `dirs` is a regular entry that handles at least one of `types`.
+bool installedFor(const QStringList &dirs, const QString &id, const QStringList &types)
+{
+    for (const QString &dir : dirs) {
+        const QFileInfo info(dir + QLatin1Char('/') + id);
+        if (!info.isFile() || info.size() > 256 * 1024)
+            continue;
+        QFile file(info.filePath());
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        const QStringList have = desktopMimeTypes(QString::fromUtf8(file.readAll()));
+        for (const QString &t : types) {
+            if (have.contains(t))
+                return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+bool writeWhole(const QString &path, const QString &text)
+{
+    if (!QDir().mkpath(QFileInfo(path).absolutePath()))
+        return false;
+    QSaveFile out(path);
+    if (!out.open(QIODevice::WriteOnly))
+        return false;
+    out.write(text.toUtf8());
+    return out.commit();
+}
+} // namespace
+
+QList<BundledGroup> bundledGroups()
+{
+    return {{QStringLiteral("web"),
+             QStringLiteral("sanaga.desktop"),
+             {QStringLiteral("x-scheme-handler/http"), QStringLiteral("x-scheme-handler/https"), QStringLiteral("text/html"), QStringLiteral("application/xhtml+xml")}},
+            {QStringLiteral("notes"), QStringLiteral("grassfield-notes.desktop"), {QStringLiteral("text/markdown"), QStringLiteral("text/x-markdown")}}};
+}
+
+bool isLauncherExec(const QString &exec)
+{
+    const QString program = exec.trimmed().section(QLatin1Char(' '), 0, 0).section(QLatin1Char('/'), -1);
+    static const QStringList launchers = {QStringLiteral("xdg-open"), QStringLiteral("gio"),   QStringLiteral("xdg-settings"), QStringLiteral("gtk-launch"),
+                                          QStringLiteral("uwsm-app"), QStringLiteral("sh"),    QStringLiteral("bash"),         QStringLiteral("env"),
+                                          QStringLiteral("systemd-run")};
+    return program.isEmpty() || program.startsWith(QLatin1String("omarchy-")) || launchers.contains(program);
+}
+
+QString withoutDefaults(const QString &listText, const QStringList &types, const QString &desktopId)
+{
+    QStringList out;
+    bool in = false;
+    for (const QString &line : listText.split(QLatin1Char('\n'))) {
+        if (isGroupLine(line)) {
+            in = line.trimmed() == kGroup;
+            out << line;
+            continue;
+        }
+        const QString key = in ? keyOf(line) : QString();
+        if (!key.isEmpty() && types.contains(key) && valueOf(line).split(QLatin1Char(';'), Qt::SkipEmptyParts).value(0).trimmed() == desktopId)
+            continue;
+        out << line;
+    }
+    return out.join(QLatin1Char('\n'));
+}
+
+bool parseState(const QString &text, QHash<QString, QString> *out)
+{
+    out->clear();
+    for (const QString &raw : text.split(QLatin1Char('\n'))) {
+        const QString line = raw.trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+            continue;
+        const int eq = int(line.indexOf(QLatin1Char('=')));
+        if (eq <= 0)
+            return false;
+        out->insert(line.left(eq), line.mid(eq + 1));
+    }
+    return true;
+}
+
+bool seedBundledApps(const QString &configDir, const QString &stateFile, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists)
+{
+    if (configDir.isEmpty() || !QDir::isAbsolutePath(configDir) || stateFile.isEmpty() || !QDir::isAbsolutePath(stateFile))
+        return false;
+    QStringList user;
+    if (!readLists(userLists, &user))
+        return false; // a list that cannot be read: nothing is decided
+    QStringList stock;
+    if (!omarchyDir.isEmpty()) {
+        for (const char *rel : {"config/hyprland-mimeapps.list", "default/applications/mimeapps.list"}) {
+            QString text;
+            if (readListFile(omarchyDir + QLatin1Char('/') + QLatin1String(rel), false, &text) && !text.isEmpty())
+                stock << text;
+        }
+    }
+    // What Omarchy itself names for the web: a browser it set up, not one the person picked.
+    QStringList stockWeb = {kRouting};
+    for (const QString &text : std::as_const(stock)) {
+        for (const QString &type : {QStringLiteral("x-scheme-handler/http"), QStringLiteral("x-scheme-handler/https")}) {
+            const QString id = defaults(text).value(type);
+            if (!id.isEmpty() && !stockWeb.contains(id))
+                stockWeb << id;
+        }
+    }
+    QString stateText;
+    QHash<QString, QString> state;
+    if (!readListFile(stateFile, true, &stateText) || !parseState(stateText, &state))
+        return false; // an unreadable or corrupt record: the person's choice is left alone
+    const QString listPath = configDir + QLatin1Char('/') + QLatin1String(kListName);
+    QString list;
+    if (!readListFile(listPath, true, &list))
+        return false;
+    bool changedList = false;
+    bool changedState = false;
+    for (const BundledGroup &g : bundledGroups()) {
+        const QString key = g.name + QStringLiteral(".state");
+        const QString st = state.value(key);
+        if (st == QLatin1String("user") || st == QLatin1String("done"))
+            continue;
+        QHash<QString, QString> now;
+        for (const QString &t : g.types)
+            now.insert(t, lookedUp(user, t));
+        if (st == QLatin1String("seeded")) {
+            bool same = true;
+            for (const QString &t : g.types) {
+                const QString was = state.value(g.name + QLatin1Char('.') + t);
+                if ((was == QLatin1String("-") ? QString() : was) != now.value(t))
+                    same = false;
+            }
+            if (same)
+                continue;
+            // Something else wrote the lists after the seed (xdg-settings, omarchy default browser, a browser's "make default"):
+            // that is the person's choice. The seeded entries go and nothing seeds again.
+            list = withoutDefaults(list, g.types, g.desktopId);
+            changedList = true;
+            state.insert(key, QStringLiteral("done"));
+            changedState = true;
+            continue;
+        }
+        if (!st.isEmpty())
+            continue; // a value this version does not know: left alone
+        if (!installedFor(applicationDirs, g.desktopId, g.types))
+            continue; // not installed (yet): nothing is recorded, a later start tries again
+        // First time. A choice anywhere keeps the whole group out, for good.
+        const QHash<QString, QString> session = defaults(list);
+        bool choice = false;
+        for (const QString &t : g.types) {
+            if (session.contains(t)) {
+                choice = true;
+                break;
+            }
+            const QString value = now.value(t);
+            if (value.isEmpty())
+                continue;
+            bool isStock = g.name == QLatin1String("web") && stockWeb.contains(value);
+            for (const QString &s : std::as_const(stock)) {
+                if (defaults(s).value(t) == value)
+                    isStock = true;
+            }
+            if (!isStock)
+                choice = true;
+        }
+        if (choice) {
+            state.insert(key, QStringLiteral("done"));
+            changedState = true;
+            continue;
+        }
+        QList<QPair<QString, QString>> seeds;
+        for (const QString &t : g.types)
+            seeds.append({t, g.desktopId});
+        list = withSeeds(list, seeds);
+        changedList = true;
+        state.insert(key, QStringLiteral("seeded"));
+        for (const QString &t : g.types)
+            state.insert(g.name + QLatin1Char('.') + t, now.value(t).isEmpty() ? QStringLiteral("-") : now.value(t));
+        changedState = true;
+    }
+    if (!changedList && !changedState)
+        return false;
+    if (changedList && !writeWhole(listPath, list))
+        return false;
+    if (changedState) {
+        QStringList keys = state.keys();
+        keys.sort();
+        QString out = QStringLiteral("# Written by grassfield-files --seed-default-apps and Settings > Desktop & Dock (ADR-0055 D-6)\n");
+        for (const QString &k : std::as_const(keys))
+            out += k + QLatin1Char('=') + state.value(k) + QLatin1Char('\n');
+        if (!writeWhole(stateFile, out))
+            return false;
+    }
+    return true;
+}
+} // namespace DefaultApps

@@ -184,4 +184,31 @@ QStringList lookupLists(const QStringList &configLocations, const QStringList &d
 // that order) counts as a choice unless it is Omarchy's shipped one (its lists under `omarchyDir`); the entries the file has
 // are kept, and a linked file is left as it is (only Change All… writes through a link). Returns whether it was written.
 bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
+
+// Bundled apps (ADR-0055 D-6): Sanaga (the web: http, https, text/html, xhtml) and Notes (Markdown) are the session's defaults
+// once, on a fresh session, and the person's later choice always wins.
+struct BundledGroup {
+    QString name;      // "web" or "notes": the key of its record
+    QString desktopId; // sanaga.desktop, grassfield-notes.desktop
+    QStringList types;
+};
+QList<BundledGroup> bundledGroups();
+// Whether an Exec= line runs a launcher that resolves the default again (omarchy-*, xdg-open, gio, a shell...): never a browser
+// to choose or to seed (the fork storm of 2026-10-30).
+bool isLauncherExec(const QString &exec);
+// The text without the [Default Applications] entries of `types` whose first application is `desktopId`; the rest as it was.
+QString withoutDefaults(const QString &listText, const QStringList &types, const QString &desktopId);
+// The record's "key=value" lines; false when a line is neither blank, a comment nor key=value (a corrupt record).
+bool parseState(const QString &text, QHash<QString, QString> *out);
+// The seed of the bundled apps, `stateFile` being the record (<state dir>/default-apps.state, "<group>.state" = seeded | done | user,
+// and the user's value of each type at the seed). Per group, never twice:
+//  - first time and installed: the group's types go to `configDir`/grassfield-mimeapps.list when no list names one for them, or
+//    only Omarchy's own (chromium.desktop, omarchy-browser.desktop) for the web; a choice of any other browser keeps the
+//    whole group out for good ("done");
+//  - already seeded: when the user's lists name something else for a type than at the seed (xdg-settings, omarchy default
+//    browser, a browser's "make default"), the seeded entries are removed and the group is "done";
+//  - "user" (Settings > Desktop & Dock wrote the choice) or "done": nothing.
+// An unreadable list, a list or record that is corrupt, a linked session list: nothing is decided and false is returned. True
+// when a file was written.
+bool seedBundledApps(const QString &configDir, const QString &stateFile, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
 } // namespace DefaultApps

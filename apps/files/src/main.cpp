@@ -1,4 +1,5 @@
 #include <QApplication>
+#include "runmode.h"
 #include <QCommandLineParser>
 #include <QDir>
 #include <QQmlApplicationEngine>
@@ -47,6 +48,9 @@ int main(int argc, char *argv[])
             const QStringList lists = DefaultApps::lookupLists(QStandardPaths::standardLocations(QStandardPaths::GenericConfigLocation),
                                                                QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation), desktops);
             DefaultApps::seedSessionDefaults(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation), dirs, omarchy, lists);
+            // Sanaga and Notes (ADR-0055 D-6): once, and a later choice of the person's always wins.
+            DefaultApps::seedBundledApps(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation),
+                                         grassfield::apps::runmode::stateDir() + QStringLiteral("/default-apps.state"), dirs, omarchy, lists);
         }
         return 0;
     }
