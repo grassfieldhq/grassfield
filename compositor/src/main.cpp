@@ -269,7 +269,7 @@ namespace {
         step("top clamp", [] { gf::topClamp::stop(); });     // the clamp scheduled after a drag removed (its callback is in this library)
         step("client chrome", [] { gf::chrome::stop(); });   // per-window toplevel listeners removed
         step("frame probe", [] { gf::frameProbe::stop(); }); // presentation listeners removed
-        step("capture privacy", [] { gf::capturePrivacy::stop(); }); // render.pre and screen-share listeners removed
+        step("capture privacy", [] { gf::capturePrivacy::stop(); }); // render.pre and screen-share listeners and the 1 s end-check timer removed
         step("desktop focus", [] { gf::desktopFocus::stop(); }); // no press or commit may reach the policy any more
         step("minimizer", [] { gf::minimizer::stop(); }); // before the Lua entry points go: animations complete, snapshots dropped
         step("overview", [] { gf::overviewer::stop(); });   // every window back to normal rendering, transformers detached

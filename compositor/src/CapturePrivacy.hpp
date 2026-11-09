@@ -16,7 +16,8 @@ namespace gf::capturePrivacy {
 
     // Listens to every display's frames (render.pre) and to Hyprland's screen-share state, with a check timer while a
     // display capture is in progress. False without the event bus or the event loop: then mayDrawContent() never lets a
-    // protected window's pixels be drawn outside its box, captured or not.
+    // protected window's pixels be drawn outside its box, captured or not. Once per load: a second call does nothing after
+    // a success, and first removes what a call that failed midway registered (core startOnce).
     bool start();
 
     // Unload: removes the listeners and the timer (their callbacks are code of this library) and redraws the displays that

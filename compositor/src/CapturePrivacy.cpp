@@ -92,48 +92,54 @@ namespace gf::capturePrivacy {
             if (now)
                 armEndCheck();
         }
+
+        // The listeners and the end check's timer (their callbacks are code of this library), gone from Hyprland.
+        void unregister(SState& s) {
+            s.listeners.clear();
+            if (s.endCheck) {
+                if (g_pEventLoopManager)
+                    g_pEventLoopManager->removeTimer(s.endCheck);
+                s.endCheck.reset();
+            }
+        }
+
+        bool registerAll(SState& s) {
+            auto& bus = Event::bus();
+            if (!bus || !g_pEventLoopManager)
+                return false;
+            s.endCheck = makeShared<CEventLoopTimer>(
+                std::nullopt,
+                [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) {
+                    guarded("capture privacy end check", [] {
+                        if (redrawEnded())
+                            armEndCheck();
+                    });
+                },
+                nullptr);
+            g_pEventLoopManager->addTimer(s.endCheck);
+            s.listeners.push_back(bus->m_events.render.pre.listen([](const PHLMONITOR& mon) { guarded("capture privacy render.pre", [&] { beforeFrame(mon); }); }));
+            // A display share's end: Hyprland stops counting a session as sharing 500 ms after its last copied frame, or
+            // when it stops, and says so here (CScreenshareSession::screenshareEvents). Only the displays whose capture
+            // has ended are redrawn, for render.pre to see it: a window share changes no display (core endChecked), and a
+            // display share with a frame still pending is still a capture. A start needs nothing: the frame the client
+            // waits for is pending before it is drawn, and render.pre sees that.
+            s.listeners.push_back(bus->m_events.screenshare.state.listen([](bool started, uint8_t type, const std::string& /*name*/) {
+                if (!privacy::endChecked(started, type == Screenshare::SHARE_WINDOW))
+                    return;
+                guarded("capture privacy screenshare.state", [] { (void)redrawEnded(); });
+            }));
+            return true;
+        }
     } // namespace
 
     bool start() {
         auto& s = st();
-        if (s.tracked)
-            return true;
-        auto& bus = Event::bus();
-        if (!bus || !g_pEventLoopManager)
-            return false;
-        s.endCheck = makeShared<CEventLoopTimer>(
-            std::nullopt,
-            [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) {
-                guarded("capture privacy end check", [] {
-                    if (redrawEnded())
-                        armEndCheck();
-                });
-            },
-            nullptr);
-        g_pEventLoopManager->addTimer(s.endCheck);
-        s.listeners.push_back(bus->m_events.render.pre.listen([](const PHLMONITOR& mon) { guarded("capture privacy render.pre", [&] { beforeFrame(mon); }); }));
-        // A display share's end: Hyprland stops counting a session as sharing 500 ms after its last copied frame, or when
-        // it stops, and says so here (CScreenshareSession::screenshareEvents). Only the displays whose capture has ended
-        // are redrawn, for render.pre to see it: a window share changes no display (its events come twice a second while
-        // a live thumbnail waits for its next frame), and a display share with a frame still pending is still a capture.
-        // A start needs nothing: the frame the client waits for is pending before it is drawn, and render.pre sees that.
-        s.listeners.push_back(bus->m_events.screenshare.state.listen([](bool started, uint8_t type, const std::string& /*name*/) {
-            if (started || type == Screenshare::SHARE_WINDOW)
-                return;
-            guarded("capture privacy screenshare.state", [] { (void)redrawEnded(); });
-        }));
-        s.tracked = true;
-        return true;
+        return privacy::startOnce(s.tracked, [&s] { unregister(s); }, [&s] { return registerAll(s); });
     }
 
     void stop() {
         auto& s = st();
-        s.listeners.clear();
-        if (s.endCheck) {
-            if (g_pEventLoopManager)
-                g_pEventLoopManager->removeTimer(s.endCheck);
-            s.endCheck.reset();
-        }
+        unregister(s);
         s.tracked = false;
         // The displays that showed a capture's look get their content back.
         guarded("capture privacy stop", [] {

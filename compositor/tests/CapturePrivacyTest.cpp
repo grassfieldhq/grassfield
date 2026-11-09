@@ -10,16 +10,19 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -188,8 +191,9 @@ TEST(CapturePrivacy, AMiniaturesPlateCoversItsSubsurfaces) {
 // ---- The plugin's sources: every function that draws a window's own pixels, or its title, asks first ----
 //
 // Review of e21c2071, MINOR-1: a file-wide text search let a second draw site, or a guard moved out of the drawing function,
-// pass. Here every use of a window's pixels (a surface's current state or its texture, a framebuffer's texture: a snapshot,
-// a transformer's input) and of the title's rendering is found in the plugin's sources with comments and literals blanked,
+// pass. Here every use of a window's pixels (a surface's current state, its texture or its buffer, a framebuffer's texture:
+// a snapshot, a transformer's input; a window or surface rendered by the plugin itself; the whole display's mirror texture;
+// review of a913cc59, nit-a) and of the title's rendering is found in the plugin's sources with comments and literals blanked,
 // attributed to the function whose body holds it, and the functions and their counts are pinned: a new use fails until
 // it is added here, with or without the guard. A function that draws must call gf::capturePrivacy::mayDrawContent in its
 // own body. What a source scan cannot see (a guard whose result is ignored) is for the nested checks.
@@ -351,8 +355,10 @@ namespace {
     }
 
     const std::regex& pixelUse() {
-        // A surface's current state taken whole or its texture, a framebuffer's texture, the title's rendering.
-        static const std::regex re{R"(getTexture\s*\(|m_current\s*;|m_current\s*\.\s*texture|renderText\s*\()"};
+        // A surface's current state taken whole, its texture or its buffer; a framebuffer's texture; a window rendered by
+        // Hyprland's renderer on the plugin's behalf, or a surface pass element; the display's mirror texture (the frame a
+        // display capture copies); the title's rendering. None of the last four occurs in the plugin today.
+        static const std::regex re{R"(getTexture\s*\(|m_current\s*;|m_current\s*\.\s*(texture|buffer)\b|renderText\s*\(|renderWindow\s*\(|CSurfacePassElement|getMirrorTexture\s*\()"};
         return re;
     }
 
@@ -398,41 +404,150 @@ namespace gf {
     EXPECT_EQ(owners, (std::vector<std::string>{"draw", "Foo"})) << "the comment and the string are not uses; the lambda and the if are not functions";
 }
 
-TEST(CapturePrivacy, EveryPluginFunctionThatDrawsAWindowsPixelsOrTitleAsksFirst) {
-    const std::filesystem::path dir{GF_PLUGIN_SOURCE_DIR};
-    ASSERT_TRUE(std::filesystem::is_directory(dir)) << dir;
-    std::map<std::string, Site> found;
-    std::vector<std::string>    unguarded;
-    std::vector<std::string>    outside;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
-        if (entry.path().extension() != ".cpp")
-            continue;
-        const std::string file   = entry.path().filename().string();
-        const std::string code   = codeOnly(slurp(entry.path()));
-        const auto        bodies = functionBodies(code);
-        for (auto it = std::sregex_iterator(code.begin(), code.end(), pixelUse()); it != std::sregex_iterator(); ++it) {
-            const Body* b = bodyOf(bodies, static_cast<size_t>(it->position()));
-            if (!b) {
-                outside.push_back(file + " at " + std::to_string(it->position()));
-                continue;
+namespace {
+    using Sources = std::vector<std::pair<std::string, std::string>>; // file name, source text
+
+    struct Scan {
+        std::map<std::string, int> uses;      // "<file> <function>" -> uses of a window's pixels or title in its body
+        std::vector<std::string>   unguarded; // such functions that draw without asking in their own body
+        std::vector<std::string>   outside;   // uses outside every function
+    };
+
+    Scan scan(const Sources& sources) {
+        Scan result;
+        for (const auto& [file, text] : sources) {
+            const std::string code   = codeOnly(text);
+            const auto        bodies = functionBodies(code);
+            for (auto it = std::sregex_iterator(code.begin(), code.end(), pixelUse()); it != std::sregex_iterator(); ++it) {
+                const Body* b = bodyOf(bodies, static_cast<size_t>(it->position()));
+                if (!b) {
+                    result.outside.push_back(file + " at " + std::to_string(it->position()));
+                    continue;
+                }
+                const std::string key = file + " " + b->name;
+                ++result.uses[key];
+                const std::string_view body{code.data() + b->open, b->close - b->open};
+                const bool             guarded = body.find("capturePrivacy::mayDrawContent(") != std::string_view::npos;
+                const auto             pin     = pinned().find(key);
+                if (!guarded && (pin == pinned().end() || pin->second.draws))
+                    result.unguarded.push_back(key);
             }
-            const std::string key = file + " " + b->name;
-            ++found[key].uses;
-            const std::string_view body{code.data() + b->open, b->close - b->open};
-            const bool             guarded = body.find("capturePrivacy::mayDrawContent(") != std::string_view::npos;
-            const auto             pin     = pinned().find(key);
-            if (!guarded && (pin == pinned().end() || pin->second.draws))
-                unguarded.push_back(key);
+        }
+        return result;
+    }
+
+    std::map<std::string, int> pinnedUses() {
+        std::map<std::string, int> uses;
+        for (const auto& [key, site] : pinned())
+            uses[key] = site.uses;
+        return uses;
+    }
+
+    Sources pluginSources() {
+        Sources                     sources;
+        const std::filesystem::path dir{GF_PLUGIN_SOURCE_DIR};
+        if (!std::filesystem::is_directory(dir))
+            return sources;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(dir)) {
+            if (entry.path().extension() == ".cpp")
+                sources.emplace_back(entry.path().filename().string(), slurp(entry.path()));
+        }
+        return sources;
+    }
+} // namespace
+
+TEST(CapturePrivacy, EveryPluginFunctionThatDrawsAWindowsPixelsOrTitleAsksFirst) {
+    const auto sources = pluginSources();
+    ASSERT_FALSE(sources.empty()) << GF_PLUGIN_SOURCE_DIR;
+    const auto result = scan(sources);
+    EXPECT_TRUE(result.outside.empty()) << ::testing::PrintToString(result.outside);
+    EXPECT_TRUE(result.unguarded.empty()) << "draws a window's pixels or title without gf::capturePrivacy::mayDrawContent() in its own body: "
+                                          << ::testing::PrintToString(result.unguarded);
+    EXPECT_EQ(result.uses, pinnedUses()) << "a use of a window's pixels was added, moved or removed: review it for SEC-01, then update pinned()";
+}
+
+// Review of a913cc59, nit-a: every way the scan knows to draw a window's pixels, added to the real sources in a new
+// function, is caught: unguarded, it is named; guarded, it still changes the pinned uses until it is reviewed.
+TEST(CapturePrivacy, ANewDrawSiteOfAnyKindIsCaught) {
+    const auto sources = pluginSources();
+    ASSERT_FALSE(sources.empty()) << GF_PLUGIN_SOURCE_DIR;
+    const std::array<std::string_view, 8> sites{
+        "auto tex = fb->getTexture();",
+        "const auto& state = surface->m_current;",
+        "auto tex = surface->m_current.texture;",
+        "auto buffer = surface->m_current.buffer;",
+        "auto title = g_pHyprRenderer->renderText(w->m_title, colour, 12, false, font, 100, 400);",
+        "g_pHyprRenderer->renderWindow(w, mon, now, true, Render::RENDER_PASS_MAIN);",
+        "g_pHyprRenderer->draw(CSurfacePassElement::SRenderData{});",
+        "auto frame = mon->resources()->getMirrorTexture();",
+    };
+    // The other files are scanned once; each mutant rescans only the file it changes (std::regex is slow on the big ones).
+    const auto target = std::ranges::find_if(sources, [](const auto& s) { return s.first == "WindowTransform.cpp"; });
+    ASSERT_NE(target, sources.end());
+    Sources others;
+    std::ranges::copy_if(sources, std::back_inserter(others), [](const auto& s) { return s.first != "WindowTransform.cpp"; });
+    const Scan base = scan(others);
+    for (const auto site : sites) {
+        for (const bool guard : {false, true}) {
+            std::string text = target->second + "\nnamespace gf::transform {\n    void sec01Mutant(const PHLWINDOW& w, const PHLMONITOR& mon) {\n";
+            if (guard)
+                text += "        if (!gf::capturePrivacy::mayDrawContent(w, mon))\n            return;\n";
+            text += "        " + std::string{site} + "\n    }\n}\n";
+            Scan       result = base;
+            const Scan mutant = scan(Sources{{"WindowTransform.cpp", text}});
+            for (const auto& [key, n] : mutant.uses)
+                result.uses[key] += n;
+            result.unguarded.insert(result.unguarded.end(), mutant.unguarded.begin(), mutant.unguarded.end());
+            result.outside.insert(result.outside.end(), mutant.outside.begin(), mutant.outside.end());
+            const bool named  = std::ranges::find(result.unguarded, "WindowTransform.cpp sec01Mutant") != result.unguarded.end();
+            EXPECT_EQ(named, !guard) << site << (guard ? " (guarded)" : " (unguarded)");
+            EXPECT_EQ(result.uses.count("WindowTransform.cpp sec01Mutant"), 1U) << site;
+            EXPECT_NE(result.uses, pinnedUses()) << site << ": a new site, guarded or not, is not in pinned()";
         }
     }
-    EXPECT_TRUE(outside.empty()) << ::testing::PrintToString(outside);
-    EXPECT_TRUE(unguarded.empty()) << "draws a window's pixels or title without gf::capturePrivacy::mayDrawContent() in its own body: "
-                                   << ::testing::PrintToString(unguarded);
-    std::map<std::string, int> foundUses;
-    std::map<std::string, int> pinnedUses;
-    for (const auto& [key, site] : found)
-        foundUses[key] = site.uses;
-    for (const auto& [key, site] : pinned())
-        pinnedUses[key] = site.uses;
-    EXPECT_EQ(foundUses, pinnedUses) << "a use of a window's pixels was added, moved or removed: review it for SEC-01, then update pinned()";
+}
+
+// Review of a913cc59, S8: the end of a share asks for the end check only for a display or region share.
+TEST(CapturePrivacy, OnlyTheEndOfADisplayShareAsksForTheEndCheck) {
+    EXPECT_TRUE(gf::privacy::endChecked(false, false)) << "a display or region share ended";
+    EXPECT_FALSE(gf::privacy::endChecked(false, true)) << "a window share ended (a live thumbnail, twice a second)";
+    EXPECT_FALSE(gf::privacy::endChecked(true, false)) << "a start is render.pre's";
+    EXPECT_FALSE(gf::privacy::endChecked(true, true));
+}
+
+// Review of a913cc59, nit-c: start() registers once per load, whatever an earlier call left. The counters stand in for
+// Hyprland's event loop (timers) and event bus (listeners).
+TEST(CapturePrivacy, StartRegistersOnceEvenAfterACallThatFailedMidway) {
+    bool started   = false;
+    int  timers    = 0;
+    int  listeners = 0;
+    int  builds    = 0;
+    bool failNext  = true;
+    const auto undo  = [&] { timers = 0; listeners = 0; };
+    const auto build = [&] {
+        ++builds;
+        ++timers; // addTimer
+        if (std::exchange(failNext, false))
+            throw std::runtime_error("listen failed after addTimer");
+        listeners += 2;
+        return true;
+    };
+    EXPECT_THROW(gf::privacy::startOnce(started, undo, build), std::runtime_error);
+    EXPECT_FALSE(started);
+    EXPECT_EQ(timers, 1) << "the failed call left its timer";
+    EXPECT_TRUE(gf::privacy::startOnce(started, undo, build));
+    EXPECT_EQ(timers, 1) << "the second call removed the first timer before adding its own";
+    EXPECT_EQ(listeners, 2);
+    EXPECT_TRUE(gf::privacy::startOnce(started, undo, build));
+    EXPECT_EQ(builds, 2) << "a call after a success registers nothing";
+    EXPECT_EQ(timers, 1);
+    EXPECT_EQ(listeners, 2);
+
+    // Without the event bus nothing is registered, and the next call tries again.
+    bool       again   = false;
+    int        tries   = 0;
+    const auto missing = [&] { ++tries; return false; };
+    EXPECT_FALSE(gf::privacy::startOnce(again, [] {}, missing));
+    EXPECT_FALSE(gf::privacy::startOnce(again, [] {}, missing));
+    EXPECT_EQ(tries, 2);
 }

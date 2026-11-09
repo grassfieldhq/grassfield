@@ -65,6 +65,24 @@ namespace gf::privacy {
     // How often a display capture in progress is checked for an end Hyprland does not report.
     inline constexpr std::chrono::milliseconds kEndCheck{1000};
 
+    // Whether Hyprland's screenshare.state event asks for the end check: the end of a share (`started` false) of a display
+    // or a region, never a window share (`windowShare`: Hyprland's SHARE_WINDOW). A window share changes no display, and
+    // its events come twice a second while a live thumbnail waits for its next frame (review of e21c2071, MAJOR-1).
+    bool endChecked(bool started, bool windowShare);
+
+    // start() once per load (review of a913cc59, nit-c): a call after a success does nothing; a call after one that failed
+    // midway first undoes what that one left (`undo`: a timer in Hyprland's event loop, listeners), then builds again, so
+    // nothing is ever registered twice. `build` returns whether it registered everything; when it throws, `started` stays
+    // false and the exception goes to the caller (gf::guarded), and the next call undoes again.
+    template <typename Undo, typename Build>
+    bool startOnce(bool& started, Undo&& undo, Build&& build) {
+        if (started)
+            return true;
+        undo();
+        started = build();
+        return started;
+    }
+
     // What the plate over a protected window's miniature covers (layout, on the display): the window's surface box
     // `surface` (its real place) and every one of its subsurfaces `parts` (their boxes at the real place too, empty or
     // non-finite ones ignored), mapped as the miniature maps the surface box onto `fitted`.

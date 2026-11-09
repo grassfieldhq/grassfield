@@ -26,6 +26,10 @@ namespace gf::privacy {
         return recorded.known && recorded.capturing && !capturingNow;
     }
 
+    bool endChecked(bool started, bool windowShare) {
+        return !started && !windowShare;
+    }
+
     Box miniatureCover(const Box& surface, const Box& fitted, const std::vector<Box>& parts) {
         double left   = surface.x;
         double top    = surface.y;
