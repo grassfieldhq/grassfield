@@ -264,6 +264,12 @@ TestCase {
         const loader = source("shell/security/lock/LockViewLoader.qml");
         verify(/^Loader \{\n\s*id: root\n\n\s*asynchronous: true\n/m.test(loader), "asynchronously");
         compare((lock.match(/\bLockView \{/g) || []).length, 1, "one LockView, inside the Loader");
+        // The state becomes "locked" on Hyprland's confirmation itself (WlSessionLock.secure), never on the view: neither
+        // the confirmation handler nor engage() reads the loader or the view (the integrator's run of c80c55b3, probe-cost).
+        const confirmed = block(lock, "onSecureStateChanged: {");
+        verify(/if \(secure\) \{[^}]*controller\.lockAcquired\(\);/.test(confirmed), "acquired on the compositor's confirmation");
+        for (const b of [confirmed, block(lock, "function engage(): void {")])
+            verify(!/\bcontent\b|\bview\b|LockView|status/.test(b), b);
         // The controller's shake and clear reach the view from inside it (no reference to an item that may not exist yet).
         verify(/sourceComponent: LockView \{[^]*Connections \{\s*target: controller\s*function onFailed\(\): void \{\s*view\.shake\(\);/.test(lock));
     }

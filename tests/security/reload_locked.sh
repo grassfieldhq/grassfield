@@ -515,7 +515,15 @@ foreign_release_and_wait() { # <step>
     sleep 0.05
   done
   if [[ -n $first ]]; then echo "unlocked window: <= ${first} ms (foreign release -> Hyprland reports LOCK again)"; fi
-  if [[ -n $first ]] && s=$(wait_status locked 3); then pass "$1: locked again by Grassfield after the foreign release (status $s)"; else fail "$1: not re-locked after the foreign release (status ${s:-?}, compositor $(compositor_lock))"; fi
+  # Hyprland lists LOCK as soon as a session lock exists; the shell's status becomes "locked" only on Hyprland's `locked`
+  # event, sent once every enabled monitor has drawn a frame of its lock surface (WlSessionLock.secure, Lock.qml
+  # onSecureStateChanged). In the nested session WAYLAND-1 draws only when the parent presents the nested window, so the
+  # confirmation can come late (the integrator's run of c80c55b3: "locking" 3 s after a release whose LOCK came back in
+  # 221 ms, with no WAYLAND-1 capture all run long). Meanwhile the session is locked (LOCK) and the UI reads "locking" as
+  # locked (LockState.uiLocked, uiLockConfirmed). So: LOCK back within 3 s (above), the confirmed "locked" within 10 s,
+  # and the time to the confirmation printed.
+  if [[ -n $first ]] && s=$(wait_status locked 10); then pass "$1: locked again by Grassfield after the foreign release (status $s)"; else fail "$1: not re-locked after the foreign release (status ${s:-?} after 10 s, compositor $(compositor_lock); a 'locking' with LOCK on every monitor waits for a lock frame on each: is the nested window shown?)"; fi
+  confirm_time "$1" "$from"
   foreign_wait_exit "$1"
   echo "compositor: $(compositor_lock)"
   grep "grassfield-lock: the session is unlocked although" "$lock_log" | tail -n 1
