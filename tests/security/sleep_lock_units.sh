@@ -181,6 +181,7 @@ echo "qs $*" >>"$STUB_LOG"
 case "$*" in
   "ipc -p /usr/share/grassfield/shell/security.qml call lock lock") ;;
   "ipc -p /usr/share/grassfield/shell call update check omarchy") [ -n "$STUB_QS" ] || exit 1; echo ok; exit 0 ;;
+  "ipc -p /usr/share/grassfield/shell/security.qml call security state") [ -n "$STUB_SECSTATE" ] || exit 1; printf '%s\n' "$STUB_SECSTATE"; exit 0 ;;
   *) exit 9 ;;
 esac
 [ -n "$STUB_QS" ] || exit 1
@@ -208,7 +209,7 @@ shimrun() { # <state> <qs answer> <monitors json> args... -> stdout; exit status
   : >"$tmp/log"
   shim_rc=0
   env -i PATH="$tmp/sbin:/usr/bin:/bin" STUB_LOG="$tmp/log" STUB_STATE="$state" STUB_QS="$answer" STUB_MONITORS="$monitors" \
-    XDG_RUNTIME_DIR="$tmp/run" HYPRLAND_INSTANCE_SIGNATURE="sig/1 x" timeout "$shim_guard" sh "$shim" "$@" 2>/dev/null || shim_rc=$?
+    STUB_SECSTATE="${secstate:-}" XDG_RUNTIME_DIR="$tmp/run" HYPRLAND_INSTANCE_SIGNATURE="sig/1 x" timeout "$shim_guard" sh "$shim" "$@" 2>/dev/null || shim_rc=$?
 }
 locked='[{"name":"eDP-1","solitaryBlockedBy":["LOCK"]},{"name":"DP-1","solitaryBlockedBy":["LOCK","WINDOWED"]}]'
 half='[{"name":"eDP-1","solitaryBlockedBy":["LOCK"]},{"name":"DP-1","solitaryBlockedBy":["WINDOWED"]}]'
@@ -216,6 +217,22 @@ half='[{"name":"eDP-1","solitaryBlockedBy":["LOCK"]},{"name":"DP-1","solitaryBlo
 out=$(shimrun active ok "$locked" lock lock; echo "rc=$shim_rc")
 [[ $out == $'ok\nrc=0' ]] && ! grep -q "start\|reset-failed" "$tmp/log" && grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock" "$tmp/log" \
   && pass "stand-in: lock lock with grassfield-security running asks it to lock (the security instance), starts nothing" || bad "stand-in: running security process: $out / $(tr '\n' ';' <"$tmp/log")"
+# An upgrade from a build before ADR-0041 S2 leaves the earlier security process running: it hosts no lock and its
+# `security state` answers "starting" (the opus review of 77a0ceb3, MINOR-1). The stand-in restarts it (no-block) so the
+# new one hosts the lock; a process of S2 (any other answer, or none) is left alone.
+secstate=starting
+out=$(shimrun active ok "$locked" lock lock; echo "rc=$shim_rc")
+grep -qx "systemctl --user restart --no-block grassfield-security.service" "$tmp/log" && ! grep -q "reset-failed\|grassfield-shell.service" "$tmp/log" \
+  && grep -qx "qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock" "$tmp/log" && [[ $out == $'ok\nrc=0' ]] \
+  && pass "stand-in: lock lock next to a security process from before S2 (security state: starting) restarts it (no-block), then asks it to lock" \
+  || bad "stand-in: pre-S2 security process: $out / $(tr '\n' ';' <"$tmp/log")"
+for secstate in "lock idle" "lock sleep" ""; do
+  out=$(shimrun active ok "$locked" lock lock; echo "rc=$shim_rc")
+  ! grep -q "restart\|reset-failed" "$tmp/log" && [[ $out == $'ok\nrc=0' ]] \
+    && pass "stand-in: lock lock next to a security process of S2 (security state: '${secstate:-no answer}') restarts nothing" \
+    || bad "stand-in: S2 security process '${secstate}': $out / $(tr '\n' ';' <"$tmp/log")"
+done
+secstate=
 for state in failed inactive; do
   out=$(shimrun "$state" ok "$locked" lock lock; echo "rc=$shim_rc")
   grep -qx "systemctl --user reset-failed grassfield-security.service" "$tmp/log" && grep -qx "systemctl --user start --no-block grassfield-security.service" "$tmp/log" \

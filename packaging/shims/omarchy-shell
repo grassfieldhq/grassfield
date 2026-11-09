@@ -47,7 +47,14 @@ marker() {
 
 lock_lock() {
   case $(systemctl --user show --property=ActiveState --value grassfield-security.service 2>/dev/null) in
-    active | activating | reloading) ;;
+    active | activating | reloading)
+      # An upgrade from a build before ADR-0041 S2 leaves the earlier security process running, which hosts no lock (its
+      # `security state` answers "starting"): restarted, the new one hosts the lock and restores it from the marker (the opus
+      # review of 77a0ceb3, MINOR-1). Anything else (an answer of S2, no answer yet) is left alone.
+      if [ "$(timeout -k 0.2 2 qs ipc -p /usr/share/grassfield/shell/security.qml call security state 2>/dev/null)" = starting ]; then
+        systemctl --user restart --no-block grassfield-security.service >/dev/null 2>&1
+      fi
+      ;;
     *)
       systemctl --user reset-failed grassfield-security.service >/dev/null 2>&1
       systemctl --user start --no-block grassfield-security.service >/dev/null 2>&1
