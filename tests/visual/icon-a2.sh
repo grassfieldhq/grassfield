@@ -5,32 +5,94 @@
 # ("A2 ...") and exits 0 when every rule holds.
 #
 # A renderer can stall when the GPU is shared with other nested sessions (a swap that never completes). Every test function
-# (a size, the desktop, the folder model, the missing-shader fallback) runs in a process of its own under a watchdog
-# (GRASSFIELD_ICONS_TIMEOUT seconds, default 240, then SIGKILL after 10 s) and a stalled attempt is retried
-# (GRASSFIELD_ICONS_ATTEMPTS, default 4): a stall costs one case, not the whole run. A real failure (a FAIL line) is never retried.
+# (a size, the desktop, the folder model, the missing-shader fallback) runs in a process of its own under a watchdog and a
+# stalled attempt is retried: a stall costs one case, not the whole run. A real failure (a FAIL line) is never retried.
 #
-#   tests/visual/icon-a2.sh
+# What a stall must not do (R7 icon harness, 2026-11-09: on main the four size cases passed, then the desktop case stalled and so did
+# every later case, even the pure data check limitKeysAreWellFormed, each for 4 x 240 s = 2.5 h with no data): after a stalled attempt
+#   1. the watchdog's process group is killed (timeout kills the group; a sweep of this tree's qmltestrunner follows),
+#   2. a HEALTH PROBE runs: the pure data case under a short limit. If it stalls too, the nested session or its GPU context is wedged
+#      and no later case can run: the run stops at once (exit 3), naming the cases that did not run, instead of burning every
+#      remaining case's attempts. Restart the nested session (scripts/dev/nested-down.sh, scripts/dev/nested-up.sh) and run the
+#      remaining cases by name.
+#   3. a heavy case (several scenarios: desktop, transparency, tints, accent row) gets a longer limit than a size case.
+#
+#   tests/visual/icon-a2.sh [test_function ...]
+#
+# Environment: GRASSFIELD_ICONS_TIMEOUT (a size case, s, default 240), GRASSFIELD_ICONS_TIMEOUT_HEAVY (default 480),
+# GRASSFIELD_ICONS_PROBE_TIMEOUT (default 60), GRASSFIELD_ICONS_ATTEMPTS (default 2), GRASSFIELD_ICONS_KILL (s between TERM and
+# KILL, default 10). GRASSFIELD_ICONS_RUNNER: a command that runs one case instead of qmltestrunner (it receives
+# "IconShaderA2::<function>" and prints the qmltestrunner lines); used by tests/shell/icon_a2_runner.sh, no nested session is needed then.
 set -uo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 dev=$root/.dev
-# shellcheck source=pidfile.sh
-. "$root/scripts/dev/pidfile.sh"
-dev_nested_target "$dev" || { echo "test-icons: no nested session of this tree (scripts/dev/nested-up.sh)" >&2; exit 1; }
+runner=${GRASSFIELD_ICONS_RUNNER:-}
+if [[ -z $runner ]]; then
+  # shellcheck source=pidfile.sh
+  . "$root/scripts/dev/pidfile.sh"
+  dev_nested_target "$dev" || { echo "test-icons: no nested session of this tree (scripts/dev/nested-up.sh)" >&2; exit 1; }
+fi
+mkdir -p "$dev"
 limit=${GRASSFIELD_ICONS_TIMEOUT:-240}
-attempts=${GRASSFIELD_ICONS_ATTEMPTS:-4}
+heavy=${GRASSFIELD_ICONS_TIMEOUT_HEAVY:-480}
+probe_limit=${GRASSFIELD_ICONS_PROBE_TIMEOUT:-60}
+attempts=${GRASSFIELD_ICONS_ATTEMPTS:-2}
+kill_after=${GRASSFIELD_ICONS_KILL:-10}
+probe_fn=test_a2_limitKeysAreWellFormed
 cases=("$@")
 [[ ${#cases[@]} -gt 0 ]] || cases=(test_a2_size48 test_a2_size32 test_a2_size24 test_a2_size16 test_a2_desktop test_a2_transparent48 test_a2_transparent24 test_a2_transparent16 test_a2_tintYellow32 test_a2_tintPink32 test_a2_accentRow test_a2_filesSelectedRow test_a2_limitKeysAreWellFormed test_folderModelMatchesTheShader test_blackFolderKeepsItsPlateOnBlack test_missingShaderDrawsThePlainIcon)
+
+limit_of() {
+  case $1 in
+    test_a2_desktop | test_a2_transparent* | test_a2_tint* | test_a2_accentRow | test_a2_filesSelectedRow) echo "$heavy" ;;
+    test_a2_limitKeysAreWellFormed) echo "$probe_limit" ;;
+    *) echo "$limit" ;;
+  esac
+}
+
+# One attempt of one case: prints the qmltestrunner output; the exit status is the watchdog's (124 / 137: stalled).
+run_one() {
+  local fn=$1 lim=$2
+  if [[ -n $runner ]]; then
+    timeout -k "$kill_after" "$lim" "$runner" "IconShaderA2::$fn" 2>&1
+  else
+    timeout -k "$kill_after" "$lim" "$root/scripts/dev/isolated.sh" --name "a2-$$" env WAYLAND_DISPLAY="$DEV_NESTED_SOCK" QT_QPA_PLATFORM=wayland QML_XHR_ALLOW_FILE_READ=1 \
+      /usr/lib/qt6/bin/qmltestrunner -import "$root/ui" -input "$root/tests/unit/tst_iconshader.qml" "IconShaderA2::$fn" 2>&1
+  fi
+}
+
+# Whatever survived a killed attempt (this tree's runner only; never anything else).
+sweep() {
+  [[ -n $runner ]] || pkill -KILL -f -- "qmltestrunner .*-input $root/tests/unit/tst_iconshader.qml" 2>/dev/null || true
+}
+
+# The nested session answers: the pure data case runs to its Totals line within the probe limit.
+healthy() {
+  local out status
+  out=$(run_one "$probe_fn" "$probe_limit")
+  status=$?
+  [[ $status != 124 && $status != 137 ]] && grep -q 'Totals' <<<"$out"
+}
+
 overall=0
+remaining=("${cases[@]}")
 for fn in "${cases[@]}"; do
+  remaining=("${remaining[@]:1}")
   done_case=0
   for ((try = 1; try <= attempts; try++)); do
-    out=$(timeout -k 10 "$limit" "$root/scripts/dev/isolated.sh" --name a2 env WAYLAND_DISPLAY="$DEV_NESTED_SOCK" QT_QPA_PLATFORM=wayland QML_XHR_ALLOW_FILE_READ=1 \
-      /usr/lib/qt6/bin/qmltestrunner -import "$root/ui" -input "$root/tests/unit/tst_iconshader.qml" "IconShaderA2::$fn" 2>&1)
+    out=$(run_one "$fn" "$(limit_of "$fn")")
     status=$?
     # A stall: killed by the watchdog, or no result at all (the runner died before reporting).
     if [[ $status == 124 || $status == 137 ]] || ! grep -q 'Totals' <<<"$out"; then
-      echo "test-icons: $fn attempt $try stalled (exit $status, limit ${limit}s), retrying" >&2
+      echo "test-icons: $fn attempt $try stalled (exit $status, limit $(limit_of "$fn")s)" >&2
+      sweep
+      if ! healthy; then
+        echo "test-icons: the health probe ($probe_fn, ${probe_limit}s) stalled too: the nested session or its GPU context is wedged." >&2
+        echo "test-icons: stopping. Restart it (scripts/dev/nested-down.sh, scripts/dev/nested-up.sh) and run the cases that did not run by name: $fn ${remaining[*]}" >&2
+        exit 3
+      fi
+      echo "test-icons: the health probe passed, the stall is this case's" >&2
       continue
     fi
     echo "$out" | grep -E "A2 " >>"$dev/a2-last.log" || true

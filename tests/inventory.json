@@ -449,6 +449,7 @@
  {"path": "tests/shell/settings_external_write/shell.qml", "layer": "headless"},
  {"path": "tests/shell/wall_clock/shell.qml", "layer": "headless"},
  {"path": "tests/shell/a2_limits_doc.sh", "layer": "data"},
+ {"path": "tests/shell/icon_a2_runner.sh", "layer": "data"},
  {"path": "tests/shell/store_helper_denied.sh", "layer": "data"},
  {"path": "tests/shell/store_helper_e2e.sh", "layer": "data"},
  {"path": "tests/shell/apps_nested.sh", "layer": "nested"},
