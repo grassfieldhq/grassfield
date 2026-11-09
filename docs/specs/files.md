@@ -112,8 +112,8 @@ selection").
    - app launchers (`.desktop`) are still refused (a launcher outside an applications folder run after a sheet is a
      follow-up); program content under a document's name (also "Invoice" + any character but a dot + "pdf"), another
      computer's program and anything with other rights are refused; nothing runs from a server or the Trash; nothing under
-     an Expand or Compress staging name (`.grassfield-expand-…`) is opened, listed or searched, and a killed Files' staging
-     items are removed at the next start.
+     an Expand or Compress staging name (`.grassfield-expand-…`) is opened, listed, searched, renamed, copied, moved,
+     dragged or trashed, and a killed Files' staging items are removed at the next start.
    Open With lists `KApplicationTrader::queryByMimeType` apps and launches with `ApplicationLauncherJob`; any application
    may run what it is given, so a downloaded program, AppImage, script, or Windows or Java program gets a sheet naming the
    application first ("… Are you sure you want to open it with <app>?").

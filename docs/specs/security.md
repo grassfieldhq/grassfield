@@ -646,15 +646,20 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
     U+2024 + "pdf", a Cyrillic er in "pdf" and trailing combining marks all ran without a sheet. A list of dot lookalikes
     can't be complete (second counter-review of fd5823de: U+A78F, U+16EB, U+1427 and U+10101, the UTS #39 lookalikes of the
     middle dot, and U+2022, U+2981, U+02D9, U+0F0B, U+2E30, U+2E3C, U+1803 and a combining dot below still ran), so the rule
-    also fails closed (`LaunchGuard::documentTailAfterOtherThanDot`): a program whose name ends in 1 to 5 ASCII letters or
-    digits (one letter at least) that name a document or archive type, right after any character but an ASCII dot, is
-    refused. It is read on the cleaned name and on the name as drawn (no compatibility folding, so a "TM" sign stays a sign;
-    accents dropped except the marks below a letter, canonical combining class 220, where a dot below sits on the line). So
-    "photo.jpg", "notes.txt", "run.sh" or "setup.exe" with ELF program content, "Invoice" + any punctuation or symbol +
-    "pdf", and "photo-jpg" never run (banner: "… it is an app, but its name makes it look like a document. If you trust it,
-    rename it first."). The cost, accepted: a program named like "nvim-qt" or "qemu-img" (a document type after a hyphen)
-    must be renamed to run from Files; digits only ("x86_64", "1.95"), a longer last word ("linux64") and accented words
-    ("vidéo") are not affected. Every other name check (launcher, Windows, Java, AppImage, another system's app, remote) is
+    also fails closed (`LaunchGuard::documentTailAfterOtherThanDot`): a program whose name ends in ASCII letters or digits
+    (one letter at least) that name a document or archive type (1 to 5 that "x." plus them gives such a MIME type, or a
+    longer document extension: torrent, sqlite, sqlite3, numbers, markdown, keynote, sketch, drawio, gnumeric, kdenlive,
+    parquet, webarchive, flatpakref, flatpakrepo), right after any character but an ASCII dot, is refused. It is read on the
+    cleaned name and on the name as drawn: nothing folded or decomposed, so a "TM" sign stays a sign, and every combining mark
+    kept, so a mark right before the letters (a dot below, a nukta, a Myanmar dot below, a Hebrew hiriq, an Arabic kasra, a
+    Thai sara u, a dot above, an accent) is a character other than a dot (third counter-review of fd5823de, m-b: the marks
+    outside combining class 220, and "Movie" + a lookalike + "torrent", still ran). So "photo.jpg", "notes.txt", "run.sh" or
+    "setup.exe" with ELF program content, "Invoice" + any punctuation, symbol or mark + "pdf", and "photo-jpg" never run
+    (banner: "… it is an app, but its name makes it look like a document. If you trust it, rename it first."). The cost,
+    accepted: a program named like "nvim-qt" or "qemu-img" (a document type after a hyphen), or with an accented letter right
+    before a document's letters ("Lecteur-vidéo": ".o" is an object file), must be renamed to run from Files; digits only
+    ("x86_64", "1.95"), a longer last word ("linux64", "signal-desktop") and accents inside a word ("Créateur") are not
+    affected. Every other name check (launcher, Windows, Java, AppImage, another system's app, remote) is
     made on the cleaned name too;
   - uwsm would read its path as a desktop entry (`RefuseLauncher`, `LaunchGuard::uwsmReadsAsEntry`: uwsm 0.27's MainArg takes
     an argument that ends in ".desktop" or holds ".desktop:" for an entry, so "…/Tool.desktop:run" would start the entry
@@ -687,13 +692,23 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
       hex>`, and Compress's `.grassfield-compress-<8 hex>.zip`) is opened, run, listed or searched from Files
       (`RefuseStaging`, `LaunchGuard::insideStaging` on the item's path and on a link's target: "… can’t be opened while Files
       is still expanding or compressing it."; `FolderModel` lists nothing there, Open With refuses it, `FileSearch` skips
-      it). The staging names in use are recorded in `<state>/files-staging` (the boot, the Files process and its start time,
-      the path; ADR-0020); a Files killed meanwhile leaves its line, and the next Files to start removes those items off the
-      GUI thread (`ArchiveJob::sweepStaleStaging`: only an absolute path whose last name is a staging name, of the user's
-      own). Every removal (a cancel, a refusal, the sweep) goes by descriptor (`LaunchGuard::removeTree`: openat and
-      unlinkat, one folder descriptor open at a time and a stack of names, each folder given u+rwx first, no link followed),
-      so a tree deeper than PATH_MAX goes too (second counter-review of fd5823de, m2: such a tree, and a killed Files'
-      staging folder, stayed behind unmarked);
+      it). Nor is it listed in its parent folder (hidden files shown or not), renamed, copied, cut, pasted, moved, dragged
+      out, duplicated, trashed, deleted, aliased, compressed, expanded, given other permissions or dropped into
+      (`FilesApp::refuseApplicationItems` with `stagingItem`: "… can’t be used while Files is still expanding or compressing
+      it."; a drag's `uriList` leaves it out), so its unmarked programs can't be taken out from under the staging name (third
+      counter-review of fd5823de, m-c). The staging names in use are recorded in `<state>/files-staging` (the boot, the Files
+      process and its start time, the path; ADR-0020); a Files killed meanwhile leaves its line, and the next Files to start
+      removes those items off the GUI thread (`ArchiveJob::sweepStaleStaging`: only an absolute path whose last name is a
+      staging name, of the user's own). The registry is read whole (up to 64 MiB; a larger file is left untouched and nothing
+      is recorded, swept or rewritten), the lines of live processes are never dropped, and at most 4096 lines are kept: a
+      Compress or an Expand that can't record its staging name doesn't start ("… can’t be expanded here.") (m-d: the lines
+      past 1 MiB were dropped on the rewrite). Every removal (a cancel, a refusal, the sweep) goes by descriptor
+      (`LaunchGuard::removeTree`: openat and unlinkat, one folder descriptor open at a time and a stack of names, no link
+      followed, each folder pinned with O_PATH and given u+rwx through its /proc/self/fd entry, the root included), so a tree
+      deeper than PATH_MAX goes too (second counter-review of fd5823de, m2: such a tree, and a killed Files' staging folder,
+      stayed behind unmarked); it climbs back through ".." only into the folder it came down from (device and inode recorded
+      on the way down) and stops otherwise, so a part of the tree moved elsewhere meanwhile never makes it empty the folder
+      that now holds that part (m-a: moving a/b into another folder during a removal emptied that folder);
     - a copy or move from a remote location (sftp, smb, ftp, http, a phone; `FilesApp::markRemoteCopies` on every tracked
       copy job) gets the source address, without user name or password, as its `user.xdg.origin.url`;
   - the user's execute bit is missing ("Opening it allows it to run on this computer."): Open sets u+x only (`fchmod`

@@ -171,9 +171,11 @@ Decision: copy Gatekeeper, from "never run" to "run after consent".
   `user.xdg.origin.url`. Names are judged as the eye reads them (NFKC, combining marks, format, default-ignorable and blank
   characters dropped, dot lookalikes read as "."), and a program whose extension is not plain ASCII is refused as a
   disguise, as is one whose name ends in a document's or an archive's letters after any character but an ASCII dot ("Invoice"
-  + any lookalike + "pdf", "photo-jpg": fail closed, since no list of lookalikes is complete). Nothing under an Expand or
-  Compress staging name is opened, run, listed or searched; a killed Files' staging items are removed at the next start
-  (`<state>/files-staging`, ADR-0020), and every removal goes by descriptor (a tree deeper than PATH_MAX too). Every Open With
+  + any lookalike or combining mark + "pdf", "photo-jpg", "Movie" + a lookalike + "torrent": fail closed, since no list of
+  lookalikes is complete). Nothing under an Expand or Compress staging name is opened, run, listed, searched, renamed,
+  copied, moved, dragged or trashed from Files; a killed Files' staging items are removed at the next start
+  (`<state>/files-staging`, ADR-0020, read whole, live lines never dropped), and every removal goes by descriptor (a tree
+  deeper than PATH_MAX too), climbing back only into the folder it came down from. Every Open With
   application of a program, an AppImage, a script, or a Windows or Java program follows the open rule (root refused, no
   remote program or staging item, the sheet first when downloaded): any of them may run it (second counter-review of
   fd5823de).
