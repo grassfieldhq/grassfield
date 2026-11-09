@@ -698,25 +698,57 @@ bool openTree(const QString &root)
     return ok;
 }
 
+namespace
+{
+// A folder of the user's own pinned by `pinned` (O_PATH, no link followed): u+rwx given through its /proc/self/fd entry when
+// it lacks them (the same inode, never a path looked up again), then opened for listing from that entry. -1 when it is not a
+// folder of the user's own or can't be opened; `identity` gets its status.
+int openOwnFolder(int pinned, struct stat *identity)
+{
+    struct stat st{};
+    if (::fstat(pinned, &st) != 0 || !S_ISDIR(st.st_mode) || st.st_uid != ::geteuid())
+        return -1;
+    const QByteArray self = "/proc/self/fd/" + QByteArray::number(pinned);
+    if ((st.st_mode & S_IRWXU) != S_IRWXU && ::chmod(self.constData(), (st.st_mode & 07777) | S_IRWXU) != 0)
+        return -1;
+    const int fd = ::open(self.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd >= 0)
+        *identity = st;
+    return fd;
+}
+} // namespace
+
 bool removeTree(const QString &root)
 {
-    // The root: a folder of the user's own (or a single file of theirs), never through a link.
+    // The root, pinned without following a link: a folder of the user's own, or a single file or link of theirs (its name goes,
+    // never a link's target).
     const QByteArray native = QFile::encodeName(root);
-    struct stat st{};
-    if (::lstat(native.constData(), &st) != 0)
+    const int pinnedRoot = ::open(native.constData(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    if (pinnedRoot < 0)
         return errno == ENOENT;
-    if (st.st_uid != ::geteuid())
+    struct stat rootStat{};
+    if (::fstat(pinnedRoot, &rootStat) != 0 || rootStat.st_uid != ::geteuid()) {
+        ::close(pinnedRoot);
         return false;
-    if (!S_ISDIR(st.st_mode))
+    }
+    if (!S_ISDIR(rootStat.st_mode)) {
+        ::close(pinnedRoot);
         return ::unlink(native.constData()) == 0;
-    if ((st.st_mode & S_IRWXU) != S_IRWXU && ::chmod(native.constData(), (st.st_mode & 07777) | S_IRWXU) != 0)
-        return false;
-    int current = ::open(native.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    }
+    int current = openOwnFolder(pinnedRoot, &rootStat);
+    ::close(pinnedRoot);
     if (current < 0)
         return false;
-    // One folder descriptor at a time: down into the first subfolder found, back up through ".." once a folder is empty,
-    // removing it by name in its parent. The names on the way down are the only state kept.
-    QList<QByteArray> names;
+    // One folder descriptor at a time: down into the first subfolder found, back up through ".." once a folder is empty, and
+    // only into the very folder it was entered from (device and inode recorded on the way down): a folder moved elsewhere
+    // during the walk has another parent there, and the walk stops instead of emptying it (third counter-review of fd5823de,
+    // m-a). The names and identities on the way down are the only state kept.
+    struct Level {
+        QByteArray name;
+        dev_t device;
+        ino_t inode;
+    };
+    QList<Level> levels;
     bool ok = true;
     while (current >= 0) {
         DIR *dir = ::fdopendir(::dup(current));
@@ -736,10 +768,6 @@ bool removeTree(const QString &root)
                 continue;
             }
             if (S_ISDIR(es.st_mode)) {
-                if (es.st_uid != ::geteuid()) {
-                    failed = true;
-                    continue;
-                }
                 down = entry->d_name;
                 break;
             }
@@ -752,24 +780,25 @@ bool removeTree(const QString &root)
             break;
         }
         if (!down.isEmpty()) {
-            struct stat ds{};
-            if (::fstatat(current, down.constData(), &ds, AT_SYMLINK_NOFOLLOW) != 0
-                || ((ds.st_mode & S_IRWXU) != S_IRWXU && ::fchmodat(current, down.constData(), (ds.st_mode & 07777) | S_IRWXU, 0) != 0)) {
-                ok = false;
-                break;
-            }
-            const int child = ::openat(current, down.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+            // Pinned without following a link; opened up and listed through that pin (openOwnFolder).
+            const int pinned = ::openat(current, down.constData(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
+            struct stat cs{};
+            const int child = pinned >= 0 ? openOwnFolder(pinned, &cs) : -1;
+            if (pinned >= 0)
+                ::close(pinned);
             if (child < 0) {
                 ok = false;
                 break;
             }
             ::close(current);
             current = child;
-            names.append(down);
+            levels.append({down, cs.st_dev, cs.st_ino});
             continue;
         }
         // Empty: back up and remove it by name, or, at the root, remove the root itself.
-        if (names.isEmpty()) {
+        if (RemoveTreeHooks::s_folderEmptied)
+            RemoveTreeHooks::s_folderEmptied(int(levels.size()));
+        if (levels.isEmpty()) {
             ::close(current);
             current = -1;
             ok = ::rmdir(native.constData()) == 0;
@@ -778,7 +807,15 @@ bool removeTree(const QString &root)
         const int parent = ::openat(current, "..", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         ::close(current);
         current = parent;
-        if (current < 0 || ::unlinkat(current, names.takeLast().constData(), AT_REMOVEDIR) != 0) {
+        const Level left = levels.takeLast();
+        const dev_t device = levels.isEmpty() ? rootStat.st_dev : levels.last().device;
+        const ino_t inode = levels.isEmpty() ? rootStat.st_ino : levels.last().inode;
+        struct stat ps{};
+        if (current < 0 || ::fstat(current, &ps) != 0 || ps.st_dev != device || ps.st_ino != inode) {
+            ok = false; // moved meanwhile: nothing outside the tree as it was entered is touched
+            break;
+        }
+        if (::unlinkat(current, left.name.constData(), AT_REMOVEDIR) != 0) {
             ok = false;
             break;
         }
@@ -800,8 +837,22 @@ bool insideStaging(const QString &path)
 
 namespace
 {
-// `name` ends (after its trailing spaces and dots) in 1 to 5 ASCII letters or digits, one letter at least, right after a
-// character that is not an ASCII dot, and "x." plus them is a document or archive type (no type of a program's own).
+// Document and archive extensions of 6 letters or more (the MIME rule below covers 1 to 5): a program's name never ends in one
+// of them after anything but a dot (third counter-review of fd5823de, m-b: "Movie" + a lookalike + "torrent" ran).
+bool longDocumentExtension(const QString &tail)
+{
+    static const char *const kLong[] = {"torrent", "sqlite", "sqlite3", "numbers", "markdown", "keynote", "sketch", "drawio",
+                                        "gnumeric", "kdenlive", "parquet", "webarchive", "flatpakref", "flatpakrepo"};
+    for (const char *e : kLong) {
+        if (tail.compare(QLatin1String(e), Qt::CaseInsensitive) == 0)
+            return true;
+    }
+    return false;
+}
+
+// `name` ends (after its trailing spaces and dots) in ASCII letters or digits, one letter at least, right after a character
+// that is not an ASCII dot, and they name a document or an archive: 1 to 5 of them that "x." plus them gives such a type (no
+// type of a program's own), or a longer extension of longDocumentExtension().
 bool documentTail(QString name)
 {
     while (!name.isEmpty() && (name.back().isSpace() || name.back() == QLatin1Char('.')))
@@ -816,9 +867,12 @@ bool documentTail(QString name)
         --start;
     }
     const qsizetype length = name.size() - start;
-    if (length < 1 || length > 5 || !letter || start == 0 || name.at(start - 1) == QLatin1Char('.'))
+    if (length < 1 || !letter || start == 0 || name.at(start - 1) == QLatin1Char('.'))
         return false;
-    const QList<QMimeType> types = QMimeDatabase().mimeTypesForFileName(QStringLiteral("x.") + name.mid(start));
+    const QString tail = name.mid(start);
+    if (length > 5)
+        return longDocumentExtension(tail);
+    const QList<QMimeType> types = QMimeDatabase().mimeTypesForFileName(QStringLiteral("x.") + tail);
     if (types.isEmpty())
         return false;
     for (const QMimeType &t : types) {
@@ -834,16 +888,13 @@ bool documentTailAfterOtherThanDot(const QString &name)
     // Read the way Files judges names (cleanName: lookalike dots folded, accents dropped, fullwidth letters made plain)...
     if (documentTail(cleanName(name)))
         return true;
-    // ... and the way it is drawn: invisible characters dropped, blank glyphs as spaces, no compatibility folding (a "TM" sign
-    // stays a sign, never the letters T and M joined to what follows), accents dropped except a mark below a letter (canonical
-    // combining class 220: a dot below sits on the line, where a full stop does). "vidéo" reads "video"; "Invoice" with a dot
-    // below and then "pdf" reads as "Invoice", a mark, "pdf".
+    // ... and the way it is drawn: invisible characters dropped, blank glyphs as spaces, nothing folded or decomposed, every
+    // combining mark kept. A "TM" sign stays a sign, never the letters T and M joined to what follows, and any mark right before
+    // the letters (a dot below, a nukta, a Thai sara u, a dot above, an accent) is a character other than a dot (third
+    // counter-review of fd5823de, m-b: marks outside combining class 220 were dropped and ran).
     QString drawn;
-    for (const char32_t c : name.normalized(QString::NormalizationForm_D).toUcs4()) {
-        const QChar::Category category = QChar::category(c);
-        if (category == QChar::Other_Format || defaultIgnorable(c))
-            continue;
-        if ((category == QChar::Mark_NonSpacing || category == QChar::Mark_Enclosing) && QChar::combiningClass(c) != 220)
+    for (const char32_t c : name.toUcs4()) {
+        if (QChar::category(c) == QChar::Other_Format || defaultIgnorable(c))
             continue;
         if (blankGlyph(c)) {
             drawn += QLatin1Char(' ');

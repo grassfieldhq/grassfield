@@ -7,6 +7,8 @@
 
 #include <functional>
 
+class LaunchGuardTestAccess;
+
 // What opening an item from Grassfield Files may do (GF-AUDIT-001 GF-070, SEC-12, DT-10; amended 2026-11-08 by the owner's
 // report "impossible de lancer une AppImage", ADR-0011 amendment "Files opens apps the Gatekeeper way"). macOS model
 // (Gatekeeper): opening a program runs it, and a program that came from the Internet runs only after the user said Open in a
@@ -155,16 +157,26 @@ TreeMarks markTree(const QString &root, const DownloadMarks &marks, qint64 cap =
 // Gives every folder under `root` (the root included) u+rwx, no link followed, so that a staging tree can be removed.
 bool openTree(const QString &root);
 // Removes the user's own tree at `root` by descriptor (openat, unlinkat; one folder descriptor open at a time and a stack of
-// names, so a tree deeper than PATH_MAX goes too), giving each folder u+rwx first; no link is followed (a link is removed,
-// never its target). False when something stayed.
+// names, so a tree deeper than PATH_MAX goes too), giving each folder u+rwx first through its O_PATH pin; no link is followed
+// (a link is removed, never its target). It climbs back only into the folder it came down from (device and inode): a part of
+// the tree moved elsewhere meanwhile stops the walk. False when something stayed.
 bool removeTree(const QString &root);
+// The tests' hook into removeTree (set only through LaunchGuardTestAccess, a friend): called each time a folder is found
+// empty, before removeTree leaves it, with its depth below the root (0: the root itself).
+class RemoveTreeHooks
+{
+    friend class ::LaunchGuardTestAccess;
+    friend bool removeTree(const QString &root);
+    static inline std::function<void(int)> s_folderEmptied;
+};
 // An Expand or Compress staging name (".grassfield-expand-<8 hex>", ".grassfield-compress-<8 hex>.zip") is a component of
 // `path`: Files opens, runs and lists nothing there (its files are not marked yet).
 bool insideStaging(const QString &path);
-// A program's name ends in 1 to 5 ASCII letters or digits (one letter at least) that name a document or archive type, right
-// after a character that is not an ASCII dot ("Invoice" + any lookalike of a dot + "pdf", "photo-jpg", "Invoice" + a dot
-// below + "pdf"): a disguise, whatever that character is (counter-review of fd5823de). Read on cleanName(name) and on the
-// name as drawn (no compatibility folding; accents dropped except the marks below a letter).
+// A program's name ends in ASCII letters or digits (one letter at least) that name a document or archive type (1 to 5 that
+// give such a MIME type, or a longer document extension: "torrent", "sqlite", "markdown"...), right after a character that
+// is not an ASCII dot ("Invoice" + any lookalike of a dot + "pdf", "photo-jpg", "Invoice" + any combining mark + "pdf"): a
+// disguise, whatever that character is (counter-reviews of fd5823de). Read on cleanName(name) and on the name as drawn
+// (nothing folded or decomposed, every combining mark kept).
 bool documentTailAfterOtherThanDot(const QString &name);
 // The download mark a copy from `source` gets: the address without user name or password, for a remote location (sftp, smb,
 // ftp, http, a phone…); "" for this computer's own locations (file:, the Trash, Recent, tags, searches).

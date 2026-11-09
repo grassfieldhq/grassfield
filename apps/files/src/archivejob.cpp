@@ -38,7 +38,10 @@ qint64 freeSpace(const QString &folder)
 
 // The staging registry (ArchiveJob::stagingRegistry): who holds a staging name. A holder is this boot, a process id and that
 // process's start time (field 22 of /proc/<pid>/stat), so that a process id used again by another program is no holder.
-constexpr qint64 kMaxRegistry = 1024 * 1024;
+// The registry is read whole, or not at all: a file larger than this (only a same-user process could make it) is left as it
+// is, and nothing is added to it, swept from it or rewritten (third counter-review of fd5823de, m-d: the lines past 1 MiB were
+// dropped on the rewrite, and their staging folders never swept).
+constexpr qint64 kMaxRegistry = qint64(64) * 1024 * 1024;
 
 QByteArray bootId()
 {
@@ -66,7 +69,8 @@ QByteArray holderLine(const QString &path)
     return self + ' ' + QFile::encodeName(path).toPercentEncoding();
 }
 
-// The registry's lines, changed by `edit` under an exclusive lock (flock: Files' processes and threads in turn), written back.
+// The registry's lines, changed by `edit` under an exclusive lock (flock: Files' processes and threads in turn), written back
+// whole. False, with nothing written, when it can't be opened, locked or read whole.
 bool editRegistry(const QString &file, const std::function<void(QList<QByteArray> &)> &edit)
 {
     if (!QDir().mkpath(QFileInfo(file).absolutePath()))
@@ -81,8 +85,12 @@ bool editRegistry(const QString &file, const std::function<void(QList<QByteArray
     QByteArray content;
     char buffer[4096];
     ssize_t n = 0;
-    while (content.size() < kMaxRegistry && (n = ::read(fd, buffer, sizeof buffer)) > 0)
+    while ((n = ::read(fd, buffer, sizeof buffer)) > 0 && content.size() <= kMaxRegistry)
         content.append(buffer, n);
+    if (n < 0 || content.size() > kMaxRegistry) {
+        ::close(fd);
+        return false;
+    }
     QList<QByteArray> lines;
     for (const QByteArray &line : content.split('\n')) {
         if (!line.isEmpty())
@@ -183,13 +191,22 @@ int ArchiveJob::sweepStaleStaging(const QString &registry)
     return removed;
 }
 
-void ArchiveJob::setTemp(const QString &path)
+bool ArchiveJob::setTemp(const QString &path)
 {
-    m_temp = path;
+    // Never a staging name that a killed Files would leave unswept: not recorded (the registry can't be written, or already
+    // holds kMaxStagingLines lines), no Compress or Expand. Lines of live Files processes are never dropped to make room.
     const QByteArray line = holderLine(path);
-    editRegistry(stagingRegistry(), [&line](QList<QByteArray> &lines) {
+    bool added = false;
+    const bool written = editRegistry(stagingRegistry(), [&line, &added](QList<QByteArray> &lines) {
+        if (lines.size() >= kMaxStagingLines)
+            return;
         lines << line;
+        added = true;
     });
+    if (!written || !added)
+        return false;
+    m_temp = path;
+    return true;
 }
 
 void ArchiveJob::forgetTemp()
@@ -218,11 +235,10 @@ void ArchiveJob::start()
     }
     if (m_kind == Kind::Compress) {
         const QString temp = hiddenName(m_folder, QStringLiteral("compress"), QStringLiteral(".zip"));
-        if (temp.isEmpty()) {
+        if (temp.isEmpty() || !setTemp(temp)) {
             fail(tr("“%1” can’t be created here.").arg(FileLogic::displayName(subject())));
             return;
         }
-        setTemp(temp);
         m_poll.start();
         run(ArchiveLogic::compressArgs(m_temp, m_folder, m_names));
         return;
@@ -298,9 +314,8 @@ void ArchiveJob::listed()
         return;
     }
     const QString temp = hiddenName(m_folder, QStringLiteral("expand"), QString());
-    if (!temp.isEmpty())
-        setTemp(temp); // recorded before it exists: a Files killed right after the mkdir leaves a line for the next sweep
-    if (temp.isEmpty() || !QDir().mkdir(m_temp)) {
+    // Recorded before it exists: a Files killed right after the mkdir leaves a line for the next sweep.
+    if (temp.isEmpty() || !setTemp(temp) || !QDir().mkdir(m_temp)) {
         forgetTemp();
         fail(tr("“%1” can’t be expanded here.").arg(FileLogic::displayName(subject())));
         return;

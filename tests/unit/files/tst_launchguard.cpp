@@ -830,7 +830,7 @@ TEST(LaunchGuardNames, LookalikesNeverHideADocumentsName)
     }
 
     // A program's own names still run: no extension, an ASCII one, letters with accents before the extension.
-    for (const QString &name : {QStringLiteral("Tool"), QStringLiteral("\u00c9diteur"), QStringLiteral("Lecteur-vid\u00e9o"), QStringLiteral("Spiel.x86_64"),
+    for (const QString &name : {QStringLiteral("Tool"), QStringLiteral("\u00c9diteur"), QStringLiteral("Cr\u00e9ateur"), QStringLiteral("Spiel.x86_64"),
                                 QStringLiteral("Lecteur-vid\u00e9o.AppImage"), QStringLiteral("\u65e5\u672c")}) {
         Facts f = program(name, QStringLiteral("application/x-executable"));
         EXPECT_EQ(verdict(f), Verdict::RunProgram) << name.toStdString();
@@ -881,8 +881,9 @@ TEST(LaunchGuardNames, ADocumentsLettersAfterAnythingButADotAreADisguise)
 TEST(LaunchGuardNames, AProgramsOwnNamesStillRun)
 {
     for (const QString &name : {QStringLiteral("Tool"), QStringLiteral("nvim-linux64"), QStringLiteral("Spiel.x86_64"), QStringLiteral("code-1.95"),
-                                QStringLiteral("Godot_v4.3-stable_linux.x86_64"), QStringLiteral("Lecteur-vid\u00e9o"), QStringLiteral("Lecteur-vide\u0301o"),
-                                QStringLiteral("my-tool"), QStringLiteral("Tool-1.0-x86_64.AppImage"), QStringLiteral("\u00c9diteur")}) {
+                                QStringLiteral("Godot_v4.3-stable_linux.x86_64"), QStringLiteral("Cr\u00e9ateur"), QStringLiteral("Cre\u0301ateur"),
+                                QStringLiteral("my-tool"), QStringLiteral("Tool-1.0-x86_64.AppImage"), QStringLiteral("\u00c9diteur"), QStringLiteral("Th\u00e9"),
+                                QStringLiteral("signal-desktop"), QStringLiteral("obs-studio"), QStringLiteral("steam-runtime"), QStringLiteral("my-program")}) {
         EXPECT_FALSE(documentTailAfterOtherThanDot(name)) << name.toStdString();
         EXPECT_EQ(verdict(program(name)), Verdict::RunProgram) << name.toStdString();
     }
@@ -991,4 +992,70 @@ TEST_F(Files, AnItemUnderAStagingNameOrALinkToOneIsRefused)
     EXPECT_EQ(of(notes), Verdict::RefuseStaging) << "a document too: nothing there is marked yet";
     EXPECT_EQ(of(link), Verdict::RefuseStaging) << "the link's target decides";
     EXPECT_EQ(of(dir.filePath(QStringLiteral(".grassfield-expand-0a1b2c3d"))), Verdict::RefuseStaging) << "the folder itself";
+}
+
+// Third counter-review of fd5823de (m-b): every combining mark right before a document's letters is a character other than a
+// dot (a nukta, a Myanmar dot below, a Hebrew hiriq, an Arabic kasra, a Thai sara u, a dot above), and longer document
+// extensions count too ("torrent", "sqlite", "numbers", "markdown"). The cost, accepted and documented: an accented letter
+// right before a document's letters ("Lecteur-vid" + e acute + "o": ".o" is an object file) is refused too.
+TEST(LaunchGuardNames, AnyMarkOrALongDocumentExtensionIsADisguise)
+{
+    for (const QString &mark : {QStringLiteral("\u093c"), QStringLiteral("\u09bc"), QStringLiteral("\u1037"), QStringLiteral("\u05b4"),
+                                QStringLiteral("\u0650"), QStringLiteral("\u0e38"), QStringLiteral("\u0307"), QStringLiteral("\u0358"),
+                                QStringLiteral("\u0301"), QStringLiteral("\u20dd")}) {
+        for (const QString &name : {QStringLiteral("Invoice") + mark + QStringLiteral("pdf"), QStringLiteral("Invoice") + mark + QStringLiteral("pdf "),
+                                    QStringLiteral("photo") + mark + QStringLiteral("jpg"), QStringLiteral("setup") + mark + QStringLiteral("exe")}) {
+            EXPECT_TRUE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+            EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << name.toStdString();
+        }
+    }
+    for (const QString &x : {QStringLiteral("\ua78f"), QStringLiteral("-"), QStringLiteral(" "), QStringLiteral("\u093c")}) {
+        for (const QString &name : {QStringLiteral("Movie") + x + QStringLiteral("torrent"), QStringLiteral("Budget") + x + QStringLiteral("numbers"),
+                                    QStringLiteral("Notes") + x + QStringLiteral("markdown"), QStringLiteral("db") + x + QStringLiteral("sqlite"),
+                                    QStringLiteral("db") + x + QStringLiteral("sqlite3"), QStringLiteral("Talk") + x + QStringLiteral("Keynote"),
+                                    QStringLiteral("App") + x + QStringLiteral("flatpakref")}) {
+            EXPECT_TRUE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+            EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << name.toStdString();
+        }
+    }
+    EXPECT_EQ(verdict(program(QStringLiteral("Lecteur-vid\u00e9o"))), Verdict::RefuseDisguised) << "the documented cost";
+    EXPECT_EQ(verdict(program(QStringLiteral("Lecteur-vide\u0301o"))), Verdict::RefuseDisguised) << "the same, decomposed";
+}
+
+class LaunchGuardTestAccess
+{
+public:
+    static void onFolderEmptied(std::function<void(int)> hook) { LaunchGuard::RemoveTreeHooks::s_folderEmptied = std::move(hook); }
+};
+
+// Third counter-review of fd5823de (m-a): a part of the tree moved elsewhere while removeTree walks it is never followed: the
+// walk climbs back only into the folder it came down from, so the folder that now holds the moved part keeps its files.
+TEST_F(Files, RemoveTreeNeverEmptiesAFolderItDidNotComeFrom)
+{
+    ASSERT_TRUE(dir.isValid());
+    const QString root = dir.filePath(QStringLiteral(".grassfield-expand-0000cccc"));
+    ASSERT_TRUE(QDir().mkpath(root + QStringLiteral("/a/b/c")));
+    for (int i = 0; i < 3; ++i)
+        write(QStringLiteral(".grassfield-expand-0000cccc/a/b/c/file%1").arg(i), "staged", false);
+    write(QStringLiteral(".grassfield-expand-0000cccc/a/b/beside"), "staged", false);
+    const QString victim = dir.filePath(QStringLiteral("victim"));
+    ASSERT_TRUE(QDir().mkpath(victim + QStringLiteral("/keep")));
+    write(QStringLiteral("victim/precious1"), "keep me", false);
+    write(QStringLiteral("victim/keep/precious2"), "keep me too", false);
+    // When "c" (depth 3) has been emptied, "a/b" (with "c" in it) is moved into the victim folder.
+    bool moved = false;
+    LaunchGuardTestAccess::onFolderEmptied([&](int depth) {
+        if (depth == 3 && !moved)
+            moved = QDir().rename(root + QStringLiteral("/a/b"), victim + QStringLiteral("/b"));
+    });
+    const bool removed = removeTree(root);
+    LaunchGuardTestAccess::onFolderEmptied({});
+    ASSERT_TRUE(moved);
+    EXPECT_FALSE(removed) << "the walk stops where the moved part now is";
+    EXPECT_TRUE(QFileInfo::exists(victim + QStringLiteral("/precious1")));
+    EXPECT_TRUE(QFileInfo::exists(victim + QStringLiteral("/keep/precious2")));
+    EXPECT_TRUE(QFileInfo(root + QStringLiteral("/a")).isDir()) << "what stays is left for a later removal";
+    // Unmoved, the same tree goes entirely.
+    EXPECT_TRUE(removeTree(root));
+    EXPECT_FALSE(QFileInfo::exists(root));
 }

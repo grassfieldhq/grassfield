@@ -5741,6 +5741,10 @@
         <translation>Terminal</translation>
     </message>
     <message>
+        <source>“%1” can’t be used while Files is still expanding or compressing it.</source>
+        <translation>«&#xa0;%1&#xa0;» ne peut pas être utilisé tant que Fichiers le décompresse ou le compresse.</translation>
+    </message>
+    <message>
         <source>Make Alias</source>
         <translation>Créer un alias</translation>
     </message>

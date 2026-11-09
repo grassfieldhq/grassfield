@@ -13,11 +13,14 @@
 #include "launchguard.h"
 #include "programlaunch.h"
 
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
+#include <QMimeData>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QSysInfo>
@@ -1036,4 +1039,149 @@ TEST_F(FilesLaunch, OpenWithAnyHandlerOfAProgramOrScriptAsksForADownloadedOne)
     EXPECT_EQ(s.told, QStringList{QStringLiteral("“Staged.AppImage” can’t be opened while Files is still expanding or compressing it.")});
     for (const auto &h : handlers)
         QFile::remove(apps + QLatin1Char('/') + h.first + QStringLiteral(".desktop"));
+}
+
+// Third counter-review of fd5823de (m-c): what an Expand is still writing is never listed (hidden files shown too), renamed,
+// copied, moved, trashed, duplicated, dropped, pasted, dragged or given other permissions from Files, and nothing is dropped
+// into it: its unmarked programs can't be taken out from under the staging name.
+TEST_F(FilesLaunch, AStagingItemIsNeverListedRenamedCopiedOrMoved)
+{
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    const QString staging = d(QStringLiteral("Downloads/.grassfield-expand-0a1b2c3d"));
+    const QString staged = place("probe", QStringLiteral("Downloads/.grassfield-expand-0a1b2c3d/Staged"), 0644);
+    const QString plain = place("probe", QStringLiteral("Downloads/plain"), 0644);
+    const QString elsewhere = d(QStringLiteral("Elsewhere"));
+    QDir().mkpath(elsewhere);
+    const QString refusedStaging = QStringLiteral("“.grassfield-expand-0a1b2c3d” can’t be used while Files is still expanding or compressing it.");
+    const QString refusedStaged = QStringLiteral("“Staged” can’t be used while Files is still expanding or compressing it.");
+
+    FolderModel model;
+    model.setShowHidden(true);
+    model.setUrl(QUrl::fromLocalFile(d(QStringLiteral("Downloads"))));
+    ASSERT_TRUE(waitFor([&] { return model.rowCount() > 0; }));
+    settle(300);
+    QStringList listed;
+    for (int row = 0; row < model.rowCount(); ++row)
+        listed << model.urlAt(row).fileName();
+    EXPECT_EQ(listed, QStringList{QStringLiteral("plain")}) << listed.join(QLatin1Char('|')).toStdString();
+
+    const auto refusedOnce = [&](const QString &message) {
+        const bool ok = s.told == QStringList{message};
+        s.told.clear();
+        return ok;
+    };
+    app.rename(QUrl::fromLocalFile(staging), QStringLiteral("Out"), nullptr);
+    EXPECT_TRUE(refusedOnce(refusedStaging)) << "rename";
+    app.copyToClipboard(urls(staged), false);
+    EXPECT_TRUE(refusedOnce(refusedStaged)) << "copy";
+    app.copyToClipboard(urls(staging), true);
+    EXPECT_TRUE(refusedOnce(refusedStaging)) << "cut";
+    app.trash(urls(staging));
+    EXPECT_TRUE(refusedOnce(refusedStaging)) << "trash";
+    app.duplicate(urls(staged), nullptr);
+    EXPECT_TRUE(refusedOnce(refusedStaged)) << "duplicate";
+    app.drop(urls(staged), QUrl::fromLocalFile(elsewhere), nullptr);
+    EXPECT_TRUE(refusedOnce(refusedStaged)) << "drag out";
+    app.drop(urls(plain), QUrl::fromLocalFile(staging), nullptr);
+    EXPECT_TRUE(refusedOnce(refusedStaging)) << "drop in";
+    {
+        auto *data = new QMimeData; // as another application would put it on the clipboard
+        data->setUrls(urls(staged));
+        QGuiApplication::clipboard()->setMimeData(data);
+    }
+    app.paste(QUrl::fromLocalFile(elsewhere), nullptr);
+    EXPECT_TRUE(refusedOnce(refusedStaged)) << "paste";
+    app.setAccess(QUrl::fromLocalFile(staged), 0, 3);
+    EXPECT_TRUE(refusedOnce(refusedStaged)) << "permissions";
+    EXPECT_EQ(app.uriList({QUrl::fromLocalFile(staged), QUrl::fromLocalFile(plain)}), QString::fromUtf8(QUrl::fromLocalFile(plain).toEncoded()) + QStringLiteral("\r\n"))
+        << "a drag carries no staging item";
+    settle(800);
+    EXPECT_TRUE(QFileInfo(staged).isFile()) << "nothing moved it";
+    EXPECT_EQ(modeOf(staged), 0644u);
+    EXPECT_TRUE(QDir(elsewhere).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot).isEmpty());
+    EXPECT_FALSE(QFileInfo::exists(d(QStringLiteral("Downloads/Out"))));
+    EXPECT_FALSE(QFileInfo::exists(staging + QStringLiteral("/plain")));
+}
+
+// Third counter-review of fd5823de (m-d): the registry is read whole, past 1 MiB too: a stale line at its end is swept, and no
+// line of a live Files is ever dropped.
+TEST_F(FilesLaunch, TheStagingRegistryIsReadWholeAndKeepsEveryLiveLine)
+{
+    const QByteArray self = selfHolder();
+    ASSERT_FALSE(self.isEmpty());
+    const QString registry = d(QStringLiteral("state/files-staging"));
+    QDir().mkpath(d(QStringLiteral("state")));
+    const QString stale = d(QStringLiteral("Work/.grassfield-expand-0000dead"));
+    place("probe", QStringLiteral("Work/.grassfield-expand-0000dead/prog"), 0755);
+    const QString deep = d(QStringLiteral("Work/") + QString(100, QLatin1Char('x')));
+    QByteArray content;
+    const int live = 9000;
+    for (int i = 0; i < live; ++i)
+        content += registryLine(self, deep + QStringLiteral("/.grassfield-expand-%1").arg(i, 8, 16, QLatin1Char('0'))) + '\n';
+    ASSERT_GT(content.size(), 1024 * 1024) << "the live lines alone pass 1 MiB";
+    content += registryLine("another-boot 4242 777", stale) + '\n';
+    {
+        QFile f(registry);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(content);
+    }
+    EXPECT_EQ(ArchiveJob::sweepStaleStaging(registry), 1);
+    EXPECT_FALSE(QFileInfo::exists(stale)) << "the stale line past 1 MiB was read and swept";
+    EXPECT_EQ(lines(registry).size(), live) << "every live line kept";
+}
+
+// m-d: the registry holds at most kMaxStagingLines lines; a Compress or Expand that can't record its staging name doesn't start
+// (a killed Files would leave it unswept), and no live line is dropped to make room.
+TEST_F(FilesLaunch, AnExpandThatCantRecordItsStagingNameDoesNotStart)
+{
+    const QString bsdtar = QStandardPaths::findExecutable(QStringLiteral("bsdtar"));
+    if (bsdtar.isEmpty())
+        GTEST_SKIP() << "bsdtar is not installed";
+    const QByteArray self = selfHolder();
+    ASSERT_FALSE(self.isEmpty());
+    place("probe", QStringLiteral("staging/Kit/tool"), 0755);
+    QDir().mkpath(d(QStringLiteral("Downloads")));
+    const QString archive = d(QStringLiteral("Downloads/Kit.zip"));
+    ASSERT_EQ(QProcess::execute(bsdtar, {QStringLiteral("-a"), QStringLiteral("-cf"), archive, QStringLiteral("-C"), d(QStringLiteral("staging")), QStringLiteral("Kit")}), 0);
+    const QString registry = ArchiveJob::stagingRegistry();
+    QByteArray before;
+    {
+        QFile f(registry);
+        if (f.open(QIODevice::ReadOnly))
+            before = f.readAll();
+    }
+    QByteArray full = before;
+    for (int i = int(lines(registry).size()); i < ArchiveJob::kMaxStagingLines; ++i)
+        full += registryLine(self, d(QStringLiteral("Held/.grassfield-expand-%1").arg(i, 8, 16, QLatin1Char('0')))) + '\n';
+    QDir().mkpath(QFileInfo(registry).absolutePath());
+    {
+        QFile f(registry);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(full);
+    }
+    ArchiveJob *job = ArchiveJob::expand(bsdtar, archive);
+    bool done = false;
+    bool ok = true;
+    QString error;
+    QObject::connect(job, &ArchiveJob::finished, job, [&](bool success, const QString &message, const QString &) {
+        done = true;
+        ok = success;
+        error = message;
+    });
+    job->start();
+    const bool finished = waitFor([&] { return done; }, 15000);
+    const int after = int(lines(registry).size());
+    delete job;
+    {
+        QFile f(registry);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(before);
+    }
+    ASSERT_TRUE(finished);
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(error, QStringLiteral("“Kit.zip” can’t be expanded here."));
+    EXPECT_EQ(after, ArchiveJob::kMaxStagingLines) << "no live line dropped, none added";
+    const QStringList left = QDir(d(QStringLiteral("Downloads"))).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot);
+    EXPECT_EQ(left, QStringList{QStringLiteral("Kit.zip")}) << left.join(QLatin1Char('|')).toStdString();
 }

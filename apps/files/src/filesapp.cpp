@@ -884,8 +884,10 @@ bool FilesApp::defaultDescending(int sortKey) const
 QString FilesApp::uriList(const QList<QUrl> &urls) const
 {
     QStringList lines;
-    for (const QUrl &u : urls)
-        lines << QString::fromUtf8(u.toEncoded());
+    for (const QUrl &u : urls) {
+        if (!stagingItem(u)) // a drag never carries what an Expand is still writing (m-c)
+            lines << QString::fromUtf8(u.toEncoded());
+    }
     return lines.join(QStringLiteral("\r\n")) + QStringLiteral("\r\n");
 }
 
@@ -1788,7 +1790,25 @@ bool FilesApp::refuseApplicationItems(const QList<QUrl> &urls)
             return true;
         }
     }
+    // What a Compress or an Expand is still writing (".grassfield-expand-…", or through a link): never renamed, copied, moved,
+    // trashed, dropped, given other permissions or used as a destination from Files, so its unmarked programs can't be taken
+    // out from under the staging name (third counter-review of fd5823de, m-c).
+    for (const QUrl &u : urls) {
+        if (!stagingItem(u))
+            continue;
+        qInfo("grassfield-files: refused on a staging item: \"%s\"", qPrintable(LaunchGuard::logName(u.fileName())));
+        emit operationFailed(tr("“%1” can’t be used while Files is still expanding or compressing it.").arg(FileLogic::displayName(u.fileName())));
+        return true;
+    }
     return false;
+}
+
+bool FilesApp::stagingItem(const QUrl &url)
+{
+    if (!url.isLocalFile())
+        return false;
+    const QString path = url.toLocalFile();
+    return LaunchGuard::insideStaging(path) || LaunchGuard::insideStaging(QFileInfo(path).canonicalFilePath());
 }
 
 // Copy of an application: the Finder copies the app, and pasting elsewhere makes a copy of it. Here the application is its desktop
@@ -1847,7 +1867,7 @@ void FilesApp::paste(const QUrl &destination, QObject *folder)
     // Items only, as the Finder: text or an image would go to KIO's own file-name dialogs (KioDialogs::pastableItems).
     // The checks below and KIO::paste see the same list: KIO's own (local URLs first, valid ones).
     const QList<QUrl> urls = KioDialogs::pastableItems(data);
-    if (urls.isEmpty())
+    if (urls.isEmpty() || refuseApplicationItems(urls))
         return;
     // A cut, the KDE way or the GNOME way (Nautilus writes only its own list): the items move.
     const bool cut = clipboardSaysCut(data);
@@ -2371,6 +2391,8 @@ void FilesApp::compress(const QList<QUrl> &urls, QObject *folder)
 
 void FilesApp::expand(const QUrl &archive, QObject *folder)
 {
+    if (refuseApplicationItems({archive}))
+        return;
     if (!isArchive(archive) || !QFileInfo(archive.toLocalFile()).isFile()) {
         emit operationFailed(tr("Only archives on this computer can be expanded."));
         return;
@@ -2485,6 +2507,8 @@ QVariantMap FilesApp::permissionsOf(const QUrl &url) const
 
 void FilesApp::setAccess(const QUrl &url, int who, int access)
 {
+    if (refuseApplicationItems({url}))
+        return;
     if (!permissionsOf(url).value(QStringLiteral("editable")).toBool() || who < 0 || who > 2 || access < 0 || access > 3)
         return;
     struct stat st{};
@@ -2508,6 +2532,8 @@ void FilesApp::setAccess(const QUrl &url, int who, int access)
 
 void FilesApp::setGroup(const QUrl &url, const QString &groupNameText)
 {
+    if (refuseApplicationItems({url}))
+        return;
     if (!permissionsOf(url).value(QStringLiteral("editable")).toBool() || !userGroups().contains(groupNameText))
         return;
     const group *gr = getgrnam(QFile::encodeName(groupNameText).constData());
@@ -2534,6 +2560,8 @@ void FilesApp::setGroup(const QUrl &url, const QString &groupNameText)
 
 void FilesApp::applyToEnclosed(const QUrl &url)
 {
+    if (refuseApplicationItems({url}))
+        return;
     const QVariantMap p = permissionsOf(url);
     if (!p.value(QStringLiteral("editable")).toBool() || !p.value(QStringLiteral("isDir")).toBool())
         return;

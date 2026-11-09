@@ -1106,6 +1106,10 @@ bool FolderModel::lessThan(const QModelIndex &left, const QModelIndex &right) co
 bool FolderModel::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const
 {
     const KFileItem item = sourceItem(sourceModel()->index(sourceRow, 0, sourceParent));
+    // An Expand or Compress staging name is never listed, hidden files shown or not: nothing can select it to rename, copy or
+    // drag it out while it holds unmarked programs (third counter-review of fd5823de, m-c).
+    if (item.name().startsWith(QLatin1Char('.')) && LaunchGuard::insideStaging(item.name()))
+        return false;
     // Only remote:/ entries can be hidden; the target is looked up for those alone.
     if (item.url().scheme() == QLatin1String("remote") && FileLogic::hiddenNetworkEntry(item.url(), item.targetUrl()))
         return false;

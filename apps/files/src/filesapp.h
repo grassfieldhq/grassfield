@@ -281,8 +281,11 @@ public:
     Q_INVOKABLE QUrl applicationUrl(const QString &id) const;
     Q_INVOKABLE QString applicationId(const QUrl &url) const;
     // True (and operationFailed with the permission message) when `urls` hold an item of the Applications location or the
-    // location itself: nothing can be done to them but opening.
+    // location itself: nothing can be done to them but opening. Also true (with its own message) for an item under an Expand
+    // or Compress staging name (stagingItem): Files never renames, copies, moves, trashes or changes one.
     bool refuseApplicationItems(const QList<QUrl> &urls);
+    // A local item under an Expand or Compress staging name, by its path or a link's target (LaunchGuard::insideStaging).
+    static bool stagingItem(const QUrl &url);
     QList<QUrl> applicationFiles(const QList<QUrl> &urls) const;
     Q_INVOKABLE bool isApplicationUrl(const QUrl &url) const;
     // How many applications the Applications location lists (Get Info on the location: macOS shows the size of the folder).

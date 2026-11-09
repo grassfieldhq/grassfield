@@ -50,8 +50,12 @@ public:
     // boot, the Files process and its start time, the percent-encoded path. A Files that was killed during a Compress or an
     // Expand leaves its lines; sweepStaleStaging() (FilesApp, at start, off the GUI thread) removes the items of lines whose
     // process is gone, by descriptor (LaunchGuard::removeTree), and only an absolute path whose last name is a staging name
-    // (".grassfield-expand-<8 hex>", ".grassfield-compress-<8 hex>.zip") of the user's own. Returns the items removed.
+    // (".grassfield-expand-<8 hex>", ".grassfield-compress-<8 hex>.zip") of the user's own. Returns the items removed. The
+    // registry is read whole (up to 64 MiB) or left untouched; the lines of live processes are always kept.
     static QString stagingRegistry();
+    // At most this many lines in the registry: a Compress or Expand that would add one more doesn't start ("… can’t be
+    // expanded here."); no line of a live Files is ever dropped. A sweep at each start removes the lines of gone processes.
+    static constexpr int kMaxStagingLines = 4096;
     static int sweepStaleStaging(const QString &registry = QString());
 
 signals:
@@ -68,7 +72,7 @@ private:
     void compressed();
     void fail(const QString &error);
     void cleanUp();
-    void setTemp(const QString &path);
+    bool setTemp(const QString &path);
     void forgetTemp();
     QString failureText(const QString &fallback) const;
 
