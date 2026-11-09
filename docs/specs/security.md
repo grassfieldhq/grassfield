@@ -435,7 +435,12 @@ Read in the sources (Quickshell v0.3.1, `quickshell-mirror/quickshell@v0.3.1`; H
   and keeps the lock for, and which systemd counts as a failure (unlike SIGTERM, which leaves the unit inactive):
   `OnFailure=` runs, the unit restarts and the marker brings the lock back. Both units also set `LimitCORE=0` (the opus
   delta review of 122f8d67): the crash is recorded in the journal and no core file is stored, since a core of the
-  security process may hold the typed password, and one of the UI the polkit and secret-sheet passwords.
+  security process may hold the typed password, and one of the UI the polkit and secret-sheet passwords. Exactly 0, the
+  hard limit included, never `0:infinity`: a hard limit above 0 lets a same-user process raise the soft one with prlimit,
+  crash the process and read the dump. The applications the shell starts (`uwsm-app --` from the Dock, Search and
+  Launchpad, a scope in the shell's process tree) inherit the hard limit of 0: their crashes still give a notice, but no
+  core file, a terminal opened from the Dock included (ADR-0041 S2: to revisit, by starting them through the user
+  manager).
 - Either way the restarted shell (`Restart=always`) finds the marker `locked` and takes the lock back.
 Expected: locked in both cases. NOT VERIFIED at runtime until the nested `graceful-exit` step of
 `tests/security/reload_locked.sh` runs (bare, outside the sandbox): (a) `kill -TERM`, (b) `qs kill --pid`; after each,

@@ -41,6 +41,12 @@ Environment=QS_DISABLE_CRASH_HANDLER=1
 # LimitCORE=0, systemd-coredump honours the limit: it records the crash in the journal (signal, PID, unit: coredumpctl list
 # shows it, without a file and without a stack) and stores nothing. The process still dies by the signal, so Restart=,
 # OnFailure= and the failure counter are unchanged.
+# Exactly 0, the hard limit included: never `0:infinity` or any soft-only form. With a hard limit above 0, a same-user process
+# can raise the soft one with prlimit, crash this process and read the dump (the opus gate of 55bfea41). The tests pin this
+# exact line (tests/security/security_unit.sh, tests/shell/shell_unit.sh). The applications this shell starts (the Dock,
+# Search, Launchpad: `uwsm-app --`, a scope that runs in this process's tree) inherit the hard limit of 0: their crashes
+# still give a notice (the journal entry), but no core file, a terminal opened from the Dock included (ADR-0041 S2: a
+# decision to revisit, starting the applications through the user manager instead).
 LimitCORE=0
 # Qt's "@2x" image lookup off (review of cbd6ef05): a file:// picture is decoded from the very path the shell asked for (the
 # lock checks its wallpaper still by that path), never from a "<name>@2x.<ext>" beside it. The shell ships no such file.

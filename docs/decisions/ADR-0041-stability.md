@@ -577,12 +577,45 @@ down, how sleep behaves) is written in the table at the end of this step.
     in the journal (signal, PID, unit; `coredumpctl list` shows it without a file or a stack) and stores nothing.
     Nothing of Grassfield reads a core file: `grassfield-crash-watch` follows the journal entries (and gives no notice
     for these units), `grassfield-report` lists `coredumpctl list`, which shows these entries without a file, and the
-    1a counter is `OnFailure=`. Quickshell's own report folder (`~/.cache/quickshell/crashes`) is no longer written. Tests: `security_unit.sh`, `tests/shell/shell_unit.sh`;
+    1a counter is `OnFailure=`. Quickshell's own report folder (`~/.cache/quickshell/crashes`) is no longer written.
+    The limit is exactly 0, the hard one included (never `0:infinity`): with a hard limit above 0 a same-user process
+    could raise the soft one with prlimit, crash the process and read the dump (the opus gate of 55bfea41); the tests pin
+    the line. Consequence, a decision to revisit: the applications the shell starts (the Dock, Search, Launchpad, through
+    `uwsm-app --`, whose scope runs in the shell's process tree) inherit the hard limit of 0. Their crashes still give a
+    notice (`grassfield-crash-watch` reads the journal entry) but no core file, a terminal opened from the Dock and what
+    it runs included: a privacy gain, and a loss for whoever debugs an application's crash. The alternative is to start
+    the applications through the user manager (a transient service or scope created by systemd, outside the shell's tree),
+    which gives them the user manager's limits. Tests: `security_unit.sh`, `tests/shell/shell_unit.sh`;
     `reload_locked.sh ui-crash` now passes the step "the UI ended on SIGSEGV" and names the handler if it comes back.
   - `rss.sh --nested` required a running menu bridge, which P2 does not count and a nested session without its build
     does not run: it is now listed when it runs and never required; `--real` finds both Quickshell processes by their
     units' MainPID (it still looked for `qs -n -c grassfield`, a command line gone since GF-115, and missed the security
     process).
+- The integrator's nested run of 122f8d67 (2026-11-09, bare, no compositor plugin, load 8 to 15): `reload_locked.sh` 85
+  PASS, 3 FAIL; `rss.sh --nested` unlocked 601 MB (PASS, 608), locked 665 MB (FAIL).
+  - ui-crash still failed: the UI was alive 5 s after SIGSEGV, with `QS_DISABLE_CRASH_HANDLER=1` in its environment and
+    its own Process children (inotifywait, gio monitor) listed. The record names qs itself (`setsid` execs it), and the
+    children kept nothing alive: the kernel was writing the UI's core (hundreds of MB) to systemd-coredump, and a process
+    ends only once its dump is written. With `ulimit -c 0` (f1b6a852) systemd-coredump stores nothing and the process
+    ends at once. The step now checks the UI's core limit (0 0), waits out a dump that is under way (`CoreDumping:` in
+    /proc, at most 65 s) and fails if there was one, and replaces the UI when it does not end, so that one failure no
+    longer runs the remaining steps without a UI.
+  - sleep-desync: the fresh lock after a foreign takeover was confirmed 5054 ms after "taking a fresh lock" in lock-desync
+    and not within the 4 s sleep delay in sleep-desync (the e1a3ff4c run: 425 to 441 ms; `reload_locked.sh` now prints
+    this time for both steps). Hyprland confirms a lock (`locked`, `WlSessionLock.secure`) once every lock surface has
+    drawn a frame, and each surface created LockView at once, so its first frame waited for the view's creation and
+    first render. Offscreen (the scratch probe `.dev/lvtime`, load 15): a lock surface with LockView drew its first frame
+    after 653 ms cold and 49 to 73 ms warm; with the ground alone, 20 to 42 ms, LockView following at 613 ms cold and 31
+    to 75 ms warm. The nested 5 s include what offscreen does not have (the window's graphics context, its effects'
+    pipelines, the nested compositor under load), and the UI's core still being processed then (ui-crash above) may have
+    loaded the machine: the cause is not isolated (NOT VERIFIED). Change: the surface draws its opaque ground first and
+    LockView is incubated after it by an asynchronous Loader (`Lock.qml`), so Hyprland's confirmation waits for that
+    frame only; nothing behind the lock shows meanwhile, a key typed before the view exists is dropped, the view takes
+    the keyboard focus when it completes. The sleep delay already waits up to what logind allows: `IdleModel.sleepBudgetMs`
+    reads `InhibitDelayMaxUSec` (Omarchy's 15 s window gives 12 s, the cap); 4 s is only the fallback when it cannot be
+    read, which a dev session always is (no system bus): no change. Test: `tst_lockbackdrop.qml`
+    (test_theConfirmationWaitsForTheGroundOnly). The nested time to a confirmed lock with this change: NOT VERIFIED
+    (the integrator's next run).
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words
