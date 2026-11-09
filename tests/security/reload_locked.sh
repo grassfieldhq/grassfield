@@ -283,15 +283,37 @@ step_ui_crash() {
   lockpid=$(lock_pid) || { fail "ui-crash: no live security process record (.dev/security.pid)"; return; }
   dev_may_signal "$pid" || { fail "ui-crash: refusing to signal PID $pid"; return; }
   [[ $pid != "$lockpid" ]] || { fail "ui-crash: the UI's record names the security process (PID $pid)"; return; }
+  # The UI writes no core (shell-run.sh: ulimit -c 0, as the units' LimitCORE=0). The integrator's nested run of 122f8d67,
+  # before that limit, saw the SIGSEGV'd UI still alive after 5 s: the kernel was writing its core (hundreds of MB) to
+  # systemd-coredump, and a process is gone only once its dump is written. Its Process children (inotifywait, gio monitor)
+  # were listed as if they kept it alive; they did not.
+  local core_limit
+  core_limit=$(awk '/^Max core file size/ {print $5 " " $6}' "/proc/$pid/limits" 2>/dev/null)
+  [[ $core_limit == "0 0" ]] && pass "ui-crash: the UI runs with no core file (soft and hard limit 0)" \
+    || fail "ui-crash: the UI's core file limit is '${core_limit:-unknown}' (want 0 0: scripts/dev/shell-run.sh ulimit -c 0)"
+  local t0=$SECONDS dumping=0
   kill -SEGV "$pid"
   for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  # A core being written: wait for the dump to end (at most 60 s more), and say so.
+  while kill -0 "$pid" 2>/dev/null && grep -qx $'CoreDumping:\t1' "/proc/$pid/status" 2>/dev/null && ((SECONDS - t0 < 65)); do
+    dumping=1
+    sleep 0.5
+  done
   # Quickshell's crash handler would keep the crashed process alive under a relaunched child (QS_DISABLE_CRASH_HANDLER=1 in
   # the units and in scripts/dev/shell-run.sh turns it off): named here if it ever comes back.
   if kill -0 "$pid" 2>/dev/null; then
-    fail "ui-crash: the UI did not exit after SIGSEGV (children: $(pgrep -P "$pid" -a 2>/dev/null | tr '\n' ';' | cut -c1-200); QS_DISABLE_CRASH_HANDLER in its environment: $(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -c '^QS_DISABLE_CRASH_HANDLER=1$'))"
+    fail "ui-crash: the UI did not exit after SIGSEGV ($((SECONDS - t0)) s; state $(awk '/^State:/ {print $2 $3}' "/proc/$pid/status" 2>/dev/null); children: $(pgrep -P "$pid" -a 2>/dev/null | tr '\n' ';' | cut -c1-200); QS_DISABLE_CRASH_HANDLER in its environment: $(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -c '^QS_DISABLE_CRASH_HANDLER=1$'))"
+    # The later steps need a UI: this one is ended and replaced, so that one failure does not run the rest without it.
+    kill -KILL "$pid" 2>/dev/null
+    for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    "$root/scripts/dev/shell-run.sh"
     return
   fi
-  pass "ui-crash: the UI ended on SIGSEGV (no crash handler kept it alive)"
+  if ((dumping)); then
+    fail "ui-crash: the UI ended on SIGSEGV only after $((SECONDS - t0)) s in its core dump (the kernel hands the core to systemd-coredump whatever the limit; with a limit of 0 it must end at once)"
+  else
+    pass "ui-crash: the UI ended on SIGSEGV within $((SECONDS - t0)) s (no crash handler kept it alive, no core written)"
+  fi
   sleep 0.5
   echo "compositor after the UI's crash: $(compositor_lock)"
   if compositor_locked; then pass "ui-crash: Hyprland still reports LOCK on every monitor"; else fail "ui-crash: the session is UNLOCKED after a crash of the UI"; fi
@@ -630,6 +652,20 @@ check_triggered_by() { # <step> <request log pattern>
   fi
 }
 
+# The time from "taking a fresh lock" to "locking -> locked (acquired)" (Hyprland's confirmation: every lock surface drew a
+# frame) in the security log since line <from>: printed for the integrator's comparison (the nested run of 122f8d67 measured
+# 5.05 s under load where the run of e1a3ff4c measured 0.43 s; since the surface draws its ground before LockView, the
+# confirmation waits for that frame only).
+confirm_time() { # <step> <log line count before>
+  local ms
+  ms=$(tail -n +"$(($2 + 1))" "$lock_log" | awk '
+    function t(s,  a) { split(s, a, ":"); return ((a[1] * 60 + a[2]) * 60 + a[3]) * 1000 }
+    /taking a fresh lock/ && from == "" { from = t($2) }
+    /locking -> locked \(acquired\)/ && from != "" && to == "" { to = t($2) }
+    END { if (from != "" && to != "") printf "%d", to - from }')
+  if [[ -n $ms ]]; then echo "$1: fresh lock confirmed by Hyprland in $ms ms"; else echo "$1: no confirmation of the fresh lock in the log"; fi
+}
+
 step_lock_desync() {
   local s answer
   make_desync lock-desync
@@ -639,6 +675,7 @@ step_lock_desync() {
   if compositor_locked && s=$(wait_status locked 3); then pass "lock-desync: real lock after lock lock (status $s, compositor $(compositor_lock))"; else fail "lock-desync: status ${s:-?}, compositor $(compositor_lock)"; fi
   check_triggered_by lock-desync "lock requested \(ipc\) while locked"
   tail -n +"$((desync_from + 1))" "$lock_log" | grep -E "grassfield-lock"
+  confirm_time lock-desync "$desync_from"
   shot lock-desync
   no_leak afterdesync "lock-desync"
 }
@@ -668,6 +705,7 @@ step_sleep_desync() {
   make_desync sleep-desync
   echo "idle devSleep before -> $(ipc idle devSleep before)"
   sleep_wait sleep-desync "$desync_from"
+  confirm_time sleep-desync "$desync_from"
   check_triggered_by sleep-desync "lock requested \(sleep\) while locked"
   order=$(grep -o -E "taking a fresh lock|locking -> locked \(acquired\)|ready for sleep" <<<"$sleep_new" | head -n 3 | tr '\n' '|')
   if [[ $order == "taking a fresh lock|locking -> locked (acquired)|ready for sleep|" ]]; then
