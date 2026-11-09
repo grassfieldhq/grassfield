@@ -10,15 +10,19 @@
 //     those corners away (lock_privacy.sh screenshare, 2026-11-09: 98 green px of the Bitwarden fixture);
 //   - an overview or Stages miniature (WindowTransform.cpp): drawn elsewhere, the box stays at the real place;
 //   - a minimize or restore animation (Minimize.cpp): the window is hidden then, and Hyprland paints no box at all.
+// The window's bar lies outside the box too: its title is the window's own text.
 // Nothing can be drawn into the capture alone (no capture-only render hook; patching Hyprland is excluded, compositor.md),
 // so while a capture of a display is in progress the plugin draws none of that there: the bar colour stays in the
-// corners, a black plate covers the miniature's surface, the animation is not drawn. A display is drawn whole when its
-// capture state changes, so a capture never copies pixels drawn before it began, and the content comes back on screen
-// when it ends. Pure logic, no Hyprland includes: unit-tested in tests/CapturePrivacyTest.cpp.
+// corners, the title is blank, a black plate covers the miniature's surface and its subsurfaces, the animation is not
+// drawn. A display is drawn whole when its capture state changes, so a capture never copies pixels drawn before it
+// began, and redrawn when the capture ends (Hyprland's word, or a check while one is in progress), so the content comes
+// back on screen. Pure logic, no Hyprland includes: unit-tested in tests/CapturePrivacyTest.cpp.
 
 #include "Minimize.hpp"
 
+#include <chrono>
 #include <cstdint>
+#include <vector>
 
 namespace gf::privacy {
 
@@ -51,10 +55,24 @@ namespace gf::privacy {
     // and on the first frame seen while a capture is in progress (the plugin was loaded during it).
     bool redrawWhole(DisplayCapture& display, bool capturingNow);
 
-    // The black plate over a protected window's miniature: `fitted` (layout) is where its surface box is drawn, on a display
-    // at (monX, monY) with `scale`. Display pixels, out to whole pixels and one more on every side: square, so it covers
-    // the surface's rounded corners and their antialiased edge whatever the rounding and its power. Empty for an empty or
-    // non-finite input.
-    Box platePx(const Box& fitted, double monX, double monY, double scale);
+    // The display was capturing at its last frame and is not any more: it must be redrawn for the content to come back
+    // (render.pre only runs for a frame something else asked for). Asked when Hyprland says a display share ended
+    // (screenshare.state; never for a window share: those leave the displays as they are) and at kEndCheck while a
+    // display capture is in progress (a request that dies before its first copy ends with no word). Not while a frame is
+    // still pending: the frame is drawn when the display next changes, and redrawing for it would only make the next one.
+    bool ended(const DisplayCapture& recorded, bool capturingNow);
+
+    // How often a display capture in progress is checked for an end Hyprland does not report.
+    inline constexpr std::chrono::milliseconds kEndCheck{1000};
+
+    // What the plate over a protected window's miniature covers (layout, on the display): the window's surface box
+    // `surface` (its real place) and every one of its subsurfaces `parts` (their boxes at the real place too, empty or
+    // non-finite ones ignored), mapped as the miniature maps the surface box onto `fitted`.
+    Box miniatureCover(const Box& surface, const Box& fitted, const std::vector<Box>& parts);
+
+    // The black plate over that cover (`covered`, layout) on a display at (monX, monY) with `scale`. Display pixels, out to
+    // whole pixels and one more on every side: square, so it covers the surface's rounded corners and their antialiased
+    // edge whatever the rounding and its power. Empty for an empty or non-finite input.
+    Box platePx(const Box& covered, double monX, double monY, double scale);
 
 } // namespace gf::privacy

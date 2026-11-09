@@ -1,13 +1,17 @@
 #include "CapturePrivacy.hpp"
 
 #include "Plugin.hpp"
-#include "core/CapturePrivacy.hpp"
 
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
+#include <hyprland/src/desktop/view/WLSurface.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <hyprland/src/managers/screenshare/ScreenshareManager.hpp>
 #include <hyprland/src/output/Monitor.hpp>
+#include <hyprland/src/protocols/XDGShell.hpp>
+#include <hyprland/src/protocols/core/Compositor.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
 
@@ -27,6 +31,7 @@ namespace gf::capturePrivacy {
         struct SState {
             std::vector<CHyprSignalListener> listeners;
             std::vector<SDisplay>            displays;
+            SP<CEventLoopTimer>              endCheck;        // code of this library: removed in stop()
             bool                             tracked = false; // the listeners are registered
         };
 
@@ -47,11 +52,28 @@ namespace gf::capturePrivacy {
             return privacy::CaptureCounts{.sharingSessions = state.sharingSessions, .pendingFrames = state.pendingFrames};
         }
 
-        void redrawAll() {
-            if (!g_pHyprRenderer || !State::monitorState())
+        // Redraws every display whose capture was in progress at its last frame and has ended (core ended()); render.pre
+        // then records it and the content comes back. True while a display capture is still in progress somewhere.
+        bool redrawEnded() {
+            bool inProgress = false;
+            for (const auto& d : st().displays) {
+                const auto mon = d.monitor.lock();
+                if (!mon)
+                    continue;
+                const bool now = capturing(mon);
+                if (privacy::ended(d.capture, now) && g_pHyprRenderer)
+                    g_pHyprRenderer->damageMonitor(mon);
+                inProgress = inProgress || now;
+            }
+            return inProgress;
+        }
+
+        // The end check, at most once per privacy::kEndCheck while a display capture is in progress.
+        void armEndCheck() {
+            auto& s = st();
+            if (!s.endCheck || s.endCheck->armed())
                 return;
-            for (const auto& m : State::monitorState()->monitors())
-                g_pHyprRenderer->damageMonitor(m);
+            s.endCheck->updateTimeout(std::chrono::duration_cast<Time::steady_dur>(privacy::kEndCheck));
         }
 
         // render.pre comes before Hyprland reads the display's damage for the frame (IHyprRenderer::renderMonitor, then
@@ -64,8 +86,11 @@ namespace gf::capturePrivacy {
             auto it = std::ranges::find_if(displays, [&mon](const SDisplay& d) { return d.monitor.lock() == mon; });
             if (it == displays.end())
                 it = displays.insert(displays.end(), SDisplay{.monitor = mon, .capture = {}});
-            if (privacy::redrawWhole(it->capture, capturing(mon)))
+            const bool now = capturing(mon);
+            if (privacy::redrawWhole(it->capture, now))
                 g_pHyprRenderer->damageMonitor(mon);
+            if (now)
+                armEndCheck();
         }
     } // namespace
 
@@ -74,16 +99,28 @@ namespace gf::capturePrivacy {
         if (s.tracked)
             return true;
         auto& bus = Event::bus();
-        if (!bus)
+        if (!bus || !g_pEventLoopManager)
             return false;
+        s.endCheck = makeShared<CEventLoopTimer>(
+            std::nullopt,
+            [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) {
+                guarded("capture privacy end check", [] {
+                    if (redrawEnded())
+                        armEndCheck();
+                });
+            },
+            nullptr);
+        g_pEventLoopManager->addTimer(s.endCheck);
         s.listeners.push_back(bus->m_events.render.pre.listen([](const PHLMONITOR& mon) { guarded("capture privacy render.pre", [&] { beforeFrame(mon); }); }));
-        // A capture's end: Hyprland stops counting a session as sharing 500 ms after its last copied frame, or when it
-        // stops, and says so here (CScreenshareSession::screenshareEvents). Nothing else may redraw the displays then, so
-        // they are redrawn here for render.pre to see the change. A start needs none: the frame the client waits for is
-        // pending before it is drawn, and render.pre sees that.
-        s.listeners.push_back(bus->m_events.screenshare.state.listen([](bool started, uint8_t /*type*/, const std::string& /*name*/) {
-            if (!started)
-                guarded("capture privacy screenshare.state", [] { redrawAll(); });
+        // A display share's end: Hyprland stops counting a session as sharing 500 ms after its last copied frame, or when
+        // it stops, and says so here (CScreenshareSession::screenshareEvents). Only the displays whose capture has ended
+        // are redrawn, for render.pre to see it: a window share changes no display (its events come twice a second while
+        // a live thumbnail waits for its next frame), and a display share with a frame still pending is still a capture.
+        // A start needs nothing: the frame the client waits for is pending before it is drawn, and render.pre sees that.
+        s.listeners.push_back(bus->m_events.screenshare.state.listen([](bool started, uint8_t type, const std::string& /*name*/) {
+            if (started || type == Screenshare::SHARE_WINDOW)
+                return;
+            guarded("capture privacy screenshare.state", [] { (void)redrawEnded(); });
         }));
         s.tracked = true;
         return true;
@@ -92,9 +129,20 @@ namespace gf::capturePrivacy {
     void stop() {
         auto& s = st();
         s.listeners.clear();
-        s.displays.clear();
+        if (s.endCheck) {
+            if (g_pEventLoopManager)
+                g_pEventLoopManager->removeTimer(s.endCheck);
+            s.endCheck.reset();
+        }
         s.tracked = false;
-        guarded("capture privacy stop", [] { redrawAll(); });
+        // The displays that showed a capture's look get their content back.
+        guarded("capture privacy stop", [] {
+            for (const auto& d : st().displays) {
+                if (const auto mon = d.monitor.lock(); mon && d.capture.capturing && g_pHyprRenderer)
+                    g_pHyprRenderer->damageMonitor(mon);
+            }
+        });
+        s.displays.clear();
     }
 
     bool protectedWindow(const PHLWINDOW& w) {
@@ -115,6 +163,31 @@ namespace gf::capturePrivacy {
 
     bool mayDrawContent(const PHLWINDOW& w, const PHLMONITOR& mon) {
         return mayDrawContent(protectedWindow(w), mon);
+    }
+
+    std::vector<privacy::Box> subsurfaceBoxes(const PHLWINDOW& w, const privacy::Box& surface) {
+        std::vector<privacy::Box> parts;
+        if (!w)
+            return parts;
+        const auto view = w->wlSurface();
+        const auto root = view ? view->resource() : nullptr;
+        if (!root)
+            return parts;
+        // The surface's origin: the window's box is its xdg geometry, which starts that far into the surface (client-side
+        // shadows). XWayland surfaces have no offset.
+        Vector2D origin{surface.x, surface.y};
+        if (!w->m_isX11) {
+            if (const auto xdg = w->m_xdgSurface.lock())
+                origin = origin - xdg->m_current.geometry.pos();
+        }
+        root->breadthfirst(
+            [&parts, &root, origin](const SP<CWLSurfaceResource>& surf, const Vector2D& offset, void* /*data*/) {
+                if (!surf || surf == root)
+                    return;
+                parts.push_back(privacy::Box{origin.x + offset.x, origin.y + offset.y, surf->m_current.size.x, surf->m_current.size.y});
+            },
+            nullptr);
+        return parts;
     }
 
 } // namespace gf::capturePrivacy

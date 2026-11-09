@@ -1,5 +1,6 @@
 #include "CapturePrivacy.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace gf::privacy {
@@ -21,13 +22,33 @@ namespace gf::privacy {
         return changed;
     }
 
-    Box platePx(const Box& fitted, double monX, double monY, double scale) {
-        const double left   = (fitted.x - monX) * scale;
-        const double top    = (fitted.y - monY) * scale;
-        const double right  = (fitted.x + fitted.w - monX) * scale;
-        const double bottom = (fitted.y + fitted.h - monY) * scale;
-        if (!std::isfinite(left) || !std::isfinite(top) || !std::isfinite(right) || !std::isfinite(bottom) || !(scale > 0.0) || !(fitted.w > 0.0) ||
-            !(fitted.h > 0.0))
+    bool ended(const DisplayCapture& recorded, bool capturingNow) {
+        return recorded.known && recorded.capturing && !capturingNow;
+    }
+
+    Box miniatureCover(const Box& surface, const Box& fitted, const std::vector<Box>& parts) {
+        double left   = surface.x;
+        double top    = surface.y;
+        double right  = surface.x + surface.w;
+        double bottom = surface.y + surface.h;
+        for (const auto& p : parts) {
+            if (!gf::minimize::isFinite(p) || !(p.w > 0.0) || !(p.h > 0.0))
+                continue;
+            left   = std::min(left, p.x);
+            top    = std::min(top, p.y);
+            right  = std::max(right, p.x + p.w);
+            bottom = std::max(bottom, p.y + p.h);
+        }
+        return gf::minimize::mapBox(Box{left, top, right - left, bottom - top}, surface, fitted);
+    }
+
+    Box platePx(const Box& covered, double monX, double monY, double scale) {
+        const double left   = (covered.x - monX) * scale;
+        const double top    = (covered.y - monY) * scale;
+        const double right  = (covered.x + covered.w - monX) * scale;
+        const double bottom = (covered.y + covered.h - monY) * scale;
+        if (!std::isfinite(left) || !std::isfinite(top) || !std::isfinite(right) || !std::isfinite(bottom) || !(scale > 0.0) || !(covered.w > 0.0) ||
+            !(covered.h > 0.0))
             return Box{};
         const double x0 = std::floor(left) - 1.0;
         const double y0 = std::floor(top) - 1.0;
