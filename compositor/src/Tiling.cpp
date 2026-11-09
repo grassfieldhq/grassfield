@@ -1589,7 +1589,7 @@ namespace gf::tiler {
         }
 
         bool modifierHeld() {
-            constexpr uint32_t kMods = HL_MODIFIER_SHIFT | HL_MODIFIER_CTRL | HL_MODIFIER_ALT | HL_MODIFIER_META; // not Caps or Num Lock
+            constexpr uint32_t kMods = gf::flagsOf(HL_MODIFIER_SHIFT, HL_MODIFIER_CTRL, HL_MODIFIER_ALT, HL_MODIFIER_META); // not Caps or Num Lock
             return g_pInputManager && (g_pInputManager->getModsFromAllKBs() & kMods) != 0;
         }
 
@@ -1616,7 +1616,7 @@ namespace gf::tiler {
         bool handleClearAt(const tiling::SharedEdge& edge, const Vector2D& p) {
             if (!Desktop::viewState())
                 return false;
-            constexpr auto props = static_cast<uint16_t>(Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
+            constexpr auto props = static_cast<uint16_t>(gf::flagsOf(Desktop::View::RESERVED_EXTENTS, Desktop::View::INPUT_EXTENTS, Desktop::View::ALLOW_FLOATING));
             const auto     w     = Desktop::viewState()->hitTest().windowAt(p, props);
             return tiling::handleClear(edge, w ? idOf(w) : 0, popupAt(p));
         }

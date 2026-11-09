@@ -29,9 +29,11 @@ tp_class=$(sed -n 's/.*name = "gf-client-chrome-third-party", match = { class = 
 check "the third-party client-chrome rule matches a class list (GF-056)" $? "$tp_class"
 tp_re=${tp_class//\\\\/\\}
 okc=0
-for id in chromium google-chrome firefox org.mozilla.firefox md.obsidian.Obsidian org.gnome.Evince org.gnome.Nautilus; do [[ $id =~ $tp_re ]] || okc=1; done
-for id in google-chrome-beta chrome-example.com__-Default firefox-esr Firefox org.mozillafirefox; do [[ $id =~ $tp_re ]] && okc=1; done
-check "the third-party list holds Firefox (firefox, org.mozilla.firefox; owner's rc1-22 screenshot) and Google Chrome (google-chrome, as Omarchy's browser rule names it), not an app window (chrome-<site>-Default)" $okc
+for id in chromium google-chrome md.obsidian.Obsidian org.gnome.Evince org.gnome.Nautilus; do [[ $id =~ $tp_re ]] || okc=1; done
+for id in google-chrome-beta chrome-example.com__-Default firefox org.mozilla.firefox; do [[ $id =~ $tp_re ]] && okc=1; done
+check "the third-party list holds Google Chrome (google-chrome, as Omarchy's browser rule names it), not an app window (chrome-<site>-Default), and no longer Firefox (rc7 audit: its Title Bar mode had no controls; the plugin reads its negotiation, ADR-0015 amendment 2026-11-08)" $okc
+# Firefox keeps the maximize exemption (its own zoom control, when it draws its own frame), outside the tag list.
+ff_inner='firefox|org\\.mozilla\\.firefox' # as written in the Lua source (escaped dots)
 # Every Grassfield app that draws its own chrome (its main.cpp makes a ChromeTagger, apps/windowchrome.h) is in the rule,
 # under each app id it gives itself; Glance alone has its own rule, without a titlebar (integrator, PR #47: Activity Monitor
 # showed two sets of lights). A missing app gets the plugin's titlebar over its toolbar.
@@ -52,10 +54,10 @@ check "every Grassfield app drawing its own chrome is in the client-chrome rule 
 check "negative control: an id outside the list does not match the rule" $?
 cc_inner=${cc_class#^}; cc_inner=${cc_inner%\$}
 tp_inner=${tp_class#^(}; tp_inner=${tp_inner%)\$}
-grep -qF "name = \"gf-no-maximize-event\", match = { class = \"negative:^($cc_inner|$tp_inner)\$\" }, suppress_event = \"maximize\"" "$rules"
-check "S2: every other class keeps the maximize suppression (negation of both lists)" $?
-grep -qF "name = \"gf-no-maximize-event-untagged\", match = { class = \"negative:$tp_class\", xdg_tag = \"negative:.+\" }, suppress_event = \"maximize\"" "$rules"
-check "S2: a window without an xdg tag and not in the third-party list keeps the maximize suppression" $?
+grep -qF "name = \"gf-no-maximize-event\", match = { class = \"negative:^($cc_inner|$tp_inner|$ff_inner)\$\" }, suppress_event = \"maximize\"" "$rules"
+check "S2: every other class keeps the maximize suppression (negation of both lists and Firefox)" $?
+grep -qF "name = \"gf-no-maximize-event-untagged\", match = { class = \"negative:^($tp_inner|$ff_inner)\$\", xdg_tag = \"negative:.+\" }, suppress_event = \"maximize\"" "$rules"
+check "S2: a window without an xdg tag, not in the third-party list and not Firefox keeps the maximize suppression" $?
 if grep -v "^ *--" "$rules" | grep 'suppress_event = "maximize"' | grep -v 'gf-no-maximize-event' | grep -q .; then
   check "S2: no other rule touches the maximize suppression" 1
 else

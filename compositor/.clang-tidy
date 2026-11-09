@@ -7,6 +7,12 @@ Checks: >
   performance-*,
   -bugprone-easily-swappable-parameters
 WarningsAsErrors: 'clang-analyzer-*'
+CheckOptions:
+  # bugprone-signed-bitwise (new in clang-tidy 23) guards against a negative operand of a bitwise operator (an
+  # implementation-defined right shift, an undefined left shift). A positive integer literal can never be negative, so
+  # `0xC0 | (cp >> 6)` or `1U << 4` are left alone; every other signed operand (an integer promotion of uint8_t, a
+  # Hyprland enum) is made unsigned in the code.
+  bugprone-signed-bitwise.IgnorePositiveIntegerLiterals: true
 # Report only our own headers, never Hyprland's or the system's.
 HeaderFilterRegex: '.*/compositor/(src|tests)/.*'
 SystemHeaders: false

@@ -62,7 +62,7 @@ plugin_flags=()
 plugin_libs=()
 if [[ $what == plugin || $what == all || $what == compdb || $what == tidy ]]; then
   # shellcheck disable=SC2207
-  plugin_flags=("-DGRASSFIELD_VERSION=\"$(tr -d "[:space:]" <../VERSION)\"" -std=c++23 -O2 -g -DNDEBUG -fPIC -Wall -Wextra -Ibuild $(pkg-config --cflags hyprland pixman-1 libdrm glesv2) $(pkg-config --cflags lua))
+  plugin_flags=("-DGRASSFIELD_VERSION=\"$(tr -d "[:space:]" <../VERSION)\"" -std=c++23 -O2 -g -DNDEBUG -fPIC -Wall -Wextra "-I$PWD/build" $(pkg-config --cflags hyprland pixman-1 libdrm glesv2) $(pkg-config --cflags lua))
   # shellcheck disable=SC2207
   plugin_libs=($(pkg-config --libs hyprland pixman-1 libdrm glesv2))
 fi
@@ -70,7 +70,7 @@ fi
 # shellcheck disable=SC2207
 # GF_PLUGIN_SOURCE_DIR: QuietTest reads the plugin's sources (every key listener opens the quiet scope), as CMakeLists.txt.
 # GF_RUN_MODE_VECTORS: RunModeTest reads the run-mode vectors shared with the shell and the apps (ADR-0019).
-test_flags=(-std=c++23 -O0 -g -Wall -Wextra -Isrc "-DGF_PLUGIN_SOURCE_DIR=\"$PWD/src\"" "-DGF_RUN_MODE_VECTORS=\"$PWD/../tests/fixtures/run-mode-vectors.json\"" $(pkg-config --cflags gtest_main))
+test_flags=(-std=c++23 -O0 -g -Wall -Wextra "-I$PWD/src" "-DGF_PLUGIN_SOURCE_DIR=\"$PWD/src\"" "-DGF_RUN_MODE_VECTORS=\"$PWD/../tests/fixtures/run-mode-vectors.json\"" $(pkg-config --cflags gtest_main))
 # shellcheck disable=SC2207
 test_libs=($(pkg-config --libs gtest_main))
 
@@ -92,13 +92,16 @@ if [[ $what == tests-asan ]]; then
   g++ "${test_flags[@]}" -fsanitize=address,undefined -fno-omit-frame-pointer "${test_srcs[@]}" "${core_srcs[@]}" "${test_libs[@]}" -o build/grassfield-compositor-tests-asan
 fi
 
-# One compile command per translation unit, with the exact flags used above.
+# One compile command per translation unit, with the exact flags used above. Absolute paths, for the source and the include
+# directories: clang-tidy names a header by the path it was found under, and .clang-tidy's HeaderFilterRegex
+# ('.*/compositor/(src|tests)/.*') matches only an absolute one (review of c36220a3: with `-c src/...` no finding in our own
+# headers was ever reported).
 if [[ $what == compdb || $what == all || $what == tidy ]]; then
   protocols
   entry() { # <source> <flags...>   (arguments go through stdin: jq would parse "-std=..." as its own options)
     local src=$1
     shift
-    printf '%s\n' g++ "$@" -c "$src" | jq -R . | jq -s --arg d "$PWD" --arg f "$PWD/$src" '{directory: $d, file: $f, arguments: .}'
+    printf '%s\n' g++ "$@" -c "$PWD/$src" | jq -R . | jq -s --arg d "$PWD" --arg f "$PWD/$src" '{directory: $d, file: $f, arguments: .}'
   }
   {
     for src in "${plugin_srcs[@]}"; do entry "$src" "${plugin_flags[@]}"; done

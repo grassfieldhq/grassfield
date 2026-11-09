@@ -41,9 +41,12 @@ namespace gf::chrome {
     // protocols' enums. What a request proves (review of 3ca47a4b, nested at 1.25): an xdg client_side request does not prove a
     // title bar (foot -o csd.preferred=client asks it, takes Hyprland's server_side answer and draws nothing; Chromium asks it
     // and draws its tab strip: S1b names it), and neither does the absence of any negotiation (imv binds no decoration manager
-    // and draws nothing). A KDE client request does (GTK's header bars draw themselves whatever the answer), and so does a
-    // client that bound a decoration manager yet made no decoration object at all (Qt does that for a frameless window:
-    // Telegram).
+    // and draws nothing). A KDE client request does (GTK's header bars draw themselves whatever the answer). A client that
+    // bound a decoration manager yet made no decoration object at all (Qt does that for every frameless window) proves only
+    // that it decorates itself or wants no decoration: it draws its own title bar when it also draws its own frame, its
+    // xdg window geometry inside its surface (the shadow margins Telegram's lib_ui sets through QtWayland's custom margins);
+    // a frameless window that draws nothing has none and keeps the plugin's titlebar (rc7 audit R7-REQ-01, owner 2026-11-08:
+    // every window has its controls).
     inline constexpr uint32_t kXdgModeClientSide = 1;
     inline constexpr uint32_t kXdgModeServerSide = 2;
     inline constexpr uint32_t kKdeModeClient     = 1;
@@ -54,6 +57,7 @@ namespace gf::chrome {
     // zxdg_decoration_manager_v1 or org_kde_kwin_server_decoration_manager (it knows the compositor offers server-side
     // decorations); `clientHasObject`: its client holds a decoration object of either protocol, for any of its windows. The
     // last two come from libwayland's public list of the client's resources, so they hold whatever Hyprland keeps privately.
+    // `framed`: the window draws its own frame (CFrameEvidence::framed, from its commits' frame reads).
     struct DecorationRequest {
         bool     xdgObject       = false;
         uint32_t xdgRequested    = 0;
@@ -61,16 +65,70 @@ namespace gf::chrome {
         uint32_t kdeRequested    = 0;
         bool     managerBound    = false;
         bool     clientHasObject = false;
+        bool     framed          = false;
     };
 
-    // The client draws its own title bar, proved by the protocol alone: a KDE client request, or a decoration manager bound
-    // and no decoration object in the whole client. Anything else keeps the plugin's titlebar: any xdg request, client_side
-    // included; a KDE server request or a KDE object without a client request (0 is both "never asked" and KDE's "none", which
-    // no toolkit seen sends); a client that bound no manager; a client that holds an object not found for this window
-    // (another of its windows is decorated, or Hyprland's private containers changed meaning). The invariant: a window the
-    // plugin tags always has a bar of its own; an app whose request proves nothing and that does draw its own goes in the
-    // per-app list S1b.
+    // The client draws its own title bar, proved by the protocol alone: a KDE client request, or a decoration manager bound,
+    // no decoration object in the whole client and a frame of its own drawn (`framed`). Anything else keeps the plugin's
+    // titlebar: any xdg request, client_side included; a KDE server request or a KDE object without a client request (0 is
+    // both "never asked" and KDE's "none", which no toolkit seen sends); a client that bound no manager; a frameless window
+    // that draws no frame of its own (a Qt frameless window that draws nothing: R7-REQ-01); a client that holds an object
+    // not found for this window (another of its windows is decorated, or Hyprland's private containers changed meaning).
+    // The invariant: no window is left with neither the client's bar nor the plugin's; an app whose request proves nothing
+    // and that does draw its own bar goes in the per-app list S1b (a second bar can be fixed by the list, a missing one
+    // cannot be fixed by the user).
     bool drawsOwnTitlebar(const DecorationRequest& request);
+
+    // What one commit shows of a window's frame: its xdg window geometry (xdg_surface.set_window_geometry, surface-local,
+    // layout px) against its surface (surfaceW x surfaceH, layout px). xdg-shell defines the window geometry as the window's
+    // visible bounds, without the invisible parts of client-side decorations such as drop shadows.
+    //   Inside   the geometry lies inside the surface by at least kFrameInsetMin on one side or more, nowhere outside it: a
+    //            frame drawn around the window (Telegram's lib_ui shadow through QtWayland's custom margins, GTK's CSD);
+    //   Whole    inside the surface by less than kFrameInsetMin on every side: no frame (Qt without custom margins, foot);
+    //   Unknown  nothing proved: never set (empty), no surface size yet, or a geometry that reaches outside the surface (a
+    //            client between a new geometry and the buffer of that size while it grows, or a subsurface beyond the main one).
+    // A single read can mislead: QtWayland sends a new window geometry before the buffer of the new size
+    // (QWaylandXdgSurface::setContentGeometry from setGeometry), so a commit in between, while a window shrinks, reads
+    // Inside for a window that draws nothing (review of c36220a3). CFrameEvidence decides from consecutive reads.
+    inline constexpr double kFrameInsetMin = 2.0;
+    enum class FrameRead : uint8_t {
+        Unknown,
+        Inside,
+        Whole,
+    };
+    FrameRead frameRead(const titlebar::Rect& geometry, double surfaceW, double surfaceH);
+
+    // Whether a window draws its own frame, from its frame reads.
+    //   Kept: a frame read at the window's first buffer (`firstBuffer`: the map, not the plugin's start over windows already
+    //   mapped), or kFrameReadsToKeep consecutive Inside reads, is the window's for its life: only its negotiation can take
+    //   its tag away, as macOS keeps the style mask a window was created with. A first buffer has the size its geometry
+    //   describes, and we assume (not measured) that no geometry-before-buffer transient lasts kFrameReadsToKeep commits; so a
+    //   window that draws nothing is never kept unless the client itself declares a frame (an inset geometry) at its first
+    //   buffer or keeps declaring one. Accepted exception (ADR-0015 amendment 2026-11-08): a window framed at its first buffer
+    //   that later draws nothing stays without the plugin's bar (keyboard close, the Dock's Quit and Force Quit remain). A
+    //   client that drops its margins and never restores them keeps its tag: its own title bar is still there, and one bar
+    //   must stay one (frameless_chrome.sh F3, F6, both fixture modes).
+    //   Otherwise: the answer changes only after kFrameReadsToChange consecutive commits that contradict it (Unknown reads
+    //   neither count nor break a run), and while the window is zoomed or in full screen (`sized`) a Whole read does not
+    //   count against a frame (a client drops its shadow there). So a commit caught between a shrinking window's geometry and
+    //   its buffer (leaving Fill, a resize) never tags a window that draws nothing for good: two bare commits give its
+    //   controls back.
+    inline constexpr uint8_t kFrameReadsToChange = 2;
+    inline constexpr uint8_t kFrameReadsToKeep   = 4;
+    class CFrameEvidence {
+      public:
+        void atMap(FrameRead read, bool firstBuffer);
+        // A commit's read; true when framed() changed.
+        bool onCommit(FrameRead read, bool sized);
+        bool framed() const;
+        bool kept() const;
+
+      private:
+        bool    m_framed = false;
+        bool    m_kept   = false;
+        uint8_t m_inside = 0; // consecutive Inside reads
+        uint8_t m_whole  = 0; // consecutive Whole reads that count (not while sized)
+    };
 
     // A Wayland interface name, as libwayland lists a client's resources: one of the two decoration managers
     // (DecorationRequest::managerBound: zxdg_decoration_manager_v1, org_kde_kwin_server_decoration_manager), one of their

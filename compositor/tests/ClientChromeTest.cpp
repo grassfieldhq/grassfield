@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <vector>
 
 // P8 (GF-056 part 2): a window that draws its own controls is told it can be minimized (GTK4 greys a minimize button the
@@ -118,7 +119,206 @@ TEST(ClientChromeDecoration, OnlyARequestThatProvesABarOfItsOwnTagsTheWindow) {
     using gf::chrome::drawsOwnTitlebar;
     EXPECT_TRUE(drawsOwnTitlebar(DecorationRequest{.kdeObject = true, .kdeRequested = 1, .managerBound = true, .clientHasObject = true}))
         << "KDE client: a GTK header bar";
-    EXPECT_TRUE(drawsOwnTitlebar(DecorationRequest{.managerBound = true})) << "a manager bound, no object in the client: Qt's frameless window (Telegram)";
+    EXPECT_TRUE(drawsOwnTitlebar(DecorationRequest{.managerBound = true, .framed = true}))
+        << "a manager bound, no object in the client, its own frame drawn: Telegram's frameless window and its shadow margins";
+}
+
+// The rc7 audit (R7-REQ-01, R7-UX-01; owner 2026-11-08: not accepted for 1.0): a Qt frameless window that draws nothing was
+// tagged for its negotiation alone (a manager bound, no decoration object) and had neither a bar of its own nor the plugin's.
+// Qt negotiates the same for Telegram, which draws its own bar; what sets them apart is the frame: Telegram's lib_ui draws its
+// shadow and sets QtWayland's custom margins, so its xdg window geometry lies inside its surface.
+TEST(ClientChromeDecoration, AFramelessWindowThatDrawsNothingKeepsThePluginsTitlebar) {
+    using gf::chrome::DecorationRequest;
+    using gf::chrome::drawsOwnTitlebar;
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.managerBound = true}))
+        << "a manager bound, no decoration object, no frame of its own: a Qt frameless window that draws nothing";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.managerBound = true, .clientHasObject = true, .framed = true}))
+        << "framed, but the client holds a decoration object not found for this window: nothing proved";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.framed = true})) << "framed without a manager bound: no negotiation proves a bar";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.xdgObject = true, .xdgRequested = 2, .managerBound = true, .clientHasObject = true, .framed = true}))
+        << "a frame does not outweigh a server_side request";
+    EXPECT_FALSE(drawsOwnTitlebar(DecorationRequest{.xdgObject = true, .xdgRequested = 1, .managerBound = true, .clientHasObject = true, .framed = true}))
+        << "nor an xdg client_side request (Chromium's --app windows stay the plugin's; Chromium is in S1b)";
+}
+
+TEST(ClientChromeDecoration, AFrameIsAWindowGeometryInsideItsSurface) {
+    using gf::chrome::FrameRead;
+    using gf::chrome::frameRead;
+    using gf::titlebar::Rect;
+    EXPECT_EQ(frameRead(Rect{16, 16, 420, 260}, 452, 292), FrameRead::Inside) << "shadow margins on every side (lib_ui, GTK CSD)";
+    EXPECT_EQ(frameRead(Rect{0, 0, 420, 260}, 420, 280), FrameRead::Inside) << "a margin on one side only";
+    EXPECT_EQ(frameRead(Rect{2, 0, 418, 260}, 420, 260), FrameRead::Inside) << "kFrameInsetMin exactly";
+    EXPECT_EQ(frameRead(Rect{0, 0, 420, 260}, 420, 260), FrameRead::Whole) << "the whole surface: Qt without custom margins, foot";
+    EXPECT_EQ(frameRead(Rect{1, 1, 419, 259}, 421, 261), FrameRead::Whole) << "under kFrameInsetMin: a rounding, not a frame";
+    EXPECT_EQ(frameRead(Rect{}, 420, 260), FrameRead::Unknown) << "never set: nothing proved";
+    EXPECT_EQ(frameRead(Rect{16, 16, 420, 260}, 0, 0), FrameRead::Unknown) << "no surface size yet";
+    EXPECT_EQ(frameRead(Rect{-10, 0, 440, 260}, 420, 260), FrameRead::Unknown) << "reaches outside the surface";
+    EXPECT_EQ(frameRead(Rect{0, 0, 1904, 1040}, 420, 260), FrameRead::Unknown)
+        << "a growing window's new geometry before its buffer (zooming to Fill): nothing proved";
+    EXPECT_EQ(frameRead(Rect{16, 16, 420, 260}, std::numeric_limits<double>::quiet_NaN(), 292), FrameRead::Unknown) << "an unknown size";
+}
+
+// Review of c36220a3: QtWayland sends a shrinking window's new geometry before the buffer of that size, so one commit in between
+// reads Inside for a frameless window that draws nothing (leaving Fill at scale 1: geometry 420x260 on the 1904x1040 buffer).
+// Kept for the window's life, as c36220a3 did, that one read would have taken its only bar away for good (R7-REQ-01 again).
+TEST(ClientChromeDecoration, AShrinkingWindowsGeometryBeforeItsBufferDoesNotTagIt) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    using gf::chrome::frameRead;
+    using gf::titlebar::Rect;
+    CFrameEvidence e;
+    e.atMap(frameRead(Rect{0, 0, 420, 260}, 420, 260), true);
+    EXPECT_FALSE(e.framed()) << "a frameless window that draws nothing, at its map";
+    EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 1904, 1040}, 420, 260), false)) << "zooming: the geometry first (Unknown)";
+    EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 1904, 1040}, 1904, 1040), true)) << "zoomed: its buffer";
+    EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 420, 260}, 1904, 1040), false)) << "leaving Fill: the geometry before the buffer";
+    EXPECT_FALSE(e.framed()) << "one Inside read tags nothing";
+    EXPECT_FALSE(e.onCommit(frameRead(Rect{0, 0, 420, 260}, 420, 260), false)) << "its buffer of that size";
+    EXPECT_FALSE(e.framed());
+    for (int step = 0; step < 5; ++step) { // an interactive shrink: each step's geometry before its buffer
+        const double w = 400.0 - (step * 10.0);
+        e.onCommit(frameRead(Rect{0, 0, w, 250}, w + 10.0, 250), false);
+        e.onCommit(frameRead(Rect{0, 0, w, 250}, w, 250), false);
+    }
+    EXPECT_FALSE(e.framed()) << "a resize never tags it either";
+}
+
+TEST(ClientChromeDecoration, AFrameDrawnSinceTheMapOrForTwoCommitsTagsTheWindow) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence atMap;
+    atMap.atMap(FrameRead::Inside, true);
+    EXPECT_TRUE(atMap.framed()) << "Telegram: its first buffer already has its shadow margins";
+    EXPECT_TRUE(atMap.kept());
+    CFrameEvidence later;
+    later.atMap(FrameRead::Whole, true);
+    EXPECT_FALSE(later.onCommit(FrameRead::Inside, false));
+    EXPECT_TRUE(later.onCommit(FrameRead::Inside, false)) << "margins set after the map: two commits";
+    CFrameEvidence gap;
+    gap.atMap(FrameRead::Unknown, true);
+    EXPECT_FALSE(gap.framed()) << "nothing proved at the map";
+    EXPECT_FALSE(gap.onCommit(FrameRead::Inside, false));
+    EXPECT_FALSE(gap.onCommit(FrameRead::Unknown, false)) << "an Unknown read neither counts nor breaks the run";
+    EXPECT_TRUE(gap.onCommit(FrameRead::Inside, false));
+}
+
+// frameless_chrome.sh F3 then F6 (integrator's nested run of 74e35ae6, scale 1): the fixture, a QtWayland frameless window with
+// its own bar and 16 px custom margins, mapped with its margins (Inside), was maximized by Hyprland's dispatcher (its margins
+// dropped: Whole) and restored; it came back without its margins (the capture: its bar at the window's left edge, 452 px
+// wide), so every later commit read Whole, and the move and raise of F6 brought the second one: the two-reads rule took its
+// tag and the plugin's bar came over its own. A frame of the first buffer is the window's for its life.
+TEST(ClientChromeDecoration, AFrameOfTheFirstBufferSurvivesAZoomAndMarginsThatDoNotComeBack) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    for (const bool marginsBack : {false, true}) {
+        CFrameEvidence e;
+        e.atMap(FrameRead::Inside, true);
+        EXPECT_FALSE(e.onCommit(FrameRead::Inside, false)) << "a repaint before the zoom";
+        EXPECT_FALSE(e.onCommit(FrameRead::Unknown, true)) << "maximized: the geometry before the buffer (it grows)";
+        EXPECT_FALSE(e.onCommit(FrameRead::Whole, true)) << "maximized: no margins";
+        EXPECT_FALSE(e.onCommit(FrameRead::Whole, true));
+        EXPECT_FALSE(e.onCommit(marginsBack ? FrameRead::Inside : FrameRead::Whole, false)) << "restored";
+        EXPECT_FALSE(e.onCommit(marginsBack ? FrameRead::Inside : FrameRead::Whole, false)) << "moved";
+        EXPECT_FALSE(e.onCommit(marginsBack ? FrameRead::Inside : FrameRead::Whole, false)) << "raised (activated)";
+        EXPECT_TRUE(e.framed()) << (marginsBack ? "margins back" : "margins never back") << ": still its own bar, one bar";
+    }
+}
+
+TEST(ClientChromeDecoration, AFrameSeenOnlyAfterTheMapIsKeptOnceSustainedAndElseTwoBareCommitsRemoveIt) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence brief;
+    brief.atMap(FrameRead::Whole, true);
+    EXPECT_FALSE(brief.onCommit(FrameRead::Inside, false));
+    EXPECT_TRUE(brief.onCommit(FrameRead::Inside, false)) << "two Inside reads: framed";
+    EXPECT_FALSE(brief.kept()) << "two reads could still be a transient pair";
+    for (int i = 0; i < 3; ++i)
+        EXPECT_FALSE(brief.onCommit(FrameRead::Whole, true)) << "zoomed: dropped shadow, not counted";
+    EXPECT_TRUE(brief.framed());
+    EXPECT_FALSE(brief.onCommit(FrameRead::Whole, false)) << "back from Fill, one commit before its margins return";
+    EXPECT_FALSE(brief.onCommit(FrameRead::Inside, false));
+    EXPECT_TRUE(brief.framed()) << "keeps its tag";
+    EXPECT_FALSE(brief.onCommit(FrameRead::Whole, false));
+    EXPECT_TRUE(brief.onCommit(FrameRead::Whole, false)) << "two bare commits while floating: the plugin's bar again";
+    EXPECT_FALSE(brief.framed());
+
+    CFrameEvidence sustained;
+    sustained.atMap(FrameRead::Whole, true);
+    for (int i = 0; i < 4; ++i)
+        sustained.onCommit(FrameRead::Inside, false);
+    EXPECT_TRUE(sustained.kept()) << "four consecutive Inside reads: no transient lasts that long, a frame of its own";
+    sustained.onCommit(FrameRead::Whole, false);
+    sustained.onCommit(FrameRead::Whole, false);
+    EXPECT_TRUE(sustained.framed());
+
+    CFrameEvidence reload;
+    reload.atMap(FrameRead::Inside, false);
+    EXPECT_TRUE(reload.framed()) << "the plugin started over a mapped window with a frame";
+    EXPECT_FALSE(reload.kept()) << "not its first buffer: it could be a commit between a geometry and its buffer";
+    reload.onCommit(FrameRead::Whole, false);
+    EXPECT_TRUE(reload.onCommit(FrameRead::Whole, false)) << "so two bare commits give a window that draws nothing its controls back";
+}
+
+// The accepted exception of "decided at the first buffer, kept for life" (delta review of 364b812d; ADR-0015 amendment
+// 2026-11-08): a window that declares a frame at its first buffer and then draws nothing, a splash screen with a shadow that
+// becomes a plain window in the same toplevel or a client with a wrong geometry, stays tagged: no plugin bar, as macOS keeps a
+// borderless window borderless. It reverses the 2026-11-07 "when unsure, the plugin's bar stays" for this case only; keyboard
+// close, the Dock's Quit and Force Quit remain.
+TEST(ClientChromeDecoration, AcceptedExceptionAWindowFramedAtItsFirstBufferThatThenDrawsNothingStaysTagged) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence e;
+    e.atMap(FrameRead::Inside, true);
+    for (int i = 0; i < 20; ++i)
+        EXPECT_FALSE(e.onCommit(FrameRead::Whole, false)) << "bare for good while floating";
+    EXPECT_TRUE(e.framed()) << "accepted: tagged, no plugin bar";
+    EXPECT_TRUE(e.kept());
+}
+
+TEST(ClientChromeDecoration, ThreeInsideReadsAfterABareMapAreNotKept) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    using gf::chrome::kFrameReadsToKeep;
+    static_assert(kFrameReadsToKeep == 4, "the boundary this test pins");
+    CFrameEvidence e;
+    e.atMap(FrameRead::Whole, true);
+    for (int i = 0; i < 3; ++i)
+        e.onCommit(FrameRead::Inside, false);
+    EXPECT_TRUE(e.framed()) << "framed after two";
+    EXPECT_FALSE(e.kept()) << "three reads are not four";
+    e.onCommit(FrameRead::Whole, false);
+    EXPECT_TRUE(e.onCommit(FrameRead::Whole, false)) << "still removable: two bare commits";
+    EXPECT_FALSE(e.framed());
+}
+
+// Accepted trade-off (ADR-0015 amendment 2026-11-08, two bars): a frameless app with margins that maps already zoomed or in full
+// screen shows no frame at its first buffer; it gets the plugin's bar above its own until two consecutive commits show its
+// margins, and keeps it as long as they never come back.
+TEST(ClientChromeDecoration, AWindowMappedZoomedWithoutItsMarginsGetsThePluginsBarUntilTheyCome) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence e;
+    e.atMap(FrameRead::Whole, true);
+    for (int i = 0; i < 3; ++i)
+        EXPECT_FALSE(e.onCommit(FrameRead::Whole, true)) << "zoomed: no frame at its first buffer, none since";
+    EXPECT_FALSE(e.framed()) << "accepted: two bars while its margins stay away";
+    EXPECT_FALSE(e.onCommit(FrameRead::Inside, false)) << "unzoomed, its margins back";
+    EXPECT_TRUE(e.onCommit(FrameRead::Inside, false)) << "two commits with them: one bar";
+}
+
+// Accepted trade-off (ADR-0015 amendment 2026-11-08, two bars): a window already mapped when the plugin starts or reloads has no
+// first buffer seen; its frame stays removable, so if its margins then go for good it gets the plugin's bar above its own.
+TEST(ClientChromeDecoration, AWindowSeenOnlyAtThePluginsStartLosesItsTagWhenItsMarginsGo) {
+    using gf::chrome::CFrameEvidence;
+    using gf::chrome::FrameRead;
+    CFrameEvidence e;
+    e.atMap(FrameRead::Inside, false);
+    EXPECT_TRUE(e.framed()) << "framed at the plugin's start";
+    EXPECT_FALSE(e.kept());
+    EXPECT_FALSE(e.onCommit(FrameRead::Whole, true)) << "zoomed: not counted";
+    EXPECT_FALSE(e.onCommit(FrameRead::Whole, false)) << "restored without its margins";
+    EXPECT_TRUE(e.onCommit(FrameRead::Whole, false)) << "accepted: the second bare commit takes its tag (two bars)";
+    EXPECT_FALSE(e.framed());
 }
 
 TEST(ClientChromeDecoration, ARequestThatProvesNoBarKeepsThePluginsTitlebar) {

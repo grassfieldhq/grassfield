@@ -304,7 +304,7 @@ namespace {
                 const unsigned char d = static_cast<unsigned char>(s[i + k]);
                 if ((d & 0xC0) != 0x80)
                     return false;
-                cp = (cp << 6) | (d & 0x3F);
+                cp = (cp << 6) | (d & 0x3FU); // unsigned: d & 0x3F alone is an int (promotion), a signed operand of |
             }
             if ((n == 2 && cp < 0x800) || (n == 3 && (cp < 0x10000 || cp > 0x10FFFF)) || (cp >= 0xD800 && cp <= 0xDFFF))
                 return false;
