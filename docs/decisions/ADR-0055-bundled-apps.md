@@ -1,6 +1,7 @@
 # ADR-0055: Bundled apps: Sanaga is the browser and Grassfield Notes is the notebook of the session
-Status: Proposed (2026-11-09); D-1 to D-5 and D-7 follow the owner decision of 2026-11-08; D-6 (the session default) is OPEN,
-awaiting the owner's answer on one point (see D-6) · Date: 2026-11-09 · Decider: owner (ratify), integrator (merge) · Number:
+Status: Proposed (2026-11-09), applied provisionally (owner rule of 2026-10-28), awaiting the owner's ratification; D-1 to D-5 and D-7
+follow the owner decision of 2026-11-08, D-6 was decided on 2026-11-09 under the owner's delegated rule (closest to macOS 27, no
+technical step for the end user) · Date: 2026-11-09 · Decider: owner (ratify), integrator (merge) · Number:
 0055
 
 ## Context
@@ -39,31 +40,45 @@ browser keeps it.
   last pinned commit (not of the whole tree), by an agent other than the one that wrote the change; the review and the two
   commits are named in the pin's commit message in grassfield-packages. Sanaga is a browser: a diff touching its network,
   profile, permission or extension code needs the opus security reviewer. A failed review keeps the old pin.
-- **D-6 Session defaults (OPEN).** In the Grassfield session links open in Sanaga and `.md` files in Notes, and a later choice of
-  the user always wins. Mechanism and what is open:
-  - XDG mime-apps specification, lookup order for a type: `$XDG_CONFIG_HOME/$desktop-mimeapps.list`, then
+- **D-6 Session defaults (decided 2026-11-09).** In the Grassfield session links open in Sanaga and `.md` files in Notes, and a
+  later choice of the user always wins.
+  - Where: the XDG mime-apps specification reads, for a type, `$XDG_CONFIG_HOME/$desktop-mimeapps.list`, then
     `$XDG_CONFIG_HOME/mimeapps.list`, then `$XDG_CONFIG_DIRS/$desktop-mimeapps.list`, then `$XDG_CONFIG_DIRS/mimeapps.list`, then
     the same two names in the data directories' `applications/`. The session's `XDG_CURRENT_DESKTOP` is `Grassfield:Hyprland`, so
-    the session's own list is `$XDG_CONFIG_HOME/grassfield-mimeapps.list` and the Omarchy session never reads it.
-  - A packaged default in `$XDG_CONFIG_DIRS` (`/usr/share/grassfield/xdg-config`) cannot work: Omarchy writes
-    `~/.config/mimeapps.list` (`text/html`, `x-scheme-handler/http(s)` = `chromium.desktop`) at install, and that list is read
-    before every system one.
-  - The mechanism already in the tree is the right one: `--seed-default-apps` of Grassfield Files (`config/hypr/grassfield/autostart.lua`,
-    `DefaultApps::seedSessionDefaults`, F-19) writes `grassfield-mimeapps.list` at session start for a type only when none of
-    the user's lists names a default for it, or names exactly what Omarchy ships (`seedsAllowed`). It never edits
-    `~/.config/mimeapps.list`. The types of Sanaga and Notes would be added to `seededTypes`.
-  - OPEN, for the owner: that rule reads a `chromium.desktop` in `~/.config/mimeapps.list` as Omarchy's stock default, which it
-    cannot tell from a person who chose Chromium on purpose in Omarchy (`omarchy default browser chromium` writes the same
-    line), so an existing Omarchy install switches to Sanaga in the Grassfield session at its first start, and its Chromium choice
-    is lost. Any other browser the user picked (Firefox, Brave, Zen...) is kept. A second point follows: an entry in
-    `grassfield-mimeapps.list` shadows `mimeapps.list`, so a later `xdg-settings set default-web-browser` or
-    `omarchy default browser` (which write `mimeapps.list`) would lose to the seeded Sanaga; the choice must be made in a place
-    that writes the session's own list (Files > Change All... for `.md`, a "Default web browser" row in Settings > Desktop &
-    Dock, proposed, not built in this step). No code of D-6 is merged until the owner answers.
-  - No handler can launch itself: `sanaga.desktop` and `grassfield-notes.desktop` run their own binary; the session never lists
-    `omarchy-browser.desktop` (which runs `omarchy-launch-browser`, which reads the default browser) as the target of a
-    Grassfield default, and `tests/integration/bundled_apps.sh` fails on an entry whose Exec is a launcher that resolves the
-    default again (the fork storm of 2026-10-30, load 1100).
+    `$XDG_CONFIG_HOME/grassfield-mimeapps.list` is read first in this session and never in the Omarchy session. A packaged list
+    in `$XDG_CONFIG_DIRS` cannot work: Omarchy writes `~/.config/mimeapps.list` (`chromium.desktop`) at install and that is read
+    before every system list. Nothing edits `~/.config/mimeapps.list`.
+  - How: Grassfield Files' session-start `--seed-default-apps` (F-19) also runs `DefaultApps::seedBundledApps`. Two groups, `web`
+    (`x-scheme-handler/http`, `https`, `text/html`, `application/xhtml+xml` to `sanaga.desktop`) and `notes` (`text/markdown`,
+    `text/x-markdown` to `grassfield-notes.desktop`), each once, and only when its desktop file is installed. A record,
+    `default-apps.state` in Grassfield's state folder (`$GRASSFIELD_STATE_HOME`, else `$XDG_STATE_HOME/grassfield`), holds
+    `<group>.state` = `seeded` | `done` | `user` and what the user's lists named for each type at the seed.
+  - Rule 1, first start: Omarchy's own stock browser is no choice. `chromium.desktop` in `mimeapps.list` (what Omarchy's
+    install writes, equal to the value its shipped `default/applications/mimeapps.list` names) and `omarchy-browser.desktop`
+    (the routing entry of its `hyprland-mimeapps.list`, which runs `omarchy-launch-browser`) are read as "nothing chosen", as a Mac
+    starts with Safari; the group is seeded. Any other browser named for one of the four types (Firefox, Brave, Zen, a
+    Chromium-family browser other than Omarchy's stock one) keeps the whole group out, recorded as `done`, for good. A
+    Markdown editor named for `text/markdown` keeps Notes out the same way. Without Omarchy's shipped lists (not found) every
+    value counts as a choice: nothing is seeded.
+  - Rule 2, a later choice wins: at each start, a `seeded` group whose types now resolve differently in the user's lists than
+    at the seed (`xdg-settings set default-web-browser`, `omarchy default browser`, a browser's "make default"; all write
+    `mimeapps.list`) has its seeded entries removed from `grassfield-mimeapps.list`, and becomes `done`: that choice is honoured
+    and the seed never runs for the group again. Known limit: setting the very same browser as at the seed (Omarchy's Chromium
+    again) changes no value and is not seen, because the content is identical; the Settings row below is how to make that choice.
+  - Doubt: an unreadable or non-UTF-8 list, a corrupt record, a session list reached through a link: nothing is written and the
+    user's choice stays. A record value this version does not know is left alone. A desktop file not installed yet records
+    nothing, so the seed runs once it is.
+  - Settings > Desktop & Dock "Default web browser" (macOS 27 has it in that pane): a popup of the installed browsers, i.e.
+    desktop entries with `WebBrowser` in `Categories` that handle http or https, are shown, and are not
+    `omarchy-browser.desktop` nor an entry whose `Exec` is a launcher that resolves the default again (`omarchy-*`, `xdg-open`,
+    `gio`, `xdg-settings`, a shell, `env`, `uwsm-app`...). It records `web.state=user` first, then writes the four types to
+    `grassfield-mimeapps.list`; a failure of the record leaves the list as it was. Chromium is a choice like any other there.
+  - No handler can launch itself: the seeded ids run their own binary (`tests/integration/bundled_apps.sh`), the routing entry
+    is never a target of the seed or the row, and a launcher `Exec` is never offered (the fork storm of 2026-10-30, load 1100).
+  - Why this rule: the owner decided Sanaga is the session's default browser, so a fresh session must open links in it with no
+    step for the user; and a person who chose something else, or chooses later, is never overridden (the macOS model).
+    Reading Omarchy's stock `chromium.desktop` as no choice is the one trade: a person who chose Chromium on purpose in Omarchy
+    cannot be told from the install default, and picks Chromium again in the row.
 - **D-7 Dock and Apps panel.** The default Dock is Sanaga, Notes, Terminal, Settings (`dock.pinned`; Files and Apps are fixed
   tiles before them): the browser first as in macOS, Notes among the productivity apps, the lists of the earlier releases
   (`["chromium","foot","org.grassfield.Settings"]`, and the first one) read as the new default and are not rewritten; any other
@@ -73,11 +88,11 @@ browser keeps it.
 
 ## How a user changes the default
 
-A browser: Settings > Desktop & Dock "Default web browser" row (proposed; until it exists, Files' Change All... on an HTML
-document, or a line in `~/.config/grassfield-mimeapps.list`), which writes the session's own list. Notes: Files > Get Info >
-Open with > Change All... Chromium is never removed by this change; the Dock's Chromium tile is dragged back in like any app.
+A browser: Settings > Desktop & Dock > Default web browser, which writes the session's own list and marks it the user's. Tools
+that write `mimeapps.list` (`xdg-settings`, `omarchy default browser`, a browser's "make default") also win, at the next session
+start (D-6). Notes: Files > Get Info > Open with > Change All... (a different application than Notes at the next start removes
+the seeded entries). Chromium is never removed by this change; the Dock's Chromium tile is dragged back in like any app.
 
 ## Not done
 
-- D-6 code (the seed of Sanaga's and Notes' types, the Settings row): see D-6.
 - Nested visual proof of the Dock and the Apps panel (the packages are not built yet).
