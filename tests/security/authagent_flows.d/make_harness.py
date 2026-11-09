@@ -48,7 +48,13 @@ def main():
             raise ValueError("import not found once: " + imp.strip())
         s = s.replace(imp, "", 1)
     s = replace_block(s, r"\n    PolkitAgent \{", "\n    QtObject {\n        id: agent\n        property bool isActive: false\n"
-                      "        property var flow: null\n        property bool isRegistered: true\n    }")
+                      "        property var flow: null\n        property bool isRegistered: true\n"
+                      "        property string path: \"/org/grassfield/PolkitAgent\"\n    }")
+    # The dev gate reads Quickshell, which the harness has not: a writable flag the tests set (false: a real session).
+    dev = '    readonly property bool devSession: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))\n'
+    if s.count(dev) != 1:
+        raise ValueError("devSession line not found once")
+    s = s.replace(dev, "    property bool devSession: false\n", 1)
     s = replace_block(s, r"\n    IpcHandler \{", "\n")
     s = replace_block(s, r"\n        anchors \{\n            top: true", "\n        width: 800\n        height: 600")
     s = replace_block(s, r"\n        Region \{", "\n")

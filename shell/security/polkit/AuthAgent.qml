@@ -44,9 +44,39 @@ Scope {
     // security process's lookup (the system theme only, whose directories the user cannot change); a harness gives none.
     property var iconSource: name => ""
 
+    // Registration (ADR-0041 S3; the opus review of S3, MINOR-3). polkit takes one agent per session, and Quickshell asks once,
+    // when the agent is made: a refusal only warns. After an upgrade, or a restart in the wrong order, the UI's earlier agent
+    // may still hold the session when this one asks; it then asks again while it is not registered, after
+    // registrationRetryMs, doubling to registrationRetryMaxMs: a new object path makes Quickshell register again (its
+    // setPath). It only ever asks to be the session's agent; it never answers a request by itself. Never in a dev session:
+    // the nested agent must not take the owner's session when the owner's own agent restarts (it asks once, as before).
+    readonly property string agentPath: "/org/grassfield/PolkitAgent"
+    readonly property bool devSession: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))
+    property int registrationRetryMs: 3000
+    readonly property int registrationRetryMaxMs: 60000
+    // Asked again this many times since the start (the path's suffix).
+    property int registrationTries: 0
+
+    function retryRegistration(): void {
+        if (agent.isRegistered || root.devSession)
+            return;
+        root.registrationTries += 1;
+        if (root.registrationTries <= 5 || root.registrationTries % 10 === 0)
+            console.warn("grassfield-polkit: not registered (another authentication agent owns this session); asking again (" + root.registrationTries + ")");
+        agent.path = root.agentPath + "/" + root.registrationTries;
+    }
+
+    Timer {
+        id: registrationRetry
+        interval: Math.min(root.registrationRetryMaxMs, root.registrationRetryMs * Math.pow(2, Math.min(root.registrationTries, 10)))
+        running: !agent.isRegistered && !root.devSession
+        repeat: true
+        onTriggered: root.retryRegistration()
+    }
+
     PolkitAgent {
         id: agent
-        path: "/org/grassfield/PolkitAgent"
+        path: root.agentPath
 
         onIsRegisteredChanged: {
             if (isRegistered)

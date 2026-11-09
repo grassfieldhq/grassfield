@@ -146,6 +146,10 @@ replaced-refused-first (re-review MAJOR-1)#AuthDialogModel.qml#        if (reque
 replaced-refusal-inside-the-binding (re-review MAJOR-1)#AuthDialogModel.qml#        Qt.callLater(root.refuseReplaced)#        root.refuseReplaced()
 device-answers-a-waiting-request (e3542510 MAJOR-2)#AuthAgent.qml#        request: agent.flow#        request: agent.isActive && !root.waiting ? agent.flow : null
 device-answers-always (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SheetSession.locked#        answerable: true || !SheetSession.locked
+registration-never-asked-again (S3 review MINOR-3)#AuthAgent.qml#        running: !agent.isRegistered && !root.devSession#        running: false
+registration-same-path (S3 review MINOR-3)#AuthAgent.qml#        agent.path = root.agentPath + "/" + root.registrationTries;#        agent.path = root.agentPath;
+registration-asked-while-registered (S3 review MINOR-3)#AuthAgent.qml#        if (agent.isRegistered || root.devSession)#        if (root.devSession)#AuthAgent.qml#        running: !agent.isRegistered && !root.devSession#        running: !root.devSession
+registration-asked-in-a-dev-session (S3 review MINOR-3)#AuthAgent.qml#        if (agent.isRegistered || root.devSession)#        if (agent.isRegistered)#AuthAgent.qml#        running: !agent.isRegistered && !root.devSession#        running: !agent.isRegistered
 EOF_MUTANTS
 ((status == 0)) && echo "PASS: authagent_flows (and every mutant caught)" || echo "FAIL: authagent_flows mutants"
 exit "$status"

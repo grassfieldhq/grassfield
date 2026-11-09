@@ -634,6 +634,36 @@ Item {
             compare(a.cancels, 1, "A refused once");
         }
 
+        // ADR-0041 S3, the opus review's MINOR-3: refused (another agent held the session: an earlier UI after an upgrade, a
+        // restart in the wrong order), the agent asks again with a backoff, a new path each time (Quickshell registers again on
+        // a new path), and stops once registered. It answers nothing meanwhile.
+        function test_36_registrationAskedAgainWhileRefused() {
+            ag.registrationRetryMs = 40;
+            compare(ag.registrationTries, 0);
+            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent");
+            ag.agentMock.isRegistered = false;
+            tryCompare(ag, "registrationTries", 1, 3000);
+            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent/1", "a new path: Quickshell registers again");
+            tryCompare(ag, "registrationTries", 2, 3000);
+            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent/2");
+            ag.agentMock.isRegistered = true;
+            const tries = ag.registrationTries;
+            wait(500);
+            compare(ag.registrationTries, tries, "registered: no more asking");
+            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent/" + tries);
+            compare(ag.model.active, false, "nothing was answered or shown meanwhile");
+        }
+
+        // Never in a dev session: the nested agent asks once, and never takes the owner's session when the owner's agent restarts.
+        function test_37_noAskingAgainInADevSession() {
+            ag.registrationRetryMs = 40;
+            ag.devSession = true;
+            ag.agentMock.isRegistered = false;
+            wait(400);
+            compare(ag.registrationTries, 0);
+            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent");
+        }
+
         // ADR-0041 S3: the agent runs in the security process, which restarts (Restart=always) after a crash or a stop. Its end
         // with a request open, a password half typed, answers nothing: no password goes out, nothing is approved; polkitd
         // then ends the request with the agent's bus name ("not authorized"), as when the UI restarted before S3. The agent

@@ -230,6 +230,10 @@ if command -v vercmp >/dev/null; then
   # upgrade keep the earlier split until the next login.
   desc="the .install log-out note for the lock's own process is printed when upgrading from any build of 1.0.0rc7 or earlier (1.0.0rc7-1, 1.0.0rc7-4, 1.0.0rc6-2 to 1.0.0rc8-1; 1.0.0rc7-3 to 1.0.0-1)"
   check bash -c 'for o in "$@"; do grep -q "lock screen now runs in its own process" <<<"$o" || exit 1; done' _ "$(up 1.0.0rc8-1 1.0.0rc7-1)" "$(up 1.0.0rc8-1 1.0.0rc7-4)" "$(up 1.0.0rc8-1 1.0.0rc6-2)" "$(up 1.0.0-1 1.0.0rc7-3)"
+  # ADR-0041 S3 (the opus review of S3, MINOR-3): the restart line restarts the UI alone first (its earlier polkit agent
+  # leaves the session), then the bridge and the security process, never the three in one parallel transaction.
+  desc="...its restart line: daemon-reload, then the UI alone, then grassfield-prompter and grassfield-security (the UI's earlier polkit agent gone before the security process's asks)"
+  check bash -c 'grep -qF "(or: systemctl --user daemon-reload && systemctl --user restart grassfield-shell && systemctl --user restart grassfield-prompter grassfield-security)" <<<"$1" && ! grep -qE "restart [a-z -]*grassfield-security[a-z -]*grassfield-shell|restart grassfield-shell [a-z]" <<<"$1"' _ "$(up 1.0.0rc8-1 1.0.0rc7-1)"
   desc="...and not on later upgrades (1.0.0rc8-1 to 1.0.0rc8-2 or 1.0.0rc9-1, 1.0.0 to 1.0.1) nor without an old version"
   check bash -c '! grep -q "lock screen now runs in its own process" <<<"$1$2$3$4"' _ "$(up 1.0.0rc8-2 1.0.0rc8-1)" "$(up 1.0.0rc9-1 1.0.0rc8-1)" "$(up 1.0.1-1 1.0.0-1)" "$(up 1.0.0rc8-1 "")"
 else
