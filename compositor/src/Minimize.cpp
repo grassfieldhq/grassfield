@@ -1,5 +1,6 @@
 #include "Minimize.hpp"
 
+#include "CapturePrivacy.hpp"
 #include "ClientChrome.hpp"
 #include "GenieDraw.hpp"
 #include "Ipc.hpp"
@@ -89,6 +90,7 @@ namespace {
         std::vector<mz::Box>         damagedBands; // funnel: the bands damaged last frame (layout), repainted next frame
         uintptr_t                    monitorKey = 0; // the snapshot's monitor (timing only: compared, never dereferenced)
         STiming                      timing;
+        bool                         noScreenShare = false; // hidden from captures when it started (SEC-01): its snapshot too
     };
 
     // Where a window minimized by the plugin was (owner decision D-1): its display and frame, given back by restore().
@@ -500,6 +502,11 @@ namespace {
         for (const auto& a : all) {
             if (!a.snapshot || a.frame.alpha <= 0.F)
                 continue;
+            // SEC-01: a window hidden from captures is hidden, or transparent, while its snapshot moves, so Hyprland blacks
+            // out nothing of it here: while this display is captured its animation is not drawn, on screen too
+            // (core/CapturePrivacy.hpp). The window just goes, or comes back at the end.
+            if (!gf::capturePrivacy::mayDrawContent(a.noScreenShare || gf::capturePrivacy::protectedWindow(a.window.lock()), mon))
+                continue;
             const auto tex = a.snapshot->getTexture();
             if (!tex)
                 continue;
@@ -711,7 +718,8 @@ namespace {
         a.region           = intersection(full, mz::Box{geometry.monitorX, geometry.monitorY, geometry.texW / scale, geometry.texH / scale});
         if (a.effect == mz::Effect::Genie && (a.region.w <= 0 || a.region.h <= 0))
             a.effect = mz::Effect::Scale;
-        a.monitorKey = reinterpret_cast<uintptr_t>(mon.get());
+        a.monitorKey    = reinterpret_cast<uintptr_t>(mon.get());
+        a.noScreenShare = gf::capturePrivacy::protectedWindow(w);
         return a;
     }
 } // namespace

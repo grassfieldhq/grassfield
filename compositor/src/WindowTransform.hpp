@@ -42,7 +42,8 @@ namespace gf::transform {
     // into a pooled work buffer, and returns it. Without a free work buffer the window is drawn as nothing this frame
     // (never at its real place; `warnedNoBuffer` limits the warning to one line; `address` is for that line only).
     // Without a monitor or an input texture it is drawn as nothing too where possible; `in` is returned unchanged only
-    // when the window, the renderer or the monitor being rendered is missing.
+    // when the window, the renderer or the monitor being rendered is missing. A window hidden from captures has its fitted
+    // surface under a black plate while that monitor is captured (SEC-01, core/CapturePrivacy.hpp).
     SP<Render::IFramebuffer> drawFitted(const PHLWINDOW& w, const Box& rect, const SP<Render::IFramebuffer>& in, bool& warnedNoBuffer, uint64_t address);
 
     // Clears `in` (the bound work buffer): the window is drawn as nothing on the monitor being rendered.

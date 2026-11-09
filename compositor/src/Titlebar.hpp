@@ -159,7 +159,8 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
     // and minimize none (unavailable); `fixedSize` and `sized`: a window of fixed size neither zoomed nor in full screen shows
     // no zoom glyph (its light is disabled, core lightAvailable).
     void drawGlyphs(const CBox& bar, float scale, float alpha, bool fullscreen, bool fixedSize, bool sized);
-    // The content's own pixels in the surface's rounded top corners (under the surface), when its texture maps 1:1.
+    // The content's own pixels in the surface's rounded top corners (under the surface), when its texture maps 1:1. The
+    // caller asks gf::capturePrivacy first (SEC-01: outside the box Hyprland blacks out in a capture).
     void drawContentCorners(const PHLWINDOW& w, const CBox& bar, double rounding, float scale, float alpha);
 
     PHLWINDOWREF                m_owner;

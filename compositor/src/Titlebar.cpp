@@ -1,5 +1,6 @@
 #include "Titlebar.hpp"
 
+#include "CapturePrivacy.hpp"
 #include "ClientChrome.hpp"
 #include "DeferredFocus.hpp"
 #include "Ipc.hpp"
@@ -972,13 +973,16 @@ void CGrassfieldTitlebar::drawTitlebar(const PHLMONITOR& monitor, float alpha) {
     // 2. The surface's rounded top corners, under the surface: Hyprland cuts them away with the window's rounding, so the
     //    bar colour fills them, then the content's own pixels are drawn there unrounded (macOS: bar and content are one
     //    shape, square where they meet). Where the content is transparent the bar colour stays. Below the bar: nothing
-    //    drawBar draws overlaps them.
+    //    drawBar draws overlaps them. Not the content of a window hidden from captures while this display is captured
+    //    (SEC-01): Hyprland's black box rounds these corners away, so its pixels there would be in the capture; the bar
+    //    colour stays (core/CapturePrivacy.hpp).
     if (rounding > 0) {
         CBox left{bar.x, bar.y + bar.h, rounding, rounding};
         CBox right{bar.x + bar.w - rounding, bar.y + bar.h, rounding, rounding};
         addRect(left.scale(scale).round(), bgColor, 0, power);
         addRect(right.scale(scale).round(), bgColor, 0, power);
-        drawContentCorners(w, bar, rounding, scale, alpha);
+        if (gf::capturePrivacy::mayDrawContent(w, monitor))
+            drawContentCorners(w, bar, rounding, scale, alpha);
     }
 }
 

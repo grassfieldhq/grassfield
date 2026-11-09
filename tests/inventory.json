@@ -608,6 +608,7 @@
  {"path": "compositor/tests/RunModeTest.cpp", "layer": "logic"},
  {"path": "compositor/tests/TopClampTest.cpp", "layer": "logic"},
  {"path": "compositor/tests/WindowRimTest.cpp", "layer": "logic"},
+ {"path": "compositor/tests/CapturePrivacyTest.cpp", "layer": "logic"},
  {"path": "compositor/tests/MinimizeTest.cpp", "layer": "logic"},
  {"path": "compositor/tests/OverviewFocusTest.cpp", "layer": "logic"},
  {"path": "compositor/tests/OverviewTest.cpp", "layer": "logic"},
