@@ -20,6 +20,13 @@
 #      stalled with it, so the first GPU client of a fresh nested session is slow or wedges. The pure data case runs first under a long
 #      limit (GRASSFIELD_ICONS_WARMUP, default 300 s, TERM then a 60 s grace before KILL so the client can leave cleanly); if it does
 #      not finish the session is unusable and the run stops at once (exit 3) before any case starts.
+#   5. THE OUTPUT. In the nested session a window that maps on WAYLAND-1 (the nested compositor's own window on the owner's screen) only gets
+#      frame callbacks while that window is visible there, and never otherwise: every case then waits for a frame that does not come
+#      (2026-11-09: even the pure data case, which only needs its window shown, never finished, on main and on the branch, at load 6;
+#      the size cases had passed earlier, when the window happened to be visible). GF-REF is headless and renders regardless, as for
+#      tests/visual/lib.sh (VS_OUTPUT). So before every attempt the runner focuses GF-REF and parks the pointer on it (new windows map on
+#      the focused monitor), and the warm-up reads, from the nested `clients` and `monitors`, the output the test window landed on: it prints
+#      it, and fails with that reason (exit 3) when it is not GF-REF or when no window appeared.
 #
 #   tests/visual/icon-a2.sh [test_function ...]
 #
@@ -44,6 +51,7 @@ probe_limit=${GRASSFIELD_ICONS_PROBE_TIMEOUT:-60}
 attempts=${GRASSFIELD_ICONS_ATTEMPTS:-2}
 kill_after=${GRASSFIELD_ICONS_KILL:-10}
 probe_fn=test_a2_limitKeysAreWellFormed
+want_output=${GRASSFIELD_ICONS_OUTPUT:-GF-REF}
 warmup=${GRASSFIELD_ICONS_WARMUP:-300}
 warm_kill=${GRASSFIELD_ICONS_WARMUP_KILL:-60}
 cases=("$@")
@@ -57,9 +65,30 @@ limit_of() {
   esac
 }
 
+# Focus the reference output and park the pointer on it, so the next window maps there (nested session only).
+pin_output() {
+  [[ -n $runner ]] && return 0
+  timeout 10 "$root/scripts/nestctl" dispatch "hl.dsp.focus({ monitor = '$want_output' })" >/dev/null 2>&1 || echo "test-icons: could not focus $want_output" >&2
+  timeout 20 "$root/scripts/dev/pointer.sh" output "$want_output" abs 100 100 >/dev/null 2>&1 || true
+}
+
+# The output the test window sits on, or nothing while there is no such window. GRASSFIELD_ICONS_OUTPUT_PROBE replaces the query (tests).
+window_output() {
+  if [[ -n ${GRASSFIELD_ICONS_OUTPUT_PROBE:-} ]]; then
+    "$GRASSFIELD_ICONS_OUTPUT_PROBE" 2>/dev/null
+    return 0
+  fi
+  [[ -n $runner ]] && return 0
+  local mid
+  mid=$(timeout 10 "$root/scripts/nestctl" clients -j 2>/dev/null | jq -r '[.[] | select(((.class // "") + " " + (.initialClass // "")) | test("qmltestrunner"; "i"))] | .[0].monitor // empty' 2>/dev/null)
+  [[ -n $mid ]] || return 0
+  timeout 10 "$root/scripts/nestctl" monitors -j 2>/dev/null | jq -r --argjson id "$mid" '.[] | select(.id == $id) | .name' 2>/dev/null
+}
+
 # One attempt of one case: prints the qmltestrunner output; the exit status is the watchdog's (124 / 137: stalled).
 run_one() {
   local fn=$1 lim=$2
+  pin_output
   if [[ -n $runner ]]; then
     timeout -k "$kill_after" "$lim" "$runner" "IconShaderA2::$fn" 2>&1
   else
@@ -81,12 +110,39 @@ healthy() {
   [[ $status != 124 && $status != 137 ]] && grep -q 'Totals' <<<"$out"
 }
 
-# Warm-up: the first GPU client of a fresh nested session.
-out=$(kill_after=$warm_kill run_one "$probe_fn" "$warmup")
+# Warm-up: the first GPU client of a fresh nested session, run in the background so that the output of its window can be read while it runs.
+warm_tmp=$(mktemp "$dev/icon-a2-warm.XXXXXX")
+trap 'rm -f "$warm_tmp"' EXIT
+( kill_after=$warm_kill run_one "$probe_fn" "$warmup" >"$warm_tmp" 2>&1 ) &
+warm_pid=$!
+landed=""
+while kill -0 "$warm_pid" 2>/dev/null; do
+  if [[ -z $landed ]]; then
+    landed=$(window_output)
+    if [[ -n $landed ]]; then
+      echo "test-icons: the test window landed on output $landed" >&2
+      if [[ $landed != "$want_output" ]]; then
+        pkill -KILL -P "$warm_pid" 2>/dev/null || true
+        kill -KILL "$warm_pid" 2>/dev/null || true
+        sweep
+        echo "test-icons: the warm-up window is on $landed, not $want_output: it gets no frame callbacks there unless that output is visible, so no case could finish (exit 3)." >&2
+        echo "test-icons: focus $want_output in the nested session (scripts/nestctl dispatch \"hl.dsp.focus({ monitor = '$want_output' })\") or restart it." >&2
+        exit 3
+      fi
+    fi
+  fi
+  sleep 1
+done
+wait "$warm_pid"
 status=$?
+out=$(cat "$warm_tmp")
 if [[ $status == 124 || $status == 137 ]] || ! grep -q 'Totals' <<<"$out"; then
-  echo "test-icons: the warm-up ($probe_fn, ${warmup}s) did not finish: the nested session is unusable before any case ran (exit $status)." >&2
-  echo "test-icons: restart it (scripts/dev/nested-down.sh, scripts/dev/nested-up.sh) and run again." >&2
+  if [[ -n $landed ]]; then
+    echo "test-icons: the warm-up ($probe_fn, ${warmup}s) did not finish although its window is on $landed: the nested session is wedged (exit $status)." >&2
+  else
+    echo "test-icons: the warm-up ($probe_fn, ${warmup}s) did not finish and no qmltestrunner window ever appeared in the nested clients: the output is unknown, the client never mapped (exit $status)." >&2
+  fi
+  echo "test-icons: restart the nested session (scripts/dev/nested-down.sh, scripts/dev/nested-up.sh) and run again." >&2
   exit 3
 fi
 

@@ -48,6 +48,35 @@ run cold test_a2_limitKeysAreWellFormed ""
 [[ $(grep -c . <<<"$log") == 1 ]] && ok "only the warm-up ran, no case" || bad "cold: ran $log"
 grep -q "warm-up" <<<"$out" && ok "the message names the warm-up" || bad "no warm-up message: $out"
 
+# 5. the window lands on the wrong output (WAYLAND-1 instead of GF-REF): the warm-up fails at once with that reason
+cat >"$tmp/probe-wrong.sh" <<'EOF'
+#!/usr/bin/env bash
+echo WAYLAND-1
+EOF
+cat >"$tmp/probe-right.sh" <<'EOF'
+#!/usr/bin/env bash
+echo GF-REF
+EOF
+chmod +x "$tmp/probe-wrong.sh" "$tmp/probe-right.sh"
+cat >"$tmp/slow.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "${1#IconShaderA2::}" >>"$FAKE_LOG"
+sleep 5
+echo "Totals: 2 passed, 0 failed, 0 skipped, 0 blacklisted, 5ms"
+EOF
+chmod +x "$tmp/slow.sh"
+export FAKE_LOG=$tmp/out.log
+: >"$FAKE_LOG"
+out=$(GRASSFIELD_ICONS_RUNNER=$tmp/slow.sh GRASSFIELD_ICONS_OUTPUT_PROBE=$tmp/probe-wrong.sh GRASSFIELD_ICONS_WARMUP=20 GRASSFIELD_ICONS_WARMUP_KILL=1 "$root/tests/visual/icon-a2.sh" test_a2_size48 2>&1)
+status=$?
+[[ $status == 3 ]] && ok "a window on the wrong output: exit 3" || bad "wrong output: exit $status: $out"
+grep -q "landed on output WAYLAND-1" <<<"$out" && grep -q "not GF-REF" <<<"$out" && ok "the warm-up names the output and the reason" || bad "no output/reason: $out"
+[[ $(grep -c . "$FAKE_LOG") == 1 ]] && ok "no case ran" || bad "ran: $(cat "$FAKE_LOG")"
+: >"$FAKE_LOG"
+out=$(GRASSFIELD_ICONS_RUNNER=$tmp/slow.sh GRASSFIELD_ICONS_OUTPUT_PROBE=$tmp/probe-right.sh GRASSFIELD_ICONS_WARMUP=20 GRASSFIELD_ICONS_WARMUP_KILL=1 GRASSFIELD_ICONS_TIMEOUT=20 GRASSFIELD_ICONS_ATTEMPTS=1 "$root/tests/visual/icon-a2.sh" test_a2_size48 2>&1)
+status=$?
+[[ $status == 0 ]] && grep -q "landed on output GF-REF" <<<"$out" && ok "a window on GF-REF is reported and the run goes on" || bad "right output: exit $status: $out"
+
 # 3. clean
 run clean "" ""
 [[ $status == 0 ]] && ok "a clean run exits 0" || bad "a clean run exits $status: $out"
