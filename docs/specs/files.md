@@ -110,9 +110,13 @@ selection").
      with "Open with Wine/Bottles/Java" when installed, after the same origin line; a `.dmg` or `.pkg` is explained ("This
      file contains an app made for another operating system …") with Search the Store;
    - app launchers (`.desktop`) are still refused (a launcher outside an applications folder run after a sheet is a
-     follow-up); program content under a document's name, another computer's program and anything with other rights are
-     refused; nothing runs from a server or the Trash.
-   Open With lists `KApplicationTrader::queryByMimeType` apps and launches with `ApplicationLauncherJob`.
+     follow-up); program content under a document's name (also "Invoice" + any character but a dot + "pdf"), another
+     computer's program and anything with other rights are refused; nothing runs from a server or the Trash; nothing under
+     an Expand or Compress staging name (`.grassfield-expand-…`) is opened, listed or searched, and a killed Files' staging
+     items are removed at the next start.
+   Open With lists `KApplicationTrader::queryByMimeType` apps and launches with `ApplicationLauncherJob`; any application
+   may run what it is given, so a downloaded program, AppImage, script, or Windows or Java program gets a sheet naming the
+   application first ("… Are you sure you want to open it with <app>?").
 8. F8 Context menus (Grassfield `PopupMenu`): item menu (Open, Open With, Open in New Tab, Move to Trash, Get Info,
    Rename, Duplicate, Glance, Copy, Cut, Show in Enclosing Folder while searching), Trash item menu
    (Put Back, Delete Immediately…, Get Info, Copy), background menu (New Folder or Empty Trash…, Get Info, Paste,

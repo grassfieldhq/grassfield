@@ -157,8 +157,9 @@ Decision: copy Gatekeeper, from "never run" to "run after consent".
   the host it came from; Return and Esc cancel. After Open, Files writes `user.grassfield.approved` = `1 <inode> <mtime ns>
   <size>` (macOS clears the quarantine): an approved, unchanged file never asks again, a changed one asks again. A program
   without the user's execute bit gets the same sheet and Open sets u+x (only; ADR-0028's unprivileged path, through the
-  descriptor that was checked, then verified: a FAT mount that ignores it gets the copy); one on a `noexec` or read-only disk
-  is copied to `~/Applications` (macOS: `/Applications`), checked against the approved file, and run from there.
+  descriptor that was checked, then verified: a FAT mount that ignores it gets the copy, checked against the file as it is
+  after that chmod, which moved its status time); one on a `noexec` or read-only disk is copied to `~/Applications` (macOS:
+  `/Applications`), checked against the approved file, and run from there.
 - Files keeps the download marks on what it makes from a downloaded or remote file (the Archive Utility model, reviews of
   0c51550e and 48475cf6). Expand of an archive that carries a download mark completes only if every extracted regular file
   got the archive's marks, fail closed: they are written in the private staging folder before the final rename, on a worker
@@ -169,7 +170,13 @@ Decision: copy Gatekeeper, from "never run" to "run after consent".
   run with no sheet). A copy or move from a remote location gets its source address, without credentials, as its
   `user.xdg.origin.url`. Names are judged as the eye reads them (NFKC, combining marks, format, default-ignorable and blank
   characters dropped, dot lookalikes read as "."), and a program whose extension is not plain ASCII is refused as a
-  disguise. Open With > Wine, Bottles or Java follows the open rule (root refused, the sheet first when downloaded).
+  disguise, as is one whose name ends in a document's or an archive's letters after any character but an ASCII dot ("Invoice"
+  + any lookalike + "pdf", "photo-jpg": fail closed, since no list of lookalikes is complete). Nothing under an Expand or
+  Compress staging name is opened, run, listed or searched; a killed Files' staging items are removed at the next start
+  (`<state>/files-staging`, ADR-0020), and every removal goes by descriptor (a tree deeper than PATH_MAX too). Every Open With
+  application of a program, an AppImage, a script, or a Windows or Java program follows the open rule (root refused, no
+  remote program or staging item, the sheet first when downloaded): any of them may run it (second counter-review of
+  fd5823de).
 - Scripts open in the default text editor; Open With > Terminal runs an executable one in the session's terminal
   (decision F-7, `xdg-terminal-exec`), after the same sheet when downloaded. Windows and Java programs are explained and
   never run by opening; their own application (Wine, Bottles, java) runs them after "Open with …" in the sheet. A `.dmg` or

@@ -643,10 +643,19 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
     extension, so a lookalike letter ("pdf" with a Cyrillic er, "exe" in Cyrillic, a Greek rho) is refused without a
     confusables table (the UTS #39 skeleton would need ICU's i18n library linked directly: not done). Security reviews of
     0c51550e and 48475cf6: "Invoice.pdf " and + U+200B, "Invoice" + U+202E + "fdp.exe", a trailing U+2800, "Invoice" +
-    U+2024 + "pdf", a Cyrillic er in "pdf" and trailing combining marks all ran without a sheet. So "photo.jpg", "notes.txt",
-    "run.sh" or "setup.exe" with ELF program content never runs, however it is spelled (banner: "… it is an app, but its name
-    makes it look like a document. If you trust it, rename it first."). Every other name check (launcher, Windows, Java,
-    AppImage, another system's app, remote) is made on the cleaned name too;
+    U+2024 + "pdf", a Cyrillic er in "pdf" and trailing combining marks all ran without a sheet. A list of dot lookalikes
+    can't be complete (second counter-review of fd5823de: U+A78F, U+16EB, U+1427 and U+10101, the UTS #39 lookalikes of the
+    middle dot, and U+2022, U+2981, U+02D9, U+0F0B, U+2E30, U+2E3C, U+1803 and a combining dot below still ran), so the rule
+    also fails closed (`LaunchGuard::documentTailAfterOtherThanDot`): a program whose name ends in 1 to 5 ASCII letters or
+    digits (one letter at least) that name a document or archive type, right after any character but an ASCII dot, is
+    refused. It is read on the cleaned name and on the name as drawn (no compatibility folding, so a "TM" sign stays a sign;
+    accents dropped except the marks below a letter, canonical combining class 220, where a dot below sits on the line). So
+    "photo.jpg", "notes.txt", "run.sh" or "setup.exe" with ELF program content, "Invoice" + any punctuation or symbol +
+    "pdf", and "photo-jpg" never run (banner: "… it is an app, but its name makes it look like a document. If you trust it,
+    rename it first."). The cost, accepted: a program named like "nvim-qt" or "qemu-img" (a document type after a hyphen)
+    must be renamed to run from Files; digits only ("x86_64", "1.95"), a longer last word ("linux64") and accented words
+    ("vidéo") are not affected. Every other name check (launcher, Windows, Java, AppImage, another system's app, remote) is
+    made on the cleaned name too;
   - uwsm would read its path as a desktop entry (`RefuseLauncher`, `LaunchGuard::uwsmReadsAsEntry`: uwsm 0.27's MainArg takes
     an argument that ends in ".desktop" or holds ".desktop:" for an entry, so "…/Tool.desktop:run" would start the entry
     Tool.desktop beside it); `ProgramLaunch::Run::allowed` refuses such an uwsm-app command again at the start;
@@ -654,7 +663,8 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
     IA-32 runs on x86-64);
   - it would run with other rights (`RefuseElevated`): setuid or setgid bit, a `security.capability` attribute, or Files
     itself running as root. Files as root starts nothing on any path (`FilesApp::refuseAsRoot` before a program, the
-    Terminal, Java, the Windows handler and Open With a Windows or Java program; `Run::allowed` again at the start).
+    Terminal, Java, the Windows handler, and Open With a program, an AppImage, a script, or a Windows or Java program;
+    `Run::allowed` again at the start).
   Otherwise `LaunchGuard::plan` says what Open does first, and the sheet (`KioSheetsLogic.openProgram`, the window's sheet
   style, Return and Esc cancel) is shown when any of these holds:
   - it came from the Internet: `user.xdg.origin.url` or `user.xdg.referrer.url` (what Chromium and Firefox write on a
@@ -673,12 +683,26 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
       be walked, a tree deeper than 256 folders or a cancel, and the staging folder is removed (its folders opened up
       first), nothing is kept, and a sheet says "“Kit.zip” couldn’t be expanded safely." (security review of 48475cf6:
       members of mode 0500 and 0555, members in folders of mode 0100 and 0300, and archives of more than 100000 entries were
-      expanded with programs left unmarked);
+      expanded with programs left unmarked). Until the final rename, nothing under a staging name (`.grassfield-expand-<8
+      hex>`, and Compress's `.grassfield-compress-<8 hex>.zip`) is opened, run, listed or searched from Files
+      (`RefuseStaging`, `LaunchGuard::insideStaging` on the item's path and on a link's target: "… can’t be opened while Files
+      is still expanding or compressing it."; `FolderModel` lists nothing there, Open With refuses it, `FileSearch` skips
+      it). The staging names in use are recorded in `<state>/files-staging` (the boot, the Files process and its start time,
+      the path; ADR-0020); a Files killed meanwhile leaves its line, and the next Files to start removes those items off the
+      GUI thread (`ArchiveJob::sweepStaleStaging`: only an absolute path whose last name is a staging name, of the user's
+      own). Every removal (a cancel, a refusal, the sweep) goes by descriptor (`LaunchGuard::removeTree`: openat and
+      unlinkat, one folder descriptor open at a time and a stack of names, each folder given u+rwx first, no link followed),
+      so a tree deeper than PATH_MAX goes too (second counter-review of fd5823de, m2: such a tree, and a killed Files'
+      staging folder, stayed behind unmarked);
     - a copy or move from a remote location (sftp, smb, ftp, http, a phone; `FilesApp::markRemoteCopies` on every tracked
       copy job) gets the source address, without user name or password, as its `user.xdg.origin.url`;
   - the user's execute bit is missing ("Opening it allows it to run on this computer."): Open sets u+x only (`fchmod`
     through the descriptor that was checked, mode `& 0777 | S_IXUSR`: never setuid, setgid, group or others), then checks it
-    with `fstat`: a FAT, exFAT or fixed-mode NTFS mount that ignores the chmod (`Approval::ExecIgnored`) gets the copy below;
+    with `fstat`: a FAT, exFAT or fixed-mode NTFS mount that ignores the chmod (`Approval::ExecIgnored`) gets the copy below.
+    That chmod moves the file's status time (POSIX; FAT's setattr too), so the file is inspected again after it and must be
+    the same program (path, inode, modification time, size) with the status time `approve` saw right after its chmod; the
+    copy is then checked against these fresh facts (second counter-review of fd5823de, R1: checked against the facts from
+    before the chmod, every program on a FAT stick was refused as changed);
   - it can't run where it is (a `noexec` mount, or not executable on a read-only disk or in another user's file): Open copies
     it to `~/Applications` (made when missing; a free name "Tool 2.AppImage"; KIO's copy keeps the download marks), then
     checks that the source is still the approved file (inode, modification and status change times, size: the owner can set an
@@ -716,10 +740,17 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
   directly on Linux." (or "This file is a Java program."). When the default application of its exact type is installed
   (Wine, Bottles: one that names the type itself, never one inherited from a parent type) or `java`/`javaws` is on the PATH,
   the sheet offers "Open with <app>" (Return and Esc cancel), with the download origin; Open checks the file again and opens
-  it with that application (Java: `java -jar <path>` through the same start). Open With > Wine, Bottles or a Java entry runs
-  the program it is given, so it follows the same rule (`FilesApp::openWithChecked`, security review of 48475cf6): never as
-  root, and a downloaded Windows or Java program gets the sheet first (one per item, "Open with <app>"), unless it was
-  approved as it is now; Open in the sheet writes the approval.
+  it with that application (Java: `java -jar <path>` through the same start).
+- Open With: any application may run what it is given (Wine, Bottles, java, an AppImage helper registered for
+  `application/vnd.appimage`, a terminal registered for scripts), so Open With follows the open rule for programs,
+  AppImages, scripts, and Windows and Java programs (`FilesApp::openWithChecked`; security review of 48475cf6, second
+  counter-review of fd5823de, m3): never as root, never a remote program or a staging item (the open banners), and a
+  downloaded one gets a sheet first, one per item, unless it was approved as it is now: "Open with <app>" for a Windows or
+  Java program; for a program or a script `KioSheetsLogic.openProgram` with the application's name ("“Tool.AppImage” is an
+  app downloaded from the Internet. Are you sure you want to open it with <app>?", Return and Esc cancel). Open writes the
+  approval for a Windows or Java program (only such an application runs it); for a program or a script it covers that open
+  only (no execute bit, no approval: the next Open With asks again, and a double-click has its own sheet). The text editor
+  Files picks for a script it opens is Files' own choice and asks nothing.
 - Another system's app (`ForeignApp`: `.dmg`, `.pkg`, `.mpkg`, `application/x-apple-diskimage`): "This file contains an app
   made for another operating system, which can’t work on Linux.", with Search the Store (Grassfield Store's
   `--page=search:<the file's name without version and platform words>`) when the Store is there. The text never names that
