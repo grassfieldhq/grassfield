@@ -6,6 +6,7 @@
 #include <QMimeType>
 #include <QRegularExpression>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <dirent.h>
@@ -442,8 +443,24 @@ RunPlan plan(const Facts &f)
     // file of another user). Open then copies it to ~/Applications (macOS: an app is copied to /Applications from its disk image).
     p.copy = f.noexecMount || (needsExec && (f.readOnlyMount || !f.ownedByUser));
     p.allowRun = needsExec && !p.copy;
-    p.ask = (p.downloaded && !f.approved) || needsExec || p.copy;
+    // A name that can be drawn in another order is not trusted as drawn (fifth check of fd5823de, V1): always the sheet, which
+    // writes the marks out and says the name may not show what it is; an Arabic or Hebrew program name gets that sheet, never a
+    // refusal.
+    p.nameUntrusted = bidiName(f.fileName);
+    p.ask = (p.downloaded && !f.approved) || needsExec || p.copy || p.nameUntrusted;
     return p;
+}
+
+bool bidiName(const QString &name)
+{
+    for (const char32_t c : name.toUcs4()) {
+        if (c == 0x200E || c == 0x200F || c == 0x061C || (c >= 0x202A && c <= 0x202E) || (c >= 0x2066 && c <= 0x2069))
+            return true;
+        const QChar::Direction d = QChar::direction(c);
+        if (d == QChar::DirR || d == QChar::DirAL)
+            return true;
+    }
+    return false;
 }
 
 QString originHost(const Facts &f)
@@ -869,7 +886,48 @@ bool lureExtension(const QString &tail)
                          "mp3", "mp4", "m4a", "m4v", "wav", "flac", "ogg", "opus", "aac", "wma", "mov", "avi", "mkv", "webm",
                          "wmv", "mpg", "mpeg", "zip", "rar", "7z", "gz", "tgz", "bz2", "xz", "zst", "tar", "iso", "img",
                          "dmg", "pkg", "deb", "rpm", "apk", "appx", "msix", "jar", "exe", "msi", "bat", "cmd", "scr", "lnk", "ps1",
-                         "vbs"});
+                         "vbs", "sh", "py", "js", "ps", "ai", "kdbx", "ofx", "qif"});
+}
+
+bool startsWithAny(const QString &type, std::initializer_list<const char *> prefixes)
+{
+    for (const char *p : prefixes) {
+        if (type.startsWith(QLatin1String(p)))
+            return true;
+    }
+    return false;
+}
+
+// A type the user opens as a document, never as a program's own (fifth check of fd5823de, v2): pictures, sounds, films and fonts;
+// archives; PDF, PostScript, office and ebook files; shell, Python and JavaScript scripts; text documents (plain text, Markdown,
+// CSV, HTML, XML, JSON, YAML, SQL, logs, subtitles, calendars and cards). Developer types (gettext, object files, troff, source
+// code) are not in it, so "Démo" and "Mémo" run.
+bool userType(const QMimeType &type)
+{
+    QStringList names = type.allAncestors();
+    names.prepend(type.name());
+    for (const QString &n : std::as_const(names)) {
+        if (startsWithAny(n, {"image/", "audio/", "video/", "font/", "application/vnd.ms-", "application/vnd.openxmlformats-officedocument.",
+                              "application/vnd.oasis.opendocument.", "application/vnd.apple.", "application/vnd.visio",
+                              "application/vnd.wordperfect", "application/vnd.lotus-", "application/x-iwork-"}))
+            return true;
+        if (inList(n, {"application/zip", "application/x-7z-compressed", "application/vnd.rar", "application/x-rar", "application/x-tar",
+                       "application/gzip", "application/x-bzip", "application/x-bzip1", "application/x-bzip2", "application/x-xz",
+                       "application/zstd", "application/x-lzip", "application/x-lzma", "application/x-compress", "application/x-cpio",
+                       "application/x-cd-image", "application/vnd.ms-cab-compressed", "application/x-rpm",
+                       "application/vnd.debian.binary-package", "application/x-apple-diskimage", "application/vnd.comicbook-rar",
+                       "application/pdf", "application/postscript", "application/illustrator", "application/oxps", "application/msword",
+                       "application/rtf", "application/epub+zip", "application/x-mobipocket-ebook", "application/x-fictionbook+xml",
+                       "application/x-abiword", "application/x-mswrite", "text/x-shellscript", "application/x-shellscript",
+                       "text/x-python", "text/x-python3", "text/javascript", "application/javascript"})
+            || n.contains(QLatin1String("-compressed-tar")))
+            return true;
+    }
+    // Text documents by their own type only: every source code type inherits text/plain too.
+    return inList(type.name(), {"text/plain", "text/markdown", "text/csv", "text/tab-separated-values", "text/html", "application/xhtml+xml",
+                                "text/xml", "application/xml", "application/json", "application/yaml", "application/x-yaml", "application/sql",
+                                "text/x-sql", "text/x-log", "application/x-subrip", "text/x-subviewer", "text/calendar", "text/vcard",
+                                "text/x-vcard", "text/rtf"});
 }
 
 // `name` ends (after its trailing spaces and dots) in ASCII letters or digits, one letter at least, right after a character
@@ -903,8 +961,19 @@ bool documentTail(QString name)
     while (i > 0 && QChar::isMark(before.at(i)))
         --i;
     const char32_t base = char32_t(before.at(i));
-    if (QChar::isLetter(base))
-        return length >= 2 && lureExtension(tail);
+    if (QChar::isLetter(base)) {
+        // 2 letters: the lure list alone (a user type would also take "Caméra" for RealAudio, "Démo" for Modelica, "Diégo" for
+        // Go); 3 or more: a lure or any user type (fifth check of fd5823de, v2: "Photo" + U+A78F + "jfif", "Notes" + U+A78F +
+        // "log" ran).
+        if (length < 2)
+            return false;
+        if (lureExtension(tail))
+            return true;
+        if (length < 3)
+            return false;
+        const QList<QMimeType> types = QMimeDatabase().mimeTypesForFileName(QStringLiteral("x.") + tail);
+        return std::any_of(types.cbegin(), types.cend(), [](const QMimeType &t) { return userType(t); });
+    }
     if (length > 5)
         return longDocumentExtension(tail) || (before.last() > 0x7F && lureExtension(tail));
     if (before.last() > 0x7F && lureExtension(tail))
@@ -931,12 +1000,14 @@ bool documentTailAfterOtherThanDot(const QString &name)
     // counter-review of fd5823de, m-b: marks outside combining class 220 were dropped and ran).
     QString drawn;
     for (const char32_t c : name.toUcs4()) {
-        if (QChar::category(c) == QChar::Other_Format || defaultIgnorable(c))
-            continue;
+        // A blank glyph first: the Hangul fillers are also default-ignorable, and they draw a space ("Invoice" + U+3164 + "pdf"
+        // looks like "Invoice pdf"; fifth check of fd5823de, nit).
         if (blankGlyph(c)) {
             drawn += QLatin1Char(' ');
             continue;
         }
+        if (QChar::category(c) == QChar::Other_Format || defaultIgnorable(c))
+            continue;
         drawn += QString::fromUcs4(&c, 1);
     }
     return documentTail(drawn);

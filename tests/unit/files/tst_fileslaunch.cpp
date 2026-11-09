@@ -1196,3 +1196,35 @@ TEST(FilesKioHome, GrassfieldHomesAreTheScratchOnes)
     EXPECT_EQ(qEnvironmentVariable("GRASSFIELD_CONFIG_HOME"), scratch + QStringLiteral("/GRASSFIELD_CONFIG_HOME"));
     EXPECT_TRUE(ArchiveJob::stagingRegistry().startsWith(scratch + QLatin1Char('/'))) << ArchiveJob::stagingRegistry().toStdString();
 }
+
+// Fifth check of fd5823de (V1): a program made here whose name an RLM draws as "Invoice.pdf" gets the sheet, which writes the
+// marks out and says the name may not show what it is; Cancel runs nothing. An Arabic program name gets the same sheet, runs
+// after Open, and asks again the next time (the name is never trusted as drawn).
+TEST_F(FilesLaunch, ANameDrawnInAnotherOrderAlwaysAsks)
+{
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    const QString swapped = QStringLiteral("\u200fpdf.\u200fInvoice");
+    const QString path = place("probe", QStringLiteral("Stick/") + swapped, 0755);
+    s.answer = QStringLiteral("cancel");
+    app.open(urls(path));
+    ASSERT_TRUE(waitFor([&] { return !s.ofKind(QStringLiteral("openProgram")).isEmpty(); }));
+    const QVariantMap sheet = s.ofKind(QStringLiteral("openProgram")).first();
+    EXPECT_TRUE(sheet.value(QStringLiteral("nameUntrusted")).toBool());
+    EXPECT_EQ(sheet.value(QStringLiteral("name")).toString(), QStringLiteral("<U+200F>pdf.<U+200F>Invoice")) << "the marks written out";
+    EXPECT_FALSE(sheet.value(QStringLiteral("downloaded")).toBool());
+    settle(1200);
+    EXPECT_FALSE(QFileInfo::exists(mark(swapped))) << "Cancel: nothing ran";
+
+    const QString arabic = QStringLiteral("\u0628\u0631\u0646\u0627\u0645\u062c");
+    const QString tool = place("probe", QStringLiteral("Apps/") + arabic, 0755);
+    s.answer = QStringLiteral("open");
+    app.open(urls(tool));
+    EXPECT_TRUE(waitFor([&] { return QFileInfo::exists(mark(arabic)); }, 10000)) << "Open: it runs";
+    EXPECT_EQ(s.ofKind(QStringLiteral("openProgram")).size(), 2);
+    EXPECT_TRUE(s.told.isEmpty()) << "a sheet, never a refusal: " << s.told.join(QLatin1Char('|')).toStdString();
+    QFile::remove(mark(arabic));
+    app.open(urls(tool));
+    EXPECT_TRUE(waitFor([&] { return QFileInfo::exists(mark(arabic)); }, 10000));
+    EXPECT_EQ(s.ofKind(QStringLiteral("openProgram")).size(), 3) << "asked again: the name is never trusted as drawn";
+}

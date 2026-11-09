@@ -1086,3 +1086,67 @@ TEST(LaunchGuardNames, AfterALetterOnlyALureExtensionIsADisguise)
     EXPECT_TRUE(documentTailAfterOtherThanDot(QStringLiteral("App\u2027desktop")));
     EXPECT_EQ(verdict(program(QStringLiteral("App\u2027desktop"))), Verdict::RefuseLauncher);
 }
+
+// Fifth check of fd5823de (V1): a name that can be drawn in another order is not trusted as drawn. RLM + "pdf." + RLM +
+// "Invoice" is drawn "Invoice.pdf" (ALM the same, "Holiday.jpg" too): such a program always gets the sheet, approved and
+// executable or not; an ordinary Arabic or Hebrew program name gets the sheet too, never a refusal.
+TEST(LaunchGuardNames, ANameDrawnInAnotherOrderAlwaysAsks)
+{
+    for (const QString &name : {QStringLiteral("\u200fpdf.\u200fInvoice"), QStringLiteral("\u061cpdf.\u061cInvoice"),
+                                QStringLiteral("\u200fjpg.\u200fHoliday"), QStringLiteral("\u061cjpg.\u061cHoliday"),
+                                QStringLiteral("\u200eTool"), QStringLiteral("Tool\u202bx"), QStringLiteral("Tool\u2067x"),
+                                QStringLiteral("\u0628\u0631\u0646\u0627\u0645\u062c"), QStringLiteral("\u05ea\u05d5\u05db\u05e0\u05d4"),
+                                QStringLiteral("Tool-\u05d0")}) {
+        EXPECT_TRUE(bidiName(name)) << name.toStdString();
+        Facts f = program(name);
+        EXPECT_EQ(verdict(f), Verdict::RunProgram) << name.toStdString() << ": the sheet, not a refusal";
+        f.approved = true;
+        const RunPlan p = plan(f);
+        EXPECT_TRUE(p.nameUntrusted) << name.toStdString();
+        EXPECT_TRUE(p.ask) << name.toStdString() << ": always, approved and executable";
+        EXPECT_FALSE(p.downloaded);
+    }
+    for (const QString &name : {QStringLiteral("Tool"), QStringLiteral("\u00c9diteur"), QStringLiteral("Ti\u1ebfng-Vi\u1ec7t"), QStringLiteral("\u65e5\u672c")}) {
+        EXPECT_FALSE(bidiName(name)) << name.toStdString();
+        EXPECT_FALSE(plan(program(name)).ask) << name.toStdString();
+    }
+}
+
+// Fifth check of fd5823de (v2): after a letter, 3 letters or more of any user type are a disguise again (pictures, sounds,
+// films, fonts, archives, office files and ebooks, scripts, text documents), and the short ones the review found are lures.
+// Developer types and two-letter collisions with ordinary words stay allowed.
+TEST(LaunchGuardNames, AfterALetterAUserTypeIsADisguise)
+{
+    const QStringList tails = {QStringLiteral("Photo|jfif"), QStringLiteral("Report|xps"), QStringLiteral("Logo|eps"), QStringLiteral("Logo|ai"),
+                               QStringLiteral("Photo|jxl"), QStringLiteral("Photo|dng"), QStringLiteral("Photo|cr2"), QStringLiteral("install|sh"),
+                               QStringLiteral("script|py"), QStringLiteral("Passwords|kdbx"), QStringLiteral("Bank|ofx"), QStringLiteral("Dump|sql"),
+                               QStringLiteral("Notes|log"), QStringLiteral("Config|yml"), QStringLiteral("Comic|cbz"), QStringLiteral("Movie|srt"),
+                               QStringLiteral("Clip|flv"), QStringLiteral("Clip|3gp"), QStringLiteral("Song|aiff"), QStringLiteral("Song|mid"),
+                               QStringLiteral("Font|ttf"), QStringLiteral("Book|fb2"), QStringLiteral("Diagram|vsdx"), QStringLiteral("Flyer|pub"),
+                               QStringLiteral("Letter|wps"), QStringLiteral("Setup|cab"), QStringLiteral("Slides|potx"), QStringLiteral("Sheet|xlsb")};
+    for (const QString &letter : {QStringLiteral("\ua78f"), QStringLiteral("\u1427"), QStringLiteral("\u02d1"), QStringLiteral("\u1e6d")}) {
+        for (const QString &pair : tails) {
+            const QString name = pair.section(QLatin1Char('|'), 0, 0) + letter + pair.section(QLatin1Char('|'), 1, 1);
+            EXPECT_TRUE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+            EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << name.toStdString();
+        }
+    }
+    for (const QString &name : {QStringLiteral("D\u00e9mo"), QStringLiteral("M\u00e9mo"), QStringLiteral("Vid\u00e9o"), QStringLiteral("Ti\u1ebfng-Vi\u1ec7t"),
+                                QStringLiteral("Cam\u00e9ra"), QStringLiteral("Op\u00e9ra"), QStringLiteral("Pr\u00e9au"), QStringLiteral("Di\u00e9go"),
+                                QStringLiteral("Syst\u00e8me"), QStringLiteral("Donn\u00e9es"), QStringLiteral("R\u00e9el"), QStringLiteral("Pok\u00e9mon"),
+                                QStringLiteral("M\u00fasica"), QStringLiteral("\u00c9diteur"), QStringLiteral("Cr\u00e9ateur"), QStringLiteral("Lecteur-vid\u00e9o")}) {
+        EXPECT_FALSE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+        EXPECT_EQ(verdict(program(name)), Verdict::RunProgram) << name.toStdString();
+    }
+}
+
+// Fifth check of fd5823de (nit): the Hangul fillers are drawn as a space, so "Invoice" + U+3164 + "pdf" reads "Invoice pdf",
+// refused like a plain space before "pdf".
+TEST(LaunchGuardNames, AHangulFillerIsDrawnAsASpace)
+{
+    for (const QString &name : {QStringLiteral("Invoice\u3164pdf"), QStringLiteral("Invoice\uffa0pdf"), QStringLiteral("Invoice\u115fpdf"),
+                                QStringLiteral("Invoice\u1160pdf"), QStringLiteral("photo\u3164jpg"), QStringLiteral("Invoice pdf")}) {
+        EXPECT_TRUE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+        EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << name.toStdString();
+    }
+}

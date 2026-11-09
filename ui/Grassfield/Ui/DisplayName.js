@@ -3,14 +3,16 @@
 // A file name as shown in a label (GF-105, like Finder): the one helper every view of Files and Preview, and every message that
 // names a file, goes through. Line breaks become a return symbol (U+23CE), and the bidirectional override, embedding and
 // isolate controls (U+202A to U+202E, U+2066 to U+2069) and the line and paragraph separators (U+2028, U+2029) are written
-// out as "<U+202E>" so a name cannot reorder the text around it or break the line. The marks LRM and RLM stay. The code
+// out as "<U+202E>" so a name cannot reorder the text around it or break the line; so are the marks LRM, RLM and ALM (U+200E,
+// U+200F, U+061C: "pdf." + RLM + "Invoice" after an RLM was drawn "Invoice.pdf"; Files' fifth security check, V1). The code
 // points are numbers on purpose: this source never holds a bidi control itself. The C++ twin is FileLogic::displayName
 // (apps/files/src/filelogic.cpp). tests/shell/display_names.sh fails when a view shows a raw name.
 
 const RETURN_SYMBOL = String.fromCharCode(0x23CE);
 
 function escaped(code) {
-    return (code >= 0x202A && code <= 0x202E) || (code >= 0x2066 && code <= 0x2069) || code === 0x2028 || code === 0x2029;
+    return (code >= 0x202A && code <= 0x202E) || (code >= 0x2066 && code <= 0x2069) || code === 0x2028 || code === 0x2029
+        || code === 0x200E || code === 0x200F || code === 0x061C;
 }
 
 function text(name) {
@@ -26,7 +28,7 @@ function text(name) {
             continue;
         }
         inBreak = false;
-        out += escaped(code) ? "<U+" + code.toString(16).toUpperCase() + ">" : s[i];
+        out += escaped(code) ? "<U+" + ("0000" + code.toString(16).toUpperCase()).slice(-4) + ">" : s[i];
     }
     return out;
 }

@@ -276,9 +276,10 @@ function noApplication(request) {
 
 // The Gatekeeper sheet before Files runs a program for the first time (FilesApp::requestRun, Open With > Terminal; ADR-0011
 // amendment 2026-11-08), or before an application opens a downloaded program or script (Open With, FilesApp::openWithChecked):
-// request {name, what: "app"|"script", downloaded, host, allowRun, copy, handler}. Where it came from (the host a browser
-// recorded), what Open does (allow it to run, copy it to the Applications folder, open it with that application). Return and
-// Esc cancel: running is never the default answer.
+// request {name, what: "app"|"script", downloaded, host, allowRun, copy, handler, nameUntrusted}. Where it came from (the host
+// a browser recorded), that its name may not show what it is (right-to-left text or a bidi mark, written out by DisplayName),
+// what Open does (allow it to run, copy it to the Applications folder, open it with that application). Return and Esc cancel:
+// running is never the default answer.
 function openProgram(request) {
     const name = request.name;
     const script = request.what === "script";
@@ -299,6 +300,8 @@ function openProgram(request) {
     const lines = [];
     if (request.downloaded && request.host)
         lines.push(script ? qsTr("This script was downloaded from %1.").arg(request.host) : qsTr("This app was downloaded from %1.").arg(request.host));
+    if (request.nameUntrusted)
+        lines.push(qsTr("Its name contains right-to-left text, which can change the way it is shown: it may not be what its name suggests."));
     if (request.copy)
         lines.push(qsTr("It can’t run from this location: it will be copied to your Applications folder and opened from there."));
     else if (request.allowRun)

@@ -90,6 +90,8 @@ struct RunPlan {
     bool allowRun = false;   // the user's execute bit is set on Open (chmod u+x), the file stays where it is
     bool copy = false;       // it cannot run from where it is (noexec, or not executable on a read-only disk or another
                              // user's file): Open copies it to ~/Applications and runs the copy
+    bool nameUntrusted = false; // its name holds right-to-left text or a bidi mark (bidiName): it may not show what it is, so
+                                // the sheet is always shown, approved or not (macOS: a name is not trusted as drawn)
 };
 
 // The ELF header facts of a file (parseElf).
@@ -180,6 +182,10 @@ bool insideStaging(const QString &path);
 // "sqlite"...; "photo-jpg", "nvim-qt"), and a lure extension after a character outside ASCII. Read on cleanName(name) and on
 // the name as drawn (nothing folded or decomposed, every combining mark kept).
 bool documentTailAfterOtherThanDot(const QString &name);
+// The name holds a character that can reorder how it is drawn: LRM, RLM or ALM (U+200E, U+200F, U+061C), an embedding,
+// override or isolate control (U+202A to U+202E, U+2066 to U+2069), or any strong right-to-left character (bidi class R or AL:
+// Hebrew, Arabic...). "pdf." + RLM + "Invoice" with an RLM first is drawn "Invoice.pdf" (fifth check of fd5823de, V1).
+bool bidiName(const QString &name);
 // The download mark a copy from `source` gets: the address without user name or password, for a remote location (sftp, smb,
 // ftp, http, a phone…); "" for this computer's own locations (file:, the Trash, Recent, tags, searches).
 QByteArray remoteOrigin(const QUrl &source);

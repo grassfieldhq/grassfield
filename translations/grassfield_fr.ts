@@ -8364,6 +8364,10 @@
         <translation>Cette app a été téléchargée depuis %1.</translation>
     </message>
     <message>
+        <source>Its name contains right-to-left text, which can change the way it is shown: it may not be what its name suggests.</source>
+        <translation>Son nom contient du texte de droite à gauche, qui peut changer la façon dont il s’affiche&#xa0;: ce n’est peut-être pas ce que son nom laisse croire.</translation>
+    </message>
+    <message>
         <source>It can’t run from this location: it will be copied to your Applications folder and opened from there.</source>
         <translation>Elle ne peut pas s’exécuter depuis cet emplacement&#xa0;: elle sera copiée dans votre dossier Applications et ouverte depuis celui-ci.</translation>
     </message>

@@ -1170,7 +1170,8 @@ void FilesApp::requestRun(const QUrl &url, const LaunchGuard::Facts &facts)
                               {QStringLiteral("downloaded"), plan.downloaded},
                               {QStringLiteral("host"), LaunchGuard::originHost(facts)},
                               {QStringLiteral("allowRun"), plan.allowRun},
-                              {QStringLiteral("copy"), plan.copy}};
+                              {QStringLiteral("copy"), plan.copy},
+                              {QStringLiteral("nameUntrusted"), plan.nameUntrusted}};
     m_prompts->ask(request, nullptr, [this, url, facts, plan, name](const QVariantMap &reply) {
         if (reply.value(QStringLiteral("button")).toString() != QLatin1String("open")) {
             logDecision("canceled", LaunchGuard::Verdict::RunProgram, facts);

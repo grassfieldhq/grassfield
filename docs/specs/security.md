@@ -652,17 +652,24 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
     - a letter of any script (U+A78F, a precomposed or decomposed dot below, an accented letter): refused only when the
       letters are a lure extension of 2 letters or more (`lureExtension`: pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp,
       rtf, txt, csv, md, html, xml, json, epub, jpg, jpeg, png, gif, webp, heic, svg, mp3, mp4, mov, avi, mkv, webm, zip,
-      rar, 7z, gz, tar, iso, img, dmg, pkg, deb, rpm, apk, jar, exe, msi, the long extensions below, desktop, backup...).
-      Fourth check of fd5823de, m-b': refusing every document type there refused "Vidéo", "Météo" (".o"), "Démo", "Mémo"
-      (".mo") and "Tiếng-Việt" (".t"); these run now, and "Invoice" + U+A78F + "pdf", "Invoicẹpdf" and "photo" + U+A78F +
-      "jpg" stay refused;
+      rar, 7z, gz, tar, iso, img, dmg, pkg, deb, rpm, apk, jar, exe, msi, sh, py, js, ps, ai, kdbx, ofx, the long extensions
+      below, desktop, backup...), or, for 3 letters or more, any user type (`userType`, from the shared MIME database:
+      pictures, sounds, films and fonts; archives; PDF, PostScript, office and ebook files; shell, Python and JavaScript
+      scripts; text documents such as logs, YAML, SQL and subtitles). Fourth check of fd5823de, m-b': refusing every document
+      type there refused "Vidéo", "Météo" (".o"), "Démo", "Mémo" (".mo") and "Tiếng-Việt" (".t"); these run, and "Invoice" +
+      U+A78F + "pdf", "Invoicẹpdf" and "photo" + U+A78F + "jpg" stay refused. Fifth check, v2: the lure list alone let
+      "Photo" + U+A78F + "jfif", "Notes" + U+A78F + "log", "install" + U+A78F + "sh" and the like run; the user types close
+      that. Developer types (gettext, Modelica, object files, troff, source code) are not user types, and two letters count
+      only through the lure list, so "Démo", "Mémo", "Caméra" (".ra" is RealAudio), "Diégo" (".go") and "Système" (".me" is
+      troff) run;
     - anything else (punctuation, a symbol, a space, a mark on no letter): refused when the letters name a document or an
       archive (1 to 5 that "x." plus them gives such a MIME type, or a long extension: torrent, sqlite, sqlite3, numbers,
       markdown, keynote, sketch, drawio, gnumeric, kdenlive, parquet, webarchive, flatpak, flatpakref, flatpakrepo), or, after a
       character outside ASCII, a lure extension ("App" + U+2981 + "desktop").
-    It is read on the cleaned name and on the name as drawn: nothing folded or decomposed, so a "TM" sign stays a sign, and
-    every combining mark kept (third counter-review of fd5823de, m-b: the marks outside combining class 220, and "Movie" + a
-    lookalike + "torrent", still ran). So "photo.jpg", "notes.txt", "run.sh" or "setup.exe" with ELF program content,
+    It is read on the cleaned name and on the name as drawn: nothing folded or decomposed, so a "TM" sign stays a sign, every
+    combining mark kept (third counter-review of fd5823de, m-b: the marks outside combining class 220, and "Movie" + a
+    lookalike + "torrent", still ran), and the blank glyphs (the braille blank, the Hangul fillers U+3164, U+FFA0, U+115F,
+    U+1160) drawn as a space, so "Invoice" + U+3164 + "pdf" reads "Invoice pdf" and is refused (fifth check, nit). So "photo.jpg", "notes.txt", "run.sh" or "setup.exe" with ELF program content,
     "Invoice" + any punctuation, symbol, mark or lookalike letter + "pdf", and "photo-jpg" never run (banner: "… it is an
     app, but its name makes it look like a document. If you trust it, rename it first."). The cost, accepted: a program named
     like "nvim-qt" or "qemu-img" (a document type after a hyphen) must be renamed to run from Files; digits only ("x86_64",
@@ -680,6 +687,13 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
     `Run::allowed` again at the start).
   Otherwise `LaunchGuard::plan` says what Open does first, and the sheet (`KioSheetsLogic.openProgram`, the window's sheet
   style, Return and Esc cancel) is shown when any of these holds:
+  - its name can be drawn in another order (`LaunchGuard::bidiName`: LRM, RLM or ALM, an embedding, override or isolate
+    control, or any strong right-to-left character, bidi class R or AL): always, approved or not, executable or not
+    (`RunPlan::nameUntrusted`; macOS does not trust a name as drawn either). Fifth check of fd5823de, V1: an ELF named RLM +
+    "pdf." + RLM + "Invoice" (or with ALM) is drawn "Invoice.pdf", and it ran without a sheet. The sheet writes the marks out
+    ("<U+200F>pdf.<U+200F>Invoice": DisplayName.js and `FileLogic::displayName` write out LRM, RLM and ALM as they do the
+    embeddings) and adds "Its name contains right-to-left text, which can change the way it is shown: it may not be what its
+    name suggests." An ordinary Arabic or Hebrew program name gets this sheet on every open, never a refusal;
   - it came from the Internet: `user.xdg.origin.url` or `user.xdg.referrer.url` (what Chromium and Firefox write on a
     download; Grassfield had no quarantine mark of its own) on the file, or on a symbolic link's final target (a link follows
     its target's trust), and Files' approval `user.grassfield.approved` = `1 <inode> <mtime ns> <size>` does not name the

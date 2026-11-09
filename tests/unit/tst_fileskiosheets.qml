@@ -812,6 +812,12 @@ TestCase {
         compare(s.confirmText, "Open with Script Runner");
         s = KioSheetsLogic.sheet({id: 98, kind: "openProgram", what: "app", name: "tool", downloaded: false, handler: "AppImage Helper"});
         compare(s.title, "Are you sure you want to open “tool” with AppImage Helper?");
+        // A name drawn in another order (right-to-left text, a bidi mark written out by DisplayName): said in the sheet.
+        s = KioSheetsLogic.sheet({id: 99, kind: "openProgram", what: "app", name: "<U+200F>pdf.<U+200F>Invoice", downloaded: false, allowRun: false,
+                                  copy: false, nameUntrusted: true});
+        compare(s.title, "Are you sure you want to open “<U+200F>pdf.<U+200F>Invoice”?");
+        compare(s.message, "Its name contains right-to-left text, which can change the way it is shown: it may not be what its name suggests.");
+        compare([s.confirmText, s.returnCancels], ["Open", true]);
     }
 
     function test_openProgramReplies(): void {
