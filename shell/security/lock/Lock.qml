@@ -223,6 +223,11 @@ Singleton {
     // monitor model still empty, outputs still coming up). Cleared once Hyprland reported the session locked (taken over)
     // or unlocked, or this shell locked; while set, monitors appearing run the check again at once (monitorsAdded).
     property bool strandedUndecided: false
+    // The start-up probe is still asking Hyprland whether it holds a lock this process did not take (a stranded or foreign
+    // lock: Lock.locked reads false meanwhile). At most the probe's 20 ticks of 500 ms. The polkit and secret sheets count it
+    // as locked (ADR-0041 S3, the opus review's LOW-4: a request in that second waits, and no device answers it); nothing
+    // that locks or unlocks reads it.
+    readonly property bool strandedProbing: strandedUndecided && strandedProbe.running
     // The lock surface (one per screen) whose window has the keyboard, else null: none of this shell's lock
     // surfaces has it (another client's lock surface took it, or a window did after the session was unlocked
     // under this lock). Only ever speeds the ownership check up.

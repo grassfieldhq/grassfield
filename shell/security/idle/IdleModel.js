@@ -275,3 +275,29 @@ function saverSeconds(minutes) {
 function saverArmed(seconds, locked, busInhibited, rearming) {
     return seconds > 0 && seconds <= SAVER_MAX_SECONDS && locked !== true && busInhibited !== true && rearming !== true;
 }
+
+// What the sheets count of the saver (the opus review of S3, MINOR-1): it may only ever be early, never late, so it holds
+// rather than opens.
+//  - The applications' ScreenSaver inhibitors are left out (the sheets' count is armed with `busInhibited` false): they
+//    reach this process only as the UI's `idle inhibit` lease, which a lost `idle inhibit 0` or any same-user caller can
+//    keep for 150 s while the UI's saver (which reads them from the menu bridge) shows. Wayland inhibitors still count
+//    (the monitor respects them, as the saver's does).
+function sheetsSaverArmed(seconds, locked, rearming) {
+    return saverArmed(seconds, locked, false, rearming);
+}
+
+//  - From the process's start until it has seen the user active, the saver counts as possibly shown: Hyprland starts a new
+//    idle notification's timer from zero (IdleNotify, 0.56.2), so a process restarted while the user was away (a crash, a
+//    same-user SIGSEGV) would read "no saver" for up to screensaver.idleMinutes while the UI's saver is on screen.
+//    `activitySeen` turns true at the first input that ends an idle period of ACTIVITY_PROBE_SECONDS (sheetsActivitySeen).
+var ACTIVITY_PROBE_SECONDS = 1;
+
+function sheetsSaverShown(activitySeen, armed, idle) {
+    return activitySeen !== true || (armed === true && idle === true);
+}
+
+// The activity probe's state after a change of its idle state: activity is seen once the probe was idle and is no longer
+// (an input after a pause); a probe that never went idle has seen nothing it can tell from its own start.
+function sheetsActivitySeen(seen, wasIdle, idle) {
+    return seen === true || (wasIdle === true && idle === false);
+}

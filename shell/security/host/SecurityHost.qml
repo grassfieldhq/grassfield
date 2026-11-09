@@ -79,12 +79,13 @@ Scope {
 
     // ---- The polkit sheet and the secret sheets (ADR-0041 S3) ----
     // What they read of the session, from this process only (the opus review of 77a0ceb3, MINOR-4): the lock (any state but
-    // unlocked), the displays switched off by idle, and the UI's screen saver as idle counts it. These three Bindings are
-    // SheetSession's only writers (tests/security/security_process_scan.py).
+    // unlocked, and the start-up probe of a stranded or foreign lock while it runs: the opus review of S3, LOW-4), the
+    // displays switched off by idle, and the UI's screen saver as idle counts it (only ever early: MINOR-1 of that review).
+    // These three Bindings are SheetSession's only writers (tests/security/security_process_scan.py).
     Binding {
         target: SheetSession
         property: "locked"
-        value: Lock.locked
+        value: Lock.locked || Lock.strandedProbing
     }
     Binding {
         target: SheetSession

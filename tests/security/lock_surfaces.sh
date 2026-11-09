@@ -340,7 +340,7 @@ expect("polkit sheet: the screen saver takes the sink's keys, then a request ope
 host_src = read("shell/security/host/SecurityHost.qml")
 expect("the security process's host binds SheetSession.saverShown to idle's count of the screen saver",
        re.search(r"Binding\s*\{\s*target:\s*SheetSession\s*property:\s*\"saverShown\"\s*value:\s*idle\.saverShown\s*\}", host_src) is not None
-       and re.search(r"readonly property bool saverShown:\s*saverMonitor\.enabled\s*&&\s*saverMonitor\.isIdle\s*\n", code(read("shell/security/idle/Idle.qml"))) is not None)
+       and re.search(r"readonly property bool saverShown:\s*IdleModel\.sheetsSaverShown\(root\.activitySeen,\s*saverMonitor\.enabled,\s*saverMonitor\.isIdle\)\s*\n", code(read("shell/security/idle/Idle.qml"))) is not None)
 # ADR-0032: that Binding is the only writer of SheetSession.saverShown in the shell, the apps and Grassfield.Ui: no
 # assignment, no other Binding, PropertyChanges or object property, no other quoted name (setProperty and the like). A
 # wrong saverShown holds every polkit request (true) or lets the sheet take the keyboard over the saver (false).
@@ -366,7 +366,7 @@ def saver_writes():
 writes = saver_writes()
 expect("SheetSession.saverShown has one writer, the host's Binding, from idle's own (" + "; ".join(writes) + ")",
        sorted(writes) == ['shell/security/host/SecurityHost.qml: property: "saverShown"',
-                          'shell/security/idle/Idle.qml: readonly property bool saverShown: saverMonitor.enabled && saverMonitor.isIdle'])
+                          'shell/security/idle/Idle.qml: readonly property bool saverShown: IdleModel.sheetsSaverShown(root.activitySeen, saverMonitor.enabled, saverMonitor.isIdle)'])
 expect("polkit sheet: only a click past the guard gives the keyboard (one userFocused = true), and an arrival, a lock and the saver take it back (three userFocused = false)",
        len(re.findall(r"userFocused\s*=\s*true", agent)) == 1 and len(re.findall(r"userFocused\s*=\s*false", agent)) == 3)
 # Re-check of b5d7657 (MEDIUM-3): the sheet, then the held click's guard over it, then the saver's swallowing area on top.
@@ -476,7 +476,9 @@ expect("polkit sheet: the agent hands the model every flow Quickshell has open a
                      r"&&\s*\(!root\.heldByLock\s*\|\|\s*root\.userFocused\s*\|\|\s*root\.heldWhy\s*===\s*\"queued\"\)\s*$", dialog_model, re.M) is not None
        and re.search(r"Binding\s*\{\s*target:\s*SheetSession\s*property:\s*\"displaysOff\"\s*value:\s*idle\.displayOff\s*\}", host_src) is not None
        and len(re.findall(r"\"displaysOff\"", code(host_src))) == 1
-       and re.search(r"Binding\s*\{\s*target:\s*SheetSession\s*property:\s*\"locked\"\s*value:\s*Lock\.locked\s*\}", host_src) is not None
+       and re.search(r"Binding\s*\{\s*target:\s*SheetSession\s*property:\s*\"locked\"\s*value:\s*Lock\.locked\s*\|\|\s*Lock\.strandedProbing\s*\}", host_src) is not None
+       # The opus review of S3, LOW-4: the start-up probe of a stranded or foreign lock holds the sheets, bounded by the probe.
+       and re.search(r"readonly property bool strandedProbing:\s*strandedUndecided\s*&&\s*strandedProbe\.running\s*\n", code(read("shell/security/lock/Lock.qml"))) is not None
        and len(re.findall(r"\b(?:request|answerable)\s*:", agent)) == 2
        and not re.search(r"\b(?:request|answerable|refusesUnseen)\s*=(?!=)|\.cancelAuthenticationRequest\b", agent))
 expect("polkit sheet: a request that comes right after another one ended is held (noteEnded when none is left)",
@@ -806,7 +808,7 @@ for case_ in 'shell/dock/Dock.qml#SessionState.refuses("dock keyboard")#false' \
   'shell/security/host/SecurityHost.qml#        property: "saverShown"\n        value: idle.saverShown#        property: "saverShown"\n        value: false' \
   'shell/security/SheetSession.qml#    property bool saverShown: false#    property bool saverShown: false\n    function hideSaver(): void {\n        saverShown = false;\n    }' \
   'shell/security/host/SecurityHost.qml#        property: "saverShown"\n        value: idle.saverShown\n    }#        property: "saverShown"\n        value: idle.saverShown\n    }\n    Binding {\n        target: SheetSession\n        property: "saverShown"\n        value: false\n        when: false\n    }' \
-  'shell/security/idle/Idle.qml#readonly property bool saverShown: saverMonitor.enabled && saverMonitor.isIdle#readonly property bool saverShown: false' \
+  'shell/security/idle/Idle.qml#readonly property bool saverShown: IdleModel.sheetsSaverShown(root.activitySeen, saverMonitor.enabled, saverMonitor.isIdle)#readonly property bool saverShown: false' \
   'shell/security/polkit/AuthAgent.qml#if (!dialogModel.active || SheetSession.locked)#if (!dialogModel.active || SheetSession.locked || !SheetSession.saverShown)' \
   'shell/security/polkit/AuthAgent.qml#        root.userFocused = false;\n        if (dialogModel.active)\n            root.requestOpen = true;#        root.userFocused = true;\n        if (dialogModel.active)\n            root.requestOpen = true;' \
   'shell/security/polkit/AuthAgent.qml#const follows = root.flowShown#const follows = false && root.flowShown' \
@@ -862,7 +864,9 @@ for case_ in 'shell/dock/Dock.qml#SessionState.refuses("dock keyboard")#false' \
   'shell/security/polkit/AuthAgent.qml#readonly property bool queuePresent: agent.isActive || root.requestOpen || root.sinkingKeys#readonly property bool queuePresent: agent.isActive || root.requestOpen' \
   'shell/security/polkit/AuthAgent.qml#!SheetSession.displaysOff && #' \
   'shell/security/host/SecurityHost.qml#        property: "displaysOff"\n        value: idle.displayOff#        property: "displaysOff"\n        value: false' \
-  'shell/security/host/SecurityHost.qml#        property: "locked"\n        value: Lock.locked#        property: "locked"\n        value: false' \
+  'shell/security/host/SecurityHost.qml#        property: "locked"\n        value: Lock.locked || Lock.strandedProbing#        property: "locked"\n        value: false' \
+  'shell/security/host/SecurityHost.qml#        value: Lock.locked || Lock.strandedProbing#        value: Lock.locked' \
+  'shell/security/lock/Lock.qml#readonly property bool strandedProbing: strandedUndecided && strandedProbe.running#readonly property bool strandedProbing: false' \
   'shell/security/polkit/AuthAgent.qml#root.userFocused || root.heldWhy === "queued")#root.userFocused || root.heldWhy !== "locked")' \
   'shell/security/polkit/AuthAgent.qml#                    && (!root.heldByLock || root.userFocused || root.heldWhy === "queued")#' \
   'shell/capture/Capture.qml#        if (locked)\n            hide();#        ;' \

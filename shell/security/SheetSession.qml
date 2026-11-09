@@ -3,10 +3,14 @@ import QtQuick
 
 // What the polkit sheet and the secret sheets know about the session (ADR-0041 step 1, S3): read by AuthAgent and SecretAgent
 // only, written only by shell/security/host/SecurityHost.qml, in the security process, from that process's own lock and idle
-// modules (Bindings): `locked` from Lock.locked, `displaysOff` from Idle.displayOff, `saverShown` from Idle.saverShown. So
-// nothing the UI publishes, writes or answers reaches the sheets' rules (the hold behind the lock, the device rule of
-// ADR-0045 OC-6): the state file the UI reads is never read here (docs/specs/security.md "Lock state across processes",
-// the opus review of 77a0ceb3, MINOR-4). tests/security/security_process_scan.py holds the one writer and the UI's absence.
+// modules (Bindings): `locked` from Lock.locked and the start-up stranded-lock probe (Lock.strandedProbing), `displaysOff`
+// from Idle.displayOff, `saverShown` from Idle.saverShown. The state file the UI reads is never read here, so a forged
+// `unlocked` no longer reaches the hold behind the lock or the device rule of ADR-0045 OC-6 (the opus review of 77a0ceb3,
+// MINOR-4, closed for the lock and the displays). The screen saver is the UI's: idle counts its idle time itself, early and
+// never late (from this process's start until the user is seen active, and without the UI's `idle inhibit` lease, which
+// can only keep idle's own timers off: the opus review of S3, MINOR-1). Same-user code can still keep the displays on
+// through that lease (they then are on) and can restart this process (the saver then counts as shown until activity).
+// tests/security/security_process_scan.py holds the one writer and the UI's absence.
 // Fail closed without the host's Bindings (a harness sets each value itself): the session counts as locked and the
 // displays as off, so no sheet is mapped, given the keyboard or answerable by a device.
 QtObject {

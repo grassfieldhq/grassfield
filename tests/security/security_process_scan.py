@@ -7,6 +7,12 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
      SecretAgent, SheetQueue, SheetSession, PrompterClient or PolkitAgent: no `Lock.lock` caller is left in the UI, and
      referencing Lock there would start a second WlSessionLock and a second `lock` IPC target in the UI process; an
      AuthAgent there would be a second polkit agent of the session, a SecretAgent a second client of grassfield-prompter;
+  1b. nor builds one from strings (the opus review of S3, MINOR-2): in the UI tree and in ui/ (Grassfield.Ui, which both
+     processes load), no Qt.createQmlObject; a createComponent or a Loader/LazyLoader source only as one plain string
+     literal (a computed source cannot be read), but for the desktop widgets' one computed source, whose function
+     (shell/widgets/Registry.qml `source`) is then held to return only plain resolvedUrl literals of builtin/ files or "";
+     and no string literal (comments aside, string contents read) that names a security path (`security/`, `qs.security`),
+     Quickshell.Services.Polkit or a security type (STRING_NAMES);
   2. shell/security/host/SecurityHost.qml instantiates Idle exactly once (one idle module, one sleep inhibitor) and only the
      types listed in HOST_TYPES, and makes the sheets at run time (S3: shell/security/host/SheetHost.qml, created once by
      its URL, never declared, so that a sheet that cannot load never keeps the lock from loading); SheetHost.qml instantiates
@@ -23,7 +29,8 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
   3c. the sheets read the session in process (the opus review of 77a0ceb3, MINOR-4): SessionState and LockClient are named
      by no security module, and SheetSession is written only by the host's three Bindings, each from the lock or idle of
      the same process (locked <- Lock.locked, displaysOff <- idle.displayOff, saverShown <- idle.saverShown): no other
-     Binding targets it and no file assigns one of its properties;
+     Binding targets it and no file assigns one of its properties; it fails closed until bound (`locked: true`,
+     `displaysOff: true`; the opus review of S3, NIT M3; tests/security/tst_sheetsession.qml reads the same at run time);
   4. shell/lib/LockState.js is the one definition of the state file: the publisher and LockClient import it by a relative
      path, and nothing else writes a file named grassfield-lock-state-*;
   5. the UI never writes the state file (the opus review of 77a0ceb3, MINOR-5): shell/services/LockClient.qml, the one UI file
@@ -54,8 +61,69 @@ AGENT = "shell/security/polkit/AuthAgent.qml"
 SECURITY_NAMES = ("Lock", "SleepInhibitor", "AuthAgent", "SecretAgent", "SheetQueue", "SheetSession", "PrompterClient",
                   "PolkitAgent")
 # SheetSession's one writer and what each property is bound to (rule 3c).
-SHEET_BINDINGS = {"locked": "Lock.locked", "displaysOff": "idle.displayOff", "saverShown": "idle.saverShown"}
+SHEET_BINDINGS = {"locked": "Lock.locked || Lock.strandedProbing", "displaysOff": "idle.displayOff", "saverShown": "idle.saverShown"}
 HOST = "shell/security/host/SecurityHost.qml"
+# Rule 1b: what no string of the UI tree or of ui/ may name (a security path, the polkit module, a security type).
+STRING_NAMES = re.compile(r"security/|qs\.security|Quickshell\.Services\.Polkit|\b(?:PolkitAgent|AuthAgent|SecretAgent|PrompterClient"
+                          r"|SheetHost|SheetSession|SheetQueue|SecurityHost)\b")
+_STRING = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`', re.S)
+# The one computed Loader source of the UI tree, allowed only while its function returns plain literals (global_findings).
+ALLOWED_COMPUTED = {("shell/widgets/WidgetHost.qml", "Registry.source(root.widgetId)")}
+REGISTRY = "shell/widgets/Registry.qml"
+_LITERAL = re.compile(r'^\s*("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')\s*;?\s*$')
+
+
+def top_level(block):
+    """The text of a { } block at its own level: nested blocks' contents removed."""
+    out, depth = [], 0
+    for ch in block:
+        if ch == "{":
+            depth += 1
+            if depth == 1:
+                out.append(ch)
+            continue
+        if ch == "}":
+            depth -= 1
+            if depth == 0:
+                out.append(ch)
+            continue
+        if depth == 1:
+            out.append(ch)
+    return "".join(out)
+
+
+def built_from_strings(path, src):
+    """Rule 1b's findings for one file of the UI tree or of ui/."""
+    out = []
+    code = strip(src)
+    with_strings = strip(src, keep_strings=True)
+    if re.search(r"\bcreateQmlObject\b", code):
+        out.append(f"{path}: calls createQmlObject (code built from a string cannot be checked; the security types live in the security process)")
+    for m in re.finditer(r"\bcreateComponent\s*\(", with_strings):
+        depth, i = 1, m.end()
+        while i < len(with_strings) and depth:
+            depth += {"(": 1, ")": -1}.get(with_strings[i], 0)
+            i += 1
+        args = with_strings[m.end():i - 1]
+        if not _LITERAL.match(args):
+            out.append(f"{path}: createComponent with a computed source ({args.strip()[:60]}): only one plain string literal can be checked")
+    for m in re.finditer(r"\b(?:Lazy)?Loader\s*\{", with_strings):
+        depth, i = 0, m.end() - 1
+        for j in range(m.end() - 1, len(with_strings)):
+            depth += {"{": 1, "}": -1}.get(with_strings[j], 0)
+            if depth == 0:
+                i = j + 1
+                break
+        own = top_level(with_strings[m.end() - 1:i])
+        for s in re.finditer(r"(?:^|[\s;{])source\s*:\s*([^\n;}]*)", own):
+            if (path, s.group(1).strip()) in ALLOWED_COMPUTED:
+                continue
+            if not _LITERAL.match(s.group(1)):
+                out.append(f"{path}: a Loader with a computed source ({s.group(1).strip()[:60]}): only one plain string literal can be checked")
+    for s in _STRING.finditer(with_strings):
+        if STRING_NAMES.search(s.group(0)):
+            out.append(f"{path}: a string names a security path, module or type ({s.group(0)[:60]}): the UI builds no security code")
+    return out
 CLIENT = "shell/services/LockClient.qml"
 # What would write a file from LockClient.qml: a FileView write, its write options or an adapter, or a process given the path.
 CLIENT_WRITES = (
@@ -103,7 +171,7 @@ def imports_of(src):
 
 def tree(repo):
     files = {}
-    for base in ("shell",):
+    for base in ("shell", "ui"):
         for d, _, names in os.walk(os.path.join(repo, base)):
             for name in names:
                 if name.endswith((".qml", ".js")):
@@ -140,6 +208,8 @@ def file_findings(path, src, singletons):
     ui = path.startswith("shell/") and not path.startswith("shell/security/") and path != "shell/security.qml"
     code = strip(src)
     mods, paths = imports_of(src)
+    if ui or path.startswith("ui/"):
+        out += built_from_strings(path, src)
     if ui:
         for m in mods:
             if m == "qs.security" or m.startswith("qs.security."):
@@ -210,6 +280,14 @@ def global_findings(files):
         if len(re.findall(r"\bBinding\s*\{[^{}]*?\btarget\s*:\s*SheetSession\b", code)) != len(SHEET_BINDINGS) or len(bound) != len(SHEET_BINDINGS) \
                 or dict(named) != SHEET_BINDINGS:
             out.append(f"{HOST}: SheetSession is not bound exactly as {SHEET_BINDINGS} (the sheets read the lock and idle of this process)")
+    registry = strip(files.get(REGISTRY, ""), keep_strings=True)
+    body = re.search(r"function source\(id: string\): url \{(.*?)\n    \}", registry, re.S)
+    returns = re.findall(r"\breturn\b([^;]*);", body.group(1)) if body else []
+    if not returns or any(not (r.strip() == '""' or re.fullmatch(r'\s*Qt\.resolvedUrl\("builtin/[A-Za-z0-9_/]+\.qml"\)\s*', r)) for r in returns):
+        out.append(f"{REGISTRY}: source() returns something else than Qt.resolvedUrl(\"builtin/....qml\") or \"\" (WidgetHost's computed Loader source must stay a known built-in widget)")
+    session = strip(files.get("shell/security/SheetSession.qml", ""))
+    if not (re.search(r"^\s*property bool locked:\s*true\s*$", session, re.M) and re.search(r"^\s*property bool displaysOff:\s*true\s*$", session, re.M)):
+        out.append("shell/security/SheetSession.qml: does not fail closed until bound (locked: true, displaysOff: true)")
     sheet_host = files.get(SHEET_HOST)
     if sheet_host is None:
         out.append(f"{SHEET_HOST}: missing")
@@ -276,10 +354,26 @@ def main(argv):
             ("ThemeIcons in the secret agent", "shell/security/secret/SecretAgent.qml", lambda s: s.replace("appIconSource: root.iconSource(sheetModel.appIcon)", "appIconSource: ThemeIcons.source(sheetModel.appIcon)", 1)),
             ("Popups in the polkit agent", "shell/security/polkit/AuthAgent.qml", lambda s: s.replace("        onIsRegisteredChanged: {\n", "        onAuthenticationRequestStarted: Popups.close()\n        onIsRegisteredChanged: {\n", 1)),
             ("Settings in the queue", "shell/security/SheetQueue.qml", lambda s: s.replace("    property bool polkitPresent: false\n", "    property bool polkitPresent: Settings.reduceMotion\n", 1)),
-            ("SheetSession bound to a constant in the host", HOST, lambda s: s.replace("        property: \"locked\"\n        value: Lock.locked\n", "        property: \"locked\"\n        value: false\n", 1)),
+            ("SheetSession bound to a constant in the host", HOST, lambda s: s.replace("        property: \"locked\"\n        value: Lock.locked || Lock.strandedProbing\n", "        property: \"locked\"\n        value: false\n", 1)),
             ("SheetSession's displays bound to the lock in the host", HOST, lambda s: s.replace("        property: \"displaysOff\"\n        value: idle.displayOff\n", "        property: \"displaysOff\"\n        value: Lock.displaysOff\n", 1)),
             ("SheetSession's saver unbound in the host", HOST, lambda s: s.replace("    Binding {\n        target: SheetSession\n        property: \"saverShown\"\n        value: idle.saverShown\n    }\n", "", 1)),
             ("SheetSession bound in idle", "shell/security/idle/Idle.qml", lambda s: s.replace("    IdleMonitor {\n        id: saverMonitor\n", "    Binding {\n        target: SheetSession\n        property: \"saverShown\"\n        value: false\n    }\n    IdleMonitor {\n        id: saverMonitor\n", 1)),
+            # The opus review of S3, MINOR-2: code built from strings (M1, M2 are the reviewer's own).
+            ("M1: a PolkitAgent built by createQmlObject in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var extraAgent: Qt.createQmlObject(\"import Quickshell.Services.Polkit\\nPolkitAgent { path: \\\"/x\\\" }\", root)\n    Saver {\n", 1)),
+            ("M2: a Loader of the agent's file in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: \"security/polkit/AuthAgent.qml\"\n    }\n    Saver {\n", 1)),
+            ("a Loader with a computed source in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: \"sec\" + \"urity/polkit/AuthAgent.qml\"\n    }\n    Saver {\n", 1)),
+            ("a LazyLoader with a source from a property in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    LazyLoader {\n        active: true\n        source: root.agentFile\n    }\n    Saver {\n", 1)),
+            ("createComponent with a computed source in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(Quickshell.shellPath(\"x.qml\"))\n    Saver {\n", 1)),
+            ("createComponent of the agent's file in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(\"security/polkit/AuthAgent.qml\")\n    Saver {\n", 1)),
+            ("a security type named in a string of a UI script", "shell/services/LockClient.js", lambda s: s + "\nvar kind = \"SecretAgent\";\n"),
+            ("the polkit module named in a string in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property string m: \"Quickshell.Services.Polkit\"\n    Saver {\n", 1)),
+            ("the widget registry returning a computed file", REGISTRY, lambda s: s.replace('            return Qt.resolvedUrl("builtin/clock/Clock.qml");', '            return Qt.resolvedUrl(id);', 1)),
+            ("the widget registry returning a file outside builtin/", REGISTRY, lambda s: s.replace('            return Qt.resolvedUrl("builtin/clock/Clock.qml");', '            return Qt.resolvedUrl("../" + "Clock.qml");', 1)),
+            ("another computed Loader source next to the allowed one", "shell/widgets/WidgetHost.qml", lambda s: s.replace("Registry.source(root.widgetId)", "Registry.source(root.widgetId + \"\")", 1)),
+            ("M3: SheetSession open by default", "shell/security/SheetSession.qml", lambda s: s.replace("    property bool locked: true\n", "    property bool locked: false\n", 1).replace("    property bool displaysOff: true\n", "    property bool displaysOff: false\n", 1)),
+            ("SheetSession's displays on by default", "shell/security/SheetSession.qml", lambda s: s.replace("    property bool displaysOff: true\n", "    property bool displaysOff: false\n", 1)),
+            ("createQmlObject in Grassfield.Ui", "ui/Grassfield/Ui/Material.qml", lambda s: s.replace("import QtQuick.Effects\n", "import QtQuick.Effects\nimport Quickshell\n", 1).rstrip("\n").rstrip("}") + "    property var x: Qt.createQmlObject(\"import QtQuick\\nItem {}\", this)\n}\n"),
+            ("a PolkitAgent in Grassfield.Ui", "ui/Grassfield/Ui/Material.qml", lambda s: s.replace("import QtQuick.Effects\n", "import QtQuick.Effects\nimport Quickshell.Services.Polkit\n", 1).rstrip("\n").rstrip("}") + "    PolkitAgent {\n    }\n}\n"),
             ("SheetSession assigned by the secret agent", "shell/security/secret/SecretAgent.qml", lambda s: s.replace("        root.serial++;\n", "        root.serial++;\n        SheetSession.locked = false;\n", 1)),
             ("the UI instantiating Idle", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Idle {\n    }\n    Saver {\n", 1)),
             ("the UI importing the idle module by path", "shell/saver/Saver.qml", lambda s: s.replace("import \"SaverModel.js\" as SaverModel\n", "import \"SaverModel.js\" as SaverModel\nimport \"../security/idle\"\n", 1)),

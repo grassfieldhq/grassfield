@@ -204,24 +204,47 @@ Scope {
     // ---- The UI's screen saver, as this process counts it (ADR-0041 step 1, S3). The UI draws the saver (shell/saver,
     // ADR-0032) after screensaver.idleMinutes without input; the polkit sheet and the secret sheets, which run here, hold a
     // request while it may show (SheetSession.saverShown, bound by the host). This monitor counts the same idle time by the
-    // same rule (IdleModel.saverArmed, SaverModel.armed's; the same Wayland inhibitors, and the applications' through the
-    // lease above), so nothing the UI says is read. It differs from the saver only on the holding side: while the UI is down,
-    // or for the moment between an input that dismisses the saver and the compositor's activity report. Off in a dev session,
-    // as the saver's own delay (no test of the sheets needs it there; `saver devShow` is the UI's alone). It never locks,
-    // unlocks or dims. ----
+    // same rule (SaverModel.armed's) and the same Wayland inhibitors, so nothing the UI says is read, and it is only ever
+    // early, never late (the opus review of S3, MINOR-1; IdleModel.sheetsSaverArmed, sheetsSaverShown): the applications'
+    // ScreenSaver inhibitors, which reach this process only as the UI's `idle inhibit` lease, are left out, and from this
+    // process's start until it has seen the user active the saver counts as possibly shown (Hyprland starts a new idle
+    // notification's timer from zero, so a process restarted while the user was away would otherwise read "no saver" while
+    // the UI's saver shows). It differs from the saver on the holding side only: while the UI is down, an application's
+    // inhibitor, the start, and the moment between an input that dismisses the saver and the compositor's activity report.
+    // The delay is off in a dev session, as the saver's own (`saver devShow` is the UI's alone); the start's hold is not. It
+    // never locks, unlocks or dims. ----
     readonly property int saverSeconds: devHooks ? 0 : IdleModel.saverSeconds(Settings.screenSaverIdleMinutes)
     property bool rearmingSaver: false
-    readonly property bool saverShown: saverMonitor.enabled && saverMonitor.isIdle
+    // The user was seen active since this process started (an input after a pause of IdleModel.ACTIVITY_PROBE_SECONDS).
+    property bool activitySeen: false
+    property bool activityProbeWasIdle: false
+    readonly property bool saverShown: IdleModel.sheetsSaverShown(root.activitySeen, saverMonitor.enabled, saverMonitor.isIdle)
 
     IdleMonitor {
         id: saverMonitor
         // Armed only once its timeout is the one wanted (Quickshell keeps the timeout it was enabled with, see `rearming`).
-        enabled: timeout === Math.max(1, root.saverSeconds) && IdleModel.saverArmed(root.saverSeconds, Lock.locked, root.busInhibited, root.rearmingSaver)
+        enabled: timeout === Math.max(1, root.saverSeconds) && IdleModel.sheetsSaverArmed(root.saverSeconds, Lock.locked, root.rearmingSaver)
         timeout: Math.max(1, root.saverSeconds)
         respectInhibitors: true
         onTimeoutChanged: {
             root.rearmingSaver = true;
             Qt.callLater(() => root.rearmingSaver = false);
+        }
+    }
+
+    // Activity since the start: an input after a pause, whatever inhibits idle (respectInhibitors false); off once seen.
+    IdleMonitor {
+        id: activityProbe
+        enabled: !root.activitySeen
+        timeout: IdleModel.ACTIVITY_PROBE_SECONDS
+        respectInhibitors: false
+        onIsIdleChanged: {
+            const seen = IdleModel.sheetsActivitySeen(root.activitySeen, root.activityProbeWasIdle, isIdle);
+            root.activityProbeWasIdle = isIdle;
+            if (seen && !root.activitySeen) {
+                console.info("grassfield-idle: activity seen since this process started; the sheets follow the screen saver's count");
+                root.activitySeen = true;
+            }
         }
     }
 
@@ -549,6 +572,7 @@ Scope {
                 busInhibited: root.busInhibited,
                 saverSeconds: root.saverSeconds,
                 saver: root.saverShown,
+                activitySeen: root.activitySeen,
                 sleepPrevented: root.sleepPrevented,
                 autoSleepArmed: root.autoSleepArmed,
                 autoSleepSeconds: root.autoSleepSeconds,
