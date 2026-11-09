@@ -8,8 +8,10 @@
 // Part of files-kio-tests (its main makes the home).
 #include "archivejob.h"
 #include "filesapp.h"
+#include "foldermodel.h"
 #include "kioprompts.h"
 #include "launchguard.h"
+#include "programlaunch.h"
 
 #include <QCoreApplication>
 #include <QDeadlineTimer>
@@ -28,11 +30,13 @@
 
 #include <gtest/gtest.h>
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/xattr.h>
+#include <unistd.h>
 
-// The tests' own access to two hooks the app never sets (friends of FilesApp and ArchiveJob): the run plan, and the number of
-// entries Expand may mark.
+// The tests' own access to hooks the app never sets (friends of FilesApp, ArchiveJob and ProgramLaunch::ApproveHooks): the run
+// plan, the number of entries Expand may mark, and approvals that report ExecIgnored as a FAT mount does.
 class FilesAppTestAccess
 {
 public:
@@ -43,6 +47,12 @@ class ArchiveJobTestAccess
 {
 public:
     static void setMarkCap(qint64 cap) { ArchiveJob::s_markCap = cap; }
+};
+
+class ProgramLaunchTestAccess
+{
+public:
+    static void reportExecIgnored(int times) { ProgramLaunch::ApproveHooks::s_execIgnored = times; }
 };
 
 namespace
@@ -141,6 +151,7 @@ protected:
     void TearDown() override
     {
         ArchiveJobTestAccess::setMarkCap(0);
+        ProgramLaunchTestAccess::reportExecIgnored(0);
         // Folders of mode 0100 or 0300 from an archive: opened up so that the scratch folder can go.
         LaunchGuard::openTree(m_dir.path());
         qunsetenv("GRASSFIELD_FILES_NO_LAUNCH");
@@ -753,6 +764,276 @@ TEST_F(FilesLaunch, OpenWithAWindowsOrJavaHandlerAsksForADownloadedProgram)
         ASSERT_TRUE(waitFor([&] { return !lines(records.at(i)).isEmpty(); }, 10000));
         EXPECT_EQ(int(s.ofKind(QStringLiteral("foreignProgram")).size()), asked) << "approved: no second sheet";
     }
+    for (const auto &h : handlers)
+        QFile::remove(apps + QLatin1Char('/') + h.first + QStringLiteral(".desktop"));
+}
+
+// Second counter-review of fd5823de (R1): on a disk that ignores the execute bit (FAT, exFAT), approve() reports ExecIgnored
+// after its chmod, which moved the file's status time; the program still runs, from a copy in ~/Applications checked against
+// the file as it is after that write (here a real chmod, then ExecIgnored as a FAT mount reports it).
+TEST_F(FilesLaunch, AProgramOnADiskThatIgnoresTheExecuteBitRunsFromACopy)
+{
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    const QString source = place("probe", QStringLiteral("Stick/FatTool"), 0644);
+    const QString applications = QDir(QDir::homePath()).filePath(QStringLiteral("Applications"));
+    const QString copy = QDir(applications).filePath(QStringLiteral("FatTool"));
+    QFile::remove(copy);
+    ProgramLaunchTestAccess::reportExecIgnored(1);
+    s.answer = QStringLiteral("open");
+    app.open(urls(source));
+    ASSERT_TRUE(waitFor([&] { return !s.ofKind(QStringLiteral("openProgram")).isEmpty(); }));
+    const QVariantMap sheet = s.ofKind(QStringLiteral("openProgram")).first();
+    EXPECT_TRUE(sheet.value(QStringLiteral("allowRun")).toBool()) << "Open sets the execute bit where the disk keeps it";
+    EXPECT_FALSE(sheet.value(QStringLiteral("copy")).toBool());
+    EXPECT_TRUE(waitFor([&] { return QFileInfo::exists(mark(QStringLiteral("FatTool"))); }, 10000))
+        << "the copy ran; notices: " << s.ofKind(QStringLiteral("notice")).size();
+    EXPECT_TRUE(s.ofKind(QStringLiteral("notice")).isEmpty()) << "never “It changed while you were deciding”";
+    EXPECT_TRUE(QFileInfo(copy).isExecutable());
+    EXPECT_TRUE(LaunchGuard::inspect(QUrl::fromLocalFile(copy)).approved);
+}
+
+namespace
+{
+// This process as the staging registry names a holder: the boot, the process id, its start time.
+QByteArray selfHolder()
+{
+    QFile boot(QStringLiteral("/proc/sys/kernel/random/boot_id"));
+    QFile stat(QStringLiteral("/proc/self/stat"));
+    if (!boot.open(QIODevice::ReadOnly) || !stat.open(QIODevice::ReadOnly))
+        return {};
+    const QByteArray text = stat.readAll();
+    const QList<QByteArray> fields = text.mid(text.lastIndexOf(')') + 2).split(' ');
+    return boot.readAll().trimmed() + ' ' + QByteArray::number(qint64(::getpid())) + ' ' + fields.value(19);
+}
+
+QByteArray registryLine(const QByteArray &holder, const QString &path)
+{
+    return holder + ' ' + QFile::encodeName(path).toPercentEncoding();
+}
+
+// A downloaded tar.gz whose program lies deeper than PATH_MAX (25 folders of 200-character names), with two more programs
+// beside the chain.
+bool writeDeepArchive(const QString &archive, const QString &program)
+{
+    static const char kScript[] = R"(import io, sys, tarfile
+out, prog = sys.argv[1], open(sys.argv[2], "rb").read()
+with tarfile.open(out, "w:gz", format=tarfile.PAX_FORMAT) as t:
+    def add(name, mode, data=None):
+        info = tarfile.TarInfo(name)
+        info.mode = mode
+        if data is None:
+            info.type = tarfile.DIRTYPE
+            t.addfile(info)
+        else:
+            info.size = len(data)
+            t.addfile(info, io.BytesIO(data))
+    path = "Deep"
+    add(path, 0o755)
+    add("Deep/one", 0o755, prog)
+    add("Deep/two", 0o755, prog)
+    for i in range(25):
+        path += "/" + "d" * 200
+        add(path, 0o755)
+    add(path + "/prog", 0o755, prog)
+)";
+    return QProcess::execute(QStringLiteral("python3"), {QStringLiteral("-I"), QStringLiteral("-c"), QString::fromLatin1(kScript), archive, program}) == 0;
+}
+} // namespace
+
+// Second counter-review of fd5823de (m2): what an Expand is still writing is never opened, run, listed or searched from Files,
+// a link to it included.
+TEST_F(FilesLaunch, NothingUnderAStagingNameIsOpenedOrListed)
+{
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    const QString staging = d(QStringLiteral("Downloads/.grassfield-expand-0a1b2c3d"));
+    const QString staged = place("probe", QStringLiteral("Downloads/.grassfield-expand-0a1b2c3d/Staged"), 0755);
+    const QString link = d(QStringLiteral("Downloads/Staged link"));
+    ASSERT_TRUE(QFile::link(staged, link));
+    app.open(urls(staged));
+    app.open(urls(link));
+    app.open(urls(staging));
+    settle(1200);
+    EXPECT_FALSE(QFileInfo::exists(mark(QStringLiteral("Staged"))));
+    EXPECT_FALSE(QFileInfo::exists(mark(QStringLiteral("Staged link"))));
+    EXPECT_TRUE(s.asked.isEmpty()) << "refused, not asked";
+    ASSERT_EQ(s.told.size(), 3) << s.told.join(QLatin1Char('|')).toStdString();
+    EXPECT_EQ(s.told.at(0), QStringLiteral("“Staged” can’t be opened while Files is still expanding or compressing it."));
+    EXPECT_EQ(s.told.at(1), QStringLiteral("“Staged link” can’t be opened while Files is still expanding or compressing it."));
+
+    FolderModel model;
+    model.setUrl(QUrl::fromLocalFile(staging));
+    settle(500);
+    EXPECT_EQ(model.rowCount(), 0) << "nothing listed";
+    EXPECT_FALSE(model.error().isEmpty());
+    model.reload();
+    settle(500);
+    EXPECT_EQ(model.rowCount(), 0) << "nor after a refresh";
+    model.setUrl(QUrl::fromLocalFile(d(QStringLiteral("Downloads"))));
+    EXPECT_TRUE(waitFor([&] { return model.rowCount() > 0; })) << "an ordinary folder lists";
+    EXPECT_TRUE(model.error().isEmpty());
+}
+
+// m2: a Files killed during an Expand leaves its staging folder and its line in the registry; the next start removes the
+// folder (by descriptor, its 0100 and 0500 folders opened up first), and nothing else: a line still held, a name that is not
+// a staging name, a relative path.
+TEST_F(FilesLaunch, StagingLeftByAKilledFilesIsSweptAtStart)
+{
+    const QByteArray self = selfHolder();
+    ASSERT_FALSE(self.isEmpty());
+    const QString registry = d(QStringLiteral("state/files-staging"));
+    QDir().mkpath(d(QStringLiteral("state")));
+    const QString left = d(QStringLiteral("Work/.grassfield-expand-00c0ffee"));
+    place("probe", QStringLiteral("Work/.grassfield-expand-00c0ffee/Kit/locked/prog"), 0755);
+    place("probe", QStringLiteral("Work/.grassfield-expand-00c0ffee/Kit/readonly"), 0500);
+    ASSERT_EQ(::chmod(QFile::encodeName(left + QStringLiteral("/Kit/locked")).constData(), 0100), 0);
+    ASSERT_EQ(::chmod(QFile::encodeName(left + QStringLiteral("/Kit")).constData(), 0500), 0);
+    const QString compressLeft = place("probe", QStringLiteral("Work/.grassfield-compress-0badf00d.zip"), 0644);
+    const QString held = d(QStringLiteral("Work/.grassfield-expand-0000beef"));
+    place("probe", QStringLiteral("Work/.grassfield-expand-0000beef/inside"), 0644);
+    const QString notStaging = d(QStringLiteral("Work/Documents"));
+    place("probe", QStringLiteral("Work/Documents/keep"), 0644);
+    {
+        QFile f(registry);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(registryLine("another-boot 4242 777", left) + '\n');
+        f.write(registryLine(self.left(self.lastIndexOf(' ')) + " 1", compressLeft) + '\n'); // this process id, another start time
+        f.write(registryLine(self, held) + '\n');
+        f.write(registryLine("another-boot 4243 778", notStaging) + '\n');
+        f.write(registryLine("another-boot 4244 779", QStringLiteral(".grassfield-expand-0a0a0a0a")) + '\n');
+        f.write("a line that is not one\n");
+    }
+    EXPECT_EQ(ArchiveJob::sweepStaleStaging(registry), 2);
+    EXPECT_FALSE(QFileInfo::exists(left)) << "the killed Files' staging folder went";
+    EXPECT_FALSE(QFileInfo::exists(compressLeft)) << "a process id used again is no holder";
+    EXPECT_TRUE(QFileInfo::exists(held + QStringLiteral("/inside"))) << "a staging folder still held stays";
+    EXPECT_TRUE(QFileInfo::exists(notStaging + QStringLiteral("/keep"))) << "never anything but a staging name";
+    EXPECT_EQ(lines(registry), QStringList{QString::fromLatin1(registryLine(self, held))}) << "only the held line stays";
+    EXPECT_EQ(ArchiveJob::sweepStaleStaging(d(QStringLiteral("state/none"))), 0) << "no registry: nothing to do";
+    EXPECT_FALSE(QFileInfo::exists(d(QStringLiteral("state/none"))));
+}
+
+// m2: an Expand forgets its staging folder at the end (ArchiveJob::stagingRegistry); a refused one removes its tree by
+// descriptor, a program deeper than PATH_MAX included (openTree's depth and removeRecursively's paths kept it before).
+TEST_F(FilesLaunch, ARefusedExpandLeavesNothingEvenDeeperThanPathMax)
+{
+    if (QStandardPaths::findExecutable(QStringLiteral("bsdtar")).isEmpty() || QStandardPaths::findExecutable(QStringLiteral("python3")).isEmpty())
+        GTEST_SKIP() << "bsdtar or python3 is not installed";
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    QDir().mkpath(d(QStringLiteral("Downloads")));
+    const QString archive = d(QStringLiteral("Downloads/Deep.tar.gz"));
+    ASSERT_TRUE(writeDeepArchive(archive, fixture("probe")));
+    if (!markDownloaded(archive))
+        GTEST_SKIP() << "no user extended attributes in " << m_dir.path().toStdString();
+    ArchiveJobTestAccess::setMarkCap(2);
+    app.open(urls(archive));
+    ASSERT_TRUE(waitFor([&] { return !s.ofKind(QStringLiteral("notice")).isEmpty(); }, 30000)) << s.told.join(QLatin1Char('|')).toStdString();
+    EXPECT_EQ(s.ofKind(QStringLiteral("notice")).first().value(QStringLiteral("title")).toString(), QStringLiteral("“Deep.tar.gz” couldn’t be expanded safely."));
+    settle(500);
+    const QStringList kept = QDir(d(QStringLiteral("Downloads"))).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot);
+    EXPECT_EQ(kept, QStringList{QStringLiteral("Deep.tar.gz")}) << kept.join(QLatin1Char('|')).toStdString();
+    EXPECT_FALSE(lines(ArchiveJob::stagingRegistry()).join(QLatin1Char('\n')).contains(QStringLiteral(".grassfield-expand-"))) << "and forgotten";
+}
+
+// Second counter-review of fd5823de (m3): every application that opens a program, an AppImage or a script may run it (an
+// AppImage helper, a terminal registered for scripts): a downloaded one asks first, naming the application; Cancel runs
+// nothing; Open covers that open only (no execute bit, no approval: the next open asks again). A file made here does not ask.
+// Nothing under a staging name is handed to an application.
+TEST_F(FilesLaunch, OpenWithAnyHandlerOfAProgramOrScriptAsksForADownloadedOne)
+{
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    const QString helper = recorder(QStringLiteral("gf-appimage-helper"));
+    const QString runner = recorder(QStringLiteral("gf-script-runner"));
+    const QString apps = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/applications");
+    QDir().mkpath(apps);
+    const QList<QPair<QString, QString>> handlers = {
+        {QStringLiteral("org.example.GfAppImageHelper"), QStringLiteral("gf-appimage-helper|application/vnd.appimage;application/x-executable;")},
+        {QStringLiteral("org.example.GfScriptRunner"), QStringLiteral("gf-script-runner|application/x-shellscript;")}};
+    for (const auto &h : handlers) {
+        QFile entry(apps + QLatin1Char('/') + h.first + QStringLiteral(".desktop"));
+        ASSERT_TRUE(entry.open(QIODevice::WriteOnly));
+        entry.write(QStringLiteral("[Desktop Entry]\nType=Application\nName=%1\nExec=\"%2\" %f\nMimeType=%3\n")
+                        .arg(h.first, QDir(d(QStringLiteral("bin"))).filePath(h.second.section(QLatin1Char('|'), 0, 0)), h.second.section(QLatin1Char('|'), 1))
+                        .toUtf8());
+    }
+    QDeadlineTimer cache(15000);
+    while ((!KService::serviceByMenuId(QStringLiteral("org.example.GfAppImageHelper.desktop")) || !KService::serviceByMenuId(QStringLiteral("org.example.GfScriptRunner.desktop")))
+           && !cache.hasExpired()) {
+        settle(200);
+        KSycoca::self()->ensureCacheValid();
+    }
+    ASSERT_TRUE(KService::serviceByMenuId(QStringLiteral("org.example.GfAppImageHelper.desktop")));
+    ASSERT_TRUE(KService::serviceByMenuId(QStringLiteral("org.example.GfScriptRunner.desktop")));
+
+    const QString appImage = place("probe", QStringLiteral("Downloads/Helped.AppImage"), 0644, true);
+    const QString script = d(QStringLiteral("Downloads/install.sh"));
+    {
+        QFile f(script);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("#!/bin/sh\necho installed\n");
+    }
+    ASSERT_EQ(::chmod(QFile::encodeName(script).constData(), 0755), 0);
+    if (!markDownloaded(appImage) || !markDownloaded(script))
+        GTEST_SKIP() << "no user extended attributes in " << m_dir.path().toStdString();
+    ASSERT_EQ(LaunchGuard::verdict(LaunchGuard::inspect(QUrl::fromLocalFile(appImage))), LaunchGuard::Verdict::RunProgram);
+    ASSERT_EQ(LaunchGuard::verdict(LaunchGuard::inspect(QUrl::fromLocalFile(script))), LaunchGuard::Verdict::OpenScript);
+
+    struct Case {
+        QString id, name, file, record, what;
+    };
+    const QList<Case> cases = {{QStringLiteral("org.example.GfAppImageHelper.desktop"), QStringLiteral("org.example.GfAppImageHelper"), appImage, helper, QStringLiteral("app")},
+                               {QStringLiteral("org.example.GfScriptRunner.desktop"), QStringLiteral("org.example.GfScriptRunner"), script, runner, QStringLiteral("script")}};
+    for (const Case &c : cases) {
+        const int before = int(s.ofKind(QStringLiteral("openProgram")).size());
+        s.answer = QStringLiteral("cancel");
+        app.openWith(c.id, urls(c.file));
+        ASSERT_TRUE(waitFor([&] { return int(s.ofKind(QStringLiteral("openProgram")).size()) == before + 1; })) << c.id.toStdString();
+        const QVariantMap sheet = s.ofKind(QStringLiteral("openProgram")).last();
+        EXPECT_EQ(sheet.value(QStringLiteral("handler")).toString(), c.name);
+        EXPECT_EQ(sheet.value(QStringLiteral("what")).toString(), c.what);
+        EXPECT_TRUE(sheet.value(QStringLiteral("downloaded")).toBool());
+        EXPECT_EQ(sheet.value(QStringLiteral("host")).toString(), QStringLiteral("downloads.example.org"));
+        EXPECT_FALSE(sheet.value(QStringLiteral("allowRun")).toBool());
+        settle(500);
+        EXPECT_FALSE(QFileInfo::exists(c.record)) << "Cancel: the application never ran";
+        s.answer = QStringLiteral("open");
+        app.openWith(c.id, urls(c.file));
+        ASSERT_TRUE(waitFor([&] { return !lines(c.record).isEmpty() && lines(c.record).last() == c.file; }, 10000)) << c.id.toStdString();
+        EXPECT_FALSE(LaunchGuard::inspect(QUrl::fromLocalFile(c.file)).approved) << "Open covered that open only";
+        // The next open with it asks again.
+        QFile::remove(c.record);
+        s.answer = QStringLiteral("cancel");
+        app.openWith(c.id, urls(c.file));
+        ASSERT_TRUE(waitFor([&] { return int(s.ofKind(QStringLiteral("openProgram")).size()) == before + 3; })) << c.id.toStdString();
+    }
+    EXPECT_EQ(modeOf(appImage), 0644u) << "no execute bit from Open With";
+
+    // Made here (no download mark): no sheet.
+    const QString local = d(QStringLiteral("Work/local.sh"));
+    QDir().mkpath(d(QStringLiteral("Work")));
+    {
+        QFile f(local);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("#!/bin/sh\necho local\n");
+    }
+    ASSERT_EQ(::chmod(QFile::encodeName(local).constData(), 0755), 0);
+    QFile::remove(runner);
+    const int asked = int(s.ofKind(QStringLiteral("openProgram")).size());
+    app.openWith(QStringLiteral("org.example.GfScriptRunner.desktop"), urls(local));
+    ASSERT_TRUE(waitFor([&] { return !lines(runner).isEmpty() && lines(runner).last() == local; }, 10000));
+    EXPECT_EQ(int(s.ofKind(QStringLiteral("openProgram")).size()), asked);
+
+    // Under a staging name: refused, never handed to the application.
+    const QString staged = place("probe", QStringLiteral("Downloads/.grassfield-expand-0a1b2c3d/Staged.AppImage"), 0755, true);
+    QFile::remove(helper);
+    s.told.clear();
+    app.openWith(QStringLiteral("org.example.GfAppImageHelper.desktop"), urls(staged));
+    settle(800);
+    EXPECT_FALSE(QFileInfo::exists(helper));
+    EXPECT_EQ(s.told, QStringList{QStringLiteral("“Staged.AppImage” can’t be opened while Files is still expanding or compressing it.")});
     for (const auto &h : handlers)
         QFile::remove(apps + QLatin1Char('/') + h.first + QStringLiteral(".desktop"));
 }

@@ -8,6 +8,7 @@
 class QSocketNotifier;
 class QTimer;
 class QProcess;
+class ProgramLaunchTestAccess;
 
 // Running what Files opened the Gatekeeper way (LaunchGuard::RunProgram and OpenScript, ADR-0011 amendment 2026-11-08): the
 // approval Files keeps on a file the user said Open to (user.grassfield.approved, bound to the file's inode, modification time
@@ -72,8 +73,20 @@ enum class Approval {
 // After the user said Open: through one descriptor of `path` (no symbolic link followed), and only while it is still the file
 // the user decided on (inode, modification time, size): with allowRun, the user's execute bit (u+x; never setuid, setgid,
 // group or others), checked afterwards with fstat (a FAT mount accepts the chmod and keeps its own modes); then Files'
-// approval. A file system without user extended attributes keeps no approval (the next open asks again).
-Approval approve(const QString &path, quint64 inode, qint64 mtimeNs, qint64 size, bool allowRun);
+// approval. A file system without user extended attributes keeps no approval (the next open asks again). `ctimeNs`, when
+// given with allowRun, gets the file's status time right after Files' own chmod: after ExecIgnored, what the file must
+// still show when Files reads it again to copy it to ~/Applications.
+Approval approve(const QString &path, quint64 inode, qint64 mtimeNs, qint64 size, bool allowRun, qint64 *ctimeNs = nullptr);
+
+// The tests' hook into approve() (set only through ProgramLaunchTestAccess, a friend): the next s_execIgnored calls with
+// allowRun report ExecIgnored after the real fchmod, as a FAT mount does, so that the copy to ~/Applications runs on the path
+// a FAT stick takes.
+class ApproveHooks
+{
+    friend class ::ProgramLaunchTestAccess;
+    friend Approval approve(const QString &path, quint64 inode, qint64 mtimeNs, qint64 size, bool allowRun, qint64 *ctimeNs);
+    static inline int s_execIgnored = 0;
+};
 
 // ~/Applications (macOS: an app is copied to the Applications folder), made if missing; "" when it can't be.
 QString applicationsFolder();

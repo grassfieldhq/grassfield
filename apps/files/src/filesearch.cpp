@@ -1,5 +1,6 @@
 #include "filesearch.h"
 
+#include "launchguard.h"
 #include "taglogic.h"
 
 #include <QDateTime>
@@ -115,6 +116,9 @@ bool FileSearch::inScope(const QString &path, const QString &base) const
     const QString root = QDir::cleanPath(base);
     if (!clean.startsWith(root + QLatin1Char('/')))
         return false;
+    // Never what an Expand or Compress is still writing (".grassfield-expand-…": not marked yet), hidden items shown or not.
+    if (LaunchGuard::insideStaging(clean.mid(root.size() + 1)))
+        return false;
     if (m_settings.showHidden)
         return true;
     const QStringList segments = clean.mid(root.size() + 1).split(QLatin1Char('/'));
@@ -196,7 +200,7 @@ void FileSearch::walk(const QString &base, const QSet<QString> *contents)
             const char *name = entry->d_name;
             if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0)))
                 continue;
-            if (name[0] == '.' && !m_settings.showHidden)
+            if (name[0] == '.' && (!m_settings.showHidden || LaunchGuard::insideStaging(QFile::decodeName(name))))
                 continue;
             if (++visited > kMaxVisited) {
                 m_limited = true;

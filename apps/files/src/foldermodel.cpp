@@ -6,6 +6,7 @@
 #include "folderstylestore.h"
 #include "imageproviders.h"
 #include "imagesize.h"
+#include "launchguard.h"
 #include "recents.h"
 #include "runmode.h"
 #include "searchlogic.h"
@@ -475,6 +476,16 @@ void FolderModel::setUrl(const QUrl &url)
         if (sourceModel() != m_results)
             setSourceModel(m_results);
         loadApplications();
+    } else if (m_url.isLocalFile()
+               && (LaunchGuard::insideStaging(m_url.toLocalFile()) || LaunchGuard::insideStaging(QFileInfo(m_url.toLocalFile()).canonicalFilePath()))) {
+        // An Expand or Compress staging folder (".grassfield-expand-…", or a link into one): its files are not marked yet
+        // (second counter-review of fd5823de, m2). Nothing is listed there.
+        m_lister->stop();
+        m_results->clear();
+        m_apps.clear();
+        if (sourceModel() != m_results)
+            setSourceModel(m_results);
+        setError(tr("This folder can’t be shown: Files is expanding or compressing items in it."));
     } else {
         if (sourceModel() != m_dirModel)
             setSourceModel(m_dirModel);
@@ -1614,6 +1625,8 @@ void FolderModel::reload()
     if (rowCount() > 0)
         emit dataChanged(index(0, 0), index(rowCount() - 1, 0), {TagsRole, TagColorsRole});
     m_styles.clear();
+    if (sourceModel() == m_results)
+        return; // a staging folder (setUrl): nothing is listed there
     m_dirModel->openUrl(m_url, KDirModel::Reload);
 }
 

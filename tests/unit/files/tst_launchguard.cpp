@@ -14,8 +14,10 @@
 
 #include <gtest/gtest.h>
 
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/xattr.h>
+#include <unistd.h>
 
 using namespace LaunchGuard;
 
@@ -833,4 +835,160 @@ TEST(LaunchGuardNames, LookalikesNeverHideADocumentsName)
         Facts f = program(name, QStringLiteral("application/x-executable"));
         EXPECT_EQ(verdict(f), Verdict::RunProgram) << name.toStdString();
     }
+}
+
+// Second counter-review of fd5823de (m1): the list of dot lookalikes can't be complete, so a program whose name ends in a
+// document's or an archive's letters right after anything but an ASCII dot is refused as a disguise, whatever that character
+// is: the four UTS #39 lookalikes of the middle dot (U+A78F, U+16EB, U+1427, U+10101), the others the review found, a
+// combining dot below, and every punctuation and symbol character of Unicode.
+TEST(LaunchGuardNames, ADocumentsLettersAfterAnythingButADotAreADisguise)
+{
+    const QList<QString> separators = {QStringLiteral("\ua78f"), QStringLiteral("\u16eb"), QStringLiteral("\u1427"), QString::fromUcs4(U"\U00010101"),
+                                       QStringLiteral("\u2022"), QStringLiteral("\u2981"), QStringLiteral("\u02d9"), QStringLiteral("\u0f0b"),
+                                       QStringLiteral("\u2e30"), QStringLiteral("\u2e3c"), QStringLiteral("\u1803"), QStringLiteral("\u0323"),
+                                       QStringLiteral("e\u0323"), QStringLiteral("\u1eb9"), QStringLiteral("\u2122"), QStringLiteral("-"),
+                                       QStringLiteral("_"), QStringLiteral(" "), QStringLiteral(","), QStringLiteral("\u2800")};
+    for (const QString &x : separators) {
+        for (const QString &name : {QStringLiteral("Invoice") + x + QStringLiteral("pdf"), QStringLiteral("photo") + x + QStringLiteral("jpg"),
+                                    QStringLiteral("setup") + x + QStringLiteral("exe"), QStringLiteral("Invoice") + x + QStringLiteral("pdf "),
+                                    QStringLiteral("backup") + x + QStringLiteral("zip")}) {
+            Facts f = program(name, QStringLiteral("application/x-executable"));
+            EXPECT_TRUE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+            EXPECT_EQ(verdict(f), Verdict::RefuseDisguised) << name.toStdString();
+            f.approved = true;
+            EXPECT_EQ(verdict(f), Verdict::RefuseDisguised) << name.toStdString() << " approved";
+        }
+    }
+    // Every punctuation and symbol character of Unicode (the categories P and S) before "pdf".
+    int checked = 0;
+    for (char32_t c = 0x21; c <= 0x10FFFF; ++c) {
+        if (c >= 0xD800 && c <= 0xDFFF)
+            continue;
+        const QChar::Category category = QChar::category(c);
+        const bool punctuationOrSymbol = (category >= QChar::Punctuation_Connector && category <= QChar::Punctuation_Other)
+            || (category >= QChar::Symbol_Math && category <= QChar::Symbol_Other);
+        if (!punctuationOrSymbol)
+            continue;
+        const QString name = QStringLiteral("Invoice") + QString::fromUcs4(&c, 1) + QStringLiteral("pdf");
+        EXPECT_EQ(verdict(program(name)), Verdict::RefuseDisguised) << "U+" << std::hex << unsigned(c);
+        ++checked;
+    }
+    EXPECT_GT(checked, 7000) << "the punctuation and symbol characters of Qt's Unicode tables";
+}
+
+// The same rule leaves a program's own names alone: no document's letters at the end, digits only, accents in a word (also
+// decomposed, as another system may write them), an ASCII extension of a program.
+TEST(LaunchGuardNames, AProgramsOwnNamesStillRun)
+{
+    for (const QString &name : {QStringLiteral("Tool"), QStringLiteral("nvim-linux64"), QStringLiteral("Spiel.x86_64"), QStringLiteral("code-1.95"),
+                                QStringLiteral("Godot_v4.3-stable_linux.x86_64"), QStringLiteral("Lecteur-vid\u00e9o"), QStringLiteral("Lecteur-vide\u0301o"),
+                                QStringLiteral("my-tool"), QStringLiteral("Tool-1.0-x86_64.AppImage"), QStringLiteral("\u00c9diteur")}) {
+        EXPECT_FALSE(documentTailAfterOtherThanDot(name)) << name.toStdString();
+        EXPECT_EQ(verdict(program(name)), Verdict::RunProgram) << name.toStdString();
+    }
+}
+
+// m2: an Expand's or a Compress's staging name, anywhere in the path, is refused, whatever is in it.
+TEST(LaunchGuardStaging, AStagingNameAnywhereInThePathIsRefused)
+{
+    EXPECT_TRUE(insideStaging(QStringLiteral("/home/u/Downloads/.grassfield-expand-0a1b2c3d/Tool")));
+    EXPECT_TRUE(insideStaging(QStringLiteral("/home/u/Downloads/.grassfield-expand-0a1b2c3d")));
+    EXPECT_TRUE(insideStaging(QStringLiteral(".grassfield-expand-0a1b2c3d")));
+    EXPECT_TRUE(insideStaging(QStringLiteral("/home/u/.grassfield-compress-deadbeef.zip")));
+    EXPECT_TRUE(insideStaging(QStringLiteral("/a/.grassfield-expand-00000000/b/c/d")));
+    EXPECT_FALSE(insideStaging(QStringLiteral("/home/u/Downloads/.grassfield-expand-0a1b2c3/Tool"))) << "seven digits";
+    EXPECT_FALSE(insideStaging(QStringLiteral("/home/u/.grassfield-expand-0A1B2C3D/Tool"))) << "Files writes lowercase hex";
+    EXPECT_FALSE(insideStaging(QStringLiteral("/home/u/grassfield-expand-0a1b2c3d/Tool")));
+    EXPECT_FALSE(insideStaging(QStringLiteral("/home/u/.grassfield-expand-0a1b2c3d.old/Tool")));
+    EXPECT_FALSE(insideStaging(QStringLiteral("/home/u/.grassfield-compress-deadbeef")));
+    EXPECT_FALSE(insideStaging(QStringLiteral("/home/u/Downloads/Tool")));
+    for (Facts f : {program(QStringLiteral("tool")), localFile(QStringLiteral("notes.txt"), QStringLiteral("text/plain")),
+                    localFile(QStringLiteral("setup.exe"), QStringLiteral("application/x-msdownload"))}) {
+        f.staging = true;
+        EXPECT_EQ(verdict(f), Verdict::RefuseStaging) << f.fileName.toStdString();
+    }
+}
+
+namespace
+{
+// A chain of `levels` folders of 200-character names under `root` (deeper than PATH_MAX past about 20 levels), made by
+// descriptor only, with a program at the bottom; every folder of the chain but the last is then made 0500 (no write: the
+// removal must open each up first). False when it could not be made.
+bool deepChain(const QString &root, int levels)
+{
+    int fd = ::open(QFile::encodeName(root).constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    const QByteArray name(200, 'd');
+    QList<int> chain;
+    bool ok = true;
+    for (int i = 0; i < levels && ok; ++i) {
+        ok = ::mkdirat(fd, name.constData(), 0700) == 0;
+        const int child = ok ? ::openat(fd, name.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1;
+        ok = ok && child >= 0;
+        chain << fd;
+        fd = child;
+    }
+    if (ok) {
+        const int file = ::openat(fd, "prog", O_WRONLY | O_CREAT | O_CLOEXEC, 0755);
+        ok = file >= 0 && ::write(file, "\x7f" "ELF", 4) == 4;
+        if (file >= 0)
+            ::close(file);
+    }
+    if (fd >= 0)
+        ::close(fd);
+    for (qsizetype i = 0; i < chain.size(); ++i) {
+        if (i > 0 && ok)
+            ok = ::fchmod(chain.at(i), 0500) == 0;
+        ::close(chain.at(i));
+    }
+    return ok;
+}
+} // namespace
+
+// m2: a refused tree is removed by descriptor, deeper than PATH_MAX too, its folders opened up first; a link inside is removed,
+// never what it points to; a link given as the root is removed, never its target.
+TEST_F(Files, RemoveTreeGoesDeeperThanPathMaxAndNeverThroughALink)
+{
+    ASSERT_TRUE(dir.isValid());
+    const QString outside = write(QStringLiteral("outside.txt"), "keep", false);
+    const QString root = dir.filePath(QStringLiteral(".grassfield-expand-0a1b2c3d"));
+    ASSERT_TRUE(QDir().mkpath(root + QStringLiteral("/Kit/locked")));
+    ASSERT_TRUE(QFile::link(outside, root + QStringLiteral("/Kit/link")));
+    ASSERT_TRUE(QFile::link(dir.path(), root + QStringLiteral("/Kit/folder link")));
+    ASSERT_TRUE(deepChain(root + QStringLiteral("/Kit"), 25));
+    ASSERT_EQ(::chmod(QFile::encodeName(root + QStringLiteral("/Kit/locked")).constData(), 0100), 0);
+    ASSERT_EQ(::chmod(QFile::encodeName(root + QStringLiteral("/Kit")).constData(), 0500), 0);
+    ASSERT_EQ(::chmod(QFile::encodeName(root).constData(), 0500), 0);
+    EXPECT_TRUE(removeTree(root));
+    EXPECT_FALSE(QFileInfo::exists(root));
+    EXPECT_FALSE(QFileInfo(root).isSymLink());
+    EXPECT_TRUE(QFileInfo::exists(outside)) << "a link's target stays";
+    EXPECT_TRUE(QFileInfo(dir.path()).isDir()) << "a link to a folder is removed, not followed";
+    // A link as the root: the link goes, its target stays.
+    const QString target = dir.filePath(QStringLiteral("target"));
+    ASSERT_TRUE(QDir().mkpath(target + QStringLiteral("/inside")));
+    const QString rootLink = dir.filePath(QStringLiteral("root link"));
+    ASSERT_TRUE(QFile::link(target, rootLink));
+    EXPECT_TRUE(removeTree(rootLink));
+    EXPECT_FALSE(QFileInfo(rootLink).isSymLink());
+    EXPECT_TRUE(QFileInfo(target + QStringLiteral("/inside")).isDir());
+    EXPECT_TRUE(removeTree(dir.filePath(QStringLiteral("gone")))) << "nothing there: nothing left";
+}
+
+// m2 on real files: an item under a staging name, or a link to one, is refused by inspect() and verdict().
+TEST_F(Files, AnItemUnderAStagingNameOrALinkToOneIsRefused)
+{
+    ASSERT_TRUE(dir.isValid());
+    ASSERT_TRUE(QDir().mkpath(dir.filePath(QStringLiteral(".grassfield-expand-0a1b2c3d"))));
+    const QString tool = nativeProgram(QStringLiteral(".grassfield-expand-0a1b2c3d/tool"), true);
+    if (tool.isEmpty())
+        GTEST_SKIP() << "no /usr/bin/true";
+    const QString notes = write(QStringLiteral(".grassfield-expand-0a1b2c3d/notes.txt"), "text", false);
+    const QString link = dir.filePath(QStringLiteral("tool link"));
+    ASSERT_TRUE(QFile::link(tool, link));
+    EXPECT_EQ(of(tool), Verdict::RefuseStaging);
+    EXPECT_EQ(of(notes), Verdict::RefuseStaging) << "a document too: nothing there is marked yet";
+    EXPECT_EQ(of(link), Verdict::RefuseStaging) << "the link's target decides";
+    EXPECT_EQ(of(dir.filePath(QStringLiteral(".grassfield-expand-0a1b2c3d"))), Verdict::RefuseStaging) << "the folder itself";
 }

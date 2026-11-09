@@ -122,7 +122,7 @@ bool filesRunsAsRoot()
     return ::geteuid() == 0;
 }
 
-Approval approve(const QString &path, quint64 inode, qint64 mtimeNs, qint64 size, bool allowRun)
+Approval approve(const QString &path, quint64 inode, qint64 mtimeNs, qint64 size, bool allowRun, qint64 *ctimeNs)
 {
     const QByteArray native = QFile::encodeName(path);
     const int fd = ::open(native.constData(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NOCTTY | O_NONBLOCK);
@@ -151,8 +151,11 @@ Approval approve(const QString &path, quint64 inode, qint64 mtimeNs, qint64 size
             ::close(fd);
             return Approval::Changed;
         }
+        if (ctimeNs)
+            *ctimeNs = qint64(st.st_ctim.tv_sec) * 1000000000 + st.st_ctim.tv_nsec;
         // A FAT, exFAT or fixed-mode NTFS mount accepts the chmod and keeps its own modes: the bit must really be there.
-        if (!(st.st_mode & S_IXUSR)) {
+        const bool hooked = ApproveHooks::s_execIgnored > 0 && ApproveHooks::s_execIgnored-- > 0;
+        if (!(st.st_mode & S_IXUSR) || hooked) {
             ::close(fd);
             return Approval::ExecIgnored;
         }

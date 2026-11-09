@@ -5665,6 +5665,10 @@
         <translation>Il a été modifié pendant que vous décidiez. Ouvrez-le à nouveau pour décider de sa version actuelle.</translation>
     </message>
     <message>
+        <source>“%1” can’t be opened while Files is still expanding or compressing it.</source>
+        <translation>«&#xa0;%1&#xa0;» ne peut pas être ouvert tant que Fichiers le décompresse ou le compresse.</translation>
+    </message>
+    <message>
         <source>“%1” wasn’t opened: Files doesn’t open programs while it runs as the administrator (root).</source>
         <translation>«&#xa0;%1&#xa0;» n’a pas été ouvert&#xa0;: Fichiers n’ouvre pas de programmes lorsqu’il s’exécute en tant qu’administrateur (root).</translation>
     </message>
@@ -6371,6 +6375,10 @@
 </context>
 <context>
     <name>FolderModel</name>
+    <message>
+        <source>This folder can’t be shown: Files is expanding or compressing items in it.</source>
+        <translation>Ce dossier ne peut pas être affiché&#xa0;: Fichiers y décompresse ou y compresse des éléments.</translation>
+    </message>
     <message>
         <source>Applications</source>
         <translation>Applications</translation>
@@ -8314,6 +8322,18 @@
     <message>
         <source>Search the Store</source>
         <translation>Rechercher dans le Store</translation>
+    </message>
+    <message>
+        <source>“%1” is a script downloaded from the Internet. Are you sure you want to open it with %2?</source>
+        <translation>«&#xa0;%1&#xa0;» est un script téléchargé sur Internet. Voulez-vous vraiment l’ouvrir avec %2&#xa0;?</translation>
+    </message>
+    <message>
+        <source>Are you sure you want to open “%1” with %2?</source>
+        <translation>Voulez-vous vraiment ouvrir «&#xa0;%1&#xa0;» avec %2&#xa0;?</translation>
+    </message>
+    <message>
+        <source>“%1” is an app downloaded from the Internet. Are you sure you want to open it with %2?</source>
+        <translation>«&#xa0;%1&#xa0;» est une app téléchargée sur Internet. Voulez-vous vraiment l’ouvrir avec %2&#xa0;?</translation>
     </message>
     <message>
         <source>“%1” is a script downloaded from the Internet. Are you sure you want to run it in Terminal?</source>

@@ -275,14 +275,22 @@ function noApplication(request) {
 }
 
 // The Gatekeeper sheet before Files runs a program for the first time (FilesApp::requestRun, Open With > Terminal; ADR-0011
-// amendment 2026-11-08): request {name, what: "app"|"script", downloaded, host, allowRun, copy}. Where it came from (the host
-// a browser recorded), what Open does (allow it to run, copy it to the Applications folder). Return and Esc cancel: running is
-// never the default answer.
+// amendment 2026-11-08), or before an application opens a downloaded program or script (Open With, FilesApp::openWithChecked):
+// request {name, what: "app"|"script", downloaded, host, allowRun, copy, handler}. Where it came from (the host a browser
+// recorded), what Open does (allow it to run, copy it to the Applications folder, open it with that application). Return and
+// Esc cancel: running is never the default answer.
 function openProgram(request) {
     const name = request.name;
     const script = request.what === "script";
+    const handler = request.handler || "";
     let title;
-    if (script)
+    if (handler !== "" && script)
+        title = request.downloaded ? qsTr("“%1” is a script downloaded from the Internet. Are you sure you want to open it with %2?").arg(name).arg(handler)
+                                   : qsTr("Are you sure you want to open “%1” with %2?").arg(name).arg(handler);
+    else if (handler !== "")
+        title = request.downloaded ? qsTr("“%1” is an app downloaded from the Internet. Are you sure you want to open it with %2?").arg(name).arg(handler)
+                                   : qsTr("Are you sure you want to open “%1” with %2?").arg(name).arg(handler);
+    else if (script)
         title = request.downloaded ? qsTr("“%1” is a script downloaded from the Internet. Are you sure you want to run it in Terminal?").arg(name)
                                    : qsTr("Are you sure you want to run “%1” in Terminal?").arg(name);
     else
@@ -298,7 +306,7 @@ function openProgram(request) {
     return {
         title: title,
         message: lines.join(" "),
-        confirmText: request.copy ? qsTr("Copy and Open") : script ? qsTr("Run") : qsTr("Open"),
+        confirmText: handler !== "" ? qsTr("Open with %1").arg(handler) : request.copy ? qsTr("Copy and Open") : script ? qsTr("Run") : qsTr("Open"),
         confirmId: "open",
         destructive: false,
         showCancel: true,

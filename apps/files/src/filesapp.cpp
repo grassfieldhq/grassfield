@@ -194,6 +194,11 @@ FilesApp::FilesApp(const QList<QUrl> &initialUrls, QObject *parent)
     , m_folderViews(grassfield::apps::runmode::stateDir() + QStringLiteral("/files-views.json"))
 {
     m_rotations.setMaxThreadCount(1);
+    // What a Files that was killed during a Compress or an Expand left in its staging names (".grassfield-expand-…", not
+    // marked yet), removed off the GUI thread (second counter-review of fd5823de, m2).
+    QThreadPool::globalInstance()->start([] {
+        ArchiveJob::sweepStaleStaging();
+    });
     auto *undo = KIO::FileUndoManager::self();
     connect(undo, &KIO::FileUndoManager::undoAvailable, this, &FilesApp::undoChanged);
     connect(undo, &KIO::FileUndoManager::redoAvailable, this, &FilesApp::undoChanged);
@@ -958,6 +963,8 @@ const char *verdictName(LaunchGuard::Verdict v)
         return "program on a server";
     case LaunchGuard::Verdict::RefuseElevated:
         return "program with other rights";
+    case LaunchGuard::Verdict::RefuseStaging:
+        return "being expanded";
     case LaunchGuard::Verdict::RunProgram:
         return "program";
     case LaunchGuard::Verdict::OpenScript:
@@ -1062,6 +1069,8 @@ void FilesApp::open(const QList<QUrl> &urls)
         emit operationFailed(tr("“%1” can’t be opened: it isn’t a valid app.").arg(shown));
     else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseRemoteProgram)
         emit operationFailed(tr("“%1” can’t be opened from here. Copy it to a folder on this computer first.").arg(shown));
+    else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseStaging)
+        emit operationFailed(tr("“%1” can’t be opened while Files is still expanding or compressing it.").arg(shown));
     else if (refused == 1)
         emit operationFailed(tr("“%1” wasn’t opened: Files doesn’t open programs that run with other rights.").arg(shown));
     // An archive opens by expanding next to itself (the Finder's Archive Utility, ADR-0029); Open With still offers the
@@ -1181,11 +1190,22 @@ void FilesApp::requestRun(const QUrl &url, const LaunchGuard::Facts &facts)
             copyToApplicationsAndRun(now);
             return;
         }
-        const ProgramLaunch::Approval approval = ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, plan.allowRun);
+        qint64 ctimeAfter = 0;
+        const ProgramLaunch::Approval approval = ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, plan.allowRun, &ctimeAfter);
         if (approval == ProgramLaunch::Approval::ExecIgnored) {
-            // A FAT or exFAT disk keeps its own modes: the program runs from a copy in the Applications folder.
+            // A FAT or exFAT disk keeps its own modes: the program runs from a copy in the Applications folder. approve()'s
+            // chmod moved the file's status time (POSIX; FAT too): the copy is checked against the file as it is after that
+            // write, which must be the program the user decided on, with the status time approve() saw (second
+            // counter-review of fd5823de, R1).
+            const LaunchGuard::Facts after = LaunchGuard::inspect(url);
+            if (LaunchGuard::verdict(after) != LaunchGuard::Verdict::RunProgram || after.path != now.path || after.inode != now.inode
+                || after.mtimeNs != now.mtimeNs || after.size != now.size || after.ctimeNs != ctimeAfter) {
+                logDecision("changed", LaunchGuard::Verdict::RunProgram, facts);
+                m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
+                return;
+            }
             logDecision("copied (no execute bit here)", LaunchGuard::Verdict::RunProgram, facts);
-            copyToApplicationsAndRun(now);
+            copyToApplicationsAndRun(after);
             return;
         }
         if (approval != ProgramLaunch::Approval::Approved) {
@@ -1356,7 +1376,8 @@ void FilesApp::openInTextEditor(const QUrl &url)
     // type would choose (a type's application may be the one that runs it). None set: the Choose Application panel.
     const KService::Ptr editor = KApplicationTrader::preferredService(QStringLiteral("text/plain"));
     if (editor && editor->desktopEntryName() != QLatin1String("org.grassfield.files")) {
-        openWith(editor->storageId(), {url});
+        // Files' own choice for a script it opened (the editor shows it, never runs it): no sheet, as on macOS.
+        openWithChecked(editor->storageId(), {url}, {url});
         return;
     }
     chooseApplication({url});
@@ -1483,29 +1504,46 @@ void FilesApp::openWithChecked(const QString &storageId, const QList<QUrl> &urls
         emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
         return;
     }
-    // A Windows or Java program opened with an application (Wine, Bottles, java) is run by it: the open rule applies (ADR-0011
-    // amendment, review of 48475cf6): never as root, and a downloaded one only after Open in its sheet, unless it was approved
-    // as it is now. One sheet per such item, in turn.
+    // An application that opens a program, an AppImage, a script, or a Windows or Java program may run it (Gear Lever or
+    // AppImageLauncher for AppImages, a terminal registered for scripts, Wine or Bottles, java): the open rule applies
+    // (ADR-0011 amendment; reviews of 48475cf6 and fd5823de): never as root, never from a server or from a staging name, and
+    // a downloaded one only after Open in its sheet, unless it was approved as it is now. One sheet per such item, in turn.
     for (const QUrl &u : urls) {
         if (consented.contains(u))
             continue;
         const LaunchGuard::Facts facts = LaunchGuard::inspect(u);
         const LaunchGuard::Verdict v = LaunchGuard::verdict(facts);
-        if (v != LaunchGuard::Verdict::WindowsFile && v != LaunchGuard::Verdict::JavaProgram)
-            continue;
         const QString name = FileLogic::displayName(facts.fileName.isEmpty() ? u.fileName() : facts.fileName);
+        if (v == LaunchGuard::Verdict::RefuseRemoteProgram || v == LaunchGuard::Verdict::RefuseStaging) {
+            qInfo("grassfield-files: open with refused (%s): \"%s\"", verdictName(v), qPrintable(LaunchGuard::logName(facts.fileName)));
+            emit operationFailed(v == LaunchGuard::Verdict::RefuseStaging
+                                     ? tr("“%1” can’t be opened while Files is still expanding or compressing it.").arg(name)
+                                     : tr("“%1” can’t be opened from here. Copy it to a folder on this computer first.").arg(name));
+            return;
+        }
+        const bool foreign = v == LaunchGuard::Verdict::WindowsFile || v == LaunchGuard::Verdict::JavaProgram;
+        if (!foreign && v != LaunchGuard::Verdict::RunProgram && v != LaunchGuard::Verdict::OpenScript)
+            continue;
         if (refuseAsRoot(name))
             return;
         if (!LaunchGuard::plan(facts).downloaded || facts.approved)
             continue;
         logDecision("asked", v, facts);
-        const QVariantMap request{{QStringLiteral("kind"), QStringLiteral("foreignProgram")},
-                                  {QStringLiteral("platform"), v == LaunchGuard::Verdict::WindowsFile ? QStringLiteral("windows") : QStringLiteral("java")},
-                                  {QStringLiteral("name"), name},
-                                  {QStringLiteral("handler"), service->name()},
-                                  {QStringLiteral("downloaded"), true},
-                                  {QStringLiteral("host"), LaunchGuard::originHost(facts)}};
-        m_prompts->ask(request, nullptr, [this, storageId, urls, consented, u, facts, v, name](const QVariantMap &reply) {
+        QVariantMap request{{QStringLiteral("name"), name},
+                            {QStringLiteral("handler"), service->name()},
+                            {QStringLiteral("downloaded"), true},
+                            {QStringLiteral("host"), LaunchGuard::originHost(facts)}};
+        if (foreign) {
+            request.insert(QStringLiteral("kind"), QStringLiteral("foreignProgram"));
+            request.insert(QStringLiteral("platform"), v == LaunchGuard::Verdict::WindowsFile ? QStringLiteral("windows") : QStringLiteral("java"));
+        } else {
+            // Gatekeeper's sheet with the application's name (KioSheetsLogic.openProgram): Files sets no execute bit here.
+            request.insert(QStringLiteral("kind"), QStringLiteral("openProgram"));
+            request.insert(QStringLiteral("what"), v == LaunchGuard::Verdict::OpenScript ? QStringLiteral("script") : QStringLiteral("app"));
+            request.insert(QStringLiteral("allowRun"), false);
+            request.insert(QStringLiteral("copy"), false);
+        }
+        m_prompts->ask(request, nullptr, [this, storageId, urls, consented, u, facts, v, name, foreign](const QVariantMap &reply) {
             if (reply.value(QStringLiteral("button")).toString() != QLatin1String("open")) {
                 logDecision("canceled", v, facts);
                 return;
@@ -1516,7 +1554,10 @@ void FilesApp::openWithChecked(const QString &storageId, const QList<QUrl> &urls
                 return;
             }
             logDecision("approved", v, facts);
-            ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, false);
+            // A Windows or Java program runs only through such an application: Open is kept for it. For a program or a
+            // script, Open covers this open only, never a later run of the file itself (no approval written).
+            if (foreign)
+                ProgramLaunch::approve(now.path, now.inode, now.mtimeNs, now.size, false);
             openWithChecked(storageId, urls, consented + QList<QUrl>{u});
         });
         return;

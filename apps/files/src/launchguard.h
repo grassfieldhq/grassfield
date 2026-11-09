@@ -32,6 +32,7 @@ enum class Verdict {
     RefuseNotAnApp,       // a name that says app (x.AppImage) on content that is not a program
     RefuseRemoteProgram,  // a program, Windows or Java file on a server or in the Trash: never run from there
     RefuseElevated,       // a program that would run with other rights (setuid, setgid, file capabilities), or Files as root
+    RefuseStaging,        // anything inside an Expand or Compress staging name (".grassfield-expand-…"): not ready, not marked yet
 };
 // Name checks (a disguise, a launcher's or a Windows program's name) are made on cleanName(fileName), never on the raw name.
 
@@ -53,6 +54,7 @@ struct Facts {
     QString elfInterpreter;     // PT_INTERP ("" when static)
     bool appImage = false;      // the AppImage magic ("AI" and 1 or 2 at offset 8 of the ELF header)
     bool elevated = false;      // setuid or setgid bit, a security.capability attribute, or Files itself runs as root
+    bool staging = false;       // the item or its target lies inside a staging name (insideStaging)
     // Where it came from (Facts of local regular files only)
     QString originUrl;   // user.xdg.origin.url (Chromium, Firefox: the address it was downloaded from)
     QString referrerUrl; // user.xdg.referrer.url (the page that linked it)
@@ -152,6 +154,18 @@ struct TreeMarks {
 TreeMarks markTree(const QString &root, const DownloadMarks &marks, qint64 cap = 0, const std::function<bool(qint64)> &keepGoing = {});
 // Gives every folder under `root` (the root included) u+rwx, no link followed, so that a staging tree can be removed.
 bool openTree(const QString &root);
+// Removes the user's own tree at `root` by descriptor (openat, unlinkat; one folder descriptor open at a time and a stack of
+// names, so a tree deeper than PATH_MAX goes too), giving each folder u+rwx first; no link is followed (a link is removed,
+// never its target). False when something stayed.
+bool removeTree(const QString &root);
+// An Expand or Compress staging name (".grassfield-expand-<8 hex>", ".grassfield-compress-<8 hex>.zip") is a component of
+// `path`: Files opens, runs and lists nothing there (its files are not marked yet).
+bool insideStaging(const QString &path);
+// A program's name ends in 1 to 5 ASCII letters or digits (one letter at least) that name a document or archive type, right
+// after a character that is not an ASCII dot ("Invoice" + any lookalike of a dot + "pdf", "photo-jpg", "Invoice" + a dot
+// below + "pdf"): a disguise, whatever that character is (counter-review of fd5823de). Read on cleanName(name) and on the
+// name as drawn (no compatibility folding; accents dropped except the marks below a letter).
+bool documentTailAfterOtherThanDot(const QString &name);
 // The download mark a copy from `source` gets: the address without user name or password, for a remote location (sftp, smb,
 // ftp, http, a phone…); "" for this computer's own locations (file:, the Trash, Recent, tags, searches).
 QByteArray remoteOrigin(const QUrl &source);

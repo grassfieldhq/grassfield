@@ -46,6 +46,14 @@ public:
     // (the Archive Utility model, fail closed). FilesApp says so in a sheet.
     bool unsafe() const { return m_unsafe; }
 
+    // Staging names still in use are recorded, one line each, in stagingRegistry() (<state>/files-staging, ADR-0020): the
+    // boot, the Files process and its start time, the percent-encoded path. A Files that was killed during a Compress or an
+    // Expand leaves its lines; sweepStaleStaging() (FilesApp, at start, off the GUI thread) removes the items of lines whose
+    // process is gone, by descriptor (LaunchGuard::removeTree), and only an absolute path whose last name is a staging name
+    // (".grassfield-expand-<8 hex>", ".grassfield-compress-<8 hex>.zip") of the user's own. Returns the items removed.
+    static QString stagingRegistry();
+    static int sweepStaleStaging(const QString &registry = QString());
+
 signals:
     // `error` is "" on success and on a cancel; `result` the new archive or the expanded item.
     void finished(bool ok, const QString &error, const QString &result);
@@ -60,6 +68,8 @@ private:
     void compressed();
     void fail(const QString &error);
     void cleanUp();
+    void setTemp(const QString &path);
+    void forgetTemp();
     QString failureText(const QString &fallback) const;
 
     Kind m_kind;

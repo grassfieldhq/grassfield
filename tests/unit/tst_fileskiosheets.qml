@@ -799,6 +799,19 @@ TestCase {
         compare(s.confirmText, "Run");
         s = KioSheetsLogic.sheet({id: 95, kind: "openProgram", what: "script", name: "install.sh", downloaded: false});
         compare(s.title, "Are you sure you want to run “install.sh” in Terminal?");
+        // Open With: the application that would open (and may run) it is named; Return and Esc still cancel.
+        s = KioSheetsLogic.sheet({id: 96, kind: "openProgram", what: "app", name: "Tool.AppImage", downloaded: true, host: "example.org", allowRun: false,
+                                  copy: false, handler: "AppImage Helper"});
+        compare(s.title, "“Tool.AppImage” is an app downloaded from the Internet. Are you sure you want to open it with AppImage Helper?");
+        compare(s.message, "This app was downloaded from example.org.");
+        compare([s.confirmText, s.confirmId, s.cancelId, s.returnCancels, s.destructive], ["Open with AppImage Helper", "open", "cancel", true, false]);
+        s = KioSheetsLogic.sheet({id: 97, kind: "openProgram", what: "script", name: "install.sh", downloaded: true, host: "", allowRun: false, copy: false,
+                                  handler: "Script Runner"});
+        compare(s.title, "“install.sh” is a script downloaded from the Internet. Are you sure you want to open it with Script Runner?");
+        compare(s.message, "");
+        compare(s.confirmText, "Open with Script Runner");
+        s = KioSheetsLogic.sheet({id: 98, kind: "openProgram", what: "app", name: "tool", downloaded: false, handler: "AppImage Helper"});
+        compare(s.title, "Are you sure you want to open “tool” with AppImage Helper?");
     }
 
     function test_openProgramReplies(): void {

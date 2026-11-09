@@ -387,6 +387,9 @@ Verdict verdict(const Facts &f)
             return Verdict::RefuseRemoteProgram;
         return Verdict::Open;
     }
+    // An Expand or Compress staging name: its files are not marked yet (security review of fd5823de, m2).
+    if (f.staging)
+        return Verdict::RefuseStaging;
     if (!f.regularFile)
         return Verdict::Open;
     // Desktop entries are never handed to KIO, a web link included: KIO downloads a link's target and runs the handler of
@@ -399,7 +402,7 @@ Verdict verdict(const Facts &f)
     // content shown as a document ("photo.jpg", "notes.txt", "run.sh", "setup.exe", and the same names with invisible
     // characters or trailing spaces) is never run.
     if (f.elf && f.elfProgram) {
-        if (!showsAsProgram(f.mimeType) || !nameShowsAsProgram(name) || !asciiExtension(name))
+        if (!showsAsProgram(f.mimeType) || !nameShowsAsProgram(name) || !asciiExtension(name) || documentTailAfterOtherThanDot(f.fileName))
             return Verdict::RefuseDisguised;
         // uwsm would start a desktop entry instead of the program (a launcher's way round the refusal above).
         if (uwsmReadsAsEntry(f.path) || uwsmReadsAsEntry(name))
@@ -695,6 +698,162 @@ bool openTree(const QString &root)
     return ok;
 }
 
+bool removeTree(const QString &root)
+{
+    // The root: a folder of the user's own (or a single file of theirs), never through a link.
+    const QByteArray native = QFile::encodeName(root);
+    struct stat st{};
+    if (::lstat(native.constData(), &st) != 0)
+        return errno == ENOENT;
+    if (st.st_uid != ::geteuid())
+        return false;
+    if (!S_ISDIR(st.st_mode))
+        return ::unlink(native.constData()) == 0;
+    if ((st.st_mode & S_IRWXU) != S_IRWXU && ::chmod(native.constData(), (st.st_mode & 07777) | S_IRWXU) != 0)
+        return false;
+    int current = ::open(native.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (current < 0)
+        return false;
+    // One folder descriptor at a time: down into the first subfolder found, back up through ".." once a folder is empty,
+    // removing it by name in its parent. The names on the way down are the only state kept.
+    QList<QByteArray> names;
+    bool ok = true;
+    while (current >= 0) {
+        DIR *dir = ::fdopendir(::dup(current));
+        if (!dir) {
+            ok = false;
+            break;
+        }
+        ::rewinddir(dir); // the duplicate shares its offset with `current`: always read the folder from its start
+        QByteArray down;
+        bool failed = false;
+        while (const dirent *entry = ::readdir(dir)) {
+            if (std::strcmp(entry->d_name, ".") == 0 || std::strcmp(entry->d_name, "..") == 0)
+                continue;
+            struct stat es{};
+            if (::fstatat(current, entry->d_name, &es, AT_SYMLINK_NOFOLLOW) != 0) {
+                failed = true;
+                continue;
+            }
+            if (S_ISDIR(es.st_mode)) {
+                if (es.st_uid != ::geteuid()) {
+                    failed = true;
+                    continue;
+                }
+                down = entry->d_name;
+                break;
+            }
+            if (::unlinkat(current, entry->d_name, 0) != 0)
+                failed = true;
+        }
+        ::closedir(dir);
+        if (failed) {
+            ok = false;
+            break;
+        }
+        if (!down.isEmpty()) {
+            struct stat ds{};
+            if (::fstatat(current, down.constData(), &ds, AT_SYMLINK_NOFOLLOW) != 0
+                || ((ds.st_mode & S_IRWXU) != S_IRWXU && ::fchmodat(current, down.constData(), (ds.st_mode & 07777) | S_IRWXU, 0) != 0)) {
+                ok = false;
+                break;
+            }
+            const int child = ::openat(current, down.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+            if (child < 0) {
+                ok = false;
+                break;
+            }
+            ::close(current);
+            current = child;
+            names.append(down);
+            continue;
+        }
+        // Empty: back up and remove it by name, or, at the root, remove the root itself.
+        if (names.isEmpty()) {
+            ::close(current);
+            current = -1;
+            ok = ::rmdir(native.constData()) == 0;
+            break;
+        }
+        const int parent = ::openat(current, "..", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        ::close(current);
+        current = parent;
+        if (current < 0 || ::unlinkat(current, names.takeLast().constData(), AT_REMOVEDIR) != 0) {
+            ok = false;
+            break;
+        }
+    }
+    if (current >= 0)
+        ::close(current);
+    return ok;
+}
+
+bool insideStaging(const QString &path)
+{
+    static const QRegularExpression staging(QStringLiteral(R"(\A\.grassfield-(?:expand-[0-9a-f]{8}|compress-[0-9a-f]{8}\.zip)\z)"));
+    for (const QString &component : path.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
+        if (staging.match(component).hasMatch())
+            return true;
+    }
+    return false;
+}
+
+namespace
+{
+// `name` ends (after its trailing spaces and dots) in 1 to 5 ASCII letters or digits, one letter at least, right after a
+// character that is not an ASCII dot, and "x." plus them is a document or archive type (no type of a program's own).
+bool documentTail(QString name)
+{
+    while (!name.isEmpty() && (name.back().isSpace() || name.back() == QLatin1Char('.')))
+        name.chop(1);
+    qsizetype start = name.size();
+    bool letter = false;
+    while (start > 0) {
+        const QChar c = name.at(start - 1);
+        if (c.unicode() > 0x7F || !c.isLetterOrNumber())
+            break;
+        letter = letter || c.isLetter();
+        --start;
+    }
+    const qsizetype length = name.size() - start;
+    if (length < 1 || length > 5 || !letter || start == 0 || name.at(start - 1) == QLatin1Char('.'))
+        return false;
+    const QList<QMimeType> types = QMimeDatabase().mimeTypesForFileName(QStringLiteral("x.") + name.mid(start));
+    if (types.isEmpty())
+        return false;
+    for (const QMimeType &t : types) {
+        if (showsAsProgram(t.name()))
+            return false;
+    }
+    return true;
+}
+} // namespace
+
+bool documentTailAfterOtherThanDot(const QString &name)
+{
+    // Read the way Files judges names (cleanName: lookalike dots folded, accents dropped, fullwidth letters made plain)...
+    if (documentTail(cleanName(name)))
+        return true;
+    // ... and the way it is drawn: invisible characters dropped, blank glyphs as spaces, no compatibility folding (a "TM" sign
+    // stays a sign, never the letters T and M joined to what follows), accents dropped except a mark below a letter (canonical
+    // combining class 220: a dot below sits on the line, where a full stop does). "vidéo" reads "video"; "Invoice" with a dot
+    // below and then "pdf" reads as "Invoice", a mark, "pdf".
+    QString drawn;
+    for (const char32_t c : name.normalized(QString::NormalizationForm_D).toUcs4()) {
+        const QChar::Category category = QChar::category(c);
+        if (category == QChar::Other_Format || defaultIgnorable(c))
+            continue;
+        if ((category == QChar::Mark_NonSpacing || category == QChar::Mark_Enclosing) && QChar::combiningClass(c) != 220)
+            continue;
+        if (blankGlyph(c)) {
+            drawn += QLatin1Char(' ');
+            continue;
+        }
+        drawn += QString::fromUcs4(&c, 1);
+    }
+    return documentTail(drawn);
+}
+
 QByteArray remoteOrigin(const QUrl &source)
 {
     static const QStringList local = {QStringLiteral("file"),        QStringLiteral("trash"),         QStringLiteral("desktop"),
@@ -759,14 +918,18 @@ Facts inspect(const QUrl &url)
     const QString itemPath = url.toLocalFile();
     const QFileInfo item(itemPath);
     f.fileName = item.fileName();
+    f.staging = insideStaging(itemPath);
     f.regularFile = item.isFile();
     f.executable = f.regularFile && item.isExecutable();
-    if (!f.regularFile)
+    if (!f.regularFile) {
+        f.staging = f.staging || insideStaging(item.canonicalFilePath()); // a link to a staging folder too
         return f;
+    }
     // A link's final target decides (its trust, its permission bits, its folder); the name stays the link's (what the user sees).
     f.path = item.canonicalFilePath();
     if (f.path.isEmpty())
         f.path = item.absoluteFilePath();
+    f.staging = f.staging || insideStaging(f.path);
     const QMimeType mime = QMimeDatabase().mimeTypeForFile(item);
     f.mimeType = mime.name();
     f.mimeAncestors = mime.allAncestors();
