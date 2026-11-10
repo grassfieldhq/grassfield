@@ -1,5 +1,5 @@
 # ADR-0054: Qt apps and LibreOffice use Grassfield's Open and Save panels
-Status: Proposed (2026-11-08), applied provisionally (owner rule of 2026-10-28), awaiting the owner's ratification · Date:
+Status: Accepted (owner ratification of 2026-11-10; applied since #25, 2026-11-08) · Date:
 2026-11-08 · Decider: owner (ratify), integrator (merge) · Number: 0054 · Amends: owner decision Q3 of ADR-0035 (2026-10-27,
 "Qt keeps `gtk3`")
 
