@@ -209,6 +209,9 @@ public:
     Q_INVOKABLE QStringList desktopEntries(const QString &dir) const;
     Q_INVOKABLE QString writeAutostart(const QString &path, const QString &text) const;
     Q_INVOKABLE QString removeAutostart(const QString &path) const;
+    // Default web browser (ADR-0055 D-6): writes the session's list or the record, and nothing else (isDefaultAppsWrite); "" or a
+    // reason. A dev session writes only under <worktree>/.dev, never the owner's ~/.config.
+    Q_INVOKABLE QString writeDefaultAppsFile(const QString &path, const QString &text) const;
     // Emit fileChanged(path) whenever the file is created, replaced, changed or removed.
     Q_INVOKABLE bool watch(const QString &path);
     // Settings > Displays (ADR-0031). displays.conf holds the kept choices (read at every parse by

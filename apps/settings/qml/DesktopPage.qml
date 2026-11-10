@@ -272,9 +272,24 @@ SettingsPage {
     // resolves the default again. The choice is written to the session's own list and recorded as the user's (DefaultBrowser.js).
     property var browserChoices: []
     property string browserCurrent: ""
+    // A short sentence under the row when the last choice could not be kept ("" otherwise).
+    property string browserError: ""
 
     function entriesOf(dir: string): var {
         return root.backend.desktopEntries(dir).map(f => ({file: f, text: root.backend.readText(dir + "/" + f).text}));
+    }
+
+    // The text of the user's own lists (the configuration folder's desktop lists and mimeapps.list), in lookup order; null when one
+    // exists and cannot be read as UTF-8 (nothing is decided on a list that is not understood).
+    function ownListTexts(): var {
+        const texts = [];
+        for (const name of DefaultBrowser.ownListNames(root.backend.currentDesktops)) {
+            const file = root.backend.readText(root.backend.xdgConfigDir + "/" + name);
+            if (file.exists && !file.ok)
+                return null;
+            texts.push(file.text);
+        }
+        return texts;
     }
 
     function readBrowsers(): void {
@@ -286,32 +301,41 @@ SettingsPage {
         for (const dir of root.backend.applicationDirs)
             all = all.concat(root.entriesOf(dir));
         root.browserChoices = DefaultBrowser.browsers(all, Qt.locale().name);
-        const config = root.backend.xdgConfigDir;
-        const texts = [];
-        for (const name of [DefaultBrowser.LIST_NAME, "hyprland-mimeapps.list", "mimeapps.list"])
-            texts.push(root.backend.readText(config + "/" + name).text);
-        root.browserCurrent = DefaultBrowser.current(texts);
+        const own = root.ownListTexts();
+        const session = root.backend.readText(root.backend.xdgConfigDir + "/" + DefaultBrowser.LIST_NAME);
+        root.browserCurrent = own === null ? "" : DefaultBrowser.current([session.text].concat(own));
     }
 
-    // Records the choice as the user's first, then writes the session's list: a failure of the first leaves the list as it was.
+    function failBrowser(): bool {
+        root.browserError = qsTr("The default web browser could not be changed.");
+        return false;
+    }
+
+    // Records the choice as the user's first (with what the user's own lists name now, the baseline a later change is seen against),
+    // then writes the session's list: a failure of the first leaves the list as it was. Neither goes through any other path than the
+    // backend's guarded writer (a dev session writes only under .dev). A failure shows a short sentence under the row.
     function setBrowser(id: string): bool {
+        root.browserError = "";
         if (!root.backend || !root.browserChoices.some(b => b.id === id))
-            return false;
-        const config = root.backend.xdgConfigDir;
-        const list = root.backend.readText(config + "/" + DefaultBrowser.LIST_NAME);
+            return root.failBrowser();
+        const own = root.ownListTexts();
+        if (own === null)
+            return root.failBrowser();
+        const listPath = root.backend.xdgConfigDir + "/" + DefaultBrowser.LIST_NAME;
+        const list = root.backend.readText(listPath);
         if (list.exists && !list.ok)
-            return false;
+            return root.failBrowser();
         const next = DefaultBrowser.withBrowser(list.text, id);
         if (next === null)
-            return false;
+            return root.failBrowser();
         const statePath = root.backend.grassfieldStateDir + "/" + DefaultBrowser.STATE_NAME;
         const record = root.backend.readText(statePath);
         if (record.exists && !record.ok)
-            return false;
-        if (root.backend.writeText(statePath, DefaultBrowser.stateWithUser(record.text)) !== "")
-            return false;
-        if (root.backend.writeText(config + "/" + DefaultBrowser.LIST_NAME, next) !== "")
-            return false;
+            return root.failBrowser();
+        if (root.backend.writeDefaultAppsFile(statePath, DefaultBrowser.stateWithUser(record.text, id, DefaultBrowser.baseline(own))) !== "")
+            return root.failBrowser();
+        if (root.backend.writeDefaultAppsFile(listPath, next) !== "")
+            return root.failBrowser();
         root.browserCurrent = id;
         return true;
     }
@@ -323,6 +347,7 @@ SettingsPage {
 
         SettingsRow {
             title: qsTr("Default web browser")
+            subtitle: root.browserError
             ComboBox {
                 inline: true
                 accessibleName: qsTr("Default web browser")

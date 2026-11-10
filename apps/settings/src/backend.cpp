@@ -1,4 +1,5 @@
 #include "backend.h"
+#include <QStringDecoder>
 
 #include <algorithm>
 #include <numeric>
@@ -715,6 +716,13 @@ QString Backend::writeAutostart(const QString &path, const QString &text) const
     return writeText(path, text);
 }
 
+QString Backend::writeDefaultAppsFile(const QString &path, const QString &text) const
+{
+    if (!grassfield::settings::isDefaultAppsWrite(path, xdgConfigDir(), grassfieldStateDir(), m_devRoot, m_dev))
+        return QStringLiteral("refused"); // i18n-ignore: a reason the page maps to its own sentence
+    return writeText(path, text);
+}
+
 QString Backend::removeAutostart(const QString &path) const
 {
     if (!autostartWriteAllowed(path))
@@ -744,7 +752,12 @@ QVariantMap Backend::readText(const QString &path) const
     out["exists"] = true;
     if (!f.open(QIODevice::ReadOnly))
         return out;
-    out["text"] = QString::fromUtf8(f.read(kMaxRead));
+    // Strictly UTF-8: a file in another encoding is not read and rewritten as replacement characters (ok stays false).
+    QStringDecoder utf8(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+    const QString text = utf8(f.read(kMaxRead));
+    if (utf8.hasError())
+        return out;
+    out["text"] = text;
     out["ok"] = true;
     return out;
 }

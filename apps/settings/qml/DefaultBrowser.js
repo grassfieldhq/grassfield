@@ -13,12 +13,73 @@ var GROUP = "[Default Applications]";
 // Omarchy's routing entry: it runs omarchy-launch-browser, which reads the default browser again. Never a browser to choose.
 var ROUTING = "omarchy-browser.desktop";
 
-// Whether an Exec= line runs a launcher that resolves the default again (the fork storm of 2026-10-30), as
-// DefaultApps::isLauncherExec in apps/files does.
+// The words of an Exec= line as the desktop entry specification quotes them (double quotes with backslash escapes, and the single
+// quotes a careless writer uses), as DefaultApps::isLauncherExec in apps/files reads them.
+function execWords(exec) {
+    const words = [];
+    let cur = "";
+    let have = false;
+    let quote = "";
+    const text = String(exec);
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (quote !== "") {
+            if (c === quote)
+                quote = "";
+            else if (c === "\\" && quote === "\"" && i + 1 < text.length)
+                cur += text[++i];
+            else
+                cur += c;
+        } else if (c === "\"" || c === "'") {
+            quote = c;
+            have = true;
+        } else if (/\s/.test(c)) {
+            if (have)
+                words.push(cur);
+            cur = "";
+            have = false;
+        } else {
+            if (c === "\\" && i + 1 < text.length)
+                cur += text[++i];
+            else
+                cur += c;
+            have = true;
+        }
+    }
+    if (have)
+        words.push(cur);
+    return words;
+}
+
+function launcherWords(words, depth) {
+    if (words.length === 0 || depth > 3)
+        return true;
+    const program = words[0].split("/").pop();
+    let rest = null;
+    if (program === "uwsm-app")
+        rest = words.slice(1);
+    else if (program === "uwsm" && words[1] === "app")
+        rest = words.slice(2);
+    if (rest === null) {
+        const launchers = ["gio", "gtk-launch", "sh", "bash", "dash", "zsh", "fish", "env", "uwsm", "systemd-run", "kde-open", "gnome-open", "exo-open",
+                           "sensible-browser", "x-www-browser"];
+        return program === "" || program.indexOf("omarchy-") === 0 || program.indexOf("xdg-") === 0 || launchers.indexOf(program) >= 0;
+    }
+    // uwsm-app and `uwsm app` only start the program they are given: judge that one.
+    const dashes = rest.indexOf("--");
+    if (dashes >= 0)
+        return launcherWords(rest.slice(dashes + 1), depth + 1);
+    for (let i = 0; i < rest.length; i++) {
+        if (rest[i].indexOf("-") !== 0)
+            return launcherWords(rest.slice(i), depth + 1);
+    }
+    return true;
+}
+
+// Whether an Exec= line runs a launcher that resolves the default again (the fork storm of 2026-10-30): omarchy-*, xdg-*, gio, a
+// shell, env..., an empty line; the program uwsm-app or `uwsm app --` starts is the one judged.
 function launcherExec(exec) {
-    const program = String(exec).trim().split(/\s+/)[0].split("/").pop();
-    const launchers = ["xdg-open", "gio", "xdg-settings", "gtk-launch", "uwsm-app", "sh", "bash", "env", "systemd-run"];
-    return program === "" || program.indexOf("omarchy-") === 0 || launchers.indexOf(program) >= 0;
+    return launcherWords(execWords(exec), 0);
 }
 
 function validId(id) {
@@ -110,15 +171,43 @@ function defaultOf(listText, type) {
     return "";
 }
 
-// The browser the session opens links with: the session's list first, then the user's lists in the lookup's order (the routing
-// entry left out), as Omarchy's omarchy-cmd-default-browser reads them. `texts`: the lists' text in that order, the session's first.
-function current(texts) {
+// The first application the lists (text, in lookup order) name for a type, "" when none; Omarchy's routing entry is left out, as
+// omarchy-cmd-default-browser does.
+function lookedUp(texts, type) {
     for (const t of texts) {
-        const id = defaultOf(t, "x-scheme-handler/http");
+        const id = defaultOf(t, type);
         if (id !== "" && id !== ROUTING)
             return id;
     }
     return "";
+}
+
+// The browser the session opens links with: the session's list first, then the user's lists in the lookup's order, as Omarchy's
+// omarchy-cmd-default-browser reads them. `texts`: the lists' text in that order, the session's first.
+function current(texts) {
+    return lookedUp(texts, "x-scheme-handler/http");
+}
+
+// The names of the user's own lists in the configuration folder, in lookup order: a desktop list for each item of
+// XDG_CURRENT_DESKTOP (lowercased; the session's own grassfield-mimeapps.list is not one of them), then mimeapps.list.
+function ownListNames(desktops) {
+    const out = [];
+    for (const d of desktops) {
+        const name = String(d).toLowerCase();
+        if (/^[a-z0-9._+-]+$/.test(name) && name !== "grassfield" && out.indexOf(name + "-mimeapps.list") < 0)
+            out.push(name + "-mimeapps.list");
+    }
+    out.push("mimeapps.list");
+    return out;
+}
+
+// What the user's own lists name for each web type now: {type: id or ""}. The record keeps it as the baseline against which a later
+// change (xdg-settings, omarchy default browser, a browser's own check) is seen.
+function baseline(ownTexts) {
+    const out = {};
+    for (const t of WEB_TYPES)
+        out[t] = lookedUp(ownTexts, t);
+    return out;
 }
 
 // The list text with `type` set to `id` in [Default Applications] (the group added when missing); every other line kept, a
@@ -182,16 +271,23 @@ function withBrowser(listText, id) {
     return text;
 }
 
-// The record's text with "web.state=user": the other lines of a readable record are kept, a line that is no key=value is dropped.
-function stateWithUser(stateText) {
+// The record's text for a choice of the user's: web.state=user, web.chosen=<id> and web.<type> = the baseline ("-" for nothing); the
+// other lines of a readable record are kept, a line that is no key=value is dropped. Sorted, as the other two writers do.
+function stateWithUser(stateText, chosen, base) {
+    const own = {"web.state": "user", "web.chosen": chosen};
+    for (const t of WEB_TYPES)
+        own["web." + t] = base && base[t] ? base[t] : "-";
     const keep = [];
     for (const raw of String(stateText).split("\n")) {
         const line = raw.trim();
-        if (line === "" || line.startsWith("#") || line.indexOf("=") <= 0 || line.indexOf("web.state=") === 0)
+        if (line === "" || line.startsWith("#") || line.indexOf("=") <= 0)
+            continue;
+        if (own[line.slice(0, line.indexOf("="))] !== undefined)
             continue;
         keep.push(line);
     }
-    keep.push("web.state=user");
+    for (const k of Object.keys(own))
+        keep.push(k + "=" + own[k]);
     keep.sort();
-    return "# Written by grassfield-files --seed-default-apps and Settings > Desktop & Dock (ADR-0055 D-6)\n" + keep.join("\n") + "\n";
+    return "# Written by grassfield-files --seed-default-apps, the xdg-settings stand-in and Settings > Desktop & Dock (ADR-0055 D-6)\n" + keep.join("\n") + "\n";
 }
