@@ -14,6 +14,12 @@
 #     2. the session list names X for http, https, text/html and application/xhtml+xml;
 #     3. the real /usr/bin/xdg-settings runs with the same arguments, so ~/.config/mimeapps.list follows the explicit choice;
 #     4. the record's baseline (what the user's own lists name) is refreshed; exit 0 when the effective session default is X.
+#   Before any of it X is validated, and nothing is written when it fails (exit 2, as the real tool for a missing file): X must be
+#   a desktop entry that is installed, found as xdg-settings finds it ($XDG_DATA_HOME, then $XDG_DATA_DIRS, applications/, a "-" of
+#   the id also read as a folder), whose Exec is no launcher that resolves the default again (omarchy-*, xdg-*, gio, a shell, env;
+#   uwsm-app and `uwsm app --` are judged by the program they start). A linked session list or record is refused (exit 1) and the
+#   real tool is NOT called: it would fail its own check and write our entry into mimeapps.list. A `set` is never handed to the
+#   real tool except after step 2, for the same reason.
 #   get default-web-browser, check default-web-browser X, and the http/https url-scheme variants: answered from the effective
 #   session default, so a browser's own check passes.
 #   Everything else (other properties, other schemes, anything it cannot judge) is the real tool, unchanged.
@@ -166,9 +172,96 @@ refresh_baseline() {
   write_record "${pairs[@]}"
 }
 
-# Answers from the effective session default (get, check), or the real tool when the lists name nothing.
-answer() { # action type [id] ; remaining args for passthrough in "$@" afterwards
-  :
+# The words of an Exec= line, quotes read as the desktop entry specification does (double quotes with backslash escapes, and single
+# quotes), into the array `words`.
+exec_words() { # line
+  words=()
+  local line=$1 i c cur= have=0 quote=
+  for ((i = 0; i < ${#line}; i++)); do
+    c=${line:i:1}
+    if [[ -n $quote ]]; then
+      if [[ $c == "$quote" ]]; then
+        quote=
+      elif [[ $c == '\' && $quote == '"' && $((i + 1)) -lt ${#line} ]]; then
+        cur+=${line:++i:1}
+      else
+        cur+=$c
+      fi
+    elif [[ $c == '"' || $c == "'" ]]; then
+      quote=$c
+      have=1
+    elif [[ $c == [[:space:]] ]]; then
+      ((have)) && words+=("$cur")
+      cur=
+      have=0
+    else
+      if [[ $c == '\' && $((i + 1)) -lt ${#line} ]]; then cur+=${line:++i:1}; else cur+=$c; fi
+      have=1
+    fi
+  done
+  ((have)) && words+=("$cur")
+  return 0
+}
+
+# Whether the words run a launcher that resolves the default again (the fork storm of 2026-10-30); the same rule as
+# DefaultApps::isLauncherExec in apps/files and DefaultBrowser.js in Settings.
+launcher_words() { # depth, words...
+  local depth=$1 program rest=() i found=-1
+  shift
+  (($# == 0 || depth > 3)) && return 0
+  program=${1##*/}
+  if [[ $program == uwsm-app ]]; then
+    rest=("${@:2}")
+  elif [[ $program == uwsm && ${2:-} == app ]]; then
+    rest=("${@:3}")
+  else
+    case $program in
+      '' | omarchy-* | xdg-* | gio | gtk-launch | sh | bash | dash | zsh | fish | env | uwsm | systemd-run | kde-open | gnome-open | exo-open | sensible-browser | x-www-browser) return 0 ;;
+    esac
+    return 1
+  fi
+  for i in "${!rest[@]}"; do
+    [[ ${rest[i]} == -- ]] && { found=$i; break; }
+  done
+  if ((found >= 0)); then
+    launcher_words $((depth + 1)) "${rest[@]:found+1}"
+    return
+  fi
+  for i in "${!rest[@]}"; do
+    [[ ${rest[i]} != -* ]] && { launcher_words $((depth + 1)) "${rest[@]:i}"; return; }
+  done
+  return 0
+}
+
+# The desktop file of an id, found as xdg-settings finds it: $XDG_DATA_HOME, then each of $XDG_DATA_DIRS, applications/, and a "-"
+# of the id also read as a folder (kde-foo.desktop is kde/foo.desktop).
+entry_file() { # id
+  local dir id=$1 alt f
+  local IFS=:
+  for dir in "${XDG_DATA_HOME:-${HOME:-}/.local/share}" ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+    [[ $dir == /* ]] || continue
+    f=$dir/applications/$id
+    [[ -f $f && -r $f ]] && { printf '%s\n' "$f"; return 0; }
+    if [[ $id == *-* ]]; then
+      alt=${id/-//}
+      f=$dir/applications/$alt
+      [[ -f $f && -r $f ]] && { printf '%s\n' "$f"; return 0; }
+    fi
+  done
+  return 1
+}
+
+# Whether the id may be made the default: installed, and its Exec (the first one of [Desktop Entry]) no launcher.
+usable_browser() { # id
+  local file exec
+  file=$(entry_file "$1") || { echo "xdg-settings: $1 is not an installed desktop entry" >&2; return 1; }
+  exec=$(awk '/^\[/ { g = ($0 == "[Desktop Entry]"); next } g && /^Exec[ \t]*=/ { sub(/^Exec[ \t]*=[ \t]*/, ""); print; exit }' "$file" 2>/dev/null)
+  exec_words "$exec"
+  if launcher_words 0 "${words[@]}"; then
+    echo "xdg-settings: $1 runs a launcher that resolves the default browser again; it cannot be the default" >&2
+    return 1
+  fi
+  return 0
 }
 
 action=${1:-}
@@ -187,7 +280,10 @@ case $prop in
     ;;
   *) passthrough "$@" ;;
 esac
-[[ $cfg == /* && $state_dir == /* ]] || passthrough "$@"
+if [[ $cfg != /* || $state_dir != /* ]]; then
+  [[ $action == set ]] && { echo "xdg-settings: no home folder to write the default browser to" >&2; exit 1; }
+  passthrough "$@"
+fi
 
 case $action in
   get)
@@ -202,16 +298,25 @@ case $action in
     exit 0
     ;;
   set)
-    valid_id "$id" || passthrough "$@"
-    [[ -L $session_list || -L $record ]] && passthrough "$@"
+    # Nothing is written, and the real tool never runs, unless the id is an installed entry that is no launcher: the real tool would
+    # fail its own check against the session list and write our entry into the user's mimeapps.list.
+    if ! valid_id "$id"; then
+      echo "xdg-settings: '$id' is not a desktop entry that can be the default web browser" >&2
+      exit 2
+    fi
+    usable_browser "$id" || exit 2
+    if [[ -L $session_list || -L $record ]]; then
+      echo "xdg-settings: the session's default applications file or its record is a link; not changed" >&2
+      exit 1
+    fi
     # 1. the record first: whatever happens next, the choice is the user's
-    write_record "web.state=user" "web.chosen=$id" || passthrough "$@"
+    write_record "web.state=user" "web.chosen=$id" || { echo "xdg-settings: the record could not be written; not changed" >&2; exit 1; }
     # 2. the session list
-    write_session_list "$id" || passthrough "$@"
+    write_session_list "$id" || { echo "xdg-settings: the session's list could not be written" >&2; exit 1; }
     # 3. the real tool, so ~/.config/mimeapps.list follows
     "$real" "$@"
     rc=$?
-    # 4. baseline, and the answer: the effective session default
+    # 4. baseline, and the answer: success only when the effective session default is the new id
     refresh_baseline
     now=$(effective "$type")
     if [[ $now == "$id" ]]; then exit 0; fi
