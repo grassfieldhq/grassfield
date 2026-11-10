@@ -64,24 +64,36 @@ browser keeps it.
   - Rule 2, a later choice wins: after the seed only the user's own lists are watched (the configuration folder's `mimeapps.list` and
     desktop lists; a package update of `/usr/share/applications/mimeapps.list` is nothing) and the session list. A different value
     in the user's lists (xdg-settings outside the session, a browser's check), or a session-list entry that is no more ours
-    (Change All… in Files), is the person's choice: the seeded entries go (the person's own entry stays) and the group is `done`.
+    (Change All… in Files), is the person's choice: the seeded entries go from the session list (the person's own entry stays) and
+    the group is `done`. One exception that is no change of mind: every changed type now naming the group's own application
+    (`xdg-mime default sanaga.desktop …`, Notes' own "open .md with Notes", `gio mime`) agrees with the seed; only the baseline moves.
     A `user` record yields the same way: a later value in the user's own list that is not the choice itself is followed (the
     session entries go, `done`); lists that agree with the choice only move the baseline. Never re-seeded after that. An
     unreadable or non-UTF-8 list, a corrupt record, an unknown record value, a record without its baseline, a linked session list:
-    nothing is written.
-  - A browser's "make default" works at once (decision of the review of PR #38): the real `xdg-settings set default-web-browser X`
-    writes `~/.config/mimeapps.list`, then checks the lookup, which still answers Sanaga from the session list, so it exits 4 and its
-    rollback wrote our own entry into the user's list. `packaging/session-bin/xdg-settings`, on the PATH of the Grassfield session
-    only (as the Chromium stand-in), handles `set default-web-browser X` and `set default-url-scheme-handler http|https X`: the
-    record says `user` and the choice first, then the session list names X for the four web types, then the real
-    `/usr/bin/xdg-settings` runs (by absolute path, never by PATH; a real path that is the stand-in stops with an error, a test
-    covers it) so `~/.config/mimeapps.list` follows the explicit choice, then the baseline is refreshed; exit 0 when the effective
-    session default is X. `get` and `check` for the web browser and the http/https schemes answer from the effective session
-    default, so a browser's own check passes; everything else is the real tool. `omarchy default browser` runs it (tested).
+    nothing is written. **Grassfield never writes, edits or deletes a line of `~/.config/mimeapps.list` or of any list of the user's
+    own**: the lines the person or an app makes (xdg-mime, gio, a browser) survive every start byte for byte and win
+    (`tests/integration/seed_real_xdg.sh` runs the real `xdg-mime default` and `gio mime`). Writes to the session list: a removal
+    (a group the person took over) before the record, an addition (a first seed) after it, so that a failed write never leaves
+    our entries behind for a group that is no more ours, nor entries that the next start would read as the person's own.
+  - A browser's "make default" through xdg-settings works at once (decision of the review of PR #38): the real
+    `xdg-settings set default-web-browser X` writes `~/.config/mimeapps.list`, then checks the lookup, which still answers Sanaga
+    from the session list, so it exits 4 and its rollback writes our own entry into the user's list.
+    `packaging/session-bin/xdg-settings`, on the PATH of the Grassfield session only (as the Chromium stand-in), handles
+    `set default-web-browser X` and `set default-url-scheme-handler http|https X`. X is validated first and nothing is written when
+    it fails (exit 2): it must be an installed desktop entry, found as xdg-settings finds it, whose `Exec` is no launcher (the
+    rule of `isLauncherExec`: omarchy-*, xdg-*, gio, a shell, env; `uwsm app --` and `uwsm-app` judged by the program they start).
+    A linked session list or record is refused (exit 1) without calling the real tool. Then the record says `user` and the choice,
+    the session list names X for the four web types, the real `/usr/bin/xdg-settings` runs (by absolute path, never by PATH; a
+    real path that is the stand-in stops with an error, a test covers it) so `~/.config/mimeapps.list` follows the explicit
+    choice, the baseline is refreshed, and the exit is 0 only when the effective session default really is X. `get` and `check` for
+    the web browser and the http/https schemes answer from the effective session default, so a browser's own check passes;
+    everything else is the real tool. `omarchy default browser` runs it (tested). The stand-in is the one writer besides Settings
+    that touches `~/.config/mimeapps.list`, and only through the real tool, for an explicit "make default".
+    Limit: an app that writes `mimeapps.list` itself through GLib/GIO (Firefox's "make default" calls
+    `g_app_info_set_as_default_for_type`, as `gio mime` does) does not pass through xdg-settings: its choice wins at the next
+    session start (the session list shadows `mimeapps.list` until then). A watcher that re-runs the seed when `mimeapps.list`
+    changes would close that gap; it is not built here.
     Same-browser re-selection (Chromium again after a seed that recorded Chromium) is a choice like any other there.
-  - Leftovers of the earlier failed rollback: lines in `~/.config/mimeapps.list` that are exactly `type=sanaga.desktop[;]` for a type
-    the record of a `seeded` group shows had another value are removed by the seed; any other line, and any file when the group is
-    not `seeded`, is left.
   - Settings > Desktop & Dock "Default web browser" (macOS 27 has it in that pane): a popup of the installed browsers, i.e. desktop
     entries with `WebBrowser` in `Categories` that handle http or https, are shown, and are not `omarchy-browser.desktop` nor an
     entry whose `Exec` is a launcher that resolves the default again. It records `user`, the choice and the baseline first, then
@@ -106,10 +118,12 @@ browser keeps it.
 
 ## How a user changes the default
 
-A browser: Settings > Desktop & Dock > Default web browser, `omarchy default browser`, or a browser's own "make default": all of them
-win at once in the session (D-6). Notes: Files > Get Info > Open with > Change All…, which writes the session list's entry for the
-type: the seed sees an entry that is no more Notes, marks the group done and leaves the person's entry. `xdg-mime default` run
-outside the session stand-in writes `mimeapps.list`; the next session start sees a value that differs from the record and follows it.
+A browser: Settings > Desktop & Dock > Default web browser, `omarchy default browser`, or a browser's own "make default" through
+xdg-settings: all of them win at once in the session (D-6); a browser that writes the list through GLib/GIO (Firefox) wins at the next
+session start. Notes: Files > Get Info > Open with > Change All…, which writes the session list's entry for the type: the seed sees
+an entry that is no more Notes, marks the group done and removes its own other entry, leaving the person's. `xdg-mime default` and
+`gio mime` write `mimeapps.list`: their lines are never touched; naming Notes or Sanaga they agree with the seed, naming another
+application the next session start follows them.
 Chromium is never removed by this change; the Dock's Chromium tile is dragged back in like any app.
 
 ## Not done
