@@ -292,13 +292,21 @@ Scope {
         target: Capabilities
 
         function onFeaturesChanged(): void {
-            if (!root.open && Capabilities.has("overview"))
-                Compositor.overview({
-                    on: false,
-                    durationMs: 0
-                });
+            root.resetPluginOverview();
         }
     }
+
+    function resetPluginOverview(): void {
+        if (!root.open && Capabilities.has("overview"))
+            Compositor.overview({
+                on: false,
+                durationMs: 0
+            });
+    }
+
+    // Built after "started" (shell.qml, ADR-0056 amendment), this surface can miss the capabilities event that announced the
+    // plugin: the same reset runs once on arrival (idempotent).
+    Component.onCompleted: root.resetPluginOverview()
 
     // True between releasing the exclusive keyboard grab and the pending action.
     readonly property bool releasing: stage === "releasing"

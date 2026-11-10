@@ -600,10 +600,9 @@ ShellRoot {
         activeAsync: !root.deferredHeld
         onItemChanged: {
             if (item)
-                early.deliver("search", item);
+                early.attach("search", item);
         }
         Search {
-            id: searchSurface
             ipcEnabled: false
         }
     }
@@ -638,10 +637,9 @@ ShellRoot {
         activeAsync: !root.deferredHeld
         onItemChanged: {
             if (item)
-                early.deliver("overview", item);
+                early.attach("overview", item);
         }
         Overview {
-            id: overviewSurface
             ipcEnabled: false
             // The session lock owns the screen and the keyboard: the overview closes and focuses nothing.
             locked: SessionState.locked
@@ -653,10 +651,9 @@ ShellRoot {
         activeAsync: !root.deferredHeld
         onItemChanged: {
             if (item)
-                early.deliver("apps", item);
+                early.attach("apps", item);
         }
         AppsController {
-            id: appsSurface
             ipcEnabled: false
         }
     }
@@ -741,13 +738,18 @@ ShellRoot {
             console.info("grassfield-shell: early request", surface, what, "(the surface is still being built)");
         }
 
-        // The loader built `item`: what was asked meanwhile happens now (the surface's own checks apply: a locked session
-        // refuses, as for a request made later).
-        function deliver(surface: string, item: var): void {
+        // The loader built `item`: the surface's own IPC handler takes over from the forwarding one (never two for one target), and
+        // what was asked meanwhile is performed on the next turn of the event loop, once `root.<surface>Surface` is bound and
+        // ExclusiveSurfaces watches it (a request performed inside the loader's own item-changed signal skipped the exclusion:
+        // review of ddaf5c2e, MED-2). The surface's own checks apply (a locked session refuses, as for any request).
+        function attach(surface: string, item: var): void {
             console.info("grassfield-shell: surface built", surface);
-            // The forwarding handler goes off first, then the surface's own comes on: never two for one target.
             live = Object.assign({}, live, {[surface]: true});
             item.ipcEnabled = true;
+            Qt.callLater(early.replay, surface, item);
+        }
+
+        function replay(surface: string, item: var): void {
             const p = pending[surface];
             delete pending[surface];
             if (!p || !p.open || Date.now() - p.at > Tokens.deferredRequestMaxAgeMs)
@@ -785,6 +787,23 @@ ShellRoot {
             if (VisualFixtures.dev)
                 early.ask("search", "close", "");
         }
+
+        // The test hooks of the surface itself, before it exists: gated as its own, answering "not ready" (a void one is ignored).
+        function query(text: string): void {
+            if (VisualFixtures.dev)
+                console.info("grassfield-shell: search query ignored, the surface is still being built");
+        }
+
+        function filter(id: string): void {
+            if (VisualFixtures.active)
+                console.info("grassfield-shell: search filter ignored, the surface is still being built");
+        }
+
+        function status(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
     }
     IpcHandler {
         target: "apps"
@@ -801,6 +820,31 @@ ShellRoot {
         function close(): void {
             early.ask("apps", "close", "");
         }
+
+        // The test hooks of the surface itself, before it exists: gated as its own, answering "not ready".
+        function status(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function edit(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function removable(json: string): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function ask(id: string): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
     }
     IpcHandler {
         target: "overview"
@@ -816,6 +860,25 @@ ShellRoot {
 
         function close(): void {
             early.ask("overview", "close", "");
+        }
+
+        // The test hooks of the surface itself, before it exists: gated as its own, answering "not ready".
+        function holdNextRelease(ms: int): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function dropProbe(address: string, spaceId: int): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function status(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
         }
     }
 

@@ -23,7 +23,15 @@ QtObject {
 
             target: watcher.modelData.target
 
+            // A surface built late can appear already open (a request made before it existed, performed on its arrival): it is
+            // the newest opener, so it closes the others as an opening would.
+            Component.onCompleted: watcher.closeOthers()
+
             function onOpenChanged(): void {
+                watcher.closeOthers();
+            }
+
+            function closeOthers(): void {
                 if (!watcher.modelData.target || !watcher.modelData.target.open)
                     return;
                 for (let i = 0; i < root.surfaces.length; i++) {

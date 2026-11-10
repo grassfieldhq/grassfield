@@ -8,6 +8,8 @@
 # building until `qs ipc call deferred release`; requests are sent meanwhile, then the surfaces are built and read back.
 #   case 1  search open needle; apps toggle twice            -> after the release Search is open on "needle", Apps closed
 #   case 2  apps open; search open x then search close       -> after the release Apps is open, Search closed
+#   case 3  apps open and search open, before the release     -> exactly one of them is open (ExclusiveSurfaces), and a test hook
+#                                                                before the surface exists answers "not ready"
 # and the shell log holds no "Handler was registered but will not be used" (two handlers for one target) and no QML TypeError,
 # ReferenceError or binding loop. The shell is restarted normally at the end.
 #
@@ -64,6 +66,21 @@ ipc apps open >/dev/null; ipc search open x >/dev/null; ipc search close >/dev/n
 ipc deferred release >/dev/null
 until_ok 20 is apps .open true; check "case 2: Apps is open once built" $?
 is search .open false; check "case 2: an early Search open then close ends closed" $?
+
+# case 3: two different surfaces asked before they exist end with exactly ONE open (ExclusiveSurfaces: the keyboard has one owner)
+restart_held 1; check "case 3: the shell started with the deferred surfaces held" $?
+until_ok 20 held
+settle
+[[ $(ipc search status) == "not ready" && $(ipc apps status) == "not ready" && $(ipc overview status) == "not ready" ]]; check "case 3: a test hook before the surface exists answers 'not ready'" $?
+ipc apps open >/dev/null; ipc search open y >/dev/null
+ipc deferred release >/dev/null
+both_settled() { [[ $(st apps .open) != "" && $(st search .open) != "" ]]; }
+until_ok 20 both_settled
+sleep 1
+n=0
+[[ $(st apps .open) == true ]] && n=$((n + 1))
+[[ $(st search .open) == true ]] && n=$((n + 1))
+[[ $n == 1 ]]; check "case 3: apps and search asked early end with exactly one open ($n)" $?
 
 # the log of the last held run
 ! grep -q "will not be used because another handler" "$dev/shell.log"; check "log: no two IPC handlers for one target" $?
