@@ -221,6 +221,9 @@ def verify(src, tree, roots_to_split=ROOTS):
     """The problems (a list of strings) that make TREE differ from SRC by more than the import lines; empty when it is the
     shipped form of SRC. Independent of migrate(): it compares the two trees line by line."""
     problems = []
+    for p in sorted(tree.rglob("*")):
+        if p.is_symlink():
+            problems.append(f"{p.relative_to(tree)}: a symlink (the package holds files and directories only)")
     src_files = {p.relative_to(src) for p in src.rglob("*") if p.is_file()}
     out_files = {p.relative_to(tree) for p in tree.rglob("*") if p.is_file()}
     roots = [r for r in roots_to_split if (src / r).is_file()]
@@ -254,10 +257,23 @@ def verify(src, tree, roots_to_split=ROOTS):
             stub, _ = split_root(s, s.read_text(encoding="utf-8"))
             if t.read_text(encoding="utf-8") != stub:
                 problems.append(f"{rel}: is not the generated stub")
+        elif len(rel.parts) == 1 and rel.suffix == ".qml":
+            # a kept root (security.qml, ADR-0056 D-5) ships verbatim
+            if s.read_bytes() != t.read_bytes():
+                problems.append(f"{rel}: a kept root differs from the source (it ships byte for byte)")
         elif rel.suffix == ".qml":
             compare(s.read_text(encoding="utf-8").split("\n"), t.read_text(encoding="utf-8").split("\n"), t, str(rel))
         elif s.read_bytes() != t.read_bytes():
             problems.append(f"{rel}: differs from the source (only .qml import lines may)")
+    # An independent whole-file check, which shares nothing with the header parser: no .qml file of the package, a kept root
+    # apart (byte-equal above), has a line that imports qs (a file reverted to `import qs.*`, or one the parser stopped short of).
+    for p in sorted(tree.rglob("*.qml")):
+        rel = p.relative_to(tree)
+        if len(rel.parts) == 1 and rel.name not in roots and (src / rel).is_file():
+            continue
+        for i, line in enumerate(p.read_text(encoding="utf-8").split("\n")):
+            if re.match(r"^\s*import\s+qs\b", line):
+                problems.append(f"{rel}:{i + 1}: still imports qs (`{line.strip()}`)")
     for r in roots:
         core = tree / (pathlib.Path(r).stem + "-core.qml")
         if not core.is_file():

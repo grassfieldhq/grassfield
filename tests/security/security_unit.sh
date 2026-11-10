@@ -40,9 +40,16 @@ check bash -c '[[ "$(sha256sum shell/security/host/SecurityHost.qml | cut -d" " 
 # The tool that makes the shipped UI tree (ADR-0056, Proposed): it rewrites the imports of every file the UI process loads, the
 # polkit agent and the secret sheets included, and verifies the package equals the source apart from them. A change of it can
 # change what ships, so it is pinned the same way (the opus review of #37, MAJOR-1).
-migrate_pinned=78306cc1d8c55fa26c4ae28a4e8d767af9d08ee3e82887a9c79c5bb31a65fb90
+migrate_pinned=c38c65115da0131deab30f78e5eb6e9bb358a3c579e39f609a56bdc7c598b30e
 desc="migrate: scripts/dev/migrate-qs-imports.py is pinned by its SHA-256 (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum scripts/dev/migrate-qs-imports.py | cut -d" " -f1)" == "$1" ]] || { echo "scripts/dev/migrate-qs-imports.py changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$migrate_pinned"
+# What runs the verification is pinned with the tool (the delta review of #37, LOW-4): the CI step (check-migrate.sh) and the two
+# lines of the PKGBUILD that migrate and verify the package. A weakened or removed one would let a changed tree ship.
+check_migrate_pinned=2ff879212f6044bd6f6417d86456febad202c9071112189818a44c539a4140d1
+desc="migrate: scripts/dev/check-migrate.sh (the CI step that verifies the migrated copy) is pinned by its SHA-256 (any change: security review required)"
+check bash -c '[[ "$(sha256sum scripts/dev/check-migrate.sh | cut -d" " -f1)" == "$1" ]] || { echo "scripts/dev/check-migrate.sh changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$check_migrate_pinned"
+desc="migrate: the PKGBUILD migrates and then verifies the package (both lines exactly, in this order), and just check-quick runs check-migrate"
+check bash -c 'grep -Fxn "  python3 -I \"\$root/scripts/dev/migrate-qs-imports.py\" --in-place \"\$pkgdir/usr/share/grassfield/shell\" || return 1" packaging/arch/PKGBUILD | cut -d: -f1 > "$1" && grep -Fxn "  python3 -I \"\$root/scripts/dev/migrate-qs-imports.py\" --verify --src \"\$root/shell\" \"\$pkgdir/usr/share/grassfield/shell\" || return 1" packaging/arch/PKGBUILD | cut -d: -f1 >> "$1" && [[ $(wc -l < "$1") == 2 && $(( $(tail -1 "$1") - $(head -1 "$1") )) == 2 ]] && grep -qE "^check-quick:.* check-migrate( |$)" justfile' _ "$(mktemp)"
 desc="root: the readable second check (tests/security/root_check.py): ASCII only, no backslash, no regex literal, template string or bracket outside strings; every identifier one the root uses today; imports QtQuick, Quickshell, Quickshell.Io and qs.security.host only, wherever they stand; ShellRoot, SecurityHost and IpcHandler the only types; one SecurityHost; one IpcHandler, target security, the functions state and heartbeat only"
 check python3 -I tests/security/root_check.py "$qml"
 desc="root check selftest: the root passes (with LF and with CRLF) and each of the 38 planted mutants (next-line braces, comments before braces, indented imports, a singleton's property, names as strings or through Reflect, a U+2028 ending a comment, Unicode escapes, a second IpcHandler, an animation, Quickshell.reload, a third function, a renamed target, a second SecurityHost, the lock, idle, polkit or qs.security module imported into the root, ...) is refused"

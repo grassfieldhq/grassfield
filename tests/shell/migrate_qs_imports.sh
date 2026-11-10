@@ -88,6 +88,19 @@ check bash -c '! python3 -I "$1" --verify "$2" >/dev/null 2>&1' _ "$mig" "$tmp/m
 rm -rf "$tmp/m"; cp -r "$tmp/shell" "$tmp/m"; sed -i 's/kill", "-ABRT"/kill", "-TERM"/' "$tmp/m/shell.qml"
 desc="mutant m2i: the stub changed (not the generated one) is caught by --verify"
 check bash -c '! python3 -I "$1" --verify "$2" >/dev/null 2>&1' _ "$mig" "$tmp/m"
+# Mutants the line comparison alone accepts (review of #37 delta, LOW-1..3): a file left as the source (still `import qs.*`: a
+# reverted file, or the parser-bug case where the header parser stops at a blank line and leaves files unmigrated), a kept root
+# rewritten, a symlink where a file should be.
+plain() { # name, description, setup command run in the mutated copy
+  rm -rf "$tmp/m"; cp -r "$tmp/shell" "$tmp/m"
+  (cd "$tmp/m" && eval "$3")
+  desc="mutant $1: $2 is caught by --verify"
+  check bash -c '! python3 -I "$1" --verify "$2" >/dev/null 2>&1' _ "$mig" "$tmp/m"
+}
+plain m4a "one file left as the source (a file reverted to import qs.*)" "cp '$root/shell/platform/Compositor.qml' platform/Compositor.qml"
+plain m4b "three files left unmigrated (the header parser ends at a blank line)" "for f in platform/Compositor.qml services/Apps.qml dock/Dock.qml; do cp '$root/shell/'\$f \$f; done"
+plain m4c "security.qml rewritten in the package (a kept root ships byte for byte)" "sed -i '0,/^import qs.security.host/s//import \"security\/host\"/' security.qml"
+plain m4d "a symlink in place of a file" "rm lib/qmldir; ln -s '$root/shell/lib/qmldir' lib/qmldir"
 rm -rf "$tmp/m"
 desc="the stub kills its own process with Quickshell.processId (no shell, no PPID)"
 check bash -c 'grep -q "command: \[\"kill\", \"-ABRT\", String(Quickshell.processId)\]" "$1/shell.qml" && ! grep -q "sh\", \"-c\"" "$1/shell.qml"' _ "$tmp/shell"
