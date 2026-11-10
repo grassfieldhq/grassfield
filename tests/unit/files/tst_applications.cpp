@@ -944,9 +944,9 @@ TEST(BundledApps, WhenInDoubtNothingIsWritten)
 TEST(BundledApps, NoLauncherExecIsEverABrowser)
 {
     for (const char *exec : {"omarchy-launch-browser %U", "/usr/bin/omarchy-launch-browser", "omarchy-browser %U", "xdg-open %u", "/usr/bin/gio open %u", "sh -c 'xdg-open %u'",
-                             "env FOO=1 chromium", "uwsm-app -- chromium", "xdg-settings get default-web-browser", "", "   "})
+                             "env FOO=1 chromium", "uwsm-app -- xdg-open %u", "xdg-settings get default-web-browser", "", "   "})
         EXPECT_TRUE(DefaultApps::isLauncherExec(QString::fromLatin1(exec))) << exec;
-    for (const char *exec : {"sanaga %U", "/usr/bin/sanaga", "chromium --new-window %U", "firefox %u", "/usr/lib/grassfield/session-bin/google-chrome-stable %U", "grassfield-notes %F"})
+    for (const char *exec : {"sanaga %U", "/usr/bin/sanaga", "chromium --new-window %U", "firefox %u", "uwsm-app -- chromium %U", "/usr/lib/grassfield/session-bin/google-chrome-stable %U", "grassfield-notes %F"})
         EXPECT_FALSE(DefaultApps::isLauncherExec(QString::fromLatin1(exec))) << exec;
     for (const DefaultApps::BundledGroup &g : DefaultApps::bundledGroups()) {
         EXPECT_NE(g.desktopId, QStringLiteral("omarchy-browser.desktop"));
@@ -957,4 +957,237 @@ TEST(BundledApps, NoLauncherExecIsEverABrowser)
     ASSERT_TRUE(t.omarchyInstall());
     ASSERT_TRUE(t.seed());
     EXPECT_FALSE(QString::fromUtf8(t.session()).contains(QStringLiteral("omarchy-browser")));
+}
+
+// ---- Review of PR #38 (ADR-0055 D-6) -------------------------------------------------------------------------------------------
+namespace
+{
+QHash<QString, QString> sessionDefaults(const BundledTree &t)
+{
+    return DefaultApps::defaults(QString::fromUtf8(t.session()));
+}
+QHash<QString, QString> recordOf(const BundledTree &t)
+{
+    QHash<QString, QString> state;
+    DefaultApps::parseState(QString::fromUtf8(BundledTree::read(t.state)), &state);
+    return state;
+}
+QString web(const char *type)
+{
+    return QStringLiteral("web.") + QString::fromLatin1(type);
+}
+} // namespace
+
+// MED-1: the record is written before the session list. A record that cannot be written leaves the list as it was, so the entries
+// never read as the person's own choice at the next start; and entries that already name Sanaga (a list written by a first run that
+// lost its record) are ours, not a choice: the group is seeded as recorded, not marked done.
+TEST(BundledApps, TheRecordIsWrittenBeforeTheListAndAFailedRecordWritesNoList)
+{
+    BundledTree t;
+    ASSERT_TRUE(t.setUp());
+    ASSERT_TRUE(t.omarchyInstall());
+    // The state folder cannot be made: its parent is a regular file.
+    ASSERT_TRUE(BundledTree::write(t.dir.filePath(QStringLiteral("state")), "not a folder"));
+    EXPECT_FALSE(t.seed());
+    EXPECT_FALSE(QFileInfo::exists(t.config + QStringLiteral("/grassfield-mimeapps.list"))) << "no list without its record";
+    EXPECT_EQ(BundledTree::read(t.config + QStringLiteral("/mimeapps.list")).contains("chromium.desktop"), true);
+    // The record can be written again: the seed completes.
+    ASSERT_TRUE(QFile::remove(t.dir.filePath(QStringLiteral("state"))));
+    EXPECT_TRUE(t.seed());
+    EXPECT_EQ(recordOf(t).value(QStringLiteral("web.state")), QStringLiteral("seeded"));
+    EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("x-scheme-handler/http")), QStringLiteral("sanaga.desktop"));
+
+    // Our own entries without any record (an older run): not a choice.
+    BundledTree u;
+    ASSERT_TRUE(u.setUp());
+    ASSERT_TRUE(u.omarchyInstall());
+    ASSERT_TRUE(BundledTree::write(u.config + QStringLiteral("/grassfield-mimeapps.list"),
+                                   "[Default Applications]\nx-scheme-handler/http=sanaga.desktop;\ntext/html=sanaga.desktop;\n"));
+    EXPECT_TRUE(u.seed());
+    EXPECT_EQ(recordOf(u).value(QStringLiteral("web.state")), QStringLiteral("seeded")) << "ours, not the person's";
+    EXPECT_EQ(sessionDefaults(u).value(QStringLiteral("x-scheme-handler/https")), QStringLiteral("sanaga.desktop"));
+}
+
+// A first seed finds a choice of the person's in the session list itself (Change All… in Files before the seed): m6, kept out.
+// A record value this version does not know is left alone (m7): nothing is seeded over it.
+TEST(BundledApps, ASessionListChoiceAndAnUnknownRecordKeepTheSeedOut)
+{
+    {
+        BundledTree t;
+        ASSERT_TRUE(t.setUp());
+        ASSERT_TRUE(t.omarchyInstall());
+        ASSERT_TRUE(BundledTree::write(t.config + QStringLiteral("/grassfield-mimeapps.list"), "[Default Applications]\ntext/html=org.example.Viewer.desktop;\n"));
+        t.seed();
+        const QHash<QString, QString> got = sessionDefaults(t);
+        EXPECT_EQ(got.value(QStringLiteral("text/html")), QStringLiteral("org.example.Viewer.desktop"));
+        EXPECT_FALSE(got.contains(QStringLiteral("x-scheme-handler/http"))) << "a choice in the session list keeps the whole web group out";
+        EXPECT_EQ(recordOf(t).value(QStringLiteral("web.state")), QStringLiteral("done"));
+    }
+    {
+        BundledTree t;
+        ASSERT_TRUE(t.setUp());
+        ASSERT_TRUE(t.omarchyInstall());
+        ASSERT_TRUE(BundledTree::write(t.state, "web.state=weird\nweb.x-scheme-handler/http=-\n"));
+        t.seed();
+        EXPECT_FALSE(sessionDefaults(t).contains(QStringLiteral("x-scheme-handler/http"))) << "an unknown record value is never seeded over";
+        EXPECT_EQ(recordOf(t).value(QStringLiteral("web.state")), QStringLiteral("weird")) << "and not rewritten";
+        EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("text/markdown")), QStringLiteral("grassfield-notes.desktop")) << "the other group is its own";
+    }
+}
+
+// MED-3: a choice made in Settings (state "user", with its baseline) yields to a later one written to the user's own list; the lists
+// agreeing with the choice only move the baseline.
+TEST(BundledApps, AUserChoiceYieldsToALaterChangeInTheUsersOwnList)
+{
+    const auto settingsChoice = [](BundledTree &t) {
+        ASSERT_TRUE(t.setUp());
+        ASSERT_TRUE(t.omarchyInstall());
+        ASSERT_TRUE(BundledTree::write(t.state,
+                                       "web.state=user\nweb.chosen=sanaga.desktop\nweb.x-scheme-handler/http=chromium.desktop\nweb.x-scheme-handler/https=chromium.desktop\n"
+                                       "web.text/html=chromium.desktop\nweb.application/xhtml+xml=-\nnotes.state=done\n"));
+        ASSERT_TRUE(BundledTree::write(t.config + QStringLiteral("/grassfield-mimeapps.list"),
+                                       "[Default Applications]\nx-scheme-handler/http=sanaga.desktop;\nx-scheme-handler/https=sanaga.desktop;\ntext/html=sanaga.desktop;\n"
+                                       "application/xhtml+xml=sanaga.desktop;\n"));
+    };
+    {
+        BundledTree t; // nothing changed: nothing written
+        settingsChoice(t);
+        EXPECT_FALSE(t.seed());
+        EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("text/html")), QStringLiteral("sanaga.desktop"));
+    }
+    {
+        BundledTree t; // omarchy default browser / xdg-settings outside the session wrote firefox: followed
+        settingsChoice(t);
+        ASSERT_TRUE(BundledTree::write(t.config + QStringLiteral("/mimeapps.list"),
+                                       "[Default Applications]\ntext/html=firefox.desktop\nx-scheme-handler/http=firefox.desktop\nx-scheme-handler/https=firefox.desktop\n"));
+        EXPECT_TRUE(t.seed());
+        const QHash<QString, QString> got = sessionDefaults(t);
+        for (const char *type : kWebTypes)
+            EXPECT_FALSE(got.contains(QString::fromLatin1(type))) << type << ": the user's own list now decides";
+        EXPECT_EQ(recordOf(t).value(QStringLiteral("web.state")), QStringLiteral("done"));
+        EXPECT_FALSE(t.seed());
+    }
+    {
+        BundledTree t; // the list moved to the very browser chosen (the stand-in does that): the baseline moves, the choice stays
+        settingsChoice(t);
+        ASSERT_TRUE(BundledTree::write(t.config + QStringLiteral("/mimeapps.list"),
+                                       "[Default Applications]\ntext/html=sanaga.desktop\nx-scheme-handler/http=sanaga.desktop\nx-scheme-handler/https=sanaga.desktop\n"));
+        EXPECT_TRUE(t.seed());
+        EXPECT_EQ(recordOf(t).value(QStringLiteral("web.state")), QStringLiteral("user"));
+        EXPECT_EQ(recordOf(t).value(web("x-scheme-handler/http")), QStringLiteral("sanaga.desktop"));
+        EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("text/html")), QStringLiteral("sanaga.desktop"));
+        EXPECT_FALSE(t.seed());
+    }
+}
+
+// LOW: only the user's own lists are watched after the seed. A package update of /usr/share/applications/mimeapps.list (any list
+// outside the configuration folder) never removes Sanaga. A first seed still reads every list the lookup reads.
+TEST(BundledApps, OnlyTheUsersOwnListsAreWatchedAfterTheSeed)
+{
+    BundledTree t; // (no user list names the web: a system list that appears later is what the lookup would reach first)
+    ASSERT_TRUE(t.setUp());
+    const QString usr = t.dir.filePath(QStringLiteral("usr-share"));
+    ASSERT_TRUE(QDir().mkpath(usr + QStringLiteral("/applications")));
+    const QStringList lists = DefaultApps::lookupLists({t.config}, {usr}, {QStringLiteral("grassfield"), QStringLiteral("hyprland")});
+    EXPECT_TRUE(DefaultApps::seedBundledApps(t.config, t.state, {t.apps}, t.stock, lists));
+    ASSERT_TRUE(BundledTree::write(usr + QStringLiteral("/applications/mimeapps.list"), "[Default Applications]\nx-scheme-handler/http=firefox.desktop\ntext/html=firefox.desktop\n"));
+    EXPECT_FALSE(DefaultApps::seedBundledApps(t.config, t.state, {t.apps}, t.stock, lists)) << "a system list changed: not the person's choice";
+    EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("x-scheme-handler/http")), QStringLiteral("sanaga.desktop"));
+    EXPECT_EQ(recordOf(t).value(QStringLiteral("web.state")), QStringLiteral("seeded"));
+    // and a system list that names another browser before the first seed keeps the seed out, as before
+    BundledTree u; // (no user list: a system list is the one the lookup reaches)
+    ASSERT_TRUE(u.setUp());
+    const QString usr2 = u.dir.filePath(QStringLiteral("usr-share"));
+    ASSERT_TRUE(BundledTree::write(usr2 + QStringLiteral("/applications/mimeapps.list"), "[Default Applications]\nx-scheme-handler/http=firefox.desktop\n"));
+    const QStringList lists2 = DefaultApps::lookupLists({u.config}, {usr2}, {QStringLiteral("grassfield"), QStringLiteral("hyprland")});
+    DefaultApps::seedBundledApps(u.config, u.state, {u.apps}, u.stock, lists2);
+    EXPECT_FALSE(sessionDefaults(u).contains(QStringLiteral("x-scheme-handler/http")));
+}
+
+// A session-list entry that is no more Sanaga (Change All… in Files after the seed) is the person's choice: the group is done and the
+// entry stays; the other seeded entries are not touched.
+TEST(BundledApps, ASessionListEntryThatIsNoMoreOursIsTheUsersChoice)
+{
+    BundledTree t;
+    ASSERT_TRUE(t.setUp());
+    ASSERT_TRUE(t.omarchyInstall());
+    ASSERT_TRUE(t.seed());
+    const QString path = t.config + QStringLiteral("/grassfield-mimeapps.list");
+    QString text = QString::fromUtf8(t.session());
+    text = DefaultApps::withDefault(text, QStringLiteral("text/html"), QStringLiteral("org.example.Viewer.desktop"));
+    ASSERT_TRUE(BundledTree::write(path, text.toUtf8()));
+    EXPECT_TRUE(t.seed());
+    EXPECT_EQ(recordOf(t).value(QStringLiteral("web.state")), QStringLiteral("done"));
+    EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("text/html")), QStringLiteral("org.example.Viewer.desktop"));
+    EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("x-scheme-handler/http")), QStringLiteral("sanaga.desktop"));
+    EXPECT_FALSE(t.seed());
+}
+
+// MED-2 cleaning: what an earlier failed xdg-settings rollback wrote into the user's mimeapps.list (our own entry, exactly) is
+// removed when the record shows a seeded group and another value at the seed; nothing else of the file changes. A line that is not
+// exactly ours, and any file when the group is done, are left.
+TEST(BundledApps, AnEarlierRollbacksStrayEntriesAreRemovedOnlyWhenTheRecordShowsThem)
+{
+    BundledTree t;
+    ASSERT_TRUE(t.setUp());
+    ASSERT_TRUE(t.omarchyInstall());
+    ASSERT_TRUE(t.seed());
+    const QByteArray polluted = BundledTree::read(t.config + QStringLiteral("/mimeapps.list")) + "text/html=sanaga.desktop;\napplication/xhtml+xml=sanaga.desktop\n";
+    ASSERT_TRUE(BundledTree::write(t.config + QStringLiteral("/mimeapps.list"), polluted));
+    // (the user's file now reads text/html=chromium first and Sanaga's strays later: the first key wins in the lookup, and removal is by exact line)
+    EXPECT_TRUE(t.seed());
+    const QByteArray after = BundledTree::read(t.config + QStringLiteral("/mimeapps.list"));
+    EXPECT_FALSE(after.contains("sanaga.desktop")) << after.constData();
+    EXPECT_TRUE(after.contains("x-scheme-handler/mailto=HEY.desktop")) << "the rest of the user's list is as it was";
+    EXPECT_EQ(recordOf(t).value(QStringLiteral("web.state")), QStringLiteral("seeded"));
+    EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("text/html")), QStringLiteral("sanaga.desktop"));
+
+    BundledTree u; // not exactly ours: kept (and it reads as a change of the first application: the person's)
+    ASSERT_TRUE(u.setUp());
+    ASSERT_TRUE(u.omarchyInstall());
+    ASSERT_TRUE(u.seed());
+    const QByteArray other = "[Default Applications]\ntext/html=sanaga.desktop;gimp.desktop;\nx-scheme-handler/http=chromium.desktop\nx-scheme-handler/https=chromium.desktop\n";
+    ASSERT_TRUE(BundledTree::write(u.config + QStringLiteral("/mimeapps.list"), other));
+    u.seed();
+    EXPECT_EQ(BundledTree::read(u.config + QStringLiteral("/mimeapps.list")), other) << "not exactly our line: left";
+
+    BundledTree v; // done: the record does not show a seed, nothing is cleaned
+    ASSERT_TRUE(v.setUp());
+    ASSERT_TRUE(v.omarchyInstall());
+    ASSERT_TRUE(BundledTree::write(v.state, "web.state=done\n"));
+    const QByteArray stray = BundledTree::read(v.config + QStringLiteral("/mimeapps.list")) + "text/html=sanaga.desktop;\n";
+    ASSERT_TRUE(BundledTree::write(v.config + QStringLiteral("/mimeapps.list"), stray));
+    v.seed();
+    EXPECT_EQ(BundledTree::read(v.config + QStringLiteral("/mimeapps.list")), stray);
+}
+
+// LOW: the seed never targets a launcher. A ~/.local copy of sanaga.desktop whose Exec is xdg-open (plain, quoted, behind uwsm) is
+// not seeded and nothing is recorded; a real program behind uwsm is.
+TEST(BundledApps, TheSeedNeverTargetsAnEntryWhoseExecIsALauncher)
+{
+    for (const char *exec : {"xdg-open %u", "\"xdg-open\" %u", "'/usr/bin/xdg-open' %u", "uwsm app -- xdg-open %u", "uwsm-app -- omarchy-launch-browser %U", "omarchy-launch-browser %U",
+                             "env X=1 sanaga %U", "sh -c 'sanaga %U'", "gio open %u"}) {
+        BundledTree t;
+        ASSERT_TRUE(t.setUp());
+        ASSERT_TRUE(t.omarchyInstall());
+        const QString local = t.dir.filePath(QStringLiteral("local-applications"));
+        ASSERT_TRUE(BundledTree::write(local + QStringLiteral("/sanaga.desktop"),
+                                       QByteArray("[Desktop Entry]\nType=Application\nExec=") + exec + "\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n"));
+        DefaultApps::seedBundledApps(t.config, t.state, {local, t.apps}, t.stock, t.lists());
+        EXPECT_FALSE(sessionDefaults(t).contains(QStringLiteral("x-scheme-handler/http"))) << exec;
+        EXPECT_FALSE(recordOf(t).contains(QStringLiteral("web.state"))) << exec << ": nothing is recorded, the real entry may come later";
+    }
+    BundledTree t;
+    ASSERT_TRUE(t.setUp());
+    ASSERT_TRUE(t.omarchyInstall());
+    const QString local = t.dir.filePath(QStringLiteral("local-applications"));
+    ASSERT_TRUE(BundledTree::write(local + QStringLiteral("/sanaga.desktop"),
+                                   "[Desktop Entry]\nType=Application\nExec=uwsm app -- sanaga %U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n"));
+    DefaultApps::seedBundledApps(t.config, t.state, {local, t.apps}, t.stock, t.lists());
+    EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("x-scheme-handler/http")), QStringLiteral("sanaga.desktop"));
+    // the table of launchers, as the Settings row reads it
+    for (const char *exec : {"\"xdg-open\" %u", "uwsm app -- xdg-open %u", "uwsm-app xdg-settings", "uwsm app", "uwsm-app --", "/usr/bin/env FOO=1 firefox", "xdg-mime query default x"})
+        EXPECT_TRUE(DefaultApps::isLauncherExec(QString::fromLatin1(exec))) << exec;
+    for (const char *exec : {"uwsm app -- firefox %u", "uwsm-app -- chromium --new-window %U", "\"/opt/Some Browser/browser\" %U", "'zen-browser' %u"})
+        EXPECT_FALSE(DefaultApps::isLauncherExec(QString::fromLatin1(exec))) << exec;
 }

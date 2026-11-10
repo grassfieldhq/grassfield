@@ -663,7 +663,6 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   fades and Paste moves, a GNOME cut too, Copy and Esc cancel; TheClipboardIsOnlyEverEmptiedForFilesOwnCut: newer content
   kept, another manager's cut left alone, the same folder), `tst_filelogic.cpp` (the GNOME list), `tst_filescolumns.qml`
   (a cut item is faded), `tst_filesbrowser.qml` (`test_cutAndMoveItemHere`).
-- **F-19b Bundled apps** (ADR-0055 D-6): the same session start also seeds Sanaga (http, https, text/html, xhtml) and Grassfield Notes (Markdown) once through `DefaultApps::seedBundledApps` and a record in the state folder; Omarchy's stock Chromium is no choice, any other earlier choice is kept, and a later one (xdg-settings, omarchy default browser, a browser's make default, Settings > Desktop & Dock > Default web browser) always wins. Tests: `BundledApps.*` in `tests/unit/files/tst_applications.cpp`.
 - **F-19 Default applications** (owner report 2026-11-07, "there is no way to choose the default app for a file type, and
   Grassfield's apps come second when opening files"): the Finder's model. Get Info's "Open with:" pop-up lists the type's
   applications, the default marked "(default)", and Change All… makes the chosen one the type's default; the item menu's
@@ -699,6 +698,7 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   choice kept and Omarchy's stock default not, the same end to end, a Latin-1 list left byte for byte),
   `tst_folderchooser.cpp` (DefaultApplications, on KIO: Change All… in the session writes the session's list and Open With
   lists it first), `tst_filesbrowser.qml` (`test_openWithListsTheDefaultFirst`).
+- **F-19b Bundled apps** (ADR-0055 D-6): the same session start also seeds Sanaga (http, https, text/html, xhtml) and Grassfield Notes (Markdown) once through `DefaultApps::seedBundledApps` and a record in the state folder (the record is written before the list; a target whose Exec is a launcher is never seeded). Omarchy's stock Chromium is no choice, any other earlier choice is kept, and a later one wins whoever makes it: the user's own lists are watched after the seed (never the system's), a session-list entry that is no more ours (Change All…) is kept as the person's, and a `user` record yields to a later value. A browser's "make default" and `omarchy default browser` work at once through the session's xdg-settings stand-in (`packaging/session-bin/xdg-settings`). Tests: `BundledApps.*` in `tests/unit/files/tst_applications.cpp`, `tests/integration/xdg_settings_standin.sh`.
 
 ### ADRs opened by this step
 - ADR-0026 Files window frames: size by Files, position and cascade by the compositor (cross-module: Files and

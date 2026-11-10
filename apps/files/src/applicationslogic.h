@@ -193,22 +193,32 @@ struct BundledGroup {
     QStringList types;
 };
 QList<BundledGroup> bundledGroups();
-// Whether an Exec= line runs a launcher that resolves the default again (omarchy-*, xdg-open, gio, a shell...): never a browser
-// to choose or to seed (the fork storm of 2026-10-30).
+// Whether an Exec= line runs a launcher that resolves the default again (omarchy-*, xdg-*, gio, a shell, env...): never a browser
+// to choose or to seed (the fork storm of 2026-10-30). The line is read with its quotes; uwsm-app and `uwsm app [--]` only start
+// the program they are given, which is the one judged. An empty or unreadable line is a launcher.
 bool isLauncherExec(const QString &exec);
-// The text without the [Default Applications] entries of `types` whose first application is `desktopId`; the rest as it was.
+// The text without the [Default Applications] entries of `types` whose first application is `desktopId` (any application when
+// `desktopId` is empty); the rest as it was.
 QString withoutDefaults(const QString &listText, const QStringList &types, const QString &desktopId);
 // The record's "key=value" lines; false when a line is neither blank, a comment nor key=value (a corrupt record).
 bool parseState(const QString &text, QHash<QString, QString> *out);
-// The seed of the bundled apps, `stateFile` being the record (<state dir>/default-apps.state, "<group>.state" = seeded | done | user,
-// and the user's value of each type at the seed). Per group, never twice:
-//  - first time and installed: the group's types go to `configDir`/grassfield-mimeapps.list when no list names one for them, or
-//    only Omarchy's own (chromium.desktop, omarchy-browser.desktop) for the web; a choice of any other browser keeps the
-//    whole group out for good ("done");
-//  - already seeded: when the user's lists name something else for a type than at the seed (xdg-settings, omarchy default
-//    browser, a browser's "make default"), the seeded entries are removed and the group is "done";
-//  - "user" (Settings > Desktop & Dock wrote the choice) or "done": nothing.
-// An unreadable list, a list or record that is corrupt, a linked session list: nothing is decided and false is returned. True
-// when a file was written.
+// The seed of the bundled apps, `stateFile` being the record (<state dir>/default-apps.state): "<group>.state" = seeded | done |
+// user, "<group>.<type>" = what the user's own lists named for the type when the state was recorded ("-" for nothing), and
+// "<group>.chosen" = the application a user choice named. Per group:
+//  - first time, the desktop file installed and its Exec no launcher: the group's types go to `configDir`/grassfield-mimeapps.list
+//    when no list the lookup reads names one for them, or only Omarchy's own (chromium.desktop, omarchy-browser.desktop) for the
+//    web; a choice of any other application keeps the whole group out for good ("done"). Entries of the session list that already
+//    name the group's own application are not a choice;
+//  - "seeded": watched are the user's own lists (the configuration directory's mimeapps.list and desktop lists, never the system's
+//    or the data directories') and the session list. Our own entries that an earlier xdg-settings rollback left in mimeapps.list
+//    (a line exactly "type=application" for a type the record shows had another value) are removed. A different value there
+//    (xdg-settings, omarchy default browser, a browser's "make default"), or a session-list entry that is no more ours, is the
+//    person's choice: the seeded entries go (the other kept) and the group is "done";
+//  - "user" (Settings or the xdg-settings stand-in wrote the choice): the same watch; the lists agreeing with the choice only move
+//    the baseline, any other value is followed (the session entries go) and the group is "done";
+//  - "done", an unknown value, or a record without its baseline: nothing.
+// The record is written before the lists, so a failed write never leaves entries that read as the person's own. An unreadable
+// list, a list or record that is corrupt, a linked session list: nothing is decided and false is returned. True when a file was
+// written.
 bool seedBundledApps(const QString &configDir, const QString &stateFile, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
 } // namespace DefaultApps
