@@ -320,6 +320,8 @@ package_grassfield-desktop() {
   # never cached: every file was compiled at every start). The imports of the packaged copy are rewritten and shell.qml becomes
   # a stub of shell-core.qml; security.qml and the security process are unchanged (they still load by qs:, ADR-0056 D-5).
   python3 -I "$root/scripts/dev/migrate-qs-imports.py" --in-place "$pkgdir/usr/share/grassfield/shell" || return 1
+  # The package must be the source apart from its import lines (a change only the package carries would escape every source test).
+  python3 -I "$root/scripts/dev/migrate-qs-imports.py" --verify --src "$root/shell" "$pkgdir/usr/share/grassfield/shell" || return 1
 
   # Design system as a regular QML module; icons copied into the module (repo symlink resolved).
   install -d "$pkgdir/usr/lib/qt6/qml/Grassfield/Ui"

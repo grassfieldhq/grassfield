@@ -15,9 +15,9 @@ check: check-config check-schema check-cmake check-shell check-shaders check-i18
 # recipe on purpose: `just check-schema check-shell` would pass check-shell to check-schema as a file argument.
 check-quick: check-config check-schema check-cmake check-shell check-shaders check-i18n check-scripts check-inventory check-contracts check-contrast check-literals check-upstream check-version check-licenses check-migrate check-secrets
 
-# The whole shell tree migrates to file: imports (ADR-0056, scripts/dev/migrate-qs-imports.py): a new file whose import cannot be migrated fails here.
+# ADR-0056: the whole shell tree migrates to file: imports (scripts/dev/migrate-qs-imports.py), the migrated copy equals the source apart from its import lines, and it passes qmllint.
 check-migrate:
-    python3 -I scripts/dev/migrate-qs-imports.py --dry-run
+    scripts/dev/check-migrate.sh
 
 # clang-tidy over the compositor with the project's config (gate Q1); a passing full run is stamped, an unchanged tree is "up to date" (--force: scripts/dev/tidy.sh --force).
 check-tidy:

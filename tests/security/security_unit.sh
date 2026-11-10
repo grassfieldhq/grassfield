@@ -37,6 +37,12 @@ check bash -c '[[ "$(sha256sum "$1" | cut -d" " -f1)" == "$2" ]] || { echo "shel
 host_pinned=ec8c4f0edb55bbf3baed7571da8902263d8652d22c7d2607c613abadb5174375
 desc="host: the reviewed shell/security/host/SecurityHost.qml is pinned by its SHA-256 too (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum shell/security/host/SecurityHost.qml | cut -d" " -f1)" == "$1" ]] || { echo "shell/security/host/SecurityHost.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$host_pinned"
+# The tool that makes the shipped UI tree (ADR-0056, Proposed): it rewrites the imports of every file the UI process loads, the
+# polkit agent and the secret sheets included, and verifies the package equals the source apart from them. A change of it can
+# change what ships, so it is pinned the same way (the opus review of #37, MAJOR-1).
+migrate_pinned=78306cc1d8c55fa26c4ae28a4e8d767af9d08ee3e82887a9c79c5bb31a65fb90
+desc="migrate: scripts/dev/migrate-qs-imports.py is pinned by its SHA-256 (any change: security review required, then update the pinned hash)"
+check bash -c '[[ "$(sha256sum scripts/dev/migrate-qs-imports.py | cut -d" " -f1)" == "$1" ]] || { echo "scripts/dev/migrate-qs-imports.py changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$migrate_pinned"
 desc="root: the readable second check (tests/security/root_check.py): ASCII only, no backslash, no regex literal, template string or bracket outside strings; every identifier one the root uses today; imports QtQuick, Quickshell, Quickshell.Io and qs.security.host only, wherever they stand; ShellRoot, SecurityHost and IpcHandler the only types; one SecurityHost; one IpcHandler, target security, the functions state and heartbeat only"
 check python3 -I tests/security/root_check.py "$qml"
 desc="root check selftest: the root passes (with LF and with CRLF) and each of the 38 planted mutants (next-line braces, comments before braces, indented imports, a singleton's property, names as strings or through Reflect, a U+2028 ending a comment, Unicode escapes, a second IpcHandler, an animation, Quickshell.reload, a third function, a renamed target, a second SecurityHost, the lock, idle, polkit or qs.security module imported into the root, ...) is refused"

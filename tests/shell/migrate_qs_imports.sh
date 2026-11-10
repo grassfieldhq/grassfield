@@ -52,7 +52,7 @@ sys.exit(1 if bad or n < 100 else 0)
 EOF
 
 desc="shell.qml is a stub: watchFiles false, a LazyLoader of shell-core.qml by file: URL, a failed core ends the process by SIGABRT (never status 0)"
-check bash -c 'f=$1/shell.qml; grep -q "settings.watchFiles: false" "$f" && grep -q "LazyLoader" "$f" && grep -q "shell-core.qml" "$f" && grep -q "kill -ABRT" "$f" && ! grep -v "^ *//" "$f" | grep -q "Qt.quit()\|Qt.exit(" && ! grep -q "import qs" "$f"' _ "$tmp/shell"
+check bash -c 'f=$1/shell.qml; grep -q "settings.watchFiles: false" "$f" && grep -q "LazyLoader" "$f" && grep -q "shell-core.qml" "$f" && grep -q "\"-ABRT\"" "$f" && ! grep -v "^ *//" "$f" | grep -q "Qt.quit()\|Qt.exit(" && ! grep -q "import qs" "$f"' _ "$tmp/shell"
 desc="shell-core.qml holds the former root as a Scope, without watchFiles (the stub has it)"
 check bash -c 'f=$1/shell-core.qml; grep -q "^Scope {" "$f" && ! grep -q "ShellRoot {" "$f" && ! grep -q "settings.watchFiles" "$f"' _ "$tmp/shell"
 desc="security.qml is kept verbatim and no security-core.qml exists (the security process is not migrated yet)"
@@ -65,6 +65,42 @@ desc="--dry-run refuses an import it cannot migrate (a qs module without a qmldi
 cp -r "$root/shell" "$tmp/broken"
 printf 'import QtQuick\nimport qs.nothing\nItem {}\n' >"$tmp/broken/lib/Broken.qml"
 check bash -c '! python3 -I "$1" --dry-run --src "$2" >/dev/null 2>&1' _ "$mig" "$tmp/broken"
+
+desc="--verify: the migrated tree equals the source apart from its import lines (every file, line by line)"
+check bash -c 'python3 -I "$1" --verify "$2" 2>/dev/null' _ "$mig" "$tmp/shell"
+# Mutants of the shipped tree: a change that only the package carries must fail --verify (m2c of the review of #37: the lock
+# checks of the capture toolbar dropped in the package alone passed every source test).
+mutant() { # name, relative file, sed program
+  rm -rf "$tmp/m"; cp -r "$tmp/shell" "$tmp/m"
+  sed -i "$3" "$tmp/m/$2"
+  desc="mutant $1: $2 changed in the package only is caught by --verify"
+  check bash -c '! python3 -I "$1" --verify "$2" >/dev/null 2>&1' _ "$mig" "$tmp/m"
+}
+mutant m2c capture/Capture.qml '0,/if (locked)/{/if (locked)/d}'
+mutant m2d capture/Capture.qml 's/!SessionState.locked/true/'
+mutant m2e shell-core.qml '0,/saverShown/s/saverShown/saverShownX/'
+mutant m2f security/lock/Lock.qml '0,/^import /s/^import \(.*\)$/import \1 \/\/ x/'
+mutant m2g services/Settings.qml '$a\
+// added line'
+rm -rf "$tmp/m"; cp -r "$tmp/shell" "$tmp/m"; printf 'Item {}\n' >"$tmp/m/NewFile.qml"
+desc="mutant m2h: a new file in the package (only shell-core.qml may be new) is caught by --verify"
+check bash -c '! python3 -I "$1" --verify "$2" >/dev/null 2>&1' _ "$mig" "$tmp/m"
+rm -rf "$tmp/m"; cp -r "$tmp/shell" "$tmp/m"; sed -i 's/kill", "-ABRT"/kill", "-TERM"/' "$tmp/m/shell.qml"
+desc="mutant m2i: the stub changed (not the generated one) is caught by --verify"
+check bash -c '! python3 -I "$1" --verify "$2" >/dev/null 2>&1' _ "$mig" "$tmp/m"
+rm -rf "$tmp/m"
+desc="the stub kills its own process with Quickshell.processId (no shell, no PPID)"
+check bash -c 'grep -q "command: \[\"kill\", \"-ABRT\", String(Quickshell.processId)\]" "$1/shell.qml" && ! grep -q "sh\", \"-c\"" "$1/shell.qml"' _ "$tmp/shell"
+
+# Only the import header is read: a template string and a block comment opened mid-line below it hold the text `import qs.x`.
+mkdir -p "$tmp/hdr/lib" "$tmp/hdr/a"
+printf 'module qs.lib\n' >"$tmp/hdr/lib/qmldir"
+printf 'module qs.a\n' >"$tmp/hdr/a/qmldir"
+printf 'pragma ComponentBehavior: Bound\nimport QtQuick\nimport qs.lib // one\n/* header\n comment */\nItem {\n    property string s: `\nimport qs.nothing\n`\n    Component.onCompleted: { /* opens mid-line\nimport qs.alsonothing\n*/ }\n}\n' >"$tmp/hdr/a/X.qml"
+printf 'import QtQuick\nShellRoot {\n    settings.watchFiles: false\n}\n' >"$tmp/hdr/shell.qml"
+cp "$tmp/hdr/a/X.qml" "$tmp/hdr/a/X.orig"
+desc="a template string and a block comment below the header keep their text; the header's import is rewritten"
+check bash -c 'python3 -I "$1" --in-place "$2" >/dev/null && grep -q "^import \"../lib\" // one$" "$2/a/X.qml" && diff <(sed 1,3d "$2/a/X.orig") <(sed 1,3d "$2/a/X.qml") >/dev/null' _ "$mig" "$tmp/hdr"
 
 # The failure path, on a tiny tree under the real qs (offscreen): a core that is there runs and the process stays up; a core
 # that is missing (or does not compile) ends the process by SIGABRT (status 134 through a shell), after the stub's 10 s.
