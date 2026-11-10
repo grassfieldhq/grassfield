@@ -16,8 +16,10 @@
 #
 #   options: --vm-dir DIR      (default: <main checkout>/.claude/integrator/vm; never /tmp: it is a tmpfs)
 #            --installer FILE  use this grassfield-install.sh instead of downloading the published one
+#            --branch-installer  render packaging/install/grassfield-install.sh.in of this checkout and use that
 #            --no-restore      `install` continues from the current disk instead of restoring "stock"
 #            --force           `stock-install` replaces an existing disk
+#            --reuse-stock     `all` skips stock-install and starts from the existing qcow2 snapshot "stock"
 #            --max-load N      refuse to start the VM above this 1-minute load (default 8)
 #
 # Every phase prints PASS/FAIL lines carrying their evidence and exits 1 on any FAIL (2: usage or environment error).
@@ -33,6 +35,8 @@ VM_DIR=${GF_VM_DIR:-$(dirname "$common")/.claude/integrator/vm}
 SSH_PORT=${GF_VM_SSH_PORT:-2222}
 MAX_LOAD=8
 INSTALLER=''
+BRANCH_INSTALLER=0
+REUSE_STOCK=0
 RESTORE=1
 FORCE=0
 VCPUS=4
@@ -301,7 +305,7 @@ collect() { # collect NAME
   vm_ssh 'pacman -Q | sort' >"$r/packages.txt" || return 1
   vm_ssh "bash -s -- $VM_USER" >"$r/files.tsv" <<'EOS' || return 1
 u=$1 h=/home/$1
-roots=(/etc "$h/.config" "$h/.local/share")
+roots=(/etc "$h/.config" "$h/.local/share" "$h/.local/state" "$h/.cache")
 {
   find "${roots[@]}" -xdev -type f -exec sha256sum {} + 2>/dev/null | sed 's/^\([0-9a-f]\{64\}\)  \(.*\)$/\2\tF\t\1/'
   find "${roots[@]}" -xdev -type l -printf '%p\tL\t%l\n' 2>/dev/null
@@ -370,36 +374,56 @@ stock_update() {
   [[ $n == 0 ]] && pass "no pending update left on the stock system" || fail "$n updates still pending after the update"
 }
 
+# restore_stock: back to the qcow2 snapshot "stock" (the fresh install) and its OVMF variables, VM stopped
+restore_stock() {
+  vm_stop
+  check "restore qcow2 snapshot 'stock'" qemu-img snapshot -a stock "$(DISK)" || return 1
+  cp -f "$(d OVMF_VARS.stock.fd)" "$(d OVMF_VARS.4m.fd)"
+}
+
+# The snapshot "stock" is the FRESH install (updates pending, as the ISO leaves it): the installer's own update step is part of
+# what the drill exercises. The baseline the end state is compared with is that same system after Omarchy's update ("stock"
+# record). Run again, the phase starts from the existing snapshot.
 phase_snapshot() {
-  vm_running || boot_installed snapshot || return 1
   creds
+  if qemu-img snapshot -l "$(DISK)" 2>/dev/null | grep -q ' stock '; then
+    restore_stock || return 1
+    boot_installed snapshot || return 1
+  else
+    vm_running || boot_installed snapshot || return 1
+  fi
   vm_ssh true || { fail "no SSH to the VM: run stock-install first"; return 1; }
+  vm_ssh 'pacman -Q omarchy' | sed 's/^/INFO fresh install: /'
+  collect fresh || { fail "collecting the fresh record"; return 1; }
+  vm_stop
+  vm_running && { fail "VM did not stop"; return 1; }
+  qemu-img snapshot -d stock "$(DISK)" >/dev/null 2>&1
+  check "qcow2 snapshot 'stock' (the fresh install)" qemu-img snapshot -c stock "$(DISK)" || return 1
+  cp -f "$(d OVMF_VARS.4m.fd)" "$(d OVMF_VARS.stock.fd)"
+  qemu-img snapshot -l "$(DISK)" | sed 's/^/INFO /'
+  boot_installed snapshot || return 1
   stock_update || return 1
   vm_ssh 'pacman -Q omarchy' | sed 's/^/INFO stock /'
   collect stock || { fail "collecting the stock record"; return 1; }
-  pass "stock record written to $(REC stock)"
-  reboot_vm || { fail "reboot before the stock screendump"; return 1; }
-  sleep 45
+  pass "stock record (the fresh install after Omarchy's update) written to $(REC stock)"
+  sleep 20
   shot stock-session
   vm_ssh 'loginctl list-sessions --no-legend' | sed 's/^/INFO /'
   vm_stop
   vm_running && { fail "VM did not stop"; return 1; }
-  qemu-img snapshot -d stock "$(DISK)" >/dev/null 2>&1
-  check "qcow2 snapshot 'stock'" qemu-img snapshot -c stock "$(DISK)"
-  cp -f "$(d OVMF_VARS.4m.fd)" "$(d OVMF_VARS.stock.fd)"
-  qemu-img snapshot -l "$(DISK)" | sed 's/^/INFO /'
 }
 
 phase_install() {
   creds
-  if ((RESTORE)); then
-    vm_stop
-    check "restore qcow2 snapshot 'stock'" qemu-img snapshot -a stock "$(DISK)" || return 1
-    cp -f "$(d OVMF_VARS.stock.fd)" "$(d OVMF_VARS.4m.fd)"
-  fi
+  if ((RESTORE)); then restore_stock || return 1; fi
   boot_installed install || return 1
   local script
   script=$(d logs/grassfield-install.sh)
+  if ((BRANCH_INSTALLER)); then
+    python3 -I "$repo/packaging/install/render.py" --conf "$repo/packaging/pacman/repository.conf" \
+      --template "$repo/packaging/install/grassfield-install.sh.in" --out "$(d logs/rendered)" >/dev/null || { fail "cannot render the installer of this checkout"; return 1; }
+    INSTALLER=$(d logs/rendered/grassfield-install.sh)
+  fi
   if [[ -n $INSTALLER ]]; then
     cp -f "$INSTALLER" "$script"
     info "installer: $INSTALLER (a local file, not the published script)"
@@ -423,6 +447,12 @@ EOF
   ((rc == 0)) && pass "grassfield-install.sh --dry-run exits 0" || fail "grassfield-install.sh --dry-run exit $rc: $(tail -3 "$(d logs/install-dry-run.log)")"
   as_user "bash ~/grassfield-install.sh --yes" >"$log" 2>&1
   rc=$?
+  if ((rc != 0)) && grep -q 'failed retrieving file' "$log"; then
+    info "a mirror dropped a download (the script rolled back): running it again, as it says"
+    cp "$log" "$log.attempt1"
+    as_user "bash ~/grassfield-install.sh --yes" >"$log" 2>&1
+    rc=$?
+  fi
   tail -15 "$log" | sed 's/^/INFO install: /'
   ((rc == 0)) && pass "grassfield-install.sh --yes exits 0" || { fail "grassfield-install.sh --yes exit $rc (log $log)"; return 1; }
   vm_ssh "pacman -Q grassfield-desktop grassfield-compositor grassfield-store" | sed 's/^/INFO version: /'
@@ -468,14 +498,13 @@ phase_uninstall() {
   rc=$?
   tail -15 "$log" | sed 's/^/INFO uninstall: /'
   ((rc == 0)) && pass "grassfield-install.sh --uninstall --yes exits 0" || fail "grassfield-install.sh --uninstall exit $rc (log $log)"
-  # docs/owner-setup/real-session.md section 9 (the package removal, then the user's paths), run by the VM's root
+  # docs/owner-setup/real-session.md section 9: after --uninstall nothing of it is left to do by hand except the settings
+  # the uninstall keeps by design (it prints where they are and the one command that deletes them).
   pk=$(vm_ssh "pacman -Q | awk '/^grassfield-/{print \$1}'" | tr '\n' ' ')
-  if [[ -n $pk ]]; then
-    info "packages still installed after --uninstall: $pk"
-    vm_ssh "pacman -Rns --noconfirm $pk" >>"$log" 2>&1 && info "section 9: pacman -Rns $pk" || fail "section 9: pacman -Rns $pk failed"
-  fi
-  as_user 'for p in ~/.config/grassfield ~/.local/state/grassfield ~/.local/share/icons/grassfield-cursors-custom; do [[ -e $p ]] && echo "left in the home by --uninstall (section 9 removes it): $p"; done; true' | sed 's/^/INFO /'
-  as_user 'rm -rf ~/.config/grassfield ~/.local/state/grassfield ~/.local/share/icons/grassfield-cursors-custom'
+  [[ -z $pk ]] && pass "no grassfield package left after --uninstall (GF-046)" || fail "packages left after --uninstall: $pk"
+  grep -q "/home/$VM_USER/.config/grassfield" "$log" && grep -q 'rm -rf' "$log" &&
+    pass "--uninstall prints where the kept settings and state are and the command that removes them" ||
+    fail "--uninstall does not print the kept folders and the removal command"
   vm_ssh "rm -f /etc/sudoers.d/99-gfdrill /etc/polkit-1/rules.d/99-gfdrill.rules /home/$VM_USER/grassfield-install.sh"
   reboot_vm || { fail "reboot after the uninstall"; return 1; }
   sleep 45
@@ -511,11 +540,36 @@ phase_compare() {
       printf '%s\t%s\t%s\n' "$kind" "$path" "$note"
     fi
   done <"$out" >"$out.tmp" && mv "$out.tmp" "$out"
-  # Paths a booting session or the package manager rewrites by itself: listed, marked [noise], not counted as leftovers.
-  local noise='^/etc/\.updated$|/\.local/share/gvfs-metadata/|/\.config/ibus/bus/|/\.config/herdr/|/\.config/dconf/user$|^/etc/pacman\.d/gnupg/(trustdb\.gpg|pubring\.gpg~)$'
-  n=$(awk -F'\t' -v re="$noise" '$2 !~ re' "$out" | wc -l)
+  # Anything not matched below is a leftover. Each rule is "extended regex of the path<TAB>reason".
+  local h=/home/$VM_USER
+  local -a noise=(
+    $'^/etc/\\.updated$\tpacman'"'"'s ConditionNeedsUpdate marker, rewritten by every package transaction (the update step of the drill already ran them)'
+    $'^/etc/pacman\\.d/gnupg/(trustdb\\.gpg|pubring\\.gpg~)$\tpacman keyring: adding and deleting a key rewrites the trust database and the keyring backup'
+    $'^/etc/(group|gshadow)-$\tshadow-utils backup copies, written at every account or group change (groupdel)'
+    "^$h/\\.config/dconf/user\$"$'\tGNOME settings database, rewritten by the session at every start'
+    "^$h/\\.config/ibus/bus/"$'\tIBus socket files named after the machine id and the display, new at every session start'
+    "^$h/\\.config/herdr/"$'\tlog of the terminal multiplexer that Omarchy starts, appended at every session'
+    "^$h/\\.local/share/gvfs-metadata/"$'\tGVfs metadata journal, rolled over by the session'
+  )
+  # The user's own Grassfield settings and state: kept by design, documented (docs/install.md, docs/owner-setup/real-session.md section 9)
+  local kept="^$h/\\.(config|local/state)/grassfield(/|\$)"
+  local rules="" r
+  for r in "${noise[@]}"; do rules+="$r"$'\n'; done
+  printf '%s' "$rules" >"$(d records/allowlist.tsv)"
+  n=0
+  local kind path origin why
   printf '\n%-14s %-70s %s\n' KIND PATH ORIGIN
-  awk -F'\t' -v re="$noise" '{ printf "%-14s %-70s %s%s\n", $1, $2, $3, ($2 ~ re ? "  [noise]" : "") }' "$out"
+  while IFS=$'\t' read -r kind path origin; do
+    why=$(awk -F'\t' -v p="$path" 'p ~ $1 { print $2; exit }' "$(d records/allowlist.tsv)")
+    if [[ -n $why ]]; then
+      printf '%-14s %-70s %s  [system noise: %s]\n' "$kind" "$path" "$origin" "$why"
+    elif [[ $path =~ $kept ]]; then
+      printf '%-14s %-70s %s  [kept by design (documented)]\n' "$kind" "$path" "$origin"
+    else
+      printf '%-14s %-70s %s  [LEFTOVER]\n' "$kind" "$path" "$origin"
+      n=$((n + 1))
+    fi
+  done <"$out"
   echo
   if ((n == 0)); then pass "no leftover: packages, files, units equal the stock record"; else fail "$n leftover(s) against the stock record (table above, saved to $out)"; fi
   shot compare-session
@@ -530,8 +584,10 @@ main() {
     case $1 in
       --vm-dir) VM_DIR=$2; shift ;;
       --installer) INSTALLER=$2; shift ;;
+      --branch-installer) BRANCH_INSTALLER=1 ;;
       --no-restore) RESTORE=0 ;;
       --force) FORCE=1 ;;
+      --reuse-stock) REUSE_STOCK=1 ;;
       --max-load) MAX_LOAD=$2; shift ;;
       -h | --help) usage; exit 0 ;;
       *) rest+=("$1") ;;
@@ -555,7 +611,9 @@ main() {
     uninstall) phase_uninstall ;;
     compare) phase_compare ;;
     all)
-      for p in stock_install snapshot install check uninstall compare; do
+      local seq=(stock_install snapshot install check uninstall compare)
+      ((REUSE_STOCK)) && seq=(snapshot install check uninstall compare)
+      for p in "${seq[@]}"; do
         printf '== phase %s ==\n' "${p//_/-}"
         "phase_$p" || fail "phase ${p//_/-} failed"
         ((FAILS == 0)) || break

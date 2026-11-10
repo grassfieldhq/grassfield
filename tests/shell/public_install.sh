@@ -135,6 +135,7 @@ case $1 in
       qt6-base) echo "qt6-base 6.12.0-1" ;;
       *) grep -qx "$2" "$inst" 2>/dev/null && echo "$2 1.0.0-1" || exit 1 ;;
     esac ;;
+  -Qq) cat "$inst" 2>/dev/null; exit 0 ;;
   -Qm) cat "$GF_STUB/foreign" 2>/dev/null; exit 0 ;;
   -Qu) cat "$GF_STUB/qu" 2>/dev/null; exit 0 ;;
   -Si)
@@ -250,6 +251,19 @@ echo "plymouth-set-default-theme $*" >>"$GF_STUB/calls"
 # the setter refusing one theme (plymouth_refuse_<theme>)
 [[ -n ${1:-} && -f $GF_STUB/plymouth_refuse_$1 ]] && { echo "plymouth-set-default-theme: refused" >&2; exit 1; }
 if (($# == 0)); then cat "$GF_STUB/plymouth"; else echo "$1" >"$GF_STUB/plymouth"; fi
+# Plymouth's own script leaves plymouthd.confe behind (sed -ie): plymouth_confe makes the stub do the same
+if [[ -f $GF_STUB/plymouth_confe && $# -gt 0 ]]; then mkdir -p "$GRASSFIELD_INSTALL_ROOT/etc/plymouth"; [[ -e $GRASSFIELD_INSTALL_ROOT/etc/plymouth/plymouthd.confe ]] || echo "Theme=old" >"$GRASSFIELD_INSTALL_ROOT/etc/plymouth/plymouthd.confe"; fi
+EOF
+stub omarchy-update <<'EOF'
+#!/bin/bash
+echo "omarchy-update $*" >>"$GF_STUB/calls"
+[[ -f $GF_STUB/update_fail ]] && { echo "update broke" >&2; exit 1; }
+[[ -f $GF_STUB/update_leaves_pending ]] || : >"$GF_STUB/checkupdates"
+EOF
+stub groupdel <<'EOF'
+#!/bin/bash
+echo "groupdel $*" >>"$GF_STUB/calls"
+sed -i "/^$1:/d" "$GRASSFIELD_INSTALL_ROOT/etc/group"
 EOF
 mk_rebuild() {
   stub limine-mkinitcpio <<'EOF'
@@ -407,7 +421,38 @@ expect 'French locale: quickshell from [extra] is still caught' "$rc" 1
 has 'French locale: the French problem text names [extra]' 'viendrait de [extra]' "$W/out"
 fresh; touch "$S/netdown"; preflight_case 'no network' 'cannot reach'
 fresh; echo 100 >"$S/free"; preflight_case 'low disk' 'MiB free'
-fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; preflight_case 'pending updates' 'pending updates'
+# Pending updates are offered, not refused (GF-010): the script says how many, asks, runs Omarchy's update, checks again.
+fresh; printf 'firefox 1-1 -> 2-1\nlinux 1-1 -> 2-1\n' >"$S/checkupdates"; run '' --dry-run
+expect 'pending updates, dry run: exit 0' "$rc" 0
+has 'pending updates, dry run: says how many' '2 update(s) are waiting' "$W/out"
+has 'pending updates, dry run: says it would ask' 'Install them now?' "$W/out"
+hasnt 'pending updates, dry run: the update is not run' 'omarchy-update -y' "$S/calls"
+[[ -z $(sudo_calls) ]] && pass 'pending updates, dry run: no sudo' || fail 'pending updates, dry run: sudo ran'
+fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; run '' --yes
+expect 'pending updates, --yes: the install goes on (exit 0)' "$rc" 0
+has 'pending updates, --yes: Omarchy update runs unattended' 'omarchy-update -y' "$S/calls"
+expect 'pending updates, --yes: the update runs before any root command' "$(grep -nE '^(omarchy-update|sudo )' "$S/calls" | head -n 1 | cut -d: -f2-)" 'omarchy-update -y'
+has 'pending updates, --yes: the packages are installed after it' 'grassfield-desktop' "$S/installed"
+fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; run $'\ny\n'
+expect 'pending updates, Enter means yes (exit 0)' "$rc" 0
+has 'pending updates, Enter: the question has [Y/n]' 'Install them now? [Y/n]' "$W/out"
+has 'pending updates, Enter: update ran' 'omarchy-update -y' "$S/calls"
+fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; run $'n\n'
+expect 'pending updates, answer no: exit 1' "$rc" 1
+has 'pending updates, answer no: the old message' 'the system has pending updates' "$W/out"
+hasnt 'pending updates, answer no: no update' 'omarchy-update -y' "$S/calls"
+[[ -z $(sudo_calls) ]] && pass 'pending updates, answer no: no sudo' || fail 'pending updates, answer no: sudo ran'
+fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; touch "$S/update_fail"; run '' --yes
+expect 'pending updates, update fails: exit 1' "$rc" 1
+has 'pending updates, update fails: says so' 'Omarchy update failed' "$W/out"
+[[ -z $(sudo_calls) ]] && pass 'pending updates, update fails: no sudo' || fail 'pending updates, update fails: sudo ran'
+fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; touch "$S/update_leaves_pending"; run '' --yes
+expect 'pending updates, still pending after the update: exit 1' "$rc" 1
+has 'pending updates, still pending: the old message' 'the system has pending updates' "$W/out"
+[[ -z $(sudo_calls) ]] && pass 'pending updates, still pending: no sudo' || fail 'pending updates, still pending: sudo ran'
+fresh; echo 'grassfield-desktop 1-1 -> 1-2' >"$S/checkupdates"; run '' --yes
+expect 'only Grassfield updates pending: no update offered (exit 0)' "$rc" 0
+hasnt 'only Grassfield updates pending: the Omarchy update is not run' 'omarchy-update -y' "$S/calls"
 fresh; echo 1 >"$S/cu_rc"; preflight_case 'checkupdates fails' 'checkupdates failed'
 hasnt 'checkupdates fails: never says [ok] up to date' '[ok] the system is up to date' "$W/out"
 fresh; rm -f "$BIN/checkupdates"; preflight_case 'checkupdates missing' 'checkupdates (package pacman-contrib) is missing'
@@ -758,6 +803,46 @@ has 'uninstall end message' 'stock Omarchy' "$W/out"
 has 'uninstall let go of the update lock around Turn Off' 'flock -n 8' "$S/calls"
 run '' --uninstall --yes
 expect 'uninstall twice exits 0' "$rc" 0
+
+# GF-010: session-only files go, settings and state stay, the update group goes when nothing uses it, plymouthd.confe is cleaned.
+fresh; touch "$S/plymouth_confe"; run '' --yes
+[[ ! -e $R/etc/plymouth/plymouthd.confe ]] && pass 'install: plymouthd.confe made by the theme setter is removed' || fail 'install: plymouthd.confe left'
+mkdir -p "$W/home/.config/xdg-desktop-portal" "$W/home/.local/share/icons/grassfield-cursors-custom" "$W/home/.cache/grassfield" "$W/home/.config/grassfield" "$W/home/.local/state/grassfield"
+echo x >"$W/home/.config/grassfield-mimeapps.list"; echo x >"$W/home/.config/xdg-desktop-portal/grassfield-portals.conf"
+echo keep >"$W/home/.config/grassfield/settings.json"; echo keep >"$W/home/.config/mimeapps.list"
+mkdir -p "$R/etc"; printf 'root:x:0:\ngrassfield-update:x:960:\nwheel:x:998:\n' >"$R/etc/group"; printf 'root:x:0:0::/root:/bin/bash\n' >"$R/etc/passwd"
+mkdir -p "$R/usr/lib/sysusers.d"
+run '' --uninstall --yes
+expect 'uninstall (GF-010 files): exit 0' "$rc" 0
+[[ ! -e $R/etc/plymouth/plymouthd.confe ]] && pass 'uninstall: plymouthd.confe made by the theme setter is removed' || fail 'uninstall: plymouthd.confe left'
+for f in .config/grassfield-mimeapps.list .config/xdg-desktop-portal/grassfield-portals.conf .local/share/icons/grassfield-cursors-custom .cache/grassfield; do
+  [[ ! -e $W/home/$f ]] && pass "uninstall: $f removed" || fail "uninstall: $f left"
+done
+[[ -f $W/home/.config/grassfield/settings.json && -d $W/home/.local/state/grassfield ]] && pass 'uninstall: settings and state are kept' || fail 'uninstall: settings or state removed'
+[[ -f $W/home/.config/mimeapps.list ]] && pass "uninstall: the user's own mimeapps.list is untouched" || fail "uninstall: the user's mimeapps.list was removed"
+has 'uninstall: prints where the kept folders are' "$W/home/.config/grassfield" "$W/out"
+has 'uninstall: prints the one command that deletes them' 'rm -rf' "$W/out"
+has 'uninstall: the update group is removed' 'groupdel grassfield-update' "$S/calls"
+hasnt 'uninstall: the group file no longer names it' 'grassfield-update' "$R/etc/group"
+has 'uninstall: other groups stay' 'wheel:x:998:' "$R/etc/group"
+# a plymouthd.confe that was already there is never touched
+fresh; touch "$S/plymouth_confe"; mkdir -p "$R/etc/plymouth"; echo "mine" >"$R/etc/plymouth/plymouthd.confe"; run '' --yes
+expect 'a pre-existing plymouthd.confe is kept' "$(cat "$R/etc/plymouth/plymouthd.confe")" mine
+run '' --uninstall --yes
+expect 'a pre-existing plymouthd.confe is kept by the uninstall too' "$(cat "$R/etc/plymouth/plymouthd.confe")" mine
+# the group stays when something uses it
+for why in members passwd sysusers file; do
+  fresh; run '' --yes
+  mkdir -p "$R/etc" "$R/usr/lib/sysusers.d" "$R/usr/lib"
+  printf 'grassfield-update:x:960:%s\n' "$([[ $why == members ]] && echo bob)" >"$R/etc/group"
+  printf 'bob:x:1000:%s::/home/bob:/bin/bash\n' "$([[ $why == passwd ]] && echo 960 || echo 1000)" >"$R/etc/passwd"
+  [[ $why == sysusers ]] && echo 'g grassfield-update - -' >"$R/usr/lib/sysusers.d/other.conf"
+  [[ $why == file ]] && echo 'Group=grassfield-update' >"$R/etc/other.service"
+  run '' --uninstall --yes
+  expect "the group is kept ($why): exit 0" "$rc" 0
+  hasnt "the group is kept ($why): no groupdel" 'groupdel' "$S/calls"
+  has "the group is kept ($why): says why" 'is kept' "$W/out"
+done
 # Uninstall when the rebuild fails twice: stops before removing anything, with the retry command.
 fresh; run '' --yes
 touch "$S/rebuild_fail"; run '' --uninstall --yes
