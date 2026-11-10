@@ -150,7 +150,7 @@ expect("the published authorizing covers the secret sheets (the UI's clipboard h
        and re.search(r'target:\s*Lock\s*property:\s*"authorizing"\s*value:\s*root\.sheets\s*!==\s*null\s*&&\s*root\.sheets\.authorizing\s*===\s*true\s*\}', read("shell/security/host/SecurityHost.qml")) is not None)
 polkit = code(read("shell/security/polkit/AuthAgent.qml"))
 expect("the polkit agent is handed no request while a secret sheet came first",
-       re.search(r"flow:\s*agent\.isActive\s*&&\s*!root\.waiting\s*\?\s*agent\.flow\s*:\s*null", polkit) is not None
+       re.search(r"flow:\s*root\.agentActive\s*&&\s*!root\.waiting\s*\?\s*root\.agent\.flow\s*:\s*null", polkit) is not None
        and re.search(r"property bool waiting:\s*root\.queue\s*!==\s*null\s*&&\s*root\.queue\.polkitWaits\s*\n", polkit) is not None)
 for c in checks:
     print(c)
@@ -195,7 +195,7 @@ PY
   if run "$m" >/dev/null; then echo "MUTANT $name: NOT CAUGHT"; status=1; else echo "MUTANT $name: CAUGHT"; fi
 done <<'EOF_MUTANTS'
 queue-ignored (the secret sheet shows any request)#SecretAgent.qml#        const head = root.queue.secretHead;#        const head = Object.keys(root.requests)[0] || "";
-polkit-not-gated (the polkit sheet takes a request while a secret sheet is on screen)#AuthAgent.qml#flow: agent.isActive && !root.waiting ? agent.flow : null#flow: agent.isActive ? agent.flow : null
+polkit-not-gated (the polkit sheet takes a request while a secret sheet is on screen)#AuthAgent.qml#flow: root.agentActive && !root.waiting ? root.agent.flow : null#flow: root.agentActive ? root.agent.flow : null
 polkit-not-held-after-a-secret-sheet#AuthAgent.qml#            if (kind === "secret")\n                dialogModel.noteEnded();#            if (kind === "nothing")\n                dialogModel.noteEnded();
 secret-not-held-after-the-polkit-sheet#SecretAgent.qml#            if (kind === "polkit")\n                sheetModel.noteEnded();#            if (kind === "nothing")\n                sheetModel.noteEnded();
 waited-not-held#SecretAgent.qml#        request.waited = root.queue.secretHead !== request.id;#        request.waited = false;

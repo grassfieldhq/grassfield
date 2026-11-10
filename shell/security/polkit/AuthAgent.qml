@@ -23,7 +23,7 @@ import "../../lib/RunMode.js" as RunMode
 Scope {
     id: root
 
-    readonly property bool registered: agent.isRegistered
+    readonly property bool registered: root.agent !== null && root.agent.isRegistered
     // A request is open: its sheet shown, or held (behind the lock or the screen saver, or queued). Published by the host with
     // the lock state for the UI's SessionState.authorizing (the clipboard history records nothing while it is true and 2 s
     // after, ADR-0034 Q11; the UI closes its menus when a sheet opens).
@@ -39,50 +39,73 @@ Scope {
     readonly property bool waiting: root.queue !== null && root.queue.polkitWaits
     // The polkit sheet's place in the queue: from a request's arrival (while it waits too) until its sheet is gone, the key
     // sink's linger included (the host binds SheetQueue.polkitPresent to it).
-    readonly property bool queuePresent: agent.isActive || root.requestOpen || root.sinkingKeys
+    readonly property bool queuePresent: root.agentActive || root.requestOpen || root.sinkingKeys
     // The URL of a plain theme icon name for the sheet ("" for none: the sheet shows its lock alone). The host gives the
     // security process's lookup (the system theme only, whose directories the user cannot change); a harness gives none.
     property var iconSource: name => ""
 
-    // Registration (ADR-0041 S3; the opus review of S3, MINOR-3). polkit takes one agent per session, and Quickshell asks once,
-    // when the agent is made: a refusal only warns. After an upgrade, or a restart in the wrong order, the UI's earlier agent
-    // may still hold the session when this one asks; it then asks again while it is not registered, after
-    // registrationRetryMs, doubling to registrationRetryMaxMs: a new object path makes Quickshell register again (its
-    // setPath). It only ever asks to be the session's agent; it never answers a request by itself. Never in a dev session:
-    // the nested agent must not take the owner's session when the owner's own agent restarts (it asks once, as before).
+    // Registration (ADR-0041 S3; the opus review of S3, MINOR-3, and its delta review, MAJOR-1). polkit takes one agent per
+    // session, and Quickshell's PolkitAgent asks once, when it is made: a refusal only warns, and its path is set once (a
+    // later path is refused with "cannot change path after it has been set.", so a new path never asks again). After an
+    // upgrade, or a restart in the wrong order, the UI's earlier agent may still hold the session when this one asks. While
+    // it is not registered, the agent is made again after registrationRetryMs, doubling to registrationRetryMaxMs: the
+    // Loader lets the old one go, and makes the next one an event-loop turn later (agentRemake), once the old one is
+    // destroyed (the Loader deletes it later; made in the same turn, the next one would find it still there and stay inert,
+    // measured on Quickshell 0.3.2). Quickshell keeps one agent per process (a second one made while the first lives never
+    // registers), and the Loader holds one, so two never live. A registered agent, or one with a request, is never let go.
+    // It only ever asks to be the session's agent; it never answers a request by itself, and while none is made polkitd has
+    // no agent here to ask (it answers "not authorized"). Never in a dev session: the nested agent must not take the owner's
+    // session when the owner's own agent restarts (it asks once, as before). tests/security/authagent_registration.sh
+    // counts the attempts on a real Quickshell.
     readonly property string agentPath: "/org/grassfield/PolkitAgent"
     readonly property bool devSession: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))
     property int registrationRetryMs: 3000
     readonly property int registrationRetryMaxMs: 60000
-    // Asked again this many times since the start (the path's suffix).
+    // Made again this many times since the start.
     property int registrationTries: 0
+    // The wait before the next one: registrationRetryMs, doubled at each try, at most registrationRetryMaxMs.
+    readonly property int registrationRetryInterval: Math.min(root.registrationRetryMaxMs, root.registrationRetryMs * Math.pow(2, Math.min(root.registrationTries, 10)))
+    // The agent now: null in the turn between letting one go and making the next.
+    readonly property PolkitAgent agent: agentHolder.item as PolkitAgent
+    readonly property bool agentActive: root.agent !== null && root.agent.isActive
 
     function retryRegistration(): void {
-        if (agent.isRegistered || root.devSession)
+        if (root.registered || root.agentActive || root.devSession)
             return;
         root.registrationTries += 1;
         if (root.registrationTries <= 5 || root.registrationTries % 10 === 0)
             console.warn("grassfield-polkit: not registered (another authentication agent owns this session); asking again (" + root.registrationTries + ")");
-        agent.path = root.agentPath + "/" + root.registrationTries;
+        agentHolder.active = false;
+        agentRemake.restart();
     }
 
     Timer {
         id: registrationRetry
-        interval: Math.min(root.registrationRetryMaxMs, root.registrationRetryMs * Math.pow(2, Math.min(root.registrationTries, 10)))
-        running: !agent.isRegistered && !root.devSession
+        interval: root.registrationRetryInterval
+        running: !root.registered && !root.devSession
         repeat: true
         onTriggered: root.retryRegistration()
     }
 
-    PolkitAgent {
-        id: agent
-        path: root.agentPath
+    // The next agent, an event-loop turn after the last one was let go.
+    Timer {
+        id: agentRemake
+        interval: 0
+        onTriggered: agentHolder.active = true
+    }
 
-        onIsRegisteredChanged: {
-            if (isRegistered)
-                console.info("grassfield-polkit: authentication agent registered");
-            else
-                console.warn("grassfield-polkit: authentication agent unregistered");
+    Loader {
+        id: agentHolder
+
+        sourceComponent: PolkitAgent {
+            path: root.agentPath
+
+            onIsRegisteredChanged: {
+                if (isRegistered)
+                    console.info("grassfield-polkit: authentication agent registered");
+                else
+                    console.warn("grassfield-polkit: authentication agent unregistered");
+            }
         }
     }
 
@@ -90,7 +113,7 @@ Scope {
         id: dialogModel
         // Quickshell qmltypes name the AuthFlow property type without exporting it (metadata quirk).
         // qmllint disable unresolved-type
-        flow: agent.isActive && !root.waiting ? agent.flow : null
+        flow: root.agentActive && !root.waiting ? root.agent.flow : null
         // The request Quickshell has open, handed over or not, and whether the user sees it now: its sheet is on screen and in
         // front (no lock, no screen saver, displays on, not waiting behind another sheet, in the sheet). Otherwise a device must
         // not answer it: it is refused as soon as PAM talks without asking (AuthDialogModel.refusesUnseen; ADR-0045 OC-6,
@@ -99,7 +122,7 @@ Scope {
         // ask two or three times in a row) or once the user clicked past its guard. Held for any other reason (it arrived just
         // after an unlock, or while locked or under the saver) it may not: a finger left on the reader after unlocking would
         // answer it, and the lock marker tells any process of the user's when to ask (opus re-review, MINOR-1).
-        request: agent.flow
+        request: root.agent !== null ? root.agent.flow : null
         // qmllint enable unresolved-type
         answerable: !SheetSession.locked && !SheetSession.saverShown && !SheetSession.displaysOff && !root.waiting && root.requestOpen
                     && (!root.heldByLock || root.userFocused || root.heldWhy === "queued")
@@ -261,7 +284,7 @@ Scope {
         running: true
         interval: 3000
         onTriggered: {
-            if (!agent.isRegistered)
+            if (!root.registered)
                 console.warn("grassfield-polkit: not registered (another authentication agent owns this session); no dialog will be shown, nothing is approved");
         }
     }
@@ -480,7 +503,7 @@ Scope {
         function status(): string {
             if (!RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION")))
                 return RunMode.REFUSED;
-            return agent.isRegistered ? "registered" : "unregistered";
+            return root.registered ? "registered" : "unregistered";
         }
     }
 }

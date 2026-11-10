@@ -1,12 +1,24 @@
 """The polkit agent as an offscreen test component (tests/security/authagent_flows.sh): the real
 shell/security/polkit/AuthAgent.qml with its Quickshell types replaced by plain QML, its logic untouched.
 
-    make_harness.py [--panel] <AuthAgent.qml> <out.qml>
+    make_harness.py [--panel | --real] <AuthAgent.qml> <out.qml>
 
 PolkitAgent becomes a plain object the tests drive (isActive, flow), Scope an Item, and PanelWindow an Item of the window's
 size, or with --panel the FakePanel beside the output (a window made again each time it is shown, which gets the keyboard
 only once mapped, as Quickshell's PanelWindow and a compositor do); the layer-shell, blur and IPC parts go. Each replacement must find exactly what it expects: when AuthAgent.qml changes shape,
 the script fails (exit 1) rather than test something else.
+
+The plain PolkitAgent keeps what Quickshell 0.3.2 does with registration (src/services/polkit/qml.cpp, agentimpl.cpp; the
+opus delta review of S3, MAJOR-1): it asks once, when it is made, with the path it was made with; a later path is refused
+with Quickshell's warning and the path stays (setPath sets an empty path only); and there is one agent per process: one
+made while an earlier one still lives (a Loader deletes later) stays inert and never asks. The harness's root gets what the
+tests read and set: `agentMock` (the agent the Loader holds now), `mockRegistrations` (registration attempts) and
+`mockTimes` (when each was made, Date.now()), `mockInert` (agents made inert) and `mockRefused` (the answer to the next
+attempt: refused, never registered).
+
+With --real (tests/security/authagent_registration.sh) Quickshell's own PolkitAgent stays, with its imports, the dev gate
+and the IPC handler: only the window becomes an Item (offscreen, Quickshell has no window backend), so the registration code
+runs as written against the installed Quickshell.
 """
 import re
 import sys
@@ -36,31 +48,82 @@ def replace_block(text, head, replacement):
 def main():
     args = sys.argv[1:]
     panel = args[:1] == ["--panel"]
-    if panel:
+    real = args[:1] == ["--real"]
+    if panel or real:
         args = args[1:]
     if len(args) != 2:
-        raise ValueError("usage: make_harness.py [--panel] <AuthAgent.qml> <out.qml>")
+        raise ValueError("usage: make_harness.py [--panel | --real] <AuthAgent.qml> <out.qml>")
     src, out = args
     s = open(src).read()
+    if not real:
+        s = mock_quickshell(s)
+    s = window_as_item(s, panel, real)
+    if not real:
+        aliases = ("    property alias agentMock: agentHolder.item\n    property alias model: dialogModel\n    property alias sheet: win\n"
+                   "    property alias holderItem: holder\n    property alias sink: keySink\n"
+                   "    property bool mockRefused: false\n    property int mockRegistrations: 0\n    property int mockInert: 0\n"
+                   "    property QtObject mockOwner: null\n    property var mockTimes: []\n")
+        if s.count("    id: root\n") != 1:
+            raise ValueError("root id not found once")
+        s = s.replace("    id: root\n", "    id: root\n" + aliases, 1)
+    open(out, "w").write(s)
+
+
+def mock_quickshell(s):
+    """The Quickshell imports, the PolkitAgent, the dev gate and the IPC handler replaced by plain QML."""
     for imp in ("import Quickshell\n", "import Quickshell.Io\n", "import Quickshell.Services.Polkit\n", "import Quickshell.Wayland\n",
                 'import "../../lib/RunMode.js" as RunMode\n'):
         if s.count(imp) != 1:
             raise ValueError("import not found once: " + imp.strip())
         s = s.replace(imp, "", 1)
-    s = replace_block(s, r"\n    PolkitAgent \{", "\n    QtObject {\n        id: agent\n        property bool isActive: false\n"
-                      "        property var flow: null\n        property bool isRegistered: true\n"
-                      "        property string path: \"/org/grassfield/PolkitAgent\"\n    }")
+    mock = ("\n        sourceComponent: QtObject {\n"
+            "            id: mockAgent\n"
+            "            property bool isActive: false\n"
+            "            property var flow: null\n"
+            "            property bool isRegistered: false\n"
+            "            property string path: root.agentPath\n"
+            "            property string pathSet: \"\"\n"
+            "            onPathChanged: {\n"
+            "                if (pathSet !== \"\" && path !== pathSet) {\n"
+            "                    console.warn(\"cannot change path after it has been set.\");\n"
+            "                    path = pathSet;\n"
+            "                }\n"
+            "            }\n"
+            "            Component.onCompleted: {\n"
+            "                pathSet = path;\n"
+            "                if (root.mockOwner !== null) {\n"
+            "                    root.mockInert += 1;\n"
+            "                    return;\n"
+            "                }\n"
+            "                root.mockOwner = mockAgent;\n"
+            "                root.mockRegistrations += 1;\n"
+            "                root.mockTimes = root.mockTimes.concat([Date.now()]);\n"
+            "                isRegistered = !root.mockRefused;\n"
+            "            }\n"
+            "        }")
+    s = replace_block(s, r"\n        sourceComponent: PolkitAgent \{", mock)
+    typed = "    readonly property PolkitAgent agent: agentHolder.item as PolkitAgent\n"
+    if s.count(typed) != 1:
+        raise ValueError("agent property line not found once")
+    s = s.replace(typed, "    readonly property var agent: agentHolder.item\n", 1)
     # The dev gate reads Quickshell, which the harness has not: a writable flag the tests set (false: a real session).
     dev = '    readonly property bool devSession: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))\n'
     if s.count(dev) != 1:
         raise ValueError("devSession line not found once")
     s = s.replace(dev, "    property bool devSession: false\n", 1)
-    s = replace_block(s, r"\n    IpcHandler \{", "\n")
+    return replace_block(s, r"\n    IpcHandler \{", "\n")
+
+
+def window_as_item(s, panel, real):
+    """The PanelWindow as an Item (or the FakePanel), its layer-shell, blur and colour properties gone."""
     s = replace_block(s, r"\n        anchors \{\n            top: true", "\n        width: 800\n        height: 600")
     s = replace_block(s, r"\n        Region \{", "\n")
     # The dim's fade animates the window's colour, which goes below (an Item has none).
     s = replace_block(s, r"\n        Behavior on color \{", "\n")
-    for old, new in (("\n    PanelWindow {\n", "\n    FakePanel {\n" if panel else "\n    Item {\n"), ("\nScope {\n", "\nItem {\n")):
+    swaps = [("\n    PanelWindow {\n", "\n    FakePanel {\n" if panel else "\n    Item {\n")]
+    if not real:
+        swaps.append(("\nScope {\n", "\nItem {\n"))
+    for old, new in swaps:
         if s.count(old) != 1:
             raise ValueError("not found once: " + old.strip())
         s = s.replace(old, new, 1)
@@ -76,13 +139,7 @@ def main():
     kept = [line for line in lines if not re.match(dropped, line)]
     if len(lines) - len(kept) != (5 if panel else 6):
         raise ValueError("expected %d window property lines, found %d" % (5 if panel else 6, len(lines) - len(kept)))
-    s = "\n".join(kept)
-    aliases = ("    property alias agentMock: agent\n    property alias model: dialogModel\n    property alias sheet: win\n"
-               "    property alias holderItem: holder\n    property alias sink: keySink\n")
-    if s.count("    id: root\n") != 1:
-        raise ValueError("root id not found once")
-    s = s.replace("    id: root\n", "    id: root\n" + aliases, 1)
-    open(out, "w").write(s)
+    return "\n".join(kept)
 
 
 if __name__ == "__main__":

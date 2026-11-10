@@ -634,34 +634,88 @@ Item {
             compare(a.cancels, 1, "A refused once");
         }
 
-        // ADR-0041 S3, the opus review's MINOR-3: refused (another agent held the session: an earlier UI after an upgrade, a
-        // restart in the wrong order), the agent asks again with a backoff, a new path each time (Quickshell registers again on
-        // a new path), and stops once registered. It answers nothing meanwhile.
+        // ADR-0041 S3, the opus review's MINOR-3 and its delta review's MAJOR-1: refused (another agent held the session: an
+        // earlier UI after an upgrade, a restart in the wrong order), the agent is made again with a backoff, and the new one
+        // asks again (Quickshell asks only when an agent is made; a later path is refused). Each one is made once the last one
+        // is gone (none made inert: never two at once), and the asking stops once one is registered, which is kept. It
+        // answers nothing meanwhile. tests/security/authagent_registration.sh counts the same on a real Quickshell.
         function test_36_registrationAskedAgainWhileRefused() {
-            ag.registrationRetryMs = 40;
-            compare(ag.registrationTries, 0);
-            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent");
-            ag.agentMock.isRegistered = false;
-            tryCompare(ag, "registrationTries", 1, 3000);
-            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent/1", "a new path: Quickshell registers again");
-            tryCompare(ag, "registrationTries", 2, 3000);
-            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent/2");
-            ag.agentMock.isRegistered = true;
-            const tries = ag.registrationTries;
-            wait(500);
-            compare(ag.registrationTries, tries, "registered: no more asking");
-            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent/" + tries);
-            compare(ag.model.active, false, "nothing was answered or shown meanwhile");
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 100});
+            verify(a);
+            compare(a.mockRegistrations, 1, "asked once, when made");
+            compare(a.registered, false);
+            const first = a.agentMock;
+            for (let n = 2; n <= 4; n++)
+                tryCompare(a, "mockRegistrations", n, 5000, "made again: the new agent asks again");
+            verify(a.agentMock !== first, "a new agent");
+            compare(a.agentMock.path, "/org/grassfield/PolkitAgent");
+            compare(a.mockInert, 0, "each one made once the last one was gone");
+            compare(a.registrationTries, 3);
+            // 100, 200 then 400 ms apart (a coarse timer may fire up to 5 % early).
+            const t = a.mockTimes;
+            verify(t[1] - t[0] >= 90, "first wait " + (t[1] - t[0]));
+            verify(t[2] - t[1] >= 180, "second wait, doubled: " + (t[2] - t[1]));
+            verify(t[3] - t[2] >= 360, "third wait, doubled: " + (t[3] - t[2]));
+            a.mockRefused = false;
+            tryVerify(() => a.registered, 5000, "the next one registers");
+            const tries = a.registrationTries;
+            const made = a.mockRegistrations;
+            const kept = a.agentMock;
+            wait(2 * a.registrationRetryInterval);
+            compare(a.registrationTries, tries, "registered: no more asking");
+            compare(a.mockRegistrations, made);
+            verify(a.agentMock === kept, "the registered agent is kept");
+            compare(a.mockInert, 0);
+            compare(a.model.active, false, "nothing was answered or shown meanwhile");
         }
 
         // Never in a dev session: the nested agent asks once, and never takes the owner's session when the owner's agent restarts.
         function test_37_noAskingAgainInADevSession() {
-            ag.registrationRetryMs = 40;
-            ag.devSession = true;
-            ag.agentMock.isRegistered = false;
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, devSession: true, registrationRetryMs: 40});
+            verify(a);
             wait(400);
+            compare(a.registrationTries, 0);
+            compare(a.mockRegistrations, 1, "asked once, when made");
+            a.retryRegistration();
+            wait(50);
+            compare(a.mockRegistrations, 1, "not even when asked directly");
+            compare(a.registrationTries, 0);
+        }
+
+        // The delta review's MAJOR-1, item 2: the retry never lets go of a registered agent, nor of one with a request open
+        // (polkit hands requests to a registered agent only; kept all the same).
+        function test_38_aRegisteredAgentOrARequestIsNeverLetGo() {
+            verify(ag.registered);
+            const kept = ag.agentMock;
+            ag.retryRegistration();
+            wait(50);
+            verify(ag.agentMock === kept, "registered: kept");
+            compare(ag.mockRegistrations, 1);
             compare(ag.registrationTries, 0);
-            compare(ag.agentMock.path, "/org/grassfield/PolkitAgent");
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 60000});
+            verify(a);
+            const f = mkflow("A");
+            a.agentMock.isActive = true;
+            a.agentMock.flow = f;
+            const held = a.agentMock;
+            a.retryRegistration();
+            wait(50);
+            verify(a.agentMock === held, "a request open: kept");
+            compare(a.registrationTries, 0);
+            compare(a.mockRegistrations, 1);
+            compare(f.submits, []);
+        }
+
+        // The backoff: registrationRetryMs (3 s) doubled at each try, at most 60 s.
+        function test_39_registrationBackoff() {
+            const waits = [];
+            for (let n = 0; n <= 6; n++) {
+                ag.registrationTries = n;
+                waits.push(ag.registrationRetryInterval);
+            }
+            ag.registrationTries = 40;
+            waits.push(ag.registrationRetryInterval);
+            compare(waits, [3000, 6000, 12000, 24000, 48000, 60000, 60000, 60000]);
         }
 
         // ADR-0041 S3: the agent runs in the security process, which restarts (Restart=always) after a crash or a stop. Its end

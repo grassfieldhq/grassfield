@@ -387,6 +387,7 @@
  {"path": "tests/unit/wallpaper-tool/tst_videotool.cpp", "layer": "logic"},
  {"path": "tests/security/mutate_authdialog.sh", "layer": "headless", "runner": "bare"},
  {"path": "tests/security/authagent_flows.sh", "layer": "headless"},
+ {"path": "tests/security/authagent_registration.sh", "layer": "headless"},
  {"path": "tests/security/tst_authdialog.qml", "layer": "headless"},
  {"path": "tests/security/tst_authdialogmodel.qml", "layer": "headless"},
  {"path": "tests/security/tst_idlemodel.qml", "layer": "headless"},

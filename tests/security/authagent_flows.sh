@@ -10,7 +10,11 @@
 # Quickshell's PanelWindow and a compositor do, beside a window underneath (check of c1ca44f). flows.qml test_20 to test_34:
 # a request the user cannot see (locked, saver, displays off, held other than right after another one, waiting behind a
 # secret sheet, replaced) is refused once PAM talks without asking, as for a fingerprint reader (ADR-0045 OC-6, security
-# review of e3542510 and its re-reviews). No compositor, no polkit, no PAM.
+# review of e3542510 and its re-reviews). test_36 to test_39: registration (ADR-0041 S3, the opus review's MINOR-3 and its
+# delta review's MAJOR-1): refused, the agent is made again with a backoff and the new one asks again; the plain agent keeps
+# Quickshell's rules (asks only when made, its path set once, one per process: make_harness.py), so a retry by a new path
+# or one made before the last is gone is caught; tests/security/authagent_registration.sh counts the attempts on a real
+# Quickshell. No compositor, no polkit, no PAM.
 # Against the security process (ADR-0041 step 1, S3): the agent runs there, beside the lock it reads in process
 # (qs.security's SheetSession, which the tests set as SecurityHost's Bindings would), so the harness gives it qs.security and
 # qs.lib only: no qs.services, nothing of the UI (an import of the UI's world fails to load here).
@@ -144,12 +148,18 @@ replaced-not-watched (re-review MAJOR-1)#AuthDialogModel.qml#            priv.re
 replaced-alone-refused (re-review MAJOR-1)#AuthDialogModel.qml#        if (request && request.isCompleted !== true && replaced.indexOf(request) < 0)\n            request.cancelAuthenticationRequest();#        ;
 replaced-refused-first (re-review MAJOR-1)#AuthDialogModel.qml#        if (request && request.isCompleted !== true && replaced.indexOf(request) < 0)\n            request.cancelAuthenticationRequest();\n        for (const f of replaced)\n            f.cancelAuthenticationRequest();#        for (const f of replaced)\n            f.cancelAuthenticationRequest();\n        if (request && request.isCompleted !== true && replaced.indexOf(request) < 0)\n            request.cancelAuthenticationRequest();
 replaced-refusal-inside-the-binding (re-review MAJOR-1)#AuthDialogModel.qml#        Qt.callLater(root.refuseReplaced)#        root.refuseReplaced()
-device-answers-a-waiting-request (e3542510 MAJOR-2)#AuthAgent.qml#        request: agent.flow#        request: agent.isActive && !root.waiting ? agent.flow : null
+device-answers-a-waiting-request (e3542510 MAJOR-2)#AuthAgent.qml#        request: root.agent !== null ? root.agent.flow : null#        request: root.agentActive && !root.waiting ? root.agent.flow : null
 device-answers-always (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SheetSession.locked#        answerable: true || !SheetSession.locked
-registration-never-asked-again (S3 review MINOR-3)#AuthAgent.qml#        running: !agent.isRegistered && !root.devSession#        running: false
-registration-same-path (S3 review MINOR-3)#AuthAgent.qml#        agent.path = root.agentPath + "/" + root.registrationTries;#        agent.path = root.agentPath;
-registration-asked-while-registered (S3 review MINOR-3)#AuthAgent.qml#        if (agent.isRegistered || root.devSession)#        if (root.devSession)#AuthAgent.qml#        running: !agent.isRegistered && !root.devSession#        running: !root.devSession
-registration-asked-in-a-dev-session (S3 review MINOR-3)#AuthAgent.qml#        if (agent.isRegistered || root.devSession)#        if (agent.isRegistered)#AuthAgent.qml#        running: !agent.isRegistered && !root.devSession#        running: !agent.isRegistered
+registration-never-asked-again (S3 review MINOR-3)#AuthAgent.qml#        running: !root.registered && !root.devSession#        running: false
+registration-by-setPath (S3 delta review MAJOR-1: the retry of 655916ba)#AuthAgent.qml#        agentHolder.active = false;\n        agentRemake.restart();#        root.agent.path = root.agentPath + "/" + root.registrationTries;
+registration-remade-in-the-same-turn (S3 delta review MAJOR-1)#AuthAgent.qml#        agentHolder.active = false;\n        agentRemake.restart();#        agentHolder.active = false;\n        agentHolder.active = true;
+registration-never-remade (S3 delta review MAJOR-1)#AuthAgent.qml#        onTriggered: agentHolder.active = true#        onTriggered: {}
+registration-no-backoff (S3 review MINOR-3)#AuthAgent.qml#        interval: root.registrationRetryInterval#        interval: root.registrationRetryMs
+registration-no-doubling (S3 review MINOR-3)#AuthAgent.qml#root.registrationRetryMs * Math.pow(2, Math.min(root.registrationTries, 10)))#root.registrationRetryMs)
+registration-no-cap (S3 review MINOR-3)#AuthAgent.qml#Math.min(root.registrationRetryMaxMs, root.registrationRetryMs#Math.min(1000000000, root.registrationRetryMs
+registration-asked-while-registered (S3 review MINOR-3)#AuthAgent.qml#        if (root.registered || root.agentActive || root.devSession)#        if (root.devSession)#AuthAgent.qml#        running: !root.registered && !root.devSession#        running: !root.devSession
+registration-lets-a-request-go (S3 delta review MAJOR-1)#AuthAgent.qml#        if (root.registered || root.agentActive || root.devSession)#        if (root.registered || root.devSession)
+registration-asked-in-a-dev-session (S3 review MINOR-3)#AuthAgent.qml#        if (root.registered || root.agentActive || root.devSession)#        if (root.registered || root.agentActive)#AuthAgent.qml#        running: !root.registered && !root.devSession#        running: !root.registered
 EOF_MUTANTS
 ((status == 0)) && echo "PASS: authagent_flows (and every mutant caught)" || echo "FAIL: authagent_flows mutants"
 exit "$status"
