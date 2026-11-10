@@ -34,7 +34,7 @@ check bash -c '[[ $1 == $2 && -f $3/migrated-$1/MARK ]]' _ "$s1" "$s1c" "$tmp/de
 
 printf '// changed\n' >>"$tmp/r/shell/lib/Mode.qml"
 s2=$(run)
-desc="a changed source gives a new stamp and a fresh directory; the tree a process may use is not deleted (its marker stays), the link moves"
+desc="a changed source gives a new stamp and a fresh directory; the previous tree is kept whole (its marker stays) and the link moves; processes must be started on the real path (case below), the link only names the current tree"
 check bash -c '[[ $1 != $2 && -d $3/migrated-$2 && -f $3/migrated-$1/MARK && $(readlink "$3/migrated") == "$3/migrated-$2" ]]' _ "$s1" "$s2" "$tmp/dev"
 desc="the new tree carries the change, the old one does not"
 check bash -c 'grep -q "^// changed$" "$2/migrated-$3/shell/lib/Mode.qml" && ! grep -q "^// changed$" "$2/migrated-$1/shell/lib/Mode.qml"' _ "$s1" "$tmp/dev" "$s2"
@@ -56,6 +56,77 @@ before=$(readlink "$tmp/dev/migrated")
 if run >/dev/null; then rc=0; else rc=$?; fi
 desc="a source that does not migrate fails (exit 1), the link still points to the last good tree, no build directory is left"
 check bash -c '[[ $1 == 1 && $(readlink "$2/migrated") == "$3" && -z $(ls -A "$2" | grep "^.migrated-build") ]]' _ "$rc" "$tmp/dev" "$before"
+
+# A process started on the real path of tree A keeps loading from A after the link moves to B; one started through the link does
+# not (review of #37, LOW-A). A tiny tree under the real qs (offscreen): its core loads Late.qml with Qt.createComponent 6 s in.
+if command -v qs >/dev/null; then
+  mkdir -p "$tmp/q/r/scripts/dev" "$tmp/q/dev" "$tmp/q/run"
+  mkdir "$tmp/q/r/shell"
+  cp "$root/scripts/dev/migrate-qs-imports.py" "$tmp/q/r/scripts/dev/"
+  printf 'import QtQuick\nimport Quickshell\nShellRoot {\n    settings.watchFiles: false\n    Timer {\n        id: tm\n        interval: 6000\n        running: true\n        onTriggered: {\n            const c = Qt.createComponent("Late.qml");\n            console.log("LATE=" + c.createObject(tm).tag);\n            Qt.quit();\n        }\n    }\n}\n' >"$tmp/q/r/shell/shell.qml"
+  printf 'import QtQuick\nQtObject { property string tag: "V1" }\n' >"$tmp/q/r/shell/Late.qml"
+  qtool() { bash "$tool" "$tmp/q/r" "$tmp/q/dev" 2>"$tmp/q/err"; }
+  qa=$(qtool)
+  real_a=$(readlink -f "$tmp/q/dev/migrated")
+  qsq() { # path, log
+    env -u GRASSFIELD_SESSION -u QT_QPA_PLATFORMTHEME -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE XDG_RUNTIME_DIR="$tmp/q/run" \
+      XDG_CACHE_HOME="$tmp/q/cache" HOME="$tmp/q" QT_QPA_PLATFORM=offscreen QS_DISABLE_CRASH_HANDLER=1 QS_DISABLE_FILE_WATCHER=1 \
+      timeout 40 qs -p "$1" --no-color >"$2" 2>&1
+  }
+  qsq "$real_a/shell" "$tmp/q/real.log" &
+  p1=$!
+  qsq "$tmp/q/dev/migrated/shell" "$tmp/q/link.log" &
+  p2=$!
+  sleep 2
+  printf 'import QtQuick\nQtObject { property string tag: "V2" }\n' >"$tmp/q/r/shell/Late.qml"
+  qb=$(qtool)
+  wait "$p1" || true
+  wait "$p2" || true
+  desc="the swap to tree B happened (new stamp, link points to B)"
+  check bash -c '[[ $1 != $2 && $(readlink -f "$3/migrated") != "$4" ]]' _ "$qa" "$qb" "$tmp/q/dev" "$real_a"
+  desc="a process started on tree A's real path keeps loading from A after the swap (a late createComponent gives V1)"
+  check grep -q 'LATE=V1$' "$tmp/q/real.log"
+  desc="a process started through the link loads its late file from B (V2): why every process and every caller uses the real path"
+  check grep -q 'LATE=V2$' "$tmp/q/link.log"
+  desc="the launchers address the processes by the real path (readlink -f), never the link: shell-run.sh, nested-up.sh, the nested security tests"
+  check bash -c 'grep -q "shell_dir=\$(readlink -f \"\$dev/migrated\")/shell" "$1/scripts/dev/shell-run.sh" && grep -q "shell_dir=\$(readlink -f \"\$dev/migrated\")/shell" "$1/scripts/dev/nested-up.sh" && for t in l2_wrong_password lock_keyboard_replaced reload_locked lock_privacy; do grep -q "readlink -f \"\$root/.dev/migrated\"" "$1/tests/security/$t.sh" || exit 1; done' _ "$root"
+else
+  echo "SKIP: no quickshell (a process on the real path of an old tree keeps loading from it)"
+fi
+
+# Two concurrent runs on one content: one build, both succeed with the same stamp, nobody deletes a stamped tree, no leftovers.
+rm -rf "$tmp/c"; mkdir -p "$tmp/c/r/scripts/dev" "$tmp/c/dev"
+cp -r "$root/shell" "$tmp/c/r/shell"; cp "$root/scripts/dev/migrate-qs-imports.py" "$tmp/c/r/scripts/dev/"
+( bash "$tool" "$tmp/c/r" "$tmp/c/dev" >"$tmp/c/o1" 2>"$tmp/c/e1" ) &
+( bash "$tool" "$tmp/c/r" "$tmp/c/dev" >"$tmp/c/o2" 2>"$tmp/c/e2" ) &
+( bash "$tool" "$tmp/c/r" "$tmp/c/dev" >"$tmp/c/o3" 2>"$tmp/c/e3" ) &
+wait
+desc="three concurrent runs on one content: the same stamp, one build (one 'file(s) changed' line in all their output), one stamped tree, no temporary directory left"
+check bash -c 'cd "$1" && [[ $(cat o1) == $(cat o2) && $(cat o2) == $(cat o3) && $(cat e1 e2 e3 | grep -c "file(s) changed") == 1 && $(ls -d dev/migrated-* | wc -l) == 1 && -f dev/migrated-$(cat o1)/.stamp && -z $(ls -A dev | grep "^\.migrated-\(build\|snap\)") ]]' _ "$tmp/c"
+# Concurrent runs on two contents: both finish, the link points at one of them, every stamped tree that is left is whole.
+printf '// two\n' >>"$tmp/c/r/shell/lib/Mode.qml"
+( bash "$tool" "$tmp/c/r" "$tmp/c/dev" >"$tmp/c/p1" 2>"$tmp/c/f1" ) &
+( bash "$tool" "$tmp/c/r" "$tmp/c/dev" >"$tmp/c/p2" 2>"$tmp/c/f2" ) &
+wait
+desc="two concurrent runs after a change: both succeed with the same new stamp, the link points to it, the previous tree is intact"
+check bash -c 'cd "$1" && [[ $(cat p1) == $(cat p2) && $(readlink dev/migrated) == "$1/dev/migrated-$(cat p1)" && -f dev/migrated-$(cat o1)/.stamp && -d dev/migrated-$(cat o1)/shell ]]' _ "$tmp/c"
+
+# A reused tree is verified again; a damaged one is refused and left alone (never deleted by this script).
+real_now=$(readlink -f "$tmp/c/dev/migrated")
+printf '// tampered\n' >>"$real_now/shell/lib/Mode.qml"
+if bash "$tool" "$tmp/c/r" "$tmp/c/dev" >/dev/null 2>"$tmp/c/e4"; then rc=0; else rc=$?; fi
+desc="a reused tree that is not the source any more is refused (exit 1, the message names it) and not deleted"
+check bash -c '[[ $1 == 1 && -d $2 ]] && grep -q "is not the source apart from its imports" "$3"' _ "$rc" "$real_now" "$tmp/c/e4"
+
+# A source with a symlink is refused, and the link stays where it was.
+rm -rf "$tmp/c2"; mkdir -p "$tmp/c2/r/scripts/dev" "$tmp/c2/dev"
+cp -r "$root/shell" "$tmp/c2/r/shell"; cp "$root/scripts/dev/migrate-qs-imports.py" "$tmp/c2/r/scripts/dev/"
+ln -s /etc/hostname "$tmp/c2/r/shell/lib/Linked"
+if bash "$tool" "$tmp/c2/r" "$tmp/c2/dev" >/dev/null 2>"$tmp/c2/err"; then rc=0; else rc=$?; fi
+desc="a source with a symlink is refused (exit 1, the message says so) and no tree is published"
+check bash -c '[[ $1 == 1 && ! -e $2/dev/migrated ]] && grep -q "symlinks" "$2/err"' _ "$rc" "$tmp/c2"
+desc="the stamp is computed from a snapshot of the sources and the tree is built from that snapshot (an edit in between cannot mislabel it)"
+check bash -c 'grep -q "cp -a \"\$root/shell\" \"\$snap/shell\"" "$1" && grep -q "cd \"\$snap/shell\" && find" "$1" && grep -q -- "--src \"\$snap/shell\" --out" "$1"' _ "$tool"
 
 # The launcher: the tree stamp is in security_sig (a changed tree restarts security), and it never deletes the migrated tree.
 sr=$root/scripts/dev/shell-run.sh

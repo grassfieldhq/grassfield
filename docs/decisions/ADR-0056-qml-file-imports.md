@@ -38,8 +38,15 @@ conflict); the packaged tree is the migrated copy (`packaging/arch/PKGBUILD` run
 `just check-quick` runs `--dry-run` (check-migrate): the whole tree must migrate, twice with the same result, so a new file whose
 import cannot be migrated fails CI. The QML test layers keep testing the source modules (the files differ only by their import
 lines). `scripts/dev/shell-run.sh --migrated` runs the UI from `.dev/migrated/shell`: a link to `.dev/migrated-<stamp>`, the stamp being a hash of the sources and of the script (`scripts/dev/migrated-tree.sh`).
-A changed content is built into a fresh directory and the link is swapped by one rename; the tree a running process uses is never
-deleted or rewritten, and the stamp is in `security_sig`, so a changed tree restarts the security process on purpose; it is not
+A changed content is built into a fresh directory and the link is swapped by one rename. A tree that has a stamp is never deleted
+or rewritten while it is current or the one before it, and a run on the current content changes and prunes nothing. The processes
+are STARTED AND ADDRESSED BY THE REAL PATH (`readlink -f .dev/migrated`, in `shell-run.sh`, `nested-up.sh` and the nested security
+tests), never through the link: Quickshell keeps the literal path (shellDir, the Path ID, every relative load), so a process
+started through the link would load a file it opens late from whatever tree the link points to by then, while one started on tree
+A's real path keeps loading from A after a swap to B (tests/shell/migrated_tree.sh runs both). The stamp is computed from a
+snapshot of the sources that the tree is then built from, runs are serialised by `flock`, a reused tree is verified again, and a
+source with a symlink is refused. The stamp is in `security_sig`, so a changed tree restarts the security process on purpose,
+a process that outlives two swaps having lost its tree; it is not
 the default yet, because the dev key bindings and the nested security tests address instances by path (`qs ipc -p <repo>/shell`,
 `-p <repo>/shell/security.qml`: Quickshell identifies an instance by its config path), so the default flips together with
 `config/hypr/grassfield/bindings.lua` and those tests, in a change the compositor and security owners review.

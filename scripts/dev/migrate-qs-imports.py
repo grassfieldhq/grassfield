@@ -217,6 +217,14 @@ def pending(tree, roots_to_split=ROOTS):
     return left
 
 
+def refuse_symlinks(src):
+    """A source with a symlink is refused: the package holds files and directories only, and a link could stand for content the
+    review never saw (copytree would follow it, copy -a would keep it: the two must not differ)."""
+    links = [str(p.relative_to(src)) for p in sorted(src.rglob("*")) if p.is_symlink()]
+    if links:
+        raise Fail("the source tree has symlinks (" + ", ".join(links[:5]) + (", ..." if len(links) > 5 else "") + "): refused")
+
+
 def verify(src, tree, roots_to_split=ROOTS):
     """The problems (a list of strings) that make TREE differ from SRC by more than the import lines; empty when it is the
     shipped form of SRC. Independent of migrate(): it compares the two trees line by line."""
@@ -309,6 +317,7 @@ def main():
             import tempfile
             with tempfile.TemporaryDirectory() as t:
                 tree = pathlib.Path(t) / "shell"
+                refuse_symlinks(pathlib.Path(a.src))
                 shutil.copytree(a.src, tree)
                 migrate(tree, roots)
                 again = migrate(tree, roots)
@@ -321,6 +330,7 @@ def main():
             print("migrate-qs-imports: the whole tree migrates, and equals the source apart from its import lines")
             return 0
         if a.verify:
+            refuse_symlinks(pathlib.Path(a.src))
             problems = verify(pathlib.Path(a.src), pathlib.Path(a.tree), roots)
             for p in problems:
                 print(f"migrate-qs-imports: {p}", file=sys.stderr)
@@ -334,6 +344,7 @@ def main():
             out = pathlib.Path(a.out)
             if out.exists():
                 shutil.rmtree(out)
+            refuse_symlinks(pathlib.Path(a.src))
             shutil.copytree(a.src, out)
             tree = out
         elif a.in_place and a.tree:

@@ -40,7 +40,7 @@ check bash -c '[[ "$(sha256sum shell/security/host/SecurityHost.qml | cut -d" " 
 # The tool that makes the shipped UI tree (ADR-0056, Proposed): it rewrites the imports of every file the UI process loads, the
 # polkit agent and the secret sheets included, and verifies the package equals the source apart from them. A change of it can
 # change what ships, so it is pinned the same way (the opus review of #37, MAJOR-1).
-migrate_pinned=c38c65115da0131deab30f78e5eb6e9bb358a3c579e39f609a56bdc7c598b30e
+migrate_pinned=d5b0b9f9d2792da70e090c275a037474b3d08f10e6501f4e9cd96cbe9715d0ad
 desc="migrate: scripts/dev/migrate-qs-imports.py is pinned by its SHA-256 (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum scripts/dev/migrate-qs-imports.py | cut -d" " -f1)" == "$1" ]] || { echo "scripts/dev/migrate-qs-imports.py changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$migrate_pinned"
 # What runs the verification is pinned with the tool (the delta review of #37, LOW-4): the CI step (check-migrate.sh) and the two
