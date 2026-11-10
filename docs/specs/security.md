@@ -1570,8 +1570,9 @@ same directory and the modules move without moving a file), one step at a time u
   process's main thread (a hung polkitd stops the lock for up to 25 s), so the tries are bounded (round 2, MINOR-A): none
   while the session is locked, the displays are off or a sleep is under way (`SheetSession.sleeping`), at most four per
   unlock period, and none for the rest of the period once an attempt coincided with a stall of the event loop longer than
-  1 s (a 200 ms beat on a monotonic clock); an unlock starts a new period. The one attempt at each start of the security
-  process stays, whatever the session's state (an accepted residual). `authagent_flows.d` test_36 to test_45,
+  1 s (a 200 ms beat on a monotonic clock); a real unlock (the session locked while the agent ran, not the end of the
+  start-up probe of a stranded lock: round 3, MINOR-1) starts a new period. The one attempt at each start of the security
+  process stays, whatever the session's state (an accepted residual). `authagent_flows.d` test_36 to test_46,
   `authagent_registration.sh` on the real Quickshell. The sheets also count the start-up probe of a stranded or foreign
   lock as locked (LOW-4). The
   `polkit` and `secrets` dev hooks answer on the security instance. **S4:** safe mode. The invariant of each state (who

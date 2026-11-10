@@ -811,6 +811,25 @@ down, how sleep behaves) is written in the table at the end of this step.
   - NIT: a web address (http, https, any case) is refused as a Loader or `createComponent` source, `Qt.resolvedUrl` of
     one included; the exception stays for plain strings (two more mutants, the reviewer's
     `https://example.invalid/security/polkit/AuthAgent.qml` among them).
+- Review round 4 (2026-11-11, the opus review of 64847439: PASS, one MINOR and three NITs, fixed before the merge):
+  - MINOR-1, the re-arm ran at any fall of `SheetSession.locked`, which also covers the start-up probe of a stranded lock
+    (`Lock.locked || Lock.strandedProbing`; Lock starts the probe before the host makes the sheets). When the probe ended
+    "unlocked", a stalled start attempt was forgotten and a second blocking try followed about 3 s later (the reviewer's
+    qmltestrunner run: "stopped … 1706 ms", then `stalled=false periodTries=0`, then a second registration). Now only a
+    real unlock re-arms: the agent counts an unlock only after it saw the session lock while it ran (`sawLock`), so the
+    probe's end, which it never saw begin, is none. No sixth host Binding. A session already locked when the agent is made
+    is not re-armed at its first unlock either (the tries stay as they were: never more). `authagent_flows.d` test_46 (the
+    probe case) and two more mutants (a re-arm at any fall of `locked`, a lock never seen).
+  - NIT-1, the scan: strings are read decoded (JavaScript escapes: `"\x68ttps://…"`, `"https://…"`,
+    `"secu\x72ity/…"`), and in every file of shell/ and ui/, the security tree included, no import (`import "…"`,
+    `.import "…"`) and no literal Loader or `createComponent` source may be anything but a file of this tree: no address
+    with a scheme (http, https, data, file, qrc, ...), no absolute path (`/tmp/x.qml`), no relative path out of shell/ and
+    ui/. Checked first: the tree uses none; shell/security makes SheetHost.qml and LockStills.qml by `Qt.resolvedUrl` of a
+    relative literal. Eleven more mutants, and an allowed case (a UI file spelled with escapes).
+  - NIT-2: `authagent_registration.sh` "stall-start": the fake authority answers the START's own registration 2 s late:
+    one registration, the stall logged, no try (the reviewer saw it detected at 2017 ms with 0 tries). A private-bus phase:
+    run bare by the integrator.
+  - NIT-3: the beat Timer's id is `stallBeatTimer` (the function keeps `stallBeat`).
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words
