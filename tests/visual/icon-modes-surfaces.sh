@@ -50,15 +50,23 @@ for wall in white grey black; do
 done
 for wall in white grey black; do
   vs_wallpaper "$OUT/wall-$wall.png" || echo "wallpaper $wall refused" >&2
-  vs_sleep 1.5
   # The live Dock's icons follow the glass they sit on (R7-REQ-13): the wallpaper is known to the shell (source "wallpaper") and the tone follows it, in any appearance.
-  case $wall in white) want_dark=false ;; black) want_dark=true ;; *) want_dark= ;; esac
-  surf=$(vs_ipc dock iconsurface)
-  echo "dock iconsurface over $wall: $surf"
-  src=$(printf '%s' "$surf" | jq -r --arg o "$VS_OUTPUT" '.[$o].source // "missing"')
-  dark=$(printf '%s' "$surf" | jq -r --arg o "$VS_OUTPUT" '.[$o].dark | tostring')
-  [ "$src" = wallpaper ] || { echo "FAIL: the live Dock does not know the wallpaper under it over $wall (source $src)" >&2; ICON_SURFACE_FAIL=1; }
-  [ -z "$want_dark" ] || [ "$dark" = "$want_dark" ] || { echo "FAIL: the live Dock icons are dark=$dark over $wall, expected $want_dark" >&2; ICON_SURFACE_FAIL=1; }
+  # Polled, not read after a fixed sleep: taken once VS_OUTPUT reports the wallpaper with the expected tone, within ICON_SURFACE_BOUND_MS (5 s); the settle time (from
+  # vs_wallpaper returning) is printed for each wallpaper and the run fails only past the bound. Only VS_OUTPUT is checked: the nested session's own output (WAYLAND-1)
+  # is not rendered by the pinned run, so its wallpaper probe has no paint to read and its reading stays the previous one.
+  case $wall in black) want_dark=true ;; *) want_dark=false ;; esac
+  t0=$(date +%s%N); surf=; src=missing; dark=missing
+  while :; do
+    surf=$(vs_ipc dock iconsurface)
+    src=$(printf '%s' "$surf" | jq -r --arg o "$VS_OUTPUT" '.[$o].source // "missing"' 2>/dev/null)
+    dark=$(printf '%s' "$surf" | jq -r --arg o "$VS_OUTPUT" '.[$o].dark | tostring' 2>/dev/null)
+    [ "$src" = wallpaper ] && [ "$dark" = "$want_dark" ] && break
+    [ $((($(date +%s%N) - t0) / 1000000)) -lt ${ICON_SURFACE_BOUND_MS:-5000} ] || break
+    sleep 0.1
+  done
+  settle=$((($(date +%s%N) - t0) / 1000000))
+  echo "dock iconsurface over $wall: settled in ${settle} ms: $surf"
+  { [ "$src" = wallpaper ] && [ "$dark" = "$want_dark" ]; } || { echo "FAIL: the live Dock over $wall: source $src, dark=$dark, expected wallpaper and dark=$want_dark after ${settle} ms" >&2; ICON_SURFACE_FAIL=1; }
   for appearance in $APPEARANCES; do
     for mode in $MODES; do
       config "$appearance" "$mode"
