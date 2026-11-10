@@ -71,6 +71,24 @@ desc="files and settings resolve to the Grassfield apps"
 check test "$(resolve files)" = org.grassfield.Files.desktop -a "$(resolve settings)" = org.grassfield.Settings.desktop
 desc="activity (Ctrl+Shift+Esc, AM64) resolves to Activity Monitor"
 check test "$(resolve activity)" = org.grassfield.Activity.desktop
+# ADR-0055 D-6: the session's own list (XDG_CURRENT_DESKTOP names Grassfield) is read before mimeapps.list, so the web key follows a
+# browser chosen in Settings or seeded at the start; Omarchy's routing entry is never the handler.
+entry sanaga.desktop Sanaga sanaga 'Network;WebBrowser;'
+entry omarchy-browser.desktop Browser omarchy-launch-browser 'Network;WebBrowser;'
+printf '[Default Applications]\nx-scheme-handler/https=sanaga.desktop;\n' >"$tmp/cfg/grassfield-mimeapps.list"
+printf '[Default Applications]\nx-scheme-handler/https=omarchy-browser.desktop\n' >"$tmp/cfg/hyprland-mimeapps.list"
+resolve_session() {
+  env -i PATH="$PATH" HOME="$tmp/home" XDG_CONFIG_HOME="$tmp/cfg" XDG_DATA_HOME="$tmp/none" XDG_DATA_DIRS="$tmp/share" \
+    XDG_CURRENT_DESKTOP="$2" GRASSFIELD_LAUNCH_DRY_RUN=1 sh "$root/packaging/bin/grassfield-launch-key" "$1"
+}
+desc="web (session): the session's own list is read first: Sanaga"
+check test "$(resolve_session web Grassfield:Hyprland)" = sanaga.desktop
+desc="web (Omarchy session, no Grassfield item): mimeapps.list, the session list is not read"
+check test "$(resolve_session web Hyprland)" = browser.desktop
+rm -f "$tmp/cfg/grassfield-mimeapps.list"
+desc="web (session) with no session list: mimeapps.list; the routing entry of the desktop list is never the handler"
+check test "$(resolve_session web Grassfield:Hyprland)" = browser.desktop
+rm -f "$tmp/cfg/hyprland-mimeapps.list"
 if command -v xdg-mime >/dev/null; then
   desc="mail, web and music resolve to the user's default handlers, not a package name"
   check test "$(resolve mail)" = mailer.desktop -a "$(resolve web)" = browser.desktop -a "$(resolve music)" = player.desktop

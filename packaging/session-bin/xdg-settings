@@ -1,0 +1,221 @@
+#!/bin/bash
+# Grassfield session stand-in for xdg-settings (ADR-0055 D-6; owner decision of the review of PR #38). Installed to
+# /usr/lib/grassfield/session-bin/, first in PATH only in a Grassfield session (packaging/uwsm/env-grassfield); the Omarchy
+# session runs /usr/bin/xdg-settings untouched.
+#
+# Why: the session's own list ($XDG_CONFIG_HOME/grassfield-mimeapps.list, read before mimeapps.list because the session's
+# XDG_CURRENT_DESKTOP is Grassfield:Hyprland) holds Sanaga as the default browser from the first start. Chromium-family browsers
+# and `omarchy default browser` call `xdg-settings set default-web-browser X`; the real tool writes ~/.config/mimeapps.list, then
+# checks the result through the lookup, which still answers Sanaga, so it fails (exit 4) and its rollback writes our own entry
+# into the user's list. A browser's "make default" must work at once, as on a Mac.
+#
+#   set default-web-browser X            (and set default-url-scheme-handler http|https X)
+#     1. the record (default-apps.state in Grassfield's state folder) says web.state=user, web.chosen=X;
+#     2. the session list names X for http, https, text/html and application/xhtml+xml;
+#     3. the real /usr/bin/xdg-settings runs with the same arguments, so ~/.config/mimeapps.list follows the explicit choice;
+#     4. the record's baseline (what the user's own lists name) is refreshed; exit 0 when the effective session default is X.
+#   get default-web-browser, check default-web-browser X, and the http/https url-scheme variants: answered from the effective
+#   session default, so a browser's own check passes.
+#   Everything else (other properties, other schemes, anything it cannot judge) is the real tool, unchanged.
+#
+# The real tool is run by absolute path and never found through PATH: the stand-in cannot reach itself. A real path that is this
+# very file stops with an error before anything is written. GRASSFIELD_XDG_SETTINGS_REAL replaces the real tool for tests only,
+# and only in a dev run (GRASSFIELD_DEV=1 and GRASSFIELD_SESSION not 1), as in the Chromium stand-in.
+real=/usr/bin/xdg-settings
+if [[ ${GRASSFIELD_DEV:-} == 1 && ${GRASSFIELD_SESSION:-} != 1 ]]; then
+  real=${GRASSFIELD_XDG_SETTINGS_REAL:-$real}
+fi
+self=$(readlink -f -- "$0" 2>/dev/null)
+if [[ -z $self || $(readlink -f -- "$real" 2>/dev/null) == "$self" ]]; then
+  echo "grassfield xdg-settings: the real xdg-settings is this stand-in (refusing to call itself)" >&2
+  exit 1
+fi
+[[ -x $real ]] || { echo "grassfield xdg-settings: $real is not installed" >&2; exit 127; }
+
+WEB_TYPES=(x-scheme-handler/http x-scheme-handler/https text/html application/xhtml+xml)
+ROUTING=omarchy-browser.desktop
+cfg=${XDG_CONFIG_HOME:-${HOME:-}/.config}
+if [[ -n ${GRASSFIELD_STATE_HOME:-} ]]; then
+  state_dir=$GRASSFIELD_STATE_HOME
+else
+  state_dir=${XDG_STATE_HOME:-${HOME:-}/.local/state}/grassfield
+fi
+session_list=$cfg/grassfield-mimeapps.list
+record=$state_dir/default-apps.state
+
+passthrough() { exec "$real" "$@"; }
+
+# The first desktop id a list names for a type; nothing when the file is no regular readable file.
+list_default() { # file type
+  [[ -f $1 && -r $1 ]] || return 0
+  awk -v type="$2" '
+    function trim(s) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", s); return s }
+    { line = trim($0) }
+    line ~ /^\[.*\]$/ { g = (line == "[Default Applications]"); next }
+    g && line !~ /^#/ {
+      eq = index(line, "=")
+      if (eq > 0 && trim(substr(line, 1, eq - 1)) == type) {
+        n = split(substr(line, eq + 1), a, ";")
+        for (i = 1; i <= n; i++) { x = trim(a[i]); if (x != "") { print x; exit } }
+      }
+    }' "$1"
+}
+
+# The user's own lists, in lookup order (the desktop list of the session, then mimeapps.list); and the effective default with the
+# session list first. The routing entry of Omarchy is left out, as omarchy-cmd-default-browser does.
+lookup() { # type, lists...
+  local type=$1 f id
+  shift
+  for f in "$@"; do
+    id=$(list_default "$f" "$type")
+    if [[ -n $id && $id != "$ROUTING" ]]; then
+      printf '%s\n' "$id"
+      return 0
+    fi
+  done
+  return 1
+}
+own_lists=("$cfg/hyprland-mimeapps.list" "$cfg/mimeapps.list")
+effective() { lookup "$1" "$session_list" "${own_lists[@]}"; }
+
+valid_id() { [[ $1 =~ ^[A-Za-z0-9._+-]{1,200}\.desktop$ && $1 != "$ROUTING" ]]; }
+
+# The record with the given key=value pairs replaced or added; its other valid lines kept; a line that is no key=value dropped.
+write_record() { # key=value...
+  local tmp keep=() line k drop pair
+  [[ -d $state_dir ]] || mkdir -p -- "$state_dir" || return 1
+  if [[ -L $record ]]; then return 1; fi
+  if [[ -f $record ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+      line=${line%$'\r'}
+      [[ -z ${line//[[:space:]]/} || $line == \#* ]] && continue
+      [[ $line == *=* && ${line%%=*} != "" ]] || continue
+      k=${line%%=*}
+      drop=0
+      for pair in "$@"; do [[ ${pair%%=*} == "$k" ]] && drop=1; done
+      ((drop)) || keep+=("$line")
+    done <"$record"
+  fi
+  tmp=$(mktemp -- "$state_dir/.default-apps.XXXXXX") || return 1
+  {
+    echo "# Written by grassfield-files --seed-default-apps, the xdg-settings stand-in and Settings > Desktop & Dock (ADR-0055 D-6)"
+    printf '%s\n' "${keep[@]}" "$@" | LC_ALL=C sort
+  } >"$tmp" && chmod 600 -- "$tmp" && mv -f -- "$tmp" "$record" || { rm -f -- "$tmp"; return 1; }
+}
+
+# The session list with the four web types set to the id: other lines kept, a repeated key of the group dropped, the group added
+# when missing. Written through a temporary file; a linked list is never written.
+write_session_list() { # id
+  local tmp
+  [[ -L $session_list ]] && return 1
+  [[ -d $cfg ]] || mkdir -p -- "$cfg" || return 1
+  tmp=$(mktemp -- "$cfg/.grassfield-mimeapps.XXXXXX") || return 1
+  if [[ -f $session_list ]]; then
+    awk -v id="$1" -v types="${WEB_TYPES[*]}" '
+      function trim(s) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", s); return s }
+      BEGIN { split(types, T, " "); for (i in T) want[T[i]] = 1 }
+      { lines[++n] = $0 }
+      END {
+        gs = 0; ge = 0
+        for (i = 1; i <= n; i++) {
+          t = trim(lines[i])
+          if (t ~ /^\[.*\]$/) {
+            if (gs && !ge) { ge = i - 1 }
+            if (t == "[Default Applications]" && !gs) gs = i
+          }
+        }
+        if (gs && !ge) ge = n
+        m = 0; last = 0
+        for (i = 1; i <= n; i++) {
+          drop = 0
+          if (gs && i > gs && i <= ge) {
+            t = trim(lines[i]); eq = index(t, "=")
+            if (t !~ /^#/ && eq > 0 && (trim(substr(t, 1, eq - 1)) in want)) drop = 1
+          }
+          if (!drop) {
+            out[++m] = lines[i]
+            if (gs && i > gs && i <= ge && trim(lines[i]) != "") last = m
+            if (i == gs && !last) last = m
+          }
+        }
+        if (!gs) {
+          if (m > 0 && trim(out[m]) != "") out[++m] = ""
+          out[++m] = "[Default Applications]"; last = m
+        }
+        for (i = 1; i <= m; i++) {
+          print out[i]
+          if (i == last) for (j = 1; j <= length(T); j++) print T[j] "=" id ";"
+        }
+      }' "$session_list" >"$tmp" || { rm -f -- "$tmp"; return 1; }
+  else
+    {
+      echo "[Default Applications]"
+      for t in "${WEB_TYPES[@]}"; do echo "$t=$1;"; done
+    } >"$tmp"
+  fi
+  mv -f -- "$tmp" "$session_list" || { rm -f -- "$tmp"; return 1; }
+}
+
+# The record's baseline: what the user's own lists name for each web type now.
+refresh_baseline() {
+  local pairs=() t v
+  for t in "${WEB_TYPES[@]}"; do
+    v=$(lookup "$t" "${own_lists[@]}") || v=-
+    pairs+=("web.$t=$v")
+  done
+  write_record "${pairs[@]}"
+}
+
+# Answers from the effective session default (get, check), or the real tool when the lists name nothing.
+answer() { # action type [id] ; remaining args for passthrough in "$@" afterwards
+  :
+}
+
+action=${1:-}
+prop=${2:-}
+case $prop in
+  default-web-browser)
+    type=x-scheme-handler/http
+    id=${3:-}
+    ;;
+  default-url-scheme-handler)
+    case ${3:-} in
+      http | https) type=x-scheme-handler/${3} ;;
+      *) passthrough "$@" ;;
+    esac
+    id=${4:-}
+    ;;
+  *) passthrough "$@" ;;
+esac
+[[ $cfg == /* && $state_dir == /* ]] || passthrough "$@"
+
+case $action in
+  get)
+    now=$(effective "$type") || passthrough "$@"
+    printf '%s\n' "$now"
+    exit 0
+    ;;
+  check)
+    valid_id "$id" || passthrough "$@"
+    now=$(effective "$type") || passthrough "$@"
+    if [[ $now == "$id" ]]; then echo yes; else echo no; fi
+    exit 0
+    ;;
+  set)
+    valid_id "$id" || passthrough "$@"
+    [[ -L $session_list || -L $record ]] && passthrough "$@"
+    # 1. the record first: whatever happens next, the choice is the user's
+    write_record "web.state=user" "web.chosen=$id" || passthrough "$@"
+    # 2. the session list
+    write_session_list "$id" || passthrough "$@"
+    # 3. the real tool, so ~/.config/mimeapps.list follows
+    "$real" "$@"
+    rc=$?
+    # 4. baseline, and the answer: the effective session default
+    refresh_baseline
+    now=$(effective "$type")
+    if [[ $now == "$id" ]]; then exit 0; fi
+    exit $((rc == 0 ? 4 : rc))
+    ;;
+  *) passthrough "$@" ;;
+esac

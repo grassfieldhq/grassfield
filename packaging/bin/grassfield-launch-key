@@ -34,19 +34,38 @@ find_entry() {
   return 1
 }
 
-# The default handler of a MIME type, if its desktop entry is installed. The user's mimeapps.list files are read in the
-# order of the desktop entry specification (user config, system config, data directories); xdg-mime answers when none
-# names an installed handler.
-default_for() {
+# The user's desktop lists of the session, in the order of the specification: $XDG_CONFIG_HOME/<desktop>-mimeapps.list for each item of
+# XDG_CURRENT_DESKTOP (lowercased), so the session's own grassfield-mimeapps.list (a browser chosen in Settings, Sanaga and Notes
+# seeded at the first start, ADR-0055 D-6) is read before mimeapps.list, as xdg-mime does. Colon-separated.
+desktop_lists() {
+  cfg=${XDG_CONFIG_HOME:-$HOME/.config}
   old_ifs=$IFS
   IFS=:
-  for f in "${XDG_CONFIG_HOME:-$HOME/.config}/mimeapps.list" $(printf '%s' "${XDG_CONFIG_DIRS:-/etc/xdg}" | sed 's|:|/mimeapps.list:|g; s|$|/mimeapps.list|') \
+  out=
+  for d in ${XDG_CURRENT_DESKTOP:-}; do
+    d=$(printf '%s' "$d" | tr 'A-Z' 'a-z')
+    case $d in '' | */* | .*) continue ;; esac
+    out="$out$cfg/$d-mimeapps.list:"
+  done
+  IFS=$old_ifs
+  printf '%s' "$out"
+}
+
+# The default handler of a MIME type, if its desktop entry is installed. The user's mimeapps.list files are read in the
+# order of the desktop entry specification (the session's desktop lists, user config, system config, data directories); xdg-mime
+# answers when none names an installed handler. Omarchy's routing entry (omarchy-browser.desktop, which runs
+# omarchy-launch-browser, which reads the default browser again) is never a handler here.
+default_for() {
+  old_ifs=$IFS
+  lists=$(desktop_lists)
+  IFS=:
+  for f in $lists "${XDG_CONFIG_HOME:-$HOME/.config}/mimeapps.list" $(printf '%s' "${XDG_CONFIG_DIRS:-/etc/xdg}" | sed 's|:|/mimeapps.list:|g; s|$|/mimeapps.list|') \
     $(printf '%s' "$dirs" | sed 's|:|/applications/mimeapps.list:|g; s|$|/applications/mimeapps.list|'); do
     [ -r "$f" ] || continue
     ids=$(sed -n '/^\[Default Applications\]/,/^\[/{s/^'"$(printf '%s' "$1" | sed 's|/|\\/|g')"'=//p}' "$f" | head -n 1)
     IFS=';'
     for id in $ids; do
-      if [ -n "$id" ] && find_entry "$id" >/dev/null; then
+      if [ -n "$id" ] && [ "$id" != omarchy-browser.desktop ] && find_entry "$id" >/dev/null; then
         IFS=$old_ifs
         echo "$id"
         return
