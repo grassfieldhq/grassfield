@@ -4,7 +4,8 @@ import QtQuick
 // What the polkit sheet and the secret sheets know about the session (ADR-0041 step 1, S3): read by AuthAgent and SecretAgent
 // only, written only by shell/security/host/SecurityHost.qml, in the security process, from that process's own lock and idle
 // modules (Bindings): `locked` from Lock.locked and the start-up stranded-lock probe (Lock.strandedProbing), `displaysOff`
-// from Idle.displayOff, `saverShown` from Idle.saverShown, `starting` from Idle.starting. The state file the UI reads is never read here, so a forged
+// from Idle.displayOff, `saverShown` from Idle.saverShown, `starting` from Idle.starting, `sleeping` from Idle.sleeping.
+// The state file the UI reads is never read here, so a forged
 // `unlocked` no longer reaches the hold behind the lock or the device rule of ADR-0045 OC-6 (the opus review of 77a0ceb3,
 // MINOR-4, closed for the lock and the displays). The screen saver is the UI's: idle counts its idle time itself, early and
 // never late (from this process's start until the user is seen active, and without the UI's `idle inhibit` lease, which
@@ -25,4 +26,7 @@ QtObject {
     // saverShown is true for this process's start alone (Idle.starting: the user not seen active yet, no saver counted): a
     // request held then says it arrived while Grassfield was starting (the opus delta review of S3, LOW). Text only.
     property bool starting: false
+    // A sleep is under way (Idle.sleeping: logind's PrepareForSleep(true) until the resume). The polkit agent makes no
+    // registration attempt meanwhile (the opus review of S3, round 2, MINOR-A); `locked` turns true at the same moment.
+    property bool sleeping: false
 }

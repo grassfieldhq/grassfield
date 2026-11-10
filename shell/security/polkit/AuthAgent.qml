@@ -44,55 +44,132 @@ Scope {
     // security process's lookup (the system theme only, whose directories the user cannot change); a harness gives none.
     property var iconSource: name => ""
 
-    // Registration (ADR-0041 S3; the opus review of S3, MINOR-3, and its delta review, MAJOR-1). polkit takes one agent per
-    // session, and Quickshell's PolkitAgent asks once, when it is made: a refusal only warns, and its path is set once (a
-    // later path is refused with "cannot change path after it has been set.", so a new path never asks again). After an
-    // upgrade, or a restart in the wrong order, the UI's earlier agent may still hold the session when this one asks. While
-    // it is not registered, the agent is made again after registrationRetryMs, doubling to registrationRetryMaxMs: the
-    // Loader lets the old one go, and makes the next one an event-loop turn later (agentRemake), once the old one is
-    // destroyed (the Loader deletes it later; made in the same turn, the next one would find it still there and stay inert,
-    // measured on Quickshell 0.3.2). Quickshell keeps one agent per process (a second one made while the first lives never
-    // registers), and the Loader holds one, so two never live. A registered agent, or one with a request, is never let go.
-    // It only ever asks to be the session's agent; it never answers a request by itself, and while none is made polkitd has
-    // no agent here to ask (it answers "not authorized"). Never in a dev session: the nested agent must not take the owner's
-    // session when the owner's own agent restarts (it asks once, as before). tests/security/authagent_registration.sh
-    // counts the attempts on a real Quickshell.
+    // Registration (ADR-0041 S3; the opus review of S3, MINOR-3, its delta review, MAJOR-1, and its round 2, MINOR-A). polkit
+    // takes one agent per session, and Quickshell's PolkitAgent asks once, when it is made: a refusal only warns, and its
+    // path is set once (a later path is refused with "cannot change path after it has been set.", so a new path never asks
+    // again). After an upgrade, or a restart in the wrong order, the UI's earlier agent may still hold the session when this
+    // one asks. While it is not registered, the agent is made again after registrationRetryMs, doubling: the Loader lets the
+    // old one go, and makes the next one an event-loop turn later (agentRemake), once the old one is destroyed (the Loader
+    // deletes it later; made in the same turn, the next one would find it still there and stay inert, measured on
+    // Quickshell 0.3.2). Quickshell keeps one agent per process (a second one made while the first lives never registers),
+    // and the Loader holds one, so two never live. A registered agent, or one with a request, is never let go. It only ever
+    // asks to be the session's agent; it never answers a request by itself, and while none is made polkitd has no agent here
+    // to ask (it answers "not authorized"). Never in a dev session: the nested agent must not take the owner's session when
+    // the owner's own agent restarts (it asks once, as before).
+    // Bounded (round 2, MINOR-A): Quickshell asks polkitd with a synchronous D-Bus call on this process's main thread, so a
+    // hung polkitd blocks the lock here for up to D-Bus's 25 s, and a sleep asked meanwhile waits out logind's delay
+    // without the lock. So the agent is made again only while the session is unlocked, the displays on and no sleep under
+    // way (`quiet` otherwise: a try due then is dropped, and the agent made in that turn too), at most registrationTriesMax
+    // times per unlock period (3, 6, 12 and 24 s), and never again in that period once an attempt coincided with a stall of
+    // the event loop longer than stallLimitMs (stallBeat, a monotonic ElapsedTimer). An unlock starts a new period. The one
+    // attempt at the start is made whatever the session's state (S3's accepted residual). tests/security/authagent_flows.d
+    // test_36 to test_44; tests/security/authagent_registration.sh counts the attempts on a real Quickshell.
     readonly property string agentPath: "/org/grassfield/PolkitAgent"
     readonly property bool devSession: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))
     property int registrationRetryMs: 3000
     readonly property int registrationRetryMaxMs: 60000
-    // Made again this many times since the start.
+    readonly property int registrationTriesMax: 4
+    // Made again this many times since the start (the log's count), and since the last unlock (the cap's).
     property int registrationTries: 0
-    // The wait before the next one: registrationRetryMs, doubled at each try, at most registrationRetryMaxMs.
-    readonly property int registrationRetryInterval: Math.min(root.registrationRetryMaxMs, root.registrationRetryMs * Math.pow(2, Math.min(root.registrationTries, 10)))
+    property int periodTries: 0
+    // An attempt coincided with a stall: no more until the next unlock.
+    property bool registrationStalled: false
+    // The wait before the next one: registrationRetryMs, doubled at each try of the period, at most registrationRetryMaxMs.
+    readonly property int registrationRetryInterval: Math.min(root.registrationRetryMaxMs, root.registrationRetryMs * Math.pow(2, Math.min(root.periodTries, 10)))
+    // No attempt now: locked (or the start-up stranded-lock probe), displays off, or a sleep under way.
+    readonly property bool quiet: SheetSession.locked || SheetSession.displaysOff || SheetSession.sleeping
+    readonly property bool retryArmed: !root.registered && !root.devSession && !root.quiet && !root.registrationStalled && root.periodTries < root.registrationTriesMax
     // The agent now: null in the turn between letting one go and making the next.
     readonly property PolkitAgent agent: agentHolder.item as PolkitAgent
     readonly property bool agentActive: root.agent !== null && root.agent.isActive
 
     function retryRegistration(): void {
-        if (root.registered || root.agentActive || root.devSession)
+        if (!root.retryArmed || root.agentActive)
             return;
         root.registrationTries += 1;
+        root.periodTries += 1;
         if (root.registrationTries <= 5 || root.registrationTries % 10 === 0)
             console.warn("grassfield-polkit: not registered (another authentication agent owns this session); asking again (" + root.registrationTries + ")");
+        if (root.periodTries === root.registrationTriesMax)
+            console.warn("grassfield-polkit: the last try until the next unlock");
         agentHolder.active = false;
         agentRemake.restart();
+    }
+
+    // An unlock starts a new period: the tries and a stall are forgotten.
+    function rearmRegistration(): void {
+        root.periodTries = 0;
+        root.registrationStalled = false;
+    }
+
+    Connections {
+        target: SheetSession
+
+        function onLockedChanged(): void {
+            if (!SheetSession.locked)
+                root.rearmRegistration();
+        }
     }
 
     Timer {
         id: registrationRetry
         interval: root.registrationRetryInterval
-        running: !root.registered && !root.devSession
+        running: root.retryArmed
         repeat: true
         onTriggered: root.retryRegistration()
     }
 
-    // The next agent, an event-loop turn after the last one was let go.
+    // The next agent, an event-loop turn after the last one was let go; dropped when the session went quiet or a stall was
+    // seen in that turn (the next period makes it).
     Timer {
         id: agentRemake
         interval: 0
-        onTriggered: agentHolder.active = true
+        onTriggered: {
+            if (root.quiet || root.registrationStalled)
+                return;
+            root.watchAttempt();
+            agentHolder.active = true;
+        }
     }
+
+    // The stall watch: from an agent's making (the start's included) for stallWatchMs, or until it registers, a beat every
+    // 200 ms reads the time since the last one on a monotonic clock (no wall clock in shell/security). A beat later than
+    // stallLimitMs means the event loop stood still, Quickshell's registration call the likely cause: no more tries until the
+    // next unlock, logged once.
+    readonly property int stallLimitMs: 1000
+    readonly property int stallWatchMs: 3000
+    property bool stallWatching: true
+    property real stallWatchedMs: 0
+
+    function watchAttempt(): void {
+        stallClock.restart();
+        root.stallWatchedMs = 0;
+        root.stallWatching = true;
+    }
+
+    function stallBeat(sinceMs: real): void {
+        root.stallWatchedMs += sinceMs;
+        if (sinceMs > root.stallLimitMs && !root.registered && !root.registrationStalled && !root.devSession) {
+            root.registrationStalled = true;
+            console.warn("grassfield-polkit: registering stopped this process for " + Math.round(sinceMs) + " ms (polkitd not answering?); not asking again until the next unlock");
+        }
+        if (root.registered || root.stallWatchedMs >= root.stallWatchMs)
+            root.stallWatching = false;
+    }
+
+    ElapsedTimer {
+        id: stallClock
+    }
+
+    Timer {
+        id: stallBeat
+        interval: 200
+        repeat: true
+        running: root.stallWatching && !root.devSession
+        onTriggered: root.stallBeat(stallClock.restartMs())
+    }
+
+    Component.onCompleted: stallClock.restart()
 
     Loader {
         id: agentHolder

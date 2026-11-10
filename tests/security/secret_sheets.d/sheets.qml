@@ -70,6 +70,7 @@ Item {
             SheetSession.saverShown = false;
             SheetSession.displaysOff = false;
             SheetSession.starting = false;
+            SheetSession.sleeping = false;
             compare(top.secretC.status, Component.Ready, top.secretC.errorString());
             compare(top.polkitC.status, Component.Ready, top.polkitC.errorString());
             rig = createTemporaryObject(rigC, top);

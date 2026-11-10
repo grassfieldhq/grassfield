@@ -28,9 +28,10 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
   3b. exactly one PolkitAgent in the tree, in shell/security/polkit/AuthAgent.qml, the one file that imports
      Quickshell.Services.Polkit (S3: "exactly one agent in the session");
   3c. the sheets read the session in process (the opus review of 77a0ceb3, MINOR-4): SessionState and LockClient are named
-     by no security module, and SheetSession is written only by the host's four Bindings, each from the lock or idle of
+     by no security module, and SheetSession is written only by the host's five Bindings, each from the lock or idle of
      the same process (locked <- Lock.locked || Lock.strandedProbing, displaysOff <- idle.displayOff, saverShown <-
-     idle.saverShown, starting <- idle.starting, the held notice's words only: the opus delta review of S3, LOW): no other
+     idle.saverShown, starting <- idle.starting, the held notice's words only: the opus delta review of S3, LOW; sleeping
+     <- idle.sleeping, which stops the polkit agent's registration attempts: round 2, MINOR-A): no other
      Binding targets it and no file assigns one of its properties; it fails closed until bound (`locked: true`,
      `displaysOff: true`; the opus review of S3, NIT M3; tests/security/tst_sheetsession.qml reads the same at run time);
   4. shell/lib/LockState.js is the one definition of the state file: the publisher and LockClient import it by a relative
@@ -64,7 +65,7 @@ SECURITY_NAMES = ("Lock", "SleepInhibitor", "AuthAgent", "SecretAgent", "SheetQu
                   "PolkitAgent")
 # SheetSession's one writer and what each property is bound to (rule 3c).
 SHEET_BINDINGS = {"locked": "Lock.locked || Lock.strandedProbing", "displaysOff": "idle.displayOff", "saverShown": "idle.saverShown",
-                  "starting": "idle.starting"}
+                  "starting": "idle.starting", "sleeping": "idle.sleeping"}
 HOST = "shell/security/host/SecurityHost.qml"
 # Rule 1b: what no string of the UI tree or of ui/ may name (a security path, the polkit module, a security type).
 STRING_NAMES = re.compile(r"security/|qs\.security|Quickshell\.Services\.Polkit|\b(?:PolkitAgent|AuthAgent|SecretAgent|PrompterClient"
@@ -369,6 +370,7 @@ def main(argv):
             ("Settings in the queue", "shell/security/SheetQueue.qml", lambda s: s.replace("    property bool polkitPresent: false\n", "    property bool polkitPresent: Settings.reduceMotion\n", 1)),
             ("SheetSession bound to a constant in the host", HOST, lambda s: s.replace("        property: \"locked\"\n        value: Lock.locked || Lock.strandedProbing\n", "        property: \"locked\"\n        value: false\n", 1)),
             ("SheetSession's displays bound to the lock in the host", HOST, lambda s: s.replace("        property: \"displaysOff\"\n        value: idle.displayOff\n", "        property: \"displaysOff\"\n        value: Lock.displaysOff\n", 1)),
+            ("SheetSession's sleep bound to a constant in the host", HOST, lambda s: s.replace("        property: \"sleeping\"\n        value: idle.sleeping\n", "        property: \"sleeping\"\n        value: false\n", 1)),
             ("SheetSession's start bound to the saver in the host", HOST, lambda s: s.replace("        property: \"starting\"\n        value: idle.starting\n", "        property: \"starting\"\n        value: idle.saverShown\n", 1)),
             ("SheetSession's saver unbound in the host", HOST, lambda s: s.replace("    Binding {\n        target: SheetSession\n        property: \"saverShown\"\n        value: idle.saverShown\n    }\n", "", 1)),
             ("SheetSession bound in idle", "shell/security/idle/Idle.qml", lambda s: s.replace("    IdleMonitor {\n        id: saverMonitor\n", "    Binding {\n        target: SheetSession\n        property: \"saverShown\"\n        value: false\n    }\n    IdleMonitor {\n        id: saverMonitor\n", 1)),

@@ -10,8 +10,10 @@
 # Quickshell's PanelWindow and a compositor do, beside a window underneath (check of c1ca44f). flows.qml test_20 to test_34:
 # a request the user cannot see (locked, saver, displays off, held other than right after another one, waiting behind a
 # secret sheet, replaced) is refused once PAM talks without asking, as for a fingerprint reader (ADR-0045 OC-6, security
-# review of e3542510 and its re-reviews). test_36 to test_39: registration (ADR-0041 S3, the opus review's MINOR-3 and its
-# delta review's MAJOR-1): refused, the agent is made again with a backoff and the new one asks again; the plain agent keeps
+# review of e3542510 and its re-reviews). test_36 to test_44: registration (ADR-0041 S3, the opus review's MINOR-3, its
+# delta review's MAJOR-1 and its round 2's MINOR-A): refused, the agent is made again with a backoff and the new one asks
+# again, never while locked, the displays off or a sleep under way, at most four times per unlock period, and never again
+# in that period once an attempt stopped the event loop (the plain agent can: mockBlockMs); the plain agent keeps
 # Quickshell's rules (asks only when made, its path set once, one per process: make_harness.py), so a retry by a new path
 # or one made before the last is gone is caught; tests/security/authagent_registration.sh counts the attempts on a real
 # Quickshell. No compositor, no polkit, no PAM.
@@ -150,16 +152,27 @@ replaced-refused-first (re-review MAJOR-1)#AuthDialogModel.qml#        if (reque
 replaced-refusal-inside-the-binding (re-review MAJOR-1)#AuthDialogModel.qml#        Qt.callLater(root.refuseReplaced)#        root.refuseReplaced()
 device-answers-a-waiting-request (e3542510 MAJOR-2)#AuthAgent.qml#        request: root.agent !== null ? root.agent.flow : null#        request: root.agentActive && !root.waiting ? root.agent.flow : null
 device-answers-always (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SheetSession.locked#        answerable: true || !SheetSession.locked
-registration-never-asked-again (S3 review MINOR-3)#AuthAgent.qml#        running: !root.registered && !root.devSession#        running: false
+registration-never-asked-again (S3 review MINOR-3)#AuthAgent.qml#        running: root.retryArmed#        running: false
 registration-by-setPath (S3 delta review MAJOR-1: the retry of 655916ba)#AuthAgent.qml#        agentHolder.active = false;\n        agentRemake.restart();#        root.agent.path = root.agentPath + "/" + root.registrationTries;
 registration-remade-in-the-same-turn (S3 delta review MAJOR-1)#AuthAgent.qml#        agentHolder.active = false;\n        agentRemake.restart();#        agentHolder.active = false;\n        agentHolder.active = true;
-registration-never-remade (S3 delta review MAJOR-1)#AuthAgent.qml#        onTriggered: agentHolder.active = true#        onTriggered: {}
+registration-never-remade (S3 delta review MAJOR-1)#AuthAgent.qml#            root.watchAttempt();\n            agentHolder.active = true;#            root.watchAttempt();
 registration-no-backoff (S3 review MINOR-3)#AuthAgent.qml#        interval: root.registrationRetryInterval#        interval: root.registrationRetryMs
-registration-no-doubling (S3 review MINOR-3)#AuthAgent.qml#root.registrationRetryMs * Math.pow(2, Math.min(root.registrationTries, 10)))#root.registrationRetryMs)
-registration-no-cap (S3 review MINOR-3)#AuthAgent.qml#Math.min(root.registrationRetryMaxMs, root.registrationRetryMs#Math.min(1000000000, root.registrationRetryMs
-registration-asked-while-registered (S3 review MINOR-3)#AuthAgent.qml#        if (root.registered || root.agentActive || root.devSession)#        if (root.devSession)#AuthAgent.qml#        running: !root.registered && !root.devSession#        running: !root.devSession
-registration-lets-a-request-go (S3 delta review MAJOR-1)#AuthAgent.qml#        if (root.registered || root.agentActive || root.devSession)#        if (root.registered || root.devSession)
-registration-asked-in-a-dev-session (S3 review MINOR-3)#AuthAgent.qml#        if (root.registered || root.agentActive || root.devSession)#        if (root.registered || root.agentActive)#AuthAgent.qml#        running: !root.registered && !root.devSession#        running: !root.registered
+registration-no-doubling (S3 review MINOR-3)#AuthAgent.qml#root.registrationRetryMs * Math.pow(2, Math.min(root.periodTries, 10)))#root.registrationRetryMs)
+registration-no-longest-wait (S3 review MINOR-3)#AuthAgent.qml#Math.min(root.registrationRetryMaxMs, root.registrationRetryMs#Math.min(1000000000, root.registrationRetryMs
+registration-asked-while-registered (S3 review MINOR-3)#AuthAgent.qml#    readonly property bool retryArmed: !root.registered && #    readonly property bool retryArmed:
+registration-lets-a-request-go (S3 delta review MAJOR-1)#AuthAgent.qml#        if (!root.retryArmed || root.agentActive)#        if (!root.retryArmed)
+registration-asked-in-a-dev-session (S3 review MINOR-3)#AuthAgent.qml#!root.registered && !root.devSession && !root.quiet#!root.registered && !root.quiet
+registration-while-quiet (S3 round 2 MINOR-A)#AuthAgent.qml#!root.devSession && !root.quiet && !root.registrationStalled#!root.devSession && !root.registrationStalled
+registration-while-locked (S3 round 2 MINOR-A)#AuthAgent.qml#    readonly property bool quiet: SheetSession.locked || SheetSession.displaysOff#    readonly property bool quiet: SheetSession.displaysOff
+registration-while-the-displays-are-off (S3 round 2 MINOR-A)#AuthAgent.qml#SheetSession.locked || SheetSession.displaysOff || SheetSession.sleeping#SheetSession.locked || SheetSession.sleeping
+registration-while-a-sleep-is-under-way (S3 round 2 MINOR-A)#AuthAgent.qml#SheetSession.displaysOff || SheetSession.sleeping#SheetSession.displaysOff
+registration-made-at-the-lock (S3 round 2 MINOR-A)#AuthAgent.qml#            if (root.quiet || root.registrationStalled)\n                return;\n            root.watchAttempt();#            root.watchAttempt();
+registration-no-cap (S3 round 2 MINOR-A)#AuthAgent.qml# && root.periodTries < root.registrationTriesMax# && true
+registration-cap-kept-after-an-unlock (S3 round 2 MINOR-A)#AuthAgent.qml#        root.periodTries = 0;\n        root.registrationStalled = false;#        root.registrationStalled = false;
+registration-unlock-unseen (S3 round 2 MINOR-A)#AuthAgent.qml#            if (!SheetSession.locked)\n                root.rearmRegistration();#            if (false)\n                root.rearmRegistration();
+registration-stall-ignored (S3 round 2 MINOR-A)#AuthAgent.qml#        if (sinceMs > root.stallLimitMs && #        if (false &&
+registration-stall-kept-after-an-unlock (S3 round 2 MINOR-A)#AuthAgent.qml#        root.periodTries = 0;\n        root.registrationStalled = false;#        root.periodTries = 0;
+registration-stall-unwatched (S3 round 2 MINOR-A)#AuthAgent.qml#            root.watchAttempt();\n            agentHolder.active = true;#            agentHolder.active = true;
 EOF_MUTANTS
 ((status == 0)) && echo "PASS: authagent_flows (and every mutant caught)" || echo "FAIL: authagent_flows mutants"
 exit "$status"

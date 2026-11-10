@@ -53,6 +53,7 @@ Item {
             SheetSession.saverShown = false;
             SheetSession.displaysOff = false;
             SheetSession.starting = false;
+            SheetSession.sleeping = false;
             compare(top.agentC.status, Component.Ready, top.agentC.errorString());
             ag = createTemporaryObject(top.agentC, top);
             verify(ag);
@@ -730,12 +731,86 @@ Item {
         function test_39_registrationBackoff() {
             const waits = [];
             for (let n = 0; n <= 6; n++) {
-                ag.registrationTries = n;
+                ag.periodTries = n;
                 waits.push(ag.registrationRetryInterval);
             }
-            ag.registrationTries = 40;
+            ag.periodTries = 40;
             waits.push(ag.registrationRetryInterval);
             compare(waits, [3000, 6000, 12000, 24000, 48000, 60000, 60000, 60000]);
+            compare(ag.registrationTriesMax, 4, "3, 6, 12 and 24 s, then not before the next unlock");
+        }
+
+        // The opus review of S3, round 2, MINOR-A: Quickshell asks polkitd with a synchronous call on the security process's
+        // main thread, so the agent is never made again while the session is locked, the displays are off or a sleep is
+        // under way (a hung polkitd would stop the lock, or the lock before a sleep). It asks again once that ends.
+        function test_41_noRetryWhileQuiet_data() {
+            return [{tag: "locked", key: "locked"}, {tag: "displays off", key: "displaysOff"}, {tag: "sleep under way", key: "sleeping"}];
+        }
+        function test_41_noRetryWhileQuiet(d) {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 40});
+            verify(a);
+            SheetSession[d.key] = true;
+            wait(400);
+            compare(a.registrationTries, 0, "no try while " + d.tag);
+            compare(a.mockRegistrations, 1, "the start's attempt only");
+            SheetSession[d.key] = false;
+            tryCompare(a, "mockRegistrations", 2, 3000, "asked again once that ends");
+            compare(a.mockInert, 0);
+        }
+
+        // A try whose agent is due in the turn the session locks is dropped: no agent is made behind the lock; the next unlock
+        // makes it, in a new period.
+        function test_42_aTryAtTheLockIsDropped() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 60000});
+            verify(a);
+            a.retryRegistration();
+            SheetSession.locked = true;
+            wait(100);
+            compare(a.agentMock, null, "no agent made while locked");
+            compare(a.mockRegistrations, 1);
+            a.registrationRetryMs = 40;
+            SheetSession.locked = false;
+            tryCompare(a, "mockRegistrations", 2, 3000, "the next unlock makes it");
+            compare(a.periodTries, 1, "in a new period");
+            compare(a.mockInert, 0);
+        }
+
+        // At most registrationTriesMax tries per unlock period, then none until the next unlock.
+        function test_43_capPerUnlockPeriod() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 20});
+            verify(a);
+            tryCompare(a, "registrationTries", 4, 5000);
+            wait(800);
+            compare(a.registrationTries, 4, "four tries in the period (a fifth would have come 320 ms after the fourth)");
+            compare(a.mockRegistrations, 5);
+            SheetSession.locked = true;
+            wait(100);
+            compare(a.registrationTries, 4);
+            SheetSession.locked = false;
+            tryCompare(a, "registrationTries", 8, 5000, "an unlock starts a new period");
+            wait(800);
+            compare(a.registrationTries, 8, "four more, no more");
+            compare(a.mockRegistrations, 9);
+            compare(a.mockInert, 0);
+        }
+
+        // An attempt that stops the event loop (a hung polkitd: Quickshell's call is synchronous) stops the tries until the
+        // next unlock, which starts again.
+        function test_44_aStallStopsTheTries() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 300});
+            verify(a);
+            a.mockBlockMs = 1500;
+            tryCompare(a, "mockRegistrations", 2, 3000);
+            tryCompare(a, "registrationStalled", true, 5000, "the stall is seen");
+            wait(1500);
+            compare(a.registrationTries, 1, "no try after the stall (the next was due 600 ms after the first)");
+            compare(a.mockRegistrations, 2);
+            a.mockBlockMs = 0;
+            SheetSession.locked = true;
+            SheetSession.locked = false;
+            compare(a.registrationStalled, false, "an unlock forgets the stall");
+            tryCompare(a, "registrationTries", 2, 3000, "asked again after the next unlock");
+            tryCompare(a, "mockRegistrations", 3, 3000);
         }
 
         // ADR-0041 S3: the agent runs in the security process, which restarts (Restart=always) after a crash or a stop. Its end

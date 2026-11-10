@@ -221,6 +221,8 @@ Scope {
     readonly property bool saverShown: IdleModel.sheetsSaverShown(root.activitySeen, saverMonitor.enabled, saverMonitor.isIdle)
     // saverShown holds for the start alone (the sheets then say the request arrived while Grassfield was starting).
     readonly property bool starting: IdleModel.sheetsStarting(root.activitySeen, saverMonitor.enabled, saverMonitor.isIdle)
+    // A sleep is under way (PrepareForSleep(true) until the resume): the polkit agent makes no registration attempt then.
+    readonly property bool sleeping: sleepInhibitor.sleeping
 
     IdleMonitor {
         id: saverMonitor

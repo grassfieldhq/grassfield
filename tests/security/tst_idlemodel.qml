@@ -594,6 +594,7 @@ TestCase {
         verify(/readonly property bool saverShown: IdleModel\.sheetsSaverShown\(root\.activitySeen, saverMonitor\.enabled, saverMonitor\.isIdle\)\n/.test(idle));
         verify(/readonly property bool starting: IdleModel\.sheetsStarting\(root\.activitySeen, saverMonitor\.enabled, saverMonitor\.isIdle\)\n/.test(idle),
                "the start's words from the same inputs (the delta review of S3, LOW)");
+        verify(/readonly property bool sleeping: sleepInhibitor\.sleeping\n/.test(idle), "a sleep under way, for the polkit agent's tries (round 2, MINOR-A)");
         // The activity probe: on until activity is seen, any input counts (no inhibitor hides it), its state through the model.
         verify(/id: activityProbe\s+enabled: !root\.activitySeen\s+timeout: IdleModel\.ACTIVITY_PROBE_SECONDS\s+respectInhibitors: false\s/.test(idle));
         verify(/const seen = IdleModel\.sheetsActivitySeen\(root\.activitySeen, root\.activityProbeWasIdle, isIdle\);/.test(idle));

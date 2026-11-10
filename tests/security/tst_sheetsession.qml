@@ -14,5 +14,6 @@ TestCase {
         compare(Security.SheetSession.displaysOff, true, "displays off until the host binds Idle.displayOff");
         compare(Security.SheetSession.saverShown, false);
         compare(Security.SheetSession.starting, false, "the held notice's words only (the delta review of S3, LOW)");
+        compare(Security.SheetSession.sleeping, false, "locked covers a sleep until bound (the polkit agent's tries: round 2, MINOR-A)");
     }
 }

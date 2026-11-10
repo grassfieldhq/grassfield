@@ -81,8 +81,9 @@ Scope {
     // What they read of the session, from this process only (the opus review of 77a0ceb3, MINOR-4): the lock (any state but
     // unlocked, and the start-up probe of a stranded or foreign lock while it runs: the opus review of S3, LOW-4), the
     // displays switched off by idle, and the UI's screen saver as idle counts it (only ever early: MINOR-1 of that review),
-    // with whether it counts for the start alone (the held notice's words: the delta review of S3, LOW).
-    // These four Bindings are SheetSession's only writers (tests/security/security_process_scan.py).
+    // with whether it counts for the start alone (the held notice's words: the delta review of S3, LOW), and a sleep under
+    // way (no polkit registration attempt then: round 2, MINOR-A).
+    // These five Bindings are SheetSession's only writers (tests/security/security_process_scan.py).
     Binding {
         target: SheetSession
         property: "locked"
@@ -102,6 +103,11 @@ Scope {
         target: SheetSession
         property: "starting"
         value: idle.starting
+    }
+    Binding {
+        target: SheetSession
+        property: "sleeping"
+        value: idle.sleeping
     }
 
     // The sheets themselves (SheetHost.qml: the one queue, the polkit agent, the secret agent), created at run time at the end

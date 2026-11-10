@@ -13,8 +13,10 @@ opus delta review of S3, MAJOR-1): it asks once, when it is made, with the path 
 with Quickshell's warning and the path stays (setPath sets an empty path only); and there is one agent per process: one
 made while an earlier one still lives (a Loader deletes later) stays inert and never asks. The harness's root gets what the
 tests read and set: `agentMock` (the agent the Loader holds now), `mockRegistrations` (registration attempts) and
-`mockTimes` (when each was made, Date.now()), `mockInert` (agents made inert) and `mockRefused` (the answer to the next
-attempt: refused, never registered).
+`mockTimes` (when each was made, Date.now()), `mockInert` (agents made inert), `mockRefused` (the answer to the next
+attempt: refused, never registered) and `mockBlockMs` (each registering agent then stops the event loop that long an
+event-loop turn after it is made, as Quickshell's synchronous D-Bus call does when polkitd hangs: round 2, MINOR-A).
+Quickshell's ElapsedTimer becomes a Date.now() clock (test code; the stall stops both).
 
 With --real (tests/security/authagent_registration.sh) Quickshell's own PolkitAgent stays, with its imports, the dev gate
 and the IPC handler: only the window becomes an Item (offscreen, Quickshell has no window backend), so the registration code
@@ -62,7 +64,9 @@ def main():
         aliases = ("    property alias agentMock: agentHolder.item\n    property alias model: dialogModel\n    property alias sheet: win\n"
                    "    property alias holderItem: holder\n    property alias sink: keySink\n"
                    "    property bool mockRefused: false\n    property int mockRegistrations: 0\n    property int mockInert: 0\n"
-                   "    property QtObject mockOwner: null\n    property var mockTimes: []\n")
+                   "    property QtObject mockOwner: null\n    property var mockTimes: []\n    property int mockBlockMs: 0\n"
+                   "    function mockBlock(): void {\n        const end = Date.now() + root.mockBlockMs;\n"
+                   "        while (Date.now() < end) {}\n    }\n")
         if s.count("    id: root\n") != 1:
             raise ValueError("root id not found once")
         s = s.replace("    id: root\n", "    id: root\n" + aliases, 1)
@@ -99,6 +103,8 @@ def mock_quickshell(s):
             "                root.mockRegistrations += 1;\n"
             "                root.mockTimes = root.mockTimes.concat([Date.now()]);\n"
             "                isRegistered = !root.mockRefused;\n"
+            "                if (root.mockBlockMs > 0)\n"
+            "                    Qt.callLater(root.mockBlock);\n"
             "            }\n"
             "        }")
     s = replace_block(s, r"\n        sourceComponent: PolkitAgent \{", mock)
@@ -111,6 +117,15 @@ def mock_quickshell(s):
     if s.count(dev) != 1:
         raise ValueError("devSession line not found once")
     s = s.replace(dev, "    property bool devSession: false\n", 1)
+    # Quickshell's ElapsedTimer (monotonic) as the wall clock: the harness is test code, and the tests stall the event loop
+    # itself (mockBlock), which both clocks see.
+    clock = "    ElapsedTimer {\n        id: stallClock\n    }\n"
+    if s.count(clock) != 1:
+        raise ValueError("stall clock not found once")
+    s = s.replace(clock, "    QtObject {\n        id: stallClock\n        property real last: Date.now()\n"
+                  "        function restart(): void {\n            last = Date.now();\n        }\n"
+                  "        function restartMs(): real {\n            const now = Date.now();\n            const since = now - last;\n"
+                  "            last = now;\n            return since;\n        }\n    }\n", 1)
     return replace_block(s, r"\n    IpcHandler \{", "\n")
 
 
