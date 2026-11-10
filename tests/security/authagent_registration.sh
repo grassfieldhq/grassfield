@@ -156,7 +156,7 @@ phase3() {
   mkdir -p "$bus_dir/run"
   printf '%s\n' '<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">' \
     '<busconfig>' '  <type>system</type>' "  <listen>unix:path=$bus_dir/system.sock</listen>" '  <auth>EXTERNAL</auth>' \
-    '  <policy context="default">' '    <allow send_destination="*"/>' '    <allow own="*"/>' '  </policy>' '</busconfig>' >"$bus_dir/system.conf"
+    '  <policy context="default">' '    <allow send_destination="*"/>' '    <allow own="*"/>' '    <allow receive_sender="*"/>' '  </policy>' '</busconfig>' >"$bus_dir/system.conf"
   setsid env -i PATH="$PATH" HOME="$bus_dir" XDG_RUNTIME_DIR="$bus_dir/run" dbus-daemon --config-file="$bus_dir/system.conf" \
     --nofork --print-address=1 >"$bus_dir/address" 2>"$bus_dir/bus.log" </dev/null &
   pids+=("$!")
