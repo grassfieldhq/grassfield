@@ -1318,7 +1318,8 @@ void FilesApp::explainForeign(const QUrl &url, const LaunchGuard::Facts &facts, 
     const LaunchGuard::RunPlan plan = LaunchGuard::plan(facts);
     QVariantMap request{{QStringLiteral("name"), name},
                         {QStringLiteral("downloaded"), plan.downloaded},
-                        {QStringLiteral("host"), LaunchGuard::originHost(facts)}};
+                        {QStringLiteral("host"), LaunchGuard::originHost(facts)},
+                        {QStringLiteral("nameUntrusted"), plan.nameUntrusted}};
     if (verdict == LaunchGuard::Verdict::ForeignApp) {
         // Another system's app: nothing here runs it. The Store may have an app for this computer that does the same thing.
         const bool store = !storeProgram().isEmpty();
@@ -1401,7 +1402,9 @@ void FilesApp::runInTerminal(const QUrl &url)
         return;
     }
     const LaunchGuard::RunPlan plan = LaunchGuard::plan(facts);
-    if (!plan.downloaded || facts.approved) {
+    // Downloaded and not approved as it is now, or a name that can be drawn in another order: the sheet first (seventh check
+    // of fd5823de, m1': Open With > Terminal is the other way a script runs).
+    if ((!plan.downloaded || facts.approved) && !plan.nameUntrusted) {
         logDecision("run in Terminal", LaunchGuard::Verdict::OpenScript, facts);
         startScriptInTerminal(facts.path);
         return;
@@ -1410,10 +1413,11 @@ void FilesApp::runInTerminal(const QUrl &url)
     const QVariantMap request{{QStringLiteral("kind"), QStringLiteral("openProgram")},
                               {QStringLiteral("what"), QStringLiteral("script")},
                               {QStringLiteral("name"), name},
-                              {QStringLiteral("downloaded"), true},
+                              {QStringLiteral("downloaded"), plan.downloaded},
                               {QStringLiteral("host"), LaunchGuard::originHost(facts)},
                               {QStringLiteral("allowRun"), false},
-                              {QStringLiteral("copy"), false}};
+                              {QStringLiteral("copy"), false},
+                              {QStringLiteral("nameUntrusted"), plan.nameUntrusted}};
     m_prompts->ask(request, nullptr, [this, url, facts, name](const QVariantMap &reply) {
         if (reply.value(QStringLiteral("button")).toString() != QLatin1String("open")) {
             logDecision("canceled", LaunchGuard::Verdict::OpenScript, facts);

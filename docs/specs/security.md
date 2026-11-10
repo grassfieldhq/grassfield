@@ -771,7 +771,8 @@ header, a `#!` line, the MIME type of name and content) and by the execute bit, 
   (`xdg-terminal-exec -- /bin/bash -c '"$1"; …omarchy-show-done…' grassfield-files <path>`, the path an argument, never
   command text; decision F-7; the script's folder is the terminal's working folder, as Terminal runs a .command file), after
   the same sheet when it came from the Internet ("… is a script downloaded from the Internet. Are you sure you want to run it
-  in Terminal?").
+  in Terminal?") or when its name can be drawn in another order (`nameUntrusted`, every time; seventh check of fd5823de,
+  m1'). A Windows or Java program's explanation sheet says it too.
 - Windows programs and scripts and registry files (`WindowsFile`: `.exe`, `.com`, `.scr`, `.cpl`, `.msi`, `.lnk`, `.bat`,
   `.cmd`, `.ps1`, `.vbs`, `.vbe`, `.wsf`, `.hta`, `.reg`, by type and by name) and Java archives and Web Start files
   (`JavaProgram`: `.jar`, `.jnlp`) never run by opening: a sheet says "This file is a program for Windows; it doesn’t work

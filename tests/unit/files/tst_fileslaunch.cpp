@@ -1285,3 +1285,55 @@ TEST_F(FilesLaunch, OpenWithABidiNamedProgramAlwaysAsks)
     EXPECT_EQ(s.ofKind(QStringLiteral("openProgram")).size(), 2) << "a plain, approved program: no sheet";
     QFile::remove(entryPath);
 }
+
+// Seventh check of fd5823de (m1'): Open With > Terminal runs a script, so a script whose name can be drawn in another order gets
+// the sheet there too, made here and approved or not; Cancel runs nothing (the recorder stands for xdg-terminal-exec). A plain,
+// approved script runs in Terminal without a sheet, as before. And a Windows program with such a name is explained with the
+// right-to-left line (explainForeign passes nameUntrusted).
+TEST_F(FilesLaunch, TerminalAndWindowsSheetsKnowANameDrawnInAnotherOrder)
+{
+    FilesApp app(QList<QUrl>{});
+    Session s(app);
+    const QString record = recorder(QStringLiteral("xdg-terminal-exec"));
+    QDir().mkpath(d(QStringLiteral("Scripts")));
+    const QString swapped = d(QStringLiteral("Scripts/\u200fhs.\u200fllatsni"));
+    const QString plain = d(QStringLiteral("Scripts/plain.sh"));
+    for (const QString &path : {swapped, plain}) {
+        QFile f(path);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("#!/bin/sh\necho ran\n");
+        f.close();
+        ASSERT_EQ(::chmod(QFile::encodeName(path).constData(), 0755), 0);
+        const LaunchGuard::Facts facts = LaunchGuard::inspect(QUrl::fromLocalFile(path));
+        ASSERT_EQ(LaunchGuard::verdict(facts), LaunchGuard::Verdict::OpenScript) << path.toStdString();
+        ASSERT_EQ(ProgramLaunch::approve(facts.path, facts.inode, facts.mtimeNs, facts.size, false), ProgramLaunch::Approval::Approved);
+    }
+
+    s.answer = QStringLiteral("cancel");
+    app.openWith(QStringLiteral("grassfield:terminal"), urls(swapped));
+    ASSERT_TRUE(waitFor([&] { return !s.ofKind(QStringLiteral("openProgram")).isEmpty(); }));
+    const QVariantMap sheet = s.ofKind(QStringLiteral("openProgram")).first();
+    EXPECT_EQ(sheet.value(QStringLiteral("what")).toString(), QStringLiteral("script"));
+    EXPECT_TRUE(sheet.value(QStringLiteral("nameUntrusted")).toBool());
+    EXPECT_FALSE(sheet.value(QStringLiteral("downloaded")).toBool()) << "the real state, not a hard-coded download";
+    EXPECT_EQ(sheet.value(QStringLiteral("name")).toString(), QStringLiteral("<U+200F>hs.<U+200F>llatsni"));
+    settle(800);
+    EXPECT_FALSE(QFileInfo::exists(record)) << "Cancel: no terminal started";
+
+    app.openWith(QStringLiteral("grassfield:terminal"), urls(plain));
+    ASSERT_TRUE(waitFor([&] { return lines(record).contains(plain); }, 10000)) << "a plain, approved script runs in Terminal";
+    EXPECT_EQ(s.ofKind(QStringLiteral("openProgram")).size(), 1) << "without a sheet";
+
+    // A Windows program with an RLM in its name: its sheet says the name may not show what it is.
+    const QString exe = d(QStringLiteral("Downloads/\u200fsetup.exe"));
+    QDir().mkpath(d(QStringLiteral("Downloads")));
+    {
+        QFile f(exe);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray("MZ\x90\x00", 4) + QByteArray(200, '\0'));
+    }
+    ASSERT_EQ(LaunchGuard::verdict(LaunchGuard::inspect(QUrl::fromLocalFile(exe))), LaunchGuard::Verdict::WindowsFile);
+    app.open(urls(exe));
+    ASSERT_TRUE(waitFor([&] { return !s.ofKind(QStringLiteral("foreignProgram")).isEmpty(); }));
+    EXPECT_TRUE(s.ofKind(QStringLiteral("foreignProgram")).first().value(QStringLiteral("nameUntrusted")).toBool());
+}
