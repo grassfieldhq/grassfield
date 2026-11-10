@@ -47,6 +47,8 @@ Item {
     // Its own hex colour, else the global colour (which is the accent for "accent").
     readonly property color folderTint: FolderStyle.colorOf(root.setting, Appearance.colors.accent)
 
+    // The icon sits on a solid window material (see TintedIcon.solidMaterial).
+    property bool solidMaterial: false
     implicitWidth: size
     implicitHeight: size
     Accessible.role: Accessible.Graphic
@@ -61,6 +63,7 @@ Item {
         oversample: root.oversample
         // Default mode (no effect item) and a failed shader: the folder colour is a layer over the plain icon. In an icon mode the
         // shader recolours the artwork itself (TintedIcon.recolor), so that the system plate is not recoloured.
+        solidMaterial: root.solidMaterial
         recolor: root.recolored
         recolorTint: root.folderTint
         layer.enabled: root.recolored && (root.modeName === "default" || icon.effectFailed)

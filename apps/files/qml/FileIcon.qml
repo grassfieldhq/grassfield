@@ -57,6 +57,7 @@ Item {
             folderColor: root.folderColor
             folderGlyph: root.folderGlyph
             overAccent: root.overAccent
+            solidMaterial: true
         }
     }
 

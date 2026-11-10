@@ -48,6 +48,19 @@ function tileToneSide(dark, wallpaper, transparency, t) {
     return transparency <= t.materialTintClampUntil ? -1 : 1;
 }
 
+// Whether an icon is drawn with the "over the bare wallpaper" look (shaders/icon.frag, `wall`): for Clear that is the dark smoked plate with light ink, which holds its own
+// luminance on any backdrop (a white wallpaper included); the other modes only force the dark styling. It is the case (1) of the desktop icons (`wallpaper`), (2) of Clear once
+// the wallpaper shows through the material (transparency from `iconModeWallpaperLikeTransparency`), except over an accent fill, and (3) of Clear in the DARK appearance on
+// a surface that is not a solid window material (the Dock, Launchpad, Search ...: an almost clear glass whose own tint cannot hold a light plate against a white wallpaper;
+// the macOS model: Clear icons in the dark appearance are dark smoked glass with light glyphs). A glass plate that is white at 0.22 is for the solid dark window material.
+function overWallpaperLook(modeIndex, wallpaper, transparency, dark, solidMaterial, accentFill, t) {
+    if (wallpaper)
+        return true;
+    if (modeIndex !== 2 || accentFill >= 0.5)
+        return false;
+    return transparency >= t.iconModeWallpaperLikeTransparency || (dark && !solidMaterial);
+}
+
 // One warning per process (an icon shader that cannot load fails for every icon).
 let warned = false;
 function warnOnce(message) {

@@ -89,6 +89,33 @@ TestCase {
         }
     }
 
+    // Clear in the dark appearance on a surface that is not a solid window material (the Dock ...) is the dark smoked glass of the over-the-wallpaper look: a light plate
+    // merged with a white wallpaper through the almost clear Dock (GPU run of 2026-11-10: 79 test_a2_dock cells, inside 1.01 on #ffffff).
+    function test_overWallpaperLook() {
+        const t = Tokens;
+        const look = (mode, wall, tr, dark, solid, accent) => IconModes.overWallpaperLook(mode, wall, tr, dark, solid, accent, t);
+        compare(look(2, false, 0.25, true, false, 0), true, "Clear, dark, Dock: smoked");
+        compare(look(2, false, 0.25, true, true, 0), false, "Clear, dark, solid window material: the white glass of the A2 window cells");
+        compare(look(2, false, 0.25, false, false, 0), false, "Clear, light appearance: unchanged");
+        compare(look(1, false, 0.25, true, false, 0), false, "Dark and Tinted keep their plates");
+        compare(look(3, false, 0.25, true, false, 0), false);
+        compare(look(2, false, 0.25, true, false, 1), false, "never over an accent fill");
+        compare(look(2, false, t.iconModeWallpaperLikeTransparency, false, true, 0), true, "wallpaper through the material");
+        compare(look(1, true, 0.25, true, true, 0), true, "desktop icons");
+    }
+
+    // The smoked plate holds against any backdrop: the plate of the over-the-wallpaper look (luma and opacity tokens) against black, grey and white.
+    function test_smokedPlateHoldsOnAnyBackdrop() {
+        const t = Tokens;
+        const plate = 0.0 + t.iconModeClearPlateWallpaperLuma;
+        for (const bd of [0, 0.5, 1]) {
+            const a = t.iconModeClearPlateAlphaWallpaper;
+            const over = Math.pow(plate, 1) * a + bd * (1 - a);
+            if (bd >= 0.5)
+                verify(contrast(lum([bd, bd, bd]), lum([over, over, over])) >= 1.9, `plate over a backdrop of ${bd}`);
+        }
+    }
+
     // The shader's arithmetic of the tone (reference mirror for the tests below; the rule that IconEffect uses is IconModes.tileToneSide).
     function tone(v, side, pivot, exponent) {
         if (side > 0)

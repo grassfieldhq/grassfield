@@ -215,6 +215,7 @@ SettingsPage {
                         source: Appearance.iconSampleSource
                         mode: choice
                         tint: Appearance.iconTint
+                        solidMaterial: true
                     }
                 }
                 onPicked: id => root.store.set("icons.mode", id)

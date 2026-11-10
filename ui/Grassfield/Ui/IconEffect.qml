@@ -31,7 +31,7 @@ ShaderEffect {
     readonly property real dark: root.darkAppearance ? 1 : 0
     // Over the bare wallpaper (desktop icons); for Clear also over a material that lets so much of it through (transparency at its
     // end) that the icon is over the wallpaper: the look that holds on any wallpaper brightness.
-    readonly property real overWallpaper: (root.wallpaper || (root.params.index === 2 && root.accentFill < 0.5 && Appearance.effectiveTransparency >= Tokens.iconModeWallpaperLikeTransparency)) ? 1 : 0
+    readonly property real overWallpaper: IconModes.overWallpaperLook(root.params.index, root.wallpaper, Appearance.effectiveTransparency, root.darkAppearance, root.solidMaterial, root.accentFill, Tokens) ? 1 : 0
     readonly property real clearPlateAlphaWallpaper: Tokens.iconModeClearPlateAlphaWallpaper
     readonly property real sysPlateInset: Tokens.iconModeSysPlateInset
     readonly property real sysPlateRadius: Tokens.iconModeSysPlateRadius
