@@ -82,13 +82,21 @@ browser keeps it.
     `set default-web-browser X` and `set default-url-scheme-handler http|https X`. X is validated first and nothing is written when
     it fails (exit 2): it must be an installed desktop entry, found as xdg-settings finds it, whose `Exec` is no launcher (the
     rule of `isLauncherExec`: omarchy-*, xdg-*, gio, a shell, env; `uwsm app --` and `uwsm-app` judged by the program they start).
+    The entry must also be one GLib could run and would read one way (delta review of PR #38): the program it starts (an absolute
+    path to an executable file, or a name of $PATH, behind uwsm too) and its `TryExec` must exist, so a removed package or a typo is
+    never made the default, seeded or offered; and `Exec`, `TryExec` and `Type` must each appear once in `[Desktop Entry]` (GLib keeps
+    the LAST of a repeated key, a reader of the first would be fooled: such an entry is refused). An id containing `..` is refused (the
+    "-" of an id is also read as a folder, `..-x.desktop` would read `applications/../x.desktop`). The same rule is in the stand-in, the
+    seed (`usableEntry`) and the Settings browser list (`DefaultBrowser.browsers`, `Backend::programExists`). The stand-in reads a
+    desktop file with CRLF line ends as having no `[Desktop Entry]` group and refuses it.
     A linked session list or record is refused (exit 1) without calling the real tool. Then the record says `user` and the choice,
     the session list names X for the four web types, the real `/usr/bin/xdg-settings` runs (by absolute path, never by PATH; a
     real path that is the stand-in stops with an error, a test covers it) so `~/.config/mimeapps.list` follows the explicit
     choice, the baseline is refreshed, and the exit is 0 only when the effective session default really is X. `get` and `check` for
     the web browser and the http/https schemes answer from the effective session default, so a browser's own check passes;
-    everything else is the real tool. `omarchy default browser` runs it (tested). The stand-in is the one writer besides Settings
-    that touches `~/.config/mimeapps.list`, and only through the real tool, for an explicit "make default".
+    everything else is the real tool. `omarchy default browser` runs it (tested). Grassfield itself (the seed, Settings, the stand-in's
+    own writes) never touches `~/.config/mimeapps.list`: the only thing that does is the real `xdg-settings`, run by the stand-in for an
+    explicit "make default" and nothing else.
     Limit: an app that writes `mimeapps.list` itself through GLib/GIO (Firefox's "make default" calls
     `g_app_info_set_as_default_for_type`, as `gio mime` does) does not pass through xdg-settings: its choice wins at the next
     session start (the session list shadows `mimeapps.list` until then). A watcher that re-runs the seed when `mimeapps.list`
