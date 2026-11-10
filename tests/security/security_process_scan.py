@@ -14,7 +14,12 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
      builtin/ files or ""; and no string literal (comments aside, string contents read) that names a security path
      (`security/`, `qs.security`), Quickshell.Services.Polkit or a security type (STRING_NAMES), web addresses (http, https)
      aside, which name no file of the tree (file: and qrc: addresses are read; the opus delta review of S3, NIT), but never
-     as a Loader or createComponent source (QML from the network: round 2, NIT);
+     as a Loader or createComponent source (QML from the network: round 2, NIT); strings are read decoded (JavaScript
+     escapes: round 3, NIT-1);
+  1c. in every file of shell/ and ui/, the security tree included (round 3, NIT-1): no import (QML `import "..."`, script
+     `.import "..."`) and no literal Loader or createComponent source that is no file of this tree: an address with a
+     scheme (http:, https:, data:, file:, qrc:, ...), an absolute path, or a relative path out of shell/ and ui/. The tree
+     uses none today (shell/security makes SheetHost.qml and LockStills.qml by Qt.resolvedUrl of a relative literal);
   2. shell/security/host/SecurityHost.qml instantiates Idle exactly once (one idle module, one sleep inhibitor) and only the
      types listed in HOST_TYPES, and makes the sheets at run time (S3: shell/security/host/SheetHost.qml, created once by
      its URL, never declared, so that a sheet that cannot load never keeps the lock from loading); SheetHost.qml instantiates
@@ -79,18 +84,99 @@ _LITERAL = re.compile(r'^\s*("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')\s*;?\s*
 # A source that is one plain literal resolved against the file (the opus delta review of S3, NIT): as readable as the literal,
 # which the string rule still reads.
 _RESOLVED_LITERAL = re.compile(r'^\s*Qt\.resolvedUrl\(\s*("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')\s*\)\s*;?\s*$')
-# A web address (http or https): it names no file of the tree, whatever its path says (the same NIT). file: and qrc: do.
-_WEB_URL = re.compile(r'^["\'`]https?://')
+# A web address (http or https, any case), read on a string's decoded value: it names no file of the tree, whatever its path
+# says (the same NIT). The exception is for plain strings only, never for a source or an import.
+_WEB_URL = re.compile(r'^https?://', re.I)
+# JavaScript string escapes, decoded before a string is read (the opus review of S3, round 3, NIT-1: "\x68ttps://...",
+# "\u0068ttps://..." or "secu\x72ity/..." are read as what the engine makes of them).
+_JS_ESCAPE = re.compile(r"\\(x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]{1,6}\}|u[0-9a-fA-F]{4}|[0-7]{1,3}|\r\n|[\s\S])")
+_SIMPLE_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v"}
+# A target with a scheme (http:, https:, file:, data:, qrc:, ...).
+_SCHEME = re.compile(r"^\s*[A-Za-z][A-Za-z0-9+.\-]*:")
 
 
-# A source naming a web address (http, https, any case): QML fetched from the network is code no scan of the tree reads
-# (the opus review of S3, round 2, NIT). The web exception of the string rule is for plain strings only.
-_WEB_SOURCE = re.compile(r'^\s*(?:Qt\.resolvedUrl\(\s*)?["\']https?://', re.I)
+def js_unescape(body):
+    """The value of a JavaScript string literal's body."""
+    def one(m):
+        e = m.group(1)
+        if e[0] == "x" and len(e) == 3:
+            return chr(int(e[1:], 16))
+        if e.startswith("u{"):
+            return chr(min(int(e[2:-1], 16), 0x10FFFF))
+        if e[0] == "u" and len(e) == 5:
+            return chr(int(e[1:], 16))
+        if e[0] in "01234567":
+            return chr(int(e, 8))
+        if e in ("\n", "\r", "\r\n", "\u2028", "\u2029"):
+            return ""
+        return _SIMPLE_ESCAPES.get(e, e)
+    return _JS_ESCAPE.sub(one, body)
 
 
-def readable_source(text):
-    """One plain string literal, or Qt.resolvedUrl of one, that is not a web address."""
-    return bool((_LITERAL.match(text) or _RESOLVED_LITERAL.match(text)) and not _WEB_SOURCE.match(text))
+def string_value(literal):
+    """The decoded value of a quoted literal (its quotes included)."""
+    return js_unescape(literal[1:-1])
+
+
+def foreign_target(path, value):
+    """Why `value`, a source or an import named in the file `path`, is no file of this tree ("" when it is one): an address
+    with a scheme (the network, data:, file:, ...), an absolute path, or a relative one that leaves shell/ and ui/ (the opus
+    review of S3, round 3, NIT-1: such code is read by no scan of the tree)."""
+    v = value.strip()
+    if _SCHEME.match(v):
+        return "an address with a scheme (" + v.split(":", 1)[0] + ":)"
+    if v.startswith(("/", "~", "\\")):
+        return "an absolute path"
+    target = os.path.normpath(os.path.join(os.path.dirname(path), v))
+    if not (target in ("shell", "ui") or target.startswith(("shell" + os.sep, "ui" + os.sep))):
+        return "a path outside the tree"
+    return ""
+
+
+def source_problem(path, text):
+    """Why a Loader or createComponent source cannot be checked ("" when it can): it must be one plain string literal or
+    Qt.resolvedUrl of one, naming a file of this tree."""
+    m = _LITERAL.match(text) or _RESOLVED_LITERAL.match(text)
+    if not m:
+        return "a computed source: only one plain string literal (or Qt.resolvedUrl of one) can be checked"
+    why = foreign_target(path, string_value(m.group(1)))
+    return why and why + ": only a file of this tree can be checked"
+
+
+def sources_of(with_strings):
+    """("createComponent" | "Loader", the source's text) for each createComponent call and Loader/LazyLoader source."""
+    for m in re.finditer(r"\bcreateComponent\s*\(", with_strings):
+        depth, i = 1, m.end()
+        while i < len(with_strings) and depth:
+            depth += {"(": 1, ")": -1}.get(with_strings[i], 0)
+            i += 1
+        yield "createComponent", with_strings[m.end():i - 1]
+    for m in re.finditer(r"\b(?:Lazy)?Loader\s*\{", with_strings):
+        depth, i = 0, m.end() - 1
+        for j in range(m.end() - 1, len(with_strings)):
+            depth += {"{": 1, "}": -1}.get(with_strings[j], 0)
+            if depth == 0:
+                i = j + 1
+                break
+        own = top_level(with_strings[m.end() - 1:i])
+        for s in re.finditer(r"(?:^|[\s;{])source\s*:\s*([^\n;}]*)", own):
+            yield "Loader", s.group(1)
+
+
+def foreign_code(path, src, paths):
+    """Every file of shell/ and ui/ (the security tree included): no import, and no literal Loader or createComponent source,
+    that is no file of this tree (round 3, NIT-1)."""
+    out = []
+    for p in paths:
+        why = foreign_target(path, js_unescape(p))
+        if why:
+            out.append(f"{path}: imports \"{p[:60]}\", {why} (code no scan of this tree reads)")
+    for kind, text in sources_of(strip(src, keep_strings=True)):
+        m = _LITERAL.match(text) or _RESOLVED_LITERAL.match(text)
+        why = foreign_target(path, string_value(m.group(1))) if m else ""
+        if why:
+            out.append(f"{path}: a {kind} source ({text.strip()[:60]}) is {why} (code no scan of this tree reads)")
+    return out
 
 
 def top_level(block):
@@ -119,29 +205,15 @@ def built_from_strings(path, src):
     with_strings = strip(src, keep_strings=True)
     if re.search(r"\bcreateQmlObject\b", code):
         out.append(f"{path}: calls createQmlObject (code built from a string cannot be checked; the security types live in the security process)")
-    for m in re.finditer(r"\bcreateComponent\s*\(", with_strings):
-        depth, i = 1, m.end()
-        while i < len(with_strings) and depth:
-            depth += {"(": 1, ")": -1}.get(with_strings[i], 0)
-            i += 1
-        args = with_strings[m.end():i - 1]
-        if not readable_source(args):
-            out.append(f"{path}: createComponent with a computed or remote source ({args.strip()[:60]}): only one plain string literal (or Qt.resolvedUrl of one), not a web address, can be checked")
-    for m in re.finditer(r"\b(?:Lazy)?Loader\s*\{", with_strings):
-        depth, i = 0, m.end() - 1
-        for j in range(m.end() - 1, len(with_strings)):
-            depth += {"{": 1, "}": -1}.get(with_strings[j], 0)
-            if depth == 0:
-                i = j + 1
-                break
-        own = top_level(with_strings[m.end() - 1:i])
-        for s in re.finditer(r"(?:^|[\s;{])source\s*:\s*([^\n;}]*)", own):
-            if (path, s.group(1).strip()) in ALLOWED_COMPUTED:
-                continue
-            if not readable_source(s.group(1)):
-                out.append(f"{path}: a Loader with a computed or remote source ({s.group(1).strip()[:60]}): only one plain string literal (or Qt.resolvedUrl of one), not a web address, can be checked")
+    for kind, text in sources_of(with_strings):
+        if kind == "Loader" and (path, text.strip()) in ALLOWED_COMPUTED:
+            continue
+        why = source_problem(path, text)
+        if why:
+            out.append(f"{path}: a {kind} source ({text.strip()[:60]}): {why}")
     for s in _STRING.finditer(with_strings):
-        if STRING_NAMES.search(s.group(0)) and not _WEB_URL.match(s.group(0)):
+        value = string_value(s.group(0))
+        if STRING_NAMES.search(value) and not _WEB_URL.match(value):
             out.append(f"{path}: a string names a security path, module or type ({s.group(0)[:60]}): the UI builds no security code")
     return out
 CLIENT = "shell/services/LockClient.qml"
@@ -185,7 +257,7 @@ def _strip(src, keep_strings):
 def imports_of(src):
     """The QML imports (module names and quoted paths) of a file, from its raw text (import lines are not in comments)."""
     mods = re.findall(r"^\s*import\s+([A-Za-z_][\w.]*)", src, re.M)
-    paths = re.findall(r"^\s*import\s+\"([^\"]+)\"", src, re.M)
+    paths = re.findall(r"^\s*\.?import\s+\"([^\"]+)\"", src, re.M)
     return mods, paths
 
 
@@ -230,6 +302,7 @@ def file_findings(path, src, singletons):
     mods, paths = imports_of(src)
     if ui or path.startswith("ui/"):
         out += built_from_strings(path, src)
+    out += foreign_code(path, src, paths)
     if ui:
         for m in mods:
             if m == "qs.security" or m.startswith("qs.security."):
@@ -394,6 +467,18 @@ def main(argv):
             ("createComponent of Qt.resolvedUrl of a property in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(Qt.resolvedUrl(root.agentFile))\n    Saver {\n", 1)),
             ("a Loader of an https address in the UI (round 2, NIT)", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: \"https://example.invalid/security/polkit/AuthAgent.qml\"\n    }\n    Saver {\n", 1)),
             ("createComponent of Qt.resolvedUrl of an http address in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(Qt.resolvedUrl(\"HTTP://example.invalid/Thing.qml\"))\n    Saver {\n", 1)),
+            # Round 3, NIT-1: escapes decoded, other schemes, absolute paths and paths out of the tree, remote imports.
+            ("a Loader of an https address in \\u escapes in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: \"\\u0068ttps://example.invalid/x.qml\"\n    }\n    Saver {\n", 1)),
+            ("createComponent of an http address in \\x escapes in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(\"\\x68ttp://example.invalid/x.qml\")\n    Saver {\n", 1)),
+            ("a Loader of a data: address in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: \"data:text/plain,Item {}\"\n    }\n    Saver {\n", 1)),
+            ("a Loader of a file:///tmp address in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: \"file:///tmp/x.qml\"\n    }\n    Saver {\n", 1)),
+            ("createComponent of /tmp in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(\"/tmp/x.qml\")\n    Saver {\n", 1)),
+            ("a Loader of Qt.resolvedUrl of a path out of the tree in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: Qt.resolvedUrl(\"../../../../tmp/x.qml\")\n    }\n    Saver {\n", 1)),
+            ("a remote import in the UI", "shell/shell.qml", lambda s: s.replace("import qs.services\n", "import qs.services\nimport \"https://example.invalid/mod\"\n", 1)),
+            ("a remote .import in a UI script", "shell/dock/Geometry.js", lambda s: s.replace(".import \"Magnify.js\" as Magnify\n", ".import \"Magnify.js\" as Magnify\n.import \"https://example.invalid/x.js\" as X\n", 1)),
+            ("an import of /tmp in the lock view", "shell/security/lock/LockView.qml", lambda s: s.replace("import \"../LockMachine.js\" as Machine\n", "import \"../LockMachine.js\" as Machine\nimport \"/tmp/mod\"\n", 1)),
+            ("a Loader of file:///tmp in the lock view", "shell/security/lock/LockView.qml", lambda s: s.rstrip("\n").rstrip("}") + "    Loader {\n        source: \"file:///tmp/x.qml\"\n    }\n}\n"),
+            ("a security path in \\x escapes in a UI string", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property string m: \"secu\\x72ity/polkit/AuthAgent.qml\"\n    Saver {\n", 1)),
             ("a file: address of the agent in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property string f: \"file:///usr/share/grassfield/shell/security/polkit/AuthAgent.qml\"\n    Saver {\n", 1)),
             ("the widget registry returning a computed file", REGISTRY, lambda s: s.replace('            return Qt.resolvedUrl("builtin/clock/Clock.qml");', '            return Qt.resolvedUrl(id);', 1)),
             ("the widget registry returning a file outside builtin/", REGISTRY, lambda s: s.replace('            return Qt.resolvedUrl("builtin/clock/Clock.qml");', '            return Qt.resolvedUrl("../" + "Clock.qml");', 1)),
@@ -437,6 +522,7 @@ def main(argv):
             ("a Loader of Qt.resolvedUrl(\"<a UI file>\") in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: Qt.resolvedUrl(\"saver/Saver.qml\")\n    }\n    Saver {\n", 1)),
             ("createComponent(Qt.resolvedUrl(\"<a UI file>\")) in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(Qt.resolvedUrl('saver/Saver.qml'))\n    Saver {\n", 1)),
             ("an https link whose path says security/ in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property string help: \"https://example.org/security/advisories\"\n    Saver {\n", 1)),
+            ("createComponent of a UI file spelled with escapes", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(\"saver/S\\x61ver.qml\")\n    Saver {\n", 1)),
             ("an http link whose path says security/ in Grassfield.Ui", "ui/Grassfield/Ui/Material.qml", lambda s: s.rstrip("\n").rstrip("}") + "    property string help: \"http://example.org/security/\"\n}\n"),
         ]
         for what, path, change in allowed:
