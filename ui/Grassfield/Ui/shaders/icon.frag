@@ -63,7 +63,8 @@ layout(std140, binding = 0) uniform buf {
     float tileToneSide;       // tile icon tone, see TILE TONE below: -1 darken the pixels below tileTonePivot, 0 none
     float tileTonePivot;      // linear value the tone leaves alone
     float darkPlateLumaOnDarkAccent;  // Dark over a dark accent fill of a selected row: lightness of the plate
-    float darkRimWidth;       // tile, dark appearance: width of the light rim on the tile's edge as a fraction of the box, at least one device pixel (DARK RIM below)
+    float darkRimWidth;       // tile, dark appearance: width of the light halo outside the tile's edge as a fraction of the box, at least one device pixel (DARK RIM below)
+    float darkRimInnerPx;     // tile, dark appearance: width in device pixels of the light rim inside the tile's edge
     float darkRimStrength;
     float darkRimLuma;
     float tileToneExp;        // exponent of the darkening below the pivot (> 1)
@@ -186,13 +187,14 @@ void main() {
     float sdf = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - rad;
     float aa = max(fwidth(sdf), 0.0005);
     float mask = 1.0 - smoothstep(-aa, aa, sdf);
-    // DARK RIM (R7-REQ-13, A2 rule E): a tile icon in the dark appearance (Dark, Clear and Tinted) carries a thin light rim on its edge (macOS dark-mode tiles have a specular
-    // edge), darkRimWidth of the box wide (at least one device pixel): it separates the tile from a dark or mid-grey material without touching the tile's inner tones (rules I, S, N).
-    // Within that distance inside the tile's edge (-sdf / aa, in device pixels) the tile's colour is replaced by darkRimStrength of darkRimLuma.
+    // DARK RIM (R7-REQ-13, A2 rule E): a tile icon in the dark appearance (Dark, Clear and Tinted) carries a thin light edge, as macOS dark-mode and Clear icon tiles do
+    // (a specular edge). It separates the tile from a dark or mid-grey material without touching the tile's inner tones (rules I, S, N): two parts, both in the
+    // pixels nearest the edge. (1) Outside the tile, a halo in the margin that the plate's inset leaves to the box (darkRimWidth of the box, at least one device pixel),
+    // drawn BEHIND the tile and the plate, so it can never be part of the tile's own pixels. (2) Inside the tile, darkRimInnerPx device pixels (half a pixel at 24 px):
+    // rule I reads the ring from 2 px inside the edge of what is drawn, and the GPU run of 2026-11-09 showed a 1 px rim (and 1.5 px before it) already reaches it at 24 px.
     if (isTile && dark > 0.5) {
         float dpx = -sdf / aa;
-        float rimPx = max(1.0, darkRimWidth / aa);   // 1 / aa is the box in device pixels
-        float rim = clamp(rimPx - dpx + 0.5, 0.0, 1.0) * step(-0.5, dpx) * darkRimStrength;
+        float rim = clamp(darkRimInnerPx - dpx + 0.5, 0.0, 1.0) * step(-0.5, dpx) * darkRimStrength;
         artP.rgb = mix(art, vec3(darkRimLuma), rim) * artA;
     }
     vec3 plateRgb;
@@ -216,5 +218,12 @@ void main() {
     }
     vec4 plateP = vec4(plateRgb * plateA, plateA);
     plateP *= mask;
-    fragColor = (artP + plateP * (1.0 - artP.a)) * qt_Opacity;
+    vec4 face = artP + plateP * (1.0 - artP.a);
+    if (isTile && dark > 0.5) {
+        float outPx = sdf / aa;                       // device pixels outside the plate's edge (negative inside it)
+        float haloPx = max(1.0, darkRimWidth / aa);   // 1 / aa is the box in device pixels
+        float halo = clamp(haloPx + 0.5 - outPx, 0.0, 1.0) * step(-0.5, outPx) * darkRimStrength;
+        face += vec4(vec3(darkRimLuma) * halo, halo) * (1.0 - face.a);
+    }
+    fragColor = face * qt_Opacity;
 }

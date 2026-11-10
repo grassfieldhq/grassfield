@@ -57,16 +57,23 @@ function warnOnce(message) {
     console.warn("grassfield-ui: " + message);
 }
 
-// Dark rim (R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, DARK RIM). A tile icon in the dark appearance (Dark, Clear and Tinted) carries a thin light rim on its
-// edge: within `width` device pixels inside the tile's edge (`distance` px, negative outside) the tile's colour is replaced by `strength` of the rim colour.
-// Returns the weight of the rim (0..strength) at that distance; the inner tones (rules I, S, N) are never touched.
+// Dark rim (R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, DARK RIM). A tile icon in the dark appearance (Dark, Clear and Tinted) carries a thin light
+// edge: a halo outside the tile (in the margin the plate inset leaves to the box, behind the tile) and a rim `iconModeDarkRimInnerPx` pixels inside its edge.
+// `distance` is in device pixels, positive inside the tile and negative outside it; the weight is 0..strength, `width` the extent of the part.
 function darkRimWeight(distance, width, strength) {
     if (distance < -0.5)
         return 0;
     return Math.min(1, Math.max(0, width - distance + 0.5)) * strength;
 }
 
-// The rim's width in device pixels for an icon of `box` device pixels: the token is a fraction of the box, never under one pixel.
+// The halo's width in device pixels for an icon of `box` device pixels: the token is a fraction of the box, never under one pixel. Its weight at `outside`
+// device pixels outside the plate's edge.
 function darkRimWidthPx(box, fraction) {
     return Math.max(1, fraction * box);
+}
+
+function darkHaloWeight(outside, box, fraction, strength) {
+    if (outside < -0.5)
+        return 0;
+    return Math.min(1, Math.max(0, darkRimWidthPx(box, fraction) + 0.5 - outside)) * strength;
 }
