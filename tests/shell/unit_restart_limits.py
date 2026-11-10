@@ -31,6 +31,14 @@ def seconds(value):
     return total
 
 
+def strict(key, value):
+    """The seconds of a setting, or ValueError: a value this model cannot read (`infinity`, a typo) is refused, never read as a default."""
+    v = seconds(value)
+    if v is None:
+        raise ValueError(f"{key}={value.strip()} is not a time this model reads (a number, or with us, ms, s, min, h, d)")
+    return v
+
+
 def main(argv):
     if len(argv) != 2:
         print("usage: unit_restart_limits.py UNIT_FILE", file=sys.stderr)
@@ -41,11 +49,14 @@ def main(argv):
         m = re.search(r"^" + key + r"=(.+)$", text, re.M)
         if not m:
             return default
-        v = seconds(m[1])
-        return default if v is None else v
+        return strict(key, m[1])
 
-    interval, sec = num("StartLimitIntervalSec"), num("RestartSec", 1.0)
-    burst = num("StartLimitBurst")
+    try:
+        interval, sec = num("StartLimitIntervalSec"), num("RestartSec", 1.0)
+        burst = num("StartLimitBurst")
+    except ValueError as e:
+        print(f"unit_restart_limits: {e}", file=sys.stderr)
+        return 2
     if not interval or not burst:
         return 1
     bound = burst * (sec + LIFETIME)

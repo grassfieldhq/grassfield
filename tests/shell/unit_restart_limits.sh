@@ -30,7 +30,7 @@ import unit_restart_limits as model
 t = open(sys.argv[1]).read()
 def num(key):
     r = re.search(r"^" + key + r"=(.+)$", t, re.M)
-    return model.seconds(r[1]) if r else None
+    return model.strict(key, r[1]) if r else None
 interval, burst, sec = num("StartLimitIntervalSec"), num("StartLimitBurst"), num("RestartSec") or 1.0
 sys.exit(0 if interval and burst and burst * sec < interval else 1)' "$unit" "$root/tests/shell"
   desc="$name ends a loop of one crash every 10 s: the start limit trips for that lifetime, or OnFailure= names the failure counter"
@@ -63,6 +63,9 @@ desc="the model reads StartLimitIntervalSec=5min as 300 s"
 check bash -c 'python3 -I "$1" "$2" | grep -q "<= 300 s"' _ "$root/tests/shell/unit_restart_limits.py" "$model/interval-min.service"
 desc="the shell unit's own bound is computed from its real RestartSec=100ms (101 s <= 300 s)"
 check bash -c 'python3 -I "$1" "$2/packaging/systemd/grassfield-shell.service" | grep -q "= 101 s <= 300 s"' _ "$root/tests/shell/unit_restart_limits.py" "$root"
+printf '[Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=10\n[Service]\nRestart=always\nRestartSec=infinity\n' >"$model/inf.service"
+desc="a value the model cannot read (RestartSec=infinity) is refused with exit 2, not read as 1 s"
+check bash -c 'python3 -I "$1" "$2" 2>"$3"; [[ $? == 2 ]] && grep -q "RestartSec=infinity" "$3"' _ "$root/tests/shell/unit_restart_limits.py" "$model/inf.service" "$model/inf.err"
 desc="the scan found the restarting units (shell, crash-watch, battery-watch, automount, menu-bridge)"
 check test "$n" -ge 5
 exit "$fail"
