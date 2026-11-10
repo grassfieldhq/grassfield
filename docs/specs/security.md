@@ -555,7 +555,9 @@ shell no longer relies on that alone:
   decision 2026-10-26: over the opaque saver an unheld sheet looked like the lock's prompt and took the keys at once): one
   that arrives while `SheetSession.saverShown` (since ADR-0041 S3 the security process's own count of the saver's idle time,
   `Idle.saverShown`, by the saver's rule `SaverModel.armed`: it reads nothing from the UI), or is open when the saver comes up
-  (its field emptied), is held and says "…and waited while the screen saver was on"; while the saver shows a press (any
+  (its field emptied), is held and says "…and waited while the screen saver was on" (or "…, while Grassfield was
+  starting" when the saver counts as shown only because the security process has just started and has not seen the user
+  active yet: `SheetSession.starting`, the opus delta review of S3, LOW); while the saver shows a press (any
   button) or the wheel on the sheet goes nowhere (the waking input), and when the saver ends the click guard starts over
   (`noteUncovered`), so no click in the next 500 ms gives the sheet the keyboard, whichever of the press and the saver's end
   comes first (such a click still reaches the control it hits, as after an unlock: Cancel at worst; Allow with an empty
@@ -1221,7 +1223,12 @@ and runs nothing as root. In a terminal of the Grassfield session:
    journal shows the agent registered again, and step 2 run once more shows the sheet. A request asked during that restart
    is not authorized (no agent to ask), as while the UI restarted before S3. The session stays as it was (a lock held
    stays held: the lock's own restart rules).
-PASS: 1–3 (and 5, 6) as described. FAIL: any approval without the right password, a second agent, or the sheet missing.
+7. The retry (the opus delta review of S3, MAJOR-1): after any start of the security process, `journalctl --user -u
+   grassfield-security -b -o cat | grep -E 'grassfield-polkit|cannot change path'` shows "authentication agent registered"
+   at once, or, when another agent still held the session (an upgrade from a UI that held it), "not registered … asking
+   again (1)", "(2)", … and then "authentication agent registered" once that agent is gone; never "cannot change path
+   after it has been set.".
+PASS: 1–3 (and 5 to 7) as described. FAIL: any approval without the right password, a second agent, or the sheet missing.
 
 ## Lock survival (crash, reload) — fail closed
 Found in R12 review: a Quickshell soft reload while locked unlocked the session when the marker was missing or not
@@ -1554,8 +1561,12 @@ same directory and the modules move without moving a file), one step at a time u
   security process restarts finds no agent and is not authorized, and one open when it ends is ended by polkitd with the
   agent's bus name after a crash, or cancelled by Quickshell itself on a graceful stop (dismissed), never approved (as
   while the UI restarted before S3; `authagent_flows.d` test_35 for the QML side, L5 step 6). A refused registration (the
-  UI's earlier agent still held the session) is asked again with a backoff, never in a dev session; the sheets also count
-  the start-up probe of a stranded or foreign lock as locked (the opus review of S3, MINOR-3 and LOW-4). The
+  UI's earlier agent still held the session) is asked again with a backoff (3 s doubling to 60 s), never in a dev session:
+  Quickshell's `PolkitAgent` asks once, when it is made, and sets its path once, so `AuthAgent` holds it in a Loader and,
+  while it is not registered and has no request, lets it go and makes the next one an event-loop turn later (one made in
+  the same turn would find the old one still alive and stay inert); a registered agent is never let go (the opus review of
+  S3, MINOR-3, and its delta review, MAJOR-1; `authagent_flows.d` test_36 to test_39, `authagent_registration.sh` on the
+  real Quickshell). The sheets also count the start-up probe of a stranded or foreign lock as locked (LOW-4). The
   `polkit` and `secrets` dev hooks answer on the security instance. **S4:** safe mode. The invariant of each state (who
   locks, either process down, sleep) is the table at the end of ADR-0041 step 1.
 

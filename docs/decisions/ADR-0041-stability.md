@@ -651,7 +651,9 @@ down, how sleep behaves) is written in the table at the end of this step.
   UI's saver was on screen). It differs from the saver on the holding side only (`IdleModel.sheetsSaverArmed`,
   `sheetsSaverShown`, `sheetsActivitySeen`; `tst_idlemodel` test_sheetsSaverRestartDuringIdle), and `saver devShow` is the
   UI's alone. Same-user code can still keep the displays on through the lease (they then are on), or restart this process
-  (the saver then counts as shown until activity).
+  (the saver then counts as shown until activity). While it counts as shown for the start alone, `SheetSession.starting`
+  (a fourth Binding, from `Idle.starting`) makes a held sheet say the request arrived while Grassfield was starting, not
+  that it waited for the screen saver (review 2, LOW; text only).
 - **What the UI knows of the sheets.** Two booleans published with the lock state (`LockState.format`, absent from a file of
   a process before S3: read false; any other type: no state): `authorizing` (a sheet open, shown or held) and
   `securityKeyboard` (a sheet or its key sink may hold the keyboard). `LockClient.authorizing` and `securityKeyboard`
@@ -673,7 +675,8 @@ down, how sleep behaves) is written in the table at the end of this step.
   sheets declared or made twice, `SheetSession` bound to anything else, elsewhere or assigned, the sheets reading
   `SessionState` or `LockClient` or importing `qs.services`, ...). polkitd itself refuses a second registration for the
   session. Nested, no agent registers (the owner's agent holds the session, as before S3); the real session's count is L5
-  step 1 (`journalctl --user -u grassfield-security`).
+  step 1 (`journalctl --user -u grassfield-security`). The `PolkitAgent` sits in a Loader, made again while refused (review
+  2, MAJOR-1): Quickshell keeps one agent per process, so a second one made while the first lives never registers.
 - **The restart.** While the security process restarts no agent is registered: polkitd answers an authorization asked
   then "not authorized" (no agent), and ends one that was open with the agent's bus name (not authorized or dismissed),
   never approved, as while the UI restarted before S3. On a crash the agent answers nothing (no password goes out,
@@ -718,10 +721,12 @@ down, how sleep behaves) is written in the table at the end of this step.
     plain string literal (the desktop widgets' `Registry.source(root.widgetId)` alone, while `Registry.source` returns only
     `Qt.resolvedUrl("builtin/....qml")` literals), and any string naming `security/`, `qs.security`,
     Quickshell.Services.Polkit or a security type. The reviewer's M1 and M2 are among the 68 planted mutants.
-  - MINOR-3, the agent never asked again: `AuthAgent` asks again while it is not registered (a new object path makes
-    Quickshell register again), after 3 s doubling to 60 s, never in a dev session (the nested agent must not take the
-    owner's session when the owner's agent restarts); `authagent_flows.d` test_36, test_37 and four mutants. The upgrade
-    note's restart line restarts the UI alone first, then the bridge and the security process (`session_services.sh`).
+  - MINOR-3, the agent never asked again: the fix of this round set a new object path while not registered, after 3 s
+    doubling to 60 s, never in a dev session (the nested agent must not take the owner's session when the owner's agent
+    restarts). That did not ask again: Quickshell 0.3.2's `PolkitAgent` sets its path once and refuses a later one with a
+    warning (the delta review's MAJOR-1, below), and its tests passed only because the harness's agent took any path. The
+    upgrade note's restart line restarts the UI alone first, then the bridge and the security process
+    (`session_services.sh`).
   - LOW-4: the sheets count the start-up probe of a stranded or foreign lock as locked, at most its 20 ticks
     (`Lock.strandedProbing`; the scan's binding table, `lock_surfaces.sh` and its mutations, `security_unit.sh`).
   - NITs: SheetSession's fail-closed defaults tested (`tst_sheetsession.qml`, and the scan with the reviewer's M3); the
@@ -730,6 +735,45 @@ down, how sleep behaves) is written in the table at the end of this step.
     ENVIRONMENT (2) when `/tmp` cannot hold their short socket directory; the restart's wording (above).
   - Residual, not new since S2: a restarted process starts with `displayOff` false while the displays may be dark (the
     saver's hold above covers the sheets until the user is active).
+- Review round 2 (2026-11-10, the opus delta review of 655916ba: FAIL on one MAJOR; MINOR-1, MINOR-2, LOW-4, the NITs and
+  b84d46e7 passed), each fixed on the branch:
+  - MAJOR-1, the retry never registered again: Quickshell's `PolkitAgent::setPath` sets an empty path only ("cannot change
+    path after it has been set.", upstream `src/services/polkit/qml.cpp`), and an agent asks polkitd once, when it is made
+    (`componentComplete`). `AuthAgent` now holds its `PolkitAgent` in a Loader; while not registered it lets the agent go
+    and makes the next one an event-loop turn later (a 0 ms Timer), 3 s doubling to 60 s (`registrationRetryInterval`),
+    never in a dev session, never while registered or with a request open. The turn matters: the Loader deletes the old
+    agent later, and one made in the same turn finds Quickshell's one agent per process (`PolkitAgentImpl::instance`)
+    still held, so it stays inert (measured on 0.3.2.r7: every second try asked nothing). One Loader and Quickshell's
+    single instance mean two agents never live at once. Tests: the harness's agent now follows Quickshell (asks only when
+    made, its path set once, inert while an earlier one lives: `make_harness.py`); `authagent_flows.d` test_36 to test_39
+    (asked again with each wait at least doubled, none made inert, the registered one kept, a dev session asks once, a
+    registered agent or an open request never let go, the backoff's values) and ten mutants, the retry of 655916ba by a
+    new path and the next agent made in the same turn among them; and on the real Quickshell, offscreen,
+    `authagent_registration.sh`: with the system bus pointing nowhere, Quickshell's own "failed to register listener on
+    path" lines are one per agent made (6 in 4.5 s at a 100 ms base, 100, 200, 402, 803, 1600 ms apart), none in a dev
+    session but the first; `--mutants` catches the 655916ba retry, the same-turn agent and no backoff. Its third phase
+    (a private bus with `tests/fixtures/fake-polkit-authority.py` refusing three times: the fourth agent registers, and
+    nothing registers or unregisters after it until the end) needs Unix sockets and SKIPs in a sandbox that refuses them:
+    NOT VERIFIED on the branch until it is run outside one.
+  - LOW (from MINOR-1): a request held only because the security process had just started said "waited while the screen
+    saver was on". `Idle.starting` (`IdleModel.sheetsStarting`: not seen active, the saver not counted) is bound into
+    `SheetSession.starting` by a fourth Binding of the host; the sheets then say "This request arrived at %1, while
+    Grassfield was starting." (en, fr). Text only: what holds a request is still `saverShown`. Tests: `tst_idlemodel`,
+    `tst_authdialogmodel`, `tst_secretsheetmodel`, `authagent_flows.d` test_40, `secret_sheets.d` test_11b,
+    `tst_sheetsession`, the scan's binding table.
+  - NIT, the scan: a Loader or `createComponent` source may be `Qt.resolvedUrl` of one plain literal (the literal is still
+    read), and an http or https address in a string names no file of the tree (file: and qrc: addresses are still read);
+    five allowed cases planted in the selftest pass, four more mutants (a resolved agent file, a resolved computed file, a
+    resolved property, a file: address) and M1, M2 are found.
+  - Residual risks, Quickshell's: (1) its registration is asynchronous (the session subject in a thread, then a
+    synchronous D-Bus call), and an agent destroyed before that completes leaves the listener calling into a freed object
+    (upstream `listener.cpp` keeps `cb`); the retry lets an agent go only a full wait (3 s or more) after making it, while
+    the attempt completes in milliseconds (1 to 3 ms here), so only a main loop or thread pool stalled for that long
+    could reach it, and the outcome is a crash of the security process (Restart=always; no agent meanwhile, nothing
+    approved). (2) That D-Bus call blocks the security process's main thread up to D-Bus's 25 s timeout when polkitd hangs,
+    the lock's prompt included; S3 moved the one start-time attempt into this process, and the retry repeats it at most
+    once a minute while unregistered. Upstream fixes to propose: clear the listener's `cb` in `~PolkitAgentImpl`, and
+    register asynchronously.
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words
