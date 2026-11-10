@@ -13,10 +13,11 @@
 //     Every map is increasing and keeps a minimum slope, so the internal contrast of an icon survives (A2 "internal contrast").
 //  TILES. An icon that is already a rounded square covers the plate, so nothing has to separate from it and the maps keep the luminance of
 //     every pixel (a contrast ratio between two parts of the icon survives, so does the one against the background; A2 rules I, S, N, E):
-//       Dark   no lift (tileDarkArtLift), the same desaturation.
+//       Dark   no lift (tileDarkArtLift), the same desaturation, the lightest tone at tileDarkArtScale (dark appearance, solid window material) or darkArtScale.
 //       Clear  neutral grey at the luminance of the pixel, opaque (a translucent ink would take the backdrop into the contrast).
 //       Tinted the tint at the luminance of the pixel: darker than the tint scaled, lighter than the tint mixed toward white.
-//  There is no rim (owner decision 2026-10-23): a mode only changes the colour; the plate has no edge highlight.
+//  There is no rim, ring or halo (owner decisions 2026-10-23 and 2026-11-10): a mode only changes the colour; nothing is drawn around a tile.
+//  TILE TONE. Over a solid window material a tile's tones are moved away from the material by a one-sided map, see below.
 // The folder colour (FolderIcon) recolours the artwork only, after the mode transform: the plate stays.
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -34,6 +35,7 @@ layout(std140, binding = 0) uniform buf {
     float darkPlateLuma;
     float darkArtSaturation;
     float darkArtScale;
+    float tileDarkArtScale;   // Dark, a tile in the dark appearance over a solid window material: the lightest tone (darkArtScale for everything else)
     float darkArtLift;
     float tile;               // 1: the icon is its own rounded-square tile (own-tile rule): luminance-preserving maps, see below
     float tileDarkArtLift;
@@ -60,15 +62,10 @@ layout(std140, binding = 0) uniform buf {
     float tintedRampHighDark;
     float tintedRampLowLight;
     float tintedRampHighLight;
-    float tileToneSide;       // tile icon tone, see TILE TONE below: -1 darken the pixels below tileTonePivot, 0 none
+    float tileToneSide;       // tile icon tone, see TILE TONE below: +1 lift the pixels above tileTonePivot, -1 darken those below it, 0 none
     float tileTonePivot;      // linear value the tone leaves alone
+    float tileToneExp;        // exponent of the tone: an ease-out lift above the pivot, a power darkening below it (both > 1; 1 = none)
     float darkPlateLumaOnDarkAccent;  // Dark over a dark accent fill of a selected row: lightness of the plate
-    float darkRimWidth;       // tile, dark appearance: width of the light halo outside the tile's edge as a fraction of the box, at least one device pixel (DARK RIM below)
-    float lightHaloLuma;      // tile, light appearance over a see-through material: lightness of the dark halo (DARK RIM below)
-    float lightHalo;          // 1: the light-appearance halo is drawn (see IconModes.lightHaloActive), 0 not
-    float darkRimStrength;
-    float darkRimLuma;
-    float tileToneExp;        // exponent of the darkening below the pivot (> 1)
     vec4 folderTint;          // folder colour step (FolderIcon): a = 1 when the artwork is recoloured, 0 otherwise
     float folderBrightness;   // MultiEffect arithmetic of the folder colour (FolderEffect, tokens folderIcon*)
     float folderContrast;
@@ -119,12 +116,20 @@ void main() {
     vec3 c = px.rgb / max(a, 0.0001);
     bool isTile = tile > 0.5;
     vec3 lin = isTile ? srgbToLinear(c) : toLinear(c);
-    // TILE TONE (R7-REQ-13, A2 rule E). A tile keeps the luminance of its pixels, so over a light material its edge is no better than Default's, and scaling a
-    // full-bleed tile onto the plate moves the measured edge onto other art. In the light appearance, while the material is solid (IconModes.tileToneSide, the
-    // pure rule that tst_iconmodes checks: -1, else 0), the pixels below the darkest material (pivot 0.62 in linear light) are darkened,
-    // v' = P (v / P)^e with e > 1: continuous and increasing, the same for every mode, per channel (the hue is kept), and no pixel ever moves towards the material.
-    // (The dark appearance has the DARK RIM below: a lift of the bright tones was tried and cost rule I and S cells, measured on the GPU.)
-    if (isTile && tileToneSide < -0.5) {
+    // TILE TONE (R7-REQ-13, A2 rule E). A tile keeps the luminance of its pixels, so over a solid window material its edge is no better than Default's, and scaling a
+    // full-bleed tile onto the plate moves the measured edge onto other art. The tone pushes the pixels AWAY from the material, on one side of a pivot only, so no
+    // pixel moves towards it; IconEffect chooses the side (IconModes.tileToneSide, the pure rule that tst_iconmodes checks) and only for icons declared on a solid
+    // window material (TintedIcon.solidMaterial: never the Dock, Launchpad or other glass, whose backdrop the pivots do not describe):
+    //   +1 dark appearance: the pixels above the brightest dark material (pivot 0.38 in linear light) are lifted, v' = P + (1 - P) (1 - (1 - u)^e), u = (v - P) / (1 - P),
+    //      e > 1 (an ease-out: continuous, finite slope; a lift compresses pairs of bright tones, so e stays small and is chosen per mode, Dark the smallest);
+    //   -1 light appearance, material solid: the pixels below the darkest material (pivot 0.62) are darkened, v' = P (v / P)^e with e > 1;
+    //   +1 light appearance, the wallpaper showing through (any material from dark grey to white): only the brightest tones, above pivot 0.8, are lifted.
+    // Per channel (the hue is kept), the same arithmetic for every mode, only the exponent differs.
+    if (isTile && tileToneSide > 0.5) {
+        vec3 u = clamp((lin - vec3(tileTonePivot)) / (1.0 - tileTonePivot), vec3(0.0), vec3(1.0));
+        vec3 up = vec3(tileTonePivot) + (1.0 - tileTonePivot) * (vec3(1.0) - pow(vec3(1.0) - u, vec3(tileToneExp)));
+        lin = mix(lin, up, step(vec3(tileTonePivot), lin));
+    } else if (isTile && tileToneSide < -0.5) {
         vec3 down = vec3(tileTonePivot) * pow(min(lin / tileTonePivot, vec3(1.0)), vec3(tileToneExp));
         lin = mix(down, lin, step(vec3(tileTonePivot), lin));
     }
@@ -138,7 +143,7 @@ void main() {
         vec3 d = mix(vec3(Y), lin, darkArtSaturation);
         if (isTile) {
             vec3 lo = srgbToLinear(vec3(tileDarkArtLift));
-            art = linearToSrgb(lo + (srgbToLinear(vec3(darkArtScale)) - lo) * d);
+            art = linearToSrgb(lo + (srgbToLinear(vec3(tileDarkArtScale)) - lo) * d);
         } else {
             vec3 lo = toLinear(vec3(darkArtLift));
             art = fromLinear(lo + (toLinear(vec3(darkArtScale)) - lo) * d);
@@ -209,22 +214,6 @@ void main() {
     }
     vec4 plateP = vec4(plateRgb * plateA, plateA);
     plateP *= mask;
-    // EDGE HALO (R7-REQ-13, A2 rule E). A tile icon carries a thin halo OUTSIDE its edge, in the margin that the plate inset leaves to the box (darkRimWidth of the
-    // box, at least one device pixel): light in the dark appearance (Dark, Clear and Tinted; macOS dark-mode and Clear tiles have a specular edge), dark in the light
-    // appearance while the wallpaper shows through the material (the tile tone does the work below that). It lies over the plate's antialiased fringe and behind the tile, so
-    // no pixel of the tile changes (rules I, S and N) and the edge band that rule E measures holds a row of the halo, whose contrast against the material is the halo's own:
-    // the edge cannot be worse than that. Not over the bare wallpaper (desktop icons: IconEffect sets both strengths to 0). Rims INSIDE the tile were tried and removed:
-    // 1.5 px, 1.0 px and 0.5 px all reached the 2 to 4 px ring that rule I reads at 24 px (GPU runs of 2026-11-09: squircle inside 1.69, 1.94, 2.10 against 2.35).
-    vec4 under = plateP;
-    if (isTile) {
-        float haloAmount = dark > 0.5 ? darkRimStrength : lightHalo * darkRimStrength;
-        float haloLuma = dark > 0.5 ? darkRimLuma : lightHaloLuma;
-        float outPx = sdf / aa;                       // device pixels outside the plate's edge (negative inside it)
-        float haloPx = max(1.0, darkRimWidth / aa);   // 1 / aa is the box in device pixels
-        float halo = clamp(haloPx + 0.5 - outPx, 0.0, 1.0) * step(-0.5, outPx) * haloAmount;
-        vec4 haloP = vec4(vec3(haloLuma) * halo, halo);
-        under = haloP + plateP * (1.0 - haloP.a);
-    }
-    vec4 face = artP + under * (1.0 - artP.a);
+    vec4 face = artP + plateP * (1.0 - artP.a);
     fragColor = face * qt_Opacity;
 }

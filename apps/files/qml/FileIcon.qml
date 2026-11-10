@@ -42,6 +42,7 @@ Item {
             size: root.size
             oversample: Tokens.filesThumbnailOversample
             overAccent: root.overAccent
+            solidMaterial: true
             source: root.iconName !== "" ? IconSource.url(root.iconName) : ""
         }
     }

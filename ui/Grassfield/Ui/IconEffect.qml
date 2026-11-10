@@ -42,6 +42,8 @@ ShaderEffect {
     readonly property real darkPlateLuma: Tokens.iconModeDarkPlateLuma
     readonly property real darkArtSaturation: Tokens.iconModeDarkArtSaturation
     readonly property real darkArtScale: Tokens.iconModeDarkArtScale
+    // A tile in Dark: darker lightest tone in the dark appearance over a solid window material (the Dock and other glass keep darkArtScale).
+    readonly property real tileDarkArtScale: (root.solidMaterial && root.darkAppearance && !root.wallpaper) ? Tokens.iconModeTileDarkArtScale : Tokens.iconModeDarkArtScale
     readonly property real darkArtLift: Tokens.iconModeDarkArtLift
     // The icon is its own rounded-square tile (own-tile rule, not over an accent fill): the maps keep the luminance of every pixel.
     property bool ownTile: false
@@ -67,17 +69,13 @@ ShaderEffect {
     readonly property real tintedRampHighDark: Tokens.iconModeTintedRampHighDark
     readonly property real tintedRampLowLight: Tokens.iconModeTintedRampLowLight
     readonly property real tintedRampHighLight: Tokens.iconModeTintedRampHighLight
-    // Tone of a tile icon (shaders/icon.frag, TILE TONE): which side of its pivot the pixels move to, chosen by the pure rule IconModes.tileToneSide.
-    readonly property real tileToneSide: IconModes.tileToneSide(root.darkAppearance, root.wallpaper, Appearance.effectiveTransparency, Tokens)
-    readonly property real tileTonePivot: Tokens.iconModeTileDarkenPivot
-    readonly property real darkRimWidth: Tokens.iconModeDarkRimWidth
-    readonly property real lightHaloLuma: Tokens.iconModeLightHaloLuma
-    readonly property real lightHalo: IconModes.lightHaloActive(root.darkAppearance, root.wallpaper, Appearance.effectiveTransparency, Tokens) ? 1 : 0
-    // No rim over the bare wallpaper (desktop icons): the rim is light, the wallpaper may be too.
-    readonly property real darkRimStrength: root.wallpaper ? 0 : Tokens.iconModeDarkRimStrength
+    // Tone of a tile icon (shaders/icon.frag, TILE TONE): which side of its pivot the pixels move to, by the pure rule IconModes.tileToneSide. Only for icons on a solid
+    // window material (a window's own views, the A2 suite): the Dock and the other glass surfaces have a backdrop the pivots do not describe, so they get none.
+    property bool solidMaterial: false
+    readonly property real tileToneSide: root.solidMaterial ? IconModes.tileToneSide(root.darkAppearance, root.wallpaper, Appearance.effectiveTransparency, Tokens) : 0
+    readonly property real tileTonePivot: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenPivot : (root.darkAppearance ? Tokens.iconModeTileLiftPivot : Tokens.iconModeTileLightLiftPivot)
+    readonly property real tileToneExp: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenExponent : (root.darkAppearance ? [0, 1, Tokens.iconModeTileLiftExponentClear, Tokens.iconModeTileLiftExponentTinted][root.params.index] : Tokens.iconModeTileLightLiftExponent)
     readonly property real darkPlateLumaOnDarkAccent: Tokens.iconModeDarkPlateLumaOnDarkAccent
-    readonly property real darkRimLuma: Tokens.iconModeDarkRimLuma
-    readonly property real tileToneExp: Tokens.iconModeTileDarkenExponent
     readonly property color folderTint: Qt.rgba(root.recolorTint.r, root.recolorTint.g, root.recolorTint.b, root.recolor ? 1 : 0)
     readonly property real folderBrightness: Tokens.folderIconBrightness
     readonly property real folderContrast: Tokens.folderIconContrast

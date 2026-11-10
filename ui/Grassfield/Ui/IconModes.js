@@ -29,23 +29,23 @@ function effect(mode, tint) {
     return {enabled: normalized !== "default", index: MODES.indexOf(normalized), tint: tint, mode: normalized};
 }
 
-// Tone of a tile icon (own-tile rule, R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, TILE TONE). A tile keeps the luminance of its pixels, so
-// its edge stands off a light material only as far as its own tones do. In the light appearance, while the material is solid (transparency up to
-// `material.tintClampUntil`, tint opacity at least `tintAlphaClamp`), the pixels below `iconModeTileDarkenPivot` (0.62, about the darkest solid light material: the
-// material tint over a black wallpaper, 0.63 at the default transparency, 0.57 at the clamp) are darkened by the power `iconModeTileDarkenExponent`, so no
-// pixel moves towards the material. Side -1; 0 (nothing moves) in the dark appearance (it has the dark rim instead: a lift of the bright tones was tried and
-// measured on the GPU to cost rule I and S cells), over the bare wallpaper (desktop icons: any luminance) and once the wallpaper shows through the light material.
+// Tone of a tile icon (own-tile rule, R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, TILE TONE; IconEffect applies it only to icons on a solid window
+// material). A tile keeps the luminance of its pixels, so its edge stands off the material only as far as its own tones do. The tone moves the pixels away from the
+// material, on one side of a pivot, so no pixel moves towards it:
+//   +1  the dark appearance: the pixels above `iconModeTileLiftPivot` (0.38, the brightest material of the dark appearance: the material tint at `material.tintAlphaMin`
+//       over a white wallpaper) are lifted by an ease-out whose exponent `iconModeTileLiftExponent<Mode>` is chosen per mode;
+//   -1  the light appearance while the material is solid (transparency up to `material.tintClampUntil`): the pixels below `iconModeTileDarkenPivot` (0.62, about the
+//       darkest solid light material) are darkened by the power `iconModeTileDarkenExponent`;
+//   +1  the light appearance once the wallpaper shows through (transparency above `material.tintClampUntil`): the material may be anything from a dark grey to white, so
+//       only the brightest tones move: the pixels above `iconModeTileLightLiftPivot` (0.8) are lifted by `iconModeTileLightLiftExponent`; a pixel moves away from every
+//       material darker than the pivot, and over a white wallpaper (0.9) only the tones between 0.8 and 0.9, already within 1.2:1 of it, can lose;
+//    0  over the bare wallpaper (desktop icons: any luminance).
 function tileToneSide(dark, wallpaper, transparency, t) {
-    if (wallpaper || dark)
+    if (wallpaper)
         return 0;
-    return transparency <= t.materialTintClampUntil ? -1 : 0;
-}
-
-// The tone of one linear value `v` (0..1): `side` as above, `pivot` and `exponent` the tokens.
-function tileTone(v, side, pivot, exponent) {
-    if (side < 0)
-        return v >= pivot ? v : pivot * Math.pow(v / pivot, exponent);
-    return v;
+    if (dark)
+        return 1;
+    return transparency <= t.materialTintClampUntil ? -1 : 1;
 }
 
 // One warning per process (an icon shader that cannot load fails for every icon).
@@ -55,24 +55,4 @@ function warnOnce(message) {
         return;
     warned = true;
     console.warn("grassfield-ui: " + message);
-}
-
-// Edge halo (R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, EDGE HALO). A tile icon carries a thin halo OUTSIDE its edge, in the margin the plate inset
-// leaves to the box, over the plate fringe and behind the tile: light in the dark appearance, dark in the light appearance while the wallpaper shows through the
-// material (`lightHaloActive`). No pixel of the tile changes, so rules I, S and N do not move.
-// The halo's width in device pixels for an icon of `box` device pixels: the token is a fraction of the box, never under one pixel.
-function darkRimWidthPx(box, fraction) {
-    return Math.max(1, fraction * box);
-}
-
-// The halo's weight (0..strength) `outside` device pixels outside the plate's edge (negative inside it: the tile covers it).
-function darkHaloWeight(outside, box, fraction, strength) {
-    if (outside < -0.5)
-        return 0;
-    return Math.min(1, Math.max(0, darkRimWidthPx(box, fraction) + 0.5 - outside)) * strength;
-}
-
-// The dark halo of the light appearance: where the tile tone does not act (tileToneSide 0) and the icon is not over the bare wallpaper.
-function lightHaloActive(dark, wallpaper, transparency, t) {
-    return !dark && !wallpaper && tileToneSide(dark, wallpaper, transparency, t) === 0;
 }

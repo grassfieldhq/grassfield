@@ -60,11 +60,11 @@ want_output=${GRASSFIELD_ICONS_OUTPUT:-GF-REF}
 warmup=${GRASSFIELD_ICONS_WARMUP:-300}
 warm_kill=${GRASSFIELD_ICONS_WARMUP_KILL:-60}
 cases=("$@")
-[[ ${#cases[@]} -gt 0 ]] || cases=(test_a2_size48 test_a2_size32 test_a2_size24 test_a2_size16 test_a2_desktop test_a2_transparent48 test_a2_transparent24 test_a2_transparent16 test_a2_tintYellow32 test_a2_tintPink32 test_a2_accentRow test_a2_filesSelectedRow test_a2_limitKeysAreWellFormed test_folderModelMatchesTheShader test_blackFolderKeepsItsPlateOnBlack test_missingShaderDrawsThePlainIcon)
+[[ ${#cases[@]} -gt 0 ]] || cases=(test_a2_size48 test_a2_size32 test_a2_size24 test_a2_size16 test_a2_desktop test_a2_dock test_a2_transparent48 test_a2_transparent24 test_a2_transparent16 test_a2_tintYellow32 test_a2_tintPink32 test_a2_accentRow test_a2_filesSelectedRow test_a2_limitKeysAreWellFormed test_folderModelMatchesTheShader test_blackFolderKeepsItsPlateOnBlack test_missingShaderDrawsThePlainIcon)
 
 limit_of() {
   case $1 in
-    test_a2_desktop | test_a2_transparent* | test_a2_tint* | test_a2_accentRow | test_a2_filesSelectedRow) echo "$heavy" ;;
+    test_a2_desktop | test_a2_dock | test_a2_transparent* | test_a2_tint* | test_a2_accentRow | test_a2_filesSelectedRow) echo "$heavy" ;;
     test_a2_limitKeysAreWellFormed) echo "$probe_limit" ;;
     *) echo "$limit" ;;
   esac

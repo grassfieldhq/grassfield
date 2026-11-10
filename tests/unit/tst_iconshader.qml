@@ -86,6 +86,8 @@ TestCase {
     property color tintColor: "#3E7BFA"
     // The material at transparency 1.0: the wallpaper shows through, a floor of 2.0 holds (all modes).
     property bool transparentPass: false
+    // The icons are on the Dock (a nearly clear glass), not on a solid window material: no tile tone (TintedIcon.solidMaterial).
+    property bool dockPass: false
 
     Item {
         id: board
@@ -120,6 +122,7 @@ TestCase {
                     darkAppearance: testCase.darkPass
                     overWallpaper: testCase.wallpaperPass
                     overAccent: testCase.accentPass
+                    solidMaterial: !testCase.dockPass
                 }
             }
         }
@@ -383,8 +386,12 @@ TestCase {
             const cells = [];
             for (let m = 0; m < testCase.modes.length; m++)
                 cells.push(slots.itemAt(f * testCase.modes.length + m));
-            if (cells[0] === undefined || cells[0].icon.status !== Image.Ready)
+            // A fixture that is not there (a system icon of a package that is not installed) is a failure of the run, not a cell that is skipped: a gate that
+            // skips what it cannot read passes on a machine where it measures nothing.
+            if (cells[0] === undefined || cells[0].icon.status !== Image.Ready) {
+                failures.push(`${testCase.fixtures[f].name}: the icon could not be read (${testCase.fixtures[f].url}): a missing system icon fails the run`);
                 continue;
+            }
             // A glyph that is 1.45:1 against its plate in the default rendering (same hue, a little darker) is below legibility
             // below 48 px by its own design: it is tested from 48 px only.
             if (testCase.iconSize < 48 && testCase.fixtures[f].name === "same-tone-glyph")
@@ -600,6 +607,31 @@ TestCase {
     }
 
     // The desktop: bare wallpaper, always styled for it (DesktopIcon passes darkAppearance), also when the windows are light.
+    // The Dock: a nearly clear glass (Tokens.dockTintAlpha*, 0.05) over the wallpaper. The tile tone is for solid window materials and is off here
+    // (TintedIcon.solidMaterial false), so a tile keeps the contrast of the Default rendering against the Dock's backdrop in every mode: the floors
+    // of the suite hold. 2026-11-10: with the tone on, a tile at Y 0.28 fell from 1.61:1 to 1.01:1 on the Dock (independent review).
+    function dockOver(appearanceDark, wallpaper) {
+        const tint = Qt.color((appearanceDark ? Tokens.colorDark : Tokens.colorLight).materialTint);
+        const a = appearanceDark ? Tokens.dockTintAlphaDark : Tokens.dockTintAlphaLight;
+        const w = Qt.color(wallpaper);
+        return Qt.rgba(tint.r * a + w.r * (1 - a), tint.g * a + w.g * (1 - a), tint.b * a + w.b * (1 - a), 1);
+    }
+
+    function test_a2_dock() {
+        if (board.GraphicsInfo.api === GraphicsInfo.Software)
+            skip("needs a GPU scene graph: tests/visual/icon-a2.sh");
+        const failures = [];
+        let measured = 0;
+        testCase.iconSize = 48;
+        testCase.dockPass = true;
+        for (const dark of [true, false]) {
+            for (const wallpaper of ["#000000", "#808080", "#ffffff"])
+                measured += runScenario(`48px ${dark ? "dark" : "light"} dock wallpaper ${wallpaper}`, dark, dockOver(dark, wallpaper), failures);
+        }
+        testCase.dockPass = false;
+        finishRun(measured, failures);
+    }
+
     function test_a2_desktop() {
         if (board.GraphicsInfo.api === GraphicsInfo.Software)
             skip("needs a GPU scene graph: tests/visual/icon-a2.sh");
