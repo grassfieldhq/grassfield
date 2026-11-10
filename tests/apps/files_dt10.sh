@@ -93,6 +93,17 @@ run_pass() {
   app=$!
   sleep 3
   kill -0 "$app" 2>/dev/null || { fail "Files exited at start ($log)"; app=""; return; }
+  # A cold first start (pass 1) can take longer than 3 s to map its window: keys typed before it exists go nowhere and
+  # the pass logs nothing (2026-11-10, three runs). Wait for the mapped Files window, as tests/apps/files_sandbox.sh does.
+  local w
+  for w in $(seq 1 60); do
+    "$root/scripts/nestctl" clients -j 2>/dev/null |
+      jq -e 'any(.[]; .mapped and .class == "org.grassfield.Files")' >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  "$root/scripts/nestctl" clients -j 2>/dev/null | jq -e 'any(.[]; .mapped and .class == "org.grassfield.Files")' >/dev/null 2>&1 ||
+    { fail "the Files window never mapped ($log)"; kill -- "-$app" 2>/dev/null; app=""; return; }
+  sleep 1
   "$pointer" output "$output" abs 1050 600 sleep 200 click >/dev/null
   local name
   for name in $items; do
