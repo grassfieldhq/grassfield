@@ -256,7 +256,10 @@ step_nowatch() {
   local before after sbefore safter
   before=$(grep -c "Reloading configuration" "$dev/shell.log" 2>/dev/null)
   sbefore=$(grep -c "Reloading configuration" "$lock_log" 2>/dev/null)
-  touch "$root/shell/security/lock/LockView.qml" "$root/shell/security.qml"
+  # The files the two processes actually load: the source tree, or with GRASSFIELD_MIGRATED=1 the migrated one (a touch of the
+  # source would test nothing then). A touch changes no content, so scripts/dev/migrated-tree.sh (content stamp) rebuilds nothing.
+  touch "$ui_dir/shell.qml" "$ui_dir/security/lock/LockView.qml" "$sec_qml"
+  [[ -f $ui_dir/shell-core.qml ]] && touch "$ui_dir/shell-core.qml"
   sleep 3
   after=$(grep -c "Reloading configuration" "$dev/shell.log" 2>/dev/null)
   safter=$(grep -c "Reloading configuration" "$lock_log" 2>/dev/null)

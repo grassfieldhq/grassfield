@@ -583,6 +583,7 @@
  {"path": "tests/shell/shell_failures.sh", "layer": "logic"},
  {"path": "tests/shell/shell_version.sh", "layer": "headless"},
  {"path": "tests/shell/migrate_qs_imports.sh", "layer": "logic"},
+ {"path": "tests/shell/migrated_tree.sh", "layer": "logic"},
  {"path": "tests/shell/icons_compose.sh", "layer": "data"},
  {"path": "tests/shell/icons_real_pins.sh", "layer": "data"},
  {"path": "tests/shell/mime_data.sh", "layer": "logic"},

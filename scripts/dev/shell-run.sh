@@ -79,19 +79,10 @@ shell_dir=$root/shell
 if [[ $migrated == 1 ]]; then
   # The packaged form of the UI tree (scripts/dev/migrate-qs-imports.py, ADR-0056): file: URLs, so Qt's QML disk cache serves
   # it. The parents of shell/ that dev code reaches (../VERSION, ../packaging, ../branding, ../.dev) are links to the repository.
-  mig=$dev/migrated
-  if [[ ! -f $mig/.stamp || -n $(find "$root/shell" "$root/scripts/dev/migrate-qs-imports.py" -newer "$mig/.stamp" -print -quit 2>/dev/null) ]]; then
-    rm -rf "$mig"
-    mkdir -p "$mig"
-    "$root/scripts/dev/migrate-qs-imports.py" --out "$mig/shell" >&2 && "$root/scripts/dev/migrate-qs-imports.py" --verify "$mig/shell" >&2 \
-      || { echo "shell-run: the migrated tree did not build or is not the source apart from its imports" >&2; rm -rf "$mig"; exit 1; }
-    for e in "$root"/* "$root"/.dev; do
-      [[ $(basename "$e") == shell ]] && continue
-      ln -s "$e" "$mig/$(basename "$e")"
-    done
-    touch "$mig/.stamp"
-  fi
-  shell_dir=$mig/shell
+  # scripts/dev/migrated-tree.sh never deletes or rewrites a tree a process may use: a changed source is built into a fresh
+  # directory and .dev/migrated is repointed with one rename; its stamp names the tree content (security_sig below).
+  tree_stamp=$("$root/scripts/dev/migrated-tree.sh" "$root" "$dev") || { echo "shell-run: the migrated tree did not build" >&2; exit 1; }
+  shell_dir=$dev/migrated/shell
 fi
 # The security process runs from the same tree as the UI: the UI's lock requests (shell/security/lock LockClient) and the key
 # bindings address `<shell dir>/security.qml`, and an instance is identified by its path. With --migrated that is the migrated
@@ -282,7 +273,7 @@ fi
 # (`--security`, after the stop above); a restart of the UI leaves a running one alone, unless the settings it was started
 # with changed (the language, the visual fixtures and fixed time, the private bus, the unit environment, the L2 PAM opt-in:
 # .dev/security.sig), as when the visual suite switches language: then it is restarted too.
-security_sig="migrated=$migrated lang=${GRASSFIELD_LANG:-} fixtures=${GRASSFIELD_VISUAL_FIXTURES:-} time=${GRASSFIELD_FIXED_TIME:-} bus=$private unit=${GRASSFIELD_UNIT_ENV:-} pam=${GRASSFIELD_DEV_ALLOW_PAM:-}"
+security_sig="migrated=$migrated tree=${tree_stamp:-} lang=${GRASSFIELD_LANG:-} fixtures=${GRASSFIELD_VISUAL_FIXTURES:-} time=${GRASSFIELD_FIXED_TIME:-} bus=$private unit=${GRASSFIELD_UNIT_ENV:-} pam=${GRASSFIELD_DEV_ALLOW_PAM:-}"
 start_security() {
   # The security modules read no GRASSFIELD_* variable but the dev gate's (ADR-0019): the lock finds the UI's wallpaper.json
   # under $XDG_STATE_HOME/grassfield, here a link to the dev state the shell writes (.dev/state).
