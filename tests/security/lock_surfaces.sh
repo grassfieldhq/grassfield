@@ -63,6 +63,22 @@ def ipc(text, target):
 def code(body):
     return "\n".join(l.split("//", 1)[0] for l in body.split("\n"))
 
+def placement(text, pattern):
+    """The enclosing blocks of the first match of `pattern` in the code of `text`, outermost first: ["ShellRoot"] is a direct
+    child of the root, ["ShellRoot", "LazyLoader"] a child of a loader (ADR-0056 D-6). Strings and comments are blanked."""
+    c = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', code(text))
+    m = re.search(pattern, c)
+    if not m:
+        return None
+    stack = []
+    for t in re.finditer(r"[A-Za-z_][\w.]*\s*\{|\{|\}", c[:m.start()]):
+        if t.group(0) == "}":
+            if stack:
+                stack.pop()
+        else:
+            stack.append(re.sub(r"\s*\{", "", t.group(0)) or "{")
+    return stack
+
 def expect(what, ok):
     (oks if ok else problems).append(what)
 
@@ -128,6 +144,8 @@ expect("shell/services/Emoji.qml: place() opens nothing once the session locked"
 first_decision("shell/capture/Capture.qml", "show", R, lines=1)
 capture = read("shell/capture/Capture.qml")
 expect("shell.qml gives the capture toolbar the lock state", re.search(r"\bCapture\s*\{\s*id:\s*captureSurface\s*locked:\s*SessionState\.locked\s*\}", code(shell)) is not None)
+expect("shell.qml: Capture is a child of the root or of the one reviewed LazyLoader (ADR-0056 D-6), nowhere else",
+       placement(shell, r"\bCapture\s*\{") in (["ShellRoot"], ["ShellRoot", "LazyLoader"]))
 expect("shell/capture/Capture.qml: toggle() opens only through show()", re.search(r"^\s*else\s+show\(\);\s*$", code(function(capture, "toggle") or ""), re.M) is not None
        and "open = true" not in code(function(capture, "toggle") or ""))
 expect("shell/capture/Capture.qml: the capture runs only if the session is still unlocked when the toolbar is gone",
@@ -331,6 +349,10 @@ expect("polkit sheet: the screen saver takes the sink's keys, then a request ope
 expect("shell.qml binds SessionState.saverShown to the screen saver's shown",
        re.search(r"Binding\s*\{\s*target:\s*SessionState\s*property:\s*\"saverShown\"\s*value:\s*saver\.shown\s*\}", shell) is not None
        and re.search(r"\bSaver\s*\{\s*id:\s*saver\b", shell) is not None)
+# The Binding above reads `saver.shown` by id: Saver must be a DIRECT child of the root (inside a loader the id is out of
+# scope, the Binding reads null and SessionState.saverShown stays false: the polkit sheet takes the keyboard over the saver).
+expect("shell.qml: Saver is a direct child of the root, not inside a loader (the saverShown Binding reads it by id)",
+       placement(shell, r"\bSaver\s*\{\s*id:\s*saver\b") == ["ShellRoot"])
 # ADR-0032: that Binding is the only writer of SessionState.saverShown in the shell, the apps and Grassfield.Ui: no
 # assignment, no other Binding, PropertyChanges or object property, no other quoted name (setProperty and the like). A
 # wrong saverShown holds every polkit request (true) or lets the sheet take the keyboard over the saver (false).
@@ -791,6 +813,8 @@ for case_ in 'shell/dock/Dock.qml#SessionState.refuses("dock keyboard")#false' \
   'shell/security/polkit/AuthAgent.qml#enabled: SessionState.saverShown#enabled: false' \
   'shell/security/polkit/AuthAgent.qml#acceptedButtons: Qt.AllButtons#acceptedButtons: Qt.LeftButton' \
   'shell/shell.qml#        property: "saverShown"\n        value: saver.shown#        property: "saverShown"\n        value: false' \
+  'shell/shell.qml#    Saver {\n        id: saver#    LazyLoader {\n    Saver {\n        id: saver' \
+  'shell/shell.qml#    LazyLoader {\n        id: captureLoader#    Row {\n    LazyLoader {\n        id: captureLoader' \
   'shell/services/SessionState.qml#    property bool saverShown: false#    property bool saverShown: false\n    function hideSaver(): void {\n        saverShown = false;\n    }' \
   'shell/shell.qml#        property: "saverShown"\n        value: saver.shown\n    }#        property: "saverShown"\n        value: saver.shown\n    }\n    Binding {\n        target: SessionState\n        property: "saverShown"\n        value: false\n        when: false\n    }' \
   'shell/security/polkit/AuthAgent.qml#if (!dialogModel.active || SessionState.locked)#if (!dialogModel.active || SessionState.locked || !SessionState.saverShown)' \
