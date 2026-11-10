@@ -1235,6 +1235,37 @@ Scope {
             readonly property var targetScales: pointerActive ? Magnify.slotScales(baseCenters, widths, Tokens.dockSpacing, separatorFlags, pointerX, pitch, maxScale, Tokens.dockMagnificationRadius) : widths.map(() => 1)
             property var smoothScales: []
             readonly property var scaleList: widths.map((w, i) => smoothScales[i] !== undefined ? smoothScales[i] : 1)
+            // What the icons stand on (R7-REQ-13, ADR-0014): the Dock's glass is almost clear, so its tone is the wallpaper's under the shelf, not the system appearance's.
+            // The shelf's strip on the output (output px, centred along the edge), the effective luminance of the glass over the wallpaper there, and the held decision with a
+            // hysteresis band (IconModes.surfaceIsDark): over black the light-appearance Dock is dark, over white the dark-appearance Dock is light, and the icons are drawn for that.
+            readonly property rect shelfStrip: {
+                const t = shelfHeight + Tokens.dockBottomMargin;
+                const w = win.screen ? win.screen.width : 0, h = win.screen ? win.screen.height : 0;
+                switch (edge) {
+                case "left":
+                    return Qt.rect(0, (h - shelfWidth) / 2, t, shelfWidth);
+                case "right":
+                    return Qt.rect(w - t, (h - shelfWidth) / 2, t, shelfWidth);
+                case "top":
+                    return Qt.rect((w - shelfWidth) / 2, 0, shelfWidth, t);
+                default:
+                    return Qt.rect((w - shelfWidth) / 2, h - t, shelfWidth, t);
+                }
+            }
+            readonly property real surfaceLuma: Appearance.surfaceLuma(win.screen ? win.screen.name : "", win.shelfStrip, Appearance.dark ? Tokens.dockTintAlphaDark : Tokens.dockTintAlphaLight)
+            property bool iconDark: IconModes.surfaceIsDark(Appearance.dark, win.surfaceLuma, Appearance.dark, Tokens)
+            function refreshIconDark(): void {
+                const d = IconModes.surfaceIsDark(win.iconDark, win.surfaceLuma, Appearance.dark, Tokens);
+                if (d !== win.iconDark)
+                    win.iconDark = d;
+            }
+            onSurfaceLumaChanged: win.refreshIconDark()
+            Connections {
+                target: Appearance
+                function onDarkChanged(): void {
+                    win.refreshIconDark();
+                }
+            }
             readonly property real shelfWidth: Magnify.totalWidth(widths.map((w, i) => w * scaleList[i]), Tokens.dockSpacing) + 2 * Tokens.dockPadding - dragCollapse * pitch + gapGrow * pitch
 
             // Autohide state machine (AutoHide.js, table in docs/specs/dock.md): inhibitors keep the shelf shown.
@@ -1943,6 +1974,7 @@ Scope {
                                 // Application icon, growing upward from the shelf.
                                 TintedIcon {
                                     id: appIcon
+                                    darkAppearance: win.iconDark
                                     visible: tile.isApp
                                     size: win.iconSize
                                     // Default mode is decoded as before; an effect mode decodes at the largest magnification so the
@@ -2135,6 +2167,7 @@ Scope {
 
                                     TintedIcon {
                                         id: minimizedIcon
+                                    darkAppearance: win.iconDark
                                         // The drawn nominal size (the badge is a fraction of the tile when the thumbnail shows), so that
                                         // the minimum size of the icon modes applies to what is on screen.
                                         size: minimizedTile.live ? Math.round(win.iconSize * Tokens.dockMinimizedBadgeScale) : win.iconSize
@@ -2164,6 +2197,7 @@ Scope {
 
                                 TintedIcon {
                                     id: folderThemed
+                                    darkAppearance: win.iconDark
                                     visible: tile.isFolder && !(tile.folderOptions.display === "stack" && !pile.empty)
                                     size: win.iconSize
                                     oversample: folderThemed.modeActive ? Tokens.dockIconOversample : folderThemed.defaultOversample
@@ -2179,6 +2213,7 @@ Scope {
                                 // mode; a symbolic glyph on a rounded tile when the theme has neither.
                                 TintedIcon {
                                     id: trashThemed
+                                    darkAppearance: win.iconDark
                                     readonly property string themed: Quickshell.iconPath(Trash.empty ? "user-trash" : "user-trash-full", true)
                                     visible: tile.isTrash && themed !== ""
                                     size: win.iconSize
@@ -2213,6 +2248,7 @@ Scope {
                                 // own grid glyph when no theme has it (a dev session without the package).
                                 TintedIcon {
                                     id: appsThemed
+                                    darkAppearance: win.iconDark
                                     readonly property string themed: Quickshell.iconPath("org.grassfield.Apps", true)
                                     visible: tile.isAppsTile && themed !== ""
                                     size: win.iconSize

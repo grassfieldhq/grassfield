@@ -61,6 +61,27 @@ function overWallpaperLook(modeIndex, wallpaper, transparency, dark, solidMateri
     return transparency >= t.iconModeWallpaperLikeTransparency || (dark && !solidMaterial);
 }
 
+// The tone of the surface an icon stands on (R7-REQ-13, the macOS model: an icon follows the glass it sits on, not the system appearance). The Dock's glass is almost
+// clear (tint opacity `dock.tintAlpha*`, 0.05), so over a black wallpaper it is dark in the LIGHT appearance and over a white one it is light in the DARK appearance (GPU run of
+// 2026-11-10: 77 test_a2_dock cells of Clear in the light appearance over black, inside 1.12 against 3.20). The effective relative luminance of such a surface is its tint over the
+// backdrop under it: `alpha` of `tintLuma` over `backdropLuma` (the middle of the luminance range the shell measured under the surface, -1 when it knows none).
+function surfaceLuma(backdropLuma, tintLuma, alpha) {
+    return backdropLuma < 0 ? -1 : alpha * tintLuma + (1 - alpha) * backdropLuma;
+}
+
+// Whether that surface is dark, for the icons on it: below `iconModeSurfaceToneThreshold` (0.10: between the dark look's proven surface, black, and the light look's, mid-grey at 0.21) it
+// is, above it is not, and within `iconModeSurfaceToneHysteresis` of it the previous answer stays (`previous`), so a wallpaper that drifts around the threshold does not flip the look back and
+// forth: one threshold on a stable value, with a band. An unknown surface (`luma` < 0) follows the system appearance.
+function surfaceIsDark(previous, luma, appearanceDark, t) {
+    if (!(luma >= 0))
+        return appearanceDark;
+    if (luma < t.iconModeSurfaceToneThreshold - t.iconModeSurfaceToneHysteresis)
+        return true;
+    if (luma > t.iconModeSurfaceToneThreshold + t.iconModeSurfaceToneHysteresis)
+        return false;
+    return previous;
+}
+
 // One warning per process (an icon shader that cannot load fails for every icon).
 let warned = false;
 function warnOnce(message) {

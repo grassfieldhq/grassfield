@@ -116,6 +116,47 @@ TestCase {
         }
     }
 
+    // The icons on a nearly clear glass (the Dock) follow the glass, not the system appearance: dark over a black wallpaper in either appearance, light over a grey or white one
+    // in either (GPU run of 2026-11-10: Clear in the light appearance over black, 77 cells, and in the dark appearance over white, 2 cells, and over grey, 8, failed with the
+    // appearance's look). The looks themselves are the proven ones: the dark surface gets the dark look, the light surface the light look.
+    function test_surfaceFollowsTheGlass() {
+        const t = Tokens;
+        for (const appearanceDark of [true, false]) {
+            const tint = lum(FolderStyle.rgbOf(appearanceDark ? t.colorDark.materialTint : t.colorLight.materialTint));
+            const alpha = appearanceDark ? t.dockTintAlphaDark : t.dockTintAlphaLight;
+            const dark = backdrop => IconModes.surfaceIsDark(appearanceDark, IconModes.surfaceLuma(backdrop, tint, alpha), appearanceDark, t);
+            compare(dark(0), true, `black wallpaper, ${appearanceDark ? "dark" : "light"} appearance: a dark glass`);
+            compare(dark(lum([0.5, 0.5, 0.5])), false, "grey wallpaper: a light glass");
+            compare(dark(1), false, "white wallpaper: a light glass");
+        }
+        compare(IconModes.surfaceLuma(-1, 0.5, 0.05), -1, "an unknown backdrop stays unknown");
+        compare(IconModes.surfaceIsDark(false, -1, true, t), true, "unknown: the system appearance (dark)");
+        compare(IconModes.surfaceIsDark(true, -1, false, t), false, "unknown: the system appearance (light)");
+    }
+
+    // One threshold on a stable value with a band: inside the band the previous look stays, so a wallpaper drifting around the threshold does not flip the icons.
+    function test_surfaceToneHasHysteresis() {
+        const t = Tokens;
+        verify(t.iconModeSurfaceToneHysteresis > 0 && t.iconModeSurfaceToneHysteresis < 0.1, "a band, not a gap");
+        verify(t.iconModeSurfaceToneThreshold > 0.05 && t.iconModeSurfaceToneThreshold < lum([0.5, 0.5, 0.5]) - 0.05, "between a black wallpaper and a mid-grey one, away from both");
+        const mid = t.iconModeSurfaceToneThreshold, h = t.iconModeSurfaceToneHysteresis;
+        for (const l of [mid - h * 0.9, mid, mid + h * 0.9]) {
+            compare(IconModes.surfaceIsDark(true, l, false, t), true, `in the band ${l.toFixed(3)} a dark surface stays dark`);
+            compare(IconModes.surfaceIsDark(false, l, true, t), false, `in the band ${l.toFixed(3)} a light surface stays light`);
+        }
+        compare(IconModes.surfaceIsDark(false, mid - h - 0.001, false, t), true, "below the band: dark whatever it was");
+        compare(IconModes.surfaceIsDark(true, mid + h + 0.001, true, t), false, "above the band: light whatever it was");
+        // A drifting wallpaper: the look changes at most twice while the luminance crosses the band and returns.
+        let look = true, flips = 0;
+        for (const l of [0.10, 0.15, 0.17, 0.19, 0.18, 0.19, 0.18, 0.17, 0.2, 0.22, 0.21, 0.19, 0.18, 0.15, 0.1]) {
+            const d = IconModes.surfaceIsDark(look, l, true, t);
+            if (d !== look)
+                flips++;
+            look = d;
+        }
+        verify(flips <= 2, `flips: ${flips}`);
+    }
+
     // The shader's arithmetic of the tone (reference mirror for the tests below; the rule that IconEffect uses is IconModes.tileToneSide).
     function tone(v, side, pivot, exponent) {
         if (side > 0)

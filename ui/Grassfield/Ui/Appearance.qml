@@ -203,6 +203,18 @@ QtObject {
         return glassAlphaOver(glassClass, t, under ?? known);
     }
 
+    // The effective relative luminance of a nearly clear glass of `alpha` over the backdrop under `rect` (output px) on an output: its tint over the middle of the luminance range the shell
+    // measured there (the same grid as glassAlpha), or -1 when the output's backdrop is unknown (a window below, a video): the caller then follows the system appearance (IconModes.surfaceLuma).
+    function surfaceLuma(screenName: string, rect: var, alpha: real): real {
+        const known = backdrops[screenName] ?? null;
+        if (!known)
+            return -1;
+        const under = known.grid ? GlassTint.gridRange(known.grid, rect, Tokens.glassBackdropPad) : null;
+        const range = under ?? known;
+        const tintLuma = GlassTint.luminance(GlassTint.channels(colors.materialTint));
+        return IconModes.surfaceLuma((range.lumMin + range.lumMax) / 2, tintLuma, alpha);
+    }
+
     // Increase Contrast frosts every glass surface (ADR-0024 G-8): a tint alpha raised to glass.contrastFrost.
     function frosted(a: real): real {
         return increaseContrast ? Math.max(Tokens.glassContrastFrost, a) : a;

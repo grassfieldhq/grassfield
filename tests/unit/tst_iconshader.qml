@@ -88,6 +88,8 @@ TestCase {
     property bool transparentPass: false
     // The icons are on the Dock (a nearly clear glass), not on a solid window material: no tile tone (TintedIcon.solidMaterial).
     property bool dockPass: false
+    // The effective luminance of the Dock's glass in the scenario (set once per scenario, so that the inverse pass keeps the icons' look), -1: unknown.
+    property real dockLuma: -1
 
     Item {
         id: board
@@ -119,7 +121,7 @@ TestCase {
                     source: testCase.fixtures[slot.fixture].url
                     mode: testCase.modes[slot.modeIndex]
                     tint: testCase.tintColor
-                    darkAppearance: testCase.darkPass
+                    darkAppearance: testCase.dockPass ? IconModes.surfaceIsDark(testCase.darkPass, testCase.dockLuma, testCase.darkPass, Tokens) : testCase.darkPass
                     overWallpaper: testCase.wallpaperPass
                     overAccent: testCase.accentPass
                     solidMaterial: !testCase.dockPass
@@ -626,9 +628,14 @@ TestCase {
         testCase.dockPass = true;
         for (const dark of [true, false]) {
             for (const wallpaper of ["#000000", "#808080", "#ffffff"])
-                measured += runScenario(`48px ${dark ? "dark" : "light"} dock wallpaper ${wallpaper}`, dark, dockOver(dark, wallpaper), failures);
+            {
+                const panel = dockOver(dark, wallpaper);
+                testCase.dockLuma = FolderStyle.relativeLuminance([panel.r, panel.g, panel.b]);
+                measured += runScenario(`48px ${dark ? "dark" : "light"} dock wallpaper ${wallpaper}`, dark, panel, failures);
+            }
         }
         testCase.dockPass = false;
+        testCase.dockLuma = -1;
         finishRun(measured, failures);
     }
 
@@ -676,6 +683,7 @@ TestCase {
                 tint: "#3E7BFA"
                 darkAppearance: testCase.darkPass
                 overWallpaper: testCase.wallpaperPass
+                solidMaterial: true
             }
         }
     }

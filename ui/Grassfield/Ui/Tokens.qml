@@ -3097,6 +3097,10 @@ QtObject {
     readonly property real iconModeTileLightLiftExponent: 2.0
     // ADR-0014 own-tile rule, tile tone, dark appearance over a solid window material (R7-REQ-13, A2 rule E): relative luminance (linear light) above which the pixels of a tile icon are lifted and below which nothing moves: the luminance of the brightest material of the dark appearance (the material tint at material.tintAlphaMin over a white wallpaper, transparency 1.0: 0.38), so a lifted pixel never moves towards the material
     readonly property real iconModeTileLiftPivot: 0.38
+    // ADR-0014 / R7-REQ-13: relative luminance of the surface under an icon (a nearly clear glass such as the Dock: its tint over the wallpaper under it) below which the icon is drawn for a dark surface and above which for a light one, whatever the system appearance (the macOS model: an icon follows the glass it sits on). Between the two configurations measured on the GPU (2026-11-10): the dark look passes over black (luminance 0), the light look over a mid-grey (0.21) and white, and each fails the other way; 0.10 keeps 0.1 from both, so a wallpaper has to be well on one side for the look to change
+    readonly property real iconModeSurfaceToneThreshold: 0.1
+    // ADR-0014 / R7-REQ-13: half-width of the band around surfaceToneThreshold in which the previous look stays, so that a wallpaper whose luminance drifts around the threshold does not flip the icons back and forth
+    readonly property real iconModeSurfaceToneHysteresis: 0.03
     // ADR-0014 tile tone, Dark in the dark appearance (R7-REQ-13, A2 rule E): the pivot of Dark's lift, above the brightest dark material (tileLiftPivot 0.38) so that only the lightest tones of a tile move: basecamp's sky (0.60) takes Dark's tile at 24 px, transparency 1.0, over white from 1.57:1 to a modelled 2.06 (floor 1.73) while Dark's rule I and S cells (floor 0.9 of Default's) keep a modelled margin of 0.16 and 0.21: a lift from 0.38 and one from 0.45 broke them (model, 2026-11-10)
     readonly property real iconModeTileLiftPivotDark: 0.55
     // ADR-0014 tile tone, Dark: exponent q of the lift above tileLiftPivotDark (an ease-out; 1 = none)
