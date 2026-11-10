@@ -158,6 +158,59 @@ reset_session
 PATH=$tmp/bin:$PATH xdg-settings set default-web-browser zen.desktop >/dev/null 2>&1
 check "F a real browser behind uwsm app is accepted" test $? -eq 0
 check "F ... and is the effective default" test "$(PATH=$tmp/bin:$PATH xdg-settings get default-web-browser)" = zen.desktop
+# an entry GLib could not run, or would read two ways, is refused with 2 and nothing is written (delta review: LOW-1, LOW-2)
+make_raw() { printf '%s\n' "$2" >"$tmp/share/applications/$1"; }
+ENTRY_HEAD='[Desktop Entry]
+Type=Application
+Name=Odd
+Categories=Network;WebBrowser;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;'
+make_raw gone.desktop "$ENTRY_HEAD
+Exec=/nonexistent/bin/gone %u"
+make_raw nopath.desktop "$ENTRY_HEAD
+Exec=no-such-browser-anywhere %u"
+make_raw gonewrap.desktop "$ENTRY_HEAD
+Exec=uwsm app -- /nonexistent/bin/gone %u"
+make_raw notry.desktop "$ENTRY_HEAD
+Exec=$tmp/bin/fake-firefox %u
+TryExec=/nonexistent/bin/gone"
+make_raw dupexec1.desktop "$ENTRY_HEAD
+Exec=$tmp/bin/fake-firefox %u
+Exec=xdg-open %u"
+make_raw dupexec2.desktop "$ENTRY_HEAD
+Exec=xdg-open %u
+Exec=$tmp/bin/fake-firefox %u"
+make_raw duptry.desktop "$ENTRY_HEAD
+Exec=$tmp/bin/fake-firefox %u
+TryExec=$tmp/bin/fake-firefox
+TryExec=/nonexistent/bin/gone"
+make_raw duptype.desktop "$ENTRY_HEAD
+Type=Link
+Exec=$tmp/bin/fake-firefox %u"
+cp "$tmp/share/applications/firefox.desktop" "$tmp/share/evil.desktop"
+for id in gone nopath gonewrap notry dupexec1 dupexec2 duptry duptype; do
+  reset_session
+  before=$(snap)
+  PATH=$tmp/bin:$PATH xdg-settings set default-web-browser "$id.desktop" >/dev/null 2>&1
+  rc=$?
+  check "F an entry that cannot run or reads two ways ($id) is refused with 2" test $rc -eq 2
+  check "F ... nothing is written for $id, get still answers Sanaga" test "$before" = "$(snap)" -a "$(PATH=$tmp/bin:$PATH xdg-settings get default-web-browser)" = sanaga.desktop
+done
+reset_session
+before=$(snap)
+PATH=$tmp/bin:$PATH xdg-settings set default-web-browser "..-evil.desktop" >/dev/null 2>&1
+check "F an id with .. (read as applications/../evil.desktop) is refused with 2" test $? -eq 2
+check "F ... and nothing is written" test "$before" = "$(snap)"
+# a program found in PATH, a TryExec that exists, one of each key: accepted
+printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/pathbrowser"
+chmod +x "$tmp/bin/pathbrowser"
+make_raw pathy.desktop "$ENTRY_HEAD
+Exec=pathbrowser %u
+TryExec=pathbrowser"
+reset_session
+PATH=$tmp/bin:$PATH xdg-settings set default-web-browser pathy.desktop >/dev/null 2>&1
+check "F a program named in PATH (with its TryExec) is accepted" test $? -eq 0
+check "F ... and is the effective default" test "$(PATH=$tmp/bin:$PATH xdg-settings get default-web-browser)" = pathy.desktop
 # a linked session list or record: refused with a non-zero exit, the real tool is NOT called (it would fail and write our entry into mimeapps.list)
 reset_session
 mv "$cfg/grassfield-mimeapps.list" "$tmp/real-session-list"

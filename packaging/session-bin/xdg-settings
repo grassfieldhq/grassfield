@@ -16,7 +16,8 @@
 #     4. the record's baseline (what the user's own lists name) is refreshed; exit 0 when the effective session default is X.
 #   Before any of it X is validated, and nothing is written when it fails (exit 2, as the real tool for a missing file): X must be
 #   a desktop entry that is installed, found as xdg-settings finds it ($XDG_DATA_HOME, then $XDG_DATA_DIRS, applications/, a "-" of
-#   the id also read as a folder), whose Exec is no launcher that resolves the default again (omarchy-*, xdg-*, gio, a shell, env;
+#   the id also read as a folder; ids with ".." are refused), with one Exec, TryExec and Type, whose program (and TryExec) exists and
+#   whose Exec is no launcher that resolves the default again (omarchy-*, xdg-*, gio, a shell, env;
 #   uwsm-app and `uwsm app --` are judged by the program they start). A linked session list or record is refused (exit 1) and the
 #   real tool is NOT called: it would fail its own check and write our entry into mimeapps.list. A `set` is never handed to the
 #   real tool except after step 2, for the same reason.
@@ -84,7 +85,9 @@ lookup() { # type, lists...
 own_lists=("$cfg/hyprland-mimeapps.list" "$cfg/mimeapps.list")
 effective() { lookup "$1" "$session_list" "${own_lists[@]}"; }
 
-valid_id() { [[ $1 =~ ^[A-Za-z0-9._+-]{1,200}\.desktop$ && $1 != "$ROUTING" ]]; }
+# An id the stand-in will act on: a plain desktop file name, no ".." (the "-" of an id is also read as a folder: "..-x.desktop" would
+# read applications/../x.desktop), and not Omarchy's routing entry.
+valid_id() { [[ $1 =~ ^[A-Za-z0-9._+-]{1,200}\.desktop$ && $1 != *..* && $1 != "$ROUTING" ]]; }
 
 # The record with the given key=value pairs replaced or added; its other valid lines kept; a line that is no key=value dropped.
 write_record() { # key=value...
@@ -218,6 +221,7 @@ launcher_words() { # depth, words...
     case $program in
       '' | omarchy-* | xdg-* | gio | gtk-launch | sh | bash | dash | zsh | fish | env | uwsm | systemd-run | kde-open | gnome-open | exo-open | sensible-browser | x-www-browser) return 0 ;;
     esac
+    started=$1 # the program that runs (behind uwsm too), as the entry names it
     return 1
   fi
   for i in "${!rest[@]}"; do
@@ -251,14 +255,51 @@ entry_file() { # id
   return 1
 }
 
-# Whether the id may be made the default: installed, and its Exec (the first one of [Desktop Entry]) no launcher.
+# Whether a program exists as GLib resolves it: an absolute path to an executable regular file, or a name found in $PATH.
+program_runs() { # program
+  [[ -n $1 ]] || return 1
+  if [[ $1 == /* ]]; then
+    [[ -f $1 && -x $1 ]]
+  elif [[ $1 == */* ]]; then
+    return 1
+  else
+    type -P -- "$1" >/dev/null 2>&1
+  fi
+}
+
+# Whether the id may be made the default: installed; one Exec, TryExec and Type in [Desktop Entry] (GLib keeps the LAST of a repeated
+# key, a reader of the first is fooled: such an entry is refused); its Exec no launcher; the program it starts and its TryExec there
+# (a removed package or a typo would leave gio without a default browser). A file with CRLF line ends is refused too.
 usable_browser() { # id
-  local file exec
+  local file exec tryexec dup kind value
   file=$(entry_file "$1") || { echo "xdg-settings: $1 is not an installed desktop entry" >&2; return 1; }
-  exec=$(awk '/^\[/ { g = ($0 == "[Desktop Entry]"); next } g && /^Exec[ \t]*=/ { sub(/^Exec[ \t]*=[ \t]*/, ""); print; exit }' "$file" 2>/dev/null)
+  exec=
+  tryexec=
+  dup=0
+  while IFS=$'\t' read -r kind value; do
+    case $kind in
+      E) exec=$value ;;
+      T) tryexec=$value ;;
+      D) dup=1 ;;
+    esac
+  done < <(awk '
+    /^\[/ { if (g) exit; g = ($0 == "[Desktop Entry]"); next }
+    g && /^Exec[ \t]*=/ { if (++e > 1) d = 1; else { v = $0; sub(/^Exec[ \t]*=[ \t]*/, "", v); ex = v } }
+    g && /^TryExec[ \t]*=/ { if (++t > 1) d = 1; else { v = $0; sub(/^TryExec[ \t]*=[ \t]*/, "", v); tx = v } }
+    g && /^Type[ \t]*=/ { if (++y > 1) d = 1 }
+    END { print "E\t" ex; print "T\t" tx; if (d) print "D\t1" }' "$file" 2>/dev/null)
+  if ((dup)); then
+    echo "xdg-settings: $1 repeats Exec, TryExec or Type; which one runs depends on the reader, so it cannot be the default" >&2
+    return 1
+  fi
   exec_words "$exec"
+  started=
   if launcher_words 0 "${words[@]}"; then
     echo "xdg-settings: $1 runs a launcher that resolves the default browser again; it cannot be the default" >&2
+    return 1
+  fi
+  if ! program_runs "$started" || { [[ -n $tryexec ]] && ! program_runs "$tryexec"; }; then
+    echo "xdg-settings: the program of $1 is not there; it cannot be the default" >&2
     return 1
   fi
   return 0
