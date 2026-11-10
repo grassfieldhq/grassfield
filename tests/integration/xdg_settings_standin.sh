@@ -118,8 +118,65 @@ check "C setting another scheme leaves the session list and the record alone" ba
 want=$("$real" --version 2>&1)
 got=$(PATH=$tmp/bin:$PATH xdg-settings --version 2>&1)
 check "C --version is the real tool's" test "$got" = "$want"
-check "C the routing entry is never a target (the real tool judges it)" bash -c 'PATH="$1/bin:$PATH" xdg-settings set default-web-browser omarchy-browser.desktop >/dev/null 2>&1; grep -q "^web.state=seeded$" "$2"' _ "$tmp" "$rec"
-check "C an id that is not a desktop id is refused by the real tool, nothing recorded" bash -c 'PATH="$1/bin:$PATH" xdg-settings set default-web-browser "../x" >/dev/null 2>&1; grep -q "^web.state=seeded$" "$2"' _ "$tmp" "$rec"
+check "C the routing entry is never a target: refused with 2, nothing written" bash -c 'PATH="$1/bin:$PATH" xdg-settings set default-web-browser omarchy-browser.desktop >/dev/null 2>&1; test $? -eq 2 && grep -q "^web.state=seeded$" "$2"' _ "$tmp" "$rec"
+check "C an id that is not a desktop id is refused with 2, nothing written" bash -c 'PATH="$1/bin:$PATH" xdg-settings set default-web-browser "../x" >/dev/null 2>&1; test $? -eq 2 && grep -q "^web.state=seeded$" "$2"' _ "$tmp" "$rec"
+
+# F  a failed set writes nothing and never reaches the real tool (review of PR #38, MED-1 and the LOWs)
+snap() { cat "$cfg/grassfield-mimeapps.list" "$cfg/mimeapps.list" "$rec" 2>/dev/null; }
+reset_session
+before=$(snap)
+PATH=$tmp/bin:$PATH xdg-settings set default-web-browser firefx.desktop >/dev/null 2>&1
+check "F a typo (not installed) exits 2" test $? -eq 2
+check "F ... and changes nothing at all" test "$before" = "$(snap)"
+check "F ... get still answers Sanaga" test "$(PATH=$tmp/bin:$PATH xdg-settings get default-web-browser)" = sanaga.desktop
+check "F ... the scheme variant is refused the same" bash -c 'PATH="$1/bin:$PATH" xdg-settings set default-url-scheme-handler https firefx.desktop >/dev/null 2>&1; test $? -eq 2' _ "$tmp"
+make_entry() { # id, name, exec
+  cat >"$tmp/share/applications/$1" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$2
+Exec=$3
+Categories=Network;WebBrowser;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+EOF
+}
+make_entry loop.desktop Loop 'xdg-open %u'
+make_entry quoted.desktop Quoted '"/usr/bin/xdg-open" %u'
+make_entry uwsmloop.desktop UwsmLoop 'uwsm app -- xdg-open %u'
+make_entry uwsmapp.desktop UwsmApp 'uwsm-app -- omarchy-launch-browser %U'
+make_entry shell.desktop Shell "sh -c 'firefox %u'"
+for id in loop quoted uwsmloop uwsmapp shell; do
+  reset_session
+  before=$(snap)
+  PATH=$tmp/bin:$PATH xdg-settings set default-web-browser "$id.desktop" >/dev/null 2>&1
+  rc=$?
+  check "F an entry whose Exec is a launcher ($id) is refused with 2" test $rc -eq 2
+  check "F ... nothing is written for $id" test "$before" = "$(snap)"
+done
+make_entry zen.desktop Zen "uwsm app -- $tmp/bin/fake-firefox %u"
+reset_session
+PATH=$tmp/bin:$PATH xdg-settings set default-web-browser zen.desktop >/dev/null 2>&1
+check "F a real browser behind uwsm app is accepted" test $? -eq 0
+check "F ... and is the effective default" test "$(PATH=$tmp/bin:$PATH xdg-settings get default-web-browser)" = zen.desktop
+# a linked session list or record: refused with a non-zero exit, the real tool is NOT called (it would fail and write our entry into mimeapps.list)
+reset_session
+mv "$cfg/grassfield-mimeapps.list" "$tmp/real-session-list"
+ln -s "$tmp/real-session-list" "$cfg/grassfield-mimeapps.list"
+before=$(cat "$cfg/mimeapps.list" "$rec" "$tmp/real-session-list")
+PATH=$tmp/bin:$PATH xdg-settings set default-web-browser firefox.desktop >/dev/null 2>&1
+rc=$?
+check "F a linked session list is refused (exit $rc, not 0)" test $rc -ne 0
+check "F ... nothing is written through it, the user's mimeapps.list is untouched and holds no Sanaga" test "$before" = "$(cat "$cfg/mimeapps.list" "$rec" "$tmp/real-session-list")"
+check "F ... no sanaga.desktop line reached mimeapps.list" bash -c '! grep -q "sanaga.desktop" "$1"' _ "$cfg/mimeapps.list"
+reset_session
+mv "$rec" "$tmp/real-record"
+ln -s "$tmp/real-record" "$rec"
+before=$(cat "$cfg/mimeapps.list" "$cfg/grassfield-mimeapps.list" "$tmp/real-record")
+PATH=$tmp/bin:$PATH xdg-settings set default-web-browser firefox.desktop >/dev/null 2>&1
+rc=$?
+check "F a linked record is refused (exit $rc, not 0)" test $rc -ne 0
+check "F ... and nothing is written" test "$before" = "$(cat "$cfg/mimeapps.list" "$cfg/grassfield-mimeapps.list" "$tmp/real-record")"
+rm -f "$rec" "$cfg/grassfield-mimeapps.list"
 
 # D
 if [[ -x /usr/bin/omarchy-default-browser && -x /usr/bin/omarchy-cmd-missing ]]; then
