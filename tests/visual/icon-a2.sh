@@ -20,6 +20,11 @@
 #      stalled with it, so the first GPU client of a fresh nested session is slow or wedges. The pure data case runs first under a long
 #      limit (GRASSFIELD_ICONS_WARMUP, default 300 s, TERM then a 60 s grace before KILL so the client can leave cleanly); if it does
 #      not finish the session is unusable and the run stops at once (exit 3) before any case starts.
+#   6. NO WAIT FOR FRAME CALLBACKS. Rendering cases (not the data case) hung on GF-REF although the window was mapped there (2026-11-09 evening).
+#      Qt Quick's grabs render in the window's render loop, which swaps; Mesa's EGL Wayland swap with swap interval 1 blocks until the compositor
+#      answers the frame callback of the previous frame, with no timeout, and the compositor answers only for what it presents on screen. The
+#      cases need no presentation (they read their own offscreen grabs), so qmltestrunner starts with vblank_mode=0 (Mesa: swap interval 0, no
+#      throttle). GRASSFIELD_ICONS_VBLANK=1 restores the old behaviour (an A/B without editing the script).
 #   5. THE OUTPUT. In the nested session a window that maps on WAYLAND-1 (the nested compositor's own window on the owner's screen) only gets
 #      frame callbacks while that window is visible there, and never otherwise: every case then waits for a frame that does not come
 #      (2026-11-09: even the pure data case, which only needs its window shown, never finished, on main and on the branch, at load 6;
@@ -92,7 +97,7 @@ run_one() {
   if [[ -n $runner ]]; then
     timeout -k "$kill_after" "$lim" "$runner" "IconShaderA2::$fn" 2>&1
   else
-    timeout -k "$kill_after" "$lim" "$root/scripts/dev/isolated.sh" --name "a2-$$" env WAYLAND_DISPLAY="$DEV_NESTED_SOCK" QT_QPA_PLATFORM=wayland QML_XHR_ALLOW_FILE_READ=1 \
+    timeout -k "$kill_after" "$lim" "$root/scripts/dev/isolated.sh" --name "a2-$$" env WAYLAND_DISPLAY="$DEV_NESTED_SOCK" QT_QPA_PLATFORM=wayland QML_XHR_ALLOW_FILE_READ=1 vblank_mode="${GRASSFIELD_ICONS_VBLANK:-0}" \
       /usr/lib/qt6/bin/qmltestrunner -import "$root/ui" -input "$root/tests/unit/tst_iconshader.qml" "IconShaderA2::$fn" 2>&1
   fi
 }

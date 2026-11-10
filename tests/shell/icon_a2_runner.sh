@@ -77,6 +77,10 @@ out=$(GRASSFIELD_ICONS_RUNNER=$tmp/slow.sh GRASSFIELD_ICONS_OUTPUT_PROBE=$tmp/pr
 status=$?
 [[ $status == 0 ]] && grep -q "landed on output GF-REF" <<<"$out" && ok "a window on GF-REF is reported and the run goes on" || bad "right output: exit $status: $out"
 
+# 6. the real command line keeps the swap from waiting for frame callbacks (Mesa's EGL swap blocks until the compositor answers the frame
+# callback of the previous frame; a headless output or an occluded window never answers): vblank_mode=0 unless overridden
+grep -q 'vblank_mode="${GRASSFIELD_ICONS_VBLANK:-0}"' "$root/tests/visual/icon-a2.sh" && ok "the runner starts qmltestrunner with vblank_mode=0" || bad "icon-a2.sh no longer sets vblank_mode"
+
 # 3. clean
 run clean "" ""
 [[ $status == 0 ]] && ok "a clean run exits 0" || bad "a clean run exits $status: $out"
