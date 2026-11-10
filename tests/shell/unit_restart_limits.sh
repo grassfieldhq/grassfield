@@ -25,12 +25,14 @@ for unit in "$root"/packaging/systemd/*.service; do
   desc="$name sets a start limit that its RestartSec can reach (Burst x RestartSec < Interval)"
   check python3 -I -c '
 import re, sys
+sys.path.insert(0, sys.argv[2])
+import unit_restart_limits as model
 t = open(sys.argv[1]).read()
 def num(key):
-    m = re.search(r"^" + key + r"=(\d+)$", t, re.M)
-    return int(m[1]) if m else None
-interval, burst, sec = num("StartLimitIntervalSec"), num("StartLimitBurst"), num("RestartSec") or 1
-sys.exit(0 if interval and burst and burst * sec < interval else 1)' "$unit"
+    r = re.search(r"^" + key + r"=(.+)$", t, re.M)
+    return model.seconds(r[1]) if r else None
+interval, burst, sec = num("StartLimitIntervalSec"), num("StartLimitBurst"), num("RestartSec") or 1.0
+sys.exit(0 if interval and burst and burst * sec < interval else 1)' "$unit" "$root/tests/shell"
   desc="$name ends a loop of one crash every 10 s: the start limit trips for that lifetime, or OnFailure= names the failure counter"
   check python3 -I "$root/tests/shell/unit_restart_limits.py" "$unit"
 done
@@ -47,6 +49,20 @@ desc="the lifetime model accepts the same unit once OnFailure= names the failure
 check python3 -I "$root/tests/shell/unit_restart_limits.py" "$model/counter.service"
 desc="the lifetime model accepts a limit a 10 s loop reaches (5 x (5 + 10) = 75 <= 120)"
 check python3 -I "$root/tests/shell/unit_restart_limits.py" "$model/fits.service"
+printf '[Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=10\n[Service]\nRestart=always\nRestartSec=100ms\n' >"$model/ms.service"
+printf '[Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=10\n[Service]\nRestart=always\nRestartSec=1min\n' >"$model/min.service"
+printf '[Unit]\nStartLimitIntervalSec=300\nStartLimitBurst=10\nOnFailure=grassfield-shell-failed.service\n[Service]\nRestart=always\nRestartSec=1min\n' >"$model/mincounter.service"
+printf '[Unit]\nStartLimitIntervalSec=5min\nStartLimitBurst=10\n[Service]\nRestart=always\nRestartSec=100ms\n' >"$model/interval-min.service"
+desc="the model reads RestartSec=100ms as 0.1 s and computes the bound: 10 x (0.1 + 10) = 101 s <= 300 s, no counter needed"
+check bash -c 'out=$(python3 -I "$1" "$2") && grep -q "= 101 s <= 300 s" <<<"$out"' _ "$root/tests/shell/unit_restart_limits.py" "$model/ms.service"
+desc="the model reads RestartSec=1min as 60 s: 10 x (60 + 10) = 700 s > 300 s, the limit does not end the loop, no counter: rejected"
+check bash -c '! python3 -I "$1" "$2" | grep -q "= 700 s <= " && ! python3 -I "$1" "$2" >/dev/null' _ "$root/tests/shell/unit_restart_limits.py" "$model/min.service"
+desc="the same 1min unit passes once OnFailure= names the failure counter, and the bound is still printed"
+check bash -c 'out=$(python3 -I "$1" "$2") && grep -q "= 700 s > 300 s" <<<"$out"' _ "$root/tests/shell/unit_restart_limits.py" "$model/mincounter.service"
+desc="the model reads StartLimitIntervalSec=5min as 300 s"
+check bash -c 'python3 -I "$1" "$2" | grep -q "<= 300 s"' _ "$root/tests/shell/unit_restart_limits.py" "$model/interval-min.service"
+desc="the shell unit's own bound is computed from its real RestartSec=100ms (101 s <= 300 s)"
+check bash -c 'python3 -I "$1" "$2/packaging/systemd/grassfield-shell.service" | grep -q "= 101 s <= 300 s"' _ "$root/tests/shell/unit_restart_limits.py" "$root"
 desc="the scan found the restarting units (shell, crash-watch, battery-watch, automount, menu-bridge)"
 check test "$n" -ge 5
 exit "$fail"
