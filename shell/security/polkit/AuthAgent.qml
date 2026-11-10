@@ -63,7 +63,7 @@ Scope {
     // times per unlock period (3, 6, 12 and 24 s), and never again in that period once an attempt coincided with a stall of
     // the event loop longer than stallLimitMs (stallBeat, a monotonic ElapsedTimer). An unlock starts a new period. The one
     // attempt at the start is made whatever the session's state (S3's accepted residual). tests/security/authagent_flows.d
-    // test_36 to test_44; tests/security/authagent_registration.sh counts the attempts on a real Quickshell.
+    // test_36 to test_45; tests/security/authagent_registration.sh counts the attempts on a real Quickshell.
     readonly property string agentPath: "/org/grassfield/PolkitAgent"
     readonly property bool devSession: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))
     property int registrationRetryMs: 3000

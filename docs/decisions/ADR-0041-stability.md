@@ -772,8 +772,45 @@ down, how sleep behaves) is written in the table at the end of this step.
     could reach it, and the outcome is a crash of the security process (Restart=always; no agent meanwhile, nothing
     approved). (2) That D-Bus call blocks the security process's main thread up to D-Bus's 25 s timeout when polkitd hangs,
     the lock's prompt included; S3 moved the one start-time attempt into this process, and the retry repeats it at most
-    once a minute while unregistered. Upstream fixes to propose: clear the listener's `cb` in `~PolkitAgentImpl`, and
-    register asynchronously.
+    once a minute while unregistered (bounded since round 3, below). Upstream fixes to propose: clear the listener's `cb`
+    in `~PolkitAgentImpl`, and register asynchronously.
+- Review round 3 (2026-11-10, the opus review of 655916ba..c34b4497, the integrator's "round 2": MAJOR-1 confirmed fixed on
+  the real Quickshell, every phase of `authagent_registration.sh` included; residuals (1) above and the polkitd restart
+  accepted; FAIL on one required MINOR):
+  - MINOR-A, the retry could stop the security process while the session was locked, without bound. Quickshell registers
+    with a synchronous `polkit_agent_listener_register` on the main thread, so with polkitd hung each attempt blocks for up
+    to D-Bus's 25 s. While locked, the lock's surfaces then handle no input for that long, and a long block can overflow
+    the Wayland connection's buffer ("lock client died", then a restart). While unlocked, a sleep asked during a block
+    waits out logind's delay (InhibitDelayMaxSec; Omarchy skips its own lock before sleep while grassfield-security runs),
+    so the computer could go to sleep without the lock and wake on the desktop until the block ended; the idle lock is
+    late the same way. The tries are now bounded (`AuthAgent.qml`): none while the session is locked (`SheetSession.locked`:
+    the lock's own state and the start-up stranded-lock probe), the displays are off, or a sleep is under way
+    (`SheetSession.sleeping`, a fifth Binding of the host from `Idle.sleeping`, PrepareForSleep(true) until the resume);
+    a try due then is dropped, and so is an agent due in that turn; at most `registrationTriesMax` (4: 3, 6, 12 and 24 s)
+    per unlock period; and none for the rest of the period once an attempt coincided with a stall of the event loop: a
+    200 ms beat on a monotonic clock (Quickshell's `ElapsedTimer`; no wall clock in shell/security) watches each attempt
+    for 3 s, and a beat later than 1 s stops the tries until the next unlock, logged once. An unlock starts a new period.
+    What remains: the one attempt at each start of the security process is made whatever the session's state (S3's
+    accepted residual: a hung polkitd then stops this process once, up to 25 s, possibly behind the lock), and at most one
+    blocked try per unlock period, while unlocked with the displays on.
+  - Upstream proposals (Quickshell): register asynchronously (`polkit_agent_listener_register_with_options` is
+    synchronous; its D-Bus call can run in a thread or through the asynchronous GDBus call), and clear the listener's `cb`
+    in `~PolkitAgentImpl` (residual (1)). Follow-up of our own: watch `org.freedesktop.PolicyKit1`'s owner and make the
+    agent again when polkitd restarts (an agent registered with the previous polkitd believes it still is: the accepted
+    polkitd-restart residual, which fails closed).
+  - Tests: `authagent_flows.d` test_41 (no try while locked, the displays off or a sleep under way, and again once that
+    ends), test_42 (a try due as the session locks is dropped; the next unlock makes it), test_43 (four tries per unlock
+    period), test_44 (an attempt that stops the event loop for 1.5 s stops the tries until the next unlock; the harness's
+    agent can stand still like Quickshell's call, `mockBlockMs`), test_45 (each attempt is watched, not only the start's),
+    21 registration mutants in all; on the real Quickshell,
+    `authagent_registration.sh`: "nowhere" now shows the cap (exactly 4 tries in 4.5 s, attempts 101, 201, 402 and 800 ms apart),
+    "locked" (the start's attempt alone), "relock" (4 tries, none while locked, 4 more after the unlock), and on the
+    private bus "stall" (the fake authority answers the second registration 2 s late: two registrations, the stall
+    logged, then none); `--mutants` adds no cap, tries while locked and a stall ignored. The private-bus phases need Unix
+    sockets: NOT VERIFIED in the author's sandbox, run bare by the integrator.
+  - NIT: a web address (http, https, any case) is refused as a Loader or `createComponent` source, `Qt.resolvedUrl` of
+    one included; the exception stays for plain strings (two more mutants, the reviewer's
+    `https://example.invalid/security/polkit/AuthAgent.qml` among them).
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words

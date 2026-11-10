@@ -10,7 +10,7 @@
 # Quickshell's PanelWindow and a compositor do, beside a window underneath (check of c1ca44f). flows.qml test_20 to test_34:
 # a request the user cannot see (locked, saver, displays off, held other than right after another one, waiting behind a
 # secret sheet, replaced) is refused once PAM talks without asking, as for a fingerprint reader (ADR-0045 OC-6, security
-# review of e3542510 and its re-reviews). test_36 to test_44: registration (ADR-0041 S3, the opus review's MINOR-3, its
+# review of e3542510 and its re-reviews). test_36 to test_45: registration (ADR-0041 S3, the opus review's MINOR-3, its
 # delta review's MAJOR-1 and its round 2's MINOR-A): refused, the agent is made again with a backoff and the new one asks
 # again, never while locked, the displays off or a sleep under way, at most four times per unlock period, and never again
 # in that period once an attempt stopped the event loop (the plain agent can: mockBlockMs); the plain agent keeps
