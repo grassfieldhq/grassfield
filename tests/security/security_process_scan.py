@@ -13,7 +13,8 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
      whose function (shell/widgets/Registry.qml `source`) is then held to return only plain resolvedUrl literals of
      builtin/ files or ""; and no string literal (comments aside, string contents read) that names a security path
      (`security/`, `qs.security`), Quickshell.Services.Polkit or a security type (STRING_NAMES), web addresses (http, https)
-     aside, which name no file of the tree (file: and qrc: addresses are read; the opus delta review of S3, NIT);
+     aside, which name no file of the tree (file: and qrc: addresses are read; the opus delta review of S3, NIT), but never
+     as a Loader or createComponent source (QML from the network: round 2, NIT);
   2. shell/security/host/SecurityHost.qml instantiates Idle exactly once (one idle module, one sleep inhibitor) and only the
      types listed in HOST_TYPES, and makes the sheets at run time (S3: shell/security/host/SheetHost.qml, created once by
      its URL, never declared, so that a sheet that cannot load never keeps the lock from loading); SheetHost.qml instantiates
@@ -82,9 +83,14 @@ _RESOLVED_LITERAL = re.compile(r'^\s*Qt\.resolvedUrl\(\s*("(?:\\.|[^"\\\n])*"|\'
 _WEB_URL = re.compile(r'^["\'`]https?://')
 
 
+# A source naming a web address (http, https, any case): QML fetched from the network is code no scan of the tree reads
+# (the opus review of S3, round 2, NIT). The web exception of the string rule is for plain strings only.
+_WEB_SOURCE = re.compile(r'^\s*(?:Qt\.resolvedUrl\(\s*)?["\']https?://', re.I)
+
+
 def readable_source(text):
-    """One plain string literal, or Qt.resolvedUrl of one."""
-    return bool(_LITERAL.match(text) or _RESOLVED_LITERAL.match(text))
+    """One plain string literal, or Qt.resolvedUrl of one, that is not a web address."""
+    return bool((_LITERAL.match(text) or _RESOLVED_LITERAL.match(text)) and not _WEB_SOURCE.match(text))
 
 
 def top_level(block):
@@ -120,7 +126,7 @@ def built_from_strings(path, src):
             i += 1
         args = with_strings[m.end():i - 1]
         if not readable_source(args):
-            out.append(f"{path}: createComponent with a computed source ({args.strip()[:60]}): only one plain string literal (or Qt.resolvedUrl of one) can be checked")
+            out.append(f"{path}: createComponent with a computed or remote source ({args.strip()[:60]}): only one plain string literal (or Qt.resolvedUrl of one), not a web address, can be checked")
     for m in re.finditer(r"\b(?:Lazy)?Loader\s*\{", with_strings):
         depth, i = 0, m.end() - 1
         for j in range(m.end() - 1, len(with_strings)):
@@ -133,7 +139,7 @@ def built_from_strings(path, src):
             if (path, s.group(1).strip()) in ALLOWED_COMPUTED:
                 continue
             if not readable_source(s.group(1)):
-                out.append(f"{path}: a Loader with a computed source ({s.group(1).strip()[:60]}): only one plain string literal (or Qt.resolvedUrl of one) can be checked")
+                out.append(f"{path}: a Loader with a computed or remote source ({s.group(1).strip()[:60]}): only one plain string literal (or Qt.resolvedUrl of one), not a web address, can be checked")
     for s in _STRING.finditer(with_strings):
         if STRING_NAMES.search(s.group(0)) and not _WEB_URL.match(s.group(0)):
             out.append(f"{path}: a string names a security path, module or type ({s.group(0)[:60]}): the UI builds no security code")
@@ -386,6 +392,8 @@ def main(argv):
             ("a Loader of Qt.resolvedUrl of the agent's file in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: Qt.resolvedUrl(\"security/polkit/AuthAgent.qml\")\n    }\n    Saver {\n", 1)),
             ("a Loader of Qt.resolvedUrl of a computed file in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: Qt.resolvedUrl(\"sec\" + \"urity/polkit/AuthAgent.qml\")\n    }\n    Saver {\n", 1)),
             ("createComponent of Qt.resolvedUrl of a property in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(Qt.resolvedUrl(root.agentFile))\n    Saver {\n", 1)),
+            ("a Loader of an https address in the UI (round 2, NIT)", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: \"https://example.invalid/security/polkit/AuthAgent.qml\"\n    }\n    Saver {\n", 1)),
+            ("createComponent of Qt.resolvedUrl of an http address in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(Qt.resolvedUrl(\"HTTP://example.invalid/Thing.qml\"))\n    Saver {\n", 1)),
             ("a file: address of the agent in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property string f: \"file:///usr/share/grassfield/shell/security/polkit/AuthAgent.qml\"\n    Saver {\n", 1)),
             ("the widget registry returning a computed file", REGISTRY, lambda s: s.replace('            return Qt.resolvedUrl("builtin/clock/Clock.qml");', '            return Qt.resolvedUrl(id);', 1)),
             ("the widget registry returning a file outside builtin/", REGISTRY, lambda s: s.replace('            return Qt.resolvedUrl("builtin/clock/Clock.qml");', '            return Qt.resolvedUrl("../" + "Clock.qml");', 1)),
@@ -428,7 +436,6 @@ def main(argv):
         allowed = [
             ("a Loader of Qt.resolvedUrl(\"<a UI file>\") in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: Qt.resolvedUrl(\"saver/Saver.qml\")\n    }\n    Saver {\n", 1)),
             ("createComponent(Qt.resolvedUrl(\"<a UI file>\")) in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(Qt.resolvedUrl('saver/Saver.qml'))\n    Saver {\n", 1)),
-            ("a Loader of a plain https address in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: \"https://example.org/Thing.qml\"\n    }\n    Saver {\n", 1)),
             ("an https link whose path says security/ in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property string help: \"https://example.org/security/advisories\"\n    Saver {\n", 1)),
             ("an http link whose path says security/ in Grassfield.Ui", "ui/Grassfield/Ui/Material.qml", lambda s: s.rstrip("\n").rstrip("}") + "    property string help: \"http://example.org/security/\"\n}\n"),
         ]
