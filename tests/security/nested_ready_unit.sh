@@ -108,7 +108,7 @@ check test ! -e "$scratch/calls"
 # the lock state (lock_privacy.sh once stopped on an empty answer as "already locked").
 for f in reload_locked.sh lock_privacy.sh; do
   desc="$f sources nested_ready.sh and waits for the security process (the lock's, ADR-0041 S2) before its step loop"
-  check awk '/^\. "\$root\/tests\/security\/nested_ready.sh"/ { s = NR } /nested_ready "\$sig" "\$sock" "(\$lock_root|\$root\/shell\/security\.qml)"/ && !w { w = NR }
+  check awk '/^\. "\$root\/tests\/security\/nested_ready.sh"/ { s = NR } /nested_ready "\$sig" "\$sock" "(\$lock_root|\$sec_qml|\$root\/shell\/security\.qml)"/ && !w { w = NR }
     /^for s in "\$\{steps\[@\]\}"; do$/ && w { l = NR } END { exit !(s && w && l > w && w > s) }' "$root/tests/security/$f"
 done
 desc="lock_privacy.sh decides 'already locked' on the readiness state, not on a raw ipc answer"

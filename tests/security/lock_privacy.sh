@@ -45,6 +45,10 @@
 set -uo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# GRASSFIELD_MIGRATED=1: the nested session runs the packaged form of the UI tree (scripts/dev/shell-run.sh --migrated,
+# ADR-0056): both instances are addressed by their path under .dev/migrated.
+ui_dir=$root/shell; sec_qml=$root/shell/security.qml
+[[ ${GRASSFIELD_MIGRATED:-0} == 1 ]] && { ui_dir=$root/.dev/migrated/shell; sec_qml=$ui_dir/security.qml; }
 dev=$root/.dev
 # shellcheck source=../../scripts/dev/pidfile.sh
 . "$root/scripts/dev/pidfile.sh"
@@ -80,8 +84,8 @@ hypr() { nested timeout -k 2 5 hyprctl "$@" 2>/dev/null; }
 # The lock and idle targets are on the security instance since ADR-0041 step 1, S2 (shell/security.qml, started beside the
 # shell by scripts/dev/shell-run.sh); every other target on the shell.
 ipc() {
-  local where="$root/shell"
-  case $1 in lock | idle | security) where="$root/shell/security.qml" ;; esac
+  local where="$ui_dir"
+  case $1 in lock | idle | security) where="$sec_qml" ;; esac
   nested timeout -k 2 5 qs ipc -p "$where" call "$@" 2>/dev/null
 }
 pointer() { timeout -k 2 20 "$root/scripts/dev/pointer.sh" output "$@" >/dev/null 2>&1; }
@@ -691,7 +695,7 @@ needs_shell=0
 for s in "${steps[@]}"; do [[ $s == cleanup ]] || needs_shell=1; done
 if ((needs_shell)); then
   ready_rc=0
-  nested_ready "$sig" "$sock" "$root/shell/security.qml" "${READY_SECONDS:-60}" || ready_rc=$?
+  nested_ready "$sig" "$sock" "$sec_qml" "${READY_SECONDS:-60}" || ready_rc=$?
   case $ready_rc in
     0) echo "ready: GF-REF listed, lock status $nested_ready_state, after $nested_ready_ms ms" ;;
     2) echo "lock_privacy: $nested_ready_why" >&2; exit 2 ;;
@@ -714,7 +718,7 @@ if [[ " ${steps[*]} " == *" setup "* ]]; then
     echo "main display: the nested shell runs without GRASSFIELD_DESKTOP_SCREEN=$out (banners on '$(banners_output)'); restarting it with --desktop-screen $out"
     "$root/scripts/dev/shell-run.sh" --desktop-screen "$out" >/dev/null || { echo "FAIL ready: scripts/dev/shell-run.sh --desktop-screen $out failed"; exit 1; }
     ready_rc=0
-    nested_ready "$sig" "$sock" "$root/shell/security.qml" "${READY_SECONDS:-60}" || ready_rc=$?
+    nested_ready "$sig" "$sock" "$sec_qml" "${READY_SECONDS:-60}" || ready_rc=$?
     ((ready_rc == 0)) || { echo "FAIL ready: after the restart with --desktop-screen $out: $nested_ready_why"; exit 1; }
     # The lock is the security process's (ADR-0041 S2), which the UI's restart leaves alone: wait for the UI itself too, until
     # it answers a dev query of its own (its configuration has loaded).

@@ -71,6 +71,10 @@
 set -uo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# GRASSFIELD_MIGRATED=1: the nested session runs the packaged form of the UI tree (scripts/dev/shell-run.sh --migrated,
+# ADR-0056): both instances are addressed by their path under .dev/migrated.
+ui_dir=$root/shell; sec_qml=$root/shell/security.qml
+[[ ${GRASSFIELD_MIGRATED:-0} == 1 ]] && { ui_dir=$root/.dev/migrated/shell; sec_qml=$ui_dir/security.qml; }
 dev=$root/.dev
 # shellcheck source=../../scripts/dev/pidfile.sh
 . "$root/scripts/dev/pidfile.sh"
@@ -93,7 +97,7 @@ instances=$(hyprctl instances -j 2>/dev/null)
 
 marker=$XDG_RUNTIME_DIR/grassfield-lock-${sig//[^A-Za-z0-9_.-]/_}
 # The process that holds the lock (ADR-0041 S2): its root (what its `qs ipc -p` names), log and record.
-lock_root=$root/shell/security.qml
+lock_root=$sec_qml
 lock_log=$dev/security.log
 typed=$dev/reload-typed.txt
 foreign=$root/tests/security/foreign_locker/ForeignLocker.qml
