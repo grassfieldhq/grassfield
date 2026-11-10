@@ -17,12 +17,17 @@
 
 pam_audit_root=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 
-# Log files of every instance (live or exited) that launched this tree's shell/shell.qml or shell/security.qml.
+# Log files of every instance (live or exited) that launched this tree's shell.qml or security.qml: from <tree>/shell, or from the
+# packaged form a `--migrated` run starts them from, <tree>/.dev/migrated-<stamp>/shell (ADR-0056; the real path of the stamped tree,
+# or the first version's .dev/migrated/shell, or its migrated-legacy). The first lines of an instance's log name the literal path
+# it was started on, so a count that only knew <tree>/shell found no instance in a migrated run and read 0 attempts.
 pam_tree_logs() {
-  local f ui="Launching config: \"$pam_audit_root/shell/shell.qml\"" sec="Launching config: \"$pam_audit_root/shell/security.qml\""
+  local f root_re re
+  root_re=$(printf '%s' "$pam_audit_root" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+  re="Launching config: \"${root_re}(/shell|/\\.dev/migrated(-[0-9a-f]+|-legacy)?/shell)/(shell|security)\\.qml\""
   for f in "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"/quickshell/by-id/*/log.log; do
     [[ -f $f ]] || continue
-    head -n 5 "$f" | grep -a -q -F -e "$ui" -e "$sec" && echo "$f"
+    head -n 5 "$f" | grep -a -q -E -e "$re" && echo "$f"
   done
 }
 

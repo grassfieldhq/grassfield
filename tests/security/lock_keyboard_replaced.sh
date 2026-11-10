@@ -27,6 +27,10 @@
 set -uo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# GRASSFIELD_MIGRATED=1: the nested session runs the packaged form of the UI tree (scripts/dev/shell-run.sh --migrated,
+# ADR-0056): both instances are addressed by the REAL path of the stamped tree (readlink -f .dev/migrated), as they were started.
+ui_dir=$root/shell; sec_qml=$root/shell/security.qml
+[[ ${GRASSFIELD_MIGRATED:-0} == 1 ]] && { ui_dir=$(readlink -f "$root/.dev/migrated")/shell; sec_qml=$ui_dir/security.qml; }
 dev=$root/.dev
 # shellcheck source=../../scripts/dev/pidfile.sh
 . "$root/scripts/dev/pidfile.sh"
@@ -45,7 +49,7 @@ typed=$dev/lock-keyboard-typed.txt
 status=0
 nested() { env WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" "$@"; }
 # The lock lives in the security process since ADR-0041 step 1, S2 (shell/security.qml, started by scripts/dev/shell-run.sh).
-ipc() { nested qs ipc -p "$root/shell/security.qml" call "$@" 2>/dev/null; }
+ipc() { nested qs ipc -p "$sec_qml" call "$@" 2>/dev/null; }
 nestctl() { timeout 10 "$root/scripts/nestctl" "$@"; }
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; status=1; }

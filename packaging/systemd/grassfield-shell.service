@@ -7,7 +7,7 @@ Requisite=graphical-session.target
 # Only inside the Grassfield session, never in the Omarchy session.
 ConditionEnvironment=GRASSFIELD_SESSION=1
 # The start limit is the backstop of a crash loop (ADR-0041 step 1a, owner decision SQ-2 A): systemd refuses the eleventh
-# start within 5 minutes, so with RestartSec=1 a loop faster than one crash every 29 s ends here in "failed" (the first
+# start within 5 minutes, so with RestartSec=100ms a loop faster than one crash every 29.9 s ends here in "failed" (the first
 # limit, 10 in 30 s, needed a crash within 2 s of each start and never tripped the loop of 2026-10-29, a crash 5 s after
 # every start). The loop detector below counts failures instead and stops a loop of any pace at the third failure within
 # 10 minutes.
@@ -83,12 +83,12 @@ ExecStart=/usr/bin/qs -n -p /usr/share/grassfield/shell
 # ADR-0048 D-4: the CPU and I/O limits the shell set on apps the person could not see are lifted when it stops or crashes
 # (the restarted shell resets them again at start). "-": a failure here never marks the unit failed.
 ExecStopPost=-/usr/lib/grassfield/grassfield-energy reset
-# Gate R1 and GF-030: back within ~1 s after ANY exit while the session runs: a crash, SIGTERM, `qs kill`, exit 0. The
+# Gate R1 and GF-030: back after 100 ms after ANY exit (the start itself is what gate R1 measures; ADR-0056; a loop is still ended by the start limit above, 10 starts x (0.1 s + the 10 s of the slowest loop the model knows) = 101 s < 300 s, and by the failure counter at the third failure) while the session runs: a crash, SIGTERM, `qs kill`, exit 0. The
 # session lock is the security process's (ADR-0041 S2): a lock shown when this shell goes away stays drawn and keeps the
 # keyboard. A stop through systemd is never restarted: logout (graphical-session.target stops, PartOf=) or
 # `systemctl --user stop`; Requisite= refuses a start once the session target is gone.
 Restart=always
-RestartSec=1
+RestartSec=100ms
 TimeoutStopSec=5
 # GF-081: Quickshell exits 255 when the compositor goes away first, which is how EVERY session end looks, but ALSO on "Failed
 # to load configuration" and a missing path. So 255 stays a failure (SuccessExitStatus=255 would hide a broken shell from
@@ -100,8 +100,8 @@ TimeoutStopSec=5
 # healthy figure and far below the runaway, so they never touch normal use:
 #   MemoryHigh=1536M  soft ceiling, about 2x the worst healthy peak: above it the kernel reclaims and throttles the shell
 #                     instead of letting it grow, and the pressure shows in `systemctl --user status`.
-#   MemoryMax=3G      hard ceiling (a third of the runaway): the shell is killed and Restart=always brings it back in
-#                     1 s; the lock lives in the security process and is not touched (ADR-0041 S2).
+#   MemoryMax=3G      hard ceiling (a third of the runaway): the shell is killed and Restart=always brings it back after RestartSec=100ms
+#                     (the start time itself is gate R1); the lock lives in the security process and is not touched (ADR-0041 S2).
 #   CPUQuota=150%     one and a half cores: a spinning shell cannot starve the compositor, while the Overview and
 #                     Stage animations (a GUI thread plus the render thread) keep their headroom.
 MemoryHigh=1536M

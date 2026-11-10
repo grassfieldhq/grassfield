@@ -550,8 +550,11 @@ ShellRoot {
     MenuBar {
         searchActive: searchSurface.open
         onSearchRequested: searchSurface.toggle()
-        captureActive: captureSurface.open
-        onCaptureRequested: screen => captureSurface.openOn(screen)
+        captureActive: root.captureSurface ? root.captureSurface.open : false
+        onCaptureRequested: screen => {
+            if (root.captureSurface)
+                root.captureSurface.openOn(screen);
+        }
     }
     Dock {
         id: dock
@@ -563,7 +566,12 @@ ShellRoot {
     NotificationCenter {}
     OsdWindow {}
     // Log Out, Restart and Shut Down end under one fade to the ground (ADR-0040 ID-10; grassfield-session-end asks for it).
-    ExitCover {}
+    // Built right after "started", not before (ADR-0056, R1): nothing asks for it at login, and its IPC target "session" is there
+    // within a tick of the first frame, long before a person can end the session.
+    LazyLoader {
+        activeAsync: true
+        ExitCover {}
+    }
     Search {
         id: searchSurface
     }
@@ -609,11 +617,18 @@ ShellRoot {
         controller: switcher
     }
     // The capture toolbar (Shift-Super-5, ADR-0045 OC-1) and the countdown of its timer.
-    Capture {
-        id: captureSurface
-        // The session lock owns the screen and the keyboard: the toolbar closes and does not open.
-        locked: SessionState.locked
+    // Built right after "started", not before (ADR-0056, R1): the toolbar is opened by a key press, never at login. A press in
+    // the first tick (the loader's item is null) does nothing, as a press before the shell has started does.
+    LazyLoader {
+        id: captureLoader
+        activeAsync: true
+        Capture {
+            id: captureSurface
+            // The session lock owns the screen and the keyboard: the toolbar closes and does not open.
+            locked: SessionState.locked
+        }
     }
+    readonly property var captureSurface: captureLoader.item
 
     // Opening Overview, Apps, Search, the app switcher or the capture toolbar closes the others: the keyboard follows the visible
     // top surface.
@@ -623,7 +638,7 @@ ShellRoot {
             {target: appsSurface, close: () => appsSurface.hide()},
             {target: searchSurface, close: () => searchSurface.hide()},
             {target: switcher, close: () => switcher.cancel()},
-            {target: captureSurface, close: () => captureSurface.hide()}
+            {target: root.captureSurface, close: () => root.captureSurface.hide()}
         ]
     }
 

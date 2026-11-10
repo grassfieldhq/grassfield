@@ -29,6 +29,7 @@ root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 
 # Same options as nested-up.sh (bare commands match the sandbox exclusion; env prefixes may not).
 only_security=0
+migrated=${GRASSFIELD_MIGRATED:-0}
 while [[ $# -gt 0 ]]; do
   case $1 in
     --private-bus) export GRASSFIELD_PRIVATE_BUS=1 ;;
@@ -40,6 +41,8 @@ while [[ $# -gt 0 ]]; do
     --menu-bridge) export GRASSFIELD_MENU_BRIDGE=${2:?--menu-bridge needs a path}; shift ;;
     --desktop-screen) export GRASSFIELD_DESKTOP_SCREEN=${2:?--desktop-screen needs an output name}; shift ;;
     --cursor-theme) export GRASSFIELD_CURSOR_THEME=${2:?--cursor-theme needs a theme name}; shift ;;
+    --migrated) migrated=1 ;;  # the UI runs the packaged form (ADR-0056): .dev/migrated/shell, rebuilt when shell/ changes. The key bindings
+                               # still address -p <repo>/shell: use `qs ipc --pid $(cat .dev/shell.pid)` (tests/visual/ipc.sh) with it.
     --unit-env) export GRASSFIELD_UNIT_ENV=1 ;;  # the shell gets grassfield-shell.service's own variables (file watcher off, as packaged)
     --security) only_security=1 ;;  # (re)start the security process only (ADR-0041 S2), the UI left alone
     *) echo "shell-run: unknown option $1" >&2; exit 2 ;;
@@ -72,7 +75,22 @@ else
   dev_stop "$dev/shell.pid" grassfield-shell >/dev/null || exit 1
 fi
 
-launch=(qs -p "$root/shell" --log-times --no-color)
+shell_dir=$root/shell
+if [[ $migrated == 1 ]]; then
+  # The packaged form of the UI tree (scripts/dev/migrate-qs-imports.py, ADR-0056): file: URLs, so Qt's QML disk cache serves
+  # it. The parents of shell/ that dev code reaches (../VERSION, ../packaging, ../branding, ../.dev) are links to the repository.
+  # scripts/dev/migrated-tree.sh never deletes or rewrites a tree a process may use: a changed source is built into a fresh
+  # directory and .dev/migrated is repointed with one rename; its stamp names the tree content (security_sig below).
+  tree_stamp=$("$root/scripts/dev/migrated-tree.sh" "$root" "$dev") || { echo "shell-run: the migrated tree did not build" >&2; exit 1; }
+  # Started and addressed by the REAL path of the stamped tree, never through the .dev/migrated link: Quickshell keeps the literal
+  # path, so a process started through the link would load its late files from the tree the link points to by then.
+  shell_dir=$(readlink -f "$dev/migrated")/shell
+fi
+# The security process runs from the same tree as the UI: the UI's lock requests (shell/security/lock LockClient) and the key
+# bindings address `<shell dir>/security.qml`, and an instance is identified by its path. With --migrated that is the migrated
+# tree's security.qml (kept verbatim by the migration, loaded through qs: as in the package); without it, the source tree's.
+security_qml=$shell_dir/security.qml
+launch=(qs -p "$shell_dir" --log-times --no-color)
 private=""
 bus_env=()
 bridge_sock=""
@@ -257,7 +275,7 @@ fi
 # (`--security`, after the stop above); a restart of the UI leaves a running one alone, unless the settings it was started
 # with changed (the language, the visual fixtures and fixed time, the private bus, the unit environment, the L2 PAM opt-in:
 # .dev/security.sig), as when the visual suite switches language: then it is restarted too.
-security_sig="lang=${GRASSFIELD_LANG:-} fixtures=${GRASSFIELD_VISUAL_FIXTURES:-} time=${GRASSFIELD_FIXED_TIME:-} bus=$private unit=${GRASSFIELD_UNIT_ENV:-} pam=${GRASSFIELD_DEV_ALLOW_PAM:-}"
+security_sig="migrated=$migrated tree=${tree_stamp:-} lang=${GRASSFIELD_LANG:-} fixtures=${GRASSFIELD_VISUAL_FIXTURES:-} time=${GRASSFIELD_FIXED_TIME:-} bus=$private unit=${GRASSFIELD_UNIT_ENV:-} pam=${GRASSFIELD_DEV_ALLOW_PAM:-}"
 start_security() {
   # The security modules read no GRASSFIELD_* variable but the dev gate's (ADR-0019): the lock finds the UI's wallpaper.json
   # under $XDG_STATE_HOME/grassfield, here a link to the dev state the shell writes (.dev/state).
@@ -268,7 +286,7 @@ start_security() {
     GRASSFIELD_STATE_HOME="$dev/state" GRASSFIELD_CONFIG_HOME="$dev/config" GRASSFIELD_DEV=1 \
     GRASSFIELD_PRIVATE_BUS="$private" \
     QT_QPA_PLATFORM=wayland QT_NO_XDG_DESKTOP_PORTAL=1 QML_IMPORT_PATH="$root/ui:$dev/build/qml" GRASSFIELD_TRANSLATIONS_DIR="$dev/translations" \
-    setsid qs -p "$root/shell/security.qml" --log-times --no-color >"$dev/security.log" 2>&1 </dev/null &
+    setsid qs -p "$security_qml" --log-times --no-color >"$dev/security.log" 2>&1 </dev/null &
   local security_pid=$!
   dev_record_pid "$dev/security.pid" "$security_pid"
   printf '%s\n' "$security_sig" >"$dev/security.sig"

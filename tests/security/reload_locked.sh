@@ -71,6 +71,10 @@
 set -uo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# GRASSFIELD_MIGRATED=1: the nested session runs the packaged form of the UI tree (scripts/dev/shell-run.sh --migrated,
+# ADR-0056): both instances are addressed by the REAL path of the stamped tree (readlink -f .dev/migrated), as they were started.
+ui_dir=$root/shell; sec_qml=$root/shell/security.qml
+[[ ${GRASSFIELD_MIGRATED:-0} == 1 ]] && { ui_dir=$(readlink -f "$root/.dev/migrated")/shell; sec_qml=$ui_dir/security.qml; }
 dev=$root/.dev
 # shellcheck source=../../scripts/dev/pidfile.sh
 . "$root/scripts/dev/pidfile.sh"
@@ -93,7 +97,7 @@ instances=$(hyprctl instances -j 2>/dev/null)
 
 marker=$XDG_RUNTIME_DIR/grassfield-lock-${sig//[^A-Za-z0-9_.-]/_}
 # The process that holds the lock (ADR-0041 S2): its root (what its `qs ipc -p` names), log and record.
-lock_root=$root/shell/security.qml
+lock_root=$sec_qml
 lock_log=$dev/security.log
 typed=$dev/reload-typed.txt
 foreign=$root/tests/security/foreign_locker/ForeignLocker.qml
@@ -252,7 +256,10 @@ step_nowatch() {
   local before after sbefore safter
   before=$(grep -c "Reloading configuration" "$dev/shell.log" 2>/dev/null)
   sbefore=$(grep -c "Reloading configuration" "$lock_log" 2>/dev/null)
-  touch "$root/shell/security/lock/LockView.qml" "$root/shell/security.qml"
+  # The files the two processes actually load: the source tree, or with GRASSFIELD_MIGRATED=1 the migrated one (a touch of the
+  # source would test nothing then). A touch changes no content, so scripts/dev/migrated-tree.sh (content stamp) rebuilds nothing.
+  touch "$ui_dir/shell.qml" "$ui_dir/security/lock/LockView.qml" "$sec_qml"
+  [[ -f $ui_dir/shell-core.qml ]] && touch "$ui_dir/shell-core.qml"
   sleep 3
   after=$(grep -c "Reloading configuration" "$dev/shell.log" 2>/dev/null)
   safter=$(grep -c "Reloading configuration" "$lock_log" 2>/dev/null)
