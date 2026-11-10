@@ -52,7 +52,7 @@ D-3 The stub root keeps the safety the former root had: `settings.watchFiles: fa
 file name (the unit's `-p` path is unchanged). A core that did not load must END AS A FAILURE, never with status 0 (the unit's
 `Restart=` and `OnFailure=`, the failure counter and safe mode, ADR-0041 step 1a, act on failures only). Quickshell has no exit
 with a code from QML (`Qt.quit()` is status 0, `Qt.exit(n)` has no receiver: the qmltypes of Quickshell 0.3.2 name no other), so
-after 10 s the stub runs `kill -ABRT $PPID` through a `Process`: the process dies by a signal, a failed unit (`Result: signal`),
+after 10 s the stub runs `kill -ABRT <Quickshell.processId>` through a `Process` (`["kill", "-ABRT", String(Quickshell.processId)]`, no shell): the process dies by a signal, a failed unit (`Result: signal`),
 with no report run (`QS_DISABLE_CRASH_HANDLER=1`) and no core file (`LimitCORE=0`), the journal records the crash.
 `tests/shell/migrate_qs_imports.sh` shows status 134 on a tree with a missing core, and, where a user manager exists, the
 failed unit state (`systemd-run --user --wait`).
@@ -75,6 +75,32 @@ D-7 `grassfield-shell.service` restarts after 100 ms (`RestartSec=100ms`). The l
 reached by any loop the lifetime model knows (10 x (0.1 + 10) s = 101 s < 300 s, `tests/shell/unit_restart_limits.sh`), and the
 failure counter (`grassfield-shell-failed`, third failure within 10 minutes, ADR-0041 step 1a) counts failures, not time, so it
 stops a loop of any pace, a faster one sooner. `grassfield-security.service` is unchanged.
+
+D-8 The shipped tree is the source apart from its import lines, and a check says so. `migrate-qs-imports.py --verify SRC TREE` compares
+every file line by line (an `.qml` file may differ only in the `import qs.*` lines of its header; `shell-core.qml` is `shell.qml`
+without the watchFiles line, ShellRoot as Scope; the stub is the generated one; nothing else is new; every other file is byte for
+byte equal). `just check-quick` runs it on a migrated copy (`check-migrate`, which also runs qmllint on that copy), the PKGBUILD
+runs it on the package, and `tests/shell/migrate_qs_imports.sh` plants mutants in the migrated tree (a lock check dropped from
+the capture toolbar in the package only, an extra file, a changed stub, an added line) that it must catch. Only the import header
+is read and rewritten: a template string or a block comment below it that contains `import qs.x` is left alone. The script is
+pinned by its SHA-256 in `tests/security/security_unit.sh` like `SecurityHost.qml`: a change of it needs the security review,
+because the UI process hosts the polkit agent and the secret sheets (S3) and runs what it produces.
+
+D-9 What runs. The UI process, which after S3 hosts the polkit agent and the secret sheets, now runs compiled code read back
+from `~/.cache/quickshell/qmlcache` (Qt's disk cache, validated by the source file's modification time and size and by the Qt
+version) instead of compiling the package's source at every start. That is acceptable because the cache is written and read by
+the same user's process, in a directory only that user can write: a process that can alter it can already alter the user's
+session (it can start the shell with its own tree, replace a user unit, preload code); the cache adds no privilege boundary that
+the migration crosses. The package itself is the reviewed artefact (D-8), and the unit already clears `QML_DISK_CACHE_PATH`
+(UnsetEnvironment=), so the folder is Quickshell's own, not an inherited one. The security process is not migrated (D-5) and
+compiles its source at every start as before.
+
+D-10 A known limit of the failure counter, for S4. `grassfield-shell-failed.service` does not count a failure that arrives while its own
+job is still running (systemd merges a start request for a unit that is already starting or running): with RestartSec=100ms, a loop
+of sub-second crashes can reach the start limit (10 starts in 300 s) and end in "failed" without the third counted failure having
+been written, so `shell-safe-mode` may not exist when the unit has stopped for good. Safe mode (S4) therefore must not rely on the
+state file alone: it must also read the unit's own state (`systemctl --user show -p ActiveState,Result,NRestarts
+grassfield-shell.service`: failed with Result=start-limit-hit is a safe-mode condition too).
 
 ## Rule for new files
 Write `import qs.<module>` exactly as before and nothing else about loading: no `qs:` URL in a string, no second import form in

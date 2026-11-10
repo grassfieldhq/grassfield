@@ -7,7 +7,7 @@ Requisite=graphical-session.target
 # Only inside the Grassfield session, never in the Omarchy session.
 ConditionEnvironment=GRASSFIELD_SESSION=1
 # The start limit is the backstop of a crash loop (ADR-0041 step 1a, owner decision SQ-2 A): systemd refuses the eleventh
-# start within 5 minutes, so with RestartSec=1 a loop faster than one crash every 29 s ends here in "failed" (the first
+# start within 5 minutes, so with RestartSec=100ms a loop faster than one crash every 29.9 s ends here in "failed" (the first
 # limit, 10 in 30 s, needed a crash within 2 s of each start and never tripped the loop of 2026-10-29, a crash 5 s after
 # every start). The loop detector below counts failures instead and stops a loop of any pace at the third failure within
 # 10 minutes.
@@ -100,8 +100,8 @@ TimeoutStopSec=5
 # healthy figure and far below the runaway, so they never touch normal use:
 #   MemoryHigh=1536M  soft ceiling, about 2x the worst healthy peak: above it the kernel reclaims and throttles the shell
 #                     instead of letting it grow, and the pressure shows in `systemctl --user status`.
-#   MemoryMax=3G      hard ceiling (a third of the runaway): the shell is killed and Restart=always brings it back in
-#                     1 s; the lock lives in the security process and is not touched (ADR-0041 S2).
+#   MemoryMax=3G      hard ceiling (a third of the runaway): the shell is killed and Restart=always brings it back after RestartSec=100ms
+#                     (the start time itself is gate R1); the lock lives in the security process and is not touched (ADR-0041 S2).
 #   CPUQuota=150%     one and a half cores: a spinning shell cannot starve the compositor, while the Overview and
 #                     Stage animations (a GUI thread plus the render thread) keep their headroom.
 MemoryHigh=1536M
