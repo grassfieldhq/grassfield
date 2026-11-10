@@ -85,7 +85,8 @@ if [[ $migrated == 1 ]]; then
   # Quickshell keeps the literal path, so the process would run another tree than the one security_sig names.
   tree_dir=$dev/migrated-$tree_stamp
   if [[ -L $tree_dir || ! -d $tree_dir ]]; then
-    echo "shell-run: the migrated tree $tree_dir is gone or not a directory${only_security:+ (the one the UI was started from: restart the UI)}" >&2
+    hint=""; ((only_security)) && hint=" (the one the UI was started from: restart the UI)"
+    echo "shell-run: the migrated tree $tree_dir is gone or not a directory$hint" >&2
     exit 1
   fi
   shell_dir=$tree_dir/shell
