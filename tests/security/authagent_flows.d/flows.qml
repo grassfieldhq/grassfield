@@ -52,6 +52,7 @@ Item {
             SheetSession.locked = false;
             SheetSession.saverShown = false;
             SheetSession.displaysOff = false;
+            SheetSession.starting = false;
             compare(top.agentC.status, Component.Ready, top.agentC.errorString());
             ag = createTemporaryObject(top.agentC, top);
             verify(ag);
@@ -704,6 +705,25 @@ Item {
             compare(a.registrationTries, 0);
             compare(a.mockRegistrations, 1);
             compare(f.submits, []);
+        }
+
+        // The opus delta review of S3, LOW: held because the security process had just started (the saver counted for the start
+        // alone, SheetSession.starting), the notice says so; held by the saver's own count, it still names the saver.
+        function test_40_heldWhileStarting() {
+            SheetSession.saverShown = true;
+            SheetSession.starting = true;
+            const a = mkflow("A");
+            arriveFlow(a, true);
+            compare(ag.heldByLock, true);
+            compare(ag.heldWhy, "starting");
+            verify(dialog().heldNotice.indexOf("while Grassfield was starting") !== -1, dialog().heldNotice);
+            endAll(true);
+            SheetSession.starting = false;
+            const b = mkflow("B");
+            arriveFlow(b, true);
+            compare(ag.heldWhy, "saver");
+            verify(dialog().heldNotice.indexOf("while the screen saver was on") !== -1, dialog().heldNotice);
+            SheetSession.saverShown = false;
         }
 
         // The backoff: registrationRetryMs (3 s) doubled at each try, at most 60 s.

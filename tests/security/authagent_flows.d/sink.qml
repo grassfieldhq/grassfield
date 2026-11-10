@@ -52,6 +52,7 @@ Item {
             SheetSession.locked = false;
             SheetSession.saverShown = false;
             SheetSession.displaysOff = false;
+            SheetSession.starting = false;
             compare(top.agentC.status, Component.Ready, top.agentC.errorString());
             ag = createTemporaryObject(top.agentC, top);
             verify(ag);

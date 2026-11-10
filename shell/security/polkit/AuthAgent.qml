@@ -169,7 +169,7 @@ Scope {
         root.sinkingKeys = typing;
         if (!dialogModel.active)
             root.requestOpen = false;
-        root.heldWhy = SheetSession.locked ? "locked" : SheetSession.saverShown ? "saver" : queued ? "queued" : "unlock";
+        root.heldWhy = SheetSession.locked ? "locked" : SheetSession.saverShown ? (SheetSession.starting ? "starting" : "saver") : queued ? "queued" : "unlock";
         root.heldByLock = dialogModel.active && (follows || typing || dialogModel.arrivesHeld(SheetSession.locked || SheetSession.saverShown));
         root.userFocused = false;
         if (dialogModel.active)
@@ -254,7 +254,7 @@ Scope {
                 return;
             if (SheetSession.saverShown) {
                 if (!root.heldByLock || root.userFocused)
-                    root.heldWhy = "saver";
+                    root.heldWhy = SheetSession.starting ? "starting" : "saver";
                 root.heldByLock = true;
                 root.userFocused = false;
                 dialogModel.clearRequested();

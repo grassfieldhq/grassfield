@@ -238,7 +238,7 @@ Scope {
         root.sinkingKeys = typing;
         if (!sheetModel.active)
             root.requestOpen = false;
-        root.heldWhy = SheetSession.locked ? "locked" : SheetSession.saverShown ? "saver" : waited ? "waited" : queued ? "queued" : network && !sheetModel.arrivesHeld(false) ? "network" : server && !sheetModel.arrivesHeld(false) ? "server" : pairing && !sheetModel.arrivesHeld(false) ? sheetModel.pairingHeldWhyOf(sheetModel.request.pairing.mode) : confirm && !sheetModel.arrivesHeld(false) ? "confirm" : "unlock";
+        root.heldWhy = SheetSession.locked ? "locked" : SheetSession.saverShown ? (SheetSession.starting ? "starting" : "saver") : waited ? "waited" : queued ? "queued" : network && !sheetModel.arrivesHeld(false) ? "network" : server && !sheetModel.arrivesHeld(false) ? "server" : pairing && !sheetModel.arrivesHeld(false) ? sheetModel.pairingHeldWhyOf(sheetModel.request.pairing.mode) : confirm && !sheetModel.arrivesHeld(false) ? "confirm" : "unlock";
         root.heldByLock = sheetModel.active && (typing || waited || confirm || network || server || pairing || sheetModel.arrivesHeld(SheetSession.locked || SheetSession.saverShown));
         root.userFocused = false;
         if (sheetModel.active)
@@ -306,7 +306,7 @@ Scope {
                 return;
             if (SheetSession.saverShown) {
                 if (!root.heldByLock || root.userFocused)
-                    root.heldWhy = "saver";
+                    root.heldWhy = SheetSession.starting ? "starting" : "saver";
                 root.heldByLock = true;
                 root.userFocused = false;
                 sheetModel.clearRequested();

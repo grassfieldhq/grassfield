@@ -296,6 +296,13 @@ function sheetsSaverShown(activitySeen, armed, idle) {
     return activitySeen !== true || (armed === true && idle === true);
 }
 
+// The saver counts as shown only for that start, not for its own idle time: a request held then says it arrived while
+// Grassfield was starting, not that it waited for the screen saver (the opus delta review of S3, LOW). Text only: what
+// holds a request is sheetsSaverShown.
+function sheetsStarting(activitySeen, armed, idle) {
+    return activitySeen !== true && !(armed === true && idle === true);
+}
+
 // The activity probe's state after a change of its idle state: activity is seen once the probe was idle and is no longer
 // (an input after a pause); a probe that never went idle has seen nothing it can tell from its own start.
 function sheetsActivitySeen(seen, wasIdle, idle) {

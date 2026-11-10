@@ -219,6 +219,8 @@ Scope {
     property bool activitySeen: false
     property bool activityProbeWasIdle: false
     readonly property bool saverShown: IdleModel.sheetsSaverShown(root.activitySeen, saverMonitor.enabled, saverMonitor.isIdle)
+    // saverShown holds for the start alone (the sheets then say the request arrived while Grassfield was starting).
+    readonly property bool starting: IdleModel.sheetsStarting(root.activitySeen, saverMonitor.enabled, saverMonitor.isIdle)
 
     IdleMonitor {
         id: saverMonitor

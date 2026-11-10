@@ -559,6 +559,17 @@ TestCase {
         compare(IdleModel.sheetsSaverShown(true, true, false), false);
         compare(IdleModel.sheetsSaverShown(true, true, true), true);
         compare(IdleModel.sheetsSaverShown(true, false, true), false, "a monitor that is not armed says nothing");
+        // The start's words (the opus delta review of S3, LOW): held for the start alone, not for the saver's own count.
+        compare(IdleModel.sheetsStarting(false, true, false), true, "restarted, the saver not counted: starting");
+        compare(IdleModel.sheetsStarting(false, false, false), true);
+        compare(IdleModel.sheetsStarting(undefined, true, false), true, "unknown reads not seen");
+        compare(IdleModel.sheetsStarting(false, true, true), false, "the saver's own count holds too: the saver's words");
+        compare(IdleModel.sheetsStarting(true, true, false), false, "seen active: never starting again");
+        compare(IdleModel.sheetsStarting(true, true, true), false);
+        for (const seen of [false, true])
+            for (const armed of [false, true])
+                for (const idle of [false, true])
+                    verify(!IdleModel.sheetsStarting(seen, armed, idle) || IdleModel.sheetsSaverShown(seen, armed, idle), "starting only ever words a hold");
         // The probe: idle (a pause), then active (an input) is activity; active from its start is not; once seen, always.
         compare(IdleModel.sheetsActivitySeen(false, false, true), false, "the probe went idle: nothing seen yet");
         compare(IdleModel.sheetsActivitySeen(false, true, false), true, "an input after the pause");
@@ -581,6 +592,8 @@ TestCase {
         verify(/enabled: timeout === Math\.max\(1, root\.saverSeconds\) && IdleModel\.sheetsSaverArmed\(root\.saverSeconds, Lock\.locked, root\.rearmingSaver\)\n/.test(idle),
                "armed without the lease (review 1, MINOR-1)");
         verify(/readonly property bool saverShown: IdleModel\.sheetsSaverShown\(root\.activitySeen, saverMonitor\.enabled, saverMonitor\.isIdle\)\n/.test(idle));
+        verify(/readonly property bool starting: IdleModel\.sheetsStarting\(root\.activitySeen, saverMonitor\.enabled, saverMonitor\.isIdle\)\n/.test(idle),
+               "the start's words from the same inputs (the delta review of S3, LOW)");
         // The activity probe: on until activity is seen, any input counts (no inhibitor hides it), its state through the model.
         verify(/id: activityProbe\s+enabled: !root\.activitySeen\s+timeout: IdleModel\.ACTIVITY_PROBE_SECONDS\s+respectInhibitors: false\s/.test(idle));
         verify(/const seen = IdleModel\.sheetsActivitySeen\(root\.activitySeen, root\.activityProbeWasIdle, isIdle\);/.test(idle));

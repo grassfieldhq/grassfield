@@ -13,5 +13,6 @@ TestCase {
         compare(Security.SheetSession.locked, true, "locked until the host binds Lock.locked");
         compare(Security.SheetSession.displaysOff, true, "displays off until the host binds Idle.displayOff");
         compare(Security.SheetSession.saverShown, false);
+        compare(Security.SheetSession.starting, false, "the held notice's words only (the delta review of S3, LOW)");
     }
 }

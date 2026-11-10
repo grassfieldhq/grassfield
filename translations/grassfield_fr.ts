@@ -1855,6 +1855,10 @@
         <translation>Cette demande est arrivée à %1 et a attendu pendant que l’économiseur d’écran était affiché. Cliquez sur la fenêtre pour y répondre.</translation>
     </message>
     <message>
+        <source>This request arrived at %1, while Grassfield was starting. Click the sheet to answer it.</source>
+        <translation>Cette demande est arrivée à %1, pendant le démarrage de Grassfield. Cliquez sur la fenêtre pour y répondre.</translation>
+    </message>
+    <message>
         <source>This request arrived at %1, right after another one. Click the sheet to answer it.</source>
         <translation>Cette demande est arrivée à %1, juste après une autre. Cliquez sur la fenêtre pour y répondre.</translation>
     </message>
@@ -13100,6 +13104,10 @@
     <message>
         <source>This request arrived at %1 and waited while the screen saver was on. Click the alert to answer it.</source>
         <translation>Cette demande est arrivée à %1 et a attendu pendant que l’économiseur d’écran était affiché. Cliquez sur l’alerte pour y répondre.</translation>
+    </message>
+    <message>
+        <source>This request arrived at %1, while Grassfield was starting. Click the alert to answer it.</source>
+        <translation>Cette demande est arrivée à %1, pendant le démarrage de Grassfield. Cliquez sur l’alerte pour y répondre.</translation>
     </message>
     <message>
         <source>This request arrived at %1, while another one was open. Click the alert to answer it.</source>

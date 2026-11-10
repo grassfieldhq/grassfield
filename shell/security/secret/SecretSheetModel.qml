@@ -178,8 +178,9 @@ QtObject {
         return locked || unlockHold.running || afterRequest.running;
     }
 
-    // What the held sheet says, with the time the request arrived. `why`: "locked", "saver", "waited" (another sheet was on
-    // screen when it arrived), "queued" (right after another one), "confirm" (a confirmation: always held, decision 9-23) or
+    // What the held sheet says, with the time the request arrived. `why`: "locked", "saver", "starting" (the security process
+    // had just started and had not seen the user active yet: SheetSession.starting), "waited" (another sheet was on screen
+    // when it arrived), "queued" (right after another one), "confirm" (a confirmation: always held, decision 9-23) or
     // "unlock".
     function heldNotice(arrivedAt: var, why: string): string {
         const at = Qt.formatTime(new Date(arrivedAt), Qt.locale().timeFormat(Locale.ShortFormat));
@@ -187,6 +188,8 @@ QtObject {
             return qsTr("This request arrived at %1, while the screen was locked. Click the alert to answer it.").arg(at);
         if (why === "saver")
             return qsTr("This request arrived at %1 and waited while the screen saver was on. Click the alert to answer it.").arg(at);
+        if (why === "starting")
+            return qsTr("This request arrived at %1, while Grassfield was starting. Click the alert to answer it.").arg(at);
         if (why === "waited")
             return qsTr("This request arrived at %1, while another one was open. Click the alert to answer it.").arg(at);
         if (why === "queued")

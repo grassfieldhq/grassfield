@@ -69,6 +69,7 @@ Item {
             SheetSession.locked = false;
             SheetSession.saverShown = false;
             SheetSession.displaysOff = false;
+            SheetSession.starting = false;
             compare(top.secretC.status, Component.Ready, top.secretC.errorString());
             compare(top.polkitC.status, Component.Ready, top.polkitC.errorString());
             rig = createTemporaryObject(rigC, top);
@@ -334,6 +335,20 @@ Item {
             compare(rig.secret.heldByLock, true);
             compare(rig.secret.heldWhy, "unlock");
             compare(rig.secret.sheet.takesKeys, false);
+        }
+
+        // The opus delta review of S3, LOW: a request held because the security process had just started (the saver counted for
+        // the start alone, SheetSession.starting) says so, not that it waited for the screen saver.
+        function test_11b_heldWhileStarting() {
+            SheetSession.saverShown = true;
+            SheetSession.starting = true;
+            client.prompt("p1", {});
+            shown("p1");
+            compare(rig.secret.heldByLock, true);
+            compare(rig.secret.heldWhy, "starting");
+            verify(sheet().heldNotice.indexOf("while Grassfield was starting") >= 0, sheet().heldNotice);
+            SheetSession.starting = false;
+            SheetSession.saverShown = false;
         }
 
         // The screen saver holds an open request; its waking click answers nothing; the guard starts over at its end.
