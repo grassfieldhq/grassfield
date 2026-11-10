@@ -943,8 +943,13 @@ Scope {
 
     // qs ipc call search <toggle|open|close|query|status>. toggle is the SUPER+SPACE binding; the others are test hooks,
     // refused outside a dev session (VisualFixtures.dev, SEC-04: `status` returns what the user types).
+    // False while shell.qml's `early` handler answers for this target (a surface built by its LazyLoader, ADR-0056
+    // amendment): two handlers for one target warn and only one is used, so the loader switches them over in order.
+    property bool ipcEnabled: true
+
     IpcHandler {
         target: "search"
+        enabled: root.ipcEnabled
 
         function toggle(): void {
             root.toggle();

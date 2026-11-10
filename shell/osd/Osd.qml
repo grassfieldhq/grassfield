@@ -37,6 +37,17 @@ Singleton {
     // must not draw a pill in a capture or a test. The IPC hooks and the brightness keys still show the OSD (brightnessStep).
     readonly property bool hardwareDrives: !Brightness.devSession && !VisualFixtures.active
 
+    // When the last event was shown (ms since the epoch, 0 before the first): the OSD window is built right after the shell
+    // started (shell.qml, ADR-0056 amendment); an event that came while it was loading is shown once it exists.
+    property real lastEventMs: 0
+
+    function replay(): void {
+        if (lastEventMs > 0 && Date.now() - lastEventMs <= Tokens.deferredRequestMaxAgeMs) {
+            shown = true;
+            hideTimer.restart();
+        }
+    }
+
     function showValue(osdKind: string, osdLevel: real, osdMuted: bool): void {
         // NaN or infinite levels (bad IPC input, sensor glitch) are ignored; the rest is clamped.
         if (!isFinite(osdLevel))
@@ -53,6 +64,7 @@ Singleton {
         level = Math.max(0, Math.min(1, osdLevel));
         muted = osdMuted;
         shown = true;
+        lastEventMs = Date.now();
         hideTimer.restart();
     }
 
@@ -71,6 +83,7 @@ Singleton {
         muted = false;
         output = "";
         shown = true;
+        lastEventMs = Date.now();
         hideTimer.restart();
     }
 

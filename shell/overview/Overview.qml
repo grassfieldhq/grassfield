@@ -568,8 +568,13 @@ Scope {
     }
 
     // IPC: qs ipc call overview <toggle|open|close|status>. CTRL+UP calls toggle().
+    // False while shell.qml's `early` handler answers for this target (a surface built by its LazyLoader, ADR-0056
+    // amendment): two handlers for one target warn and only one is used, so the loader switches them over in order.
+    property bool ipcEnabled: true
+
     IpcHandler {
         target: "overview"
+        enabled: root.ipcEnabled
 
         function toggle(): void {
             root.toggle();

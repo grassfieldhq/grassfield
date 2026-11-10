@@ -552,6 +552,8 @@ ShellRoot {
         onSearchRequested: {
             if (root.searchSurface)
                 root.searchSurface.toggle();
+            else
+                early.ask("search", "toggle", "");
         }
         captureActive: root.captureSurface ? root.captureSurface.open : false
         onCaptureRequested: screen => {
@@ -564,19 +566,26 @@ ShellRoot {
         onAppsRequested: {
             if (root.appsSurface)
                 root.appsSurface.toggle();
+            else
+                early.ask("apps", "toggle", "");
         }
     }
     Overlay {}
     Stages {}
     Banners {}
     NotificationCenter {}
-    // The surfaces below that only draw on demand (the OSD, the app switcher's window, Search, Overview, Apps) are built right
-    // after "started", not before (ADR-0056, R1): their windows and content cost about 0.5 s of the start (nested, measured
-    // 2.84 -> 2.31 s median launch to "started"), and nothing asks for them in the first tick. Each one's IPC target and key
-    // binding answer from the moment its loader has built it (within a second of the first frame); a press or an IPC call
-    // before that does nothing, as a press before the shell has started does. The loaders' items are null until then.
+    // The surfaces below that are only used on demand (the OSD, the app switcher's window, Search, Overview, Apps) are built right
+    // after "started", not before (ADR-0056 amendment, R1): their windows and content cost about 0.5 s of the start, and nothing
+    // asks for them in the first tick. A request that arrives before a loader has built its surface (the key binding or a hot
+    // corner by IPC, the menu bar's search button, the Dock's apps button) is remembered by `early` below and performed once the
+    // surface exists: one pending request per surface, the last one winning, dropped after Tokens.deferredRequestMaxAgeMs.
+    // The OSD window shows the last OSD event received while it was loading (Osd.replay).
     LazyLoader {
-        activeAsync: true
+        activeAsync: !root.deferredHeld
+        onItemChanged: {
+            if (item)
+                Osd.replay();
+        }
         OsdWindow {}
     }
     // Log Out, Restart and Shut Down end under one fade to the ground (ADR-0040 ID-10; grassfield-session-end asks for it).
@@ -588,9 +597,14 @@ ShellRoot {
     }
     LazyLoader {
         id: searchLoader
-        activeAsync: true
+        activeAsync: !root.deferredHeld
+        onItemChanged: {
+            if (item)
+                early.deliver("search", item);
+        }
         Search {
             id: searchSurface
+            ipcEnabled: false
         }
     }
     readonly property var searchSurface: searchLoader.item
@@ -621,9 +635,14 @@ ShellRoot {
     }
     LazyLoader {
         id: overviewLoader
-        activeAsync: true
+        activeAsync: !root.deferredHeld
+        onItemChanged: {
+            if (item)
+                early.deliver("overview", item);
+        }
         Overview {
             id: overviewSurface
+            ipcEnabled: false
             // The session lock owns the screen and the keyboard: the overview closes and focuses nothing.
             locked: SessionState.locked
         }
@@ -631,9 +650,14 @@ ShellRoot {
     readonly property var overviewSurface: overviewLoader.item
     LazyLoader {
         id: appsLoader
-        activeAsync: true
+        activeAsync: !root.deferredHeld
+        onItemChanged: {
+            if (item)
+                early.deliver("apps", item);
+        }
         AppsController {
             id: appsSurface
+            ipcEnabled: false
         }
     }
     readonly property var appsSurface: appsLoader.item
@@ -643,7 +667,7 @@ ShellRoot {
         locked: SessionState.locked
     }
     LazyLoader {
-        activeAsync: true
+        activeAsync: !root.deferredHeld
         SwitcherWindow {
             controller: switcher
         }
@@ -661,6 +685,139 @@ ShellRoot {
         }
     }
     readonly property var captureSurface: captureLoader.item
+
+    // Development only (GRASSFIELD_DEFER_HOLD=1 in a dev session, ADR-0019 table): the deferred surfaces are not built until
+    // `qs ipc call deferred release`, so tests/shell/deferred_early.sh can send requests while they do not exist.
+    property bool deferredHeld: Mode.devValue("DEFER_HOLD") === "1"
+    IpcHandler {
+        target: "deferred"
+
+        function release(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            root.deferredHeld = false;
+            return "ok";
+        }
+
+        function status(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return JSON.stringify({held: root.deferredHeld, live: early.live, pending: early.pending});
+        }
+    }
+    // What a deferred surface was asked before it existed (ADR-0056 amendment). `pending` holds one entry per surface:
+    // {open, text, clip, at}: whether the surface is wanted open once built (a toggle flips it, open and close set it, so
+    // open-then-close ends closed), the text of a Search open, whether it is the Clipboard view, and when the last request came.
+    QtObject {
+        id: early
+
+        property var pending: ({})
+        // Whether the surface exists and its own IPC handler is the one answering (the forwarding handler below is off).
+        property var live: ({search: false, apps: false, overview: false})
+
+        function ask(surface: string, what: string, text: string): void {
+            const p = pending[surface] ?? {open: false, text: "", clip: false, at: 0};
+            if (what === "toggle") {
+                p.open = !p.open;
+                p.clip = false;
+                p.text = "";
+            } else if (what === "open") {
+                p.open = true;
+                p.clip = false;
+                p.text = text;
+            } else if (what === "close") {
+                p.open = false;
+            } else if (what === "clipboard") {
+                if (p.open && p.clip) {
+                    p.open = false;
+                } else {
+                    p.open = true;
+                    p.clip = true;
+                    p.text = "";
+                }
+            }
+            p.at = Date.now();
+            pending[surface] = p;
+            console.info("grassfield-shell: early request", surface, what, "(the surface is still being built)");
+        }
+
+        // The loader built `item`: what was asked meanwhile happens now (the surface's own checks apply: a locked session
+        // refuses, as for a request made later).
+        function deliver(surface: string, item: var): void {
+            console.info("grassfield-shell: surface built", surface);
+            // The forwarding handler goes off first, then the surface's own comes on: never two for one target.
+            live = Object.assign({}, live, {[surface]: true});
+            item.ipcEnabled = true;
+            const p = pending[surface];
+            delete pending[surface];
+            if (!p || !p.open || Date.now() - p.at > Tokens.deferredRequestMaxAgeMs)
+                return;
+            if (surface === "search") {
+                if (p.clip)
+                    item.toggleClipboard();
+                else
+                    item.show(p.text);
+            } else {
+                item.show();
+            }
+        }
+    }
+    // The IPC targets of the three surfaces answer from the start: until a surface is built, these take its place (same names and
+    // gates as the surface's own handler, which takes over the moment its item exists).
+    IpcHandler {
+        target: "search"
+        enabled: !early.live.search
+
+        function toggle(): void {
+            early.ask("search", "toggle", "");
+        }
+
+        function clipboard(): void {
+            early.ask("search", "clipboard", "");
+        }
+
+        function open(text: string): void {
+            if (VisualFixtures.dev)
+                early.ask("search", "open", text);
+        }
+
+        function close(): void {
+            if (VisualFixtures.dev)
+                early.ask("search", "close", "");
+        }
+    }
+    IpcHandler {
+        target: "apps"
+        enabled: !early.live.apps
+
+        function toggle(): void {
+            early.ask("apps", "toggle", "");
+        }
+
+        function open(): void {
+            early.ask("apps", "open", "");
+        }
+
+        function close(): void {
+            early.ask("apps", "close", "");
+        }
+    }
+    IpcHandler {
+        target: "overview"
+        enabled: !early.live.overview
+
+        function toggle(): void {
+            early.ask("overview", "toggle", "");
+        }
+
+        function open(): void {
+            early.ask("overview", "open", "");
+        }
+
+        function close(): void {
+            early.ask("overview", "close", "");
+        }
+    }
 
     // Opening Overview, Apps, Search, the app switcher or the capture toolbar closes the others: the keyboard follows the visible
     // top surface.

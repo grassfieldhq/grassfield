@@ -79,6 +79,7 @@ D-6 Two invisible surfaces are built right after "started" (`LazyLoader { active
 and the exit cover. Nothing asks for them at login; a capture key pressed in the first tick does nothing, the exit cover's IPC
 target exists a tick after the first frame. The saver stays (its state is pinned by `tests/security/lock_surfaces.sh`), and Search,
 Apps, Overview and the Switcher stay (P4, A10).
+**[Amended 2026-11-10: Search, Apps, Overview, the OSD window and the switcher's window are now built right after "started" too; see the amendment at the end.]**
 
 D-7 `grassfield-shell.service` restarts after 100 ms (`RestartSec=100ms`). The loop bounds hold: the start limit (10 in 300 s) is
 reached by any loop the lifetime model knows (10 x (0.1 + 10) s = 101 s < 300 s, `tests/shell/unit_restart_limits.sh`), and the
@@ -127,3 +128,62 @@ the same tree, no new root file without a line in the script's roots (every `.qm
   delay of 100 ms (see the report for the nested commands).
 - Open until measured in a nested session: that windows created under a `LazyLoader` behave as under the root (the proxy has no
   Wayland); that the cache folder is the one Quickshell sets under the unit's `UnsetEnvironment=QML_DISK_CACHE_PATH`.
+
+## Amendment 2026-11-10 (integrator, delegated decision; owner informed)
+
+Changes D-6 only (the sentence "Search, Apps, Overview and the Switcher stay (P4, A10)" no longer holds for Search, Apps and Overview; the
+Switcher itself, whose IPC target and key handling stay, and the Saver stay as D-6 says). Nothing else of this ADR changes.
+
+What changed. `Search`, `Overview`, `AppsController` (Apps), `OsdWindow` and `SwitcherWindow` are built by `LazyLoader { activeAsync: true }`
+right after "started", not before it. Measured by marking each root child of `shell.qml` (nested, load 3 to 5, warm cache, `MARK` objects
+dropped afterwards): the finalisation of their windows and content was Apps 280 ms, SwitcherWindow 140, Search 103, Overview 71, OsdWindow 47 (about
+0.65 s of a 2.66 s start). The cache itself already saves about 2.6 s (no-cache median 5.4 s against 2.8 s); the C++ plugins cost under 0.1 s
+together; surfaces deferred by `LazyLoader { active: false }` alone or by URL (`source`) gave nothing measurable, the saving is in not
+instantiating their windows before the first frame. "started" means what it did (the root's `Component.onCompleted`).
+
+No request is lost. A request that reaches the shell before a surface is built is remembered and performed when it exists:
+- `early` in `shell.qml` keeps one pending request per surface, the last winning (a toggle flips the wanted state, open and close set
+  it: open then close ends closed; a Clipboard-view request is kept as such; a Search open keeps its text) and drops it if it is older than
+  `Tokens.deferredRequestMaxAgeMs` (5 s). The surface's own checks apply when it is performed (a locked session refuses, as for any request).
+- The IPC targets `search`, `apps` and `overview` answer from the start: until a surface is built, a forwarding `IpcHandler` in
+  `shell.qml` (same names and dev gates for the test hooks) takes the request; the surface's own handler is switched on right after the
+  forwarding one is off (`ipcEnabled`, in `Search.qml`, `Overview.qml`, `AppsController.qml`), so a target never has two handlers (Quickshell
+  warns and uses one). Key bindings, hot corners and gestures reach the shell by these targets.
+- The menu bar's search button and the Dock's apps button ask `early` while the surface is null.
+- The OSD window shows the last OSD event received before it was built (`Osd.replay`, bounded by the same age).
+- The app switcher's window is a view of the controller's state (`switcher.active`): built late, it shows what is active.
+- In practice a request made in the first seconds waits in the IPC socket until the main thread is free, which is after the surfaces are
+  built (the nested measurement: a first `apps open` was answered 2.2 s after "started", after "surface built apps"); `early` covers the
+  requests that are served between two incubation steps and every non-IPC caller.
+- Test: `tests/shell/deferred_early.sh` (nested layer) restarts the nested shell with `GRASSFIELD_DEFER_HOLD=1` (dev session only, ADR-0019
+  table; holds the loaders until `qs ipc call deferred release`), sends requests while the surfaces do not exist, releases and reads the
+  surfaces back: Search open with its text, Apps open, two early toggles ending closed, open then close ending closed; and that the log
+  has no handler conflict. With `early.deliver` neutered the first case fails (checked).
+
+Gain, same nested commands as the original measurement (launch = the "Launching config" log line; strict alternation, one sample per
+switch of the file set, 9 each, 1-minute load 7.0 to 9.4, other lanes running, so above the load of 6 asked for; the order of the pairs is
+the order of the table):
+
+| sample | origin/main (s) | load | this change (s) | load |
+|---|---|---|---|---|
+| 1 | 3.56 | 7.14 | 2.59 | 7.44 |
+| 2 | 3.32 | 8.10 | 2.49 | 7.85 |
+| 3 | 3.03 | 7.71 | 2.80 | 7.33 |
+| 4 | 4.31 | 7.04 | 2.83 | 8.36 |
+| 5 | 3.90 | 8.02 | 3.37 | 7.99 |
+| 6 | 2.93 | 8.97 | 3.08 | 9.30 |
+| 7 | 3.90 | 9.06 | 2.93 | 9.06 |
+| 8 | 4.08 | 8.98 | 3.28 | 9.43 |
+| 9 | 4.07 | 9.28 | 3.14 | 9.37 |
+| median | 3.90 | | 2.93 | |
+
+(Earlier runs at load 4.2 to 7.2: 2.84 s against 2.31 s median, 9 each.) From the process start the median is 3.41 s here
+(origin/main 4.36 s); process start to the "Launching config" line is about 0.45 s.
+
+Follow-up, not done here: `AppsController.rebuildApps` (the Launchpad's list, 75 apps) runs as one 321 ms step on the main thread about
+4 s after "started", when the apps list becomes ready (a stutter after the start, not part of R1). It wants to be incremental or built
+on first use; the surfaces' windows could also be built one per frame.
+
+Consequences. A request in the first second after "started" still takes effect (delayed until the surface exists); a request older than
+5 s when the surface appears is dropped. Open until measured on the real session: the first-frame behaviour of windows built after the
+first frame (the nested proxy has no real display), and the "usable" time (the nested entrance waits for icons, so it does not discriminate).
