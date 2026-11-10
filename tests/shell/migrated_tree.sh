@@ -88,8 +88,8 @@ if command -v qs >/dev/null; then
   check grep -q 'LATE=V1$' "$tmp/q/real.log"
   desc="a process started through the link loads its late file from B (V2): why every process and every caller uses the real path"
   check grep -q 'LATE=V2$' "$tmp/q/link.log"
-  desc="the launchers address the processes by the real path (readlink -f), never the link: shell-run.sh, nested-up.sh, the nested security tests"
-  check bash -c 'grep -q "shell_dir=\$(readlink -f \"\$dev/migrated\")/shell" "$1/scripts/dev/shell-run.sh" && grep -q "shell_dir=\$(readlink -f \"\$dev/migrated\")/shell" "$1/scripts/dev/nested-up.sh" && for t in l2_wrong_password lock_keyboard_replaced reload_locked lock_privacy; do grep -q "readlink -f \"\$root/.dev/migrated\"" "$1/tests/security/$t.sh" || exit 1; done' _ "$root"
+  desc="the launchers address the processes by the real path of the stamped tree (built from the printed stamp, no readlink of the link): shell-run.sh, nested-up.sh; the nested security tests read the link once"
+  check bash -c 'grep -q "shell_dir=\$tree_dir/shell" "$1/scripts/dev/shell-run.sh" && grep -q "shell_dir=\$dev/migrated-\$tree_stamp/shell" "$1/scripts/dev/nested-up.sh" && ! grep -q "readlink -f \"\$dev/migrated\"" "$1/scripts/dev/shell-run.sh" "$1/scripts/dev/nested-up.sh" && for t in l2_wrong_password lock_keyboard_replaced reload_locked lock_privacy; do grep -q "readlink -f \"\$root/.dev/migrated\"" "$1/tests/security/$t.sh" || exit 1; done' _ "$root"
 else
   echo "SKIP: no quickshell (a process on the real path of an old tree keeps loading from it)"
 fi
@@ -136,4 +136,8 @@ desc="shell-run.sh builds the tree only through migrated-tree.sh and removes no 
 check bash -c 'grep -q "scripts/dev/migrated-tree.sh" "$1" && ! grep -qE "rm -rf .*(\\\$mig|migrated)" "$1"' _ "$sr"
 desc="shell-run.sh starts the security process from the same tree as the UI (security_qml follows shell_dir)"
 check bash -c 'grep -q "^security_qml=\$shell_dir/security.qml" "$1" && grep -q "setsid qs -p \"\$security_qml\"" "$1"' _ "$sr"
+desc="shell-run.sh --security never builds: it reads the tree the UI started from (.dev/ui.tree) and refuses without a record or when the tree is gone"
+check bash -c 'grep -q "tree_stamp=\$(cat \"\$dev/ui.tree\"" "$1" && grep -q "no record of the migrated tree" "$1" && grep -q "is gone or not a directory" "$1"' _ "$sr"
+desc="a plain run records the tree in .dev/ui.tree (the record is removed when the UI runs the source tree)"
+check bash -c 'grep -q "tree_stamp\" >\"\$dev/ui.tree\"" "$1" && grep -q "rm -f \"\$dev/ui.tree\"" "$1"' _ "$sr"
 exit "$fail"

@@ -66,6 +66,35 @@ dev_nested_target "$dev" || exit 1
 sig=$DEV_NESTED_SIG
 sock=$DEV_NESTED_SOCK
 
+shell_dir=$root/shell
+if [[ $migrated == 1 ]]; then
+  # The packaged form of the UI tree (scripts/dev/migrate-qs-imports.py, ADR-0056): file: URLs, so Qt's QML disk cache serves
+  # it. The parents of shell/ that dev code reaches (../VERSION, ../packaging, ../branding, ../.dev) are links to the repository.
+  # scripts/dev/migrated-tree.sh never deletes or rewrites a tree a process may use: a changed source is built into a fresh
+  # directory and .dev/migrated is repointed with one rename; its stamp names the tree content (security_sig below).
+  if ((only_security)); then
+    # `--security` never builds: the running UI addresses `<its tree>/security.qml`, so the security process starts from the tree
+    # the UI was started from (the stamp recorded in .dev/ui.tree when it started), even if shell/ changed since.
+    tree_stamp=$(cat "$dev/ui.tree" 2>/dev/null || true)
+    [[ $tree_stamp =~ ^[0-9a-f]{16}$ ]] || { echo "shell-run: --security --migrated: no record of the migrated tree the UI runs from (.dev/ui.tree): start the UI first (shell-run.sh --migrated)" >&2; exit 1; }
+  else
+    tree_stamp=$("$root/scripts/dev/migrated-tree.sh" "$root" "$dev") || { echo "shell-run: the migrated tree did not build" >&2; exit 1; }
+  fi
+  # Started and addressed by the REAL path of the stamped tree, built from the stamp migrated-tree.sh printed (it decided under
+  # its lock), never through the .dev/migrated link: a concurrent build could repoint the link after the lock was released, and
+  # Quickshell keeps the literal path, so the process would run another tree than the one security_sig names.
+  tree_dir=$dev/migrated-$tree_stamp
+  if [[ -L $tree_dir || ! -d $tree_dir ]]; then
+    echo "shell-run: the migrated tree $tree_dir is gone or not a directory${only_security:+ (the one the UI was started from: restart the UI)}" >&2
+    exit 1
+  fi
+  shell_dir=$tree_dir/shell
+fi
+# The tree the UI runs from, for `--security` (above): written by a plain run, removed when the UI runs the source tree.
+if ((!only_security)); then
+  if [[ $migrated == 1 ]]; then printf '%s\n' "$tree_stamp" >"$dev/ui.tree"; else rm -f "$dev/ui.tree"; fi
+fi
+
 # The shell runs as a session leader (setsid): its whole group stops, so that no orphaned qs stays behind. Only a record
 # that still matches its process is signalled (scripts/dev/pidfile.sh). `--security` stops the security process instead
 # (below); the UI keeps running.
@@ -75,17 +104,6 @@ else
   dev_stop "$dev/shell.pid" grassfield-shell >/dev/null || exit 1
 fi
 
-shell_dir=$root/shell
-if [[ $migrated == 1 ]]; then
-  # The packaged form of the UI tree (scripts/dev/migrate-qs-imports.py, ADR-0056): file: URLs, so Qt's QML disk cache serves
-  # it. The parents of shell/ that dev code reaches (../VERSION, ../packaging, ../branding, ../.dev) are links to the repository.
-  # scripts/dev/migrated-tree.sh never deletes or rewrites a tree a process may use: a changed source is built into a fresh
-  # directory and .dev/migrated is repointed with one rename; its stamp names the tree content (security_sig below).
-  tree_stamp=$("$root/scripts/dev/migrated-tree.sh" "$root" "$dev") || { echo "shell-run: the migrated tree did not build" >&2; exit 1; }
-  # Started and addressed by the REAL path of the stamped tree, never through the .dev/migrated link: Quickshell keeps the literal
-  # path, so a process started through the link would load its late files from the tree the link points to by then.
-  shell_dir=$(readlink -f "$dev/migrated")/shell
-fi
 # The security process runs from the same tree as the UI: the UI's lock requests (shell/security/lock LockClient) and the key
 # bindings address `<shell dir>/security.qml`, and an instance is identified by its path. With --migrated that is the migrated
 # tree's security.qml (kept verbatim by the migration, loaded through qs: as in the package); without it, the source tree's.
