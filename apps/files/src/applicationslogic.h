@@ -210,15 +210,17 @@ bool parseState(const QString &text, QHash<QString, QString> *out);
 //    web; a choice of any other application keeps the whole group out for good ("done"). Entries of the session list that already
 //    name the group's own application are not a choice;
 //  - "seeded": watched are the user's own lists (the configuration directory's mimeapps.list and desktop lists, never the system's
-//    or the data directories') and the session list. Our own entries that an earlier xdg-settings rollback left in mimeapps.list
-//    (a line exactly "type=application" for a type the record shows had another value) are removed. A different value there
-//    (xdg-settings, omarchy default browser, a browser's "make default"), or a session-list entry that is no more ours, is the
-//    person's choice: the seeded entries go (the other kept) and the group is "done";
+//    or the data directories') and the session list. A different value in the user's lists (xdg-settings outside the session,
+//    omarchy default browser, a browser's "make default"), or a session-list entry that is no more ours (Change All… in Files),
+//    is the person's choice: the seeded entries go from the session list (an entry the person made stays) and the group is
+//    "done". Grassfield never writes, edits or deletes a line of the user's own lists (`xdg-mime default` and `gio mime` lines
+//    for Sanaga or Notes are the person's and survive every start);
 //  - "user" (Settings or the xdg-settings stand-in wrote the choice): the same watch; the lists agreeing with the choice only move
 //    the baseline, any other value is followed (the session entries go) and the group is "done";
 //  - "done", an unknown value, or a record without its baseline: nothing.
-// The record is written before the lists, so a failed write never leaves entries that read as the person's own. An unreadable
-// list, a list or record that is corrupt, a linked session list: nothing is decided and false is returned. True when a file was
-// written.
+// Additions to the session list (a first seed, entries put back) are written after the record, so that a failed write never leaves
+// entries that read as the person's own; removals (a group the person took over) before it, so that a failed write never leaves
+// our entries behind for a group that is no more ours. An unreadable list, a list or record that is corrupt, a linked session
+// list: nothing is decided and false is returned. True when a file was written.
 bool seedBundledApps(const QString &configDir, const QString &stateFile, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
 } // namespace DefaultApps

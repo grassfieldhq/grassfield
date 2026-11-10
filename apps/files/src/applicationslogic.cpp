@@ -1099,26 +1099,6 @@ bool writeWhole(const QString &path, const QString &text)
     out.write(text.toUtf8());
     return out.commit();
 }
-
-// The text without the entries of `types` whose whole value is exactly `desktopId` or `desktopId;`; every other line kept.
-QString withoutExactEntries(const QString &listText, const QStringList &types, const QString &desktopId)
-{
-    QStringList out;
-    bool in = false;
-    for (const QString &line : listText.split(QLatin1Char('\n'))) {
-        if (isGroupLine(line)) {
-            in = line.trimmed() == kGroup;
-            out << line;
-            continue;
-        }
-        const QString key = in ? keyOf(line) : QString();
-        const QString value = valueOf(line);
-        if (!key.isEmpty() && types.contains(key) && (value == desktopId || value == desktopId + QLatin1Char(';')))
-            continue;
-        out << line;
-    }
-    return out.join(QLatin1Char('\n'));
-}
 } // namespace
 
 QList<BundledGroup> bundledGroups()
@@ -1173,17 +1153,15 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
         return false;
     // Every list the lookup reads decides a first seed; only the user's own (the configuration directory's: mimeapps.list and the
     // desktop lists there) are watched afterwards, so a package update of /usr/share/applications/mimeapps.list never counts.
+    // Grassfield never writes, edits or deletes a line of the user's own lists: it only reads them.
     QStringList user;
     if (!readLists(userLists, &user))
         return false; // a list that cannot be read: nothing is decided
     const QString ownPrefix = configDir + QLatin1Char('/');
-    QStringList ownPaths;
     QStringList own;
     for (qsizetype i = 0; i < userLists.size(); ++i) {
-        if (userLists.at(i).startsWith(ownPrefix)) {
-            ownPaths << userLists.at(i);
+        if (userLists.at(i).startsWith(ownPrefix))
             own << user.at(i);
-        }
     }
     QStringList stock;
     if (!omarchyDir.isEmpty()) {
@@ -1210,14 +1188,18 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
     QString list;
     if (!readListFile(listPath, true, &list))
         return false;
-    const QString mimeappsPath = configDir + QStringLiteral("/mimeapps.list");
-    QString mimeapps;
-    if (!readListFile(mimeappsPath, true, &mimeapps))
-        mimeapps.clear(); // a linked or unreadable list is never edited: only the cleaning below needs it
-    const bool mimeappsEditable = QFileInfo(mimeappsPath).isFile() && !QFileInfo(mimeappsPath).isSymLink();
-    const QString mimeappsOriginal = mimeapps;
+    // The session list in two stages. Removals (a group the person took over) are written BEFORE the record, so that a failed write
+    // never leaves our entries behind for a group that is no more ours (the next start finds the same difference and redoes it);
+    // additions (a first seed, entries put back) AFTER it, so that a failed write never leaves entries that read as the person's own.
     const QString listOriginal = list;
+    QString removed = list;
     bool changedState = false;
+    const auto seedsOf = [](const BundledGroup &g) {
+        QList<QPair<QString, QString>> seeds;
+        for (const QString &t : g.types)
+            seeds.append({t, g.desktopId});
+        return seeds;
+    };
     for (const BundledGroup &g : bundledGroups()) {
         const QString key = g.name + QStringLiteral(".state");
         const QString st = state.value(key);
@@ -1227,6 +1209,13 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
             continue; // a value this version does not know: left alone
         const auto valueKey = [&](const QString &t) { return g.name + QLatin1Char('.') + t; };
         const auto nowOwn = [&](const QString &t) { return lookedUp(own, t); };
+        // The group is the person's from now on: our entries leave the session list (theirs stay), never to come back.
+        const auto takeOver = [&](const QString &application) {
+            removed = withoutDefaults(removed, g.types, application);
+            list = withoutDefaults(list, g.types, application);
+            state.insert(key, QStringLiteral("done"));
+            changedState = true;
+        };
         if (st.isEmpty()) {
             if (!usableEntry(applicationDirs, g.desktopId, g.types))
                 continue; // not installed (yet), or a launcher: nothing is recorded, a later start tries again
@@ -1255,10 +1244,7 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
                 changedState = true;
                 continue;
             }
-            QList<QPair<QString, QString>> seeds;
-            for (const QString &t : g.types)
-                seeds.append({t, g.desktopId});
-            list = withSeeds(list, seeds);
+            list = withSeeds(list, seedsOf(g));
             state.insert(key, QStringLiteral("seeded"));
             for (const QString &t : g.types)
                 state.insert(valueKey(t), nowOwn(t).isEmpty() ? QStringLiteral("-") : nowOwn(t));
@@ -1275,30 +1261,15 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
             const QString v = state.value(valueKey(t));
             return v == QLatin1String("-") ? QString() : v;
         };
-        if (st == QLatin1String("seeded") && mimeappsEditable) {
-            // An earlier rollback of xdg-settings (it restored what it read, our own entry, into the user's list): lines that are exactly
-            // what this seed writes, for a type the record shows had another value.
-            QStringList stray;
-            for (const QString &t : g.types) {
-                if (recorded(t) != g.desktopId)
-                    stray << t;
-            }
-            mimeapps = withoutExactEntries(mimeapps, stray, g.desktopId);
-            if (mimeapps != mimeappsOriginal) {
-                own.clear();
-                for (qsizetype i = 0; i < ownPaths.size(); ++i)
-                    own << (ownPaths.at(i) == mimeappsPath ? mimeapps : user.at(userLists.indexOf(ownPaths.at(i))));
-            }
-        }
         const QHash<QString, QString> session = defaults(list);
         if (st == QLatin1String("seeded")) {
-            // An entry of the session list that is no more ours (Change All… in Files, a hand edit) is the person's choice.
+            // An entry of the session list that is no more ours (Change All… in Files, a hand edit) is the person's choice: a user
+            // choice, so the seed yields (macOS: a choice in the Get Info panel is the person's); the entry they made stays.
             bool elsewhere = false;
             for (const QString &t : g.types)
                 elsewhere = elsewhere || (session.contains(t) && session.value(t) != g.desktopId);
             if (elsewhere) {
-                state.insert(key, QStringLiteral("done"));
-                changedState = true;
+                takeOver(g.desktopId);
                 continue;
             }
         }
@@ -1307,12 +1278,7 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
             same = same && recorded(t) == nowOwn(t);
         if (same) {
             if (st == QLatin1String("seeded"))
-                list = withSeeds(list, [&] {
-                    QList<QPair<QString, QString>> s;
-                    for (const QString &t : g.types)
-                        s.append({t, g.desktopId});
-                    return s;
-                }()); // entries missing (a first write that failed) are put back, never replaced
+                list = withSeeds(list, seedsOf(g)); // entries missing (a first write that failed) are put back, never replaced
             continue;
         }
         if (st == QLatin1String("user")) {
@@ -1328,20 +1294,30 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
                 continue;
             }
             // Something else wrote the user's lists after the choice (xdg-settings outside the session, a browser's own check): follow it.
-            list = withoutDefaults(list, g.types, QString());
+            takeOver(QString());
         } else {
-            // After the seed something else wrote the lists (xdg-settings, omarchy default browser, a browser's "make default"):
-            // that is the person's choice. The seeded entries go and nothing seeds again.
-            list = withoutDefaults(list, g.types, g.desktopId);
+            // After the seed the person's own lists changed. Every changed type now naming the group's own application (`xdg-mime
+            // default sanaga.desktop …`, Notes' own "open .md with Notes", `gio mime`) agrees with the seed: only the baseline moves
+            // and the seeded entries stay. Any other value (xdg-settings, omarchy default browser, a browser's "make default") is the
+            // person's choice: the seeded entries go and nothing seeds again.
+            bool toOurs = true;
+            for (const QString &t : g.types)
+                toOurs = toOurs && (recorded(t) == nowOwn(t) || nowOwn(t) == g.desktopId);
+            if (toOurs) {
+                for (const QString &t : g.types)
+                    state.insert(valueKey(t), nowOwn(t).isEmpty() ? QStringLiteral("-") : nowOwn(t));
+                changedState = true;
+                continue;
+            }
+            takeOver(g.desktopId);
         }
-        state.insert(key, QStringLiteral("done"));
-        changedState = true;
     }
-    const bool changedList = list != listOriginal;
-    const bool changedMimeapps = mimeapps != mimeappsOriginal;
-    if (!changedState && !changedList && !changedMimeapps)
+    const bool removals = removed != listOriginal;
+    const bool additions = list != removed;
+    if (!changedState && !removals && !additions)
         return false;
-    // The record first: a list written before a record that then fails would read as the person's own choice at the next start.
+    if (removals && !writeWhole(listPath, removed))
+        return false;
     if (changedState) {
         QStringList keys = state.keys();
         keys.sort();
@@ -1351,9 +1327,7 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
         if (!writeWhole(stateFile, out))
             return false;
     }
-    if (changedMimeapps && !writeWhole(mimeappsPath, mimeapps))
-        return false;
-    if (changedList && !writeWhole(listPath, list))
+    if (additions && !writeWhole(listPath, list))
         return false;
     return true;
 }
