@@ -9,10 +9,11 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
      AuthAgent there would be a second polkit agent of the session, a SecretAgent a second client of grassfield-prompter;
   1b. nor builds one from strings (the opus review of S3, MINOR-2): in the UI tree and in ui/ (Grassfield.Ui, which both
      processes load), no Qt.createQmlObject; a createComponent or a Loader/LazyLoader source only as one plain string
-     literal (a computed source cannot be read), but for the desktop widgets' one computed source, whose function
-     (shell/widgets/Registry.qml `source`) is then held to return only plain resolvedUrl literals of builtin/ files or "";
-     and no string literal (comments aside, string contents read) that names a security path (`security/`, `qs.security`),
-     Quickshell.Services.Polkit or a security type (STRING_NAMES);
+     literal or Qt.resolvedUrl of one (a computed source cannot be read), but for the desktop widgets' one computed source,
+     whose function (shell/widgets/Registry.qml `source`) is then held to return only plain resolvedUrl literals of
+     builtin/ files or ""; and no string literal (comments aside, string contents read) that names a security path
+     (`security/`, `qs.security`), Quickshell.Services.Polkit or a security type (STRING_NAMES), web addresses (http, https)
+     aside, which name no file of the tree (file: and qrc: addresses are read; the opus delta review of S3, NIT);
   2. shell/security/host/SecurityHost.qml instantiates Idle exactly once (one idle module, one sleep inhibitor) and only the
      types listed in HOST_TYPES, and makes the sheets at run time (S3: shell/security/host/SheetHost.qml, created once by
      its URL, never declared, so that a sheet that cannot load never keeps the lock from loading); SheetHost.qml instantiates
@@ -73,6 +74,16 @@ _STRING = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\]
 ALLOWED_COMPUTED = {("shell/widgets/WidgetHost.qml", "Registry.source(root.widgetId)")}
 REGISTRY = "shell/widgets/Registry.qml"
 _LITERAL = re.compile(r'^\s*("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')\s*;?\s*$')
+# A source that is one plain literal resolved against the file (the opus delta review of S3, NIT): as readable as the literal,
+# which the string rule still reads.
+_RESOLVED_LITERAL = re.compile(r'^\s*Qt\.resolvedUrl\(\s*("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')\s*\)\s*;?\s*$')
+# A web address (http or https): it names no file of the tree, whatever its path says (the same NIT). file: and qrc: do.
+_WEB_URL = re.compile(r'^["\'`]https?://')
+
+
+def readable_source(text):
+    """One plain string literal, or Qt.resolvedUrl of one."""
+    return bool(_LITERAL.match(text) or _RESOLVED_LITERAL.match(text))
 
 
 def top_level(block):
@@ -107,8 +118,8 @@ def built_from_strings(path, src):
             depth += {"(": 1, ")": -1}.get(with_strings[i], 0)
             i += 1
         args = with_strings[m.end():i - 1]
-        if not _LITERAL.match(args):
-            out.append(f"{path}: createComponent with a computed source ({args.strip()[:60]}): only one plain string literal can be checked")
+        if not readable_source(args):
+            out.append(f"{path}: createComponent with a computed source ({args.strip()[:60]}): only one plain string literal (or Qt.resolvedUrl of one) can be checked")
     for m in re.finditer(r"\b(?:Lazy)?Loader\s*\{", with_strings):
         depth, i = 0, m.end() - 1
         for j in range(m.end() - 1, len(with_strings)):
@@ -120,10 +131,10 @@ def built_from_strings(path, src):
         for s in re.finditer(r"(?:^|[\s;{])source\s*:\s*([^\n;}]*)", own):
             if (path, s.group(1).strip()) in ALLOWED_COMPUTED:
                 continue
-            if not _LITERAL.match(s.group(1)):
-                out.append(f"{path}: a Loader with a computed source ({s.group(1).strip()[:60]}): only one plain string literal can be checked")
+            if not readable_source(s.group(1)):
+                out.append(f"{path}: a Loader with a computed source ({s.group(1).strip()[:60]}): only one plain string literal (or Qt.resolvedUrl of one) can be checked")
     for s in _STRING.finditer(with_strings):
-        if STRING_NAMES.search(s.group(0)):
+        if STRING_NAMES.search(s.group(0)) and not _WEB_URL.match(s.group(0)):
             out.append(f"{path}: a string names a security path, module or type ({s.group(0)[:60]}): the UI builds no security code")
     return out
 CLIENT = "shell/services/LockClient.qml"
@@ -370,6 +381,10 @@ def main(argv):
             ("createComponent of the agent's file in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(\"security/polkit/AuthAgent.qml\")\n    Saver {\n", 1)),
             ("a security type named in a string of a UI script", "shell/services/LockClient.js", lambda s: s + "\nvar kind = \"SecretAgent\";\n"),
             ("the polkit module named in a string in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property string m: \"Quickshell.Services.Polkit\"\n    Saver {\n", 1)),
+            ("a Loader of Qt.resolvedUrl of the agent's file in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: Qt.resolvedUrl(\"security/polkit/AuthAgent.qml\")\n    }\n    Saver {\n", 1)),
+            ("a Loader of Qt.resolvedUrl of a computed file in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: Qt.resolvedUrl(\"sec\" + \"urity/polkit/AuthAgent.qml\")\n    }\n    Saver {\n", 1)),
+            ("createComponent of Qt.resolvedUrl of a property in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(Qt.resolvedUrl(root.agentFile))\n    Saver {\n", 1)),
+            ("a file: address of the agent in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property string f: \"file:///usr/share/grassfield/shell/security/polkit/AuthAgent.qml\"\n    Saver {\n", 1)),
             ("the widget registry returning a computed file", REGISTRY, lambda s: s.replace('            return Qt.resolvedUrl("builtin/clock/Clock.qml");', '            return Qt.resolvedUrl(id);', 1)),
             ("the widget registry returning a file outside builtin/", REGISTRY, lambda s: s.replace('            return Qt.resolvedUrl("builtin/clock/Clock.qml");', '            return Qt.resolvedUrl("../" + "Clock.qml");', 1)),
             ("another computed Loader source next to the allowed one", "shell/widgets/WidgetHost.qml", lambda s: s.replace("Registry.source(root.widgetId)", "Registry.source(root.widgetId + \"\")", 1)),
@@ -407,6 +422,24 @@ def main(argv):
             found = findings(dict(files, **{path: after}), singletons)
             print(("PASS: " if found else "FAIL: ") + f"security process scan selftest: {what} is found" + (f" ({found[0]})" if found else ""))
             ok = ok and bool(found)
+        # What the rules allow (the opus delta review of S3, NIT): planted, none is a finding; M1 and M2 above still are.
+        allowed = [
+            ("a Loader of Qt.resolvedUrl(\"<a UI file>\") in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: Qt.resolvedUrl(\"saver/Saver.qml\")\n    }\n    Saver {\n", 1)),
+            ("createComponent(Qt.resolvedUrl(\"<a UI file>\")) in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property var made: Qt.createComponent(Qt.resolvedUrl('saver/Saver.qml'))\n    Saver {\n", 1)),
+            ("a Loader of a plain https address in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Loader {\n        source: \"https://example.org/Thing.qml\"\n    }\n    Saver {\n", 1)),
+            ("an https link whose path says security/ in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    property string help: \"https://example.org/security/advisories\"\n    Saver {\n", 1)),
+            ("an http link whose path says security/ in Grassfield.Ui", "ui/Grassfield/Ui/Material.qml", lambda s: s.rstrip("\n").rstrip("}") + "    property string help: \"http://example.org/security/\"\n}\n"),
+        ]
+        for what, path, change in allowed:
+            before = files[path]
+            after = change(before)
+            if after == before:
+                print(f"FAIL: security process scan selftest: the allowed case '{what}' does not apply to {path} (stale)")
+                ok = False
+                continue
+            found = findings(dict(files, **{path: after}), singletons)
+            print(("PASS: " if not found else "FAIL: ") + f"security process scan selftest: {what} is allowed" + (f" (found: {found[0]})" if found else ""))
+            ok = ok and not found
         return 0 if ok else 1
     repo = argv[0]
     found = findings(tree(repo), services_singletons(repo))
