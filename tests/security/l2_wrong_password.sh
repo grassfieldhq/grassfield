@@ -18,9 +18,9 @@ set -uo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 # GRASSFIELD_MIGRATED=1: the nested session runs the packaged form of the UI tree (scripts/dev/shell-run.sh --migrated,
-# ADR-0056): both instances are addressed by their path under .dev/migrated.
+# ADR-0056): both instances are addressed by the REAL path of the stamped tree (readlink -f .dev/migrated), as they were started.
 ui_dir=$root/shell; sec_qml=$root/shell/security.qml
-[[ ${GRASSFIELD_MIGRATED:-0} == 1 ]] && { ui_dir=$root/.dev/migrated/shell; sec_qml=$ui_dir/security.qml; }
+[[ ${GRASSFIELD_MIGRATED:-0} == 1 ]] && { ui_dir=$(readlink -f "$root/.dev/migrated")/shell; sec_qml=$ui_dir/security.qml; }
 dev=$root/.dev
 # shellcheck source=../../scripts/dev/pidfile.sh
 . "$root/scripts/dev/pidfile.sh"

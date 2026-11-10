@@ -61,7 +61,12 @@ plugin=${GRASSFIELD_PLUGIN:-$root/compositor/build/grassfield-compositor.so}
 
 # The shell tree the bindings address (`qs ipc -p`): the source, or with --migrated the packaged form shell-run.sh builds.
 shell_dir=$root/shell
-[[ ${GRASSFIELD_MIGRATED:-0} == 1 ]] && shell_dir=$dev/migrated/shell
+if [[ ${GRASSFIELD_MIGRATED:-0} == 1 ]]; then
+  # Built now (shell-run.sh finds the same stamp later) and addressed by its REAL path, as the processes are started: the link is
+  # never a process's path (scripts/dev/migrated-tree.sh).
+  "$root/scripts/dev/migrated-tree.sh" "$root" "$dev" >/dev/null || { echo "nested-up: the migrated tree did not build" >&2; exit 1; }
+  shell_dir=$(readlink -f "$dev/migrated")/shell
+fi
 
 # 2. Start Hyprland nested. Its children inherit the nested WAYLAND_DISPLAY/HYPRLAND_INSTANCE_SIGNATURE.
 env -u HYPRLAND_INSTANCE_SIGNATURE -u HYPRLAND_CMD -u DISPLAY \

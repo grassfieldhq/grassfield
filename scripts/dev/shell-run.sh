@@ -82,7 +82,9 @@ if [[ $migrated == 1 ]]; then
   # scripts/dev/migrated-tree.sh never deletes or rewrites a tree a process may use: a changed source is built into a fresh
   # directory and .dev/migrated is repointed with one rename; its stamp names the tree content (security_sig below).
   tree_stamp=$("$root/scripts/dev/migrated-tree.sh" "$root" "$dev") || { echo "shell-run: the migrated tree did not build" >&2; exit 1; }
-  shell_dir=$dev/migrated/shell
+  # Started and addressed by the REAL path of the stamped tree, never through the .dev/migrated link: Quickshell keeps the literal
+  # path, so a process started through the link would load its late files from the tree the link points to by then.
+  shell_dir=$(readlink -f "$dev/migrated")/shell
 fi
 # The security process runs from the same tree as the UI: the UI's lock requests (shell/security/lock LockClient) and the key
 # bindings address `<shell dir>/security.qml`, and an instance is identified by its path. With --migrated that is the migrated
