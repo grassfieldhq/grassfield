@@ -13,7 +13,7 @@
 //     Every map is increasing and keeps a minimum slope, so the internal contrast of an icon survives (A2 "internal contrast").
 //  TILES. An icon that is already a rounded square covers the plate, so nothing has to separate from it and the maps keep the luminance of
 //     every pixel (a contrast ratio between two parts of the icon survives, so does the one against the background; A2 rules I, S, N, E):
-//       Dark   no lift (tileDarkArtLift), the same desaturation, the lightest tone at tileDarkArtScale (dark appearance, solid window material) or darkArtScale.
+//       Dark   no lift (tileDarkArtLift), the same desaturation.
 //       Clear  neutral grey at the luminance of the pixel, opaque (a translucent ink would take the backdrop into the contrast).
 //       Tinted the tint at the luminance of the pixel: darker than the tint scaled, lighter than the tint mixed toward white.
 //  There is no rim, ring or halo (owner decisions 2026-10-23 and 2026-11-10): a mode only changes the colour; nothing is drawn around a tile.
@@ -35,7 +35,6 @@ layout(std140, binding = 0) uniform buf {
     float darkPlateLuma;
     float darkArtSaturation;
     float darkArtScale;
-    float tileDarkArtScale;   // Dark, a tile in the dark appearance over a solid window material: the lightest tone (darkArtScale for everything else)
     float darkArtLift;
     float tile;               // 1: the icon is its own rounded-square tile (own-tile rule): luminance-preserving maps, see below
     float tileDarkArtLift;
@@ -121,7 +120,7 @@ void main() {
     // pixel moves towards it; IconEffect chooses the side (IconModes.tileToneSide, the pure rule that tst_iconmodes checks) and only for icons declared on a solid
     // window material (TintedIcon.solidMaterial: never the Dock, Launchpad or other glass, whose backdrop the pivots do not describe):
     //   +1 dark appearance: the pixels above the brightest dark material (pivot 0.38 in linear light) are lifted, v' = P + (1 - P) (1 - (1 - u)^e), u = (v - P) / (1 - P),
-    //      e > 1 (an ease-out: continuous, finite slope; a lift compresses pairs of bright tones, so e stays small and is chosen per mode, Dark the smallest);
+    //      e > 1 (an ease-out: continuous, finite slope; a lift compresses pairs of bright tones, so e stays small; Dark has none, see docs/specs/ui.md);
     //   -1 light appearance, material solid: the pixels below the darkest material (pivot 0.62) are darkened, v' = P (v / P)^e with e > 1;
     //   +1 light appearance, the wallpaper showing through (any material from dark grey to white): only the brightest tones, above pivot 0.8, are lifted.
     // Per channel (the hue is kept), the same arithmetic for every mode, only the exponent differs.
@@ -143,7 +142,7 @@ void main() {
         vec3 d = mix(vec3(Y), lin, darkArtSaturation);
         if (isTile) {
             vec3 lo = srgbToLinear(vec3(tileDarkArtLift));
-            art = linearToSrgb(lo + (srgbToLinear(vec3(tileDarkArtScale)) - lo) * d);
+            art = linearToSrgb(lo + (srgbToLinear(vec3(darkArtScale)) - lo) * d);
         } else {
             vec3 lo = toLinear(vec3(darkArtLift));
             art = fromLinear(lo + (toLinear(vec3(darkArtScale)) - lo) * d);

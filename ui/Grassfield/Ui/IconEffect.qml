@@ -42,8 +42,6 @@ ShaderEffect {
     readonly property real darkPlateLuma: Tokens.iconModeDarkPlateLuma
     readonly property real darkArtSaturation: Tokens.iconModeDarkArtSaturation
     readonly property real darkArtScale: Tokens.iconModeDarkArtScale
-    // A tile in Dark: darker lightest tone in the dark appearance over a solid window material (the Dock and other glass keep darkArtScale).
-    readonly property real tileDarkArtScale: (root.solidMaterial && root.darkAppearance && !root.wallpaper) ? Tokens.iconModeTileDarkArtScale : Tokens.iconModeDarkArtScale
     readonly property real darkArtLift: Tokens.iconModeDarkArtLift
     // The icon is its own rounded-square tile (own-tile rule, not over an accent fill): the maps keep the luminance of every pixel.
     property bool ownTile: false

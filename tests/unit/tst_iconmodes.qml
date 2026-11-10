@@ -127,7 +127,6 @@ TestCase {
         verify(t.iconModeTileDarkenExponent > 1, "the darken exponent darkens");
         for (const q of liftExponents())
             verify(q >= 1 && q <= 3, "a lift exponent between none and a strong ease-out: " + q);
-        verify(t.iconModeTileDarkArtScale < t.iconModeDarkArtScale && t.iconModeTileDarkArtScale > 0.8, "Dark has no lift: a darker lightest tone for its tiles instead");
         for (const q of liftExponents()) {
             let lastL = -1, lastD = -1;
             for (let i = 0; i <= 200; i++) {
@@ -207,9 +206,6 @@ TestCase {
         const panel = lum(materialRgb(true, 1, 1.0));
         for (const q of [t.iconModeTileLiftExponentClear, t.iconModeTileLiftExponentTinted])
             verify(best(1, t.iconModeTileLiftPivot, q, panel) >= 1.73, `dark window at transparency 1.0 over white, lift ${q}`);
-        // Dark: no lift; the lightest tone of its tiles is tileDarkArtScale (sRGB) in linear light: the hill's 0.23 becomes 0.23 * linear(scale).
-        const linScale = Math.pow((t.iconModeTileDarkArtScale + 0.055) / 1.055, 2.4);
-        verify(contrast(0.23 * linScale, panel) >= 1.73, `Dark, dark window at transparency 1.0 over white: ${contrast(0.23 * linScale, panel).toFixed(2)}`);
     }
 
     // Selected rows (rule A, tests/unit/tst_iconshader.qml test_a2_accentRow): the plate over the accent fill keeps 4.5:1 in Clear and 2.5:1 in Dark. Both selection
