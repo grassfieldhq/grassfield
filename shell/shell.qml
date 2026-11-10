@@ -141,7 +141,7 @@ ShellRoot {
     Binding {
         target: AppEnergy
         property: "awake"
-        value: overviewSurface.open || switcher.active
+        value: (root.overviewSurface ? root.overviewSurface.open : false) || switcher.active
     }
 
     Connections {
@@ -548,8 +548,11 @@ ShellRoot {
     DesktopIcons {}
     DesktopWidgets {}
     MenuBar {
-        searchActive: searchSurface.open
-        onSearchRequested: searchSurface.toggle()
+        searchActive: root.searchSurface ? root.searchSurface.open : false
+        onSearchRequested: {
+            if (root.searchSurface)
+                root.searchSurface.toggle();
+        }
         captureActive: root.captureSurface ? root.captureSurface.open : false
         onCaptureRequested: screen => {
             if (root.captureSurface)
@@ -558,13 +561,24 @@ ShellRoot {
     }
     Dock {
         id: dock
-        onAppsRequested: appsSurface.toggle()
+        onAppsRequested: {
+            if (root.appsSurface)
+                root.appsSurface.toggle();
+        }
     }
     Overlay {}
     Stages {}
     Banners {}
     NotificationCenter {}
-    OsdWindow {}
+    // The surfaces below that only draw on demand (the OSD, the app switcher's window, Search, Overview, Apps) are built right
+    // after "started", not before (ADR-0056, R1): their windows and content cost about 0.5 s of the start (nested, measured
+    // 2.84 -> 2.31 s median launch to "started"), and nothing asks for them in the first tick. Each one's IPC target and key
+    // binding answer from the moment its loader has built it (within a second of the first frame); a press or an IPC call
+    // before that does nothing, as a press before the shell has started does. The loaders' items are null until then.
+    LazyLoader {
+        activeAsync: true
+        OsdWindow {}
+    }
     // Log Out, Restart and Shut Down end under one fade to the ground (ADR-0040 ID-10; grassfield-session-end asks for it).
     // Built right after "started", not before (ADR-0056, R1): nothing asks for it at login, and its IPC target "session" is there
     // within a tick of the first frame, long before a person can end the session.
@@ -572,9 +586,14 @@ ShellRoot {
         activeAsync: true
         ExitCover {}
     }
-    Search {
-        id: searchSurface
+    LazyLoader {
+        id: searchLoader
+        activeAsync: true
+        Search {
+            id: searchSurface
+        }
     }
+    readonly property var searchSurface: searchLoader.item
     // The one queue of the polkit sheet and the secret sheets (ADR-0035 D-9, master-prompt R12): one sheet on screen at a
     // time, in arrival order; no sheet takes the keyboard from another.
     SheetQueue {
@@ -600,21 +619,34 @@ ShellRoot {
         busInhibited: MenuBridge.screenSaverInhibited
         displaysOff: LockClient.displaysOff
     }
-    Overview {
-        id: overviewSurface
-        // The session lock owns the screen and the keyboard: the overview closes and focuses nothing.
-        locked: SessionState.locked
+    LazyLoader {
+        id: overviewLoader
+        activeAsync: true
+        Overview {
+            id: overviewSurface
+            // The session lock owns the screen and the keyboard: the overview closes and focuses nothing.
+            locked: SessionState.locked
+        }
     }
-    AppsController {
-        id: appsSurface
+    readonly property var overviewSurface: overviewLoader.item
+    LazyLoader {
+        id: appsLoader
+        activeAsync: true
+        AppsController {
+            id: appsSurface
+        }
     }
+    readonly property var appsSurface: appsLoader.item
     Switcher {
         id: switcher
         // The session lock owns the screen and the keyboard: the switcher ends and does not start.
         locked: SessionState.locked
     }
-    SwitcherWindow {
-        controller: switcher
+    LazyLoader {
+        activeAsync: true
+        SwitcherWindow {
+            controller: switcher
+        }
     }
     // The capture toolbar (Shift-Super-5, ADR-0045 OC-1) and the countdown of its timer.
     // Built right after "started", not before (ADR-0056, R1): the toolbar is opened by a key press, never at login. A press in
@@ -634,9 +666,9 @@ ShellRoot {
     // top surface.
     ExclusiveSurfaces {
         surfaces: [
-            {target: overviewSurface, close: () => overviewSurface.requestCloseForOther()},
-            {target: appsSurface, close: () => appsSurface.hide()},
-            {target: searchSurface, close: () => searchSurface.hide()},
+            {target: root.overviewSurface, close: () => root.overviewSurface.requestCloseForOther()},
+            {target: root.appsSurface, close: () => root.appsSurface.hide()},
+            {target: root.searchSurface, close: () => root.searchSurface.hide()},
             {target: switcher, close: () => switcher.cancel()},
             {target: root.captureSurface, close: () => root.captureSurface.hide()}
         ]
