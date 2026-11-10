@@ -1403,7 +1403,8 @@ Other… opens the Choose Application panel. No progress window opens for Undo.
   - `OpenWithHandlerInterface`: Finder's alert for a type with no application, then the Choose Application panel (section 2,
     OW3; 4a-5, 5c-3);
   - `UntrustedProgramHandlerInterface`: refuses with a notice (Files' `LaunchGuard` decides first and never hands an
-    executable to KIO, `docs/specs/security.md` § Files never runs what it opens; this is the second guard).
+    executable to KIO: Files runs programs itself, after its own checks and sheet, `docs/specs/security.md` § Files opens
+    apps the Gatekeeper way; this is the second guard).
     `OpenOrExecuteFileInterface` has no installed header in KIO 6.31: Files never enables the job option that asks it (4a-4).
 - KD2 every answer is the KIO answer the widget dialog gives for the same choice (`RenameDialog_Result`, `SkipDialog_Result`,
   `KIO::WorkerBase::ButtonCode`), so jobs behave exactly as before.

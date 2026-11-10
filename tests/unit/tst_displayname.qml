@@ -18,6 +18,15 @@ TestCase {
         compare(DisplayName.text("a" + c(0x2067) + c(0x2068)), "a<U+2067><U+2068>");
     }
 
+    // Files' fifth security check (V1): RLM + "pdf." + RLM + "Invoice" was drawn "Invoice.pdf"; the marks LRM, RLM and ALM are
+    // written out like the embeddings, with four digits as FileLogic::displayName writes them.
+    function test_bidiMarksAreWrittenOut() {
+        compare(DisplayName.text(c(0x200F) + "pdf." + c(0x200F) + "Invoice"), "<U+200F>pdf.<U+200F>Invoice");
+        compare(DisplayName.text(c(0x061C) + "pdf." + c(0x061C) + "Invoice"), "<U+061C>pdf.<U+061C>Invoice");
+        compare(DisplayName.text(c(0x200F) + "jpg." + c(0x200F) + "Holiday"), "<U+200F>jpg.<U+200F>Holiday");
+        compare(DisplayName.text("marks" + c(0x200E) + "shown" + c(0x200F)), "marks<U+200E>shown<U+200F>");
+    }
+
     function test_lineAndParagraphSeparatorsAreWrittenOut() {
         compare(DisplayName.text("a" + c(0x2028) + "b" + c(0x2029) + "c"), "a<U+2028>b<U+2029>c");
     }
@@ -29,7 +38,7 @@ TestCase {
 
     function test_everythingElseStays() {
         compare(DisplayName.text("say \"hi\" \\ there"), "say \"hi\" \\ there");
-        compare(DisplayName.text("marks" + c(0x200E) + "kept" + c(0x200F)), "marks" + c(0x200E) + "kept" + c(0x200F));
+        compare(DisplayName.text(c(0x05D0) + c(0x0628)), c(0x05D0) + c(0x0628), "right-to-left letters stay");
         compare(DisplayName.text("R" + c(0xE9) + "sum" + c(0xE9)), "R" + c(0xE9) + "sum" + c(0xE9));
         compare(DisplayName.text(undefined), "");
         compare(DisplayName.text(null), "");

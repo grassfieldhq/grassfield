@@ -637,12 +637,16 @@ after; mutants removing a refusal fail it), `tests/security/lock_surfaces.sh` (s
 close-on-lock, IPC routes, screen corners, the polkit sheet; mutation self-test). Nested (bare, outside the sandbox):
 `tests/security/lock_privacy.sh` step `privacy` tries every surface over the lock and checks the captures (DT-08).
 
-## Files never runs what it opens (GF-070, SEC-12, DT-10)
-macOS model (Gatekeeper): double-clicking a downloaded app, script or launcher does not run it; macOS says it was not
-opened, and only a deliberate "Open Anyway" in System Settings runs it. Grassfield Files decides itself, before KIO
-(`KIO::OpenUrlJob::setRunExecutables(false)` documents executables but not every `.desktop` case; KIO's source is not on
-the host): `apps/files/src/launchguard.{h,cpp}` `LaunchGuard::verdict(inspect(url))` for every item `FilesApp::open`
-gets (double-click, File > Open, Ctrl+Down, the context menu; Return renames), before the scripted-test switch:
+## Files opens apps the Gatekeeper way (GF-070, SEC-12, DT-10; amended 2026-11-08)
+macOS model (Gatekeeper). Until 2026-11-08 Files refused every program, script and AppImage it was asked to open (GF-AUDIT-001
+DT-10, commit e6e75bc3). The owner reported (2026-11-08) that no AppImage "or others" could be started from Files and that a
+`.dmg` did nothing: too strict for a desktop. The rule is now Gatekeeper's (ADR-0011 amendment "Files opens apps the
+Gatekeeper way"): opening a program runs it; a program that came from the Internet runs only after the user said Open in a
+sheet that says where it came from; nothing is run silently because of a name. Grassfield Files decides itself, before KIO
+(`KIO::OpenUrlJob::setRunExecutables(false)` stays on every job it starts; KIO's source is not on the host):
+`apps/files/src/launchguard.{h,cpp}` `LaunchGuard::verdict(inspect(url))` for every item `FilesApp::open` gets (double-click,
+File > Open, Ctrl+Down, the context menu; Return renames), before the scripted-test switch. It decides by content (the ELF
+header, a `#!` line, the MIME type of name and content) and by the execute bit, never by the name alone:
 - A desktop entry (named `*.desktop` / `*.kdelnk` / `.directory`, or of type `application/x-desktop`) is never handed to
   KIO, with or without the permission bit, wherever it is (review of a5646b8: KIO downloads a `Type=Link` target and runs
   the handler of the type the server announces, or the application in `X-KDE-LastOpenedWith`; the reviewer ran an
@@ -651,21 +655,187 @@ gets (double-click, File > Open, Ctrl+Down, the context menu; Return renames), b
   application, `ApplicationLauncherJob` with the URL), nothing else; with no default browser it is refused. Any other
   entry is refused, "app launcher": `Type=Application`, `Service`, a missing or unknown Type, an unreadable file, a link to
   a file or another scheme, and an ambiguous entry (a repeated `Type` or `URL`, also across repeated groups, or `URL` with
-  `URL[$e]`: KConfig keeps the last value; or longer than the 64 KiB read).
-- Refused, "program or script": an executable regular file whose type is a program or script (shared-mime-info:
-  `application/x-executable` and its sub-classes, scripts included; `x-pie-executable`; `x-sharedlib`), or that starts
-  with `#!` or the ELF magic; and, even without the permission bit, types whose handler runs them (by type and by name):
-  Windows programs and scripts (`.exe`, `.com`, `.scr`, `.cpl`, `.msi`, `.lnk`, `.bat`, `.cmd`, `.ps1`, `.vbs`, `.vbe`,
-  `.wsf`, `.hta`), registry files (`.reg`), Java archives and Web Start files (`.jar`, `.jnlp`), AppImages.
-- Remote items (a share, sftp, the Trash): desktop entries and the names above are refused (KIO downloads a remote file
-  and runs the handler of its type); everything else goes to KIO as before.
+  `URL[$e]`: KConfig keeps the last value; or longer than the 64 KiB read). Unchanged by the amendment: a launcher that is
+  not in an applications folder, run after a downloaded-file sheet, is a follow-up (KIO's Exec parsing would run it).
+- A native program (`RunProgram`): an ELF file whose header says it is one (`ET_EXEC`, or `ET_DYN` with an interpreter or
+  `DF_1_PIE`; a shared library or an object is a document for KIO), with or without the permission bit; AppImages (the
+  "AI" 1/2 magic at offset 8 of the ELF header) are native programs. It is refused when:
+  - its shown kind is a document's (`RefuseDisguised`): the MIME type Files shows for it (name first, as KIO picks the
+    handler) is not Executable, Shared library, AppImage or unknown, or the types its cleaned name gives are not all of
+    those, or the cleaned name's extension (after its last dot) is not plain ASCII. `LaunchGuard::cleanName` reads the name
+    as the eye does: NFKC (fullwidth forms and the dots U+2024, U+FE52, U+FF0E become "."), then NFKD with every combining
+    mark dropped; every format character, default-ignorable code point and blank glyph dropped (bidirectional controls, the
+    braille blank U+2800, the Hangul fillers); the other full stops and dot lookalikes (U+3002, U+FF61, U+0701, U+0702,
+    U+06D4, U+00B7, ...) read as "."; trailing spaces and dots removed; then NFC. A program has no business with a non-ASCII
+    extension, so a lookalike letter ("pdf" with a Cyrillic er, "exe" in Cyrillic, a Greek rho) is refused without a
+    confusables table (the UTS #39 skeleton would need ICU's i18n library linked directly: not done). Security reviews of
+    0c51550e and 48475cf6: "Invoice.pdf " and + U+200B, "Invoice" + U+202E + "fdp.exe", a trailing U+2800, "Invoice" +
+    U+2024 + "pdf", a Cyrillic er in "pdf" and trailing combining marks all ran without a sheet. A list of dot lookalikes
+    can't be complete (second counter-review of fd5823de: U+A78F, U+16EB, U+1427 and U+10101, the UTS #39 lookalikes of the
+    middle dot, and U+2022, U+2981, U+02D9, U+0F0B, U+2E30, U+2E3C, U+1803 and a combining dot below still ran), so the rule
+    also fails closed (`LaunchGuard::documentTailAfterOtherThanDot`) for a program whose name ends in ASCII letters or digits
+    (one letter at least) right after a character that is not an ASCII dot. What comes before those letters decides; a
+    combining mark is judged with the character it sits on, so a decomposed "é" or "ẹ" is the letter it draws:
+    - a letter of any script (U+A78F, a precomposed or decomposed dot below, an accented letter): refused only when the
+      letters are a lure extension of 2 letters or more (`lureExtension`: pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp,
+      rtf, txt, csv, md, html, xml, json, epub, jpg, jpeg, png, gif, webp, heic, svg, mp3, mp4, mov, avi, mkv, webm, zip,
+      rar, 7z, gz, tar, iso, img, dmg, pkg, deb, rpm, apk, jar, exe, msi, sh, py, js, ps, ai, kdbx, ofx, ts, qt, rm, crt, pem,
+      p12, ovpn, url, kml, gpx, mbox, the long extensions
+      below, desktop, backup...), or, for 3 letters or more, any user type (`userType`, from the shared MIME database:
+      pictures, sounds, films and fonts; archives; PDF, PostScript, office and ebook files; shell, Python and JavaScript
+      scripts; text documents such as logs, YAML, SQL and subtitles). Fourth check of fd5823de, m-b': refusing every document
+      type there refused "Vidéo", "Météo" (".o"), "Démo", "Mémo" (".mo") and "Tiếng-Việt" (".t"); these run, and "Invoice" +
+      U+A78F + "pdf", "Invoicẹpdf" and "photo" + U+A78F + "jpg" stay refused. Fifth check, v2: the lure list alone let
+      "Photo" + U+A78F + "jfif", "Notes" + U+A78F + "log", "install" + U+A78F + "sh" and the like run; the user types close
+      that. Developer types (gettext, Modelica, object files, troff, source code) are not user types, and two letters count
+      only through the lure list, so "Démo", "Mémo", "Caméra" (".ra" is RealAudio), "Diégo" (".go") and "Système" (".me" is
+      troff) run;
+    - anything else (punctuation, a symbol, a space, a mark on no letter): refused when the letters name a document or an
+      archive (1 to 5 that "x." plus them gives such a MIME type, or a long extension: torrent, sqlite, sqlite3, numbers,
+      markdown, keynote, sketch, drawio, gnumeric, kdenlive, parquet, webarchive, flatpak, flatpakref, flatpakrepo), or, after a
+      character outside ASCII, a lure extension ("App" + U+2981 + "desktop").
+    It is read on the cleaned name and on the name as drawn: nothing folded or decomposed, so a "TM" sign stays a sign, every
+    combining mark kept (third counter-review of fd5823de, m-b: the marks outside combining class 220, and "Movie" + a
+    lookalike + "torrent", still ran), and the blank glyphs (the braille blank, the Hangul fillers U+3164, U+FFA0, U+115F,
+    U+1160) drawn as a space, so "Invoice" + U+3164 + "pdf" reads "Invoice pdf" and is refused (fifth check, nit). So "photo.jpg", "notes.txt", "run.sh" or "setup.exe" with ELF program content,
+    "Invoice" + any punctuation, symbol, mark or lookalike letter + "pdf", and "photo-jpg" never run (banner: "… it is an
+    app, but its name makes it look like a document. If you trust it, rename it first."). The cost, accepted: a program named
+    like "nvim-qt" or "qemu-img" (a document type after a hyphen) must be renamed to run from Files; digits only ("x86_64",
+    "1.95"), a longer last word after a hyphen ("linux64", "signal-desktop", "timeshift-backup") and accented names
+    ("Lecteur-vidéo", "Tiếng-Việt", "Créateur") are not affected. Every other name check (launcher, Windows, Java, AppImage, another system's app, remote) is
+    made on the cleaned name too;
+  - uwsm would read its path as a desktop entry (`RefuseLauncher`, `LaunchGuard::uwsmReadsAsEntry`: uwsm 0.27's MainArg takes
+    an argument that ends in ".desktop" or holds ".desktop:" for an entry, so "…/Tool.desktop:run" would start the entry
+    Tool.desktop beside it); `ProgramLaunch::Run::allowed` refuses such an uwsm-app command again at the start;
+  - it is made for another computer (`RefuseIncompatible`: ELF class, byte order and machine against `/proc/self/exe`;
+    IA-32 runs on x86-64);
+  - it would run with other rights (`RefuseElevated`): setuid or setgid bit, a `security.capability` attribute, or Files
+    itself running as root. Files as root starts nothing on any path (`FilesApp::refuseAsRoot` before a program, the
+    Terminal, Java, the Windows handler, and Open With a program, an AppImage, a script, or a Windows or Java program;
+    `Run::allowed` again at the start).
+  Otherwise `LaunchGuard::plan` says what Open does first, and the sheet (`KioSheetsLogic.openProgram`, the window's sheet
+  style, Return and Esc cancel) is shown when any of these holds:
+  - its name can be drawn in another order (`LaunchGuard::bidiName`: LRM, RLM or ALM, an embedding, override or isolate
+    control, or any strong right-to-left character, bidi class R or AL): always, approved or not, executable or not
+    (`RunPlan::nameUntrusted`; macOS does not trust a name as drawn either). Fifth check of fd5823de, V1: an ELF named RLM +
+    "pdf." + RLM + "Invoice" (or with ALM) is drawn "Invoice.pdf", and it ran without a sheet. The sheet writes the marks out
+    ("<U+200F>pdf.<U+200F>Invoice": DisplayName.js and `FileLogic::displayName` write out LRM, RLM and ALM as they do the
+    embeddings) and adds "Its name contains right-to-left text, which can change the way it is shown: it may not be what its
+    name suggests." An ordinary Arabic or Hebrew program name gets this sheet on every open, never a refusal;
+  - it came from the Internet: `user.xdg.origin.url` or `user.xdg.referrer.url` (what Chromium and Firefox write on a
+    download; Grassfield had no quarantine mark of its own) on the file, or on a symbolic link's final target (a link follows
+    its target's trust), and Files' approval `user.grassfield.approved` = `1 <inode> <mtime ns> <size>` does not name the
+    file as it is now. Title "“Tool.AppImage” is an app downloaded from the Internet. Are you sure you want to open it?",
+    "This app was downloaded from <host>." (the host only: no path, query or user name; a host whose labels mix scripts is
+    shown in ASCII, "xn--…"). Files keeps these marks on what it makes from a downloaded file:
+    - Expand of an archive that carries a download mark (the Archive Utility model; bsdtar's `--no-same-permissions` keeps
+      the members' execute bits) completes only if every extracted regular file got the archive's marks, fail closed: the
+      marks are written in the private staging folder before anything gets a real name, by `LaunchGuard::markTree` on a
+      worker thread (`ArchiveJob::extracted`); entries are reached through descriptors (openat with O_PATH | O_NOFOLLOW, no
+      link followed, nothing looked up by path twice); a file whose user bits lack read or write (0100, 0500, 0555) gets u+rw
+      for the moment of the write and its mode back; a folder the user may not list or enter (0100, 0300) gets u+rx while
+      its entries are walked and its mode back; there is no entry cap. One regular file left unmarked, a folder that can't
+      be walked, a tree deeper than 256 folders or a cancel, and the staging folder is removed (its folders opened up
+      first), nothing is kept, and a sheet says "“Kit.zip” couldn’t be expanded safely." (security review of 48475cf6:
+      members of mode 0500 and 0555, members in folders of mode 0100 and 0300, and archives of more than 100000 entries were
+      expanded with programs left unmarked). Until the final rename, nothing under a staging name (`.grassfield-expand-<8
+      hex>`, and Compress's `.grassfield-compress-<8 hex>.zip`) is opened, run, listed or searched from Files
+      (`RefuseStaging`, `LaunchGuard::insideStaging` on the item's path and on a link's target: "… can’t be opened while Files
+      is still expanding or compressing it."; `FolderModel` lists nothing there, Open With refuses it, `FileSearch` skips
+      it). Nor is it listed in its parent folder (hidden files shown or not), renamed, copied, cut, pasted, moved, dragged
+      out, duplicated, trashed, deleted, aliased, compressed, expanded, given other permissions or dropped into
+      (`FilesApp::refuseApplicationItems` with `stagingItem`: "… can’t be used while Files is still expanding or compressing
+      it."; a drag's `uriList` leaves it out), so its unmarked programs can't be taken out from under the staging name (third
+      counter-review of fd5823de, m-c). The staging names in use are recorded in `<state>/files-staging` (the boot, the Files
+      process and its start time, the path; ADR-0020); a Files killed meanwhile leaves its line, and the next Files to start
+      removes those items off the GUI thread (`ArchiveJob::sweepStaleStaging`: only an absolute path whose last name is a
+      staging name, of the user's own). The registry is read whole (up to 64 MiB; a larger file is left untouched and nothing
+      is recorded, swept or rewritten), the lines of live processes are never dropped, and at most 4096 lines are kept: a
+      Compress or an Expand that can't record its staging name doesn't start ("… can’t be expanded here.") (m-d: the lines
+      past 1 MiB were dropped on the rewrite). Every removal (a cancel, a refusal, the sweep) goes by descriptor
+      (`LaunchGuard::removeTree`: openat and unlinkat, one folder descriptor open at a time and a stack of names, no link
+      followed, each folder pinned with O_PATH and given u+rwx through its /proc/self/fd entry, the root included), so a tree
+      deeper than PATH_MAX goes too (second counter-review of fd5823de, m2: such a tree, and a killed Files' staging folder,
+      stayed behind unmarked); it climbs back through ".." only into the folder it came down from (device and inode recorded
+      on the way down) and stops otherwise, so a part of the tree moved elsewhere meanwhile never makes it empty the folder
+      that now holds that part (m-a: moving a/b into another folder during a removal emptied that folder);
+    - a copy or move from a remote location (sftp, smb, ftp, http, a phone; `FilesApp::markRemoteCopies` on every tracked
+      copy job) gets the source address, without user name or password, as its `user.xdg.origin.url`;
+  - the user's execute bit is missing ("Opening it allows it to run on this computer."): Open sets u+x only (`fchmod`
+    through the descriptor that was checked, mode `& 0777 | S_IXUSR`: never setuid, setgid, group or others), then checks it
+    with `fstat`: a FAT, exFAT or fixed-mode NTFS mount that ignores the chmod (`Approval::ExecIgnored`) gets the copy below.
+    That chmod moves the file's status time (POSIX; FAT's setattr too), so the file is inspected again after it and must be
+    the same program (path, inode, modification time, size) with the status time `approve` saw right after its chmod; the
+    copy is then checked against these fresh facts (second counter-review of fd5823de, R1: checked against the facts from
+    before the chmod, every program on a FAT stick was refused as changed);
+  - it can't run where it is (a `noexec` mount, or not executable on a read-only disk or in another user's file): Open copies
+    it to `~/Applications` (made when missing; a free name "Tool 2.AppImage"; KIO's copy keeps the download marks), then
+    checks that the source is still the approved file (inode, modification and status change times, size: the owner can set an
+    mtime back after a same-size swap, not a ctime) and that the copy has its size (otherwise the copy
+    is removed and nothing runs), allows and approves the copy and runs it ("Copy and Open").
+  After Open the file is inspected again and must be the same file (path, inode, modification and status change times, size) and still a
+  program; then `ProgramLaunch::approve` writes the approval (and u+x), through one `O_NOFOLLOW` descriptor, only while the
+  identity matches. An approved, unchanged file never asks again; a changed one (other inode, time or size) asks again. A
+  file system without user extended attributes keeps no approval and no download mark. A sheet never shows the system's
+  error text: "It changed while you were deciding…", "It belongs to another user.", "Its permissions couldn’t be changed."
+- The start (`ProgramLaunch::Run`): `posix_spawnp` of the program's absolute path (no shell, no argument), through the
+  Dock's launch path (`grassfield::apps::scopedCommand`: `uwsm-app --` in a real session, ADR-0011), in its own session,
+  every signal at its default, stdin and stdout on `/dev/null`, the home folder as its working folder (the folder apps
+  started from the Dock have; macOS starts apps in "/"; never the folder it was opened from), Files' environment. Its error
+  output goes to a datagram socket that Files reads for one second, 64 datagrams per wake-up at most, and closes after the
+  second or at 16 KiB (later writes fail with ECONNREFUSED, never SIGPIPE, and never block the program); the child's pidfd
+  tells its end and it is reaped. A
+  start that fails within that second gets a plain alert (`KioPrompts::tell`): exec format ("… isn’t made for this
+  computer"), a library the loader names ("A component it needs is missing on this computer (libfoo.so.1)."), an AppImage
+  without FUSE (`libfuse.so.2`, "AppImages require FUSE", fusermount): `pacman -Qq fuse2` (read-only) decides between "This
+  AppImage needs a system component (fuse2)." and "This AppImage couldn’t use FUSE on this computer." (no Store or Software
+  Update path installs a library; never sudo); refused where it is (noexec, permission); an error code ("… quit right after
+  it opened."). A crash (a signal) is grassfield-crash-watch's to tell.
+- A script (`OpenScript`: executable, with a `#!` line or a script type) opens in the default text editor (text/plain's
+  application, through Open With's path; none set: the Choose Application panel), as on macOS; it never runs by opening.
+  Without the permission bit it is a document for KIO, as before. Open With lists "Terminal" last for one executable script on
+  this computer (`applicationsFor(urls, true)`; never in Always Open With or Get Info): it runs in the session's terminal
+  (`xdg-terminal-exec -- /bin/bash -c '"$1"; …omarchy-show-done…' grassfield-files <path>`, the path an argument, never
+  command text; decision F-7; the script's folder is the terminal's working folder, as Terminal runs a .command file), after
+  the same sheet when it came from the Internet ("… is a script downloaded from the Internet. Are you sure you want to run it
+  in Terminal?") or when its name can be drawn in another order (`nameUntrusted`, every time; seventh check of fd5823de,
+  m1'). A Windows or Java program's explanation sheet says it too.
+- Windows programs and scripts and registry files (`WindowsFile`: `.exe`, `.com`, `.scr`, `.cpl`, `.msi`, `.lnk`, `.bat`,
+  `.cmd`, `.ps1`, `.vbs`, `.vbe`, `.wsf`, `.hta`, `.reg`, by type and by name) and Java archives and Web Start files
+  (`JavaProgram`: `.jar`, `.jnlp`) never run by opening: a sheet says "This file is a program for Windows; it doesn’t work
+  directly on Linux." (or "This file is a Java program."). When the default application of its exact type is installed
+  (Wine, Bottles: one that names the type itself, never one inherited from a parent type) or `java`/`javaws` is on the PATH,
+  the sheet offers "Open with <app>" (Return and Esc cancel), with the download origin; Open checks the file again and opens
+  it with that application (Java: `java -jar <path>` through the same start).
+- Open With: any application may run what it is given (Wine, Bottles, java, an AppImage helper registered for
+  `application/vnd.appimage`, a terminal registered for scripts), so Open With follows the open rule for programs,
+  AppImages, scripts, and Windows and Java programs (`FilesApp::openWithChecked`; security review of 48475cf6, second
+  counter-review of fd5823de, m3): never as root, never a remote program or a staging item (the open banners), and a
+  downloaded one gets a sheet first, one per item, unless it was approved as it is now, and a program whose name can be
+  drawn in another order (`nameUntrusted`) gets it every time, downloaded or not, approved or not (sixth check of
+  fd5823de, m1): "Open with <app>" for a Windows or Java program; for a program or a script `KioSheetsLogic.openProgram` with the application's name ("“Tool.AppImage” is an
+  app downloaded from the Internet. Are you sure you want to open it with <app>?", Return and Esc cancel). Open writes the
+  approval for a Windows or Java program (only such an application runs it); for a program or a script it covers that open
+  only (no execute bit, no approval: the next Open With asks again, and a double-click has its own sheet). The text editor
+  Files picks for a script it opens is Files' own choice and asks nothing.
+- Another system's app (`ForeignApp`: `.dmg`, `.pkg`, `.mpkg`, `application/x-apple-diskimage`): "This file contains an app
+  made for another operating system, which can’t work on Linux.", with Search the Store (Grassfield Store's
+  `--page=search:<the file's name without version and platform words>`) when the Store is there. The text never names that
+  system (tests/ci/ui_names.py: no Apple trademark in the UI).
+- Remote items (a share, sftp, a phone, the Trash): desktop entries are refused, other systems' apps explained, and Windows,
+  Java and AppImage names refused with "… can’t be opened from here. Copy it to a folder on this computer first."
+  (`RefuseRemoteProgram`: nothing is ever downloaded and run); everything else goes to KIO as before (which never runs a
+  remote executable). A copy made by Files carries the source address as its download mark (above).
 - Opened as before: folders, documents (also with the permission bit: every file of a FAT/NTFS volume has it), scripts
   without the permission bit (text, in their editor, as KIO and macOS do).
-- The user sees one banner: "“t.desktop” was not opened: it is an app launcher, and Files never starts apps from a folder.
-  Open apps from the Dock, Apps or Search." (programs: "… To run it on purpose, use a terminal."); the journal gets
-  `grassfield-files: open refused (<kind>)`. No "Open Anyway" in Files, on purpose: Grassfield has no signed-app notion to
-  base it on, apps start from the Dock, Apps and Search, and a program the user trusts runs from a terminal. "Open With"
-  is unchanged: it opens the item WITH the chosen app (a launcher in a text editor), it never runs the item.
+- Refusals are one banner (several: "%1 items were not opened."); the journal gets one line per decision, never the file's
+  contents: `grassfield-files: open <decision> (<kind>): "<name>"[ from <host>]` (decisions: refused, run, asked, approved,
+  canceled, changed, explained, in the text editor, run in Terminal, failed); names and hosts have their C0, C1 and
+  bidirectional control characters and quotes replaced (`LaunchGuard::logName`).
+- Limits: the download mark is only as present as the browsers and Files make it: a file fetched by another tool (curl, a
+  chat or mail client), extracted by another archive tool, or copied from a FAT volume (every file executable, no attribute)
+  carries none, and a program there that is executable runs at once, as it would from a terminal. Between the last check and
+  the exec the program is named by path (the residual race needs write access to its folder, i.e. the user's own rights).
 - The Applications location (`grassfield-apps:/`, macOS: Finder's Applications) is the one place where Files starts an
   application, and it is not an exception to the rule above: its items are not files and have no path. They are the virtual
   urls `grassfield-app:/<id>` of the apps the shell's Apps grid lists (`ApplicationsLogic`); double-click, Ctrl+O/File > Open and Ctrl+Down call `FilesApp::launchApplication` instead of `FilesApp::open` (`BrowserTab.activate`/`openSelection`), so
@@ -708,13 +878,29 @@ gets (double-click, File > Open, Ctrl+Down, the context menu; Return renames), b
   with the permission message.
 - The desktop already never runs `.desktop` files (`DesktopFiles.qml`, DT-11). The shell's `gio open` / `xdg-open` paths
   (Search results, Dock stacks) hand files to their MIME handler; not changed here.
-Tests: `tests/unit/files/tst_launchguard.cpp` (verdicts; DT-10 on real files: `t.desktop` executable and not,
-`Invoice.pdf.desktop`, web links to the browser only (the review's `.msi` link with `X-KDE-LastOpenedWith` included),
-repeated keys, an oversized entry, `.directory`, file links, an unreadable entry, scripts with and without the bit, a
-copied `/usr/bin/true` and a symlink to it, `.exe`, `.jar`, AppImage without +x, `.ps1`, `.vbs`, `.reg`, `.jnlp`, a
-folder; remote items by name), nested `tests/apps/files_dt10.sh` (bare: pass 1 with the launch switch
-on, four "open refused" and nothing reaching the launch path; pass 2 without it, the marker the launchers would create
-never appears).
+Tests: `tests/unit/files/tst_launchguard.cpp` (verdicts and plans; DT-10 on real files as amended: `t.desktop` executable
+and not, `Invoice.pdf.desktop`, web links to the browser only (the review's `.msi` link with `X-KDE-LastOpenedWith`
+included), repeated keys, an oversized entry, `.directory`, file links, an unreadable entry; scripts with and without the bit
+to the editor or KIO; a copied `/usr/bin/true` (runs; without the bit the sheet allows it), named `photo.jpg`, `notes.txt`,
+`run.sh`, `setup.exe` (refused), through a link (the target decides) and a link named `report.pdf` (refused), with another
+machine (refused), setuid (refused); a downloaded fake AppImage asked about until approved, a forged approval of another
+identity ignored, asked again after a change, a link to it following its trust; `.exe` by name and by content, `.jar`, an
+"AppImage" that is no ELF program, `.ps1`, `.vbs`, `.reg`, `.jnlp`, `.dmg`, a folder; remote items by name; the ELF parser
+on synthetic headers), `tests/unit/files/tst_programlaunch.cpp` (the failure a first second shows, the approval through one
+descriptor, `~/Applications` and its free names), `tests/unit/files/tst_fileslaunch.cpp` (FilesApp::open in a scratch home
+with real programs, `launch_fixture.cpp`: a native program runs in its folder without a sheet; a downloaded non-executable
+fake AppImage asks, Cancel runs and changes nothing, Open allows and runs it, approved it runs without a sheet, changed it asks
+again; a link follows its target's trust and one named as a document is refused; FUSE 2 missing, a missing library and
+another computer's program get their alert or banner, a program that stays gets none; a script never runs by opening,
+Terminal is listed for an executable script only and asks when downloaded; a remote AppImage, a `.dmg`, an `.exe` and a
+`.jar` are explained and never run; after the security review of 0c51550e: a program from a downloaded zip and tar.gz asks
+after Expand, a program changed while its sheet is open does not run, the copy into ~/Applications runs the copy and leaves the
+original, Open With > Terminal hands the terminal the path as bash's argument, Open in the Java and Windows sheets runs
+`java -jar` and the handler (recorders on the PATH), a remote copy gets its source address as its mark; the unit tests add
+cleaned names, uwsm's entry names, mixed-script hosts, marks copied through no link), `tests/unit/tst_fileskiosheets.qml` (the sheets' texts and buttons; Return and Esc
+cancel, only Open runs), nested `tests/apps/files_dt10.sh` (bare: pass 1 with the launch switch on, the three launchers
+refused and the script stopped at the switch, nothing reaching a launch; pass 2 without it, a downloaded program's sheet
+answered with Return, and the marker the launchers, the script or the program would create never appears).
 
 ## Upstream base (GF-031)
 Forks reviewed against Omarchy **v4.0.6** = `basecamp/omarchy@237f1b4071a0bff2296c6d740ba2b9fd695ebfa0`, the installed

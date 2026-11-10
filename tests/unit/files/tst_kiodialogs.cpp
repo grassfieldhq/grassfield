@@ -851,12 +851,15 @@ TEST(KioDialogsSources, FilesCreatesNoWidgetDialog)
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
-    // A scratch home: KIO's worker, FileUndoManager and Qt write nothing of the session that runs the tests.
+    // A scratch home: KIO's worker, FileUndoManager and Qt write nothing of the session that runs the tests. Grassfield's own
+    // GRASSFIELD_STATE_HOME and GRASSFIELD_CONFIG_HOME win over the XDG folders (runmode.h; the dev shells set them to .dev
+    // paths): redirected too, so Files' state (files-staging, files-views.json) and config land in the scratch home only.
     QTemporaryDir scratch(QDir(qEnvironmentVariableIsEmpty("GRASSFIELD_TEST_TMP") ? QDir::tempPath() : qEnvironmentVariable("GRASSFIELD_TEST_TMP"))
                               .filePath(QStringLiteral("kiodialogs-XXXXXX")));
     if (!scratch.isValid())
         return 2;
-    for (const char *name : {"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"}) {
+    for (const char *name : {"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
+                             "GRASSFIELD_STATE_HOME", "GRASSFIELD_CONFIG_HOME"}) {
         const QString dir = scratch.filePath(QString::fromLatin1(name));
         QDir().mkpath(dir);
         QFile::setPermissions(dir, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);

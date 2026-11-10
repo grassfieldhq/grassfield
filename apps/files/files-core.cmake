@@ -29,6 +29,7 @@ add_library(grassfield-files-core STATIC
     ${GF_FILES_SRC}/imageproviders.cpp ${GF_FILES_SRC}/imageproviders.h
     ${GF_FILES_SRC}/filelogic.cpp ${GF_FILES_SRC}/filelogic.h
     ${GF_FILES_SRC}/launchguard.cpp ${GF_FILES_SRC}/launchguard.h
+    ${GF_FILES_SRC}/programlaunch.cpp ${GF_FILES_SRC}/programlaunch.h
     ${GF_FILES_SRC}/taglogic.cpp ${GF_FILES_SRC}/taglogic.h
     ${GF_FILES_SRC}/tagstore.cpp ${GF_FILES_SRC}/tagstore.h
     ${GF_FILES_SRC}/tagsearch.cpp ${GF_FILES_SRC}/tagsearch.h
