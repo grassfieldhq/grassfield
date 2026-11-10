@@ -82,7 +82,8 @@ rendering DBusMenu menus (that is `grassfield-menu-bridge` and the shell, step B
   radius, so under the surface the plugin fills the two cut top corners with the bar colour, then draws the content's
   own texture there, unrounded, clipped to the two corner squares. That texture is drawn only where it maps 1:1 onto
   the surface box (no overview or Stages transform, no buffer transform, no viewport crop, the squares inside the
-  texture); otherwise the bar colour stays. Known limits (R13 of F2a, 2026-10-22): XWayland windows keep a thin 1-px
+  texture), and not for a window hidden from captures while its display is captured (FR59); otherwise the bar colour
+  stays. Known limits (R13 of F2a, 2026-10-22): XWayland windows keep a thin 1-px
   arc at the join (radius 12 and 26, scale 1 and 2; the patch is drawn, the anti-aliased edge of the rounded surface
   still blends with what is behind it, cause not proven); a translucent window (foot at alpha 0.5) shows lighter
   corner squares and the curve (before F2a: dark squares).
@@ -117,6 +118,32 @@ rendering DBusMenu menus (that is `grassfield-menu-bridge` and the shell, step B
   survive a reload), so a plugin reloaded in a session turned light draws no dark rim before the push, and a plugin
   without the shell draws none. Without the plugin there is no rim (C2); the unload damages every rim's band, then
   removes it.
+- **FR59** Capture privacy (SEC-01, security.md SEC11; core `CapturePrivacy.*`, glue `CapturePrivacy.*`): a window with
+  Hyprland's effective `no_screen_share` (`config/hypr/grassfield/privacy.lua`: the password managers) shows none of its
+  pixels in a capture of a display through the plugin's drawings. Hyprland 0.56.2 copies the frame the display shows and
+  paints one black box per such window, the window's own box at its real place, rounded on all four corners
+  (`ScreenshareFrame.cpp` `renderMonitor`); a window capture (toplevel export) draws such a window not at all, and no
+  decoration. Three drawings of the plugin put the window's pixels outside that box: the content's top corners under the
+  titlebar's square join (FR3; `lock_privacy.sh` screenshare, 2026-11-09, plugin loaded: 98 green px of the Bitwarden
+  fixture, four runs of four), an overview or Stages miniature (the box stays at the real place), and a minimize or
+  restore animation (the window is hidden or transparent, no box). While a capture of the display is in progress
+  (Hyprland's `outputCopyFBState`: a frame pending, or a session that copied one less than 500 ms ago; not "any session":
+  each grim run leaves one behind) the plugin draws none of them there, on screen too: the bar colour stays in the
+  corners, a black square plate (`Colors::BLACK`, out to whole pixels and one more on every side) covers the miniature's
+  surface and subsurfaces, and the animation is not drawn (the window goes, or comes back at its end). The window's bar
+  lies outside the box too: its title (the window's own text) is not drawn meanwhile, so apart from a plain bar with its
+  lights the window is black in the capture. The display is drawn whole when its capture state changes (`render.pre`,
+  before Hyprland reads the frame's damage), so a capture never copies pixels drawn before it began. A capture's end
+  redraws only the displays whose capture was in progress at their last frame and is over now: when Hyprland reports
+  the end of a display share (`screenshare.state`; window shares are ignored, they change no display, and a display with
+  a frame still pending is still captured: review of e21c2071, MAJOR-1, a live thumbnail's events twice a second had
+  redrawn every display), and at a check every second while a display capture is in progress (a request that dies
+  before its first copy gets no end event). Without these listeners a protected window's pixels are never drawn
+  outside its box. No hook into the capture itself (patching Hyprland is excluded). Not advertised: the shell has
+  nothing to do, and without the plugin there is nothing of the plugin's to hide (C2). Every plugin function that draws
+  a window's pixels or its title asks `gf::capturePrivacy::mayDrawContent` in its own body; the functions and their uses
+  are pinned (unit-checked). Not hidden: the edge of a blur over the window's surroundings (Hyprland's own blur samples
+  the frame), and the window's title wherever the shell shows it (Dock, menu bar, switcher: the shell's own surfaces).
 - **FR4** Close, minimize, zoom buttons: 14 px circles, 9 px gaps (23 px pitch), first one 9 px from the left
   edge (centres at x 16, 39, 62), vertically centered (y 16); each is hit inside its circle grown by 1/6 of the
   diameter (2.33 px), and the gaps between the buttons stay drag area; colors from `compositor/src/core/Theme.hpp` (close `#E83A52`, minimize `#E6C619`,
@@ -843,6 +870,7 @@ not bound for the virtual keyboard in nested: foot received `ESC TAB`). Fixed bu
 | FR56 | unit `TopClamp.*` (11: the move and resize rules, the output under the frame's top edge (level outputs above the edge: the one sharing most of its width, review of 9ba1d40), the review cases of e0a3734 on stacked and bottom-aligned outputs: SUPER+drag ending on the lower output, bottom-edge and right-edge resizes, a top-edge resize and a move into the lower output's menu bar); nested `tests/compositor/top_clamp.sh` (P foot titlebar drag, C Chromium tab strip, R bottom-edge resize with the titlebar under the menu bar) | L0 / L1 | unit 393/393 PASS (2026-10-25, branch m7-clamp-fix; clang-tidy clean on the changed files); nested top_clamp.sh after the fix 2026-10-26 PASS, 8/8 (Hyprland 0.56.2 efb50993; P1-P3, R0 height 400 -> 500 with R1 top 24 -> 24 (titlebar at -8, under the 24 px bar, left alone), C0-C2); C1 soak shortened to 300 s PASS (103 rounds, every action effective but restore 7/9, no coredump, no plugin exception; RSS slopes not judged at that length); C2: plugin unloaded, a window still maps, plugin loaded again. These nested runs used the build of the Electron branch, which merges this one. 2026-10-26 after the review of 9ba1d40 (tie rule, keyboard-focus events): unit 394/394, top_clamp.sh 8/8 PASS again |
 | FR57 | unit `WindowRim.*` (15: the tokens, the dark appearance only and after the shell's push, none in full screen, the width in whole device pixels and macOS 27's light per point at 1, 1.25, 1.5 and 2, the frame with the titlebar, the snapping, the ring's box and radii, and through Hyprland 0.56.2's border and rounding shader arithmetic: the straight sides' first device pixels, never outside the window's shape, continuous round the arcs); nested `tests/compositor/window_edge.sh` (checks 4 to 6, with and without the plugin), `window_edge.sh c2`, `window_edge.sh cost` | L0 / L1 | 2026-11-03, Hyprland 0.56.2 (efb50993), GF-REF 1920x1080 at 1.25: unit 524/524; `window_edge.sh` PASS with the plugin (200 checks: Settings 66 over 39 on its sides and 65-66 on its arcs, inactive 61 and 60-61; foot's bar top 67 over 40, its sides 63 over 36, no second line under the hairline; Evince, dark theme, 78 over 53; none in light) and without it (no rim, no titlebar); `c2` PASS (unload with two windows open: Hyprland alive, rim and titlebar gone; reload: the shell's push, the rim back at 27 levels; 0 plugin exceptions); `cost 6`: render CPU median 2.17 ms with the rim, 2.13 ms without (p95 2.98 / 2.80 ms), 60 Hz either way; C1 `soak.sh 480` PASS (481 s, 166 rounds, every action type effective, minimize 15/20 and restore 15/15, 0 plugin exceptions, no core dump, the shell kept its PID; RSS slopes not judged at that length) |
 | FR58 | unit `ToplevelDrag*` (31: the drag target picked in Hyprland's order with its own window properties, floating windows admitted and the dragged one ignored; the release ending the window's drag when the target finishes late or never and kept until the end, the client's offset for a window mapped while attached, no jump for one mapped already (the grab held at the attach), the regrab, the protocol errors, unmap and role destruction detaching, attach again after a remap, drop, release-then-cancel as a drop, Escape and a destroyed source as a cancel, one live object per source); `Protocol.*` (the feature); nested `tests/compositor/toplevel_drag.sh` (T0-T16, C1/C2; also at scale 1.25) with the fixture client `tests/compositor/toplevel-drag-fixture/tdrag.c` | L0 / L1 | unit PASS (2026-11-08, branch feat/toplevel-drag, Hyprland 0.56.2 efb50993); nested NOT RUN (the agent sandbox cannot start a nested session): pending the integrator's run |
+| FR59 | unit `CapturePrivacy.*` (17: capture state from Hyprland's counts, a protected window drawn only while not captured and only with the listeners, whole redraws when a capture begins and ends and at a load during one, the end of a share redrawing only a display whose capture ended and never for a window share, a capture dying before its first copy, the frame-by-frame grim scenario of 2026-11-09, the miniature's plate on whole pixels at 1, 1.25, 1.5 and 2 and over the subsurfaces, start() registering once even after a call that failed midway, the source scanner itself, every plugin function that draws a window's pixels or title asking in its own body with the functions and their uses pinned, and a new draw site of each of the 8 kinds the scan knows (texture, surface state, its texture or buffer, the title, `renderWindow`, `CSurfacePassElement`, the mirror texture) caught, guarded or not); nested `tests/security/lock_privacy.sh` step screenshare (no green px of the Bitwarden fixture's box, plugin loaded) and `tests/compositor/capture_privacy.sh` (still: no cyan px and a flat bar; overview, Stages strip and slow-motion minimize captured: no cyan px, the green twin's controls) | L0 / L1 | 2026-11-09, integrator's bare nested run of e21c2071 (Hyprland 0.56.2-4): `lock_privacy.sh` 38/38 with the plugin (the 98 px gone) and 38/38 without, `chrome.sh` 19/19, `genie.sh` 42/42. After the review of e21c2071 (end redraw filtered, end check, title, subsurfaces, per-function scan): unit PASS; `capture_privacy.sh` NOT RUN (the agent sandbox cannot start a nested session): pending the integrator's run |
 
 ## Interfaces / contracts (versions)
 
@@ -1652,6 +1680,10 @@ window still on `special:minimized` (`scripts/nestctl -j clients`), keys typed w
   activation that follows user input take the focus. Not doable with Hyprland 0.56.2's plugin surface.
 
 - Titlebar join (FR3): a thin 1-px arc remains on XWayland windows and translucent windows show lighter corner squares.
+- Capture privacy (FR59): macOS leaves a window hidden from captures as it is on screen; here, while a capture of the
+  display runs, such a window's titlebar join shows the bar colour, its bar no title, its overview or Stages miniature a
+  black surface, and its minimize animation is not played, on screen too (Hyprland 0.56.2 has no capture-only drawing).
+  The look ends at most a second after the capture.
 - Titlebar below the menu bar (FR56): during one of Hyprland's own moves (an app's move request, as Chromium's tab strip
   asks, or SUPER+drag) the window passes under the menu bar and is moved down at the release (about 23 px for Chromium's
   strip); macOS holds the title bar below the menu bar for the whole drag. Hyprland 0.56.2 offers no hook during its drag.

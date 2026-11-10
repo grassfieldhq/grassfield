@@ -1,10 +1,13 @@
 #include "WindowTransform.hpp"
 
+#include "CapturePrivacy.hpp"
 #include "Plugin.hpp"
+#include "core/CapturePrivacy.hpp"
 #include "core/Overview.hpp"
 
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/helpers/Color.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/output/MonitorResources.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -108,15 +111,32 @@ namespace gf::transform {
                                                        .texW         = mon->m_transformedSize.x,
                                                        .texH         = mon->m_transformedSize.y};
         const Box texBox = gf::minimize::textureBox(geometry, dst, mon->m_position.x, mon->m_position.y, mon->m_scale);
+        // SEC-01: Hyprland blacks out a window hidden from captures at its real place only, never here
+        // (core/CapturePrivacy.hpp). While this display is captured the miniature's surface and subsurfaces are under a
+        // black plate, on screen too (the bar above shows no title then: Titlebar.cpp); without a plate the window is
+        // drawn as nothing.
+        const bool hidden = !gf::capturePrivacy::mayDrawContent(w, mon);
+        const Box  plate  = hidden ? gf::privacy::platePx(gf::privacy::miniatureCover(src, dst, gf::capturePrivacy::subsurfaceBoxes(w, src)), mon->m_position.x,
+                                                          mon->m_position.y, mon->m_scale) :
+                                     Box{};
+        const CRegion bufferRegion{0, 0, mon->m_transformedSize.x, mon->m_transformedSize.y};
 
         const CWholeBufferDamage whole{mon};
         const auto               guard = g_pHyprRenderer->bindTempFB(out);
         g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor(0, 0, 0, 0)});
+        if (hidden && !hasArea(plate))
+            return out;
         CTexPassElement::SRenderData data;
         data.tex = tex;
         data.box = toCBox(texBox);
         data.a   = 1.F;
-        g_pHyprRenderer->draw(data, CRegion{0, 0, mon->m_transformedSize.x, mon->m_transformedSize.y});
+        g_pHyprRenderer->draw(data, bufferRegion);
+        if (hidden) {
+            CRectPassElement::SRectData black;
+            black.box   = toCBox(plate);
+            black.color = Colors::BLACK; // Hyprland's own box over a protected window (ScreenshareFrame.cpp renderMonitor)
+            g_pHyprRenderer->draw(black, bufferRegion);
+        }
         return out;
     }
 

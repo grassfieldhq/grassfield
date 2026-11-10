@@ -5,6 +5,7 @@
 // its degraded mode because no `grassfield` capabilities event is ever posted.
 
 #include "AppmenuServer.hpp"
+#include "CapturePrivacy.hpp"
 #include "ClientChrome.hpp"
 #include "CursorRefresh.hpp"
 #include "DesktopFocus.hpp"
@@ -268,6 +269,7 @@ namespace {
         step("top clamp", [] { gf::topClamp::stop(); });     // the clamp scheduled after a drag removed (its callback is in this library)
         step("client chrome", [] { gf::chrome::stop(); });   // per-window toplevel listeners removed
         step("frame probe", [] { gf::frameProbe::stop(); }); // presentation listeners removed
+        step("capture privacy", [] { gf::capturePrivacy::stop(); }); // render.pre and screen-share listeners and the 1 s end-check timer removed
         step("desktop focus", [] { gf::desktopFocus::stop(); }); // no press or commit may reach the policy any more
         step("minimizer", [] { gf::minimizer::stop(); }); // before the Lua entry points go: animations complete, snapshots dropped
         step("overview", [] { gf::overviewer::stop(); });   // every window back to normal rendering, transformers detached
@@ -331,6 +333,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     const bool ok = gf::guarded("PLUGIN_INIT", [&] {
         gf::ipc::startEvents(); // before anything can post (spec FR24)
         registerListeners();
+        // SEC-01, before anything draws a window's pixels: without its listeners the content of a window hidden from captures
+        // is never drawn outside Hyprland's black box (core/CapturePrivacy.hpp). Not a capability: nothing to advertise.
+        bool capturePrivacyOk = false;
+        gf::guarded("capture privacy start", [&] { capturePrivacyOk = gf::capturePrivacy::start(); });
+        if (!capturePrivacyOk)
+            gf::log(Log::WARN, "capture privacy listeners failed to register; protected windows' content stays inside their box");
         if (!gf::minimizer::start())
             gf::log(Log::WARN, "minimize render hooks failed to register; minimize not advertised");
         // Optional feature: a failure here only drops overview from the capabilities (the shell keeps thumbnails).
