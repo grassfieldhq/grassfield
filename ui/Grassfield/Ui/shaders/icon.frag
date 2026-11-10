@@ -64,7 +64,8 @@ layout(std140, binding = 0) uniform buf {
     float tileTonePivot;      // linear value the tone leaves alone
     float darkPlateLumaOnDarkAccent;  // Dark over a dark accent fill of a selected row: lightness of the plate
     float darkRimWidth;       // tile, dark appearance: width of the light halo outside the tile's edge as a fraction of the box, at least one device pixel (DARK RIM below)
-    float darkRimInnerPx;     // tile, dark appearance: width in device pixels of the light rim inside the tile's edge
+    float lightHaloLuma;      // tile, light appearance over a see-through material: lightness of the dark halo (DARK RIM below)
+    float lightHalo;          // 1: the light-appearance halo is drawn (see IconModes.lightHaloActive), 0 not
     float darkRimStrength;
     float darkRimLuma;
     float tileToneExp;        // exponent of the darkening below the pivot (> 1)
@@ -187,16 +188,6 @@ void main() {
     float sdf = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - rad;
     float aa = max(fwidth(sdf), 0.0005);
     float mask = 1.0 - smoothstep(-aa, aa, sdf);
-    // DARK RIM (R7-REQ-13, A2 rule E): a tile icon in the dark appearance (Dark, Clear and Tinted) carries a thin light edge, as macOS dark-mode and Clear icon tiles do
-    // (a specular edge). It separates the tile from a dark or mid-grey material without touching the tile's inner tones (rules I, S, N): two parts, both in the
-    // pixels nearest the edge. (1) Outside the tile, a halo in the margin that the plate's inset leaves to the box (darkRimWidth of the box, at least one device pixel),
-    // drawn BEHIND the tile and the plate, so it can never be part of the tile's own pixels. (2) Inside the tile, darkRimInnerPx device pixels (half a pixel at 24 px):
-    // rule I reads the ring from 2 px inside the edge of what is drawn, and the GPU run of 2026-11-09 showed a 1 px rim (and 1.5 px before it) already reaches it at 24 px.
-    if (isTile && dark > 0.5) {
-        float dpx = -sdf / aa;
-        float rim = clamp(darkRimInnerPx - dpx + 0.5, 0.0, 1.0) * step(-0.5, dpx) * darkRimStrength;
-        artP.rgb = mix(art, vec3(darkRimLuma), rim) * artA;
-    }
     vec3 plateRgb;
     float plateA;
     if (modeIndex < 1.5) {
@@ -218,12 +209,22 @@ void main() {
     }
     vec4 plateP = vec4(plateRgb * plateA, plateA);
     plateP *= mask;
-    vec4 face = artP + plateP * (1.0 - artP.a);
-    if (isTile && dark > 0.5) {
+    // EDGE HALO (R7-REQ-13, A2 rule E). A tile icon carries a thin halo OUTSIDE its edge, in the margin that the plate inset leaves to the box (darkRimWidth of the
+    // box, at least one device pixel): light in the dark appearance (Dark, Clear and Tinted; macOS dark-mode and Clear tiles have a specular edge), dark in the light
+    // appearance while the wallpaper shows through the material (the tile tone does the work below that). It lies over the plate's antialiased fringe and behind the tile, so
+    // no pixel of the tile changes (rules I, S and N) and the edge band that rule E measures holds a row of the halo, whose contrast against the material is the halo's own:
+    // the edge cannot be worse than that. Not over the bare wallpaper (desktop icons: IconEffect sets both strengths to 0). Rims INSIDE the tile were tried and removed:
+    // 1.5 px, 1.0 px and 0.5 px all reached the 2 to 4 px ring that rule I reads at 24 px (GPU runs of 2026-11-09: squircle inside 1.69, 1.94, 2.10 against 2.35).
+    vec4 under = plateP;
+    if (isTile) {
+        float haloAmount = dark > 0.5 ? darkRimStrength : lightHalo * darkRimStrength;
+        float haloLuma = dark > 0.5 ? darkRimLuma : lightHaloLuma;
         float outPx = sdf / aa;                       // device pixels outside the plate's edge (negative inside it)
         float haloPx = max(1.0, darkRimWidth / aa);   // 1 / aa is the box in device pixels
-        float halo = clamp(haloPx + 0.5 - outPx, 0.0, 1.0) * step(-0.5, outPx) * darkRimStrength;
-        face += vec4(vec3(darkRimLuma) * halo, halo) * (1.0 - face.a);
+        float halo = clamp(haloPx + 0.5 - outPx, 0.0, 1.0) * step(-0.5, outPx) * haloAmount;
+        vec4 haloP = vec4(vec3(haloLuma) * halo, halo);
+        under = haloP + plateP * (1.0 - haloP.a);
     }
+    vec4 face = artP + under * (1.0 - artP.a);
     fragColor = face * qt_Opacity;
 }

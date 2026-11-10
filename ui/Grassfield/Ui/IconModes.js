@@ -57,23 +57,22 @@ function warnOnce(message) {
     console.warn("grassfield-ui: " + message);
 }
 
-// Dark rim (R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, DARK RIM). A tile icon in the dark appearance (Dark, Clear and Tinted) carries a thin light
-// edge: a halo outside the tile (in the margin the plate inset leaves to the box, behind the tile) and a rim `iconModeDarkRimInnerPx` pixels inside its edge.
-// `distance` is in device pixels, positive inside the tile and negative outside it; the weight is 0..strength, `width` the extent of the part.
-function darkRimWeight(distance, width, strength) {
-    if (distance < -0.5)
-        return 0;
-    return Math.min(1, Math.max(0, width - distance + 0.5)) * strength;
-}
-
-// The halo's width in device pixels for an icon of `box` device pixels: the token is a fraction of the box, never under one pixel. Its weight at `outside`
-// device pixels outside the plate's edge.
+// Edge halo (R7-REQ-13, A2 rule E; the arithmetic is shaders/icon.frag, EDGE HALO). A tile icon carries a thin halo OUTSIDE its edge, in the margin the plate inset
+// leaves to the box, over the plate fringe and behind the tile: light in the dark appearance, dark in the light appearance while the wallpaper shows through the
+// material (`lightHaloActive`). No pixel of the tile changes, so rules I, S and N do not move.
+// The halo's width in device pixels for an icon of `box` device pixels: the token is a fraction of the box, never under one pixel.
 function darkRimWidthPx(box, fraction) {
     return Math.max(1, fraction * box);
 }
 
+// The halo's weight (0..strength) `outside` device pixels outside the plate's edge (negative inside it: the tile covers it).
 function darkHaloWeight(outside, box, fraction, strength) {
     if (outside < -0.5)
         return 0;
     return Math.min(1, Math.max(0, darkRimWidthPx(box, fraction) + 0.5 - outside)) * strength;
+}
+
+// The dark halo of the light appearance: where the tile tone does not act (tileToneSide 0) and the icon is not over the bare wallpaper.
+function lightHaloActive(dark, wallpaper, transparency, t) {
+    return !dark && !wallpaper && tileToneSide(dark, wallpaper, transparency, t) === 0;
 }

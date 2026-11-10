@@ -153,42 +153,42 @@ TestCase {
     }
 
     // The Dark rim: one device pixel of near-white on the edge of a Dark tile in the dark appearance. Pure math of the shader's DARK RIM.
-    function test_darkRimWeight() {
+    function test_edgeHalo() {
         const t = Tokens;
         verify(t.iconModeDarkRimWidth > 0.02 && t.iconModeDarkRimWidth < 0.06, "a thin halo, a few percent of the box");
         compare(IconModes.darkRimWidthPx(24, t.iconModeDarkRimWidth), 1, "one device pixel at 24 px");
         verify(IconModes.darkRimWidthPx(48, t.iconModeDarkRimWidth) <= t.iconModeSysPlateInset * 48 + 0.01, "no wider than the margin the plate inset leaves to the box");
-        verify(t.iconModeDarkRimInnerPx > 0 && t.iconModeDarkRimInnerPx <= 0.5 + 1e-9, "the inner rim stays out of the ring that rule I reads from 2 px inside the edge (a 1 px one measured 1.94 against 2.35 on the GPU at 24 px)");
-        verify(t.iconModeDarkRimStrength > 0 && t.iconModeDarkRimStrength <= 1 && t.iconModeDarkRimLuma > 0.8 && t.iconModeDarkRimLuma <= 1, "a light rim");
-        const inner = d => IconModes.darkRimWeight(d, t.iconModeDarkRimInnerPx, t.iconModeDarkRimStrength);
-        compare(inner(-1), 0, "no inner rim outside the tile");
-        compare(inner(0), t.iconModeDarkRimStrength, "full strength on the edge");
-        compare(inner(1.0), 0, "nothing one pixel in: the inner tones are untouched (rules I, S, N)");
-        for (let d = 0; d < 3; d += 0.25)
-            verify(inner(d + 0.25) <= inner(d) + 1e-12, "the inner rim fades inwards");
+        verify(t.iconModeDarkRimStrength > 0 && t.iconModeDarkRimStrength <= 1, "an opaque halo");
+        verify(t.iconModeDarkRimLuma > 0.8 && t.iconModeDarkRimLuma <= 1 && t.iconModeLightHaloLuma >= 0 && t.iconModeLightHaloLuma < 0.2, "light in the dark appearance, dark in the light one");
         for (const box of [24, 32, 48]) {
             const h = o => IconModes.darkHaloWeight(o, box, t.iconModeDarkRimWidth, t.iconModeDarkRimStrength);
-            compare(h(-1), 0, "no halo inside the tile (it is drawn behind it)");
+            compare(h(-1), 0, "no halo inside the tile (it covers it): rules I, S and N do not move");
             compare(h(0), t.iconModeDarkRimStrength, `full strength at the plate edge, ${box} px`);
             compare(h(IconModes.darkRimWidthPx(box, t.iconModeDarkRimWidth) + 0.5), 0, "none past its width");
+            for (let o = 0; o < 3; o += 0.25)
+                verify(h(o + 0.25) <= h(o) + 1e-12, "the halo fades outwards");
         }
     }
 
-    // The edge stands out of the brightest dark material (relative luminance 0.38) by at least the floor of basecamp's 24 px cell (0.9 of Default's 1.92 =
-    // 1.73): the halo over the material and the inner rim over a tile pixel of the sky's tone (0.60) or the hill's (0.23).
-    function test_darkRimStandsOutOfAMidGreyMaterial() {
+    // The halo is a row of the edge band, so the edge cannot be worse than the halo's contrast against the material: the dark appearance's brightest material
+    // (relative luminance 0.38) against the light halo, floor of basecamp's 24 px cell (0.9 of Default's 1.92 = 1.73); the light appearance's darkest
+    // see-through material (the tint at the transparency-1.0 opacity over a black wallpaper) and a mid one against the dark halo, floor 2.0 at transparency 1.0.
+    function test_haloContrast() {
         const t = Tokens;
-        const panel = lum(materialRgb(true, 1, 1.0));
-        const halo = IconModes.darkHaloWeight(0, 24, t.iconModeDarkRimWidth, t.iconModeDarkRimStrength);
-        const over = halo * t.iconModeDarkRimLuma + (1 - halo) * Math.pow(panel, 1 / 2.4);
-        verify(contrast(lum([over, over, over]), panel) >= 1.73, `halo over the material: ${contrast(lum([over, over, over]), panel).toFixed(2)}:1`);
-        const weight = IconModes.darkRimWeight(0, t.iconModeDarkRimInnerPx, t.iconModeDarkRimStrength);
-        for (const tone of [0.60, 0.23]) {
-            const tileCoded = Math.pow(tone, 1 / 2.4);
-            const coded = tileCoded * (1 - weight) + t.iconModeDarkRimLuma * weight;
-            const y = lum([coded, coded, coded]);
-            verify(contrast(y, panel) >= 1.73, `inner rim over a tile tone ${tone}: ${contrast(y, panel).toFixed(2)}:1`);
-        }
+        const lightY = lum([t.iconModeDarkRimLuma, t.iconModeDarkRimLuma, t.iconModeDarkRimLuma]);
+        verify(contrast(lightY, lum(materialRgb(true, 1, 1.0))) >= 1.73, "light halo over the brightest dark material");
+        verify(contrast(lightY, lum(materialRgb(true, 0, 1.0))) >= 2.9, "light halo over a dark material");
+        const darkY = lum([t.iconModeLightHaloLuma, t.iconModeLightHaloLuma, t.iconModeLightHaloLuma]);
+        for (const wp of [0, 0.5, 1])
+            verify(contrast(lum(materialRgb(false, wp, 1.0)), darkY) >= 2.9, `dark halo over the light material at transparency 1.0 over ${wp}`);
+    }
+
+    function test_lightHaloActive() {
+        const t = Tokens;
+        compare(IconModes.lightHaloActive(false, false, 1.0, t), true, "light appearance, wallpaper through");
+        compare(IconModes.lightHaloActive(false, false, t.materialTintClampUntil, t), false, "solid material: the tile tone acts instead");
+        compare(IconModes.lightHaloActive(true, false, 1.0, t), false, "dark appearance: the light halo");
+        compare(IconModes.lightHaloActive(false, true, 1.0, t), false, "bare wallpaper (desktop icons): none");
     }
 
     // Selected rows (rule A, tests/unit/tst_iconshader.qml test_a2_accentRow): the plate over the accent fill keeps 4.5:1 in Clear and 2.5:1 in Dark. Both selection
