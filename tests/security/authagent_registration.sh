@@ -18,7 +18,9 @@
 #   stall     the private bus, every registration refused, the second one answered 2 s late (a hung polkitd: Quickshell's
 #             call stops the event loop meanwhile), a 500 ms base, 6 s: two registrations and the stall logged, then none
 #             (without the stall rule a third would come at 3.5 s).
-#   The two last SKIP when this process cannot run a private bus (Unix sockets refused, as in a sandbox) or has no logind
+#   stall-start the same with the START's own registration answered 2 s late, 4 s: one registration, the stall logged, no
+#             try (the opus review of S3, round 3, NIT-2).
+#   The private-bus phases SKIP when this process cannot run a private bus (Unix sockets refused, as in a sandbox) or has no logind
 #   session (Quickshell then makes no subject and never reaches the bus).
 # Never the real system bus: nowhere names a socket that does not exist, the others the test's own bus.
 #
@@ -144,7 +146,7 @@ elif phase == "relock":
     say(lock is not None and unlock is not None and (len(before), len(between), len(after)) == (5, 0, 4) and tries == 8,
         "4 tries, none while locked, 4 more after the unlock (attempts %d before the lock, %d while locked, %d after; %d tries)" % (len(before), len(between), len(after), tries))
     say(nothing_registered, "nothing registered")
-elif phase in ("authority", "stall"):
+elif phase in ("authority", "stall", "stall-start"):
     calls = [x.split() for x in open(sys.argv[3], encoding="utf-8").read().splitlines() if not x.startswith("#")]
     regs = [c for c in calls if c[1] == "register"]
     unregs = [c for c in calls if c[1] == "unregister"]
@@ -158,7 +160,8 @@ elif phase in ("authority", "stall"):
             "the registered agent kept until the probe quit (unregistrations: %d, all at the end)" % len(unregs))
     else:
         stalled = [x for x in lines if "registering stopped this process for" in x]
-        say(len(regs) == 2 and tries == 1 and len(stalled) == 1,
+        want = (1, 0) if phase == "stall-start" else (2, 1)
+        say((len(regs), tries) == want and len(stalled) == 1,
             "the late answer stopped the tries: %d registrations, %d tries, the stall logged %d time(s)" % (len(regs), tries, len(stalled)))
         say(nothing_registered, "nothing registered")
 if not ok:
@@ -237,6 +240,9 @@ if start_bus; then
   rc=$?
   ((rc == 0 || rc == 77)) || fail=1
   authority_phase stall 500 6000 --refuse 99 --delay-ms 2000 --delay-from 2
+  rc=$?
+  ((rc == 0 || rc == 77)) || fail=1
+  authority_phase stall-start 500 4000 --refuse 99 --delay-ms 2000 --delay-from 1
   rc=$?
   ((rc == 0 || rc == 77)) || fail=1
 fi
