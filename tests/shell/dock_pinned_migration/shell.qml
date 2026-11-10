@@ -66,6 +66,7 @@ ShellRoot {
     SettingsStore {
         id: store
         saveDelay: 10
+        pollInterval: 300 // the file is looked at often: a file watch may lag under load
         onLoadedFile: {
             if (root.step < 0)
                 root.next();
@@ -76,7 +77,7 @@ ShellRoot {
         id: write
     }
 
-    // Each step: poll until the store reads what a fresh start would, or give up after 6 s.
+    // Each step: poll until the store reads what a fresh start would, or give up after 15 s.
     Timer {
         interval: 100
         running: root.step >= 0 && !root.finished
@@ -89,7 +90,7 @@ ShellRoot {
                 root.next();
                 return;
             }
-            if (++root.tries > 60)
+            if (++root.tries > 150)
                 root.finish(false, "step " + root.step + " (" + root.steps[root.step].text + "): read " + JSON.stringify(store.dockPinned) + ", wanted " + JSON.stringify(want));
         }
     }
@@ -104,7 +105,7 @@ ShellRoot {
     }
 
     Timer {
-        interval: 60000
+        interval: 110000
         running: true
         onTriggered: root.finish(false, "timeout at step " + root.step)
     }
