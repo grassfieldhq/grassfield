@@ -66,8 +66,8 @@ verify_pin() { # vendored file, clone dir, pin, path in the repository
     bad "C the vendored $(basename "$vendored") differs from $path at $pin in $clone (or the clone lacks the pin)"
   fi
 }
-check_entry "$fixtures/sanaga-a9e0e56.desktop" sanaga.desktop "text/html application/xhtml+xml x-scheme-handler/http x-scheme-handler/https"
-check_entry "$fixtures/grassfield-notes-2daf1c8.desktop" grassfield-notes.desktop "text/markdown text/x-markdown"
-verify_pin "$fixtures/sanaga-a9e0e56.desktop" "${GRASSFIELD_SANAGA_GIT:-}" a9e0e56 packaging/sanaga.desktop
-verify_pin "$fixtures/grassfield-notes-2daf1c8.desktop" "${GRASSFIELD_NOTES_GIT:-}" 2daf1c8 packaging/grassfield-notes.desktop
+check_entry "$fixtures/sanaga-a9e0e56.desktop.pinned" sanaga.desktop "text/html application/xhtml+xml x-scheme-handler/http x-scheme-handler/https"
+check_entry "$fixtures/grassfield-notes-2daf1c8.desktop.pinned" grassfield-notes.desktop "text/markdown text/x-markdown"
+verify_pin "$fixtures/sanaga-a9e0e56.desktop.pinned" "${GRASSFIELD_SANAGA_GIT:-}" a9e0e56 packaging/sanaga.desktop
+verify_pin "$fixtures/grassfield-notes-2daf1c8.desktop.pinned" "${GRASSFIELD_NOTES_GIT:-}" 2daf1c8 packaging/grassfield-notes.desktop
 exit "$fail"
