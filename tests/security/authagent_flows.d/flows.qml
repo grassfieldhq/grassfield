@@ -813,6 +813,18 @@ Item {
             tryCompare(a, "mockRegistrations", 3, 3000);
         }
 
+        // Each attempt is watched, not only the start's: the second try, made after the first one's watch ended, stops the
+        // event loop and is seen.
+        function test_45_eachAttemptIsWatched() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 2000});
+            verify(a);
+            tryCompare(a, "mockRegistrations", 2, 5000, "the first try, quick");
+            tryCompare(a, "stallWatching", false, 5000, "its watch ends");
+            a.mockBlockMs = 1500;
+            tryCompare(a, "mockRegistrations", 3, 6000, "the second try, 4 s after the first");
+            tryCompare(a, "registrationStalled", true, 3000, "its stall is seen");
+        }
+
         // ADR-0041 S3: the agent runs in the security process, which restarts (Restart=always) after a crash or a stop. Its end
         // with a request open, a password half typed, answers nothing: no password goes out, nothing is approved; polkitd
         // then ends the request with the agent's bus name ("not authorized"), as when the UI restarted before S3. The agent
