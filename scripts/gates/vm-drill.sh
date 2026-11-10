@@ -305,7 +305,7 @@ collect() { # collect NAME
   vm_ssh 'pacman -Q | sort' >"$r/packages.txt" || return 1
   vm_ssh "bash -s -- $VM_USER" >"$r/files.tsv" <<'EOS' || return 1
 u=$1 h=/home/$1
-roots=(/etc "$h/.config" "$h/.local/share" "$h/.local/state" "$h/.cache")
+roots=(/etc "$h/.config" "$h/.local/share")
 {
   find "${roots[@]}" -xdev -type f -exec sha256sum {} + 2>/dev/null | sed 's/^\([0-9a-f]\{64\}\)  \(.*\)$/\2\tF\t\1/'
   find "${roots[@]}" -xdev -type l -printf '%p\tL\t%l\n' 2>/dev/null
@@ -326,7 +326,8 @@ else
   echo "# no user manager running"
 fi
 EOS
-  vm_ssh 'find /usr /opt /var/lib /var/cache /boot -xdev -iname "*grassfield*" 2>/dev/null | sort' >"$r/extra.txt" || return 1
+  # Grassfield-named paths outside the hashed scope: system folders, and the user's state and cache (session churn there is not recorded)
+  vm_ssh "find /usr /opt /var/lib /var/cache /boot /home/$VM_USER/.cache /home/$VM_USER/.local/state -xdev -iname '*grassfield*' 2>/dev/null | sort" >"$r/extra.txt" || return 1
   vm_ssh 'loginctl list-sessions --no-legend; echo; ps -eo comm= | sort | uniq -c | sort -rn | head -40' >"$r/session.txt" || true
   info "record $1: $(wc -l <"$r/packages.txt") packages, $(wc -l <"$r/files.tsv") paths, $(wc -l <"$r/units-system.txt") system unit lines"
 }
@@ -410,7 +411,7 @@ phase_snapshot() {
   shot stock-session
   vm_ssh 'loginctl list-sessions --no-legend' | sed 's/^/INFO /'
   vm_stop
-  vm_running && { fail "VM did not stop"; return 1; }
+  if vm_running; then fail "VM did not stop"; return 1; fi
 }
 
 phase_install() {
@@ -524,8 +525,9 @@ phase_compare() {
     printf 'package\t%s\t%s\n' "$line" "$(vm_ssh "pacman -Qi $pkg | awk -F': *' '/^(Install Reason|Required By)/{printf \"%s=%s; \", \$1, \$2}'" </dev/null)" >>"$out"
   done < <(comm -13 "$s/packages.txt" "$a/packages.txt")
   comm -23 "$s/packages.txt" "$a/packages.txt" | sed 's/^/package-missing\t/; s/$/\tpresent in stock, absent now/' >>"$out"
-  LC_ALL=C sort -t$'\t' -k1,1 "$s/files.tsv" >"$s/files.sorted"
-  LC_ALL=C sort -t$'\t' -k1,1 "$a/files.tsv" >"$a/files.sorted"
+  # Scope: /etc, ~/.config, ~/.local/share (a record that also holds ~/.cache or ~/.local/state is cut to the same scope)
+  LC_ALL=C sort -t$'\t' -k1,1 "$s/files.tsv" | grep -vE "^/home/[^/]+/(\.cache|\.local/state)/" >"$s/files.sorted"
+  LC_ALL=C sort -t$'\t' -k1,1 "$a/files.tsv" | grep -vE "^/home/[^/]+/(\.cache|\.local/state)/" >"$a/files.sorted"
   LC_ALL=C join -t$'\t' -a1 -a2 -e '-' -o 0,1.2,1.3,2.2,2.3 "$s/files.sorted" "$a/files.sorted" |
     awk -F'\t' '($2 != $4) || ($3 != $5) { k = ($2 == "-") ? "file-added" : ($4 == "-") ? "file-removed" : "file-changed"; print k "\t" $1 "\t" $3 " -> " $5 }' >>"$out"
   diff "$s/units-system.txt" "$a/units-system.txt" | sed -n 's/^< \(.*\)/unit-removed\t\1\t-/p;s/^> \(.*\)/unit-added\t\1\t-/p' >>"$out"
