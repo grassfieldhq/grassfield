@@ -40,8 +40,8 @@ import cannot be migrated fails CI. The QML test layers keep testing the source 
 lines). `scripts/dev/shell-run.sh --migrated` runs the UI from `.dev/migrated/shell`: a link to `.dev/migrated-<stamp>`, the stamp being a hash of the sources and of the script (`scripts/dev/migrated-tree.sh`).
 A changed content is built into a fresh directory and the link is swapped by one rename. A tree that has a stamp is never deleted
 or rewritten while it is current or the one before it, and a run on the current content changes and prunes nothing. The processes
-are STARTED AND ADDRESSED BY THE REAL PATH (`readlink -f .dev/migrated`, in `shell-run.sh`, `nested-up.sh` and the nested security
-tests), never through the link: Quickshell keeps the literal path (shellDir, the Path ID, every relative load), so a process
+are STARTED AND ADDRESSED BY THE REAL PATH (`.dev/migrated-<stamp>`, built from the stamp migrated-tree.sh prints in `shell-run.sh`
+and `nested-up.sh` since #40, `readlink -f .dev/migrated` in the nested security tests), never through the link: Quickshell keeps the literal path (shellDir, the Path ID, every relative load), so a process
 started through the link would load a file it opens late from whatever tree the link points to by then, while one started on tree
 A's real path keeps loading from A after a swap to B (tests/shell/migrated_tree.sh runs both). The stamp is computed from a
 snapshot of the sources that the tree is then built from, runs are serialised by `flock`, a reused tree is verified again, and a

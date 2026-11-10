@@ -63,9 +63,12 @@ plugin=${GRASSFIELD_PLUGIN:-$root/compositor/build/grassfield-compositor.so}
 shell_dir=$root/shell
 if [[ ${GRASSFIELD_MIGRATED:-0} == 1 ]]; then
   # Built now (shell-run.sh finds the same stamp later) and addressed by its REAL path, as the processes are started: the link is
-  # never a process's path (scripts/dev/migrated-tree.sh).
-  "$root/scripts/dev/migrated-tree.sh" "$root" "$dev" >/dev/null || { echo "nested-up: the migrated tree did not build" >&2; exit 1; }
-  shell_dir=$(readlink -f "$dev/migrated")/shell
+  # never a process's path (scripts/dev/migrated-tree.sh). The path is built from the stamp it printed, not read back from the link,
+  # which a concurrent build could have repointed after it released its lock.
+  tree_stamp=$("$root/scripts/dev/migrated-tree.sh" "$root" "$dev") || { echo "nested-up: the migrated tree did not build" >&2; exit 1; }
+  [[ $tree_stamp =~ ^[0-9a-f]{16}$ && ! -L $dev/migrated-$tree_stamp && -d $dev/migrated-$tree_stamp ]] \
+    || { echo "nested-up: the migrated tree $dev/migrated-$tree_stamp is missing" >&2; exit 1; }
+  shell_dir=$dev/migrated-$tree_stamp/shell
 fi
 
 # 2. Start Hyprland nested. Its children inherit the nested WAYLAND_DISPLAY/HYPRLAND_INSTANCE_SIGNATURE.
