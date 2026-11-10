@@ -291,6 +291,24 @@ TestCase {
     }
 
     // The glass over the dark half takes the class target; over the bright half it is raised (dark appearance).
+    // A plain white wallpaper (R7-REQ-13, the Dock over #ffffff): a one-cell grid and a range of exactly 1.0..1.0 are a valid backdrop (no zero-variance guard), and the Dock's
+    // icons are light on it; the grid of the previous wallpaper must not be kept (it wins over the range in wallpaperUnder).
+    function test_uniformWhiteWallpaper() {
+        const px = [];
+        for (let i = 0; i < 16 * 16; i++)
+            px.push(255, 255, 255, 255);
+        const span = GlassTint.gridOf(px, 16, 16, 1, 1, 1920, 1080);
+        compare(span.min[0], 1);
+        compare(span.max[0], 1);
+        const white = {lumMin: span.min[0], lumMax: span.max[0]};
+        compare(GlassTint.wallpaperUnder(white, null, Qt.rect(0, 1000, 600, 80), 0), {lumMin: 1, lumMax: 1});
+        const dark = {width: 1920, height: 1080, cols: 1, rows: 1, min: [0.02], max: [0.07]};
+        compare(GlassTint.wallpaperUnder(white, dark, Qt.rect(0, 1000, 600, 80), 0), {lumMin: 0.02, lumMax: 0.07}, "a stale grid beats the range: the host clears it with the override");
+        const glass = IconModes.surfaceLuma(1, 0.017, Tokens.dockTintAlphaLight);
+        verify(glass > 0.9, `glass over white ${glass}`);
+        compare(IconModes.surfaceIsDark(true, glass, true, Tokens), false, "light icons on white, whatever the previous look");
+    }
+
     function test_materialUsesTheAreaUnderIt() {
         Appearance.dark = true;
         Appearance.transparency = Tokens.materialDefaultTransparency;

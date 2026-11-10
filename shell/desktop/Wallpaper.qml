@@ -228,6 +228,12 @@ Scope {
             readonly property string imageUrl: imageFile !== "" ? "file://" + imageFile : ""
             function measure(): void {
                 if (imageFile !== "") {
+                    // What was reported for the previous wallpaper (the artwork's range and luminance grid) no longer describes the screen: forget it until the probe has read the
+                    // image, the grid first (Backdrop.wallpaperUnder prefers it to the range, so a stale one beat the new range: the Dock never followed the first override, 2026-11-10).
+                    if (win.modelData) {
+                        Backdrop.reportGrid(win.modelData.name, null);
+                        Backdrop.reportWallpaper(win.modelData.name, null);
+                    }
                     if (probe.isImageLoaded(imageUrl))
                         probe.requestPaint();
                     else
@@ -261,6 +267,9 @@ Scope {
                 renderTarget: Canvas.Image
                 renderStrategy: Canvas.Immediate
                 onImageLoaded: requestPaint()
+                // A first measurement that came before the canvas had a context is read again once it has one (the first override of a run).
+                onAvailableChanged: if (available && win.imageUrl !== "")
+                    Qt.callLater(win.measure)
                 onPaint: {
                     const url = win.imageUrl;
                     if (url === "" || !isImageLoaded(url))
