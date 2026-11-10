@@ -300,7 +300,7 @@ SettingsPage {
         let all = [];
         for (const dir of root.backend.applicationDirs)
             all = all.concat(root.entriesOf(dir));
-        root.browserChoices = DefaultBrowser.browsers(all, Qt.locale().name);
+        root.browserChoices = DefaultBrowser.browsers(all, Qt.locale().name, program => root.backend.programExists(program));
         const own = root.ownListTexts();
         const session = root.backend.readText(root.backend.xdgConfigDir + "/" + DefaultBrowser.LIST_NAME);
         root.browserCurrent = own === null ? "" : DefaultBrowser.current([session.text].concat(own));

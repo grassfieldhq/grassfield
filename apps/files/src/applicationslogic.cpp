@@ -1020,12 +1020,13 @@ QStringList execWords(const QString &exec)
     return words;
 }
 
-bool launcherWords(const QStringList &words, int depth)
+// The program a word list starts, "" for a launcher that resolves the default again (or for nothing usable). uwsm-app and `uwsm app`
+// only start the program they are given: that one is the answer.
+QString startedProgram(const QStringList &words, int depth)
 {
     if (words.isEmpty() || depth > 3)
-        return true;
+        return {};
     const QString program = words.first().section(QLatin1Char('/'), -1);
-    // uwsm-app and `uwsm app` only start the program they are given: judge that one.
     QStringList rest;
     if (program == QLatin1String("uwsm-app"))
         rest = words.mid(1);
@@ -1036,22 +1037,48 @@ bool launcherWords(const QStringList &words, int depth)
                                               QStringLiteral("dash"),    QStringLiteral("zsh"),        QStringLiteral("fish"),  QStringLiteral("env"),
                                               QStringLiteral("uwsm"),    QStringLiteral("systemd-run"), QStringLiteral("kde-open"), QStringLiteral("gnome-open"),
                                               QStringLiteral("exo-open"), QStringLiteral("sensible-browser"), QStringLiteral("x-www-browser")};
-        return program.isEmpty() || program.startsWith(QLatin1String("omarchy-")) || program.startsWith(QLatin1String("xdg-")) || launchers.contains(program);
+        const bool launcher = program.isEmpty() || program.startsWith(QLatin1String("omarchy-")) || program.startsWith(QLatin1String("xdg-")) || launchers.contains(program);
+        return launcher ? QString() : words.first();
     }
     const qsizetype dashes = rest.indexOf(QStringLiteral("--"));
     if (dashes >= 0)
-        return launcherWords(rest.mid(dashes + 1), depth + 1);
+        return startedProgram(rest.mid(dashes + 1), depth + 1);
     for (qsizetype i = 0; i < rest.size(); ++i) {
         if (!rest.at(i).startsWith(QLatin1Char('-')))
-            return launcherWords(rest.mid(i), depth + 1);
+            return startedProgram(rest.mid(i), depth + 1);
     }
-    return true;
+    return {};
 }
 
-// The first Exec= of a desktop file's [Desktop Entry] group.
-QString entryExec(const QString &desktopText)
+bool launcherWords(const QStringList &words, int depth)
 {
+    return startedProgram(words, depth).isEmpty();
+}
+
+// Whether a program exists as GLib resolves it: an absolute path to an executable regular file, or a name found in $PATH.
+bool programRuns(const QString &program)
+{
+    if (program.isEmpty() || program.contains(QChar(0)))
+        return false;
+    if (program.startsWith(QLatin1Char('/'))) {
+        const QFileInfo info(program);
+        return info.isFile() && info.isExecutable();
+    }
+    return program.contains(QLatin1Char('/')) ? false : !QStandardPaths::findExecutable(program).isEmpty();
+}
+
+struct EntryFields {
+    QString exec;
+    QString tryExec;
+    bool duplicate = false; // Exec, TryExec or Type twice in [Desktop Entry]: GLib keeps the last, a reader of the first is fooled
+};
+
+// The first Exec= of a desktop file's [Desktop Entry] group.
+EntryFields entryFields(const QString &desktopText)
+{
+    EntryFields out;
     bool in = false;
+    int execs = 0, tryExecs = 0, types = 0;
     for (const QString &line : desktopText.split(QLatin1Char('\n'))) {
         if (isGroupLine(line)) {
             if (in)
@@ -1059,16 +1086,26 @@ QString entryExec(const QString &desktopText)
             in = line.trimmed() == QLatin1String("[Desktop Entry]");
             continue;
         }
-        if (in && keyOf(line) == QLatin1String("Exec"))
-            return valueOf(line);
+        if (!in)
+            continue;
+        const QString key = keyOf(line);
+        if (key == QLatin1String("Exec") && execs++ == 0)
+            out.exec = valueOf(line);
+        else if (key == QLatin1String("TryExec") && tryExecs++ == 0)
+            out.tryExec = valueOf(line);
+        else if (key == QLatin1String("Type"))
+            ++types;
     }
-    return {};
+    out.duplicate = execs > 1 || tryExecs > 1 || types > 1;
+    return out;
 }
 
 // Whether the first file of `id` in `dirs` is a regular entry that handles at least one of `types` and whose Exec is no
 // launcher: a ~/.local copy that runs xdg-open would loop, so it is never a target (the fork storm of 2026-10-30).
 bool usableEntry(const QStringList &dirs, const QString &id, const QStringList &types)
 {
+    if (id.contains(QStringLiteral("..")))
+        return false; // the "-" of an id is also read as a folder: "..-x.desktop" would read applications/../x.desktop
     for (const QString &dir : dirs) {
         const QFileInfo info(dir + QLatin1Char('/') + id);
         if (!info.isFile() || info.size() > 256 * 1024)
@@ -1077,7 +1114,13 @@ bool usableEntry(const QStringList &dirs, const QString &id, const QStringList &
         if (!file.open(QIODevice::ReadOnly))
             continue;
         const QString text = QString::fromUtf8(file.readAll());
-        if (isLauncherExec(entryExec(text)))
+        const EntryFields fields = entryFields(text);
+        if (fields.duplicate)
+            return false; // which Exec runs depends on the reader: refused
+        if (isLauncherExec(fields.exec))
+            return false;
+        // A program that is not there (a removed package, a typo) is never seeded: gio would have no default browser then.
+        if (!programRuns(startedProgram(execWords(fields.exec), 0)) || (!fields.tryExec.isEmpty() && !programRuns(fields.tryExec)))
             return false;
         const QStringList have = desktopMimeTypes(text);
         for (const QString &t : types) {

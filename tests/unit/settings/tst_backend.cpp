@@ -687,3 +687,24 @@ TEST_F(BackendTest, ATextFileThatIsNotUtf8IsNotReadAsText)
     EXPECT_FALSE(refused.value(QStringLiteral("ok")).toBool()) << "Latin-1 bytes are not decoded into replacement characters and rewritten";
     EXPECT_TRUE(refused.value(QStringLiteral("text")).toString().isEmpty());
 }
+
+// Default web browser: a desktop entry whose program is gone is never offered. A program exists as GLib resolves it: an absolute path to an
+// executable regular file, or a name found in $PATH (here the scratch folder of fake commands).
+TEST_F(BackendTest, AProgramExistsAsGlibResolvesIt)
+{
+    Backend backend;
+    EXPECT_TRUE(backend.programExists(QStringLiteral("gf-fake-query"))) << "a name of $PATH";
+    EXPECT_TRUE(backend.programExists(scratch(QStringLiteral("gf-fake-query")))) << "an absolute path to an executable file";
+    EXPECT_FALSE(backend.programExists(QStringLiteral("no-such-program-anywhere")));
+    EXPECT_FALSE(backend.programExists(QStringLiteral("/nonexistent/bin/gone")));
+    EXPECT_FALSE(backend.programExists(scratch(QString()))) << "a directory";
+    {
+        QFile f(scratch(QStringLiteral("plain-file")));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    }
+    EXPECT_FALSE(backend.programExists(scratch(QStringLiteral("plain-file")))) << "a file that is not executable";
+    EXPECT_FALSE(backend.programExists(QString()));
+    EXPECT_FALSE(backend.programExists(QStringLiteral("dir/relative"))) << "a relative path is no program";
+    EXPECT_FALSE(backend.programExists(QStringLiteral("a\0b")));
+}

@@ -735,6 +735,16 @@ struct BundledTree {
         QFile f(path);
         return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray("(missing)");
     }
+    // A program that exists (an executable file of the scratch tree), by absolute path.
+    QByteArray exe(const QString &name)
+    {
+        const QString path = dir.filePath(QStringLiteral("bin/") + name);
+        if (!QFileInfo::exists(path)) {
+            write(path, "#!/bin/sh\nexit 0\n");
+            QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+        }
+        return QFile::encodeName(path);
+    }
     // Installed as grassfield-packages ships them; Omarchy's stock lists as Omarchy 4.x ships them.
     bool setUp(bool installed = true)
     {
@@ -742,8 +752,8 @@ struct BundledTree {
             return false;
         bool ok = QDir().mkpath(config) && QDir().mkpath(apps);
         if (installed) {
-            ok = ok && write(apps + QStringLiteral("/sanaga.desktop"), "[Desktop Entry]\nType=Application\nExec=sanaga %U\nMimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;\n");
-            ok = ok && write(apps + QStringLiteral("/grassfield-notes.desktop"), "[Desktop Entry]\nType=Application\nExec=grassfield-notes %F\nMimeType=text/markdown;text/x-markdown;\n");
+            ok = ok && write(apps + QStringLiteral("/sanaga.desktop"), QByteArray("[Desktop Entry]\nType=Application\nExec=") + exe(QStringLiteral("sanaga")) + " %U\nMimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;\n");
+            ok = ok && write(apps + QStringLiteral("/grassfield-notes.desktop"), QByteArray("[Desktop Entry]\nType=Application\nExec=") + exe(QStringLiteral("grassfield-notes")) + " %F\nMimeType=text/markdown;text/x-markdown;\n");
         }
         ok = ok && write(stock + QStringLiteral("/config/hyprland-mimeapps.list"), "[Default Applications]\nx-scheme-handler/http=omarchy-browser.desktop\nx-scheme-handler/https=omarchy-browser.desktop\n");
         ok = ok && write(stock + QStringLiteral("/default/applications/mimeapps.list"),
@@ -928,7 +938,7 @@ TEST(BundledApps, WhenInDoubtNothingIsWritten)
         ASSERT_TRUE(t.omarchyInstall());
         EXPECT_FALSE(t.seed());
         EXPECT_FALSE(QFileInfo::exists(t.state)) << "not installed: nothing is recorded";
-        ASSERT_TRUE(BundledTree::write(t.apps + QStringLiteral("/sanaga.desktop"), "[Desktop Entry]\nType=Application\nExec=sanaga %U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n"));
+        ASSERT_TRUE(BundledTree::write(t.apps + QStringLiteral("/sanaga.desktop"), QByteArray("[Desktop Entry]\nType=Application\nExec=") + t.exe(QStringLiteral("sanaga")) + " %U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n"));
         EXPECT_TRUE(t.seed()) << "installed later: seeded then";
     }
     {
@@ -1214,7 +1224,7 @@ TEST(BundledApps, TheSeedNeverTargetsAnEntryWhoseExecIsALauncher)
     ASSERT_TRUE(t.omarchyInstall());
     const QString local = t.dir.filePath(QStringLiteral("local-applications"));
     ASSERT_TRUE(BundledTree::write(local + QStringLiteral("/sanaga.desktop"),
-                                   "[Desktop Entry]\nType=Application\nExec=uwsm app -- sanaga %U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n"));
+                                   QByteArray("[Desktop Entry]\nType=Application\nExec=uwsm app -- ") + t.exe(QStringLiteral("sanaga")) + " %U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n"));
     DefaultApps::seedBundledApps(t.config, t.state, {local, t.apps}, t.stock, t.lists());
     EXPECT_EQ(sessionDefaults(t).value(QStringLiteral("x-scheme-handler/http")), QStringLiteral("sanaga.desktop"));
     // the table of launchers, as the Settings row reads it
@@ -1222,4 +1232,58 @@ TEST(BundledApps, TheSeedNeverTargetsAnEntryWhoseExecIsALauncher)
         EXPECT_TRUE(DefaultApps::isLauncherExec(QString::fromLatin1(exec))) << exec;
     for (const char *exec : {"uwsm app -- firefox %u", "uwsm-app -- chromium --new-window %U", "\"/opt/Some Browser/browser\" %U", "'zen-browser' %u"})
         EXPECT_FALSE(DefaultApps::isLauncherExec(QString::fromLatin1(exec))) << exec;
+}
+
+// LOW-1 and LOW-2 of the delta review: the entry must be one GLib would run. A program that is not there (an absolute path or a name of
+// $PATH, behind uwsm too) or a missing TryExec is never seeded; an entry with a second Exec, TryExec or Type in [Desktop Entry] (GLib keeps
+// the last, a reader of the first is fooled) is refused. Nothing is recorded for any of them, so the real entry may come later.
+TEST(BundledApps, TheSeedNeverTargetsAnEntryThatCannotRunOrThatReadsTwoWays)
+{
+    const auto entry = [](BundledTree &t, const QByteArray &body) {
+        return BundledTree::write(t.apps + QStringLiteral("/sanaga.desktop"),
+                                  QByteArray("[Desktop Entry]\nType=Application\n") + body + "MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n");
+    };
+    struct Case {
+        const char *why;
+        QByteArray (*body)(BundledTree &);
+        bool seeded;
+    };
+    const Case cases[] = {
+        {"a program that is gone (absolute path)", [](BundledTree &) { return QByteArray("Exec=/nonexistent/bin/gone %U\n"); }, false},
+        {"a program that is not in PATH", [](BundledTree &) { return QByteArray("Exec=no-such-browser-here %U\n"); }, false},
+        {"a program that is gone behind uwsm", [](BundledTree &) { return QByteArray("Exec=uwsm app -- /nonexistent/bin/gone %U\n"); }, false},
+        {"a directory, not a program", [](BundledTree &t) { return QByteArray("Exec=") + QFile::encodeName(t.dir.path()) + " %U\n"; }, false},
+        {"a file that is not executable", [](BundledTree &t) {
+             BundledTree::write(t.dir.filePath(QStringLiteral("notexec")), "x");
+             return QByteArray("Exec=") + QFile::encodeName(t.dir.filePath(QStringLiteral("notexec"))) + " %U\n"; }, false},
+        {"a TryExec that is missing", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\nTryExec=/nonexistent/bin/gone\n"; }, false},
+        {"a TryExec that exists", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\nTryExec=" + t.exe(QStringLiteral("sanaga")) + "\n"; }, true},
+        {"a second Exec (a launcher last: GLib keeps it)", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\nExec=xdg-open %u\n"; }, false},
+        {"a second Exec (a browser last)", [](BundledTree &t) { return QByteArray("Exec=xdg-open %u\nExec=") + t.exe(QStringLiteral("sanaga")) + " %U\n"; }, false},
+        {"a second TryExec", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\nTryExec=" + t.exe(QStringLiteral("sanaga")) + "\nTryExec=/nonexistent\n"; }, false},
+        {"a second Type", [](BundledTree &t) { return QByteArray("Type=Link\nExec=") + t.exe(QStringLiteral("sanaga")) + " %U\n"; }, false},
+        {"one of each", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\n"; }, true},
+    };
+    for (const Case &c : cases) {
+        BundledTree t;
+        ASSERT_TRUE(t.setUp(false));
+        ASSERT_TRUE(t.omarchyInstall());
+        ASSERT_TRUE(entry(t, c.body(t))) << c.why;
+        t.seed();
+        EXPECT_EQ(sessionDefaults(t).contains(QStringLiteral("x-scheme-handler/http")), c.seeded) << c.why;
+        EXPECT_EQ(recordOf(t).contains(QStringLiteral("web.state")), c.seeded) << c.why << (c.seeded ? "" : ": nothing is recorded");
+    }
+    // a name found in $PATH runs, and so does one behind uwsm
+    for (const char *form : {"Exec=%1 %U\n", "Exec=uwsm app -- %1 %U\n"}) {
+        BundledTree t;
+        ASSERT_TRUE(t.setUp(false));
+        ASSERT_TRUE(t.omarchyInstall());
+        t.exe(QStringLiteral("a-browser"));
+        const QByteArray oldPath = qgetenv("PATH");
+        qputenv("PATH", QFile::encodeName(t.dir.filePath(QStringLiteral("bin"))) + ':' + oldPath);
+        ASSERT_TRUE(entry(t, QByteArray(form).replace("%1", "a-browser")));
+        t.seed();
+        qputenv("PATH", oldPath);
+        EXPECT_TRUE(sessionDefaults(t).contains(QStringLiteral("x-scheme-handler/http"))) << form;
+    }
 }

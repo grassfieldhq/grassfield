@@ -189,6 +189,9 @@ public:
     // setup done meanwhile in Omarchy's terminal counts at once (ADR-0045 OC-0.3). false for anything but 1 to 64 of
     // [A-Za-z0-9._+-] starting with a letter or a digit.
     Q_INVOKABLE bool hasCommand(const QString &name) const;
+    // Whether a program exists as GLib resolves it: an absolute path to an executable regular file, or a name found in $PATH
+    // (Default web browser: a desktop entry whose program is gone is never offered).
+    Q_INVOKABLE bool programExists(const QString &program) const;
     // The outputs the compositor reports to this client (Qt screens): [{name, model, manufacturer, x, y, width,
     // height, scale, pixelWidth, pixelHeight, refreshRate, physicalWidth, physicalHeight (mm), primary}]. Read-only; never
     // talks to Hyprland.

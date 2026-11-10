@@ -529,6 +529,17 @@ bool Backend::hasCommand(const QString &name) const
     return plain.match(name).hasMatch() && !QStandardPaths::findExecutable(name).isEmpty();
 }
 
+bool Backend::programExists(const QString &program) const
+{
+    if (program.isEmpty() || program.size() > 4096 || program.contains(QChar(0)))
+        return false;
+    if (program.startsWith(QLatin1Char('/'))) {
+        const QFileInfo info(program);
+        return info.isFile() && info.isExecutable();
+    }
+    return !program.contains(QLatin1Char('/')) && !QStandardPaths::findExecutable(program).isEmpty();
+}
+
 QVariantList Backend::screens() const
 {
     QVariantList out;

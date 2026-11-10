@@ -51,9 +51,11 @@ function execWords(exec) {
     return words;
 }
 
-function launcherWords(words, depth) {
+// The program a word list starts, null for a launcher that resolves the default again (or for nothing usable). uwsm-app and
+// `uwsm app` only start the program they are given: that one is the answer.
+function startedProgram(words, depth) {
     if (words.length === 0 || depth > 3)
-        return true;
+        return null;
     const program = words[0].split("/").pop();
     let rest = null;
     if (program === "uwsm-app")
@@ -63,32 +65,34 @@ function launcherWords(words, depth) {
     if (rest === null) {
         const launchers = ["gio", "gtk-launch", "sh", "bash", "dash", "zsh", "fish", "env", "uwsm", "systemd-run", "kde-open", "gnome-open", "exo-open",
                            "sensible-browser", "x-www-browser"];
-        return program === "" || program.indexOf("omarchy-") === 0 || program.indexOf("xdg-") === 0 || launchers.indexOf(program) >= 0;
+        const launcher = program === "" || program.indexOf("omarchy-") === 0 || program.indexOf("xdg-") === 0 || launchers.indexOf(program) >= 0;
+        return launcher ? null : words[0];
     }
-    // uwsm-app and `uwsm app` only start the program they are given: judge that one.
     const dashes = rest.indexOf("--");
     if (dashes >= 0)
-        return launcherWords(rest.slice(dashes + 1), depth + 1);
+        return startedProgram(rest.slice(dashes + 1), depth + 1);
     for (let i = 0; i < rest.length; i++) {
         if (rest[i].indexOf("-") !== 0)
-            return launcherWords(rest.slice(i), depth + 1);
+            return startedProgram(rest.slice(i), depth + 1);
     }
-    return true;
+    return null;
 }
 
 // Whether an Exec= line runs a launcher that resolves the default again (the fork storm of 2026-10-30): omarchy-*, xdg-*, gio, a
 // shell, env..., an empty line; the program uwsm-app or `uwsm app --` starts is the one judged.
 function launcherExec(exec) {
-    return launcherWords(execWords(exec), 0);
+    return startedProgram(execWords(exec), 0) === null;
 }
 
+// A plain desktop file name, no ".." (the "-" of an id is also read as a folder: "..-x.desktop" would read applications/../x.desktop).
 function validId(id) {
-    return typeof id === "string" && /^[A-Za-z0-9._+-]{1,200}\.desktop$/.test(id);
+    return typeof id === "string" && /^[A-Za-z0-9._+-]{1,200}\.desktop$/.test(id) && id.indexOf("..") < 0;
 }
 
 // One entry's fields: name (localised), exec, icon, categories, mimeTypes, hidden, noDisplay, type.
 function parseEntry(text, lang) {
-    const e = {name: "", exec: "", icon: "", categories: [], mimeTypes: [], hidden: false, noDisplay: false, type: ""};
+    const e = {name: "", exec: "", tryExec: "", icon: "", categories: [], mimeTypes: [], hidden: false, noDisplay: false, type: "", duplicate: false};
+    const seenKey = {};
     const short = String(lang).split(/[_.@]/)[0];
     let inGroup = false;
     let localised = "";
@@ -105,7 +109,15 @@ function parseEntry(text, lang) {
             continue;
         const key = line.slice(0, eq).trim();
         const value = line.slice(eq + 1).trim();
-        if (key === "Name")
+        // Exec, TryExec or Type twice: GLib keeps the last, a reader of the first is fooled, so such an entry is refused.
+        if (key === "Exec" || key === "TryExec" || key === "Type") {
+            if (seenKey[key])
+                e.duplicate = true;
+            seenKey[key] = true;
+        }
+        if (key === "TryExec" && e.tryExec === "")
+            e.tryExec = value;
+        else if (key === "Name")
             e.name = value;
         else if ((key === "Name[" + lang + "]" || key === "Name[" + short + "]") && localised === "")
             localised = value;
@@ -129,9 +141,11 @@ function parseEntry(text, lang) {
     return e;
 }
 
-// The browsers one can choose: [{id, name, icon}] sorted by name, from [{file, text}] (the first file of a name wins, as the
-// lookup does). A browser has WebBrowser in its Categories, is shown, handles http or https, and its Exec is no launcher.
-function browsers(entries, lang) {
+// The browsers one can choose: [{id, name, icon}] sorted by name, from [{file, text}] (the first file of a name wins, as the lookup does).
+// A browser has WebBrowser in its Categories, is shown, handles http or https, has one Exec, TryExec and Type, its Exec is no launcher,
+// and the program it starts and its TryExec exist: `exists(program)` (the backend's programExists: an absolute path to an executable
+// file or a name of $PATH, as GLib resolves it) must say yes; a broken entry is never offered.
+function browsers(entries, lang, exists) {
     const seen = {};
     const out = [];
     for (const a of entries) {
@@ -141,7 +155,12 @@ function browsers(entries, lang) {
         if (a.file === ROUTING)
             continue;
         const e = parseEntry(a.text, lang);
-        if (e.type !== "Application" || e.hidden || e.noDisplay || e.name === "" || launcherExec(e.exec))
+        if (e.duplicate || e.type !== "Application" || e.hidden || e.noDisplay || e.name === "")
+            continue;
+        const program = startedProgram(execWords(e.exec), 0);
+        if (program === null)
+            continue;
+        if (typeof exists === "function" && (!exists(program) || (e.tryExec !== "" && !exists(e.tryExec))))
             continue;
         if (e.categories.indexOf("WebBrowser") < 0)
             continue;

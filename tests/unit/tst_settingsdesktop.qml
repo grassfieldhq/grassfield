@@ -339,9 +339,14 @@ TestCase {
             property var applicationDirs: ["/apps"]
             property var currentDesktops: ["Grassfield", "Hyprland"]
             property var unreadable: []
+            // The programs that exist: names of $PATH and absolute paths.
+            property var programs: ["sanaga", "chromium", "firefox", "zen-browser", "nocat", "nohttp", "hidden", "/usr/bin/fine"]
             property var files: ({})
             property bool failState: false
             property var writes: []
+            function programExists(program: string): bool {
+                return programs.indexOf(program) >= 0;
+            }
             function desktopEntries(dir: string): var {
                 const out = [];
                 for (const path of Object.keys(files)) {
@@ -389,6 +394,16 @@ TestCase {
             "/apps/uwsmlauncher.desktop": entry("UwsmLauncher", "uwsm app -- xdg-open %u"),
             "/apps/uwsmapp.desktop": entry("UwsmApp", "uwsm-app -- omarchy-launch-browser %U"),
             "/apps/zen.desktop": entry("Zen", "uwsm app -- zen-browser %u"),
+            // An entry GLib could not run, or would read two ways, is never offered (delta review of PR #38).
+            "/apps/gone.desktop": entry("Gone", "/nonexistent/bin/gone %u"),
+            "/apps/gonewrap.desktop": entry("GoneWrap", "uwsm app -- no-such-browser %u"),
+            "/apps/notry.desktop": entry("NoTry", "firefox %u", "TryExec=/nonexistent/bin/gone\n"),
+            "/apps/dupexec1.desktop": entry("DupExec1", "firefox %u", "Exec=xdg-open %u\n"),
+            "/apps/dupexec2.desktop": entry("DupExec2", "xdg-open %u", "Exec=firefox %u\n"),
+            "/apps/duptry.desktop": entry("DupTry", "firefox %u", "TryExec=firefox\nTryExec=/nonexistent\n"),
+            "/apps/duptype.desktop": entry("DupType", "firefox %u", "Type=Link\n"),
+            "/apps/..-evil.desktop": entry("Evil", "firefox %u"),
+            "/apps/tryok.desktop": entry("TryOk", "/usr/bin/fine %u", "TryExec=/usr/bin/fine\n"),
             "/apps/editor.desktop": "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor %F\nCategories=Utility;\nMimeType=text/plain;\n",
             "/cfg/mimeapps.list": "[Default Applications]\ntext/html=chromium.desktop\nx-scheme-handler/http=chromium.desktop\nx-scheme-handler/https=chromium.desktop\n"
                 + "x-scheme-handler/mailto=HEY.desktop\n",
@@ -408,7 +423,7 @@ TestCase {
     // resolves the default again; the current one is read from the lists (the routing entry left out).
     function test_defaultBrowserOffersBrowsersOnly() {
         const t = makeWithBackend(browserFiles());
-        compare(t.page.browserChoices.map(b => b.id).join(","), "chromium.desktop,firefox.desktop,sanaga.desktop,zen.desktop");
+        compare(t.page.browserChoices.map(b => b.id).join(","), "chromium.desktop,firefox.desktop,sanaga.desktop,tryok.desktop,zen.desktop");
         compare(t.page.browserCurrent, "chromium.desktop");
         const box = named(t.page.contentItem, "Default web browser");
         verify(box, "the row is there");
@@ -449,7 +464,8 @@ TestCase {
     function test_defaultBrowserNeverChoosesALauncherOrFailsHalfWay() {
         const t = makeWithBackend(browserFiles());
         for (const id of ["omarchy-browser.desktop", "evil.desktop", "launcher2.desktop", "hidden.desktop", "editor.desktop", "../x.desktop", "sanaga",
-                          "nocat.desktop", "nohttp.desktop", "quoted.desktop", "uwsmlauncher.desktop", "uwsmapp.desktop"])
+                          "nocat.desktop", "nohttp.desktop", "quoted.desktop", "uwsmlauncher.desktop", "uwsmapp.desktop", "gone.desktop", "gonewrap.desktop",
+                          "notry.desktop", "dupexec1.desktop", "dupexec2.desktop", "duptry.desktop", "duptype.desktop", "..-evil.desktop"])
             verify(!t.page.setBrowser(id), id + " is refused");
         compare(t.backend.writes.length, 0, "nothing was written");
         t.backend.failState = true;
