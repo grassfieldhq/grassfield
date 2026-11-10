@@ -13,6 +13,8 @@ ShaderEffect {
     property string mode: "default"
     property color tint: Appearance.iconTint
     property bool darkAppearance: Appearance.dark
+    // The relative luminance of the glass surface the icon sits on, when the shell knows it (-1: unknown). The Dock's (Appearance.surfaceLumaOver).
+    property real surfaceLuma: -1
     // Drawn over the bare wallpaper (desktop icons): a look that holds on any wallpaper brightness.
     property bool wallpaper: false
     // Drawn over the accent fill of a selected row: 0 no, 1 a bright accent, 2 a dark one (the plate and the ink are the opposite of it).
@@ -31,8 +33,8 @@ ShaderEffect {
     readonly property real dark: root.darkAppearance ? 1 : 0
     // Over the bare wallpaper (desktop icons); for Clear also over a material that lets so much of it through (transparency at its
     // end) that the icon is over the wallpaper: the look that holds on any wallpaper brightness.
-    readonly property real overWallpaper: IconModes.overWallpaperLook(root.params.index, root.wallpaper, Appearance.effectiveTransparency, root.darkAppearance, root.solidMaterial, root.accentFill, Tokens) ? 1 : 0
-    readonly property real clearPlateAlphaWallpaper: Tokens.iconModeClearPlateAlphaWallpaper
+    readonly property real overWallpaper: IconModes.overWallpaperLook(root.params.index, root.wallpaper, Appearance.effectiveTransparency, root.darkAppearance, root.solidMaterial, root.accentFill, Tokens, root.surfaceLuma) ? 1 : 0
+    readonly property real clearPlateAlphaWallpaper: root.wallpaper ? Tokens.iconModeClearPlateAlphaWallpaper : IconModes.smokeAlpha(root.surfaceLuma, Tokens.iconModeClearPlateAlphaWallpaper, Tokens.iconModeClearPlateWallpaperLuma, Tokens)
     readonly property real sysPlateInset: Tokens.iconModeSysPlateInset
     readonly property real sysPlateRadius: Tokens.iconModeSysPlateRadius
     // Scale of the artwork about the centre: the glyph scale (the icon sits on the plate), or for an icon that is already a tile the scale that
@@ -70,7 +72,7 @@ ShaderEffect {
     // Tone of a tile icon (shaders/icon.frag, TILE TONE): which side of its pivot the pixels move to, by the pure rule IconModes.tileToneSide. Only for icons on a solid
     // window material (a window's own views, the A2 suite): the Dock and the other glass surfaces have a backdrop the pivots do not describe, so they get none.
     property bool solidMaterial: false
-    readonly property real tileToneSide: root.solidMaterial ? IconModes.tileToneSide(root.darkAppearance, root.wallpaper, Appearance.effectiveTransparency, Tokens) : 0
+    readonly property real tileToneSide: root.solidMaterial ? IconModes.tileToneSide(root.darkAppearance, root.wallpaper, Appearance.effectiveTransparency, Tokens) : IconModes.glassToneSide(root.surfaceLuma, root.darkAppearance, Tokens)
     readonly property real tileTonePivot: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenPivot : (root.darkAppearance ? (root.params.index === 1 ? Tokens.iconModeTileLiftPivotDark : Tokens.iconModeTileLiftPivot) : Tokens.iconModeTileLightLiftPivot)
     readonly property real tileToneExp: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenExponent : (root.darkAppearance ? [0, Tokens.iconModeTileLiftExponentDark, Tokens.iconModeTileLiftExponentClear, Tokens.iconModeTileLiftExponentTinted][root.params.index] : Tokens.iconModeTileLightLiftExponent)
     readonly property real darkPlateLumaOnDarkAccent: Tokens.iconModeDarkPlateLumaOnDarkAccent

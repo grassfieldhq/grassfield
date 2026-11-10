@@ -210,7 +210,13 @@ QtObject {
         if (!known)
             return -1;
         const under = known.grid ? GlassTint.gridRange(known.grid, rect, Tokens.glassBackdropPad) : null;
-        const range = under ?? known;
+        return surfaceLumaOver(under ?? known, alpha);
+    }
+
+    // The same over a luminance range the caller already has ({lumMin, lumMax}, e.g. Backdrop.wallpaperUnder for a surface that always lies on the wallpaper); -1 for null.
+    function surfaceLumaOver(range: var, alpha: real): real {
+        if (!range || typeof range.lumMin !== "number" || typeof range.lumMax !== "number")
+            return -1;
         const tintLuma = GlassTint.luminance(GlassTint.channels(colors.materialTint));
         return IconModes.surfaceLuma((range.lumMin + range.lumMax) / 2, tintLuma, alpha);
     }

@@ -27,6 +27,8 @@ Item {
     property bool overWallpaper: false
     // The icon sits on a solid window material (a window's own views): a tile icon then gets the tile tone (shaders/icon.frag). False for the Dock and other glass.
     property bool solidMaterial: false
+    // The luminance of the glass surface under the icon, when known (IconEffect.surfaceLuma); -1 otherwise.
+    property real surfaceLuma: -1
     // The folder colour (FolderIcon), applied by the effect to the artwork only; drawn by the owner's layer in default mode.
     property bool recolor: false
     property color recolorTint: "#000000"
@@ -115,6 +117,7 @@ Item {
             darkAppearance: root.inkDark
             wallpaper: root.overWallpaper
             solidMaterial: root.solidMaterial
+            surfaceLuma: root.surfaceLuma
             accentFill: root.overAccent ? (root.accentBright ? 1 : 2) : 0
             recolor: root.recolor
             recolorTint: root.recolorTint

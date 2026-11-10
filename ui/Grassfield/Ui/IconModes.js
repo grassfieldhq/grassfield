@@ -53,12 +53,31 @@ function tileToneSide(dark, wallpaper, transparency, t) {
 // the wallpaper shows through the material (transparency from `iconModeWallpaperLikeTransparency`), except over an accent fill, and (3) of Clear in the DARK appearance on
 // a surface that is not a solid window material (the Dock, Launchpad, Search ...: an almost clear glass whose own tint cannot hold a light plate against a white wallpaper;
 // the macOS model: Clear icons in the dark appearance are dark smoked glass with light glyphs). A glass plate that is white at 0.22 is for the solid dark window material.
-function overWallpaperLook(modeIndex, wallpaper, transparency, dark, solidMaterial, accentFill, t) {
+function overWallpaperLook(modeIndex, wallpaper, transparency, dark, solidMaterial, accentFill, t, surface) {
     if (wallpaper)
         return true;
     if (modeIndex !== 2 || accentFill >= 0.5)
         return false;
-    return transparency >= t.iconModeWallpaperLikeTransparency || (dark && !solidMaterial);
+    if (transparency >= t.iconModeWallpaperLikeTransparency || (dark && !solidMaterial))
+        return true;
+    // (4) a glass surface of known mid-to-light tone in the light look: its own tone is where the light look's faint plate vanishes (R7-REQ-13, grey wallpaper under the Dock).
+    return !solidMaterial && surface >= t.iconModeSurfaceToneThreshold && surface < t.iconModeClearSmokeSurfaceMax;
+}
+
+// The opacity of the smoked Clear plate on a glass surface of known luminance `surface` (-1 or undefined: unknown, the base): raised from `base` until the plate (luma `plateLuma`)
+// over the surface keeps `t.iconModeClearPlateMinRatio` against it (WCAG ratio of relative luminances); 1 at most; the base over black and white, which it already separates.
+function smokeAlpha(surface, base, plateLuma, t) {
+    if (!(surface >= 0) || !(surface > plateLuma))
+        return base;
+    const effective = (surface + 0.05) / t.iconModeClearPlateMinRatio - 0.05;
+    if (effective <= plateLuma)
+        return 1;
+    return Math.min(1, Math.max(base, (surface - effective) / (surface - plateLuma)));
+}
+
+// The tile tone side on a glass surface (not a solid material): -1 (darken, the light-surface tone) from `iconModeGlassToneLightMin`, in the light look; 0 elsewhere.
+function glassToneSide(surface, dark, t) {
+    return !dark && surface >= t.iconModeGlassToneLightMin ? -1 : 0;
 }
 
 // The tone of the surface an icon stands on (R7-REQ-13, the macOS model: an icon follows the glass it sits on, not the system appearance). The Dock's glass is almost

@@ -134,6 +134,35 @@ TestCase {
         compare(IconModes.surfaceIsDark(true, -1, false, t), false, "unknown: the system appearance (light)");
     }
 
+    // Clear on a mid-tone glass (the Dock over #808080: plate 1.11:1, GPU 2026-11-10, 34 cells): the smoked look in either appearance, the plate pushed away from the
+    // surface to the least ratio, and the glass over a white wallpaper keeps its light look in the light appearance (a glassy look on white and black).
+    function test_clearOnMidToneGlass() {
+        const t = Tokens;
+        const grey = lum([0.5, 0.5, 0.5]);
+        const look = (dark, surface) => IconModes.overWallpaperLook(2, false, 0.25, dark, false, 0, t, surface);
+        compare(look(false, grey), true, "light appearance, grey glass: smoked");
+        compare(look(true, grey), true, "dark look, grey glass: smoked");
+        compare(look(false, 1), false, "light appearance, white glass: the light look holds");
+        compare(look(false, -1), false, "unknown surface: the appearance's look");
+        compare(look(false, undefined), false, "no surface given: the appearance's look");
+        compare(IconModes.overWallpaperLook(2, false, 0.25, false, true, 0, t, grey), false, "never on a solid window material");
+        compare(IconModes.overWallpaperLook(1, false, 0.25, false, false, 0, t, grey), false, "Dark keeps its plate");
+        const plate = t.iconModeClearPlateWallpaperLuma, base = t.iconModeClearPlateAlphaWallpaper;
+        for (const surface of [0.1, 0.15, grey, 0.35, 0.5, 0.6]) {
+            const a = IconModes.smokeAlpha(surface, base, plate, t);
+            verify(a >= base && a <= 1, `alpha ${a} at ${surface}`);
+            const over = plate * a + surface * (1 - a);
+            verify(contrast(surface, over) >= t.iconModeClearPlateMinRatio - 1e-9 || a === 1, `plate over ${surface}: ${contrast(surface, over).toFixed(2)}`);
+        }
+        compare(IconModes.smokeAlpha(-1, base, plate, t), base, "unknown: the base");
+        compare(IconModes.smokeAlpha(0, base, plate, t), base, "over black: the base");
+        compare(IconModes.smokeAlpha(1, base, plate, t), base, "over white: the base already separates it");
+        compare(IconModes.glassToneSide(1, false, t), -1, "light glass, light look: darken");
+        compare(IconModes.glassToneSide(grey, false, t), 0, "mid-tone glass: no tone");
+        compare(IconModes.glassToneSide(1, true, t), 0, "dark look: none");
+        compare(IconModes.glassToneSide(-1, false, t), 0, "unknown: none");
+    }
+
     // One threshold on a stable value with a band: inside the band the previous look stays, so a wallpaper drifting around the threshold does not flip the icons.
     function test_surfaceToneHasHysteresis() {
         const t = Tokens;

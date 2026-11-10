@@ -272,9 +272,17 @@ Scope {
                     // top-left width x rows pixels (about a fifth of it too little on a 1.25 output, half of it on a 2x one).
                     const k = Math.max(1, win.devicePixelRatio);
                     const lum = BarTone.pixelsLuminance(ctx.getImageData(0, 0, Math.round(width * k), Math.round(Tokens.menubarToneSampleRows * k)).data);
+                    // The same canvas gives the backdrop of the adaptive glass and of the Dock's icons (ADR-0024 G-3, R7-REQ-13): the whole image's lowest and highest luminance
+                    // (one cell of GlassTint.gridOf), so Backdrop.wallpaperUnder answers under the dev override as it does for a picture with statistics.
+                    const whole = ctx.getImageData(0, 0, Math.round(width * k), Math.round(height * k));
+                    const span = GlassTint.gridOf(whole.data, whole.width, whole.height, 1, 1, win.width, win.height);
+                    const range = {lumMin: span.min[0], lumMax: span.max[0]};
                     unloadImage(url);
                     // Not inside the paint: the bar's bindings must change outside the render sync.
-                    Qt.callLater(() => BarTone.report(win.modelData.name, lum));
+                    Qt.callLater(() => {
+                        BarTone.report(win.modelData.name, lum);
+                        Backdrop.reportWallpaper(win.modelData.name, range);
+                    });
                 }
             }
 
@@ -772,7 +780,9 @@ Scope {
                     return;
                 // The backdrop of the adaptive glass (ADR-0024 G-3): the luminance range of what is on screen, when known.
                 const slot = desc === win.pendingDesc && win.incoming !== null ? win.incoming : win.shown;
-                Backdrop.reportWallpaper(win.modelData.name, VisualFixtures.wallpaperFile !== "" ? null : Backdrop.rangeOf(desc, slot.art));
+                // (Under the dev image override the probe canvas reports the range once it has read the image.)
+                if (VisualFixtures.wallpaperFile === "")
+                    Backdrop.reportWallpaper(win.modelData.name, Backdrop.rangeOf(desc, slot.art));
                 win.measureGrid(desc);
                 if (VisualFixtures.wallpaperFile !== "")
                     return;

@@ -35,7 +35,7 @@ Item {
     readonly property bool inkDark: icon.inkDark
     readonly property string modeName: icon.effectiveMode
     // The look the shader gives the plate (IconModes.overWallpaperLook): the folder model must repeat it exactly (A2 test_folderModelMatchesTheShader).
-    readonly property bool wallLook: IconModes.overWallpaperLook(IconModes.effect(root.modeName, root.tint).index, root.overWallpaper, Appearance.effectiveTransparency, root.inkDark, root.solidMaterial, 0, Tokens)
+    readonly property bool wallLook: IconModes.overWallpaperLook(IconModes.effect(root.modeName, root.tint).index, root.overWallpaper, Appearance.effectiveTransparency, root.inkDark, root.solidMaterial, 0, Tokens, root.surfaceLuma)
     // The plate under the symbol (FolderPlate): the raw icon's pixels under it are read once per icon file and size bucket
     // (never per colour), the plate of this icon's mode, colour and appearance is computed from them. A plain symbol is
     // shaded against it. undefined until read, null when it could not be (the estimate of FolderStyle serves, and serves
@@ -51,6 +51,8 @@ Item {
 
     // The icon sits on a solid window material (see TintedIcon.solidMaterial).
     property bool solidMaterial: false
+    // The luminance of the glass surface under the icon, when known (-1 otherwise): see TintedIcon.surfaceLuma.
+    property real surfaceLuma: -1
     implicitWidth: size
     implicitHeight: size
     Accessible.role: Accessible.Graphic
@@ -66,6 +68,7 @@ Item {
         // Default mode (no effect item) and a failed shader: the folder colour is a layer over the plain icon. In an icon mode the
         // shader recolours the artwork itself (TintedIcon.recolor), so that the system plate is not recoloured.
         solidMaterial: root.solidMaterial
+        surfaceLuma: root.surfaceLuma
         recolor: root.recolored
         recolorTint: root.folderTint
         layer.enabled: root.recolored && (root.modeName === "default" || icon.effectFailed)

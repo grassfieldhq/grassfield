@@ -3101,6 +3101,12 @@ QtObject {
     readonly property real iconModeSurfaceToneThreshold: 0.1
     // ADR-0014 / R7-REQ-13: half-width of the band around surfaceToneThreshold in which the previous look stays, so that a wallpaper whose luminance drifts around the threshold does not flip the icons back and forth
     readonly property real iconModeSurfaceToneHysteresis: 0.03
+    // ADR-0014 / R7-REQ-13: relative luminance of a glass surface up to which Clear takes the smoked look (dark plate, light ink) in the light appearance too: the light look's faint plate (alpha 0.14, luma 0.3) is the surface's own tone from mid-grey up (plate 1.11:1 over #808080, GPU 2026-11-10); above it (white) the light look holds
+    readonly property real iconModeClearSmokeSurfaceMax: 0.6
+    // ADR-0014 / R7-REQ-13: least contrast (WCAG ratio) the smoked Clear plate keeps against the glass surface it sits on: its opacity is raised from clearPlateAlphaWallpaper until the plate, over the surface, reaches it (only on mid-tone surfaces; over black and white the base opacity already does)
+    readonly property real iconModeClearPlateMinRatio: 2.0
+    // ADR-0014 / R7-REQ-13: relative luminance of a glass surface from which a tile icon on it gets the light-surface tone (darken, as on a solid light material); between this and the dark look's surface no tone is applied, the pivots do not describe mid-tones
+    readonly property real iconModeGlassToneLightMin: 0.6
     // ADR-0014 tile tone, Dark in the dark appearance (R7-REQ-13, A2 rule E): the pivot of Dark's lift, above the brightest dark material (tileLiftPivot 0.38) so that only the lightest tones of a tile move: basecamp's sky (0.60) takes Dark's tile at 24 px, transparency 1.0, over white from 1.57:1 to a modelled 2.06 (floor 1.73) while Dark's rule I and S cells (floor 0.9 of Default's) keep a modelled margin of 0.16 and 0.21: a lift from 0.38 and one from 0.45 broke them (model, 2026-11-10)
     readonly property real iconModeTileLiftPivotDark: 0.55
     // ADR-0014 tile tone, Dark: exponent q of the lift above tileLiftPivotDark (an ease-out; 1 = none)

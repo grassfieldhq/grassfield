@@ -754,6 +754,21 @@ Scope {
                 win.markHoldMenu(index);
         }
 
+        // The luminance the live Dock's icons follow, per output (JSON; fixtures only): {output: {luma, dark, source}}. source: "wallpaper" (Backdrop.wallpaperUnder),
+        // "backdrop" (bare output), "appearance" (nothing known: the icons follow the system appearance). tests/visual/dock-icon-surface.sh asserts it against the wallpaper.
+        function iconsurface(): string {
+            if (!VisualFixtures.active)
+                return "{}";
+            const out = {};
+            const all = windows.instances;
+            for (let i = 0; i < all.length; i++) {
+                const w = all[i];
+                const r3 = v => Math.round(v * 1000) / 1000;
+                out[w.screen.name] = {luma: r3(w.surfaceLuma), dark: w.iconDark, source: Appearance.surfaceLumaOver(w.wallpaperStrip, w.tintAlpha) >= 0 ? "wallpaper" : (w.surfaceLuma >= 0 ? "backdrop" : "appearance")};
+            }
+            return JSON.stringify(out);
+        }
+
         // Kind of the open shell popup ("" when none; fixtures only): tests close menus before a part.
         function popup(): string {
             return VisualFixtures.active ? Popups.kind : "";
@@ -1252,7 +1267,13 @@ Scope {
                     return Qt.rect((w - shelfWidth) / 2, h - t, shelfWidth, t);
                 }
             }
-            readonly property real surfaceLuma: Appearance.surfaceLuma(win.screen ? win.screen.name : "", win.shelfStrip, Appearance.dark ? Tokens.dockTintAlphaDark : Tokens.dockTintAlphaLight)
+            // The same wallpaper luminance the menu bar's tone reads (Backdrop.wallpaperUnder: ungated by bare outputs, the shelf is always over the wallpaper's light), else the bare-output backdrop, else -1 (the appearance).
+            readonly property real tintAlpha: Appearance.dark ? Tokens.dockTintAlphaDark : Tokens.dockTintAlphaLight
+            readonly property var wallpaperStrip: win.screen ? Backdrop.wallpaperUnder(win.screen.name, win.shelfStrip) : null
+            readonly property real surfaceLuma: {
+                const over = Appearance.surfaceLumaOver(win.wallpaperStrip, win.tintAlpha);
+                return over >= 0 ? over : Appearance.surfaceLuma(win.screen ? win.screen.name : "", win.shelfStrip, win.tintAlpha);
+            }
             property bool iconDark: IconModes.surfaceIsDark(Appearance.dark, win.surfaceLuma, Appearance.dark, Tokens)
             function refreshIconDark(): void {
                 const d = IconModes.surfaceIsDark(win.iconDark, win.surfaceLuma, Appearance.dark, Tokens);
@@ -1975,6 +1996,7 @@ Scope {
                                 TintedIcon {
                                     id: appIcon
                                     darkAppearance: win.iconDark
+                                    surfaceLuma: win.surfaceLuma
                                     visible: tile.isApp
                                     size: win.iconSize
                                     // Default mode is decoded as before; an effect mode decodes at the largest magnification so the
@@ -2168,6 +2190,7 @@ Scope {
                                     TintedIcon {
                                         id: minimizedIcon
                                     darkAppearance: win.iconDark
+                                    surfaceLuma: win.surfaceLuma
                                         // The drawn nominal size (the badge is a fraction of the tile when the thumbnail shows), so that
                                         // the minimum size of the icon modes applies to what is on screen.
                                         size: minimizedTile.live ? Math.round(win.iconSize * Tokens.dockMinimizedBadgeScale) : win.iconSize
@@ -2198,6 +2221,7 @@ Scope {
                                 TintedIcon {
                                     id: folderThemed
                                     darkAppearance: win.iconDark
+                                    surfaceLuma: win.surfaceLuma
                                     visible: tile.isFolder && !(tile.folderOptions.display === "stack" && !pile.empty)
                                     size: win.iconSize
                                     oversample: folderThemed.modeActive ? Tokens.dockIconOversample : folderThemed.defaultOversample
@@ -2214,6 +2238,7 @@ Scope {
                                 TintedIcon {
                                     id: trashThemed
                                     darkAppearance: win.iconDark
+                                    surfaceLuma: win.surfaceLuma
                                     readonly property string themed: Quickshell.iconPath(Trash.empty ? "user-trash" : "user-trash-full", true)
                                     visible: tile.isTrash && themed !== ""
                                     size: win.iconSize
@@ -2249,6 +2274,7 @@ Scope {
                                 TintedIcon {
                                     id: appsThemed
                                     darkAppearance: win.iconDark
+                                    surfaceLuma: win.surfaceLuma
                                     readonly property string themed: Quickshell.iconPath("org.grassfield.Apps", true)
                                     visible: tile.isAppsTile && themed !== ""
                                     size: win.iconSize

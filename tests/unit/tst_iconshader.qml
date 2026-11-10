@@ -125,6 +125,7 @@ TestCase {
                     overWallpaper: testCase.wallpaperPass
                     overAccent: testCase.accentPass
                     solidMaterial: !testCase.dockPass
+                    surfaceLuma: testCase.dockPass ? testCase.dockLuma : -1
                 }
             }
         }
@@ -609,9 +610,9 @@ TestCase {
     }
 
     // The desktop: bare wallpaper, always styled for it (DesktopIcon passes darkAppearance), also when the windows are light.
-    // The Dock: a nearly clear glass (Tokens.dockTintAlpha*, 0.05) over the wallpaper. The tile tone is for solid window materials and is off here
-    // (TintedIcon.solidMaterial false), so a tile keeps the contrast of the Default rendering against the Dock's backdrop in every mode: the floors
-    // of the suite hold. 2026-11-10: with the tone on, a tile at Y 0.28 fell from 1.61:1 to 1.01:1 on the Dock (independent review).
+    // The Dock: a nearly clear glass (Tokens.dockTintAlpha*, 0.05) over the wallpaper. The solid-material tile tone is off here (TintedIcon.solidMaterial
+    // false); over a light glass (IconModes.glassToneSide) a tile is darkened as on a light material, and Clear on a mid-tone glass takes the smoked plate at the least ratio
+    // (IconModes.smokeAlpha), the surface luminance being fed as TintedIcon.surfaceLuma. 2026-11-10: with the tone on, a tile at Y 0.28 fell from 1.61:1 to 1.01:1 on the Dock (independent review).
     function dockOver(appearanceDark, wallpaper) {
         const tint = Qt.color((appearanceDark ? Tokens.colorDark : Tokens.colorLight).materialTint);
         const a = appearanceDark ? Tokens.dockTintAlphaDark : Tokens.dockTintAlphaLight;
@@ -749,7 +750,7 @@ TestCase {
                         }
                         const drawn = testCase.boxMean(img, m * 120 + 8, 560 + 8, 96, Tokens.iconModeSysGlyphScale);
                         const d = Math.max(Math.abs(mean[0] - drawn[0]), Math.abs(mean[1] - drawn[1]), Math.abs(mean[2] - drawn[2]));
-                        const label = `${String(url).split("/").pop()} ${mode} ${dark ? "dark" : "light"}${wall ? " wallpaper" : ""}: model ${FolderStyle.hexOf(mean)} drawn ${FolderStyle.hexOf(drawn)} (max channel diff ${(d * 255).toFixed(0)}/255)`;
+                        const label = `${String(url).split("/").pop()} ${mode} ${dark ? "dark" : "light"}${wall ? " wallpaper" : ""}: model ${FolderStyle.hexOf(mean)} drawn ${FolderStyle.hexOf(drawn)} (max channel diff ${(d * 255).toFixed(0)}/255; per channel ${[0, 1, 2].map(q => ((mean[q] - drawn[q]) * 255).toFixed(1)).join(" ")}; shader look: wall=${cells[m].icon.effectItem ? cells[m].icon.effectItem.overWallpaper : "?"} tile=${cells[m].icon.ownTile} tone=${cells[m].icon.effectItem ? cells[m].icon.effectItem.tileToneSide : "?"} transparency=${Appearance.effectiveTransparency.toFixed(2)})`;
                         console.log("A2 folder " + label);
                         compared++;
                         if (d > 4 / 255 + 1e-6)

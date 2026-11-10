@@ -115,3 +115,5 @@ The A2 exemptions of the icon modes (18 cells, 1.52 to 2.82:1) are removed and `
 - (Historical, WhiteSur dropped 2026-10-21) GPL-3.0 WhiteSur was a separate package; the ISO (M6) must ship its source offer and licence; public release needs the
   E27 legal review again.
 - Limits: tinted third-party icons are approximations; running GTK/Qt apps keep their cursor until restarted.
+
+R7-REQ-13 follow-up (2026-11-10, third GPU run): on a mid-tone glass Clear takes the smoked plate at a minimum plate/surface ratio (`clearPlateMinRatio`), a tile on a light glass is darkened (`glassToneLightMin`), and the live Dock reads the wallpaper under it through `Backdrop.wallpaperUnder` (docs/specs/ui.md). `a2-limits.json` stays empty; nothing is drawn around an icon.

@@ -50,6 +50,15 @@ for wall in white grey black; do
 done
 for wall in white grey black; do
   vs_wallpaper "$OUT/wall-$wall.png" || echo "wallpaper $wall refused" >&2
+  vs_sleep 1.5
+  # The live Dock's icons follow the glass they sit on (R7-REQ-13): the wallpaper is known to the shell (source "wallpaper") and the tone follows it, in any appearance.
+  case $wall in white) want_dark=false ;; black) want_dark=true ;; *) want_dark= ;; esac
+  surf=$(vs_ipc dock iconsurface)
+  echo "dock iconsurface over $wall: $surf"
+  src=$(printf '%s' "$surf" | jq -r --arg o "$VS_OUTPUT" '.[$o].source // "missing"')
+  dark=$(printf '%s' "$surf" | jq -r --arg o "$VS_OUTPUT" '.[$o].dark | tostring')
+  [ "$src" = wallpaper ] || { echo "FAIL: the live Dock does not know the wallpaper under it over $wall (source $src)" >&2; ICON_SURFACE_FAIL=1; }
+  [ -z "$want_dark" ] || [ "$dark" = "$want_dark" ] || { echo "FAIL: the live Dock icons are dark=$dark over $wall, expected $want_dark" >&2; ICON_SURFACE_FAIL=1; }
   for appearance in $APPEARANCES; do
     for mode in $MODES; do
       config "$appearance" "$mode"
@@ -72,3 +81,4 @@ for appearance in $APPEARANCES; do
 done
 vs_kill_clients
 echo "captures in $OUT"
+[ -z "$ICON_SURFACE_FAIL" ] || exit 1
