@@ -1,5 +1,5 @@
 # ADR-0056: the shell's QML is loaded by file: URLs, so that Qt's disk cache serves it
-Status: Proposed (2026-11-09) · Date: 2026-11-09 · Decider: owner · Number: 0056 · Related: R7-REL-01 (gate R1), R7-PRF-05,
+Status: Accepted (owner decision of 2026-11-10; applied since #37) · Date: 2026-11-09 · Decider: owner · Number: 0056 · Related: R7-REL-01 (gate R1), R7-PRF-05,
 ADR-0021 (layers), ADR-0041 (security process), GF-115 (the shell loads from the system tree only)
 
 ## Context
