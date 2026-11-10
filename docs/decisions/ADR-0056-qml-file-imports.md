@@ -37,7 +37,9 @@ D-1 `scripts/dev/migrate-qs-imports.py` makes the transformation. It is determin
 conflict); the packaged tree is the migrated copy (`packaging/arch/PKGBUILD` runs `--in-place` on the copy it installs).
 `just check-quick` runs `--dry-run` (check-migrate): the whole tree must migrate, twice with the same result, so a new file whose
 import cannot be migrated fails CI. The QML test layers keep testing the source modules (the files differ only by their import
-lines). `scripts/dev/shell-run.sh --migrated` runs the UI from `.dev/migrated/shell` (rebuilt when `shell/` changes); it is not
+lines). `scripts/dev/shell-run.sh --migrated` runs the UI from `.dev/migrated/shell`: a link to `.dev/migrated-<stamp>`, the stamp being a hash of the sources and of the script (`scripts/dev/migrated-tree.sh`).
+A changed content is built into a fresh directory and the link is swapped by one rename; the tree a running process uses is never
+deleted or rewritten, and the stamp is in `security_sig`, so a changed tree restarts the security process on purpose; it is not
 the default yet, because the dev key bindings and the nested security tests address instances by path (`qs ipc -p <repo>/shell`,
 `-p <repo>/shell/security.qml`: Quickshell identifies an instance by its config path), so the default flips together with
 `config/hypr/grassfield/bindings.lua` and those tests, in a change the compositor and security owners review.
@@ -84,11 +86,15 @@ runs it on the package, and `tests/shell/migrate_qs_imports.sh` plants mutants i
 the capture toolbar in the package only, an extra file, a changed stub, an added line) that it must catch. Only the import header
 is read and rewritten: a template string or a block comment below it that contains `import qs.x` is left alone. The script is
 pinned by its SHA-256 in `tests/security/security_unit.sh` like `SecurityHost.qml`: a change of it needs the security review,
-because the UI process hosts the polkit agent and the secret sheets (S3) and runs what it produces.
+because the UI process hosts the polkit agent and the secret sheets until S3 moves them and runs what it produces. The same
+file pins the CI step (`scripts/dev/check-migrate.sh`) and the two PKGBUILD lines that migrate and verify the package. The
+verification also holds independently of the header parser: no `.qml` file of the package but a kept root has a line that
+imports `qs` (so a file reverted to the source, or one the parser stopped short of, fails), a kept root (`security.qml`) must be
+byte-equal to its source (D-5), and the package holds no symlink.
 
-D-9 What runs. The UI process, which after S3 hosts the polkit agent and the secret sheets, now runs compiled code read back
-from `~/.cache/quickshell/qmlcache` (Qt's disk cache, validated by the source file's modification time and size and by the Qt
-version) instead of compiling the package's source at every start. That is acceptable because the cache is written and read by
+D-9 What runs. The UI process, which until S3 hosts the polkit agent and the secret sheets, now runs compiled code read back
+from `~/.cache/quickshell/qmlcache` (Qt's disk cache, validated by the Qt version and by a checksum of the source's content, which
+Qt 6.12 compares even when the modification time and size are the same) instead of compiling the package's source at every start. That is acceptable because the cache is written and read by
 the same user's process, in a directory only that user can write: a process that can alter it can already alter the user's
 session (it can start the shell with its own tree, replace a user unit, preload code); the cache adds no privilege boundary that
 the migration crosses. The package itself is the reviewed artefact (D-8), and the unit already clears `QML_DISK_CACHE_PATH`
