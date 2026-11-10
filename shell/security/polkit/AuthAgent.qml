@@ -61,9 +61,9 @@ Scope {
     // without the lock. So the agent is made again only while the session is unlocked, the displays on and no sleep under
     // way (`quiet` otherwise: a try due then is dropped, and the agent made in that turn too), at most registrationTriesMax
     // times per unlock period (3, 6, 12 and 24 s), and never again in that period once an attempt coincided with a stall of
-    // the event loop longer than stallLimitMs (stallBeat, a monotonic ElapsedTimer). An unlock starts a new period. The one
+    // the event loop longer than stallLimitMs (stallBeat, a monotonic ElapsedTimer). A real unlock starts a new period. The one
     // attempt at the start is made whatever the session's state (S3's accepted residual). tests/security/authagent_flows.d
-    // test_36 to test_45; tests/security/authagent_registration.sh counts the attempts on a real Quickshell.
+    // test_36 to test_46; tests/security/authagent_registration.sh counts the attempts on a real Quickshell.
     readonly property string agentPath: "/org/grassfield/PolkitAgent"
     readonly property bool devSession: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))
     property int registrationRetryMs: 3000
@@ -102,12 +102,23 @@ Scope {
         root.registrationStalled = false;
     }
 
+    // A real unlock only: the session locked while this agent ran, then was unlocked. SheetSession.locked also covers the
+    // start-up probe of a stranded lock, which Lock starts before the host makes the sheets, so the agent is made with
+    // `locked` already true and the probe's end ("unlocked") is no unlock: a stall of the start's attempt is not forgotten
+    // then, and no second blocking try follows (the opus review of S3, round 3, MINOR-1). A session already locked when the
+    // agent is made is not re-armed at its first unlock either: the tries stay as they were, never more.
+    property bool sawLock: false
+
     Connections {
         target: SheetSession
 
         function onLockedChanged(): void {
-            if (!SheetSession.locked)
+            if (SheetSession.locked) {
+                root.sawLock = true;
+            } else if (root.sawLock) {
+                root.sawLock = false;
                 root.rearmRegistration();
+            }
         }
     }
 
@@ -162,7 +173,7 @@ Scope {
     }
 
     Timer {
-        id: stallBeat
+        id: stallBeatTimer
         interval: 200
         repeat: true
         running: root.stallWatching && !root.devSession

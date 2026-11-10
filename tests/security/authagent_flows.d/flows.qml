@@ -825,6 +825,26 @@ Item {
             tryCompare(a, "registrationStalled", true, 3000, "its stall is seen");
         }
 
+        // The opus review of S3, round 3, MINOR-1: the start-up probe of a stranded lock already runs when the sheets are made
+        // (SheetSession.locked true), and its end ("unlocked") is no unlock: the start's stalled attempt is not forgotten, no
+        // second blocking try follows. A real lock and unlock afterwards starts a new period.
+        function test_46_theStrandedProbeEndIsNoUnlock() {
+            SheetSession.locked = true;
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 300, mockBlockMs: 1500});
+            verify(a);
+            tryCompare(a, "registrationStalled", true, 5000, "the start's attempt stalled");
+            a.mockBlockMs = 0;
+            SheetSession.locked = false;
+            compare(a.registrationStalled, true, "the probe's end is no unlock: the stall stays");
+            wait(1000);
+            compare(a.registrationTries, 0, "no try (one would have come 300 ms after an unlock)");
+            compare(a.mockRegistrations, 1);
+            SheetSession.locked = true;
+            SheetSession.locked = false;
+            compare(a.registrationStalled, false, "a real unlock forgets the stall");
+            tryCompare(a, "mockRegistrations", 2, 3000, "and asks again");
+        }
+
         // ADR-0041 S3: the agent runs in the security process, which restarts (Restart=always) after a crash or a stop. Its end
         // with a request open, a password half typed, answers nothing: no password goes out, nothing is approved; polkitd
         // then ends the request with the agent's bus name ("not authorized"), as when the UI restarted before S3. The agent

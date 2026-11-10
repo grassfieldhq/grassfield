@@ -10,7 +10,7 @@
 # Quickshell's PanelWindow and a compositor do, beside a window underneath (check of c1ca44f). flows.qml test_20 to test_34:
 # a request the user cannot see (locked, saver, displays off, held other than right after another one, waiting behind a
 # secret sheet, replaced) is refused once PAM talks without asking, as for a fingerprint reader (ADR-0045 OC-6, security
-# review of e3542510 and its re-reviews). test_36 to test_45: registration (ADR-0041 S3, the opus review's MINOR-3, its
+# review of e3542510 and its re-reviews). test_36 to test_46: registration (ADR-0041 S3, the opus review's MINOR-3, its
 # delta review's MAJOR-1 and its round 2's MINOR-A): refused, the agent is made again with a backoff and the new one asks
 # again, never while locked, the displays off or a sleep under way, at most four times per unlock period, and never again
 # in that period once an attempt stopped the event loop (the plain agent can: mockBlockMs); the plain agent keeps
@@ -169,7 +169,9 @@ registration-while-a-sleep-is-under-way (S3 round 2 MINOR-A)#AuthAgent.qml#Sheet
 registration-made-at-the-lock (S3 round 2 MINOR-A)#AuthAgent.qml#            if (root.quiet || root.registrationStalled)\n                return;\n            root.watchAttempt();#            root.watchAttempt();
 registration-no-cap (S3 round 2 MINOR-A)#AuthAgent.qml# && root.periodTries < root.registrationTriesMax# && true
 registration-cap-kept-after-an-unlock (S3 round 2 MINOR-A)#AuthAgent.qml#        root.periodTries = 0;\n        root.registrationStalled = false;#        root.registrationStalled = false;
-registration-unlock-unseen (S3 round 2 MINOR-A)#AuthAgent.qml#            if (!SheetSession.locked)\n                root.rearmRegistration();#            if (false)\n                root.rearmRegistration();
+registration-unlock-unseen (S3 round 2 MINOR-A)#AuthAgent.qml#                root.sawLock = false;\n                root.rearmRegistration();#                root.sawLock = false;
+registration-rearm-on-any-fall-of-locked (S3 round 3 MINOR-1)#AuthAgent.qml#            } else if (root.sawLock) {#            } else if (true) {
+registration-lock-never-seen (S3 round 3 MINOR-1)#AuthAgent.qml#            if (SheetSession.locked) {\n                root.sawLock = true;#            if (SheetSession.locked) {\n                root.sawLock = false;
 registration-stall-ignored (S3 round 2 MINOR-A)#AuthAgent.qml#        if (sinceMs > root.stallLimitMs && #        if (false &&
 registration-stall-kept-after-an-unlock (S3 round 2 MINOR-A)#AuthAgent.qml#        root.periodTries = 0;\n        root.registrationStalled = false;#        root.periodTries = 0;
 registration-stall-unwatched (S3 round 2 MINOR-A)#AuthAgent.qml#            root.watchAttempt();\n            agentHolder.active = true;#            agentHolder.active = true;
