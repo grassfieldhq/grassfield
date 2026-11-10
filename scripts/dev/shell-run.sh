@@ -67,6 +67,12 @@ sig=$DEV_NESTED_SIG
 sock=$DEV_NESTED_SOCK
 
 shell_dir=$root/shell
+# `--security` without --migrated while the UI runs the migrated tree (its record below) would start security from the source
+# tree, where the UI's lock requests never arrive: refused (review of #40, LOW-2).
+if ((only_security)) && [[ $migrated != 1 && -s $dev/ui.tree ]]; then
+  echo "shell-run: --security: the UI runs the migrated tree (.dev/ui.tree): add --migrated, or restart the UI without it" >&2
+  exit 1
+fi
 if [[ $migrated == 1 ]]; then
   # The packaged form of the UI tree (scripts/dev/migrate-qs-imports.py, ADR-0056): file: URLs, so Qt's QML disk cache serves
   # it. The parents of shell/ that dev code reaches (../VERSION, ../packaging, ../branding, ../.dev) are links to the repository.
@@ -79,6 +85,7 @@ if [[ $migrated == 1 ]]; then
     [[ $tree_stamp =~ ^[0-9a-f]{16}$ ]] || { echo "shell-run: --security --migrated: no record of the migrated tree the UI runs from (.dev/ui.tree): start the UI first (shell-run.sh --migrated)" >&2; exit 1; }
   else
     tree_stamp=$("$root/scripts/dev/migrated-tree.sh" "$root" "$dev") || { echo "shell-run: the migrated tree did not build" >&2; exit 1; }
+    [[ $tree_stamp =~ ^[0-9a-f]{16}$ ]] || { echo "shell-run: migrated-tree.sh printed no stamp: '$tree_stamp'" >&2; exit 1; }
   fi
   # Started and addressed by the REAL path of the stamped tree, built from the stamp migrated-tree.sh printed (it decided under
   # its lock), never through the .dev/migrated link: a concurrent build could repoint the link after the lock was released, and
@@ -91,11 +98,6 @@ if [[ $migrated == 1 ]]; then
   fi
   shell_dir=$tree_dir/shell
 fi
-# The tree the UI runs from, for `--security` (above): written by a plain run, removed when the UI runs the source tree.
-if ((!only_security)); then
-  if [[ $migrated == 1 ]]; then printf '%s\n' "$tree_stamp" >"$dev/ui.tree"; else rm -f "$dev/ui.tree"; fi
-fi
-
 # The shell runs as a session leader (setsid): its whole group stops, so that no orphaned qs stays behind. Only a record
 # that still matches its process is signalled (scripts/dev/pidfile.sh). `--security` stops the security process instead
 # (below); the UI keeps running.
@@ -338,4 +340,7 @@ env "${unit_unset[@]}" "${timing[@]}" "${crash_env[@]}" "${bus_env[@]}" PATH="$r
   setsid "${launch[@]}" >"$dev/shell.log" 2>&1 </dev/null &
 shell_pid=$!
 dev_record_pid "$dev/shell.pid" "$shell_pid"
+# The tree the UI runs from, for `--security` (above): written once the new UI is started (a refused stop above leaves the old UI
+# and its record together; review of #40, LOW-1), removed when the UI runs the source tree.
+if [[ $migrated == 1 ]]; then printf '%s\n' "$tree_stamp" >"$dev/ui.tree"; else rm -f "$dev/ui.tree"; fi
 echo "shell-run: grassfield-shell pid $shell_pid (log .dev/shell.log${private:+, private bus: .dev/bus.address}${bridge_sock:+, menu bridge: .dev/menu-bridge.log})"

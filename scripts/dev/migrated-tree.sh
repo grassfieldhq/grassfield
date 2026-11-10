@@ -5,7 +5,7 @@
 #   scripts/dev/migrated-tree.sh ROOT DEV      prints the tree stamp (16 hex digits); DEV/migrated -> DEV/migrated-<stamp>
 #
 # Rules (reviews of #37):
-#   * Start and address a process through the REAL path of the tree (`readlink -f DEV/migrated`, ending in migrated-<stamp>),
+#   * Start and address a process through the REAL path of the tree (DEV/migrated-<stamp>, from the stamp this script prints),
 #     never through the link: Quickshell keeps the literal path it was given (shellDir, the Path ID, every relative load), so a
 #     process started through the link would load a file it opens late (a Loader, a createComponent) from whatever tree the link
 #     points to by then. A process started on the real path of tree A keeps loading from A after the link moves to B
