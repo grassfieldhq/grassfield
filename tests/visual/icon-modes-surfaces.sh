@@ -89,4 +89,4 @@ for appearance in $APPEARANCES; do
 done
 vs_kill_clients
 echo "captures in $OUT"
-[ -z "$ICON_SURFACE_FAIL" ] || exit 1
+[ -z "${ICON_SURFACE_FAIL:-}" ] || exit 1
