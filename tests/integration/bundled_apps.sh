@@ -6,8 +6,10 @@
 #   C  the contract desktop entries (sanaga.desktop: text/html, xhtml, http, https; grassfield-notes.desktop: text/markdown,
 #      text/x-markdown) name their binary and never a launcher that resolves the default browser again (omarchy-launch-browser,
 #      xdg-open, omarchy-browser: the fork storm of 2026-10-30)
-# C reads the entries from the sibling repositories' packaging directories at GRASSFIELD_SANAGA_DIR / GRASSFIELD_NOTES_DIR
-# (default ~/workspace/sanaga and ~/workspace/grassfield-notes) and SKIPs when they are not there.
+# C reads the entries of the PINNED commits (sanaga a9e0e56, grassfield-notes 2daf1c8), vendored byte for byte in
+# tests/fixtures/bundled-apps/ and named by the pin: never the HEAD of a sibling checkout, which moves. A re-pin replaces the file
+# and the name. When GRASSFIELD_SANAGA_GIT / GRASSFIELD_NOTES_GIT name a clone of the sibling repository, the vendored file is
+# also compared with `git show <pin>:packaging/<file>` there (run it bare, from a clone that has the pin).
 set -uo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 unset GRASSFIELD_SESSION QT_QPA_PLATFORMTHEME
@@ -32,18 +34,16 @@ model=$(sed -n 's/^const DEFAULT_PINNED = \[\(.*\)\];/\1/p' "$root/shell/dock/Do
 for pair in "schema:$schema" "defaults:$defaults" "DockModel:$model"; do
   [[ ${pair#*:} == "$want" ]] && ok "B ${pair%%:*} default pins are $want" || bad "B ${pair%%:*} default pins are ${pair#*:}"
 done
-store="$root/shell/store/SettingsStore.qml"
-if grep -qF 'old === "chromium\nfoot\norg.grassfield.Settings"' "$store" && grep -qF '["sanaga", "grassfield-notes", "foot", "org.grassfield.Settings"]' "$store"; then
-  ok "B the store migrates the earlier default"
-else
-  bad "B the store does not migrate the earlier default"
-fi
+# The store's migration of the earlier defaults is run for real (SettingsStore reading files) by tests/shell/dock_pinned_migration.
+[[ -f $root/tests/shell/dock_pinned_migration/shell.qml ]] && grep -q '"chromium","foot","org.grassfield.Settings"\]}}' "$root/tests/shell/dock_pinned_migration/shell.qml" \
+  && ok "B the store's migration has its own run (tests/shell/dock_pinned_migration)" || bad "B the store's migration test is missing"
 python3 "$root/scripts/dev/gen-settings.py" --check >/dev/null 2>&1 && ok "B generated defaults are current" || bad "B generated defaults are stale"
 
 # C
+fixtures=$root/tests/fixtures/bundled-apps
 check_entry() { # file id types
   local file=$1 id=$2 types=$3 line cmd t
-  [[ -f $file ]] || { echo "SKIP: C $id entry not found ($file)"; return; }
+  [[ -f $file ]] || { bad "C $id: the vendored entry is missing ($file)"; return; }
   while read -r line; do
     cmd=${line%% *}
     cmd=${cmd##*/}
@@ -57,6 +57,17 @@ check_entry() { # file id types
     grep -q "^MimeType=\(.*;\)\?$t;" "$file" && ok "C $id handles $t" || bad "C $id lacks $t"
   done
 }
-check_entry "${GRASSFIELD_SANAGA_DIR:-$HOME/workspace/sanaga}/packaging/sanaga.desktop" sanaga.desktop "text/html application/xhtml+xml x-scheme-handler/http x-scheme-handler/https"
-check_entry "${GRASSFIELD_NOTES_DIR:-$HOME/workspace/grassfield-notes}/packaging/grassfield-notes.desktop" grassfield-notes.desktop "text/markdown text/x-markdown"
+verify_pin() { # vendored file, clone dir, pin, path in the repository
+  local vendored=$1 clone=$2 pin=$3 path=$4
+  [[ -n $clone ]] || { echo "SKIP: C the vendored $(basename "$vendored") is not compared with $pin (no clone named)"; return; }
+  if git -C "$clone" show "$pin:$path" 2>/dev/null | cmp -s - "$vendored"; then
+    ok "C the vendored $(basename "$vendored") is byte for byte $path at $pin"
+  else
+    bad "C the vendored $(basename "$vendored") differs from $path at $pin in $clone (or the clone lacks the pin)"
+  fi
+}
+check_entry "$fixtures/sanaga-a9e0e56.desktop" sanaga.desktop "text/html application/xhtml+xml x-scheme-handler/http x-scheme-handler/https"
+check_entry "$fixtures/grassfield-notes-2daf1c8.desktop" grassfield-notes.desktop "text/markdown text/x-markdown"
+verify_pin "$fixtures/sanaga-a9e0e56.desktop" "${GRASSFIELD_SANAGA_GIT:-}" a9e0e56 packaging/sanaga.desktop
+verify_pin "$fixtures/grassfield-notes-2daf1c8.desktop" "${GRASSFIELD_NOTES_GIT:-}" 2daf1c8 packaging/grassfield-notes.desktop
 exit "$fail"
