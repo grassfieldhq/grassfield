@@ -33,7 +33,7 @@ function effect(mode, tint) {
 // material). A tile keeps the luminance of its pixels, so its edge stands off the material only as far as its own tones do. The tone moves the pixels away from the
 // material, on one side of a pivot, so no pixel moves towards it:
 //   +1  the dark appearance: the pixels above `iconModeTileLiftPivot` (0.38, the brightest material of the dark appearance: the material tint at `material.tintAlphaMin`
-//       over a white wallpaper) are lifted by an ease-out whose exponent `iconModeTileLiftExponent<Mode>` is chosen per mode;
+//       over a white wallpaper; `iconModeTileLiftPivotDark` 0.55 for Dark, whose rule I floor takes only a lift of its lightest tones) are lifted by an ease-out whose exponent `iconModeTileLiftExponent<Mode>` is chosen per mode;
 //   -1  the light appearance while the material is solid (transparency up to `material.tintClampUntil`): the pixels below `iconModeTileDarkenPivot` (0.62, about the
 //       darkest solid light material) are darkened by the power `iconModeTileDarkenExponent`;
 //   +1  the light appearance once the wallpaper shows through (transparency above `material.tintClampUntil`): the material may be anything from a dark grey to white, so

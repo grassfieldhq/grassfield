@@ -42,6 +42,24 @@ for appearance in $APPEARANCES; do
   done
 done
 
+# The Dock over a white, a grey and a black wallpaper (R7-REQ-13, test_a2_dock): the Dock is an almost clear glass, so what the icons stand on is the wallpaper itself;
+# Clear in the dark appearance must stay legible on white (dark smoked plate, light ink). Writes ims-dock-<wallpaper>-<appearance>-<mode>.
+for wall in white grey black; do
+  case $wall in white) c='#ffffff' ;; grey) c='#808080' ;; black) c='#000000' ;; esac
+  magick -size 64x64 "xc:$c" "$OUT/wall-$wall.png"
+done
+for wall in white grey black; do
+  vs_wallpaper "$OUT/wall-$wall.png" || echo "wallpaper $wall refused" >&2
+  for appearance in $APPEARANCES; do
+    for mode in $MODES; do
+      config "$appearance" "$mode"
+      vs_ipc controlcenter appearance "$appearance" >/dev/null
+      shot "ims-dock-$wall-$appearance-$mode"
+    done
+  done
+done
+vs_wallpaper "" || true
+
 vs_spawn "$VS_DEV/build/grassfield-settings"
 vs_wait_clients 1
 vs_sleep 2

@@ -71,8 +71,8 @@ ShaderEffect {
     // window material (a window's own views, the A2 suite): the Dock and the other glass surfaces have a backdrop the pivots do not describe, so they get none.
     property bool solidMaterial: false
     readonly property real tileToneSide: root.solidMaterial ? IconModes.tileToneSide(root.darkAppearance, root.wallpaper, Appearance.effectiveTransparency, Tokens) : 0
-    readonly property real tileTonePivot: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenPivot : (root.darkAppearance ? Tokens.iconModeTileLiftPivot : Tokens.iconModeTileLightLiftPivot)
-    readonly property real tileToneExp: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenExponent : (root.darkAppearance ? [0, 1, Tokens.iconModeTileLiftExponentClear, Tokens.iconModeTileLiftExponentTinted][root.params.index] : Tokens.iconModeTileLightLiftExponent)
+    readonly property real tileTonePivot: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenPivot : (root.darkAppearance ? (root.params.index === 1 ? Tokens.iconModeTileLiftPivotDark : Tokens.iconModeTileLiftPivot) : Tokens.iconModeTileLightLiftPivot)
+    readonly property real tileToneExp: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenExponent : (root.darkAppearance ? [0, Tokens.iconModeTileLiftExponentDark, Tokens.iconModeTileLiftExponentClear, Tokens.iconModeTileLiftExponentTinted][root.params.index] : Tokens.iconModeTileLightLiftExponent)
     readonly property real darkPlateLumaOnDarkAccent: Tokens.iconModeDarkPlateLumaOnDarkAccent
     readonly property color folderTint: Qt.rgba(root.recolorTint.r, root.recolorTint.g, root.recolorTint.b, root.recolor ? 1 : 0)
     readonly property real folderBrightness: Tokens.folderIconBrightness

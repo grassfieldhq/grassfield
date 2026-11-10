@@ -120,7 +120,7 @@ void main() {
     // pixel moves towards it; IconEffect chooses the side (IconModes.tileToneSide, the pure rule that tst_iconmodes checks) and only for icons declared on a solid
     // window material (TintedIcon.solidMaterial: never the Dock, Launchpad or other glass, whose backdrop the pivots do not describe):
     //   +1 dark appearance: the pixels above the brightest dark material (pivot 0.38 in linear light) are lifted, v' = P + (1 - P) (1 - (1 - u)^e), u = (v - P) / (1 - P),
-    //      e > 1 (an ease-out: continuous, finite slope; a lift compresses pairs of bright tones, so e stays small; Dark has none, see docs/specs/ui.md);
+    //      e > 1 (an ease-out: continuous, finite slope; a lift compresses pairs of bright tones, so e stays small, and Dark's pivot is higher, 0.55, so that only its lightest tones move);
     //   -1 light appearance, material solid: the pixels below the darkest material (pivot 0.62) are darkened, v' = P (v / P)^e with e > 1;
     //   +1 light appearance, the wallpaper showing through (any material from dark grey to white): only the brightest tones, above pivot 0.8, are lifted.
     // Per channel (the hue is kept), the same arithmetic for every mode, only the exponent differs.

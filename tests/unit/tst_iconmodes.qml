@@ -126,7 +126,7 @@ TestCase {
     }
 
     function liftExponents() {
-        return [Tokens.iconModeTileLiftExponentClear, Tokens.iconModeTileLiftExponentTinted];
+        return [Tokens.iconModeTileLiftExponentDark, Tokens.iconModeTileLiftExponentClear, Tokens.iconModeTileLiftExponentTinted];
     }
 
     function test_tileToneSide() {
@@ -152,15 +152,17 @@ TestCase {
         const t = Tokens;
         const dark = v => tone(v, -1, t.iconModeTileDarkenPivot, t.iconModeTileDarkenExponent);
         verify(t.iconModeTileDarkenExponent > 1, "the darken exponent darkens");
+        verify(t.iconModeTileLiftPivotDark > t.iconModeTileLiftPivot, "Dark lifts only its lightest tones");
         for (const q of liftExponents())
             verify(q >= 1 && q <= 3, "a lift exponent between none and a strong ease-out: " + q);
-        for (const q of liftExponents()) {
+        const lifts = [[t.iconModeTileLiftPivotDark, t.iconModeTileLiftExponentDark], [t.iconModeTileLiftPivot, t.iconModeTileLiftExponentClear], [t.iconModeTileLiftPivot, t.iconModeTileLiftExponentTinted]];
+        for (const [pivot, q] of lifts) {
             let lastL = -1, lastD = -1;
             for (let i = 0; i <= 200; i++) {
                 const v = i / 200;
-                const l = tone(v, 1, t.iconModeTileLiftPivot, q);
+                const l = tone(v, 1, pivot, q);
                 verify(l >= v - 1e-12 && l <= 1 + 1e-12, "lift never darkens: " + v);
-                if (v <= t.iconModeTileLiftPivot)
+                if (v <= pivot)
                     compare(l, v, "the lift leaves what is below its pivot alone");
                 verify(l >= lastL, "increasing: " + v);
                 lastL = l;
@@ -170,7 +172,7 @@ TestCase {
                     compare(d, v, "the darkening leaves what is above its pivot alone");
                 lastD = d;
             }
-            compare(tone(1, 1, t.iconModeTileLiftPivot, q), 1);
+            compare(tone(1, 1, pivot, q), 1);
         }
         compare(dark(0), 0);
         verify(Math.abs(dark(t.iconModeTileDarkenPivot - 1e-9) - t.iconModeTileDarkenPivot) < 1e-6, "continuous at its pivot");
@@ -190,9 +192,9 @@ TestCase {
             const lm = lum(materialRgb(false, wp, t.materialTintClampUntil));
             for (let i = 0; i <= 100; i++) {
                 const v = i / 100;
-                for (const q of liftExponents()) {
-                    if (v > dm)
-                        verify(contrast(tone(v, 1, t.iconModeTileLiftPivot, q), dm) >= contrast(v, dm) - 1e-9, `lift: ${v} over a dark material ${dm.toFixed(3)}`);
+                for (const [pivot, q] of [[t.iconModeTileLiftPivotDark, t.iconModeTileLiftExponentDark], [t.iconModeTileLiftPivot, t.iconModeTileLiftExponentClear], [t.iconModeTileLiftPivot, t.iconModeTileLiftExponentTinted]]) {
+                    if (v > dm && pivot >= dm)
+                        verify(contrast(tone(v, 1, pivot, q), dm) >= contrast(v, dm) - 1e-9, `lift: ${v} over a dark material ${dm.toFixed(3)}`);
                 }
                 if (v < lm - 0.05)
                     verify(contrast(tone(v, -1, t.iconModeTileDarkenPivot, t.iconModeTileDarkenExponent), lm) >= contrast(v, lm) - 1e-9, `darken: ${v} over a light material ${lm.toFixed(3)}`);
