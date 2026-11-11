@@ -145,6 +145,9 @@ No request is lost. A request that reaches the shell before a surface is built i
 - `early` in `shell.qml` keeps one pending request per surface, the last winning (a toggle flips the wanted state, open and close set
   it: open then close ends closed; a Clipboard-view request is kept as such; a Search open keeps its text) and drops it if it is older than
   `Tokens.deferredRequestMaxAgeMs` (5 s). The surface's own checks apply when it is performed (a locked session refuses, as for any request).
+- Each replay is its own `Qt.callLater(() => ...)` closure: `Qt.callLater` runs a repeated call of one function once per turn, with the last
+  arguments, so three loaders attaching in the same turn would replay only the last surface (review of 8887f8f0). The newest request wins
+  whatever order the loaders finish in (a request older than one already performed is not performed).
 - It is performed on the next turn of the event loop after the loader's item is bound (`Qt.callLater`), not inside the loader's own
   item-changed signal: there `root.<surface>Surface` is still null and ExclusiveSurfaces would not see the opening (two early requests
   left two keyboard-grabbing surfaces open; review of ddaf5c2e, MED-2). `ExclusiveSurfaces` also handles a target that appears already
@@ -168,9 +171,11 @@ No request is lost. A request that reaches the shell before a surface is built i
 - Test: `tests/shell/deferred_early.sh` (nested layer) restarts the nested shell with `GRASSFIELD_DEFER_HOLD=1` (dev session only, ADR-0019
   table; holds the loaders until `qs ipc call deferred release`; the `deferred` target is in the IPC table of docs/specs/security.md),
   sends requests while the surfaces do not exist, releases and reads the surfaces back: Search open with its text, Apps open, two early
-  toggles ending closed, open then close ending closed, Apps and Search both asked early ending with exactly one open, a test hook
-  answering `not ready`; and that the log has no handler conflict. With the replay neutered case 1 fails, with the `Qt.callLater` and the
-  ExclusiveSurfaces arrival check removed case 3 fails with two surfaces open (both checked).
+  toggles ending closed, open then close ending closed, Apps then Search asked early ending with Search open and Apps closed, all three
+  loaders attaching in one turn (Apps, Overview, Search asked, one release: Search open, `pending` empty), every case ending with `pending`
+  empty, a test hook answering `not ready`; and that the log has no handler conflict. With the replay neutered case 1 fails, with the `Qt.callLater` and the
+  ExclusiveSurfaces arrival check removed case 3 fails with two surfaces open, with the shared `callLater` function of 8887f8f0 case 4 fails
+  (`pending` not empty) (all checked).
 
 Measurement basis. Gate R1 is "exit of the old shell to the new shell's `grassfield-shell: started` line"
 (`scripts/gates/r1-restart.sh`), that is the unit's `RestartSec` (0.1 s) plus the new process's start to "started". The nested proxy is

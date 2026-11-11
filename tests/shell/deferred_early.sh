@@ -8,8 +8,11 @@
 # building until `qs ipc call deferred release`; requests are sent meanwhile, then the surfaces are built and read back.
 #   case 1  search open needle; apps toggle twice            -> after the release Search is open on "needle", Apps closed
 #   case 2  apps open; search open x then search close       -> after the release Apps is open, Search closed
-#   case 3  apps open and search open, before the release     -> exactly one of them is open (ExclusiveSurfaces), and a test hook
-#                                                                before the surface exists answers "not ready"
+#   case 3  apps open, then search open, before the release    -> Search (asked last) is open, Apps closed; a test hook before the
+#                                                                surface exists answers "not ready"
+#   case 4  apps, overview and search open before one release  -> the three loaders attach in the same turn; Search (last) is open,
+#                                                                the others closed, and `pending` is empty (no replay dropped)
+# and in every case nothing is left in `pending` after the release.
 # and the shell log holds no "Handler was registered but will not be used" (two handlers for one target) and no QML TypeError,
 # ReferenceError or binding loop. The shell is restarted normally at the end.
 #
@@ -46,6 +49,9 @@ held() { [[ $(ipc deferred status | jq -r .held 2>/dev/null) == true ]]; }
 # The shell's main thread is busy for a few seconds after "started" and answers IPC slowly meanwhile; a request older than
 # Tokens.deferredRequestMaxAgeMs (5 s) is dropped on purpose, so the requests are sent once it answers quickly and released at once.
 settle() { sleep 6; }
+# After a release every request must have been performed or dropped on purpose: nothing is left in `pending` (a replay that never
+# ran leaves its entry there), and the three surfaces exist.
+drained() { [[ $(ipc deferred status | jq -r '(.pending | length | tostring) + (.live | map(select(. == true)) | length | tostring)' 2>/dev/null) == 03 ]]; }
 
 # case 1
 restart_held 1; check "case 1: the shell started with the deferred surfaces held" $?
@@ -57,6 +63,7 @@ ipc deferred release >/dev/null
 until_ok 20 is search .open true; check "case 1: Search is open once built" $?
 is search .query needle; check "case 1: Search kept the text of the early open" $?
 is apps .open false; check "case 1: two early Apps toggles end closed" $?
+until_ok 20 drained; check "case 1: nothing is left pending after the release" $?
 
 # case 2
 restart_held 1; check "case 2: the shell started with the deferred surfaces held" $?
@@ -66,21 +73,33 @@ ipc apps open >/dev/null; ipc search open x >/dev/null; ipc search close >/dev/n
 ipc deferred release >/dev/null
 until_ok 20 is apps .open true; check "case 2: Apps is open once built" $?
 is search .open false; check "case 2: an early Search open then close ends closed" $?
+until_ok 20 drained; check "case 2: nothing is left pending after the release" $?
 
-# case 3: two different surfaces asked before they exist end with exactly ONE open (ExclusiveSurfaces: the keyboard has one owner)
+# case 3: two different surfaces asked before they exist: the LAST asked ends open and the other closed (ExclusiveSurfaces: the
+# keyboard has one owner), and nothing is left pending
 restart_held 1; check "case 3: the shell started with the deferred surfaces held" $?
 until_ok 20 held
 settle
 [[ $(ipc search status) == "not ready" && $(ipc apps status) == "not ready" && $(ipc overview status) == "not ready" ]]; check "case 3: a test hook before the surface exists answers 'not ready'" $?
 ipc apps open >/dev/null; ipc search open y >/dev/null
 ipc deferred release >/dev/null
-both_settled() { [[ $(st apps .open) != "" && $(st search .open) != "" ]]; }
-until_ok 20 both_settled
+until_ok 20 drained; check "case 3: nothing is left pending after the release" $?
 sleep 1
-n=0
-[[ $(st apps .open) == true ]] && n=$((n + 1))
-[[ $(st search .open) == true ]] && n=$((n + 1))
-[[ $n == 1 ]]; check "case 3: apps and search asked early end with exactly one open ($n)" $?
+is search .open true; check "case 3: Search, asked last, is the one open" $?
+is apps .open false; check "case 3: Apps, asked first, is closed" $?
+
+# case 4: all three loaders attach in the same turn (held, then released at once): every request is performed, the last asked wins
+restart_held 1; check "case 4: the shell started with the deferred surfaces held" $?
+until_ok 20 held
+settle
+ipc apps open >/dev/null; ipc overview open >/dev/null; ipc search open z >/dev/null
+[[ $(ipc deferred status | jq -r '.pending | length') == 3 ]]; check "case 4: three requests are pending" $?
+ipc deferred release >/dev/null
+until_ok 20 drained; check "case 4: nothing is left pending after the release (no replay was dropped)" $?
+sleep 1
+is search .open true; check "case 4: Search, asked last of the three, is open" $?
+is apps .open false; check "case 4: Apps is closed" $?
+is overview .open false; check "case 4: Overview is closed" $?
 
 # the log of the last held run
 ! grep -q "will not be used because another handler" "$dev/shell.log"; check "log: no two IPC handlers for one target" $?

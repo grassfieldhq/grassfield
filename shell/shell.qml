@@ -746,14 +746,21 @@ ShellRoot {
             console.info("grassfield-shell: surface built", surface);
             live = Object.assign({}, live, {[surface]: true});
             item.ipcEnabled = true;
-            Qt.callLater(early.replay, surface, item);
+            // A new closure for each surface: Qt.callLater runs a repeated call of ONE function once per turn, with the last
+            // arguments, so three loaders attaching in the same turn would replay only the last surface (review of 8887f8f0).
+            Qt.callLater(() => early.replay(surface, item));
         }
+
+        // When the newest request performed so far was made: a surface whose request is older does not open over it, whatever
+        // the order the loaders finish in (the last request wins, as for requests made one after the other).
+        property real performedAt: 0
 
         function replay(surface: string, item: var): void {
             const p = pending[surface];
             delete pending[surface];
-            if (!p || !p.open || Date.now() - p.at > Tokens.deferredRequestMaxAgeMs)
+            if (!p || !p.open || Date.now() - p.at > Tokens.deferredRequestMaxAgeMs || p.at < performedAt)
                 return;
+            performedAt = p.at;
             if (surface === "search") {
                 if (p.clip)
                     item.toggleClipboard();
