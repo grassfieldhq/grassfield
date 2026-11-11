@@ -145,7 +145,7 @@ DEST=(usr/lib/grassfield/grassfield-channel-helper usr/lib/grassfield/grassfield
   usr/share/polkit-1/actions/org.grassfield.packages.policy usr/share/grassfield/pacman/ usr/share/grassfield/omarchy-hooks/pre-refresh-pacman)
 missing=""
 for d in "${DEST[@]}"; do grep -qF "\$pkgdir/$d" /src/packaging/arch/PKGBUILD || grep -qF "\$pkgdir/${d%/*}/" /src/packaging/arch/PKGBUILD || missing+=" $d"; done
-grep -q 'grassfield-channel-set; do' /src/packaging/arch/PKGBUILD || missing+=" usr/bin/grassfield-channel-set"
+grep -qE 'grassfield-channel-set( [a-z-]+)*; do' /src/packaging/arch/PKGBUILD || missing+=" usr/bin/grassfield-channel-set"
 deps=" $(sed -n '/^package_grassfield-desktop()/,/^}/s/^  depends=(\(.*\))$/\1/p' /src/packaging/arch/PKGBUILD) "
 for p in grassfield-keyring pacman-contrib fakeroot; do [[ $deps == *" $p "* ]] || missing+=" depends:$p"; done
 expect "the PKGBUILD installs every path used here and grassfield-desktop depends on grassfield-keyring, pacman-contrib and fakeroot${missing:+ (missing:$missing)}" test -z "$missing"
@@ -576,6 +576,7 @@ say "A7f/A7h/A8 the checker's own tests as a user (its lock, Omarchy's update lo
 git config --system --add safe.directory '*'
 as alice env TMPDIR=/tmp bash /src/tests/shell/update_check.sh >"$W/unit.log" 2>&1; rc=$?
 grep -E '^(FAIL|SKIP)' "$W/unit.log"
+((rc == 0)) || tail -n 12 "$W/unit.log" | sed 's/^/   unit.log: /'
 expect "tests/shell/update_check.sh as alice: $(grep -c '^PASS' "$W/unit.log") PASS" test "$rc:$(grep -c '^FAIL' "$W/unit.log")" == 0:0
 
 say "done: $fails failure(s)"

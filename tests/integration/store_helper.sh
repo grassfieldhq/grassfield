@@ -299,6 +299,7 @@ sleep 2
 hpid=$(cut -d' ' -f1 "$D/$op.started")
 holders=$(find /proc/[0-9]*/fd -lname "$D/helper.lock" 2>/dev/null | cut -d/ -f3 | sort -u | tr '\n' ' ')
 expect "while pacman and gs-slow's scriptlet run, only the helper holds its lock ($holders)" test "$holders" == "$hpid "
+[[ $holders == "$hpid " ]] || for p in $holders; do echo "   holder $p (ppid $(awk '/^PPid/ { print $2 }' /proc/$p/status 2>/dev/null)): $(tr '\0' ' ' </proc/$p/cmdline 2>/dev/null)"; done
 fds=$(for fd in 0 1 2; do readlink "/proc/$hpid/fd/$fd"; done | tr '\n' ' ')
 expect "its stdin is /dev/null, stdout and stderr the log ($fds)" test "$fds" == "/dev/null $D/$op.log $D/$op.log "
 ign=$(awk '/^SigIgn:/{print $2}' "/proc/$hpid/status")
@@ -544,7 +545,7 @@ set -euo pipefail
 shift
 names=()
 for a in "$@"; do
-  case $a in --noconfirm | --needed) ;; -*) echo "yay (stand-in): $a" >&2; exit 2 ;; *) names+=("$a") ;; esac
+  case $a in --noconfirm | --needed | --) ;; -*) echo "yay (stand-in): $a" >&2; exit 2 ;; *) names+=("$a") ;; esac
 done
 build() { # name asdeps
   local n=$1 dir d
