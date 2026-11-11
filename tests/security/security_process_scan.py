@@ -73,7 +73,8 @@ SAFE_MODE_MODULE = "shell/security/safemode/"
 SAFE_MODE = "shell/security/safemode/SafeMode.qml"
 # The host's one SafeMode and what each input is bound to (rule 6).
 SAFE_MODE_INPUTS = {"locked": "Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"",
-                    "sheetUp": "root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)"}
+                    "sheetUp": "root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)",
+                    "displaysOff": "idle.displayOff"}
 SECURITY_SHARED = ("shell/security/SheetQueue.qml", "shell/security/SheetSession.qml", "shell/security/PasswordField.qml",
                    "shell/security/LockController.qml")
 AGENT = "shell/security/polkit/AuthAgent.qml"
@@ -331,6 +332,8 @@ def file_findings(path, src, singletons):
             if m.startswith("qs.") and m not in ("qs.services", "qs.security", "qs.security.lock", "qs.security.idle", "qs.security.polkit", "qs.security.secret",
                                                   "qs.security.safemode"):
                 out.append(f"{path}: imports {m} (a UI module in the security process)")
+            if m == "qs.security.safemode" and path != HOST:
+                out.append(f"{path}: imports qs.security.safemode (the host makes the one SafeMode; the opus review of a0df9c3e, NIT)")
         used = set(re.findall(r"\b([A-Z]\w*)\s*\.", code)) | set(re.findall(r"\b([A-Z]\w*)\s*\{", code))
         sheets = path.startswith(SHEET_MODULES) or path in SECURITY_SHARED or path == SHEET_HOST
         safe_mode = path.startswith(SAFE_MODE_MODULE)
@@ -399,8 +402,9 @@ def global_findings(files):
     if not returns or any(not (r.strip() == '""' or re.fullmatch(r'\s*Qt\.resolvedUrl\("builtin/[A-Za-z0-9_/]+\.qml"\)\s*', r)) for r in returns):
         out.append(f"{REGISTRY}: source() returns something else than Qt.resolvedUrl(\"builtin/....qml\") or \"\" (WidgetHost's computed Loader source must stay a known built-in widget)")
     safe_mode = strip(files.get(SAFE_MODE, ""))
-    if not (re.search(r"^\s*property bool locked:\s*true\s*$", safe_mode, re.M) and re.search(r"^\s*property bool sheetUp:\s*true\s*$", safe_mode, re.M)):
-        out.append(f"{SAFE_MODE}: does not fail closed until bound (locked: true, sheetUp: true)")
+    if not (re.search(r"^\s*property bool locked:\s*true\s*$", safe_mode, re.M) and re.search(r"^\s*property bool sheetUp:\s*true\s*$", safe_mode, re.M)
+            and re.search(r"^\s*property bool displaysOff:\s*true\s*$", safe_mode, re.M)):
+        out.append(f"{SAFE_MODE}: does not fail closed until bound (locked: true, sheetUp: true, displaysOff: true)")
     for path, src in files.items():
         if path != HOST and not path.startswith(SAFE_MODE_MODULE) and re.search(r"\bSafeMode\s*\{", strip(src)):
             out.append(f"{path}: instantiates SafeMode (the host does, once)")
@@ -523,12 +527,16 @@ def main(argv):
             ("SafeMode's sheet input without the key sink", HOST, lambda s: s.replace("(root.sheets.authorizing === true || root.sheets.securityKeyboard === true)", "root.sheets.authorizing === true", 1)),
             ("SafeMode's inputs left unbound in the host", HOST, lambda s: s.replace("        sheetUp: root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)\n", "", 1)),
             ("SafeMode open by default (locked)", SAFE_MODE, lambda s: s.replace("    property bool locked: true\n", "    property bool locked: false\n", 1)),
+            ("SafeMode open by default (displaysOff)", SAFE_MODE, lambda s: s.replace("    property bool displaysOff: true\n", "    property bool displaysOff: false\n", 1)),
+            ("SafeMode's displays left unbound in the host (MINOR-2)", HOST, lambda s: s.replace("        displaysOff: idle.displayOff\n", "", 1)),
+            ("SafeMode's displays bound to a constant in the host", HOST, lambda s: s.replace("        displaysOff: idle.displayOff\n", "        displaysOff: false\n", 1)),
+            ("idle importing the safe-mode module (only the host does: NIT)", "shell/security/idle/Idle.qml", lambda s: s.replace("import qs.security.lock\n", "import qs.security.lock\nimport qs.security.safemode\n", 1)),
             ("SafeMode open by default (sheetUp)", SAFE_MODE, lambda s: s.replace("    property bool sheetUp: true\n", "    property bool sheetUp: false\n", 1)),
             ("SafeMode in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    SafeMode {\n    }\n    Saver {\n", 1)),
             ("the UI importing the safe-mode module", "shell/shell.qml", lambda s: s.replace("import qs.services\n", "import qs.services\nimport qs.security.safemode\n", 1)),
             ("SafeMode made in the lock", "shell/security/lock/LockView.qml", lambda s: s.rstrip("\n").rstrip("}") + "    SafeMode {\n    }\n}\n"),
             ("safe mode importing qs.services", SAFE_MODE, lambda s: s.replace("import Quickshell.Io\n", "import Quickshell.Io\nimport qs.services\n", 1)),
-            ("safe mode reading the UI's SessionState", SAFE_MODE, lambda s: s.replace("    readonly property bool shown: Model.shown(root.confirmed, root.locked, root.sheetUp)", "    readonly property bool shown: Model.shown(root.confirmed, SessionState.locked, root.sheetUp)", 1)),
+            ("safe mode reading the UI's SessionState", SAFE_MODE, lambda s: s.replace("    readonly property bool shown: Model.shown(root.confirmed, root.locked, root.sheetUp, root.displaysOff)", "    readonly property bool shown: Model.shown(root.confirmed, SessionState.locked, root.sheetUp, root.displaysOff)", 1)),
             ("Settings in the safe-mode notice", "shell/security/safemode/SafeModeCard.qml", lambda s: s.replace("    readonly property bool busy: root.running !== \"\"\n", "    readonly property bool busy: root.running !== \"\" || Settings.reduceMotion\n", 1)),
             ("a second Idle in the host", HOST, lambda s: s.replace("    Idle {\n        id: idle\n    }\n", "    Idle {\n        id: idle\n    }\n    Idle {\n    }\n", 1)),
             ("a window in the host", HOST, lambda s: s.replace("    Idle {\n", "    FloatingWindow {\n    }\n    Idle {\n", 1)),

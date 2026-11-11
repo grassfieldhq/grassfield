@@ -100,6 +100,7 @@ done
 
 # Try Again (dev: suppressed) ends safe mode; the surface goes.
 before=$(log_lines "dev session, suppressed Try Again")
+wait_for 5 st_is '.armed' || bad "the notice was never armed: $(status)"
 [[ $(call "$sec" safemode devPress tryAgain) == ok ]] && pass "Try Again from the notice answers ok" || bad "devPress tryAgain while shown"
 wait_for 5 st_is '.confirmed == false and .notice == false' && pass "Try Again ends safe mode and the notice" || bad "after Try Again: $(status)"
 wait_for 5 bash -c '! scripts/nestctl -j layers 2>/dev/null | jq -e "[.. | objects | select(has(\"namespace\")) | .namespace] | index(\"grassfield-safe-mode\") != null" >/dev/null' && pass "the notice surface is gone" || bad "the notice surface stayed after Try Again"
@@ -107,7 +108,7 @@ wait_for 5 bash -c '! scripts/nestctl -j layers 2>/dev/null | jq -e "[.. | objec
 
 # A second loop brings it back; Log Out (dev: suppressed) leaves it.
 call "$sec" safemode devSet true >/dev/null
-wait_for 10 st_is '.shown and .notice' && pass "a second loop brings the notice back" || bad "second loop: $(status)"
+wait_for 10 st_is '.shown and .notice and .armed' && pass "a second loop brings the notice back (armed after its guard)" || bad "second loop: $(status)"
 before=$(log_lines "dev session, suppressed grassfield-session-end logout")
 [[ $(call "$sec" safemode devPress logOut) == ok ]] && pass "Log Out from the notice answers ok" || bad "devPress logOut while shown"
 (($(log_lines "dev session, suppressed grassfield-session-end logout") == before + 1)) && pass "the dev session ran nothing for Log Out (suppressed, logged once)" || bad "suppressed Log Out lines"

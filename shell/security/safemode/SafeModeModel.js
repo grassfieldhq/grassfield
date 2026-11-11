@@ -22,6 +22,13 @@ var LOOK_WATCH_MS = 2000;
 // Looks in a row that must say "safe mode" before the notice shows: a flag left from an earlier loop, read at a login before
 // the session's autostart has started the shell, or a unit passing through "failed" on its way to a restart, shows nothing.
 var SETTLE_LOOKS = 2;
+// After the notice appears (at the unlock, when a sheet closes, when the displays wake), a key or a click acts only this
+// long after: the key that woke the displays, a Return that ended the password or a repeat of it never presses a button
+// (the polkit and secret sheets' held guard, AuthDialogModel.heldGuardMs; the opus review of a0df9c3e, MINOR-2).
+var GUARD_MS = 500;
+// An action whose process never reported its end (it could not start) is given up after this long; both commands are
+// bounded below it by `timeout` (SafeMode.qml).
+var ACTION_GUARD_MS = 340000;
 // systemd's unit states and results are lower-case words with dashes ("inactive", "auto-restart", "start-limit-hit").
 var TOKEN = /^[a-z][a-z-]{0,31}$/;
 
@@ -100,15 +107,28 @@ function confirmed(count) {
 }
 
 // The notice is on screen, and only then exists: safe mode confirmed, the session unlocked (not locked, not asked to lock,
-// not probing a stranded lock at start) and no polkit or secret sheet of this process open, shown or held. Anything but
-// exactly false for `locked` or `sheetUp` keeps it off (fail closed).
-function shown(isConfirmed, locked, sheetUp) {
-    return isConfirmed === true && locked === false && sheetUp === false;
+// not probing a stranded lock at start), no polkit or secret sheet of this process open, shown or held, and the displays on
+// (idle can turn them off while unlocked; the wake key must find no notice: the opus review of a0df9c3e, MINOR-2). Anything
+// but exactly false for `locked`, `sheetUp` or `displaysOff` keeps it off (fail closed).
+function shown(isConfirmed, locked, sheetUp, displaysOff) {
+    return isConfirmed === true && locked === false && sheetUp === false && displaysOff === false;
 }
 
-// An action (Try Again, Log Out) may start: the notice is on screen and no action is under way.
-function canAct(isShown, busy) {
-    return isShown === true && busy === false;
+// An action (Try Again, Log Out) may start: the notice is on screen, has been for GUARD_MS (`armed`), and no action is under
+// way.
+function canAct(isShown, busy, armed) {
+    return isShown === true && busy === false && armed === true;
+}
+
+// What an action that did not finish says (SafeModeCard): Try Again, any failure; Log Out, apps still open (exit 3 of
+// grassfield-session-end: the windows did not all close, or the list could not be read) or the session not ended (anything
+// else: the logout's own failure, its bound, a process that could not start). "" for a success.
+function failureOf(action, code) {
+    if (code === 0)
+        return "";
+    if (action === "logOut")
+        return code === 3 ? "logOutOpen" : "logOut";
+    return "tryAgain";
 }
 
 // The delay before the next look.

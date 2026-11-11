@@ -110,33 +110,56 @@ Item {
             verify(!Model.confirmed("2"));
         }
 
-        // The lock always wins: on screen only when confirmed, unlocked and no sheet; anything but an exact false keeps it
-        // off.
+        // The lock always wins: on screen only when confirmed, unlocked, no sheet and the displays on (the opus review of
+        // a0df9c3e, MINOR-2); anything but an exact false keeps it off.
         function test_shown() {
-            verify(Model.shown(true, false, false));
-            verify(!Model.shown(true, true, false), "locked: never over (or under) the lock");
-            verify(!Model.shown(true, false, true), "a polkit or secret sheet open");
-            verify(!Model.shown(true, true, true));
-            verify(!Model.shown(false, false, false), "not in safe mode");
+            verify(Model.shown(true, false, false, false));
+            verify(!Model.shown(true, true, false, false), "locked: never over (or under) the lock");
+            verify(!Model.shown(true, false, true, false), "a polkit or secret sheet open");
+            verify(!Model.shown(true, false, false, true), "the displays off: the wake key finds no notice");
+            verify(!Model.shown(true, true, true, true));
+            verify(!Model.shown(false, false, false, false), "not in safe mode");
             const notFalse = [undefined, null, 0, "", "false", 1, true];
             for (let i = 0; i < notFalse.length; i++) {
-                verify(!Model.shown(true, notFalse[i], false), "locked " + JSON.stringify(notFalse[i]));
-                verify(!Model.shown(true, false, notFalse[i]), "sheetUp " + JSON.stringify(notFalse[i]));
+                verify(!Model.shown(true, notFalse[i], false, false), "locked " + JSON.stringify(notFalse[i]));
+                verify(!Model.shown(true, false, notFalse[i], false), "sheetUp " + JSON.stringify(notFalse[i]));
+                verify(!Model.shown(true, false, false, notFalse[i]), "displaysOff " + JSON.stringify(notFalse[i]));
             }
-            verify(!Model.shown("true", false, false));
-            verify(!Model.shown(1, false, false));
+            verify(!Model.shown(true, false, false), "a missing input keeps it off");
+            verify(!Model.shown("true", false, false, false));
+            verify(!Model.shown(1, false, false, false));
         }
 
-        // Try Again and Log Out run only from a notice on screen, one at a time: never while locked (the notice is not shown
-        // then), never twice.
+        // Try Again and Log Out run only from a notice on screen for GUARD_MS, one at a time: never while locked, over a sheet
+        // or with the displays off (the notice is not shown then), never in the guard after it appears, never twice.
         function test_canAct() {
-            verify(Model.canAct(true, false));
-            verify(!Model.canAct(true, true), "an action under way");
-            verify(!Model.canAct(false, false), "not on screen (locked, a sheet, or no safe mode)");
-            verify(!Model.canAct(Model.shown(true, true, false), false), "Try Again while locked");
-            verify(!Model.canAct(Model.shown(true, false, true), false), "Try Again over a sheet");
-            verify(!Model.canAct(undefined, false));
-            verify(!Model.canAct(true, undefined));
+            verify(Model.canAct(true, false, true));
+            verify(!Model.canAct(true, true, true), "an action under way");
+            verify(!Model.canAct(true, false, false), "in the guard after the notice appeared (the wake key, a repeated Return)");
+            verify(!Model.canAct(false, false, true), "not on screen (locked, a sheet, the displays off, or no safe mode)");
+            verify(!Model.canAct(Model.shown(true, true, false, false), false, true), "Try Again while locked");
+            verify(!Model.canAct(Model.shown(true, false, true, false), false, true), "Try Again over a sheet");
+            verify(!Model.canAct(Model.shown(true, false, false, true), false, true), "Try Again with the displays off");
+            verify(!Model.canAct(undefined, false, true));
+            verify(!Model.canAct(true, undefined, true));
+            verify(!Model.canAct(true, false, undefined));
+            verify(!Model.canAct(true, false, "true"));
+            compare(Model.GUARD_MS, 500, "the sheets' held guard (AuthDialogModel.heldGuardMs)");
+        }
+
+        // What an action that did not finish says (NIT: the Log Out text for apps still open only on grassfield-session-end's
+        // exit 3).
+        function test_failureOf() {
+            compare(Model.failureOf("tryAgain", 0), "");
+            compare(Model.failureOf("logOut", 0), "");
+            compare(Model.failureOf("tryAgain", 1), "tryAgain");
+            compare(Model.failureOf("tryAgain", 124), "tryAgain", "its bound");
+            compare(Model.failureOf("tryAgain", -1), "tryAgain", "could not start, or the guard gave up");
+            compare(Model.failureOf("logOut", 3), "logOutOpen", "apps still open, or their list unreadable");
+            compare(Model.failureOf("logOut", 4), "logOut", "the session could not be ended");
+            compare(Model.failureOf("logOut", 124), "logOut");
+            compare(Model.failureOf("logOut", -1), "logOut");
+            verify(Model.ACTION_GUARD_MS > 330000, "above the Log Out command's own bound (330 s + 5)");
         }
 
         // A look that cannot be read changes nothing: no notice on a guess, none hidden either.
@@ -265,8 +288,10 @@ Item {
             card.running = "logOut";
             compare(status.text, "Logging out…");
             card.running = "";
-            card.failure = "logOut";
+            card.failure = "logOutOpen";
             verify(status.text.indexOf("weren’t logged out") >= 0);
+            card.failure = "logOut";
+            verify(status.text.indexOf("couldn’t be ended") >= 0);
         }
 
         // Light and dark (ADR-0041 S4): the alert draws from the current palette, the one the security host binds from the

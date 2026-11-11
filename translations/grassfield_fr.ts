@@ -12131,6 +12131,10 @@
         <translation>Certaines apps sont encore ouvertes : la session n’a pas été fermée. Enregistrez votre travail et quittez-les, puis fermez la session.</translation>
     </message>
     <message>
+        <source>The session couldn’t be ended. Log out again in a moment.</source>
+        <translation>La session n’a pas pu être fermée. Réessayez de la fermer dans un instant.</translation>
+    </message>
+    <message>
         <source>Log Out</source>
         <translation>Fermer la session</translation>
     </message>

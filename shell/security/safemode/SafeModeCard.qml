@@ -15,8 +15,8 @@ import Grassfield.Ui
 FocusScope {
     id: root
 
-    // The action under way ("" | "tryAgain" | "logOut") and the one that did not finish ("" | "tryAgain" | "logOut"), set
-    // by the controller.
+    // The action under way ("" | "tryAgain" | "logOut") and the one that did not finish ("" | "tryAgain" | "logOutOpen", apps
+    // still open | "logOut", the session not ended: SafeModeModel.failureOf), set by the controller.
     property string running: ""
     property string failure: ""
     readonly property bool busy: root.running !== ""
@@ -31,8 +31,10 @@ FocusScope {
             return qsTr("Logging out…");
         if (root.failure === "tryAgain")
             return qsTr("The desktop couldn’t be restarted. Try again, or log out.");
-        if (root.failure === "logOut")
+        if (root.failure === "logOutOpen")
             return qsTr("Some apps are still open, so you weren’t logged out. Save your work and quit them, then log out.");
+        if (root.failure === "logOut")
+            return qsTr("The session couldn’t be ended. Log out again in a moment.");
         return "";
     }
 
@@ -60,7 +62,9 @@ FocusScope {
         Qt.callLater(root.takeFocus)
 
     // Return and Enter are Try Again wherever the focus is in the alert, unless Tab moved it to Log Out (a focused button
-    // takes its own activation keys first, as in every Grassfield alert); a key held down answers nothing. Esc is swallowed.
+    // takes its own activation keys first, as in every Grassfield alert). A Return held down on the alert answers nothing; on
+    // a focused button its repeats reach the button, and the controller refuses all but the first (an action under way
+    // refuses another; nothing acts in the first SafeModeModel.GUARD_MS after the alert appears). Esc is swallowed.
     Keys.onPressed: event => {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             if (!event.isAutoRepeat)

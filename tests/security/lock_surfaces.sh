@@ -748,21 +748,26 @@ smodel = code(read("shell/security/safemode/SafeModeModel.js"))
 snotice = code(read("shell/security/safemode/SafeModeNotice.qml"))
 shost = code(read("shell/security/host/SecurityHost.qml"))
 expect("safe mode: the notice is shown only when confirmed, unlocked and no sheet is up (an exact false each)",
-       stmts(function(smodel, "shown") or "") == ["return isConfirmed === true && locked === false && sheetUp === false;"])
-expect("safe mode: an action may start only from the notice on screen, none under way",
-       stmts(function(smodel, "canAct") or "") == ["return isShown === true && busy === false;"])
+       stmts(function(smodel, "shown") or "") == ["return isConfirmed === true && locked === false && sheetUp === false && displaysOff === false;"])
+expect("safe mode: an action may start only from the notice on screen for SafeModeModel.GUARD_MS, none under way",
+       stmts(function(smodel, "canAct") or "") == ["return isShown === true && busy === false && armed === true;"])
+expect("safe mode: the guard (MINOR-2): armed falls whenever the notice appears or goes, and only the guard Timer, GUARD_MS later, sets it, to whether it is still shown",
+       re.search(r"onShownChanged:\s*\{\s*root\.armed\s*=\s*false;", sm) is not None
+       and re.search(r"Timer\s*\{\s*id:\s*guardTimer\s+interval:\s*Model\.GUARD_MS\s+onTriggered:\s*root\.armed\s*=\s*root\.shown\s*\}", sm) is not None
+       and len(re.findall(r"\barmed\s*=(?!=)", sm)) == 2 and re.search(r"^\s*property bool armed: false$", sm, re.M) is not None)
 expect("safe mode: the notice's window exists only while shown (one LazyLoader, active: root.shown), read from the lock and the sheets",
-       re.search(r"readonly property bool shown:\s*Model\.shown\(root\.confirmed,\s*root\.locked,\s*root\.sheetUp\)\s*\n", sm) is not None
+       re.search(r"readonly property bool shown:\s*Model\.shown\(root\.confirmed,\s*root\.locked,\s*root\.sheetUp,\s*root\.displaysOff\)\s*\n", sm) is not None
        and re.search(r"LazyLoader\s*\{\s*id:\s*notice\s+active:\s*root\.shown\s+source:\s*Qt\.resolvedUrl\(\"SafeModeNotice\.qml\"\)\s*\}", sm) is not None
        and len(re.findall(r"\bLazyLoader\s*\{", sm)) == 1 and len(re.findall(r"\bactive\s*:", sm)) == 1)
-expect("safe mode: the lock and the sheets read true until the host binds them (no notice on a default)",
-       re.search(r"^\s*property bool locked: true$", sm, re.M) is not None and re.search(r"^\s*property bool sheetUp: true$", sm, re.M) is not None)
-expect("safe mode: the host binds the lock (any state but unlocked, the stranded-lock probe) and the sheets (open, held, the key sink) of this process",
-       re.search(r"SafeMode\s*\{\s*locked:\s*Lock\.locked\s*\|\|\s*Lock\.strandedProbing\s*\|\|\s*Lock\.publicState\s*!==\s*\"unlocked\"\s+sheetUp:\s*root\.sheets\s*!==\s*null\s*&&\s*\(root\.sheets\.authorizing\s*===\s*true\s*\|\|\s*root\.sheets\.securityKeyboard\s*===\s*true\)\s*\}", shost) is not None)
+expect("safe mode: the lock, the sheets and the displays read true until the host binds them (no notice on a default)",
+       re.search(r"^\s*property bool locked: true$", sm, re.M) is not None and re.search(r"^\s*property bool sheetUp: true$", sm, re.M) is not None
+       and re.search(r"^\s*property bool displaysOff: true$", sm, re.M) is not None)
+expect("safe mode: the host binds the lock (any state but unlocked, the stranded-lock probe), the sheets (open, held, the key sink) and the displays idle turned off, of this process",
+       re.search(r"SafeMode\s*\{\s*locked:\s*Lock\.locked\s*\|\|\s*Lock\.strandedProbing\s*\|\|\s*Lock\.publicState\s*!==\s*\"unlocked\"\s+sheetUp:\s*root\.sheets\s*!==\s*null\s*&&\s*\(root\.sheets\.authorizing\s*===\s*true\s*\|\|\s*root\.sheets\.securityKeyboard\s*===\s*true\)\s+displaysOff:\s*idle\.displayOff\s*\}", shost) is not None)
 for action in ("tryAgain", "logOut"):
     body = stmts(function(sm, action) or "")
     expect(f"safe mode: {action}() refuses first unless the notice is on screen and nothing runs",
-           body[:1] == ["if (!Model.canAct(root.shown, root.busy)) {"] and "return \"refused\";" in body[:4])
+           body[:1] == ["if (!Model.canAct(root.shown, root.busy, root.armed)) {"] and "return \"refused\";" in body[:4])
 expect("safe mode: the notice's buttons and Return reach the actions only through tryAgain() and logOut() (one Connections, no process started by the notice)",
        re.search(r"Connections\s*\{\s*target:\s*notice\.item\s+ignoreUnknownSignals:\s*true\s+function onTryAgain\(\):\s*void\s*\{\s*root\.tryAgain\(\);\s*\}\s*function onLogOut\(\):\s*void\s*\{\s*root\.logOut\(\);\s*\}\s*\}", sm) is not None
        and "Process" not in snotice and "Process" not in code(read("shell/security/safemode/SafeModeCard.qml")))
@@ -804,14 +809,19 @@ done
 cp -a "$root/shell/security" "$mut/shell/" # the wall-clock scan reads every file of shell/security
 python3 -I "$tmp/check.py" "$mut" >/dev/null 2>&1 && pass "mutation: the unchanged copy passes" || bad "mutation: the unchanged copy fails"
 for case_ in 'shell/dock/Dock.qml#SessionState.refuses("dock keyboard")#false' \
-  'shell/security/safemode/SafeModeModel.js#return isConfirmed === true && locked === false && sheetUp === false;#return isConfirmed === true && sheetUp === false;' \
-  'shell/security/safemode/SafeModeModel.js#return isConfirmed === true && locked === false && sheetUp === false;#return isConfirmed === true && locked !== true && sheetUp === false;' \
-  'shell/security/safemode/SafeModeModel.js#return isConfirmed === true && locked === false && sheetUp === false;#return isConfirmed === true && locked === false;' \
-  'shell/security/safemode/SafeModeModel.js#return isShown === true && busy === false;#return busy === false;' \
+  'shell/security/safemode/SafeModeModel.js#return isConfirmed === true && locked === false && sheetUp === false && displaysOff === false;#return isConfirmed === true && sheetUp === false && displaysOff === false;' \
+  'shell/security/safemode/SafeModeModel.js#return isConfirmed === true && locked === false && sheetUp === false && displaysOff === false;#return isConfirmed === true && locked !== true && sheetUp === false && displaysOff === false;' \
+  'shell/security/safemode/SafeModeModel.js#return isConfirmed === true && locked === false && sheetUp === false && displaysOff === false;#return isConfirmed === true && locked === false && displaysOff === false;' \
+  'shell/security/safemode/SafeModeModel.js#return isShown === true && busy === false && armed === true;#return busy === false && armed === true;' \
+  'shell/security/safemode/SafeModeModel.js#return isShown === true && busy === false && armed === true;#return isShown === true && busy === false;' \
+  'shell/security/safemode/SafeModeModel.js#&& sheetUp === false && displaysOff === false;#&& sheetUp === false;' \
+  'shell/security/safemode/SafeMode.qml#        onTriggered: root.armed = root.shown#        onTriggered: root.armed = true' \
+  'shell/security/safemode/SafeMode.qml#    onShownChanged: {\n        root.armed = false;#    onShownChanged: {' \
+  'shell/security/host/SecurityHost.qml#        displaysOff: idle.displayOff#        displaysOff: false' \
   'shell/security/safemode/SafeMode.qml#        active: root.shown#        active: root.confirmed' \
   'shell/security/safemode/SafeMode.qml#    property bool locked: true#    property bool locked: false' \
-  'shell/security/safemode/SafeMode.qml#        if (!Model.canAct(root.shown, root.busy)) {\n            console.warn("grassfield-safe-mode: Try Again refused#        if (root.busy) {\n            console.warn("grassfield-safe-mode: Try Again refused' \
-  'shell/security/safemode/SafeMode.qml#        if (!Model.canAct(root.shown, root.busy)) {\n            console.warn("grassfield-safe-mode: Log Out refused#        if (!Model.canAct(root.confirmed, root.busy)) {\n            console.warn("grassfield-safe-mode: Log Out refused' \
+  'shell/security/safemode/SafeMode.qml#        if (!Model.canAct(root.shown, root.busy, root.armed)) {\n            console.warn("grassfield-safe-mode: Try Again refused#        if (root.busy) {\n            console.warn("grassfield-safe-mode: Try Again refused' \
+  'shell/security/safemode/SafeMode.qml#        if (!Model.canAct(root.shown, root.busy, root.armed)) {\n            console.warn("grassfield-safe-mode: Log Out refused#        if (!Model.canAct(root.confirmed, root.busy, root.armed)) {\n            console.warn("grassfield-safe-mode: Log Out refused' \
   'shell/security/safemode/SafeMode.qml#            root.tryAgain();\n        }#            tryAgainRun.running = true;\n        }' \
   'shell/security/host/SecurityHost.qml#        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== "unlocked"#        locked: Lock.locked' \
   'shell/security/host/SecurityHost.qml#(root.sheets.authorizing === true || root.sheets.securityKeyboard === true)#(root.sheets.authorizing === true)' \

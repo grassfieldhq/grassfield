@@ -177,11 +177,13 @@ Scope {
     // The notice that the UI's unit stopped after a crash loop (Try Again, Log Out). It reads the lock and the sheets of this
     // process only: any lock state but unlocked (`locking` included, so the notice is gone before the compositor even draws
     // the lock) and the start-up probe of a stranded or foreign lock count as locked; a polkit or secret sheet open, shown or
-    // held, or its key sink, counts as a sheet up. Either one destroys the notice and refuses its actions; both read true
-    // inside SafeMode until bound. No sheets made: none up.
+    // held, or its key sink, counts as a sheet up; the displays idle turned off (unlocked, with a non-default "require
+    // password" delay) count too, as for the sheets (the opus review of a0df9c3e, MINOR-2). Any of them destroys the notice
+    // and refuses its actions; all read true inside SafeMode until bound. No sheets made: none up.
     SafeMode {
         locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== "unlocked"
         sheetUp: root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)
+        displaysOff: idle.displayOff
     }
 
     // The state and the beat for `security heartbeat` (shell/security.qml): "<public state> <sequence>".

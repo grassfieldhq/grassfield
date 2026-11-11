@@ -857,7 +857,8 @@ down, how sleep behaves) is written in the table at the end of this step.
   `grassfield-shell.service`. Safe mode is the flag with the unit down for good (`inactive` or `failed`, never
   `activating`, which covers the auto-restart wait), or the unit `failed` with `Result=start-limit-hit` with or without the
   flag (ADR-0056 D-10: the counter can miss the last failures of a sub-second loop). A stale flag with the shell brought back
-  shows nothing (the opus review of b1d826b); two looks in a row must agree, so a flag left from an earlier loop, read at a
+  shows nothing (the opus review of b1d826b), nor does a flag in a linked runtime directory (review round 1, MINOR-3); two
+  looks in a row must agree, so a flag left from an earlier loop, read at a
   login before the autostart starts the shell, or a unit passing through `failed` on its way to a restart, shows nothing.
   An answer that cannot be read (a missing line, a token outside systemd's form, CRLF, more than 4 KiB, a look killed at its
   5 s bound) counts for nothing: it never shows the notice on a guess and never hides one already up (logged once).
@@ -873,16 +874,21 @@ down, how sleep behaves) is written in the table at the end of this step.
   dev hook. Nothing here locks, unlocks, approves, delays a lock or reads the UI's state file.
 - **What the actions run** (fixed commands, as the user, nothing read from a file):
   - Try Again: `timeout -k 2 40 /usr/lib/grassfield/grassfield-shell-failed --try-again`, the loop detector's own helper,
-    which gains this verb (never the unit's: its `ExecStart=` has no argument; an unknown argument does nothing, exit 2). In
-    this order: the ledger and the flag are removed (the next loop is counted from zero, and a flag that loop writes is never
-    removed here), `systemctl --user reset-failed grassfield-shell.service` (a unit at its start limit refuses a start until
-    then), `systemctl --user start grassfield-shell.service` waited for within 30 s (Type=simple: it returns once the shell
-    runs, or fails). A start that fails puts the flag back, so the notice stays with its failure line. It never loops: nothing
+    which gains this verb (never the unit's: its `ExecStart=` has no argument; an unknown argument does nothing, exit 2). The
+    flag stays until the shell is confirmed running (review round 1, MINOR-1): it is written when missing (a unit at its start
+    limit with no flag), its identity (inode) noted, the ledger cleared (the next loop is counted from zero); then `systemctl
+    --user reset-failed grassfield-shell.service` bounded at 5 s (a unit at its start limit refuses a start until then),
+    `systemctl --user start grassfield-shell.service` bounded at 20 s (Type=simple: it returns once the shell runs, or fails),
+    `systemctl --user is-active grassfield-shell.service` bounded at 5 s; only then is the flag removed, and only if it is still
+    the one noted (a flag a new loop wrote meanwhile stays). The steps fit inside the caller's 40 s, every command by absolute
+    path; a run killed at any point, a start that fails or a unit not active after it leaves the flag, so the notice stays (with
+    its failure line) or comes back. No usable runtime directory (unset, or a link): nothing is done. It never loops: nothing
     restarts the shell on its own; a shell that fails again is the counter's to stop again (three failures, its stop, a new
     flag), and the notice comes back. After a start that worked the notice leaves (the next looks see the flag gone).
   - Log Out: `timeout -k 5 330 /usr/lib/grassfield/grassfield-session-end logout`, the Grassfield menu's own path (every app
-    asked to close, none forced; `uwsm stop`). An app that keeps a window open stops it after its 15 s, and the notice says
-    so (see the residuals).
+    asked to close, none forced; `uwsm stop`). An app that keeps a window open stops it after its 15 s (its exit 3), and the
+    notice says so; any other failure (its own, its bound, a process that could not start) says the session could not be
+    ended (review round 1, NIT; `SafeModeModel.failureOf`).
 - **Deviations from the plan's text** (step 1 S4 and SD-4, written before later owner decisions; taken under the owner's rule
   and the integrator's brief of 2026-11-11, to be confirmed by the reviewer and the owner): (1) one centred alert instead of a
   bar with the Grassfield menu: macOS's "a problem occurred" alerts, and a bar would rebuild a piece of the menu bar in the
@@ -960,6 +966,34 @@ down, how sleep behaves) is written in the table at the end of this step.
   sheets change with the appearance too (above): what S3 had lost. (7) Try Again restarts the same desktop (SQ-1 B: safe mode is the UI stopped, not a reduced UI); a second loop comes
   back here. (8) Should Hyprland not give the on-demand alert the keyboard at map, Return and Esc need a click on it first.
 - **Review:** opus security (R12), by the integrator.
+- **Review round 1** (2026-11-11, the opus security review of a0df9c3e: PASS, no BLOCKER or MAJOR; three MINOR and four NITs,
+  fixed on the branch with the light appearance above, for a delta review):
+  - MINOR-1, Try Again could leave the flag gone with the shell down: it removed the flag first and its reset had no bound, so
+    a run killed by the caller's 40 s (a slow user manager, the security unit restarting) left neither the shell nor the
+    flag, and the notice went (the reviewer reproduced it with stubs: exit 124 after 40 s, the flag gone). Now as above: the
+    flag kept until the unit is active, every step bounded. `tests/shell/shell_failures.sh`: killed in the reset and in the
+    start (the flag stays), a reset that hangs (its own bound, the start goes on), a failed start and a unit not active (the
+    same flag stays), no flag (one is written, and removed only after a confirmed start), a new loop's flag (kept); mutants:
+    the flag removed first, no active check, no identity check (57 PASS). The scratch copies run a stub systemctl and refuse
+    to run if a real one is left.
+  - MINOR-2, the displays off: with a non-default "require password after display off", idle turns the displays off while
+    the session stays unlocked, and the alert kept the keyboard, so the wake key (Space, Return) could press Try Again or
+    Log Out. As the sheets: the alert exists only while the displays are on (the host binds `displaysOff: idle.displayOff`,
+    true until bound), and whenever it appears (the unlock, a sheet closing, the displays waking) nothing it is given acts
+    for `SafeModeModel.GUARD_MS` (500 ms, the sheets' `heldGuardMs`): `armed` falls at every appearance and only the guard
+    Timer sets it. `tst_safemode.qml`, `safe_mode.sh` (the displays off, the wake key's press refused, a press after the
+    guard acts; mutants `shows-with-the-displays-off`, `no-guard`), the scan, `lock_surfaces.sh`, `security_unit.sh`.
+  - MINOR-3, no test ran the real-session paths: `safe_mode.sh` now runs the look's own shell script, taken from
+    SafeMode.qml, against a stub systemctl (a plain file counts; a FIFO, a directory, a link, a dangling link, an empty path,
+    a missing file and a file in a linked directory do not), and the controller outside a dev session with its three commands
+    pointed at stubs in a copy (`safe_mode.d/probe_real.qml`): the looks, Try Again failing, hanging past the action guard
+    (shortened in the copy; the late end then changes nothing) and working, Log Out with apps open and with the session not
+    ended. The reviewer's finding that a flag in a linked runtime directory showed the alert while `--try-again` refused it:
+    the look now refuses a linked directory too, as the counter and `--try-again` do.
+  - NITs: the alert's comment on held keys corrected (a focused button takes its own repeats; the controller refuses all
+    but the first); `qs.security.safemode` may be imported by the host only (`security_process_scan.py`, a mutant: idle
+    importing it); `grassfield-shell-failed` names systemctl and timeout by absolute path; the Log Out failure text split by
+    exit code (above).
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words

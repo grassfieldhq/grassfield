@@ -1778,12 +1778,15 @@ same directory and the modules move without moving a file), one step at a time u
   down for good (`inactive` or `failed`), or the unit failed at its start limit (ADR-0056 D-10), two looks in a row. It
   then shows one small alert (a layer surface the compositor centres, on the overlay layer, the keyboard on demand; the
   caution symbol, fixed plain text; Try Again the default, Log Out; Return is Try Again, Esc does nothing), made by a
-  LazyLoader only while the session is unlocked and no polkit or secret sheet of this process is up, and destroyed the
-  moment a lock is asked for (`locking` counts) or a sheet opens: it is never drawn under or over the lock and never takes
-  a key meant for a sheet. The host binds both inputs from this process's lock and sheets; they read true until bound. Try
-  Again and Log Out refuse first unless the alert is on screen and nothing runs. Try Again runs
-  `grassfield-shell-failed --try-again` as the user (the ledger and the flag removed, the unit's start limit reset, the unit
-  started with `systemctl --user` and waited for; a start that fails puts the flag back); Log Out runs
+  LazyLoader only while the session is unlocked, no polkit or secret sheet of this process is up and the displays are on,
+  and destroyed the moment a lock is asked for (`locking` counts), a sheet opens or idle turns the displays off: it is never
+  drawn under or over the lock, never takes a key meant for a sheet, and the wake key finds no alert. The host binds the
+  three inputs from this process's lock, sheets and idle; they read true until bound. Try Again and Log Out refuse first
+  unless the alert is on screen, has been for 500 ms (the sheets' held guard: a repeated Return of the password or the wake
+  key never presses a button) and nothing runs. Try Again runs `grassfield-shell-failed --try-again` as the user: the flag
+  kept until the shell is confirmed active (written when missing, removed only if it is still the one noted), the ledger
+  cleared, the start limit reset, the unit started and asked whether it is active with `systemctl --user`, each step
+  bounded inside the caller's 40 s, so a run killed or failed at any point leaves the flag and the notice; Log Out runs
   `grassfield-session-end logout`, the menu's path. Nothing restarts the UI on its own, so nothing loops: a second loop is
   the counter's to stop and the notice comes back. A dev session never asks systemd and runs neither action (the dev hooks
   `safemode devSet`, `devPress`, `status` fake the looks and press the buttons). Tests: `tst_safemode.qml`,

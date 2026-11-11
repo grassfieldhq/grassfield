@@ -34,10 +34,12 @@ import "../../lib/RunMode.js" as RunMode
 Scope {
     id: root
 
-    // Bound by the host from this process's lock (any state but unlocked, and the start-up probe of a stranded lock) and
-    // sheets (a polkit or secret sheet open, shown or held, or its key sink). True until bound: no notice.
+    // Bound by the host from this process's lock (any state but unlocked, and the start-up probe of a stranded lock), sheets
+    // (a polkit or secret sheet open, shown or held, or its key sink) and idle (the displays it turned off). True until
+    // bound: no notice.
     property bool locked: true
     property bool sheetUp: true
+    property bool displaysOff: true
 
     readonly property bool devHooks: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))
     readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || ""
@@ -46,7 +48,9 @@ Scope {
     // The looks in a row that said safe mode.
     property int looks: 0
     readonly property bool confirmed: Model.confirmed(root.looks)
-    readonly property bool shown: Model.shown(root.confirmed, root.locked, root.sheetUp)
+    readonly property bool shown: Model.shown(root.confirmed, root.locked, root.sheetUp, root.displaysOff)
+    // The notice has been on screen for SafeModeModel.GUARD_MS: only then does a key or a click act (MINOR-2).
+    property bool armed: false
     // The action under way ("" | "tryAgain" | "logOut") and the last one that did not finish.
     property string running: ""
     readonly property bool busy: root.running !== ""
@@ -64,7 +68,20 @@ Scope {
             console.info("grassfield-safe-mode: the desktop is no longer stopped; no safe-mode notice");
         }
     }
-    onShownChanged: console.info("grassfield-safe-mode: notice " + (root.shown ? "shown" : "hidden") + " (locked " + root.locked + ", sheet " + root.sheetUp + ")")
+    onShownChanged: {
+        root.armed = false;
+        if (root.shown)
+            guardTimer.restart();
+        else
+            guardTimer.stop();
+        console.info("grassfield-safe-mode: notice " + (root.shown ? "shown" : "hidden") + " (locked " + root.locked + ", sheet " + root.sheetUp + ", displays off " + root.displaysOff + ")");
+    }
+
+    Timer {
+        id: guardTimer
+        interval: Model.GUARD_MS
+        onTriggered: root.armed = root.shown
+    }
 
     // ---- The looks ----
     function look(): void {
@@ -91,11 +108,13 @@ Scope {
         lookTimer.restart();
     }
 
-    // The flag is tested as a plain file that is not a link (`-f` and `! -L`), never read; the path is the script's argument,
-    // never part of its text. Bounded: a look that does not end within 5 s is killed and reads as no answer.
+    // The flag is tested as a plain file that is not a link (`-f` and `! -L`) in a directory that is not a link (as the counter
+    // and `grassfield-shell-failed --try-again` refuse a linked runtime directory: the opus review of a0df9c3e, MINOR-3), never
+    // read; the path is the script's argument, never part of its text. Bounded: a look that does not end within 5 s is killed
+    // and reads as no answer.
     Process {
         id: probe
-        command: ["/usr/bin/timeout", "-k", "1", "5", "/usr/bin/sh", "-c", "if [ -f \"$1\" ] && [ ! -L \"$1\" ]; then echo marker=1; else echo marker=0; fi; exec /usr/bin/systemctl --user show --property=ActiveState --property=SubState --property=Result grassfield-shell.service", "grassfield-safe-mode", root.markerPath]
+        command: ["/usr/bin/timeout", "-k", "1", "5", "/usr/bin/sh", "-c", "d=${1%/*}; if [ -n \"$1\" ] && [ -d \"$d\" ] && [ ! -L \"$d\" ] && [ -f \"$1\" ] && [ ! -L \"$1\" ]; then echo marker=1; else echo marker=0; fi; exec /usr/bin/systemctl --user show --property=ActiveState --property=SubState --property=Result grassfield-shell.service", "grassfield-safe-mode", root.markerPath]
         stdout: StdioCollector {
             onStreamFinished: root.take(String(text))
         }
@@ -118,11 +137,15 @@ Scope {
             return "not in safe mode";
         if (root.locked)
             return "locked";
-        return "a sheet is open";
+        if (root.sheetUp)
+            return "a sheet is open";
+        if (root.displaysOff)
+            return "displays off";
+        return "shown less than " + Model.GUARD_MS + " ms ago";
     }
 
     function tryAgain(): string {
-        if (!Model.canAct(root.shown, root.busy)) {
+        if (!Model.canAct(root.shown, root.busy, root.armed)) {
             console.warn("grassfield-safe-mode: Try Again refused (" + root.refusal() + ")");
             return "refused";
         }
@@ -143,7 +166,7 @@ Scope {
     }
 
     function logOut(): string {
-        if (!Model.canAct(root.shown, root.busy)) {
+        if (!Model.canAct(root.shown, root.busy, root.armed)) {
             console.warn("grassfield-safe-mode: Log Out refused (" + root.refusal() + ")");
             return "refused";
         }
@@ -176,7 +199,7 @@ Scope {
             return;
         }
         console.warn("grassfield-safe-mode: " + action + " did not finish (exit " + code + ")");
-        root.failure = action;
+        root.failure = Model.failureOf(action, code);
     }
 
     Process {
@@ -200,7 +223,7 @@ Scope {
     // Both commands are bounded by `timeout`; this ends the wait if a process never reported its end (it could not start).
     Timer {
         id: actionGuard
-        interval: 340000
+        interval: Model.ACTION_GUARD_MS
         onTriggered: root.finish(root.running, -1)
     }
 
@@ -253,6 +276,8 @@ Scope {
                 notice: root.noticeItem !== null,
                 locked: root.locked,
                 sheetUp: root.sheetUp,
+                displaysOff: root.displaysOff,
+                armed: root.armed,
                 running: root.running,
                 failure: root.failure,
                 dark: Appearance.dark
