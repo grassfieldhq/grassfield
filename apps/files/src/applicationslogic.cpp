@@ -949,3 +949,429 @@ bool seedSessionDefaults(const QString &configDir, const QStringList &applicatio
     return out.commit();
 }
 } // namespace DefaultApps
+
+// ---- Bundled apps (ADR-0055 D-6): Sanaga for the web, Notes for Markdown ------------------------------------------------------
+namespace DefaultApps
+{
+namespace
+{
+// Omarchy's routing entry: it runs omarchy-launch-browser, which reads the default browser again.
+const QString kRouting = QStringLiteral("omarchy-browser.desktop");
+
+// The texts of the lists, or false when one cannot be read as a list (nothing is decided then).
+bool readLists(const QStringList &paths, QStringList *texts)
+{
+    for (const QString &path : paths) {
+        QString text;
+        if (!readListFile(path, false, &text))
+            return false;
+        texts->append(text);
+    }
+    return true;
+}
+
+// The desktop id the lookup gives `type` in the lists, in their order, leaving out the routing entry (as Omarchy's
+// omarchy-cmd-default-browser does); "" when none names one.
+QString lookedUp(const QStringList &texts, const QString &type)
+{
+    for (const QString &text : texts) {
+        const QString id = defaults(text).value(type);
+        if (!id.isEmpty() && id != kRouting)
+            return id;
+    }
+    return {};
+}
+
+// The words of an Exec= line as the desktop entry specification quotes them: double quotes with backslash escapes, and the
+// single quotes a careless writer uses.
+QStringList execWords(const QString &exec)
+{
+    QStringList words;
+    QString cur;
+    bool have = false;
+    QChar quote;
+    for (int i = 0; i < exec.size(); ++i) {
+        const QChar c = exec.at(i);
+        if (!quote.isNull()) {
+            if (c == quote)
+                quote = QChar();
+            else if (c == QLatin1Char('\\') && quote == QLatin1Char('"') && i + 1 < exec.size())
+                cur += exec.at(++i);
+            else
+                cur += c;
+        } else if (c == QLatin1Char('"') || c == QLatin1Char('\'')) {
+            quote = c;
+            have = true;
+        } else if (c.isSpace()) {
+            if (have)
+                words << cur;
+            cur.clear();
+            have = false;
+        } else {
+            if (c == QLatin1Char('\\') && i + 1 < exec.size())
+                cur += exec.at(++i);
+            else
+                cur += c;
+            have = true;
+        }
+    }
+    if (have)
+        words << cur;
+    return words;
+}
+
+// The program a word list starts, "" for a launcher that resolves the default again (or for nothing usable). uwsm-app and `uwsm app`
+// only start the program they are given: that one is the answer.
+QString startedProgram(const QStringList &words, int depth)
+{
+    if (words.isEmpty() || depth > 3)
+        return {};
+    const QString program = words.first().section(QLatin1Char('/'), -1);
+    QStringList rest;
+    if (program == QLatin1String("uwsm-app"))
+        rest = words.mid(1);
+    else if (program == QLatin1String("uwsm") && words.value(1) == QLatin1String("app"))
+        rest = words.mid(2);
+    else {
+        static const QStringList launchers = {QStringLiteral("gio"),     QStringLiteral("gtk-launch"), QStringLiteral("sh"),    QStringLiteral("bash"),
+                                              QStringLiteral("dash"),    QStringLiteral("zsh"),        QStringLiteral("fish"),  QStringLiteral("env"),
+                                              QStringLiteral("uwsm"),    QStringLiteral("systemd-run"), QStringLiteral("kde-open"), QStringLiteral("gnome-open"),
+                                              QStringLiteral("exo-open"), QStringLiteral("sensible-browser"), QStringLiteral("x-www-browser")};
+        const bool launcher = program.isEmpty() || program.startsWith(QLatin1String("omarchy-")) || program.startsWith(QLatin1String("xdg-")) || launchers.contains(program);
+        return launcher ? QString() : words.first();
+    }
+    const qsizetype dashes = rest.indexOf(QStringLiteral("--"));
+    if (dashes >= 0)
+        return startedProgram(rest.mid(dashes + 1), depth + 1);
+    for (qsizetype i = 0; i < rest.size(); ++i) {
+        if (!rest.at(i).startsWith(QLatin1Char('-')))
+            return startedProgram(rest.mid(i), depth + 1);
+    }
+    return {};
+}
+
+bool launcherWords(const QStringList &words, int depth)
+{
+    return startedProgram(words, depth).isEmpty();
+}
+
+// Whether a program exists as GLib resolves it: an absolute path to an executable regular file, or a name found in $PATH.
+bool programRuns(const QString &program)
+{
+    if (program.isEmpty() || program.contains(QChar(0)))
+        return false;
+    if (program.startsWith(QLatin1Char('/'))) {
+        const QFileInfo info(program);
+        return info.isFile() && info.isExecutable();
+    }
+    return program.contains(QLatin1Char('/')) ? false : !QStandardPaths::findExecutable(program).isEmpty();
+}
+
+struct EntryFields {
+    QString exec;
+    QString tryExec;
+    bool duplicate = false; // Exec, TryExec or Type twice in [Desktop Entry], or the group twice (GLib merges them and keeps the last): refused
+};
+
+// The first Exec= of a desktop file's [Desktop Entry] group.
+EntryFields entryFields(const QString &desktopText)
+{
+    EntryFields out;
+    bool in = false;
+    int execs = 0, tryExecs = 0, types = 0, groups = 0;
+    for (const QString &line : desktopText.split(QLatin1Char('\n'))) {
+        if (isGroupLine(line)) {
+            in = line.trimmed() == QLatin1String("[Desktop Entry]");
+            if (in)
+                ++groups; // the whole file is read: a second [Desktop Entry] group is merged by GLib, its Exec would win
+            continue;
+        }
+        if (!in)
+            continue;
+        const QString key = keyOf(line);
+        if (key == QLatin1String("Exec") && execs++ == 0)
+            out.exec = valueOf(line);
+        else if (key == QLatin1String("TryExec") && tryExecs++ == 0)
+            out.tryExec = valueOf(line);
+        else if (key == QLatin1String("Type"))
+            ++types;
+    }
+    out.duplicate = execs > 1 || tryExecs > 1 || types > 1 || groups > 1;
+    return out;
+}
+
+// Whether the first file of `id` in `dirs` is a regular entry that handles at least one of `types` and whose Exec is no
+// launcher: a ~/.local copy that runs xdg-open would loop, so it is never a target (the fork storm of 2026-10-30).
+bool usableEntry(const QStringList &dirs, const QString &id, const QStringList &types)
+{
+    // No check of ".." here: the seed's ids are fixed (sanaga.desktop, grassfield-notes.desktop). Where an id comes from outside (the
+    // stand-in, the Settings list) a ".." is refused, as "-" of an id is also read as a folder.
+    for (const QString &dir : dirs) {
+        const QFileInfo info(dir + QLatin1Char('/') + id);
+        if (!info.isFile() || info.size() > 256 * 1024)
+            continue;
+        QFile file(info.filePath());
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        const QString text = QString::fromUtf8(file.readAll());
+        const EntryFields fields = entryFields(text);
+        if (fields.duplicate)
+            return false; // which Exec runs depends on the reader: refused
+        if (isLauncherExec(fields.exec))
+            return false;
+        // A program that is not there (a removed package, a typo) is never seeded: gio would have no default browser then.
+        if (!programRuns(startedProgram(execWords(fields.exec), 0)) || (!fields.tryExec.isEmpty() && !programRuns(fields.tryExec)))
+            return false;
+        const QStringList have = desktopMimeTypes(text);
+        for (const QString &t : types) {
+            if (have.contains(t))
+                return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+bool writeWhole(const QString &path, const QString &text)
+{
+    if (!QDir().mkpath(QFileInfo(path).absolutePath()))
+        return false;
+    QSaveFile out(path);
+    if (!out.open(QIODevice::WriteOnly))
+        return false;
+    out.write(text.toUtf8());
+    return out.commit();
+}
+} // namespace
+
+QList<BundledGroup> bundledGroups()
+{
+    return {{QStringLiteral("web"),
+             QStringLiteral("sanaga.desktop"),
+             {QStringLiteral("x-scheme-handler/http"), QStringLiteral("x-scheme-handler/https"), QStringLiteral("text/html"), QStringLiteral("application/xhtml+xml")}},
+            {QStringLiteral("notes"), QStringLiteral("grassfield-notes.desktop"), {QStringLiteral("text/markdown"), QStringLiteral("text/x-markdown")}}};
+}
+
+bool isLauncherExec(const QString &exec)
+{
+    return launcherWords(execWords(exec), 0);
+}
+
+QString withoutDefaults(const QString &listText, const QStringList &types, const QString &desktopId)
+{
+    QStringList out;
+    bool in = false;
+    for (const QString &line : listText.split(QLatin1Char('\n'))) {
+        if (isGroupLine(line)) {
+            in = line.trimmed() == kGroup;
+            out << line;
+            continue;
+        }
+        const QString key = in ? keyOf(line) : QString();
+        if (!key.isEmpty() && types.contains(key) && (desktopId.isEmpty() || valueOf(line).split(QLatin1Char(';'), Qt::SkipEmptyParts).value(0).trimmed() == desktopId))
+            continue;
+        out << line;
+    }
+    return out.join(QLatin1Char('\n'));
+}
+
+bool parseState(const QString &text, QHash<QString, QString> *out)
+{
+    out->clear();
+    for (const QString &raw : text.split(QLatin1Char('\n'))) {
+        const QString line = raw.trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+            continue;
+        const int eq = int(line.indexOf(QLatin1Char('=')));
+        if (eq <= 0)
+            return false;
+        out->insert(line.left(eq), line.mid(eq + 1));
+    }
+    return true;
+}
+
+bool seedBundledApps(const QString &configDir, const QString &stateFile, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists)
+{
+    if (configDir.isEmpty() || !QDir::isAbsolutePath(configDir) || stateFile.isEmpty() || !QDir::isAbsolutePath(stateFile))
+        return false;
+    // Every list the lookup reads decides a first seed; only the user's own (the configuration directory's: mimeapps.list and the
+    // desktop lists there) are watched afterwards, so a package update of /usr/share/applications/mimeapps.list never counts.
+    // Grassfield never writes, edits or deletes a line of the user's own lists: it only reads them.
+    QStringList user;
+    if (!readLists(userLists, &user))
+        return false; // a list that cannot be read: nothing is decided
+    const QString ownPrefix = configDir + QLatin1Char('/');
+    QStringList own;
+    for (qsizetype i = 0; i < userLists.size(); ++i) {
+        if (userLists.at(i).startsWith(ownPrefix))
+            own << user.at(i);
+    }
+    QStringList stock;
+    if (!omarchyDir.isEmpty()) {
+        for (const char *rel : {"config/hyprland-mimeapps.list", "default/applications/mimeapps.list"}) {
+            QString text;
+            if (readListFile(omarchyDir + QLatin1Char('/') + QLatin1String(rel), false, &text) && !text.isEmpty())
+                stock << text;
+        }
+    }
+    // What Omarchy itself names for the web: a browser it set up, not one the person picked.
+    QStringList stockWeb = {kRouting};
+    for (const QString &text : std::as_const(stock)) {
+        for (const QString &type : {QStringLiteral("x-scheme-handler/http"), QStringLiteral("x-scheme-handler/https")}) {
+            const QString id = defaults(text).value(type);
+            if (!id.isEmpty() && !stockWeb.contains(id))
+                stockWeb << id;
+        }
+    }
+    QString stateText;
+    QHash<QString, QString> state;
+    if (!readListFile(stateFile, true, &stateText) || !parseState(stateText, &state))
+        return false; // an unreadable or corrupt record: the person's choice is left alone
+    const QString listPath = configDir + QLatin1Char('/') + QLatin1String(kListName);
+    QString list;
+    if (!readListFile(listPath, true, &list))
+        return false;
+    // The session list in two stages. Removals (a group the person took over) are written BEFORE the record, so that a failed write
+    // never leaves our entries behind for a group that is no more ours (the next start finds the same difference and redoes it);
+    // additions (a first seed, entries put back) AFTER it, so that a failed write never leaves entries that read as the person's own.
+    const QString listOriginal = list;
+    QString removed = list;
+    bool changedState = false;
+    const auto seedsOf = [](const BundledGroup &g) {
+        QList<QPair<QString, QString>> seeds;
+        for (const QString &t : g.types)
+            seeds.append({t, g.desktopId});
+        return seeds;
+    };
+    for (const BundledGroup &g : bundledGroups()) {
+        const QString key = g.name + QStringLiteral(".state");
+        const QString st = state.value(key);
+        if (st == QLatin1String("done"))
+            continue;
+        if (!st.isEmpty() && st != QLatin1String("seeded") && st != QLatin1String("user"))
+            continue; // a value this version does not know: left alone
+        const auto valueKey = [&](const QString &t) { return g.name + QLatin1Char('.') + t; };
+        const auto nowOwn = [&](const QString &t) { return lookedUp(own, t); };
+        // The group is the person's from now on: our entries leave the session list (theirs stay), never to come back.
+        const auto takeOver = [&](const QString &application) {
+            removed = withoutDefaults(removed, g.types, application);
+            list = withoutDefaults(list, g.types, application);
+            state.insert(key, QStringLiteral("done"));
+            changedState = true;
+        };
+        if (st.isEmpty()) {
+            if (!usableEntry(applicationDirs, g.desktopId, g.types))
+                continue; // not installed (yet), or a launcher: nothing is recorded, a later start tries again
+            // First time. A choice anywhere keeps the whole group out, for good. The session list's own entries for this app are
+            // ours, not a choice.
+            const QHash<QString, QString> session = defaults(list);
+            bool choice = false;
+            for (const QString &t : g.types) {
+                if (session.contains(t) && session.value(t) != g.desktopId) {
+                    choice = true;
+                    break;
+                }
+                const QString value = lookedUp(user, t);
+                if (value.isEmpty())
+                    continue;
+                bool isStock = g.name == QLatin1String("web") && stockWeb.contains(value);
+                for (const QString &s : std::as_const(stock)) {
+                    if (defaults(s).value(t) == value)
+                        isStock = true;
+                }
+                if (!isStock)
+                    choice = true;
+            }
+            if (choice) {
+                state.insert(key, QStringLiteral("done"));
+                changedState = true;
+                continue;
+            }
+            list = withSeeds(list, seedsOf(g));
+            state.insert(key, QStringLiteral("seeded"));
+            for (const QString &t : g.types)
+                state.insert(valueKey(t), nowOwn(t).isEmpty() ? QStringLiteral("-") : nowOwn(t));
+            changedState = true;
+            continue;
+        }
+        // seeded or user: all the baseline values must be there, else this record is not ours to judge.
+        bool haveBaseline = true;
+        for (const QString &t : g.types)
+            haveBaseline = haveBaseline && state.contains(valueKey(t));
+        if (!haveBaseline)
+            continue;
+        const auto recorded = [&](const QString &t) {
+            const QString v = state.value(valueKey(t));
+            return v == QLatin1String("-") ? QString() : v;
+        };
+        const QHash<QString, QString> session = defaults(list);
+        if (st == QLatin1String("seeded")) {
+            // An entry of the session list that is no more ours (Change All… in Files, a hand edit) is the person's choice: a user
+            // choice, so the seed yields (macOS: a choice in the Get Info panel is the person's); the entry they made stays.
+            bool elsewhere = false;
+            for (const QString &t : g.types)
+                elsewhere = elsewhere || (session.contains(t) && session.value(t) != g.desktopId);
+            if (elsewhere) {
+                takeOver(g.desktopId);
+                continue;
+            }
+        }
+        bool same = true;
+        for (const QString &t : g.types)
+            same = same && recorded(t) == nowOwn(t);
+        if (same) {
+            if (st == QLatin1String("seeded"))
+                list = withSeeds(list, seedsOf(g)); // entries missing (a first write that failed) are put back, never replaced
+            continue;
+        }
+        if (st == QLatin1String("user")) {
+            // Settings or the xdg-settings stand-in wrote the choice and the baseline; the lists agreeing with it only move the baseline.
+            const QString chosen = state.value(g.name + QStringLiteral(".chosen"));
+            bool agrees = !chosen.isEmpty();
+            for (const QString &t : g.types)
+                agrees = agrees && (nowOwn(t).isEmpty() || nowOwn(t) == chosen);
+            if (agrees) {
+                for (const QString &t : g.types)
+                    state.insert(valueKey(t), nowOwn(t).isEmpty() ? QStringLiteral("-") : nowOwn(t));
+                changedState = true;
+                continue;
+            }
+            // Something else wrote the user's lists after the choice (xdg-settings outside the session, a browser's own check): follow it.
+            takeOver(QString());
+        } else {
+            // After the seed the person's own lists changed. Every changed type now naming the group's own application (`xdg-mime
+            // default sanaga.desktop …`, Notes' own "open .md with Notes", `gio mime`) agrees with the seed: only the baseline moves
+            // and the seeded entries stay. Any other value (xdg-settings, omarchy default browser, a browser's "make default") is the
+            // person's choice: the seeded entries go and nothing seeds again.
+            bool toOurs = true;
+            for (const QString &t : g.types)
+                toOurs = toOurs && (recorded(t) == nowOwn(t) || nowOwn(t) == g.desktopId);
+            if (toOurs) {
+                for (const QString &t : g.types)
+                    state.insert(valueKey(t), nowOwn(t).isEmpty() ? QStringLiteral("-") : nowOwn(t));
+                changedState = true;
+                continue;
+            }
+            takeOver(g.desktopId);
+        }
+    }
+    const bool removals = removed != listOriginal;
+    const bool additions = list != removed;
+    if (!changedState && !removals && !additions)
+        return false;
+    if (removals && !writeWhole(listPath, removed))
+        return false;
+    if (changedState) {
+        QStringList keys = state.keys();
+        keys.sort();
+        QString out = QStringLiteral("# Written by grassfield-files --seed-default-apps, the xdg-settings stand-in and Settings > Desktop & Dock (ADR-0055 D-6)\n");
+        for (const QString &k : std::as_const(keys))
+            out += k + QLatin1Char('=') + state.value(k) + QLatin1Char('\n');
+        if (!writeWhole(stateFile, out))
+            return false;
+    }
+    if (additions && !writeWhole(listPath, list))
+        return false;
+    return true;
+}
+} // namespace DefaultApps

@@ -79,12 +79,15 @@ const FILES_ID = "org.grassfield.Files";
 
 // Default pinned list of the first releases: it reads as the current default (the shell store applies the same rule).
 const OLD_DEFAULT_PINNED = ["foot", "chromium", "org.gnome.Nautilus"];
-const DEFAULT_PINNED = ["chromium", "foot", "org.grassfield.Settings"];
+// Second default (rc releases before ADR-0055, Chromium first): Sanaga and Notes are the bundled apps now.
+const PREVIOUS_DEFAULT_PINNED = ["chromium", "foot", "org.grassfield.Settings"];
+const DEFAULT_PINNED = ["sanaga", "grassfield-notes", "foot", "org.grassfield.Settings"];
 
 // Pinned list as the Dock reads it: the old default list becomes the new default, any other list is left as it is.
 function migratePinned(pinned) {
     const list = pinned ? pinned : [];
-    return list.length === OLD_DEFAULT_PINNED.length && list.every((id, i) => id === OLD_DEFAULT_PINNED[i]) ? DEFAULT_PINNED.slice() : list;
+    const same = d => list.length === d.length && list.every((id, i) => id === d[i]);
+    return same(OLD_DEFAULT_PINNED) || same(PREVIOUS_DEFAULT_PINNED) ? DEFAULT_PINNED.slice() : list;
 }
 
 // True for the id of Grassfield Files, with or without the ".desktop" suffix and whatever its case: ids compare as the entry

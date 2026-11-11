@@ -224,7 +224,9 @@ Scope {
     readonly property var dockPinned: {
         const stored = rawValue("dock.pinned");
         const list = stringList(stored === undefined ? SettingsContract.ALL_DEFAULTS["dock.pinned"] : stored);
-        return list.join("\n") === "foot\nchromium\norg.gnome.Nautilus" ? ["chromium", "foot", "org.grassfield.Settings"] : list;
+        const old = list.join("\n");
+        return old === "foot\nchromium\norg.gnome.Nautilus" || old === "chromium\nfoot\norg.grassfield.Settings"
+            ? ["sanaga", "grassfield-notes", "foot", "org.grassfield.Settings"] : list;
     }
     readonly property var dockRecent: stringList(rawValue("dock.recent"))
     readonly property var dockFolders: read("dock.folders")

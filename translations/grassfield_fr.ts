@@ -4301,6 +4301,14 @@
         <translation>Afficher Fin de tâche dans les menus du Dock</translation>
     </message>
     <message>
+        <source>Default web browser</source>
+        <translation>Navigateur web par défaut</translation>
+    </message>
+    <message>
+        <source>The default web browser could not be changed.</source>
+        <translation>Le navigateur web par défaut n’a pas pu être changé.</translation>
+    </message>
+    <message>
         <source>Choose a folder for the Dock</source>
         <translation>Choisir un dossier pour le Dock</translation>
     </message>

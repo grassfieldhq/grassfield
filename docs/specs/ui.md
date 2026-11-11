@@ -28,7 +28,7 @@ Design system shared by the shell and (later) native apps: tokens, frosted mater
 | `material.transparency` | number 0–1 | 0.25 | Appearance.transparency |
 | `accessibility.reduceTransparency` | bool | false | Appearance |
 | `accessibility.reduceMotion` | bool | false | Appearance |
-| `dock.pinned` | string[] (desktop entry ids) | `["chromium","foot","org.grassfield.Settings"]` (the old default list reads as this one) | Dock |
+| `dock.pinned` | string[] (desktop entry ids) | `["sanaga","grassfield-notes","foot","org.grassfield.Settings"]` (the old default lists read as this one, ADR-0055) | Dock |
 | `dock.magnification` | number 1–2.5 | 1.6 | Dock |
 | `dock.magnificationEnabled` | bool | false | Dock |
 | `menubar.showBackground` | bool | false | Menu bar (transparent unless true) |

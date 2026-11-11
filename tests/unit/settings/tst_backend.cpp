@@ -6,7 +6,9 @@
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QMap>
 #include <QTemporaryDir>
 #include <QThread>
@@ -605,4 +607,104 @@ TEST_F(BackendTest, WithoutAShellTheCheckerRunsHere)
     EXPECT_EQ(recorded(QStringLiteral("fake-checker")).size(), 1) << "the canned answer runs nothing";
 
     EXPECT_EQ(backend.softwareUpdateFile(), scratch(QStringLiteral("state")) + QStringLiteral("/software-update.json"));
+}
+
+// Default web browser (ADR-0055 D-6): the two files the row writes, nothing else; a dev session writes only under <worktree>/.dev
+// (ADR-0019), never the owner's ~/.config or state folder (review of PR #38, MED-4); a file that is not valid UTF-8 is not read as text.
+TEST_F(BackendTest, TheDefaultBrowserRowWritesItsTwoFilesAndNothingElse)
+{
+    EnvGuard env{"XDG_CONFIG_HOME", "GRASSFIELD_STATE_HOME", "GRASSFIELD_SESSION"};
+    qputenv("XDG_CONFIG_HOME", QFile::encodeName(scratch(QStringLiteral("cfg"))));
+    qputenv("GRASSFIELD_STATE_HOME", QFile::encodeName(scratch(QStringLiteral("state"))));
+    Backend backend;
+    const QString list = scratch(QStringLiteral("cfg")) + QStringLiteral("/grassfield-mimeapps.list");
+    const QString record = scratch(QStringLiteral("state")) + QStringLiteral("/default-apps.state");
+    EXPECT_EQ(backend.xdgConfigDir(), scratch(QStringLiteral("cfg")));
+    EXPECT_EQ(backend.grassfieldStateDir(), scratch(QStringLiteral("state")));
+    EXPECT_EQ(backend.writeDefaultAppsFile(list, QStringLiteral("[Default Applications]\n")), QString());
+    EXPECT_EQ(backend.writeDefaultAppsFile(record, QStringLiteral("web.state=user\n")), QString());
+    EXPECT_TRUE(QFileInfo::exists(list) && QFileInfo::exists(record));
+    // nothing else: the user's own mimeapps.list, another name, a path out of the folder, a link
+    for (const QString &other : {scratch(QStringLiteral("cfg")) + QStringLiteral("/mimeapps.list"), scratch(QStringLiteral("cfg")) + QStringLiteral("/../cfg/grassfield-mimeapps.list"),
+                                 scratch(QStringLiteral("elsewhere")) + QStringLiteral("/grassfield-mimeapps.list"), scratch(QStringLiteral("cfg")) + QStringLiteral("/hyprland-mimeapps.list"),
+                                 QStringLiteral("relative/default-apps.state")})
+        EXPECT_EQ(backend.writeDefaultAppsFile(other, QStringLiteral("x")), QStringLiteral("refused")) << qPrintable(other);
+    EXPECT_FALSE(QFileInfo::exists(scratch(QStringLiteral("cfg")) + QStringLiteral("/mimeapps.list")));
+    QFile::remove(list);
+    ASSERT_TRUE(QFile::link(scratch(QStringLiteral("dotfiles-list")), list));
+    EXPECT_EQ(backend.writeDefaultAppsFile(list, QStringLiteral("x")), QStringLiteral("refused")) << "a link is never written through";
+}
+
+TEST_F(BackendTest, ADevSessionNeverWritesTheDefaultBrowserFilesOutsideDev)
+{
+    EnvGuard env{"GRASSFIELD_DEV", "GRASSFIELD_SESSION", "XDG_CONFIG_HOME", "GRASSFIELD_STATE_HOME"};
+    qputenv("GRASSFIELD_DEV", "1");
+    qunsetenv("GRASSFIELD_SESSION");
+    // The owner's real folders (here: scratch ones that are not under the worktree's .dev): refused, nothing created.
+    qputenv("XDG_CONFIG_HOME", QFile::encodeName(scratch(QStringLiteral("realcfg"))));
+    qputenv("GRASSFIELD_STATE_HOME", QFile::encodeName(scratch(QStringLiteral("realstate"))));
+    {
+        Backend dev;
+        EXPECT_EQ(dev.writeDefaultAppsFile(dev.xdgConfigDir() + QStringLiteral("/grassfield-mimeapps.list"), QStringLiteral("x")), QStringLiteral("refused"));
+        EXPECT_EQ(dev.writeDefaultAppsFile(dev.grassfieldStateDir() + QStringLiteral("/default-apps.state"), QStringLiteral("x")), QStringLiteral("refused"));
+        EXPECT_FALSE(QFileInfo::exists(scratch(QStringLiteral("realcfg"))));
+        EXPECT_FALSE(QFileInfo::exists(scratch(QStringLiteral("realstate"))));
+    }
+    // The isolated ones, under <worktree>/.dev (the test binary sits in <worktree>/.dev/build): written.
+    const QString root = QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/../..")).canonicalPath();
+    const QString inside = root + QStringLiteral("/.dev/default-browser-test-") + QString::number(QCoreApplication::applicationPid());
+    ASSERT_TRUE(QDir().mkpath(inside));
+    qputenv("XDG_CONFIG_HOME", QFile::encodeName(inside + QStringLiteral("/cfg")));
+    qputenv("GRASSFIELD_STATE_HOME", QFile::encodeName(inside + QStringLiteral("/state")));
+    {
+        Backend dev;
+        EXPECT_EQ(dev.writeDefaultAppsFile(dev.xdgConfigDir() + QStringLiteral("/grassfield-mimeapps.list"), QStringLiteral("x")), QString());
+        EXPECT_EQ(dev.writeDefaultAppsFile(dev.grassfieldStateDir() + QStringLiteral("/default-apps.state"), QStringLiteral("x")), QString());
+    }
+    QDir(inside).removeRecursively();
+}
+
+TEST_F(BackendTest, ATextFileThatIsNotUtf8IsNotReadAsText)
+{
+    Backend backend;
+    const QString good = scratch(QStringLiteral("good.list"));
+    const QString bad = scratch(QStringLiteral("bad.list"));
+    {
+        QFile f(good);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("# caf\xc3\xa9\n[Default Applications]\n");
+    }
+    {
+        QFile f(bad);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("# caf\xe9\n[Default Applications]\n");
+    }
+    const QVariantMap ok = backend.readText(good);
+    EXPECT_TRUE(ok.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(ok.value(QStringLiteral("text")).toString(), QStringLiteral("# café\n[Default Applications]\n"));
+    const QVariantMap refused = backend.readText(bad);
+    EXPECT_TRUE(refused.value(QStringLiteral("exists")).toBool());
+    EXPECT_FALSE(refused.value(QStringLiteral("ok")).toBool()) << "Latin-1 bytes are not decoded into replacement characters and rewritten";
+    EXPECT_TRUE(refused.value(QStringLiteral("text")).toString().isEmpty());
+}
+
+// Default web browser: a desktop entry whose program is gone is never offered. A program exists as GLib resolves it: an absolute path to an
+// executable regular file, or a name found in $PATH (here the scratch folder of fake commands).
+TEST_F(BackendTest, AProgramExistsAsGlibResolvesIt)
+{
+    Backend backend;
+    EXPECT_TRUE(backend.programExists(QStringLiteral("gf-fake-query"))) << "a name of $PATH";
+    EXPECT_TRUE(backend.programExists(scratch(QStringLiteral("gf-fake-query")))) << "an absolute path to an executable file";
+    EXPECT_FALSE(backend.programExists(QStringLiteral("no-such-program-anywhere")));
+    EXPECT_FALSE(backend.programExists(QStringLiteral("/nonexistent/bin/gone")));
+    EXPECT_FALSE(backend.programExists(scratch(QString()))) << "a directory";
+    {
+        QFile f(scratch(QStringLiteral("plain-file")));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    }
+    EXPECT_FALSE(backend.programExists(scratch(QStringLiteral("plain-file")))) << "a file that is not executable";
+    EXPECT_FALSE(backend.programExists(QString()));
+    EXPECT_FALSE(backend.programExists(QStringLiteral("dir/relative"))) << "a relative path is no program";
+    EXPECT_FALSE(backend.programExists(QStringLiteral("a\0b")));
 }

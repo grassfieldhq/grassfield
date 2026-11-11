@@ -328,4 +328,261 @@ TestCase {
             }
         }
     }
+
+    // ---- Default web browser (ADR-0055 D-6) ----------------------------------------------------------------------------
+    // A backend on a map of files: the applications folder, the config folder and the state folder.
+    Component {
+        id: fakeBackendComponent
+        QtObject {
+            property string xdgConfigDir: "/cfg"
+            property string grassfieldStateDir: "/state"
+            property var applicationDirs: ["/apps"]
+            property var currentDesktops: ["Grassfield", "Hyprland"]
+            property var unreadable: []
+            // The programs that exist: names of $PATH and absolute paths.
+            property var programs: ["sanaga", "chromium", "firefox", "zen-browser", "nocat", "nohttp", "hidden", "/usr/bin/fine"]
+            property var files: ({})
+            property bool failState: false
+            property var writes: []
+            function programExists(program: string): bool {
+                return programs.indexOf(program) >= 0;
+            }
+            function desktopEntries(dir: string): var {
+                const out = [];
+                for (const path of Object.keys(files)) {
+                    if (path.indexOf(dir + "/") === 0 && path.slice(dir.length + 1).indexOf("/") < 0 && path.endsWith(".desktop"))
+                        out.push(path.slice(dir.length + 1));
+                }
+                return out.sort();
+            }
+            function readText(path: string): var {
+                if (unreadable.indexOf(path) >= 0)
+                    return {exists: true, ok: false, text: ""};
+                return files[path] === undefined ? {exists: false, ok: false, text: ""} : {exists: true, ok: true, text: files[path]};
+            }
+            function writeDefaultAppsFile(path: string, text: string): string {
+                if (failState && path.indexOf("/state/") === 0)
+                    return "disk full";
+                writes.push(path);
+                const next = Object.assign({}, files);
+                next[path] = text;
+                files = next;
+                return "";
+            }
+        }
+    }
+
+    function entry(name, exec, extra) {
+        return "[Desktop Entry]\nType=Application\nName=" + name + "\nExec=" + exec + "\nCategories=Network;WebBrowser;\n"
+            + "MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;\n" + (extra || "");
+    }
+
+    function browserFiles() {
+        return {
+            "/apps/sanaga.desktop": entry("Sanaga", "sanaga %U"),
+            "/apps/chromium.desktop": entry("Chromium", "chromium %U"),
+            "/apps/firefox.desktop": entry("Firefox", "firefox %u"),
+            "/apps/omarchy-browser.desktop": entry("Browser", "omarchy-launch-browser %U"),
+            "/apps/evil.desktop": entry("Evil", "xdg-open %u"),
+            "/apps/launcher2.desktop": entry("Launcher", "/usr/bin/omarchy-launch-browser %U"),
+            "/apps/hidden.desktop": entry("Hidden", "hidden %U", "NoDisplay=true\n"),
+            // Each filter of the offer has its own entry that only it keeps out: a browser that is no WebBrowser, one that does not
+            // handle http or https, a quoted launcher, a launcher behind uwsm; and a real browser behind uwsm that stays.
+            "/apps/nocat.desktop": "[Desktop Entry]\nType=Application\nName=NoCategory\nExec=nocat %U\nCategories=Network;\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\n",
+            "/apps/nohttp.desktop": "[Desktop Entry]\nType=Application\nName=NoHttp\nExec=nohttp %U\nCategories=Network;WebBrowser;\nMimeType=text/html;\n",
+            "/apps/quoted.desktop": entry("Quoted", "\"/usr/bin/xdg-open\" %u"),
+            "/apps/uwsmlauncher.desktop": entry("UwsmLauncher", "uwsm app -- xdg-open %u"),
+            "/apps/uwsmapp.desktop": entry("UwsmApp", "uwsm-app -- omarchy-launch-browser %U"),
+            "/apps/zen.desktop": entry("Zen", "uwsm app -- zen-browser %u"),
+            // An entry GLib could not run, or would read two ways, is never offered (delta review of PR #38).
+            "/apps/gone.desktop": entry("Gone", "/nonexistent/bin/gone %u"),
+            "/apps/gonewrap.desktop": entry("GoneWrap", "uwsm app -- no-such-browser %u"),
+            "/apps/notry.desktop": entry("NoTry", "firefox %u", "TryExec=/nonexistent/bin/gone\n"),
+            "/apps/dupexec1.desktop": entry("DupExec1", "firefox %u", "Exec=xdg-open %u\n"),
+            "/apps/dupexec2.desktop": entry("DupExec2", "xdg-open %u", "Exec=firefox %u\n"),
+            "/apps/duptry.desktop": entry("DupTry", "firefox %u", "TryExec=firefox\nTryExec=/nonexistent\n"),
+            "/apps/duptype.desktop": entry("DupType", "firefox %u", "Type=Link\n"),
+            "/apps/dupgroup.desktop": entry("DupGroup", "firefox %u", "[Desktop Action x]\nName=x\n[Desktop Entry]\nName=Again\n"),
+            "/apps/dupindent.desktop": entry("DupIndent", "firefox %u", "  Exec=xdg-open %u\n"),
+            "/apps/..-evil.desktop": entry("Evil", "firefox %u"),
+            "/apps/tryok.desktop": entry("TryOk", "/usr/bin/fine %u", "TryExec=/usr/bin/fine\n"),
+            "/apps/editor.desktop": "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor %F\nCategories=Utility;\nMimeType=text/plain;\n",
+            "/cfg/mimeapps.list": "[Default Applications]\ntext/html=chromium.desktop\nx-scheme-handler/http=chromium.desktop\nx-scheme-handler/https=chromium.desktop\n"
+                + "x-scheme-handler/mailto=HEY.desktop\n",
+            "/cfg/hyprland-mimeapps.list": "[Default Applications]\nx-scheme-handler/http=omarchy-browser.desktop\nx-scheme-handler/https=omarchy-browser.desktop\n"
+        };
+    }
+
+    function makeWithBackend(files) {
+        const backend = createTemporaryObject(fakeBackendComponent, testCase, {files: files});
+        const store = createTemporaryObject(storeComponent, testCase);
+        const page = createTemporaryObject(pageComponent, testCase, {store: store, backend: backend});
+        verify(page);
+        return {backend: backend, page: page};
+    }
+
+    // Only the installed browsers are offered, and never Omarchy's routing entry or an entry whose Exec is a launcher that
+    // resolves the default again; the current one is read from the lists (the routing entry left out).
+    function test_defaultBrowserOffersBrowsersOnly() {
+        const t = makeWithBackend(browserFiles());
+        compare(t.page.browserChoices.map(b => b.id).join(","), "chromium.desktop,firefox.desktop,sanaga.desktop,tryok.desktop,zen.desktop");
+        compare(t.page.browserCurrent, "chromium.desktop");
+        const box = named(t.page.contentItem, "Default web browser");
+        verify(box, "the row is there");
+    }
+
+    // The row always shows the browser links open in now (never blank while a browser is installed). Stock chromium as the effective default
+    // is shown (it is only no choice for the seed); the routing entry shows the browser the lists route to, else the first installed one;
+    // a current entry that is not installed is passed over; picking the browser already shown is harmless; without any browser the row hides.
+    function shownBrowser(t) {
+        const box = named(t.page.contentItem, "Default web browser");
+        verify(box, "the row is there");
+        return box.value;
+    }
+
+    function test_defaultBrowserShowsTheEffectiveDefault() {
+        // stock chromium named by Omarchy's mimeapps.list only
+        let files = browserFiles();
+        delete files["/cfg/hyprland-mimeapps.list"];
+        let t = makeWithBackend(files);
+        compare(t.page.browserCurrent, "chromium.desktop");
+        compare(shownBrowser(t), "chromium.desktop");
+
+        // only the routing entry names a browser, and a later item of the list does
+        files = browserFiles();
+        files["/cfg/mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=omarchy-browser.desktop;zen.desktop;\n";
+        t = makeWithBackend(files);
+        compare(t.page.browserCurrent, "zen.desktop", "the browser the lists route to");
+        compare(shownBrowser(t), "zen.desktop");
+
+        // the routing entry alone, nothing else named: the first installed browser
+        files = browserFiles();
+        files["/cfg/mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=omarchy-browser.desktop;\n";
+        t = makeWithBackend(files);
+        compare(t.page.browserCurrent, "chromium.desktop", "the first installed browser (by name)");
+        compare(shownBrowser(t), "chromium.desktop");
+
+        // no list at all
+        files = browserFiles();
+        delete files["/cfg/mimeapps.list"];
+        delete files["/cfg/hyprland-mimeapps.list"];
+        t = makeWithBackend(files);
+        compare(shownBrowser(t), "chromium.desktop");
+
+        // the current entry is missing (not installed, or a launcher): passed over, the next one named, else the first browser
+        files = browserFiles();
+        files["/cfg/mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=gone-forever.desktop;evil.desktop;firefox.desktop;\n";
+        t = makeWithBackend(files);
+        compare(shownBrowser(t), "firefox.desktop");
+        files["/cfg/mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=gone-forever.desktop;\n";
+        t = makeWithBackend(files);
+        compare(shownBrowser(t), "chromium.desktop");
+
+        // the session's list wins over the user's
+        files = browserFiles();
+        files["/cfg/grassfield-mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=sanaga.desktop;\n";
+        t = makeWithBackend(files);
+        compare(shownBrowser(t), "sanaga.desktop");
+
+        // a user list that cannot be read: the row is not blank all the same
+        files = browserFiles();
+        t = makeWithBackend(files);
+        t.backend.unreadable = ["/cfg/mimeapps.list"];
+        t.page.readBrowsers();
+        compare(shownBrowser(t), "chromium.desktop");
+    }
+
+    function test_defaultBrowserPickingTheShownOneIsHarmless() {
+        const t = makeWithBackend(browserFiles());
+        const shown = shownBrowser(t);
+        verify(t.page.setBrowser(shown), "the shown browser can be picked again");
+        compare(t.page.browserCurrent, shown);
+        compare(t.page.browserError, "");
+        verify(t.backend.files["/cfg/grassfield-mimeapps.list"].indexOf("x-scheme-handler/http=" + shown + ";\n") >= 0);
+        compare(t.backend.files["/cfg/mimeapps.list"], browserFiles()["/cfg/mimeapps.list"], "the user's mimeapps.list is never written");
+        // again: the same result
+        verify(t.page.setBrowser(shown));
+        compare(t.page.browserCurrent, shown);
+    }
+
+    function test_defaultBrowserRowHidesWithoutAnyBrowser() {
+        const files = {
+            "/apps/editor.desktop": "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor %F\nCategories=Utility;\nMimeType=text/plain;\n",
+            "/cfg/mimeapps.list": "[Default Applications]\nx-scheme-handler/http=chromium.desktop\n"
+        };
+        const t = makeWithBackend(files);
+        compare(t.page.browserChoices.length, 0);
+        compare(t.page.browserCurrent, "");
+        const box = named(t.page.contentItem, "Default web browser");
+        verify(!box || !box.visible, "the row is hidden");
+    }
+
+    function test_defaultBrowserRowIsHiddenWithoutBackend() {
+        const t = make();
+        compare(t.page.browserChoices.length, 0);
+        verify(!named(t.page.contentItem, "Default web browser") || !named(t.page.contentItem, "Default web browser").visible);
+    }
+
+    // The row writes the session's list (the four web types, the other lines kept) and records the choice as the user's.
+    function test_defaultBrowserWritesTheListAndTheRecord() {
+        const files = browserFiles();
+        files["/cfg/grassfield-mimeapps.list"] = "# mine\n[Default Applications]\ninode/directory=org.grassfield.Files.desktop;\ntext/html=old.desktop;\n";
+        files["/state/default-apps.state"] = "notes.state=seeded\nnotes.text/markdown=-\n";
+        const t = makeWithBackend(files);
+        named(t.page.contentItem, "Default web browser").picked("sanaga.desktop");
+        const list = t.backend.files["/cfg/grassfield-mimeapps.list"];
+        compare(list, "# mine\n[Default Applications]\ninode/directory=org.grassfield.Files.desktop;\ntext/html=sanaga.desktop;\nx-scheme-handler/http=sanaga.desktop;\n"
+            + "x-scheme-handler/https=sanaga.desktop;\napplication/xhtml+xml=sanaga.desktop;\n");
+        const state = t.backend.files["/state/default-apps.state"];
+        verify(state.indexOf("web.state=user\n") >= 0, "recorded as the user's: " + state);
+        verify(state.indexOf("web.chosen=sanaga.desktop\n") >= 0, "the choice is recorded: " + state);
+        verify(state.indexOf("web.x-scheme-handler/http=chromium.desktop\n") >= 0 && state.indexOf("web.text/html=chromium.desktop\n") >= 0,
+               "the baseline is what the user's own lists name (the routing entry left out): " + state);
+        verify(state.indexOf("web.application/xhtml+xml=-\n") >= 0, "a type no list names is recorded as nothing: " + state);
+        verify(state.indexOf("notes.state=seeded\n") >= 0 && state.indexOf("notes.text/markdown=-\n") >= 0, "the other group's record is kept");
+        compare(t.page.browserCurrent, "sanaga.desktop");
+        compare(t.backend.files["/cfg/mimeapps.list"], browserFiles()["/cfg/mimeapps.list"], "the user's mimeapps.list is never written");
+        // Chromium again (stock Omarchy's browser): written all the same, as the user's choice.
+        named(t.page.contentItem, "Default web browser").picked("chromium.desktop");
+        verify(t.backend.files["/cfg/grassfield-mimeapps.list"].indexOf("x-scheme-handler/https=chromium.desktop;\n") > 0);
+        verify(t.backend.files["/state/default-apps.state"].indexOf("web.state=user\n") >= 0);
+    }
+
+    // No launcher is ever chosen, nothing outside the offered list either; a record that cannot be written leaves the list as it was.
+    function test_defaultBrowserNeverChoosesALauncherOrFailsHalfWay() {
+        const t = makeWithBackend(browserFiles());
+        for (const id of ["omarchy-browser.desktop", "evil.desktop", "launcher2.desktop", "hidden.desktop", "editor.desktop", "../x.desktop", "sanaga",
+                          "nocat.desktop", "nohttp.desktop", "quoted.desktop", "uwsmlauncher.desktop", "uwsmapp.desktop", "gone.desktop", "gonewrap.desktop",
+                          "notry.desktop", "dupexec1.desktop", "dupexec2.desktop", "duptry.desktop", "duptype.desktop", "dupgroup.desktop", "dupindent.desktop", "..-evil.desktop"])
+            verify(!t.page.setBrowser(id), id + " is refused");
+        compare(t.backend.writes.length, 0, "nothing was written");
+        t.backend.failState = true;
+        verify(!t.page.setBrowser("sanaga.desktop"));
+        compare(t.backend.writes.length, 0, "the record failed first: the list is untouched");
+        compare(t.page.browserCurrent, "chromium.desktop");
+    }
+
+    // A failed pick shows a short sentence under the row (Grassfield.Ui row subtitle) and leaves the lists as they were; the next
+    // successful pick clears it. A list that is not valid UTF-8 (the backend answers ok false) is never rewritten.
+    function test_defaultBrowserShowsAShortErrorOnFailure() {
+        const t = makeWithBackend(browserFiles());
+        t.backend.failState = true;
+        verify(!t.page.setBrowser("sanaga.desktop"));
+        verify(t.page.browserError !== "", "the page says it failed");
+        const shown = find(t.page.contentItem, i => i.text === t.page.browserError && i.visible === true);
+        verify(shown, "and the sentence is on screen");
+        t.backend.failState = false;
+        verify(t.page.setBrowser("sanaga.desktop"));
+        compare(t.page.browserError, "");
+        // not UTF-8: refused, no write at all
+        const u = makeWithBackend(browserFiles());
+        u.backend.unreadable = ["/cfg/mimeapps.list"];
+        verify(!u.page.setBrowser("sanaga.desktop"));
+        verify(u.page.browserError !== "");
+        compare(u.backend.writes.length, 0);
+        const v = makeWithBackend(browserFiles());
+        v.backend.unreadable = ["/cfg/grassfield-mimeapps.list"];
+        verify(!v.page.setBrowser("sanaga.desktop"));
+        compare(v.backend.writes.length, 0);
+    }
 }
