@@ -79,6 +79,7 @@ D-6 Two invisible surfaces are built right after "started" (`LazyLoader { active
 and the exit cover. Nothing asks for them at login; a capture key pressed in the first tick does nothing, the exit cover's IPC
 target exists a tick after the first frame. The saver stays (its state is pinned by `tests/security/lock_surfaces.sh`), and Search,
 Apps, Overview and the Switcher stay (P4, A10).
+**[Amended 2026-11-10: Search, Apps, Overview, the OSD window and the switcher's window are now built right after "started" too; see the amendment at the end.]**
 
 D-7 `grassfield-shell.service` restarts after 100 ms (`RestartSec=100ms`). The loop bounds hold: the start limit (10 in 300 s) is
 reached by any loop the lifetime model knows (10 x (0.1 + 10) s = 101 s < 300 s, `tests/shell/unit_restart_limits.sh`), and the
@@ -127,3 +128,90 @@ the same tree, no new root file without a line in the script's roots (every `.qm
   delay of 100 ms (see the report for the nested commands).
 - Open until measured in a nested session: that windows created under a `LazyLoader` behave as under the root (the proxy has no
   Wayland); that the cache folder is the one Quickshell sets under the unit's `UnsetEnvironment=QML_DISK_CACHE_PATH`.
+
+## Amendment 2026-11-10 (integrator, delegated decision; owner informed)
+
+Changes D-6 only (the sentence "Search, Apps, Overview and the Switcher stay (P4, A10)" no longer holds for Search, Apps and Overview; the
+Switcher itself, whose IPC target and key handling stay, and the Saver stay as D-6 says). Nothing else of this ADR changes.
+
+What changed. `Search`, `Overview`, `AppsController` (Apps), `OsdWindow` and `SwitcherWindow` are built by `LazyLoader { activeAsync: true }`
+right after "started", not before it. Measured by marking each root child of `shell.qml` (nested, load 3 to 5, warm cache, `MARK` objects
+dropped afterwards): the finalisation of their windows and content was Apps 280 ms, SwitcherWindow 140, Search 103, Overview 71, OsdWindow 47 (about
+0.65 s of a 2.66 s start). The cache itself already saves about 2.6 s (no-cache median 5.4 s against 2.8 s); the C++ plugins cost under 0.1 s
+together; surfaces deferred by `LazyLoader { active: false }` alone or by URL (`source`) gave nothing measurable, the saving is in not
+instantiating their windows before the first frame. "started" means what it did (the root's `Component.onCompleted`).
+
+No request is lost. A request that reaches the shell before a surface is built is remembered and performed when it exists:
+- `early` in `shell.qml` keeps one pending request per surface, the last winning (a toggle flips the wanted state, open and close set
+  it: open then close ends closed; a Clipboard-view request is kept as such; a Search open keeps its text) and drops it if it is older than
+  `Tokens.deferredRequestMaxAgeMs` (5 s). The surface's own checks apply when it is performed (a locked session refuses, as for any request).
+- Each replay is its own `Qt.callLater(() => ...)` closure: `Qt.callLater` runs a repeated call of one function once per turn, with the last
+  arguments, so three loaders attaching in the same turn would replay only the last surface (review of 8887f8f0). The newest request wins
+  whatever order the loaders finish in: one counter (`early.seq`) numbers every request for the three surfaces, early or direct (a built
+  surface that opens without a replay counts as a request; the app switcher and the capture toolbar are counted too, every surface
+  ExclusiveSurfaces manages), and a replay is skipped when a newer request has opened a surface since (a
+  pending Apps request does not close a Search opened directly afterwards). The counter, not the wall clock, orders requests, and a
+  monotonic `ElapsedTimer` measures the 5 s age (the wall clock can step at login; the OSD replay uses the same). The test hook
+  `deferred releaseSurface <name>` builds one surface while the others stay held (case 5 of `deferred_early.sh`, which fails without it). Case 6 opens the switcher
+  (two foot windows) after an early Apps request and checks it stays open (it fails without the switcher's count).
+- It is performed on the next turn of the event loop after the loader's item is bound (`Qt.callLater`), not inside the loader's own
+  item-changed signal: there `root.<surface>Surface` is still null and ExclusiveSurfaces would not see the opening (two early requests
+  left two keyboard-grabbing surfaces open; review of ddaf5c2e, MED-2). `ExclusiveSurfaces` also handles a target that appears already
+  open (the newest opener closes the others), and `tests/unit/tst_exclusivesurfaces.qml` has a case for it.
+- The IPC targets `search`, `apps` and `overview` answer from the start: until a surface is built, a forwarding `IpcHandler` in
+  `shell.qml` takes the request (same names and gates); the surface's own handler is switched on right after the forwarding one is off
+  (`ipcEnabled`, in `Search.qml`, `Overview.qml`, `AppsController.qml`), so a target never has two handlers (Quickshell warns and uses
+  one). Key bindings, hot corners and gestures reach the shell by these targets. The dev test hooks (`status`, `query`, `filter`, `edit`,
+  `removable`, `ask`, `holdNextRelease`, `dropProbe`) are gated as the surface's own and answer `not ready` before it exists (a void
+  one is ignored), so a test polls instead of failing.
+- The menu bar's search button and the Dock's apps button ask `early` while the surface is null.
+- The OSD window shows the last OSD event received before it was built (`Osd.replay`, bounded by the same age).
+- The app switcher's window is a view of the controller's state (`switcher.active`): built late, it shows what is active.
+- Overview contract 7 (after a capabilities event with no overview open, the plugin is told it has none): the Overview built after
+  "started" can miss that event, so `Overview.resetPluginOverview()` also runs once when it is built (idempotent). The nested session
+  has no compositor plugin, so the reset itself is not exercised there; the plugin still ends a lost overview when the chrome layer closes
+  (`compositor/src/Overview.cpp`).
+- In practice a request made in the first seconds waits in the IPC socket until the main thread is free, which is after the surfaces are
+  built (the nested measurement: a first `apps open` was answered 2.2 s after "started", after "surface built apps"); `early` covers the
+  requests that are served between two incubation steps and every non-IPC caller.
+- Test: `tests/shell/deferred_early.sh` (nested layer) restarts the nested shell with `GRASSFIELD_DEFER_HOLD=1` (dev session only, ADR-0019
+  table; holds the loaders until `qs ipc call deferred release`; the `deferred` target is in the IPC table of docs/specs/security.md),
+  sends requests while the surfaces do not exist, releases and reads the surfaces back: Search open with its text, Apps open, two early
+  toggles ending closed, open then close ending closed, Apps then Search asked early ending with Search open and Apps closed, all three
+  loaders attaching in one turn (Apps, Overview, Search asked, one release: Search open, `pending` empty), every case ending with `pending`
+  empty, a test hook answering `not ready`; and that the log has no handler conflict. With the replay neutered case 1 fails, with the `Qt.callLater` and the
+  ExclusiveSurfaces arrival check removed case 3 fails with two surfaces open, with the shared `callLater` function of 8887f8f0 case 4 fails
+  (`pending` not empty) (all checked).
+
+Measurement basis. Gate R1 is "exit of the old shell to the new shell's `grassfield-shell: started` line"
+(`scripts/gates/r1-restart.sh`), that is the unit's `RestartSec` (0.1 s) plus the new process's start to "started". The nested proxy is
+therefore process start (the process's start time in `/proc`) to "started", plus 0.1 s; the figures "launch to started" below start at the
+shell's own "Launching config" line, about 0.45 s later than the process start, and are only for comparison with the earlier numbers.
+Strict alternation of the two file sets, one sample per switch, 9 each, nested migrated tree; the machine was shared with other lanes, so
+the 1-minute load was above the 6 asked for for most samples (stated with each sample). Process start to "started", seconds (load):
+
+| | origin/main | this change |
+|---|---|---|
+| run 1, samples 1 to 9 | 2.94 (3.99), 2.98 (4.61), 3.32 (5.22), 3.39 (5.35), 3.91 (6.50), 3.33 (7.37), 4.60 (7.65), 3.98 (7.91), 3.63 (8.73) | 2.33 (3.84), 2.82 (4.73), 2.41 (5.41), 2.77 (6.02), 3.05 (6.90), 2.72 (6.99), 3.36 (8.00), 3.88 (8.08), 2.81 (9.28) |
+| run 1 median, launch to started | 2.93 | 2.36 |
+| run 1 median, process start to started | 3.39 | 2.81 |
+| run 1, samples over 3 s with RestartSec (+0.1 s) | 9 of 9 | 3 of 9 |
+| run 2, samples 1 to 9 | 3.91 (6.21), 3.77 (6.48), 4.50 (6.19), 4.25 (7.54), 4.49 (8.10), 5.81 (8.56), 5.60 (12.54), 3.05 (11.11), 2.96 (8.89) | 3.53 (6.62), 2.92 (6.23), 3.41 (6.38), 3.41 (7.58), 3.41 (8.02), 6.76 (10.77), 2.85 (12.21), 2.42 (9.78), 2.39 (8.06) |
+| run 2 median, process start to started | 4.25 | 3.41 |
+| run 2, samples over 3 s with RestartSec (+0.1 s) | 9 of 9 | 6 of 9 |
+
+(The load of run 1's first four pairs, 3.8 to 6.0, is the only one near the
+asked-for 6: there the change gives 2.33, 2.82, 2.41 and 2.77 s (+0.1 s: all under 3 s) against 2.94 to 3.39 s for origin/main.)
+Earlier runs at load 4.2 to 7.2, launch to started: 2.84 s against 2.31 s median. The change takes about 0.55 to 0.85 s off the start in
+every run. It does NOT establish that gate R1 passes: the process-start figure with RestartSec is under 3 s in the quiet samples and
+over it in the loaded ones, and the gate itself has to be measured on the real unit (`r1-restart.sh --journal` after a kill) in a
+quiet session.
+
+Follow-up, not done here: `AppsController.rebuildApps` (the Launchpad's list, 75 apps) runs as one 321 ms step on the main thread about
+4 s after "started", when the apps list becomes ready (a stutter after the start, not part of R1). It wants to be incremental or built
+on first use; the surfaces' windows could also be built one per frame.
+
+Consequences. A request in the first second after "started" still takes effect (delayed until the surface exists); a request older than
+5 s when the surface appears is dropped. Open until measured on the real session: the first-frame behaviour of windows built after the
+first frame (the nested proxy has no real display), the "usable" time (the nested entrance waits for icons, so it does not discriminate),
+and gate R1 on the unit.

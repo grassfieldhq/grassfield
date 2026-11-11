@@ -203,6 +203,7 @@ does not check its gate.
 | search | clipboard | action | SUPER+CTRL+V (Search in its Clipboard view, ADR-0034; again closes it; refused while locked through `show()`) |
 | search | open, close, query, status | dev | `status` returns what the user types; `query`/`open` inject a query |
 | search | filter | fixtures | visual tests |
+| deferred | release, releaseSurface, status | dev | `tests/shell/deferred_early.sh` (ADR-0056 amendment): with `GRASSFIELD_DEFER_HOLD=1` the deferred surfaces stay unbuilt until `release`; `status` lists what is pending |
 | clipboard | status | dev | returns the clipboard history's items: titles and excerpts are what the user copied (ADR-0034); a real session's helper is reached by no IPC function |
 | emoji | toggle | action | SUPER+CTRL+SPACE (Emoji & Symbols, ADR-0045 OC-3; docs/specs/clipboard.md ES-1): opens the panel at the pointer (it asks Hyprland where the pointer is, `hyprctl cursorpos -j`, read only) or closes it; refused while locked through `SessionState.refuses`. It inserts nothing: only a choice in the panel does, into the window that was active when it opened |
 | emoji | status | dev | the panel's state, counts and the last insertion's outcome (how many recents, whether a glyph waits: it tells what the user inserted) |

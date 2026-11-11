@@ -2837,6 +2837,9 @@ QtObject {
     // estimate: ms after start before the windows a previous run left parked by Show Desktop are brought back (the window list must be known)
     readonly property int showDesktopRecoverMs: 1500
 
+    // estimate: ms a request for a surface still being built after the shell started (Search, Apps, Overview) stays pending; an older one is dropped, a person having moved on (ADR-0056 amendment)
+    readonly property int deferredRequestMaxAgeMs: 5000
+
     // estimate: Preview app (docs/specs/preview.md) [ref: docs/testing/f1-reference-gaps.md § Glance and Preview]
     readonly property int previewWindowWidth: 860
     // estimate: Preview app (docs/specs/preview.md) [ref: docs/testing/f1-reference-gaps.md § Glance and Preview]

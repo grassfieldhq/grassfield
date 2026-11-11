@@ -562,6 +562,7 @@
  {"path": "tests/shell/gate_tools.sh", "layer": "logic"},
  {"path": "tests/shell/unit_restart_limits.sh", "layer": "logic"},
  {"path": "tests/shell/smoke_nested.sh", "layer": "nested"},
+ {"path": "tests/shell/deferred_early.sh", "layer": "nested"},
  {"path": "tests/shell/omarchy_compat.sh", "layer": "data"},
  {"path": "tests/shell/cursors.sh", "layer": "logic"},
  {"path": "tests/shell/cursors_cancel.sh", "layer": "logic"},
