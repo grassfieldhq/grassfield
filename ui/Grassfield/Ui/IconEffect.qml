@@ -13,6 +13,8 @@ ShaderEffect {
     property string mode: "default"
     property color tint: Appearance.iconTint
     property bool darkAppearance: Appearance.dark
+    // The relative luminance of the glass surface the icon sits on, when the shell knows it (-1: unknown). The Dock's (Appearance.surfaceLumaOver).
+    property real surfaceLuma: -1
     // Drawn over the bare wallpaper (desktop icons): a look that holds on any wallpaper brightness.
     property bool wallpaper: false
     // Drawn over the accent fill of a selected row: 0 no, 1 a bright accent, 2 a dark one (the plate and the ink are the opposite of it).
@@ -31,15 +33,19 @@ ShaderEffect {
     readonly property real dark: root.darkAppearance ? 1 : 0
     // Over the bare wallpaper (desktop icons); for Clear also over a material that lets so much of it through (transparency at its
     // end) that the icon is over the wallpaper: the look that holds on any wallpaper brightness.
-    readonly property real overWallpaper: (root.wallpaper || (root.params.index === 2 && root.accentFill < 0.5 && Appearance.effectiveTransparency >= Tokens.iconModeWallpaperLikeTransparency)) ? 1 : 0
-    readonly property real clearPlateAlphaWallpaper: Tokens.iconModeClearPlateAlphaWallpaper
+    readonly property real overWallpaper: IconModes.overWallpaperLook(root.params.index, root.wallpaper, Appearance.effectiveTransparency, root.darkAppearance, root.solidMaterial, root.accentFill, Tokens, root.surfaceLuma) ? 1 : 0
+    // The deep plate on a dark glass (IconModes.deepPlate): the plates of Dark, Tinted and the smoked Clear move towards black, Clear's also towards opaque.
+    readonly property real deepPlate: root.wallpaper ? 0 : IconModes.deepPlate(root.surfaceLuma, Tokens)
+    readonly property real bandLiftPivot: Tokens.iconModeDeepLiftPivot
+    readonly property real bandLiftExp: 1 + (Tokens.iconModeDeepLiftExponent - 1) * root.deepPlate
+    readonly property real clearPlateAlphaWallpaper: root.wallpaper ? Tokens.iconModeClearPlateAlphaWallpaper : Math.max(IconModes.smokeAlpha(root.surfaceLuma, Tokens.iconModeClearPlateAlphaWallpaper, Tokens.iconModeClearPlateWallpaperLuma, Tokens), Tokens.iconModeClearPlateAlphaWallpaper + (1 - Tokens.iconModeClearPlateAlphaWallpaper) * root.deepPlate)
     readonly property real sysPlateInset: Tokens.iconModeSysPlateInset
     readonly property real sysPlateRadius: Tokens.iconModeSysPlateRadius
     // Scale of the artwork about the centre: the glyph scale (the icon sits on the plate), or for an icon that is already a tile the scale that
     // makes its own tile coincide with the plate (TintedIcon.artScale, IconTile.js).
     property real artScale: Tokens.iconModeSysGlyphScale
     readonly property real sysGlyphScale: root.artScale
-    readonly property real darkPlateLuma: Tokens.iconModeDarkPlateLuma
+    readonly property real darkPlateLuma: Tokens.iconModeDarkPlateLuma + (Tokens.iconModeDeepPlateLuma - Tokens.iconModeDarkPlateLuma) * root.deepPlate
     readonly property real darkArtSaturation: Tokens.iconModeDarkArtSaturation
     readonly property real darkArtScale: Tokens.iconModeDarkArtScale
     readonly property real darkArtLift: Tokens.iconModeDarkArtLift
@@ -50,7 +56,7 @@ ShaderEffect {
     readonly property real tileTintedPlateScaleLight: Tokens.iconModeTileTintedPlateScaleLight
     readonly property real tileClearPlateAlphaLight: Tokens.iconModeTileClearPlateAlphaLight
     readonly property real tileClearPlateLightLuma: Tokens.iconModeTileClearPlateLightLuma
-    readonly property real clearPlateWallpaperLuma: Tokens.iconModeClearPlateWallpaperLuma
+    readonly property real clearPlateWallpaperLuma: Tokens.iconModeClearPlateWallpaperLuma + (Tokens.iconModeDeepPlateLuma - Tokens.iconModeClearPlateWallpaperLuma) * root.deepPlate
     readonly property real clearPlateLightLuma: Tokens.iconModeClearPlateLightLuma
     readonly property real clearPlateAlphaDark: Tokens.iconModeClearPlateAlphaDark
     readonly property real clearPlateAlphaLight: Tokens.iconModeClearPlateAlphaLight
@@ -61,12 +67,19 @@ ShaderEffect {
     readonly property real clearBackdropMid: Tokens.iconModeClearBackdropMid
     readonly property real clearInkFloor: Tokens.iconModeClearInkFloor
     readonly property real clearPlateAlphaAccent: Tokens.iconModeClearPlateAlphaAccent
-    readonly property real tintedPlateScale: Tokens.iconModeTintedPlateScale
+    readonly property real tintedPlateScale: Tokens.iconModeTintedPlateScale + (Tokens.iconModeDeepTintedPlateScale - Tokens.iconModeTintedPlateScale) * root.deepPlate
     readonly property real tintedPlateMixLight: Tokens.iconModeTintedPlateMixLight
     readonly property real tintedRampLowDark: Tokens.iconModeTintedRampLowDark
     readonly property real tintedRampHighDark: Tokens.iconModeTintedRampHighDark
     readonly property real tintedRampLowLight: Tokens.iconModeTintedRampLowLight
     readonly property real tintedRampHighLight: Tokens.iconModeTintedRampHighLight
+    // Tone of a tile icon (shaders/icon.frag, TILE TONE): which side of its pivot the pixels move to, by the pure rule IconModes.tileToneSide. Only for icons on a solid
+    // window material (a window's own views, the A2 suite): the Dock and the other glass surfaces have a backdrop the pivots do not describe, so they get none.
+    property bool solidMaterial: false
+    readonly property real tileToneSide: root.solidMaterial ? IconModes.tileToneSide(root.darkAppearance, root.wallpaper, Appearance.effectiveTransparency, Tokens) : IconModes.glassToneSide(root.surfaceLuma, root.darkAppearance, Tokens)
+    readonly property real tileTonePivot: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenPivot : (root.darkAppearance ? (root.params.index === 1 ? Tokens.iconModeTileLiftPivotDark : Tokens.iconModeTileLiftPivot) : Tokens.iconModeTileLightLiftPivot)
+    readonly property real tileToneExp: root.tileToneSide < 0 ? Tokens.iconModeTileDarkenExponent : (root.darkAppearance ? [0, Tokens.iconModeTileLiftExponentDark, Tokens.iconModeTileLiftExponentClear, Tokens.iconModeTileLiftExponentTinted][root.params.index] : Tokens.iconModeTileLightLiftExponent)
+    readonly property real darkPlateLumaOnDarkAccent: Tokens.iconModeDarkPlateLumaOnDarkAccent
     readonly property color folderTint: Qt.rgba(root.recolorTint.r, root.recolorTint.g, root.recolorTint.b, root.recolor ? 1 : 0)
     readonly property real folderBrightness: Tokens.folderIconBrightness
     readonly property real folderContrast: Tokens.folderIconContrast

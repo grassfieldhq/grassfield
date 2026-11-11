@@ -42,6 +42,7 @@ Item {
             size: root.size
             oversample: Tokens.filesThumbnailOversample
             overAccent: root.overAccent
+            solidMaterial: true
             source: root.iconName !== "" ? IconSource.url(root.iconName) : ""
         }
     }
@@ -56,6 +57,7 @@ Item {
             folderColor: root.folderColor
             folderGlyph: root.folderGlyph
             overAccent: root.overAccent
+            solidMaterial: true
         }
     }
 

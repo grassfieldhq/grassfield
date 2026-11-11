@@ -16,7 +16,8 @@
 //       Dark   no lift (tileDarkArtLift), the same desaturation.
 //       Clear  neutral grey at the luminance of the pixel, opaque (a translucent ink would take the backdrop into the contrast).
 //       Tinted the tint at the luminance of the pixel: darker than the tint scaled, lighter than the tint mixed toward white.
-//  There is no rim (owner decision 2026-10-23): a mode only changes the colour; the plate has no edge highlight.
+//  There is no rim, ring or halo (owner decisions 2026-10-23 and 2026-11-10): a mode only changes the colour; nothing is drawn around a tile.
+//  TILE TONE. Over a solid window material a tile's tones are moved away from the material by a one-sided map, see below.
 // The folder colour (FolderIcon) recolours the artwork only, after the mode transform: the plate stays.
 
 layout(location = 0) in vec2 qt_TexCoord0;
@@ -60,6 +61,12 @@ layout(std140, binding = 0) uniform buf {
     float tintedRampHighDark;
     float tintedRampLowLight;
     float tintedRampHighLight;
+    float tileToneSide;       // tile icon tone, see TILE TONE below: +1 lift the pixels above tileTonePivot, -1 darken those below it, 0 none
+    float tileTonePivot;      // linear value the tone leaves alone
+    float tileToneExp;        // exponent of the tone: an ease-out lift above the pivot, a power darkening below it (both > 1; 1 = none)
+    float bandLiftPivot;      // plain (not own-tile) artwork on a dark Dock glass (IconModes.deepPlate): the tones above this linear value are lifted, see BAND LIFT
+    float bandLiftExp;        // exponent of that lift (1 = none)
+    float darkPlateLumaOnDarkAccent;  // Dark over a dark accent fill of a selected row: lightness of the plate
     vec4 folderTint;          // folder colour step (FolderIcon): a = 1 when the artwork is recoloured, 0 otherwise
     float folderBrightness;   // MultiEffect arithmetic of the folder colour (FolderEffect, tokens folderIcon*)
     float folderContrast;
@@ -110,6 +117,31 @@ void main() {
     vec3 c = px.rgb / max(a, 0.0001);
     bool isTile = tile > 0.5;
     vec3 lin = isTile ? srgbToLinear(c) : toLinear(c);
+    // TILE TONE (R7-REQ-13, A2 rule E). A tile keeps the luminance of its pixels, so over a solid window material its edge is no better than Default's, and scaling a
+    // full-bleed tile onto the plate moves the measured edge onto other art. The tone pushes the pixels AWAY from the material, on one side of a pivot only, so no
+    // pixel moves towards it; IconEffect chooses the side (IconModes.tileToneSide, the pure rule that tst_iconmodes checks) and only for icons declared on a solid
+    // window material (TintedIcon.solidMaterial: never the Dock, Launchpad or other glass, whose backdrop the pivots do not describe):
+    //   +1 dark appearance: the pixels above the brightest dark material (pivot 0.38 in linear light) are lifted, v' = P + (1 - P) (1 - (1 - u)^e), u = (v - P) / (1 - P),
+    //      e > 1 (an ease-out: continuous, finite slope; a lift compresses pairs of bright tones, so e stays small, and Dark's pivot is higher, 0.55, so that only its lightest tones move);
+    //   -1 light appearance, material solid: the pixels below the darkest material (pivot 0.62) are darkened, v' = P (v / P)^e with e > 1;
+    //   +1 light appearance, the wallpaper showing through (any material from dark grey to white): only the brightest tones, above pivot 0.8, are lifted.
+    // Per channel (the hue is kept), the same arithmetic for every mode, only the exponent differs.
+    if (isTile && tileToneSide > 0.5) {
+        vec3 u = clamp((lin - vec3(tileTonePivot)) / (1.0 - tileTonePivot), vec3(0.0), vec3(1.0));
+        vec3 up = vec3(tileTonePivot) + (1.0 - tileTonePivot) * (vec3(1.0) - pow(vec3(1.0) - u, vec3(tileToneExp)));
+        lin = mix(lin, up, step(vec3(tileTonePivot), lin));
+    } else if (isTile && tileToneSide < -0.5) {
+        vec3 down = vec3(tileTonePivot) * pow(min(lin / tileTonePivot, vec3(1.0)), vec3(tileToneExp));
+        lin = mix(down, lin, step(vec3(tileTonePivot), lin));
+    } else if (!isTile && bandLiftExp > 1.0001) {
+        // BAND LIFT (R7-REQ-13, A2 rule E, GPU 2026-11-11): on a dark glass the black plate is at its ceiling (about 2.9:1 against a 0.10 surface), so the glyph carries rule E; its bright
+        // tones are lifted by the same one-sided ease-out as the tile tone (nothing below the pivot moves; pairs of tones both above it compress), the exponent following the deep
+        // plate weight (IconEffect). Measured on the GPU (2026-11-11): rule N fell in 83 band cells (system-run Dark 2.20 to 1.88) and rule I by up to 0.75 (help-browser Tinted,
+        // light, 9.91 to 9.16); all still pass.
+        vec3 u = clamp((lin - vec3(bandLiftPivot)) / (1.0 - bandLiftPivot), vec3(0.0), vec3(1.0));
+        vec3 up = vec3(bandLiftPivot) + (1.0 - bandLiftPivot) * (vec3(1.0) - pow(vec3(1.0) - u, vec3(bandLiftExp)));
+        lin = mix(lin, up, step(vec3(bandLiftPivot), lin));
+    }
     float Y = dot(lin, vec3(0.2126, 0.7152, 0.0722));   // relative luminance of the artwork pixel
 
     // Per-mode transform of the artwork: rgb (straight) and the opacity it is drawn with.
@@ -173,7 +205,7 @@ void main() {
     vec3 plateRgb;
     float plateA;
     if (modeIndex < 1.5) {
-        plateRgb = vec3(darkPlateLuma);
+        plateRgb = vec3(accent && !accentBright ? darkPlateLumaOnDarkAccent : darkPlateLuma);
         plateA = 1.0;
     } else if (modeIndex < 2.5) {
         // Light glass on a dark material; smoked glass on a light one, and over the bare wallpaper (any brightness).
@@ -191,5 +223,6 @@ void main() {
     }
     vec4 plateP = vec4(plateRgb * plateA, plateA);
     plateP *= mask;
-    fragColor = (artP + plateP * (1.0 - artP.a)) * qt_Opacity;
+    vec4 face = artP + plateP * (1.0 - artP.a);
+    fragColor = face * qt_Opacity;
 }
