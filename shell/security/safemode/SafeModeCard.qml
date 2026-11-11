@@ -94,7 +94,8 @@ FocusScope {
                 anchors.centerIn: parent
                 size: Tokens.panelAlertIconGlyph
                 name: "exclamationmark-triangle"
-                color: Appearance.colors.accentGlass
+                // The text colour, as the polkit sheet's lock: the security modules read no accent glass (gate A2's rule).
+                color: Appearance.colors.text
                 Accessible.ignored: true
             }
         }
