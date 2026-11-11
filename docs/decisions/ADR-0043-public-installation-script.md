@@ -66,7 +66,9 @@ after a plan, so even the one-liner stops at a screen listing every change.
 
 ### d. What it does, in order, and what it changes
 Root is refused **before** the log is opened. Read-only **preflight** (all problems listed at once, each with its exact fix,
-exit 1, nothing changed): sudo; Arch x86_64; Omarchy ≥ 4.0.6 (`pacman -Q omarchy`); `[omarchy]` before `[extra]` and
+exit 1, nothing changed): sudo; Arch x86_64; Omarchy ≥ 4.0.6 (`pacman -Q omarchy`), or, when `omarchy-dev` is
+installed (checked first, since pacman answers `omarchy` through its provides), `omarchy-dev` ≥ 4.0.0.r7608 by
+`vercmp` (PR #17); `[omarchy]` before `[extra]` and
 quickshell offered by `[omarchy]` (the repository field is parsed with `LC_ALL=C`: a French pacman prints "Dépôt"), never the
 installed 0.3.2-N build; an existing `[grassfield]` section holding anything but the Include is refused; no `db.lck`, no
 running Omarchy update; ≥ 4 GiB free; two HEAD requests to the host; `checkupdates` (required: it reads a copy of the
@@ -161,7 +163,7 @@ and a signed `[grassfield]` repository built with a throwaway key, `render.py` r
 | IN1 | Grassfield as the next-login session at install? | yes (`--session grassfield`) · no (`--session omarchy`) | yes | **yes, by default**; `--session omarchy` opts out; uninstall restores Omarchy |
 | IN2 | Login and boot themes (`grassfield-login-themes`) | not by default · install and activate | no (recommended) | **install AND activate by default**; `--without-login-themes` opts out; install and uninstall handle the SDDM drop-in and Plymouth, the boot image rebuilt the way Omarchy does; the snapshot does not cover `/boot` and no image is copied or restored: a failed rebuild sets the previous theme back and runs Omarchy's rebuild again, and a second failure stops with the retry command and Limine's menu as the way out |
 | IN3 | Command published | download-check-run · `curl \| bash` · both | download-check-run | **both**: the one-liner first, the download-check-run form below it; the docs say what each protects against |
-| IN4 | Minimum free space and Omarchy floor | 4 GiB, 4.0.6 | as built | **as built** |
+| IN4 | Minimum free space and Omarchy floor | 4 GiB, 4.0.6 (dev builds: 4.0.0.r7608) | as built | **as built** |
 | IN5 | The `[omarchy]` order | print the fix · opt-in fix | print | **print the fix** |
 | IN6 | Snapshot failure other than "no snapper" | stop · warn | stop | **stop**, `--no-snapshot` overrides |
 | IN7 | Languages | EN + FR · EN | EN + FR | **EN + FR** |

@@ -14,11 +14,11 @@ noindex et la revue juridique précède toute annonce.
 
 ## English
 
-Grassfield is a desktop session for **Omarchy 4.0.6 or newer** (Arch Linux, x86_64). Installing it does not remove Omarchy: you
+Grassfield is a desktop session for **Omarchy 4.0.6 or newer**, or an Omarchy development build (`omarchy-dev`) 4.0.0.r7608 or newer (Arch Linux, x86_64). Installing it does not remove Omarchy: you
 choose which one starts at login, and you can go back at any time.
 
 ### Before you start
-- A working Omarchy 4.0.6+ with about 4 GiB free, and `pacman-contrib`. If updates are waiting, the script says how many and asks "Install them now? [Y/n]" (`--yes` answers yes): it then runs Omarchy's own update and goes on; answer no and it stops, changing nothing.
+- A working Omarchy 4.0.6+ (or `omarchy-dev` 4.0.0.r7608+, the oldest development build Grassfield was tested on) with about 4 GiB free, and `pacman-contrib`. If updates are waiting, the script says how many and asks "Install them now? [Y/n]" (`--yes` answers yes): it then runs Omarchy's own update and goes on; answer no and it stops, changing nothing.
 - An administrator account (the script asks for your password with `sudo`).
 - Omarchy's snapshots are used if they are set up: the script takes one before it changes anything, and stops if it fails.
 
@@ -88,11 +88,11 @@ Run the install again at any time to repair or update: it never duplicates anyth
 
 ## Français
 
-Grassfield est une session de bureau pour **Omarchy 4.0.6 ou plus récent** (Arch Linux, x86_64). L'installer ne supprime pas
+Grassfield est une session de bureau pour **Omarchy 4.0.6 ou plus récent**, ou une version de développement d'Omarchy (`omarchy-dev`) 4.0.0.r7608 ou plus récente (Arch Linux, x86_64). L'installer ne supprime pas
 Omarchy : tu choisis ce qui démarre à la connexion et tu peux revenir en arrière à tout moment.
 
 ### Avant de commencer
-- Un Omarchy 4.0.6+ qui fonctionne, avec environ 4 Gio libres, et `pacman-contrib`. Si des mises à jour attendent, le script dit combien et demande « Les installer maintenant ? [O/n] » (`--yes` répond oui) : il lance alors la mise à jour d'Omarchy puis continue ; réponds non et il s'arrête sans rien changer.
+- Un Omarchy 4.0.6+ (ou `omarchy-dev` 4.0.0.r7608+, la plus ancienne version de développement testée avec Grassfield) qui fonctionne, avec environ 4 Gio libres, et `pacman-contrib`. Si des mises à jour attendent, le script dit combien et demande « Les installer maintenant ? [O/n] » (`--yes` répond oui) : il lance alors la mise à jour d'Omarchy puis continue ; réponds non et il s'arrête sans rien changer.
 - Un compte administrateur (le script demande ton mot de passe via `sudo`).
 - Les snapshots d'Omarchy sont utilisés s'ils sont configurés : le script en prend un avant toute modification et s'arrête s'il échoue.
 
