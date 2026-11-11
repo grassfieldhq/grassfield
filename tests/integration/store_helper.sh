@@ -40,16 +40,15 @@ if [[ ${1:-} != --inside ]]; then
     esac
     shift
   done
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
+  . "$root/tests/integration/container.sh" || exit 2
+  gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -f $omarchy/install/omarchy-base.packages && -f $omarchy/install/omarchy-other.packages ]] ||
     { echo "SKIP: no Omarchy 4.0.4 tree at $omarchy (--omarchy DIR)"; exit 0; }
-  # shellcheck source=omarchy-tree.sh
-  . "$root/tests/integration/omarchy-tree.sh" || exit 2
-  args=(--rm --network host -v "$root:/src:ro")
-  omarchy_mounts "$omarchy" "$root/.dev/store-helper-omarchy" /omarchy args || exit 2
-  [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
-  for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && args+=(-e "$v"); done
-  exec docker run "${args[@]}" "$IMAGE" bash /src/tests/integration/store_helper.sh --inside
+  gf_container_init "$root" || exit 2
+  gf_standard auto || exit 2
+  omarchy_mounts "$omarchy" /omarchy || exit 2
+  gf_container_run "$IMAGE" bash /src/tests/integration/store_helper.sh --inside
+  exit $?
 fi
 
 [[ -f /.dockerenv && $(id -u) == 0 && -f /src/packaging/store/grassfield-store-helper && -d /omarchy/install ]] ||
@@ -338,7 +337,20 @@ expect "16 operations' files kept (newest)" test "$(ls "$D"/*.started | wc -l)" 
 say "A6b and A8 through pkexec: alice's password at every operation (auth_admin, never kept), bob refused"
 cat >"$W/drive.py" <<'PY'
 # Runs one command in a pseudo-terminal as the user; answers each "Password:" prompt; prints the transcript and the count.
-import os, pty, sys, time, select
+import os, pty, signal, sys, time, select
+def reap(pid, limit=30):
+    """The child's status; past `limit` seconds after EOF its process group is killed (no hang in waitpid)."""
+    end = time.time() + limit
+    while time.time() < end:
+        done, st = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return st, False
+        time.sleep(0.2)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    return os.waitpid(pid, 0)[1], True
 user, password, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
@@ -358,7 +370,9 @@ while time.time() < deadline:
     if out.count(b"Password:") > prompts:
         prompts = out.count(b"Password:")
         os.write(fd, password.encode() + b"\n")
-_, status = os.waitpid(pid, 0)
+status, late = reap(pid)
+if late:
+    print("the child did not end 30 s after EOF: its process group was killed")
 print(out.decode(errors="replace").replace("\r", ""))
 print("password prompts: %d, exit %d" % (prompts, os.waitstatus_to_exitcode(status)))
 PY
@@ -540,7 +554,7 @@ printf '%s' '{"version":5,"type":"multiinfo","resultcount":2,"results":[
   {"Name":"gs-aur-lib","PackageBase":"gs-aur-lib","Version":"1.0-1","Description":"Its library","Maintainer":null,"NumVotes":0,
    "Popularity":0,"OutOfDate":null,"LastModified":1790000000,"FirstSubmitted":1700000000,"License":["MIT"]}]}' >/srv/gsaur-rpc/info.json
 chmod -R a+rX /srv/gsaur-rpc
-# yay's stand-in (above): only `-S --noconfirm --needed <names>`.
+# yay's stand-in (above): `-S --noconfirm --needed [--] <names>` (Omarchy 4.5's omarchy-pkg-aur-add passes the `--`).
 cat >/usr/bin/yay <<'YAY'
 #!/bin/bash
 set -euo pipefail

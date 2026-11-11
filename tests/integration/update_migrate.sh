@@ -7,16 +7,21 @@
 #
 #   tests/integration/update_migrate.sh [--omarchy DIR]
 #     DIR  an Omarchy 4.x tree (default /usr/share/omarchy): its omarchy-migrate goes into the test's omarchy package
-#   Runs `docker run --cap-add SYS_ADMIN` (never --privileged, see below) on archlinux:base (digest pinned below) with
+#   Runs a container (tests/integration/container.sh: CAP_SYS_ADMIN minus MKNOD, never --privileged) on archlinux:base (digest pinned below) with
 #   systemd as PID 1, then the cases through `docker exec`; HTTPS_PROXY/HTTP_PROXY/NO_PROXY are passed through and GRASSFIELD_TEST_CA, when set, is mounted as the
 #   container's CA bundle. Exit 0 all PASS (or SKIP without docker), 1 a FAIL, 2 usage.
 #
-# Why not --privileged (the owner's live session ended three times on 2026-11-10, 16:47, 19:13 and 20:28): a privileged
+# Why not --privileged (the owner's live session ended three times on 2026-11-11, 16:47, 19:13 and 20:28): a privileged
 # container shares the host's /dev, so the container's systemd ran systemd-vconsole-setup and udev on the host's devices;
 # about 6 s after the start the host journal shows "fbcon: Taking over console", uwsm "Received SIGHUP", and SDDM could not
 # take /dev/tty1 again. Here the container gets no device, only CAP_SYS_ADMIN (the cgroup2 mount and the units' own mount
 # namespaces), and systemd starts with every unit that touches a tty or /dev masked. tests/ci/no_privileged_containers.py
-# fails `just check-quick` if a test or script asks docker or podman for --privileged, a host /dev or /run/systemd.
+# fails `just check-quick` if a test or script runs docker or podman outside container.sh.
+#
+# Where it may run: ONLY in a virtual machine (systemd-detect-virt --vm) or on a CI runner (CI=true), and never while a
+# graphical session is active on the machine: the script refuses before it calls docker (tests/shell/update_migrate_refusal.sh
+# proves it with a stub). On the GF-010 VM, whose own session is disposable, set GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1
+# (docs/testing/README.md, "Running update_migrate.sh").
 #
 # What it shows:
 #   - the channel: in grassfield-update-migrate.service (as carol, under the group grassfield-update, NoNewPrivileges, its
@@ -37,7 +42,37 @@ set -uo pipefail
 
 IMAGE=archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
 
+# The host-side refusal. A VM or a CI runner only; a graphical session (any session of type wayland, x11 or mir that is not
+# closing) stops it, except in a VM when the caller says the session is disposable. No docker call happens before this returns.
+host_refusal() {
+  local vm='' sid st t found=''
+  vm=$(systemd-detect-virt --vm 2>/dev/null) || vm=''
+  [[ $vm == none ]] && vm=''
+  if [[ -z $vm && ${CI:-} != true && ${CI:-} != 1 ]]; then
+    echo "refused: update_migrate.sh runs systemd in a container and may only run in a virtual machine (systemd-detect-virt --vm) or on a CI runner (CI=true), never on a machine you work on: see docs/testing/README.md" >&2
+    return 1
+  fi
+  if command -v loginctl >/dev/null; then
+    while read -r sid _; do
+      [[ -n $sid ]] || continue
+      t=$(loginctl show-session "$sid" -p Type --value 2>/dev/null) || t=''
+      st=$(loginctl show-session "$sid" -p State --value 2>/dev/null) || st=''
+      case $t in wayland | x11 | mir) [[ $st != closing ]] && found="$found $sid($t,$st)" ;; esac
+    done < <(loginctl list-sessions --no-legend 2>/dev/null)
+  fi
+  if [[ -n $found ]]; then
+    if [[ -n $vm && ${GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK:-} == 1 ]]; then
+      echo "update_migrate: graphical session(s)$found in the VM ($vm): allowed by GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1 (a disposable VM)" >&2
+    else
+      echo "refused: a graphical session is active on this machine ($found ): the container's systemd must not run beside it. Log out of it, or run in the VM (docs/testing/README.md)" >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+
 if [[ ${1:-} != --inside ]]; then
+  host_refusal || exit 2
   root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) || exit 2
   omarchy=/usr/share/omarchy
   while (($#)); do
@@ -47,36 +82,38 @@ if [[ ${1:-} != --inside ]]; then
     esac
     shift
   done
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
+  # shellcheck source=container.sh
+  . "$root/tests/integration/container.sh" || exit 2
+  gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -f $omarchy/bin/omarchy-migrate ]] || { echo "SKIP: no Omarchy tree at $omarchy (--omarchy DIR)"; exit 0; }
-  # shellcheck source=omarchy-tree.sh
-  . "$root/tests/integration/omarchy-tree.sh" || exit 2
-  args=(-d --cap-add SYS_ADMIN --cgroupns=private --tmpfs /run --tmpfs /run/lock --tmpfs /tmp --network host -e container=docker
-    -v "$root:/src:ro")
-  omarchy_mounts "$omarchy" "$root/.dev/update-migrate-omarchy" /omarchy args || exit 2
-  [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
-  envs=()
-  for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && envs+=(-e "$v"); done
-  # Masked before systemd starts: everything that opens a tty, a console, a VT or a device node (udev, vconsole, gettys,
-  # hwdb, the device and module setup), so nothing here can reach what the container does not have.
+  gf_container_init "$root" || exit 2
+  gf_mount "$root" /src ro || exit 2
+  omarchy_mounts "$omarchy" /omarchy || exit 2
+  if [[ -n ${GRASSFIELD_TEST_CA:-} ]]; then gf_mount "$GRASSFIELD_TEST_CA" /etc/ssl/certs/ca-certificates.crt ro || exit 2; fi
+  # The host's network namespace only when a proxy variable is set (a proxy on the host's loopback); otherwise the default network.
+  gf_network auto || exit 2
+  # Masked before systemd starts: everything that opens a tty, a console, a VT or a device node (udev, vconsole, gettys, the
+  # console password and mute units, hwdb, the device and module setup, the FUSE control mount), so nothing here can
+  # reach what the container does not have.
   mask='systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-udev-trigger.service
     systemd-udev-settle.service systemd-vconsole-setup.service getty.target getty@.service console-getty.service
     container-getty@.service serial-getty@.service autovt@.service systemd-logind.service systemd-hwdb-update.service
     systemd-tmpfiles-setup-dev.service systemd-tmpfiles-setup-dev-early.service systemd-modules-load.service
     systemd-sysctl.service systemd-binfmt.service systemd-machine-id-commit.service systemd-remount-fs.service
     systemd-pstore.service sys-kernel-config.mount sys-kernel-debug.mount sys-kernel-tracing.mount dev-hugepages.mount
-    dev-mqueue.mount systemd-boot-update.service'
-  cid=$(docker run "${args[@]}" "$IMAGE" bash -c 'umount -l /sys/fs/cgroup 2>/dev/null; mount -t cgroup2 none /sys/fs/cgroup &&
-    mkdir -p /etc/systemd/system && for u in $0; do ln -sf /dev/null "/etc/systemd/system/$u"; done && exec /usr/lib/systemd/systemd' "$mask") ||
-    { echo "FAIL: the container did not start"; exit 1; }
-  trap 'docker rm -f "$cid" >/dev/null 2>&1' EXIT
+    dev-mqueue.mount systemd-boot-update.service sys-fs-fuse-connections.mount systemd-firstboot.service
+    systemd-ask-password-console.service systemd-ask-password-console.path systemd-ask-password-wall.service
+    systemd-ask-password-wall.path systemd-mute-console.service systemd-mute-console.socket'
+  trap gf_container_cleanup EXIT
+  gf_container_systemd_start "$IMAGE" "$mask" >/dev/null || { echo "FAIL: the container did not start"; exit 1; }
+  cid=$gf_cid
   for _ in $(seq 1 60); do
-    state=$(docker exec "$cid" systemctl is-system-running 2>/dev/null)
+    state=$(gf_container_exec "$cid" systemctl is-system-running 2>/dev/null)
     [[ $state == running || $state == degraded ]] && break
     sleep 1
   done
   [[ $state == running || $state == degraded ]] || { echo "FAIL: systemd did not come up in the container ($state)"; exit 1; }
-  docker exec "${envs[@]}" "$cid" bash /src/tests/integration/update_migrate.sh --inside
+  gf_container_exec "$cid" bash /src/tests/integration/update_migrate.sh --inside
   exit $?
 fi
 

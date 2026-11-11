@@ -6,7 +6,7 @@
 #   tests/integration/update_helper.sh [--omarchy DIR]
 #     DIR  an Omarchy 4.x tree (default /usr/share/omarchy): its omarchy-migrate, omarchy-hook, omarchy-update-mise and
 #          its update guard (the hook and its program) go into the test's omarchy package, unchanged (the tree's bin/ is
-#          staged with its links followed, tests/integration/omarchy-tree.sh)
+#          staged with its links followed, tests/integration/container.sh)
 #   Runs `docker run --rm --network host` on archlinux:base (digest pinned below) with the repository and the tree mounted
 #   read-only; HTTPS_PROXY/HTTP_PROXY/NO_PROXY are passed through and GRASSFIELD_TEST_CA, when set, is mounted as the
 #   container's CA bundle (for a proxied network). Exit 0 all PASS (or SKIP without docker), 1 a FAIL, 2 usage.
@@ -35,16 +35,15 @@ if [[ ${1:-} != --inside ]]; then
     esac
     shift
   done
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
+  . "$root/tests/integration/container.sh" || exit 2
+  gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -f $omarchy/bin/omarchy-migrate && -f $omarchy/default/libalpm/hooks/00-omarchy-update-guard.hook ]] ||
     { echo "SKIP: no Omarchy 4.0.4 tree at $omarchy (--omarchy DIR)"; exit 0; }
-  # shellcheck source=omarchy-tree.sh
-  . "$root/tests/integration/omarchy-tree.sh" || exit 2
-  args=(--rm --network host -v "$root:/src:ro")
-  omarchy_mounts "$omarchy" "$root/.dev/update-helper-omarchy" /omarchy args || exit 2
-  [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
-  for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && args+=(-e "$v"); done
-  exec docker run "${args[@]}" "$IMAGE" bash /src/tests/integration/update_helper.sh --inside
+  gf_container_init "$root" || exit 2
+  gf_standard auto || exit 2
+  omarchy_mounts "$omarchy" /omarchy || exit 2
+  gf_container_run "$IMAGE" bash /src/tests/integration/update_helper.sh --inside
+  exit $?
 fi
 
 [[ -f /.dockerenv && $(id -u) == 0 && -f /src/packaging/pacman/grassfield-update-helper && -d /omarchy/bin ]] ||
@@ -419,6 +418,19 @@ cat >"$W/drive.py" <<'PY'
 # Bounded: past the deadline the child's process group is killed, so an authentication that never answers fails the case
 # instead of hanging the run (a 2026-11-08 run waited 7 h in os.waitpid after the read loop's deadline).
 import os, pty, signal, sys, time, select
+def reap(pid, limit=30):
+    """The child's status; past `limit` seconds after EOF its process group is killed (no hang in waitpid)."""
+    end = time.time() + limit
+    while time.time() < end:
+        done, st = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return st, False
+        time.sleep(0.2)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    return os.waitpid(pid, 0)[1], True
 user, password, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
@@ -446,7 +458,9 @@ if timed_out:
         os.killpg(pid, signal.SIGKILL)  # pty.fork made the child a session leader: the group holds runuser, bash and the rest
     except ProcessLookupError:
         pass
-_, status = os.waitpid(pid, 0)
+status, late = reap(pid)
+if late:
+    print("the child did not end 30 s after EOF: its process group was killed")
 print(out.decode(errors="replace").replace("\r", ""))
 if timed_out:
     print("TIMEOUT after 600 s: the child's process group was killed")

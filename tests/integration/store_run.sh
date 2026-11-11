@@ -22,8 +22,12 @@ IMAGE=archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23
 if [[ ${1:-} != --inside ]]; then
   root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) || exit 2
   (($# == 0)) || { echo "usage: store_run.sh" >&2; exit 2; }
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
-  exec docker run --rm --network none -v "$root:/src:ro" "$IMAGE" bash /src/tests/integration/store_run.sh --inside
+  . "$root/tests/integration/container.sh" || exit 2
+  gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
+  gf_container_init "$root" || exit 2
+  gf_standard none || exit 2
+  gf_container_run "$IMAGE" bash /src/tests/integration/store_run.sh --inside
+  exit $?
 fi
 
 [[ -f /.dockerenv && $(id -u) == 0 && -f /src/packaging/store/grassfield-store-run ]] ||

@@ -43,19 +43,47 @@ New test file: add one line to `tests` (or to `ignore` with a reason). Helpers a
 ## No container may share the host's devices
 
 `python3 -I tests/ci/no_privileged_containers.py` (`just check-containers`, part of `just check-quick`; `--selftest` runs it on
-fixtures, and it is a `logic` test) fails when a file under `tests/`, `scripts/`, `.github/` or the `justfile` that runs docker
-or podman asks for `--privileged`, `--device`, a bind mount of the host's `/dev`, `/run/systemd` or `/var/run/systemd`, or the
-host's pid, ipc, uts or user namespace. Whole-line comments are not read.
+about a hundred bad spellings, each of which must be refused; it is also a `logic` test) is an allowlist, not a list of bad
+flags:
+
+- Every tracked shell, python, just, yaml or cmake file is read. A call of `docker`, `podman`, `nerdctl`, `buildah` or
+  `docker-compose` is refused everywhere except in `tests/integration/container.sh`, with one exception: `docker info`. A variable
+  that holds such a command name, a compose file, a Dockerfile and a yaml `options:` line are refused too.
+- `tests/integration/container.sh` is the one wrapper every integration test and gate uses (`gf_container_init`, `gf_mount`,
+  `gf_network`, `gf_standard`, `omarchy_mounts`, `gf_container_run`). Inside it, each docker call is one of five exact
+  spellings and each statement that adds an option is one of a short list. A flag held in a variable or an array, or one the
+  guard cannot resolve, fails the check. Mount sources are checked when the test runs: the repository (read-only), its `.dev/`, an
+  Omarchy tree registered by `omarchy_mounts` and its staged `bin/`, one regular file (a CA bundle, the gate's own script), and,
+  read-write, a folder of the caller's own under `.dev/` or `$TMPDIR`. `--network host` is used only when a proxy variable is set.
+- `CAP_SYS_ADMIN` is only in `gf_container_systemd_start`, which only `tests/integration/update_migrate.sh` may call.
 
 Why: `tests/integration/update_migrate.sh` used to run `docker run --privileged` with systemd as PID 1. A privileged container
 shares the host's `/dev`, so its systemd ran `systemd-vconsole-setup` and udev on the host's devices: the kernel logged
 "fbcon: Taking over console", the Hyprland session received SIGHUP, SDDM could not take `/dev/tty1` and went into
-start-limit-hit. It ended the owner's live session three times on 2026-11-10 (16:47, 19:13, 20:28).
+start-limit-hit. It ended the owner's live session three times on 2026-11-11 (16:47, 19:13, 20:28).
 
-A test that needs systemd as the container's manager does what `update_migrate.sh` does now: `--cap-add SYS_ADMIN`,
-`--cgroupns=private`, `--tmpfs /run --tmpfs /run/lock`, no device, and every unit that touches a tty or `/dev` (udev,
-vconsole, gettys, logind, hwdb, device setup) masked before systemd starts. Anything that still needs a real device or a
-real console is run in the VM (`scripts/gates/vm-drill.sh`), never on the host.
+### Running update_migrate.sh
+
+**Never on a machine with a live graphical session, and never on the machine you work on.** Its container runs systemd as PID 1.
+It now has `CAP_SYS_ADMIN` minus `MKNOD`, no device, a tmpfs `/run`, and every unit that touches a tty or `/dev` masked (udev,
+vconsole, gettys, console password and mute units, logind, hwdb, device and module setup, the FUSE control mount); a user namespace
+is not available per run with docker (`userns-remap` is a daemon setting), so the virtual machine is the real boundary. The script
+enforces that itself: before any docker call it refuses unless it runs in a VM (`systemd-detect-virt --vm`) or on a CI runner
+(`CI=true`), and refuses while a graphical session (wayland, x11, mir) is active on that machine. In a VM whose own session is
+disposable, `GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1` lets it go on; the variable does nothing on a bare host or a CI runner.
+`tests/shell/update_migrate_refusal.sh` proves the refusal with a stub docker (no container is ever started).
+
+In the GF-010 VM (`scripts/gates/vm-drill.sh`, qemu/KVM, 4 vCPUs, 6 GB, user networking, started only at host load <= 8):
+
+```
+scripts/gates/vm-drill.sh update-migrate --repo .      # boots the VM, ships `git archive HEAD` of the repository, runs it there
+```
+
+It runs `tests/integration/update_migrate_in_vm.sh` as the VM's root: it refuses outside a VM, starts docker, runs the test, and
+prints the VM's own kernel log and journal lines about the console, VTs, fbcon, vconsole, gettys, udev or SIGHUP during the
+run, the console binding before and after, and the PASS and FAIL counts. A clean run shows none of those lines.
+
+Anything else that needs a real device or a real console is run in the VM too, never on the host.
 
 ## The gate
 

@@ -1418,7 +1418,8 @@ the terminal, a rare case (Omarchy runs pending migrations at login).
   (pre-existing from step 3; the review's NIT 11). It runs in the unit only if it is this update's.
 
 ### s5.6 Evidence (this branch)
-- **`tests/integration/update_migrate.sh` (new, A16): 69 PASS, 0 FAIL.** It runs in a privileged `archlinux:base` container
+- **`tests/integration/update_migrate.sh` (new, A16): 69 PASS, 0 FAIL.** It runs in an `archlinux:base` container (CAP_SYS_ADMIN minus MKNOD, no device; it was `--privileged` until the
+  2026-11-11 session losses, see docs/testing/README.md, and only runs in a VM now)
   with systemd 262 as PID 1 (cgroup2 mounted), dbus-broker 37, polkit 128, sudo 1.9.17, and the REAL helper, runner,
   policy, `sudo`, rule and group (no change to any of them).
   - **The channel:**
