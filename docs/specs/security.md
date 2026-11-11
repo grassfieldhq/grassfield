@@ -1770,7 +1770,9 @@ same directory and the modules move without moving a file), one step at a time u
   system-dialogs.md), drawn with `Grassfield.Ui` and `qs.security` only (no `qs.services`
   type). The sheets read the session in process: `shell/security/SheetSession.qml`, written only by the host's Bindings
   from `Lock.locked`, `Idle.displayOff` and `Idle.saverShown` (the saver's idle time counted here by the saver's rule).
-  `grassfield-prompter.service` accepts a peer of `grassfield-security.service` only (`--peer-unit`). The UI imports no
+  `grassfield-prompter.service` accepts a peer of `grassfield-security.service` only (`--peer-unit`; in a session only that
+  unit's main process, rc7 R7-SEC-02), while the share picker's one-time socket takes the UI's `grassfield-shell.service`
+  (the picker stayed in the UI; private sockets, above). The UI imports no
   security module and names none of their types (`security_process_scan.py`); what it knows of the sheets comes with the
   lock state (`authorizing`, `securityKeyboard`, below), and it closes its menus when a sheet is published open (the agent
   closed them in process before). One agent in the session: one `PolkitAgent` in the tree, in `AuthAgent.qml`, made once,

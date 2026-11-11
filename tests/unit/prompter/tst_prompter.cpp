@@ -24,6 +24,7 @@
 #include <QTemporaryDir>
 
 #include <csignal>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <memory>
@@ -800,6 +801,15 @@ namespace {
         return f.open(QIODevice::ReadOnly) && cgroupIsUnit(unifiedCgroupPath(f.readAll()), leaf, ::getuid(), true);
     }
 
+    // The main-process cases need a user systemd manager. When they skip, they also print "SKIP: <suite>.<case>: <reason>"
+    // on a line of its own, so a run without one shows in the output and cannot pass as covered (opus review of #26, NIT).
+    std::string announceSkip(const std::string& reason) {
+        const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        std::printf("SKIP: %s.%s: %s\n", info ? info->test_suite_name() : "?", info ? info->name() : "?", reason.c_str());
+        std::fflush(stdout);
+        return reason;
+    }
+
     // The peer the injected SO_PEERPIDFD names, for the liveness case below.
     pid_t g_childPeer = -1;
     PidfdAnswer pidfdOfChild(int) {
@@ -813,7 +823,7 @@ TEST(PrompterPeer, ASessionPeerMustBeTheUnitsMainProcess) {
     // into the shell's cgroup; in a session only the unit's main process (systemd's MainPID, asked at check time) passes.
     const QString leaf = ownCgroupLeaf();
     if (leaf.isEmpty() || !ownCgroupIsAUserUnit(leaf))
-        GTEST_SKIP() << "this process's cgroup is not a unit under the user's manager";
+        GTEST_SKIP() << announceSkip("this process's cgroup is not a unit under the user's manager (no user systemd)");
     int pair[2];
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair), 0);
     int asked = 0;
@@ -850,7 +860,7 @@ TEST(PrompterPeer, APeerThatExitsDuringTheMainProcessQueryIsRefused) {
     // which systemd might then name) is refused even though every answer matched its PID.
     const QString leaf = ownCgroupLeaf();
     if (leaf.isEmpty() || !ownCgroupIsAUserUnit(leaf))
-        GTEST_SKIP() << "this process's cgroup is not a unit under the user's manager";
+        GTEST_SKIP() << announceSkip("this process's cgroup is not a unit under the user's manager (no user systemd)");
     const pid_t child = ::fork();
     if (child == 0) {
         ::pause();
@@ -892,7 +902,7 @@ TEST(PrompterPeer, TheMainProcessAskedIsTheExpectedUnits) {
     // process. Here systemd names this process for one unit only, and any other unit's main process is another PID.
     const QString leaf = ownCgroupLeaf();
     if (leaf.isEmpty() || !ownCgroupIsAUserUnit(leaf))
-        GTEST_SKIP() << "this process's cgroup is not a unit under the user's manager";
+        GTEST_SKIP() << announceSkip("this process's cgroup is not a unit under the user's manager (no user systemd)");
     int pair[2];
     ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair), 0);
     QString    asked;
