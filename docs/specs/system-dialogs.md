@@ -319,7 +319,9 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
 - SP2a only the shell takes the request (rc7 audit R7-SEC-02 and its security review): a connection is taken only from a
   peer that runs as the user, in `grassfield-shell.service` under the user's own manager, only slices between, and that is
   that unit's main process as systemd says at check time (`systemctl --user show --property=MainPID`, over the manager's
-  D-Bus) (`peer_ok`, the rule of `grassfield-prompter`'s socket, `bridges/prompter/src/Peer.cpp`). The peer is read through
+  D-Bus) (`peer_ok`, the rule of `grassfield-prompter`'s socket, `bridges/prompter/src/Peer.cpp`). The UI's unit, where the
+  prompter now expects the security process's (ADR-0041 S3): the picker is a UI feature (`shell/services/SharePicker.qml`,
+  the target `picker` of the UI root the stand-in asks), which S3 left in the UI. The peer is read through
   `SO_PEERPIDFD`: its PID from the pidfd, its cgroup, systemd's answer, then the pidfd again (a peer that exited meanwhile is
   refused; only a kernel without `SO_PEERPIDFD` makes it read the PID of `SO_PEERCRED`). Any other connection is closed
   before a line is sent (not even the window list) and the wait goes on within SP2b's 2 s. A dev session (ADR-0019) may
@@ -335,7 +337,8 @@ it), Esc cancels; while sharing, the menu bar shows the screen-recording indicat
   start. A process with those powers can draw over the screen and read the keyboard as well; the session does not claim
   protection against it.
   Tests: `tests/shell/share_picker_peer.sh` (the rule, by session, on socket pairs, with a case for each guard: uid, unit,
-  main process, a peer gone during the check), `tests/shell/share_picker.sh` (end to end).
+  main process, a peer gone during the check; systemd asked for the expected unit's main process by its name; `PEER_UNIT`
+  the unit that runs the instance the stand-in asks), `tests/shell/share_picker.sh` (end to end).
 - SP2b every wait on the shell is bounded (counter-review of PR #13): after `accepted` the stand-in waits at most 2 s for the
   connection, then removes the socket file and prints nothing (cancelled); after `accepted` the stock picker never starts.
   The shell shows its panel only once connected; a failed connection shows nothing; the panel closes when the stand-in's end
@@ -735,8 +738,9 @@ server “X”." with "Remember this password in my keychain", Cancel / Connect.
 Transport: the Unix stream socket `$XDG_RUNTIME_DIR/grassfield/prompter.sock` (directory 0700, socket 0600), served by
 `grassfield-prompter`; UTF-8 JSON, one object per line, ended by a line feed. The bridge accepts one peer at a time, only
 one that runs as the user and whose cgroup is the unit named by the bridge's `--peer-unit` (`grassfield-security.service`
-since ADR-0041 S3, where the sheets run beside the polkit agent; `grassfield-shell.service` before;
-read race-free through `SO_PEERPIDFD` on Linux 6.5 and later). A refused peer gets `{"type":"error","code":"refused"}`, a
+since ADR-0041 S3, where the sheets run beside the polkit agent; `grassfield-shell.service` before) and which, in a session,
+is that unit's main process as systemd says at check time (rc7 audit R7-SEC-02; docs/specs/security.md, private sockets),
+read race-free through `SO_PEERPIDFD` on Linux 6.5 and later. A refused peer gets `{"type":"error","code":"refused"}`, a
 second shell `{"type":"error","code":"busy"}`, and the connection is closed. Nothing secret flows from the bridge to the
 shell; the shell sends a password once, in its answer, and the bridge decodes it straight into gcr's secure memory.
 
@@ -844,8 +848,9 @@ Rules (fail closed: no answer is ever invented):
   in the next main loop turn (its callers cancelled already, on seeing the name go; never from inside gcr's own callbacks,
   opus final check of step 9a), so neither gcr nor the count keeps them.
 - A peer whose pidfd the kernel will not give is refused, except on a kernel without `SO_PEERPIDFD` (ENOPROTOOPT); in a
-  session only slices may lie between `user@<uid>.service` and the shell's unit. Refused connections are logged once per
-  10 s, with the count of the others.
+  session only slices may lie between `user@<uid>.service` and the `--peer-unit` unit (the security process's since
+  ADR-0041 S3), and the peer must be that unit's main process (rc7 audit R7-SEC-02). Refused connections are logged once
+  per 10 s, with the count of the others.
 - An answer to an id that is not outstanding is ignored. A wrong answer to an outstanding id (an unknown key, a password
   where none is asked or missing for `ok`, a choice where none was shown, a password over 4096 bytes) cancels that request
   (`cancel` to the shell, "cancelled" to the caller).
@@ -994,13 +999,14 @@ Name ownership is the only authorization (upstream design): a same-user process 
 gcr-prompter while the bridge is down, and one that holds or is queued for `org.gnome.keyring.SystemPrompter` when the
 shell goes gets the next prompts (the bridge releases the name then, by design: never blocking); a same-user process that
 owns the name before the bridge asks for it keeps it (the bridge says "queued" and logs who holds it). The socket's
-checks stop other processes of the user from passing for the shell, not same-user code that sets out to: the user owns
-their systemd manager's cgroups and can move a process into the shell's unit, and the shell's own children that stay in
-its cgroup (its helpers; an application started before `uwsm-app` is detected, ADR-0011) could connect while the shell is
-not connected (out of scope as for every Grassfield socket, security.md); on a kernel without `SO_PEERPIDFD` at all
-(before 6.5) the cgroup is read through the PID `SO_PEERCRED` gives, and a peer that exits and whose PID a process of the
-shell's unit reuses in between would pass (later kernels refuse such a peer). An interpreter or a launcher that runs other
-code is shown as "Unidentified program" with its path even when the code it runs is an app (9-4). The requester row
+checks stop other processes of the user from passing for the client (the security process since ADR-0041 S3, the shell
+before), not same-user code that sets out to: the user owns their systemd manager's cgroups and can move a process into
+the client's unit, and the client's own children stay in its cgroup; since rc7 (R7-SEC-02) a session's peer must also be
+the unit's main process, so neither passes any more, but a same-user process that can act as the client itself (ptrace,
+a replaced socket or configuration: security.md, same-uid limits) is out of scope as for every Grassfield socket; on a
+kernel without `SO_PEERPIDFD` at all (before 6.5) the cgroup is read through the PID `SO_PEERCRED` gives, and a peer that
+exits and whose PID the unit's new main process reuses in between would pass (later kernels refuse such a peer). An
+interpreter or a launcher that runs other code is shown as "Unidentified program" with its path even when the code it runs is an app (9-4). The requester row
 names the program whose process opened the bus connection, not proof of whose code is asking (opus review of step 9a,
 MINOR-2; ADR-0035 9-14): "GnuPG", "Keyring" and "SSH" can be driven by any program of the user (`gpg-connect-agent`'s
 `GET_PASSPHRASE` with its own description, `pinentry-gnome3` run directly, `ssh-add`, an app asking gnome-keyring to

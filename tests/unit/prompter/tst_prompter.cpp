@@ -885,6 +885,38 @@ TEST(PrompterPeer, APeerThatExitsDuringTheMainProcessQueryIsRefused) {
     ::close(pair[1]);
 }
 
+TEST(PrompterPeer, TheMainProcessAskedIsTheExpectedUnits) {
+    // ADR-0041 S3 moved the secret sheets into the security process: the bridge's --peer-unit names
+    // grassfield-security.service, and the main process compared is that unit's, asked for by that name alone. A check that
+    // asked another unit (the UI's grassfield-shell.service, the client before S3) would compare the peer with the wrong
+    // process. Here systemd names this process for one unit only, and any other unit's main process is another PID.
+    const QString leaf = ownCgroupLeaf();
+    if (leaf.isEmpty() || !ownCgroupIsAUserUnit(leaf))
+        GTEST_SKIP() << "this process's cgroup is not a unit under the user's manager";
+    int pair[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair), 0);
+    QString    asked;
+    const auto mainOf = [&asked](const QString& owner) {
+        return [&asked, owner](const QString& unit) -> qint64 {
+            asked += unit + QLatin1Char(';');
+            return unit == owner ? ::getpid() : ::getpid() + 1;
+        };
+    };
+    const PeerCheck ok = checkSocketPeer(pair[0], ::getuid(), leaf, true, nullptr, mainOf(leaf));
+    EXPECT_TRUE(ok.accepted) << ok.reason.toStdString();
+    EXPECT_EQ(asked.toStdString(), (leaf + QLatin1Char(';')).toStdString());
+    for (const QString& other : {QStringLiteral("grassfield-shell.service"), QStringLiteral("grassfield-security.service")}) {
+        if (other == leaf)
+            continue;
+        asked.clear();
+        const PeerCheck wrong = checkSocketPeer(pair[0], ::getuid(), leaf, true, nullptr, mainOf(other));
+        EXPECT_FALSE(wrong.accepted) << other.toStdString();
+        EXPECT_EQ(asked.toStdString(), (leaf + QLatin1Char(';')).toStdString());
+    }
+    ::close(pair[0]);
+    ::close(pair[1]);
+}
+
 TEST(PrompterPeer, RefusalsAreLoggedOncePerWindow) {
     LogThrottle throttle(10000);
     qint64      suppressed = -1;

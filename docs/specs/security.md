@@ -274,9 +274,11 @@ ptrace to a process's descendants and to a debugger the process allowed, which n
 user's other processes), and any of them may replace a socket in the user's runtime folder (the session bus, the manager's
 private socket) or edit the user's own configuration either process reads at its next start. A process with those powers
 can draw over the screen and read the keyboard as well; the session does not claim protection against it.
-Tests: `tests/shell/share_picker_peer.sh`, `tests/unit/prompter/tst_prompter.cpp` (`PrompterPeer.ASessionPeerMustBeTheUnitsMainProcess`,
-`PrompterPeer.APeerThatExitsDuringTheMainProcessQueryIsRefused`), `tests/security/security_unit.sh` (the prompter's
-`--peer-unit` and its default name the security process's unit).
+Tests: `tests/shell/share_picker_peer.sh` (systemd asked for the expected unit's main process by its name; `PEER_UNIT` runs
+the instance the stand-in asks, and the target `picker` is the UI's alone), `tests/unit/prompter/tst_prompter.cpp`
+(`PrompterPeer.ASessionPeerMustBeTheUnitsMainProcess`, `PrompterPeer.APeerThatExitsDuringTheMainProcessQueryIsRefused`,
+`PrompterPeer.TheMainProcessAskedIsTheExpectedUnits`), `tests/security/security_unit.sh` (the prompter's `--peer-unit` and
+its default name the security process's unit, and the bridge asks systemd for that unit's main process alone).
 
 ### D-Bus objects of the security modules' processes (not Quickshell IPC)
 What the processes serving the secret sheets export on a message bus (ADR-0035 "Consequences": listed in the step that adds

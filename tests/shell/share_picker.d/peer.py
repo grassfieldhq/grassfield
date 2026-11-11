@@ -4,11 +4,15 @@
 # socket (a sandbox may refuse socket()): the stand-in is loaded as a module, its pure functions are checked on fixed
 # inputs, peer_ok on socket pairs (this process, and a child that has exited and been reaped) with a fake `systemctl` that
 # answers the unit's MainPID, and accept_shell with a stand-in for the listening socket. Each guard of peer_ok has a case that
-# only it refuses: another uid, another unit, another main process, no main process, a peer gone during the check. The
-# end-to-end cases (a fake shell connecting to the real channel) are share_picker.d/check.py.
+# only it refuses: another uid, another unit, another main process, no main process, a peer gone during the check; the main
+# process is asked for the expected unit by its name. PEER_UNIT is checked against the tree: the UI's unit runs the
+# instance the stand-in asks, which alone serves the target picker (ADR-0041 S3 left the picker in the UI and moved the
+# secret sheets into the security process). The end-to-end cases (a fake shell connecting to the real channel) are
+# share_picker.d/check.py.
 import importlib.machinery
 import importlib.util
 import os
+import re
 import socket
 import sys
 import tempfile
@@ -32,11 +36,15 @@ loader.exec_module(picker)
 check(picker.SYSTEMCTL == "/usr/bin/systemctl", "the stand-in runs systemctl by its path, never through PATH")
 
 uid = os.getuid()
-# systemctl: `systemctl --user show --property=MainPID --value <unit>` prints FAKE_MAINPID (or fails: FAKE_MAINPID=fail).
+# systemctl: `systemctl --user show --property=MainPID --value <unit>` prints FAKE_MAINPID (or fails: FAKE_MAINPID=fail);
+# with FAKE_UNIT set, only for that unit (any other unit's main process is PID 1); FAKE_LOG collects the units asked for.
 fakebin = tempfile.mkdtemp(prefix="picker-peer.", dir=os.environ.get("TMPDIR") or None)
 with open(os.path.join(fakebin, "systemctl"), "w") as f:
-    f.write('#!/bin/sh\n[ "$1 $2 $3 $4" = "--user show --property=MainPID --value" ] || exit 3\n'
-            '[ "$FAKE_MAINPID" = fail ] && exit 1\nprintf "%s\\n" "$FAKE_MAINPID"\n')
+    f.write('#!/bin/sh\n[ $# = 5 ] && [ "$1 $2 $3 $4" = "--user show --property=MainPID --value" ] || exit 3\n'
+            '[ -n "$FAKE_LOG" ] && printf "%s\\n" "$5" >>"$FAKE_LOG"\n'
+            '[ "$FAKE_MAINPID" = fail ] && exit 1\n'
+            '[ -n "$FAKE_UNIT" ] && [ "$5" != "$FAKE_UNIT" ] && { echo 1; exit 0; }\n'
+            'printf "%s\\n" "$FAKE_MAINPID"\n')
 os.chmod(os.path.join(fakebin, "systemctl"), 0o755)
 os.environ["FAKE_MAINPID"] = str(os.getpid())
 picker.SYSTEMCTL = os.path.join(fakebin, "systemctl")
@@ -73,7 +81,8 @@ check([picker.pid_from_fdinfo(t) for t in ("pos:\t0\nPid:\t42\n", "Pid:\t-1\n", 
 
 
 def with_env(env, fn):
-    keep = {k: os.environ.get(k) for k in ("GRASSFIELD_DEV", "GRASSFIELD_SESSION", "GRASSFIELD_PICKER_PEER_UNIT", "FAKE_MAINPID")}
+    keep = {k: os.environ.get(k) for k in ("GRASSFIELD_DEV", "GRASSFIELD_SESSION", "GRASSFIELD_PICKER_PEER_UNIT", "FAKE_MAINPID",
+                                           "FAKE_UNIT", "FAKE_LOG")}
     for k in keep:
         if k != "FAKE_MAINPID":
             os.environ.pop(k, None)
@@ -121,6 +130,19 @@ else:
         check(not with_env(dict(dev, FAKE_MAINPID=main), lambda: picker.peer_ok(a)), "refused when %s" % why)
     check(with_env(dict(dev, FAKE_MAINPID=str(os.getpid())), lambda: picker.peer_ok(a)),
           "control: the same peer is taken when it is the unit's main process")
+    # The main process compared is the expected unit's, asked for by that name alone: ADR-0041 S3 moved the polkit agent and
+    # the secret sheets into grassfield-security.service, the picker stayed in the UI. Systemd names this process for one
+    # unit only; a check that asked another unit's main process (or took any unit's) would accept or refuse the wrong one.
+    asked_log = os.path.join(fakebin, "asked")
+    open(asked_log, "w").close()
+    taken = with_env(dict(dev, FAKE_UNIT=leaf, FAKE_LOG=asked_log), lambda: picker.peer_ok(a))
+    with open(asked_log) as f:
+        asked = f.read()
+    check(taken and asked == leaf + "\n", "systemd is asked once, for the expected unit's main process by its name [%r]" % asked)
+    for other in (U, "grassfield-security.service"):
+        if other != leaf:
+            check(not with_env(dict(dev, FAKE_UNIT=other), lambda: picker.peer_ok(a)),
+                  "refused when this process is the main process of %s, not of the expected unit" % other)
     # The uid guard alone: the peer is this process, of the expected cgroup and the unit's main process, but the stand-in
     # runs as another user.
     real_getuid = picker.os.getuid
@@ -248,6 +270,40 @@ if leaf:
             s.close()
 
 source = open(os.path.join(root, "packaging/session-bin/hyprland-share-picker")).read()
+
+
+# Which unit the picker's peer must be: the one whose process serves the IPC target the stand-in asks. Since ADR-0041 S3 two
+# Quickshell instances run in a session: the UI (grassfield-shell.service, the root /usr/share/grassfield/shell) and the
+# security process (grassfield-security.service, security.qml in that directory, with the polkit agent and the secret
+# sheets). The picker is a UI feature: its target `picker` is SharePicker.qml's, made by the UI root, named nowhere in the
+# security process; so PEER_UNIT is the UI's unit, the one that runs the instance `qs ipc -p SHELL_DIR` reaches.
+def exec_start(name):
+    with open(os.path.join(root, "packaging/systemd", name)) as f:
+        return [line[len("ExecStart="):].strip() for line in f if line.startswith("ExecStart=")]
+
+
+check(exec_start(picker.PEER_UNIT) == ["/usr/bin/qs -n -p " + picker.SHELL_DIR]
+      and exec_start("grassfield-security.service") == ["/usr/bin/qs -n -p " + picker.SHELL_DIR + "/security.qml"]
+      and 'command = "qs ipc -p SHELL_DIR call picker request".split()' in source,
+      "PEER_UNIT (%s) runs the instance the stand-in asks (qs ipc -p %s), the security process another one"
+      % (picker.PEER_UNIT, picker.SHELL_DIR))
+targets, named_by_security = [], []
+for base, dirs, files in os.walk(os.path.join(root, "shell")):
+    for name in files:
+        if not name.endswith((".qml", ".js")):
+            continue
+        path = os.path.join(base, name)
+        rel = os.path.relpath(path, os.path.join(root, "shell"))
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        targets += [rel] * len(re.findall(r'^\s*target:\s*"picker"\s*$', text, re.M))
+        if (rel == "security.qml" or rel.startswith("security" + os.sep)) and "SharePicker" in text:
+            named_by_security.append(rel)
+with open(os.path.join(root, "shell/shell.qml"), encoding="utf-8") as f:
+    ui_root = f.read()
+check(targets == [os.path.join("services", "SharePicker.qml")] and "SharePicker." in ui_root and not named_by_security,
+      "the target picker is SharePicker.qml's alone, made by the UI root and named nowhere in the security process %r %r"
+      % (targets, named_by_security))
 check(source.count("    conn = accept_shell(server)\n") == 1 and "server.accept()" not in source.replace("            conn, _ = server.accept()\n", ""),
       "main takes the shell's connection only through accept_shell (no other accept)")
 import shutil
