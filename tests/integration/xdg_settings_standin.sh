@@ -214,7 +214,10 @@ Exec=$tmp/bin/fake-firefox %u
 Name=New
 [Desktop Entry]
 Name=Again"
-for id in nxpath nxtry dupindent dupindent2 dupgroup dupgroup2; do
+# LOW-D: the second header with trailing whitespace is still the group (GLib trims the line)
+printf '%s\nExec=%s/bin/fake-firefox %%u\n[Desktop Entry]  \nExec=xdg-open %%u\n' "$ENTRY_HEAD" "$tmp" >"$tmp/share/applications/duptrail.desktop"
+printf '%s\nExec=%s/bin/fake-firefox %%u\n[Desktop Entry]\t\nName=Again\n' "$ENTRY_HEAD" "$tmp" >"$tmp/share/applications/duptrail2.desktop"
+for id in nxpath nxtry dupindent dupindent2 dupgroup dupgroup2 duptrail duptrail2; do
   reset_session
   before=$(snap)
   PATH=$tmp/nxbin:$tmp/bin:$PATH xdg-settings set default-web-browser "$id.desktop" >/dev/null 2>&1

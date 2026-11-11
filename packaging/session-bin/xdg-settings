@@ -291,7 +291,7 @@ usable_browser() { # id
       D) dup=1 ;;
     esac
   done < <(awk '
-    { sub(/^[ \t]+/, "") }
+    { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, "") }
     /^\[/ { g = ($0 == "[Desktop Entry]"); if (g && ++n > 1) d = 1; next }
     g && /^Exec[ \t]*=/ { if (++e > 1) d = 1; else { v = $0; sub(/^Exec[ \t]*=[ \t]*/, "", v); ex = v } }
     g && /^TryExec[ \t]*=/ { if (++t > 1) d = 1; else { v = $0; sub(/^TryExec[ \t]*=[ \t]*/, "", v); tx = v } }
