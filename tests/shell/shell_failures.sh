@@ -8,6 +8,11 @@
 #     the shell: a counter that cannot count counts nothing (the restarts go on);
 #   - the only command it runs is `systemctl --user stop grassfield-shell.service`; nothing unlocks;
 #   - mutants: without the session-gone check a logout counts; with the threshold moved the second failure stops.
+#   - `--try-again` (ADR-0041 S4, safe mode's Try Again from the security process): the ledger and the flag go before the
+#     start, the start limit is reset, the unit is started with `systemctl --user`; a start that fails puts the flag back;
+#     no runtime directory or a linked one leaves the files alone; an unknown argument does nothing; the counter's own path
+#     (no argument, the unit's) still never starts or resets anything; mutants: the flag removed after the start, the flag
+#     not put back.
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 tmp=$(mktemp -d "${GRASSFIELD_TEST_TMP:-${TMPDIR:-/tmp}}/shell-failures.XXXXXX")
@@ -24,6 +29,13 @@ SH
 cat >"$tmp/bin/systemctl" <<'SH'
 #!/bin/sh
 echo "systemctl $*" >>"$FAKE_LOG"
+case " $* " in
+  *" start "*)
+    # Whether the flag was still there when the start was asked (Try Again removes it first).
+    if [ -e "${XDG_RUNTIME_DIR:-/nonexistent}/grassfield/shell-safe-mode" ]; then echo "flag-at-start=1" >>"$FAKE_LOG"; else echo "flag-at-start=0" >>"$FAKE_LOG"; fi
+    [ "${FAKE_START_FAILS:-0}" = 1 ] && exit 5
+    ;;
+esac
 [ "${FAKE_STOP_FAILS:-0}" = 1 ] && exit 1
 exit 0
 SH
@@ -129,6 +141,51 @@ fresh
 run 10 GRASSFIELD_SHELL_FAIL_COUNT=0 GRASSFIELD_SHELL_FAIL_WINDOW=abc; run 11 GRASSFIELD_SHELL_FAIL_COUNT=0 GRASSFIELD_SHELL_FAIL_WINDOW=abc
 desc="nonsense values fall back to the defaults (3 in 600 s): two failures stop nothing"
 check test "$(stops)" = 0 -a "$(ledger)" = "10 11 "
+# 5b. Try Again (ADR-0041 S4): `--try-again`, run by the security process's safe-mode notice.
+tryagain() { # [VAR=value...] -> exit code in $rc, stderr in $err
+  rc=0
+  err=$(env -i PATH="$tmp/bin:/usr/bin:/bin" XDG_RUNTIME_DIR="$tmp/run" FAKE_LOG="$tmp/log" "$@" sh "$tmp/lib/grassfield-shell-failed" --try-again 2>&1 >/dev/null) || rc=$?
+  return 0
+}
+loop() { fresh; run 1; run 2; run 3; : >"$tmp/log"; }
+loop
+tryagain
+desc="Try Again: exit 0, the failure ledger and the safe-mode flag are gone"
+check test "$rc" = 0 -a ! -e "$tmp/run/grassfield/shell-failures" -a ! -e "$tmp/run/grassfield/shell-safe-mode"
+desc="Try Again: resets the unit's start limit, then starts it, as the user, nothing else (no stop)"
+check test "$(grep -v '^flag-at-start=' "$tmp/log" | tr '\n' '|')" = "systemctl --user reset-failed grassfield-shell.service|systemctl --user start grassfield-shell.service|"
+desc="Try Again: the flag is gone before the start is asked (a flag the next loop writes is never removed)"
+check grep -qx "flag-at-start=0" "$tmp/log"
+desc="Try Again: says it in the journal"
+check bash -c '[[ $1 == *"grassfield-shell started"* ]]' _ "$err"
+run 100; run 101
+desc="Try Again: the next loop is counted from zero (two failures after it stop nothing)"
+check test "$(ledger)" = "100 101 " -a "$(stops)" = 0
+loop
+tryagain FAKE_START_FAILS=1
+desc="Try Again whose start fails: exit 1, the flag is back (the notice stays), the ledger stays cleared"
+check test "$rc" = 1 -a -f "$tmp/run/grassfield/shell-safe-mode" -a ! -e "$tmp/run/grassfield/shell-failures"
+desc="Try Again whose start fails: the flag is the user's own file (0600) and the journal says so"
+check bash -c '[ "$(stat -c %a "$1")" = 600 ] && [[ $2 == *"did not start (exit 5)"* ]]' _ "$tmp/run/grassfield/shell-safe-mode" "$err"
+fresh
+rc=0
+err=$(env -i PATH="$tmp/bin:/usr/bin:/bin" FAKE_LOG="$tmp/log" sh "$tmp/lib/grassfield-shell-failed" --try-again 2>&1 >/dev/null) || rc=$?
+desc="Try Again without XDG_RUNTIME_DIR still starts the shell and says the files were left alone"
+check bash -c '[ "$1" = 0 ] && grep -qx "systemctl --user start grassfield-shell.service" "$2" && [[ $3 == *"no runtime directory"* ]]' _ "$rc" "$tmp/log" "$err"
+fresh
+mkdir -p "$tmp/elsewhere"
+printf 'keep\n' >"$tmp/elsewhere/shell-safe-mode"
+ln -s "$tmp/elsewhere" "$tmp/run/grassfield"
+tryagain
+desc="Try Again with a linked runtime directory removes nothing through the link"
+check test "$(cat "$tmp/elsewhere/shell-safe-mode")" = keep
+rm -f "$tmp/run/grassfield"
+fresh
+rc=0
+err=$(env -i PATH="$tmp/bin:/usr/bin:/bin" XDG_RUNTIME_DIR="$tmp/run" FAKE_LOG="$tmp/log" GRASSFIELD_SHELL_FAIL_NOW=5 sh "$tmp/lib/grassfield-shell-failed" --tryagain 2>&1 >/dev/null) || rc=$?
+desc="an unknown argument does nothing (exit 2, no ledger, no systemctl)"
+check bash -c '[ "$1" = 2 ] && [ ! -s "$2" ] && [ ! -e "$3" ]' _ "$rc" "$tmp/log" "$tmp/run/grassfield/shell-failures"
+
 # 6. Static: the unit starts this script through OnFailure= of the shell, hardened, installed by the PKGBUILD.
 u=$root/packaging/systemd/grassfield-shell-failed.service
 desc="grassfield-shell.service names the counter as its only OnFailure= (ADR-0041 S2: Omarchy's sleep lock is armed by grassfield-security.service, which holds the inhibitor), with the SQ-2 A backstop (10 starts in 5 minutes)"
@@ -145,8 +202,17 @@ desc="the sandbox keeps what the stop needs (AF_UNIX for the manager's private s
 check bash -c 'grep -qx "RestrictAddressFamilies=AF_UNIX" "$1" && grep -qx "ProtectHome=read-only" "$1" && grep -q "block that request" "$1"' _ "$u"
 desc="the PKGBUILD installs the unit, the script (from packaging/bin) and session-gone next to it"
 check bash -c 'grep -q "for unit in .*shell-failed" "$1" && grep -q "packaging/bin\" -maxdepth 1 -type f -exec install -m755 -t \"\$pkgdir/usr/lib/grassfield/\"" "$1" && grep -q "packaging/systemd/session-gone\" \"\$pkgdir/usr/lib/grassfield/session-gone\"" "$1"' _ "$root/packaging/arch/PKGBUILD"
-desc="the script asks session-gone next to itself and never calls start, reset-failed, kill, unlock or qs"
-check bash -c 'grep -q "\$(dirname \"\$0\")/session-gone" "$1" && ! grep -v "^#" "$1" | grep -q -E "systemctl --user (start|reset-failed|kill|restart)|unlock|\bqs\b"' _ "$root/packaging/bin/grassfield-shell-failed"
+# The counter's own path is the script without its `--try-again` block (from its `if` line to the first `fi` at the start of
+# a line): there, no start, reset-failed, kill, restart, unlock or qs; the block itself starts and resets the shell's unit
+# with `systemctl --user` and nothing else.
+awk '/^if \[ "\$\{1:-\}" = "--try-again" \]; then$/ { skip = 1 } !skip { print } skip && /^fi$/ { skip = 0 }' "$root/packaging/bin/grassfield-shell-failed" >"$tmp/counter-path"
+awk '/^if \[ "\$\{1:-\}" = "--try-again" \]; then$/ { on = 1 } on { print } on && /^fi$/ { exit }' "$root/packaging/bin/grassfield-shell-failed" >"$tmp/try-again-path"
+desc="the script asks session-gone next to itself and, on the counter's path, never calls start, reset-failed, kill, unlock or qs"
+check bash -c '[ -s "$2" ] && grep -q "\$(dirname \"\$0\")/session-gone" "$1" && ! grep -v "^#" "$1" | grep -q -E "systemctl --user (start|reset-failed|kill|restart)|unlock|\bqs\b"' _ "$tmp/counter-path" "$tmp/try-again-path"
+desc="the --try-again block runs exactly one reset-failed and one start of grassfield-shell.service (as the user), and no stop, kill, restart, unlock or qs"
+check bash -c '[ "$(grep -c -E "systemctl --user (reset-failed|start) grassfield-shell.service" "$1")" = 2 ] && [ "$(grep -o -E "systemctl --user [a-z-]+" "$1" | sort -u | tr "\n" " ")" = "systemctl --user reset-failed systemctl --user start " ] && ! grep -q -E "unlock|\bqs\b|\bkill\b|session-gone" "$1"' _ "$tmp/try-again-path"
+desc="the unit runs the counter with no argument (Try Again is the security process's, never the unit's)"
+check grep -qx "ExecStart=/usr/lib/grassfield/grassfield-shell-failed" "$u"
 # 7. Mutants: each must change the decisions.
 mutant() { # <name> <sed expression>
   sed "$2" "$root/packaging/bin/grassfield-shell-failed" >"$tmp/lib/mutant-$1"
@@ -172,4 +238,17 @@ mutant no-prune 's|now - \$1 <= w|1|'
 fresh; runm no-prune 0; runm no-prune 300; runm no-prune 700
 desc="mutant: without the window the failure of 700 s ago still counts and the third stops (the real script forgets it)"
 check test "$(stops)" = 1
+tryagainm() { # <name> [VAR=value...]
+  local name=$1
+  shift
+  env -i PATH="$tmp/bin:/usr/bin:/bin" XDG_RUNTIME_DIR="$tmp/run" FAKE_LOG="$tmp/log" "$@" sh "$tmp/lib/mutant-$name" --try-again >/dev/null 2>&1 || true
+}
+mutant flag-after-start 's|^    rm -f "$dir/shell-failures" "$dir/shell-failures.new" "$dir/shell-safe-mode" "$dir/shell-safe-mode.new"$|    :|; s|^    say "Try Again: grassfield-shell started (the failure ledger and the safe-mode flag cleared)"$|    rm -f "$dir/shell-failures" "$dir/shell-safe-mode"|'
+loop; tryagainm flag-after-start
+desc="mutant: the flag removed after the start is caught (the start must find it gone)"
+check grep -qx "flag-at-start=1" "$tmp/log"
+mutant no-flag-back 's|^    printf .try-again %s.n. "$rc" >"$dir/shell-safe-mode.new" \&\& mv -f "$dir/shell-safe-mode.new" "$dir/shell-safe-mode"$|    :|'
+loop; tryagainm no-flag-back FAKE_START_FAILS=1
+desc="mutant: a failed start that does not put the flag back is caught (the notice would never come back)"
+check test ! -e "$tmp/run/grassfield/shell-safe-mode"
 exit "$fail"

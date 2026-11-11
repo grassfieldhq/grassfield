@@ -28,10 +28,45 @@
 # window, default 600), GRASSFIELD_SHELL_FAIL_COUNT (the threshold, default 3), GRASSFIELD_SHELL_FAIL_NOW (the monotonic
 # time to use instead of /proc/uptime). The unit clears all three (UnsetEnvironment=), so in the session they are never
 # read: nothing in the user manager's environment can lower the threshold (opus security review of b1d826b).
+#
+# `grassfield-shell-failed --try-again` (ADR-0041 step 1, S4): safe mode's Try Again, run by the security process's notice
+# (shell/security/safemode/SafeMode.qml) as the user, never by the unit (its ExecStart= has no argument). In this order: the
+# ledger and the flag are removed (the next loop is counted from zero, and a flag that loop writes is never removed here),
+# the unit's failed state and start limit are reset (a unit failed at its limit refuses a start until then), and
+# grassfield-shell.service is started with the user's own `systemctl --user`, waited for within 30 s (Type=simple: it
+# returns once the shell runs, or fails: a dependency, the session ending). A start that fails puts the flag back, so the
+# notice stays. Exit 0 started, 1 not started. It restarts nothing by itself and nothing calls it in a loop: a shell that
+# fails again is the counter's to stop again (above), and the notice comes back. Nothing here unlocks.
 set -u
 me=grassfield-shell-failed
 say() { echo "$me: $*" >&2; }
 digits() { case ${1:-} in '' | *[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+if [ "${1:-}" = "--try-again" ]; then
+  dir=
+  if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR/grassfield" ] && [ ! -L "$XDG_RUNTIME_DIR/grassfield" ]; then
+    dir=$XDG_RUNTIME_DIR/grassfield
+    rm -f "$dir/shell-failures" "$dir/shell-failures.new" "$dir/shell-safe-mode" "$dir/shell-safe-mode.new"
+  else
+    say "Try Again: no runtime directory: the ledger and the flag are left alone"
+  fi
+  systemctl --user reset-failed grassfield-shell.service >/dev/null 2>&1
+  if timeout -k 2 30 systemctl --user start grassfield-shell.service; then
+    say "Try Again: grassfield-shell started (the failure ledger and the safe-mode flag cleared)"
+    exit 0
+  else
+    rc=$?
+  fi
+  if [ -n "$dir" ]; then
+    umask 077
+    printf 'try-again %s\n' "$rc" >"$dir/shell-safe-mode.new" && mv -f "$dir/shell-safe-mode.new" "$dir/shell-safe-mode"
+  fi
+  say "Try Again: grassfield-shell did not start (exit $rc): the safe-mode flag is back"
+  exit 1
+fi
+if [ $# -gt 0 ]; then
+  say "unknown argument: nothing done"
+  exit 2
+fi
 window=${GRASSFIELD_SHELL_FAIL_WINDOW:-600}
 digits "$window" || window=600
 count_max=${GRASSFIELD_SHELL_FAIL_COUNT:-3}

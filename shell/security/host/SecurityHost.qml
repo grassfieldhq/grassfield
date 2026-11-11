@@ -7,6 +7,7 @@ import qs.services
 import qs.security
 import qs.security.idle
 import qs.security.lock
+import qs.security.safemode
 
 // What the security process hosts (ADR-0041 step 1, S2 and S3; ADR-0010 "Separate security process", the owner's SQ-1 B):
 // everything that locks, together: the lock (Lock, with its crash-recovery marker, the stranded-lock takeover and the
@@ -14,7 +15,9 @@ import qs.security.lock
 // PrepareForSleep watcher (inside Idle); since S3 the session's one polkit agent and the secret sheets fed by
 // grassfield-prompter (ADR-0035 D-9), with the one queue they share (SheetHost.qml, created at run time below).
 // Instantiated by shell/security.qml only; the UI (shell/shell.qml) never instantiates this file, Lock, Idle or the sheets,
-// and reaches the lock over IPC on the security instance (`lock lock`, `lock lid`, `idle inhibit`). S4 adds safe mode.
+// and reaches the lock over IPC on the security instance (`lock lock`, `lock lid`, `idle inhibit`). Since S4, safe mode: the
+// notice that the UI's unit stopped after a crash loop, with Try Again and Log Out (../safemode/SafeMode.qml), never over the
+// lock or a sheet.
 // The sheets read the session from this process alone (SheetSession, bound below from Lock and Idle): nothing the UI
 // writes or answers reaches their rules. What the UI knows of them goes out with the lock state (Lock.authorizing,
 // Lock.securityKeyboard: booleans).
@@ -160,6 +163,17 @@ Scope {
         target: Lock
         property: "securityKeyboard"
         value: root.sheets !== null && root.sheets.securityKeyboard === true
+    }
+
+    // ---- Safe mode (ADR-0041 S4) ----
+    // The notice that the UI's unit stopped after a crash loop (Try Again, Log Out). It reads the lock and the sheets of this
+    // process only: any lock state but unlocked (`locking` included, so the notice is gone before the compositor even draws
+    // the lock) and the start-up probe of a stranded or foreign lock count as locked; a polkit or secret sheet open, shown or
+    // held, or its key sink, counts as a sheet up. Either one destroys the notice and refuses its actions; both read true
+    // inside SafeMode until bound. No sheets made: none up.
+    SafeMode {
+        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== "unlocked"
+        sheetUp: root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)
     }
 
     // The state and the beat for `security heartbeat` (shell/security.qml): "<public state> <sequence>".
