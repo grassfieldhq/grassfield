@@ -558,8 +558,8 @@ plan_uninstall() {
     " 4. themes (root)       $GF_SDDM_DROPIN supprime ; si le theme de demarrage est celui de Grassfield : retour a celui memorise (sinon omarchy) et reconstruction de l image de demarrage d Omarchy"
   say " 5. remove (root)      pacman -Rns of the installed ones among: ${GF_ALL_PKGS[*]} (their pre_remove removes [grassfield] and the key too)" \
     " 5. retrait (root)      pacman -Rns de ceux installes parmi : ${GF_ALL_PKGS[*]} (leur pre_remove retire aussi [grassfield] et la cle)"
-  say " 6. session files      grassfield-portals.conf, grassfield-cursors-custom and the compositor cache are deleted; the system group grassfield-update is removed (root) when no file on any local filesystem is owned by it (your own files it touched are handed back to your group first). ~/.config/grassfield, ~/.config/grassfield-mimeapps.list and ~/.local/state/grassfield are KEPT (your settings; the final message prints them and the one command that deletes them)" \
-    " 6. fichiers de session grassfield-portals.conf, grassfield-cursors-custom et le cache du compositeur sont supprimes ; le groupe systeme grassfield-update est retire (root) si aucun fichier d un systeme de fichiers local ne lui appartient (tes propres fichiers qu il a touches reviennent d abord a ton groupe). ~/.config/grassfield, ~/.config/grassfield-mimeapps.list et ~/.local/state/grassfield sont GARDES (tes reglages ; le message final les indique avec la commande qui les supprime)"
+  say " 6. session files      grassfield-portals.conf, grassfield-cursors-custom and the compositor cache are deleted. ~/.config/grassfield, ~/.config/grassfield-mimeapps.list and ~/.local/state/grassfield are KEPT (your settings; the final message prints them and the one command that deletes them). The system group grassfield-update is kept too, as Arch does for system groups" \
+    " 6. fichiers de session grassfield-portals.conf, grassfield-cursors-custom et le cache du compositeur sont supprimes. ~/.config/grassfield, ~/.config/grassfield-mimeapps.list et ~/.local/state/grassfield sont GARDES (tes reglages ; le message final les indique avec la commande qui les supprime). Le groupe systeme grassfield-update est conserve aussi, comme Arch le fait pour les groupes systeme"
   say ' 7. leftovers (root)   a key still in pacman; pacman.conf from this script'"'"'s copy if only our two lines remain; the script'"'"'s copies' \
     ' 7. restes (root)       une cle encore dans pacman ; pacman.conf depuis la copie de ce script s il ne reste que nos deux lignes ; les copies du script'
   say "Log: $LOG" "Journal : $LOG"
@@ -921,61 +921,6 @@ remove_session_files() {
   else note 'no session-only file to remove' 'aucun fichier propre a la session a retirer'; fi
 }
 
-# Mount points of the local (block device) filesystems; never proc, sys, dev or run.
-local_mounts() {
-  awk '$1 ~ /^\/dev\// && $2 !~ /^\/(proc|sys|dev|run)(\/|$)/ { print $2 }' "$GF_ROOT/proc/self/mounts" 2>/dev/null | sed 's/\\040/ /g' | LC_ALL=C sort -u
-}
-
-# Root's search of every local filesystem for files owned by a gid (one per line, up to 20).
-gid_files() { # <gid>
-  local m
-  while IFS= read -r m; do
-    [[ -n $m ]] || continue
-    as_root find "$m" -xdev -gid "$1" -print 2>&1 | { grep '^/' || true; }
-  done < <(local_mounts) | head -n 20
-}
-
-# The migrations' unit runs with the group as its primary group (grassfield-update-helper, --gid=), so what it creates in a
-# person's home (~/.local/state/omarchy/migrations/*, and whatever a migration writes there) carries its gid. Those files go
-# back to the person's own primary group before the group is removed.
-regroup_home_files() { # <gid>
-  local name pw uid pgid home
-  while IFS=: read -r name pw uid pgid _ home _; do
-    [[ $uid =~ ^[0-9]+$ && $uid != 0 && $pgid =~ ^[0-9]+$ && $pgid != "$1" && -d $home ]] || continue
-    as_root find "$home" -xdev -user "$uid" -gid "$1" -exec chgrp -h "$pgid" -- {} + >/dev/null 2>&1 || true
-  done <"$GF_ROOT/etc/passwd"
-}
-
-# The primary group of grassfield-update-migrate.service is created by a package's sysusers.d file (no member), and pacman never
-# removes a group. It goes once no Grassfield package is installed, no sysusers.d file still names it, nobody is a member or has it
-# as primary group, no file on any local filesystem is owned by its gid (the person's own files it touched are handed back first)
-# and no file in /etc outside the group database names it. Anything left: the group is kept, and the message says what.
-remove_update_group() {
-  local g=grassfield-update entry gid members why='' left
-  entry=$(awk -F: -v g="$g" '$1 == g' "$GF_ROOT/etc/group" 2>/dev/null || true)
-  [[ -n $entry ]] || return 0
-  IFS=: read -r _ _ gid members <<<"$entry"
-  if [[ -n $(pacman -Qq 2>/dev/null | grep '^grassfield-' || true) ]]; then why='a Grassfield package is still installed'
-  elif grep -rqsw -- "$g" "$GF_ROOT/usr/lib/sysusers.d" "$GF_ROOT/etc/sysusers.d"; then why='a sysusers.d file still names it'
-  elif [[ -n $members ]]; then why="it has members ($members)"
-  elif awk -F: -v gid="$gid" '$4 == gid { f = 1 } END { exit !f }' "$GF_ROOT/etc/passwd" 2>/dev/null; then why='an account has it as primary group'
-  else
-    say "Searching every local filesystem for files owned by gid $gid (root)" "Recherche, sur chaque systeme de fichiers local, des fichiers du gid $gid (root)"
-    regroup_home_files "$gid"
-    left=$(gid_files "$gid")
-    if [[ -n $left ]]; then why="files are still owned by gid $gid, e.g. $(head -n 3 <<<"$left" | tr '\n' ' ')"
-    elif [[ -n $(grep -rIlsw --exclude='group*' --exclude='gshadow*' --exclude-dir=gnupg -- "$g" "$GF_ROOT/etc" 2>/dev/null | head -n 1) ]]; then
-      why='a file in /etc still names it'
-    fi
-  fi
-  if [[ -n $why ]]; then
-    note "the system group $g is kept: $why" "le groupe systeme $g est conserve : $why"
-    return 0
-  fi
-  if as_root groupdel "$g"; then ok "system group $g removed" "groupe systeme $g retire"
-  else soft_fail "could not remove the system group $g: run  sudo groupdel $g" "groupe systeme $g non retire : lance  sudo groupdel $g"; fi
-}
-
 # What the uninstall keeps, where it is, and the one command that deletes it (quoted: a copy-paste survives spaces).
 kept_message() {
   local cfg=${XDG_CONFIG_HOME:-$HOME/.config} state=${XDG_STATE_HOME:-$HOME/.local/state} p
@@ -1014,9 +959,8 @@ do_uninstall() {
     if ((YES)); then as_root pacman -Rns --noconfirm "${pkgs[@]}"; else as_root pacman -Rns "${pkgs[@]}"; fi
   else note 'no Grassfield package is installed' 'aucun paquet Grassfield n est installe'; fi
 
-  step 'Session files and the update group' 'Fichiers de session et groupe de mise a jour'
+  step 'Session files' 'Fichiers de session'
   remove_session_files
-  remove_update_group
 
   step 'Leftovers' 'Restes'
   if (($(sections) > 0)); then
@@ -1051,6 +995,10 @@ do_uninstall() {
   say '== Done: stock Omarchy ==' '== Termine : Omarchy d origine =='
   say '  Restart the computer once. Omarchy was never modified, so nothing else is needed.' '  Redemarre l ordinateur une fois. Omarchy n a jamais ete modifie : rien d autre a faire.'
   kept_message
+  # Arch's rule: a package never removes a system group (a reused gid would give access to what it left behind).
+  if awk -F: '$1 == "grassfield-update" { f = 1 } END { exit !f }' "$GF_ROOT/etc/group" 2>/dev/null; then
+    say '  The system group grassfield-update is kept, as Arch does for system groups.' '  Le groupe systeme grassfield-update est conserve, comme Arch le fait pour les groupes systeme.'
+  fi
   say "  Log: $LOG" "  Journal : $LOG"
   if ((${#SOFT_FAILS[@]})); then
     printf '\n'

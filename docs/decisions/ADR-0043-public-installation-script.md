@@ -216,11 +216,12 @@ Owner decisions, closest to macOS with no technical step for the user:
   system, and asks "Install them now? [Y/n]" (`--yes` answers yes). On yes it runs Omarchy's own update unattended (`-y`: the
   reboot is only a printed line), then checks again. On no, or if the update fails or leaves updates pending, it stops with the
   former message and changes nothing. `--dry-run` reports it and runs nothing.
-- **`--uninstall` leaves nothing the user did not choose to keep.** It removes the `grassfield-update` system group once no
-  package, sysusers.d file, member, account, owned file or `/etc` file needs it, and the session-only files
+- **`--uninstall` leaves nothing the user did not choose to keep.** It removes the session-only files
   (`grassfield-portals.conf`, the generated pointer theme, the compositor cache). It keeps
   `~/.config/grassfield`, `~/.config/grassfield-mimeapps.list` (the person's default-app choices) and `~/.local/state/grassfield`
   (settings and state) and prints where they are and the one
-  command that deletes them.
+  command that deletes them. It keeps the `grassfield-update` system group and says so: Arch's convention is that packages never
+  remove system users or groups, because a reused gid would give access to files the group left behind (a removal with a search
+  of the machine was written, reviewed and dropped for that reason).
 - **`plymouthd.confe`.** Plymouth's own `plymouth-set-default-theme` leaves it (`sed -ie`); every call the script makes removes the
   one it created and never touches one that was already there.

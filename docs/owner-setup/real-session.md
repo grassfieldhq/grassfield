@@ -441,8 +441,9 @@ ls ~/.config/autostart/               # delete only entries you added through th
 ```
 
 System side: `pacman` never removes the `grassfield-update` system group that a package's sysusers.d file created (the primary
-group of `grassfield-update-migrate.service`, no member). The installer's `--uninstall` removes it once no package, sysusers.d
-file, member, account or owned file needs it; after a plain `pacman -Rns`, remove it yourself with `sudo groupdel grassfield-update`.
+group of `grassfield-update-migrate.service`, no member). The installer's `--uninstall` keeps it too and says so, as Arch does for system groups (a reused gid would give access to files the
+group left behind); it is invisible and harmless. To remove it anyway, once you have checked that
+`sudo find / -xdev -gid $(getent group grassfield-update | cut -d: -f3)` finds nothing: `sudo groupdel grassfield-update`.
 `plymouth-set-default-theme` leaves `/etc/plymouth/plymouthd.confe` (its own `sed -ie`) after each call; if you switched the boot
 theme by hand, `sudo rm /etc/plymouth/plymouthd.confe` once you have checked it holds nothing you wrote.
 

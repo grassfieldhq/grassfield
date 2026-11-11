@@ -547,13 +547,16 @@ phase_compare() {
   local -a noise=(
     $'^/etc/\\.updated$\tpacman'"'"'s ConditionNeedsUpdate marker, rewritten by every package transaction (the update step of the drill already ran them)'
     $'^/etc/pacman\\.d/gnupg/(trustdb\\.gpg|pubring\\.gpg~)$\tpacman keyring: adding and deleting a key rewrites the trust database and the keyring backup'
-    $'^/etc/(group|gshadow)-$\tshadow-utils backup copies, written at every account or group change (groupdel)'
+    $'^/etc/(group|gshadow)-$\tshadow-utils backup copies, written at every account or group change (a sysusers file of the package creates the group)'
     "^$h/\\.config/dconf/user\$"$'\tGNOME settings database, rewritten by the session at every start'
     "^$h/\\.config/ibus/bus/"$'\tIBus socket files named after the machine id and the display, new at every session start'
     "^$h/\\.config/herdr/"$'\tlog of the terminal multiplexer that Omarchy starts, appended at every session'
     "^$h/\\.local/share/gvfs-metadata/"$'\tGVfs metadata journal, rolled over by the session'
   )
   # The user's own Grassfield settings and state: kept by design, documented (docs/install.md, docs/owner-setup/real-session.md section 9)
+  # The grassfield-update system group (created by a package's sysusers file): Arch never removes a system group, a reused gid
+  # would give access to what it left behind. Its lines in the group and shadow databases stay.
+  local kept_group='^/etc/(group|gshadow)$'
   local kept="^$h/\\.(config|local/state)/grassfield(/|\$)|^$h/\\.config/grassfield-mimeapps\\.list\$"
   local rules="" r
   for r in "${noise[@]}"; do rules+="$r"$'\n'; done
@@ -565,6 +568,8 @@ phase_compare() {
     why=$(awk -F'\t' -v p="$path" 'p ~ $1 { print $2; exit }' "$(d records/allowlist.tsv)")
     if [[ -n $why ]]; then
       printf '%-14s %-70s %s  [system noise: %s]\n' "$kind" "$path" "$origin" "$why"
+    elif [[ $path =~ $kept_group ]]; then
+      printf '%-14s %-70s %s  [kept by design (Arch convention for system groups)]\n' "$kind" "$path" "$origin"
     elif [[ $path =~ $kept ]]; then
       printf '%-14s %-70s %s  [kept by design (documented)]\n' "$kind" "$path" "$origin"
     else

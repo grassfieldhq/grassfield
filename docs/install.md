@@ -78,9 +78,9 @@ prompt). At the login screen choose **Grassfield (uwsm)** (it is the default). U
 - Remove Grassfield completely: run the script again with `--uninstall` (`bash grassfield-install.sh --uninstall`). It takes a
   snapshot, turns Grassfield updates off, switches the session back to Omarchy, puts the previous login and boot screens back,
   removes the packages, the `[grassfield]` repository and the key, deletes the files that only matter inside Grassfield (portal
-  link, pointer theme, cache) and the `grassfield-update` system group once nothing on the machine is owned by it. Your Grassfield
+  link, pointer theme, cache). Your Grassfield
   settings and state (including the session's default-app list) are kept: the script prints where they are and the one command
-  that deletes them. Restart once.
+  that deletes them. The system group `grassfield-update` is kept, as Arch does for system groups. Restart once.
 
 Run the install again at any time to repair or update: it never duplicates anything.
 
@@ -157,9 +157,8 @@ Les mises à jour arrivent ensuite depuis Réglages > Mise à jour.
 - Retirer Grassfield complètement : relance le script avec `--uninstall` (`bash grassfield-install.sh --uninstall`). Il prend un
   snapshot, désactive les mises à jour Grassfield, remet la session sur Omarchy, remet les écrans de connexion et de démarrage
   précédents, retire les paquets, le dépôt `[grassfield]` et la clé, supprime les fichiers qui ne servent qu'à Grassfield
-  (lien des portails, thème de pointeur, cache) et le groupe système `grassfield-update` une fois que rien sur la machine ne lui
-  appartient. Tes réglages et ton état Grassfield (dont la liste des applications par défaut de la session) sont gardés : le script
-  indique où ils sont et la commande qui les supprime.
-  Redémarre une fois.
+  (lien des portails, thème de pointeur, cache). Tes réglages et ton état Grassfield (dont la liste des applications par défaut de la session) sont gardés : le script
+  indique où ils sont et la commande qui les supprime. Le groupe système `grassfield-update` est conservé, comme Arch le fait pour
+  les groupes système. Redémarre une fois.
 
 Relance l'installation à tout moment pour réparer ou mettre à jour : rien n'est jamais dupliqué.
