@@ -418,6 +418,7 @@ fresh; echo 4.0.0.r7608.g14abc07-1 >"$S/omarchy"; echo 4.0.0.r7608.g14abc07-1 >"
 expect 'Omarchy dev build answered for omarchy too: judged by the dev floor' "$rc" 0
 hasnt 'Omarchy dev build answered for omarchy too: not refused by the release floor' 'older than 4.0.6' "$W/out"
 fresh; echo 4.0.0.r7500.g1234567-1 >"$S/omarchy"; echo 4.0.0.r7500.g1234567-1 >"$S/omarchy-dev"; preflight_case 'Omarchy dev build below its floor, answered for omarchy too' 'older than the oldest one Grassfield was tested on (4.0.0.r7608)'
+hasnt 'Omarchy dev build below its floor, answered for omarchy too: not refused by the release floor' 'older than 4.0.6' "$W/out"
 fresh; rm "$S/omarchy"; preflight_case 'no Omarchy' 'Omarchy is not installed'
 fresh
 cat >"$R/etc/pacman.conf" <<'EOF'
