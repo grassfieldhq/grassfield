@@ -346,6 +346,47 @@ TestCase {
         fuzzyCompare(material.tintAlpha, Tokens.glassMenu, 1e-9);
     }
 
+    // The Dock's shelf (tintAlphaOverride 0.05) as it is really drawn, and the luminance its icons follow (R7-REQ-13, review of 398f94d1: Reduce Transparency over white gave
+    // "alpha drawn 1.00 vs used 0.05"): Appearance.fixedTintAlpha is Material's tintAlpha in every appearance, Reduce Transparency and Increase Contrast state.
+    function test_shelfTintAlphaIsWhatTheShelfDraws() {
+        const tokenAlpha = {true: Tokens.dockTintAlphaDark, false: Tokens.dockTintAlphaLight};
+        const white = {lumMin: 1, lumMax: 1};
+        for (const dark of [true, false]) {
+            for (const reduce of [false, true]) {
+                for (const contrast of [false, true]) {
+                    Appearance.dark = dark;
+                    Appearance.reduceTransparency = reduce;
+                    Appearance.increaseContrast = contrast;
+                    material.glassClass = "";
+                    material.tintAlphaOverride = tokenAlpha[dark];
+                    const label = `${dark ? "dark" : "light"}${reduce ? " reduce transparency" : ""}${contrast ? " increase contrast" : ""}`;
+                    const alpha = Appearance.fixedTintAlpha(tokenAlpha[dark], Appearance.effectiveTransparency);
+                    fuzzyCompare(alpha, material.tintAlpha, 1e-9, `${label}: the alpha drawn`);
+                    if (reduce)
+                        compare(alpha, 1, `${label}: opaque`);
+                    else if (contrast)
+                        verify(alpha >= Tokens.glassContrastFrost, `${label}: frosted ${alpha}`);
+                    else
+                        compare(alpha, tokenAlpha[dark], `${label}: the token alpha`);
+                    const luma = Appearance.surfaceLumaOver(white, alpha);
+                    const tint = GlassTint.luminance(GlassTint.channels(Appearance.colors.materialTint));
+                    if (reduce) {
+                        fuzzyCompare(luma, tint, 1e-9, `${label}: an opaque shelf is its tint over any wallpaper`);
+                        compare(IconModes.surfaceIsDark(!dark, luma, dark, Tokens), dark, `${label}: icons follow the opaque shelf, not the wallpaper`);
+                    } else if (!contrast) {
+                        verify(luma > 0.9, `${label}: over white ${luma}`);
+                    }
+                    verify(IconModes.overWallpaperLook(2, false, Appearance.effectiveTransparency, false, false, 0, Tokens, luma) === (luma >= Tokens.iconModeSurfaceToneThreshold - Tokens.iconModeSurfaceToneHysteresis && luma < Tokens.iconModeClearSmokeSurfaceMax), `${label}: the smoked rule on ${luma}`);
+                }
+            }
+        }
+        Appearance.dark = true;
+        Appearance.reduceTransparency = false;
+        Appearance.increaseContrast = false;
+        material.tintAlphaOverride = -1;
+        material.glassClass = "menu";
+    }
+
     function test_materialFollowsItsClassAndOutput() {
         Appearance.dark = true;
         Appearance.transparency = Tokens.materialDefaultTransparency;

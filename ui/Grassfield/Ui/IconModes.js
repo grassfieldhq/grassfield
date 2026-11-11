@@ -61,7 +61,22 @@ function overWallpaperLook(modeIndex, wallpaper, transparency, dark, solidMateri
     if (transparency >= t.iconModeWallpaperLikeTransparency || (dark && !solidMaterial))
         return true;
     // (4) a glass surface of known mid-to-light tone in the light look: its own tone is where the light look's faint plate vanishes (R7-REQ-13, grey wallpaper under the Dock).
-    return !solidMaterial && surface >= t.iconModeSurfaceToneThreshold && surface < t.iconModeClearSmokeSurfaceMax;
+    // It starts at the BOTTOM of the dark/light hysteresis band (threshold - hysteresis), so that a light-look icon anywhere in the band (surfaceIsDark keeps the light look up
+    // to there) is smoked, as a dark-look one already is (`dark && !solidMaterial` above): the two decisions agree over the whole band.
+    return !solidMaterial && surface >= t.iconModeSurfaceToneThreshold - t.iconModeSurfaceToneHysteresis && surface < t.iconModeClearSmokeSurfaceMax;
+}
+
+// The surface luminance the icons are drawn for, with a hysteresis band around `iconModeClearSmokeSurfaceMax` (also the edge of `glassToneSide`, `iconModeGlassToneLightMin`: the
+// two tokens are one edge, tst_iconmodes): inside the band (edge +- `iconModeSurfaceToneHysteresis`) the side of the edge the previous value `previous` was on is kept, so a surface
+// that drifts across it (a shelf that widens over a wallpaper that is lighter at one end) does not flip the plate and the tone. Outside the band, and without a previous value,
+// the luminance itself. -1 (unknown) stays unknown.
+function heldSurface(previous, luma, t) {
+    if (!(luma >= 0))
+        return luma;
+    const edge = t.iconModeClearSmokeSurfaceMax, h = t.iconModeSurfaceToneHysteresis;
+    if (luma <= edge - h || luma >= edge + h || !(previous >= 0))
+        return luma;
+    return previous < edge ? Math.min(luma, edge - 0.001) : Math.max(luma, edge);
 }
 
 // The opacity of the smoked Clear plate on a glass surface of known luminance `surface` (-1 or undefined: unknown, the base): raised from `base` until the plate (luma `plateLuma`)
@@ -70,8 +85,9 @@ function smokeAlpha(surface, base, plateLuma, t) {
     if (!(surface >= 0) || !(surface > plateLuma))
         return base;
     const effective = (surface + 0.05) / t.iconModeClearPlateMinRatio - 0.05;
+    // Out of reach (a surface so dark that even an opaque plate cannot keep the ratio): the base, the ink carries the contrast there.
     if (effective <= plateLuma)
-        return 1;
+        return base;
     return Math.min(1, Math.max(base, (surface - effective) / (surface - plateLuma)));
 }
 

@@ -635,6 +635,19 @@ TestCase {
                 measured += runScenario(`48px ${dark ? "dark" : "light"} dock wallpaper ${wallpaper}`, dark, panel, failures);
             }
         }
+        // The hysteresis band of the dark/light decision (surface luminance 0.07, 0.10, 0.13, review of 398f94d1): grey wallpapers whose glass lands there in each appearance.
+        // A dark held decision (the dark pass) and a light one (the light pass) must both read.
+        for (const dark of [true, false]) {
+            for (const target of [0.07, 0.10, 0.13]) {
+                const a = dark ? Tokens.dockTintAlphaDark : Tokens.dockTintAlphaLight;
+                const tintLuma = FolderStyle.relativeLuminance(FolderStyle.rgbOf((dark ? Tokens.colorDark : Tokens.colorLight).materialTint));
+                const wl = Math.max(0, (target - a * tintLuma) / (1 - a));
+                const v = wl <= 0.0031308 ? 12.92 * wl : 1.055 * Math.pow(wl, 1 / 2.4) - 0.055;
+                const panel = dockOver(dark, Qt.rgba(v, v, v, 1));
+                testCase.dockLuma = FolderStyle.relativeLuminance([panel.r, panel.g, panel.b]);
+                measured += runScenario(`48px ${dark ? "dark" : "light"} dock band surface ${target}`, dark, panel, failures);
+            }
+        }
         testCase.dockPass = false;
         testCase.dockLuma = -1;
         finishRun(measured, failures);

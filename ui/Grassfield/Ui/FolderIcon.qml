@@ -35,7 +35,7 @@ Item {
     readonly property bool inkDark: icon.inkDark
     readonly property string modeName: icon.effectiveMode
     // The look the shader gives the plate (IconModes.overWallpaperLook): the folder model must repeat it exactly (A2 test_folderModelMatchesTheShader).
-    readonly property bool wallLook: IconModes.overWallpaperLook(IconModes.effect(root.modeName, root.tint).index, root.overWallpaper, Appearance.effectiveTransparency, root.inkDark, root.solidMaterial, 0, Tokens, root.surfaceLuma)
+    readonly property bool wallLook: IconModes.overWallpaperLook(IconModes.effect(root.modeName, root.tint).index, root.overWallpaper, Appearance.effectiveTransparency, root.inkDark, root.solidMaterial, root.overAccent ? (icon.accentBright ? 1 : 2) : 0, Tokens, root.surfaceLuma)
     // The plate under the symbol (FolderPlate): the raw icon's pixels under it are read once per icon file and size bucket
     // (never per colour), the plate of this icon's mode, colour and appearance is computed from them. A plain symbol is
     // shaded against it. undefined until read, null when it could not be (the estimate of FolderStyle serves, and serves

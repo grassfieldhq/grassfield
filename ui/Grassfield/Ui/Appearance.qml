@@ -215,10 +215,19 @@ QtObject {
 
     // The same over a luminance range the caller already has ({lumMin, lumMax}, e.g. Backdrop.wallpaperUnder for a surface that always lies on the wallpaper); -1 for null.
     function surfaceLumaOver(range: var, alpha: real): real {
+        const tintLuma = GlassTint.luminance(GlassTint.channels(colors.materialTint));
+        // An opaque shelf (Reduce Transparency) is its own tint whatever lies behind it.
+        if (alpha >= 1)
+            return tintLuma;
         if (!range || typeof range.lumMin !== "number" || typeof range.lumMax !== "number")
             return -1;
-        const tintLuma = GlassTint.luminance(GlassTint.channels(colors.materialTint));
         return IconModes.surfaceLuma((range.lumMin + range.lumMax) / 2, tintLuma, alpha);
+    }
+
+    // The tint alpha a Material draws when a host fixes it (tintAlphaOverride, the Dock's shelf): the override while the surface is not opaque, the slider's own alpha otherwise
+    // (Reduce Transparency: opaque), then frosted by Increase Contrast (Material.baseTintAlpha and tintAlpha, for a glass class of ""). `transparency`: Appearance.effectiveTransparency.
+    function fixedTintAlpha(override: real, transparency: real): real {
+        return frosted(override >= 0 && transparency > 0 ? override : tintAlpha(transparency));
     }
 
     // Increase Contrast frosts every glass surface (ADR-0024 G-8): a tint alpha raised to glass.contrastFrost.

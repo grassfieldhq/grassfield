@@ -152,7 +152,7 @@ TestCase {
             const a = IconModes.smokeAlpha(surface, base, plate, t);
             verify(a >= base && a <= 1, `alpha ${a} at ${surface}`);
             const over = plate * a + surface * (1 - a);
-            verify(contrast(surface, over) >= t.iconModeClearPlateMinRatio - 1e-9 || a === 1, `plate over ${surface}: ${contrast(surface, over).toFixed(2)}`);
+            verify(contrast(surface, over) >= t.iconModeClearPlateMinRatio - 1e-9 || a === base /* out of reach: the ink carries it */, `plate over ${surface}: ${contrast(surface, over).toFixed(2)}`);
         }
         compare(IconModes.smokeAlpha(-1, base, plate, t), base, "unknown: the base");
         compare(IconModes.smokeAlpha(0, base, plate, t), base, "over black: the base");
@@ -161,6 +161,46 @@ TestCase {
         compare(IconModes.glassToneSide(grey, false, t), 0, "mid-tone glass: no tone");
         compare(IconModes.glassToneSide(1, true, t), 0, "dark look: none");
         compare(IconModes.glassToneSide(-1, false, t), 0, "unknown: none");
+    }
+
+    // The dark/light decision and the smoked-plate range agree over the WHOLE hysteresis band (review of 398f94d1: a light-look icon on a surface of 0.074-0.098 kept the faint
+    // plate that failed on GPU): whatever look the held decision gives, Clear is smoked at and above the bottom of the band, and the model cells sit at 0.07, 0.10 and 0.13.
+    function test_clearLookAgreesAcrossTheBand() {
+        const t = Tokens;
+        const lo = t.iconModeSurfaceToneThreshold - t.iconModeSurfaceToneHysteresis, hi = t.iconModeSurfaceToneThreshold + t.iconModeSurfaceToneHysteresis;
+        for (const surface of [0.06, lo, 0.074, 0.098, t.iconModeSurfaceToneThreshold, 0.115, hi, 0.14, 0.2]) {
+            for (const previous of [true, false]) {
+                const dark = IconModes.surfaceIsDark(previous, surface, !previous, t);
+                compare(IconModes.overWallpaperLook(2, false, 0.25, dark, false, 0, t, surface), true, `Clear is smoked at ${surface} (held dark ${previous}, look dark ${dark})`);
+            }
+        }
+        compare(IconModes.overWallpaperLook(2, false, 0.25, false, false, 0, t, lo - 0.001), false, "below the band the decision is dark, a light-look icon never gets there");
+        compare(IconModes.surfaceIsDark(false, lo - 0.001, false, t), true, "and the decision below the band is dark");
+        compare(t.iconModeGlassToneLightMin, t.iconModeClearSmokeSurfaceMax, "the plate and tone edges are one edge (IconModes.heldSurface holds it)");
+    }
+
+    // The edge of the smoked plate and the light tone (0.60) has a hysteresis band too: a drifting surface keeps the side it was on inside the band (review: a shelf widening from
+    // 640 to 760 px flipped the plate and the tone), leaves it outside, and an unknown surface stays unknown.
+    function test_surfaceEdgeHasHysteresis() {
+        const t = Tokens;
+        const edge = t.iconModeClearSmokeSurfaceMax, h = t.iconModeSurfaceToneHysteresis;
+        let held = edge - 0.2, flips = 0, side = held < edge;
+        for (const l of [0.45, 0.55, 0.59, 0.61, 0.62, 0.6, 0.59, 0.61, 0.64, 0.7, 0.62, 0.6, 0.59, 0.58, 0.55]) {
+            held = IconModes.heldSurface(held, l, t);
+            const now = held < edge;
+            if (now !== side)
+                flips++;
+            side = now;
+        }
+        verify(flips <= 2, `flips ${flips}`);
+        compare(IconModes.heldSurface(edge - 0.1, edge + h * 0.5, t) < edge, true, "inside the band the lower side stays");
+        compare(IconModes.heldSurface(edge + 0.1, edge - h * 0.5, t) >= edge, true, "inside the band the upper side stays");
+        compare(IconModes.heldSurface(edge - 0.1, edge + h + 0.01, t), edge + h + 0.01, "outside the band: the luminance itself");
+        compare(IconModes.heldSurface(-1, edge + 0.01, t), edge + 0.01, "no previous value: the luminance");
+        compare(IconModes.heldSurface(0.5, -1, t), -1, "unknown stays unknown");
+        // the decisions made on the held value
+        compare(IconModes.overWallpaperLook(2, false, 0.25, false, false, 0, t, IconModes.heldSurface(edge - 0.1, edge + 0.01, t)), true);
+        compare(IconModes.glassToneSide(IconModes.heldSurface(edge - 0.1, edge + 0.01, t), false, t), 0);
     }
 
     // One threshold on a stable value with a band: inside the band the previous look stays, so a wallpaper drifting around the threshold does not flip the icons.
