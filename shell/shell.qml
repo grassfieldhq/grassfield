@@ -17,9 +17,6 @@ import qs.overlay
 import qs.platform
 import qs.saver
 import qs.search
-import qs.security
-import qs.security.polkit
-import qs.security.secret
 import qs.services
 import qs.stages
 import qs.switcher
@@ -102,11 +99,6 @@ ShellRoot {
                 WallpaperState.setMotion(output, m[output]);
         }
     }
-    Binding {
-        target: SessionState
-        property: "saverShown"
-        value: saver.shown
-    }
 
     // The Dock's keyboard mode for the tiling popover, which never opens over it (services/TilingHover, TL22).
     Binding {
@@ -115,25 +107,29 @@ ShellRoot {
         value: dock.keyboardMode
     }
 
-    // The authorization state for the modules that must not import shell/security (the clipboard history, ADR-0034 Q11): the
-    // polkit sheet or a secret sheet is open (ADR-0035 D-9).
+    // The polkit sheet and the secret sheets run in the security process with the lock (ADR-0041 S3), never here. What the UI
+    // knows of them comes with the lock state (LockClient, fail closed: true without a fresh state): a sheet is open (the
+    // clipboard history records nothing meanwhile and 2 s after, ADR-0034 Q11; the tiling popover waits), and a sheet or its
+    // key sink may hold the keyboard (the capture toolbar maps nothing as Exclusive meanwhile).
     Binding {
         target: SessionState
         property: "authorizing"
-        value: authAgent.requestActive || secretAgent.requestActive
+        value: LockClient.authorizing
     }
-    // The displays are off (idle, in the security process; true without a fresh state): no device answers a polkit request
-    // nobody can see (ADR-0045 OC-6).
-    Binding {
-        target: SessionState
-        property: "displaysOff"
-        value: LockClient.displaysOff
-    }
-    // A security sheet or its key sink may hold the keyboard: the capture toolbar takes none meanwhile.
     Binding {
         target: SessionState
         property: "securityKeyboard"
-        value: authAgent.queuePresent || secretAgent.requestActive || secretAgent.sinkingKeys
+        value: LockClient.securityKeyboard
+    }
+    // A sheet opened (published fresh): the menus and panels close, as a system dialog dismisses them on macOS (the polkit
+    // agent closed them in process before S3).
+    Connections {
+        target: LockClient
+
+        function onSheetShownChanged(): void {
+            if (LockClient.sheetShown)
+                Popups.close();
+        }
     }
 
     // Apps the person cannot see get less CPU and I/O (ADR-0048). While the overview or the app switcher is open every
@@ -575,25 +571,8 @@ ShellRoot {
     Search {
         id: searchSurface
     }
-    // The one queue of the polkit sheet and the secret sheets (ADR-0035 D-9, master-prompt R12): one sheet on screen at a
-    // time, in arrival order; no sheet takes the keyboard from another.
-    SheetQueue {
-        id: sheetQueue
-        polkitPresent: authAgent.queuePresent
-    }
-    AuthAgent {
-        id: authAgent
-        queue: sheetQueue
-    }
-    // Password prompts of gcr's callers (gnome-keyring, GnuPG's pinentry, gcr-ssh-agent) through grassfield-prompter
-    // (ADR-0035 D-9, step 9b). In a dev session it connects only to the test socket GRASSFIELD_PROMPTER_SOCKET names.
-    SecretAgent {
-        id: secretAgent
-        queue: sheetQueue
-        devSocket: Mode.devValue("PROMPTER_SOCKET")
-        shellVersion: SystemInfo.grassfieldVersion
-    }
-    // Idle (dim, lock, display off) and the lock before sleep run in the security process (ADR-0041 S2).
+    // Idle (dim, lock, display off) and the lock before sleep run in the security process (ADR-0041 S2), and so do the polkit
+    // agent and the secret sheets with their one queue (S3: security/host/SecurityHost.qml).
     // The screen saver (ADR-0032): the applications' inhibitors keep it off; its slideshow stops while the displays are off.
     Saver {
         id: saver

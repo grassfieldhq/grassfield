@@ -369,6 +369,10 @@ TestCase {
         verify(model.heldNotice(Date.now(), "unlock").indexOf("just as the screen was unlocked") !== -1);
         // ADR-0032: held while the screen saver showed.
         verify(model.heldNotice(Date.now(), "saver").indexOf("while the screen saver was on") !== -1);
+        // The opus delta review of S3, LOW: held for the security process's start alone, it says so, not the saver.
+        const starting = model.heldNotice(Date.now(), "starting");
+        verify(starting.indexOf("while Grassfield was starting. Click the sheet to answer it.") !== -1, starting);
+        verify(starting.indexOf("screen saver") === -1, starting);
         // Review of f513b3b: a queued request that follows another in the same sheet is held too.
         verify(model.heldNotice(Date.now(), "queued").indexOf("right after another one") !== -1);
         // AuthAgent passes the arrival time as a Date (display only; shell/security reads no Date.now).

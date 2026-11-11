@@ -184,8 +184,8 @@ desc="grassfield-prompter.service: no core file, no swap, no GDBus or Qt message
 check bash -c 'grep -qx "LimitCORE=0" "$1" && grep -qx "MemorySwapMax=0" "$1" && grep -qx "UnsetEnvironment=G_DBUS_DEBUG G_MESSAGES_DEBUG G_DEBUG QDBUS_DEBUG QT_NO_GLIB" "$1"' _ "$u"
 desc="grassfield-prompter.service: none of the options that would put it in a user namespace of its own"
 check bash -c '! grep -qE "^(PrivateUsers|PrivateTmp|PrivateDevices|PrivateNetwork|NetworkNamespacePath|PrivateIPC|IPCNamespacePath|PrivateMounts|PrivatePIDs|MountAPIVFS|BindLogSockets|BindPaths|BindReadOnlyPaths|TemporaryFileSystem|RootDirectory|RootImage|ExtensionDirectories|ExtensionImages|ProtectSystem|ProtectHome|ProtectProc|ProcSubset|ProtectKernelTunables|ProtectKernelModules|ProtectKernelLogs|ProtectControlGroups|ProtectClock|ProtectHostname|ReadWritePaths|ReadOnlyPaths|InaccessiblePaths|ExecPaths|NoExecPaths)=" "$1"' _ "$u"
-desc="grassfield-prompter.service: the shell's unit is an argument (--peer-unit grassfield-shell.service), the socket directory is kept for the menu bridge, no [Install]"
-check bash -c 'grep -qx "ExecStart=/usr/lib/grassfield/grassfield-prompter --peer-unit grassfield-shell.service" "$1" && grep -qx "RuntimeDirectory=grassfield" "$1" && grep -qx "RuntimeDirectoryPreserve=yes" "$1" && grep -qx "UMask=0077" "$1" && ! grep -q "^\[Install\]" "$1" && ! grep -q "^Environment=" "$1"' _ "$u"
+desc="grassfield-prompter.service: the security process's unit is an argument (--peer-unit grassfield-security.service: the secret sheets run beside the polkit agent since ADR-0041 S3, ADR-0035 decision 9-7), the socket directory is kept for the menu bridge, no [Install]"
+check bash -c 'grep -qx "ExecStart=/usr/lib/grassfield/grassfield-prompter --peer-unit grassfield-security.service" "$1" && grep -qx "RuntimeDirectory=grassfield" "$1" && grep -qx "RuntimeDirectoryPreserve=yes" "$1" && grep -qx "UMask=0077" "$1" && ! grep -q "^\[Install\]" "$1" && ! grep -q "^Environment=" "$1"' _ "$u"
 desc="grassfield-prompter: installed where its unit runs it, built, tested and packaged by the PKGBUILD, which declares gcr-4 and libsecret (step 9e)"
 check bash -c 'grep -q "RUNTIME DESTINATION lib/grassfield" "$1" && grep -q "packaging/systemd/grassfield-prompter.service DESTINATION lib/systemd/user" "$1" && grep -q "cmake --install \"\$srcdir/prompter-build\"" "$2" && grep -q "\"\$srcdir/prompter-build/prompter-unit-tests\"" "$2" && grep -qE "^  depends=\(.* gcr-4 libsecret\)" "$2" && grep -qE "^ +quickshell gcr-4 libsecret\)" "$2"' _ "$root/bridges/prompter/CMakeLists.txt" "$pk/arch/PKGBUILD"
 # ADR-0035 decision 10-1 (opus review of step 10, MAJOR): Omarchy's bt-agent never runs beside the bridge's pairing agent.
@@ -230,6 +230,10 @@ if command -v vercmp >/dev/null; then
   # upgrade keep the earlier split until the next login.
   desc="the .install log-out note for the lock's own process is printed when upgrading from any build of 1.0.0rc7 or earlier (1.0.0rc7-1, 1.0.0rc7-4, 1.0.0rc6-2 to 1.0.0rc8-1; 1.0.0rc7-3 to 1.0.0-1)"
   check bash -c 'for o in "$@"; do grep -q "lock screen now runs in its own process" <<<"$o" || exit 1; done' _ "$(up 1.0.0rc8-1 1.0.0rc7-1)" "$(up 1.0.0rc8-1 1.0.0rc7-4)" "$(up 1.0.0rc8-1 1.0.0rc6-2)" "$(up 1.0.0-1 1.0.0rc7-3)"
+  # ADR-0041 S3 (the opus review of S3, MINOR-3): the restart line restarts the UI alone first (its earlier polkit agent
+  # leaves the session), then the bridge and the security process, never the three in one parallel transaction.
+  desc="...its restart line: daemon-reload, then the UI alone, then grassfield-prompter and grassfield-security (the UI's earlier polkit agent gone before the security process's asks)"
+  check bash -c 'grep -qF "(or: systemctl --user daemon-reload && systemctl --user restart grassfield-shell && systemctl --user restart grassfield-prompter grassfield-security)" <<<"$1" && ! grep -qE "restart [a-z -]*grassfield-security[a-z -]*grassfield-shell|restart grassfield-shell [a-z]" <<<"$1"' _ "$(up 1.0.0rc8-1 1.0.0rc7-1)"
   desc="...and not on later upgrades (1.0.0rc8-1 to 1.0.0rc8-2 or 1.0.0rc9-1, 1.0.0 to 1.0.1) nor without an old version"
   check bash -c '! grep -q "lock screen now runs in its own process" <<<"$1$2$3$4"' _ "$(up 1.0.0rc8-2 1.0.0rc8-1)" "$(up 1.0.0rc9-1 1.0.0rc8-1)" "$(up 1.0.1-1 1.0.0-1)" "$(up 1.0.0rc8-1 "")"
 else

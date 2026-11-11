@@ -1820,7 +1820,8 @@ GDBus; no C source of Grassfield's own; `CMakeLists.txt`, `build-direct.sh`), in
   `grassfield-shell.service`), never from the environment; a development run (on a private test bus only) matches the
   last component only, as a container has no user manager. One shell at a time ("busy"). The secret sheets share one
   queue with the polkit sheet, so they live in the polkit agent's process: when ADR-0041 S3 moves the agent to
-  `grassfield-security.service`, the sheets and `--peer-unit` move with it. Rule applied: D-9's socket rule; the brief's
+  `grassfield-security.service`, the sheets and `--peer-unit` move with it (done: ADR-0041 "S3 as built", 2026-11-09;
+  `--peer-unit grassfield-security.service`, the bridge's default too). Rule applied: D-9's socket rule; the brief's
   "no environment-variable bypass". **Amended after the opus review of step 9a.** MINOR-3: the first version also fell
   back to `SO_PEERCRED`'s PID on EINVAL, which Linux 6.5 to 6.15 answer when the peer has exited and been reaped, exactly
   when its PID can belong to another process: only ENOPROTOOPT (a kernel without `SO_PEERPIDFD`) falls back now, any other

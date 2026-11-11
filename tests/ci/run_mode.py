@@ -13,6 +13,9 @@ A .js file that imports the Quickshell module is refused (its calls cannot be re
 Exception, documented in ADR-0019 and docs/specs/security.md: shell/security/** keeps its own reads of GRASSFIELD_DEV and GRASSFIELD_SESSION (and
 the lock's GRASSFIELD_DEV_ALLOW_PAM) because a qs/lib directory on QML_IMPORT_PATH would replace qs.lib; those modules import RunMode.js by a
 relative path and pass it the two values themselves (tests/security/ipc_inventory.sh and tests/shell/run_mode_env.sh pin both forms).
+Since ADR-0041 S3 the secret sheets run in the security process, which cannot ask Mode either: shell/security/host/SheetHost.qml alone
+may also spell GRASSFIELD_PROMPTER_SOCKET, the dev plumbing value `Mode.devValue("PROMPTER_SOCKET")` gave the UI before, read behind
+the file's own RunMode.dev gate (Prompter.socketPath ignores it outside a dev session; ADR-0019's amendment of 2026-11-09).
 Remove the exception when the packaged shell's import path is fixed.
 """
 import importlib.util
@@ -24,6 +27,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SECURITY_NAMES = {"GRASSFIELD_DEV", "GRASSFIELD_SESSION", "GRASSFIELD_DEV_ALLOW_PAM"}
+# One file of shell/security may spell one more name (ADR-0041 S3): path relative to shell/ -> names.
+SECURITY_FILE_NAMES = {"security/host/SheetHost.qml": {"GRASSFIELD_PROMPTER_SOCKET"}}
 PREFILTER = re.compile(r"env|GRASSFIELD|\\")  # a sound prefilter: the file names no variable without one of these (a backslash can spell a name)
 LINE = re.compile(r"\bl:(\d+)")
 
@@ -55,8 +60,8 @@ def line_of(node):
     return 0
 
 
-def qml_problems(path, in_security):
-    """[(line, message)] for one .qml file."""
+def qml_problems(path, in_security, extra=frozenset()):
+    """[(line, message)] for one .qml file; `extra`: the names this file of shell/security may spell besides SECURITY_NAMES."""
     text = path.read_text(encoding="utf-8", errors="replace")
     if not PREFILTER.search(text):
         return []
@@ -68,7 +73,7 @@ def qml_problems(path, in_security):
     for node in walk(tree):
         if node.tag == "StringLiteral":
             value = node.attrs.get("value", "")
-            if value.startswith("GRASSFIELD_") and not (in_security and value in SECURITY_NAMES):
+            if value.startswith("GRASSFIELD_") and not (in_security and (value in SECURITY_NAMES or value in extra)):
                 out.append((line_of(node), f"reads {value} itself: ask Mode (Mode.dev, Mode.session, Mode.stateDir, Mode.devValue(\"NAME\"), ...)"))
         elif node.tag == "CallExpression" and len(node.children) == 2:
             callee, args = node.children
@@ -86,8 +91,10 @@ def problems(shell):
     qml = [p for p in files if p.suffix == ".qml" and lib not in p.resolve().parents]
 
     def one(p):
-        security = "security" in p.relative_to(shell).parts[:1]
-        return [(p, ln, msg) for ln, msg in qml_problems(p, security)]
+        rel = p.relative_to(shell)
+        security = "security" in rel.parts[:1]
+        extra = SECURITY_FILE_NAMES.get(rel.as_posix(), frozenset()) if security else frozenset()
+        return [(p, ln, msg) for ln, msg in qml_problems(p, security, extra)]
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         for res in pool.map(one, qml):
@@ -140,6 +147,15 @@ def selftest():
     run("a Mode call is fine", {"services/S.qml": 'import QtQuick\nimport qs.lib\nItem { property bool d: Mode.dev; property string c: Mode.devValue("OPEN_POLICY") }\n'}, None)
     run("security may read GRASSFIELD_DEV and GRASSFIELD_SESSION", {"security/L.qml": 'import QtQuick\nimport Quickshell\nItem { property string d: Quickshell.env("GRASSFIELD_DEV") + Quickshell.env("GRASSFIELD_SESSION") + Quickshell.env("GRASSFIELD_DEV_ALLOW_PAM") }\n'}, None)
     run("security may not read another name", {"security/L.qml": 'import QtQuick\nimport Quickshell\nItem { property string d: Quickshell.env("GRASSFIELD_STATE_HOME") }\n'}, "reads GRASSFIELD_STATE_HOME")
+    run("the security process's sheets may read the prompter's dev socket (ADR-0041 S3)",
+        {"security/host/SheetHost.qml": 'import QtQuick\nimport Quickshell\nItem { property string d: Quickshell.env("GRASSFIELD_PROMPTER_SOCKET") }\n'}, None)
+    run("another security file may not read the prompter's dev socket",
+        {"security/secret/SecretAgent.qml": 'import QtQuick\nimport Quickshell\nItem { property string d: Quickshell.env("GRASSFIELD_PROMPTER_SOCKET") }\n'},
+        "reads GRASSFIELD_PROMPTER_SOCKET")
+    run("the sheets' file may not read another name",
+        {"security/host/SheetHost.qml": 'import QtQuick\nimport Quickshell\nItem { property string d: Quickshell.env("GRASSFIELD_STATE_HOME") }\n'}, "reads GRASSFIELD_STATE_HOME")
+    run("the sheets' exception does not cover the same name elsewhere",
+        {"services/SheetHost.qml": 'import QtQuick\nimport Quickshell\nItem { property string d: Quickshell.env("GRASSFIELD_PROMPTER_SOCKET") }\n'}, "reads GRASSFIELD_PROMPTER_SOCKET")
     run("the security exception does not cover another directory", {"services/L.qml": 'import QtQuick\nimport Quickshell\nItem { property string d: Quickshell.env("GRASSFIELD_SESSION") }\n'}, "reads GRASSFIELD_SESSION")
     run("a .js importing Quickshell is refused", {"services/S.js": ".pragma library\n.import Quickshell 1.0 as Q\n"}, "imports Quickshell")
     run("a .js without it is fine", {"services/S.js": ".pragma library\n// GRASSFIELD_DEV in a comment\nfunction f() { return 1; }\n"}, None)

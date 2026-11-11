@@ -52,11 +52,20 @@ Singleton {
     // the state is missing or stale after an "unlocked" (the security process is down): the lock requests then still go out
     // (SessionState.refusesConfirmed; the opus review of 77a0ceb3, MAJOR-1).
     readonly property bool lockConfirmed: LockState.uiLockConfirmed(root.known, root.state, root.compositorLocked)
-    // The displays are off (idle, in the security process); without a fresh state, true: the polkit agent then lets no device
-    // answer a request nobody might see (ADR-0045 OC-6), the restrictive side.
+    // The displays are off (idle, in the security process); without a fresh state, true: the screen saver's slideshow then
+    // stops preparing pictures (the polkit agent, which also reads it, reads idle in its own process since ADR-0041 S3).
     readonly property bool displaysOff: !root.known || root.stale || (root.last !== null && root.last.displaysOff === true)
     // Where the lock's clouds came to rest on each output (the desktop draws them there, WallpaperState.setMotion).
     readonly property var motion: root.known && root.last ? root.last.motion : ({})
+    // The polkit sheet or a secret sheet is open, shown or held (ADR-0041 S3: they run in the security process), and one of
+    // them or its key sink may hold the keyboard: SessionState.authorizing and securityKeyboard follow them (shell.qml).
+    // Without a fresh state, true (LockState.uiSheet): the clipboard history records nothing and the capture toolbar takes no
+    // keyboard, the side on which they wait (the session reads locked then too).
+    readonly property bool authorizing: LockState.uiSheet(root.known, root.stale, root.last, "authorizing")
+    readonly property bool securityKeyboard: LockState.uiSheet(root.known, root.stale, root.last, "securityKeyboard")
+    // A sheet is published open in a fresh state (shell.qml closes the menus when it becomes true, as the polkit agent did in
+    // process before S3); a missing or stale state never counts.
+    readonly property bool sheetShown: LockState.sheetPublished(root.known, root.stale, root.last)
 
     onLockedChanged: console.info("grassfield: the session reads " + (root.locked ? "locked" : "unlocked") + " (state " + (root.state || "none") + (root.stale ? ", stale" : "") + (root.compositorLocked ? ", compositor locked" : "") + ")")
 

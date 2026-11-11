@@ -10,7 +10,16 @@
 # Quickshell's PanelWindow and a compositor do, beside a window underneath (check of c1ca44f). flows.qml test_20 to test_34:
 # a request the user cannot see (locked, saver, displays off, held other than right after another one, waiting behind a
 # secret sheet, replaced) is refused once PAM talks without asking, as for a fingerprint reader (ADR-0045 OC-6, security
-# review of e3542510 and its re-reviews). No compositor, no polkit, no PAM.
+# review of e3542510 and its re-reviews). test_36 to test_46: registration (ADR-0041 S3, the opus review's MINOR-3, its
+# delta review's MAJOR-1 and its round 2's MINOR-A): refused, the agent is made again with a backoff and the new one asks
+# again, never while locked, the displays off or a sleep under way, at most four times per unlock period, and never again
+# in that period once an attempt stopped the event loop (the plain agent can: mockBlockMs); the plain agent keeps
+# Quickshell's rules (asks only when made, its path set once, one per process: make_harness.py), so a retry by a new path
+# or one made before the last is gone is caught; tests/security/authagent_registration.sh counts the attempts on a real
+# Quickshell. No compositor, no polkit, no PAM.
+# Against the security process (ADR-0041 step 1, S3): the agent runs there, beside the lock it reads in process
+# (qs.security's SheetSession, which the tests set as SecurityHost's Bindings would), so the harness gives it qs.security and
+# qs.lib only: no qs.services, nothing of the UI (an import of the UI's world fails to load here).
 #
 #   tests/security/authagent_flows.sh              the tests: PASS / FAIL
 #   tests/security/authagent_flows.sh --mutants    also each mutant below, which the tests must catch ("MUTANT <name>: CAUGHT")
@@ -37,12 +46,10 @@ trap 'exit 143' TERM
 unset QT_QPA_PLATFORMTHEME
 export QT_QPA_PLATFORM=offscreen
 
-# qs.security and qs.lib are the real folders; qs.services holds the real SessionState and a ThemeIcons that finds no icon.
-mkdir -p "$scratch/qsroot/qs/services"
+# qs.security and qs.lib are the real folders, and the only qs modules (the security process's world, ADR-0041 S3).
+mkdir -p "$scratch/qsroot/qs"
 ln -s "$root/shell/security" "$scratch/qsroot/qs/security"
 ln -s "$root/shell/lib" "$scratch/qsroot/qs/lib"
-cp "$root/shell/services/SessionState.qml" "$d/ThemeIcons.qml" "$scratch/qsroot/qs/services/"
-printf 'module qs.services\nsingleton SessionState 1.0 SessionState.qml\nsingleton ThemeIcons 1.0 ThemeIcons.qml\n' >"$scratch/qsroot/qs/services/qmldir"
 
 # run <dir with AuthAgent.qml, AuthDialog.qml, AuthDialogModel.qml>: generates the harness and runs the tests; the output on
 # stdout, 0 when every case passed and no QML runtime error was printed (gate Q2's failures, in the generated copies too).
@@ -112,11 +119,11 @@ no-focus-taken-back, field focused while disabled (c1ca44f M2)#AuthAgent.qml#   
 typing-read-late (38dbfe8 LOW-2 M1)#AuthAgent.qml#const typing = (follows && win.takesKeys) || root.sinkingKeys || (!dialogModel.active && win.takesKeys && !dialogModel.answered);#let typing = false;#AuthAgent.qml#        root.userFocused = false;\n        if (dialogModel.active)\n            root.requestOpen = true;#        root.userFocused = false;\n        typing = (follows && win.takesKeys) || root.sinkingKeys || (!dialogModel.active && win.takesKeys && !dialogModel.answered);\n        root.sinkingKeys = typing;\n        if (dialogModel.active)\n            root.requestOpen = true;
 lock-keeps-sink (38dbfe8 LOW-2 M2)#AuthAgent.qml#            root.sinkingKeys = false;\n            if (dialogModel.active) {#            if (dialogModel.active) {
 no-linger (38dbfe8 MEDIUM-B)#AuthAgent.qml#const typing = (follows && win.takesKeys) || root.sinkingKeys || (!dialogModel.active && win.takesKeys && !dialogModel.answered);#const typing = (follows && win.takesKeys) || (!dialogModel.active && win.takesKeys && !dialogModel.answered);
-unmapped-linger (38dbfe8 MEDIUM-B)#AuthAgent.qml#visible: !SessionState.locked && (root.requestOpen || root.sinkingKeys)#visible: shown
-visible-through-lingering (c1ca44f M1)#AuthAgent.qml#visible: !SessionState.locked && (root.requestOpen || root.sinkingKeys)#visible: shown || root.lingering
-keys-through-lingering (c1ca44f M1)#AuthAgent.qml#readonly property bool takesKeys: !SessionState.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)#readonly property bool takesKeys: (shown && (!root.heldByLock || root.userFocused || root.sinkingKeys)) || root.lingering
+unmapped-linger (38dbfe8 MEDIUM-B)#AuthAgent.qml#visible: !SheetSession.locked && (root.requestOpen || root.sinkingKeys)#visible: shown
+visible-through-lingering (c1ca44f M1)#AuthAgent.qml#visible: !SheetSession.locked && (root.requestOpen || root.sinkingKeys)#visible: shown || root.lingering
+keys-through-lingering (c1ca44f M1)#AuthAgent.qml#readonly property bool takesKeys: !SheetSession.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)#readonly property bool takesKeys: (shown && (!root.heldByLock || root.userFocused || root.sinkingKeys)) || root.lingering
 input-enabled-while-sinking (c1ca44f M2)#AuthAgent.qml#                inputEnabled: !root.sinkingKeys#                inputEnabled: true
-linger-start-read-stale (c1ca44f)#AuthAgent.qml#        if (typing && !dialogModel.active && !SessionState.locked) {#        if (root.lingering) {
+linger-start-read-stale (c1ca44f)#AuthAgent.qml#        if (typing && !dialogModel.active && !SheetSession.locked) {#        if (root.lingering) {
 cap-never-started (c1ca44f L1)#AuthAgent.qml#            sinkIdle.restart();\n            sinkCap.restart();#            sinkIdle.restart();
 cap-ends-request-sink (c1ca44f L1)#AuthAgent.qml#        interval: dialogModel.sinkLingerMaxMs\n        onTriggered: if (root.lingering)#        interval: dialogModel.sinkLingerMaxMs\n        onTriggered: if (true)
 linger-ends-request-sink#AuthAgent.qml#        interval: dialogModel.heldAfterUnlockMs\n        onTriggered: if (root.lingering)#        interval: dialogModel.heldAfterUnlockMs\n        onTriggered: if (true)
@@ -135,16 +142,39 @@ no-ended-notice (f9e24e1 LOW-3)#AuthAgent.qml#            visible: root.lingerin
 ended-notice-over-a-sheet (f9e24e1 LOW-3)#AuthAgent.qml#            visible: root.lingering#            visible: root.sinkingKeys
 device-answers-unseen (e3542510 MAJOR-2)#AuthDialogModel.qml#        if (refusesUnseen)\n            request.cancelAuthenticationRequest();#        if (refusesUnseen)\n            console.info("refused");
 refusal-inside-the-binding (e3542510 MAJOR-2, binding loop)#AuthDialogModel.qml#        Qt.callLater(root.refuseUnseen)#        root.refuseUnseen()
-device-answers-behind-lock-and-saver (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SessionState.locked && !SessionState.saverShown && #        answerable:
+device-answers-behind-lock-and-saver (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SheetSession.locked && !SheetSession.saverShown && #        answerable:
 held-shown-request-refused (re-review: Remote Login, Add Printer)#AuthAgent.qml#root.userFocused || root.heldWhy === "queued")#root.userFocused)
 unlock-held-answerable (re-review 2 MINOR-1)#AuthAgent.qml#                    && (!root.heldByLock || root.userFocused || root.heldWhy === "queued")#                    && true
-displays-off-ignored (re-review 2 MINOR-2)#AuthAgent.qml#!SessionState.displaysOff && #true &&
+displays-off-ignored (re-review 2 MINOR-2)#AuthAgent.qml#!SheetSession.displaysOff && #true &&
 replaced-not-watched (re-review MAJOR-1)#AuthDialogModel.qml#            priv.replaced = liveReplaced().concat([before]);#            ;
 replaced-alone-refused (re-review MAJOR-1)#AuthDialogModel.qml#        if (request && request.isCompleted !== true && replaced.indexOf(request) < 0)\n            request.cancelAuthenticationRequest();#        ;
 replaced-refused-first (re-review MAJOR-1)#AuthDialogModel.qml#        if (request && request.isCompleted !== true && replaced.indexOf(request) < 0)\n            request.cancelAuthenticationRequest();\n        for (const f of replaced)\n            f.cancelAuthenticationRequest();#        for (const f of replaced)\n            f.cancelAuthenticationRequest();\n        if (request && request.isCompleted !== true && replaced.indexOf(request) < 0)\n            request.cancelAuthenticationRequest();
 replaced-refusal-inside-the-binding (re-review MAJOR-1)#AuthDialogModel.qml#        Qt.callLater(root.refuseReplaced)#        root.refuseReplaced()
-device-answers-a-waiting-request (e3542510 MAJOR-2)#AuthAgent.qml#        request: agent.flow#        request: agent.isActive && !root.waiting ? agent.flow : null
-device-answers-always (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SessionState.locked#        answerable: true || !SessionState.locked
+device-answers-a-waiting-request (e3542510 MAJOR-2)#AuthAgent.qml#        request: root.agent !== null ? root.agent.flow : null#        request: root.agentActive && !root.waiting ? root.agent.flow : null
+device-answers-always (e3542510 MAJOR-2)#AuthAgent.qml#        answerable: !SheetSession.locked#        answerable: true || !SheetSession.locked
+registration-never-asked-again (S3 review MINOR-3)#AuthAgent.qml#        running: root.retryArmed#        running: false
+registration-by-setPath (S3 delta review MAJOR-1: the retry of 655916ba)#AuthAgent.qml#        agentHolder.active = false;\n        agentRemake.restart();#        root.agent.path = root.agentPath + "/" + root.registrationTries;
+registration-remade-in-the-same-turn (S3 delta review MAJOR-1)#AuthAgent.qml#        agentHolder.active = false;\n        agentRemake.restart();#        agentHolder.active = false;\n        agentHolder.active = true;
+registration-never-remade (S3 delta review MAJOR-1)#AuthAgent.qml#            root.watchAttempt();\n            agentHolder.active = true;#            root.watchAttempt();
+registration-no-backoff (S3 review MINOR-3)#AuthAgent.qml#        interval: root.registrationRetryInterval#        interval: root.registrationRetryMs
+registration-no-doubling (S3 review MINOR-3)#AuthAgent.qml#root.registrationRetryMs * Math.pow(2, Math.min(root.periodTries, 10)))#root.registrationRetryMs)
+registration-no-longest-wait (S3 review MINOR-3)#AuthAgent.qml#Math.min(root.registrationRetryMaxMs, root.registrationRetryMs#Math.min(1000000000, root.registrationRetryMs
+registration-asked-while-registered (S3 review MINOR-3)#AuthAgent.qml#    readonly property bool retryArmed: !root.registered && #    readonly property bool retryArmed:
+registration-lets-a-request-go (S3 delta review MAJOR-1)#AuthAgent.qml#        if (!root.retryArmed || root.agentActive)#        if (!root.retryArmed)
+registration-asked-in-a-dev-session (S3 review MINOR-3)#AuthAgent.qml#!root.registered && !root.devSession && !root.quiet#!root.registered && !root.quiet
+registration-while-quiet (S3 round 2 MINOR-A)#AuthAgent.qml#!root.devSession && !root.quiet && !root.registrationStalled#!root.devSession && !root.registrationStalled
+registration-while-locked (S3 round 2 MINOR-A)#AuthAgent.qml#    readonly property bool quiet: SheetSession.locked || SheetSession.displaysOff#    readonly property bool quiet: SheetSession.displaysOff
+registration-while-the-displays-are-off (S3 round 2 MINOR-A)#AuthAgent.qml#SheetSession.locked || SheetSession.displaysOff || SheetSession.sleeping#SheetSession.locked || SheetSession.sleeping
+registration-while-a-sleep-is-under-way (S3 round 2 MINOR-A)#AuthAgent.qml#SheetSession.displaysOff || SheetSession.sleeping#SheetSession.displaysOff
+registration-made-at-the-lock (S3 round 2 MINOR-A)#AuthAgent.qml#            if (root.quiet || root.registrationStalled)\n                return;\n            root.watchAttempt();#            root.watchAttempt();
+registration-no-cap (S3 round 2 MINOR-A)#AuthAgent.qml# && root.periodTries < root.registrationTriesMax# && true
+registration-cap-kept-after-an-unlock (S3 round 2 MINOR-A)#AuthAgent.qml#        root.periodTries = 0;\n        root.registrationStalled = false;#        root.registrationStalled = false;
+registration-unlock-unseen (S3 round 2 MINOR-A)#AuthAgent.qml#                root.sawLock = false;\n                root.rearmRegistration();#                root.sawLock = false;
+registration-rearm-on-any-fall-of-locked (S3 round 3 MINOR-1)#AuthAgent.qml#            } else if (root.sawLock) {#            } else if (true) {
+registration-lock-never-seen (S3 round 3 MINOR-1)#AuthAgent.qml#            if (SheetSession.locked) {\n                root.sawLock = true;#            if (SheetSession.locked) {\n                root.sawLock = false;
+registration-stall-ignored (S3 round 2 MINOR-A)#AuthAgent.qml#        if (sinceMs > root.stallLimitMs && #        if (false &&
+registration-stall-kept-after-an-unlock (S3 round 2 MINOR-A)#AuthAgent.qml#        root.periodTries = 0;\n        root.registrationStalled = false;#        root.periodTries = 0;
+registration-stall-unwatched (S3 round 2 MINOR-A)#AuthAgent.qml#            root.watchAttempt();\n            agentHolder.active = true;#            agentHolder.active = true;
 EOF_MUTANTS
 ((status == 0)) && echo "PASS: authagent_flows (and every mutant caught)" || echo "FAIL: authagent_flows mutants"
 exit "$status"

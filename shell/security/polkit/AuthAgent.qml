@@ -9,23 +9,27 @@ import Quickshell.Services.Polkit
 import Quickshell.Wayland
 import Grassfield.Ui
 import qs.security
-import qs.services
 import "../../lib/RunMode.js" as RunMode
 
 // The session's polkit authentication agent (SEC6, ADR-0010): Quickshell.Services.Polkit,
-// one instance per shell. polkit allows one agent per session; when another one already owns
+// one instance per session. polkit allows one agent per session; when another one already owns
 // the session (expected in the nested dev session, where the owner's shell has it), registration
 // fails: that is logged once, no dialog is ever shown and nothing is approved — requests keep
 // going to the other agent.
+// Process (ADR-0041 step 1, S3): instantiated in the security process only (../host/SheetHost.qml, made by SecurityHost.qml),
+// beside the lock it reads in process (SheetSession, fed there by Lock and Idle); the UI never instantiates it, so the
+// session has one agent, and a crash of the UI leaves it registered. The sheet is drawn with Grassfield.Ui and qs.security
+// only.
 Scope {
     id: root
 
-    readonly property bool registered: agent.isRegistered
-    // A request is open: its sheet shown, or held (behind the lock or the screen saver, or queued). Read only by shell.qml for
-    // SessionState.authorizing (the clipboard history records nothing while it is true and 2 s after, ADR-0034 Q11).
+    readonly property bool registered: root.agent !== null && root.agent.isRegistered
+    // A request is open: its sheet shown, or held (behind the lock or the screen saver, or queued). Published by the host with
+    // the lock state for the UI's SessionState.authorizing (the clipboard history records nothing while it is true and 2 s
+    // after, ADR-0034 Q11; the UI closes its menus when a sheet opens).
     readonly property bool requestActive: dialogModel.active
 
-    // The one queue of the polkit sheet and the secret sheets (ADR-0035 D-9, step 9b; SheetQueue), given by shell.qml; null
+    // The one queue of the polkit sheet and the secret sheets (ADR-0035 D-9, step 9b; SheetQueue), given by the host; null
     // outside it (this agent's own harness), where nothing waits.
     property SheetQueue queue: null
     // A secret sheet came first: the request waits (ADR-0035 D-9: no sheet takes the keyboard from another). The model is
@@ -34,27 +38,170 @@ Scope {
     // another one", without the keyboard until a click past the guard.
     readonly property bool waiting: root.queue !== null && root.queue.polkitWaits
     // The polkit sheet's place in the queue: from a request's arrival (while it waits too) until its sheet is gone, the key
-    // sink's linger included (shell.qml binds SheetQueue.polkitPresent to it).
-    readonly property bool queuePresent: agent.isActive || root.requestOpen || root.sinkingKeys
+    // sink's linger included (the host binds SheetQueue.polkitPresent to it).
+    readonly property bool queuePresent: root.agentActive || root.requestOpen || root.sinkingKeys
+    // The URL of a plain theme icon name for the sheet ("" for none: the sheet shows its lock alone). The host gives the
+    // security process's lookup (the system theme only, whose directories the user cannot change); a harness gives none.
+    property var iconSource: name => ""
 
-    PolkitAgent {
-        id: agent
-        path: "/org/grassfield/PolkitAgent"
+    // Registration (ADR-0041 S3; the opus review of S3, MINOR-3, its delta review, MAJOR-1, and its round 2, MINOR-A). polkit
+    // takes one agent per session, and Quickshell's PolkitAgent asks once, when it is made: a refusal only warns, and its
+    // path is set once (a later path is refused with "cannot change path after it has been set.", so a new path never asks
+    // again). After an upgrade, or a restart in the wrong order, the UI's earlier agent may still hold the session when this
+    // one asks. While it is not registered, the agent is made again after registrationRetryMs, doubling: the Loader lets the
+    // old one go, and makes the next one an event-loop turn later (agentRemake), once the old one is destroyed (the Loader
+    // deletes it later; made in the same turn, the next one would find it still there and stay inert, measured on
+    // Quickshell 0.3.2). Quickshell keeps one agent per process (a second one made while the first lives never registers),
+    // and the Loader holds one, so two never live. A registered agent, or one with a request, is never let go. It only ever
+    // asks to be the session's agent; it never answers a request by itself, and while none is made polkitd has no agent here
+    // to ask (it answers "not authorized"). Never in a dev session: the nested agent must not take the owner's session when
+    // the owner's own agent restarts (it asks once, as before).
+    // Bounded (round 2, MINOR-A): Quickshell asks polkitd with a synchronous D-Bus call on this process's main thread, so a
+    // hung polkitd blocks the lock here for up to D-Bus's 25 s, and a sleep asked meanwhile waits out logind's delay
+    // without the lock. So the agent is made again only while the session is unlocked, the displays on and no sleep under
+    // way (`quiet` otherwise: a try due then is dropped, and the agent made in that turn too), at most registrationTriesMax
+    // times per unlock period (3, 6, 12 and 24 s), and never again in that period once an attempt coincided with a stall of
+    // the event loop longer than stallLimitMs (stallBeat, a monotonic ElapsedTimer). A real unlock starts a new period. The one
+    // attempt at the start is made whatever the session's state (S3's accepted residual). tests/security/authagent_flows.d
+    // test_36 to test_46; tests/security/authagent_registration.sh counts the attempts on a real Quickshell.
+    readonly property string agentPath: "/org/grassfield/PolkitAgent"
+    readonly property bool devSession: RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION"))
+    property int registrationRetryMs: 3000
+    readonly property int registrationRetryMaxMs: 60000
+    readonly property int registrationTriesMax: 4
+    // Made again this many times since the start (the log's count), and since the last unlock (the cap's).
+    property int registrationTries: 0
+    property int periodTries: 0
+    // An attempt coincided with a stall: no more until the next unlock.
+    property bool registrationStalled: false
+    // The wait before the next one: registrationRetryMs, doubled at each try of the period, at most registrationRetryMaxMs.
+    readonly property int registrationRetryInterval: Math.min(root.registrationRetryMaxMs, root.registrationRetryMs * Math.pow(2, Math.min(root.periodTries, 10)))
+    // No attempt now: locked (or the start-up stranded-lock probe), displays off, or a sleep under way.
+    readonly property bool quiet: SheetSession.locked || SheetSession.displaysOff || SheetSession.sleeping
+    readonly property bool retryArmed: !root.registered && !root.devSession && !root.quiet && !root.registrationStalled && root.periodTries < root.registrationTriesMax
+    // The agent now: null in the turn between letting one go and making the next.
+    readonly property PolkitAgent agent: agentHolder.item as PolkitAgent
+    readonly property bool agentActive: root.agent !== null && root.agent.isActive
 
-        onIsRegisteredChanged: {
-            if (isRegistered)
-                console.info("grassfield-polkit: authentication agent registered");
-            else
-                console.warn("grassfield-polkit: authentication agent unregistered");
+    function retryRegistration(): void {
+        if (!root.retryArmed || root.agentActive)
+            return;
+        root.registrationTries += 1;
+        root.periodTries += 1;
+        if (root.registrationTries <= 5 || root.registrationTries % 10 === 0)
+            console.warn("grassfield-polkit: not registered (another authentication agent owns this session); asking again (" + root.registrationTries + ")");
+        if (root.periodTries === root.registrationTriesMax)
+            console.warn("grassfield-polkit: the last try until the next unlock");
+        agentHolder.active = false;
+        agentRemake.restart();
+    }
+
+    // An unlock starts a new period: the tries and a stall are forgotten.
+    function rearmRegistration(): void {
+        root.periodTries = 0;
+        root.registrationStalled = false;
+    }
+
+    // A real unlock only: the session locked while this agent ran, then was unlocked. SheetSession.locked also covers the
+    // start-up probe of a stranded lock, which Lock starts before the host makes the sheets, so the agent is made with
+    // `locked` already true and the probe's end ("unlocked") is no unlock: a stall of the start's attempt is not forgotten
+    // then, and no second blocking try follows (the opus review of S3, round 3, MINOR-1). A session already locked when the
+    // agent is made is not re-armed at its first unlock either: the tries stay as they were, never more.
+    property bool sawLock: false
+
+    Connections {
+        target: SheetSession
+
+        function onLockedChanged(): void {
+            if (SheetSession.locked) {
+                root.sawLock = true;
+            } else if (root.sawLock) {
+                root.sawLock = false;
+                root.rearmRegistration();
+            }
         }
-        onAuthenticationRequestStarted: Popups.close()
+    }
+
+    Timer {
+        id: registrationRetry
+        interval: root.registrationRetryInterval
+        running: root.retryArmed
+        repeat: true
+        onTriggered: root.retryRegistration()
+    }
+
+    // The next agent, an event-loop turn after the last one was let go; dropped when the session went quiet or a stall was
+    // seen in that turn (the next period makes it).
+    Timer {
+        id: agentRemake
+        interval: 0
+        onTriggered: {
+            if (root.quiet || root.registrationStalled)
+                return;
+            root.watchAttempt();
+            agentHolder.active = true;
+        }
+    }
+
+    // The stall watch: from an agent's making (the start's included) for stallWatchMs, or until it registers, a beat every
+    // 200 ms reads the time since the last one on a monotonic clock (no wall clock in shell/security). A beat later than
+    // stallLimitMs means the event loop stood still, Quickshell's registration call the likely cause: no more tries until the
+    // next unlock, logged once.
+    readonly property int stallLimitMs: 1000
+    readonly property int stallWatchMs: 3000
+    property bool stallWatching: true
+    property real stallWatchedMs: 0
+
+    function watchAttempt(): void {
+        stallClock.restart();
+        root.stallWatchedMs = 0;
+        root.stallWatching = true;
+    }
+
+    function stallBeat(sinceMs: real): void {
+        root.stallWatchedMs += sinceMs;
+        if (sinceMs > root.stallLimitMs && !root.registered && !root.registrationStalled && !root.devSession) {
+            root.registrationStalled = true;
+            console.warn("grassfield-polkit: registering stopped this process for " + Math.round(sinceMs) + " ms (polkitd not answering?); not asking again until the next unlock");
+        }
+        if (root.registered || root.stallWatchedMs >= root.stallWatchMs)
+            root.stallWatching = false;
+    }
+
+    ElapsedTimer {
+        id: stallClock
+    }
+
+    Timer {
+        id: stallBeatTimer
+        interval: 200
+        repeat: true
+        running: root.stallWatching && !root.devSession
+        onTriggered: root.stallBeat(stallClock.restartMs())
+    }
+
+    Component.onCompleted: stallClock.restart()
+
+    Loader {
+        id: agentHolder
+
+        sourceComponent: PolkitAgent {
+            path: root.agentPath
+
+            onIsRegisteredChanged: {
+                if (isRegistered)
+                    console.info("grassfield-polkit: authentication agent registered");
+                else
+                    console.warn("grassfield-polkit: authentication agent unregistered");
+            }
+        }
     }
 
     AuthDialogModel {
         id: dialogModel
         // Quickshell qmltypes name the AuthFlow property type without exporting it (metadata quirk).
         // qmllint disable unresolved-type
-        flow: agent.isActive && !root.waiting ? agent.flow : null
+        flow: root.agentActive && !root.waiting ? root.agent.flow : null
         // The request Quickshell has open, handed over or not, and whether the user sees it now: its sheet is on screen and in
         // front (no lock, no screen saver, displays on, not waiting behind another sheet, in the sheet). Otherwise a device must
         // not answer it: it is refused as soon as PAM talks without asking (AuthDialogModel.refusesUnseen; ADR-0045 OC-6,
@@ -63,9 +210,9 @@ Scope {
         // ask two or three times in a row) or once the user clicked past its guard. Held for any other reason (it arrived just
         // after an unlock, or while locked or under the saver) it may not: a finger left on the reader after unlocking would
         // answer it, and the lock marker tells any process of the user's when to ask (opus re-review, MINOR-1).
-        request: agent.flow
+        request: root.agent !== null ? root.agent.flow : null
         // qmllint enable unresolved-type
-        answerable: !SessionState.locked && !SessionState.saverShown && !SessionState.displaysOff && !root.waiting && root.requestOpen
+        answerable: !SheetSession.locked && !SheetSession.saverShown && !SheetSession.displaysOff && !root.waiting && root.requestOpen
                     && (!root.heldByLock || root.userFocused || root.heldWhy === "queued")
 
         // A request arrived, or none is left.
@@ -110,8 +257,8 @@ Scope {
         root.sinkingKeys = typing;
         if (!dialogModel.active)
             root.requestOpen = false;
-        root.heldWhy = SessionState.locked ? "locked" : SessionState.saverShown ? "saver" : queued ? "queued" : "unlock";
-        root.heldByLock = dialogModel.active && (follows || typing || dialogModel.arrivesHeld(SessionState.locked || SessionState.saverShown));
+        root.heldWhy = SheetSession.locked ? "locked" : SheetSession.saverShown ? (SheetSession.starting ? "starting" : "saver") : queued ? "queued" : "unlock";
+        root.heldByLock = dialogModel.active && (follows || typing || dialogModel.arrivesHeld(SheetSession.locked || SheetSession.saverShown));
         root.userFocused = false;
         if (dialogModel.active)
             root.requestOpen = true;
@@ -120,7 +267,7 @@ Scope {
             dialogModel.noteEnded();
         // The linger starts: from the base state, never `lingering`, whose binding may not have seen this change of `active`
         // yet (check of c1ca44f: its timers then never started, and with no key after the end the linger never ended).
-        if (typing && !dialogModel.active && !SessionState.locked) {
+        if (typing && !dialogModel.active && !SheetSession.locked) {
             sinkIdle.restart();
             sinkCap.restart();
         }
@@ -163,16 +310,16 @@ Scope {
     // request it replaced completed): the window stays mapped, with the keyboard on the sink and a notice where the sheet was
     // (endedNotice), until no key came for heldAfterUnlockMs (sinkIdle), at most sinkLingerMaxMs (sinkCap), or a click, the
     // lock or the screen saver ends it (check of 38dbfe8, MEDIUM-B; security counter-review of f9e24e1, LOW-1 and LOW-3).
-    readonly property bool lingering: root.sinkingKeys && !dialogModel.active && !SessionState.locked
+    readonly property bool lingering: root.sinkingKeys && !dialogModel.active && !SheetSession.locked
     property bool userFocused: false
     property var requestStartedAt: null
 
     Connections {
-        target: SessionState
+        target: SheetSession
 
         // The lock has the keyboard now: the sink lets go (a linger ends), and an open request is held.
         function onLockedChanged(): void {
-            if (!SessionState.locked) {
+            if (!SheetSession.locked) {
                 dialogModel.noteUnlock();
                 return;
             }
@@ -189,13 +336,13 @@ Scope {
         // heldGuardMs gives the sheet the keyboard (such a click still reaches the control it hits, as after an unlock: Cancel
         // at worst).
         function onSaverShownChanged(): void {
-            if (SessionState.saverShown)
+            if (SheetSession.saverShown)
                 root.sinkingKeys = false;
-            if (!dialogModel.active || SessionState.locked)
+            if (!dialogModel.active || SheetSession.locked)
                 return;
-            if (SessionState.saverShown) {
+            if (SheetSession.saverShown) {
                 if (!root.heldByLock || root.userFocused)
-                    root.heldWhy = "saver";
+                    root.heldWhy = SheetSession.starting ? "starting" : "saver";
                 root.heldByLock = true;
                 root.userFocused = false;
                 dialogModel.clearRequested();
@@ -225,7 +372,7 @@ Scope {
         running: true
         interval: 3000
         onTriggered: {
-            if (!agent.isRegistered)
+            if (!root.registered)
                 console.warn("grassfield-polkit: not registered (another authentication agent owns this session); no dialog will be shown, nothing is approved");
         }
     }
@@ -239,7 +386,7 @@ Scope {
         // A request that arrives while the session is locked waits behind the lock (macOS: the authorization sheet shows
         // once the user is back): the sheet is mapped, and takes the keyboard, only after the unlock (GF-116). The request
         // itself stays pending; nothing is answered or approved meanwhile.
-        readonly property bool shown: dialogModel.active && !SessionState.locked
+        readonly property bool shown: dialogModel.active && !SheetSession.locked
         // The window holds the keyboard: the sheet is shown and not a held request the user has not clicked yet, or the keys
         // are on the sink (a held request's, or lingering after the request ended). Both this and `visible` read the base
         // state only, never `shown` or `lingering`: when a request ends while the sink has the keys, an intermediate binding
@@ -247,10 +394,10 @@ Scope {
         // the keyboard to the window underneath meanwhile (check of c1ca44f, M1). The request is `requestOpen`, not the
         // model's `active`: arrive alone moves it, after the sink, so a request that ends unanswered under the user's typing
         // never unmaps the window before the sink holds the keys (security counter-review of f9e24e1, LOW-1).
-        readonly property bool takesKeys: !SessionState.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)
+        readonly property bool takesKeys: !SheetSession.locked && ((root.requestOpen && (!root.heldByLock || root.userFocused)) || root.sinkingKeys)
 
         // Mapped with the sheet, and while the sink lingers (no sheet then, no dimming: the notice below says why).
-        visible: !SessionState.locked && (root.requestOpen || root.sinkingKeys)
+        visible: !SheetSession.locked && (root.requestOpen || root.sinkingKeys)
         // Hidden by the lock: whatever was typed is dropped (as after every attempt). Shown again: a request that was not
         // held takes the keys at once; a held one waits for a click (takesKeys) with an empty field.
         onShownChanged: {
@@ -342,9 +489,9 @@ Scope {
 
             sourceComponent: AuthDialog {
                 model: dialogModel
-                // The action's theme icon (sanitized by the model), only when the theme has it (no broken image) and every
-                // file Qt could read for it is a regular file of bounded size (ThemeIcons, review of 2dfd992).
-                appIconSource: ThemeIcons.source(dialogModel.iconName)
+                // The action's theme icon (sanitized by the model), only when the system theme has it (no broken image;
+                // the host's lookup, review of 2dfd992).
+                appIconSource: root.iconSource(dialogModel.iconName)
                 heldNotice: root.heldByLock ? dialogModel.heldNotice(root.requestStartedAt, root.heldWhy) : ""
                 inputEnabled: !root.sinkingKeys
                 // The sheet got the focus while the sink has the keys (a press on one of its controls within the guard, its
@@ -429,7 +576,7 @@ Scope {
         // the screen (the saver ends on it), never an answer, the field's focus or a middle-click paste into it.
         MouseArea {
             anchors.fill: parent
-            enabled: SessionState.saverShown
+            enabled: SheetSession.saverShown
             acceptedButtons: Qt.AllButtons
             onPressed: mouse => mouse.accepted = true
             onWheel: wheel => wheel.accepted = true
@@ -444,7 +591,7 @@ Scope {
         function status(): string {
             if (!RunMode.dev(Quickshell.env("GRASSFIELD_DEV"), Quickshell.env("GRASSFIELD_SESSION")))
                 return RunMode.REFUSED;
-            return agent.isRegistered ? "registered" : "unregistered";
+            return root.registered ? "registered" : "unregistered";
         }
     }
 }

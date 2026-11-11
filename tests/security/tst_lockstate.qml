@@ -239,4 +239,60 @@ TestCase {
         verify(Client.INHIBIT_SECONDS <= IdleModel.INHIBIT_MAX_SECONDS);
         compare(Client.INHIBIT_RENEW_MS, IdleModel.INHIBIT_RENEW_MS);
     }
+
+    // ---- the security sheets (ADR-0041 S3: the polkit agent and the secret sheets run in the security process) ----
+    // What the UI reads of them comes with the lock state: two booleans, written by the security process, absent in a file of
+    // a security process from before S3 (which hosts no sheet).
+    function test_sheetsRoundTrip() {
+        const t = LockState.format("unlocked", 7, 99, false, {}, true, false);
+        const r = LockState.parse(t);
+        verify(r.ok);
+        compare(r.authorizing, true);
+        compare(r.securityKeyboard, false);
+        const k = LockState.parse(LockState.format("unlocked", 7, 99, false, {}, false, true));
+        compare(k.authorizing, false);
+        compare(k.securityKeyboard, true);
+        // Only an exact true is written true: the format never publishes a sheet that is not open.
+        const loose = LockState.parse(LockState.format("unlocked", 7, 99, false, {}, "true", 1));
+        compare(loose.authorizing, false);
+        compare(loose.securityKeyboard, false);
+        // A file from before S3: no field, read false (no sheet there), the state still read.
+        const old = LockState.parse("{\"v\":1,\"state\":\"unlocked\",\"seq\":1,\"writer\":1,\"displaysOff\":false,\"motion\":{}}");
+        verify(old.ok);
+        compare(old.authorizing, false);
+        compare(old.securityKeyboard, false);
+        // Present, they must be booleans: anything else is no state (the UI reads locked).
+        for (const bad of ["\"true\"", "1", "null", "{}", "[]"]) {
+            verify(!LockState.parse("{\"v\":1,\"state\":\"unlocked\",\"seq\":1,\"writer\":1,\"displaysOff\":false,\"authorizing\":" + bad + "}").ok, "authorizing " + bad);
+            verify(!LockState.parse("{\"v\":1,\"state\":\"unlocked\",\"seq\":1,\"writer\":1,\"displaysOff\":false,\"securityKeyboard\":" + bad + "}").ok, "securityKeyboard " + bad);
+        }
+    }
+
+    // The UI's clipboard history, tiling popover and capture toolbar read the sheets fail closed: true unless a known, fresh
+    // state says false.
+    function test_uiSheetFailsClosed() {
+        const open = LockState.parse(LockState.format("unlocked", 1, 1, false, {}, true, true));
+        const closed = LockState.parse(LockState.format("unlocked", 1, 1, false, {}, false, false));
+        for (const field of ["authorizing", "securityKeyboard"]) {
+            compare(LockState.uiSheet(true, false, closed, field), false, field + ": a fresh state with no sheet");
+            compare(LockState.uiSheet(true, false, open, field), true, field + ": a fresh state with a sheet");
+            compare(LockState.uiSheet(false, false, closed, field), true, field + ": no state known");
+            compare(LockState.uiSheet(true, true, closed, field), true, field + ": a stale state (the security process is down)");
+            compare(LockState.uiSheet(true, undefined, closed, field), true, field + ": unknown staleness");
+            compare(LockState.uiSheet(true, false, null, field), true, field + ": nothing read");
+            compare(LockState.uiSheet(true, false, {ok: false}, field), true, field + ": a state that does not parse");
+        }
+        compare(LockState.uiSheet(true, false, closed, "other"), true, "an unknown field reads open");
+    }
+
+    // The UI's menus close when a sheet is published open in a fresh state, never on a missing or stale one.
+    function test_sheetPublished() {
+        const open = LockState.parse(LockState.format("unlocked", 1, 1, false, {}, true, false));
+        const closed = LockState.parse(LockState.format("unlocked", 1, 1, false, {}, false, true));
+        compare(LockState.sheetPublished(true, false, open), true);
+        compare(LockState.sheetPublished(true, false, closed), false, "the keyboard alone (a linger) is no sheet shown");
+        compare(LockState.sheetPublished(true, true, open), false, "stale");
+        compare(LockState.sheetPublished(false, false, open), false, "unknown");
+        compare(LockState.sheetPublished(true, false, null), false);
+    }
 }

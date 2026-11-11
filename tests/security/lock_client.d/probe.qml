@@ -37,6 +37,8 @@ ShellRoot {
     property bool beating: false
     property string beatState: "unlocked"
     property bool beatDark: false
+    // A security sheet open in the security process (ADR-0041 S3): published with the state, as LockPublisher does.
+    property bool beatSheet: false
     readonly property string mode: Quickshell.env("LOCK_CLIENT_MODE") ?? ""
     readonly property string path: LockClient.path
 
@@ -47,7 +49,7 @@ ShellRoot {
 
     function write(state: string): void {
         root.seq += 1;
-        out.setText(LockState.format(state, root.seq, root.writer, root.beatDark, {}) + "\n");
+        out.setText(LockState.format(state, root.seq, root.writer, root.beatDark, {}, root.beatSheet, root.beatSheet) + "\n");
     }
 
     function writeRaw(text: string): void {
@@ -64,6 +66,25 @@ ShellRoot {
         target: SessionState
         property: "lockConfirmed"
         value: LockClient.lockConfirmed
+    }
+    Binding {
+        target: SessionState
+        property: "authorizing"
+        value: LockClient.authorizing
+    }
+    Binding {
+        target: SessionState
+        property: "securityKeyboard"
+        value: LockClient.securityKeyboard
+    }
+
+    // The sheets' state the UI reads (ADR-0041 S3): fail closed (a sheet may be open, it may hold the keyboard) without a
+    // fresh state, and never "shown" (the menus close only on a sheet published open in a fresh state).
+    function sheetsClosed(): bool {
+        return !LockClient.authorizing && !LockClient.securityKeyboard && !LockClient.sheetShown && !SessionState.authorizing && !SessionState.securityKeyboard;
+    }
+    function sheetsFailClosed(): bool {
+        return LockClient.authorizing && LockClient.securityKeyboard && !LockClient.sheetShown && SessionState.authorizing && SessionState.securityKeyboard;
     }
 
     // The lock paths (the Grassfield menu, Search, the lock corner) stay open exactly when the UI reads locked without a
@@ -100,6 +121,7 @@ ShellRoot {
                 root.check("none: path in the scratch runtime directory", root.path.indexOf("/grassfield-lock-state-") > 0);
                 root.check("none: the displays read off (the polkit agent's restrictive side)", LockClient.displaysOff);
                 root.check("none: the lock is not confirmed, the lock paths stay open", !LockClient.lockConfirmed && root.lockPathsOpen());
+                root.check("none: the sheets read open and holding the keyboard, never shown (fail closed)", root.sheetsFailClosed());
                 root.write("unlocked");
             }],
         [1500, () => {
@@ -111,11 +133,13 @@ ShellRoot {
                 root.check("fresh: not stale", !LockClient.stale && LockClient.known);
                 root.check("fresh: the displays read on", !LockClient.displaysOff);
                 root.check("fresh: the lock paths open", root.lockPathsOpen() && !LockClient.lockConfirmed);
+                root.check("fresh: no sheet published, none read", root.sheetsClosed());
                 root.beating = false;
             }],
         [5000 + LockState.STALE_MS + LockState.HEARTBEAT_MS + 1000, () => {
                 root.check("stopped: no beat for the stale bound reads locked", LockClient.locked && LockClient.stale && SessionState.refuses("probe-stopped"));
                 root.check("stopped: the displays read off", LockClient.displaysOff);
+                root.check("stopped: the sheets read open and holding the keyboard, never shown (fail closed)", root.sheetsFailClosed());
                 root.check("stopped after an unlocked: the lock is not confirmed, the lock paths stay open (a lock request reaches the stand-in)", !LockClient.lockConfirmed && root.lockPathsOpen());
                 root.write("unlocked");
                 root.beating = true;
@@ -150,15 +174,22 @@ ShellRoot {
         [5000 + LockState.STALE_MS + LockState.HEARTBEAT_MS + 13000, () => {
                 root.check("restarted: a new writer's beat reads unlocked", !LockClient.locked && !LockClient.stale);
                 root.beatDark = true;
+                root.beatSheet = true;
                 root.write("unlocked");
             }],
         [5000 + LockState.STALE_MS + LockState.HEARTBEAT_MS + 14500, () => {
                 root.check("dark: a fresh beat with the displays off reads displays off", LockClient.displaysOff && !LockClient.locked);
+                root.check("sheet: a fresh beat with a sheet open reads it open, holding the keyboard and shown", LockClient.authorizing && LockClient.securityKeyboard && LockClient.sheetShown && SessionState.authorizing && SessionState.securityKeyboard);
+                // The security process stops with the sheet open (its last line says so): stale, never "shown".
                 root.beatDark = false;
                 root.beating = false;
+            }],
+        [5000 + LockState.STALE_MS + LockState.HEARTBEAT_MS + 14500 + LockState.STALE_MS + LockState.HEARTBEAT_MS + 1000, () => {
+                root.check("stale sheet: a sheet published open, then no beat: read open and holding the keyboard, never shown", LockClient.stale && LockClient.authorizing && LockClient.securityKeyboard && !LockClient.sheetShown);
+                root.beatSheet = false;
                 remover.running = true;
             }],
-        [5000 + LockState.STALE_MS + LockState.HEARTBEAT_MS + 17500, () => {
+        [5000 + LockState.STALE_MS + LockState.HEARTBEAT_MS + 14500 + LockState.STALE_MS + LockState.HEARTBEAT_MS + 4000, () => {
                 root.check("gone: the file removed reads locked", LockClient.locked && !LockClient.known);
                 root.finish();
             }]
@@ -176,6 +207,7 @@ ShellRoot {
         [800, () => {
                 root.check("dead writer's unlocked: read at the start, no beat: locked", LockClient.known && LockClient.stale && LockClient.locked && SessionState.refuses("probe-dead"));
                 root.check("dead writer's unlocked: not confirmed, the lock paths stay open", !LockClient.lockConfirmed && root.lockPathsOpen());
+                root.check("dead writer's sheet: a sheet in a file with no beat is read open, never shown", LockClient.authorizing && LockClient.securityKeyboard && !LockClient.sheetShown);
             }],
         [LockState.STALE_MS + 2500, () => {
                 root.check("dead writer's unlocked: still locked past the stale bound (never one fresh read)", LockClient.stale && LockClient.locked && LockClient.displaysOff);

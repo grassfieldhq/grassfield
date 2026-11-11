@@ -30,10 +30,11 @@ import "../../lib/RunMode.js" as RunMode
 //
 // Process (ADR-0041 step 1, S2): instantiated in the security process only (../host/SecurityHost.qml), with the lock and the sleep
 // inhibitor, so that the idle lock and the lock before sleep keep working whatever the UI does. What the UI knows of it
-// (the displays switched off, for the polkit agent and the screen saver) goes out with the lock state (Lock.displaysOff,
-// LockPublisher); what it needs from the UI (the applications' org.freedesktop.ScreenSaver inhibitors, which the menu
-// bridge serves to the UI) comes in as a lease (`idle inhibit <seconds>`, below), which ends by itself when the UI stops
-// renewing it: a UI that crashed while a video played cannot keep the idle lock off.
+// (the displays switched off, for the screen saver) goes out with the lock state (Lock.displaysOff, LockPublisher); the
+// polkit and secret sheets beside it (S3) read `displayOff` and `saverShown` in process (SheetSession, bound by the host);
+// what it needs from the UI (the applications' org.freedesktop.ScreenSaver inhibitors, which the menu bridge serves to the
+// UI) comes in as a lease (`idle inhibit <seconds>`, below), which ends by itself when the UI stops renewing it: a UI that
+// crashed while a video played cannot keep the idle lock off.
 Scope {
     id: root
 
@@ -198,6 +199,57 @@ Scope {
     Timer {
         id: inhibitLease
         onTriggered: console.info("grassfield-idle: the screen saver inhibitor lease ended without renewal")
+    }
+
+    // ---- The UI's screen saver, as this process counts it (ADR-0041 step 1, S3). The UI draws the saver (shell/saver,
+    // ADR-0032) after screensaver.idleMinutes without input; the polkit sheet and the secret sheets, which run here, hold a
+    // request while it may show (SheetSession.saverShown, bound by the host). This monitor counts the same idle time by the
+    // same rule (SaverModel.armed's) and the same Wayland inhibitors, so nothing the UI says is read, and it is only ever
+    // early, never late (the opus review of S3, MINOR-1; IdleModel.sheetsSaverArmed, sheetsSaverShown): the applications'
+    // ScreenSaver inhibitors, which reach this process only as the UI's `idle inhibit` lease, are left out, and from this
+    // process's start until it has seen the user active the saver counts as possibly shown (Hyprland starts a new idle
+    // notification's timer from zero, so a process restarted while the user was away would otherwise read "no saver" while
+    // the UI's saver shows). It differs from the saver on the holding side only: while the UI is down, an application's
+    // inhibitor, the start, and the moment between an input that dismisses the saver and the compositor's activity report.
+    // The delay is off in a dev session, as the saver's own (`saver devShow` is the UI's alone); the start's hold is not. It
+    // never locks, unlocks or dims. ----
+    readonly property int saverSeconds: devHooks ? 0 : IdleModel.saverSeconds(Settings.screenSaverIdleMinutes)
+    property bool rearmingSaver: false
+    // The user was seen active since this process started (an input after a pause of IdleModel.ACTIVITY_PROBE_SECONDS).
+    property bool activitySeen: false
+    property bool activityProbeWasIdle: false
+    readonly property bool saverShown: IdleModel.sheetsSaverShown(root.activitySeen, saverMonitor.enabled, saverMonitor.isIdle)
+    // saverShown holds for the start alone (the sheets then say the request arrived while Grassfield was starting).
+    readonly property bool starting: IdleModel.sheetsStarting(root.activitySeen, saverMonitor.enabled, saverMonitor.isIdle)
+    // A sleep is under way (PrepareForSleep(true) until the resume): the polkit agent makes no registration attempt then.
+    readonly property bool sleeping: sleepInhibitor.sleeping
+
+    IdleMonitor {
+        id: saverMonitor
+        // Armed only once its timeout is the one wanted (Quickshell keeps the timeout it was enabled with, see `rearming`).
+        enabled: timeout === Math.max(1, root.saverSeconds) && IdleModel.sheetsSaverArmed(root.saverSeconds, Lock.locked, root.rearmingSaver)
+        timeout: Math.max(1, root.saverSeconds)
+        respectInhibitors: true
+        onTimeoutChanged: {
+            root.rearmingSaver = true;
+            Qt.callLater(() => root.rearmingSaver = false);
+        }
+    }
+
+    // Activity since the start: an input after a pause, whatever inhibits idle (respectInhibitors false); off once seen.
+    IdleMonitor {
+        id: activityProbe
+        enabled: !root.activitySeen
+        timeout: IdleModel.ACTIVITY_PROBE_SECONDS
+        respectInhibitors: false
+        onIsIdleChanged: {
+            const seen = IdleModel.sheetsActivitySeen(root.activitySeen, root.activityProbeWasIdle, isIdle);
+            root.activityProbeWasIdle = isIdle;
+            if (seen && !root.activitySeen) {
+                console.info("grassfield-idle: activity seen since this process started; the sheets follow the screen saver's count");
+                root.activitySeen = true;
+            }
+        }
     }
 
     IdleMonitor {
@@ -522,6 +574,9 @@ Scope {
                 inactiveOffArmed: inactiveMonitor.enabled,
                 offForInactivity: root.offForInactivity,
                 busInhibited: root.busInhibited,
+                saverSeconds: root.saverSeconds,
+                saver: root.saverShown,
+                activitySeen: root.activitySeen,
                 sleepPrevented: root.sleepPrevented,
                 autoSleepArmed: root.autoSleepArmed,
                 autoSleepSeconds: root.autoSleepSeconds,

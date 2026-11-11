@@ -225,7 +225,8 @@ TestCase {
         verify(/readonly property bool moving: root\.stills \? root\.stills\.moving : false/.test(lock));
         verify(/function motionOf\(output: string\): real \{\s*return WallpaperConfig\.motionIn\(root\.motion, output\);\s*\}/.test(lock));
         verify(/function restMotion\(output: string, at: real\): void \{\s*try \{\s*if \(output !== "" && at >= 0\)\s*root\.motion = WallpaperConfig\.withMotion\(root\.motion, output, at\);\s*\} catch \(e\) \{/.test(lock));
-        verify(/LockPublisher \{\s*id: publisher\s*state: root\.publicState\s*displaysOff: root\.displaysOff\s*motion: root\.motion\s*\}/.test(lock));
+        // ADR-0041 S3: the sheets' two booleans go out with it, set by the host (nothing that locks or unlocks reads them).
+        verify(/LockPublisher \{\s*id: publisher\s*state: root\.publicState\s*displaysOff: root\.displaysOff\s*motion: root\.motion\s*authorizing: root\.authorizing\s*securityKeyboard: root\.securityKeyboard\s*\}/.test(lock));
         verify(/^\s*moving: root\.moving\n\s*motionHeld: root\.displaysOff \|\| !controller\.locked\n\s*motionStart: root\.motionOf\(surface\.screen \? surface\.screen\.name : ""\)\n\s*onMotionRestChanged: root\.restMotion\(surface\.screen \? surface\.screen\.name : "", view\.motionRest\)\n/m.test(lock), "each line to its end");
         compare((lock.match(/onMotionRestChanged/g) || []).length, 1);
         const instance = block(lock, "sourceComponent: LockView {");

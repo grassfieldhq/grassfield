@@ -4,9 +4,10 @@
 // and unit-tested in tests/unit/prompter/; checkSocketPeer reads the kernel.
 //
 // A peer is accepted when SO_PEERCRED says it runs as this user and its cgroup is the expected unit's
-// (grassfield-shell.service by default, from --peer-unit in the systemd unit). The cgroup is read race-free: the kernel
-// hands out a pidfd of the peer (SO_PEERPIDFD, Linux 6.5), the PID comes from that pidfd's fdinfo, /proc/<pid>/cgroup is
-// read, then the pidfd is checked again: when the process still runs, the PID was not reused between. Only a kernel that
+// (grassfield-security.service by default since ADR-0041 S3, from --peer-unit in the systemd unit). The cgroup is read
+// race-free: the kernel hands out a pidfd of the peer (SO_PEERPIDFD, Linux 6.5), the PID comes from that pidfd's fdinfo,
+// /proc/<pid>/cgroup is read, then the pidfd is checked again: when the process still runs, the PID was not reused
+// between. Only a kernel that
 // does not know SO_PEERPIDFD at all (ENOPROTOOPT, before 6.5) makes the bridge read the PID of SO_PEERCRED instead, and a
 // peer that exits and whose PID is reused by a process of the expected unit in between would pass there (the residual
 // race, documented in the spec). Any other failure refuses the peer: Linux 6.5 to 6.15 answer EINVAL when the peer has

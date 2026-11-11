@@ -4,7 +4,8 @@
 //
 // Usage: grassfield-prompter [--peer-unit UNIT] [--socket PATH] [--nm-timeout-ms N] [--bt-timeout-ms N]
 //                            [--kio-store-timeout-ms N] [--version]
-//   --peer-unit UNIT   the systemd unit whose process may connect as the shell (default grassfield-shell.service); set by
+//   --peer-unit UNIT   the systemd unit whose process may connect as the shell (default grassfield-security.service, the
+//                      security process that draws the sheets since ADR-0041 S3); set by
 //                      grassfield-prompter.service. Only an argument: no environment variable changes it.
 //   --socket PATH      the socket (default $XDG_RUNTIME_DIR/grassfield/prompter.sock); required in a development run
 //   --nm-timeout-ms N  development runs only (the tests): how long a NetworkManager request waits for its answer
@@ -120,7 +121,7 @@ int main(int argc, char** argv) {
     g_log_set_always_fatal(G_LOG_LEVEL_ERROR);
 
     QString           socketArgument;
-    QString           peerUnit    = QStringLiteral("grassfield-shell.service");
+    QString           peerUnit    = QStringLiteral("grassfield-security.service");
     int               nmTimeoutMs = 0; // 0: the default
     int               btTimeoutMs = 0; // 0: the default
     int               storeTimeoutMs = 0; // 0: the default

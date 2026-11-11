@@ -257,3 +257,54 @@ function inhibitLeaseMs(seconds) {
         return 0;
     return Math.min(seconds, INHIBIT_MAX_SECONDS) * 1000;
 }
+
+// ---- The UI's screen saver, as the security process counts it (ADR-0041 step 1, S3) ----
+// The screen saver is the UI's (shell/saver, ADR-0032): after screensaver.idleMinutes without input while the session is
+// unlocked, no application inhibits idle and the monitor is not being re-armed. The polkit sheet and the secret sheets run
+// in the security process and hold a request while it may show; that process counts the same idle time by the same rule
+// (shell/saver/SaverModel.js `armed`; tests/security/tst_idlemodel.qml compares the two), so it reads nothing from the UI.
+var SAVER_MAX_SECONDS = 240 * 60;
+
+// The saver's delay in seconds for screensaver.idleMinutes (Settings normalizes it; as the saver, minutes x 60): 0 (never)
+// for anything that is not a finite number.
+function saverSeconds(minutes) {
+    return typeof minutes === "number" && isFinite(minutes) ? minutes * 60 : 0;
+}
+
+// The saver's monitor counts (SaverModel.armed's rule).
+function saverArmed(seconds, locked, busInhibited, rearming) {
+    return seconds > 0 && seconds <= SAVER_MAX_SECONDS && locked !== true && busInhibited !== true && rearming !== true;
+}
+
+// What the sheets count of the saver (the opus review of S3, MINOR-1): it may only ever be early, never late, so it holds
+// rather than opens.
+//  - The applications' ScreenSaver inhibitors are left out (the sheets' count is armed with `busInhibited` false): they
+//    reach this process only as the UI's `idle inhibit` lease, which a lost `idle inhibit 0` or any same-user caller can
+//    keep for 150 s while the UI's saver (which reads them from the menu bridge) shows. Wayland inhibitors still count
+//    (the monitor respects them, as the saver's does).
+function sheetsSaverArmed(seconds, locked, rearming) {
+    return saverArmed(seconds, locked, false, rearming);
+}
+
+//  - From the process's start until it has seen the user active, the saver counts as possibly shown: Hyprland starts a new
+//    idle notification's timer from zero (IdleNotify, 0.56.2), so a process restarted while the user was away (a crash, a
+//    same-user SIGSEGV) would read "no saver" for up to screensaver.idleMinutes while the UI's saver is on screen.
+//    `activitySeen` turns true at the first input that ends an idle period of ACTIVITY_PROBE_SECONDS (sheetsActivitySeen).
+var ACTIVITY_PROBE_SECONDS = 1;
+
+function sheetsSaverShown(activitySeen, armed, idle) {
+    return activitySeen !== true || (armed === true && idle === true);
+}
+
+// The saver counts as shown only for that start, not for its own idle time: a request held then says it arrived while
+// Grassfield was starting, not that it waited for the screen saver (the opus delta review of S3, LOW). Text only: what
+// holds a request is sheetsSaverShown.
+function sheetsStarting(activitySeen, armed, idle) {
+    return activitySeen !== true && !(armed === true && idle === true);
+}
+
+// The activity probe's state after a change of its idle state: activity is seen once the probe was idle and is no longer
+// (an input after a pause); a probe that never went idle has seen nothing it can tell from its own start.
+function sheetsActivitySeen(seen, wasIdle, idle) {
+    return seen === true || (wasIdle === true && idle === false);
+}
