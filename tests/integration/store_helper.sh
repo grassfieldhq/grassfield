@@ -294,8 +294,11 @@ say "A6b descriptors and signals: the caller going away does not stop pacman (S6
 op=$(newop)
 ( env -i PATH=/usr/bin "$H" install "$op" gs-slow </dev/null 2>&1 | cat >"$W/slow.pipe" ) &
 caller=$!
-for _ in $(seq 40); do [[ -f $D/$op.started ]] && grep -q 'gs-slow' "$D/$op.log" 2>/dev/null && break; sleep 0.25; done
-sleep 2
+# Sample while the scriptlet's `sleep 8` runs. The log names gs-slow from the helper's first line on, long before pacman: on a
+# loaded machine the helper is then still in its pre-flight loops (stdin a pipe, a forked child holding the lock for an
+# instant), which is what the 2026-11-11 runs caught.
+for _ in $(seq 240); do [[ -f $D/$op.started ]] && pgrep -xf 'sleep 8' >/dev/null && break; sleep 0.25; done
+sleep 1
 hpid=$(cut -d' ' -f1 "$D/$op.started")
 holders=$(find /proc/[0-9]*/fd -lname "$D/helper.lock" 2>/dev/null | cut -d/ -f3 | sort -u | tr '\n' ' ')
 expect "while pacman and gs-slow's scriptlet run, only the helper holds its lock ($holders)" test "$holders" == "$hpid "
