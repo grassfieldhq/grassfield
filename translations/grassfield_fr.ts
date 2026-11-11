@@ -12111,8 +12111,8 @@
         <translation>Grassfield fonctionne en mode sans échec</translation>
     </message>
     <message>
-        <source>Its desktop stopped working several times in a row and was turned off. Your open apps keep running.</source>
-        <translation>Son bureau a cessé de fonctionner plusieurs fois de suite et a été désactivé. Vos apps ouvertes continuent de fonctionner.</translation>
+        <source>The desktop stopped working several times in a row and was turned off. Your open apps keep running.</source>
+        <translation>Le bureau a cessé de fonctionner plusieurs fois de suite et a été désactivé. Vos apps ouvertes continuent de fonctionner.</translation>
     </message>
     <message>
         <source>Restarting the desktop…</source>

@@ -22,7 +22,7 @@ FocusScope {
     readonly property bool busy: root.running !== ""
 
     readonly property string title: qsTr("Grassfield is running in safe mode")
-    readonly property string message: qsTr("Its desktop stopped working several times in a row and was turned off. Your open apps keep running.")
+    readonly property string message: qsTr("The desktop stopped working several times in a row and was turned off. Your open apps keep running.")
     // One line under the message while an action runs, or after one that did not finish.
     readonly property string statusText: {
         if (root.running === "tryAgain")

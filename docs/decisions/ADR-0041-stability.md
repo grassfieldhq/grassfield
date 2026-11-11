@@ -838,7 +838,7 @@ down, how sleep behaves) is written in the table at the end of this step.
   was the user-facing part, which this step adds there: a notice with one way forward and one way out.
 - **What the user sees** (`shell/security/safemode/`). One small alert, centred by the compositor on the output it maps it on
   (a layer surface with no anchor and no output: the one with the focus), the size of the alert and its shadow, nothing full
-  screen and no dim: the caution symbol, "Grassfield is running in safe mode", "Its desktop stopped working several times
+  screen and no dim: the caution symbol, "Grassfield is running in safe mode", "The desktop stopped working several times
   in a row and was turned off. Your open apps keep running.", and two capsules, Log Out and Try Again (the default),
   stacked with Try Again on top when the French labels do not fit side by side. Drawn with `Grassfield.Ui` and its tokens
   only, in the shape of the UI's alerts (`shell/overlay/Dialog.qml`: radius.alert, the 64 frame, panel.alertWidth); every
