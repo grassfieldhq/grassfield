@@ -920,7 +920,19 @@ down, how sleep behaves) is written in the table at the end of this step.
   reset, the start, the flag back on a failed start, no runtime directory, a linked one, an unknown argument, the
   counter's own path still without start or reset, the unit without argument; two mutants: the flag removed after the
   start, the flag not put back); `tests/security/safe_mode_nested.sh` (nested, bare: below). Inventory 784.
-- **Evidence.** See the pull request's report (the gates' exit codes and counts).
+- **Evidence** (this machine, 2026-11-11, the branch's head; GRASSFIELD_SESSION and QT_QPA_PLATFORMTHEME unset in every
+  command). `just check-quick` exit 0 (qmllint 858 files, 0 warnings; i18n 4477 messages, 0 unfinished; inventory 784;
+  check-contrast 57 tests OK, the alert's text roles registered; check-migrate ok; gitleaks no leaks). The security QML suite
+  as `scripts/dev/test.sh` runs it (`qmltestrunner -import ui -import <qs root> -input tests/security`): 373 passed, 0
+  failed, gate Q2 clean; `tst_safemode.qml` alone 18. `safe_mode.sh` exit 0 (26 checks; six mutants caught).
+  `security_unit.sh` 188 PASS (the scan's selftest, 100 mutants, among them); `lock_surfaces.sh` 396 PASS;
+  `ipc_inventory.sh` 104 PASS (177 functions of 38 targets, all documented); `session_services.sh` 58;
+  `tests/shell/shell_failures.sh` 48; `sleep_lock_units.sh` 100. Nested, bare, one slot of the integrator's rule (load 2
+  to 4): `safe_mode_nested.sh` 27 PASS on a fresh `nested-up` and 27 on a fresh `nested-up --lang fr`; the captures
+  `.dev/shots/safe-mode-en.png` and `safe-mode-fr.png` (GF-REF; the French buttons stacked, Réessayer on top) were looked at
+  by the author only (F1 not signed off). The first nested run failed one check (the surface still listed 5 s after Try
+  Again): the notice had mapped on the nested window's output, which was not drawing (its capture waited too), so the
+  surface's fade-out never ended; the test now focuses GF-REF first, and the same check passed in both runs after it.
 - **NOT VERIFIED.** The real session (the owner's L2): three `kill -SEGV` of the UI within ten minutes, unlocked, then the
   notice within seconds; locked, the notice only after the unlock, the password unlocking at the first attempt; Try Again
   bringing the desktop back (`grassfield-shell-failed --try-again` against systemd 261: reset-failed, the start, the flag
