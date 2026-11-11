@@ -237,10 +237,11 @@ Item {
             compare(findChild(card, "safeModeSymbol").name, "exclamationmark-triangle", "the subject's symbol, never the Grassfield mark");
         }
 
-        // Return (and Enter) is Try Again; Esc does nothing, never logs out; a key held down answers nothing.
+        // Return (and Enter) is Try Again, the default button, wherever the keyboard is; Tab moves it between the buttons and
+        // Space presses that one; Esc does nothing, never logs out.
         function test_keys() {
             const card = make();
-            verify(findChild(card, "safeModeTryAgain").activeFocus, "the keyboard starts on the default button");
+            verify(card.activeFocus && card.keyTarget === 1, "the keyboard starts on the alert, its target the default button");
             keyClick(Qt.Key_Return);
             compare(tryAgainSpy.count, 1);
             keyClick(Qt.Key_Enter);
@@ -248,19 +249,57 @@ Item {
             keyClick(Qt.Key_Escape);
             compare(tryAgainSpy.count, 2);
             compare(logOutSpy.count, 0, "Esc never logs out");
-            // Return with the keyboard on the alert itself (no button focused) is Try Again too.
-            card.forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            compare(tryAgainSpy.count, 3, "Space presses the target, Try Again at first");
+            keyClick(Qt.Key_Tab);
+            compare(card.keyTarget, 0, "Tab moves the keyboard to Log Out");
+            verify(card.activeFocus, "the alert keeps the keyboard (the buttons take none)");
             keyClick(Qt.Key_Return);
-            compare(tryAgainSpy.count, 3);
+            compare(tryAgainSpy.count, 4, "Return stays Try Again with Log Out as the target (the default button's key)");
             compare(logOutSpy.count, 0);
+            keyClick(Qt.Key_Space);
+            compare(logOutSpy.count, 1, "Space presses Log Out once it is the target");
+            keyClick(Qt.Key_Backtab);
+            compare(card.keyTarget, 1, "Shift+Tab moves it back");
         }
 
-        // The buttons: a click on each emits its own intent and nothing else.
+        // A key held down answers nothing, whatever it is and wherever the keyboard is (the delta opus review of b67472da,
+        // NIT: a held Return on a focused button pressed it again once a failed Try Again gave the focus back). Its repeats
+        // are taken (they reach nothing else) and act on nothing.
+        function test_heldKeys() {
+            const card = make();
+            verify(card.handleKey(Qt.Key_Return, true), "a repeat is taken");
+            verify(card.handleKey(Qt.Key_Enter, true));
+            verify(card.handleKey(Qt.Key_Space, true));
+            compare(tryAgainSpy.count, 0, "no repeat presses Try Again");
+            verify(card.handleKey(Qt.Key_Tab, true));
+            compare(card.keyTarget, 1, "a repeated Tab moves nothing");
+            verify(card.handleKey(Qt.Key_Tab, false));
+            compare(card.keyTarget, 0);
+            verify(card.handleKey(Qt.Key_Space, true));
+            verify(card.handleKey(Qt.Key_Return, true));
+            compare(logOutSpy.count, 0, "no repeat presses Log Out");
+            compare(tryAgainSpy.count, 0);
+            // A failed Try Again gives the keyboard back to Try Again; a Return still held then repeats and acts on nothing.
+            card.running = "tryAgain";
+            card.running = "";
+            card.failure = "tryAgain";
+            tryVerify(() => card.activeFocus && card.keyTarget === 1, 1000, "the keyboard back on the alert, Try Again its target");
+            verify(card.handleKey(Qt.Key_Return, true));
+            compare(tryAgainSpy.count, 0, "the held Return does not start it again");
+            verify(!card.handleKey(Qt.Key_A, false), "other keys go by");
+            // The buttons take no focus, so no button can take a key (or its repeats) before the alert.
+            compare(findChild(card, "safeModeTryAgain").focusPolicy, Qt.NoFocus);
+            compare(findChild(card, "safeModeLogOut").focusPolicy, Qt.NoFocus);
+        }
+
+        // The buttons: a click on each emits its own intent and nothing else, and leaves the keyboard on the alert.
         function test_buttons() {
             const card = make();
             mouseClick(findChild(card, "safeModeLogOut"));
             compare(logOutSpy.count, 1);
             compare(tryAgainSpy.count, 0);
+            verify(card.activeFocus, "a click leaves the keyboard on the alert");
             mouseClick(findChild(card, "safeModeTryAgain"));
             compare(tryAgainSpy.count, 1);
             compare(logOutSpy.count, 1);
@@ -283,7 +322,7 @@ Item {
             card.failure = "tryAgain";
             verify(status.visible);
             verify(status.text.indexOf("couldn’t be restarted") >= 0);
-            tryVerify(() => findChild(card, "safeModeTryAgain").activeFocus, 1000, "focus back on Try Again");
+            tryVerify(() => card.activeFocus && card.keyTarget === 1, 1000, "the keyboard back on Try Again");
             card.failure = "";
             card.running = "logOut";
             compare(status.text, "Logging out…");

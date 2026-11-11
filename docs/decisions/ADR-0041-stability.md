@@ -842,10 +842,11 @@ down, how sleep behaves) is written in the table at the end of this step.
   in a row and was turned off. Your open apps keep running.", and two capsules, Log Out and Try Again (the default),
   stacked with Try Again on top when the French labels do not fit side by side. Drawn with `Grassfield.Ui` and its tokens
   only, in the shape of the UI's alerts (`shell/overlay/Dialog.qml`: radius.alert, the 64 frame, panel.alertWidth); every
-  text fixed and plain (`SafeModeCard.qml`). Return and Enter are Try Again (unless Tab moved the focus to Log Out, as in
-  every Grassfield alert); Esc does nothing (no Cancel: closing it would leave no desktop and no way back, and it never
-  logs out); a key held down answers nothing; Space presses the focused button. The keyboard starts on Try Again and comes
-  back to it after an action that did not finish. Accessible as a dialog named by its title, described by its message.
+  text fixed and plain (`SafeModeCard.qml`). Return and Enter are Try Again, the default button, wherever the keyboard is;
+  Tab and Shift+Tab move the keyboard between the two buttons (a focus ring once Tab was used) and Space presses that one;
+  Esc does nothing (no Cancel: closing it would leave no desktop and no way back, and it never logs out); a key held down
+  answers nothing, whatever it is (the buttons take no focus, the alert handles every key: review round 2). The keyboard
+  starts on Try Again and comes back to it after an action that did not finish. Accessible as a dialog named by its title, described by its message.
   While an action runs both buttons are disabled and a line says "Restarting the desktop…" or "Logging out…"; one that did
   not finish says so ("The desktop couldn’t be restarted. Try again, or log out.", or that some apps are still open). The
   window is on the overlay layer (a full-screen window cannot hide it) and takes the keyboard on demand, as an app's
@@ -994,6 +995,21 @@ down, how sleep behaves) is written in the table at the end of this step.
     but the first); `qs.security.safemode` may be imported by the host only (`security_process_scan.py`, a mutant: idle
     importing it); `grassfield-shell-failed` names systemctl and timeout by absolute path; the Log Out failure text split by
     exit code (above).
+- **Review round 2** (2026-11-12, the delta opus review of b67472da: PASS; one MINOR and three NITs, fixed on the branch):
+  - MINOR, the lock's palette check was a denylist of Appearance names: it missed others (highlight, buttonFill,
+    windowSecondary, inactiveFill, iconTint) and the shared parts whose default colours follow the appearance (an `Icon {}`
+    in LockView would draw a dark glyph on the dark lock for a light user, and the test stayed green). Now
+    `tests/security/lock_palette.py` (from `security_unit.sh`) is an allowlist over the lock's files, PasswordField and the
+    idle dim: Appearance only as darkColors and appearance-free members (motion, fonts, the pure withAlpha), never bare;
+    PasswordField's `Appearance.colors` only as the defaults of the five colours LockView sets itself, from darkColors, with
+    no focus ring, and its own Icon and FocusRing held to the field's colour and to that switch; Tokens colours only
+    colorDark; each file's types as today, so no Icon, Button, Material or FocusRing. Its selftest plants 20 mutants (the
+    review's Icon, Button and `Appearance.highlight` in LockView among them).
+  - NITs: SafeMode.qml's header says what the code does (the displays, the guard, the flag kept by Try Again); the alert's
+    buttons take no focus and the alert handles every key, a held key answering nothing whatever it is (a held Return used
+    to press a focused button again once a failed Try Again gave the focus back; `tst_safemode` test_heldKeys); a flag whose
+    identity `stat` cannot read stays, as "not the same file", and is said (`tests/shell/shell_failures.sh`, where the
+    helper's cases live: a failing stat).
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words

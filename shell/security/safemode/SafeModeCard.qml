@@ -52,28 +52,41 @@ FocusScope {
     Accessible.name: root.title
     Accessible.description: root.message
 
-    // The keyboard starts on the default button, and comes back to it after an action that did not finish (a disabled
-    // button loses the focus while the action runs).
+    // The keys, all here (the buttons take no focus, so no button handles a key itself): Return and Enter are Try Again, the
+    // default button, wherever the keyboard is; Tab and Shift+Tab move the keyboard between Log Out and Try Again (a focus
+    // ring shows which once Tab was used); Space presses that one; Esc does nothing (no Cancel: closing the alert would leave
+    // no desktop, and it never logs out). A key held down answers nothing, whatever it is (the delta opus review of b67472da,
+    // NIT: a held Return on a focused button used to press it again once a failed Try Again gave the focus back); the
+    // controller also refuses a press in the first SafeModeModel.GUARD_MS after the alert appears and while an action runs.
+    // The keyboard starts on Try Again, and is back there after an action that did not finish.
+    property int keyTarget: 1 // 0: Log Out, 1: Try Again
+    property bool keyboardNavigated: false
     function takeFocus(): void {
-        if (!root.busy)
-            tryAgainButton.forceActiveFocus();
+        root.keyTarget = 1;
+        root.forceActiveFocus();
     }
     onBusyChanged: if (!root.busy)
         Qt.callLater(root.takeFocus)
 
-    // Return and Enter are Try Again wherever the focus is in the alert, unless Tab moved it to Log Out (a focused button
-    // takes its own activation keys first, as in every Grassfield alert). A Return held down on the alert answers nothing; on
-    // a focused button its repeats reach the button, and the controller refuses all but the first (an action under way
-    // refuses another; nothing acts in the first SafeModeModel.GUARD_MS after the alert appears). Esc is swallowed.
-    Keys.onPressed: event => {
-        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (!event.isAutoRepeat)
+    // true when the alert took the key.
+    function handleKey(key: int, autoRepeat: bool): bool {
+        const known = key === Qt.Key_Return || key === Qt.Key_Enter || key === Qt.Key_Space || key === Qt.Key_Escape || key === Qt.Key_Tab || key === Qt.Key_Backtab;
+        if (!known || autoRepeat)
+            return known;
+        if (key === Qt.Key_Return || key === Qt.Key_Enter) {
+            root.tryAgain();
+        } else if (key === Qt.Key_Space) {
+            if (root.keyTarget === 0)
+                root.logOut();
+            else
                 root.tryAgain();
-            event.accepted = true;
-        } else if (event.key === Qt.Key_Escape) {
-            event.accepted = true;
+        } else if (key === Qt.Key_Tab || key === Qt.Key_Backtab) {
+            root.keyTarget = 1 - root.keyTarget;
+            root.keyboardNavigated = true;
         }
+        return true;
     }
+    Keys.onPressed: event => event.accepted = root.handleKey(event.key, event.isAutoRepeat)
 
     Material {
         id: material
@@ -167,18 +180,25 @@ FocusScope {
             id: logOutButton
             objectName: "safeModeLogOut"
             capsule: true
+            focusPolicy: Qt.NoFocus
             text: qsTr("Log Out")
             enabled: !root.busy
             width: buttonRow.buttonWidth
             x: 0
             y: buttonRow.stacked ? tryAgainButton.height + buttonRow.gap : 0
             onClicked: root.logOut()
+
+            FocusRing {
+                shapeRadius: logOutButton.shapeRadius
+                visible: root.activeFocus && root.keyboardNavigated && !root.busy && root.keyTarget === 0
+            }
         }
 
         Button {
             id: tryAgainButton
             objectName: "safeModeTryAgain"
             capsule: true
+            focusPolicy: Qt.NoFocus
             primary: true
             text: qsTr("Try Again")
             enabled: !root.busy
@@ -186,6 +206,11 @@ FocusScope {
             x: buttonRow.stacked ? 0 : buttonRow.buttonWidth + buttonRow.gap
             y: 0
             onClicked: root.tryAgain()
+
+            FocusRing {
+                shapeRadius: tryAgainButton.shapeRadius
+                visible: root.activeFocus && root.keyboardNavigated && !root.busy && root.keyTarget === 1
+            }
         }
     }
 }

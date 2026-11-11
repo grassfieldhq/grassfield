@@ -62,7 +62,13 @@ esac
 [ "${FAKE_STOP_FAILS:-0}" = 1 ] && exit 1
 exit 0
 SH
-chmod +x "$tmp/lib/grassfield-shell-failed" "$tmp/lib/session-gone" "$tmp/bin/systemctl"
+# stat(1) as the script finds it (through PATH): the real one, unless a case makes it fail.
+cat >"$tmp/bin/stat" <<'SH'
+#!/bin/sh
+[ "${FAKE_STAT_FAILS:-0}" = 1 ] && exit 1
+exec /usr/bin/stat "$@"
+SH
+chmod +x "$tmp/lib/grassfield-shell-failed" "$tmp/lib/session-gone" "$tmp/bin/systemctl" "$tmp/bin/stat"
 run() { # <now> [VAR=value...] -> exit code in $rc, stderr in $err; the ledger lives in $tmp/run/grassfield
   local now=$1
   rc=0
@@ -227,6 +233,12 @@ loop
 tryagain FAKE_START_NEWFLAG=1
 desc="Try Again during which a new loop wrote its flag: that flag is kept (only the one noted is removed)"
 check test "$rc" = 0 -a "$(cat "$flag" 2>/dev/null)" = "loop 9 3"
+desc="Try Again during which a new loop wrote its flag: the journal says it stays"
+check bash -c '[[ $1 == *"a new safe-mode flag was written meanwhile"* ]]' _ "$err"
+loop
+tryagain FAKE_STAT_FAILS=1
+desc="Try Again whose stat fails (the flag's identity unreadable, the delta review of b67472da, NIT): the shell is started, the flag stays as not the same file, and the journal says so"
+check bash -c '[ "$1" = 0 ] && [ -f "$2" ] && [[ $3 == *"identity could not be read: it stays"* ]]' _ "$rc" "$flag" "$err"
 fresh
 rc=0
 err=$(env -i PATH="$tmp/bin:/usr/bin:/bin" FAKE_LOG="$tmp/log" sh "$tmp/lib/grassfield-shell-failed" --try-again 2>&1 >/dev/null) || rc=$?
@@ -314,7 +326,7 @@ mutant no-active-check 's|^  if ! /usr/bin/timeout -k 1 5 /usr/bin/systemctl --u
 loop; tryagainm no-active-check FAKE_ACTIVE=0
 desc="mutant: without the active check the flag goes while the shell is not running (caught)"
 check test ! -e "$tmp/run/grassfield/shell-safe-mode"
-mutant no-identity 's|^  if \[ -n "$noted" \] \&\& \[ "$(stat -c %i -- "$flag" 2>/dev/null)" = "$noted" \]; then$|  if true; then|'
+mutant no-identity 's|^  elif \[ "$current" = "$noted" \]; then$|  elif true; then|'
 loop; tryagainm no-identity FAKE_START_NEWFLAG=1
 desc="mutant: without the identity check a new loop's flag is removed (caught)"
 check test ! -e "$tmp/run/grassfield/shell-safe-mode"

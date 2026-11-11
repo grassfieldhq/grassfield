@@ -16,19 +16,24 @@ import "../../lib/RunMode.js" as RunMode
 // with Try Again and Log Out. Nothing else of the desktop is drawn here: no Dock, menu bar, notification server or request
 // socket (the crash of 2026-10-29 lived in those sockets, which this process never opens).
 //
-// The lock always wins. The notice exists only while the session is unlocked and no polkit or secret sheet of this process is
-// open (SafeModeModel.shown, from `locked` and `sheetUp`, which the host binds from this process's own Lock and sheets and
-// which read true until bound): it is destroyed the moment a lock is asked for, never drawn under or over the lock, and
-// takes no key meant for a sheet. The actions refuse unless the notice is on screen (SafeModeModel.canAct), whatever asks.
-// Nothing here locks, unlocks, approves or delays a lock; a failure of anything here leaves the lock as it is.
+// The lock always wins. The notice exists only while the session is unlocked, no polkit or secret sheet of this process is
+// open and the displays are on (SafeModeModel.shown, from `locked`, `sheetUp` and `displaysOff`, which the host binds from
+// this process's own Lock, sheets and idle, and which read true until bound): it is destroyed the moment a lock is asked
+// for, a sheet opens or idle turns the displays off, is never drawn under or over the lock, takes no key meant for a sheet,
+// and the wake key finds none. The actions refuse unless the notice is on screen, has been for SafeModeModel.GUARD_MS
+// (`armed`: a repeated Return of the password or the wake key never presses a button) and no action runs
+// (SafeModeModel.canAct), whatever asks. Nothing here locks, unlocks, approves or delays a lock; a failure of anything here
+// leaves the lock as it is.
 //
-// The actions run fixed commands as the user, never anything read from a file:
-// - Try Again: /usr/lib/grassfield/grassfield-shell-failed --try-again (the loop detector's own helper: it clears its ledger
-//   and its flag, resets the unit's start limit and starts grassfield-shell.service with `systemctl --user`; the flag comes
-//   back if the start fails). A second loop is the detector's to stop again, and the notice comes back; nothing here
-//   restarts the shell on its own, so nothing loops.
+// The actions run fixed commands as the user, never anything read from a file, each bounded by `timeout`:
+// - Try Again: /usr/lib/grassfield/grassfield-shell-failed --try-again (the loop detector's own helper: it keeps the flag
+//   until the shell is confirmed running, writing it when missing; clears its ledger, resets the unit's start limit, starts
+//   grassfield-shell.service and asks whether it is active with `systemctl --user`, each step bounded; it removes the flag
+//   only then, and only if it is still the one it noted). A run killed or failed at any point leaves the flag, so the notice
+//   stays or comes back. A second loop is the detector's to stop again, and the notice comes back; nothing here restarts
+//   the shell on its own, so nothing loops.
 // - Log Out: /usr/lib/grassfield/grassfield-session-end logout, the Grassfield menu's own path (every app asked to close,
-//   none forced).
+//   none forced); its exit 3 (apps still open) and any other failure say different things (SafeModeModel.failureOf).
 // A dev session never asks systemd (it would read the owner's own unit), never reads the owner's flag and runs neither
 // action: its looks come from `safemode devSet` (SafeModeModel.devLook), and each action logs that it was suppressed.
 Scope {

@@ -69,10 +69,20 @@ if [ "${1:-}" = "--try-again" ]; then
     say "Try Again: grassfield-shell is not running after its start: the safe-mode flag stays"
     exit 1
   fi
-  if [ -n "$noted" ] && [ "$(stat -c %i -- "$flag" 2>/dev/null)" = "$noted" ]; then
+  # The flag goes only if it is still the one noted. Its identity unreadable (stat failed, before or now) reads as "not the
+  # same file": it stays, which is harmless while the shell runs (the look needs the unit down), and is said (the delta opus
+  # review of b67472da, NIT).
+  current=$(stat -c %i -- "$flag" 2>/dev/null)
+  if [ ! -e "$flag" ] && [ ! -L "$flag" ]; then
+    :
+  elif [ -z "$noted" ] || [ -z "$current" ]; then
+    say "Try Again: the safe-mode flag's identity could not be read: it stays"
+  elif [ "$current" = "$noted" ]; then
     rm -f "$flag"
+  else
+    say "Try Again: a new safe-mode flag was written meanwhile (a new loop): it stays"
   fi
-  say "Try Again: grassfield-shell started (the failure ledger and the safe-mode flag cleared)"
+  say "Try Again: grassfield-shell started (the failure ledger cleared)"
   exit 0
 fi
 if [ $# -gt 0 ]; then
