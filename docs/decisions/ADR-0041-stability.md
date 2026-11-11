@@ -227,7 +227,7 @@ down, how sleep behaves) is written in the table at the end of this step.
   | S1 | the UI, unchanged | unchanged | nothing: the security process hosts nothing yet | unchanged |
   | S2 | the security process, and only it: every lock request goes to it over IPC | the lock, idle and the inhibitor keep running; the UI's refusals read locked from the compositor's signal, the pushed state or the absence of a state; nothing about the lock changes | the compositor keeps an existing lock (lockdead screen, IQ-T5); no idle lock and no inhibitor until its restart (1 s) or its stop at the limit; the UI's refusals read locked (the unit is not active/running); Omarchy's sleep lock is armed by the security unit's `OnFailure=` | the security process's inhibitor while it runs; the gate skips Omarchy's unit only while the security unit is active/running; Omarchy's stand-in starts the security unit and asks it to lock; the same known limit when it cannot start in logind's window |
   | S3 | the security process | as S2; an authorization asked while the security process restarts fails, as it does today while the UI restarts | as S2, plus no polkit agent until the restart | as S2 |
-  | S4 | the security process | as S2; after 1a's stop the safe-mode bar appears under the lock surface | as S2; the safe-mode bar is gone with it | as S2 |
+  | S4 | the security process | as S2; after 1a's stop the safe-mode notice appears while the session is unlocked and no sheet is up, never under or over the lock (S4 as built) | as S2; the notice is gone with it, and back after the restart if the UI is still stopped | as S2 |
 
 - Known limits (written in the spec): a Quickshell bug that takes the security process down in a loop leaves the
   compositor's lock in place and the session out of reach from itself (the TTY or the power button); a second Qt Quick
@@ -830,6 +830,113 @@ down, how sleep behaves) is written in the table at the end of this step.
     one registration, the stall logged, no try (the reviewer saw it detected at 2017 ms with 0 tries). A private-bus phase:
     run bare by the integrator.
   - NIT-3: the beat Timer's id is `stallBeatTimer` (the function keeps `stallBeat`).
+
+### S4 as built (2026-11-11, branch feat/safe-mode-s4 from main af7ec1a8; safe mode, last; the rc7 audit's R7-REL-03)
+- **The gap it closes.** After 1a's stop (three failures of the UI within 10 minutes) the user had no menu bar, Dock,
+  notification server or way back but a sleep, the lid or a TTY. S2 and S3 had already moved the lock, idle, the sleep
+  inhibitor, the polkit agent and the secret sheets into the security process, so those kept working; what was missing
+  was the user-facing part, which this step adds there: a notice with one way forward and one way out.
+- **What the user sees** (`shell/security/safemode/`). One small alert, centred by the compositor on the output it maps it on
+  (a layer surface with no anchor and no output: the one with the focus), the size of the alert and its shadow, nothing full
+  screen and no dim: the caution symbol, "Grassfield is running in safe mode", "Its desktop stopped working several times
+  in a row and was turned off. Your open apps keep running.", and two capsules, Log Out and Try Again (the default),
+  stacked with Try Again on top when the French labels do not fit side by side. Drawn with `Grassfield.Ui` and its tokens
+  only, in the shape of the UI's alerts (`shell/overlay/Dialog.qml`: radius.alert, the 64 frame, panel.alertWidth); every
+  text fixed and plain (`SafeModeCard.qml`). Return and Enter are Try Again (unless Tab moved the focus to Log Out, as in
+  every Grassfield alert); Esc does nothing (no Cancel: closing it would leave no desktop and no way back, and it never
+  logs out); a key held down answers nothing; Space presses the focused button. The keyboard starts on Try Again and comes
+  back to it after an action that did not finish. Accessible as a dialog named by its title, described by its message.
+  While an action runs both buttons are disabled and a line says "Restarting the desktop…" or "Logging out…"; one that did
+  not finish says so ("The desktop couldn’t be restarted. Try again, or log out.", or that some apps are still open). The
+  window is on the overlay layer (a full-screen window cannot hide it) and takes the keyboard on demand, as an app's
+  alert: the user can click a window to save their work, and click the alert again. English and French in the catalog.
+- **When it shows** (`SafeMode.qml`, the pure rules in `SafeModeModel.js`). The security process looks at the UI's unit
+  every 5 s (every 2 s while a stop is seen or the notice is up): one short process with a fixed command, bounded at 5 s,
+  that tests the loop detector's flag `$XDG_RUNTIME_DIR/grassfield/shell-safe-mode` as a plain file that is not a link
+  (never read: the flag is a flag) and prints `systemctl --user show` of `ActiveState`, `SubState` and `Result` of
+  `grassfield-shell.service`. Safe mode is the flag with the unit down for good (`inactive` or `failed`, never
+  `activating`, which covers the auto-restart wait), or the unit `failed` with `Result=start-limit-hit` with or without the
+  flag (ADR-0056 D-10: the counter can miss the last failures of a sub-second loop). A stale flag with the shell brought back
+  shows nothing (the opus review of b1d826b); two looks in a row must agree, so a flag left from an earlier loop, read at a
+  login before the autostart starts the shell, or a unit passing through `failed` on its way to a restart, shows nothing.
+  An answer that cannot be read (a missing line, a token outside systemd's form, CRLF, more than 4 KiB) is no safe mode.
+- **The lock always wins.** The notice exists only while the session is unlocked and no polkit or secret sheet of this
+  process is up: its window is made by a LazyLoader active only then (`SafeModeModel.shown`: an exact `false` for both), and
+  destroyed the moment either changes. The host (`SecurityHost.qml`, pinned anew) binds the two inputs from this process
+  alone: locked is `Lock.locked || Lock.strandedProbing || Lock.publicState !== "unlocked"` (a lock asked for, `locking`,
+  already counts, so the notice is gone before the compositor draws the lock; the start-up probe of a stranded or foreign
+  lock counts too), a sheet up is the sheets' `authorizing || securityKeyboard` (open, shown or held, or the key sink); both
+  read true until bound. Nothing is drawn under the lock (the plan said "under the lock surface": nothing there can take a
+  key or show, and the notice comes back at the unlock), nothing takes a key meant for a sheet. Try Again and Log Out refuse
+  first unless the notice is on screen and no action runs (`SafeModeModel.canAct`), whatever asks: a button, Return, the
+  dev hook. Nothing here locks, unlocks, approves, delays a lock or reads the UI's state file.
+- **What the actions run** (fixed commands, as the user, nothing read from a file):
+  - Try Again: `timeout -k 2 40 /usr/lib/grassfield/grassfield-shell-failed --try-again`, the loop detector's own helper,
+    which gains this verb (never the unit's: its `ExecStart=` has no argument; an unknown argument does nothing, exit 2). In
+    this order: the ledger and the flag are removed (the next loop is counted from zero, and a flag that loop writes is never
+    removed here), `systemctl --user reset-failed grassfield-shell.service` (a unit at its start limit refuses a start until
+    then), `systemctl --user start grassfield-shell.service` waited for within 30 s (Type=simple: it returns once the shell
+    runs, or fails). A start that fails puts the flag back, so the notice stays with its failure line. It never loops: nothing
+    restarts the shell on its own; a shell that fails again is the counter's to stop again (three failures, its stop, a new
+    flag), and the notice comes back. After a start that worked the notice leaves (the next looks see the flag gone).
+  - Log Out: `timeout -k 5 330 /usr/lib/grassfield/grassfield-session-end logout`, the Grassfield menu's own path (every app
+    asked to close, none forced; `uwsm stop`). An app that keeps a window open stops it after its 15 s, and the notice says
+    so (see the residuals).
+- **Deviations from the plan's text** (step 1 S4 and SD-4, written before later owner decisions; taken under the owner's rule
+  and the integrator's brief of 2026-11-11, to be confirmed by the reviewer and the owner): (1) one centred alert instead of a
+  bar with the Grassfield menu: macOS's "a problem occurred" alerts, and a bar would rebuild a piece of the menu bar in the
+  security process; (2) two actions, Try Again and Log Out, where SD-4 listed Restart and Shut Down too: the login screen
+  offers both after Log Out, and the power button stays logind's; (3) the caution symbol, not the Grassfield mark: the owner's
+  IQ-B1 B (ADR-0040) came after SD-4, dialogs show their subject's symbol (`tests/ci/mark_places.py`); (4) nothing under the
+  lock (above); (5) the dark palette only: the security process draws dark (the lock and the sheets since S3), so the light
+  captures of the plan do not exist.
+- **Dev session.** The security process of a dev session never asks systemd (it would read the owner's own unit) or reads
+  the owner's flag, and runs neither action (each logs "dev session, suppressed ..."). Its looks are faked by the dev hook
+  `safemode devSet` (`SafeModeModel.devLook`, read through the same parser and settle), `safemode devPress tryAgain|logOut`
+  presses a button through the same refusals, `safemode status` returns what the notice decides from (JSON, no private
+  state). The three are refused outside a dev session; no safe-mode function answers IPC in a real session, Try Again and
+  Log Out are the notice's buttons only (`docs/specs/security.md` IPC surface; `tests/visual/ipc.sh` sends `safemode` to the
+  security instance).
+- **Memory and start (gate P2, P5).** Nothing of the notice exists outside safe mode: the controller is a Timer, three
+  Process objects that run only when asked, a LazyLoader and an IpcHandler; the window and its alert are made only while the
+  notice is on screen and destroyed with it. Not measured (no compositor for the window here; the security root's
+  offscreen proxy would run the real inhibitor outside a dev session on this machine): NOT VERIFIED, the integrator's
+  `scripts/gates/rss.sh --nested` with the notice shown and not.
+- **Tests.** `tests/security/tst_safemode.qml` (the parser, the flag present or absent with every unit state, the settle,
+  the lock and sheet truth table with non-boolean inputs, `canAct`, the intervals, the dev looks; the alert offscreen: its
+  accessible name, role and buttons, Return and Enter as Try Again, Esc never logging out, the clicks, the busy and failure
+  lines, the focus back on Try Again, plain text, the caution symbol); `tests/security/safe_mode.sh` (the real controller
+  under Quickshell offscreen in a dev session, a stand-in window, the probe binding the lock and the sheets as the host:
+  26 checks, and six mutants each caught: shows over the lock, Try Again while locked, Log Out while locked, shows over a
+  sheet, not lazy, one look confirms); `security_process_scan.py` (rule 6: one SafeMode in the host bound exactly from its
+  lock and sheets, true until bound, no SafeMode or safe-mode import in the UI, no `qs.services` type in safemode/; 13 more
+  mutants, 100 in all); `security_unit.sh` (the host and the controller pinned by SHA-256, the lazy notice, the first-statement
+  refusals, the three fixed commands and nothing else that starts a process, reads or writes a file or opens a socket, the
+  dev gate, the dev-only IPC target, the small Overlay window with the keyboard on demand and no anchor);
+  `lock_surfaces.sh` (the notice's rules read from the sources, 12 mutants: shows over the lock in three ways, over a sheet,
+  acts off screen, Try Again and Log Out refusals removed or weakened, the notice's button running the helper directly,
+  the host's bindings weakened, an exclusive keyboard); `tests/shell/shell_failures.sh` (`--try-again`: the order, the
+  reset, the start, the flag back on a failed start, no runtime directory, a linked one, an unknown argument, the
+  counter's own path still without start or reset, the unit without argument; two mutants: the flag removed after the
+  start, the flag not put back); `tests/security/safe_mode_nested.sh` (nested, bare: below). Inventory 784.
+- **Evidence.** See the pull request's report (the gates' exit codes and counts).
+- **NOT VERIFIED.** The real session (the owner's L2): three `kill -SEGV` of the UI within ten minutes, unlocked, then the
+  notice within seconds; locked, the notice only after the unlock, the password unlocking at the first attempt; Try Again
+  bringing the desktop back (`grassfield-shell-failed --try-again` against systemd 261: reset-failed, the start, the flag
+  gone); Log Out; the parse of systemd 261's `show` output; Hyprland 0.56 giving the on-demand alert the keyboard when it
+  maps; the alert at the owner's 1.25 scale and its captures (en, fr; visual NOT verified); gate P2 with the notice.
+- **Residual risks.** (1) Same-user code can create or remove the flag, as it can call any IPC target: a flag created while
+  the shell is stopped by hand shows the notice (whose actions the user chooses), a flag removed while the unit is stopped
+  hides it unless the unit is at its start limit (the user is where 1a left them: the lid, a sleep or a TTY). (2) A stale
+  flag with the shell stopped on purpose (`systemctl --user stop`) shows the notice; Try Again then starts it. (3) Log Out
+  while an app keeps a window open cannot offer "Log Out Anyway": grassfield-session-end asks through the notification
+  server, which is the UI's and is down; the logout stops after 15 s, the notice says to save and quit the apps, then log
+  out (macOS offers the forced logout there). (4) One short process every 5 s in the security process for the session's
+  life (`timeout`, `sh`, `systemctl show`): small, not measured (gate P1 counts the UI only). (5) The alert sits at the
+  output's exact centre (a layer surface the compositor centres), not at panel.dialogRaise above it. (6) The dark palette
+  only. (7) Try Again restarts the same desktop (SQ-1 B: safe mode is the UI stopped, not a reduced UI); a second loop comes
+  back here. (8) Should Hyprland not give the on-demand alert the keyboard at map, Return and Esc need a click on it first.
+- **Review:** opus security (R12), by the integrator.
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words
