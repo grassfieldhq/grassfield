@@ -12,6 +12,8 @@
 #                                                                surface exists answers "not ready"
 #   case 4  apps, overview and search open before one release  -> the three loaders attach in the same turn; Search (last) is open,
 #                                                                the others closed, and `pending` is empty (no replay dropped)
+#   case 5  apps open early, search built then opened DIRECTLY, then apps built -> Search stays open (the newest request wins, early or
+#                                                                direct; `deferred releaseSurface search` builds one surface only)
 # and in every case nothing is left in `pending` after the release.
 # and the shell log holds no "Handler was registered but will not be used" (two handlers for one target) and no QML TypeError,
 # ReferenceError or binding loop. The shell is restarted normally at the end.
@@ -100,6 +102,23 @@ sleep 1
 is search .open true; check "case 4: Search, asked last of the three, is open" $?
 is apps .open false; check "case 4: Apps is closed" $?
 is overview .open false; check "case 4: Overview is closed" $?
+
+# case 5: the newest request wins even against a DIRECT one: Apps asked early, Search built and then opened directly, then Apps built:
+# Apps' early request is older than the direct Search, so Search stays open
+restart_held 1; check "case 5: the shell started with the deferred surfaces held" $?
+until_ok 20 held
+settle
+ipc apps open >/dev/null
+ipc deferred releaseSurface search >/dev/null
+search_live() { [[ $(ipc deferred status | jq -r .live.search 2>/dev/null) == true ]]; }
+until_ok 20 search_live; check "case 5: Search is built while Apps is still held" $?
+ipc search open direct >/dev/null
+until_ok 20 is search .open true; check "case 5: the direct Search request opened it" $?
+ipc deferred release >/dev/null
+until_ok 20 drained; check "case 5: nothing is left pending after the release" $?
+sleep 1
+is search .open true; check "case 5: Search, opened directly after Apps was asked, is still open" $?
+is apps .open false; check "case 5: the older early Apps request did not open over it" $?
 
 # the log of the last held run
 ! grep -q "will not be used because another handler" "$dev/shell.log"; check "log: no two IPC handlers for one target" $?

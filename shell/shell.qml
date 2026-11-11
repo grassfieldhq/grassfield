@@ -597,7 +597,7 @@ ShellRoot {
     }
     LazyLoader {
         id: searchLoader
-        activeAsync: !root.deferredHeld
+        activeAsync: !root.deferredHeld || root.deferredReleased.search === true
         onItemChanged: {
             if (item)
                 early.attach("search", item);
@@ -634,7 +634,7 @@ ShellRoot {
     }
     LazyLoader {
         id: overviewLoader
-        activeAsync: !root.deferredHeld
+        activeAsync: !root.deferredHeld || root.deferredReleased.overview === true
         onItemChanged: {
             if (item)
                 early.attach("overview", item);
@@ -648,7 +648,7 @@ ShellRoot {
     readonly property var overviewSurface: overviewLoader.item
     LazyLoader {
         id: appsLoader
-        activeAsync: !root.deferredHeld
+        activeAsync: !root.deferredHeld || root.deferredReleased.apps === true
         onItemChanged: {
             if (item)
                 early.attach("apps", item);
@@ -686,6 +686,7 @@ ShellRoot {
     // Development only (GRASSFIELD_DEFER_HOLD=1 in a dev session, ADR-0019 table): the deferred surfaces are not built until
     // `qs ipc call deferred release`, so tests/shell/deferred_early.sh can send requests while they do not exist.
     property bool deferredHeld: Mode.devValue("DEFER_HOLD") === "1"
+    property var deferredReleased: ({})
     IpcHandler {
         target: "deferred"
 
@@ -693,6 +694,14 @@ ShellRoot {
             if (!VisualFixtures.dev)
                 return "refused";
             root.deferredHeld = false;
+            return "ok";
+        }
+
+        // Builds one of the three surfaces (search, apps, overview) while the others stay held.
+        function releaseSurface(surface: string): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            root.deferredReleased = Object.assign({}, root.deferredReleased, {[surface]: true});
             return "ok";
         }
 
@@ -709,6 +718,14 @@ ShellRoot {
         id: early
 
         property var pending: ({})
+        // One counter numbers every request for these surfaces, early or direct, and a monotonic clock measures the age of a pending
+        // one: the wall clock can step at login (time sync) and must never reorder or drop a request.
+        property int seq: 0
+        // The number of the newest request that opened a surface so far (performed on arrival, or made directly to a built one).
+        property int newestOpen: 0
+        // True while a replay calls the surface, so that its own opening is not counted as a new direct request.
+        property bool replaying: false
+        readonly property ElapsedTimer clock: ElapsedTimer {}
         // Whether the surface exists and its own IPC handler is the one answering (the forwarding handler below is off).
         property var live: ({search: false, apps: false, overview: false})
 
@@ -733,7 +750,8 @@ ShellRoot {
                     p.text = "";
                 }
             }
-            p.at = Date.now();
+            p.at = clock.elapsedMs();
+            p.seq = ++seq;
             pending[surface] = p;
             console.info("grassfield-shell: early request", surface, what, "(the surface is still being built)");
         }
@@ -751,16 +769,22 @@ ShellRoot {
             Qt.callLater(() => early.replay(surface, item));
         }
 
-        // When the newest request performed so far was made: a surface whose request is older does not open over it, whatever
-        // the order the loaders finish in (the last request wins, as for requests made one after the other).
-        property real performedAt: 0
+        // A built surface opened by a direct request (key binding, button, IPC call made after it was built): the newest request so
+        // far, whatever the pending ones say. Called by the Connections below.
+        function opened(): void {
+            if (!replaying)
+                newestOpen = ++seq;
+        }
 
+        // A pending request older than the newest one that opened a surface does not open over it, whatever the order the loaders
+        // finish in (the last request wins, early or direct).
         function replay(surface: string, item: var): void {
             const p = pending[surface];
             delete pending[surface];
-            if (!p || !p.open || Date.now() - p.at > Tokens.deferredRequestMaxAgeMs || p.at < performedAt)
+            if (!p || !p.open || clock.elapsedMs() - p.at > Tokens.deferredRequestMaxAgeMs || p.seq < newestOpen)
                 return;
-            performedAt = p.at;
+            newestOpen = p.seq;
+            replaying = true;
             if (surface === "search") {
                 if (p.clip)
                     item.toggleClipboard();
@@ -769,6 +793,32 @@ ShellRoot {
             } else {
                 item.show();
             }
+            replaying = false;
+        }
+    }
+    // A direct opening of a built surface counts as a request (see `early.opened`).
+    Connections {
+        target: root.searchSurface
+
+        function onOpenChanged(): void {
+            if (root.searchSurface.open)
+                early.opened();
+        }
+    }
+    Connections {
+        target: root.appsSurface
+
+        function onOpenChanged(): void {
+            if (root.appsSurface.open)
+                early.opened();
+        }
+    }
+    Connections {
+        target: root.overviewSurface
+
+        function onOpenChanged(): void {
+            if (root.overviewSurface.open)
+                early.opened();
         }
     }
     // The IPC targets of the three surfaces answer from the start: until a surface is built, these take its place (same names and
