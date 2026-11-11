@@ -451,7 +451,8 @@ EOF
   ((rc == 0)) && pass "grassfield-install.sh --dry-run exits 0" || fail "grassfield-install.sh --dry-run exit $rc: $(tail -3 "$(d logs/install-dry-run.log)")"
   as_user "bash ~/grassfield-install.sh --yes" >"$log" 2>&1
   rc=$?
-  if ((rc != 0)) && grep -q 'failed retrieving file' "$log"; then
+  if ((rc != 0)) && grep -qE 'failed retrieving file|checkupdates failed' "$log"; then
+    sleep 20 # a mirror or the network dropped (the script changed nothing or rolled back): once more, as it says
     info "a mirror dropped a download (the script rolled back): running it again, as it says"
     cp "$log" "$log.attempt1"
     as_user "bash ~/grassfield-install.sh --yes" >"$log" 2>&1
@@ -594,7 +595,8 @@ phase_compare_canary() {
   vm_running || boot_installed canary || return 1
   local before=$FAILS
   vm_ssh 'groupadd gf-canary' || { fail "cannot add the canary group"; return 1; }
-  phase_compare | tee "$(d logs/compare-canary.log)" | grep 'gf-canary\|^PASS\|^FAIL'
+  phase_compare >"$(d logs/compare-canary.log)" 2>&1 # not in a pipeline: FAILS must survive
+  grep 'gf-canary\|^PASS\|^FAIL' "$(d logs/compare-canary.log)"
   if grep -q 'group-added.*gf-canary.*\[LEFTOVER\]' "$(d logs/compare-canary.log)" && grep -q 'gshadow-added.*gf-canary.*\[LEFTOVER\]' "$(d logs/compare-canary.log)" && ((FAILS > before)); then
     FAILS=$before
     pass "a group added on purpose is caught as a leftover (group and gshadow rows)"
