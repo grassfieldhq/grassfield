@@ -52,6 +52,8 @@ Scope {
     property string failure: ""
     // A dev session's fake look (`safemode devSet`).
     property bool devWanted: false
+    // The last look could not be read (logged once until one can).
+    property bool unreadable: false
 
     onConfirmedChanged: {
         if (root.confirmed) {
@@ -73,8 +75,13 @@ Scope {
             probe.running = true;
     }
 
+    // A look that cannot be read changes nothing (SafeModeModel.next): no notice on a guess, none hidden either.
     function take(text: string): void {
-        root.looks = Model.settle(root.looks, Model.wanted(Model.parseLook(text)));
+        const look = Model.parseLook(text);
+        if (!look.ok && !root.unreadable)
+            console.warn("grassfield-safe-mode: the state of grassfield-shell.service could not be read; safe mode stays as it was until it can");
+        root.unreadable = !look.ok;
+        root.looks = Model.next(root.looks, look);
     }
 
     // Starts the looks over (after an action, or a dev session's new fake look).

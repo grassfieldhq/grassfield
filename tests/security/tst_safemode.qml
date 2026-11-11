@@ -138,6 +138,23 @@ Item {
             verify(!Model.canAct(true, undefined));
         }
 
+        // A look that cannot be read changes nothing: no notice on a guess, none hidden either.
+        function test_next() {
+            const yes = Model.parseLook(top.stoppedAfterLoop);
+            const no = Model.parseLook(top.running);
+            const unread = Model.parseLook("garbage");
+            compare(Model.next(0, yes), 1);
+            compare(Model.next(1, yes), 2);
+            compare(Model.next(2, no), 0, "a readable no starts over");
+            compare(Model.next(0, unread), 0, "never shows on a guess");
+            compare(Model.next(1, unread), 1, "keeps the count");
+            compare(Model.next(2, unread), 2, "never hides an alert already up");
+            verify(Model.confirmed(Model.next(Model.next(Model.next(0, yes), unread), yes)), "an unreadable look between two that agree");
+            compare(Model.next(7, unread), Model.SETTLE_LOOKS, "capped");
+            compare(Model.next(undefined, unread), 0);
+            compare(Model.next(1, null), 1);
+        }
+
         function test_lookInterval() {
             compare(Model.lookInterval(0, false), Model.LOOK_IDLE_MS);
             compare(Model.lookInterval(1, false), Model.LOOK_WATCH_MS);

@@ -16,6 +16,16 @@ dev=$root/.dev
 # shellcheck source=../../scripts/dev/pidfile.sh
 . "$root/scripts/dev/pidfile.sh"
 dev_nested_target "$dev" || exit 2
+# shellcheck source=nested_ready.sh
+. "$root/tests/security/nested_ready.sh"
+# Ready first: GF-REF listed and a lock state from the security process (right after nested-up it may not answer yet).
+ready_rc=0
+nested_ready "$DEV_NESTED_SIG" "$DEV_NESTED_SOCK" "$root/shell/security.qml" "${READY_SECONDS:-60}" || ready_rc=$?
+case $ready_rc in
+  0) echo "ready: GF-REF listed, lock status $nested_ready_state, after $nested_ready_ms ms" ;;
+  2) echo "safe mode nested: $nested_ready_why" >&2; exit 2 ;;
+  *) echo "FAIL: safe mode nested ready: $nested_ready_why"; exit 1 ;;
+esac
 fail=0
 pass() { echo "PASS: safe mode nested $*"; }
 bad() { echo "FAIL: safe mode nested $*"; fail=1; }
@@ -62,6 +72,12 @@ n=$(scripts/nestctl -j layers 2>/dev/null | jq '[.. | objects | select(has("name
 w=$(scripts/nestctl -j layers 2>/dev/null | jq '[.. | objects | select(has("namespace")) | select(.namespace == "grassfield-safe-mode") | .w] | first')
 mw=$(scripts/nestctl -j monitors 2>/dev/null | jq '[.[].width] | min')
 [[ $w =~ ^[0-9]+$ && $mw =~ ^[0-9]+$ ]] && ((w < mw / 2)) && pass "the notice is small, not full screen (${w} px wide on a ${mw} px output)" || bad "notice width ${w:-?} on ${mw:-?}"
+# SAFE_MODE_SHOT=<name>: a capture of the output the notice is on (scripts/dev/shot.sh, .dev/shots/<name>.png).
+if [[ -n ${SAFE_MODE_SHOT:-} ]]; then
+  on=$(scripts/nestctl -j layers 2>/dev/null | jq -r 'to_entries[] | select([.value | .. | objects | select(has("namespace")) | .namespace] | index("grassfield-safe-mode") != null) | .key' | head -1)
+  sleep 1 # the alert's first frames
+  scripts/dev/shot.sh "$SAFE_MODE_SHOT" "$on" >/dev/null && echo "shot: .dev/shots/$SAFE_MODE_SHOT.png (output $on)" || echo "shot: none (output '${on}')"
+fi
 
 # Try Again (dev: suppressed) ends safe mode; the surface goes.
 before=$(log_lines "dev session, suppressed Try Again")

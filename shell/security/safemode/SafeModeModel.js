@@ -27,8 +27,8 @@ var TOKEN = /^[a-z][a-z-]{0,31}$/;
 
 // One look (SafeMode.qml `probe`): a line "marker=0" or "marker=1", then systemctl's "ActiveState=", "SubState=" and
 // "Result=" lines, in any order. {ok, marker, active, sub, result}; ok is false unless every line was there once, well
-// formed: an answer that cannot be read is no safe mode (the notice never shows on a guess; it never unlocks anything
-// either way).
+// formed. An answer that cannot be read counts for nothing (`next`): it never shows the notice on a guess, and never hides
+// one already up (a systemctl slowed past its bound by a loaded machine must not make the alert blink).
 function parseLook(text) {
     const out = {ok: false, marker: false, active: "", sub: "", result: ""};
     if (typeof text !== "string" || text.length > 4096)
@@ -85,6 +85,14 @@ function settle(count, wantedNow) {
         return 0;
     const before = typeof count === "number" && count > 0 ? Math.floor(count) : 0;
     return Math.min(before + 1, SETTLE_LOOKS);
+}
+
+// The count after one more look: a readable look counts or starts the count over; one that cannot be read leaves it as it
+// was.
+function next(count, look) {
+    if (!look || look.ok !== true)
+        return typeof count === "number" && count > 0 ? Math.min(Math.floor(count), SETTLE_LOOKS) : 0;
+    return settle(count, wanted(look));
 }
 
 function confirmed(count) {

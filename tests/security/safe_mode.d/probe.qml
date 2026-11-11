@@ -29,6 +29,11 @@ ShellRoot {
         sheetUp: root.sheetUp
     }
 
+    // The notice while it exists, untyped (its properties are the stand-in's).
+    function noticeOf(): var {
+        return sm.noticeItem;
+    }
+
     function twoLooks(on: bool): void {
         sm.devWanted = on;
         sm.look();
@@ -52,7 +57,7 @@ ShellRoot {
         sm.look();
         check("two looks in a row: confirmed and shown, the notice made", sm.confirmed && sm.shown && sm.noticeItem !== null);
         sm.failure = "logOut";
-        check("the notice gets the controller's failure", sm.noticeItem !== null && sm.noticeItem.failure === "logOut");
+        check("the notice gets the controller's failure", sm.noticeItem !== null && root.noticeOf().failure === "logOut");
         sm.failure = "";
 
         // The lock always wins.
@@ -77,14 +82,14 @@ ShellRoot {
         // An action under way refuses another.
         sm.running = "logOut";
         check("busy: Try Again refused", sm.tryAgain() === "refused");
-        check("busy: the notice gets the action under way", sm.noticeItem.running === "logOut");
+        check("busy: the notice gets the action under way", root.noticeOf().running === "logOut");
         sm.running = "";
 
         // The notice's buttons reach the actions. Log Out (dev: suppressed) leaves safe mode as it was.
-        sm.noticeItem.logOut();
+        root.noticeOf().logOut();
         check("the notice's Log Out reaches the controller (dev: suppressed, nothing runs)", sm.running === "" && sm.shown && sm.noticeItem !== null);
         // Try Again (dev: the fake unit is back) ends safe mode and the notice.
-        sm.noticeItem.tryAgain();
+        root.noticeOf().tryAgain();
         check("the notice's Try Again ends safe mode (dev)", !sm.confirmed && !sm.shown && sm.noticeItem === null && !sm.devWanted);
         sm.look();
         check("after Try Again a look shows nothing", sm.noticeItem === null);

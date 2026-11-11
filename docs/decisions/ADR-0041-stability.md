@@ -859,7 +859,8 @@ down, how sleep behaves) is written in the table at the end of this step.
   flag (ADR-0056 D-10: the counter can miss the last failures of a sub-second loop). A stale flag with the shell brought back
   shows nothing (the opus review of b1d826b); two looks in a row must agree, so a flag left from an earlier loop, read at a
   login before the autostart starts the shell, or a unit passing through `failed` on its way to a restart, shows nothing.
-  An answer that cannot be read (a missing line, a token outside systemd's form, CRLF, more than 4 KiB) is no safe mode.
+  An answer that cannot be read (a missing line, a token outside systemd's form, CRLF, more than 4 KiB, a look killed at its
+  5 s bound) counts for nothing: it never shows the notice on a guess and never hides one already up (logged once).
 - **The lock always wins.** The notice exists only while the session is unlocked and no polkit or secret sheet of this
   process is up: its window is made by a LazyLoader active only then (`SafeModeModel.shown`: an exact `false` for both), and
   destroyed the moment either changes. The host (`SecurityHost.qml`, pinned anew) binds the two inputs from this process

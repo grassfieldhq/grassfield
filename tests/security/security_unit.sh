@@ -76,7 +76,7 @@ smodel=shell/security/safemode/SafeModeModel.js
 notice=shell/security/safemode/SafeModeNotice.qml
 card=shell/security/safemode/SafeModeCard.qml
 # The controller runs commands as the user and decides when the notice may take input: pinned like the root and the host.
-safe_mode_pinned=6a6e9193f1c1d53dbc9497cf1ba378e04241758d64876859f5b913f3cd4d0f0a
+safe_mode_pinned=bd547ccd18d5e0957b99abbc75bd1a8208c99d0f7b2d36f7ffd09de0ea417ee8
 desc="S4: the reviewed controller shell/security/safemode/SafeMode.qml is pinned by its SHA-256 (any change: security review required, then update the pinned hash)"
 check bash -c '[[ "$(sha256sum "$1" | cut -d" " -f1)" == "$2" ]] || { echo "shell/security/safemode/SafeMode.qml changed: security review required, then update the pinned hash" >&2; exit 1; }' _ "$sm" "$safe_mode_pinned"
 desc="S4: the host makes one SafeMode, its inputs from this process's lock (any state but unlocked, the stranded-lock probe) and sheets (open, held or the key sink); the controller reads both true until bound (the scan holds the exact bindings)"
