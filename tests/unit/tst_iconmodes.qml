@@ -236,6 +236,31 @@ TestCase {
         verify(t.iconModeDeepPlateFrom < t.iconModeDeepPlateFull && t.iconModeDeepPlateFull <= t.iconModeDeepPlateFullTo && t.iconModeDeepPlateFullTo < t.iconModeDeepPlateTo, "ordered edges");
     }
 
+    // The band lift (GPU 2026-11-11: kdenlive in Dark, Clear and Tinted at surface 0.10, rule E 2.85 to 2.90 against 2.9: the black plate is at its ceiling there, so the glyph carries
+    // the rule): the one-sided ease-out of icon.frag on the tones above the pivot, at deep plate weight 1. Nothing below the pivot moves, the order of tones is kept, and the bright
+    // end of those glyphs (relative luminance 0.34 to 0.36) reaches 3:1 against a 0.10 surface with a margin.
+    function test_bandLiftRaisesTheGlyphAndMovesNothingBelowThePivot() {
+        const t = Tokens;
+        const P = t.iconModeDeepLiftPivot, e = t.iconModeDeepLiftExponent;
+        verify(P > 0.1 && P < 0.5 && e > 1 && e <= 2.5, "pivot and exponent in range");
+        const lift = v => v <= P ? v : P + (1 - P) * (1 - Math.pow(1 - (v - P) / (1 - P), e));
+        let previous = 0;
+        for (let k = 0; k <= 20; k++) {
+            const v = k / 20;
+            const l = lift(v);
+            verify(l >= v - 1e-9, `never darker at ${v}`);
+            verify(l >= previous - 1e-9, `order kept at ${v}`);
+            if (v <= P)
+                compare(l, v, `nothing moves below the pivot (${v})`);
+            previous = l;
+        }
+        compare(lift(1), 1, "white stays white");
+        for (const glyph of [0.341, 0.3567, 0.3625])
+            verify(contrast(0.10, lift(glyph)) >= 2.95, `glyph ${glyph} against 0.10: ${contrast(0.10, lift(glyph)).toFixed(2)}`);
+        compare(1 + (e - 1) * IconModes.deepPlate(0.014, t), 1, "no lift over black");
+        compare(1 + (e - 1) * IconModes.deepPlate(0.25, t), 1, "no lift over grey");
+    }
+
     // One threshold on a stable value with a band: inside the band the previous look stays, so a wallpaper drifting around the threshold does not flip the icons.
     function test_surfaceToneHasHysteresis() {
         const t = Tokens;

@@ -64,6 +64,8 @@ layout(std140, binding = 0) uniform buf {
     float tileToneSide;       // tile icon tone, see TILE TONE below: +1 lift the pixels above tileTonePivot, -1 darken those below it, 0 none
     float tileTonePivot;      // linear value the tone leaves alone
     float tileToneExp;        // exponent of the tone: an ease-out lift above the pivot, a power darkening below it (both > 1; 1 = none)
+    float bandLiftPivot;      // plain (not own-tile) artwork on a dark Dock glass (IconModes.deepPlate): the tones above this linear value are lifted, see BAND LIFT
+    float bandLiftExp;        // exponent of that lift (1 = none)
     float darkPlateLumaOnDarkAccent;  // Dark over a dark accent fill of a selected row: lightness of the plate
     vec4 folderTint;          // folder colour step (FolderIcon): a = 1 when the artwork is recoloured, 0 otherwise
     float folderBrightness;   // MultiEffect arithmetic of the folder colour (FolderEffect, tokens folderIcon*)
@@ -131,6 +133,13 @@ void main() {
     } else if (isTile && tileToneSide < -0.5) {
         vec3 down = vec3(tileTonePivot) * pow(min(lin / tileTonePivot, vec3(1.0)), vec3(tileToneExp));
         lin = mix(down, lin, step(vec3(tileTonePivot), lin));
+    } else if (!isTile && bandLiftExp > 1.0001) {
+        // BAND LIFT (R7-REQ-13, A2 rule E, GPU 2026-11-11): on a dark glass the black plate is at its ceiling (about 2.9:1 against a 0.10 surface), so the glyph carries rule E; its bright
+        // tones are lifted by the same one-sided ease-out as the tile tone (nothing below the pivot moves, so the pairs rules N and I measure only gain), the exponent following the
+        // deep plate weight (IconEffect).
+        vec3 u = clamp((lin - vec3(bandLiftPivot)) / (1.0 - bandLiftPivot), vec3(0.0), vec3(1.0));
+        vec3 up = vec3(bandLiftPivot) + (1.0 - bandLiftPivot) * (vec3(1.0) - pow(vec3(1.0) - u, vec3(bandLiftExp)));
+        lin = mix(lin, up, step(vec3(bandLiftPivot), lin));
     }
     float Y = dot(lin, vec3(0.2126, 0.7152, 0.0722));   // relative luminance of the artwork pixel
 

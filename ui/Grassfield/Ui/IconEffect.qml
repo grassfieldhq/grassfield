@@ -36,6 +36,8 @@ ShaderEffect {
     readonly property real overWallpaper: IconModes.overWallpaperLook(root.params.index, root.wallpaper, Appearance.effectiveTransparency, root.darkAppearance, root.solidMaterial, root.accentFill, Tokens, root.surfaceLuma) ? 1 : 0
     // The deep plate on a dark glass (IconModes.deepPlate): the plates of Dark, Tinted and the smoked Clear move towards black, Clear's also towards opaque.
     readonly property real deepPlate: root.wallpaper ? 0 : IconModes.deepPlate(root.surfaceLuma, Tokens)
+    readonly property real bandLiftPivot: Tokens.iconModeDeepLiftPivot
+    readonly property real bandLiftExp: 1 + (Tokens.iconModeDeepLiftExponent - 1) * root.deepPlate
     readonly property real clearPlateAlphaWallpaper: root.wallpaper ? Tokens.iconModeClearPlateAlphaWallpaper : Math.max(IconModes.smokeAlpha(root.surfaceLuma, Tokens.iconModeClearPlateAlphaWallpaper, Tokens.iconModeClearPlateWallpaperLuma, Tokens), Tokens.iconModeClearPlateAlphaWallpaper + (1 - Tokens.iconModeClearPlateAlphaWallpaper) * root.deepPlate)
     readonly property real sysPlateInset: Tokens.iconModeSysPlateInset
     readonly property real sysPlateRadius: Tokens.iconModeSysPlateRadius
