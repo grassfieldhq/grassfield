@@ -889,8 +889,17 @@ down, how sleep behaves) is written in the table at the end of this step.
   security process; (2) two actions, Try Again and Log Out, where SD-4 listed Restart and Shut Down too: the login screen
   offers both after Log Out, and the power button stays logind's; (3) the caution symbol, not the Grassfield mark: the owner's
   IQ-B1 B (ADR-0040) came after SD-4, dialogs show their subject's symbol (`tests/ci/mark_places.py`); (4) nothing under the
-  lock (above); (5) the dark palette only: the security process draws dark (the lock and the sheets since S3), so the light
-  captures of the plan do not exist.
+  lock (above). The owner accepted the centred alert on 2026-11-11 and asked for the light appearance before the merge
+  (below).
+- **Light and dark** (the owner's follow-up of 2026-11-11). Nothing bound the security process's `Appearance.dark`, which
+  defaults to true, so since S3 the polkit sheet and the secret sheets drew dark whatever the user chose (in the UI, before S3,
+  they followed `Settings.dark`), and the first version of the alert did the same. The host now binds `Appearance.dark` to
+  `Settings.dark`, as the UI's root does (`appearance`, "auto" by the local schedule): the alert and both sheets draw from
+  the current palette and the glass tint of their appearance, tokens only; gate A2's token calculation asserts their roles
+  in both appearances (`tests/visual/contrast-roles.json`, `colors.*` foregrounds). The lock does not follow it: LockView
+  draws from `Appearance.darkColors`, gives its password field every colour and no focus ring, and nothing else of the lock
+  or idle reads the current palette (`security_unit.sh` holds the binding and these lines), so the lock screen stays the
+  dark one of both appearances, as on macOS.
 - **Dev session.** The security process of a dev session never asks systemd (it would read the owner's own unit) or reads
   the owner's flag, and runs neither action (each logs "dev session, suppressed ..."). Its looks are faked by the dev hook
   `safemode devSet` (`SafeModeModel.devLook`, read through the same parser and settle), `safemode devPress tryAgain|logOut`
@@ -906,7 +915,8 @@ down, how sleep behaves) is written in the table at the end of this step.
 - **Tests.** `tests/security/tst_safemode.qml` (the parser, the flag present or absent with every unit state, the settle,
   the lock and sheet truth table with non-boolean inputs, `canAct`, the intervals, the dev looks; the alert offscreen: its
   accessible name, role and buttons, Return and Enter as Try Again, Esc never logging out, the clicks, the busy and failure
-  lines, the focus back on Try Again, plain text, the caution symbol); `tests/security/safe_mode.sh` (the real controller
+  lines, the focus back on Try Again, plain text, the caution symbol; light and dark: every colour from the current palette,
+  the glass tint included); `tests/security/safe_mode.sh` (the real controller
   under Quickshell offscreen in a dev session, a stand-in window, the probe binding the lock and the sheets as the host:
   26 checks, and six mutants each caught: shows over the lock, Try Again while locked, Log Out while locked, shows over a
   sheet, not lazy, one look confirms); `security_process_scan.py` (rule 6: one SafeMode in the host bound exactly from its
@@ -946,8 +956,8 @@ down, how sleep behaves) is written in the table at the end of this step.
   server, which is the UI's and is down; the logout stops after 15 s, the notice says to save and quit the apps, then log
   out (macOS offers the forced logout there). (4) One short process every 5 s in the security process for the session's
   life (`timeout`, `sh`, `systemctl show`): small, not measured (gate P1 counts the UI only). (5) The alert sits at the
-  output's exact centre (a layer surface the compositor centres), not at panel.dialogRaise above it. (6) The dark palette
-  only. (7) Try Again restarts the same desktop (SQ-1 B: safe mode is the UI stopped, not a reduced UI); a second loop comes
+  output's exact centre (a layer surface the compositor centres), not at panel.dialogRaise above it. (6) The polkit and secret
+  sheets change with the appearance too (above): what S3 had lost. (7) Try Again restarts the same desktop (SQ-1 B: safe mode is the UI stopped, not a reduced UI); a second loop comes
   back here. (8) Should Hyprland not give the on-demand alert the keyboard at map, Return and Esc need a click on it first.
 - **Review:** opus security (R12), by the integrator.
 

@@ -1706,7 +1706,9 @@ Display only: nothing below can lock, unlock, delay engaging the lock or keep it
   asks through the notification server, which is the UI's and is down): the logout stops after 15 s and the alert says to
   save and quit the apps, then log out. Same-user code can create or remove the safe-mode flag (it can call any IPC target
   too): a flag created while the UI is stopped by hand shows the alert, one removed hides it unless the unit is at its start
-  limit. The alert sits at the output's exact centre and draws the dark palette only (as the lock and the sheets).
+  limit. The alert sits at the output's exact centre. The security process follows the user's appearance (the host binds
+  `Appearance.dark` to `Settings.dark`): the alert and the polkit and secret sheets draw light or dark; the lock screen stays
+  dark in both (LockView's own dark palette).
 - ADR-0041 S2, ADR-0040 step 4a (3): the lock's still is decoded by Qt from the path it checked (no per-process restriction
   to the JPEG plugin, no descriptor handed over); a race between the check and the decode needs code running as the user.
 

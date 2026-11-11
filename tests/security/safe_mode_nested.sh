@@ -3,7 +3,9 @@
 # The dev security process never asks systemd (it would read the owner's own unit) and runs neither action: its looks are
 # faked with the dev hook `safemode devSet`, and `safemode devPress` presses the notice's buttons through the same refusals.
 # Checks: the `safemode` target answers on the security instance only; a faked loop maps one small layer surface
-# (`grassfield-safe-mode`) once the looks agree; Try Again (dev: suppressed, logged) ends it and the surface goes; a second
+# (`grassfield-safe-mode`) once the looks agree; it follows the light and the dark appearance while it is up (the setting
+# through the UI's dev hook, read back from `safemode status`; SAFE_MODE_SHOT=<name> captures each); Try Again (dev:
+# suppressed, logged) ends it and the surface goes; a second
 # loop brings it back; Log Out (dev: suppressed, logged) leaves it; `lock lock` destroys it before the compositor reports the
 # lock, Hyprland reports LOCK on every monitor, no `grassfield-safe-mode` layer exists, and Try Again and Log Out are refused
 # while locked (logged); a loop confirmed while locked maps nothing. The nested session stays locked afterwards (no PAM in
@@ -75,12 +77,26 @@ n=$(scripts/nestctl -j layers 2>/dev/null | jq '[.. | objects | select(has("name
 w=$(scripts/nestctl -j layers 2>/dev/null | jq '[.. | objects | select(has("namespace")) | select(.namespace == "grassfield-safe-mode") | .w] | first')
 mw=$(scripts/nestctl -j monitors 2>/dev/null | jq '[.[].width] | min')
 [[ $w =~ ^[0-9]+$ && $mw =~ ^[0-9]+$ ]] && ((w < mw / 2)) && pass "the notice is small, not full screen (${w} px wide on a ${mw} px output)" || bad "notice width ${w:-?} on ${mw:-?}"
-# SAFE_MODE_SHOT=<name>: a capture of the output the notice is on (scripts/dev/shot.sh, .dev/shots/<name>.png).
-if [[ -n ${SAFE_MODE_SHOT:-} ]]; then
+# Light and dark (the security host binds Appearance.dark to Settings.dark): the appearance is set through the UI's dev hook
+# `controlcenter appearance` (the persisted setting both processes read), and the alert must follow it while it is up,
+# read back from `safemode status` (`dark`). SAFE_MODE_SHOT=<name>: a capture of the output the notice is on per appearance
+# (scripts/dev/shot.sh, .dev/shots/<name>-light.png and -dark.png). The setting goes back to what it was.
+shot() { # <name>
+  local on
+  [[ -n ${SAFE_MODE_SHOT:-} ]] || return 0
   on=$(scripts/nestctl -j layers 2>/dev/null | jq -r 'to_entries[] | select([.value | .. | objects | select(has("namespace")) | .namespace] | index("grassfield-safe-mode") != null) | .key' | head -1)
-  sleep 1 # the alert's first frames
-  timeout 20 scripts/dev/shot.sh "$SAFE_MODE_SHOT" "$on" >/dev/null && echo "shot: .dev/shots/$SAFE_MODE_SHOT.png (output $on)" || echo "shot: none (output '${on}')"
-fi
+  sleep 1 # the alert's new frames
+  timeout 20 scripts/dev/shot.sh "$1" "$on" >/dev/null && echo "shot: .dev/shots/$1.png (output $on)" || echo "shot: none (output '${on}')"
+}
+was=$(tests/visual/ipc.sh controlcenter state 2>/dev/null | jq -r '.appearance // empty' 2>/dev/null)
+for look in light dark; do
+  tests/visual/ipc.sh controlcenter appearance "$look" >/dev/null 2>&1
+  want=$([[ $look == dark ]] && echo true || echo false)
+  wait_for 10 st_is ".dark == $want and .shown and .notice" && pass "$look appearance: the alert follows it while it is up" || bad "$look appearance: $(status)"
+  wait_for 5 layer_mapped && pass "$look appearance: still one notice surface" || bad "$look appearance: no notice surface"
+  shot "${SAFE_MODE_SHOT:-safe-mode}-$look"
+done
+[[ $was =~ ^(auto|light|dark)$ ]] && tests/visual/ipc.sh controlcenter appearance "$was" >/dev/null 2>&1
 
 # Try Again (dev: suppressed) ends safe mode; the surface goes.
 before=$(log_lines "dev session, suppressed Try Again")

@@ -37,12 +37,20 @@ Scope {
     readonly property string language: Translator.language
 
     // The region's formats (the lock's date and time), and the appearance settings the lock surfaces follow (Reduce Motion
-    // caps their fades; the text size and contrast settings; the accent of the field's selection). The lock always draws the
-    // dark palette.
+    // caps their fades; the text size and contrast settings; the accent of the field's selection).
     Binding {
         target: Translator
         property: "formats"
         value: Settings.regionFormats
+    }
+    // Light or dark (appearance, "auto" by the local schedule), as the UI's root binds it: the polkit sheet, the secret sheets
+    // and the safe-mode alert follow it, as they did in the UI before S3 (ADR-0041 S4). The lock does not: it always draws
+    // the dark palette (LockView reads Appearance.darkColors and gives its password field every colour, with no focus ring;
+    // tests/security/security_unit.sh holds it).
+    Binding {
+        target: Appearance
+        property: "dark"
+        value: Settings.dark
     }
     Binding {
         target: Appearance

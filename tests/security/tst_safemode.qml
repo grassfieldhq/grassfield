@@ -1,5 +1,6 @@
 import QtQuick
 import QtTest
+import Grassfield.Ui
 import "../../shell/security/safemode/SafeModeModel.js" as Model
 import "../../shell/security/safemode" as SafeMode
 
@@ -266,6 +267,29 @@ Item {
             card.running = "";
             card.failure = "logOut";
             verify(status.text.indexOf("weren’t logged out") >= 0);
+        }
+
+        // Light and dark (ADR-0041 S4): the alert draws from the current palette, the one the security host binds from the
+        // user's appearance (Appearance.dark <- Settings.dark): its text, symbol, status lines and glass tint.
+        function test_appearance() {
+            const before = Appearance.dark;
+            verify(String(Appearance.lightColors.text) !== String(Appearance.darkColors.text), "the two palettes differ");
+            for (const dark of [false, true]) {
+                Appearance.dark = dark;
+                const palette = dark ? Appearance.darkColors : Appearance.lightColors;
+                const which = dark ? "dark" : "light";
+                const card = make();
+                verify(Qt.colorEqual(findChild(card, "safeModeTitle").color, palette.text), which + ": the title" + " (" + findChild(card, "safeModeTitle").color + ")");
+                verify(Qt.colorEqual(findChild(card, "safeModeMessage").color, palette.text), which + ": the message" + " (" + findChild(card, "safeModeMessage").color + ")");
+                verify(Qt.colorEqual(findChild(card, "safeModeSymbol").color, palette.text), which + ": the symbol" + " (" + findChild(card, "safeModeSymbol").color + ")");
+                verify(Qt.colorEqual(card.surface.tintColor, palette.materialTint), which + ": the glass tint" + " (" + card.surface.tintColor + ")");
+                card.running = "tryAgain";
+                verify(Qt.colorEqual(findChild(card, "safeModeStatus").color, palette.textSecondary), which + ": the line of an action under way" + " (" + findChild(card, "safeModeStatus").color + ")");
+                card.running = "";
+                card.failure = "tryAgain";
+                verify(Qt.colorEqual(findChild(card, "safeModeStatus").color, palette.danger), which + ": the line of an action that did not finish" + " (" + findChild(card, "safeModeStatus").color + ")");
+            }
+            Appearance.dark = before;
         }
 
         // Fixed text: nothing it shows comes from a file or a process; the size comes from the tokens.

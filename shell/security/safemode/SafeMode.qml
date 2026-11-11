@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Grassfield.Ui
 import "SafeModeModel.js" as Model
 import "../../lib/RunMode.js" as RunMode
 
@@ -241,7 +242,7 @@ Scope {
         target: "safemode"
 
         // What the notice decides from (no private state): the looks, whether it is confirmed, on screen and made, the lock
-        // and sheet inputs, the action under way and the last one that did not finish. JSON.
+        // and sheet inputs, the action under way and the last one that did not finish, and the appearance it draws. JSON.
         function status(): string {
             if (!root.devHooks)
                 return RunMode.REFUSED;
@@ -253,7 +254,8 @@ Scope {
                 locked: root.locked,
                 sheetUp: root.sheetUp,
                 running: root.running,
-                failure: root.failure
+                failure: root.failure,
+                dark: Appearance.dark
             });
         }
 
