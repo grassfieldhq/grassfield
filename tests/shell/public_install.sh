@@ -130,6 +130,7 @@ case $1 in
   -Q)
     case $2 in
       omarchy) [[ -f $GF_STUB/omarchy ]] && echo "omarchy $(cat "$GF_STUB/omarchy")" || exit 1 ;;
+      omarchy-dev) [[ -f $GF_STUB/omarchy-dev ]] && echo "omarchy-dev $(cat "$GF_STUB/omarchy-dev")" || exit 1 ;;
       quickshell) echo "quickshell $(cat "$GF_STUB/quickshell")" ;;
       hyprland) echo "hyprland 0.56.2-4" ;;
       qt6-base) echo "qt6-base 6.12.0-1" ;;
@@ -403,6 +404,15 @@ preflight_case() { # <name> <expected text> (state already arranged)
 fresh; echo 0 >"$S/uid"; preflight_case 'root' 'running as root'
 [[ ! -e $W/home/.local ]] && pass 'root: no log was opened' || fail 'root: the log folder was created'
 fresh; echo 4.0.5-1 >"$S/omarchy"; preflight_case 'old Omarchy' 'older than 4.0.6'
+fresh; rm "$S/omarchy"; echo 4.0.0.r7608.g14abc07-1 >"$S/omarchy-dev"; run '' --dry-run
+expect 'Omarchy dev build at the tested floor passes preflight' "$rc" 0
+has 'Omarchy dev build is identified by package name' 'Omarchy development build 4.0.0.r7608.g14abc07-1' "$W/out"
+has 'Omarchy dev build reports its tested floor' 'minimum tested development build is 4.0.0.r7608' "$W/out"
+fresh; rm "$S/omarchy"; echo 4.0.0.r7500.g1234567-1 >"$S/omarchy-dev"; preflight_case 'Omarchy dev build below the tested floor' 'older than the oldest one Grassfield was tested on (4.0.0.r7608)'
+fresh; rm "$S/omarchy"; echo 4.0.0.r7500.g1234567-1 >"$S/omarchy-dev"; TLANG=fr_FR.UTF-8 run '' --yes
+expect 'French: an old Omarchy dev build is refused' "$rc" 1
+has 'French: old Omarchy dev build gives translated reason' 'plus ancienne que la plus ancienne version testee avec Grassfield (4.0.0.r7608)' "$W/out"
+has 'French: old Omarchy dev build gives a fix' 'version de developpement 4.0.0.r7608 ou plus recente' "$W/out"
 fresh; rm "$S/omarchy"; preflight_case 'no Omarchy' 'Omarchy is not installed'
 fresh
 cat >"$R/etc/pacman.conf" <<'EOF'
