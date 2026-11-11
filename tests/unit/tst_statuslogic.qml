@@ -120,8 +120,10 @@ TestCase {
         verify(bar.indexOf('onActivated: root.captureRequested(win.screen ? win.screen.name : "")') >= 0, "its bar's display");
         verify(bar.indexOf("active: root.captureActive") >= 0, "lit while the toolbar is open");
         const shell = source("shell/shell.qml");
-        verify(shell.indexOf("captureActive: captureSurface.open") >= 0);
-        verify(shell.indexOf("onCaptureRequested: screen => captureSurface.openOn(screen)") >= 0);
+        // The toolbar sits in a LazyLoader (ADR-0056 D-6): root.captureSurface is its item, null until it is loaded.
+        verify(shell.indexOf("captureActive: root.captureSurface ? root.captureSurface.open : false") >= 0, "lit while the toolbar is open, off while unloaded");
+        verify(shell.indexOf("onCaptureRequested: screen => {\n            if (root.captureSurface)\n                root.captureSurface.openOn(screen);\n        }") >= 0,
+            "opens on its bar's display, once the toolbar is loaded");
         const capture = source("shell/capture/Capture.qml");
         // It only opens (review of e134ded6): the open toolbar covers its display and takes every click there, so the bar never gets
         // a second one; Esc or the toolbar's Close button dismisses it. No hide() in openOn.
