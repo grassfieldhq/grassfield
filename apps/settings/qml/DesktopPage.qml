@@ -303,7 +303,8 @@ SettingsPage {
         root.browserChoices = DefaultBrowser.browsers(all, Qt.locale().name, program => root.backend.programExists(program));
         const own = root.ownListTexts();
         const session = root.backend.readText(root.backend.xdgConfigDir + "/" + DefaultBrowser.LIST_NAME);
-        root.browserCurrent = own === null ? "" : DefaultBrowser.current([session.text].concat(own));
+        // Always the browser links open in now (never blank while a browser is installed); a list that cannot be read is left out.
+        root.browserCurrent = DefaultBrowser.effective([session.text].concat(own === null ? [] : own), root.browserChoices);
     }
 
     function failBrowser(): bool {

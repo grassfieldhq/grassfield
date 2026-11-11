@@ -431,6 +431,92 @@ TestCase {
         verify(box, "the row is there");
     }
 
+    // The row always shows the browser links open in now (never blank while a browser is installed). Stock chromium as the effective default
+    // is shown (it is only no choice for the seed); the routing entry shows the browser the lists route to, else the first installed one;
+    // a current entry that is not installed is passed over; picking the browser already shown is harmless; without any browser the row hides.
+    function shownBrowser(t) {
+        const box = named(t.page.contentItem, "Default web browser");
+        verify(box, "the row is there");
+        return box.value;
+    }
+
+    function test_defaultBrowserShowsTheEffectiveDefault() {
+        // stock chromium named by Omarchy's mimeapps.list only
+        let files = browserFiles();
+        delete files["/cfg/hyprland-mimeapps.list"];
+        let t = makeWithBackend(files);
+        compare(t.page.browserCurrent, "chromium.desktop");
+        compare(shownBrowser(t), "chromium.desktop");
+
+        // only the routing entry names a browser, and a later item of the list does
+        files = browserFiles();
+        files["/cfg/mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=omarchy-browser.desktop;zen.desktop;\n";
+        t = makeWithBackend(files);
+        compare(t.page.browserCurrent, "zen.desktop", "the browser the lists route to");
+        compare(shownBrowser(t), "zen.desktop");
+
+        // the routing entry alone, nothing else named: the first installed browser
+        files = browserFiles();
+        files["/cfg/mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=omarchy-browser.desktop;\n";
+        t = makeWithBackend(files);
+        compare(t.page.browserCurrent, "chromium.desktop", "the first installed browser (by name)");
+        compare(shownBrowser(t), "chromium.desktop");
+
+        // no list at all
+        files = browserFiles();
+        delete files["/cfg/mimeapps.list"];
+        delete files["/cfg/hyprland-mimeapps.list"];
+        t = makeWithBackend(files);
+        compare(shownBrowser(t), "chromium.desktop");
+
+        // the current entry is missing (not installed, or a launcher): passed over, the next one named, else the first browser
+        files = browserFiles();
+        files["/cfg/mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=gone-forever.desktop;evil.desktop;firefox.desktop;\n";
+        t = makeWithBackend(files);
+        compare(shownBrowser(t), "firefox.desktop");
+        files["/cfg/mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=gone-forever.desktop;\n";
+        t = makeWithBackend(files);
+        compare(shownBrowser(t), "chromium.desktop");
+
+        // the session's list wins over the user's
+        files = browserFiles();
+        files["/cfg/grassfield-mimeapps.list"] = "[Default Applications]\nx-scheme-handler/http=sanaga.desktop;\n";
+        t = makeWithBackend(files);
+        compare(shownBrowser(t), "sanaga.desktop");
+
+        // a user list that cannot be read: the row is not blank all the same
+        files = browserFiles();
+        t = makeWithBackend(files);
+        t.backend.unreadable = ["/cfg/mimeapps.list"];
+        t.page.readBrowsers();
+        compare(shownBrowser(t), "chromium.desktop");
+    }
+
+    function test_defaultBrowserPickingTheShownOneIsHarmless() {
+        const t = makeWithBackend(browserFiles());
+        const shown = shownBrowser(t);
+        verify(t.page.setBrowser(shown), "the shown browser can be picked again");
+        compare(t.page.browserCurrent, shown);
+        compare(t.page.browserError, "");
+        verify(t.backend.files["/cfg/grassfield-mimeapps.list"].indexOf("x-scheme-handler/http=" + shown + ";\n") >= 0);
+        compare(t.backend.files["/cfg/mimeapps.list"], browserFiles()["/cfg/mimeapps.list"], "the user's mimeapps.list is never written");
+        // again: the same result
+        verify(t.page.setBrowser(shown));
+        compare(t.page.browserCurrent, shown);
+    }
+
+    function test_defaultBrowserRowHidesWithoutAnyBrowser() {
+        const files = {
+            "/apps/editor.desktop": "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor %F\nCategories=Utility;\nMimeType=text/plain;\n",
+            "/cfg/mimeapps.list": "[Default Applications]\nx-scheme-handler/http=chromium.desktop\n"
+        };
+        const t = makeWithBackend(files);
+        compare(t.page.browserChoices.length, 0);
+        compare(t.page.browserCurrent, "");
+        const box = named(t.page.contentItem, "Default web browser");
+        verify(!box || !box.visible, "the row is hidden");
+    }
+
     function test_defaultBrowserRowIsHiddenWithoutBackend() {
         const t = make();
         compare(t.page.browserChoices.length, 0);

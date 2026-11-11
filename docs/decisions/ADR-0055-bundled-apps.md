@@ -111,6 +111,10 @@ browser keeps it.
     writes the four types to `grassfield-mimeapps.list`, both through the backend's guarded writer (`writeDefaultAppsFile`: only
     those two files, never through a link, and a dev session only under `<worktree>/.dev`, ADR-0019); a list that is not valid
     UTF-8 is refused; a failure shows a short sentence under the row (fr in `grassfield_fr.ts`) and leaves the list as it was.
+    The popup always shows the browser links open in (`DefaultBrowser.effective`): the first application the session list, then the
+    user's lists name for http that is one of the offered browsers (the routing entry and an entry that is not installed are passed
+    over, as `omarchy-cmd-default-browser` does), else the first offered browser, what the routing would launch. Stock chromium
+    counting as "no choice" is a seeding rule only; it never blanks the row. Without any browser the row is hidden.
   - The keyboard web key (`grassfield-launch-key`) reads the session's desktop lists before `mimeapps.list`, as `xdg-mime` does, and
     never takes Omarchy's routing entry as a handler.
   - No handler can launch itself: the seeded ids run their own binary (`tests/integration/bundled_apps.sh` reads the desktop files of

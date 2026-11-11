@@ -211,6 +211,38 @@ function current(texts) {
     return lookedUp(texts, "x-scheme-handler/http");
 }
 
+// Every application a list names for `type`, in order.
+function allOf(listText, type) {
+    let inGroup = false;
+    for (const raw of String(listText).split("\n")) {
+        const line = raw.trim();
+        if (line.startsWith("[")) {
+            inGroup = line === GROUP;
+            continue;
+        }
+        if (!inGroup || line.startsWith("#"))
+            continue;
+        const eq = line.indexOf("=");
+        if (eq > 0 && line.slice(0, eq).trim() === type)
+            return line.slice(eq + 1).split(";").map(s => s.trim()).filter(s => s !== "");
+    }
+    return [];
+}
+
+// The browser the row shows: what links open in, as omarchy-cmd-default-browser resolves it. The first application the lists name for
+// http (session list first) that is one of `choices` (an installed, runnable browser; Omarchy's routing entry and a stock browser that is
+// not installed are passed over); when no list names one, the first of `choices` (what the routing would launch). "" only without any
+// choice, when the row is hidden. That Omarchy's stock chromium is no choice for the seed is a seeding rule: it never blanks the row.
+function effective(texts, choices) {
+    for (const t of texts) {
+        for (const id of allOf(t, "x-scheme-handler/http")) {
+            if (id !== ROUTING && choices.some(c => c.id === id))
+                return id;
+        }
+    }
+    return choices.length > 0 ? choices[0].id : "";
+}
+
 // The names of the user's own lists in the configuration folder, in lookup order: a desktop list for each item of
 // XDG_CURRENT_DESKTOP (lowercased; the session's own grassfield-mimeapps.list is not one of them), then mimeapps.list.
 function ownListNames(desktops) {
