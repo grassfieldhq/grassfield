@@ -12,13 +12,16 @@
 #     uninstall      grassfield-install.sh --uninstall + docs/owner-setup/real-session.md section 9, reboot
 #     compare        stock record against the state now: packages, files, units, session; every leftover in a table
 #     all            the six phases in order
-#   helpers: vm-start [disk|iso], vm-stop, shot NAME, key QCODE..., type TEXT, ssh CMD..., compare-canary (adds a group on purpose: compare must flag it)
+#   update-migrate  run tests/integration/update_migrate.sh INSIDE the VM (never on a host with a session: it runs systemd in a
+#                   container); ships `git archive HEAD` of --repo DIR (default: this repository) and prints the VM's console log
+#   helpers: vm-up, vm-start [disk|iso], vm-stop, shot NAME, key QCODE..., type TEXT, ssh CMD..., compare-canary (adds a group on purpose: compare must flag it)
 #
 #   options: --vm-dir DIR      (default: <main checkout>/.claude/integrator/vm; never /tmp: it is a tmpfs)
 #            --installer FILE  use this grassfield-install.sh instead of downloading the published one
 #            --branch-installer  render packaging/install/grassfield-install.sh.in of this checkout and use that
 #            --no-restore      `install` continues from the current disk instead of restoring "stock"
 #            --force           `stock-install` replaces an existing disk
+#            --repo DIR        `update-migrate`: the repository whose HEAD is run in the VM (default: this one)
 #            --reuse-stock     `all` skips stock-install and starts from the existing qcow2 snapshot "stock"
 #            --max-load N      refuse to start the VM above this 1-minute load (default 8)
 #
@@ -37,6 +40,7 @@ MAX_LOAD=8
 INSTALLER=''
 BRANCH_INSTALLER=0
 REUSE_STOCK=0
+UM_REPO=''
 RESTORE=1
 FORCE=0
 VCPUS=4
@@ -607,6 +611,29 @@ phase_compare_canary() {
   phase_compare
 }
 
+# update-migrate: tests/integration/update_migrate.sh runs systemd as PID 1 in a container, which once ended a live session:
+# it runs ONLY here, in the VM. The repository's committed HEAD is shipped, the in-VM runner prints the VM's own console log.
+phase_update_migrate() {
+  creds
+  local src log rc
+  src=$(git -C "${UM_REPO:-$repo}" rev-parse --show-toplevel 2>/dev/null) || { fail "no repository at ${UM_REPO:-$repo}"; return 1; }
+  [[ -f $src/tests/integration/update_migrate_in_vm.sh ]] || { fail "no tests/integration/update_migrate_in_vm.sh in $src"; return 1; }
+  vm_running || boot_installed update-migrate || return 1
+  git -C "$src" archive HEAD | vm_ssh 'rm -rf /root/update-migrate-repo && mkdir -p /root/update-migrate-repo && tar -x -C /root/update-migrate-repo' ||
+    { fail "cannot ship the repository to the VM"; return 1; }
+  log=$(d logs/update-migrate.log)
+  vm_ssh 'bash /root/update-migrate-repo/tests/integration/update_migrate_in_vm.sh /root/update-migrate-repo' >"$log" 2>&1
+  rc=$?
+  grep -E '^(== |\(none\)|\(identical\)|FAIL|PASS: update_migrate|update_migrate)' "$log" | tail -20
+  if ((rc == 0)); then pass "update_migrate.sh in the VM: $(grep '== update_migrate:' "$log")"; else fail "update_migrate.sh in the VM exited $rc (log $log)"; fi
+  local k j
+  k=$(sed -n '/== kernel log lines/,/== journal lines/p' "$log" | grep -v '^==')
+  j=$(sed -n '/== journal lines/,/== console before/p' "$log" | grep -v '^==')
+  [[ $k == '(none)' ]] && pass "the VM's kernel log shows nothing about its console during the run" || fail "kernel log lines about the console: $k"
+  [[ $j == '(none)' ]] && pass "the VM's journal shows no vconsole, getty, udev or SIGHUP line during the run" || fail "journal lines: $j"
+  grep -q '^(identical)$' "$log" && pass "the console binding is the same before and after" || fail "the console binding changed"
+}
+
 main() {
   local phase=${1:-}
   [[ -n $phase ]] || { usage; exit 2; }
@@ -620,6 +647,7 @@ main() {
       --no-restore) RESTORE=0 ;;
       --force) FORCE=1 ;;
       --reuse-stock) REUSE_STOCK=1 ;;
+      --repo) UM_REPO=$2; shift ;;
       --max-load) MAX_LOAD=$2; shift ;;
       -h | --help) usage; exit 0 ;;
       *) rest+=("$1") ;;
@@ -628,6 +656,8 @@ main() {
   done
   mkdir -p "$VM_DIR"/{iso,shots,logs,keys,records}
   case $phase in
+    vm-up) creds; boot_installed vm-up; exit $? ;;
+    update-migrate) phase_update_migrate ;;
     vm-start) vm_start "${rest[0]:-disk}"; exit $? ;;
     vm-stop) vm_stop; exit 0 ;;
     shot) shot "${rest[0]:?name}"; exit $? ;;
