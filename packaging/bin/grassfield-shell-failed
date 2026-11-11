@@ -28,40 +28,52 @@
 # window, default 600), GRASSFIELD_SHELL_FAIL_COUNT (the threshold, default 3), GRASSFIELD_SHELL_FAIL_NOW (the monotonic
 # time to use instead of /proc/uptime). The unit clears all three (UnsetEnvironment=), so in the session they are never
 # read: nothing in the user manager's environment can lower the threshold (opus security review of b1d826b).
-#
-# `grassfield-shell-failed --try-again` (ADR-0041 step 1, S4): safe mode's Try Again, run by the security process's notice
-# (shell/security/safemode/SafeMode.qml) as the user, never by the unit (its ExecStart= has no argument). In this order: the
-# ledger and the flag are removed (the next loop is counted from zero, and a flag that loop writes is never removed here),
-# the unit's failed state and start limit are reset (a unit failed at its limit refuses a start until then), and
-# grassfield-shell.service is started with the user's own `systemctl --user`, waited for within 30 s (Type=simple: it
-# returns once the shell runs, or fails: a dependency, the session ending). A start that fails puts the flag back, so the
-# notice stays. Exit 0 started, 1 not started. It restarts nothing by itself and nothing calls it in a loop: a shell that
-# fails again is the counter's to stop again (above), and the notice comes back. Nothing here unlocks.
 set -u
 me=grassfield-shell-failed
 say() { echo "$me: $*" >&2; }
 digits() { case ${1:-} in '' | *[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+# `grassfield-shell-failed --try-again` (ADR-0041 step 1, S4): safe mode's Try Again, run by the security process's notice
+# (shell/security/safemode/SafeMode.qml, which bounds it at 40 s) as the user, never by the unit (its ExecStart= has no
+# argument). The flag stays until the shell is confirmed running (the opus review of a0df9c3e, MINOR-1: an interruption
+# must never leave the flag gone while the shell is down, or the notice goes and the user is back where 1a left them):
+#   1. the flag is made sure of: written when it is missing (a unit at its start limit with no flag, ADR-0056 D-10), its
+#      identity (inode) noted; the ledger is cleared (the next loop is counted from zero);
+#   2. the unit's failed state and start limit are reset (a unit at its limit refuses a start until then), bounded at 5 s;
+#   3. grassfield-shell.service is started with the user's own `systemctl --user`, bounded at 20 s (Type=simple: it returns
+#      once the shell runs, or fails: a dependency, the session ending);
+#   4. the unit is asked whether it is active, bounded at 5 s; only then is the flag removed, and only if it is still the one
+#      noted (a flag a new loop wrote meanwhile is never removed).
+# Every step is bounded inside the caller's 40 s (5 + 1 + 20 + 2 + 5 + 1 = 34 s); a run killed or failed at any point leaves
+# the flag, so the notice comes back while the unit is down. Exit 0 started and confirmed, 1 otherwise. It restarts nothing
+# by itself and nothing calls it in a loop: a shell that fails again is the counter's to stop again (below). The runtime
+# directory as a link is refused, as the counter and the security process's look refuse it. Nothing here unlocks.
 if [ "${1:-}" = "--try-again" ]; then
-  dir=
-  if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR/grassfield" ] && [ ! -L "$XDG_RUNTIME_DIR/grassfield" ]; then
-    dir=$XDG_RUNTIME_DIR/grassfield
-    rm -f "$dir/shell-failures" "$dir/shell-failures.new" "$dir/shell-safe-mode" "$dir/shell-safe-mode.new"
-  else
-    say "Try Again: no runtime directory: the ledger and the flag are left alone"
+  if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -d "$XDG_RUNTIME_DIR/grassfield" ] || [ -L "$XDG_RUNTIME_DIR/grassfield" ]; then
+    say "Try Again: no usable runtime directory: nothing done"
+    exit 1
   fi
-  systemctl --user reset-failed grassfield-shell.service >/dev/null 2>&1
-  if timeout -k 2 30 systemctl --user start grassfield-shell.service; then
-    say "Try Again: grassfield-shell started (the failure ledger and the safe-mode flag cleared)"
-    exit 0
-  else
-    rc=$?
+  dir=$XDG_RUNTIME_DIR/grassfield
+  flag=$dir/shell-safe-mode
+  umask 077
+  if [ ! -f "$flag" ] || [ -L "$flag" ]; then
+    { printf 'try-again\n' >"$flag.new" && mv -f "$flag.new" "$flag"; } 2>/dev/null || { say "Try Again: cannot write the safe-mode flag: nothing done"; exit 1; }
   fi
-  if [ -n "$dir" ]; then
-    umask 077
-    printf 'try-again %s\n' "$rc" >"$dir/shell-safe-mode.new" && mv -f "$dir/shell-safe-mode.new" "$dir/shell-safe-mode"
+  noted=$(stat -c %i -- "$flag" 2>/dev/null)
+  rm -f "$dir/shell-failures" "$dir/shell-failures.new"
+  /usr/bin/timeout -k 1 5 /usr/bin/systemctl --user reset-failed grassfield-shell.service >/dev/null 2>&1
+  if ! /usr/bin/timeout -k 2 20 /usr/bin/systemctl --user start grassfield-shell.service; then
+    say "Try Again: grassfield-shell did not start: the safe-mode flag stays"
+    exit 1
   fi
-  say "Try Again: grassfield-shell did not start (exit $rc): the safe-mode flag is back"
-  exit 1
+  if ! /usr/bin/timeout -k 1 5 /usr/bin/systemctl --user is-active --quiet grassfield-shell.service; then
+    say "Try Again: grassfield-shell is not running after its start: the safe-mode flag stays"
+    exit 1
+  fi
+  if [ -n "$noted" ] && [ "$(stat -c %i -- "$flag" 2>/dev/null)" = "$noted" ]; then
+    rm -f "$flag"
+  fi
+  say "Try Again: grassfield-shell started (the failure ledger and the safe-mode flag cleared)"
+  exit 0
 fi
 if [ $# -gt 0 ]; then
   say "unknown argument: nothing done"
@@ -115,7 +127,7 @@ fi
 # 4. The loop ends: the state file first (written whole, then renamed), then the stop, then the journal line with the
 # stop's result (a stop that failed is said as well). The session stays locked if it was.
 printf 'loop %s %s\n' "$now" "$count" >"$dir/shell-safe-mode.new" && mv -f "$dir/shell-safe-mode.new" "$dir/shell-safe-mode"
-if systemctl --user stop grassfield-shell.service; then
+if /usr/bin/systemctl --user stop grassfield-shell.service; then
   say "grassfield-shell failed $count times within ${window} s: its restarts stopped (safe mode state written); the compositor keeps any lock"
 else
   say "grassfield-shell failed $count times within ${window} s, but the stop of its unit failed (exit $?): the restarts go on"
