@@ -3107,6 +3107,18 @@ QtObject {
     readonly property real iconModeClearPlateMinRatio: 2.0
     // ADR-0014 / R7-REQ-13: relative luminance of a glass surface from which a tile icon on it gets the light-surface tone (darken, as on a solid light material); between this and the dark look's surface no tone is applied, the pivots do not describe mid-tones
     readonly property real iconModeGlassToneLightMin: 0.6
+    // ADR-0014 / R7-REQ-13: the deep plate on a dark glass. The Dock over a surface of 0.07 to 0.22 (the hysteresis band of the dark/light decision and the dark greys above it) is as dark as the plates of Dark, Tinted and the smoked Clear, so plate and surface kept only 2.1 to 2.7:1 against Default's 2.8 to 5.3 (GPU 2026-11-11, test_a2_dock band cells 0.10 and 0.13, rule E). Weight 0 up to this luminance (black and the dark look, which pass).
+    readonly property real iconModeDeepPlateFrom: 0.07
+    // ADR-0014 / R7-REQ-13: surface luminance from which the deep plate weight is 1 (a linear ramp from deepPlateFrom).
+    readonly property real iconModeDeepPlateFull: 0.1
+    // ADR-0014 / R7-REQ-13: surface luminance up to which the deep plate weight stays 1.
+    readonly property real iconModeDeepPlateFullTo: 0.16
+    // ADR-0014 / R7-REQ-13: surface luminance at which the deep plate weight is 0 again (a mid-grey glass, 0.25, keeps the plates the GPU measured).
+    readonly property real iconModeDeepPlateTo: 0.22
+    // ADR-0014 / R7-REQ-13: lightness (sRGB 0..1) the graphite plate of Dark and the smoked plate of Clear reach at weight 1: black, 3.0:1 against a surface of 0.10 (modelled: (0.10+0.05)/(0+0.05)), 3.6:1 against 0.13.
+    readonly property real iconModeDeepPlateLuma: 0.0
+    // ADR-0014 / R7-REQ-13: the dark Tinted plate is the tint times this at weight 1 (0.3 normally): 2.95:1 or more against a surface of 0.10 for a mid blue (modelled).
+    readonly property real iconModeDeepTintedPlateScale: 0.03
     // ADR-0014 tile tone, Dark in the dark appearance (R7-REQ-13, A2 rule E): the pivot of Dark's lift, above the brightest dark material (tileLiftPivot 0.38) so that only the lightest tones of a tile move: basecamp's sky (0.60) takes Dark's tile at 24 px, transparency 1.0, over white from 1.57:1 to a modelled 2.06 (floor 1.73) while Dark's rule I and S cells (floor 0.9 of Default's) keep a modelled margin of 0.16 and 0.21: a lift from 0.38 and one from 0.45 broke them (model, 2026-11-10)
     readonly property real iconModeTileLiftPivotDark: 0.55
     // ADR-0014 tile tone, Dark: exponent q of the lift above tileLiftPivotDark (an ease-out; 1 = none)

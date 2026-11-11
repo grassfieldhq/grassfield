@@ -34,14 +34,16 @@ ShaderEffect {
     // Over the bare wallpaper (desktop icons); for Clear also over a material that lets so much of it through (transparency at its
     // end) that the icon is over the wallpaper: the look that holds on any wallpaper brightness.
     readonly property real overWallpaper: IconModes.overWallpaperLook(root.params.index, root.wallpaper, Appearance.effectiveTransparency, root.darkAppearance, root.solidMaterial, root.accentFill, Tokens, root.surfaceLuma) ? 1 : 0
-    readonly property real clearPlateAlphaWallpaper: root.wallpaper ? Tokens.iconModeClearPlateAlphaWallpaper : IconModes.smokeAlpha(root.surfaceLuma, Tokens.iconModeClearPlateAlphaWallpaper, Tokens.iconModeClearPlateWallpaperLuma, Tokens)
+    // The deep plate on a dark glass (IconModes.deepPlate): the plates of Dark, Tinted and the smoked Clear move towards black, Clear's also towards opaque.
+    readonly property real deepPlate: root.wallpaper ? 0 : IconModes.deepPlate(root.surfaceLuma, Tokens)
+    readonly property real clearPlateAlphaWallpaper: root.wallpaper ? Tokens.iconModeClearPlateAlphaWallpaper : Math.max(IconModes.smokeAlpha(root.surfaceLuma, Tokens.iconModeClearPlateAlphaWallpaper, Tokens.iconModeClearPlateWallpaperLuma, Tokens), Tokens.iconModeClearPlateAlphaWallpaper + (1 - Tokens.iconModeClearPlateAlphaWallpaper) * root.deepPlate)
     readonly property real sysPlateInset: Tokens.iconModeSysPlateInset
     readonly property real sysPlateRadius: Tokens.iconModeSysPlateRadius
     // Scale of the artwork about the centre: the glyph scale (the icon sits on the plate), or for an icon that is already a tile the scale that
     // makes its own tile coincide with the plate (TintedIcon.artScale, IconTile.js).
     property real artScale: Tokens.iconModeSysGlyphScale
     readonly property real sysGlyphScale: root.artScale
-    readonly property real darkPlateLuma: Tokens.iconModeDarkPlateLuma
+    readonly property real darkPlateLuma: Tokens.iconModeDarkPlateLuma + (Tokens.iconModeDeepPlateLuma - Tokens.iconModeDarkPlateLuma) * root.deepPlate
     readonly property real darkArtSaturation: Tokens.iconModeDarkArtSaturation
     readonly property real darkArtScale: Tokens.iconModeDarkArtScale
     readonly property real darkArtLift: Tokens.iconModeDarkArtLift
@@ -52,7 +54,7 @@ ShaderEffect {
     readonly property real tileTintedPlateScaleLight: Tokens.iconModeTileTintedPlateScaleLight
     readonly property real tileClearPlateAlphaLight: Tokens.iconModeTileClearPlateAlphaLight
     readonly property real tileClearPlateLightLuma: Tokens.iconModeTileClearPlateLightLuma
-    readonly property real clearPlateWallpaperLuma: Tokens.iconModeClearPlateWallpaperLuma
+    readonly property real clearPlateWallpaperLuma: Tokens.iconModeClearPlateWallpaperLuma + (Tokens.iconModeDeepPlateLuma - Tokens.iconModeClearPlateWallpaperLuma) * root.deepPlate
     readonly property real clearPlateLightLuma: Tokens.iconModeClearPlateLightLuma
     readonly property real clearPlateAlphaDark: Tokens.iconModeClearPlateAlphaDark
     readonly property real clearPlateAlphaLight: Tokens.iconModeClearPlateAlphaLight
@@ -63,7 +65,7 @@ ShaderEffect {
     readonly property real clearBackdropMid: Tokens.iconModeClearBackdropMid
     readonly property real clearInkFloor: Tokens.iconModeClearInkFloor
     readonly property real clearPlateAlphaAccent: Tokens.iconModeClearPlateAlphaAccent
-    readonly property real tintedPlateScale: Tokens.iconModeTintedPlateScale
+    readonly property real tintedPlateScale: Tokens.iconModeTintedPlateScale + (Tokens.iconModeDeepTintedPlateScale - Tokens.iconModeTintedPlateScale) * root.deepPlate
     readonly property real tintedPlateMixLight: Tokens.iconModeTintedPlateMixLight
     readonly property real tintedRampLowDark: Tokens.iconModeTintedRampLowDark
     readonly property real tintedRampHighDark: Tokens.iconModeTintedRampHighDark

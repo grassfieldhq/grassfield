@@ -91,6 +91,17 @@ function smokeAlpha(surface, base, plateLuma, t) {
     return Math.min(1, Math.max(base, (surface - effective) / (surface - plateLuma)));
 }
 
+// The weight (0..1) of the deep plate on a dark glass of luminance `surface` (-1 or undefined: 0): 0 up to `iconModeDeepPlateFrom`, a ramp to 1 at `iconModeDeepPlateFull`, 1 up to
+// `iconModeDeepPlateFullTo`, a ramp down to 0 at `iconModeDeepPlateTo`. The plates of Dark, Tinted (dark look) and the smoked Clear move towards black by this weight (IconEffect).
+function deepPlate(surface, t) {
+    if (!(surface >= 0))
+        return 0;
+    const clamp01 = v => Math.max(0, Math.min(1, v));
+    const up = clamp01((surface - t.iconModeDeepPlateFrom) / (t.iconModeDeepPlateFull - t.iconModeDeepPlateFrom));
+    const down = clamp01((t.iconModeDeepPlateTo - surface) / (t.iconModeDeepPlateTo - t.iconModeDeepPlateFullTo));
+    return Math.min(up, down);
+}
+
 // The tile tone side on a glass surface (not a solid material): -1 (darken, the light-surface tone) from `iconModeGlassToneLightMin`, in the light look; 0 elsewhere.
 function glassToneSide(surface, dark, t) {
     return !dark && surface >= t.iconModeGlassToneLightMin ? -1 : 0;

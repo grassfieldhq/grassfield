@@ -740,8 +740,19 @@ TestCase {
                         cells.forEach(c => c.destroy());
                         continue;
                     }
-                    wait(400);
-                    const img = grabImage(testCase);
+                    // The first scene of a run draws its icons late (the shader is built on first use): read the pixels once every mode cell shows something other than its grey
+                    // background (2026-11-11: the first three cells came back as the bare #808080, "3 folder model differences"), up to five seconds.
+                    let img = null;
+                    for (let tries = 0; tries < 20; tries++) {
+                        wait(tries === 0 ? 400 : 250);
+                        img = grabImage(testCase);
+                        const drawnAll = [1, 2, 3].every(m => {
+                            const c = img.pixel(m * 120 + 56, 560 + 56);
+                            return Math.abs(c.r - 0.5) > 0.02 || Math.abs(c.g - 0.5) > 0.02 || Math.abs(c.b - 0.5) > 0.02;
+                        });
+                        if (drawnAll)
+                            break;
+                    }
                     const rawBox = FolderStyle.glyphBox(96, Tokens);
                     const raw = [];
                     for (let y = Math.floor(rawBox[1]); y < rawBox[3]; y += 4) {
@@ -776,7 +787,7 @@ TestCase {
         board.visible = true;
         verify(compared >= 12, "compared " + compared);
         if (failures.length > 0)
-            fail(failures.length + " folder model differences over 4/255:\n" + failures.join("\n"));
+            fail(failures.length + " folder model differences over 4/255 (one line, the runner prints only the first): " + failures.join(" | "));
     }
 
     // A folder of the colour black keeps its system plate and the plate's edge in every icon mode, on a black wallpaper: the

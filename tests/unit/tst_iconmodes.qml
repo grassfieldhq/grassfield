@@ -203,6 +203,39 @@ TestCase {
         compare(IconModes.glassToneSide(IconModes.heldSurface(edge - 0.1, edge + 0.01, t), false, t), 0);
     }
 
+    // The deep plate on a dark glass (GPU 2026-11-11: test_a2_dock band cells at 0.10 and 0.13, rule E, plate 2.1 to 2.7 against Default's 2.8 to 5.3): weight 0 where the plates
+    // already hold (black, the dark look; a mid-grey glass), 1 across the band, ramps between; at weight 1 the plates reach 3:1 against the surface.
+    function test_deepPlateOnDarkGlass() {
+        const t = Tokens;
+        compare(IconModes.deepPlate(-1, t), 0, "unknown surface");
+        compare(IconModes.deepPlate(undefined, t), 0, "no surface given");
+        compare(IconModes.deepPlate(0.014, t), 0, "black wallpaper under the dark Dock: the plates that pass");
+        compare(IconModes.deepPlate(t.iconModeDeepPlateFrom, t), 0, "0.07");
+        compare(IconModes.deepPlate(0.10, t), 1, "0.10");
+        compare(IconModes.deepPlate(0.13, t), 1, "0.13");
+        compare(IconModes.deepPlate(t.iconModeDeepPlateFullTo, t), 1);
+        compare(IconModes.deepPlate(t.iconModeDeepPlateTo, t), 0);
+        compare(IconModes.deepPlate(lum([0.5, 0.5, 0.5]) + 0.04, t), 0, "grey #808080 under the Dock (0.25): untouched");
+        let previous = -1;
+        for (const l of [0.07, 0.075, 0.08, 0.09, 0.10]) {
+            const w = IconModes.deepPlate(l, t);
+            verify(w >= previous, `ramp up at ${l}`);
+            previous = w;
+        }
+        for (const l of [0.16, 0.18, 0.2, 0.22]) {
+            const w = IconModes.deepPlate(l, t);
+            verify(w <= previous, `ramp down at ${l}`);
+            previous = w;
+        }
+        // the plates at weight 1 against the surface (blended in sRGB, as the shader does)
+        const plateL = lum([t.iconModeDeepPlateLuma, t.iconModeDeepPlateLuma, t.iconModeDeepPlateLuma]);
+        for (const s of [0.10, 0.13])
+            verify(contrast(s, plateL) >= 2.95, `black plate over ${s}: ${contrast(s, plateL).toFixed(2)}`);
+        const tinted = FolderStyle.rgbOf("#3E7BFA").map(v => v * t.iconModeDeepTintedPlateScale);
+        verify(contrast(0.10, lum(tinted)) >= 2.9, `tinted plate over 0.10: ${contrast(0.10, lum(tinted)).toFixed(2)}`);
+        verify(t.iconModeDeepPlateFrom < t.iconModeDeepPlateFull && t.iconModeDeepPlateFull <= t.iconModeDeepPlateFullTo && t.iconModeDeepPlateFullTo < t.iconModeDeepPlateTo, "ordered edges");
+    }
+
     // One threshold on a stable value with a band: inside the band the previous look stays, so a wallpaper drifting around the threshold does not flip the icons.
     function test_surfaceToneHasHysteresis() {
         const t = Tokens;
