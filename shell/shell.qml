@@ -785,18 +785,38 @@ ShellRoot {
                 return;
             newestOpen = p.seq;
             replaying = true;
-            if (surface === "search") {
-                if (p.clip)
-                    item.toggleClipboard();
-                else
-                    item.show(p.text);
-            } else {
-                item.show();
+            try {
+                if (surface === "search") {
+                    if (p.clip)
+                        item.toggleClipboard();
+                    else
+                        item.show(p.text);
+                } else {
+                    item.show();
+                }
+            } finally {
+                replaying = false;
             }
-            replaying = false;
         }
     }
-    // A direct opening of a built surface counts as a request (see `early.opened`).
+    // A direct opening of a built surface counts as a request (see `early.opened`), for every surface ExclusiveSurfaces manages: the
+    // app switcher and the capture toolbar too, so an older pending request never closes what was opened after it.
+    Connections {
+        target: switcher
+
+        function onOpenChanged(): void {
+            if (switcher.open)
+                early.opened();
+        }
+    }
+    Connections {
+        target: root.captureSurface
+
+        function onOpenChanged(): void {
+            if (root.captureSurface.open)
+                early.opened();
+        }
+    }
     Connections {
         target: root.searchSurface
 

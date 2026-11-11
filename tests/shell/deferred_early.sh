@@ -120,6 +120,32 @@ sleep 1
 is search .open true; check "case 5: Search, opened directly after Apps was asked, is still open" $?
 is apps .open false; check "case 5: the older early Apps request did not open over it" $?
 
+# case 6: the switcher is one of the surfaces ExclusiveSurfaces manages: Apps asked early, the switcher opened directly (it is not
+# deferred) before Apps is built: Apps' older request must not close it. The switcher needs two windows: two foot terminals in the
+# nested session (killed at the end).
+pids=()
+cleanup() { local p; for p in "${pids[@]}"; do kill -- "-$p" 2>/dev/null; done; }
+trap cleanup EXIT
+for n in 1 2; do
+  WAYLAND_DISPLAY=$DEV_NESTED_SOCK setsid "$root/scripts/dev/isolated.sh" foot --app-id "gf-de-$n" >/dev/null 2>&1 </dev/null &
+  pids+=($!)
+  sleep 1.8
+done
+restart_held 1; check "case 6: the shell started with the deferred surfaces held" $?
+until_ok 20 held
+settle
+ipc apps open >/dev/null
+hold=$(date +%s)
+ipc switcher next "$hold" >/dev/null
+[[ $(st switcher .phase) != idle && -n $(st switcher .phase) ]]; check "case 6: the switcher opened (phase $(st switcher .phase))" $?
+ipc deferred release >/dev/null
+until_ok 20 drained; check "case 6: nothing is left pending after the release" $?
+sleep 1
+[[ $(st switcher .phase) != idle && -n $(st switcher .phase) ]]; check "case 6: the switcher, opened after Apps was asked, is still open" $?
+is apps .open false; check "case 6: the older early Apps request did not open over it" $?
+ipc switcher cancel >/dev/null
+cleanup
+
 # the log of the last held run
 ! grep -q "will not be used because another handler" "$dev/shell.log"; check "log: no two IPC handlers for one target" $?
 ! grep -qE "TypeError|ReferenceError|Binding loop" "$dev/shell.log"; check "log: no QML TypeError, ReferenceError or binding loop" $?

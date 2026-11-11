@@ -148,10 +148,12 @@ No request is lost. A request that reaches the shell before a surface is built i
 - Each replay is its own `Qt.callLater(() => ...)` closure: `Qt.callLater` runs a repeated call of one function once per turn, with the last
   arguments, so three loaders attaching in the same turn would replay only the last surface (review of 8887f8f0). The newest request wins
   whatever order the loaders finish in: one counter (`early.seq`) numbers every request for the three surfaces, early or direct (a built
-  surface that opens without a replay counts as a request), and a replay is skipped when a newer request has opened a surface since (a
+  surface that opens without a replay counts as a request; the app switcher and the capture toolbar are counted too, every surface
+  ExclusiveSurfaces manages), and a replay is skipped when a newer request has opened a surface since (a
   pending Apps request does not close a Search opened directly afterwards). The counter, not the wall clock, orders requests, and a
   monotonic `ElapsedTimer` measures the 5 s age (the wall clock can step at login; the OSD replay uses the same). The test hook
-  `deferred releaseSurface <name>` builds one surface while the others stay held (case 5 of `deferred_early.sh`, which fails without it).
+  `deferred releaseSurface <name>` builds one surface while the others stay held (case 5 of `deferred_early.sh`, which fails without it). Case 6 opens the switcher
+  (two foot windows) after an early Apps request and checks it stays open (it fails without the switcher's count).
 - It is performed on the next turn of the event loop after the loader's item is bound (`Qt.callLater`), not inside the loader's own
   item-changed signal: there `root.<surface>Surface` is still null and ExclusiveSurfaces would not see the opening (two early requests
   left two keyboard-grabbing surfaces open; review of ddaf5c2e, MED-2). `ExclusiveSurfaces` also handles a target that appears already
