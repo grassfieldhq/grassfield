@@ -194,6 +194,11 @@ TestCase {
         verify(m.heldNotice(new Date(), "locked").indexOf("locked") >= 0);
         verify(m.heldNotice(new Date(), "confirm").indexOf("no key answers a confirmation") >= 0);
         verify(m.heldNotice(new Date(), "network").indexOf("nothing typed elsewhere goes into it") >= 0);
+        // The opus delta review of S3, LOW: held for the security process's start alone, it says so, not the saver.
+        verify(m.heldNotice(new Date(), "saver").indexOf("while the screen saver was on") >= 0);
+        const starting = m.heldNotice(new Date(), "starting");
+        verify(starting.indexOf("while Grassfield was starting. Click the alert to answer it.") >= 0, starting);
+        verify(starting.indexOf("screen saver") < 0, starting);
     }
 
     // --- step 9c: NetworkManager's Wi-Fi alert ------------------------------------------------------------------------

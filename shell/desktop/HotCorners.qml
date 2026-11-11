@@ -31,7 +31,10 @@ Scope {
     // `screen`: output name of the corner that fired (surfaces that take a screen open there).
     function run(action: string, screen: string): void {
         if (Actions.isDirect(action)) {
-            Notifications.toggleCenter(screen);
+            if (Actions.normalize(action) === "lock")
+                SessionState.requestLock("corner");
+            else
+                Notifications.toggleCenter(screen);
             return;
         }
         const argv = Actions.command(action, Quickshell.processId);
@@ -73,7 +76,7 @@ Scope {
                     screen: perScreen.modelData
                     corner: modelData
                     action: root.actionFor(modelData)
-                    blocked: Actions.isBlocked(action, Notifications.centerOpen, FocusReturn.locked)
+                    blocked: Actions.isBlocked(action, Notifications.centerOpen, FocusReturn.locked, SessionState.lockConfirmed)
                     // Every full-attention shell surface reports to FocusReturn (Apps, Overview, Search, menus, the
                     // switcher, the Notification Center); FocusReturn.locked follows the session lock.
                     covered: FocusReturn.locked || Object.keys(FocusReturn.holders).length > 0

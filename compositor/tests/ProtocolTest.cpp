@@ -321,6 +321,19 @@ TEST(Protocol, TilingSplitComesWithTilingArrange) {
         << "never without window-tiling";
 }
 
+TEST(Protocol, ToplevelDragIsAdvertisedLastAndAlone) {
+    // ADR-0036 amendment 2026-11-08 (URR-030): informational, the shell needs nothing; on its own, after every other feature.
+    EXPECT_EQ(kFeatureToplevelDrag, "toplevel-drag");
+    EXPECT_EQ(capabilitiesJson(features(false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+                                        false, true)),
+              R"({"v":"gfc/1","type":"capabilities","features":["decorations","toplevel-drag"]})");
+    EXPECT_EQ(capabilitiesJson(features(false, true, false, false, false, false, false, false, false, false, true, false, false, false, false, false, true, false, false, false,
+                                        true, true)),
+              R"({"v":"gfc/1","type":"capabilities","features":["decorations","config","window-tiling","zoom-fill","tiling-arrange","tiling-layouts","tiling-split","tiling-split-rows","tiling-split-titles","toplevel-drag"]})");
+    EXPECT_EQ(capabilitiesJson(features(true, true, true)), R"({"v":"gfc/1","type":"capabilities","features":["decorations","minimize","config","appmenu"]})")
+        << "off by default";
+}
+
 TEST(Protocol, TileHoverComesWithWindowTiling) {
     EXPECT_EQ(kFeatureTileHover, "tile-hover");
     EXPECT_EQ(kLuaTilePopover, "tile_popover");

@@ -15,7 +15,8 @@
   },
   "dock": {
     "pinned": [
-      "chromium",
+      "sanaga",
+      "grassfield-notes",
       "foot",
       "org.grassfield.Settings"
     ],

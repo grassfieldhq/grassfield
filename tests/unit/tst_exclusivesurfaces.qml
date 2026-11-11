@@ -85,4 +85,24 @@ TestCase {
             compare(all.filter(f => f.open).length, 1);
         }
     }
+
+    // A surface built late can appear already open (an early request performed on its arrival, shell.qml): it closes the others.
+    function test_aTargetThatAppearsOpenClosesTheOthers() {
+        coordinator.surfaces = [
+            {target: null, close: () => overview.dismiss()},
+            {target: apps, close: () => apps.dismiss()},
+            {target: search, close: () => search.dismiss()}
+        ];
+        overview.open = true;
+        apps.open = true;
+        verify(apps.open);
+        verify(!search.open);
+        coordinator.surfaces = [
+            {target: overview, close: () => overview.dismiss()},
+            {target: apps, close: () => apps.dismiss()},
+            {target: search, close: () => search.dismiss()}
+        ];
+        verify(overview.open !== apps.open);
+        verify(!search.open);
+    }
 }

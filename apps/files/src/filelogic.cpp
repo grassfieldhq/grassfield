@@ -442,7 +442,8 @@ QString displayName(const QString &name)
             continue;
         }
         inBreak = false;
-        if ((u >= 0x202A && u <= 0x202E) || (u >= 0x2066 && u <= 0x2069) || u == 0x2028 || u == 0x2029)
+        if ((u >= 0x202A && u <= 0x202E) || (u >= 0x2066 && u <= 0x2069) || u == 0x2028 || u == 0x2029 || u == 0x200E || u == 0x200F
+            || u == 0x061C)
             out += QStringLiteral("<U+%1>").arg(u, 4, 16, QLatin1Char('0')).toUpper();
         else
             out += c;

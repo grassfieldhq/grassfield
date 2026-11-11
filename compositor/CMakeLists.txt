@@ -35,7 +35,7 @@ pkg_check_modules(LUA REQUIRED lua) # headers only: symbols resolve from Hyprlan
 add_library(gfcore STATIC src/core/Protocol.cpp src/core/TitlebarLayout.cpp src/core/PointerGesture.cpp src/core/Minimize.cpp src/core/Appmenu.cpp
   src/core/EventThrottle.cpp src/core/Overview.cpp src/core/DesktopFocus.cpp src/core/Json.cpp src/core/Stages.cpp src/core/CursorRefresh.cpp
   src/core/DeferredFocus.cpp src/core/OverviewFocus.cpp src/core/Genie.cpp src/core/Tiling.cpp src/core/LayerPointer.cpp src/core/ClientChrome.cpp src/core/FrameLog.cpp src/core/Quiet.cpp
-  src/core/Notices.cpp src/core/RunMode.cpp src/core/TopClamp.cpp src/core/WindowRim.cpp)
+  src/core/Notices.cpp src/core/RunMode.cpp src/core/TopClamp.cpp src/core/WindowRim.cpp src/core/ToplevelDrag.cpp src/core/CapturePrivacy.cpp)
 target_include_directories(gfcore PUBLIC src)
 set_target_properties(gfcore PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(gfcore PRIVATE -Wall -Wextra)
@@ -48,14 +48,33 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E make_directory ${GF_PROTO_DIR}
   COMMAND ${HYPRWAYLAND_SCANNER} ${CMAKE_CURRENT_SOURCE_DIR}/protocols/appmenu.xml ${GF_PROTO_DIR}
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/protocols/appmenu.xml)
-add_library(gfprotocols OBJECT ${GF_PROTO_DIR}/appmenu.cpp)
+# xdg_toplevel_drag_v1 (ADR-0036 amendment 2026-11-08): the server code generated from the INSTALLED wayland-protocols'
+# staging XML (a dependency of Arch's hyprland package). Without it the plugin is built without that server
+# (GF_TOPLEVEL_DRAG_PROTOCOL=0: no global, no feature, the degraded behaviour), as build-direct.sh does.
+pkg_get_variable(GF_WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
+set(GF_TOPLEVEL_DRAG_XML "${GF_WAYLAND_PROTOCOLS_DIR}/staging/xdg-toplevel-drag/xdg-toplevel-drag-v1.xml")
+set(GF_PROTO_SRCS ${GF_PROTO_DIR}/appmenu.cpp)
+if(GF_WAYLAND_PROTOCOLS_DIR AND EXISTS "${GF_TOPLEVEL_DRAG_XML}")
+  add_custom_command(
+    OUTPUT ${GF_PROTO_DIR}/xdg-toplevel-drag-v1.cpp ${GF_PROTO_DIR}/xdg-toplevel-drag-v1.hpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${GF_PROTO_DIR}
+    COMMAND ${HYPRWAYLAND_SCANNER} ${GF_TOPLEVEL_DRAG_XML} ${GF_PROTO_DIR}
+    DEPENDS ${GF_TOPLEVEL_DRAG_XML})
+  list(APPEND GF_PROTO_SRCS ${GF_PROTO_DIR}/xdg-toplevel-drag-v1.cpp)
+  set(GF_TOPLEVEL_DRAG_PROTOCOL 1)
+else()
+  message(WARNING "wayland-protocols' xdg-toplevel-drag-v1.xml not found: the plugin is built without xdg_toplevel_drag_manager_v1")
+  set(GF_TOPLEVEL_DRAG_PROTOCOL 0)
+endif()
+add_library(gfprotocols OBJECT ${GF_PROTO_SRCS})
 target_link_libraries(gfprotocols PRIVATE PkgConfig::HYPRLAND)
 set_target_properties(gfprotocols PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
 
-add_library(grassfield-compositor SHARED src/main.cpp src/Titlebar.cpp src/Ipc.cpp src/Minimize.cpp src/AppmenuServer.cpp src/Overview.cpp src/DesktopFocus.cpp src/Surfaces.cpp src/WindowTransform.cpp src/Stages.cpp src/CursorRefresh.cpp src/DeferredFocus.cpp src/OverviewFocus.cpp src/GenieDraw.cpp src/Tiling.cpp src/LayerPointer.cpp src/ClientChrome.cpp src/FrameProbe.cpp src/TopClamp.cpp src/WindowRim.cpp $<TARGET_OBJECTS:gfprotocols>)
+add_library(grassfield-compositor SHARED src/main.cpp src/Titlebar.cpp src/Ipc.cpp src/Minimize.cpp src/AppmenuServer.cpp src/Overview.cpp src/DesktopFocus.cpp src/Surfaces.cpp src/WindowTransform.cpp src/Stages.cpp src/CursorRefresh.cpp src/DeferredFocus.cpp src/OverviewFocus.cpp src/GenieDraw.cpp src/Tiling.cpp src/LayerPointer.cpp src/ClientChrome.cpp src/FrameProbe.cpp src/TopClamp.cpp src/WindowRim.cpp src/ToplevelDrag.cpp src/CapturePrivacy.cpp $<TARGET_OBJECTS:gfprotocols>)
 target_link_libraries(grassfield-compositor PRIVATE gfcore PkgConfig::HYPRLAND)
 target_include_directories(grassfield-compositor PRIVATE ${LUA_INCLUDE_DIRS} ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_options(grassfield-compositor PRIVATE -Wall -Wextra)
+target_compile_definitions(grassfield-compositor PRIVATE GF_TOPLEVEL_DRAG_PROTOCOL=${GF_TOPLEVEL_DRAG_PROTOCOL})
 set_target_properties(grassfield-compositor PROPERTIES
   PREFIX ""
   LIBRARY_OUTPUT_DIRECTORY ${GRASSFIELD_OUTPUT_DIR})
@@ -81,7 +100,7 @@ if(GRASSFIELD_BUILD_TESTS)
   add_executable(grassfield-compositor-tests tests/ProtocolTest.cpp tests/TitlebarLayoutTest.cpp tests/PointerGestureTest.cpp tests/MinimizeTest.cpp tests/AppmenuTest.cpp
     tests/EventThrottleTest.cpp tests/OverviewTest.cpp tests/DesktopFocusTest.cpp tests/StagesTest.cpp tests/CursorRefreshTest.cpp
     tests/DeferredFocusTest.cpp tests/OverviewFocusTest.cpp tests/GenieTest.cpp tests/TilingTest.cpp tests/LayerPointerTest.cpp tests/ClientChromeTest.cpp tests/FrameLogTest.cpp tests/QuietTest.cpp
-    tests/NoticesTest.cpp tests/RunModeTest.cpp tests/TopClampTest.cpp tests/WindowRimTest.cpp tests/ParserFuzzTest.cpp)
+    tests/NoticesTest.cpp tests/RunModeTest.cpp tests/TopClampTest.cpp tests/WindowRimTest.cpp tests/ToplevelDragTest.cpp tests/CapturePrivacyTest.cpp tests/ParserFuzzTest.cpp)
   target_link_libraries(grassfield-compositor-tests PRIVATE gfcore GTest::gtest_main)
   # QuietTest reads the plugin's sources (every key listener opens the quiet scope).
   # RunModeTest reads the run-mode vectors shared with the shell and the apps (ADR-0019).

@@ -427,13 +427,27 @@ Every package the build installed: `grassfield-icons` (the icon theme, 30,000 fi
 and are not removed when they are left out of the command (GF-046). This removes only Grassfield: every dependency is either
 explicitly installed or required by other packages (checked with `pacman -Qi`). Check afterwards with
 `pacman -Q grassfield-login-themes grassfield-desktop grassfield-wallpapers grassfield-compositor grassfield-icons` (each:
-"was not found"). Left behind in your home (only Grassfield's own paths; remove if you want a clean state):
+"was not found"). Left behind by a package removal (only Grassfield's own paths; the public `grassfield-install.sh --uninstall`
+deletes the session-only files and keeps your settings and state by design, GF-010):
 
 ```bash
-rm -rf ~/.config/grassfield ~/.local/state/grassfield ~/.local/share/icons/grassfield-cursors-custom
+# Session-only files: they do nothing outside Grassfield (the installer's --uninstall deletes them)
+rm -f ~/.config/xdg-desktop-portal/grassfield-portals.conf
+rm -rf ~/.local/share/icons/grassfield-cursors-custom ~/.cache/grassfield
+# Your Grassfield settings and state, with the session's default-app list (the installer keeps them and prints this line)
+rm -rf ~/.config/grassfield ~/.config/grassfield-mimeapps.list ~/.local/state/grassfield
 rm -rf "$XDG_RUNTIME_DIR/grassfield"   # tmpfs, gone at reboot anyway
 ls ~/.config/autostart/               # delete only entries you added through the Grassfield Dock
 ```
+
+System side: `pacman` never removes the `grassfield-update` system group that a package's sysusers.d file created (the primary
+group of `grassfield-update-migrate.service`, no member). The installer's `--uninstall` keeps it too and says so, as Arch does for system groups (a reused gid would give access to files the
+group left behind); it is invisible and harmless. To remove it anyway, once you have checked that
+`sudo find / /home -xdev -gid $(getent group grassfield-update | cut -d: -f3)` finds nothing: `sudo groupdel grassfield-update`.
+(`-xdev` stops at each filesystem boundary, and on Omarchy `/home` is a separate btrfs subvolume, so it is named too: the
+migration markers under `~/.local/state/omarchy/migrations` that carry this gid live there; add any other mount you have.)
+`plymouth-set-default-theme` leaves `/etc/plymouth/plymouthd.confe` (its own `sed -ie`) after each call; if you switched the boot
+theme by hand, `sudo rm /etc/plymouth/plymouthd.confe` once you have checked it holds nothing you wrote.
 
 The SDDM drop-in is a pacman backup file: if you edited it, removing the package leaves it as
 `/etc/sddm.conf.d/grassfield.conf.pacsave`. SDDM reads only files named `*.conf` from that directory (name filter in its

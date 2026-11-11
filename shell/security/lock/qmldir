@@ -1,5 +1,9 @@
 module qs.security.lock
 singleton Lock 1.0 Lock.qml
 LockView 1.0 LockView.qml
+LockViewLoader 1.0 LockViewLoader.qml
 LockStill 1.0 LockStill.qml
 LockStills 1.0 LockStills.qml
+LockAvatar 1.0 LockAvatar.qml
+LockPublisher 1.0 LockPublisher.qml
+LockWallpaper 1.0 LockWallpaper.qml

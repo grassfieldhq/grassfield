@@ -5,8 +5,8 @@
 # systemd's RestartMode=normal passes the unit through "failed" before each restart). A clean exit, SIGTERM or `qs kill`
 # ends "inactive" and never comes here, nor does a stop through systemd.
 #
-# Why: systemd's start limit counts starts within an interval and cannot see how long the shell lived; with RestartSec=1 the
-# unit's own limit (10 starts in 5 minutes) trips only for a loop faster than one crash every 29 s, and the first limit
+# Why: systemd's start limit counts starts within an interval and cannot see how long the shell lived; with RestartSec=100ms the
+# unit's own limit (10 starts in 5 minutes) trips only for a loop faster than one crash every 29.9 s, and the first limit
 # (10 in 30 s) never tripped the loop of 2026-10-29, a crash 5 s after every start (docs/audits/stability-2026-10-29/audit.md
 # 1.2). This script counts failures instead: it keeps the monotonic time of each failure of the last WINDOW seconds in
 # $XDG_RUNTIME_DIR/grassfield/shell-failures (0600; the runtime directory is the unit's RuntimeDirectory=) and, at the

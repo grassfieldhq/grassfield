@@ -40,7 +40,16 @@ TestCase {
         // Absolute paths, an argument vector, `--` before the path; nothing else is run.
         // The two cache folders' own real paths with the file's (a cache behind a symbolic link), and the raw mode, which no
         // locale translates (review of cbd6ef05).
-        verify(s.indexOf('root.run("real", ["/usr/bin/realpath", "-m", "--", WallpaperState.preparedDir, WallpaperState.videoDir, w.file]);') >= 0);
+        // ADR-0041 S2: the folders come from the security process's own reader of wallpaper.json (LockWallpaper), never the
+        // desktop's WallpaperState.
+        verify(s.indexOf('root.run("real", ["/usr/bin/realpath", "-m", "--", root.wallpaper.preparedDir, root.wallpaper.videoDir, w.file]);') >= 0);
+        verify(!/WallpaperState/.test(s), "no WallpaperState in the security process");
+        verify(/readonly property var wanted: root\.wallpaper \? root\.wallpaper\.lockBackdrop\(root\.output\) : null/.test(s));
+        // The reader: bounded (head -c, a timeout), watched without reading (preload: false), the pure lockBackdropOf.
+        const r = source("shell/security/lock/LockWallpaper.qml");
+        verify(r.indexOf('command: ["/usr/bin/timeout", "-k", "1", "5", "/usr/bin/head", "-c", String(root.maxBytes + 1), "--", root.stateFile]') >= 0);
+        verify(/watchChanges: true\s*preload: false/.test(r) && /return WallpaperConfig\.lockBackdropOf\(root\.saved, output, root\.preparedDir, root\.videoDir\);/.test(r));
+        verify(!/setText|atomicWrites|WallpaperState|execDetached/.test(r), "it writes nothing and starts nothing else");
         verify(s.indexOf('root.run("stat", ["/usr/bin/stat", "--printf", "%f|%s", "--", real]);') >= 0);
         compare((s.match(/root\.run\(/g) || []).length, 2);
         verify(!/"(sh|bash)"|execDetached|Quickshell\.exec/.test(s), "no shell");
@@ -101,7 +110,9 @@ TestCase {
         verify(/function afterResume\(\): void \{[\s\S]*?Lock\.resumed\(\);[\s\S]*?\n    \}/.test(inhibitor));
         // The surface's own colour is the ground (ID-2, ID-15), taken once.
         const lockSrc = source("shell/security/lock/Lock.qml");
-        verify(/function takeGround\(\): void \{\s*if \(surface\.groundTaken \|\| !surface\.screen\)\s*return;\s*surface\.groundTaken = true;\s*surface\.color = Ground\.of\(surface\.screen\.name\);/.test(lockSrc));
+        verify(/function takeGround\(\): void \{\s*if \(surface\.groundTaken \|\| !surface\.screen\)\s*return;\s*surface\.groundTaken = true;\s*surface\.color = root\.groundOf\(surface\.screen\.name\);/.test(lockSrc));
+        // ADR-0041 S2: the ground the compositor was last given, from the lock's own reader (the UI's Ground is not here).
+        verify(/function groundOf\(output: string\): string \{\s*return root\.stills \? root\.stills\.ground : Tokens\.sessionGround;\s*\}/.test(lockSrc));
         verify(/onScreenChanged: surface\.takeGround\(\)/.test(lockSrc) && /Component\.onCompleted: surface\.takeGround\(\)/.test(lockSrc));
         // Focus first in the view (review of cbd6ef05).
         verify(/Component\.onCompleted: \{\s*focusField\(\);/.test(v));
@@ -136,7 +147,7 @@ TestCase {
         const at = v.indexOf("visible: root.backdrop !== null\n");
         verify(at > 0);
         const backdrop = block(v.substring(v.lastIndexOf("Item {", at)), "Item {");
-        verify(/id: still/.test(backdrop) && /WallpaperArt \{/.test(backdrop), "the backdrop's block");
+        verify(/id: still/.test(backdrop) && /GrassfieldArtwork \{/.test(backdrop), "the backdrop's block");
         verify(!/contentOpacity/.test(backdrop), "the wallpaper does not fade");
         verify(/duration: Appearance\.duration\(root\.releasing \? Tokens\.lockFadeOutMs : Tokens\.lockFadeInMs\)/.test(v));
         // The view knows nothing of the release: no signal, no call back into the lock.
@@ -160,9 +171,10 @@ TestCase {
         // The displays stay on until a lock holds (unchanged rule): the lock is drawn before they go off.
         verify(/return inactiveOff === true && \(locked !== true \|\| holding === true\);/.test(source("shell/security/idle/IdleModel.js")));
         // The saver stays until the lock holds, bounded.
+        // ADR-0041 S2: from the state the security process publishes ("locking" = locked, not held yet).
         const saver = source("shell/saver/Saver.qml");
-        verify(/readonly property bool lockStarting: Lock\.locked && !Lock\.holding/.test(saver));
-        verify(/readonly property bool shown: \(root\.lockStarting && root\.wasShown\) \|\| \(!Lock\.locked && /.test(saver));
+        verify(/readonly property bool lockStarting: SessionState\.lockStarting/.test(saver));
+        verify(/readonly property bool shown: \(root\.lockStarting && root\.wasShown\) \|\| \(!SessionState\.locked && /.test(saver));
         verify(/interval: SaverModel\.UNTIL_LOCK_MAX_MS\s*onTriggered: root\.wasShown = false/.test(saver));
         // The lock's content starts at the dim's level.
         const lock = source("shell/security/lock/Lock.qml");
@@ -189,7 +201,7 @@ TestCase {
         verify(/readonly property bool motionPlays: root\.frozenMoving && root\.backdrop !== null && root\.backdrop\.kind === "art" && !root\.releasing && !Appearance\.reduceMotion && !root\.motionHeld\n/.test(v));
         compare(block(v, "onMotionPlaysChanged: {").replace(/\s+/g, " "), "onMotionPlaysChanged: { if (root.motionPlays) Qt.callLater(() => { root.motionTaken = true; }); }");
         compare(block(v, "onMotionStartChanged: {").replace(/\s+/g, " "), "onMotionStartChanged: { if (root.frozenMoving && !root.motionTaken) lockArt.motionMs = root.motionStart; }");
-        const art = block(v, "WallpaperArt {");
+        const art = block(v, "GrassfieldArtwork {");
         verify(/id: lockArt/.test(art) && /moving: root\.frozenMoving/.test(art) && /playing: root\.motionPlays/.test(art), art);
         // The slow-down: within the fade (the controller's releaseMs), from where they are, and stopped when a lock request
         // interrupts the release. The whole handler, so that nothing else (input, focus, the controller) can be added to it.
@@ -207,14 +219,17 @@ TestCase {
         const handlers = text => (text.match(/^\s*((?:\w+\.)?on[A-Z]\w*)\s*:/gm) || []).map(h => h.trim().replace(/\s*:$/, "")).sort();
         compare(handlers(v), ["Component.onCompleted", "onEdited", "onMotionPlaysChanged", "onMotionStartChanged", "onOfferedBackdropChanged", "onPressed",
             "onReleasingChanged", "onResumesChanged", "onSubmitted", "onTriggered"]);
-        // Lock.qml: through the stills only, frozen by the view; the rest handed back in a try.
+        // Lock.qml: the setting through the stills, frozen by the view; where they rest is the lock's own map (ADR-0041 S2),
+        // published with the lock state (LockPublisher) for the desktop, set in a try.
         const lock = source("shell/security/lock/Lock.qml");
         verify(/readonly property bool moving: root\.stills \? root\.stills\.moving : false/.test(lock));
-        verify(/function motionOf\(output: string\): real \{\s*return root\.stills \? root\.stills\.motionOf\(output\) : 0;\s*\}/.test(lock));
-        verify(/function restMotion\(output: string, at: real\): void \{\s*try \{\s*if \(root\.stills && output !== "" && at >= 0\)\s*root\.stills\.restMotion\(output, at\);\s*\} catch \(e\) \{/.test(lock));
+        verify(/function motionOf\(output: string\): real \{\s*return WallpaperConfig\.motionIn\(root\.motion, output\);\s*\}/.test(lock));
+        verify(/function restMotion\(output: string, at: real\): void \{\s*try \{\s*if \(output !== "" && at >= 0\)\s*root\.motion = WallpaperConfig\.withMotion\(root\.motion, output, at\);\s*\} catch \(e\) \{/.test(lock));
+        // ADR-0041 S3: the sheets' two booleans go out with it, set by the host (nothing that locks or unlocks reads them).
+        verify(/LockPublisher \{\s*id: publisher\s*state: root\.publicState\s*displaysOff: root\.displaysOff\s*motion: root\.motion\s*authorizing: root\.authorizing\s*securityKeyboard: root\.securityKeyboard\s*\}/.test(lock));
         verify(/^\s*moving: root\.moving\n\s*motionHeld: root\.displaysOff \|\| !controller\.locked\n\s*motionStart: root\.motionOf\(surface\.screen \? surface\.screen\.name : ""\)\n\s*onMotionRestChanged: root\.restMotion\(surface\.screen \? surface\.screen\.name : "", view\.motionRest\)\n/m.test(lock), "each line to its end");
         compare((lock.match(/onMotionRestChanged/g) || []).length, 1);
-        const instance = block(lock, "            LockView {");
+        const instance = block(lock, "sourceComponent: LockView {");
         compare(handlers(instance), ["Component.onDestruction", "onEdited", "onFieldEmptyChanged", "onMotionRestChanged", "onSubmitted"]);
         compare(instance.match(/controller\.\w+\(/g), ["controller.submit(", "controller.clearMessage("], "the instance calls the controller twice: a password, a cleared message");
         verify(!/WallpaperState/.test(lock), "Lock.qml itself reads no wallpaper state");
@@ -225,8 +240,9 @@ TestCase {
         compare((idle.match(/Lock\.displaysOff/g) || []).length, 1);
         verify(!/displaysOff/.test(block(idle, "function setDisplays(on: bool): void {")));
         const stills = source("shell/security/lock/LockStills.qml");
-        verify(/readonly property bool moving: WallpaperState\.moving/.test(stills));
-        verify(/function restMotion\(output: string, at: real\): void \{\s*WallpaperState\.setMotion\(output, at\);\s*\}/.test(stills));
+        verify(/readonly property bool moving: reader\.moving/.test(stills));
+        verify(!/WallpaperState/.test(stills) && !/restMotion/.test(stills), "the stills read wallpaper.json through LockWallpaper and give nothing back");
+        verify(/readonly property bool moving: WallpaperConfig\.normalize\(Settings\.wallpaper\)\.moving/.test(source("shell/security/lock/LockWallpaper.qml")));
     }
 
     function test_engagingTheLockReadsNoneOfIt() {
@@ -237,5 +253,98 @@ TestCase {
         }
         // The backdrops only feed the view.
         compare((lock.match(/root\.backdropOf\(/g) || []).length, 1);
+    }
+
+    // The integrator's nested run of 122f8d67 (sleep-desync): Hyprland confirms the lock once every lock surface drew a frame.
+    // The surface's first frame is its opaque ground; LockView, its one view, is incubated after it by an asynchronous Loader,
+    // so the confirmation never waits for the view's creation or its effects.
+    function test_theConfirmationWaitsForTheGroundOnly() {
+        const lock = source("shell/security/lock/Lock.qml").replace(/\r/g, "");
+        verify(/WlSessionLockSurface \{\s*id: surface\s*color: Tokens\.colorDark\.shadow/.test(lock), "the surface has its own opaque colour");
+        verify(/\n\s*LockViewLoader \{\n\s*id: content\n\s*anchors\.fill: parent\n\s*sourceComponent: LockView \{\n\s*id: view\n/.test(lock), "LockView is loaded by LockViewLoader");
+        const loader = source("shell/security/lock/LockViewLoader.qml");
+        verify(/^Loader \{\n\s*id: root\n\n\s*asynchronous: true\n/m.test(loader), "asynchronously");
+        compare((lock.match(/\bLockView \{/g) || []).length, 1, "one LockView, inside the Loader");
+        // The state becomes "locked" on Hyprland's confirmation itself (WlSessionLock.secure), never on the view: neither
+        // the confirmation handler nor engage() reads the loader or the view (the integrator's run of c80c55b3, probe-cost).
+        const confirmed = block(lock, "onSecureStateChanged: {");
+        verify(/if \(secure\) \{[^}]*controller\.lockAcquired\(\);/.test(confirmed), "acquired on the compositor's confirmation");
+        for (const b of [confirmed, block(lock, "function engage(): void {")])
+            verify(!/\bcontent\b|\bview\b|LockView|status/.test(b), b);
+        // The controller's shake and clear reach the view from inside it (no reference to an item that may not exist yet).
+        verify(/sourceComponent: LockView \{[^]*Connections \{\s*target: controller\s*function onFailed\(\): void \{\s*view\.shake\(\);/.test(lock));
+    }
+
+    // The opus gate of d151cace: the person always gets a field. LockViewLoader retries a failed load once, synchronously, and
+    // completes a load still under way after its bound. Run here on the real file's text (QtQuick and LockMachine.js only),
+    // created outside the lock module's directory, whose other types need Quickshell: only its relative import of
+    // LockMachine.js is made absolute.
+    function loaderOf(sourceComponent, fallbackMs) {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../shell/security/lock/LockViewLoader.qml"), false);
+        xhr.send();
+        const imp = 'import "../LockMachine.js" as Machine';
+        verify(xhr.responseText.indexOf(imp) >= 0);
+        const text = xhr.responseText.replace(imp, 'import "' + Qt.resolvedUrl("../../shell/security/LockMachine.js") + '" as Machine');
+        const l = Qt.createQmlObject(text, testRoot, Qt.resolvedUrl("LockViewLoaderUnderTest.qml"));
+        verify(l !== null);
+        // createQmlObject returns a QObject to the linter: the loader's own properties are set unchecked.
+        // qmllint disable missing-property
+        if (fallbackMs !== undefined)
+            l.fallbackMs = fallbackMs;
+        l.sourceComponent = sourceComponent;
+        // qmllint enable missing-property
+        return l;
+    }
+
+    Item {
+        id: testRoot
+    }
+
+    Component {
+        id: heavyView
+        Item {
+            Repeater {
+                model: 3000
+                Rectangle {
+                    width: 1
+                    height: 1
+                }
+            }
+        }
+    }
+
+    function test_aFailedViewIsRetriedOnceSynchronously() {
+        // A forced error: a component that cannot be created.
+        const broken = Qt.createComponent(Qt.resolvedUrl("tst_lockbackdrop.d/NoSuchView.qml"));
+        compare(broken.status, Component.Error);
+        ignoreWarning(/the lock view did not load; trying once more, synchronously/);
+        const l = loaderOf(broken);
+        tryVerify(() => l.retried, 2000, "the error leads to a retry");
+        tryCompare(l, "asynchronous", false, 2000, "the retry is synchronous");
+        // Long enough for a loop to show (the opus gate of c80c55b3: without the guard, 677 retries were logged): one retry.
+        wait(300);
+        compare(l.status, Loader.Error, "the same broken view fails again");
+        // qmllint disable missing-property
+        compare(l.retries, 1, "exactly one retry, never a loop");
+        // qmllint enable missing-property
+        l.destroy();
+    }
+
+    function test_aViewStillLoadingIsCompletedAtOnce() {
+        ignoreWarning(/the lock view was still loading after 1 ms; completing it now/);
+        const l = loaderOf(heavyView, 1);
+        tryCompare(l, "status", Loader.Ready, 5000, "the fallback completes the load");
+        compare(l.asynchronous, false, "by turning the load synchronous");
+        verify(!l.retried);
+        l.destroy();
+    }
+
+    function test_aViewThatLoadsInTimeIsLeftAlone() {
+        const l = loaderOf(heavyView);
+        tryCompare(l, "status", Loader.Ready, 5000);
+        verify(l.asynchronous, "no fallback: the load stayed asynchronous");
+        verify(!l.retried);
+        l.destroy();
     }
 }

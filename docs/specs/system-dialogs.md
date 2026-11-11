@@ -734,7 +734,8 @@ server “X”." with "Remember this password in my keychain", Cancel / Connect.
 ### prompter/1 protocol (bridge and shell; built in step 9a, ADR-0035 decisions 9-1 to 9-13; kind nm and role disk in step 9c, 9-26 and 9-33; kind kio and role kio in step 9e, 9-38 to 9-47; kind bluetooth and message progress in step 10, 10-5)
 Transport: the Unix stream socket `$XDG_RUNTIME_DIR/grassfield/prompter.sock` (directory 0700, socket 0600), served by
 `grassfield-prompter`; UTF-8 JSON, one object per line, ended by a line feed. The bridge accepts one peer at a time, only
-one that runs as the user and whose cgroup is the unit named by the bridge's `--peer-unit` (`grassfield-shell.service`;
+one that runs as the user and whose cgroup is the unit named by the bridge's `--peer-unit` (`grassfield-security.service`
+since ADR-0041 S3, where the sheets run beside the polkit agent; `grassfield-shell.service` before;
 read race-free through `SO_PEERPIDFD` on Linux 6.5 and later). A refused peer gets `{"type":"error","code":"refused"}`, a
 second shell `{"type":"error","code":"busy"}`, and the connection is closed. Nothing secret flows from the bridge to the
 shell; the shell sends a password once, in its answer, and the bridge decodes it straight into gcr's secure memory.
@@ -905,7 +906,9 @@ Rules (fail closed: no answer is ever invented):
   bridge (`bridges/prompter/build-direct.sh`), start it as a development run on the nested session's private bus
   (`env DBUS_SESSION_BUS_ADDRESS=$(cat .dev/bus.address) GF_TEST_BUS=1 GF_TEST_BUS_DIR=/tmp GRASSFIELD_DEV=1
   .dev/build/grassfield-prompter --socket .dev/run/prompter.sock --peer-unit <the last component of the dev shell's cgroup>`),
-  restart the dev shell with `GRASSFIELD_PROMPTER_SOCKET=$PWD/.dev/run/prompter.sock scripts/dev/shell-run.sh`, check
+  restart the dev shell with `GRASSFIELD_PROMPTER_SOCKET=$PWD/.dev/run/prompter.sock scripts/dev/shell-run.sh` (since
+  ADR-0041 S3 the sheets run in the dev security process, which that run restarts with the socket; the `--peer-unit` is
+  the last component of its cgroup), check
   that `tests/visual/ipc.sh secrets state` (the dev hook, nested environment) says `ready owned`, then ask with libgcr's test client on that
   bus (`python3 -I tests/fixtures/prompter-client.py password --title "Unlock the login keyring" --choice "Remember"`, same
   environment as the bridge): `just shot secret-sheet` (the alert, its requester row, the framed caller text), type a
@@ -1423,7 +1426,8 @@ Other… opens the Choose Application panel. No progress window opens for Undo.
   - `OpenWithHandlerInterface`: Finder's alert for a type with no application, then the Choose Application panel (section 2,
     OW3; 4a-5, 5c-3);
   - `UntrustedProgramHandlerInterface`: refuses with a notice (Files' `LaunchGuard` decides first and never hands an
-    executable to KIO, `docs/specs/security.md` § Files never runs what it opens; this is the second guard).
+    executable to KIO: Files runs programs itself, after its own checks and sheet, `docs/specs/security.md` § Files opens
+    apps the Gatekeeper way; this is the second guard).
     `OpenOrExecuteFileInterface` has no installed header in KIO 6.31: Files never enables the job option that asks it (4a-4).
 - KD2 every answer is the KIO answer the widget dialog gives for the same choice (`RenameDialog_Result`, `SkipDialog_Result`,
   `KIO::WorkerBase::ButtonCode`), so jobs behave exactly as before.

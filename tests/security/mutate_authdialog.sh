@@ -18,7 +18,9 @@ trap 'exit 143' TERM
 unset QT_QPA_PLATFORMTHEME
 export QT_QPA_PLATFORM=offscreen
 
-# Fresh copy of the sources and the test (the test imports ../../shell/security/polkit; `qs.security` through qs -> shell).
+# Fresh copy of the sources and the test (the test imports ../../shell/security/polkit; `qs.security` through the import
+# root). Against the security process (ADR-0041 S3: the sheet runs there): the import root offers qs.security and qs.lib
+# only, the security process's world, so a sheet that reached for a UI module (qs.services, qs.desktop, ...) fails to load.
 # branding/icons/symbolic too: ui/Grassfield/Ui/icons links to it, and test_10 loads ../../branding/icons/symbolic/lock.svg
 # (without it the unmutated control fails and every "CAUGHT" would prove nothing; follow-up N9).
 fresh() {
@@ -27,7 +29,9 @@ fresh() {
   cp -a "$root/ui" "$root/shell" "$scratch/src/"
   cp -a "$root/branding/icons/symbolic" "$scratch/src/branding/icons/"
   cp "$root/tests/security/tst_authdialog.qml" "$scratch/src/tests/security/"
-  ln -s "$scratch/src/shell" "$scratch/src/qsroot/qs"
+  mkdir -p "$scratch/src/qsroot/qs"
+  ln -s "$scratch/src/shell/security" "$scratch/src/qsroot/qs/security"
+  ln -s "$scratch/src/shell/lib" "$scratch/src/qsroot/qs/lib"
 }
 
 # mutate <file under src> <text to find> <replacement>: fails unless the text occurs exactly once.

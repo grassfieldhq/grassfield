@@ -96,7 +96,8 @@
             "minLength": 1
           },
           "default": [
-            "chromium",
+            "sanaga",
+            "grassfield-notes",
             "foot",
             "org.grassfield.Settings"
           ],

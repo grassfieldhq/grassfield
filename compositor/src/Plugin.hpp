@@ -142,6 +142,13 @@ namespace gf {
         return false;
     }
 
+    // The union of Hyprland flag enumerators, unsigned all the way: two enumerators of a small or unfixed underlying type are
+    // promoted to int before `|`, and a chain of them is a signed operand (bugprone-signed-bitwise, clang-tidy 23).
+    template <typename... Flags>
+    constexpr unsigned flagsOf(Flags... flags) noexcept {
+        return (0U | ... | static_cast<unsigned>(flags));
+    }
+
     // A key listener's body (Event::bus()->m_events.input.keyboard.key): guarded, and with every log line off while it runs,
     // whatever it calls (core/Quiet.hpp; compositor/tests/QuietTest.cpp fails on a key listener without it).
     template <typename Fn, typename Event, typename Info>

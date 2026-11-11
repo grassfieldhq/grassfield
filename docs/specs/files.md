@@ -93,10 +93,30 @@ selection").
    rename), Rename (`KIO::moveAs`, inline, F2, base name preselected), Duplicate ("name copy.ext", `KIO::copyAs`),
    drop (`KIO::move`/`copy`), undo/redo (`KIO::FileUndoManager`, Ctrl+Z / Ctrl+Shift+Z; one step per command: Rename N Items, Make Alias and New Folder with Selection are kept by Files as `BatchOps` commands, ordered against KIO's by `newCommandSerialNumber`, review of PR #98). Errors show in a banner.
    Pasting copies into the same folder makes duplicates instead of a conflict.
-7. F7 Opening: folders navigate; files open with `KIO::OpenUrlJob` (MIME associations, executables never run: app
-   launchers, scripts and programs are refused by Files itself before KIO, `src/launchguard.h`, GF-070, see
-   `docs/specs/security.md` "Files never runs what it opens");
-   Open With lists `KApplicationTrader::queryByMimeType` apps and launches with `ApplicationLauncherJob`.
+7. F7 Opening: folders navigate; documents open with `KIO::OpenUrlJob` (MIME associations; KIO never runs an executable:
+   `setRunExecutables(false)`). Programs are Files' own decision, before KIO, the Gatekeeper way (`src/launchguard.h`,
+   `src/programlaunch.h`; GF-070 and DT-10 as amended on 2026-11-08 after the owner's report that AppImages and other
+   programs could not be started; ADR-0011 amendment; `docs/specs/security.md` "Files opens apps the Gatekeeper way"):
+   - a native program or AppImage runs, in the home folder, through the Dock's launch path; when it came from the Internet
+     (the browsers' `user.xdg.origin.url` / `user.xdg.referrer.url`, kept by Expand on what it extracts and written by Files
+     on what it copies from a server) a sheet asks first ("“Tool.AppImage” is an app
+     downloaded from the Internet. Are you sure you want to open it?", with the host; Cancel is the default), and once the
+     user said Open the approval (`user.grassfield.approved`, bound to inode, modification time and size) keeps it from
+     asking again until the file changes; a program without the execute bit gets the same sheet, and Open sets u+x; one that
+     can't run where it is (noexec, read-only) is copied to `~/Applications` first; a start that fails in its first second
+     gets a plain alert (another computer's program, a missing library, an AppImage without fuse2);
+   - a script opens in the default text editor; Open With > Terminal runs an executable one in the session's terminal;
+   - Windows and Java programs are explained ("This file is a program for Windows; it doesn’t work directly on Linux."),
+     with "Open with Wine/Bottles/Java" when installed, after the same origin line; a `.dmg` or `.pkg` is explained ("This
+     file contains an app made for another operating system …") with Search the Store;
+   - app launchers (`.desktop`) are still refused (a launcher outside an applications folder run after a sheet is a
+     follow-up); program content under a document's name (also "Invoice" + any character but a dot + "pdf"), another
+     computer's program and anything with other rights are refused; nothing runs from a server or the Trash; nothing under
+     an Expand or Compress staging name (`.grassfield-expand-…`) is opened, listed, searched, renamed, copied, moved,
+     dragged or trashed, and a killed Files' staging items are removed at the next start.
+   Open With lists `KApplicationTrader::queryByMimeType` apps and launches with `ApplicationLauncherJob`; any application
+   may run what it is given, so a downloaded program, AppImage, script, or Windows or Java program gets a sheet naming the
+   application first ("… Are you sure you want to open it with <app>?").
 8. F8 Context menus (Grassfield `PopupMenu`): item menu (Open, Open With, Open in New Tab, Move to Trash, Get Info,
    Rename, Duplicate, Glance, Copy, Cut, Show in Enclosing Folder while searching), Trash item menu
    (Put Back, Delete Immediately…, Get Info, Copy), background menu (New Folder or Empty Trash…, Get Info, Paste,
@@ -585,8 +605,9 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   paste's progress). **Amended by F-18** (owner request 2026-11-07): Files has Cut ⌘X as well.
 - **F-7 Terminal**: the session's terminal is `xdg-terminal-exec` (Omarchy; the shell uses it for `Terminal=true` entries,
   ADR-0011). Files starts terminal applications and "New Terminal at Folder" through it, never through KIO's konsole
-  lookup; the working directory is the folder. Launches keep `launchguard.cpp`'s rules (Files never runs a program from a
-  folder; the terminal itself is an application the user chose).
+  lookup; the working directory is the folder. Launches keep `launchguard.cpp`'s rules (the terminal itself is an
+  application the user chose; a script runs there only through Open With > Terminal, after the downloaded-file sheet when it
+  came from the Internet, amendment of 2026-11-08).
 - **F-8 Archives**: Compress makes a `.zip` (Finder's Archive Utility default) and Expand reads zip, tar, tar.gz, tar.bz2,
   tar.xz, tar.zst and 7z with `bsdtar` in a child process (ADR-0029).
 - **F-9 Connect to Server**: Files asks for nothing itself; KIO's worker asks kiod's password server, whose dialog is KDE's
@@ -698,6 +719,7 @@ Every new chord is checked against `bindings.lua` and `forwarding.lua` in its PR
   choice kept and Omarchy's stock default not, the same end to end, a Latin-1 list left byte for byte),
   `tst_folderchooser.cpp` (DefaultApplications, on KIO: Change All… in the session writes the session's list and Open With
   lists it first), `tst_filesbrowser.qml` (`test_openWithListsTheDefaultFirst`).
+- **F-19b Bundled apps** (ADR-0055 D-6): the same session start also seeds Sanaga (http, https, text/html, xhtml) and Grassfield Notes (Markdown) once through `DefaultApps::seedBundledApps` and a record in the state folder (the record is written before the list; a target whose Exec is a launcher is never seeded). Omarchy's stock Chromium is no choice, any other earlier choice is kept, and a later one wins whoever makes it: the user's own lists are watched after the seed (never the system's), a session-list entry that is no more ours (Change All…) is the person's choice and the seed yields, Grassfield never edits a line of the user's own lists (the real xdg-mime and gio lines survive every start), and a `user` record yields to a later value. A browser's "make default" and `omarchy default browser` work at once through the session's xdg-settings stand-in (`packaging/session-bin/xdg-settings`). Tests: `BundledApps.*` in `tests/unit/files/tst_applications.cpp`, `tests/integration/xdg_settings_standin.sh`.
 
 ### ADRs opened by this step
 - ADR-0026 Files window frames: size by Files, position and cascade by the compositor (cross-module: Files and

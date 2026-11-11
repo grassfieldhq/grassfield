@@ -312,6 +312,31 @@ bool isAutostartWrite(const QString &path, const QString &autostartDir, const QS
     return !devDir.isEmpty() && !real.isEmpty() && (real == devDir || real.startsWith(devDir + QLatin1Char('/')));
 }
 
+bool isDefaultAppsWrite(const QString &path, const QString &configDir, const QString &stateDir, const QString &devRoot, bool dev)
+{
+    if (!path.startsWith(QLatin1Char('/')) || QDir::cleanPath(path) != path)
+        return false;
+    const QFileInfo file(path);
+    QString dir;
+    if (!configDir.isEmpty() && path == QDir::cleanPath(configDir) + QStringLiteral("/grassfield-mimeapps.list"))
+        dir = configDir;
+    else if (!stateDir.isEmpty() && path == QDir::cleanPath(stateDir) + QStringLiteral("/default-apps.state"))
+        dir = stateDir;
+    else
+        return false;
+    if (file.isSymLink())
+        return false;
+    if (!dev)
+        return true;
+    const QString devDir = devRoot.isEmpty() ? QString() : QFileInfo(devRoot + QStringLiteral("/.dev")).canonicalFilePath();
+    // The folder may not exist yet (the first write makes it): the nearest existing parent decides, by its real location.
+    QString probe = QDir::cleanPath(dir);
+    while (!probe.isEmpty() && probe != QStringLiteral("/") && !QFileInfo::exists(probe))
+        probe = QFileInfo(probe).path();
+    const QString real = resolvedPath(probe);
+    return !devDir.isEmpty() && !real.isEmpty() && (real == devDir || real.startsWith(devDir + QLatin1Char('/')));
+}
+
 bool isIconFile(const QString &path)
 {
     static const QRegularExpression raster(QRegularExpression::anchoredPattern(QStringLiteral(".+\\.(png|xpm|jpe?g)")),

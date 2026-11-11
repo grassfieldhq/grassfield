@@ -2,7 +2,6 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Effects
 import Grassfield.Ui
-import qs.desktop // layering-exception: GF-087
 import qs.security
 import qs.services
 import "../LockMachine.js" as Machine
@@ -206,7 +205,7 @@ Item {
         }
 
         // The artwork the output shows, and the picture's fallback (drawn until the still is Ready, and if it fails).
-        WallpaperArt {
+        GrassfieldArtwork {
             id: lockArt
             anchors.fill: parent
             visible: root.backdrop !== null && root.backdrop.kind !== "color" && still.status !== Image.Ready

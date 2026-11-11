@@ -508,13 +508,16 @@ namespace gf::tiling {
     }
 
     uint8_t extendedSides(uint8_t sides, bool alt) {
+        // The pairs as uint8_t: kSideLeft | kSideRight alone is an int (both promoted), a signed operand of the next `&`.
+        constexpr uint8_t kHorizontal = kSideLeft | kSideRight;
+        constexpr uint8_t kVertical   = kSideTop | kSideBottom;
         sides &= kAllSides;
         if (!alt)
             return sides;
-        if (sides & (kSideLeft | kSideRight))
-            sides |= kSideLeft | kSideRight;
-        if (sides & (kSideTop | kSideBottom))
-            sides |= kSideTop | kSideBottom;
+        if ((sides & kHorizontal) != 0)
+            sides |= kHorizontal;
+        if ((sides & kVertical) != 0)
+            sides |= kVertical;
         return sides;
     }
 
@@ -1627,7 +1630,7 @@ namespace gf::tiling {
             appendNames(out, unfitZones[i].places);
             out += '}';
         }
-        out += "]";
+        out += ']';
         if (!suggestion) {
             out += R"(,"suggestion":null})";
             return out;

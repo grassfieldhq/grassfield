@@ -38,6 +38,9 @@ std::unique_ptr<QTemporaryDir> sandbox(QString *why)
         return nullptr;
     }
     QDir().mkpath(base);
+    // ArchiveJob records its staging names in the state folder (ArchiveJob::stagingRegistry): the test's own, never the
+    // session's (a job that can't record its name doesn't start).
+    qputenv("GRASSFIELD_STATE_HOME", QFile::encodeName(base + QStringLiteral("/archive-state")));
     auto dir = std::make_unique<QTemporaryDir>(base + QStringLiteral("/archive-XXXXXX"));
     if (!dir->isValid()) {
         *why = QStringLiteral("cannot create a directory in ") + base;

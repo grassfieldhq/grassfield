@@ -154,7 +154,7 @@ const ALL_DEFAULTS = {
     "accessibility.textSize": 1,
     "accessibility.zoom": false,
     "accessibility.zoomLevel": 2,
-    "dock.pinned": ["chromium", "foot", "org.grassfield.Settings"],
+    "dock.pinned": ["sanaga", "grassfield-notes", "foot", "org.grassfield.Settings"],
     "dock.size": 48,
     "dock.position": "bottom",
     "dock.magnification": 1.6,

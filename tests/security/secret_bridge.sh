@@ -46,7 +46,7 @@ unset QT_QPA_PLATFORMTHEME
 mkdir -p "$root/.dev"
 tmp=$(mktemp -d "$root/.dev/secret-bridge.XXXXXX")
 # Unix socket paths stay under 108 bytes: sockets and runtime directories in a short directory of their own.
-d=$(mktemp -d /tmp/gfs.XXXXXX)
+d=$(mktemp -d /tmp/gfs.XXXXXX) || { echo "ENVIRONMENT: no short scratch directory under /tmp (Unix socket paths stay under 108 bytes)"; exit 2; }
 pids=()
 bus_pid=""
 stop_all() {

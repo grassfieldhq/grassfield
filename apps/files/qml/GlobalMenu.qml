@@ -60,7 +60,8 @@ Platform.MenuBar {
         const rows = f.selectedRows();
         if (!rows.every(r => !f.isDirAt(r)))
             return [];
-        return bar.app.applicationsFor(f.selectedUrls());
+        // With Terminal for an executable script (FilesApp::applicationsFor).
+        return bar.app.applicationsFor(f.selectedUrls(), true);
     }
 
     // What Add to Sidebar would add (BrowserTab.sidebarCandidates), read again on every selection and Favorites change.

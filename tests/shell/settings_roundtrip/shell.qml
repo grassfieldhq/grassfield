@@ -321,7 +321,7 @@ ShellRoot {
         // Defaults when no file exists.
         check("default appearance", writer.document().appearance === "dark");
         check("default transparency", Math.abs(writer.document().material.transparency - 0.25) < 1e-9);
-        check("default pinned", writer.document().dock.pinned.length === 3);
+        check("default pinned", writer.document().dock.pinned.length === 4); // sanaga, grassfield-notes, foot, Settings (ADR-0055)
         check("default magnification", Math.abs(writer.document().dock.magnification - 1.6) < 1e-9);
         check("default dock size", writer.document().dock.size === 48 && writer.dockSize === 48);
         check("default dock position", writer.document().dock.position === "bottom" && writer.dockPosition === "bottom");

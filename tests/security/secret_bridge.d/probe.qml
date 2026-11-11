@@ -129,8 +129,13 @@ ShellRoot {
     Component.onCompleted: {
         if (root.mode === "client")
             root.client = clientC.createObject(root);
-        else if (root.mode === "agent")
+        else if (root.mode === "agent") {
+            // An unlocked session with the displays on, as the security process's host binds them from its lock and idle
+            // (ADR-0041 S3; SheetSession fails closed without them: locked, displays off).
+            SheetSession.locked = false;
+            SheetSession.displaysOff = false;
             root.agent = agentC.createObject(root);
+        }
         root.log("started " + root.mode);
     }
 }

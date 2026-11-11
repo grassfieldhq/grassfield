@@ -17,11 +17,6 @@ import qs.overlay
 import qs.platform
 import qs.saver
 import qs.search
-import qs.security
-import qs.security.idle
-import qs.security.lock
-import qs.security.polkit
-import qs.security.secret
 import qs.services
 import qs.stages
 import qs.switcher
@@ -59,16 +54,50 @@ ShellRoot {
         value: Settings.dark
     }
 
-    // Lock state and lock requests for the modules that must not import shell/security (Notifications, Search).
+    // Lock state and lock requests (ADR-0041 step 1, S2): the lock, idle and the sleep inhibitor run in the security process
+    // (shell/security.qml), never here. LockClient reads the state it publishes, fail closed (no state, a stale beat, a lock
+    // being acquired or held, or the compositor's own lock signal read locked), and every refusal of the UI reads it
+    // through SessionState.locked. Nothing in this process imports qs.security.lock or qs.security.idle.
     Binding {
         target: SessionState
         property: "locked"
-        value: Lock.locked
+        value: LockClient.locked
     }
     Binding {
         target: SessionState
-        property: "saverShown"
-        value: saver.shown
+        property: "lockStarting"
+        value: LockClient.lockStarting
+    }
+    // Whether the lock is known to be held: the paths that only lock or end the session stay open while it is not (the
+    // security process is down while the session was unlocked: a lock request must still reach it).
+    Binding {
+        target: SessionState
+        property: "lockConfirmed"
+        value: LockClient.lockConfirmed
+    }
+    // The compositor's own lock signal (hyprland-lock-notify-v1, read by the clipboard helper while it runs): one more input
+    // of LockClient.locked, so a push the UI missed never reads unlocked once the compositor holds a lock.
+    Binding {
+        target: LockClient
+        property: "compositorLocked"
+        value: Clipboard.helperLocked
+    }
+    // Applications' org.freedesktop.ScreenSaver inhibitors (GF-016, served by the menu bridge to this process): leased to the
+    // security process's idle module (`idle inhibit`), renewed while they last.
+    Binding {
+        target: LockClient
+        property: "busInhibited"
+        value: MenuBridge.screenSaverInhibited
+    }
+    // Where the lock's clouds came to rest (published with the lock state): the desktop draws them there (ADR-0040 step 9).
+    Connections {
+        target: LockClient
+
+        function onMotionChanged(): void {
+            const m = LockClient.motion;
+            for (const output of Object.keys(m))
+                WallpaperState.setMotion(output, m[output]);
+        }
     }
 
     // The Dock's keyboard mode for the tiling popover, which never opens over it (services/TilingHover, TL22).
@@ -78,24 +107,29 @@ ShellRoot {
         value: dock.keyboardMode
     }
 
-    // The authorization state for the modules that must not import shell/security (the clipboard history, ADR-0034 Q11): the
-    // polkit sheet or a secret sheet is open (ADR-0035 D-9).
+    // The polkit sheet and the secret sheets run in the security process with the lock (ADR-0041 S3), never here. What the UI
+    // knows of them comes with the lock state (LockClient, fail closed: true without a fresh state): a sheet is open (the
+    // clipboard history records nothing meanwhile and 2 s after, ADR-0034 Q11; the tiling popover waits), and a sheet or its
+    // key sink may hold the keyboard (the capture toolbar maps nothing as Exclusive meanwhile).
     Binding {
         target: SessionState
         property: "authorizing"
-        value: authAgent.requestActive || secretAgent.requestActive
+        value: LockClient.authorizing
     }
-    // The displays are off (Idle): no device answers a polkit request nobody can see (ADR-0045 OC-6).
-    Binding {
-        target: SessionState
-        property: "displaysOff"
-        value: idle.displayOff
-    }
-    // A security sheet or its key sink may hold the keyboard: the capture toolbar takes none meanwhile.
     Binding {
         target: SessionState
         property: "securityKeyboard"
-        value: authAgent.queuePresent || secretAgent.requestActive || secretAgent.sinkingKeys
+        value: LockClient.securityKeyboard
+    }
+    // A sheet opened (published fresh): the menus and panels close, as a system dialog dismisses them on macOS (the polkit
+    // agent closed them in process before S3).
+    Connections {
+        target: LockClient
+
+        function onSheetShownChanged(): void {
+            if (LockClient.sheetShown)
+                Popups.close();
+        }
     }
 
     // Apps the person cannot see get less CPU and I/O (ADR-0048). While the overview or the app switcher is open every
@@ -103,14 +137,14 @@ ShellRoot {
     Binding {
         target: AppEnergy
         property: "awake"
-        value: overviewSurface.open || switcher.active
+        value: (root.overviewSurface ? root.overviewSurface.open : false) || switcher.active
     }
 
     Connections {
         target: SessionState
 
         function onLockRequested(reason: string): void {
-            Lock.lock(reason);
+            LockClient.request(reason);
         }
     }
 
@@ -504,97 +538,420 @@ ShellRoot {
 
     Wallpaper {
         // The session lock owns the screen: a video wallpaper pauses (ADR-0016 section 5).
-        locked: Lock.lockState !== "unlocked"
+        locked: SessionState.locked
     }
     HotCorners {}
     DesktopIcons {}
     DesktopWidgets {}
     MenuBar {
-        searchActive: searchSurface.open
-        onSearchRequested: searchSurface.toggle()
-        captureActive: captureSurface.open
-        onCaptureRequested: screen => captureSurface.openOn(screen)
+        searchActive: root.searchSurface ? root.searchSurface.open : false
+        onSearchRequested: {
+            if (root.searchSurface)
+                root.searchSurface.toggle();
+            else
+                early.ask("search", "toggle", "");
+        }
+        captureActive: root.captureSurface ? root.captureSurface.open : false
+        onCaptureRequested: screen => {
+            if (root.captureSurface)
+                root.captureSurface.openOn(screen);
+        }
     }
     Dock {
         id: dock
-        onAppsRequested: appsSurface.toggle()
+        onAppsRequested: {
+            if (root.appsSurface)
+                root.appsSurface.toggle();
+            else
+                early.ask("apps", "toggle", "");
+        }
     }
     Overlay {}
     Stages {}
     Banners {}
     NotificationCenter {}
-    OsdWindow {}
+    // The surfaces below that are only used on demand (the OSD, the app switcher's window, Search, Overview, Apps) are built right
+    // after "started", not before (ADR-0056 amendment, R1): their windows and content cost about 0.5 s of the start, and nothing
+    // asks for them in the first tick. A request that arrives before a loader has built its surface (the key binding or a hot
+    // corner by IPC, the menu bar's search button, the Dock's apps button) is remembered by `early` below and performed once the
+    // surface exists: one pending request per surface, the last one winning, dropped after Tokens.deferredRequestMaxAgeMs.
+    // The OSD window shows the last OSD event received while it was loading (Osd.replay).
+    LazyLoader {
+        activeAsync: !root.deferredHeld
+        onItemChanged: {
+            if (item)
+                Osd.replay();
+        }
+        OsdWindow {}
+    }
     // Log Out, Restart and Shut Down end under one fade to the ground (ADR-0040 ID-10; grassfield-session-end asks for it).
-    ExitCover {}
-    Search {
-        id: searchSurface
+    // Built right after "started", not before (ADR-0056, R1): nothing asks for it at login, and its IPC target "session" is there
+    // within a tick of the first frame, long before a person can end the session.
+    LazyLoader {
+        activeAsync: true
+        ExitCover {}
     }
-    // The one queue of the polkit sheet and the secret sheets (ADR-0035 D-9, master-prompt R12): one sheet on screen at a
-    // time, in arrival order; no sheet takes the keyboard from another.
-    SheetQueue {
-        id: sheetQueue
-        polkitPresent: authAgent.queuePresent
+    LazyLoader {
+        id: searchLoader
+        activeAsync: !root.deferredHeld || root.deferredReleased.search === true
+        onItemChanged: {
+            if (item)
+                early.attach("search", item);
+        }
+        Search {
+            ipcEnabled: false
+        }
     }
-    AuthAgent {
-        id: authAgent
-        queue: sheetQueue
-    }
-    // Password prompts of gcr's callers (gnome-keyring, GnuPG's pinentry, gcr-ssh-agent) through grassfield-prompter
-    // (ADR-0035 D-9, step 9b). In a dev session it connects only to the test socket GRASSFIELD_PROMPTER_SOCKET names.
-    SecretAgent {
-        id: secretAgent
-        queue: sheetQueue
-        devSocket: Mode.devValue("PROMPTER_SOCKET")
-        shellVersion: SystemInfo.grassfieldVersion
-    }
-    Idle {
-        id: idle
-        // Applications' org.freedesktop.ScreenSaver inhibitors, served by the menu bridge (GF-016).
-        busInhibited: MenuBridge.screenSaverInhibited
-    }
-    // The screen saver (ADR-0032): the same inhibitors keep it off; its slideshow stops while the displays are off.
+    readonly property var searchSurface: searchLoader.item
+    // Idle (dim, lock, display off) and the lock before sleep run in the security process (ADR-0041 S2), and so do the polkit
+    // agent and the secret sheets with their one queue (S3: security/host/SecurityHost.qml).
+    // The screen saver (ADR-0032): the applications' inhibitors keep it off; its slideshow stops while the displays are off.
     Saver {
         id: saver
         busInhibited: MenuBridge.screenSaverInhibited
-        displaysOff: idle.displayOff
+        displaysOff: LockClient.displaysOff
     }
-    Overview {
-        id: overviewSurface
-        // The session lock owns the screen and the keyboard: the overview closes and focuses nothing.
-        locked: Lock.lockState !== "unlocked"
+    LazyLoader {
+        id: overviewLoader
+        activeAsync: !root.deferredHeld || root.deferredReleased.overview === true
+        onItemChanged: {
+            if (item)
+                early.attach("overview", item);
+        }
+        Overview {
+            ipcEnabled: false
+            // The session lock owns the screen and the keyboard: the overview closes and focuses nothing.
+            locked: SessionState.locked
+        }
     }
-    AppsController {
-        id: appsSurface
+    readonly property var overviewSurface: overviewLoader.item
+    LazyLoader {
+        id: appsLoader
+        activeAsync: !root.deferredHeld || root.deferredReleased.apps === true
+        onItemChanged: {
+            if (item)
+                early.attach("apps", item);
+        }
+        AppsController {
+            ipcEnabled: false
+        }
     }
+    readonly property var appsSurface: appsLoader.item
     Switcher {
         id: switcher
         // The session lock owns the screen and the keyboard: the switcher ends and does not start.
-        locked: Lock.lockState !== "unlocked"
+        locked: SessionState.locked
     }
-    SwitcherWindow {
-        controller: switcher
+    LazyLoader {
+        activeAsync: !root.deferredHeld
+        SwitcherWindow {
+            controller: switcher
+        }
     }
     // The capture toolbar (Shift-Super-5, ADR-0045 OC-1) and the countdown of its timer.
-    Capture {
-        id: captureSurface
-        // The session lock owns the screen and the keyboard: the toolbar closes and does not open.
-        locked: Lock.lockState !== "unlocked"
+    // Built right after "started", not before (ADR-0056, R1): the toolbar is opened by a key press, never at login. A press in
+    // the first tick (the loader's item is null) does nothing, as a press before the shell has started does.
+    LazyLoader {
+        id: captureLoader
+        activeAsync: true
+        Capture {
+            id: captureSurface
+            // The session lock owns the screen and the keyboard: the toolbar closes and does not open.
+            locked: SessionState.locked
+        }
+    }
+    readonly property var captureSurface: captureLoader.item
+
+    // Development only (GRASSFIELD_DEFER_HOLD=1 in a dev session, ADR-0019 table): the deferred surfaces are not built until
+    // `qs ipc call deferred release`, so tests/shell/deferred_early.sh can send requests while they do not exist.
+    property bool deferredHeld: Mode.devValue("DEFER_HOLD") === "1"
+    property var deferredReleased: ({})
+    IpcHandler {
+        target: "deferred"
+
+        function release(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            root.deferredHeld = false;
+            return "ok";
+        }
+
+        // Builds one of the three surfaces (search, apps, overview) while the others stay held.
+        function releaseSurface(surface: string): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            root.deferredReleased = Object.assign({}, root.deferredReleased, {[surface]: true});
+            return "ok";
+        }
+
+        function status(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return JSON.stringify({held: root.deferredHeld, live: early.live, pending: early.pending});
+        }
+    }
+    // What a deferred surface was asked before it existed (ADR-0056 amendment). `pending` holds one entry per surface:
+    // {open, text, clip, at}: whether the surface is wanted open once built (a toggle flips it, open and close set it, so
+    // open-then-close ends closed), the text of a Search open, whether it is the Clipboard view, and when the last request came.
+    QtObject {
+        id: early
+
+        property var pending: ({})
+        // One counter numbers every request for these surfaces, early or direct, and a monotonic clock measures the age of a pending
+        // one: the wall clock can step at login (time sync) and must never reorder or drop a request.
+        property int seq: 0
+        // The number of the newest request that opened a surface so far (performed on arrival, or made directly to a built one).
+        property int newestOpen: 0
+        // True while a replay calls the surface, so that its own opening is not counted as a new direct request.
+        property bool replaying: false
+        readonly property ElapsedTimer clock: ElapsedTimer {}
+        // Whether the surface exists and its own IPC handler is the one answering (the forwarding handler below is off).
+        property var live: ({search: false, apps: false, overview: false})
+
+        function ask(surface: string, what: string, text: string): void {
+            const p = pending[surface] ?? {open: false, text: "", clip: false, at: 0};
+            if (what === "toggle") {
+                p.open = !p.open;
+                p.clip = false;
+                p.text = "";
+            } else if (what === "open") {
+                p.open = true;
+                p.clip = false;
+                p.text = text;
+            } else if (what === "close") {
+                p.open = false;
+            } else if (what === "clipboard") {
+                if (p.open && p.clip) {
+                    p.open = false;
+                } else {
+                    p.open = true;
+                    p.clip = true;
+                    p.text = "";
+                }
+            }
+            p.at = clock.elapsedMs();
+            p.seq = ++seq;
+            pending[surface] = p;
+            console.info("grassfield-shell: early request", surface, what, "(the surface is still being built)");
+        }
+
+        // The loader built `item`: the surface's own IPC handler takes over from the forwarding one (never two for one target), and
+        // what was asked meanwhile is performed on the next turn of the event loop, once `root.<surface>Surface` is bound and
+        // ExclusiveSurfaces watches it (a request performed inside the loader's own item-changed signal skipped the exclusion:
+        // review of ddaf5c2e, MED-2). The surface's own checks apply (a locked session refuses, as for any request).
+        function attach(surface: string, item: var): void {
+            console.info("grassfield-shell: surface built", surface);
+            live = Object.assign({}, live, {[surface]: true});
+            item.ipcEnabled = true;
+            // A new closure for each surface: Qt.callLater runs a repeated call of ONE function once per turn, with the last
+            // arguments, so three loaders attaching in the same turn would replay only the last surface (review of 8887f8f0).
+            Qt.callLater(() => early.replay(surface, item));
+        }
+
+        // A built surface opened by a direct request (key binding, button, IPC call made after it was built): the newest request so
+        // far, whatever the pending ones say. Called by the Connections below.
+        function opened(): void {
+            if (!replaying)
+                newestOpen = ++seq;
+        }
+
+        // A pending request older than the newest one that opened a surface does not open over it, whatever the order the loaders
+        // finish in (the last request wins, early or direct).
+        function replay(surface: string, item: var): void {
+            const p = pending[surface];
+            delete pending[surface];
+            if (!p || !p.open || clock.elapsedMs() - p.at > Tokens.deferredRequestMaxAgeMs || p.seq < newestOpen)
+                return;
+            newestOpen = p.seq;
+            replaying = true;
+            try {
+                if (surface === "search") {
+                    if (p.clip)
+                        item.toggleClipboard();
+                    else
+                        item.show(p.text);
+                } else {
+                    item.show();
+                }
+            } finally {
+                replaying = false;
+            }
+        }
+    }
+    // A direct opening of a built surface counts as a request (see `early.opened`), for every surface ExclusiveSurfaces manages: the
+    // app switcher and the capture toolbar too, so an older pending request never closes what was opened after it.
+    Connections {
+        target: switcher
+
+        function onOpenChanged(): void {
+            if (switcher.open)
+                early.opened();
+        }
+    }
+    Connections {
+        target: root.captureSurface
+
+        function onOpenChanged(): void {
+            if (root.captureSurface.open)
+                early.opened();
+        }
+    }
+    Connections {
+        target: root.searchSurface
+
+        function onOpenChanged(): void {
+            if (root.searchSurface.open)
+                early.opened();
+        }
+    }
+    Connections {
+        target: root.appsSurface
+
+        function onOpenChanged(): void {
+            if (root.appsSurface.open)
+                early.opened();
+        }
+    }
+    Connections {
+        target: root.overviewSurface
+
+        function onOpenChanged(): void {
+            if (root.overviewSurface.open)
+                early.opened();
+        }
+    }
+    // The IPC targets of the three surfaces answer from the start: until a surface is built, these take its place (same names and
+    // gates as the surface's own handler, which takes over the moment its item exists).
+    IpcHandler {
+        target: "search"
+        enabled: !early.live.search
+
+        function toggle(): void {
+            early.ask("search", "toggle", "");
+        }
+
+        function clipboard(): void {
+            early.ask("search", "clipboard", "");
+        }
+
+        function open(text: string): void {
+            if (VisualFixtures.dev)
+                early.ask("search", "open", text);
+        }
+
+        function close(): void {
+            if (VisualFixtures.dev)
+                early.ask("search", "close", "");
+        }
+
+        // The test hooks of the surface itself, before it exists: gated as its own, answering "not ready" (a void one is ignored).
+        function query(text: string): void {
+            if (VisualFixtures.dev)
+                console.info("grassfield-shell: search query ignored, the surface is still being built");
+        }
+
+        function filter(id: string): void {
+            if (VisualFixtures.active)
+                console.info("grassfield-shell: search filter ignored, the surface is still being built");
+        }
+
+        function status(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+    }
+    IpcHandler {
+        target: "apps"
+        enabled: !early.live.apps
+
+        function toggle(): void {
+            early.ask("apps", "toggle", "");
+        }
+
+        function open(): void {
+            early.ask("apps", "open", "");
+        }
+
+        function close(): void {
+            early.ask("apps", "close", "");
+        }
+
+        // The test hooks of the surface itself, before it exists: gated as its own, answering "not ready".
+        function status(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function edit(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function removable(json: string): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function ask(id: string): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+    }
+    IpcHandler {
+        target: "overview"
+        enabled: !early.live.overview
+
+        function toggle(): void {
+            early.ask("overview", "toggle", "");
+        }
+
+        function open(): void {
+            early.ask("overview", "open", "");
+        }
+
+        function close(): void {
+            early.ask("overview", "close", "");
+        }
+
+        // The test hooks of the surface itself, before it exists: gated as its own, answering "not ready".
+        function holdNextRelease(ms: int): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function dropProbe(address: string, spaceId: int): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
+
+        function status(): string {
+            if (!VisualFixtures.dev)
+                return "refused";
+            return "not ready";
+        }
     }
 
     // Opening Overview, Apps, Search, the app switcher or the capture toolbar closes the others: the keyboard follows the visible
     // top surface.
     ExclusiveSurfaces {
         surfaces: [
-            {target: overviewSurface, close: () => overviewSurface.requestCloseForOther()},
-            {target: appsSurface, close: () => appsSurface.hide()},
-            {target: searchSurface, close: () => searchSurface.hide()},
+            {target: root.overviewSurface, close: () => root.overviewSurface.requestCloseForOther()},
+            {target: root.appsSurface, close: () => root.appsSurface.hide()},
+            {target: root.searchSurface, close: () => root.searchSurface.hide()},
             {target: switcher, close: () => switcher.cancel()},
-            {target: captureSurface, close: () => captureSurface.hide()}
+            {target: root.captureSurface, close: () => root.captureSurface.hide()}
         ]
     }
 
-    // Referencing Capabilities instantiates it, which sends the plugin hello; referencing Lock
-    // instantiates the session lock (IPC target "lock", crash-recovery restore); referencing RecentItems makes it listen to
+    // Referencing Capabilities instantiates it, which sends the plugin hello; referencing LockClient
+    // starts reading the lock state the security process publishes (the lock itself lives there, ADR-0041 S2); referencing RecentItems makes it listen to
     // every launch from the start (it would otherwise exist only once the Grassfield menu opened); referencing NotResponding
     // registers its IPC target "anr" for the hyprland-dialog stand-in (ADR-0035 D-3), SharePicker its target "picker" for the
     // screen-sharing picker's stand-in (D-6); referencing TilingHover makes it listen
@@ -606,5 +963,5 @@ ShellRoot {
     // "emoji" for Ctrl+Super+Space and reads Recently Used (ADR-0045 OC-3; Omarchy's list waits for the first opening);
     // referencing Sounds makes it listen to the compositor's bell and the power adapter from the start, and Audio starts its
     // output routing (ADR-0047).
-    Component.onCompleted: console.info("grassfield-shell: started, version", SystemInfo.grassfieldVersion, "plugin protocol", Capabilities.protocol, "lock", Lock.lockState, "recent items", RecentItems.max, "clipboard history", Clipboard.state, "not responding", NotResponding.marks.length, "share picker", SharePicker.current === null ? "idle" : "open", "tiling popover", TilingHover.address === "" ? "closed" : "open", "tiling suggestions", TilingSuggest.shown ? "shown" : "none", "software update", SoftwareUpdate.count, "activity link", ActivityLink.folder !== "" ? "ready" : "no runtime folder", "key window", KeyWindow.path !== "" ? "written" : "no runtime folder", "terminal theme", TerminalTheme.state, "emoji", Emoji.state, "sounds", Sounds.devSession ? "dev: silent" : "on", "audio routing", Audio.routingFile)
+    Component.onCompleted: console.info("grassfield-shell: started, version", SystemInfo.grassfieldVersion, "plugin protocol", Capabilities.protocol, "lock", LockClient.state || "no state yet", "recent items", RecentItems.max, "clipboard history", Clipboard.state, "not responding", NotResponding.marks.length, "share picker", SharePicker.current === null ? "idle" : "open", "tiling popover", TilingHover.address === "" ? "closed" : "open", "tiling suggestions", TilingSuggest.shown ? "shown" : "none", "software update", SoftwareUpdate.count, "activity link", ActivityLink.folder !== "" ? "ready" : "no runtime folder", "key window", KeyWindow.path !== "" ? "written" : "no runtime folder", "terminal theme", TerminalTheme.state, "emoji", Emoji.state, "sounds", Sounds.devSession ? "dev: silent" : "on", "audio routing", Audio.routingFile)
 }

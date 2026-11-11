@@ -1,0 +1,376 @@
+#!/bin/bash
+# Grassfield session stand-in for xdg-settings (ADR-0055 D-6; owner decision of the review of PR #38). Installed to
+# /usr/lib/grassfield/session-bin/, first in PATH only in a Grassfield session (packaging/uwsm/env-grassfield); the Omarchy
+# session runs /usr/bin/xdg-settings untouched.
+#
+# Why: the session's own list ($XDG_CONFIG_HOME/grassfield-mimeapps.list, read before mimeapps.list because the session's
+# XDG_CURRENT_DESKTOP is Grassfield:Hyprland) holds Sanaga as the default browser from the first start. Chromium-family browsers
+# and `omarchy default browser` call `xdg-settings set default-web-browser X`; the real tool writes ~/.config/mimeapps.list, then
+# checks the result through the lookup, which still answers Sanaga, so it fails (exit 4) and its rollback writes our own entry
+# into the user's list. A browser's "make default" must work at once, as on a Mac.
+#
+#   set default-web-browser X            (and set default-url-scheme-handler http|https X)
+#     1. the record (default-apps.state in Grassfield's state folder) says web.state=user, web.chosen=X;
+#     2. the session list names X for http, https, text/html and application/xhtml+xml;
+#     3. the real /usr/bin/xdg-settings runs with the same arguments, so ~/.config/mimeapps.list follows the explicit choice;
+#     4. the record's baseline (what the user's own lists name) is refreshed; exit 0 when the effective session default is X.
+#   Before any of it X is validated, and nothing is written when it fails (exit 2, as the real tool for a missing file): X must be
+#   a desktop entry that is installed, found as xdg-settings finds it ($XDG_DATA_HOME, then $XDG_DATA_DIRS, applications/, a "-" of
+#   the id also read as a folder; ids with ".." are refused), with one Exec, TryExec and Type, whose program (and TryExec) exists and
+#   whose Exec is no launcher that resolves the default again (omarchy-*, xdg-*, gio, a shell, env;
+#   uwsm-app and `uwsm app --` are judged by the program they start). A linked session list or record is refused (exit 1) and the
+#   real tool is NOT called: it would fail its own check and write our entry into mimeapps.list. A `set` is never handed to the
+#   real tool except after step 2, for the same reason.
+#   get default-web-browser, check default-web-browser X, and the http/https url-scheme variants: answered from the effective
+#   session default, so a browser's own check passes.
+#   Everything else (other properties, other schemes, anything it cannot judge) is the real tool, unchanged.
+#
+# The real tool is run by absolute path and never found through PATH: the stand-in cannot reach itself. A real path that is this
+# very file stops with an error before anything is written. GRASSFIELD_XDG_SETTINGS_REAL replaces the real tool for tests only,
+# and only in a dev run (GRASSFIELD_DEV=1 and GRASSFIELD_SESSION not 1), as in the Chromium stand-in.
+real=/usr/bin/xdg-settings
+if [[ ${GRASSFIELD_DEV:-} == 1 && ${GRASSFIELD_SESSION:-} != 1 ]]; then
+  real=${GRASSFIELD_XDG_SETTINGS_REAL:-$real}
+fi
+self=$(readlink -f -- "$0" 2>/dev/null)
+if [[ -z $self || $(readlink -f -- "$real" 2>/dev/null) == "$self" ]]; then
+  echo "grassfield xdg-settings: the real xdg-settings is this stand-in (refusing to call itself)" >&2
+  exit 1
+fi
+[[ -x $real ]] || { echo "grassfield xdg-settings: $real is not installed" >&2; exit 127; }
+
+WEB_TYPES=(x-scheme-handler/http x-scheme-handler/https text/html application/xhtml+xml)
+ROUTING=omarchy-browser.desktop
+cfg=${XDG_CONFIG_HOME:-${HOME:-}/.config}
+if [[ -n ${GRASSFIELD_STATE_HOME:-} ]]; then
+  state_dir=$GRASSFIELD_STATE_HOME
+else
+  state_dir=${XDG_STATE_HOME:-${HOME:-}/.local/state}/grassfield
+fi
+session_list=$cfg/grassfield-mimeapps.list
+record=$state_dir/default-apps.state
+
+passthrough() { exec "$real" "$@"; }
+
+# The first desktop id a list names for a type; nothing when the file is no regular readable file.
+list_default() { # file type
+  [[ -f $1 && -r $1 ]] || return 0
+  awk -v type="$2" '
+    function trim(s) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", s); return s }
+    { line = trim($0) }
+    line ~ /^\[.*\]$/ { g = (line == "[Default Applications]"); next }
+    g && line !~ /^#/ {
+      eq = index(line, "=")
+      if (eq > 0 && trim(substr(line, 1, eq - 1)) == type) {
+        n = split(substr(line, eq + 1), a, ";")
+        for (i = 1; i <= n; i++) { x = trim(a[i]); if (x != "") { print x; exit } }
+      }
+    }' "$1"
+}
+
+# The user's own lists, in lookup order (the desktop list of the session, then mimeapps.list); and the effective default with the
+# session list first. The routing entry of Omarchy is left out, as omarchy-cmd-default-browser does.
+lookup() { # type, lists...
+  local type=$1 f id
+  shift
+  for f in "$@"; do
+    id=$(list_default "$f" "$type")
+    if [[ -n $id && $id != "$ROUTING" ]]; then
+      printf '%s\n' "$id"
+      return 0
+    fi
+  done
+  return 1
+}
+own_lists=("$cfg/hyprland-mimeapps.list" "$cfg/mimeapps.list")
+effective() { lookup "$1" "$session_list" "${own_lists[@]}"; }
+
+# An id the stand-in will act on: a plain desktop file name, no ".." (the "-" of an id is also read as a folder: "..-x.desktop" would
+# read applications/../x.desktop), and not Omarchy's routing entry.
+valid_id() { [[ $1 =~ ^[A-Za-z0-9._+-]{1,200}\.desktop$ && $1 != *..* && $1 != "$ROUTING" ]]; }
+
+# The record with the given key=value pairs replaced or added; its other valid lines kept; a line that is no key=value dropped.
+write_record() { # key=value...
+  local tmp keep=() line k drop pair
+  [[ -d $state_dir ]] || mkdir -p -- "$state_dir" || return 1
+  if [[ -L $record ]]; then return 1; fi
+  if [[ -f $record ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+      line=${line%$'\r'}
+      [[ -z ${line//[[:space:]]/} || $line == \#* ]] && continue
+      [[ $line == *=* && ${line%%=*} != "" ]] || continue
+      k=${line%%=*}
+      drop=0
+      for pair in "$@"; do [[ ${pair%%=*} == "$k" ]] && drop=1; done
+      ((drop)) || keep+=("$line")
+    done <"$record"
+  fi
+  tmp=$(mktemp -- "$state_dir/.default-apps.XXXXXX") || return 1
+  {
+    echo "# Written by grassfield-files --seed-default-apps, the xdg-settings stand-in and Settings > Desktop & Dock (ADR-0055 D-6)"
+    printf '%s\n' "${keep[@]}" "$@" | LC_ALL=C sort
+  } >"$tmp" && chmod 600 -- "$tmp" && mv -f -- "$tmp" "$record" || { rm -f -- "$tmp"; return 1; }
+}
+
+# The session list with the four web types set to the id: other lines kept, a repeated key of the group dropped, the group added
+# when missing. Written through a temporary file; a linked list is never written.
+write_session_list() { # id
+  local tmp
+  [[ -L $session_list ]] && return 1
+  [[ -d $cfg ]] || mkdir -p -- "$cfg" || return 1
+  tmp=$(mktemp -- "$cfg/.grassfield-mimeapps.XXXXXX") || return 1
+  if [[ -f $session_list ]]; then
+    awk -v id="$1" -v types="${WEB_TYPES[*]}" '
+      function trim(s) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", s); return s }
+      BEGIN { split(types, T, " "); for (i in T) want[T[i]] = 1 }
+      { lines[++n] = $0 }
+      END {
+        gs = 0; ge = 0
+        for (i = 1; i <= n; i++) {
+          t = trim(lines[i])
+          if (t ~ /^\[.*\]$/) {
+            if (gs && !ge) { ge = i - 1 }
+            if (t == "[Default Applications]" && !gs) gs = i
+          }
+        }
+        if (gs && !ge) ge = n
+        m = 0; last = 0
+        for (i = 1; i <= n; i++) {
+          drop = 0
+          if (gs && i > gs && i <= ge) {
+            t = trim(lines[i]); eq = index(t, "=")
+            if (t !~ /^#/ && eq > 0 && (trim(substr(t, 1, eq - 1)) in want)) drop = 1
+          }
+          if (!drop) {
+            out[++m] = lines[i]
+            if (gs && i > gs && i <= ge && trim(lines[i]) != "") last = m
+            if (i == gs && !last) last = m
+          }
+        }
+        if (!gs) {
+          if (m > 0 && trim(out[m]) != "") out[++m] = ""
+          out[++m] = "[Default Applications]"; last = m
+        }
+        for (i = 1; i <= m; i++) {
+          print out[i]
+          if (i == last) for (j = 1; j <= length(T); j++) print T[j] "=" id ";"
+        }
+      }' "$session_list" >"$tmp" || { rm -f -- "$tmp"; return 1; }
+  else
+    {
+      echo "[Default Applications]"
+      for t in "${WEB_TYPES[@]}"; do echo "$t=$1;"; done
+    } >"$tmp"
+  fi
+  mv -f -- "$tmp" "$session_list" || { rm -f -- "$tmp"; return 1; }
+}
+
+# The record's baseline: what the user's own lists name for each web type now.
+refresh_baseline() {
+  local pairs=() t v
+  for t in "${WEB_TYPES[@]}"; do
+    v=$(lookup "$t" "${own_lists[@]}") || v=-
+    pairs+=("web.$t=$v")
+  done
+  write_record "${pairs[@]}"
+}
+
+# The words of an Exec= line, quotes read as the desktop entry specification does (double quotes with backslash escapes, and single
+# quotes), into the array `words`.
+exec_words() { # line
+  words=()
+  local line=$1 i c cur= have=0 quote=
+  for ((i = 0; i < ${#line}; i++)); do
+    c=${line:i:1}
+    if [[ -n $quote ]]; then
+      if [[ $c == "$quote" ]]; then
+        quote=
+      elif [[ $c == '\' && $quote == '"' && $((i + 1)) -lt ${#line} ]]; then
+        cur+=${line:++i:1}
+      else
+        cur+=$c
+      fi
+    elif [[ $c == '"' || $c == "'" ]]; then
+      quote=$c
+      have=1
+    elif [[ $c == [[:space:]] ]]; then
+      ((have)) && words+=("$cur")
+      cur=
+      have=0
+    else
+      if [[ $c == '\' && $((i + 1)) -lt ${#line} ]]; then cur+=${line:++i:1}; else cur+=$c; fi
+      have=1
+    fi
+  done
+  ((have)) && words+=("$cur")
+  return 0
+}
+
+# Whether the words run a launcher that resolves the default again (the fork storm of 2026-10-30); the same rule as
+# DefaultApps::isLauncherExec in apps/files and DefaultBrowser.js in Settings.
+launcher_words() { # depth, words...
+  local depth=$1 program rest=() i found=-1
+  shift
+  (($# == 0 || depth > 3)) && return 0
+  program=${1##*/}
+  if [[ $program == uwsm-app ]]; then
+    rest=("${@:2}")
+  elif [[ $program == uwsm && ${2:-} == app ]]; then
+    rest=("${@:3}")
+  else
+    case $program in
+      '' | omarchy-* | xdg-* | gio | gtk-launch | sh | bash | dash | zsh | fish | env | uwsm | systemd-run | kde-open | gnome-open | exo-open | sensible-browser | x-www-browser) return 0 ;;
+    esac
+    started=$1 # the program that runs (behind uwsm too), as the entry names it
+    return 1
+  fi
+  for i in "${!rest[@]}"; do
+    [[ ${rest[i]} == -- ]] && { found=$i; break; }
+  done
+  if ((found >= 0)); then
+    launcher_words $((depth + 1)) "${rest[@]:found+1}"
+    return
+  fi
+  for i in "${!rest[@]}"; do
+    [[ ${rest[i]} != -* ]] && { launcher_words $((depth + 1)) "${rest[@]:i}"; return; }
+  done
+  return 0
+}
+
+# The desktop file of an id, found as xdg-settings finds it: $XDG_DATA_HOME, then each of $XDG_DATA_DIRS, applications/, and a "-"
+# of the id also read as a folder (kde-foo.desktop is kde/foo.desktop).
+entry_file() { # id
+  local dir id=$1 alt f
+  local IFS=:
+  for dir in "${XDG_DATA_HOME:-${HOME:-}/.local/share}" ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+    [[ $dir == /* ]] || continue
+    f=$dir/applications/$id
+    [[ -f $f && -r $f ]] && { printf '%s\n' "$f"; return 0; }
+    if [[ $id == *-* ]]; then
+      alt=${id/-//}
+      f=$dir/applications/$alt
+      [[ -f $f && -r $f ]] && { printf '%s\n' "$f"; return 0; }
+    fi
+  done
+  return 1
+}
+
+# Whether a program exists as GLib resolves it: an absolute path to an executable regular file, or a name found in $PATH.
+program_runs() { # program
+  [[ -n $1 ]] || return 1
+  if [[ $1 == /* ]]; then
+    [[ -f $1 && -x $1 ]]
+  elif [[ $1 == */* ]]; then
+    return 1
+  else
+    # Walked here: `type -P` falls back to a match that is not executable, GLib wants a regular executable file.
+    local dir
+    local IFS=:
+    for dir in ${PATH:-}; do
+      [[ $dir == /* ]] || continue
+      [[ -f $dir/$1 && -x $dir/$1 ]] && return 0
+    done
+    return 1
+  fi
+}
+
+# Whether the id may be made the default: installed; one Exec, TryExec and Type in [Desktop Entry] (GLib keeps the LAST of a repeated
+# key, a reader of the first is fooled; the group twice is merged by GLib and the later Exec wins; an indented line counts as GLib
+# reads it: such an entry is refused); its Exec no launcher; the program it starts and its TryExec there
+# (a removed package or a typo would leave gio without a default browser). A file with CRLF line ends is refused too.
+usable_browser() { # id
+  local file exec tryexec dup kind value
+  file=$(entry_file "$1") || { echo "xdg-settings: $1 is not an installed desktop entry" >&2; return 1; }
+  exec=
+  tryexec=
+  dup=0
+  while IFS=$'\t' read -r kind value; do
+    case $kind in
+      E) exec=$value ;;
+      T) tryexec=$value ;;
+      D) dup=1 ;;
+    esac
+  done < <(awk '
+    { sub(/^[ \t]+/, ""); sub(/[ \t\r]+$/, "") }
+    /^\[/ { g = ($0 == "[Desktop Entry]"); if (g && ++n > 1) d = 1; next }
+    g && /^Exec[ \t]*=/ { if (++e > 1) d = 1; else { v = $0; sub(/^Exec[ \t]*=[ \t]*/, "", v); ex = v } }
+    g && /^TryExec[ \t]*=/ { if (++t > 1) d = 1; else { v = $0; sub(/^TryExec[ \t]*=[ \t]*/, "", v); tx = v } }
+    g && /^Type[ \t]*=/ { if (++y > 1) d = 1 }
+    END { print "E\t" ex; print "T\t" tx; if (d) print "D\t1" }' "$file" 2>/dev/null)
+  if ((dup)); then
+    echo "xdg-settings: $1 repeats Exec, TryExec or Type; which one runs depends on the reader, so it cannot be the default" >&2
+    return 1
+  fi
+  exec_words "$exec"
+  started=
+  if launcher_words 0 "${words[@]}"; then
+    echo "xdg-settings: $1 runs a launcher that resolves the default browser again; it cannot be the default" >&2
+    return 1
+  fi
+  if ! program_runs "$started" || { [[ -n $tryexec ]] && ! program_runs "$tryexec"; }; then
+    echo "xdg-settings: the program of $1 is not there; it cannot be the default" >&2
+    return 1
+  fi
+  return 0
+}
+
+action=${1:-}
+prop=${2:-}
+case $prop in
+  default-web-browser)
+    type=x-scheme-handler/http
+    id=${3:-}
+    ;;
+  default-url-scheme-handler)
+    case ${3:-} in
+      http | https) type=x-scheme-handler/${3} ;;
+      *) passthrough "$@" ;;
+    esac
+    id=${4:-}
+    ;;
+  *) passthrough "$@" ;;
+esac
+if [[ $cfg != /* || $state_dir != /* ]]; then
+  [[ $action == set ]] && { echo "xdg-settings: no home folder to write the default browser to" >&2; exit 1; }
+  passthrough "$@"
+fi
+
+case $action in
+  get)
+    now=$(effective "$type") || passthrough "$@"
+    printf '%s\n' "$now"
+    exit 0
+    ;;
+  check)
+    valid_id "$id" || passthrough "$@"
+    now=$(effective "$type") || passthrough "$@"
+    if [[ $now == "$id" ]]; then echo yes; else echo no; fi
+    exit 0
+    ;;
+  set)
+    # Nothing is written, and the real tool never runs, unless the id is an installed entry that is no launcher: the real tool would
+    # fail its own check against the session list and write our entry into the user's mimeapps.list.
+    if ! valid_id "$id"; then
+      echo "xdg-settings: '$id' is not a desktop entry that can be the default web browser" >&2
+      exit 2
+    fi
+    usable_browser "$id" || exit 2
+    if [[ -L $session_list || -L $record ]]; then
+      echo "xdg-settings: the session's default applications file or its record is a link; not changed" >&2
+      exit 1
+    fi
+    # 1. the record first: whatever happens next, the choice is the user's
+    write_record "web.state=user" "web.chosen=$id" || { echo "xdg-settings: the record could not be written; not changed" >&2; exit 1; }
+    # 2. the session list
+    write_session_list "$id" || { echo "xdg-settings: the session's list could not be written" >&2; exit 1; }
+    # 3. the real tool, so ~/.config/mimeapps.list follows
+    "$real" "$@"
+    rc=$?
+    # 4. baseline, and the answer: success only when the effective session default is the new id
+    refresh_baseline
+    now=$(effective "$type")
+    if [[ $now == "$id" ]]; then exit 0; fi
+    exit $((rc == 0 ? 4 : rc))
+    ;;
+  *) passthrough "$@" ;;
+esac

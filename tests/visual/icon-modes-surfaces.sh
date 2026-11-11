@@ -42,6 +42,47 @@ for appearance in $APPEARANCES; do
   done
 done
 
+# The Dock over a white, a grey and a black wallpaper (R7-REQ-13, test_a2_dock): the Dock is an almost clear glass, so what the icons stand on is the wallpaper itself;
+# Clear in the dark appearance must stay legible on white (dark smoked plate, light ink). Writes ims-dock-<wallpaper>-<appearance>-<mode>.
+for wall in white grey black; do
+  case $wall in white) c='#ffffff' ;; grey) c='#808080' ;; black) c='#000000' ;; esac
+  magick -size 64x64 "xc:$c" "$OUT/wall-$wall.png"
+done
+# check_dock_surface WALL APPEARANCE: the live Dock's icons follow the glass they sit on (R7-REQ-13): the wallpaper is known to the shell (source "wallpaper") and the tone
+# follows it, in each appearance. Polled, not read after a fixed sleep: taken once VS_OUTPUT reports the wallpaper with the expected tone, within ICON_SURFACE_BOUND_MS
+# (5 s); the settle time is printed and the run fails only past the bound. Only VS_OUTPUT is checked: the nested session's own output (WAYLAND-1) is not rendered by the
+# pinned run, so its wallpaper probe has no paint to read and its reading stays the previous one.
+check_dock_surface() {
+  local wall=$1 appearance=$2 want_dark t0 surf src dark settle
+  case $wall in black) want_dark=true ;; *) want_dark=false ;; esac
+  t0=$(date +%s%N); surf=; src=missing; dark=missing
+  while :; do
+    surf=$(vs_ipc dock iconsurface)
+    src=$(printf '%s' "$surf" | jq -r --arg o "$VS_OUTPUT" '.[$o].source // "missing"' 2>/dev/null)
+    dark=$(printf '%s' "$surf" | jq -r --arg o "$VS_OUTPUT" '.[$o].dark | tostring' 2>/dev/null)
+    [ "$src" = wallpaper ] && [ "$dark" = "$want_dark" ] && break
+    [ $((($(date +%s%N) - t0) / 1000000)) -lt ${ICON_SURFACE_BOUND_MS:-5000} ] || break
+    sleep 0.1
+  done
+  settle=$((($(date +%s%N) - t0) / 1000000))
+  echo "dock iconsurface over $wall, $appearance appearance: settled in ${settle} ms: $surf"
+  { [ "$src" = wallpaper ] && [ "$dark" = "$want_dark" ]; } || { echo "FAIL: the live Dock over $wall, $appearance appearance: source $src, dark=$dark, expected wallpaper and dark=$want_dark after ${settle} ms" >&2; ICON_SURFACE_FAIL=1; }
+}
+for wall in white grey black; do
+  vs_wallpaper "$OUT/wall-$wall.png" || echo "wallpaper $wall refused" >&2
+  for appearance in $APPEARANCES; do
+    config "$appearance" default
+    vs_ipc controlcenter appearance "$appearance" >/dev/null
+    check_dock_surface "$wall" "$appearance"
+    for mode in $MODES; do
+      config "$appearance" "$mode"
+      vs_ipc controlcenter appearance "$appearance" >/dev/null
+      shot "ims-dock-$wall-$appearance-$mode"
+    done
+  done
+done
+vs_wallpaper "" || true
+
 vs_spawn "$VS_DEV/build/grassfield-settings"
 vs_wait_clients 1
 vs_sleep 2
@@ -54,3 +95,4 @@ for appearance in $APPEARANCES; do
 done
 vs_kill_clients
 echo "captures in $OUT"
+[ -z "${ICON_SURFACE_FAIL:-}" ] || exit 1

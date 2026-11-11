@@ -10,7 +10,8 @@
 # the keys of the re-created one until it gets a new wl_keyboard.leave and enter, which grassfield-compositor announces
 # again before the first key of the new device, to the same session-lock surface (docs/specs/compositor.md "Keyboard
 # focus before every key"). Hyprland 0.56.2 keeps a disabled keyboard (device `enabled = false`) in the seat's
-# capabilities, so the condition cannot be produced through scripts/nestctl: without it the scenario is SKIPPED (exit 3).
+# capabilities, so the condition cannot be produced through scripts/nestctl: without it the scenario is SKIPPED (exit 3),
+# as it is when grassfield-compositor is not loaded (the fix under test is its focus announce).
 #
 # Steps: a foot probe window gets a control word while unlocked; `lock lock`; then six bursts of ONE key each, each from a
 # new keyboard device, so that every check is about the first key of a burst (the key a late announce loses): "x" (the
@@ -21,11 +22,15 @@
 #
 # Usage: tests/security/lock_keyboard_replaced.sh   (bare; NESTED only, GRASSFIELD_DEV=1 shell from nested-up.sh)
 # The nested session stays LOCKED afterwards (only a real password opens it, and PAM is suppressed): finish with
-# scripts/dev/nested-down.sh. Exit: 0 PASS, 1 FAIL, 2 environment, 3 SKIPPED (the session has a keyboard of its own),
-# 4 stopped for safety.
+# scripts/dev/nested-down.sh. Exit: 0 PASS, 1 FAIL, 2 environment, 3 SKIPPED (the session has a keyboard of its own, or
+# grassfield-compositor is not loaded), 4 stopped for safety.
 set -uo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# GRASSFIELD_MIGRATED=1: the nested session runs the packaged form of the UI tree (scripts/dev/shell-run.sh --migrated,
+# ADR-0056): both instances are addressed by the REAL path of the stamped tree (readlink -f .dev/migrated), as they were started.
+ui_dir=$root/shell; sec_qml=$root/shell/security.qml
+[[ ${GRASSFIELD_MIGRATED:-0} == 1 ]] && { ui_dir=$(readlink -f "$root/.dev/migrated")/shell; sec_qml=$ui_dir/security.qml; }
 dev=$root/.dev
 # shellcheck source=../../scripts/dev/pidfile.sh
 . "$root/scripts/dev/pidfile.sh"
@@ -43,7 +48,8 @@ done
 typed=$dev/lock-keyboard-typed.txt
 status=0
 nested() { env WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" "$@"; }
-ipc() { nested qs ipc -p "$root/shell" call "$@" 2>/dev/null; }
+# The lock lives in the security process since ADR-0041 step 1, S2 (shell/security.qml, started by scripts/dev/shell-run.sh).
+ipc() { nested qs ipc -p "$sec_qml" call "$@" 2>/dev/null; }
 nestctl() { timeout 10 "$root/scripts/nestctl" "$@"; }
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; status=1; }
@@ -76,6 +82,15 @@ press_escape() { nested wtype -s 150 -k Escape; }
 own=$(nestctl -j devices 2>/dev/null | jq -r '[.keyboards[]? | select(.name | test("virtual") | not)] | length')
 if [[ $own != 0 ]]; then
   echo "SKIP lock_keyboard_replaced: the nested session has ${own:-?} keyboard device(s) of its own; the scenario needs a session whose only keyboards come and go (the parent seat had no keyboard when nested-up.sh started it)"
+  exit 3
+fi
+# What this scenario proves is grassfield-compositor's focus announce (docs/specs/compositor.md "Keyboard focus before every
+# key"). Without the plugin the documented limit applies (docs/specs/security.md, known limitations): every burst after the
+# first is lost, so the Escape bursts leave the field filled and the letter bursts pass only because it is still filled.
+# The integrator's nested run of S2 (e1a3ff4c) failed exactly so, with "nested-up: ... plugin none" (no compositor/build in
+# the checkout), as main 8b04383c did: a SKIP, not a FAIL, so that it is not read as a lock regression.
+if ! nestctl -j grassfield 2>/dev/null | jq -e '.features | type == "array"' >/dev/null 2>&1; then
+  echo "SKIP lock_keyboard_replaced: grassfield-compositor is not loaded in the nested session (nested-up.sh printed 'plugin none'); the lock's keys after a replaced keyboard depend on its focus announce: build it (just plugin-build), start the nested session again, run this again: NOT VERIFIED"
   exit 3
 fi
 [[ $(ipc lock status) != refused ]] || { echo "lock_keyboard_replaced: the shell's dev hooks are refused (not a GRASSFIELD_DEV session)" >&2; exit 2; }

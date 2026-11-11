@@ -908,3 +908,40 @@ TEST(PrivacyGuard, AppIdsAndTokensAsTheStoreKeysThem)
     EXPECT_TRUE(isPortalToken(QString(128, QLatin1Char('a'))));
     EXPECT_FALSE(isPortalToken(QString(129, QLatin1Char('a'))));
 }
+
+// Default web browser (Backend::writeDefaultAppsFile, ADR-0055 D-6): the session's list and the record, nothing else, never through a
+// link, and in a dev session only where the folder's real location lies under <root>/.dev (review of PR #38, MED-4).
+TEST(DefaultAppsGuard, OnlyTheListAndTheRecordAndInDevOnlyUnderDev)
+{
+    QTemporaryDir tmp;
+    const QString base = QFileInfo(tmp.path()).canonicalFilePath();
+    const QString cfg = base + QStringLiteral("/cfg");
+    const QString state = base + QStringLiteral("/state");
+    QDir().mkpath(cfg);
+    EXPECT_TRUE(isDefaultAppsWrite(cfg + QStringLiteral("/grassfield-mimeapps.list"), cfg, state, QString(), false));
+    EXPECT_TRUE(isDefaultAppsWrite(state + QStringLiteral("/default-apps.state"), cfg, state, QString(), false)) << "the folder need not exist yet";
+    for (const QString &bad : {cfg + QStringLiteral("/mimeapps.list"), cfg + QStringLiteral("/hyprland-mimeapps.list"), cfg + QStringLiteral("/default-apps.state"),
+                               state + QStringLiteral("/grassfield-mimeapps.list"), cfg + QStringLiteral("/../cfg/grassfield-mimeapps.list"),
+                               base + QStringLiteral("/other/grassfield-mimeapps.list"), QStringLiteral("grassfield-mimeapps.list"), QString()})
+        EXPECT_FALSE(isDefaultAppsWrite(bad, cfg, state, QString(), false)) << qPrintable(bad);
+    EXPECT_FALSE(isDefaultAppsWrite(cfg + QStringLiteral("/grassfield-mimeapps.list"), QString(), state, QString(), false));
+    ASSERT_EQ(::symlink(QFile::encodeName(base + QStringLiteral("/target-list")).constData(), QFile::encodeName(cfg + QStringLiteral("/grassfield-mimeapps.list")).constData()), 0);
+    EXPECT_FALSE(isDefaultAppsWrite(cfg + QStringLiteral("/grassfield-mimeapps.list"), cfg, state, QString(), false)) << "a link to another file";
+
+    const QString root = tree().root;
+    const QString inCfg = root + QStringLiteral("/.dev/dab-cfg");
+    const QString inState = root + QStringLiteral("/.dev/dab-state/grassfield");
+    QDir().mkpath(inCfg);
+    EXPECT_TRUE(isDefaultAppsWrite(inCfg + QStringLiteral("/grassfield-mimeapps.list"), inCfg, inState, root, true));
+    EXPECT_TRUE(isDefaultAppsWrite(inState + QStringLiteral("/default-apps.state"), inCfg, inState, root, true)) << "a state folder .dev has not made yet";
+    // the owner's folders, a folder outside .dev, one reached through the .dev/link symlink to <root>/outside, no worktree at all
+    const QString home = QDir::homePath();
+    EXPECT_FALSE(isDefaultAppsWrite(home + QStringLiteral("/.config/grassfield-mimeapps.list"), home + QStringLiteral("/.config"), home + QStringLiteral("/.local/state/grassfield"), root, true));
+    EXPECT_FALSE(isDefaultAppsWrite(home + QStringLiteral("/.local/state/grassfield/default-apps.state"), home + QStringLiteral("/.config"), home + QStringLiteral("/.local/state/grassfield"), root, true));
+    EXPECT_FALSE(isDefaultAppsWrite(root + QStringLiteral("/outside/grassfield-mimeapps.list"), root + QStringLiteral("/outside"), inState, root, true));
+    EXPECT_FALSE(isDefaultAppsWrite(root + QStringLiteral("/.dev/link/grassfield-mimeapps.list"), root + QStringLiteral("/.dev/link"), inState, root, true));
+    EXPECT_FALSE(isDefaultAppsWrite(root + QStringLiteral("/.dev/link/new/grassfield-mimeapps.list"), root + QStringLiteral("/.dev/link/new"), inState, root, true));
+    EXPECT_FALSE(isDefaultAppsWrite(inCfg + QStringLiteral("/grassfield-mimeapps.list"), inCfg, inState, QString(), true)) << "no worktree";
+    QDir(root + QStringLiteral("/.dev/dab-cfg")).removeRecursively();
+    QDir(root + QStringLiteral("/.dev/dab-state")).removeRecursively();
+}

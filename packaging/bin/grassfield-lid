@@ -8,15 +8,16 @@
 # macOS model: with the lid closed and an external display connected, the computer keeps running on that display (the
 # laptop panel is switched off and its windows move to the external display); with the lid closed and no external display
 # it sleeps, and the screen is locked first. logind decides about suspend (HandleLidSwitchDocked defaults to ignore, so a
-# docked lid does not suspend). On every lid close this script asks the shell to lock with `lock lid`; the shell decides
-# (shell/security/lock/Lock.qml lockOnLid, LockMachine.lidShouldLock: no lock while a physical external display is
+# docked lid does not suspend). On every lid close this script asks the security process to lock with `lock lid` (ADR-0041
+# step 1, S2: the lock lives in grassfield-security.service, the instance /usr/share/grassfield/shell/security.qml); it
+# decides (shell/security/lock/Lock.qml lockOnLid, LockMachine.lidShouldLock: no lock while a physical external display is
 # active, i.e. clamshell mode; it locks also when logind does not suspend, D-4). This script only turns the laptop panel
 # off or on for clamshell mode. Nothing here suspends or unlocks.
 #
-# When the shell does not answer (stopped, crashed, restarting) and no external display is connected, the lock is not
-# dropped: Grassfield's `omarchy-shell` stand-in starts grassfield-shell again and asks it to lock (follow-up N3; the
-# lock stays grassfield-shell's WlSessionLock + PamContext, no other locker). That matters when logind does not suspend
-# on the lid (HandleLidSwitch=ignore or lock): nothing else would lock then.
+# When the security process does not answer (stopped, crashed, restarting) and no external display is connected, the lock
+# is not dropped: Grassfield's `omarchy-shell` stand-in starts grassfield-security again and asks it to lock (follow-up N3;
+# the lock stays grassfield-security's WlSessionLock + PamContext, no other locker). That matters when logind does not
+# suspend on the lid (HandleLidSwitch=ignore or lock): nothing else would lock then.
 #
 # Test hooks (dev plumbing, ADR-0019): GRASSFIELD_LID_PROC (default /proc/acpi/button/lid), GRASSFIELD_DRM (default
 # /sys/class/drm), GRASSFIELD_LID_LOCK (the lock command), GRASSFIELD_LID_FALLBACK (the stand-in), honoured only in a dev
@@ -36,7 +37,7 @@ DRM=/sys/class/drm
 RUNTIME=${XDG_RUNTIME_DIR:-/tmp}
 MARKER=$RUNTIME/grassfield-lid-internal-off
 LOCKFILE=$RUNTIME/grassfield-lid.lock
-LOCK_CMD="qs ipc -p /usr/share/grassfield/shell call lock lid"
+LOCK_CMD="qs ipc -p /usr/share/grassfield/shell/security.qml call lock lid"
 FALLBACK=/usr/lib/grassfield/omarchy-shims/omarchy-shell
 if [[ ${GRASSFIELD_DEV:-} == 1 && ${GRASSFIELD_SESSION:-} != 1 ]]; then
   LID_PROC=${GRASSFIELD_LID_PROC:-$LID_PROC}
@@ -45,7 +46,7 @@ if [[ ${GRASSFIELD_DEV:-} == 1 && ${GRASSFIELD_SESSION:-} != 1 ]]; then
   FALLBACK=${GRASSFIELD_LID_FALLBACK:-$FALLBACK}
 fi
 
-# Ask the shell to lock (it decides about clamshell mode). Its answers: ok, already-locked, docked, refused: <why>.
+# Ask the security process to lock (it decides about clamshell mode). Its answers: ok, already-locked, docked, refused: <why>.
 lock_on_close() {
   local answer
   if answer=$($LOCK_CMD 2>/dev/null); then
@@ -53,9 +54,10 @@ lock_on_close() {
       ok | already-locked | docked | refused:*) return 0 ;;
     esac
   fi
-  # No answer (or "Not ready to accept queries yet"): the shell is down or starting. Clamshell decides here instead.
+  # No answer (or "Not ready to accept queries yet"): the security process is down or starting. Clamshell decides here
+  # instead.
   external_connected && return 0
-  # In the background: the panel handling must not wait for a shell restart (the stand-in waits up to ~10 s).
+  # In the background: the panel handling must not wait for a restart (the stand-in waits up to ~10 s).
   [[ -x $FALLBACK ]] && setsid -f "$FALLBACK" lock lock >/dev/null 2>&1 </dev/null
   return 0
 }
@@ -111,7 +113,7 @@ reconcile() {
 
 case ${1:-} in
   closed)
-    # First, before logind may suspend: the shell locks unless an external display is active (clamshell: the computer
+    # First, before logind may suspend: the security process locks unless an external display is active (clamshell: the computer
     # keeps running and stays unlocked, as on macOS). Sent on every close, whatever /proc says (a lid that only reports
     # through the input switch still locks).
     lock_on_close

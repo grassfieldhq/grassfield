@@ -18,6 +18,8 @@
 # empty new password never sent by Return (opus review of step 9b, MAJOR-1 and MINOR-1); a restarted bridge's reused id. Then static checks of what offscreen cannot run (the layer namespace, the
 # keyboard binding, no lock or shield glyph and no "Authentication required" in the sheets, the same delays as the
 # polkit sheet's). No compositor, no bridge, no polkit, no PAM.
+# Against the security process (ADR-0041 step 1, S3): both agents run there, beside the lock they read in process
+# (qs.security's SheetSession, which the tests set as SecurityHost's Bindings would), with qs.security and qs.lib only.
 #
 #   tests/security/secret_sheets.sh              the tests: PASS / FAIL
 #   tests/security/secret_sheets.sh --mutants    also each mutant below, which the tests must catch ("MUTANT <name>: CAUGHT")
@@ -47,15 +49,12 @@ export QT_QPA_PLATFORM=offscreen
 fail=0
 
 # qs.lib is the real folder; qs.security the real files but PasswordField.qml, which run() takes from the case under test
-# (a mutant may change it: opus review of step 9c, MINOR); qs.services holds the real SessionState and a ThemeIcons that
-# finds no icon.
-mkdir -p "$scratch/qsroot/qs/services" "$scratch/qsroot/qs/security"
+# (a mutant may change it: opus review of step 9c, MINOR). No other qs module: the security process's world (ADR-0041 S3).
+mkdir -p "$scratch/qsroot/qs/security"
 for entry in "$root"/shell/security/* "$root"/shell/security/qmldir; do
   [[ $(basename "$entry") == PasswordField.qml ]] || ln -sf "$entry" "$scratch/qsroot/qs/security/$(basename "$entry")"
 done
 ln -s "$root/shell/lib" "$scratch/qsroot/qs/lib"
-cp "$root/shell/services/SessionState.qml" "$pd/ThemeIcons.qml" "$scratch/qsroot/qs/services/"
-printf 'module qs.services\nsingleton SessionState 1.0 SessionState.qml\nsingleton ThemeIcons 1.0 ThemeIcons.qml\n' >"$scratch/qsroot/qs/services/qmldir"
 
 # run <dir with SecretAgent.qml, SecretSheet.qml, SecretSheetModel.qml, Prompter.js, AuthAgent.qml, AuthDialog.qml,
 # AuthDialogModel.qml>: generates the harness and runs the tests; 0 when every case passed and no QML runtime error was
@@ -104,15 +103,16 @@ agent = code(read("shell/security/secret/SecretAgent.qml"))
 sheet = code(read("shell/security/secret/SecretSheet.qml"))
 model = code(read("shell/security/secret/SecretSheetModel.qml"))
 polkit_model = code(read("shell/security/polkit/AuthDialogModel.qml"))
-shell = code(read("shell/shell.qml"))
+host = code(read("shell/security/host/SheetHost.qml"))
+security_host = code(read("shell/security/host/SecurityHost.qml"))
 checks = []
 def expect(what, ok):
     checks.append(("OK " if ok else "PROBLEM ") + what)
 expect("the secret sheet's layer namespace is grassfield-secret", re.search(r'WlrLayershell\.namespace:\s*"grassfield-secret"\s*\n', agent) is not None)
 expect("the compositor's keyboard follows takesKeys only (Exclusive, else None), as the polkit sheet's",
        re.search(r"keyboardFocus:\s*win\.takesKeys\s*\?\s*WlrKeyboardFocus\.Exclusive\s*:\s*WlrKeyboardFocus\.None\s*\n", agent) is not None
-       and re.search(r"property bool takesKeys:\s*!SessionState\.locked\s*&&\s*\(\(root\.requestOpen\s*&&\s*\(!root\.heldByLock\s*\|\|\s*root\.userFocused\)\)\s*\|\|\s*root\.sinkingKeys\)\s*\n", agent) is not None
-       and re.search(r"\bvisible:\s*!SessionState\.locked\s*&&\s*\(root\.requestOpen\s*\|\|\s*root\.sinkingKeys\)\s*\n", agent) is not None)
+       and re.search(r"property bool takesKeys:\s*!SheetSession\.locked\s*&&\s*\(\(root\.requestOpen\s*&&\s*\(!root\.heldByLock\s*\|\|\s*root\.userFocused\)\)\s*\|\|\s*root\.sinkingKeys\)\s*\n", agent) is not None
+       and re.search(r"\bvisible:\s*!SheetSession\.locked\s*&&\s*\(root\.requestOpen\s*\|\|\s*root\.sinkingKeys\)\s*\n", agent) is not None)
 expect("the overlay layer, as the polkit sheet", re.search(r"WlrLayershell\.layer:\s*WlrLayer\.Overlay\s*\n", agent) is not None)
 glyphs = re.findall(r'"([a-z-]+)"', re.search(r"property string glyph:[^\n]*", model).group(0)) if re.search(r"property string glyph:", model) else []
 expect("the requester glyphs are never a lock or a shield (" + ", ".join(glyphs) + ")", glyphs != [] and not any(g in ("lock", "lock-fill", "shield") for g in glyphs))
@@ -141,15 +141,16 @@ expect("a Bluetooth pairing step is always held (decision 10-7)",
 expect("a Bluetooth code shown has no OK, only Cancel (decision 10-6)",
        re.search(r"visible:\s*!root\.model\.displaysCode\s*\n", sheet) is not None
        and re.search(r'if \(mode === "display-pin" \|\| mode === "display-passkey"\)\s*\n\s*return "";', code(read("shell/security/secret/Prompter.js"))) is not None)
-expect("shell.qml wires one SheetQueue to both agents and the polkit sheet's place",
-       re.search(r"SheetQueue\s*\{\s*id:\s*sheetQueue\s*polkitPresent:\s*authAgent\.queuePresent\s*\}", shell) is not None
-       and re.search(r"AuthAgent\s*\{\s*id:\s*authAgent\s*queue:\s*sheetQueue\s*\}", shell) is not None
-       and re.search(r"SecretAgent\s*\{\s*id:\s*secretAgent\s*queue:\s*sheetQueue\b", shell) is not None)
-expect("SessionState.authorizing covers the secret sheets (the clipboard history records nothing meanwhile)",
-       re.search(r'property:\s*"authorizing"\s*value:\s*authAgent\.requestActive\s*\|\|\s*secretAgent\.requestActive', shell) is not None)
+expect("the security process's sheets (SheetHost.qml) wire one SheetQueue to both agents and the polkit sheet's place (ADR-0041 S3)",
+       re.search(r"SheetQueue\s*\{\s*id:\s*sheetQueue\s*polkitPresent:\s*authAgent\.queuePresent\s*\}", host) is not None
+       and re.search(r"AuthAgent\s*\{\s*id:\s*authAgent\s*queue:\s*sheetQueue\b", host) is not None
+       and re.search(r"SecretAgent\s*\{\s*id:\s*secretAgent\s*queue:\s*sheetQueue\b", host) is not None)
+expect("the published authorizing covers the secret sheets (the UI's clipboard history records nothing meanwhile)",
+       re.search(r"readonly property bool authorizing:\s*authAgent\.requestActive\s*\|\|\s*secretAgent\.requestActive\s*\n", host) is not None
+       and re.search(r'target:\s*Lock\s*property:\s*"authorizing"\s*value:\s*root\.sheets\s*!==\s*null\s*&&\s*root\.sheets\.authorizing\s*===\s*true\s*\}', read("shell/security/host/SecurityHost.qml")) is not None)
 polkit = code(read("shell/security/polkit/AuthAgent.qml"))
 expect("the polkit agent is handed no request while a secret sheet came first",
-       re.search(r"flow:\s*agent\.isActive\s*&&\s*!root\.waiting\s*\?\s*agent\.flow\s*:\s*null", polkit) is not None
+       re.search(r"flow:\s*root\.agentActive\s*&&\s*!root\.waiting\s*\?\s*root\.agent\.flow\s*:\s*null", polkit) is not None
        and re.search(r"property bool waiting:\s*root\.queue\s*!==\s*null\s*&&\s*root\.queue\.polkitWaits\s*\n", polkit) is not None)
 for c in checks:
     print(c)
@@ -194,7 +195,7 @@ PY
   if run "$m" >/dev/null; then echo "MUTANT $name: NOT CAUGHT"; status=1; else echo "MUTANT $name: CAUGHT"; fi
 done <<'EOF_MUTANTS'
 queue-ignored (the secret sheet shows any request)#SecretAgent.qml#        const head = root.queue.secretHead;#        const head = Object.keys(root.requests)[0] || "";
-polkit-not-gated (the polkit sheet takes a request while a secret sheet is on screen)#AuthAgent.qml#flow: agent.isActive && !root.waiting ? agent.flow : null#flow: agent.isActive ? agent.flow : null
+polkit-not-gated (the polkit sheet takes a request while a secret sheet is on screen)#AuthAgent.qml#flow: root.agentActive && !root.waiting ? root.agent.flow : null#flow: root.agentActive ? root.agent.flow : null
 polkit-not-held-after-a-secret-sheet#AuthAgent.qml#            if (kind === "secret")\n                dialogModel.noteEnded();#            if (kind === "nothing")\n                dialogModel.noteEnded();
 secret-not-held-after-the-polkit-sheet#SecretAgent.qml#            if (kind === "polkit")\n                sheetModel.noteEnded();#            if (kind === "nothing")\n                sheetModel.noteEnded();
 waited-not-held#SecretAgent.qml#        request.waited = root.queue.secretHead !== request.id;#        request.waited = false;
@@ -206,7 +207,7 @@ no-linger-after-a-password (the polkit rule)#SecretAgent.qml#const typing = root
 linger-after-a-cancel#SecretAgent.qml#const typing = root.sinkingKeys || (!sheetModel.active && win.takesKeys && !(answered && root.answeredKeysBack));#const typing = root.sinkingKeys || (!sheetModel.active && win.takesKeys);
 no-linger#SecretAgent.qml#const typing = root.sinkingKeys || (!sheetModel.active && win.takesKeys && !(answered && root.answeredKeysBack));#const typing = false;
 released-during-the-linger#SecretAgent.qml#        if (sheetModel.active || root.sinkingKeys || root.shownId === "")#        if (sheetModel.active || root.shownId === "")
-shown-over-the-lock#SecretAgent.qml#readonly property bool shown: sheetModel.active && !SessionState.locked#readonly property bool shown: sheetModel.active#SecretAgent.qml#visible: !SessionState.locked && (root.requestOpen || root.sinkingKeys)#visible: (root.requestOpen || root.sinkingKeys)
+shown-over-the-lock#SecretAgent.qml#readonly property bool shown: sheetModel.active && !SheetSession.locked#readonly property bool shown: sheetModel.active#SecretAgent.qml#visible: !SheetSession.locked && (root.requestOpen || root.sinkingKeys)#visible: (root.requestOpen || root.sinkingKeys)
 no-click-guard#SecretAgent.qml#                if (!sheetModel.heldClickAccepted())\n                    return;#                ;
 no-unlock-hold#SecretSheetModel.qml#return locked || unlockHold.running || afterRequest.running;#return locked || afterRequest.running;
 saver-not-held#SecretAgent.qml#                root.heldByLock = true;\n                root.userFocused = false;\n                sheetModel.clearRequested();#                root.userFocused = false;

@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Grassfield.I18n
+import Grassfield.Ui
 import qs.notifications
 import qs.services
 
@@ -12,7 +13,8 @@ import qs.services
 // "ctl", then may have set QS_ICON_THEME to a user theme whose index.theme is hostile. As a notification would, the probe
 // takes "evil" in as an app icon, asks Qt directly (Quickshell.hasThemeIcon on the GUI thread: Qt must not read the
 // user's theme files), waits for ThemeIcons' answer (the PNG it made, or a refusal),
-// gives the notification's icon source and the polkit sheet's (ThemeIcons.source, AuthAgent's call) to Images, then
+// gives the notification's icon source and the polkit sheet's to Images (the sheets run in the security process since
+// ADR-0041 S3 and look a name up by SheetHost.themeIcon: the system theme only, never a copy), then
 // loads "ctl" (a private copy too): that Image only becomes Ready when the image loader never stalled, and the probe
 // exits only when the GUI thread never blocked. Kind "swap" starts from a regular evil.png, shown as a copy, then makes
 // it a FIFO and has a new notification name it: the new copy is refused. Prints one "probe:" line and exits.
@@ -107,7 +109,9 @@ ShellRoot {
                 }
                 root.state = s;
                 root.notifSource = Notifications.iconSource("", "evil");
-                root.polkitSource = ThemeIcons.source("evil");
+                // SheetHost.themeIcon, the same expression (theme_icon_files.sh pins it there).
+                const safe = NotificationPrefs.safeIconName("evil");
+                root.polkitSource = safe !== "" && Quickshell.hasThemeIcon(safe) ? Quickshell.iconPath(safe) : "";
                 viaNotification.source = root.notifSource;
                 viaPolkit.source = root.polkitSource;
                 root.phase = "control";

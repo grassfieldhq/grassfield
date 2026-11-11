@@ -158,6 +158,36 @@ TestCase {
         compare(Accent.resolve("multicolor", false, Tokens), null);
     }
 
+    // Accent text on glass reads `accentGlass`: the ink mixed toward the text colour by the glass token. The 18 colours are pinned as
+    // literals, computed independently by tests/visual/test_contrast_tokens.py (which pins the same ones and checks the 4.5:1 they
+    // buy over the shell's real glass), so a change of either side, of a palette or of a mix token fails here.
+    readonly property var glassPinned: ({
+        dark: {multicolor: "#cfe5d0", blue: "#d2e1f4", purple: "#e8dcf0", pink: "#f6d7e1", red: "#f7d7d1", orange: "#f7e1c8", yellow: "#f7ecc8", green: "#deedc9", graphite: "#e3e2e0"},
+        light: {multicolor: "#1b3728", blue: "#1e3864", purple: "#442a60", pink: "#62243d", red: "#612420", orange: "#503011", yellow: "#473a0e", green: "#2e401e", graphite: "#37383b"}
+    })
+
+    function test_accentGlassIsTheInkMixedTowardTheText() {
+        // The mix of the two channels spelled out for one case: pure black and white halfway is #808080 (Math.round of 127.5).
+        compare(Accent.glassInk("#000000", "#ffffff", 0.5), "#808080");
+        compare(Accent.glassInk("#ffffff", "#000000", 0), "#ffffff");
+        compare(Accent.glassInk("#0a0a0a", "#0a0a0a", 0.7), "#0a0a0a");
+        compare(Accent.glassInk("not a colour", "#ffffff", 0.5), "not a colour");
+        compare(Tokens.glassAccentInkMixDark, 0.76);
+        compare(Tokens.glassAccentInkMixLight, 0.58);
+        for (const dark of [false, true]) {
+            const ap = dark ? "dark" : "light";
+            for (const n of Accent.NAMES) {
+                Appearance.dark = dark;
+                Appearance.accentSetting = n;
+                const c = Appearance.colors;
+                compare(c.accentGlass, glassPinned[ap][n], ap + " " + n);
+                verify(!Qt.colorEqual(c.accentGlass, c.accentInk), n + ": the variant is not the raw ink");
+            }
+        }
+        Appearance.dark = false;
+        Appearance.accentSetting = "multicolor";
+    }
+
     function test_glyphMaskStillWins() {
         Appearance.accentSetting = "green";
         Appearance.devGlyphMode = "white";
