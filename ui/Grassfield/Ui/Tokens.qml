@@ -3123,6 +3123,8 @@ QtObject {
     readonly property real iconModeDeepLiftPivot: 0.25
     // ADR-0014 / R7-REQ-13: exponent of that one-sided ease-out lift at deep plate weight 1 (1 = none); nothing below the pivot moves. Modelled (.dev/a2model/band.py): kdenlive +0.5 on rule E in Dark, Clear and Tinted.
     readonly property real iconModeDeepLiftExponent: 1.7
+    // ADR-0014 / R7-REQ-13: how far below the smoked-plate and tone edge (clearSmokeSurfaceMax) the held surface luminance is clamped while it stays on the lower side inside the hysteresis band (IconModes.heldSurface).
+    readonly property real iconModeSurfaceEdgeStep: 0.001
     // ADR-0014 tile tone, Dark in the dark appearance (R7-REQ-13, A2 rule E): the pivot of Dark's lift, above the brightest dark material (tileLiftPivot 0.38) so that only the lightest tones of a tile move: basecamp's sky (0.60) takes Dark's tile at 24 px, transparency 1.0, over white from 1.57:1 to a modelled 2.06 (floor 1.73) while Dark's rule I and S cells (floor 0.9 of Default's) keep a modelled margin of 0.16 and 0.21: a lift from 0.38 and one from 0.45 broke them (model, 2026-11-10)
     readonly property real iconModeTileLiftPivotDark: 0.55
     // ADR-0014 tile tone, Dark: exponent q of the lift above tileLiftPivotDark (an ease-out; 1 = none)

@@ -135,8 +135,9 @@ void main() {
         lin = mix(down, lin, step(vec3(tileTonePivot), lin));
     } else if (!isTile && bandLiftExp > 1.0001) {
         // BAND LIFT (R7-REQ-13, A2 rule E, GPU 2026-11-11): on a dark glass the black plate is at its ceiling (about 2.9:1 against a 0.10 surface), so the glyph carries rule E; its bright
-        // tones are lifted by the same one-sided ease-out as the tile tone (nothing below the pivot moves, so the pairs rules N and I measure only gain), the exponent following the
-        // deep plate weight (IconEffect).
+        // tones are lifted by the same one-sided ease-out as the tile tone (nothing below the pivot moves; pairs of tones both above it compress), the exponent following the deep
+        // plate weight (IconEffect). Measured on the GPU (2026-11-11): rule N fell in 83 band cells (system-run Dark 2.20 to 1.88) and rule I by up to 0.75 (help-browser Tinted,
+        // light, 9.91 to 9.16); all still pass.
         vec3 u = clamp((lin - vec3(bandLiftPivot)) / (1.0 - bandLiftPivot), vec3(0.0), vec3(1.0));
         vec3 up = vec3(bandLiftPivot) + (1.0 - bandLiftPivot) * (vec3(1.0) - pow(vec3(1.0) - u, vec3(bandLiftExp)));
         lin = mix(lin, up, step(vec3(bandLiftPivot), lin));

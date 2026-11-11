@@ -406,7 +406,7 @@ TestCase {
                     const d = testCase.regionDiff(img, cells[0], cells[m]);
                     measured++;
                     console.log(`A2 D ${testCase.fixtures[f].name} ${testCase.modes[m]} ${name}: the Default artwork, largest channel difference ${(d * 255).toFixed(1)}/255`);
-                    if (d > 3 / 255)
+                    if (!(d <= 3 / 255)) // not `d > ...`: a NaN must fail too
                         failures.push(`D ${testCase.fixtures[f].name} ${testCase.modes[m]} ${name}: a ${testCase.iconSize} px icon is not the Default artwork (${(d * 255).toFixed(1)}/255 off)`);
                 }
                 continue;
@@ -428,15 +428,18 @@ TestCase {
                 console.log("A2 " + line);
                 const name1 = testCase.fixtures[f].name;
                 const mode1 = testCase.modes[m];
-                testCase.judge("I", label, line, r.inside, base.inside >= 2 && r.inside < floorIn(base.inside, mode1), failures);
+                // Every comparison below is written `!(value >= floor)`, never `value < floor`: a NaN or a non-finite measure (an icon not drawn yet) fails instead of passing.
+                if (![r.inside, r.internal, r.outside, base.inside, base.internal, base.outside].every(v => isFinite(v)))
+                    failures.push(`${label}: a non-finite measure (${line})`);
+                testCase.judge("I", label, line, r.inside, base.inside >= 2 && !(r.inside >= floorIn(base.inside, mode1)), failures);
                 // Artwork that is only a little different from its plate (a same-hue glyph, a mountain on a sky, a pale gear on a light
                 // plate) must not vanish into it in any mode: its glyph-vs-plate contrast keeps 85 percent of the default's, or 1.5.
-                testCase.judge("S", label, line, r.inside, testCase.separationFixtures.indexOf(name1) >= 0 && base.inside >= 1.2 && r.inside < Math.min(1.5, 0.85 * base.inside), failures);
-                testCase.judge("E", label, line, r.outside, r.outside < floorOf(base.outside), failures);
+                testCase.judge("S", label, line, r.inside, testCase.separationFixtures.indexOf(name1) >= 0 && base.inside >= 1.2 && !(r.inside >= Math.min(1.5, 0.85 * base.inside)), failures);
+                testCase.judge("E", label, line, r.outside, !(r.outside >= floorOf(base.outside)), failures);
                 // N (internal contrast), per-mode tiers (internalTiers): the maps are monotonic with a minimum slope; a dark monochrome glyph must
                 // also stand out from the plate, which costs part of the contrast between black and mid-grey art (tests/unit/tst_iconcontrast.qml).
                 const tier = testCase.internalTiers[mode1][base.internal >= 7 ? 0 : 1];
-                testCase.judge("N", label, line, r.internal, base.internal >= 3 && r.internal < tier, failures);
+                testCase.judge("N", label, line, r.internal, base.internal >= 3 && !(r.internal >= tier), failures);
             }
         }
         return measured;
@@ -562,7 +565,7 @@ TestCase {
                     const plateRatio = ratio(luminance(img.pixel(px, py)), luminance(accent));
                     console.log(`A2 ${label}: plate pixel ${plateRatio.toFixed(2)} (outside ${r.outside.toFixed(2)}: plate ${r.plateOverPanel.toFixed(2)} outline ${r.outlineOverPanel.toFixed(2)} glyph ${r.glyphOverPanel.toFixed(2)})`);
                     const floor = testCase.modes[m] === "clear" ? 4.5 : 2.5;
-                    if (plateRatio < floor)
+                    if (!(plateRatio >= floor))
                         failures.push(`A ${label}: plate pixel ${plateRatio.toFixed(2)} < ${floor}`);
                 }
             }
@@ -777,7 +780,7 @@ TestCase {
                         const label = `${String(url).split("/").pop()} ${mode} ${dark ? "dark" : "light"}${wall ? " wallpaper" : ""}: model ${FolderStyle.hexOf(mean)} drawn ${FolderStyle.hexOf(drawn)} (max channel diff ${(d * 255).toFixed(0)}/255; per channel ${[0, 1, 2].map(q => ((mean[q] - drawn[q]) * 255).toFixed(1)).join(" ")}; shader look: wall=${cells[m].icon.effectItem ? cells[m].icon.effectItem.overWallpaper : "?"} tile=${cells[m].icon.ownTile} tone=${cells[m].icon.effectItem ? cells[m].icon.effectItem.tileToneSide : "?"} transparency=${Appearance.effectiveTransparency.toFixed(2)})`;
                         console.log("A2 folder " + label);
                         compared++;
-                        if (d > 4 / 255 + 1e-6)
+                        if (!(d <= 4 / 255 + 1e-6))
                             failures.push(label);
                     }
                     cells.forEach(c => c.destroy());
@@ -982,27 +985,34 @@ TestCase {
                         cell.destroy();
                         continue;
                     }
-                    wait(300);
-                    const img = grabImage(cell);
                     const bg = Qt.color(Appearance.colors.selection);
                     // A robust statistic: the mean contrast of the top 20 percent of the icon's own pixels (those that differ from the accent), so
-                    // that a stray pixel cannot carry a failing icon.
-                    const rs = [];
-                    for (let y = 0; y < 40; y++) {
-                        for (let x = 0; x < 40; x++) {
-                            const c = img.pixel(x, y);
-                            if (Math.max(Math.abs(c.r - bg.r), Math.abs(c.g - bg.g), Math.abs(c.b - bg.b)) > 0.02)
-                                rs.push(ratio(luminance(c), luminance(bg)));
+                    // that a stray pixel cannot carry a failing icon. Read once the icon is drawn (the first scene draws late, as in the folder-model
+                    // test: at least 20 such pixels), up to five seconds; an icon that never shows fails below (no pixels: not finite).
+                    let rs = [];
+                    let img = null;
+                    for (let tries = 0; tries < 20; tries++) {
+                        wait(tries === 0 ? 300 : 250);
+                        img = grabImage(cell);
+                        rs = [];
+                        for (let y = 0; y < 40; y++) {
+                            for (let x = 0; x < 40; x++) {
+                                const c = img.pixel(x, y);
+                                if (Math.max(Math.abs(c.r - bg.r), Math.abs(c.g - bg.g), Math.abs(c.b - bg.b)) > 0.02)
+                                    rs.push(ratio(luminance(c), luminance(bg)));
+                            }
                         }
+                        if (rs.length >= 20)
+                            break;
                     }
                     rs.sort((p, q) => q - p);
                     const top = rs.slice(0, Math.max(1, Math.ceil(rs.length * 0.2)));
-                    const best = top.reduce((p, q) => p + q, 0) / top.length;
+                    const best = rs.length === 0 ? NaN : top.reduce((p, q) => p + q, 0) / top.length;
                     measured++;
                     const label = `files row ${src[0] ? "folder" : String(src[1]).split("/").pop()} ${mode} ${dark ? "dark" : "light"}: mean of the top 20 percent pixels ${best.toFixed(2)}`;
                     console.log("A2 " + label);
                     // Dark keeps its graphite plate on both fills (2.8:1 against the dark accent of the light appearance): 2.5, as the accent row.
-                    if (best < (mode === "dark" ? 2.5 : 3))
+                    if (!(best >= (mode === "dark" ? 2.5 : 3)))
                         failures.push(label);
                     cell.destroy();
                 }

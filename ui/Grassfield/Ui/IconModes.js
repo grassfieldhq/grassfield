@@ -76,7 +76,7 @@ function heldSurface(previous, luma, t) {
     const edge = t.iconModeClearSmokeSurfaceMax, h = t.iconModeSurfaceToneHysteresis;
     if (luma <= edge - h || luma >= edge + h || !(previous >= 0))
         return luma;
-    return previous < edge ? Math.min(luma, edge - 0.001) : Math.max(luma, edge);
+    return previous < edge ? Math.min(luma, edge - t.iconModeSurfaceEdgeStep) : Math.max(luma, edge);
 }
 
 // The opacity of the smoked Clear plate on a glass surface of known luminance `surface` (-1 or undefined: unknown, the base): raised from `base` until the plate (luma `plateLuma`)
