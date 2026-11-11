@@ -432,10 +432,10 @@ deletes the session-only files and keeps your settings and state by design, GF-0
 
 ```bash
 # Session-only files: they do nothing outside Grassfield (the installer's --uninstall deletes them)
-rm -f ~/.config/grassfield-mimeapps.list ~/.config/xdg-desktop-portal/grassfield-portals.conf
+rm -f ~/.config/xdg-desktop-portal/grassfield-portals.conf
 rm -rf ~/.local/share/icons/grassfield-cursors-custom ~/.cache/grassfield
-# Your Grassfield settings and state (the installer keeps them, as on a Mac, and prints this line)
-rm -rf ~/.config/grassfield ~/.local/state/grassfield
+# Your Grassfield settings and state, with the session's default-app list (the installer keeps them and prints this line)
+rm -rf ~/.config/grassfield ~/.config/grassfield-mimeapps.list ~/.local/state/grassfield
 rm -rf "$XDG_RUNTIME_DIR/grassfield"   # tmpfs, gone at reboot anyway
 ls ~/.config/autostart/               # delete only entries you added through the Grassfield Dock
 ```

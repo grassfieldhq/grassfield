@@ -77,9 +77,10 @@ prompt). At the login screen choose **Grassfield (uwsm)** (it is the default). U
 - Only for the next login: `grassfield-login set omarchy`, then log out.
 - Remove Grassfield completely: run the script again with `--uninstall` (`bash grassfield-install.sh --uninstall`). It takes a
   snapshot, turns Grassfield updates off, switches the session back to Omarchy, puts the previous login and boot screens back,
-  removes the packages, the `[grassfield]` repository and the key, deletes the files that only matter inside Grassfield (default
-  apps of the session, portal link, pointer theme, cache) and the `grassfield-update` system group. Your Grassfield settings and
-  state are kept, as on a Mac: the script prints where they are and the one command that deletes them. Restart once.
+  removes the packages, the `[grassfield]` repository and the key, deletes the files that only matter inside Grassfield (portal
+  link, pointer theme, cache) and the `grassfield-update` system group once nothing on the machine is owned by it. Your Grassfield
+  settings and state (including the session's default-app list) are kept: the script prints where they are and the one command
+  that deletes them. Restart once.
 
 Run the install again at any time to repair or update: it never duplicates anything.
 
@@ -156,8 +157,9 @@ Les mises à jour arrivent ensuite depuis Réglages > Mise à jour.
 - Retirer Grassfield complètement : relance le script avec `--uninstall` (`bash grassfield-install.sh --uninstall`). Il prend un
   snapshot, désactive les mises à jour Grassfield, remet la session sur Omarchy, remet les écrans de connexion et de démarrage
   précédents, retire les paquets, le dépôt `[grassfield]` et la clé, supprime les fichiers qui ne servent qu'à Grassfield
-  (applications par défaut de la session, lien des portails, thème de pointeur, cache) et le groupe système `grassfield-update`.
-  Tes réglages et ton état Grassfield sont gardés, comme sur un Mac : le script indique où ils sont et la commande qui les supprime.
+  (lien des portails, thème de pointeur, cache) et le groupe système `grassfield-update` une fois que rien sur la machine ne lui
+  appartient. Tes réglages et ton état Grassfield (dont la liste des applications par défaut de la session) sont gardés : le script
+  indique où ils sont et la commande qui les supprime.
   Redémarre une fois.
 
 Relance l'installation à tout moment pour réparer ou mettre à jour : rien n'est jamais dupliqué.

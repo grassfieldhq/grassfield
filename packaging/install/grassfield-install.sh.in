@@ -42,6 +42,8 @@ LOG='' STATE_DIR=''
 TMP=''
 PROBLEMS=0
 PENDING_N=0
+UPDATED=0
+SOFT_FAILS=()
 FR=0
 DIED=0
 # 0: nothing changed yet; 1: the repository is being added (a failure rolls it back); 2: packages installed (kept).
@@ -57,7 +59,12 @@ t() { if ((FR)); then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 say() { printf '%s\n' "$(t "$1" "$2")"; }
 die() {
   DIED=1
-  printf '\n%s %s\n' "$(t 'Stopped:' 'Arret :')" "$(t "$1" "$2")" >&2
+  local en=$1 fr=$2
+  if ((UPDATED)); then # the update ran: say what was done, never "nothing was changed"
+    en=${en//Nothing was changed./The system was updated; Grassfield was not installed.}
+    fr=${fr//Rien n a ete modifie./Le systeme a ete mis a jour ; Grassfield n a pas ete installe.}
+  fi
+  printf '\n%s %s\n' "$(t 'Stopped:' 'Arret :')" "$(t "$en" "$fr")" >&2
   exit 1
 }
 # bad <en> <fr> <fix-en> <fix-fr>: one preflight problem and its exact fix (the script changes nothing for it).
@@ -83,7 +90,8 @@ grassfield-install.sh: install Grassfield on Omarchy (as your user; sudo only wh
                            `grassfield-login set grassfield`)
   --without-login-themes   do not install and activate the Grassfield login screen (SDDM) and boot screen (Plymouth)
   --no-snapshot            go on without an Omarchy snapshot
-  --yes                    no confirmation (pacman's own questions are answered by pacman's defaults)
+  --yes                    no confirmation: also accepts the Omarchy system update when updates are pending (pacman's own
+                           questions are answered by pacman's defaults)
   --dry-run                checks and the plan only: nothing is changed, no root, two HEAD requests to the host
   --uninstall              back to stock Omarchy: themes, packages, [grassfield] section, key, session choice
 
@@ -219,11 +227,16 @@ ask() { # <question en> <question fr>: yes by --yes, else the user's answer (std
   [[ $answer == [yYoO]* ]]
 }
 
-ask_yes() { # <question en> <question fr>: like ask, but Enter means yes ([Y/n])
+# Is there a terminal to ask on? (the tests' fake root says no with a file named no-tty)
+have_tty() {
+  if [[ -n $GF_ROOT ]]; then [[ ! -e $GF_ROOT/no-tty ]]; else [[ -t 0 ]]; fi
+}
+
+ask_yes() { # <question en> <question fr>: like ask, but Enter means yes ([Y/n]); end of input (Ctrl-D, no terminal) means no
   ((YES)) && return 0
   local answer=''
   printf '%s %s ' "$(t "$1" "$2")" "$(t '[Y/n]' '[O/n]')"
-  read -r answer || answer=''
+  read -r answer || return 1
   [[ -z $answer || $answer == [yYoO]* ]]
 }
 
@@ -293,6 +306,7 @@ rollback() {
     say "  2. delete /etc/pacman.d/grassfield.conf   3. pacman-key --delete $GF_FPR   (this run's copies: ${PBAK:-none} ${CBAK:-none})" \
       "  2. supprime /etc/pacman.d/grassfield.conf   3. pacman-key --delete $GF_FPR   (copies de cette execution : ${PBAK:-aucune} ${CBAK:-aucune})"
   else
+    ((UPDATED)) && say 'The Omarchy update that ran first stays: the system is up to date.' 'La mise a jour d Omarchy lancee d abord reste : le systeme est a jour.'
     say 'Back to the exact state before this run (pacman.conf, the repository file, the key, the synced database). Nothing new was installed.' \
       'Retour a l etat exact d avant cette execution (pacman.conf, fichier du depot, cle, base synchronisee). Rien de nouveau n a ete installe.'
     say "Retry: run this script again. The log: ${LOG:-}" "Reessayer : relance ce script. Le journal : ${LOG:-}"
@@ -476,15 +490,16 @@ offer_updates() {
       'un vrai lancement demande "Les installer maintenant ?" (--yes repond oui) et lance omarchy-update -y avant tout'
     return 0
   fi
-  if ! ((YES)) && [[ -z $GF_ROOT && ! -t 0 ]]; then
+  if ! ((YES)) && ! have_tty; then
     die 'no terminal to ask on: run it from a terminal, or add --yes.' 'pas de terminal pour demander : lance-le depuis un terminal ou ajoute --yes.'
   fi
   ask_yes 'Install them now?' 'Les installer maintenant ?' || updates_pending_stop
   step 'Update Omarchy first' 'Mise a jour d Omarchy d abord'
   command -v omarchy-update >/dev/null || updates_pending_stop
+  UPDATED=1
   omarchy-update -y ||
-    die 'the Omarchy update failed (see above). Nothing of Grassfield was installed: fix it, then run this script again.' \
-      'la mise a jour d Omarchy a echoue (voir plus haut). Rien de Grassfield n a ete installe : corrige puis relance ce script.'
+    die 'the Omarchy update failed (see above). Grassfield was not installed: fix it, then run this script again.' \
+      'la mise a jour d Omarchy a echoue (voir plus haut). Grassfield n a pas ete installe : corrige puis relance ce script.'
   still=$(pending_count) || still=1
   if ((still > 0)); then updates_pending_stop; fi
   ok 'the system is up to date' 'le systeme est a jour'
@@ -543,8 +558,8 @@ plan_uninstall() {
     " 4. themes (root)       $GF_SDDM_DROPIN supprime ; si le theme de demarrage est celui de Grassfield : retour a celui memorise (sinon omarchy) et reconstruction de l image de demarrage d Omarchy"
   say " 5. remove (root)      pacman -Rns of the installed ones among: ${GF_ALL_PKGS[*]} (their pre_remove removes [grassfield] and the key too)" \
     " 5. retrait (root)      pacman -Rns de ceux installes parmi : ${GF_ALL_PKGS[*]} (leur pre_remove retire aussi [grassfield] et la cle)"
-  say " 6. session files      grassfield-mimeapps.list, grassfield-portals.conf, grassfield-cursors-custom and the compositor cache are deleted; the system group grassfield-update is removed (root) when nothing uses it. ~/.config/grassfield and ~/.local/state/grassfield are KEPT (the final message prints them and the one command that deletes them)" \
-    " 6. fichiers de session grassfield-mimeapps.list, grassfield-portals.conf, grassfield-cursors-custom et le cache du compositeur sont supprimes ; le groupe systeme grassfield-update est retire (root) si rien ne l utilise. ~/.config/grassfield et ~/.local/state/grassfield sont GARDES (le message final les indique avec la commande qui les supprime)"
+  say " 6. session files      grassfield-portals.conf, grassfield-cursors-custom and the compositor cache are deleted; the system group grassfield-update is removed (root) when no file on any local filesystem is owned by it (your own files it touched are handed back to your group first). ~/.config/grassfield, ~/.config/grassfield-mimeapps.list and ~/.local/state/grassfield are KEPT (your settings; the final message prints them and the one command that deletes them)" \
+    " 6. fichiers de session grassfield-portals.conf, grassfield-cursors-custom et le cache du compositeur sont supprimes ; le groupe systeme grassfield-update est retire (root) si aucun fichier d un systeme de fichiers local ne lui appartient (tes propres fichiers qu il a touches reviennent d abord a ton groupe). ~/.config/grassfield, ~/.config/grassfield-mimeapps.list et ~/.local/state/grassfield sont GARDES (tes reglages ; le message final les indique avec la commande qui les supprime)"
   say ' 7. leftovers (root)   a key still in pacman; pacman.conf from this script'"'"'s copy if only our two lines remain; the script'"'"'s copies' \
     ' 7. restes (root)       une cle encore dans pacman ; pacman.conf depuis la copie de ce script s il ne reste que nos deux lignes ; les copies du script'
   say "Log: $LOG" "Journal : $LOG"
@@ -556,7 +571,7 @@ confirm_plan() {
     say 'Dry run: nothing was changed.' 'Simulation : rien n a ete modifie.'
     exit 0
   fi
-  if ! ((YES)) && [[ -z $GF_ROOT && ! -t 0 ]]; then
+  if ! ((YES)) && ! have_tty; then
     die 'no terminal to ask on: run it from a terminal, or add --yes.' 'pas de terminal pour demander : lance-le depuis un terminal ou ajoute --yes.'
   fi
   printf '\n'
@@ -884,26 +899,59 @@ revert_themes() {
   esac
 }
 
-# Files Grassfield writes outside its own folders: they do nothing outside the Grassfield session, so they go with it. The
-# default-app list of the session, the portal routing link, the generated pointer theme, the compositor build cache.
+# A step that failed without stopping the uninstall: said now, summed up at the end, and the exit status is then non-zero.
+soft_fail() { # <en> <fr>
+  SOFT_FAILS+=("$(t "$1" "$2")")
+  printf ' [x] %s\n' "$(t "$1" "$2")"
+}
+
+# Files Grassfield writes outside its own folders that do nothing outside the Grassfield session, so they go with it: the
+# portal routing link, the generated pointer theme, the compositor build cache. (The session's default-app list,
+# grassfield-mimeapps.list, holds the person's own choices: it is kept with the settings.)
 remove_session_files() {
   local cfg=${XDG_CONFIG_HOME:-$HOME/.config} data=${XDG_DATA_HOME:-$HOME/.local/share} cache=${XDG_CACHE_HOME:-$HOME/.cache} f gone=0
-  for f in "$cfg/grassfield-mimeapps.list" "$cfg/xdg-desktop-portal/grassfield-portals.conf" "$data/icons/grassfield-cursors-custom" "$cache/grassfield"; do
+  for f in "$cfg/xdg-desktop-portal/grassfield-portals.conf" "$data/icons/grassfield-cursors-custom" "$cache/grassfield"; do
     if [[ -e $f || -L $f ]]; then
-      rm -rf -- "$f"
-      gone=1
+      if rm -rf -- "$f"; then gone=1
+      else soft_fail "could not remove $f" "impossible de supprimer $f"; fi
     fi
   done
-  if ((gone)); then ok 'session-only files removed (default apps of the session, portal link, pointer theme, cache)' \
-    'fichiers propres a la session retires (applications par defaut de la session, lien des portails, theme de pointeur, cache)'
+  if ((gone)); then ok 'session-only files removed (portal link, pointer theme, cache)' \
+    'fichiers propres a la session retires (lien des portails, theme de pointeur, cache)'
   else note 'no session-only file to remove' 'aucun fichier propre a la session a retirer'; fi
+}
+
+# Mount points of the local (block device) filesystems; never proc, sys, dev or run.
+local_mounts() {
+  awk '$1 ~ /^\/dev\// && $2 !~ /^\/(proc|sys|dev|run)(\/|$)/ { print $2 }' "$GF_ROOT/proc/self/mounts" 2>/dev/null | sed 's/\\040/ /g' | LC_ALL=C sort -u
+}
+
+# Root's search of every local filesystem for files owned by a gid (one per line, up to 20).
+gid_files() { # <gid>
+  local m
+  while IFS= read -r m; do
+    [[ -n $m ]] || continue
+    as_root find "$m" -xdev -gid "$1" -print 2>&1 | { grep '^/' || true; }
+  done < <(local_mounts) | head -n 20
+}
+
+# The migrations' unit runs with the group as its primary group (grassfield-update-helper, --gid=), so what it creates in a
+# person's home (~/.local/state/omarchy/migrations/*, and whatever a migration writes there) carries its gid. Those files go
+# back to the person's own primary group before the group is removed.
+regroup_home_files() { # <gid>
+  local name pw uid pgid home
+  while IFS=: read -r name pw uid pgid _ home _; do
+    [[ $uid =~ ^[0-9]+$ && $uid != 0 && $pgid =~ ^[0-9]+$ && $pgid != "$1" && -d $home ]] || continue
+    as_root find "$home" -xdev -user "$uid" -gid "$1" -exec chgrp -h "$pgid" -- {} + >/dev/null 2>&1 || true
+  done <"$GF_ROOT/etc/passwd"
 }
 
 # The primary group of grassfield-update-migrate.service is created by a package's sysusers.d file (no member), and pacman never
 # removes a group. It goes once no Grassfield package is installed, no sysusers.d file still names it, nobody is a member or has it
-# as primary group, no file in the system folders is owned by it and no file in /etc outside the group database names it.
+# as primary group, no file on any local filesystem is owned by its gid (the person's own files it touched are handed back first)
+# and no file in /etc outside the group database names it. Anything left: the group is kept, and the message says what.
 remove_update_group() {
-  local g=grassfield-update entry gid members why=''
+  local g=grassfield-update entry gid members why='' left
   entry=$(awk -F: -v g="$g" '$1 == g' "$GF_ROOT/etc/group" 2>/dev/null || true)
   [[ -n $entry ]] || return 0
   IFS=: read -r _ _ gid members <<<"$entry"
@@ -911,16 +959,34 @@ remove_update_group() {
   elif grep -rqsw -- "$g" "$GF_ROOT/usr/lib/sysusers.d" "$GF_ROOT/etc/sysusers.d"; then why='a sysusers.d file still names it'
   elif [[ -n $members ]]; then why="it has members ($members)"
   elif awk -F: -v gid="$gid" '$4 == gid { f = 1 } END { exit !f }' "$GF_ROOT/etc/passwd" 2>/dev/null; then why='an account has it as primary group'
-  elif [[ -n $(find "$GF_ROOT/etc" "$GF_ROOT/usr" "$GF_ROOT/opt" "$GF_ROOT/srv" "$GF_ROOT/var/lib" "$GF_ROOT/var/log" -xdev -gid "$gid" -print -quit 2>/dev/null) ]]; then
-    why="a file is owned by gid $gid"
-  elif [[ -n $(grep -rIlsw --exclude='group*' --exclude='gshadow*' --exclude-dir=gnupg -- "$g" "$GF_ROOT/etc" 2>/dev/null | head -n 1) ]]; then why='a file in /etc still names it'
+  else
+    say "Searching every local filesystem for files owned by gid $gid (root)" "Recherche, sur chaque systeme de fichiers local, des fichiers du gid $gid (root)"
+    regroup_home_files "$gid"
+    left=$(gid_files "$gid")
+    if [[ -n $left ]]; then why="files are still owned by gid $gid, e.g. $(head -n 3 <<<"$left" | tr '\n' ' ')"
+    elif [[ -n $(grep -rIlsw --exclude='group*' --exclude='gshadow*' --exclude-dir=gnupg -- "$g" "$GF_ROOT/etc" 2>/dev/null | head -n 1) ]]; then
+      why='a file in /etc still names it'
+    fi
   fi
   if [[ -n $why ]]; then
     note "the system group $g is kept: $why" "le groupe systeme $g est conserve : $why"
     return 0
   fi
-  as_root groupdel "$g" || { note "could not remove the system group $g: run  sudo groupdel $g" "groupe systeme $g non retire : lance  sudo groupdel $g"; return 0; }
-  ok "system group $g removed" "groupe systeme $g retire"
+  if as_root groupdel "$g"; then ok "system group $g removed" "groupe systeme $g retire"
+  else soft_fail "could not remove the system group $g: run  sudo groupdel $g" "groupe systeme $g non retire : lance  sudo groupdel $g"; fi
+}
+
+# What the uninstall keeps, where it is, and the one command that deletes it (quoted: a copy-paste survives spaces).
+kept_message() {
+  local cfg=${XDG_CONFIG_HOME:-$HOME/.config} state=${XDG_STATE_HOME:-$HOME/.local/state} p
+  local -a kept=()
+  for p in "$cfg/grassfield" "$cfg/grassfield-mimeapps.list" "$state/grassfield"; do
+    if [[ -e $p || -L $p ]]; then kept+=("$p"); fi
+  done
+  ((${#kept[@]})) || return 0
+  say '  Your Grassfield settings and state are kept, in case you come back:' '  Tes reglages et ton etat Grassfield sont gardes, au cas ou tu reviendrais :'
+  printf '    %s\n' "${kept[@]}"
+  say "  To delete them as well:  rm -rf -- $(printf '%q ' "${kept[@]}")" "  Pour les supprimer aussi :  rm -rf -- $(printf '%q ' "${kept[@]}")"
 }
 
 do_uninstall() {
@@ -984,12 +1050,14 @@ do_uninstall() {
   printf '\n'
   say '== Done: stock Omarchy ==' '== Termine : Omarchy d origine =='
   say '  Restart the computer once. Omarchy was never modified, so nothing else is needed.' '  Redemarre l ordinateur une fois. Omarchy n a jamais ete modifie : rien d autre a faire.'
-  say '  Your Grassfield settings and state are kept, as on a Mac, in case you come back:' '  Tes reglages et ton etat Grassfield sont gardes, comme sur un Mac, au cas ou tu reviendrais :'
-  say "    ${XDG_CONFIG_HOME:-$HOME/.config}/grassfield   ${XDG_STATE_HOME:-$HOME/.local/state}/grassfield (this log)" \
-    "    ${XDG_CONFIG_HOME:-$HOME/.config}/grassfield   ${XDG_STATE_HOME:-$HOME/.local/state}/grassfield (ce journal)"
-  say "    to delete them as well:  rm -rf ${XDG_CONFIG_HOME:-$HOME/.config}/grassfield ${XDG_STATE_HOME:-$HOME/.local/state}/grassfield" \
-    "    pour les supprimer aussi :  rm -rf ${XDG_CONFIG_HOME:-$HOME/.config}/grassfield ${XDG_STATE_HOME:-$HOME/.local/state}/grassfield"
+  kept_message
   say "  Log: $LOG" "  Journal : $LOG"
+  if ((${#SOFT_FAILS[@]})); then
+    printf '\n'
+    say "NOT everything was removed (${#SOFT_FAILS[@]}):" "Tout n a PAS ete retire (${#SOFT_FAILS[@]}) :"
+    printf '  - %s\n' "${SOFT_FAILS[@]}"
+    return 1
+  fi
 }
 
 # ---- main -------------------------------------------------------------------------------------------------------------

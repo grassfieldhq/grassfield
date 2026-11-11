@@ -108,8 +108,8 @@ if cmd == "raw":
 elif cmd == "key":
     for k in args:
         send(k.split("+")); time.sleep(0.15)
-elif cmd == "type":
-    for ch in " ".join(args):
+elif cmd in ("type", "type-stdin"):
+    for ch in (sys.stdin.read().rstrip("\n") if cmd == "type-stdin" else " ".join(args)):
         send(keys_for(ch)); time.sleep(0.08)
 elif cmd == "shot":
     r = call("screendump", filename=args[0], format="png")
@@ -232,8 +232,8 @@ drive_installer() {
   shot inst-timezone
   qmp key ret; sleep 3 # timezone: the detected one
   qmp type "$VM_USER"; qmp key ret; sleep 2
-  qmp type "$VM_PASS"; qmp key ret; sleep 2
-  qmp type "$VM_PASS"; qmp key ret; sleep 2
+  printf "%s" "$VM_PASS" | qmp type-stdin; qmp key ret; sleep 2
+  printf "%s" "$VM_PASS" | qmp type-stdin; qmp key ret; sleep 2
   qmp key ret; sleep 2 # hostname: omarchy
   shot inst-summary
   qmp key ret; sleep 4 # "Does this look right?" Yes
@@ -250,7 +250,7 @@ drive_installer() {
 luks_unlock() {
   sleep 28
   shot luks-prompt
-  qmp type "$VM_PASS"
+  printf "%s" "$VM_PASS" | qmp type-stdin
   qmp key ret
 }
 
@@ -263,7 +263,7 @@ enable_ssh() {
   qmp key ctrl+alt+f3
   sleep 5
   qmp type "root"; qmp key ret; sleep 2
-  qmp type "$VM_PASS"; qmp key ret; sleep 4
+  printf "%s" "$VM_PASS" | qmp type-stdin; qmp key ret; sleep 4
   qmp type "systemctl enable --now sshd; install -d -m 700 /root/.ssh; echo \"$pub\" >/root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; systemctl restart sshd; ufw allow from 10.0.2.2 to any port 22 proto tcp"
   qmp key ret
   sleep 25 # the guest takes the typed keys slowly
@@ -554,7 +554,7 @@ phase_compare() {
     "^$h/\\.local/share/gvfs-metadata/"$'\tGVfs metadata journal, rolled over by the session'
   )
   # The user's own Grassfield settings and state: kept by design, documented (docs/install.md, docs/owner-setup/real-session.md section 9)
-  local kept="^$h/\\.(config|local/state)/grassfield(/|\$)"
+  local kept="^$h/\\.(config|local/state)/grassfield(/|\$)|^$h/\\.config/grassfield-mimeapps\\.list\$"
   local rules="" r
   for r in "${noise[@]}"; do rules+="$r"$'\n'; done
   printf '%s' "$rules" >"$(d records/allowlist.tsv)"
@@ -604,7 +604,7 @@ main() {
     key) qmp key "${rest[@]}"; exit $? ;;
     type) qmp type "${rest[@]}"; exit $? ;;
     enable-ssh) creds; enable_ssh; exit $? ;;
-    type-pass) creds; qmp type "$VM_PASS"; exit $? ;;
+    type-pass) creds; printf "%s" "$VM_PASS" | qmp type-stdin; exit $? ;;
     ssh) vm_ssh "${rest[@]}"; exit $? ;;
     stock-install) phase_stock_install ;;
     snapshot) phase_snapshot ;;

@@ -165,7 +165,7 @@ case $1 in
     done ;;
   -Rns)
     shift
-    for a in "$@"; do [[ $a == -* ]] || sed -i "/^$a\$/d" "$inst"; done
+    [[ -f $GF_STUB/rns_noop ]] || for a in "$@"; do [[ $a == -* ]] || sed -i "/^$a\$/d" "$inst"; done
     "$GF_STUB/offlogic" ;;
 esac
 EOF
@@ -259,6 +259,33 @@ stub omarchy-update <<'EOF'
 echo "omarchy-update $*" >>"$GF_STUB/calls"
 [[ -f $GF_STUB/update_fail ]] && { echo "update broke" >&2; exit 1; }
 [[ -f $GF_STUB/update_leaves_pending ]] || : >"$GF_STUB/checkupdates"
+EOF
+# chgrp: logged; the files it is given stop carrying the old gid (the stub removes them: a test cannot change a real gid)
+stub chgrp <<'EOF'
+#!/bin/bash
+echo "chgrp $*" >>"$GF_STUB/calls"
+seen=0; for a in "$@"; do if ((seen)); then rm -f -- "$a"; elif [[ $a == -- ]]; then seen=1; fi; done
+exit 0
+EOF
+REALRM=$(command -v rm)
+command rm -f "$BIN/rm"
+stub rm <<EOF
+#!/bin/bash
+# rm_fail: removing the pointer theme folder fails
+if [[ -f \$GF_STUB/rm_fail ]]; then for a in "\$@"; do [[ \$a == *grassfield-cursors-custom ]] && { echo "rm: cannot remove '\$a'" >&2; exit 1; }; done; fi
+exec $REALRM "\$@"
+EOF
+REALFIND=$(command -v find)
+command rm -f "$BIN/find"
+stub find <<EOF
+#!/bin/bash
+# a test cannot give files a gid of its choosing: "-gid N" is read as "-name gidN.*"
+args=(); prev=''
+for a in "\$@"; do
+  if [[ \$prev == -gid ]]; then args[\${#args[@]}-1]=-name; args+=("gid\$a.*"); else args+=("\$a"); fi
+  prev=\$a
+done
+exec $REALFIND "\${args[@]}"
 EOF
 stub groupdel <<'EOF'
 #!/bin/bash
@@ -815,9 +842,13 @@ mkdir -p "$R/usr/lib/sysusers.d"
 run '' --uninstall --yes
 expect 'uninstall (GF-010 files): exit 0' "$rc" 0
 [[ ! -e $R/etc/plymouth/plymouthd.confe ]] && pass 'uninstall: plymouthd.confe made by the theme setter is removed' || fail 'uninstall: plymouthd.confe left'
-for f in .config/grassfield-mimeapps.list .config/xdg-desktop-portal/grassfield-portals.conf .local/share/icons/grassfield-cursors-custom .cache/grassfield; do
+for f in .config/xdg-desktop-portal/grassfield-portals.conf .local/share/icons/grassfield-cursors-custom .cache/grassfield; do
   [[ ! -e $W/home/$f ]] && pass "uninstall: $f removed" || fail "uninstall: $f left"
 done
+[[ -f $W/home/.config/grassfield-mimeapps.list ]] && pass "uninstall: the session's default-app list (the person's choices) is kept" || fail "uninstall: grassfield-mimeapps.list was deleted"
+has 'uninstall: the kept list names the default-app list' "$W/home/.config/grassfield-mimeapps.list" "$W/out"
+has 'uninstall: the delete command is quoted and ends the options' 'rm -rf -- ' "$W/out"
+hasnt 'uninstall: no brand name in the output' ' Mac' "$W/out"
 [[ -f $W/home/.config/grassfield/settings.json && -d $W/home/.local/state/grassfield ]] && pass 'uninstall: settings and state are kept' || fail 'uninstall: settings or state removed'
 [[ -f $W/home/.config/mimeapps.list ]] && pass "uninstall: the user's own mimeapps.list is untouched" || fail "uninstall: the user's mimeapps.list was removed"
 has 'uninstall: prints where the kept folders are' "$W/home/.config/grassfield" "$W/out"
@@ -843,6 +874,70 @@ for why in members passwd sysusers file; do
   hasnt "the group is kept ($why): no groupdel" 'groupdel' "$S/calls"
   has "the group is kept ($why): says why" 'is kept' "$W/out"
 done
+# GF-010 review: the group and the files it owns. Fixture: a gid no file has (the find stub reads "-gid N" as "-name gidN.*"), a
+# fake account with another primary group, and the fake root's mounts (the script reads $root/proc/self/mounts).
+MYUID=$(id -u) GRPGID=61234
+mkgrp() {
+  mkdir -p "$R/etc" "$R/usr/lib/sysusers.d" "$R/proc/self" "$W/home/.local/state/omarchy/migrations"
+  printf 'root:x:0:\ngrassfield-update:x:%s:\n' "$GRPGID" >"$R/etc/group"
+  printf 'root:x:0:0::/root:/bin/bash\nme:x:%s:5000::%s:/bin/bash\n' "$MYUID" "$W/home" >"$R/etc/passwd"
+  printf '/dev/test %s ext4 rw 0 0\n/dev/test2 %s ext4 rw 0 0\ntmpfs /run/user/1000 tmpfs rw 0 0\nproc /proc proc rw 0 0\n' "$R" "$W/home" >"$R/proc/self/mounts"
+}
+fresh; run '' --yes; mkgrp
+echo x >"$R/gid61234.orphan"
+run '' --uninstall --yes
+expect 'a file owned by the gid on a local filesystem: exit 0' "$rc" 0
+has 'a gid-owned file: the group is kept and says why' 'files are still owned by gid' "$W/out"
+hasnt 'a gid-owned file: no groupdel' 'groupdel' "$S/calls"
+has 'a gid-owned file: the group stays in the database' 'grassfield-update' "$R/etc/group"
+fresh; run '' --yes; mkgrp
+echo x >"$W/home/.local/state/omarchy/migrations/gid61234.20260101.sh"
+run '' --uninstall --yes
+expect 'migration files in a home are handed back: exit 0' "$rc" 0
+has "the migration files go back to the person's primary group" 'chgrp -h 5000' "$S/calls"
+has 'then the group is removed' 'groupdel grassfield-update' "$S/calls"
+fresh; run '' --yes; mkgrp; touch "$S/rns_noop"
+run '' --uninstall --yes
+expect 'a Grassfield package still installed: exit 0' "$rc" 0
+has 'a package still installed: the group is kept and says why' 'a Grassfield package is still installed' "$W/out"
+hasnt 'a package still installed: no groupdel' 'groupdel' "$S/calls"
+rm -f "$S/rns_noop"
+# a failing rm: said, the other steps go on, the exit status is non-zero with a summary
+fresh; run '' --yes; mkgrp; mkdir -p "$W/home/.local/share/icons/grassfield-cursors-custom"; touch "$S/rm_fail"
+run '' --uninstall --yes
+expect 'a failing rm: exit 1' "$rc" 1
+has 'a failing rm: reported' 'could not remove' "$W/out"
+has 'a failing rm: the summary' 'NOT everything was removed' "$W/out"
+has 'a failing rm: the group step still ran' 'groupdel grassfield-update' "$S/calls"
+has 'a failing rm: the end of the uninstall still ran' 'stock Omarchy' "$W/out"
+expect 'a failing rm: the packages were removed' "$(wc -c <"$S/installed")" 0
+rm -f "$S/rm_fail"
+# the help says what --yes also accepts
+fresh; run '' --help
+has '--help: --yes also accepts the Omarchy system update' 'also accepts the Omarchy system update' "$W/out"
+# end of input at the question (Ctrl-D) and a missing terminal are "no"
+fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; run ''
+expect 'pending updates, end of input at [Y/n]: exit 1' "$rc" 1
+has 'pending updates, end of input: the old message' 'the system has pending updates' "$W/out"
+hasnt 'pending updates, end of input: the update did not run' 'omarchy-update -y' "$S/calls"
+fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; touch "$R/no-tty"; run ''
+expect 'pending updates, no terminal: exit 1' "$rc" 1
+has 'pending updates, no terminal: says so' 'no terminal to ask on' "$W/out"
+hasnt 'pending updates, no terminal: the update did not run' 'omarchy-update -y' "$S/calls"
+fresh; touch "$R/no-tty"; run ''
+expect 'no terminal and no --yes: exit 1' "$rc" 1
+has 'no terminal and no --yes: says so' 'no terminal to ask on' "$W/out"
+[[ -z $(sudo_calls) ]] && pass 'no terminal: no sudo' || fail 'no terminal: sudo ran'
+fresh; touch "$R/no-tty"; run '' --yes
+expect 'no terminal with --yes: the install goes on' "$rc" 0
+# after Omarchy's update ran, a later stop says what was done, never "nothing was changed"
+fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; run $'y\nn\n'
+expect 'update done, then "Go ahead?" no: exit 1' "$rc" 1
+has 'update done, then cancelled: says what was done' 'The system was updated; Grassfield was not installed.' "$W/out"
+hasnt 'update done, then cancelled: not "Nothing was changed"' 'Nothing was changed' "$W/out"
+fresh; echo 'firefox 1-1 -> 2-1' >"$S/checkupdates"; touch "$S/update_leaves_pending"; run '' --yes
+has 'update done, still pending: says what was done' 'The system was updated; Grassfield was not installed.' "$W/out"
+hasnt 'update done, still pending: not "Nothing was changed"' 'Nothing was changed' "$W/out"
 # Uninstall when the rebuild fails twice: stops before removing anything, with the retry command.
 fresh; run '' --yes
 touch "$S/rebuild_fail"; run '' --uninstall --yes
