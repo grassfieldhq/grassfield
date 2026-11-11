@@ -188,6 +188,40 @@ make_raw duptype.desktop "$ENTRY_HEAD
 Type=Link
 Exec=$tmp/bin/fake-firefox %u"
 cp "$tmp/share/applications/firefox.desktop" "$tmp/share/evil.desktop"
+# delta review 3: LOW-A a file of PATH that is not executable is no program; LOW-B an indented second Exec is read by GLib as the last
+# Exec; LOW-C the group twice is merged by GLib, the later Exec wins
+mkdir -p "$tmp/nxbin"
+printf '#!/bin/sh\nexit 0\n' >"$tmp/nxbin/nxprog"
+chmod 644 "$tmp/nxbin/nxprog"
+make_raw nxpath.desktop "$ENTRY_HEAD
+Exec=nxprog %u"
+make_raw nxtry.desktop "$ENTRY_HEAD
+Exec=$tmp/bin/fake-firefox %u
+TryExec=nxprog"
+make_raw dupindent.desktop "$ENTRY_HEAD
+Exec=$tmp/bin/fake-firefox %u
+  Exec=xdg-open %u"
+make_raw dupindent2.desktop "$ENTRY_HEAD
+	Exec=$tmp/bin/fake-firefox %u
+Exec=xdg-open %u"
+make_raw dupgroup.desktop "$ENTRY_HEAD
+Exec=$tmp/bin/fake-firefox %u
+[Desktop Entry]
+Exec=xdg-open %u"
+make_raw dupgroup2.desktop "$ENTRY_HEAD
+Exec=$tmp/bin/fake-firefox %u
+[Desktop Action new]
+Name=New
+[Desktop Entry]
+Name=Again"
+for id in nxpath nxtry dupindent dupindent2 dupgroup dupgroup2; do
+  reset_session
+  before=$(snap)
+  PATH=$tmp/nxbin:$tmp/bin:$PATH xdg-settings set default-web-browser "$id.desktop" >/dev/null 2>&1
+  rc=$?
+  check "F delta 3: $id is refused with 2" test $rc -eq 2
+  check "F ... nothing is written for $id" test "$before" = "$(snap)"
+done
 for id in gone nopath gonewrap notry dupexec1 dupexec2 duptry duptype; do
   reset_session
   before=$(snap)

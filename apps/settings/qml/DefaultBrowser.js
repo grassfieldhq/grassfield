@@ -95,11 +95,15 @@ function parseEntry(text, lang) {
     const seenKey = {};
     const short = String(lang).split(/[_.@]/)[0];
     let inGroup = false;
+    let groups = 0;
     let localised = "";
     for (const raw of String(text).split("\n")) {
         const line = raw.trim();
         if (line.startsWith("[")) {
             inGroup = line === "[Desktop Entry]";
+            // The group twice: GLib merges the two, so the later Exec runs; such an entry is refused.
+            if (inGroup && ++groups > 1)
+                e.duplicate = true;
             continue;
         }
         if (!inGroup || line === "" || line.startsWith("#"))

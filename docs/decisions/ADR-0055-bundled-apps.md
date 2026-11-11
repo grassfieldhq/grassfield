@@ -85,8 +85,11 @@ browser keeps it.
     The entry must also be one GLib could run and would read one way (delta review of PR #38): the program it starts (an absolute
     path to an executable file, or a name of $PATH, behind uwsm too) and its `TryExec` must exist, so a removed package or a typo is
     never made the default, seeded or offered; and `Exec`, `TryExec` and `Type` must each appear once in `[Desktop Entry]` (GLib keeps
-    the LAST of a repeated key, a reader of the first would be fooled: such an entry is refused). An id containing `..` is refused (the
-    "-" of an id is also read as a folder, `..-x.desktop` would read `applications/../x.desktop`). The same rule is in the stand-in, the
+    the LAST of a repeated key, also when the line is indented, and it merges a `[Desktop Entry]` group that appears twice, so the later
+    `Exec` wins: a reader of the first would be fooled, such an entry is refused). A program is looked up in $PATH as GLib does, a
+    regular file that is executable (a non-executable match is no program). An id containing `..` is refused where it comes from outside
+    (the "-" of an id is also read as a folder, `..-x.desktop` would read `applications/../x.desktop`): the stand-in and the Settings
+    list; the seed's ids are fixed and need no such check. The same rules are in the stand-in, the
     seed (`usableEntry`) and the Settings browser list (`DefaultBrowser.browsers`, `Backend::programExists`). The stand-in reads a
     desktop file with CRLF line ends as having no `[Desktop Entry]` group and refuses it.
     A linked session list or record is refused (exit 1) without calling the real tool. Then the record says `user` and the choice,

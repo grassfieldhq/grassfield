@@ -1262,6 +1262,9 @@ TEST(BundledApps, TheSeedNeverTargetsAnEntryThatCannotRunOrThatReadsTwoWays)
         {"a second Exec (a browser last)", [](BundledTree &t) { return QByteArray("Exec=xdg-open %u\nExec=") + t.exe(QStringLiteral("sanaga")) + " %U\n"; }, false},
         {"a second TryExec", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\nTryExec=" + t.exe(QStringLiteral("sanaga")) + "\nTryExec=/nonexistent\n"; }, false},
         {"a second Type", [](BundledTree &t) { return QByteArray("Type=Link\nExec=") + t.exe(QStringLiteral("sanaga")) + " %U\n"; }, false},
+        {"an indented second Exec (GLib strips the indentation)", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\n  Exec=xdg-open %u\n"; }, false},
+        {"the group twice (GLib merges them, the later Exec wins)", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\n[Desktop Entry]\nExec=xdg-open %u\n"; }, false},
+        {"the group twice with a group between", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\nMimeType=x-scheme-handler/http;\n[Desktop Action x]\nName=x\n[Desktop Entry]\nName=y\n"; }, false},
         {"one of each", [](BundledTree &t) { return QByteArray("Exec=") + t.exe(QStringLiteral("sanaga")) + " %U\n"; }, true},
     };
     for (const Case &c : cases) {

@@ -402,6 +402,8 @@ TestCase {
             "/apps/dupexec2.desktop": entry("DupExec2", "xdg-open %u", "Exec=firefox %u\n"),
             "/apps/duptry.desktop": entry("DupTry", "firefox %u", "TryExec=firefox\nTryExec=/nonexistent\n"),
             "/apps/duptype.desktop": entry("DupType", "firefox %u", "Type=Link\n"),
+            "/apps/dupgroup.desktop": entry("DupGroup", "firefox %u", "[Desktop Action x]\nName=x\n[Desktop Entry]\nName=Again\n"),
+            "/apps/dupindent.desktop": entry("DupIndent", "firefox %u", "  Exec=xdg-open %u\n"),
             "/apps/..-evil.desktop": entry("Evil", "firefox %u"),
             "/apps/tryok.desktop": entry("TryOk", "/usr/bin/fine %u", "TryExec=/usr/bin/fine\n"),
             "/apps/editor.desktop": "[Desktop Entry]\nType=Application\nName=Editor\nExec=editor %F\nCategories=Utility;\nMimeType=text/plain;\n",
@@ -465,7 +467,7 @@ TestCase {
         const t = makeWithBackend(browserFiles());
         for (const id of ["omarchy-browser.desktop", "evil.desktop", "launcher2.desktop", "hidden.desktop", "editor.desktop", "../x.desktop", "sanaga",
                           "nocat.desktop", "nohttp.desktop", "quoted.desktop", "uwsmlauncher.desktop", "uwsmapp.desktop", "gone.desktop", "gonewrap.desktop",
-                          "notry.desktop", "dupexec1.desktop", "dupexec2.desktop", "duptry.desktop", "duptype.desktop", "..-evil.desktop"])
+                          "notry.desktop", "dupexec1.desktop", "dupexec2.desktop", "duptry.desktop", "duptype.desktop", "dupgroup.desktop", "dupindent.desktop", "..-evil.desktop"])
             verify(!t.page.setBrowser(id), id + " is refused");
         compare(t.backend.writes.length, 0, "nothing was written");
         t.backend.failState = true;

@@ -1070,7 +1070,7 @@ bool programRuns(const QString &program)
 struct EntryFields {
     QString exec;
     QString tryExec;
-    bool duplicate = false; // Exec, TryExec or Type twice in [Desktop Entry]: GLib keeps the last, a reader of the first is fooled
+    bool duplicate = false; // Exec, TryExec or Type twice in [Desktop Entry], or the group twice (GLib merges them and keeps the last): refused
 };
 
 // The first Exec= of a desktop file's [Desktop Entry] group.
@@ -1078,12 +1078,12 @@ EntryFields entryFields(const QString &desktopText)
 {
     EntryFields out;
     bool in = false;
-    int execs = 0, tryExecs = 0, types = 0;
+    int execs = 0, tryExecs = 0, types = 0, groups = 0;
     for (const QString &line : desktopText.split(QLatin1Char('\n'))) {
         if (isGroupLine(line)) {
-            if (in)
-                break;
             in = line.trimmed() == QLatin1String("[Desktop Entry]");
+            if (in)
+                ++groups; // the whole file is read: a second [Desktop Entry] group is merged by GLib, its Exec would win
             continue;
         }
         if (!in)
@@ -1096,7 +1096,7 @@ EntryFields entryFields(const QString &desktopText)
         else if (key == QLatin1String("Type"))
             ++types;
     }
-    out.duplicate = execs > 1 || tryExecs > 1 || types > 1;
+    out.duplicate = execs > 1 || tryExecs > 1 || types > 1 || groups > 1;
     return out;
 }
 
@@ -1104,8 +1104,8 @@ EntryFields entryFields(const QString &desktopText)
 // launcher: a ~/.local copy that runs xdg-open would loop, so it is never a target (the fork storm of 2026-10-30).
 bool usableEntry(const QStringList &dirs, const QString &id, const QStringList &types)
 {
-    if (id.contains(QStringLiteral("..")))
-        return false; // the "-" of an id is also read as a folder: "..-x.desktop" would read applications/../x.desktop
+    // No check of ".." here: the seed's ids are fixed (sanaga.desktop, grassfield-notes.desktop). Where an id comes from outside (the
+    // stand-in, the Settings list) a ".." is refused, as "-" of an id is also read as a folder.
     for (const QString &dir : dirs) {
         const QFileInfo info(dir + QLatin1Char('/') + id);
         if (!info.isFile() || info.size() > 256 * 1024)
