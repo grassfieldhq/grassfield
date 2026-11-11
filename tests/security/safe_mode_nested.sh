@@ -63,7 +63,10 @@ jq -e 'type == "object"' <<<"$s" >/dev/null 2>&1 && pass "the security instance 
 st_is '.confirmed == false and .notice == false and .locked == false' && pass "no safe mode at start, no notice" || bad "start: $(status)"
 layer_mapped && bad "a grassfield-safe-mode layer exists before any loop" || pass "no grassfield-safe-mode layer at start"
 
-# A loop (faked): the notice once two looks agree.
+# A loop (faked): the notice once two looks agree. The focus goes to GF-REF first: the compositor puts a layer surface with no
+# output on the focused one, and GF-REF is headless, so it always draws (the nested window's output WAYLAND-1 draws only while
+# that window is visible on the owner's screen: a capture of it waits, and an unmapped surface's fade-out never ends there).
+timeout 10 scripts/nestctl dispatch "hl.dsp.focus({ monitor = 'GF-REF' })" >/dev/null 2>&1 || true
 [[ $(call "$sec" safemode devSet true) == stopped ]] || bad "devSet true did not answer 'stopped'"
 wait_for 10 st_is '.confirmed and .shown and .notice' && pass "a faked loop confirms safe mode and makes the notice: $(status)" || bad "no notice after a faked loop: $(status)"
 wait_for 5 layer_mapped && pass "the notice is one grassfield-safe-mode layer surface" || bad "no grassfield-safe-mode layer after the notice was made"
@@ -76,7 +79,7 @@ mw=$(scripts/nestctl -j monitors 2>/dev/null | jq '[.[].width] | min')
 if [[ -n ${SAFE_MODE_SHOT:-} ]]; then
   on=$(scripts/nestctl -j layers 2>/dev/null | jq -r 'to_entries[] | select([.value | .. | objects | select(has("namespace")) | .namespace] | index("grassfield-safe-mode") != null) | .key' | head -1)
   sleep 1 # the alert's first frames
-  scripts/dev/shot.sh "$SAFE_MODE_SHOT" "$on" >/dev/null && echo "shot: .dev/shots/$SAFE_MODE_SHOT.png (output $on)" || echo "shot: none (output '${on}')"
+  timeout 20 scripts/dev/shot.sh "$SAFE_MODE_SHOT" "$on" >/dev/null && echo "shot: .dev/shots/$SAFE_MODE_SHOT.png (output $on)" || echo "shot: none (output '${on}')"
 fi
 
 # Try Again (dev: suppressed) ends safe mode; the surface goes.
