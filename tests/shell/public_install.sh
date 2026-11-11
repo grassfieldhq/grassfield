@@ -813,7 +813,7 @@ has 'uninstall let go of the update lock around Turn Off' 'flock -n 8' "$S/calls
 run '' --uninstall --yes
 expect 'uninstall twice exits 0' "$rc" 0
 
-# GF-010: session-only files go, settings and state stay, the update group goes when nothing uses it, plymouthd.confe is cleaned.
+# GF-010: session-only files go, settings and state stay, the update group stays (Arch's rule), plymouthd.confe is cleaned.
 fresh; touch "$S/plymouth_confe"; run '' --yes
 [[ ! -e $R/etc/plymouth/plymouthd.confe ]] && pass 'install: plymouthd.confe made by the theme setter is removed' || fail 'install: plymouthd.confe left'
 mkdir -p "$W/home/.config/xdg-desktop-portal" "$W/home/.local/share/icons/grassfield-cursors-custom" "$W/home/.cache/grassfield" "$W/home/.config/grassfield" "$W/home/.local/state/grassfield"
@@ -844,10 +844,10 @@ fresh; touch "$S/plymouth_confe"; mkdir -p "$R/etc/plymouth"; echo "mine" >"$R/e
 expect 'a pre-existing plymouthd.confe is kept' "$(cat "$R/etc/plymouth/plymouthd.confe")" mine
 run '' --uninstall --yes
 expect 'a pre-existing plymouthd.confe is kept by the uninstall too' "$(cat "$R/etc/plymouth/plymouthd.confe")" mine
-# a failing rm: said, the other steps go on, the exit status is non-zero with a summary
 # no group on the machine: no line about it
 fresh; run '' --yes; run '' --uninstall --yes
 hasnt 'no group file entry: no final line about the group' '  The system group grassfield-update is kept' "$W/out"
+# a failing rm: said, the other steps go on, the exit status is non-zero with a summary
 fresh; run '' --yes; mkdir -p "$R/etc" "$W/home/.local/share/icons/grassfield-cursors-custom"; printf 'grassfield-update:x:960:\n' >"$R/etc/group"; touch "$S/rm_fail"
 run '' --uninstall --yes
 expect 'a failing rm: exit 1' "$rc" 1

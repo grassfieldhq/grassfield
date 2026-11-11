@@ -443,7 +443,9 @@ ls ~/.config/autostart/               # delete only entries you added through th
 System side: `pacman` never removes the `grassfield-update` system group that a package's sysusers.d file created (the primary
 group of `grassfield-update-migrate.service`, no member). The installer's `--uninstall` keeps it too and says so, as Arch does for system groups (a reused gid would give access to files the
 group left behind); it is invisible and harmless. To remove it anyway, once you have checked that
-`sudo find / -xdev -gid $(getent group grassfield-update | cut -d: -f3)` finds nothing: `sudo groupdel grassfield-update`.
+`sudo find / /home -xdev -gid $(getent group grassfield-update | cut -d: -f3)` finds nothing: `sudo groupdel grassfield-update`.
+(`-xdev` stops at each filesystem boundary, and on Omarchy `/home` is a separate btrfs subvolume, so it is named too: the
+migration markers under `~/.local/state/omarchy/migrations` that carry this gid live there; add any other mount you have.)
 `plymouth-set-default-theme` leaves `/etc/plymouth/plymouthd.confe` (its own `sed -ie`) after each call; if you switched the boot
 theme by hand, `sudo rm /etc/plymouth/plymouthd.confe` once you have checked it holds nothing you wrote.
 

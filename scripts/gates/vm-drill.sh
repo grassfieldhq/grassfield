@@ -12,7 +12,7 @@
 #     uninstall      grassfield-install.sh --uninstall + docs/owner-setup/real-session.md section 9, reboot
 #     compare        stock record against the state now: packages, files, units, session; every leftover in a table
 #     all            the six phases in order
-#   helpers: vm-start [disk|iso], vm-stop, shot NAME, key QCODE..., type TEXT, ssh CMD...
+#   helpers: vm-start [disk|iso], vm-stop, shot NAME, key QCODE..., type TEXT, ssh CMD..., compare-canary (adds a group on purpose: compare must flag it)
 #
 #   options: --vm-dir DIR      (default: <main checkout>/.claude/integrator/vm; never /tmp: it is a tmpfs)
 #            --installer FILE  use this grassfield-install.sh instead of downloading the published one
@@ -328,6 +328,9 @@ fi
 EOS
   # Grassfield-named paths outside the hashed scope: system folders, and the user's state and cache (session churn there is not recorded)
   vm_ssh "find /usr /opt /var/lib /var/cache /boot /home/$VM_USER/.cache /home/$VM_USER/.local/state -xdev -iname '*grassfield*' 2>/dev/null | sort" >"$r/extra.txt" || return 1
+  # Groups: name:gid:members of /etc/group, and only the NAMES of /etc/gshadow (no hash, no password, ever in a record)
+  vm_ssh "cut -d: -f1,3,4 /etc/group | LC_ALL=C sort" >"$r/groups.txt" || return 1
+  vm_ssh "cut -d: -f1 /etc/gshadow | LC_ALL=C sort" >"$r/gshadow-names.txt" || return 1
   vm_ssh 'loginctl list-sessions --no-legend; echo; ps -eo comm= | sort | uniq -c | sort -rn | head -40' >"$r/session.txt" || true
   info "record $1: $(wc -l <"$r/packages.txt") packages, $(wc -l <"$r/files.tsv") paths, $(wc -l <"$r/units-system.txt") system unit lines"
 }
@@ -529,10 +532,13 @@ phase_compare() {
   LC_ALL=C sort -t$'\t' -k1,1 "$s/files.tsv" | grep -vE "^/home/[^/]+/(\.cache|\.local/state)/" >"$s/files.sorted"
   LC_ALL=C sort -t$'\t' -k1,1 "$a/files.tsv" | grep -vE "^/home/[^/]+/(\.cache|\.local/state)/" >"$a/files.sorted"
   LC_ALL=C join -t$'\t' -a1 -a2 -e '-' -o 0,1.2,1.3,2.2,2.3 "$s/files.sorted" "$a/files.sorted" |
-    awk -F'\t' '($2 != $4) || ($3 != $5) { k = ($2 == "-") ? "file-added" : ($4 == "-") ? "file-removed" : "file-changed"; print k "\t" $1 "\t" $3 " -> " $5 }' >>"$out"
+    awk -F'\t' '$1 != "/etc/group" && $1 != "/etc/gshadow" && (($2 != $4) || ($3 != $5)) { k = ($2 == "-") ? "file-added" : ($4 == "-") ? "file-removed" : "file-changed"; print k "\t" $1 "\t" $3 " -> " $5 }' >>"$out"
   diff "$s/units-system.txt" "$a/units-system.txt" | sed -n 's/^< \(.*\)/unit-removed\t\1\t-/p;s/^> \(.*\)/unit-added\t\1\t-/p' >>"$out"
   diff "$s/units-user.txt" "$a/units-user.txt" | sed -n 's/^< \(.*\)/user-unit-removed\t\1\t-/p;s/^> \(.*\)/user-unit-added\t\1\t-/p' >>"$out"
   sed 's/^/extra\t/;s/$/\t-/' "$a/extra.txt" >>"$out"
+  # /etc/group and /etc/gshadow are compared by content, line by line (the file hashes above skip them): every difference is a row
+  diff "$s/groups.txt" "$a/groups.txt" | sed -n 's/^< \(.*\)/group-removed\t\/etc\/group\t\1/p;s/^> \(.*\)/group-added\t\/etc\/group\t\1/p' >>"$out"
+  diff "$s/gshadow-names.txt" "$a/gshadow-names.txt" | sed -n 's/^< \(.*\)/gshadow-removed\t\/etc\/gshadow\t\1/p;s/^> \(.*\)/gshadow-added\t\/etc\/gshadow\t\1/p' >>"$out"
   local kind path note origin
   while IFS=$'\t' read -r kind path note; do
     if [[ $kind == file-added || $kind == file-changed ]]; then
@@ -556,7 +562,6 @@ phase_compare() {
   # The user's own Grassfield settings and state: kept by design, documented (docs/install.md, docs/owner-setup/real-session.md section 9)
   # The grassfield-update system group (created by a package's sysusers file): Arch never removes a system group, a reused gid
   # would give access to what it left behind. Its lines in the group and shadow databases stay.
-  local kept_group='^/etc/(group|gshadow)$'
   local kept="^$h/\\.(config|local/state)/grassfield(/|\$)|^$h/\\.config/grassfield-mimeapps\\.list\$"
   local rules="" r
   for r in "${noise[@]}"; do rules+="$r"$'\n'; done
@@ -566,10 +571,11 @@ phase_compare() {
   printf '\n%-14s %-70s %s\n' KIND PATH ORIGIN
   while IFS=$'\t' read -r kind path origin; do
     why=$(awk -F'\t' -v p="$path" 'p ~ $1 { print $2; exit }' "$(d records/allowlist.tsv)")
-    if [[ -n $why ]]; then
-      printf '%-14s %-70s %s  [system noise: %s]\n' "$kind" "$path" "$origin" "$why"
-    elif [[ $path =~ $kept_group ]]; then
+    # The only accepted group difference: our sysusers file's group, as created (name, gid, no member), and its gshadow name.
+    if { [[ $kind == group-added && $origin =~ ^grassfield-update:[0-9]+:$ ]] || [[ $kind == gshadow-added && $origin == grassfield-update ]]; }; then
       printf '%-14s %-70s %s  [kept by design (Arch convention for system groups)]\n' "$kind" "$path" "$origin"
+    elif [[ -n $why ]]; then
+      printf '%-14s %-70s %s  [system noise: %s]\n' "$kind" "$path" "$origin" "$why"
     elif [[ $path =~ $kept ]]; then
       printf '%-14s %-70s %s  [kept by design (documented)]\n' "$kind" "$path" "$origin"
     else
@@ -580,6 +586,23 @@ phase_compare() {
   echo
   if ((n == 0)); then pass "no leftover: packages, files, units equal the stock record"; else fail "$n leftover(s) against the stock record (table above, saved to $out)"; fi
   shot compare-session
+}
+
+# compare-canary: a group added on purpose must be caught as a leftover, and gone again it must not be
+phase_compare_canary() {
+  creds
+  vm_running || boot_installed canary || return 1
+  local before=$FAILS
+  vm_ssh 'groupadd gf-canary' || { fail "cannot add the canary group"; return 1; }
+  phase_compare | tee "$(d logs/compare-canary.log)" | grep 'gf-canary\|^PASS\|^FAIL'
+  if grep -q 'group-added.*gf-canary.*\[LEFTOVER\]' "$(d logs/compare-canary.log)" && grep -q 'gshadow-added.*gf-canary.*\[LEFTOVER\]' "$(d logs/compare-canary.log)" && ((FAILS > before)); then
+    FAILS=$before
+    pass "a group added on purpose is caught as a leftover (group and gshadow rows)"
+  else
+    fail "the canary group was NOT caught as a leftover"
+  fi
+  vm_ssh 'groupdel gf-canary'
+  phase_compare
 }
 
 main() {
@@ -617,6 +640,7 @@ main() {
     check) phase_check ;;
     uninstall) phase_uninstall ;;
     compare) phase_compare ;;
+    compare-canary) phase_compare_canary ;;
     all)
       local seq=(stock_install snapshot install check uninstall compare)
       ((REUSE_STOCK)) && seq=(snapshot install check uninstall compare)
