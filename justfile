@@ -9,7 +9,7 @@ default:
     @just --list
 
 # All offline checks (L0).
-check: check-config check-schema check-cmake check-shell check-shaders check-i18n check-scripts check-inventory check-contracts check-contrast check-literals check-upstream check-version check-licenses check-tidy check-secrets
+check: check-config check-schema check-cmake check-shell check-shaders check-i18n check-scripts check-containers check-inventory check-contracts check-contrast check-literals check-upstream check-version check-licenses check-tidy check-secrets
 
 # Every offline check except clang-tidy, for a tree that leaves compositor/ unchanged (`just check` runs them all). One
 # recipe on purpose: `just check-schema check-shell` would pass check-shell to check-schema as a file argument.
@@ -125,6 +125,11 @@ check-secrets:
 # Syntax-check shell scripts.
 check-scripts:
     for f in scripts/dev/*.sh scripts/gates/*.sh tests/*/*.sh tests/visual/scenarios/*.sh packaging/install/*.sh.in; do bash -n "$f"; done
+
+# No test or script hands the host to a container: no --privileged, --device, host /dev or /run/systemd mount (the 2026-11-10 session losses).
+check-containers:
+    python3 -I tests/ci/no_privileged_containers.py --selftest
+    python3 -I tests/ci/no_privileged_containers.py
 
 # Render the public installation script and its checksum into DIR (ADR-0043). Refuses while repository.conf holds the
 # placeholder host or an empty fingerprint (O8, O11): nothing is published by this recipe.

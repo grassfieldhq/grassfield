@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 # Software Update, step 5 (ADR-0033 s5, owner decision SU-M2: one password for Update Now and its migrations' sudo
 # commands): grassfield-update-helper, grassfield-update-run, the migrations' sudo (/usr/lib/grassfield/update-sudo/sudo)
-# and the polkit rule 49-grassfield-update.rules, with systemd as the container's manager (privileged, a cgroup2 mount),
-# real dbus-broker, polkitd and pkexec. Never on a real machine: inside, it refuses to run unless it is root in a container
+# and the polkit rule 49-grassfield-update.rules, with systemd as the container's manager (CAP_SYS_ADMIN only, NOT
+# privileged: no host device, no host VT, a private cgroup2 mount), real dbus-broker, polkitd and pkexec. Never on a real machine: inside, it refuses to run unless it is root in a container
 # with the repository mounted at /src and an Omarchy tree at /omarchy.
 #
 #   tests/integration/update_migrate.sh [--omarchy DIR]
 #     DIR  an Omarchy 4.x tree (default /usr/share/omarchy): its omarchy-migrate goes into the test's omarchy package
-#   Runs `docker run --privileged` on archlinux:base (digest pinned below) with systemd as PID 1, then the cases through
-#   `docker exec`; HTTPS_PROXY/HTTP_PROXY/NO_PROXY are passed through and GRASSFIELD_TEST_CA, when set, is mounted as the
+#   Runs `docker run --cap-add SYS_ADMIN` (never --privileged, see below) on archlinux:base (digest pinned below) with
+#   systemd as PID 1, then the cases through `docker exec`; HTTPS_PROXY/HTTP_PROXY/NO_PROXY are passed through and GRASSFIELD_TEST_CA, when set, is mounted as the
 #   container's CA bundle. Exit 0 all PASS (or SKIP without docker), 1 a FAIL, 2 usage.
+#
+# Why not --privileged (the owner's live session ended three times on 2026-11-10, 16:47, 19:13 and 20:28): a privileged
+# container shares the host's /dev, so the container's systemd ran systemd-vconsole-setup and udev on the host's devices;
+# about 6 s after the start the host journal shows "fbcon: Taking over console", uwsm "Received SIGHUP", and SDDM could not
+# take /dev/tty1 again. Here the container gets no device, only CAP_SYS_ADMIN (the cgroup2 mount and the units' own mount
+# namespaces), and systemd starts with every unit that touches a tty or /dev masked. tests/ci/no_privileged_containers.py
+# fails `just check-quick` if a test or script asks docker or podman for --privileged, a host /dev or /run/systemd.
 #
 # What it shows:
 #   - the channel: in grassfield-update-migrate.service (as carol, under the group grassfield-update, NoNewPrivileges, its
@@ -44,13 +51,23 @@ if [[ ${1:-} != --inside ]]; then
   [[ -f $omarchy/bin/omarchy-migrate ]] || { echo "SKIP: no Omarchy tree at $omarchy (--omarchy DIR)"; exit 0; }
   # shellcheck source=omarchy-tree.sh
   . "$root/tests/integration/omarchy-tree.sh" || exit 2
-  args=(-d --privileged --cgroupns=private --tmpfs /run --tmpfs /tmp --network host -e container=docker
+  args=(-d --cap-add SYS_ADMIN --cgroupns=private --tmpfs /run --tmpfs /run/lock --tmpfs /tmp --network host -e container=docker
     -v "$root:/src:ro")
   omarchy_mounts "$omarchy" "$root/.dev/update-migrate-omarchy" /omarchy args || exit 2
   [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
   envs=()
   for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && envs+=(-e "$v"); done
-  cid=$(docker run "${args[@]}" "$IMAGE" bash -c 'umount -l /sys/fs/cgroup 2>/dev/null; mount -t cgroup2 none /sys/fs/cgroup && exec /usr/lib/systemd/systemd') ||
+  # Masked before systemd starts: everything that opens a tty, a console, a VT or a device node (udev, vconsole, gettys,
+  # hwdb, the device and module setup), so nothing here can reach what the container does not have.
+  mask='systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-udev-trigger.service
+    systemd-udev-settle.service systemd-vconsole-setup.service getty.target getty@.service console-getty.service
+    container-getty@.service serial-getty@.service autovt@.service systemd-logind.service systemd-hwdb-update.service
+    systemd-tmpfiles-setup-dev.service systemd-tmpfiles-setup-dev-early.service systemd-modules-load.service
+    systemd-sysctl.service systemd-binfmt.service systemd-machine-id-commit.service systemd-remount-fs.service
+    systemd-pstore.service sys-kernel-config.mount sys-kernel-debug.mount sys-kernel-tracing.mount dev-hugepages.mount
+    dev-mqueue.mount systemd-boot-update.service'
+  cid=$(docker run "${args[@]}" "$IMAGE" bash -c 'umount -l /sys/fs/cgroup 2>/dev/null; mount -t cgroup2 none /sys/fs/cgroup &&
+    mkdir -p /etc/systemd/system && for u in $0; do ln -sf /dev/null "/etc/systemd/system/$u"; done && exec /usr/lib/systemd/systemd' "$mask") ||
     { echo "FAIL: the container did not start"; exit 1; }
   trap 'docker rm -f "$cid" >/dev/null 2>&1' EXIT
   for _ in $(seq 1 60); do

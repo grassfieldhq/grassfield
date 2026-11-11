@@ -40,6 +40,23 @@ The offscreen pattern (headless): link the real `shell/*` modules into a tempora
 
 New test file: add one line to `tests` (or to `ignore` with a reason). Helpers and fixtures outside the globs need nothing.
 
+## No container may share the host's devices
+
+`python3 -I tests/ci/no_privileged_containers.py` (`just check-containers`, part of `just check-quick`; `--selftest` runs it on
+fixtures, and it is a `logic` test) fails when a file under `tests/`, `scripts/`, `.github/` or the `justfile` that runs docker
+or podman asks for `--privileged`, `--device`, a bind mount of the host's `/dev`, `/run/systemd` or `/var/run/systemd`, or the
+host's pid, ipc, uts or user namespace. Whole-line comments are not read.
+
+Why: `tests/integration/update_migrate.sh` used to run `docker run --privileged` with systemd as PID 1. A privileged container
+shares the host's `/dev`, so its systemd ran `systemd-vconsole-setup` and udev on the host's devices: the kernel logged
+"fbcon: Taking over console", the Hyprland session received SIGHUP, SDDM could not take `/dev/tty1` and went into
+start-limit-hit. It ended the owner's live session three times on 2026-11-10 (16:47, 19:13, 20:28).
+
+A test that needs systemd as the container's manager does what `update_migrate.sh` does now: `--cap-add SYS_ADMIN`,
+`--cgroupns=private`, `--tmpfs /run --tmpfs /run/lock`, no device, and every unit that touches a tty or `/dev` (udev,
+vconsole, gettys, logind, hwdb, device setup) masked before systemd starts. Anything that still needs a real device or a
+real console is run in the VM (`scripts/gates/vm-drill.sh`), never on the host.
+
 ## The gate
 
 `python3 -I tests/ci/inventory.py` (Python standard library only; part of `just check` as `check-inventory`, and the first
