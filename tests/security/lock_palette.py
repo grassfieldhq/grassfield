@@ -71,15 +71,62 @@ ALLOWED_TYPES = {
 _TOKENS = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`', re.S)
 
 
+def template_expressions(t):
+    """The ${...} expressions of a template literal (its backticks included), brace matched."""
+    out, i = [], 1
+    while i < len(t) - 1:
+        if t[i] == "\\":
+            i += 2
+            continue
+        if t.startswith("${", i):
+            depth, j = 0, i + 1
+            while j < len(t):
+                depth += {"{": 1, "}": -1}.get(t[j], 0)
+                if depth == 0:
+                    break
+                j += 1
+            out.append(t[i + 2:j])
+            i = j + 1
+            continue
+        i += 1
+    return out
+
+
 def code_of(src, keep_strings=False):
+    """The source with comments removed and string contents blanked (unless keep_strings); a template literal keeps the code
+    of its ${...} expressions, read as code (the delta opus review of 00eff2bd, MINOR-C: `${Appearance.colors.text}` hid
+    inside a blanked literal)."""
     def repl(m):
         t = m.group(0)
         if t.startswith("//"):
             return ""
         if t.startswith("/*"):
             return " " + "\n" * t.count("\n")
-        return t if keep_strings else t[0] + t[0]
+        if keep_strings:
+            return t
+        if t.startswith("`"):
+            return "``" + "".join(" (" + code_of(e) + ")" for e in template_expressions(t))
+        return t[0] + t[0]
     return _TOKENS.sub(repl, src)
+
+
+def blocks(code, type_name):
+    """The bodies of every `type_name {` block, brace matched (the delta opus review of 00eff2bd, MINOR-A: a regex without
+    inner braces missed `Icon { anchors { ... } ... }`), each with its own top-level text (nested blocks removed)."""
+    out = []
+    for m in re.finditer(r"\b" + re.escape(type_name) + r"\s*\{", code):
+        depth, end = 0, len(code)
+        for j in range(m.end() - 1, len(code)):
+            depth += {"{": 1, "}": -1}.get(code[j], 0)
+            if depth == 0:
+                end = j
+                break
+        body = code[m.end():end]
+        own, prev = body, None
+        while own != prev:
+            prev, own = own, re.sub(r"\{[^{}]*\}", "", own)
+        out.append((body, own))
+    return out
 
 
 def module_dir(name):
@@ -91,13 +138,14 @@ def module_dir(name):
     return None
 
 
-def qmldir_entries(repo, d):
-    """{name: (file, singleton)} of a module directory's qmldir."""
+def qmldir_entries(repo, d, files=None):
+    """{name: (file, singleton)} of a module directory's qmldir (read through `files` when given: the selftest's mutants)."""
     out = {}
-    path = os.path.join(repo, d, "qmldir")
-    if not os.path.isfile(path):
+    rel = os.path.normpath(os.path.join(d, "qmldir"))
+    text = read(repo, rel, files) if files is not None else (open(os.path.join(repo, rel), encoding="utf-8").read() if os.path.isfile(os.path.join(repo, rel)) else None)
+    if text is None:
         return out
-    for line in open(path, encoding="utf-8"):
+    for line in text.splitlines():
         m = re.match(r"^\s*(singleton\s+|internal\s+)?([A-Z]\w*)\s+(?:\d[\d.]*\s+)?(\S+\.(?:qml|js))\s*$", line)
         if m:
             out[m.group(2)] = (os.path.normpath(os.path.join(d, m.group(3))), (m.group(1) or "").strip() == "singleton")
@@ -145,8 +193,12 @@ def closure(repo, files=None):
             else:
                 scopes.append(target)
         for d in scopes:
+            entries = qmldir_entries(repo, d, files)
             for t in types:
-                f = os.path.join(d, t + ".qml")
+                if t in entries and not entries[t][1]:
+                    f = entries[t][0]  # the engine follows the directory's qmldir, wherever it points
+                else:
+                    f = os.path.join(d, t + ".qml")
                 if os.path.isfile(os.path.join(repo, f)) and os.path.normpath(f) != rel:
                     todo.append(f)
         # Module imports: their qmldir types (not singletons: data) and the JavaScript modules used as qualifiers.
@@ -154,7 +206,7 @@ def closure(repo, files=None):
             d = module_dir(mod)
             if d is None:
                 continue
-            for name, (f, singleton) in qmldir_entries(repo, d).items():
+            for name, (f, singleton) in qmldir_entries(repo, d, files).items():
                 if f.endswith(".js") and name in qualifiers:
                     todo.append(f)
                 elif f.endswith(".qml") and not singleton and name in types:
@@ -171,8 +223,9 @@ def statement_prefix(code, pos):
     return code[start:pos]
 
 
-def findings(files):
+def findings(files, writers=None):
     out = []
+    writers = writers or {}
     for path, src in sorted(files.items()):
         if src is None:
             out.append(f"{path}: imported or instantiated by the lock but not found")
@@ -202,15 +255,20 @@ def findings(files):
                 out.append(f"{where(m.start())}: Tokens subscripted (only Tokens.<name>)")
             elif m.group(2) != "colorDark":
                 out.append(f"{where(m.start())}: reads Tokens.{m.group(2)} (only Tokens.colorDark on the lock)")
-        # Rule 3: no Qt palette.
-        for m in re.finditer(r"\bpalette\s*[.\[]", code):
+        # Rule 3: no Qt palette (also bare: `pal: palette`), and nothing that says which appearance is chosen.
+        # (QML only: a .pragma library script has no Item scope, so a `palette` there is its own name: Artwork.js's function.)
+        for m in re.finditer(r"(?<![\w.])palette\b", code if path.endswith(".qml") else ""):
             out.append(f"{where(m.start())}: reads Qt's palette, which follows the platform theme's appearance")
+        for m in re.finditer(r"\bSettings\s*\.\s*(dark|appearance)\b", code):
+            out.append(f"{where(m.start())}: reads Settings.{m.group(1)}, the user's appearance")
         # Rule 4: no code built at run time.
         for m in re.finditer(r"\bcreateQmlObject\b", code):
             out.append(f"{where(m.start())}: builds QML from a string (createQmlObject)")
+        for m in re.finditer(r"\bQt\s*\[", code):
+            out.append(f"{where(m.start())}: Qt subscripted (Qt[\"createQmlObject\"] builds QML from a string)")
         allowed = ALLOWED_CREATE.get(path)
         with_strings = code_of(src, keep_strings=True)
-        made = len(re.findall(r"\bcreateComponent\s*\(", code))
+        made = len(re.findall(r"\bcreateComponent\b", code))
         if made and not (allowed and made == 1 and with_strings.count(allowed[0]) == 1):
             out.append(f"{path}: Qt.createComponent (only Lock.qml's one of LockStills.qml)")
         for m in re.finditer(r"\bsetSource\s*\(", code):
@@ -271,12 +329,31 @@ def findings(files):
             if not re.search(r"^\s*" + prop + r":\s*" + value + r"\s*$", body, re.M):
                 out.append(f"{VIEW}: its PasswordField does not set {prop} to {value.replace(chr(92), '')} (the field's default follows the appearance)")
     fcode = code_of(files.get(FIELD) or "")
-    icons = re.findall(r"\bIcon\s*\{([^{}]*)\}", fcode)
-    if len(icons) != 1 or not re.search(r"^\s*color:\s*root\.textColor\s*$", icons[0], re.M):
-        out.append(f"{FIELD}: its Icon does not take the field's text colour (an Icon's default follows the appearance)")
-    rings = re.findall(r"\bFocusRing\s*\{([^{}]*)\}", fcode)
-    if len(rings) != 1 or not re.search(r"^\s*visible:\s*root\.focusRing\s*&&", rings[0], re.M):
-        out.append(f"{FIELD}: its FocusRing does not depend on focusRing (the ring's colour follows the appearance)")
+    icons = blocks(fcode, "Icon")
+    if len(icons) != 1 or not re.search(r"^\s*color:\s*root\.textColor\s*$", icons[0][1], re.M):
+        out.append(f"{FIELD}: not exactly one Icon, taking the field's text colour (an Icon's default follows the appearance)")
+    rings = blocks(fcode, "FocusRing")
+    if len(rings) != 1 or not re.search(r"^\s*visible:\s*root\.focusRing\s*&&", rings[0][1], re.M):
+        out.append(f"{FIELD}: not exactly one FocusRing, shown only when the host asks (the ring's colour follows the appearance)")
+    # Rule 7: nothing outside the lock writes an appearance into it (a Binding on Lock, or Lock.<property> = ...), from any
+    # file of the security tree (Idle.qml and SecurityHost.qml write into Lock).
+    for wpath, wsrc in sorted(writers.items()):
+        wcode = code_of(wsrc)
+        values = [b[1] for b in blocks(wcode, "Binding") if re.search(r"(^|[\s;])target\s*:\s*Lock\b", b[1])]
+        values += [m.group(1) for m in re.finditer(r"\bLock\s*\.\s*\w+\s*=(?!=)([^;\n]*)", wcode)]
+        for v in values:
+            if re.search(r"\bAppearance\b|(?<![\w.])palette\b|\bSettings\s*\.\s*(dark|appearance)\b", v):
+                out.append(f"{wpath}: writes an appearance into Lock ({v.strip()[:80]})")
+    return out
+
+
+def writers_of(repo, files, overrides=None):
+    """The security tree's files outside the closure (they may write into Lock: rule 7)."""
+    out = {}
+    for p in sorted(glob.glob(os.path.join(repo, "shell/security/**/*.qml"), recursive=True)) + sorted(glob.glob(os.path.join(repo, "shell/security/**/*.js"), recursive=True)):
+        rel = os.path.relpath(p, repo)
+        if rel not in files:
+            out[rel] = (overrides or {}).get(rel) or open(p, encoding="utf-8").read()
     return out
 
 
@@ -285,7 +362,7 @@ def main(argv):
         repo = argv[1]
         base_files = {}
         files = closure(repo, base_files)
-        base = findings(files)
+        base = findings(files, writers_of(repo, files))
         ok = not base
         print(("PASS" if ok else "FAIL") + ": lock palette selftest: the tree is clean (" + str(len(files)) + " files: " + ", ".join(sorted(files)) + ")"
               + ("" if ok else " [" + "; ".join(base) + "]"))
@@ -332,6 +409,18 @@ def main(argv):
             ("NIT-2: setSource on the view loader", {"shell/security/lock/LockViewLoader.qml": lambda s: s.replace("        root.sourceComponent = view;\n", "        root.sourceComponent = view;\n        root.setSource(\"Other.qml\", {});\n", 1)}),
             ("NIT-3: Tokens subscripted", {LOCK: lambda s: s.replace("Tokens.colorDark", "Tokens[\"colorLight\"]", 1)}),
             ("NIT-3: Appearance subscripted", {VIEW: lambda s: s.replace(anchor, "    readonly property color probe: Appearance[\"colors\"].text\n" + anchor, 1)}),
+            # The delta opus review of 00eff2bd: MINOR-A, MINOR-C and the NITs that passed.
+            ("MINOR-A: a second Icon with a nested block in PasswordField", {FIELD: lambda s: s.rstrip("\n").rstrip("}") + "    Icon {\n        anchors {\n            left: parent.left\n        }\n        name: \"lock\"\n    }\n}\n"}),
+            ("MINOR-A: the field's Icon colour hidden behind a nested block", {FIELD: lambda s: s.replace("            color: root.textColor\n", "            anchors {\n                centerIn: parent\n            }\n", 1)}),
+            ("MINOR-C: a template literal reading the palette", {VIEW: lambda s: s.replace(anchor, "    readonly property color probe: `${Appearance.colors.text}`\n" + anchor, 1)}),
+            ("MINOR-C: a template literal building QML", {VIEW: lambda s: s.replace(anchor, "    readonly property string probe: `${Qt.createQmlObject(\"import QtQuick; Item {}\", root)}`\n" + anchor, 1)}),
+            ("NIT: Settings.dark in LockView", {VIEW: lambda s: s.replace(anchor, "    readonly property color probe: Settings.dark ? \"white\" : \"black\"\n" + anchor, 1)}),
+            ("NIT: Qt's palette aliased", {VIEW: lambda s: s.replace(anchor, "    readonly property var pal: palette\n" + anchor, 1)}),
+            ("NIT: Qt.createComponent named without a call", {VIEW: lambda s: s.replace(anchor, "    readonly property var make: Qt.createComponent\n" + anchor, 1)}),
+            ("NIT: Qt subscripted", {VIEW: lambda s: s.replace(anchor, "    property var made: Qt[\"createQmlObject\"](\"import QtQuick; Item {}\", root)\n" + anchor, 1)}),
+            ("NIT: the lock's qmldir mapping a type elsewhere", {"shell/security/lock/qmldir": lambda s: s.replace("LockStill 1.0 LockStill.qml", "LockStill 1.0 ../polkit/AuthDialog.qml", 1)}),
+            ("NIT: SecurityHost writing an appearance into Lock", {"shell/security/host/SecurityHost.qml": lambda s: s.replace("    Binding {\n        target: Lock\n        property: \"authorizing\"", "    Binding {\n        target: Lock\n        property: \"fromDim\"\n        value: Appearance.dark\n    }\n    Binding {\n        target: Lock\n        property: \"authorizing\"", 1)}),
+            ("NIT: Idle assigning an appearance into Lock", {"shell/security/idle/Idle.qml": lambda s: s.rstrip("\n").rstrip("}") + "    function probe(): void {\n        Lock.fromDim = Settings.dark;\n    }\n}\n"}),
             ("NIT-3: a second statement on the field's default line", {FIELD: lambda s: s.replace("property color textColor: Appearance.colors.text", "property color textColor: Appearance.colors.text; property color probe: Appearance.colors.danger", 1)}),
         ]
         for what, changes in mutants:
@@ -347,11 +436,13 @@ def main(argv):
                 print(f"FAIL: lock palette selftest: the mutant '{what}' does not apply (stale)")
                 ok = False
                 continue
-            found = findings(closure(repo, mutated))
+            mfiles = closure(repo, mutated)
+            found = findings(mfiles, writers_of(repo, mfiles, mutated))
             print(("PASS" if found else "FAIL") + f": lock palette selftest: {what} is found" + (f" ({found[0]})" if found else ""))
             ok = ok and bool(found)
         return 0 if ok else 1
-    found = findings(closure(argv[0]))
+    files = closure(argv[0])
+    found = findings(files, writers_of(argv[0], files))
     for f in found:
         print("lock palette: " + f)
     if not found:

@@ -1029,6 +1029,33 @@ down, how sleep behaves) is written in the table at the end of this step.
   - Residual, recorded (NIT-6): on the path where `stat` cannot read the flag's identity, Try Again leaves the flag in place
     with the shell running; if the user later stops the shell on purpose (`systemctl --user stop`), the alert appears after
     two looks. Harmless (Try Again then starts it), and the same as residual (2) above.
+- **Review round 4** (2026-11-12, the opus delta review of 00eff2bd: PASS, three MINOR, NITs; the integrator's decision: stop
+  the static arms race, add a behavioural test):
+  - The behavioural test, `tests/security/lock_palette_render.sh` (headless): `lock_palette_render.d/probe.qml` draws the
+    REAL lock surface content (LockView with its real children: the artwork backdrop, the scrim, the date and clock, the
+    initials, the name, the password field with a password typed, the error line) offscreen under Quickshell, built with
+    `Appearance.dark` true and then false, and one view flipped to light while shown and back, every other input equal (the
+    size, the backdrop, the name, the message, Reduce Motion, the clock's minute: the run is done again if it moves). The
+    grabs must be the same image byte for byte, and every visible item's colour inputs the same: the offscreen renderer is
+    Qt's software scene graph, which draws no shader effect, so an Icon's tint or a MultiEffect's colour is compared by its
+    input. Two things are taken off so the grabs compare: the caret (it blinks; its colour is the dots') and the text
+    shadow's layers (a shader the software renderer does not draw; turned off, the date, the clock and the name it carries
+    are drawn). A control (a rectangle in `Appearance.colors.text`) must differ. Three mutants each make it fail: an Icon
+    with its default tint, a script module's colour (GlassTint.js importing Grassfield.Ui), a template literal's colour.
+  - The static lint stays as a fast first check: MINOR-A, the field's Icon and FocusRing read with brace matching (a second
+    `Icon { anchors { ... } }` was missed); MINOR-C, a template literal's `${...}` read as code, in `lock_palette.py` and
+    `security_process_scan.py` (`${Appearance.colors.text}`, `${Qt.createQmlObject(...)}`); and the NITs: `Settings.dark` and
+    `Settings.appearance` refused on the lock, Qt's palette refused bare too (`pal: palette`, QML only), `Qt[...]` and a
+    `createComponent` named without a call refused, a scope directory's qmldir followed as the engine follows it (a
+    `LockStill` mapped to `../polkit/X.qml`), and nothing in the security tree writes an appearance into Lock (a Binding on
+    Lock, `Lock.<property> = ...`). 45 mutants in `lock_palette.py`, 108 in the scan.
+  - Residual, static-only gaps the behavioural test covers (MINOR-B and what a lint cannot follow): a script module reached
+    through a variable (`property var t: GlassTint; t.probe()`) or through its own directory's qmldir from an allowed file
+    (GrassfieldArtwork calling `GlassTint.probe()` once GlassTint.js imports Grassfield.Ui), names built at run time, and any
+    other way a colour can come to depend on the appearance: what the lock draws is compared, whatever the path. Not covered
+    by either: Caps Lock's line (it needs real key events; the same Text as the error line, which is drawn), a shader
+    effect's own output (its colour inputs are compared, not what the GPU draws), the avatar picture (a file, not given
+    offscreen), and a colour that differs only on a real compositor or GPU.
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words

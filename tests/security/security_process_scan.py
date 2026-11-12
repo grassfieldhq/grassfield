@@ -257,14 +257,42 @@ def strip(src, keep_strings=False):
 _TOKENS = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`', re.S)
 
 
+def _template_expressions(t):
+    """The ${...} expressions of a template literal (its backticks included), brace matched."""
+    out, i = [], 1
+    while i < len(t) - 1:
+        if t[i] == "\\":
+            i += 2
+            continue
+        if t.startswith("${", i):
+            depth, j = 0, i + 1
+            while j < len(t):
+                depth += {"{": 1, "}": -1}.get(t[j], 0)
+                if depth == 0:
+                    break
+                j += 1
+            out.append(t[i + 2:j])
+            i = j + 1
+            continue
+        i += 1
+    return out
+
+
 def _strip(src, keep_strings):
+    """Comments removed; string contents blanked unless keep_strings; a template literal keeps the code of its ${...}
+    expressions, read as code (the delta opus review of 00eff2bd, MINOR-C: `${Qt.createQmlObject(...)}` hid inside a blanked
+    literal)."""
     def repl(m):
         t = m.group(0)
         if t.startswith("//"):
             return ""
         if t.startswith("/*"):
             return " "
-        return t if keep_strings else t[0] + t[0]
+        if keep_strings:
+            return t
+        if t.startswith("`"):
+            return "``" + "".join(" (" + _strip(e, False) + ")" for e in _template_expressions(t))
+        return t[0] + t[0]
     return _TOKENS.sub(repl, src)
 
 
@@ -527,6 +555,8 @@ def main(argv):
             ("the UI importing the idle module by path", "shell/saver/Saver.qml", lambda s: s.replace("import \"SaverModel.js\" as SaverModel\n", "import \"SaverModel.js\" as SaverModel\nimport \"../security/idle\"\n", 1)),
             # ADR-0041 S4: safe mode, in the security process only, bound from its own lock and sheets.
             ("createQmlObject in the lock view (NIT-2 of the review of 0edece99)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject in a template literal of the lock view (MINOR-C of the review of 00eff2bd)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    readonly property string made: `${Qt.createQmlObject(\"import QtQuick; Item {}\", root)}`\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject in a template literal of the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    readonly property string made: `x${Qt.createQmlObject(\"import QtQuick; Item {}\", root)}y`\n    Saver {\n", 1)),
             ("createQmlObject in the safe-mode notice", "shell/security/safemode/SafeModeCard.qml", lambda s: s.replace("    signal tryAgain\n", "    signal tryAgain\n    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n", 1)),
             ("a second SafeMode in the host", HOST, lambda s: s.replace("    // The state and the beat for `security heartbeat`", "    SafeMode {\n        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n        sheetUp: root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)\n    }\n    // The state and the beat for `security heartbeat`", 1)),
             ("SafeMode's lock input bound to a constant in the host", HOST, lambda s: s.replace("        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n", "        locked: false\n", 1)),
