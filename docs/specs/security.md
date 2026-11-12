@@ -199,6 +199,7 @@ does not check its gate.
 | saver | status, devDelay, devShow | dev | the screen saver's nested checks (ADR-0032): `devDelay` arms it after a test's delay, `devShow` shows it at once (refused while locked); off in a dev session otherwise |
 | polkit | status | dev | on the security instance since ADR-0041 S3: registration state (the journal has it in a real session) |
 | secrets | state | dev | on the security instance since ADR-0041 S3: the secret sheets' state (ADR-0035 D-9, step 9b): the bridge connection, the name's state, counts of the shown, held, waiting and lingering requests; never a requester or a text (`tests/security/secret_bridge.sh`) |
+| safemode | status, devSet, devPress | dev | on the security instance since ADR-0041 S4: `status` returns what the safe-mode notice decides from (the looks in a row, confirmed, on screen, made, the lock and sheet inputs, the action under way and the last one that did not finish; no private state); `devSet` fakes the looks of the UI's unit (a dev session never asks systemd or reads the owner's flag); `devPress` presses Try Again or Log Out through the notice's own refusals, the actions themselves suppressed in a dev session (`tests/security/safe_mode_nested.sh`). Try Again and Log Out have no IPC function in a real session: the notice's buttons only |
 | search | toggle | action | SUPER+SPACE |
 | search | clipboard | action | SUPER+CTRL+V (Search in its Clipboard view, ADR-0034; again closes it; refused while locked through `show()`) |
 | search | open, close, query, status | dev | `status` returns what the user types; `query`/`open` inject a query |
@@ -300,13 +301,13 @@ macOS model: the screen always locks before sleep, and the lock never silently g
   and writes `$XDG_RUNTIME_DIR/grassfield/shell-safe-mode`, the state the security process of ADR-0041 step 1 reads from
   S4 on; a logout counts nothing (`session-gone`, the test the gate uses); a counter that cannot count (no runtime
   directory, no clock, an unwritable ledger) counts nothing and the restarts go on. The stop never unlocks: the
-  compositor keeps the lock (below, "Lock survival"), and until S4 ships a stopped UI is what the start limit gave. Locked:
-  the session stays locked and out of reach from itself (a lid close or a sleep brings the shell back through the
-  stand-in, which asks it to lock; otherwise a TTY). Unlocked: no idle lock, and the lock key does nothing (SUPER+CTRL+Q
-  is `qs ipc` to the shell, `config/hypr/grassfield/bindings.lua:148`); only a sleep or the lid locks, because Omarchy's
-  sleep lock stays armed and its stand-in, like `grassfield-lid`'s fallback, starts the shell again and asks it to lock.
-  Acceptable until S4 (the old start limit gave the same state; opus security review of b1d826b), written here so that
-  nobody takes a stopped shell for a locked one. A frozen shell (its GUI thread blocked, the process alive) fails nothing
+  compositor keeps the lock (below, "Lock survival"). Before ADR-0041 S2 a stopped UI was what the start limit gave:
+  locked, the session stayed locked and out of reach from itself (a lid close or a sleep brought the shell back through the
+  stand-in; otherwise a TTY); unlocked, no idle lock and the lock key did nothing (opus security review of b1d826b). Since
+  S2 the lock, idle, the lock key's target and the sleep inhibitor are the security process's, so a stopped UI changes none
+  of them; since S4 that process shows the safe-mode notice while the session is unlocked, with Try Again and Log Out
+  ("The security process", S4), so a stopped UI is never a dead end. Written here so that nobody takes a stopped shell
+  for a locked one. A frozen shell (its GUI thread blocked, the process alive) fails nothing
   by itself: `grassfield-shell-watchdog.timer` (ADR-0041 step 6a) asks it `capabilities status` every 30 s and, after three
   questions in a row of one MainPID left unanswered for 5 s (20 s while the kernel's pressure files show a loaded machine),
   sends that process SIGKILL (`systemctl --user kill
@@ -1701,6 +1702,13 @@ Display only: nothing below can lock, unlock, delay engaging the lock or keep it
   published state within 15 s restarts the security unit, and the stand-in (the lock key, the lid, a sleep) restarts a
   security process that answers `security state` with S1's `starting`; a UI still running earlier code keeps its own lock
   and idle until it restarts. `post_upgrade` asks for one log-out when the old version is 1.0.0rc7 or earlier.
+- ADR-0041 S4: in safe mode Log Out cannot offer "Log Out Anyway" when an app keeps a window open (grassfield-session-end
+  asks through the notification server, which is the UI's and is down): the logout stops after 15 s and the alert says to
+  save and quit the apps, then log out. Same-user code can create or remove the safe-mode flag (it can call any IPC target
+  too): a flag created while the UI is stopped by hand shows the alert, one removed hides it unless the unit is at its start
+  limit. The alert sits at the output's exact centre. The security process follows the user's appearance (the host binds
+  `Appearance.dark` to `Settings.dark`): the alert and the polkit and secret sheets draw light or dark; the lock screen stays
+  dark in both (LockView's own dark palette).
 - ADR-0041 S2, ADR-0040 step 4a (3): the lock's still is decoded by Qt from the path it checked (no per-process restriction
   to the JPEG plugin, no descriptor handed over); a race between the check and the decode needs code running as the user.
 
@@ -1762,8 +1770,29 @@ same directory and the modules move without moving a file), one step at a time u
   process stays, whatever the session's state (an accepted residual). `authagent_flows.d` test_36 to test_46,
   `authagent_registration.sh` on the real Quickshell. The sheets also count the start-up probe of a stranded or foreign
   lock as locked (LOW-4). The
-  `polkit` and `secrets` dev hooks answer on the security instance. **S4:** safe mode. The invariant of each state (who
-  locks, either process down, sleep) is the table at the end of ADR-0041 step 1.
+  `polkit` and `secrets` dev hooks answer on the security instance.
+- **S4 (built, ADR-0041 "S4 as built"):** safe mode (`shell/security/safemode/`, made once by the host). The security process
+  looks at the UI's unit every 5 s (2 s while a stop is seen or the notice is up) with one short, bounded process of fixed
+  text: whether the loop detector's flag `$XDG_RUNTIME_DIR/grassfield/shell-safe-mode` exists as a plain file (never read)
+  and `systemctl --user show -p ActiveState,SubState,Result grassfield-shell.service`. Safe mode is the flag with the unit
+  down for good (`inactive` or `failed`), or the unit failed at its start limit (ADR-0056 D-10), two looks in a row. It
+  then shows one small alert (a layer surface the compositor centres, on the overlay layer, the keyboard on demand; the
+  caution symbol, fixed plain text; Try Again the default, Log Out; Return is Try Again, Esc does nothing), made by a
+  LazyLoader only while the session is unlocked, no polkit or secret sheet of this process is up and the displays are on,
+  and destroyed the moment a lock is asked for (`locking` counts), a sheet opens or idle turns the displays off: it is never
+  drawn under or over the lock, never takes a key meant for a sheet, and the wake key finds no alert. The host binds the
+  three inputs from this process's lock, sheets and idle; they read true until bound. Try Again and Log Out refuse first
+  unless the alert is on screen, has been for 500 ms (the sheets' held guard: a repeated Return of the password or the wake
+  key never presses a button) and nothing runs. Try Again runs `grassfield-shell-failed --try-again` as the user: the flag
+  kept until the shell is confirmed active (written when missing, removed only if it is still the one noted), the ledger
+  cleared, the start limit reset, the unit started and asked whether it is active with `systemctl --user`, each step
+  bounded inside the caller's 40 s, so a run killed or failed at any point leaves the flag and the notice; Log Out runs
+  `grassfield-session-end logout`, the menu's path. Nothing restarts the UI on its own, so nothing loops: a second loop is
+  the counter's to stop and the notice comes back. A dev session never asks systemd and runs neither action (the dev hooks
+  `safemode devSet`, `devPress`, `status` fake the looks and press the buttons). Tests: `tst_safemode.qml`,
+  `safe_mode.sh` (the real controller offscreen, six mutants), `security_process_scan.py` (rule 6), `security_unit.sh`,
+  `lock_surfaces.sh`, `tests/shell/shell_failures.sh` (`--try-again`), nested `safe_mode_nested.sh`. The invariant of each
+  state (who locks, either process down, sleep) is the table at the end of ADR-0041 step 1.
 
 ### Lock state across processes (ADR-0041 S2; ADR-0010 risk 2)
 - The security process publishes one file, `$XDG_RUNTIME_DIR/grassfield-lock-state-<compositor instance>` (the marker's

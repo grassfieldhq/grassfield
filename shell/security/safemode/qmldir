@@ -1,0 +1,4 @@
+module qs.security.safemode
+SafeMode 1.0 SafeMode.qml
+SafeModeCard 1.0 SafeModeCard.qml
+SafeModeNotice 1.0 SafeModeNotice.qml
