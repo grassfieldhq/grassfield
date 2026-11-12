@@ -534,6 +534,7 @@
  {"path": "tests/security/secret_bridge.sh", "layer": "headless"},
  {"path": "tests/security/tst_safemode.qml", "layer": "headless"},
  {"path": "tests/security/safe_mode.sh", "layer": "headless"},
+ {"path": "tests/security/lock_palette_render.sh", "layer": "headless"},
  {"path": "tests/security/safe_mode_nested.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/security/nm_agent.sh", "layer": "headless"},
  {"path": "tests/security/askpass.sh", "layer": "headless"},
