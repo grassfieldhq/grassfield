@@ -16,7 +16,7 @@
 #   - gf_mount <source> <target> ro|rw: a bind mount whose source is the repository (and, for a git worktree, its common git
 #     folder, read-only, so the worktree's .git file resolves), the repository's .dev/ folder, an Omarchy tree registered by
 #     omarchy_mounts (and its staged bin/), one regular file of the repository, a CA bundle (a .crt, .pem or .cer under the
-#     repository's .dev/ or in the system CA folders), and, for rw only, a folder of the caller's own: directly under /tmp, or
+#     repository's .dev/ or in the system CA folders), and, for rw only, a folder of the caller's own: directly under /tmp (or $TMPDIR when that is inside /tmp), or
 #     anywhere under the repository's .dev/ (its own scratch area; a `.dev` that is a link out of the repository is refused).
 #     Never a source that IS, is INSIDE, or CONTAINS any of /, /dev, /proc, /sys, /run, /boot, /root, ~/.ssh, ~/.gnupg, ~/.config,
 #     ~/.local/share/keyrings, ~/.password-store (so neither ~ nor ~/.local can be mounted by mistake).
@@ -24,7 +24,8 @@
 #     proxy there is unreachable otherwise; NO_PROXY never counts), or no network;
 #   - gf_proxy_env: the proxy variables, by name;
 #   - gf_container_run: `docker run --rm` (a throwaway container);
-#   - gf_container_init: every container drops NET_RAW (with `--network host` it would otherwise share the host's raw sockets);
+#   - every `docker run` line below carries `--cap-drop NET_RAW` itself (with `--network host` the container would otherwise share
+#     the host's raw sockets), so no path, a second run without init included, can build its arguments without it;
 #   - gf_container_systemd_start / gf_container_exec: update_migrate.sh's container with systemd as PID 1 (CAP_SYS_ADMIN
 #     minus MKNOD, a private cgroup, a tmpfs /run, no --device, no host path mounted, every unit that touches a tty or /dev masked).
 #     What this does NOT contain: with CAP_SYS_ADMIN, docker's default seccomp profile allows mount(2) and there is no AppArmor
@@ -55,7 +56,6 @@ gf_container_init() { # <repository root>: must be the repository this file is i
   mkdir -p -- "$GF_ROOT/.dev" || return 1
   gf_dev >/dev/null || { echo "container.sh: $GF_ROOT/.dev must be a folder inside the repository, not a link out of it" >&2; return 1; }
   gf_args=() gf_trees=() gf_stages=() gf_cid=''
-  gf_args+=(--cap-drop NET_RAW)
 }
 
 gf_under() { # <path> <base>...: the path is a base or inside one (both resolved)
@@ -87,7 +87,10 @@ gf_dev() {
 }
 
 gf_mount() { # <source> <target in the container> <ro|rw>
-  local src mode=$3 t ok=0 dev
+  local src mode=$3 t ok=0 dev tmpbase
+  # /tmp, or $TMPDIR when that is inside /tmp (an agent's sandbox sets one): never another place named by the environment.
+  tmpbase=$(realpath -m -- "${TMPDIR:-/tmp}")
+  [[ $tmpbase == /tmp || $tmpbase == /tmp/* ]] || tmpbase=/tmp
   dev=$(gf_dev) || { echo "container.sh: $GF_ROOT/.dev is not a folder inside the repository" >&2; return 1; }
   src=$(realpath -e -- "$1" 2>/dev/null) || { echo "container.sh: no such source: $1" >&2; return 1; }
   [[ $2 == /?* && ($mode == ro || $mode == rw) ]] || { echo "container.sh: bad mount $2 ($mode)" >&2; return 1; }
@@ -96,8 +99,8 @@ gf_mount() { # <source> <target in the container> <ro|rw>
     # An output folder of the caller's own: directly under /tmp, or under the repository's .dev/ (resolved, so a link cannot
     # widen it); never a link, never /tmp or .dev/ itself.
     [[ -d $src && ! -L $1 && $(stat -c %u -- "$src") == "$(id -u)" ]] &&
-      { [[ ${src%/*} == /tmp ]] || { [[ $src == "$dev"/* ]] && [[ $src != "$dev" ]]; }; } ||
-      { echo "container.sh: a writable mount must be the caller's own folder directly under /tmp, or under the repository's .dev/: $1" >&2; return 1; }
+      { [[ ${src%/*} == /tmp || ${src%/*} == "$tmpbase" ]] || { [[ $src == "$dev"/* ]] && [[ $src != "$dev" ]]; }; } ||
+      { echo "container.sh: a writable mount must be the caller's own folder directly under /tmp (or \$TMPDIR inside /tmp), or under the repository's .dev/: $1" >&2; return 1; }
   else
     [[ $src == "$GF_ROOT" ]] && ok=1
     [[ $src == "$dev" || $src == "$dev"/* ]] && ok=1
@@ -238,7 +241,7 @@ gf_check_image() { # <image>
 gf_container_run() { # <image> <command...>
   local rc
   gf_check_image "${1-}" || { gf_container_cleanup; return 2; }
-  docker run --rm "${gf_args[@]}" "$@"
+  docker run --rm --cap-drop NET_RAW "${gf_args[@]}" "$@"
   rc=$?
   gf_container_cleanup
   return "$rc"
@@ -259,7 +262,7 @@ for u in $0; do ln -sf /dev/null "/etc/systemd/system/$u"; done
 exec /usr/lib/systemd/systemd
 EOS
   gf_args+=(-d --cap-add SYS_ADMIN --cap-drop MKNOD --cgroupns=private --tmpfs /run --tmpfs /run/lock --tmpfs /tmp -e container=docker)
-  gf_cid=$(docker run "${gf_args[@]}" "$image" bash -c "$script" "$mask") || return 1
+  gf_cid=$(docker run --cap-drop NET_RAW "${gf_args[@]}" "$image" bash -c "$script" "$mask") || return 1
   printf '%s\n' "$gf_cid"
 }
 

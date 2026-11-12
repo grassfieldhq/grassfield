@@ -27,7 +27,7 @@ received SIGHUP, SDDM hit start-limit-hit and left a black screen. Each time the
    allows `mount(2)` and an Arch host has no AppArmor profile, so code inside can mount a fresh `/proc` or `/sys` and reach
    `sysrq-trigger` or `power/state`. Only the refusal (VM or CI, no graphical session) and the VM itself contain that. A user
    namespace is a daemon setting with docker, so it cannot be asked for per run.
-5. Every container drops `NET_RAW` (with `--network host`, used only for a proxy on the host's loopback, it would share the host's
+5. Every `docker run` line of the wrapper carries `--cap-drop NET_RAW` itself (a second run without init included; with `--network host`, used only for a proxy on the host's loopback, it would share the host's
    raw sockets). A mount source that is, is inside, or contains a forbidden place is refused, so `~` and `~/.local` cannot be mounted.
 
 ## Consequences

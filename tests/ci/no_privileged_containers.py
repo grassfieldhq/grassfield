@@ -9,18 +9,21 @@ A denylist of flags cannot hold (--device-cgroup-rule, -v /run:/run, -v/dev:/dev
 --security-opt systempaths=unconfined, flags split over a `\\` line or kept in a variable or an array are all ways to the same
 place). So this is an ALLOWLIST by construction:
 
-  1. Outside the wrapper, EVERY non-comment occurrence of a container CLI word (docker, podman, nerdctl, buildah, docker-compose,
-     compose) as a whole token is refused, in any position: a command, a `${X:-docker}` default, a case arm, a for-list, after
-     `&`, in a variable. The only forms that pass are `docker info` (is a daemon there?), `command -v docker`, and text inside
-     echo or printf. Every other line of the repository that names one (test stubs, product code) is listed in ALLOW by exact
+  1. Outside the wrapper, EVERY non-comment occurrence of a container CLI word (docker, podman, nerdctl, buildah, distrobox,
+     toolbox, systemd-nspawn, and their hyphenated forms: docker-compose, podman-compose, podman-remote ...; a `compose`
+     subcommand too) as a whole token is refused, in any position and in any file type, python strings included: a command, a
+     `${X:-docker}` default, a case arm, a for-list, after `&`, in a variable, in an os.system or subprocess string, in a
+     triple-quoted script. The only forms that pass are `docker info` (is a daemon there?), `command -v docker`, and text inside
+     echo or printf (not `printf -v`, not echo piped to a shell or evaluated). Every other line of the repository that names one (test stubs, product code) is listed in ALLOW by exact
      file and exact line text: each exception is visible and was reviewed. Compose files, Dockerfiles and Containerfiles are
      refused. A yaml `options:` line is refused.
   2. tests/integration/container.sh is the only wrapper. Inside it every token occurrence must be one of five exact docker
      spellings (or `docker info`, `command -v docker`, text in echo), and every statement that adds to `gf_args` (the only option
      array) or to `envs`, and every assignment of `gf_cid`, must be one of a short list of exact statements (a mount
-     `-v "$src:$2:$mode"` whose source gf_mount validates at run time, `--network none|host`, `--cap-drop NET_RAW`, `-e "$v"`, git's
+     `-v "$src:$2:$mode"` whose source gf_mount validates at run time, `--network none|host`, `-e "$v"`, git's
      safe.directory variables, and update_migrate's systemd set: CAP_SYS_ADMIN minus MKNOD, a private cgroup namespace, tmpfs).
-     A variable, an array expansion or a flag the guard cannot resolve is therefore a failure, never a pass.
+     Each docker run line spells `--cap-drop NET_RAW` itself, so no path (a second run without init) can skip it. A variable, an
+     array expansion or a flag the guard cannot resolve is therefore a failure, never a pass.
   3. CAP_SYS_ADMIN is only in gf_container_systemd_start, which only tests/integration/update_migrate.sh may call.
   4. The wrapper's own arrays (gf_args, gf_trees, gf_stages) are not touched, and gf_cid is not assigned, outside the wrapper.
   5. Every tracked text file is read, whatever its extension (shell, python, lua, .service, .desktop, zsh, extensionless
@@ -45,9 +48,9 @@ import sys
 WRAPPER = "tests/integration/container.sh"
 SYSTEMD_USER = "tests/integration/update_migrate.sh"
 EXEMPT = ("tests/ci/no_privileged_containers.py",)
-CLI = r"(?:docker|podman|nerdctl|buildah|docker-compose)"
+CLI = r"(?:docker|podman|nerdctl|buildah|docker-compose|podman-compose|distrobox|toolbox|systemd-nspawn)"
 # A container CLI word as a whole token (an absolute path before it is fine): docker-compose first, `compose` is the subcommand.
-TOKEN = re.compile(r"(?<![\w.])(?<!\w-)(?:(?:/[\w.+-]+)*/)?(docker-compose|docker|podman|nerdctl|buildah)(?![\w/-])(?!\.\w)")
+TOKEN = re.compile(r"(?<![\w.])(?<!\w-)(?:(?:/[\w.+-]+)*/)?((?:docker|podman|nerdctl|buildah)(?:-[a-z][\w-]*)?|distrobox(?:-[a-z][\w-]*)?|toolbox|systemd-nspawn)(?![\w/-])(?!\.\w)")
 # `compose` alone is an ordinary word (xkb compose keys, a wallpaper's compose step); as the compose subcommand it takes one of these.
 COMPOSE = re.compile(r"(?<![\w.-])compose\s+(?:up|down|run|exec|build|pull|create|start|stop|ps|logs|config|-f|--file|-p|--project-name)\b")
 CLI_PATH = r"(?:/[\w.+-]+)*/"  # an absolute path before the name: /usr/bin/docker, /usr/local/bin/podman
@@ -74,7 +77,12 @@ COMMENT_STARTS = ("#", "//", "/*", "*")
 ECHOES = ("echo", "printf")
 FILLER = re.compile(r"^(?:@|-|!|then|do|else|elif|if|while|until|\w+=\S*|[\w.-]+:|[\w*|-]+\))$")
 GF_CID_OK = ("gf_args=() gf_trees=() gf_stages=() gf_cid=''", "gf_cid=''",
-             'gf_cid=$(docker run "${gf_args[@]}" "$image" bash -c "$script" "$mask") || return 1')
+             'gf_cid=$(docker run --cap-drop NET_RAW "${gf_args[@]}" "$image" bash -c "$script" "$mask") || return 1')
+# Every way to write the wrapper's container id (assign, append, read, printf -v, declare ...).
+GF_CID_WRITE = re.compile(r"\bgf_cid\s*\+?=|\b(?:read|mapfile|readarray)\b[^;|&]*\bgf_cid\b|\bprintf\s+-v\s+gf_cid\b|"
+                          r"\b(?:declare|typeset|local|export|unset|eval)\b[^;|&]*\bgf_cid\b")
+# Text that is run: echo piped into a shell, evaluated, or `sh -c`.
+RUNS_TEXT = re.compile(r"\|\s*(?:ba|z|da|k)?sh\b|\|\s*(?:xargs|eval|source)\b|\beval\b|\b(?:ba|z|da|k)?sh\s+-c\b|\bsource\s+<\(")
 SHELLISH = (".sh", ".bash", ".zsh", ".py", ".just", ".yml", ".yaml", ".in", ".mk", ".cmake")
 STRINGISH = (".cpp", ".h", ".hpp", ".cc", ".qml", ".js", ".ts", ".mjs")
 BASENAMES = ("justfile", "Makefile", "makefile", "CMakeLists.txt")
@@ -94,13 +102,13 @@ SEP = re.compile(r"""(;|&&|\|\||\||\(|\{|\$\(|`)""")
 WRAPPER_CALLS = [
     r'info( >/dev/null 2>&1)?',
     r'rm -f "\$gf_cid" >/dev/null 2>&1',
-    r'run --rm "\$\{gf_args\[@\]\}" "\$@"',
-    r'run "\$\{gf_args\[@\]\}" "\$image" bash -c "\$script" "\$mask"',
+    r'run --rm --cap-drop NET_RAW "\$\{gf_args\[@\]\}" "\$@"',
+    r'run --cap-drop NET_RAW "\$\{gf_args\[@\]\}" "\$image" bash -c "\$script" "\$mask"',
     r'exec "\$\{envs\[@\]\}" "\$id" "\$@"',
 ]
 SYSTEMD_SET = '-d --cap-add SYS_ADMIN --cap-drop MKNOD --cgroupns=private --tmpfs /run --tmpfs /run/lock --tmpfs /tmp -e container=docker'
 WRAPPER_ARRAYS = {
-    "gf_args": ["--cap-drop NET_RAW", "-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*'", '-v "$src:$2:$mode"', "--network none", "--network host", '-e "$v"', SYSTEMD_SET, ""],
+    "gf_args": ["-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*'", '-v "$src:$2:$mode"', "--network none", "--network host", '-e "$v"', SYSTEMD_SET, ""],
     "envs": ['-e "$v"', ""],
 }
 
@@ -111,6 +119,8 @@ def logical_lines(text):
     for n, line in enumerate(text.split("\n"), 1):
         if not buf:
             start = n
+            if line.lstrip().startswith("#"):
+                continue  # a comment ends at its newline: a trailing backslash does not join the next line
         if line.endswith("\\"):
             buf += line[:-1] + " "
             continue
@@ -132,7 +142,7 @@ def tokens(line):
         seg = before[seps[-1].end():] if seps else before
         rest = line[m.end():]
         end = re.search(r"(;|&&|\|\||\||\)|(?<![&>])&(?!&))", rest)
-        yield m.group(1), seg, (rest[:end.start()] if end else rest).strip(), before
+        yield m.group(1), seg, (rest[:end.start()] if end else rest).strip(), before, line
 
 
 def first_word(seg):
@@ -147,19 +157,22 @@ def in_echo_text(before):
     quoted = before.count('"') % 2 == 1 or before.count("'") % 2 == 1
     m = re.search(r"\b(?:echo|printf)\b[^;|&]*$", before)
     # a command substitution inside the quotes runs: `echo "$(docker run x)"`
-    return quoted and m is not None and "$(" not in before[m.start():] and "`" not in before[m.start():]
+    return (quoted and m is not None and "$(" not in before[m.start():] and "`" not in before[m.start():]
+            and not re.search(r"\bprintf\s+-v\b", before[m.start():]))
 
 
-def permitted(word, seg, rest, rel, before=""):
+def permitted(word, seg, rest, rel, before="", line=""):
     """The forms that may name a container CLI: text in echo or printf, `command -v docker`, `docker info`, and in the wrapper its
     five exact docker spellings."""
-    if first_word(seg) in ECHOES or in_echo_text(before):
+    if (first_word(seg) in ECHOES or in_echo_text(before)) and not RUNS_TEXT.search(line) and not re.match(r"\s*printf\s+-v\b", line):
         return True
     if re.search(r"\bcommand\s+-[vV]\s*$", seg):
         return True
     plain = PREFIX_OK.match(seg) and not any(t in RUNNERS for t in seg.split())
     if word == "docker" and plain and info_only(rest):
         return True
+    if word == "docker" and re.search(r"""\[\s*["']$""", seg) and re.match(r"""^["']\s*,\s*["']info["']\s*[\],)]""", rest):
+        return True  # python: ["docker", "info"]
     if rel == WRAPPER and word == "docker" and plain and any(re.fullmatch(c, rest) for c in WRAPPER_CALLS):
         return True
     return False
@@ -198,14 +211,6 @@ def check_text(rel, text):
     ext = os.path.splitext(rel)[1]
     is_wrapper = rel == WRAPPER
     shellish = ext in SHELLISH or base in BASENAMES or text.startswith("#!")
-    if ext == ".py":
-        for m in re.finditer(r"""["'](?:""" + CLI_PATH + r""")?(""" + CLI + r""")["']""", text):
-            nxt = text[m.end():]
-            if not re.match(r"""\s*,\s*["']info["']\s*[\],)]""", nxt):
-                out.append("%s:%d: a container CLI in python outside `docker info`: %s" % (rel, text[:m.start()].count("\n") + 1, nxt[:60].strip().replace("\n", " ")))
-        for m in re.finditer(r"""["'](?:""" + CLI_PATH + r""")?(""" + CLI + r""")\s+(?!info\b)\S""", text):
-            out.append("%s:%d: a container command line in a python string: %s" % (rel, text[:m.start()].count("\n") + 1, text[m.start():m.start() + 60].replace("\n", " ")))
-        return out
     for n, line in logical_lines(text):
         if ext in STRINGISH and line.lstrip().startswith(COMMENT_STARTS):
             continue
@@ -216,8 +221,8 @@ def check_text(rel, text):
             out.append("%s:%d: a yaml container `options:` line: %s" % (rel, n, line.strip()[:120]))
         if COMPOSE.search(line) and first_word(line.split("compose")[0]) not in ECHOES:
             out.append("%s:%d: a compose subcommand: %s" % (rel, n, line.strip()[:120]))
-        for word, seg, rest, before in tokens(line):
-            if not permitted(word, seg, rest, rel, before):
+        for word, seg, rest, before, whole in tokens(line):
+            if not permitted(word, seg, rest, rel, before, whole):
                 out.append("%s:%d: `%s` in any position outside `docker info`, `command -v` and echo is refused; containers are run only "
                            "through tests/integration/container.sh (or list the exact line in ALLOW): %s" % (rel, n, word, line.strip()[:110]))
     if is_wrapper:
@@ -230,7 +235,7 @@ def check_text(rel, text):
                 if not lo <= n <= hi:
                     out.append("%s:%d: the systemd option set (CAP_SYS_ADMIN) is only allowed inside gf_container_systemd_start" % (rel, n))
         for n, line in logical_lines(text):
-            if re.search(r"\bgf_cid=", line) and line.strip() not in GF_CID_OK:
+            if GF_CID_WRITE.search(line) and line.strip() not in GF_CID_OK:
                 out.append("%s:%d: a gf_cid assignment that is not one of the wrapper's exact statements: %s" % (rel, n, line.strip()[:120]))
             if SYSTEMD_SET in line:
                 continue
@@ -247,7 +252,7 @@ def check_text(rel, text):
         for n, line in logical_lines(text):
             if re.search(r"\b(gf_args|gf_trees|gf_stages)\b", line):
                 out.append("%s:%d: the wrapper's option arrays are not touched outside tests/integration/container.sh" % (rel, n))
-            if re.search(r"\bgf_cid=", line):
+            if GF_CID_WRITE.search(line):
                 out.append("%s:%d: gf_cid is the wrapper's: it is not assigned outside tests/integration/container.sh" % (rel, n))
             if re.search(r"\bgf_container_systemd_start\b", line) and rel != SYSTEMD_USER:
                 out.append("%s:%d: only %s may start a container with systemd (CAP_SYS_ADMIN)" % (rel, n, SYSTEMD_USER))
@@ -395,6 +400,20 @@ BAD_CALLS = [
     "ssh host docker run img",
     "ExecStart=/usr/bin/docker run img",
     "Exec=docker run img",
+    # round-5 probes: hyphenated and sibling tools, comments, printf -v, text that is run
+    "podman-compose -f stack.yml up",
+    "podman-remote run --privileged img",
+    "docker-buildx build .",
+    "distrobox create --init --image img box",
+    "distrobox-enter box",
+    "toolbox create",
+    "systemd-nspawn -D /var/lib/machines/x --boot",
+    "# a comment that ends with a backslash \\\ndocker run --privileged img",
+    'printf -v cmd "docker run img"',
+    'echo "docker run --privileged img" | sh',
+    "echo docker run img | bash",
+    'eval "$(echo docker run img)"',
+    'sh -c "echo ok; docker run img"',
     # round-4 probes: the reviewer's idioms that used to pass
     "  ci) docker run --rm -v /dev:/dev img ;;",
     '"${CONTAINER_ENGINE:-docker}" run --privileged img',
@@ -432,6 +451,15 @@ GOOD_CALLS = [
     "exec \"$cmd\" --device=all",
 ]
 PY_BAD = [
+    'os.system("cd /src && docker run --privileged img")',
+    'subprocess.run("flock /tmp/l docker run --privileged img", shell=True)',
+    'cmd = "timeout 60 docker run img"',
+    'cmd = f"{x} docker run"',
+    'subprocess.run(["bash", "-c", "exec docker run img"])',
+    'script = """\ncd /src\ndocker run --privileged img\n"""',
+    'subprocess.run(["podman-remote", "run", "--privileged", "img"])',
+    'subprocess.run(["distrobox", "create", "--init"])',
+    'subprocess.run("systemd-nspawn -b -D /x", shell=True)',
     'os.system("docker run --privileged img")',
     'os.system("/usr/bin/docker run img")',
     'os.popen("podman run img")',
@@ -500,6 +528,9 @@ def selftest():
     want("an ALLOW entry waives exactly its line", "docker run x\n", "tests/integration/x.sh", False)
     want("an ALLOW entry waives only that text", "docker run y\n", "tests/integration/x.sh", True)
     ALLOW.discard(("tests/integration/x.sh", "docker run x"))
+    for c in ("gf_cid=abc", "gf_cid+=abc", "read gf_cid", "read -r gf_cid <<<abc", "printf -v gf_cid x", "local gf_cid=1", "declare gf_cid=1",
+              "mapfile gf_cid <f", "unset gf_cid"):
+        want("gf_cid written outside the wrapper", c + "\n", "tests/integration/x.sh", True)
     want("gf_cid outside the wrapper", "gf_cid=abc\n", "tests/integration/x.sh", True)
     want("gf_cid read outside the wrapper", 'gf_container_exec "$gf_cid" ls\n', "tests/integration/x.sh", False)
     want("cpp", 'QProcess::start("docker", {"run"});', "tests/unit/x.cpp", True)
@@ -553,6 +584,11 @@ def selftest():
         "docker network create x",
         "x=docker",
         "gf_cid=abc123",
+        "gf_cid+=abc123",
+        "read -r gf_cid <<<abc123",
+        'printf -v gf_cid "%s" abc123',
+        'docker run --rm "${gf_args[@]}" "$@"',
+        'docker run "${gf_args[@]}" "$image" bash -c "$script" "$mask"',
         'gf_args+=(--cap-add NET_RAW)',
         'gf_args+=(--cap-drop CHOWN)',
         '  gf_args=(--cap-drop NET_RAW --privileged)',

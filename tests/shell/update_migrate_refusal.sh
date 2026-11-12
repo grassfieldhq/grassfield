@@ -8,7 +8,8 @@
 set -uo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 W=$(mktemp -d)
-trap 'chmod -R u+rwx "$W" 2>/dev/null; rm -rf "$W"' EXIT
+mdir=''
+trap 'chmod -R u+rwx "$W" 2>/dev/null; rm -rf "$W" ${mdir:+"$mdir"}' EXIT
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
@@ -47,7 +48,7 @@ chmod +x "$W/bin/"*
 run() {
   : >"$W/calls"
   env -i PATH="$W/bin:$PATH" HOME="$W" TMPDIR="${TMPDIR:-/tmp}" GF_STUB="$W" GRASSFIELD_TEST_REFUSAL=1 GRASSFIELD_TEST_SESSIONS_DIR="$W/sess" "${@:2}" \
-    bash "$root/tests/integration/update_migrate.sh" >"$W/out" 2>&1
+    bash "${SCRIPT:-$root/tests/integration/update_migrate.sh}" >"$W/out" 2>&1
   rc=$?
   calls=$(cat "$W/calls")
 }
@@ -139,12 +140,53 @@ else
   echo "  note the unreadable-folder case needs a non-root user: SKIPPED here"
 fi
 
-# The fixture folder is honoured only with the test marker and under $TMPDIR: a wayland file in it does not refuse without the
-# marker, nor from outside $TMPDIR (the real folder is read instead: here it can hold the owner's session, so only the first is
-# proved by behaviour, with a VM stub and no real session folder to read it would proceed).
-for k in GRASSFIELD_TEST_REFUSAL TMPDIR; do
-  if grep -Fq "$k" "$root/tests/integration/update_migrate.sh"; then pass "the fixture folder depends on $k"; else fail "the fixture folder does not depend on $k"; fi
-done
+# The fixture folder is honoured only with the test marker AND under $TMPDIR, and that is proved by BEHAVIOUR: a copy of the script
+# whose "real" session folder is a stand-in holding a wayland session (so ignoring the fixture shows as a refusal) runs three
+# scenarios with a fixture that holds only a text session: the fixture outside $TMPDIR (must be ignored: refused), inside with the
+# marker (honoured: goes on), inside without the marker (ignored: refused). Then three mutants of that copy, each deleting a part
+# of the rule, must each change one answer, so the test fails if :70's condition (or either half of it) is deleted.
+mdir="$root/.dev/refusal-mutants.$$"
+mkdir -p "$mdir" "$W/realdir" "$W/othertmp"
+printf 'UID=1000\nTYPE=wayland\nSTATE=active\n' >"$W/realdir/1"
+mutant() { # <name> <mode>: a copy of update_migrate.sh with the real session folder replaced, and (per mode) a part of the fixture rule deleted
+  python3 -I - "$root/tests/integration/update_migrate.sh" "$mdir/$1.sh" "$W/realdir" "$2" <<'PY'
+import sys
+src, dst, real, mode = sys.argv[1:5]
+s = open(src).read()
+a = 'dir=/run/systemd/sessions'
+assert a in s
+s = s.replace(a, 'dir=' + real, 1)
+if mode == 'no-tmpdir-check':
+    a = '[[ $t == "$k"/* ]] && dir=$t'
+    assert a in s
+    s = s.replace(a, 'dir=$t', 1)
+elif mode == 'no-marker':
+    a = '${GRASSFIELD_TEST_REFUSAL:-} == 1 && '
+    assert a in s
+    s = s.replace(a, '', 1)
+elif mode == 'no-block':
+    i = s.index('  if [[ ${GRASSFIELD_TEST_REFUSAL:-}')
+    j = s.index('  fi\n', i) + 5
+    s = s[:i] + s[j:]
+open(dst, 'w').write(s)
+PY
+}
+scen() { # <script>: the exit codes of the three scenarios
+  local a b c
+  reset; echo kvm >"$W/virt"; : >"$W/lc_fail"; session_file 1 tty active
+  SCRIPT=$1 run outside TMPDIR="$W/othertmp"; a=$rc
+  SCRIPT=$1 run inside; b=$rc
+  SCRIPT=$1 run nomarker GRASSFIELD_TEST_REFUSAL=0; c=$rc
+  echo "$a $b $c"
+}
+mutant base none
+mutant m1 no-tmpdir-check
+mutant m2 no-marker
+mutant m3 no-block
+expect 'the fixture rule: outside $TMPDIR ignored, inside with the marker honoured, without the marker ignored' "$(scen "$mdir/base.sh")" '2 0 2'
+expect 'mutant: the $TMPDIR check deleted is seen (a fixture outside $TMPDIR is honoured)' "$(scen "$mdir/m1.sh")" '0 0 2'
+expect 'mutant: the marker check deleted is seen (a fixture without the marker is honoured)' "$(scen "$mdir/m2.sh")" '2 0 0'
+expect 'mutant: the whole fixture block deleted is seen (a fixture is never honoured)' "$(scen "$mdir/m3.sh")" '2 2 2'
 
 # The code path: the refusal is the first statement of the host branch, before git, the wrapper and any docker call.
 first=$(awk '/^if \[\[ \$\{1:-\} != --inside \]\]; then/ { on = 1; next } on && NF { print; exit }' "$root/tests/integration/update_migrate.sh")

@@ -50,16 +50,16 @@ written code** (ADR-0057). The real boundaries are at run time: the wrapper refu
 closed outside a VM (`tests/shell/update_migrate_refusal.sh`), and the VM itself.
 
 - Every tracked text file is read, whatever its extension (shell, python, lua, `.service`, `.desktop`, zsh, extensionless
-  executables, QML, C++, JS), except `docs/` and markdown. Outside the wrapper, EVERY non-comment occurrence of `docker`,
-  `podman`, `nerdctl`, `buildah` or `docker-compose` as a whole token is refused, in any position (a command, a `${X:-docker}`
-  default, a case arm, a for-list, after `&`, a variable), and so is a `compose` subcommand. The only forms that pass are
-  `docker info`, `command -v docker`, and text inside echo or printf. A line that names one without running a container (a test
-  stub, a unit name, a message) is waived by exact file and line text in `ALLOW`: seven today, each one visible. A call of `docker`, `podman`, `nerdctl`, `buildah` or
-  `docker-compose` is refused everywhere except in `tests/integration/container.sh`, with one exception: `docker info`. That
-  covers an absolute path (`/usr/bin/docker`), a lookup that is then run (`"$(command -v docker)"`, `$(which docker)`), the runners
-  `env exec command nice ionice timeout xargs flock unshare systemd-run` and the privilege wrappers, and python `os.system`,
-  `subprocess` and `Popen` with a docker string or list. A variable that holds such a command name, a compose file, a Dockerfile and
-  a yaml `options:` line are refused too.
+  executables, QML, C++, JS), except `docs/` and markdown. Outside the wrapper, EVERY non-comment occurrence of `docker`, `podman`,
+  `nerdctl`, `buildah`, `distrobox`, `toolbox` or `systemd-nspawn` as a whole token, hyphenated forms included
+  (`docker-compose`, `podman-compose`, `podman-remote`, `distrobox-enter` ...), is refused, in any position and in any file type:
+  a command, a `${X:-docker}` default, a case arm, a for-list, after `&`, a variable, a python `os.system` or `subprocess` string
+  (or a list, an f-string, a triple-quoted script), a `$(command -v docker)` or `$(which docker)` lookup that is then run, behind
+  a runner (`env exec command nice ionice timeout xargs flock unshare systemd-run` and the privilege wrappers). A `compose`
+  subcommand is refused too. The only forms that pass are `docker info`, `command -v docker`, and text inside echo or printf (not
+  `printf -v`, not echo piped into a shell or evaluated). A line that names one without running a container (a test stub, a unit
+  name, a message) is waived by exact file and line text in `ALLOW`: seven today, each one visible. A compose file, a Dockerfile,
+  a Containerfile and a yaml `options:` line are refused too.
 - `tests/integration/container.sh` is the one wrapper every integration test and gate uses (`gf_container_init`, `gf_mount`,
   `gf_network`, `gf_standard`, `omarchy_mounts`, `gf_container_run`). Inside it, each docker call is one of five exact
   spellings and each statement that adds an option is one of a short list. A flag held in a variable or an array, or one the
@@ -67,10 +67,12 @@ closed outside a VM (`tests/shell/update_migrate_refusal.sh`), and the VM itself
   Omarchy tree registered by `omarchy_mounts` and its staged `bin/`, one regular file under the repository, a CA `*.crt`, `*.pem` or
   `*.cer` only under `.dev/` or a documented CA folder (`/etc/ssl/certs`, `/etc/ca-certificates`, `/usr/share/ca-certificates`,
   `/usr/local/share/ca-certificates`, `/etc/pki`; never `/run`, `/dev`, `/proc`, `/sys`, `~/.ssh`, `~/.gnupg`, `~/.config`), and,
-  read-write, a folder of the caller's own directly under `/tmp`, or under the repository's `.dev/` at any depth (its own scratch
+  read-write, a folder of the caller's own directly under `/tmp` (or under `$TMPDIR` when that is inside `/tmp`; no other place
+  named by the environment), or under the repository's `.dev/` at any depth (its own scratch
   area; `.dev` is resolved, and a link out of the repository is refused). A source that is, is inside, or CONTAINS a forbidden
   place (`/`, `/dev`, `/proc`, `/sys`, `/run`, `/boot`, `/root`, `~/.ssh`, `~/.gnupg`, `~/.config`, `~/.local/share/keyrings`,
-  `~/.password-store`) is refused, so neither `~` nor `~/.local` can be mounted. Every container drops `NET_RAW`. The repository
+  `~/.password-store`) is refused, so neither `~` nor `~/.local` can be mounted. Every `docker run` line of the wrapper carries `--cap-drop NET_RAW`
+  itself, so no path can skip it. The repository
   root is derived from the wrapper's own location and read-only; so is the proxy list. The image is
   the first argument, pinned by `@sha256:` (a local image only by an exact name in `GF_LOCAL_IMAGES`); an argument before it that
   starts with `-` is refused; `gf_container_exec` runs only in the container id the wrapper started. In a git worktree, the common

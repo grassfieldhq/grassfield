@@ -29,7 +29,7 @@ IMG=archlinux:base@sha256:$(printf 'a%.0s' {1..64})
 # then sets rc and calls (what docker was asked)
 t() {
   : >"$W/calls"
-  out=$(env -i PATH="$W/bin:$PATH" HOME="$W/home" GF_STUB="$W" TMPDIR=/tmp "${@:2}" bash -c ". '$root/tests/integration/container.sh' && gf_container_init '$root' && $1" 2>&1)
+  out=$(env -i PATH="$W/bin:$PATH" HOME="$W/home" GF_STUB="$W" TMPDIR="${TMPDIR:-/tmp}" "${@:2}" bash -c ". '$root/tests/integration/container.sh' && gf_container_init '$root' && $1" 2>&1)
   rc=$?
   calls=$(cat "$W/calls")
 }
@@ -104,12 +104,15 @@ for src in / /tmp /run /run/user "$root/.dev" /dev "$W/home/.ssh" "$root"; do
 done
 t "gf_mount '$root' /src ro && gf_mount '$root/.dev' /dev-stage ro && echo \"args=\${gf_args[*]}\""
 has 'the repository and its .dev/ read-only: accepted' "$out" "-v $root:/src:ro"
-rw=$(mktemp -d /tmp/container-wrapper.XXXXXX)
+# the caller's temporary folder ($TMPDIR, inside /tmp in an agent's sandbox; /tmp otherwise): one level only
+rw=$(mktemp -d "${TMPDIR:-/tmp}/container-wrapper.XXXXXX")
 t "gf_mount '$rw' /out rw && echo \"args=\${gf_args[*]}\""
-has 'a folder of the caller own under /tmp read-write: accepted' "$out" "-v $rw:/out:rw"
+has 'a folder of the caller own directly under the temporary folder, read-write: accepted' "$out" "-v $rw:/out:rw"
 mkdir "$rw/sub"
 t "gf_mount '$rw/sub' /out rw; echo \"args=\${gf_args[*]}\""
-hasnt 'a folder two levels under /tmp, read-write: refused' "$out" "-v $rw/sub"
+hasnt 'a folder two levels under the temporary folder, read-write: refused' "$out" "-v $rw/sub"
+t "gf_mount '$rw' /out rw; echo \"args=\${gf_args[*]}\"" TMPDIR=/run/user
+expect 'TMPDIR=/run/user does not become the base of the one-level rule (a folder under it is still not accepted)' "$(grep -c -- "-v $rw:/out:rw" <<<"$out")" "$([[ $(dirname "$rw") == /tmp ]] && echo 1 || echo 0)"
 rm -rf "$rw"
 t "gf_mount '$root' /x ro" TMPDIR=/run/user
 expect 'TMPDIR=/run/user changes nothing (the repository is still fine)' "$rc" 0
@@ -121,15 +124,21 @@ rm -f "$root/.dev/container-wrapper-test-ca.pem"
 t "gf_standard none && echo \"args=\${gf_args[*]}\""
 has 'a tree owned by another user: git is told by its own variables' "$out" 'GIT_CONFIG_KEY_0=safe.directory'
 
-# a source that CONTAINS a forbidden folder is refused too (a mount of ~ or ~/.local would carry ~/.ssh or the keyrings along)
-mkdir -p "$W/home/.local/share/keyrings" "$W/home/.local/bin"
-for src in "$W/home" "$W/home/.local" "$W/home/.local/share" /home; do
-  t "gf_mount '$src' /x ro; echo \"args=\${gf_args[*]}\""
-  hasnt "mount $src (it contains a secret folder): refused" "$out" '-v '
+# a source that CONTAINS a forbidden folder is refused too (a mount of ~ or ~/.local would carry ~/.ssh or the keyrings along).
+# The fake home is under the repository's .dev/, which the allowlist ACCEPTS: so each refusal below comes from gf_forbidden.
+fh="$root/.dev/wrapper-test-home.$$"
+mkdir -p "$fh/.ssh" "$fh/.local/share/keyrings" "$fh/.local/bin" "$fh/plain/inner"
+t "gf_mount '$fh/plain' /x ro && echo accepted-control" HOME="$fh"
+has 'control: a folder under .dev/ with no secret folder is accepted by the allowlist' "$out" 'accepted-control'
+for src in "$fh" "$fh/.local" "$fh/.local/share" "$fh/.ssh" "$fh/.local/share/keyrings"; do
+  t "gf_mount '$src' /x ro; echo \"args=\${gf_args[*]}\"" HOME="$fh"
+  has "mount ${src#$root/} (is, is inside or contains a secret folder): refused by gf_forbidden" "$out" 'may not mount'
 done
-mkdir -p "$W/omarchy-local/bin"
-t "omarchy_mounts '$W/home/.local' /omarchy; echo \"rc=\$?\""
-has 'an Omarchy tree that is ~/.local: refused' "$out" 'may not mount'
+t "gf_mount '/home' /x ro; echo \"args=\${gf_args[*]}\"" HOME="$fh"
+hasnt 'mount /home: nothing added' "$out" '-v '
+t "omarchy_mounts '$fh/.local' /omarchy; echo \"rc=\$?\"" HOME="$fh"
+has 'an Omarchy tree that is ~/.local (it has a bin/): refused by gf_forbidden' "$out" 'may not mount'
+rm -rf "$fh"
 # a .dev that links out of the repository widens nothing: the wrapper (a copy in a fake repository) refuses to start
 mkdir -p "$W/fake/tests/integration" "$W/etc-like"
 cp "$root/tests/integration/container.sh" "$W/fake/tests/integration/container.sh"
@@ -138,9 +147,15 @@ fout=$(env -i PATH="$W/bin:$PATH" HOME="$W/home" bash -c ". '$W/fake/tests/integ
 has 'a .dev that is a link out of the repository: init refuses' "$fout" 'rc=1'
 t "gf_container_init '$root'; gf_mount '$root/.dev' /dev-stage ro && echo ok-mounted"
 has 'the real .dev is accepted' "$out" 'ok-mounted'
-# every container drops NET_RAW; cleanup empties the options
-t 'echo "args=${gf_args[*]}"'
-has 'every container drops NET_RAW' "$out" '--cap-drop NET_RAW'
+# every docker run line carries NET_RAW's drop itself, a second run without init included
+t "gf_standard none && gf_container_run '$IMG' true"
+has 'a run drops NET_RAW' "$calls" '--cap-drop NET_RAW'
+t "gf_standard none && gf_container_run '$IMG' true; : >'$W/calls'; gf_standard none && gf_container_run '$IMG' true"
+has 'a second run without gf_container_init still drops NET_RAW' "$calls" '--cap-drop NET_RAW'
+t "gf_standard none && gf_container_run '$IMG' true; : >'$W/calls'; gf_container_run '$IMG' true"
+has 'a run with no options at all still drops NET_RAW' "$calls" '--cap-drop NET_RAW'
+t "gf_container_systemd_start '$IMG' x >/dev/null; : >'$W/calls'; gf_container_systemd_start '$IMG' y >/dev/null"
+has 'a second systemd start without init still drops NET_RAW' "$calls" '--cap-drop NET_RAW'
 t "gf_standard none && gf_container_run '$IMG' true; echo \"after=\${#gf_args[@]}\""
 has 'the options are emptied after a run' "$out" 'after=0'
 
