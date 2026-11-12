@@ -1051,11 +1051,52 @@ down, how sleep behaves) is written in the table at the end of this step.
     Lock, `Lock.<property> = ...`). 45 mutants in `lock_palette.py`, 108 in the scan.
   - Residual, static-only gaps the behavioural test covers (MINOR-B and what a lint cannot follow): a script module reached
     through a variable (`property var t: GlassTint; t.probe()`) or through its own directory's qmldir from an allowed file
-    (GrassfieldArtwork calling `GlassTint.probe()` once GlassTint.js imports Grassfield.Ui), names built at run time, and any
-    other way a colour can come to depend on the appearance: what the lock draws is compared, whatever the path. Not covered
-    by either: Caps Lock's line (it needs real key events; the same Text as the error line, which is drawn), a shader
-    effect's own output (its colour inputs are compared, not what the GPU draws), the avatar picture (a file, not given
-    offscreen), and a colour that differs only on a real compositor or GPU.
+    (GrassfieldArtwork calling `GlassTint.probe()` once GlassTint.js imports Grassfield.Ui), and names built at run time,
+    within what the test draws and walks; what it does not is listed under round 5.
+- **Review round 5** (2026-11-12, the opus review of 39670f1f: PASS, one MINOR, NITs; the render test ran the production
+  LockView and was not vacuous, but missed paths a user sees that only the lint covered). Closed in the test, on top of
+  39670f1f, test files and this text only:
+  1. The field keeps the keyboard focus (the caret is hidden with `cursorVisible = false` instead), so the focus-ring path is
+     drawn: deleting `focusRing: false` (LockView) is caught.
+  2. The text shadows' layers are turned on for the walk and off for the grab: their MultiEffects exist while walked, so
+     `shadowColor: Appearance.colors.text` (LockView's TextShadow) is caught as an input, though the software renderer
+     draws no shadow.
+  3. The notice line (Lock's own text: crash recovery unavailable, PAM suppressed) and the user's lock message (a settings
+     file in the private home, read by the real Settings) are shown and compared: their colours are caught.
+  4. The walk reads every property of every visible item (for...in over the QObject: declared properties too, grouped and
+     held objects such as border, gradient stops, palette and its colour groups, layer, non-visual resources, `var` maps and
+     lists), and records every colour value, every string `Qt.color` reads and every URL: a ShaderEffect's own
+     `property color tint` is caught.
+  5. Lock.qml's surface is drawn: `lock_palette_render.d/surface.py` copies Lock.qml's `WlSessionLockSurface` block (the
+     ground colour, the view's loader, every binding given to the LockView it creates) and its `groundOf()` into
+     `ProbeLockSurface.qml`, whose root stands in for the rest of Lock.qml with fixed data (a member it does not stand in
+     for stops the test: stale), the surface window a Rectangle of its colour. The scene holds the main surface and two
+     grounds alone (the view's loader stopped: the first frame), one before its screen is known and one after: the ground
+     colour, `groundOf()`, an item beside the view and an item in the view as Lock creates it are caught.
+  NITs: the probe refuses to save a scene that is not fully shown (the view mid-fade, a line missing, an empty field, no
+  focus, the caret shown, a ground with its view); three guards check it refuses (an empty field, the focus elsewhere, the
+  notice hidden). The probe's XDG_CONFIG_HOME, XDG_DATA_HOME and XDG_STATE_HOME are in the private home. `lock_palette.py`
+  reads a template literal's `${...}` up to its own closing brace, strings, nested literals and comments skipped
+  (`${"}" && Appearance.colors.text}`; the same in `security_process_scan.py`), a Binding on Lock by its whole body, its
+  braced blocks included (`value: { return Appearance.dark; }`), and an assignment into Lock by its whole statement, over
+  lines and through brackets, subscripted too. Mutants: the render test 12 (each caught) and 3 guards (each refused),
+  `lock_palette.py` 52, the scan 109.
+  - Residual, what the behavioural test does not exercise (each still held by `lock_palette.py`, which reads every file of
+    the closure, Lock.qml whole included):
+    - the rest of Lock.qml and its helpers: the controller, the stills (LockStills.qml: a wallpaper's still, a colour
+      backdrop, the ground the stills give, the decoded avatar), LockAvatar and LockPublisher are stood in for with fixed
+      data, so a colour they compute and hand to the surface is not drawn (the ground drawn is `Tokens.sessionGround`, the
+      one without stills), and the real `WlSessionLockSurface` window is a Rectangle of the same colour;
+    - states not shown: Caps Lock's hint (real key events; the error line's Text), "Checking…" while authenticating, the
+      placeholder of an empty field, the release fade, the idle dim carried over, a picture or colour backdrop, the moving
+      artwork, the account picture (a file), "Authentication service unavailable" (the error line's Text), the account
+      hidden (`lock.showUser` off), the pointer over the submit arrow;
+    - what the walk does not compare: invisible items (they draw nothing), objects more than four levels from an item, and
+      values other than colours, colour strings and URLs; the image compares those for what the software renderer draws,
+      so a shader-drawn part's number or vector input (a shadow's opacity or blur) that followed the appearance is not
+      caught, nor a named colour written with spaces;
+    - the platform theme (the test runs without QT_QPA_PLATFORMTHEME; Qt's palette is refused on the lock by the lint), and
+      a colour that differs only on a real compositor or GPU.
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words
