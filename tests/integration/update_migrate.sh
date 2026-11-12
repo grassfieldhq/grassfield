@@ -362,8 +362,10 @@ done
 omarchy_commands+=("usr/bin/omarchy-migrate:/omarchy/bin/omarchy-migrate" "usr/share/omarchy/bin/omarchy-migrate->/usr/bin/omarchy-migrate")
 base_files=("usr/share/omarchy/version=4.0.4" "${omarchy_commands[@]}" "usr/share/omarchy/migrations/100.sh=echo 100 >>\"\$HOME/migrations.log\"")
 # 700 needs root (sudo, and a command that calls it): it writes on both sides, hands a temporary file to a root command (as
-# 4.0.6's 1791403252 does with mktemp and sudo install), and records its session and group.
-m700='echo 700 >>"$HOME/migrations.log"; echo carol-side >"$HOME/su-m2-user"; echo root-side | sudo tee /root/su-m2-root >/dev/null; sudo install -m 644 /dev/null /etc/su-m2-marker; omarchy-gu-indirect; t=$(mktemp); echo from-tmp >"$t"; sudo install -m 644 "$t" /root/su-m2-tmp; echo "$t" >"$HOME/su-m2-tmppath"; if unshare -U true 2>/dev/null; then echo allowed; else echo refused; fi >"$HOME/su-m2-userns"; echo "${WAYLAND_DISPLAY-} ${HYPRLAND_INSTANCE_SIGNATURE-}" >"$HOME/su-m2-session"; echo "$(readlink /proc/$$/cwd) ${PYTHONSAFEPATH-} ${PYTHONNOUSERSITE-}" >"$HOME/su-m2-cwd"; exec 3< <(sleep 12); touch "$HOME/su-m2-holding"; sleep 8'
+# 4.0.6's 1791403252 does with mktemp and sudo install), and records its session and group. For the isolation check below it
+# then holds a pipe for 8 s, both ends open in two processes of the unit, through a plain pipeline: never `exec` or a process
+# substitution, which the generator rightly refuses in a migration run with root (700 would be listed `exclude ... review`).
+m700='echo 700 >>"$HOME/migrations.log"; echo carol-side >"$HOME/su-m2-user"; echo root-side | sudo tee /root/su-m2-root >/dev/null; sudo install -m 644 /dev/null /etc/su-m2-marker; omarchy-gu-indirect; t=$(mktemp); echo from-tmp >"$t"; sudo install -m 644 "$t" /root/su-m2-tmp; echo "$t" >"$HOME/su-m2-tmppath"; if unshare -U true 2>/dev/null; then echo allowed; else echo refused; fi >"$HOME/su-m2-userns"; echo "${WAYLAND_DISPLAY-} ${HYPRLAND_INSTANCE_SIGNATURE-}" >"$HOME/su-m2-session"; echo "$(readlink /proc/$$/cwd) ${PYTHONSAFEPATH-} ${PYTHONNOUSERSITE-}" >"$HOME/su-m2-cwd"; sleep 8 | { touch "$HOME/su-m2-holding"; sleep 8; }'
 m700f="usr/share/omarchy/migrations/700.sh=$m700"
 mkpkg omarchy 1 "${base_files[@]}"
 mkpkg omarchy 2 "${base_files[@]}" "$m700f"
