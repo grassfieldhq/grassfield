@@ -75,6 +75,11 @@ hasnt 'systemd start: no --privileged' "$calls" '--privileged'
 hasnt 'systemd start: no device' "$calls" '--device'
 hasnt 'systemd start: no host path' "$calls" '-v /'
 
+# SYS_ADMIN belongs to the systemd container alone: gf_args is cleared right after its run, so a later run never carries it
+t "gf_container_systemd_start '$IMG' x >/dev/null; echo \"left=\${#gf_args[@]}\"; : >'$W/calls'; gf_standard none && gf_container_run '$IMG' true"
+has 'after the systemd start the options are empty' "$out" 'left=0'
+hasnt 'a later run does not carry SYS_ADMIN' "$calls" 'SYS_ADMIN'
+
 # --- exec: only in the container the wrapper started ---
 t "gf_container_exec abc123 ls"
 expect 'exec before any start: refused' "$rc" 2

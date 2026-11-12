@@ -252,7 +252,7 @@ gf_container_run() { # <image> <command...>
 # No --device, no host path mounted; but CAP_SYS_ADMIN lets code inside mount a fresh /proc or /sys (see the header): the refusal
 # in update_migrate.sh and the VM are what contain that. <mask> is a list of unit names, masked before systemd starts.
 gf_container_systemd_start() { # <image> <units to mask>
-  local image=${1-} mask=${2-} script
+  local image=${1-} mask=${2-} script rc=0
   gf_check_image "$image" || return 2
   read -r -d '' script <<'EOS' || true
 umount -l /sys/fs/cgroup 2>/dev/null
@@ -262,7 +262,10 @@ for u in $0; do ln -sf /dev/null "/etc/systemd/system/$u"; done
 exec /usr/lib/systemd/systemd
 EOS
   gf_args+=(-d --cap-add SYS_ADMIN --cap-drop MKNOD --cgroupns=private --tmpfs /run --tmpfs /run/lock --tmpfs /tmp -e container=docker)
-  gf_cid=$(docker run --cap-drop NET_RAW "${gf_args[@]}" "$image" bash -c "$script" "$mask") || return 1
+  gf_cid=$(docker run --cap-drop NET_RAW "${gf_args[@]}" "$image" bash -c "$script" "$mask") || rc=1
+  # SYS_ADMIN belongs to this one container: it must not stay in the options of a later run.
+  gf_args=()
+  ((rc == 0)) || return 1
   printf '%s\n' "$gf_cid"
 }
 
