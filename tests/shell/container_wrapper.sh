@@ -37,36 +37,36 @@ t() {
 # --- the image: the first argument, pinned, before docker ---
 t "gf_container_run --privileged '$IMG' true"
 expect 'an option in place of the image: refused (2)' "$rc" 2
-expect 'an option in place of the image: docker not called' "$calls" ''
+expect 'an option in place of the image: the engine was not called' "$calls" ''
 t "gf_container_run -v/dev:/dev '$IMG' true"
 expect 'a mount in place of the image: refused' "$rc" 2
-expect 'a mount in place of the image: docker not called' "$calls" ''
+expect 'a mount in place of the image: the engine was not called' "$calls" ''
 t "gf_container_run archlinux:base true"
 expect 'an image without a digest: refused' "$rc" 2
-expect 'an image without a digest: docker not called' "$calls" ''
+expect 'an image without a digest: the engine was not called' "$calls" ''
 t "gf_container_run archlinux@sha256:abc true"
 expect 'a short digest: refused' "$rc" 2
-expect 'a short digest: docker not called' "$calls" ''
+expect 'a short digest: the engine was not called' "$calls" ''
 t "gf_container_run '' true"
 expect 'no image: refused' "$rc" 2
-expect 'no image: docker not called' "$calls" ''
+expect 'no image: the engine was not called' "$calls" ''
 t "gf_container_run 'img@sha256:$(printf 'a%.0s' {1..64}) --privileged' true"
 expect 'an image with an option glued on: refused' "$rc" 2
-expect 'an image with an option glued on: docker not called' "$calls" ''
+expect 'an image with an option glued on: the engine was not called' "$calls" ''
 t "gf_standard none && gf_container_run '$IMG' echo hi"
 expect 'a pinned image: runs (0)' "$rc" 0
-has 'a pinned image: docker run --rm' "$calls" 'run --rm'
+has 'a pinned image: run --rm' "$calls" 'run --rm'
 has 'a pinned image: the repository read-only at /src' "$calls" "-v $root:/src:ro"
 has 'a pinned image: no network' "$calls" '--network none'
 hasnt 'a pinned image: no --privileged' "$calls" '--privileged'
 hasnt 'a pinned image: no device' "$calls" '--device'
-expect 'a pinned image: docker was called once' "$(wc -l <"$W/calls")" 1
+expect 'a pinned image: the engine was called once' "$(wc -l <"$W/calls")" 1
 t "gf_container_systemd_start --privileged 'a b'"
 expect 'systemd start: an option as the image: refused' "$rc" 2
-expect 'systemd start: an option as the image: docker not called' "$calls" ''
+expect 'systemd start: an option as the image: the engine was not called' "$calls" ''
 t "gf_container_systemd_start archlinux:base 'a b'"
 expect 'systemd start: an unpinned image: refused' "$rc" 2
-expect 'systemd start: an unpinned image: docker not called' "$calls" ''
+expect 'systemd start: an unpinned image: the engine was not called' "$calls" ''
 t "gf_container_systemd_start '$IMG' 'a.service b.mount' >/dev/null && echo \"cid=\$gf_cid\""
 has 'systemd start: the container id is kept' "$out" 'cid=abc123'
 has 'systemd start: CAP_SYS_ADMIN minus MKNOD' "$calls" '--cap-add SYS_ADMIN --cap-drop MKNOD'
@@ -78,13 +78,13 @@ hasnt 'systemd start: no host path' "$calls" '-v /'
 # --- exec: only in the container the wrapper started ---
 t "gf_container_exec abc123 ls"
 expect 'exec before any start: refused' "$rc" 2
-expect 'exec before any start: docker not called' "$calls" ''
+expect 'exec before any start: the engine was not called' "$calls" ''
 t "gf_container_systemd_start '$IMG' x >/dev/null; : >'$W/calls'; gf_container_exec someone-elses-container ls"
 expect 'exec in another container: refused' "$rc" 2
 expect 'exec in another container: no exec call' "$calls" ''
 t "gf_container_systemd_start '$IMG' x >/dev/null; : >'$W/calls'; gf_container_exec abc123 ls -l"
 expect 'exec in the started container: runs (0)' "$rc" 0
-has 'exec in the started container: docker exec' "$calls" 'exec abc123 ls -l'
+has 'exec in the started container: exec' "$calls" 'exec abc123 ls -l'
 t "gf_container_systemd_start '$IMG' x >/dev/null; : >'$W/calls'; gf_container_exec --privileged ls"
 expect 'exec with an option as the id: refused' "$rc" 2
 expect 'exec with an option as the id: no call' "$calls" ''
@@ -107,6 +107,9 @@ has 'the repository and its .dev/ read-only: accepted' "$out" "-v $root:/src:ro"
 rw=$(mktemp -d /tmp/container-wrapper.XXXXXX)
 t "gf_mount '$rw' /out rw && echo \"args=\${gf_args[*]}\""
 has 'a folder of the caller own under /tmp read-write: accepted' "$out" "-v $rw:/out:rw"
+mkdir "$rw/sub"
+t "gf_mount '$rw/sub' /out rw; echo \"args=\${gf_args[*]}\""
+hasnt 'a folder two levels under /tmp, read-write: refused' "$out" "-v $rw/sub"
 rm -rf "$rw"
 t "gf_mount '$root' /x ro" TMPDIR=/run/user
 expect 'TMPDIR=/run/user changes nothing (the repository is still fine)' "$rc" 0
@@ -117,6 +120,29 @@ rm -f "$root/.dev/container-wrapper-test-ca.pem"
 
 t "gf_standard none && echo \"args=\${gf_args[*]}\""
 has 'a tree owned by another user: git is told by its own variables' "$out" 'GIT_CONFIG_KEY_0=safe.directory'
+
+# a source that CONTAINS a forbidden folder is refused too (a mount of ~ or ~/.local would carry ~/.ssh or the keyrings along)
+mkdir -p "$W/home/.local/share/keyrings" "$W/home/.local/bin"
+for src in "$W/home" "$W/home/.local" "$W/home/.local/share" /home; do
+  t "gf_mount '$src' /x ro; echo \"args=\${gf_args[*]}\""
+  hasnt "mount $src (it contains a secret folder): refused" "$out" '-v '
+done
+mkdir -p "$W/omarchy-local/bin"
+t "omarchy_mounts '$W/home/.local' /omarchy; echo \"rc=\$?\""
+has 'an Omarchy tree that is ~/.local: refused' "$out" 'may not mount'
+# a .dev that links out of the repository widens nothing: the wrapper (a copy in a fake repository) refuses to start
+mkdir -p "$W/fake/tests/integration" "$W/etc-like"
+cp "$root/tests/integration/container.sh" "$W/fake/tests/integration/container.sh"
+ln -s "$W/etc-like" "$W/fake/.dev"
+fout=$(env -i PATH="$W/bin:$PATH" HOME="$W/home" bash -c ". '$W/fake/tests/integration/container.sh' && gf_container_init '$W/fake'; echo rc=\$?" 2>&1)
+has 'a .dev that is a link out of the repository: init refuses' "$fout" 'rc=1'
+t "gf_container_init '$root'; gf_mount '$root/.dev' /dev-stage ro && echo ok-mounted"
+has 'the real .dev is accepted' "$out" 'ok-mounted'
+# every container drops NET_RAW; cleanup empties the options
+t 'echo "args=${gf_args[*]}"'
+has 'every container drops NET_RAW' "$out" '--cap-drop NET_RAW'
+t "gf_standard none && gf_container_run '$IMG' true; echo \"after=\${#gf_args[@]}\""
+has 'the options are emptied after a run' "$out" 'after=0'
 
 # --- the globals ---
 t 'echo "root=$GF_ROOT"' GF_ROOT=/

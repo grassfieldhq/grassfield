@@ -50,8 +50,11 @@ written code** (ADR-0057). The real boundaries are at run time: the wrapper refu
 closed outside a VM (`tests/shell/update_migrate_refusal.sh`), and the VM itself.
 
 - Every tracked text file is read, whatever its extension (shell, python, lua, `.service`, `.desktop`, zsh, extensionless
-  executables, QML, C++, JS), except `docs/` and markdown. A product-code line that merely names docker is waived by exact file and
-  line text in `ALLOW` (empty today). A call of `docker`, `podman`, `nerdctl`, `buildah` or
+  executables, QML, C++, JS), except `docs/` and markdown. Outside the wrapper, EVERY non-comment occurrence of `docker`,
+  `podman`, `nerdctl`, `buildah` or `docker-compose` as a whole token is refused, in any position (a command, a `${X:-docker}`
+  default, a case arm, a for-list, after `&`, a variable), and so is a `compose` subcommand. The only forms that pass are
+  `docker info`, `command -v docker`, and text inside echo or printf. A line that names one without running a container (a test
+  stub, a unit name, a message) is waived by exact file and line text in `ALLOW`: seven today, each one visible. A call of `docker`, `podman`, `nerdctl`, `buildah` or
   `docker-compose` is refused everywhere except in `tests/integration/container.sh`, with one exception: `docker info`. That
   covers an absolute path (`/usr/bin/docker`), a lookup that is then run (`"$(command -v docker)"`, `$(which docker)`), the runners
   `env exec command nice ionice timeout xargs flock unshare systemd-run` and the privilege wrappers, and python `os.system`,
@@ -64,8 +67,11 @@ closed outside a VM (`tests/shell/update_migrate_refusal.sh`), and the VM itself
   Omarchy tree registered by `omarchy_mounts` and its staged `bin/`, one regular file under the repository, a CA `*.crt`, `*.pem` or
   `*.cer` only under `.dev/` or a documented CA folder (`/etc/ssl/certs`, `/etc/ca-certificates`, `/usr/share/ca-certificates`,
   `/usr/local/share/ca-certificates`, `/etc/pki`; never `/run`, `/dev`, `/proc`, `/sys`, `~/.ssh`, `~/.gnupg`, `~/.config`), and,
-  read-write, a folder of the caller's own directly under `/tmp` or the repository's `.dev/` (never `/run`, `/dev`, `/proc`,
-  `/sys` or `/`). The repository root is derived from the wrapper's own location and read-only; so is the proxy list. The image is
+  read-write, a folder of the caller's own directly under `/tmp`, or under the repository's `.dev/` at any depth (its own scratch
+  area; `.dev` is resolved, and a link out of the repository is refused). A source that is, is inside, or CONTAINS a forbidden
+  place (`/`, `/dev`, `/proc`, `/sys`, `/run`, `/boot`, `/root`, `~/.ssh`, `~/.gnupg`, `~/.config`, `~/.local/share/keyrings`,
+  `~/.password-store`) is refused, so neither `~` nor `~/.local` can be mounted. Every container drops `NET_RAW`. The repository
+  root is derived from the wrapper's own location and read-only; so is the proxy list. The image is
   the first argument, pinned by `@sha256:` (a local image only by an exact name in `GF_LOCAL_IMAGES`); an argument before it that
   starts with `-` is refused; `gf_container_exec` runs only in the container id the wrapper started. In a git worktree, the common
   git folder is mounted read-only at the same path (a `git archive` copy would lose the history some tests read).
@@ -81,9 +87,12 @@ start-limit-hit. It ended the owner's live session three times on 2026-11-11 (16
 ### Running update_migrate.sh
 
 **Never on a machine with a live graphical session, and never on the machine you work on.** Its container runs systemd as PID 1.
-It now has `CAP_SYS_ADMIN` minus `MKNOD`, no device, a tmpfs `/run`, and every unit that touches a tty or `/dev` masked (udev,
+It now has `CAP_SYS_ADMIN` minus `MKNOD`, no `--device`, no host path mounted, a tmpfs `/run`, and every unit that touches a tty or `/dev` masked (udev,
 vconsole, gettys, console password and mute units, logind, hwdb, device and module setup, the FUSE control mount); a user namespace
-is not available per run with docker (`userns-remap` is a daemon setting), so the virtual machine is the real boundary. The script
+is not available per run with docker (`userns-remap` is a daemon setting), so the virtual machine is the real boundary. Be plain
+about what the container does not contain: with `CAP_SYS_ADMIN`, docker's default seccomp profile allows `mount(2)` and an Arch
+host has no AppArmor profile, so code inside can mount a fresh `/proc` or `/sys` and reach `sysrq-trigger` or `power/state`.
+Only the refusal and the VM contain that. The script
 enforces that itself and fails closed: before any docker call it refuses unless it runs in a VM (`systemd-detect-virt --vm`) or on
 a CI runner (`CI=true`, `GITHUB_ACTIONS=true` and `RUNNER_TEMP` together; `CI=true` alone is not enough), refuses beside any
 wayland, x11 or mir session that is not closing (read from `loginctl` and from `/run/systemd/sessions/*`), and refuses when it

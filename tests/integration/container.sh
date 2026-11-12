@@ -16,14 +16,20 @@
 #   - gf_mount <source> <target> ro|rw: a bind mount whose source is the repository (and, for a git worktree, its common git
 #     folder, read-only, so the worktree's .git file resolves), the repository's .dev/ folder, an Omarchy tree registered by
 #     omarchy_mounts (and its staged bin/), one regular file of the repository, a CA bundle (a .crt, .pem or .cer under the
-#     repository's .dev/ or in the system CA folders), and, for rw only, a folder of the caller's own under /tmp or .dev/.
-#     Never /, /dev, /proc, /sys, /run, /boot, nor ~/.ssh, ~/.gnupg, ~/.config.
+#     repository's .dev/ or in the system CA folders), and, for rw only, a folder of the caller's own: directly under /tmp, or
+#     anywhere under the repository's .dev/ (its own scratch area; a `.dev` that is a link out of the repository is refused).
+#     Never a source that IS, is INSIDE, or CONTAINS any of /, /dev, /proc, /sys, /run, /boot, /root, ~/.ssh, ~/.gnupg, ~/.config,
+#     ~/.local/share/keyrings, ~/.password-store (so neither ~ nor ~/.local can be mounted by mistake).
 #   - gf_network auto|none: the default network, or `--network host` ONLY when HTTP(S)_PROXY names the host's loopback (a
 #     proxy there is unreachable otherwise; NO_PROXY never counts), or no network;
 #   - gf_proxy_env: the proxy variables, by name;
 #   - gf_container_run: `docker run --rm` (a throwaway container);
+#   - gf_container_init: every container drops NET_RAW (with `--network host` it would otherwise share the host's raw sockets);
 #   - gf_container_systemd_start / gf_container_exec: update_migrate.sh's container with systemd as PID 1 (CAP_SYS_ADMIN
-#     minus MKNOD, a private cgroup, a tmpfs /run, no device, every unit that touches a tty or /dev masked).
+#     minus MKNOD, a private cgroup, a tmpfs /run, no --device, no host path mounted, every unit that touches a tty or /dev masked).
+#     What this does NOT contain: with CAP_SYS_ADMIN, docker's default seccomp profile allows mount(2) and there is no AppArmor
+#     profile on an Arch host, so code running inside that container can mount a fresh /proc or /sys and reach sysrq-trigger or
+#     power/state. Only the refusal (VM or CI, no graphical session) and the VM itself contain that.
 # Never: --privileged, --device*, a host /dev, /run, /sys, /proc or / mount, a host namespace, --cap-add other than SYS_ADMIN.
 
 if [[ $(readonly -p 2>/dev/null) != *" GF_ROOT="* ]]; then
@@ -47,7 +53,9 @@ gf_container_init() { # <repository root>: must be the repository this file is i
   [[ $(realpath -e -- "${1:-/nonexistent}" 2>/dev/null) == "$GF_ROOT" && -d $GF_ROOT/tests/integration ]] ||
     { echo "container.sh: ${1:-?} is not the repository of this wrapper ($GF_ROOT)" >&2; return 1; }
   mkdir -p -- "$GF_ROOT/.dev" || return 1
+  gf_dev >/dev/null || { echo "container.sh: $GF_ROOT/.dev must be a folder inside the repository, not a link out of it" >&2; return 1; }
   gf_args=() gf_trees=() gf_stages=() gf_cid=''
+  gf_args+=(--cap-drop NET_RAW)
 }
 
 gf_under() { # <path> <base>...: the path is a base or inside one (both resolved)
@@ -60,35 +68,47 @@ gf_under() { # <path> <base>...: the path is a base or inside one (both resolved
   return 1
 }
 
-# Places no test container may get a mount from, whatever else is said.
+# Places no test container may get a mount from, whatever else is said: a source that is one of them, is inside one, or CONTAINS
+# one (a mount of ~ or ~/.local would carry ~/.ssh or the keyrings along).
 gf_forbidden() { # <resolved path>
-  local p=$1 h
+  local p=$1 f
   [[ $p == / ]] && return 0
-  gf_under "$p" /dev /proc /sys /run /boot /root && return 0
-  for h in .ssh .gnupg .config .local/share/keyrings .password-store; do
-    gf_under "$p" "${HOME:-/nonexistent}/$h" && return 0
+  for f in /dev /proc /sys /run /boot /root "${HOME:-/nonexistent}"/{.ssh,.gnupg,.config,.local/share/keyrings,.password-store}; do
+    f=$(realpath -m -- "$f")
+    [[ $p == "$f" || $p == "$f"/* || $f == "$p"/* ]] && return 0
   done
   return 1
 }
 
+# The repository's .dev/ folder, resolved: it must stay inside the repository (a `.dev` link to /etc would widen every rule).
+gf_dev() {
+  local d
+  d=$(realpath -e -- "$GF_ROOT/.dev" 2>/dev/null) && [[ $d == "$GF_ROOT"/* ]] && printf '%s\n' "$d"
+}
+
 gf_mount() { # <source> <target in the container> <ro|rw>
-  local src mode=$3 t ok=0
+  local src mode=$3 t ok=0 dev
+  dev=$(gf_dev) || { echo "container.sh: $GF_ROOT/.dev is not a folder inside the repository" >&2; return 1; }
   src=$(realpath -e -- "$1" 2>/dev/null) || { echo "container.sh: no such source: $1" >&2; return 1; }
   [[ $2 == /?* && ($mode == ro || $mode == rw) ]] || { echo "container.sh: bad mount $2 ($mode)" >&2; return 1; }
   if gf_forbidden "$src"; then echo "container.sh: a test container may not mount $src" >&2; return 1; fi
   if [[ $mode == rw ]]; then
-    # An output folder of the caller's own, under /tmp or the repository's .dev/, never a link, never the whole of either.
-    [[ -d $src && ! -L $1 && $(stat -c %u -- "$src") == "$(id -u)" ]] && gf_under "$src" "$GF_ROOT/.dev" /tmp &&
-      [[ $src != /tmp && $src != "$GF_ROOT/.dev" ]] ||
-      { echo "container.sh: a writable mount must be the caller's own folder under /tmp or .dev/: $1" >&2; return 1; }
+    # An output folder of the caller's own: directly under /tmp, or under the repository's .dev/ (resolved, so a link cannot
+    # widen it); never a link, never /tmp or .dev/ itself.
+    [[ -d $src && ! -L $1 && $(stat -c %u -- "$src") == "$(id -u)" ]] &&
+      { [[ ${src%/*} == /tmp ]] || { [[ $src == "$dev"/* ]] && [[ $src != "$dev" ]]; }; } ||
+      { echo "container.sh: a writable mount must be the caller's own folder directly under /tmp, or under the repository's .dev/: $1" >&2; return 1; }
   else
     [[ $src == "$GF_ROOT" ]] && ok=1
-    gf_under "$src" "$GF_ROOT/.dev" && ok=1
+    [[ $src == "$dev" || $src == "$dev"/* ]] && ok=1
     for t in "${gf_trees[@]}"; do [[ $src == "$t" ]] && ok=1; done
     # One regular file: of the repository (the gate's own script), or a CA bundle in .dev/ or the system's CA folders.
     if [[ -f $src ]]; then
       gf_under "$src" "$GF_ROOT" && ok=1
-      if [[ $src == *.crt || $src == *.pem || $src == *.cer ]]; then gf_under "$src" "$GF_ROOT/.dev" "${GF_CA_DIRS[@]}" && ok=1; fi
+      if [[ $src == *.crt || $src == *.pem || $src == *.cer ]]; then
+        [[ $src == "$dev"/* ]] && ok=1
+        gf_under "$src" "${GF_CA_DIRS[@]}" && ok=1
+      fi
     fi
     ((ok)) || { echo "container.sh: not a source a test container may mount: $1 (a CA bundle goes under .dev/ or the system CA folders)" >&2; return 1; }
   fi
@@ -197,6 +217,7 @@ gf_container_cleanup() {
   local s
   if [[ -n $gf_cid ]]; then docker rm -f "$gf_cid" >/dev/null 2>&1; fi
   gf_cid=''
+  gf_args=()
   for s in "${gf_stages[@]}"; do
     gf_under "$s" "$GF_ROOT/.dev" && rm -rf -- "$s"
   done
@@ -225,7 +246,8 @@ gf_container_run() { # <image> <command...>
 
 # update_migrate.sh's container: systemd as PID 1, detached; its id is kept in gf_cid (and printed). Granted: CAP_SYS_ADMIN (the
 # cgroup2 mount and the units' own mount namespaces) minus MKNOD, a private cgroup namespace, tmpfs /run, /run/lock and /tmp.
-# No device, no host path. <mask> is a list of unit names, masked before systemd starts.
+# No --device, no host path mounted; but CAP_SYS_ADMIN lets code inside mount a fresh /proc or /sys (see the header): the refusal
+# in update_migrate.sh and the VM are what contain that. <mask> is a list of unit names, masked before systemd starts.
 gf_container_systemd_start() { # <image> <units to mask>
   local image=${1-} mask=${2-} script
   gf_check_image "$image" || return 2

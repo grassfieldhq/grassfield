@@ -46,7 +46,8 @@ IMAGE=archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23
 # CI alone); and no graphical session, ever. A session is read from loginctl and from /run/systemd/sessions/*; any session of type
 # wayland, x11 or mir that is not `closing` (active, online, opening, whatever) refuses, a session whose type or state cannot be
 # read refuses, and so does a machine on which neither source can be read. No docker call happens before this returns.
-# GRASSFIELD_TEST_SESSIONS_DIR points the file source at a fixture: tests/shell/update_migrate_refusal.sh.
+# GRASSFIELD_TEST_SESSIONS_DIR points the file source at a fixture, and is honoured ONLY when GRASSFIELD_TEST_REFUSAL=1 is set
+# too and the folder is under $TMPDIR (tests/shell/update_migrate_refusal.sh); otherwise it is ignored.
 host_refusal() {
   local vm='' ci=0 sid st t f k v dir out known=0 found=''
   vm=$(systemd-detect-virt --vm 2>/dev/null) || vm=''
@@ -65,7 +66,10 @@ host_refusal() {
       case $t in wayland | x11 | mir | '?' | '') [[ $st != closing ]] && found="$found loginctl:$sid($t,$st)" ;; esac
     done <<<"$out"
   fi
-  dir=${GRASSFIELD_TEST_SESSIONS_DIR:-/run/systemd/sessions}
+  dir=/run/systemd/sessions
+  if [[ ${GRASSFIELD_TEST_REFUSAL:-} == 1 && -n ${GRASSFIELD_TEST_SESSIONS_DIR:-} ]]; then
+    t=$(realpath -m -- "$GRASSFIELD_TEST_SESSIONS_DIR") && k=$(realpath -m -- "${TMPDIR:-/tmp}") && [[ $t == "$k"/* ]] && dir=$t
+  fi
   if [[ -d $dir && -r $dir && -x $dir ]]; then
     known=1
     for f in "$dir"/*; do

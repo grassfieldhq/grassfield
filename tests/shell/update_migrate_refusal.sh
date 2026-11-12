@@ -46,7 +46,7 @@ chmod +x "$W/bin/"*
 # run <name> [env assignments...]: the script as a bare command, the stubs first on PATH, the session files in the fixture folder
 run() {
   : >"$W/calls"
-  env -i PATH="$W/bin:$PATH" HOME="$W" GF_STUB="$W" GRASSFIELD_TEST_SESSIONS_DIR="$W/sess" "${@:2}" \
+  env -i PATH="$W/bin:$PATH" HOME="$W" TMPDIR="${TMPDIR:-/tmp}" GF_STUB="$W" GRASSFIELD_TEST_REFUSAL=1 GRASSFIELD_TEST_SESSIONS_DIR="$W/sess" "${@:2}" \
     bash "$root/tests/integration/update_migrate.sh" >"$W/out" 2>&1
   rc=$?
   calls=$(cat "$W/calls")
@@ -54,15 +54,15 @@ run() {
 reset() { chmod -R u+rwx "$W/sess" 2>/dev/null; rm -rf "$W"/virt "$W"/sessions "$W"/type.* "$W"/state.* "$W"/lc_fail "$W/sess"; mkdir -p "$W/sess"; }
 session_file() { printf 'UID=1000\nTYPE=%s\nSTATE=%s\n' "$2" "$3" >"$W/sess/$1"; }
 CIENV=(CI=true GITHUB_ACTIONS=true RUNNER_TEMP=/tmp)
-refused() { # <label>: exit 2, no docker call, a refusal that suggests no way round it
+refused() { # <label>: exit 2, no engine call, a refusal that suggests no way round it
   expect "$1: refused (exit 2)" "$rc" 2
-  expect "$1: docker was never called" "$calls" ''
+  expect "$1: the engine was never called" "$calls" ''
   hasnt "$1: the message suggests no override" 'GRASSFIELD_UPDATE' "$W/out"
   hasnt "$1: the message does not tell to set CI" 'CI=true' "$W/out"
 }
 proceeds() { # <label>
   expect "$1: goes on (SKIP without a daemon, exit 0)" "$rc" 0
-  expect "$1: the only call to docker is info" "$calls" 'call: info'
+  expect "$1: the only engine call is info" "$calls" 'call: info'
 }
 
 reset
@@ -138,6 +138,13 @@ if [[ $(id -u) != 0 ]]; then
 else
   echo "  note the unreadable-folder case needs a non-root user: SKIPPED here"
 fi
+
+# The fixture folder is honoured only with the test marker and under $TMPDIR: a wayland file in it does not refuse without the
+# marker, nor from outside $TMPDIR (the real folder is read instead: here it can hold the owner's session, so only the first is
+# proved by behaviour, with a VM stub and no real session folder to read it would proceed).
+for k in GRASSFIELD_TEST_REFUSAL TMPDIR; do
+  if grep -Fq "$k" "$root/tests/integration/update_migrate.sh"; then pass "the fixture folder depends on $k"; else fail "the fixture folder does not depend on $k"; fi
+done
 
 # The code path: the refusal is the first statement of the host branch, before git, the wrapper and any docker call.
 first=$(awk '/^if \[\[ \$\{1:-\} != --inside \]\]; then/ { on = 1; next } on && NF { print; exit }' "$root/tests/integration/update_migrate.sh")

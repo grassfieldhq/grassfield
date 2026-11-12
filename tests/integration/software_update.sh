@@ -39,6 +39,10 @@ if [[ ${1:-} != --inside ]]; then
   gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -x $omarchy/bin/omarchy-refresh-pacman && -f $omarchy/migrations/1787589206.sh ]] ||
     { echo "SKIP: no Omarchy 4.0.4 tree at $omarchy (--omarchy DIR)"; exit 0; }
+  if [[ -n $next ]]; then
+    [[ -d $next/bin && -f $next/migrations/1791403252.sh ]] ||
+      { echo "refused: --omarchy-next $next is not an Omarchy 4.0.6 tree (no bin/, no migrations/1791403252.sh)" >&2; exit 2; }
+  fi
   gf_container_init "$root" || exit 2
   gf_standard auto || exit 2
   omarchy_mounts "$omarchy" /omarchy || exit 2

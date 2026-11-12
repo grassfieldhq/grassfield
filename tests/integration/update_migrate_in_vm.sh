@@ -34,8 +34,8 @@ if systemctl is-active sddm >/dev/null 2>&1; then
     sleep 1
   done
 fi
-# stderr and an execution trace go to trace.log (inside a VM only), the test's own lines to run.log
-(cd "$repo" && timeout 3000 bash -x ./tests/integration/update_migrate.sh) >"$out/run.log" 2>"$out/trace.log"
+# stderr goes to err.log, the test's own lines to run.log. No `bash -x`: a trace would record proxy variables, credentials included.
+(cd "$repo" && timeout 3000 ./tests/integration/update_migrate.sh) >"$out/run.log" 2>"$out/err.log"
 rc=$?
 if [[ -n $dm ]]; then systemctl reset-failed "$dm" 2>/dev/null; systemctl start "$dm" 2>/dev/null; fi
 sleep 3
@@ -51,6 +51,6 @@ journalctl --since "$since" --no-pager >"$out/journal.log" 2>&1
   echo "== console before / after"
   diff "$out/console-before" "$out/console-after" && echo "(identical)"
   echo "== update_migrate: $(grep -c '^PASS' "$out/run.log") PASS, $(grep -c '^FAIL' "$out/run.log") FAIL, exit $rc"
-  if ((rc != 0)); then echo "== last lines of the run"; tail -n 15 "$out/run.log"; echo "== last lines of the trace"; tail -n 40 "$out/trace.log"; fi
+  if ((rc != 0)); then echo "== last lines of the run"; tail -n 15 "$out/run.log"; echo "== last lines of stderr"; tail -n 40 "$out/err.log"; fi
 } | tee "$out/summary"
 exit "$rc"

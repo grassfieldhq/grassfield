@@ -19,9 +19,16 @@ received SIGHUP, SDDM hit start-limit-hit and left a black screen. Each time the
    - the virtual machine, the only place that script runs (`scripts/gates/vm-drill.sh update-migrate`).
 3. The static guard `tests/ci/no_privileged_containers.py` is a LINT against ACCIDENTAL reintroduction by people or agents. It is
    not a sandbox against deliberately written code, and says so in its header and in `docs/testing/README.md`. It reads every tracked
-   text file except `docs/`; a product-code false positive is waived by exact file and line text in `ALLOW`.
-4. The container that runs systemd has `CAP_SYS_ADMIN` minus `MKNOD`, a private cgroup namespace, a tmpfs `/run`, no device and no
-   host path, and masked console units. A user namespace is a daemon setting with docker, so the VM remains the real boundary.
+   text file except `docs/`. Outside the wrapper it refuses every non-comment occurrence of a container CLI word as a whole token, in
+   any position (a `${X:-docker}` default, a case arm, a for-list, after `&`); only `docker info`, `command -v docker` and text in
+   echo or printf pass, and every other line that names one is in `ALLOW` by exact file and line text (seven, each reviewed).
+4. The container that runs systemd has `CAP_SYS_ADMIN` minus `MKNOD`, a private cgroup namespace, a tmpfs `/run`, no `--device`,
+   no host path mounted, and masked console units. That is NOT a containment: with `CAP_SYS_ADMIN`, docker's default seccomp profile
+   allows `mount(2)` and an Arch host has no AppArmor profile, so code inside can mount a fresh `/proc` or `/sys` and reach
+   `sysrq-trigger` or `power/state`. Only the refusal (VM or CI, no graphical session) and the VM itself contain that. A user
+   namespace is a daemon setting with docker, so it cannot be asked for per run.
+5. Every container drops `NET_RAW` (with `--network host`, used only for a proxy on the host's loopback, it would share the host's
+   raw sockets). A mount source that is, is inside, or contains a forbidden place is refused, so `~` and `~/.local` cannot be mounted.
 
 ## Consequences
 
