@@ -54,13 +54,18 @@ FocusScope {
 
     // The keys, all here (the buttons take no focus, so no button handles a key itself): Return and Enter are Try Again, the
     // default button, wherever the keyboard is; Tab and Shift+Tab move the keyboard between Log Out and Try Again (a focus
-    // ring shows which once Tab was used); Space presses that one; Esc does nothing (no Cancel: closing the alert would leave
-    // no desktop, and it never logs out). A key held down answers nothing, whatever it is (the delta opus review of b67472da,
-    // NIT: a held Return on a focused button used to press it again once a failed Try Again gave the focus back); the
-    // controller also refuses a press in the first SafeModeModel.GUARD_MS after the alert appears and while an action runs.
-    // The keyboard starts on Try Again, and is back there after an action that did not finish.
+    // ring shows which once Tab was used, and assistive technologies are told: the target has the accessible focus and is
+    // announced, the delta opus review of 0edece99, NIT-4); Space presses that one; Esc does nothing (no Cancel: closing the
+    // alert would leave no desktop, and it never logs out). Only the bare key acts (Shift allowed for Tab, the keypad's Enter
+    // allowed): Ctrl+Space, an input method's switch, never presses Log Out (NIT-5); a key with another modifier is left to
+    // others. A key held down answers nothing, whatever it is (the delta opus review of b67472da, NIT: a held Return on a
+    // focused button used to press it again once a failed Try Again gave the focus back); the controller also refuses a press
+    // in the first SafeModeModel.GUARD_MS after the alert appears and while an action runs. The keyboard starts on Try Again,
+    // and is back there after an action that did not finish.
     property int keyTarget: 1 // 0: Log Out, 1: Try Again
     property bool keyboardNavigated: false
+    // The last announcement made for assistive technologies (the target's name), "" before any.
+    property string announced: ""
     function takeFocus(): void {
         root.keyTarget = 1;
         root.forceActiveFocus();
@@ -69,10 +74,14 @@ FocusScope {
         Qt.callLater(root.takeFocus)
 
     // true when the alert took the key.
-    function handleKey(key: int, autoRepeat: bool): bool {
+    function handleKey(key: int, autoRepeat: bool, modifiers: int): bool {
         const known = key === Qt.Key_Return || key === Qt.Key_Enter || key === Qt.Key_Space || key === Qt.Key_Escape || key === Qt.Key_Tab || key === Qt.Key_Backtab;
-        if (!known || autoRepeat)
-            return known;
+        const mods = modifiers & ~Qt.KeypadModifier;
+        const bare = mods === Qt.NoModifier || ((key === Qt.Key_Tab || key === Qt.Key_Backtab) && mods === Qt.ShiftModifier);
+        if (!known || !bare)
+            return false;
+        if (autoRepeat)
+            return true;
         if (key === Qt.Key_Return || key === Qt.Key_Enter) {
             root.tryAgain();
         } else if (key === Qt.Key_Space) {
@@ -83,10 +92,13 @@ FocusScope {
         } else if (key === Qt.Key_Tab || key === Qt.Key_Backtab) {
             root.keyTarget = 1 - root.keyTarget;
             root.keyboardNavigated = true;
+            const target = root.keyTarget === 0 ? logOutButton : tryAgainButton;
+            root.announced = target.text;
+            target.Accessible.announce(target.text);
         }
         return true;
     }
-    Keys.onPressed: event => event.accepted = root.handleKey(event.key, event.isAutoRepeat)
+    Keys.onPressed: event => event.accepted = root.handleKey(event.key, event.isAutoRepeat, event.modifiers)
 
     Material {
         id: material
@@ -181,6 +193,8 @@ FocusScope {
             objectName: "safeModeLogOut"
             capsule: true
             focusPolicy: Qt.NoFocus
+            // The keyboard's target, for assistive technologies (no key focus: the alert keeps it).
+            Accessible.focused: root.activeFocus && root.keyTarget === 0
             text: qsTr("Log Out")
             enabled: !root.busy
             width: buttonRow.buttonWidth
@@ -199,6 +213,7 @@ FocusScope {
             objectName: "safeModeTryAgain"
             capsule: true
             focusPolicy: Qt.NoFocus
+            Accessible.focused: root.activeFocus && root.keyTarget === 1
             primary: true
             text: qsTr("Try Again")
             enabled: !root.busy

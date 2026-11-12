@@ -1010,6 +1010,25 @@ down, how sleep behaves) is written in the table at the end of this step.
     to press a focused button again once a failed Try Again gave the focus back; `tst_safemode` test_heldKeys); a flag whose
     identity `stat` cannot read stays, as "not the same file", and is said (`tests/shell/shell_failures.sh`, where the
     helper's cases live: a failing stat).
+- **Review round 3** (2026-11-12, the opus review of 0edece99: PASS, merged; one MINOR and five NITs, fixed in a follow-up
+  pull request, branch fix/safe-mode-s4-hardening):
+  - MINOR-1, the palette check read the lock's .qml files only: a `.import Grassfield.Ui as Ui` in LockMachine.js returning
+    `Ui.Appearance.colors.text`, used by LockView, passed it and the scan, and an offscreen probe showed the colour following
+    the appearance. `lock_palette.py` now checks the closure of the lock's files under their file imports (.js included, and
+    `.import` in scripts), the types of this tree they make (GrassfieldArtwork, WallClock, LockController, LockStills made at
+    run time) and the script modules of an imported module they use as a qualifier, transitively; a lock script may import no
+    module, and Appearance is refused through any qualifier. PasswordField's own Icon and FocusRing are the two parts not
+    followed, their colours held by rule 6.
+  - NITs: Qt's palette (`palette.windowText`) refused on the lock; createQmlObject, Qt.createComponent (but Lock.qml's one of
+    LockStills.qml), a Loader source, setSource() and a Loader's `.source =` refused there, and createQmlObject anywhere in
+    the security tree (`security_process_scan.py`); Tokens and Appearance never subscripted, and PasswordField's exception read
+    per statement, not per line; the safe-mode alert's keyboard target has the accessible focus and is announced when Tab
+    moves it (`Accessible.focused`, `Accessible.announce`), with no key focus; only the bare key acts (Shift for Tab, the
+    keypad's Enter), so Ctrl+Space, an input method's switch, never presses Log Out (`tst_safemode` test_modifiers).
+    `lock_palette.py`'s selftest plants 34 mutants (14 new, one per finding).
+  - Residual, recorded (NIT-6): on the path where `stat` cannot read the flag's identity, Try Again leaves the flag in place
+    with the shell running; if the user later stops the shell on purpose (`systemctl --user stop`), the alert appears after
+    two looks. Harmless (Try Again then starts it), and the same as residual (2) above.
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words

@@ -16,6 +16,8 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
      aside, which name no file of the tree (file: and qrc: addresses are read; the opus delta review of S3, NIT), but never
      as a Loader or createComponent source (QML from the network: round 2, NIT); strings are read decoded (JavaScript
      escapes: round 3, NIT-1);
+  1d. the security tree (shell/security/**, shell/security.qml) calls no Qt.createQmlObject either (the delta opus review of
+     0edece99, NIT-2);
   1c. in every file of shell/ and ui/, the security tree included (round 3, NIT-1): no import (QML `import "..."`, script
      `.import "..."`) and no literal Loader or createComponent source that is no file of this tree: an address with a
      scheme (http:, https:, data:, file:, qrc:, ...), an absolute path, or a relative path out of shell/ and ui/. The tree
@@ -314,6 +316,9 @@ def file_findings(path, src, singletons):
     mods, paths = imports_of(src)
     if ui or path.startswith("ui/"):
         out += built_from_strings(path, src)
+    # The security tree builds no QML from a string either (the delta opus review of 0edece99, NIT-2): code no scan reads.
+    if (path.startswith("shell/security/") or path == "shell/security.qml") and re.search(r"\bcreateQmlObject\b", code):
+        out.append(f"{path}: calls createQmlObject (code built from a string cannot be checked)")
     out += foreign_code(path, src, paths)
     if ui:
         for m in mods:
@@ -521,6 +526,8 @@ def main(argv):
             ("the UI instantiating Idle", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Idle {\n    }\n    Saver {\n", 1)),
             ("the UI importing the idle module by path", "shell/saver/Saver.qml", lambda s: s.replace("import \"SaverModel.js\" as SaverModel\n", "import \"SaverModel.js\" as SaverModel\nimport \"../security/idle\"\n", 1)),
             # ADR-0041 S4: safe mode, in the security process only, bound from its own lock and sheets.
+            ("createQmlObject in the lock view (NIT-2 of the review of 0edece99)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject in the safe-mode notice", "shell/security/safemode/SafeModeCard.qml", lambda s: s.replace("    signal tryAgain\n", "    signal tryAgain\n    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n", 1)),
             ("a second SafeMode in the host", HOST, lambda s: s.replace("    // The state and the beat for `security heartbeat`", "    SafeMode {\n        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n        sheetUp: root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)\n    }\n    // The state and the beat for `security heartbeat`", 1)),
             ("SafeMode's lock input bound to a constant in the host", HOST, lambda s: s.replace("        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n", "        locked: false\n", 1)),
             ("SafeMode's lock input without the asked-for lock (locking)", HOST, lambda s: s.replace("        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n", "        locked: Lock.locked || Lock.strandedProbing\n", 1)),
