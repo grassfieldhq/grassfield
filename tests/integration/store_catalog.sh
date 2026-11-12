@@ -58,7 +58,12 @@ good=$(fpr good@grassfield.invalid) revoked=$(fpr revoked@grassfield.invalid) ro
 gpg --batch --export "$good" "$revoked" "$rogue" >"$keys/grassfield.gpg"
 printf '%s:4:\n%s:4:\n' "$good" "$revoked" >"$keys/grassfield-trusted"
 printf '%s\n' "$revoked" >"$keys/grassfield-revoked"
-cp tests/fixtures/store/catalog-good.json "$keys/catalog.json"
+# The Store only takes a catalog for its own channel: a plain X.Y.Z build follows stable, a prerelease (-rcN) beta (ADR-0033 O15b,
+# apps/store/src/channel.cpp releaseChannelOf), and the unit tests are built with this repository's VERSION. The fixture says stable.
+if grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' VERSION; then channel=stable; else channel=beta; fi
+sed "s/\"channel\": \"stable\"/\"channel\": \"$channel\"/" tests/fixtures/store/catalog-good.json >"$keys/catalog.json"
+grep -q "\"channel\": \"$channel\"" "$keys/catalog.json" || { echo "FAIL: the catalog fixture has no channel to set"; exit 1; }
+echo "  catalog for the $channel channel (VERSION $(tr -d '[:space:]' <VERSION))"
 sed 's/Discover/Discovrr/' "$keys/catalog.json" >"$keys/changed.json"
 for name in good revoked rogue; do
   gpg --batch --yes --local-user "$(fpr "$name@grassfield.invalid")!" --detach-sign --output "$keys/$name.sig" "$keys/catalog.json"
