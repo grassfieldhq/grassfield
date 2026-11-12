@@ -68,23 +68,75 @@ ALLOWED_TYPES = {
                                               "RadialGradient", "Rectangle", "Repeater", "Shape", "ShapePath", "Timer"},
     "shell/services/WallClock.qml": {"QtObject", "Timer"},
 }
-_TOKENS = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`', re.S)
+def _string_end(src, i):
+    """The end (exclusive) of the string literal opening at i, or None when the line ends first (not a string)."""
+    q, j = src[i], i + 1
+    while j < len(src) and src[j] != "\n":
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == q:
+            return j + 1
+        j += 1
+    return None
+
+
+def _expression_end(src, i):
+    """The index of the `}` closing a template literal's `${` whose code starts at i: braces in strings, nested template
+    literals and comments are not counted (the opus review of 39670f1f, NIT: `${"}" && Appearance.colors.text}`)."""
+    depth = 0
+    while i < len(src):
+        c = src[i]
+        if c in "\"'":
+            end = _string_end(src, i)
+            i = end if end is not None else i + 1
+            continue
+        if c == "`":
+            i = _template_end(src, i)
+            continue
+        if src.startswith("//", i):
+            n = src.find("\n", i)
+            i = len(src) if n < 0 else n
+            continue
+        if src.startswith("/*", i):
+            n = src.find("*/", i + 2)
+            i = len(src) if n < 0 else n + 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            if depth == 0:
+                return i
+            depth -= 1
+        i += 1
+    return len(src)
+
+
+def _template_end(src, i):
+    """The end (exclusive) of the template literal opening at i, its ${...} expressions read as code."""
+    j = i + 1
+    while j < len(src):
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == "`":
+            return j + 1
+        if src.startswith("${", j):
+            j = _expression_end(src, j + 2) + 1
+            continue
+        j += 1
+    return len(src)
 
 
 def template_expressions(t):
-    """The ${...} expressions of a template literal (its backticks included), brace matched."""
+    """The ${...} expressions of a template literal (its backticks included), each up to its own closing brace."""
     out, i = [], 1
     while i < len(t) - 1:
         if t[i] == "\\":
             i += 2
             continue
         if t.startswith("${", i):
-            depth, j = 0, i + 1
-            while j < len(t):
-                depth += {"{": 1, "}": -1}.get(t[j], 0)
-                if depth == 0:
-                    break
-                j += 1
+            j = _expression_end(t, i + 2)
             out.append(t[i + 2:j])
             i = j + 1
             continue
@@ -95,19 +147,39 @@ def template_expressions(t):
 def code_of(src, keep_strings=False):
     """The source with comments removed and string contents blanked (unless keep_strings); a template literal keeps the code
     of its ${...} expressions, read as code (the delta opus review of 00eff2bd, MINOR-C: `${Appearance.colors.text}` hid
-    inside a blanked literal)."""
-    def repl(m):
-        t = m.group(0)
-        if t.startswith("//"):
-            return ""
-        if t.startswith("/*"):
-            return " " + "\n" * t.count("\n")
-        if keep_strings:
-            return t
-        if t.startswith("`"):
-            return "``" + "".join(" (" + code_of(e) + ")" for e in template_expressions(t))
-        return t[0] + t[0]
-    return _TOKENS.sub(repl, src)
+    inside a blanked literal), each expression read up to its own closing brace, strings and nested literals included (the
+    opus review of 39670f1f, NIT)."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        c = src[i]
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append(" " + "\n" * src.count("\n", i, j))
+            i = j
+            continue
+        if c in "\"'":
+            j = _string_end(src, i)
+            if j is None:
+                out.append(c)
+                i += 1
+                continue
+            out.append(src[i:j] if keep_strings else c + c)
+            i = j
+            continue
+        if c == "`":
+            j = _template_end(src, i)
+            t = src[i:j]
+            out.append(t if keep_strings else "``" + "".join(" (" + code_of(e) + ")" for e in template_expressions(t)))
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def blocks(code, type_name):
@@ -223,6 +295,29 @@ def statement_prefix(code, pos):
     return code[start:pos]
 
 
+def statement_after(code, pos):
+    """The rest of the statement from `pos`: up to a `;` or a line end outside brackets, a line that ends with an operator or a
+    next line that starts with one carrying it on."""
+    depth, i = 0, pos
+    while i < len(code):
+        c = code[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and c == ";":
+            break
+        elif depth == 0 and c == "\n":
+            before = code[pos:i].rstrip()
+            after = code[i:].lstrip()
+            if before and not (before.endswith(tuple("=+-*/%&|^!?:,.<>")) or after.startswith(tuple("?:.&|+-*/%,^<>="))):
+                break
+        i += 1
+    return code[pos:i]
+
+
 def findings(files, writers=None):
     out = []
     writers = writers or {}
@@ -336,11 +431,13 @@ def findings(files, writers=None):
     if len(rings) != 1 or not re.search(r"^\s*visible:\s*root\.focusRing\s*&&", rings[0][1], re.M):
         out.append(f"{FIELD}: not exactly one FocusRing, shown only when the host asks (the ring's colour follows the appearance)")
     # Rule 7: nothing outside the lock writes an appearance into it (a Binding on Lock, or Lock.<property> = ...), from any
-    # file of the security tree (Idle.qml and SecurityHost.qml write into Lock).
+    # file of the security tree (Idle.qml and SecurityHost.qml write into Lock). A Binding's whole body is read, its braced
+    # blocks included (the opus review of 39670f1f, NIT: `value: { return Appearance.dark; }`), and an assignment's whole
+    # statement, over several lines and through brackets (`Lock.x = Qt.binding(() => {...})`), also subscripted (`Lock["x"] =`).
     for wpath, wsrc in sorted(writers.items()):
         wcode = code_of(wsrc)
-        values = [b[1] for b in blocks(wcode, "Binding") if re.search(r"(^|[\s;])target\s*:\s*Lock\b", b[1])]
-        values += [m.group(1) for m in re.finditer(r"\bLock\s*\.\s*\w+\s*=(?!=)([^;\n]*)", wcode)]
+        values = [b[0] for b in blocks(wcode, "Binding") if re.search(r"(^|[\s;])target\s*:\s*Lock\b", b[1])]
+        values += [statement_after(wcode, m.end()) for m in re.finditer(r"\bLock\s*(?:\.\s*\w+|\[[^\]]*\])\s*=(?!=)", wcode)]
         for v in values:
             if re.search(r"\bAppearance\b|(?<![\w.])palette\b|\bSettings\s*\.\s*(dark|appearance)\b", v):
                 out.append(f"{wpath}: writes an appearance into Lock ({v.strip()[:80]})")
@@ -421,6 +518,15 @@ def main(argv):
             ("NIT: the lock's qmldir mapping a type elsewhere", {"shell/security/lock/qmldir": lambda s: s.replace("LockStill 1.0 LockStill.qml", "LockStill 1.0 ../polkit/AuthDialog.qml", 1)}),
             ("NIT: SecurityHost writing an appearance into Lock", {"shell/security/host/SecurityHost.qml": lambda s: s.replace("    Binding {\n        target: Lock\n        property: \"authorizing\"", "    Binding {\n        target: Lock\n        property: \"fromDim\"\n        value: Appearance.dark\n    }\n    Binding {\n        target: Lock\n        property: \"authorizing\"", 1)}),
             ("NIT: Idle assigning an appearance into Lock", {"shell/security/idle/Idle.qml": lambda s: s.rstrip("\n").rstrip("}") + "    function probe(): void {\n        Lock.fromDim = Settings.dark;\n    }\n}\n"}),
+            # The opus review of 39670f1f, NITs: a string holding a brace inside ${...}; a Binding's value in a braced block; an
+            # assignment carried over lines or subscripted.
+            ("NIT: a string with a closing brace inside a template literal's ${...}", {VIEW: lambda s: s.replace(anchor, "    readonly property color probe: `${\"}\" && Appearance.colors.text}`\n" + anchor, 1)}),
+            ("NIT: a nested template literal inside ${...}", {VIEW: lambda s: s.replace(anchor, "    readonly property color probe: `${`}` && Appearance.colors.text}`\n" + anchor, 1)}),
+            ("NIT: a comment with a brace inside ${...}", {VIEW: lambda s: s.replace(anchor, "    readonly property color probe: `${/* } */ Appearance.colors.text}`\n" + anchor, 1)}),
+            ("NIT: SecurityHost binding Lock to an appearance from a braced block", {"shell/security/host/SecurityHost.qml": lambda s: s.replace("    Binding {\n        target: Lock\n        property: \"authorizing\"", "    Binding {\n        target: Lock\n        property: \"fromDim\"\n        value: {\n            return Appearance.dark;\n        }\n    }\n    Binding {\n        target: Lock\n        property: \"authorizing\"", 1)}),
+            ("NIT: Idle assigning an appearance into Lock over two lines", {"shell/security/idle/Idle.qml": lambda s: s.replace("    onDisplayOffChanged: Lock.displaysOff = root.displayOff\n", "    onDisplayOffChanged: Lock.displaysOff = root.displayOff\n        && !Settings.dark\n", 1)}),
+            ("NIT: Idle assigning an appearance into Lock through Qt.binding", {"shell/security/idle/Idle.qml": lambda s: s.rstrip("\n").rstrip("}") + "    function probe(): void {\n        Lock.fromDim = Qt.binding(() => {\n            return Appearance.dark;\n        });\n    }\n}\n"}),
+            ("NIT: Idle assigning an appearance into Lock subscripted", {"shell/security/idle/Idle.qml": lambda s: s.rstrip("\n").rstrip("}") + "    function probe(): void {\n        Lock[\"fromDim\"] = Settings.dark;\n    }\n}\n"}),
             ("NIT-3: a second statement on the field's default line", {FIELD: lambda s: s.replace("property color textColor: Appearance.colors.text", "property color textColor: Appearance.colors.text; property color probe: Appearance.colors.danger", 1)}),
         ]
         for what, changes in mutants:

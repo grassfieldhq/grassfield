@@ -254,23 +254,75 @@ def strip(src, keep_strings=False):
     return _CACHE[key]
 
 
-_TOKENS = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`', re.S)
+def _string_end(src, i):
+    """The end (exclusive) of the string literal opening at i, or None when the line ends first (not a string)."""
+    q, j = src[i], i + 1
+    while j < len(src) and src[j] != "\n":
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == q:
+            return j + 1
+        j += 1
+    return None
+
+
+def _expression_end(src, i):
+    """The index of the `}` closing a template literal's `${` whose code starts at i: braces in strings, nested template
+    literals and comments are not counted (the opus review of 39670f1f, NIT: `${"}" && Qt.createQmlObject(...)}`)."""
+    depth = 0
+    while i < len(src):
+        c = src[i]
+        if c in "\"'":
+            end = _string_end(src, i)
+            i = end if end is not None else i + 1
+            continue
+        if c == "`":
+            i = _template_end(src, i)
+            continue
+        if src.startswith("//", i):
+            n = src.find("\n", i)
+            i = len(src) if n < 0 else n
+            continue
+        if src.startswith("/*", i):
+            n = src.find("*/", i + 2)
+            i = len(src) if n < 0 else n + 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            if depth == 0:
+                return i
+            depth -= 1
+        i += 1
+    return len(src)
+
+
+def _template_end(src, i):
+    """The end (exclusive) of the template literal opening at i, its ${...} expressions read as code."""
+    j = i + 1
+    while j < len(src):
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == "`":
+            return j + 1
+        if src.startswith("${", j):
+            j = _expression_end(src, j + 2) + 1
+            continue
+        j += 1
+    return len(src)
 
 
 def _template_expressions(t):
-    """The ${...} expressions of a template literal (its backticks included), brace matched."""
+    """The ${...} expressions of a template literal (its backticks included), each up to its own closing brace."""
     out, i = [], 1
     while i < len(t) - 1:
         if t[i] == "\\":
             i += 2
             continue
         if t.startswith("${", i):
-            depth, j = 0, i + 1
-            while j < len(t):
-                depth += {"{": 1, "}": -1}.get(t[j], 0)
-                if depth == 0:
-                    break
-                j += 1
+            j = _expression_end(t, i + 2)
             out.append(t[i + 2:j])
             i = j + 1
             continue
@@ -281,19 +333,38 @@ def _template_expressions(t):
 def _strip(src, keep_strings):
     """Comments removed; string contents blanked unless keep_strings; a template literal keeps the code of its ${...}
     expressions, read as code (the delta opus review of 00eff2bd, MINOR-C: `${Qt.createQmlObject(...)}` hid inside a blanked
-    literal)."""
-    def repl(m):
-        t = m.group(0)
-        if t.startswith("//"):
-            return ""
-        if t.startswith("/*"):
-            return " "
-        if keep_strings:
-            return t
-        if t.startswith("`"):
-            return "``" + "".join(" (" + _strip(e, False) + ")" for e in _template_expressions(t))
-        return t[0] + t[0]
-    return _TOKENS.sub(repl, src)
+    literal), each expression read up to its own closing brace, strings and nested literals included (the opus review of
+    39670f1f, NIT)."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        c = src[i]
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+            continue
+        if c in "\"'":
+            j = _string_end(src, i)
+            if j is None:
+                out.append(c)
+                i += 1
+                continue
+            out.append(src[i:j] if keep_strings else c + c)
+            i = j
+            continue
+        if c == "`":
+            j = _template_end(src, i)
+            t = src[i:j]
+            out.append(t if keep_strings else "``" + "".join(" (" + _strip(e, False) + ")" for e in _template_expressions(t)))
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def imports_of(src):
@@ -556,6 +627,7 @@ def main(argv):
             # ADR-0041 S4: safe mode, in the security process only, bound from its own lock and sheets.
             ("createQmlObject in the lock view (NIT-2 of the review of 0edece99)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n    component TextShadow: MultiEffect {", 1)),
             ("createQmlObject in a template literal of the lock view (MINOR-C of the review of 00eff2bd)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    readonly property string made: `${Qt.createQmlObject(\"import QtQuick; Item {}\", root)}`\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject after a string holding a brace in a template literal's ${...} (NIT of the review of 39670f1f)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    readonly property string made: `${\"}\" && Qt.createQmlObject(\"import QtQuick; Item {}\", root)}`\n    component TextShadow: MultiEffect {", 1)),
             ("createQmlObject in a template literal of the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    readonly property string made: `x${Qt.createQmlObject(\"import QtQuick; Item {}\", root)}y`\n    Saver {\n", 1)),
             ("createQmlObject in the safe-mode notice", "shell/security/safemode/SafeModeCard.qml", lambda s: s.replace("    signal tryAgain\n", "    signal tryAgain\n    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n", 1)),
             ("a second SafeMode in the host", HOST, lambda s: s.replace("    // The state and the beat for `security heartbeat`", "    SafeMode {\n        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n        sheetUp: root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)\n    }\n    // The state and the beat for `security heartbeat`", 1)),
