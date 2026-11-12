@@ -498,14 +498,16 @@ rm -f "$T/qu"
 sed -n '/^denied() {/,/^}/p' /src/packaging/store/grassfield-store-helper | sed 's/omarchy\[/omarchy_lists[/' >"$T/helper-denied"
 sed -n '/^denied() {/,/^}/p' "$R" >"$T/run-denied"
 expect "denied() is the helper's" bash -c "test -s $T/run-denied && test \"\$(cat $T/helper-denied)\" == \"\$(cat $T/run-denied)\""
-# The vectors file read with grep and sed (this image has no python): Omarchy's lists, HoldPkg, then each case's name and
+# The vectors file read with grep and sed (this image has no python): Omarchy's lists, Grassfield's optional dependencies
+# (gfOptional, ADR-0046 D3), HoldPkg, then each case's name and
 # protection, in order.
 V=/src/tests/fixtures/store/removal-vectors.json
 array() { sed -n "/\"$1\": \[/,/\]/p" "$V" | grep -o '"[^"]*"' | tr -d '"' | grep -vx "$1"; }
 mapfile -t vnames < <(sed -n '/"cases"/,$p' "$V" | grep -o '"name": "[^"]*"' | sed 's/.*: "//; s/"$//')
 mapfile -t vwants < <(sed -n '/"cases"/,$p' "$V" | grep -o '"protection": "[^"]*"' | sed 's/.*: "//; s/"$//')
 {
-  echo 'declare -A omarchy_lists=() hold=()'
+  echo 'declare -A omarchy_lists=() hold=() gfopt=()'
+  for n in $(array gfOptional); do echo "gfopt[$n]=1"; done
   for n in $(array omarchyLists); do echo "omarchy_lists[$n]=1"; done
   for n in $(array holdPkg); do echo "hold[$n]=1"; done
   cat "$T/run-denied"

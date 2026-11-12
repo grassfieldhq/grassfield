@@ -164,17 +164,39 @@ done <"$pins"
 ((count > 0 && ${#needed[@]} == 0)) || finish 5 "The Store's pins do not name $recipe (or what it calls): nothing was run."
 stop
 
-# The deny list of grassfield-store-helper's remove (ADR-0037 b.1, S16), its case list copied as it is (Omarchy's lists in
-# omarchy_lists here: $omarchy is Omarchy's folder): tests/integration/store_run.sh holds it to the vectors the helper and
-# the Store's C++ rule answer (tests/fixtures/store/removal-vectors.json).
+# What Grassfield's own packages list as optional dependencies (kio-extras, cmake...): the helper's gf_optional_names, as it is
+# (ADR-0046 D3). One name per line.
+gf_optional_names() {
+  local -a own=()
+  local qi
+  mapfile -t own < <(pacman -Qq 2>/dev/null 9>&- | grep -E '^grassfield(-|$)')
+  ((${#own[@]})) || return 0
+  qi=$(pacman -Qi -- "${own[@]}" 2>/dev/null 9>&-) || return 1
+  awk '
+    /^[^ \t]/ { inopt = ($0 ~ /^Optional Deps[ \t]*:/); if (inopt) sub(/^[^:]*:[ \t]*/, ""); else next }
+    inopt { n = $0; sub(/^[ \t]+/, "", n); sub(/[^a-z0-9@._+-].*$/, "", n); if (n != "" && n != "None") print n }' <<<"$qi"
+}
+
+# The deny list of grassfield-store-helper's remove (ADR-0037 b.1, S16; ADR-0046 D2, D3), its case list copied as it is
+# (Omarchy's lists in omarchy_lists here: $omarchy is Omarchy's folder): tests/integration/store_run.sh holds it to the
+# vectors the helper and the Store's C++ rule answer (tests/fixtures/store/removal-vectors.json).
 denied() { # name: 0 when the system, Omarchy or Grassfield needs it
+  [[ -n ${gfopt[$1]-} ]] && return 0
   case $1 in
     base | base-devel | filesystem | glibc | bash | coreutils | util-linux | shadow | pam | sudo | polkit | dbus | dbus-broker | \
       dbus-broker-units | kmod | mkinitcpio | dracut | grub | efibootmgr | refind | syslinux | snapper | btrfs-progs | \
       cryptsetup | lvm2 | plymouth | archlinux-keyring | intel-ucode | amd-ucode) return 0 ;;
+    # The session's runtime (ADR-0046 D3): the compositor, the shell, sound, network, the portals, the login. Qt is not here by
+    # prefix: pacman keeps every Qt package the session requires, and an app's own (qt6-speech) must stay removable.
+    hyprland | quickshell | networkmanager | mesa | wireplumber | sddm | uwsm | gnome-keyring | xdg-desktop-portal | \
+      xdg-desktop-portal-* | pipewire | pipewire-*) return 0 ;;
     linux | linux-* | systemd | systemd-* | limine | limine-* | pacman | pacman-* | yay | yay-* | omarchy | omarchy-* | \
       grassfield | grassfield-*) return 0 ;;
     *-firmware | *-firmware-*) return 0 ;;
+    # The apps Omarchy installs on every machine and itself offers to remove (omarchy-remove-preinstalls, ADR-0046 D2): on
+    # Omarchy's lists, but not the system's: macOS lets you delete its optional bundled apps. Only HoldPkg keeps them.
+    aether | cliamp | libreoffice-fresh | xournalpp | pinta | obsidian | obs-studio | kdenlive | moonlight-qt | lazydocker | \
+      omacut | omacalc | omawrite) [[ -n ${hold[$1]-} ]]; return ;;
   esac
   [[ -n ${omarchy_lists[$1]-} || -n ${hold[$1]-} ]]
 }
@@ -183,7 +205,7 @@ denied() { # name: 0 when the system, Omarchy or Grassfield needs it
 if [[ $kind == aur ]]; then
   refuse() { finish 7 "$1: nothing was run."; }
   # What denied() reads, for both commands: Omarchy's two package lists (in the installed Omarchy), pacman's HoldPkg.
-  declare -A omarchy_lists=() hold=() explicit=() foreign=()
+  declare -A omarchy_lists=() hold=() explicit=() foreign=() gfopt=()
   for list in "$omarchy/install/omarchy-base.packages" "$omarchy/install/omarchy-other.packages"; do
     [[ -f $list ]] || continue
     while IFS= read -r line; do
@@ -193,6 +215,8 @@ if [[ $kind == aur ]]; then
   done
   ((${#omarchy_lists[@]})) || refuse "Omarchy's package lists are missing or empty"
   while IFS= read -r line; do [[ -n $line ]] && hold[$line]=1; done < <(pacman-conf HoldPkg 2>/dev/null 9>&-)
+  gf_names=$(gf_optional_names) || refuse "cannot read what Grassfield's packages list as optional dependencies"
+  while IFS= read -r line; do [[ -n $line ]] && gfopt[$line]=1; done <<<"$gf_names"
   stop
   if [[ $recipe == omarchy-pkg-aur-add ]]; then
     # Never a name of the deny list: what the Store could not remove it does not build, and an AUR package never takes a
