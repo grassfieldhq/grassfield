@@ -78,7 +78,7 @@ mutant() { # name, relative file, sed program
 }
 mutant m2c capture/Capture.qml '0,/if (locked)/{/if (locked)/d}'
 mutant m2d capture/Capture.qml 's/!SessionState.locked/true/'
-mutant m2e shell-core.qml '0,/saverShown/s/saverShown/saverShownX/'
+mutant m2e shell-core.qml '0,/value: LockClient.locked$/s/LockClient.locked$/LockClient.lockedX/'
 mutant m2f security/lock/Lock.qml '0,/^import /s/^import \(.*\)$/import \1 \/\/ x/'
 mutant m2g services/Settings.qml '$a\
 // added line'

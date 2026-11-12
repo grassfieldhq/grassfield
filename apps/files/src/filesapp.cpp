@@ -1062,19 +1062,19 @@ void FilesApp::open(const QList<QUrl> &urls)
     if (refused > 1)
         emit operationFailed(tr("%1 items were not opened.").arg(refused));
     else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseLauncher)
-        emit operationFailed(tr("“%1” was not opened: it is an app launcher, and Files never starts apps from a folder. Open apps from the Dock, Apps or Search.").arg(shown));
+        emit operationFailed(tr("“%1” was not opened: it is an app launcher, and Files never starts apps from a folder. Open apps from the Dock, Apps or Search.").arg(FileLogic::displayName(shown)));
     else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseIncompatible)
-        emit operationFailed(tr("“%1” can’t be opened because it isn’t made for this computer.").arg(shown));
+        emit operationFailed(tr("“%1” can’t be opened because it isn’t made for this computer.").arg(FileLogic::displayName(shown)));
     else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseDisguised)
-        emit operationFailed(tr("“%1” wasn’t opened: it is an app, but its name makes it look like a document. If you trust it, rename it first.").arg(shown));
+        emit operationFailed(tr("“%1” wasn’t opened: it is an app, but its name makes it look like a document. If you trust it, rename it first.").arg(FileLogic::displayName(shown)));
     else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseNotAnApp)
-        emit operationFailed(tr("“%1” can’t be opened: it isn’t a valid app.").arg(shown));
+        emit operationFailed(tr("“%1” can’t be opened: it isn’t a valid app.").arg(FileLogic::displayName(shown)));
     else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseRemoteProgram)
-        emit operationFailed(tr("“%1” can’t be opened from here. Copy it to a folder on this computer first.").arg(shown));
+        emit operationFailed(tr("“%1” can’t be opened from here. Copy it to a folder on this computer first.").arg(FileLogic::displayName(shown)));
     else if (refused == 1 && refusedKind == LaunchGuard::Verdict::RefuseStaging)
-        emit operationFailed(tr("“%1” can’t be opened while Files is still expanding or compressing it.").arg(shown));
+        emit operationFailed(tr("“%1” can’t be opened while Files is still expanding or compressing it.").arg(FileLogic::displayName(shown)));
     else if (refused == 1)
-        emit operationFailed(tr("“%1” wasn’t opened: Files doesn’t open programs that run with other rights.").arg(shown));
+        emit operationFailed(tr("“%1” wasn’t opened: Files doesn’t open programs that run with other rights.").arg(FileLogic::displayName(shown)));
     // An archive opens by expanding next to itself (the Finder's Archive Utility, ADR-0029); Open With still offers the
     // applications that read it.
     for (auto it = allowed.begin(); it != allowed.end();) {
@@ -1133,7 +1133,7 @@ bool FilesApp::refuseAsRoot(const QString &name)
     if (!ProgramLaunch::filesRunsAsRoot())
         return false;
     qInfo("grassfield-files: open refused (Files runs as root): \"%s\"", qPrintable(LaunchGuard::logName(name)));
-    emit operationFailed(tr("“%1” wasn’t opened: Files doesn’t open programs while it runs as the administrator (root).").arg(name));
+    emit operationFailed(tr("“%1” wasn’t opened: Files doesn’t open programs while it runs as the administrator (root).").arg(FileLogic::displayName(name)));
     return true;
 }
 
@@ -1181,7 +1181,7 @@ void FilesApp::requestRun(const QUrl &url, const LaunchGuard::Facts &facts)
         const LaunchGuard::Facts now = LaunchGuard::inspect(url);
         if (LaunchGuard::verdict(now) != LaunchGuard::Verdict::RunProgram || !sameFile(now, facts)) {
             logDecision("changed", LaunchGuard::Verdict::RunProgram, facts);
-            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(FileLogic::displayName(name)), approvalProblem(ProgramLaunch::Approval::Changed));
             return;
         }
         logDecision("approved", LaunchGuard::Verdict::RunProgram, facts);
@@ -1204,7 +1204,7 @@ void FilesApp::requestRun(const QUrl &url, const LaunchGuard::Facts &facts)
             if (LaunchGuard::verdict(after) != LaunchGuard::Verdict::RunProgram || after.path != now.path || after.inode != now.inode
                 || after.mtimeNs != now.mtimeNs || after.size != now.size || after.ctimeNs != ctimeAfter) {
                 logDecision("changed", LaunchGuard::Verdict::RunProgram, facts);
-                m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
+                m_prompts->tell(tr("“%1” wasn’t opened.").arg(FileLogic::displayName(name)), approvalProblem(ProgramLaunch::Approval::Changed));
                 return;
             }
             logDecision("copied (no execute bit here)", LaunchGuard::Verdict::RunProgram, facts);
@@ -1212,7 +1212,7 @@ void FilesApp::requestRun(const QUrl &url, const LaunchGuard::Facts &facts)
             return;
         }
         if (approval != ProgramLaunch::Approval::Approved) {
-            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(name), approvalProblem(approval));
+            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(FileLogic::displayName(name)), approvalProblem(approval));
             return;
         }
         startProgram(now.path, name, now.appImage, now.elfInterpreter);
@@ -1225,7 +1225,7 @@ void FilesApp::copyToApplicationsAndRun(const LaunchGuard::Facts &facts)
     const QString folder = ProgramLaunch::applicationsFolder();
     const QString free = folder.isEmpty() ? QString() : ProgramLaunch::freeName(folder, facts.fileName);
     if (free.isEmpty()) {
-        m_prompts->tell(tr("“%1” couldn’t be copied to your Applications folder.").arg(name), QString());
+        m_prompts->tell(tr("“%1” couldn’t be copied to your Applications folder.").arg(FileLogic::displayName(name)), QString());
         return;
     }
     const QString destination = QDir(folder).filePath(free);
@@ -1234,7 +1234,7 @@ void FilesApp::copyToApplicationsAndRun(const LaunchGuard::Facts &facts)
     attachDelegate(job);
     connect(job, &KJob::result, this, [this, job, destination, name, facts] {
         if (job->error()) {
-            m_prompts->tell(tr("“%1” couldn’t be copied to your Applications folder.").arg(name), QString());
+            m_prompts->tell(tr("“%1” couldn’t be copied to your Applications folder.").arg(FileLogic::displayName(name)), QString());
             return;
         }
         // The copy is of the file the user approved: the source is still that file (inode, time, size) and the copy has its
@@ -1244,21 +1244,21 @@ void FilesApp::copyToApplicationsAndRun(const LaunchGuard::Facts &facts)
         if (!sameFile(source, facts) || copy.size != facts.size || copy.path.isEmpty()) {
             QFile::remove(destination);
             logDecision("changed", LaunchGuard::Verdict::RunProgram, facts);
-            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(FileLogic::displayName(name)), approvalProblem(ProgramLaunch::Approval::Changed));
             return;
         }
         qInfo("grassfield-files: open copied to the Applications folder: \"%s\"", qPrintable(LaunchGuard::logName(QFileInfo(destination).fileName())));
         if (LaunchGuard::verdict(copy) != LaunchGuard::Verdict::RunProgram || copy.noexecMount) {
-            m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(name), tr("This disk doesn’t allow apps to run from it."));
+            m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(FileLogic::displayName(name)), tr("This disk doesn’t allow apps to run from it."));
             return;
         }
         const ProgramLaunch::Approval approval = ProgramLaunch::approve(copy.path, copy.inode, copy.mtimeNs, copy.size, !copy.executable);
         if (approval == ProgramLaunch::Approval::ExecIgnored) {
-            m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(name), tr("This disk doesn’t allow apps to run from it."));
+            m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(FileLogic::displayName(name)), tr("This disk doesn’t allow apps to run from it."));
             return;
         }
         if (approval != ProgramLaunch::Approval::Approved) {
-            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(name), approvalProblem(approval));
+            m_prompts->tell(tr("“%1” couldn’t be allowed to run.").arg(FileLogic::displayName(name)), approvalProblem(approval));
             return;
         }
         startProgram(copy.path, name, copy.appImage, copy.elfInterpreter);
@@ -1283,27 +1283,27 @@ void FilesApp::startProgram(const QString &path, const QString &name, bool appIm
         qInfo("grassfield-files: open failed (%s): \"%s\"", kFailures[qBound(0, int(o.failure), 6)], qPrintable(LaunchGuard::logName(name)));
         switch (o.failure) {
         case Failure::ExecFormat:
-            m_prompts->tell(tr("“%1” can’t be opened because it isn’t made for this computer.").arg(name),
+            m_prompts->tell(tr("“%1” can’t be opened because it isn’t made for this computer.").arg(FileLogic::displayName(name)),
                             tr("It is a program for another kind of computer. Look for the version made for this one where you got it."));
             break;
         case Failure::MissingLibrary:
-            m_prompts->tell(tr("“%1” can’t be opened.").arg(name), tr("A component it needs is missing on this computer (%1).").arg(o.library));
+            m_prompts->tell(tr("“%1” can’t be opened.").arg(FileLogic::displayName(name)), tr("A component it needs is missing on this computer (%1).").arg(o.library));
             break;
         case Failure::Fuse:
             if (o.componentMissing)
                 m_prompts->tell(tr("This AppImage needs a system component (fuse2)."),
-                                tr("It isn’t installed on this computer, so “%1” can’t be opened.").arg(name));
+                                tr("It isn’t installed on this computer, so “%1” can’t be opened.").arg(FileLogic::displayName(name)));
             else
-                m_prompts->tell(tr("“%1” can’t be opened.").arg(name), tr("This AppImage couldn’t use FUSE on this computer."));
+                m_prompts->tell(tr("“%1” can’t be opened.").arg(FileLogic::displayName(name)), tr("This AppImage couldn’t use FUSE on this computer."));
             break;
         case Failure::CannotRunHere:
-            m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(name), tr("This disk doesn’t allow apps to run from it."));
+            m_prompts->tell(tr("“%1” can’t be opened from this location.").arg(FileLogic::displayName(name)), tr("This disk doesn’t allow apps to run from it."));
             break;
         case Failure::QuitAtOnce:
-            m_prompts->tell(tr("“%1” quit right after it opened.").arg(name), tr("It ended with the error code %1.").arg(o.exitCode));
+            m_prompts->tell(tr("“%1” quit right after it opened.").arg(FileLogic::displayName(name)), tr("It ended with the error code %1.").arg(o.exitCode));
             break;
         default:
-            m_prompts->tell(tr("“%1” could not be started.").arg(name), QString());
+            m_prompts->tell(tr("“%1” could not be started.").arg(FileLogic::displayName(name)), QString());
             break;
         }
     });
@@ -1357,7 +1357,7 @@ void FilesApp::explainForeign(const QUrl &url, const LaunchGuard::Facts &facts, 
         }
         const LaunchGuard::Facts now = LaunchGuard::inspect(url);
         if (LaunchGuard::verdict(now) != verdict || !sameFile(now, facts)) {
-            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(FileLogic::displayName(name)), approvalProblem(ProgramLaunch::Approval::Changed));
             return;
         }
         if (refuseAsRoot(name))
@@ -1392,7 +1392,7 @@ void FilesApp::runInTerminal(const QUrl &url)
     const LaunchGuard::Facts facts = LaunchGuard::inspect(url);
     const QString name = FileLogic::displayName(facts.fileName.isEmpty() ? url.fileName() : facts.fileName);
     if (LaunchGuard::verdict(facts) != LaunchGuard::Verdict::OpenScript) {
-        emit operationFailed(tr("“%1” can’t run in Terminal: only a script on this computer that is allowed to run can.").arg(name));
+        emit operationFailed(tr("“%1” can’t run in Terminal: only a script on this computer that is allowed to run can.").arg(FileLogic::displayName(name)));
         return;
     }
     if (refuseAsRoot(name))
@@ -1425,7 +1425,7 @@ void FilesApp::runInTerminal(const QUrl &url)
         }
         const LaunchGuard::Facts now = LaunchGuard::inspect(url);
         if (LaunchGuard::verdict(now) != LaunchGuard::Verdict::OpenScript || !sameFile(now, facts)) {
-            m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
+            m_prompts->tell(tr("“%1” wasn’t opened.").arg(FileLogic::displayName(name)), approvalProblem(ProgramLaunch::Approval::Changed));
             return;
         }
         logDecision("approved", LaunchGuard::Verdict::OpenScript, facts);
@@ -1524,8 +1524,8 @@ void FilesApp::openWithChecked(const QString &storageId, const QList<QUrl> &urls
         if (v == LaunchGuard::Verdict::RefuseRemoteProgram || v == LaunchGuard::Verdict::RefuseStaging) {
             qInfo("grassfield-files: open with refused (%s): \"%s\"", verdictName(v), qPrintable(LaunchGuard::logName(facts.fileName)));
             emit operationFailed(v == LaunchGuard::Verdict::RefuseStaging
-                                     ? tr("“%1” can’t be opened while Files is still expanding or compressing it.").arg(name)
-                                     : tr("“%1” can’t be opened from here. Copy it to a folder on this computer first.").arg(name));
+                                     ? tr("“%1” can’t be opened while Files is still expanding or compressing it.").arg(FileLogic::displayName(name))
+                                     : tr("“%1” can’t be opened from here. Copy it to a folder on this computer first.").arg(FileLogic::displayName(name)));
             return;
         }
         const bool foreign = v == LaunchGuard::Verdict::WindowsFile || v == LaunchGuard::Verdict::JavaProgram;
@@ -1561,7 +1561,7 @@ void FilesApp::openWithChecked(const QString &storageId, const QList<QUrl> &urls
             }
             const LaunchGuard::Facts now = LaunchGuard::inspect(u);
             if (LaunchGuard::verdict(now) != v || !sameFile(now, facts)) {
-                m_prompts->tell(tr("“%1” wasn’t opened.").arg(name), approvalProblem(ProgramLaunch::Approval::Changed));
+                m_prompts->tell(tr("“%1” wasn’t opened.").arg(FileLogic::displayName(name)), approvalProblem(ProgramLaunch::Approval::Changed));
                 return;
             }
             logDecision("approved", v, facts);
