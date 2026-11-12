@@ -23,9 +23,11 @@
 # /usr/local/sbin, /usr/local/bin, /usr/bin), never in the caller's PATH; a path with a slash is taken as given (made
 # absolute); either way the file, and every folder above it and above where it was found, must be root's and writable by
 # root alone. Its arguments reach it unchanged (no $VAR expansion by systemd). It runs as a transient system service: root's
-# identity and home, systemd's own environment for it plus SUDO_USER, SUDO_UID and SUDO_GID, the caller's
-# working folder, standard input, output and error passed through, and the unit's own /tmp (PrivateTmp, joined: the files a
-# migration makes there reach its root commands and no other process); its exit status is this program's.
+# identity and home, systemd's own environment for it plus SUDO_USER, SUDO_UID and SUDO_GID, / as its working folder (never
+# the caller's: the migrations' unit works in the person's home, and a root command there would read whatever the person
+# left in it, rc7 audit R7-SEC-01; a relative argument therefore names a path under /), standard input, output and error
+# passed through, and the unit's own /tmp (PrivateTmp, joined: the files a migration makes there reach its root commands and
+# no other process); its exit status is this program's.
 set -uo pipefail
 export LC_ALL=C
 
@@ -126,6 +128,6 @@ id=${id//-/}
 [[ $id =~ ^[0-9a-f]{32}$ ]] || refuse "no unit name"
 exec /usr/bin/systemd-run --quiet --wait --pipe --collect --no-ask-password --service-type=exec --expand-environment=no \
   --unit="grassfield-update-root-$id.service" --description="Grassfield Software Update: a migration's sudo command" \
-  --uid="$target" --same-dir -p PrivateTmp=yes -p JoinsNamespaceOf=grassfield-update-migrate.service \
+  --uid="$target" -p WorkingDirectory=/ -p PrivateTmp=yes -p JoinsNamespaceOf=grassfield-update-migrate.service \
   --setenv=SUDO_USER="$(/usr/bin/id -un)" --setenv=SUDO_UID="$(/usr/bin/id -u)" --setenv=SUDO_GID="$(/usr/bin/id -g)" \
   -- "$command" "$@"

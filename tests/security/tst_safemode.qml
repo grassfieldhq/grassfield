@@ -251,9 +251,17 @@ Item {
             compare(logOutSpy.count, 0, "Esc never logs out");
             keyClick(Qt.Key_Space);
             compare(tryAgainSpy.count, 3, "Space presses the target, Try Again at first");
+            verify(findChild(card, "safeModeTryAgain").Accessible.focused, "Try Again has the accessible focus at first");
+            verify(!findChild(card, "safeModeLogOut").Accessible.focused);
             keyClick(Qt.Key_Tab);
             compare(card.keyTarget, 0, "Tab moves the keyboard to Log Out");
             verify(card.activeFocus, "the alert keeps the keyboard (the buttons take none)");
+            // Assistive technologies are told (the delta opus review of 0edece99, NIT-4): the target has the accessible focus
+            // and its name is announced, without taking the key focus.
+            verify(findChild(card, "safeModeLogOut").Accessible.focused, "Log Out has the accessible focus");
+            verify(!findChild(card, "safeModeTryAgain").Accessible.focused);
+            compare(card.announced, "Log Out", "the new target is announced");
+            verify(!findChild(card, "safeModeLogOut").activeFocus, "no key focus on the button");
             keyClick(Qt.Key_Return);
             compare(tryAgainSpy.count, 4, "Return stays Try Again with Log Out as the target (the default button's key)");
             compare(logOutSpy.count, 0);
@@ -261,6 +269,39 @@ Item {
             compare(logOutSpy.count, 1, "Space presses Log Out once it is the target");
             keyClick(Qt.Key_Backtab);
             compare(card.keyTarget, 1, "Shift+Tab moves it back");
+            compare(card.announced, "Try Again");
+            verify(findChild(card, "safeModeTryAgain").Accessible.focused);
+        }
+
+        // Only the bare key acts (the delta opus review of 0edece99, NIT-5): Ctrl+Space, an input method's switch, never
+        // presses Log Out; Return, Enter, Space and Tab with Ctrl, Alt or Meta do nothing and are left to others; Shift+Tab
+        // and the keypad's Enter act.
+        function test_modifiers() {
+            const card = make();
+            verify(card.handleKey(Qt.Key_Tab, false, Qt.NoModifier));
+            compare(card.keyTarget, 0, "Log Out targeted");
+            const mods = [Qt.ControlModifier, Qt.AltModifier, Qt.MetaModifier, Qt.ControlModifier | Qt.ShiftModifier];
+            for (let i = 0; i < mods.length; i++) {
+                verify(!card.handleKey(Qt.Key_Space, false, mods[i]), "a modified Space is not taken");
+                verify(!card.handleKey(Qt.Key_Return, false, mods[i]), "a modified Return is not taken");
+                verify(!card.handleKey(Qt.Key_Enter, false, mods[i]));
+                verify(!card.handleKey(Qt.Key_Tab, false, mods[i] & ~Qt.ShiftModifier | Qt.ControlModifier), "a Ctrl+Tab moves nothing");
+            }
+            compare(logOutSpy.count, 0, "Ctrl+Space with Log Out targeted never logs out");
+            compare(tryAgainSpy.count, 0);
+            compare(card.keyTarget, 0, "nothing moved");
+            verify(!card.handleKey(Qt.Key_Space, false, Qt.ShiftModifier), "Shift+Space is not taken either");
+            compare(logOutSpy.count, 0);
+            verify(card.handleKey(Qt.Key_Backtab, false, Qt.ShiftModifier), "Shift+Tab acts");
+            compare(card.keyTarget, 1);
+            verify(card.handleKey(Qt.Key_Enter, false, Qt.KeypadModifier), "the keypad's Enter acts");
+            compare(tryAgainSpy.count, 1);
+            // A real Ctrl+Space with Log Out targeted.
+            card.handleKey(Qt.Key_Tab, false, Qt.NoModifier);
+            keyClick(Qt.Key_Space, Qt.ControlModifier);
+            compare(logOutSpy.count, 0, "a real Ctrl+Space does nothing");
+            keyClick(Qt.Key_Space);
+            compare(logOutSpy.count, 1, "the bare Space presses Log Out");
         }
 
         // A key held down answers nothing, whatever it is and wherever the keyboard is (the delta opus review of b67472da,
@@ -268,16 +309,16 @@ Item {
         // are taken (they reach nothing else) and act on nothing.
         function test_heldKeys() {
             const card = make();
-            verify(card.handleKey(Qt.Key_Return, true), "a repeat is taken");
-            verify(card.handleKey(Qt.Key_Enter, true));
-            verify(card.handleKey(Qt.Key_Space, true));
+            verify(card.handleKey(Qt.Key_Return, true, Qt.NoModifier), "a repeat is taken");
+            verify(card.handleKey(Qt.Key_Enter, true, Qt.NoModifier));
+            verify(card.handleKey(Qt.Key_Space, true, Qt.NoModifier));
             compare(tryAgainSpy.count, 0, "no repeat presses Try Again");
-            verify(card.handleKey(Qt.Key_Tab, true));
+            verify(card.handleKey(Qt.Key_Tab, true, Qt.NoModifier));
             compare(card.keyTarget, 1, "a repeated Tab moves nothing");
-            verify(card.handleKey(Qt.Key_Tab, false));
+            verify(card.handleKey(Qt.Key_Tab, false, Qt.NoModifier));
             compare(card.keyTarget, 0);
-            verify(card.handleKey(Qt.Key_Space, true));
-            verify(card.handleKey(Qt.Key_Return, true));
+            verify(card.handleKey(Qt.Key_Space, true, Qt.NoModifier));
+            verify(card.handleKey(Qt.Key_Return, true, Qt.NoModifier));
             compare(logOutSpy.count, 0, "no repeat presses Log Out");
             compare(tryAgainSpy.count, 0);
             // A failed Try Again gives the keyboard back to Try Again; a Return still held then repeats and acts on nothing.
@@ -285,9 +326,9 @@ Item {
             card.running = "";
             card.failure = "tryAgain";
             tryVerify(() => card.activeFocus && card.keyTarget === 1, 1000, "the keyboard back on the alert, Try Again its target");
-            verify(card.handleKey(Qt.Key_Return, true));
+            verify(card.handleKey(Qt.Key_Return, true, Qt.NoModifier));
             compare(tryAgainSpy.count, 0, "the held Return does not start it again");
-            verify(!card.handleKey(Qt.Key_A, false), "other keys go by");
+            verify(!card.handleKey(Qt.Key_A, false, Qt.NoModifier), "other keys go by");
             // The buttons take no focus, so no button can take a key (or its repeats) before the alert.
             compare(findChild(card, "safeModeTryAgain").focusPolicy, Qt.NoFocus);
             compare(findChild(card, "safeModeLogOut").focusPolicy, Qt.NoFocus);

@@ -2480,6 +2480,10 @@
         <translation>Options de capture d’écran et d’enregistrement</translation>
     </message>
     <message>
+        <source>Focus the status menus</source>
+        <translation>Activer les menus d’état</translation>
+    </message>
+    <message>
         <source>Turn Dock hiding on or off</source>
         <translation>Activer ou désactiver le masquage du Dock</translation>
     </message>

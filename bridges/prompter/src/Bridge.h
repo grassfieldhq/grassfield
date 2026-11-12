@@ -59,7 +59,8 @@ namespace gf::prompter {
       public:
         struct Options {
             QString socketPath;
-            QString peerUnit;            // the shell's unit (cgroup leaf)
+            QString peerUnit;            // the client's unit, grassfield-security.service since ADR-0041 S3 (cgroup leaf;
+                                         // in a session the peer must also be its MainPID)
             bool    requireUserManager = true; // false only in a development run
             uid_t   uid = 0;
             // The system bus for the NetworkManager agent (step 9c); nullptr: no agent (NetworkManager gets NoSecrets).

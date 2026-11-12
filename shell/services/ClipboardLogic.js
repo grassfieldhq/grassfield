@@ -15,9 +15,12 @@ const PASTE_POLL_MS = 50;
 // macOS 27's three durations (Settings > Search), in milliseconds.
 const RETENTION = {"30m": 30 * 60 * 1000, "8h": 8 * 3600 * 1000, "7d": 7 * 24 * 3600 * 1000};
 
-// The windows the session hides from screen sharing (config/hypr/grassfield/privacy.lua, its BUILTIN matches, class regexes):
-// password managers that may set no hint (Bitwarden). A copy is not recorded while one of them is the active window.
-const PROTECTED_CLASSES = ["^(1[p|P]assword)$", "^(Bitwarden)$", "chrome-nngceckbapebfimnlniiiahkandclblb-Default"];
+// The windows the session hides from screen sharing: password managers that may set no hint (Bitwarden). ONE list, the shell's
+// services/protected-classes.txt (rc7 audit R7-SEC-03): config/hypr/grassfield/privacy.lua applies its lines as no_screen_share
+// rules, Clipboard.qml reads it at start and passes parseProtected's result as `protectedClasses`. A copy is not recorded while
+// one of them is the active window, nor while the list is unknown (not read yet, unreadable, a line that is not a regex).
+const PROTECTED_FILE = "services/protected-classes.txt";
+const PROTECTED_MAX = 64;
 // The terminal test of config/hypr/grassfield/forwarding.lua (terminal_focused), whole: its classes (lower case, exact) and its
 // prefixes. tests/unit/tst_clipboard.qml reads forwarding.lua and checks both lists.
 const TERMINAL_CLASSES = ["alacritty", "kitty", "com.mitchellh.ghostty", "foot", "org.codeberg.dnkl.foot", "wezterm", "org.wezfurlong.wezterm"];
@@ -33,9 +36,34 @@ function retentionMs(key) {
     return RETENTION[key] !== undefined ? RETENTION[key] : RETENTION["8h"];
 }
 
-function isProtectedClass(cls) {
+// The class regexes of protected-classes.txt (blank lines and lines starting with # skipped), or null when the text is not
+// that file: no regex line, more than PROTECTED_MAX lines, a line over 256 characters or one that is not a regex.
+function parseProtected(text) {
+    if (typeof text !== "string")
+        return null;
+    const out = [];
+    for (const raw of text.split("\n")) {
+        const line = raw.trim();
+        if (line === "" || line.charAt(0) === "#")
+            continue;
+        if (line.length > 256 || out.length >= PROTECTED_MAX)
+            return null;
+        try {
+            new RegExp(line);
+        } catch (e) {
+            return null;
+        }
+        out.push(line);
+    }
+    return out.length > 0 ? out : null;
+}
+
+// True when a window of this class may be a protected password manager: one of `classes` matches it, or the list is unknown.
+function isProtectedClass(cls, classes) {
+    if (!Array.isArray(classes))
+        return true;
     const c = String(cls || "");
-    return c !== "" && PROTECTED_CLASSES.some(p => new RegExp(p).test(c));
+    return c !== "" && classes.some(p => new RegExp(p).test(c));
 }
 
 function isTerminalClass(cls) {
@@ -45,12 +73,13 @@ function isTerminalClass(cls) {
 
 // The helper's answer to an offer: true only while the history is on, neither lock source says locked, no authorization request
 // is open or ended less than AUTH_GRACE_MS ago (authorizingGrace: the service's Timer), and the active window is not a protected
-// password manager (ADR-0034 §2). s: {enabled, locked, helperLocked, authorizing, authorizingGrace, activeClass}
+// password manager (ADR-0034 §2), the list of them known (protectedClasses: parseProtected's result).
+// s: {enabled, locked, helperLocked, authorizing, authorizingGrace, activeClass, protectedClasses}
 function mayRecord(s) {
     if (!s || s.enabled !== true || s.locked !== false || s.helperLocked !== false || s.authorizing !== false
-            || s.authorizingGrace !== false)
+            || s.authorizingGrace !== false || !Array.isArray(s.protectedClasses))
         return false;
-    return !isProtectedClass(s.activeClass);
+    return !isProtectedClass(s.activeClass, s.protectedClasses);
 }
 
 // The display socket the helper is given (ADR-0034 §8): in a dev session only GRASSFIELD_CLIPBOARD_DISPLAY, which must be

@@ -625,7 +625,9 @@ down, how sleep behaves) is written in the table at the end of this step.
   sheet in one queue, a QML object of one process, and ADR-0035 decision 9-7 says it in so many words ("when ADR-0041 S3
   moves the agent to `grassfield-security.service`, the sheets and `--peer-unit` move with it"); S2 as built had kept them in
   the UI "until S3". `grassfield-prompter.service` now accepts a peer of `grassfield-security.service` only (`--peer-unit`,
-  and the bridge's default), so the UI's unit is refused. Nothing stayed: the UI (`shell/shell.qml`) imports no security
+  and the bridge's default), so the UI's unit is refused (since the rc7 fixes, R7-SEC-02, in a session only that unit's main
+  process; the share picker's socket, a UI feature, takes `grassfield-shell.service`'s: ADR-0035 7-7 and 9-7). Nothing
+  stayed: the UI (`shell/shell.qml`) imports no security
   module at all and names none of their types.
 - **How they are hosted.** `shell/security/host/SheetHost.qml` (the queue, the two agents, the sheets' icon lookup and the
   two booleans the UI may know) is created at run time by `SecurityHost.qml`, at the end of its `Component.onCompleted`,
@@ -1010,6 +1012,93 @@ down, how sleep behaves) is written in the table at the end of this step.
     to press a focused button again once a failed Try Again gave the focus back; `tst_safemode` test_heldKeys); a flag whose
     identity `stat` cannot read stays, as "not the same file", and is said (`tests/shell/shell_failures.sh`, where the
     helper's cases live: a failing stat).
+- **Review round 3** (2026-11-12, the opus review of 0edece99: PASS, merged; one MINOR and five NITs, fixed in a follow-up
+  pull request, branch fix/safe-mode-s4-hardening):
+  - MINOR-1, the palette check read the lock's .qml files only: a `.import Grassfield.Ui as Ui` in LockMachine.js returning
+    `Ui.Appearance.colors.text`, used by LockView, passed it and the scan, and an offscreen probe showed the colour following
+    the appearance. `lock_palette.py` now checks the closure of the lock's files under their file imports (.js included, and
+    `.import` in scripts), the types of this tree they make (GrassfieldArtwork, WallClock, LockController, LockStills made at
+    run time) and the script modules of an imported module they use as a qualifier, transitively; a lock script may import no
+    module, and Appearance is refused through any qualifier. PasswordField's own Icon and FocusRing are the two parts not
+    followed, their colours held by rule 6.
+  - NITs: Qt's palette (`palette.windowText`) refused on the lock; createQmlObject, Qt.createComponent (but Lock.qml's one of
+    LockStills.qml), a Loader source, setSource() and a Loader's `.source =` refused there, and createQmlObject anywhere in
+    the security tree (`security_process_scan.py`); Tokens and Appearance never subscripted, and PasswordField's exception read
+    per statement, not per line; the safe-mode alert's keyboard target has the accessible focus and is announced when Tab
+    moves it (`Accessible.focused`, `Accessible.announce`), with no key focus; only the bare key acts (Shift for Tab, the
+    keypad's Enter), so Ctrl+Space, an input method's switch, never presses Log Out (`tst_safemode` test_modifiers).
+    `lock_palette.py`'s selftest plants 34 mutants (14 new, one per finding).
+  - Residual, recorded (NIT-6): on the path where `stat` cannot read the flag's identity, Try Again leaves the flag in place
+    with the shell running; if the user later stops the shell on purpose (`systemctl --user stop`), the alert appears after
+    two looks. Harmless (Try Again then starts it), and the same as residual (2) above.
+- **Review round 4** (2026-11-12, the opus delta review of 00eff2bd: PASS, three MINOR, NITs; the integrator's decision: stop
+  the static arms race, add a behavioural test):
+  - The behavioural test, `tests/security/lock_palette_render.sh` (headless): `lock_palette_render.d/probe.qml` draws the
+    REAL lock surface content (LockView with its real children: the artwork backdrop, the scrim, the date and clock, the
+    initials, the name, the password field with a password typed, the error line) offscreen under Quickshell, built with
+    `Appearance.dark` true and then false, and one view flipped to light while shown and back, every other input equal (the
+    size, the backdrop, the name, the message, Reduce Motion, the clock's minute: the run is done again if it moves). The
+    grabs must be the same image byte for byte, and every visible item's colour inputs the same: the offscreen renderer is
+    Qt's software scene graph, which draws no shader effect, so an Icon's tint or a MultiEffect's colour is compared by its
+    input. Two things are taken off so the grabs compare: the caret (it blinks; its colour is the dots') and the text
+    shadow's layers (a shader the software renderer does not draw; turned off, the date, the clock and the name it carries
+    are drawn). A control (a rectangle in `Appearance.colors.text`) must differ. Three mutants each make it fail: an Icon
+    with its default tint, a script module's colour (GlassTint.js importing Grassfield.Ui), a template literal's colour.
+  - The static lint stays as a fast first check: MINOR-A, the field's Icon and FocusRing read with brace matching (a second
+    `Icon { anchors { ... } }` was missed); MINOR-C, a template literal's `${...}` read as code, in `lock_palette.py` and
+    `security_process_scan.py` (`${Appearance.colors.text}`, `${Qt.createQmlObject(...)}`); and the NITs: `Settings.dark` and
+    `Settings.appearance` refused on the lock, Qt's palette refused bare too (`pal: palette`, QML only), `Qt[...]` and a
+    `createComponent` named without a call refused, a scope directory's qmldir followed as the engine follows it (a
+    `LockStill` mapped to `../polkit/X.qml`), and nothing in the security tree writes an appearance into Lock (a Binding on
+    Lock, `Lock.<property> = ...`). 45 mutants in `lock_palette.py`, 108 in the scan.
+  - Residual, static-only gaps the behavioural test covers (MINOR-B and what a lint cannot follow): a script module reached
+    through a variable (`property var t: GlassTint; t.probe()`) or through its own directory's qmldir from an allowed file
+    (GrassfieldArtwork calling `GlassTint.probe()` once GlassTint.js imports Grassfield.Ui), and names built at run time,
+    within what the test draws and walks; what it does not is listed under round 5.
+- **Review round 5** (2026-11-12, the opus review of 39670f1f: PASS, one MINOR, NITs; the render test ran the production
+  LockView and was not vacuous, but missed paths a user sees that only the lint covered). Closed in the test, on top of
+  39670f1f, test files and this text only:
+  1. The field keeps the keyboard focus (the caret is hidden with `cursorVisible = false` instead), so the focus-ring path is
+     drawn: deleting `focusRing: false` (LockView) is caught.
+  2. The text shadows' layers are turned on for the walk and off for the grab: their MultiEffects exist while walked, so
+     `shadowColor: Appearance.colors.text` (LockView's TextShadow) is caught as an input, though the software renderer
+     draws no shadow.
+  3. The notice line (Lock's own text: crash recovery unavailable, PAM suppressed) and the user's lock message (a settings
+     file in the private home, read by the real Settings) are shown and compared: their colours are caught.
+  4. The walk reads every property of every visible item (for...in over the QObject: declared properties too, grouped and
+     held objects such as border, gradient stops, palette and its colour groups, layer, non-visual resources, `var` maps and
+     lists), and records every colour value, every string `Qt.color` reads and every URL: a ShaderEffect's own
+     `property color tint` is caught.
+  5. Lock.qml's surface is drawn: `lock_palette_render.d/surface.py` copies Lock.qml's `WlSessionLockSurface` block (the
+     ground colour, the view's loader, every binding given to the LockView it creates) and its `groundOf()` into
+     `ProbeLockSurface.qml`, whose root stands in for the rest of Lock.qml with fixed data (a member it does not stand in
+     for stops the test: stale), the surface window a Rectangle of its colour. The scene holds the main surface and two
+     grounds alone (the view's loader stopped: the first frame), one before its screen is known and one after: the ground
+     colour, `groundOf()`, an item beside the view and an item in the view as Lock creates it are caught.
+  NITs: the probe refuses to save a scene that is not fully shown (the view mid-fade, a line missing, an empty field, no
+  focus, the caret shown, a ground with its view); three guards check it refuses (an empty field, the focus elsewhere, the
+  notice hidden). The probe's XDG_CONFIG_HOME, XDG_DATA_HOME and XDG_STATE_HOME are in the private home. `lock_palette.py`
+  reads a template literal's `${...}` up to its own closing brace, strings, nested literals and comments skipped
+  (`${"}" && Appearance.colors.text}`; the same in `security_process_scan.py`), a Binding on Lock by its whole body, its
+  braced blocks included (`value: { return Appearance.dark; }`), and an assignment into Lock by its whole statement, over
+  lines and through brackets, subscripted too. Mutants: the render test 12 (each caught) and 3 guards (each refused),
+  `lock_palette.py` 52, the scan 109.
+  - Residual, what the behavioural test does not exercise (each still held by `lock_palette.py`, which reads every file of
+    the closure, Lock.qml whole included):
+    - the rest of Lock.qml and its helpers: the controller, the stills (LockStills.qml: a wallpaper's still, a colour
+      backdrop, the ground the stills give, the decoded avatar), LockAvatar and LockPublisher are stood in for with fixed
+      data, so a colour they compute and hand to the surface is not drawn (the ground drawn is `Tokens.sessionGround`, the
+      one without stills), and the real `WlSessionLockSurface` window is a Rectangle of the same colour;
+    - states not shown: Caps Lock's hint (real key events; the error line's Text), "Checking…" while authenticating, the
+      placeholder of an empty field, the release fade, the idle dim carried over, a picture or colour backdrop, the moving
+      artwork, the account picture (a file), "Authentication service unavailable" (the error line's Text), the account
+      hidden (`lock.showUser` off), the pointer over the submit arrow;
+    - what the walk does not compare: invisible items (they draw nothing), objects more than four levels from an item, and
+      values other than colours, colour strings and URLs; the image compares those for what the software renderer draws,
+      so a shader-drawn part's number or vector input (a shadow's opacity or blur) that followed the appearance is not
+      caught, nor a named colour written with spaces;
+    - the platform theme (the test runs without QT_QPA_PLATFORMTHEME; Qt's palette is refused on the lock by the lint), and
+      a colour that differs only on a real compositor or GPU.
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words

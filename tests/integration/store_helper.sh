@@ -40,13 +40,15 @@ if [[ ${1:-} != --inside ]]; then
     esac
     shift
   done
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
+  . "$root/tests/integration/container.sh" || exit 2
+  gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -f $omarchy/install/omarchy-base.packages && -f $omarchy/install/omarchy-other.packages ]] ||
     { echo "SKIP: no Omarchy 4.0.4 tree at $omarchy (--omarchy DIR)"; exit 0; }
-  args=(--rm --network host -v "$root:/src:ro" -v "$(realpath "$omarchy"):/omarchy:ro")
-  [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
-  for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && args+=(-e "$v"); done
-  exec docker run "${args[@]}" "$IMAGE" bash /src/tests/integration/store_helper.sh --inside
+  gf_container_init "$root" || exit 2
+  gf_standard auto || exit 2
+  omarchy_mounts "$omarchy" /omarchy || exit 2
+  gf_container_run "$IMAGE" bash /src/tests/integration/store_helper.sh --inside
+  exit $?
 fi
 
 [[ -f /.dockerenv && $(id -u) == 0 && -f /src/packaging/store/grassfield-store-helper && -d /omarchy/install ]] ||
@@ -291,11 +293,15 @@ say "A6b descriptors and signals: the caller going away does not stop pacman (S6
 op=$(newop)
 ( env -i PATH=/usr/bin "$H" install "$op" gs-slow </dev/null 2>&1 | cat >"$W/slow.pipe" ) &
 caller=$!
-for _ in $(seq 40); do [[ -f $D/$op.started ]] && grep -q 'gs-slow' "$D/$op.log" 2>/dev/null && break; sleep 0.25; done
-sleep 2
+# Sample while the scriptlet's `sleep 8` runs. The log names gs-slow from the helper's first line on, long before pacman: on a
+# loaded machine the helper is then still in its pre-flight loops (stdin a pipe, a forked child holding the lock for an
+# instant), which is what the 2026-11-11 runs caught.
+for _ in $(seq 240); do [[ -f $D/$op.started ]] && pgrep -xf 'sleep 8' >/dev/null && break; sleep 0.25; done
+sleep 1
 hpid=$(cut -d' ' -f1 "$D/$op.started")
 holders=$(find /proc/[0-9]*/fd -lname "$D/helper.lock" 2>/dev/null | cut -d/ -f3 | sort -u | tr '\n' ' ')
 expect "while pacman and gs-slow's scriptlet run, only the helper holds its lock ($holders)" test "$holders" == "$hpid "
+[[ $holders == "$hpid " ]] || for p in $holders; do echo "   holder $p (ppid $(awk '/^PPid/ { print $2 }' /proc/$p/status 2>/dev/null)): $(tr '\0' ' ' </proc/$p/cmdline 2>/dev/null)"; done
 fds=$(for fd in 0 1 2; do readlink "/proc/$hpid/fd/$fd"; done | tr '\n' ' ')
 expect "its stdin is /dev/null, stdout and stderr the log ($fds)" test "$fds" == "/dev/null $D/$op.log $D/$op.log "
 ign=$(awk '/^SigIgn:/{print $2}' "/proc/$hpid/status")
@@ -331,7 +337,20 @@ expect "16 operations' files kept (newest)" test "$(ls "$D"/*.started | wc -l)" 
 say "A6b and A8 through pkexec: alice's password at every operation (auth_admin, never kept), bob refused"
 cat >"$W/drive.py" <<'PY'
 # Runs one command in a pseudo-terminal as the user; answers each "Password:" prompt; prints the transcript and the count.
-import os, pty, sys, time, select
+import os, pty, signal, sys, time, select
+def reap(pid, limit=30):
+    """The child's status; past `limit` seconds after EOF its process group is killed (no hang in waitpid)."""
+    end = time.time() + limit
+    while time.time() < end:
+        done, st = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return st, False
+        time.sleep(0.2)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    return os.waitpid(pid, 0)[1], True
 user, password, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
@@ -351,7 +370,9 @@ while time.time() < deadline:
     if out.count(b"Password:") > prompts:
         prompts = out.count(b"Password:")
         os.write(fd, password.encode() + b"\n")
-_, status = os.waitpid(pid, 0)
+status, late = reap(pid)
+if late:
+    print("the child did not end 30 s after EOF: its process group was killed")
 print(out.decode(errors="replace").replace("\r", ""))
 print("password prompts: %d, exit %d" % (prompts, os.waitstatus_to_exitcode(status)))
 PY
@@ -533,7 +554,7 @@ printf '%s' '{"version":5,"type":"multiinfo","resultcount":2,"results":[
   {"Name":"gs-aur-lib","PackageBase":"gs-aur-lib","Version":"1.0-1","Description":"Its library","Maintainer":null,"NumVotes":0,
    "Popularity":0,"OutOfDate":null,"LastModified":1790000000,"FirstSubmitted":1700000000,"License":["MIT"]}]}' >/srv/gsaur-rpc/info.json
 chmod -R a+rX /srv/gsaur-rpc
-# yay's stand-in (above): only `-S --noconfirm --needed <names>`.
+# yay's stand-in (above): `-S --noconfirm --needed [--] <names>` (Omarchy 4.5's omarchy-pkg-aur-add passes the `--`).
 cat >/usr/bin/yay <<'YAY'
 #!/bin/bash
 set -euo pipefail
@@ -541,7 +562,7 @@ set -euo pipefail
 shift
 names=()
 for a in "$@"; do
-  case $a in --noconfirm | --needed) ;; -*) echo "yay (stand-in): $a" >&2; exit 2 ;; *) names+=("$a") ;; esac
+  case $a in --noconfirm | --needed | --) ;; -*) echo "yay (stand-in): $a" >&2; exit 2 ;; *) names+=("$a") ;; esac
 done
 build() { # name asdeps
   local n=$1 dir d

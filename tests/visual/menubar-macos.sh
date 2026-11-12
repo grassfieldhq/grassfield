@@ -181,12 +181,14 @@ for _ in $(seq 1 10); do closed && break; vs_sleep 0.4; done
 check "focus-walk: Escape closes the menu (got '$(kind)')" closed
 for _ in $(seq 1 10); do [[ $(active_title) == "$fw_before" ]] && break; vs_sleep 0.5; done
 check "focus-walk: Escape returns the keyboard to the window that had it ('$fw_before', now '$(active_title)')" test "$(active_title)" = "$fw_before"
-# Ctrl+F8 equivalent: the status menus start at the first status item.
+# Ctrl+F8 (rc7 audit R7-A11Y-02): the key itself, through the nested compositor's bind (config/hypr/grassfield/bindings.lua),
+# as the person presses it (the virtual keyboard: wtype's modifiers never reach Hyprland's binds); the status menus start
+# at the first status item.
 reset_menus
-vs_ipc menubar open status "$VS_OUTPUT" >/dev/null
+timeout 20 "$VS_ROOT/tests/tools/vkbd/vkbd.sh" down Control_L sleep 60 tap F8 sleep 60 up Control_L >/dev/null
 vs_sleep 0.6
 k=$(kind)
-check "keyboard-status: 'open status' opens the first status menu (got '${k:-none}')" bash -c '[[ $1 =~ ^(network|volume|battery|controlcenter|nowplaying|tray)@ ]]' _ "$k"
+check "keyboard-status: Ctrl+F8 opens the first status menu (got '${k:-none}')" bash -c '[[ $1 =~ ^(network|volume|battery|controlcenter|nowplaying|tray)@ ]]' _ "$k"
 
 # status-switch: the network and volume items sit left of Quick Settings and the clock; open volume through IPC, then move
 # onto the network item, found from the bar's right side in the capture-free way: IPC opens give the anchor, so use

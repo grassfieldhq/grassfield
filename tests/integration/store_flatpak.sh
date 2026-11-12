@@ -24,14 +24,15 @@ IMAGE=archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23
 
 if [[ ! -f /.dockerenv && ! -f /run/.containerenv ]]; then
   root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
-  if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
+  . "$root/tests/integration/container.sh" || exit 2
+  if ! gf_have_docker; then
     echo "SKIP: store_flatpak (no docker)"
     exit 0
   fi
-  ca=()
-  [[ -n ${GRASSFIELD_TEST_CA:-} ]] && ca=(-v "$GRASSFIELD_TEST_CA:/test-ca.crt:ro")
-  exec docker run --rm --network host -e HTTPS_PROXY -e HTTP_PROXY -e NO_PROXY -e https_proxy -e http_proxy -e no_proxy \
-    "${ca[@]}" -v "$root":/src:ro "$IMAGE" bash /src/tests/integration/store_flatpak.sh
+  gf_container_init "$root" || exit 2
+  gf_standard auto /test-ca.crt || exit 2
+  gf_container_run "$IMAGE" bash /src/tests/integration/store_flatpak.sh
+  exit $?
 fi
 
 [[ $(id -u) == 0 && -d /src/apps/store ]] || { echo "refused: run as root in a container with the repository at /src"; exit 2; }

@@ -87,6 +87,14 @@ sent("SUPER + SHIFT + DOWN", "org.grassfield.Files", both("CTRL SHIFT", "End"))
 -- Command+Backspace: Shift+Home, then BackSpace from the timer (the stub runs timers in order, including ones they add).
 sent("SUPER + BACKSPACE", "firefox", both("SHIFT", "Home") .. " " .. both("", "BackSpace"))
 print("repeat " .. tostring(binds["ALT + LEFT"].opts.repeating) .. " " .. tostring(binds["ALT + BACKSPACE"].opts.repeating))
+-- Keyboard access to the bar (gate A1, rc7 audit R7-A11Y-02): what Ctrl+F2 and Ctrl+F8 run, and their descriptions.
+local function cmd_of(keys)
+  local b = binds[keys]
+  if not b or type(b.d) ~= "table" or b.d.dsp ~= "dsp.exec_cmd" then return "unbound" end
+  return b.opts.description .. " | " .. tostring(b.d.args[1])
+end
+print("menubar-f2 " .. cmd_of("CTRL + F2"))
+print("menubar-f8 " .. cmd_of("CTRL + F8"))
 LUA
 
 cat >"$tmp/sources.lua" <<'LUA'
@@ -125,6 +133,14 @@ check bash -c 'f="$1/apps/files/qml/GlobalMenu.qml"; p="$1/apps/preview/qml/Glob
 
 desc="Settings > Keyboard lists forwarding.lua (page reads it, parser accepts word_key lines)"
 check bash -c 'grep -q "forwarding.lua" "$1/apps/settings/qml/KeyboardPage.qml" && grep -q "word_key" "$1/apps/settings/qml/Bindings.js"' _ "$root"
+
+f2=$(sed -n 's/^menubar-f2 //p' <<<"$out")
+f8=$(sed -n 's/^menubar-f8 //p' <<<"$out")
+desc="R7-A11Y-02: Ctrl+F8 (macOS Move focus to status menus) is bound, and runs exactly Ctrl+F2's request with 'open status' for 'open system' (the shell's MenuBar.openFirstStatus)"
+want=$(sed -e 's/^Focus the menu bar | /Focus the status menus | /' -e "s/ call menubar open system ''\$/ call menubar open status ''/" <<<"$f2")
+check bash -c '[[ $1 == *" call menubar open system '"''"'" && $2 == *" call menubar open status '"''"'" && $2 == "$3" ]]' _ "$f2" "$f8" "$want"
+desc="R7-A11Y-02: Settings > Keyboard lists Ctrl+F8 (a literal bind() line, its description listed for translation, with a French text)"
+check bash -c 'grep -qx "bind(\"CTRL + F8\", \"Focus the status menus\", shell(\"menubar\", \"open status '"''"'\"))" "$1/config/hypr/grassfield/bindings.lua" && grep -qF "QT_TRANSLATE_NOOP(\"Bindings\", \"Focus the status menus\")" "$1/apps/settings/qml/Bindings.js" && grep -A1 -F "<source>Focus the status menus</source>" "$1/translations/grassfield_fr.ts" | grep -qF "<translation>Activer les menus d’état</translation>"' _ "$root"
 
 desc="GF-106 / GF-064: Show Desktop on Super+F3 and the zoom keys (Super+Alt+8, =, -) reach the shell, and none of them clashes with another bind"
 check bash -c 'f="$1/config/hypr/grassfield/bindings.lua"; for k in "SUPER + F3" "SUPER + ALT + code:17" "SUPER + ALT + code:21" "SUPER + ALT + code:20"; do [ "$(grep -c "^bind(\"$k\"" "$f")" = 1 ] || exit 1; done; grep -q "shell(\"windows\", \"showDesktop\")" "$f" && grep -q "shell(\"zoom\", \"toggle\")" "$f"' _ "$root"
