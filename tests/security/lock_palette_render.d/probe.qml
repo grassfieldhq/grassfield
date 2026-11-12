@@ -111,7 +111,7 @@ ShellRoot {
     function save(item, name: string, next): void {
         const lines = [];
         root.colours(item, "", lines);
-        const writer = writerComponent.createObject(root, {path: root.out + "/" + name.replace(/\.png$/, ".colours")});
+        const writer = writerComponent.createObject(root, {path: root.out + "/" + name.replace(/\.png$/, ".colours")}) as FileView;
         writer.setText(lines.join("\n") + "\n");
         item.grabToImage(result => {
             if (!result.saveToFile(root.out + "/" + name)) {
