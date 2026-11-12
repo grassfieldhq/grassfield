@@ -20,7 +20,17 @@ place). So this is an ALLOWLIST by construction:
      A variable, an array expansion or a flag the guard cannot resolve is therefore a failure, never a pass.
   3. CAP_SYS_ADMIN is only in gf_container_systemd_start, which only tests/integration/update_migrate.sh may call.
   4. The wrapper's own arrays (gf_args, gf_trees, gf_stages) are not touched outside the wrapper.
+  5. Every tracked text file is read, whatever its extension (shell, python, lua, .service, .desktop, zsh, extensionless
+     executables, QML, C++, JS ...), except docs/, markdown and this file. A line of product code that merely names docker is
+     listed in ALLOW by exact file and exact line text; nothing else is waived.
 Comments are not read. This file is exempt (it spells the cases).
+
+WHAT THIS IS, AND IS NOT (integrator decision, 2026-11-12; ADR-0057). This guard is a LINT against ACCIDENTAL reintroduction of a
+container that shares the host, by people or agents. It is NOT a sandbox against deliberately written code: a determined author can
+spell a call in ways no static scan resolves (a string built at run time, an interpreter, an encoded payload). The real boundaries
+are at RUN TIME: (1) the wrapper refuses anything dangerous it is handed (tests/shell/container_wrapper.sh proves each refusal fires
+before docker is called); (2) update_migrate.sh fails closed outside a virtual machine (tests/shell/update_migrate_refusal.sh);
+(3) the virtual machine itself, the only place that script runs (scripts/gates/vm-drill.sh update-migrate).
 
   python3 -I tests/ci/no_privileged_containers.py [--selftest]
 Exit 0 clean, 1 a violation, 2 usage.
@@ -34,7 +44,12 @@ WRAPPER = "tests/integration/container.sh"
 SYSTEMD_USER = "tests/integration/update_migrate.sh"
 EXEMPT = ("tests/ci/no_privileged_containers.py",)
 CLI = r"(?:docker|podman|nerdctl|buildah|docker-compose)"
-SHELLISH = (".sh", ".bash", ".py", ".just", ".yml", ".yaml", ".in", ".mk", ".cmake")
+CLI_PATH = r"(?:/[\w.+-]+)*/"  # an absolute path before the name: /usr/bin/docker, /usr/local/bin/podman
+# Product code that names docker without running a container: (file, exact stripped line). Empty unless a scan finds one.
+ALLOW = set()
+# Test files that exercise the wrapper itself (stub docker, no container) may name its arrays and its systemd start.
+WRAPPER_TESTS = ("tests/shell/container_wrapper.sh",)
+SHELLISH = (".sh", ".bash", ".zsh", ".py", ".just", ".yml", ".yaml", ".in", ".mk", ".cmake")
 STRINGISH = (".cpp", ".h", ".hpp", ".cc", ".qml", ".js", ".ts", ".mjs")
 BASENAMES = ("justfile", "Makefile", "makefile", "CMakeLists.txt")
 SKIP_PARTS = ("node_modules/", "__pycache__/", ".dev/", "docs/", "translations/")
@@ -43,6 +58,11 @@ CONTAINER_FILES = re.compile(r"(^|/)(docker-compose[^/]*\.ya?ml|compose\.ya?ml|D
 # What may stand before a command word on its command line: wrappers, options, assignments, a yaml key or list dash, a recipe's @.
 PREFIX_OK = re.compile(r"""^(?:\s*(?:@|-|exec|sudo|env|nohup|time|then|do|else|if|elif|while|until|!|command|builtin|timeout|nice|
     setsid|stdbuf|xargs|COMMAND|run|[\w.-]+:|\w+=\S*|-\S+|\d+))*\s*$""", re.X)
+# Commands that run another command, with arguments of their own (flock FILE, timeout 5s, systemd-run --user, xargs -n1 ...).
+RUNNERS = {"sudo", "doas", "su", "env", "exec", "command", "builtin", "nice", "ionice", "timeout", "xargs", "flock", "unshare",
+           "systemd-run", "nohup", "setsid", "stdbuf", "time", "chroot", "runuser", "script", "watch", "parallel", "ssh"}
+# A command found by lookup and then run: "$(command -v docker)" run, `which podman`, $(type -P docker).
+RESOLVED = re.compile(r"(?:\$\(|`)\s*(?:command\s+-[vV]|which|type\s+-[pP]|whereis)\s+[\"']?(?:" + CLI_PATH + r")?" + CLI + r"(?![\w-])")
 SEP = re.compile(r"""(;|&&|\|\||\||\(|\{|\$\(|`)""")
 
 WRAPPER_CALLS = [
@@ -79,14 +99,15 @@ def logical_lines(text):
 
 def calls(line):
     """Yield (word, rest) for every container CLI used as a command on this logical line."""
-    for m in re.finditer(r"(?<![\w./-])(" + CLI + r")(?![\w-])", line):
+    line = line.replace("{}", "_")  # xargs -I{} is a placeholder, not a brace group
+    for m in re.finditer(r"(?<![\w.-])(?:" + CLI_PATH + r")?(" + CLI + r")(?![\w/-])", line):
         before = line[:m.start()]
         seps = list(SEP.finditer(before))
         prefix = before[seps[-1].end():] if seps else before
         adjacent_quote = before[-1:] in ("'", '"')
         if re.search(r"\bcommand\s+-[vV]\s*$", prefix):
             continue  # `command -v docker`: a lookup, not a call
-        if not (PREFIX_OK.match(prefix) or adjacent_quote):
+        if not (PREFIX_OK.match(prefix) or adjacent_quote or any(t in RUNNERS for t in prefix.split())):
             continue
         rest = line[m.end():]
         end = re.search(r"(;|&&|\|\||\||\))", rest)
@@ -125,22 +146,26 @@ def check_text(rel, text):
         return ["%s: a compose, Dockerfile or Containerfile: containers are built only by tests/integration/container.sh" % rel]
     ext = os.path.splitext(rel)[1]
     if ext in STRINGISH:
-        for m in re.finditer(r"""["'](""" + CLI + r""")["']""", text):
+        for m in re.finditer(r"""["'](?:""" + CLI_PATH + r""")?(""" + CLI + r""")(?:["']|\s)""", text):
             out.append("%s:%d: a container CLI named in code: only tests/integration/container.sh runs docker" % (rel, text[:m.start()].count("\n") + 1))
         return out
-    if not (ext in SHELLISH or base in BASENAMES or text.startswith("#!")):
-        return out
     is_wrapper = rel == WRAPPER
+    shellish = ext in SHELLISH or base in BASENAMES or text.startswith("#!")
     if ext == ".py":
-        for m in re.finditer(r"""["'](""" + CLI + r""")["']""", text):
+        for m in re.finditer(r"""["'](?:""" + CLI_PATH + r""")?(""" + CLI + r""")["']""", text):
             nxt = text[m.end():]
             if not re.match(r"""\s*,\s*["']info["']\s*[\],)]""", nxt):
                 out.append("%s:%d: a container CLI in python outside `docker info`: %s" % (rel, text[:m.start()].count("\n") + 1, nxt[:60].strip().replace("\n", " ")))
-        for m in re.finditer(r"""["'](""" + CLI + r""")\s+(?!info\b)\S""", text):
+        for m in re.finditer(r"""["'](?:""" + CLI_PATH + r""")?(""" + CLI + r""")\s+(?!info\b)\S""", text):
             out.append("%s:%d: a container command line in a python string: %s" % (rel, text[:m.start()].count("\n") + 1, text[m.start():m.start() + 60].replace("\n", " ")))
         return out
+    if not shellish:  # lua, .service, .desktop, extensionless files ...: a quoted command line is a call too
+        for m in re.finditer(r"""["'](?:""" + CLI_PATH + r""")?(""" + CLI + r""")(?:["']|\s+(?!info\b)\S)""", text):
+            out.append("%s:%d: a container CLI named in a quoted string: %s" % (rel, text[:m.start()].count("\n") + 1, text[m.start():m.start() + 60].replace("\n", " ")))
     for n, line in logical_lines(text):
-        if re.search(r"""\b\w+=["']?""" + CLI + r"""(?![\w-])""", line.replace(SYSTEMD_SET, "")):
+        if RESOLVED.search(line):
+            out.append("%s:%d: a container CLI found by lookup and then run: %s" % (rel, n, line.strip()[:120]))
+        if re.search(r"""\b\w+=["']?(?:""" + CLI_PATH + r""")?""" + CLI + r"""(?![\w-])""", line.replace(SYSTEMD_SET, "")):
             out.append("%s:%d: a variable holding a container CLI (its flags could not be checked): %s" % (rel, n, line.strip()[:120]))
         m = re.match(r"^\s*options:\s*(.*)$", line)
         if m and re.search(r"(^|\s)-", m.group(1)):
@@ -172,13 +197,23 @@ def check_text(rel, text):
                     continue
                 if re.search(r"(?<![\w./-])" + CLI + r"(?![\w-])", line):
                     out.append("%s:%d: a docker call with an array the guard does not check (%s)" % (rel, n, m.group(1)))
-    else:
+    elif rel not in WRAPPER_TESTS:
         for n, line in logical_lines(text):
             if re.search(r"\b(gf_args|gf_trees|gf_stages)\b", line):
                 out.append("%s:%d: the wrapper's option arrays are not touched outside tests/integration/container.sh" % (rel, n))
             if re.search(r"\bgf_container_systemd_start\b", line) and rel != SYSTEMD_USER:
                 out.append("%s:%d: only %s may start a container with systemd (CAP_SYS_ADMIN)" % (rel, n, SYSTEMD_USER))
-    return out
+    return [v for v in out if not allowed(rel, text, v)]
+
+
+def allowed(rel, text, violation):
+    """A violation on a line listed in ALLOW (exact file, exact stripped line text)."""
+    m = re.match(r"^[^:]+:(\d+):", violation)
+    if not m:
+        return False
+    lines = text.split("\n")
+    n = int(m.group(1))
+    return 0 < n <= len(lines) and (rel, lines[n - 1].strip()) in ALLOW
 
 
 def tracked(root):
@@ -276,6 +311,42 @@ BAD_CALLS = [
     "  options: --privileged",
     "  options: --cap-add SYS_ADMIN",
     "COMMAND docker run img",
+    # round-3 probes: absolute paths, resolved commands, runners with arguments
+    "/usr/bin/docker run --privileged img",
+    "/usr/local/bin/podman run img",
+    "/opt/x/bin/nerdctl run img",
+    "/usr/bin/buildah bud .",
+    'exec /usr/bin/docker run img',
+    '"$(command -v docker)" run --privileged img',
+    '"$(which docker)" run img',
+    '$(which podman) run img',
+    'd=$(command -v docker); "$d" run img',
+    'x=`which docker`',
+    'dk=$(type -P docker)',
+    "systemd-run --user --pty docker run img",
+    "systemd-run --user --scope -p MemoryMax=1G /usr/bin/docker run img",
+    "flock /tmp/lock docker run img",
+    "flock -n 9 docker run img",
+    "doas docker run img",
+    "unshare -m docker run img",
+    "unshare --mount --map-root-user /usr/bin/docker run img",
+    "env docker run img",
+    "env -i PATH=/usr/bin docker run img",
+    "exec docker run img",
+    "command docker run img",
+    "nice -n 5 docker run img",
+    "ionice -c3 docker run img",
+    "timeout 5s docker run img",
+    "timeout --signal=KILL 60 docker run img",
+    "echo img | xargs docker run",
+    "echo img | xargs -n1 -I{} docker run {}",
+    "nohup docker run img &",
+    "setsid docker run img",
+    "bash -c 'docker run --privileged img'",
+    "sh -c '/usr/bin/docker run img'",
+    "ssh host docker run img",
+    "ExecStart=/usr/bin/docker run img",
+    "Exec=docker run img",
 ]
 GOOD_CALLS = [
     "docker info >/dev/null 2>&1",
@@ -290,10 +361,42 @@ GOOD_CALLS = [
     "exec \"$cmd\" --device=all",
 ]
 PY_BAD = [
+    'os.system("docker run --privileged img")',
+    'os.system("/usr/bin/docker run img")',
+    'os.popen("podman run img")',
+    'subprocess.Popen(["/usr/bin/docker", "run", "img"])',
+    'subprocess.check_call(["/usr/local/bin/podman", "run"])',
+    'subprocess.run("docker run img", shell=True)',
+    'subprocess.run(f"docker run {img}", shell=True)',
+    'shutil.which("docker")',
+    'subprocess.Popen(["nerdctl", "run", img])',
+    'subprocess.run(["buildah", "bud"])',
     'subprocess.run(["docker", "run", "--privileged", "img"])',
     'subprocess.run(["docker",\n    "run", "img"])',
     'cmd = ["podman"] + args',
     "subprocess.run(['docker', 'exec', c])",
+]
+# other file kinds: (file name, text). Every tracked text file is read, whatever its extension.
+OTHER_BAD = [
+    ("config/hypr/x.lua", 'hl.exec_cmd("docker run --privileged img")'),
+    ("config/hypr/x.lua", "os.execute('/usr/bin/docker run img')"),
+    ("packaging/x.service", "ExecStart=/usr/bin/docker run img"),
+    ("packaging/x.service", "ExecStart=docker run img"),
+    ("packaging/x.desktop", "Exec=docker run img"),
+    ("scripts/dev/x.zsh", "docker run --privileged img"),
+    ("scripts/dev/tool", "#!/bin/sh\ndocker run img"),
+    ("scripts/dev/tool", "docker run img"),
+    ("scripts/dev/tool", '"$(which docker)" run img'),
+    ("shell/x.qml", 'Process { command: ["docker", "run", "img"] }'),
+    ("plugins/x.cpp", 'QProcess::start("/usr/bin/docker", {"run"});'),
+    ("shell/x.js", "exec('docker run img')"),
+    ("config/x.toml", 'cmd = "docker run img"'),
+]
+OTHER_GOOD = [
+    ("config/hypr/x.lua", 'hl.exec_cmd("kitty")'),
+    ("packaging/x.service", "ExecStart=/usr/bin/true"),
+    ("scripts/dev/tool", "#!/bin/sh\necho hello"),
+    ("scripts/dev/x.zsh", "docker info >/dev/null 2>&1"),
 ]
 PY_GOOD = ['subprocess.run(["docker", "info"], check=False)']
 
@@ -317,6 +420,15 @@ def selftest():
         want("python", c + "\n", "scripts/dev/x.py", True)
     for c in PY_GOOD:
         want("python", c + "\n", "scripts/dev/x.py", False)
+    for name, text in OTHER_BAD:
+        want("other file", text + "\n", name, True)
+    for name, text in OTHER_GOOD:
+        want("other file", text + "\n", name, False)
+    want("an ALLOW entry: before", "docker run x\n", "tests/integration/x.sh", True)
+    ALLOW.add(("tests/integration/x.sh", "docker run x"))
+    want("an ALLOW entry waives exactly its line", "docker run x\n", "tests/integration/x.sh", False)
+    want("an ALLOW entry waives only that text", "docker run y\n", "tests/integration/x.sh", True)
+    ALLOW.discard(("tests/integration/x.sh", "docker run x"))
     want("cpp", 'QProcess::start("docker", {"run"});', "tests/unit/x.cpp", True)
     want("compose file", "services: {}\n", "tests/docker-compose.yml", True)
     want("dockerfile", "FROM scratch\n", "tests/Dockerfile", True)
@@ -372,7 +484,7 @@ def selftest():
     for mut in mutations:
         want("wrapper + " + mut.split("\n")[0], wrapper + "\n" + mut + "\n", WRAPPER, True)
     print("no_privileged_containers selftest: %d shell, %d python, %d wrapper mutations, %d good lines, %d failures"
-          % (len(BAD_CALLS), len(PY_BAD), len(mutations), len(GOOD_CALLS), fails))
+          % (len(BAD_CALLS), len(PY_BAD) + len(OTHER_BAD), len(mutations), len(GOOD_CALLS) + len(OTHER_GOOD), fails))
     return 1 if fails else 0
 
 

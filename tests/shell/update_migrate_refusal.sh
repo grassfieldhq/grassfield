@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # The host-side refusal of tests/integration/update_migrate.sh (its container runs systemd as PID 1: on 2026-11-11 a privileged
-# one ended the owner's live session three times). The script must refuse BEFORE any docker call, unless it runs in a virtual
-# machine (systemd-detect-virt --vm) or on a CI runner, and never beside an active graphical session. Docker, systemd-detect-virt
-# and loginctl are stubs on PATH: docker only records what it is asked, so this test starts no container, anywhere.
-# Layer: logic (no root, no session, no docker).
+# one ended the owner's live session three times). It FAILS CLOSED: before any docker call it refuses unless it runs in a virtual
+# machine or on a CI runner (CI alone is not enough: GITHUB_ACTIONS and RUNNER_TEMP too), refuses beside any wayland, x11 or mir
+# session that is not closing, however it is seen (loginctl or /run/systemd/sessions/*), and refuses when it cannot tell.
+# Docker, systemd-detect-virt and loginctl are stubs on PATH (docker only records what it is asked: no container starts, anywhere);
+# the session files are a fixture directory. Layer: logic (no root, no session, no docker).
 set -uo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 W=$(mktemp -d)
-trap 'rm -rf "$W"' EXIT
+trap 'chmod -R u+rwx "$W" 2>/dev/null; rm -rf "$W"' EXIT
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
 expect() { if [[ $2 == "$3" ]]; then pass "$1"; else fail "$1: got '$2', want '$3'"; fi; }
 has() { if grep -Fq -- "$2" "$3"; then pass "$1"; else fail "$1: '$2' not in $3"; fi; }
+hasnt() { if grep -Fq -- "$2" "$3"; then fail "$1: '$2' found in $3"; else pass "$1"; fi; }
 
 mkdir -p "$W/bin"
 cat >"$W/bin/docker" <<'EOF'
@@ -28,6 +30,7 @@ echo "$v"
 EOF
 cat >"$W/bin/loginctl" <<'EOF'
 #!/bin/bash
+[[ -e $GF_STUB/lc_fail ]] && exit 1
 case $1 in
   list-sessions) cat "$GF_STUB/sessions" 2>/dev/null ;;
   show-session)
@@ -40,67 +43,103 @@ esac
 EOF
 chmod +x "$W/bin/"*
 
-# run <name> [env assignments...]: the script as a bare command with the stubs first on PATH
+# run <name> [env assignments...]: the script as a bare command, the stubs first on PATH, the session files in the fixture folder
 run() {
-  rm -f "$W/calls"
   : >"$W/calls"
-  env -i PATH="$W/bin:$PATH" HOME="$W" GF_STUB="$W" "${@:2}" bash "$root/tests/integration/update_migrate.sh" >"$W/out" 2>&1
+  env -i PATH="$W/bin:$PATH" HOME="$W" GF_STUB="$W" GRASSFIELD_TEST_SESSIONS_DIR="$W/sess" "${@:2}" \
+    bash "$root/tests/integration/update_migrate.sh" >"$W/out" 2>&1
   rc=$?
   calls=$(cat "$W/calls")
 }
-reset() { rm -f "$W"/virt "$W"/sessions "$W"/type.* "$W"/state.*; }
+reset() { chmod -R u+rwx "$W/sess" 2>/dev/null; rm -rf "$W"/virt "$W"/sessions "$W"/type.* "$W"/state.* "$W"/lc_fail "$W/sess"; mkdir -p "$W/sess"; }
+session_file() { printf 'UID=1000\nTYPE=%s\nSTATE=%s\n' "$2" "$3" >"$W/sess/$1"; }
+CIENV=(CI=true GITHUB_ACTIONS=true RUNNER_TEMP=/tmp)
+refused() { # <label>: exit 2, no docker call, a refusal that suggests no way round it
+  expect "$1: refused (exit 2)" "$rc" 2
+  expect "$1: docker was never called" "$calls" ''
+  hasnt "$1: the message suggests no override" 'GRASSFIELD_UPDATE' "$W/out"
+  hasnt "$1: the message does not tell to set CI" 'CI=true' "$W/out"
+}
+proceeds() { # <label>
+  expect "$1: goes on (SKIP without a daemon, exit 0)" "$rc" 0
+  expect "$1: the only call to docker is info" "$calls" 'call: info'
+}
 
 reset
-run bare-host
-expect 'a bare host: refused (exit 2)' "$rc" 2
-has 'a bare host: says why' 'may only run in a virtual machine' "$W/out"
-expect 'a bare host: docker was never called' "$calls" ''
+run bare
+refused 'a bare host'
+run bare-ci-alone CI=true
+refused 'CI=true alone on a bare host'
+run bare-ci-half CI=true GITHUB_ACTIONS=true
+refused 'CI and GITHUB_ACTIONS without RUNNER_TEMP'
+run bare-override GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1
+refused 'an old override variable on a bare host'
 
 reset; echo '1 1000 u seat0' >"$W/sessions"; echo wayland >"$W/type.1"
-run bare-host-session
-expect 'a bare host with a graphical session: refused' "$rc" 2
-expect 'a bare host with a graphical session: no docker call' "$calls" ''
-run override-on-bare GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1
-expect 'the session override does not open a bare host' "$rc" 2
-expect 'the session override on a bare host: no docker call' "$calls" ''
+run bare-session
+refused 'a bare host with a graphical session'
 
-reset; echo kvm >"$W/virt"; echo '1 1000 u seat0' >"$W/sessions"; echo wayland >"$W/type.1"
-run vm-session
-expect 'a VM with an active graphical session: refused' "$rc" 2
-has 'a VM with a session: says so' 'a graphical session is active' "$W/out"
-expect 'a VM with a session: no docker call' "$calls" ''
-echo x11 >"$W/type.1"
-run vm-x11
-expect 'an x11 session counts too' "$rc" 2
-expect 'an x11 session: no docker call' "$calls" ''
-run vm-session-ok GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1
-expect 'a VM, session acknowledged as disposable: goes on (SKIP without a daemon, exit 0)' "$rc" 0
-has 'a VM, session acknowledged: the SKIP line' 'SKIP: no docker daemon' "$W/out"
-expect 'a VM, session acknowledged: the only call to docker is info' "$calls" 'call: info'
-echo closing >"$W/state.1"
-run vm-closing
-expect 'a closing session is not active: goes on' "$rc" 0
+reset
+run ci-clean "${CIENV[@]}"
+proceeds 'a CI runner with its markers and no session'
+session_file 1 wayland active
+run ci-session-file "${CIENV[@]}"
+refused 'a CI runner with a wayland session file'
+reset; echo '1 1000 u seat0' >"$W/sessions"; echo x11 >"$W/type.1"
+run ci-session-loginctl "${CIENV[@]}"
+refused 'a CI runner with an x11 session in loginctl'
 
 reset; echo kvm >"$W/virt"
 run vm-clean
-expect 'a VM without a graphical session: goes on (exit 0)' "$rc" 0
-expect 'a VM without a session: the only call to docker is info' "$calls" 'call: info'
+proceeds 'a VM without a graphical session'
 echo '2 1000 u seat0' >"$W/sessions"; echo tty >"$W/type.2"
 run vm-tty
-expect 'a text session is not graphical: goes on' "$rc" 0
+proceeds 'a VM with a text session only'
+reset; echo kvm >"$W/virt"; echo '1 1000 u seat0' >"$W/sessions"; echo wayland >"$W/type.1"
+run vm-session
+refused 'a VM with a wayland session (loginctl)'
+run vm-session-override GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1
+refused 'a VM with a wayland session and the old override variable'
+echo online >"$W/state.1"
+run vm-online
+refused 'a session that is online, not active'
+echo closing >"$W/state.1"
+run vm-closing
+proceeds 'a session that is closing'
 
-reset
-run ci CI=true
-expect 'a CI runner without a session: goes on' "$rc" 0
-expect 'a CI runner: the only call to docker is info' "$calls" 'call: info'
-echo '1 1000 u seat0' >"$W/sessions"; echo wayland >"$W/type.1"
-run ci-session CI=true
-expect 'a CI runner with a graphical session: refused' "$rc" 2
-expect 'a CI runner with a session: no docker call' "$calls" ''
-run ci-session-ok CI=true GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1
-expect 'the override does not open a CI runner that has a session' "$rc" 2
+# loginctl failing, as in the agents' sandbox, while the session files say wayland
+reset; echo kvm >"$W/virt"; : >"$W/lc_fail"
+session_file 1 wayland active
+run vm-lc-fail-wayland CI=true
+refused 'loginctl failing with a wayland session file present (CI=true does not help)'
+session_file 1 wayland online
+run vm-lc-fail-online
+refused 'loginctl failing, a wayland session file online'
+session_file 1 mir opening
+run vm-lc-fail-mir
+refused 'loginctl failing, a mir session file opening'
+session_file 1 wayland closing
+run vm-lc-fail-closing
+proceeds 'loginctl failing, the only session file closing'
+reset; echo kvm >"$W/virt"; : >"$W/lc_fail"; printf 'UID=1000\nSTATE=active\n' >"$W/sess/1"
+run vm-lc-fail-notype
+refused 'a session file without a type'
+reset; echo kvm >"$W/virt"; : >"$W/lc_fail"
+run vm-lc-fail-empty
+proceeds 'loginctl failing, the session folder readable and empty'
+rm -rf "$W/sess"
+run vm-lc-fail-nodir
+refused 'loginctl failing and no session folder: it cannot tell'
+if [[ $(id -u) != 0 ]]; then
+  reset; echo kvm >"$W/virt"; : >"$W/lc_fail"; session_file 1 wayland active; chmod 000 "$W/sess"
+  run vm-lc-fail-unreadable
+  refused 'loginctl failing and the session folder unreadable'
+  chmod 755 "$W/sess"
+else
+  echo "  note the unreadable-folder case needs a non-root user: SKIPPED here"
+fi
 
-# Read the code path too: the refusal is the first statement of the host branch, before git, the wrapper and any docker call.
+# The code path: the refusal is the first statement of the host branch, before git, the wrapper and any docker call.
 first=$(awk '/^if \[\[ \$\{1:-\} != --inside \]\]; then/ { on = 1; next } on && NF { print; exit }' "$root/tests/integration/update_migrate.sh")
 expect 'host_refusal is the first statement of the host branch' "$first" '  host_refusal || exit 2'
 

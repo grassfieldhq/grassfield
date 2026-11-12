@@ -43,18 +43,34 @@ New test file: add one line to `tests` (or to `ignore` with a reason). Helpers a
 ## No container may share the host's devices
 
 `python3 -I tests/ci/no_privileged_containers.py` (`just check-containers`, part of `just check-quick`; `--selftest` runs it on
-about a hundred bad spellings, each of which must be refused; it is also a `logic` test) is an allowlist, not a list of bad
-flags:
+about a hundred and fifty bad spellings, each of which must be refused; it is also a `logic` test) is an allowlist, not a list of
+bad flags. **It is a lint against accidental reintroduction, by people or agents; it is not a sandbox against deliberately
+written code** (ADR-0057). The real boundaries are at run time: the wrapper refuses anything dangerous it is handed
+(`tests/shell/container_wrapper.sh`, with a stub docker: every refusal fires before docker is called), `update_migrate.sh` fails
+closed outside a VM (`tests/shell/update_migrate_refusal.sh`), and the VM itself.
 
-- Every tracked shell, python, just, yaml or cmake file is read. A call of `docker`, `podman`, `nerdctl`, `buildah` or
-  `docker-compose` is refused everywhere except in `tests/integration/container.sh`, with one exception: `docker info`. A variable
-  that holds such a command name, a compose file, a Dockerfile and a yaml `options:` line are refused too.
+- Every tracked text file is read, whatever its extension (shell, python, lua, `.service`, `.desktop`, zsh, extensionless
+  executables, QML, C++, JS), except `docs/` and markdown. A product-code line that merely names docker is waived by exact file and
+  line text in `ALLOW` (empty today). A call of `docker`, `podman`, `nerdctl`, `buildah` or
+  `docker-compose` is refused everywhere except in `tests/integration/container.sh`, with one exception: `docker info`. That
+  covers an absolute path (`/usr/bin/docker`), a lookup that is then run (`"$(command -v docker)"`, `$(which docker)`), the runners
+  `env exec command nice ionice timeout xargs flock unshare systemd-run` and the privilege wrappers, and python `os.system`,
+  `subprocess` and `Popen` with a docker string or list. A variable that holds such a command name, a compose file, a Dockerfile and
+  a yaml `options:` line are refused too.
 - `tests/integration/container.sh` is the one wrapper every integration test and gate uses (`gf_container_init`, `gf_mount`,
   `gf_network`, `gf_standard`, `omarchy_mounts`, `gf_container_run`). Inside it, each docker call is one of five exact
   spellings and each statement that adds an option is one of a short list. A flag held in a variable or an array, or one the
   guard cannot resolve, fails the check. Mount sources are checked when the test runs: the repository (read-only), its `.dev/`, an
-  Omarchy tree registered by `omarchy_mounts` and its staged `bin/`, one regular file (a CA bundle, the gate's own script), and,
-  read-write, a folder of the caller's own under `.dev/` or `$TMPDIR`. `--network host` is used only when a proxy variable is set.
+  Omarchy tree registered by `omarchy_mounts` and its staged `bin/`, one regular file under the repository, a CA `*.crt`, `*.pem` or
+  `*.cer` only under `.dev/` or a documented CA folder (`/etc/ssl/certs`, `/etc/ca-certificates`, `/usr/share/ca-certificates`,
+  `/usr/local/share/ca-certificates`, `/etc/pki`; never `/run`, `/dev`, `/proc`, `/sys`, `~/.ssh`, `~/.gnupg`, `~/.config`), and,
+  read-write, a folder of the caller's own directly under `/tmp` or the repository's `.dev/` (never `/run`, `/dev`, `/proc`,
+  `/sys` or `/`). The repository root is derived from the wrapper's own location and read-only; so is the proxy list. The image is
+  the first argument, pinned by `@sha256:` (a local image only by an exact name in `GF_LOCAL_IMAGES`); an argument before it that
+  starts with `-` is refused; `gf_container_exec` runs only in the container id the wrapper started. In a git worktree, the common
+  git folder is mounted read-only at the same path (a `git archive` copy would lose the history some tests read).
+  `--network host` is used only when an HTTP(S) proxy URL names the host's loopback (`NO_PROXY` never counts);
+  `scripts/gates/rc-toolkit.sh` asks the wrapper (`gf_proxy_network`), so both agree.
 - `CAP_SYS_ADMIN` is only in `gf_container_systemd_start`, which only `tests/integration/update_migrate.sh` may call.
 
 Why: `tests/integration/update_migrate.sh` used to run `docker run --privileged` with systemd as PID 1. A privileged container
@@ -68,10 +84,11 @@ start-limit-hit. It ended the owner's live session three times on 2026-11-11 (16
 It now has `CAP_SYS_ADMIN` minus `MKNOD`, no device, a tmpfs `/run`, and every unit that touches a tty or `/dev` masked (udev,
 vconsole, gettys, console password and mute units, logind, hwdb, device and module setup, the FUSE control mount); a user namespace
 is not available per run with docker (`userns-remap` is a daemon setting), so the virtual machine is the real boundary. The script
-enforces that itself: before any docker call it refuses unless it runs in a VM (`systemd-detect-virt --vm`) or on a CI runner
-(`CI=true`), and refuses while a graphical session (wayland, x11, mir) is active on that machine. In a VM whose own session is
-disposable, `GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1` lets it go on; the variable does nothing on a bare host or a CI runner.
-`tests/shell/update_migrate_refusal.sh` proves the refusal with a stub docker (no container is ever started).
+enforces that itself and fails closed: before any docker call it refuses unless it runs in a VM (`systemd-detect-virt --vm`) or on
+a CI runner (`CI=true`, `GITHUB_ACTIONS=true` and `RUNNER_TEMP` together; `CI=true` alone is not enough), refuses beside any
+wayland, x11 or mir session that is not closing (read from `loginctl` and from `/run/systemd/sessions/*`), and refuses when it
+cannot tell. There is no override. `tests/shell/update_migrate_refusal.sh` proves it with a stub docker (no container is ever
+started), including loginctl failing beside a wayland session file.
 
 In the GF-010 VM (`scripts/gates/vm-drill.sh`, qemu/KVM, 4 vCPUs, 6 GB, user networking, started only at host load <= 8):
 
@@ -79,7 +96,8 @@ In the GF-010 VM (`scripts/gates/vm-drill.sh`, qemu/KVM, 4 vCPUs, 6 GB, user net
 scripts/gates/vm-drill.sh update-migrate --repo .      # boots the VM, ships `git archive HEAD` of the repository, runs it there
 ```
 
-It runs `tests/integration/update_migrate_in_vm.sh` as the VM's root: it refuses outside a VM, starts docker, runs the test, and
+It runs `tests/integration/update_migrate_in_vm.sh` as the VM's root: it refuses outside a VM, stops the VM's display manager (the
+test refuses beside a graphical session) and starts it again afterwards, starts docker, runs the test, and
 prints the VM's own kernel log and journal lines about the console, VTs, fbcon, vconsole, gettys, udev or SIGHUP during the
 run, the console binding before and after, and the PASS and FAIL counts. A clean run shows none of those lines.
 

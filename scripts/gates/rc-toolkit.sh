@@ -74,21 +74,9 @@ EOF
 
 # The container's network: "host" only when a proxy URL names this machine's loopback (the container could not reach it
 # through docker's default network), "default" otherwise. Host-network for a root container shares every localhost service.
-rc_network() { # <proxy URL>...
-  local url host
-  for url in "$@"; do
-    [[ -n $url ]] || continue
-    host=${url#*://}
-    host=${host#*@}
-    host=${host%%/*}
-    if [[ $host == \[* ]]; then host=${host#\[}; host=${host%%]*}; else host=${host%%:*}; fi
-    host=${host,,}
-    if [[ $host == localhost || $host == ::1 || $host =~ ^127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-      echo host
-      return 0
-    fi
-  done
-  echo default
+rc_network() { # <proxy URL>...: the wrapper's own answer (tests/integration/container.sh), so the gate and the container agree
+  # shellcheck source=../../tests/integration/container.sh
+  . "$(dirname "$0")/../../tests/integration/container.sh" && gf_proxy_network "$@"
 }
 
 # The channel's Arch mirror (default/pacman/mirrorlist-<channel> at v4.0.4 and v4.0.6: one line).

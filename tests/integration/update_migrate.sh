@@ -18,9 +18,9 @@
 # namespaces), and systemd starts with every unit that touches a tty or /dev masked. tests/ci/no_privileged_containers.py
 # fails `just check-quick` if a test or script runs docker or podman outside container.sh.
 #
-# Where it may run: ONLY in a virtual machine (systemd-detect-virt --vm) or on a CI runner (CI=true), and never while a
-# graphical session is active on the machine: the script refuses before it calls docker (tests/shell/update_migrate_refusal.sh
-# proves it with a stub). On the GF-010 VM, whose own session is disposable, set GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1
+# Where it may run: ONLY in a virtual machine (systemd-detect-virt --vm) or on a CI runner (its own markers), and never beside
+# a graphical session; if that cannot be told, it refuses. It refuses before it calls docker (tests/shell/update_migrate_refusal.sh
+# proves it with a stub docker). In the GF-010 VM, `scripts/gates/vm-drill.sh update-migrate` stops the VM's display manager first
 # (docs/testing/README.md, "Running update_migrate.sh").
 #
 # What it shows:
@@ -42,31 +42,48 @@ set -uo pipefail
 
 IMAGE=archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
 
-# The host-side refusal. A VM or a CI runner only; a graphical session (any session of type wayland, x11 or mir that is not
-# closing) stops it, except in a VM when the caller says the session is disposable. No docker call happens before this returns.
+# The host-side refusal, and it FAILS CLOSED: a VM, or a CI runner (its own markers: CI, GITHUB_ACTIONS and RUNNER_TEMP, not
+# CI alone); and no graphical session, ever. A session is read from loginctl and from /run/systemd/sessions/*; any session of type
+# wayland, x11 or mir that is not `closing` (active, online, opening, whatever) refuses, a session whose type or state cannot be
+# read refuses, and so does a machine on which neither source can be read. No docker call happens before this returns.
+# GRASSFIELD_TEST_SESSIONS_DIR points the file source at a fixture: tests/shell/update_migrate_refusal.sh.
 host_refusal() {
-  local vm='' sid st t found=''
+  local vm='' ci=0 sid st t f k v dir out known=0 found=''
   vm=$(systemd-detect-virt --vm 2>/dev/null) || vm=''
   [[ $vm == none ]] && vm=''
-  if [[ -z $vm && ${CI:-} != true && ${CI:-} != 1 ]]; then
-    echo "refused: update_migrate.sh runs systemd in a container and may only run in a virtual machine (systemd-detect-virt --vm) or on a CI runner (CI=true), never on a machine you work on: see docs/testing/README.md" >&2
+  if [[ ${CI:-} == true && ${GITHUB_ACTIONS:-} == true && -n ${RUNNER_TEMP:-} ]]; then ci=1; fi
+  if [[ -z $vm && $ci == 0 ]]; then
+    echo "refused: update_migrate.sh runs systemd in a container and may only run in a virtual machine or on a CI runner, never on a machine you work on (docs/testing/README.md)" >&2
     return 1
   fi
-  if command -v loginctl >/dev/null; then
+  if command -v loginctl >/dev/null && out=$(loginctl list-sessions --no-legend 2>/dev/null); then
+    known=1
     while read -r sid _; do
       [[ -n $sid ]] || continue
-      t=$(loginctl show-session "$sid" -p Type --value 2>/dev/null) || t=''
-      st=$(loginctl show-session "$sid" -p State --value 2>/dev/null) || st=''
-      case $t in wayland | x11 | mir) [[ $st != closing ]] && found="$found $sid($t,$st)" ;; esac
-    done < <(loginctl list-sessions --no-legend 2>/dev/null)
+      t=$(loginctl show-session "$sid" -p Type --value 2>/dev/null) || t='?'
+      st=$(loginctl show-session "$sid" -p State --value 2>/dev/null) || st='?'
+      case $t in wayland | x11 | mir | '?' | '') [[ $st != closing ]] && found="$found loginctl:$sid($t,$st)" ;; esac
+    done <<<"$out"
+  fi
+  dir=${GRASSFIELD_TEST_SESSIONS_DIR:-/run/systemd/sessions}
+  if [[ -d $dir && -r $dir && -x $dir ]]; then
+    known=1
+    for f in "$dir"/*; do
+      [[ -f $f ]] || continue
+      t='' st=''
+      if ! { while IFS='=' read -r k v; do
+        case $k in TYPE) t=$v ;; STATE) st=$v ;; esac
+      done <"$f"; } 2>/dev/null; then t='?'; fi
+      case $t in wayland | x11 | mir | '?' | '') [[ $st != closing ]] && found="$found ${f##*/}($t,$st)" ;; esac
+    done
+  fi
+  if ((!known)); then
+    echo "refused: cannot tell whether a graphical session is running here (neither loginctl nor /run/systemd/sessions can be read)" >&2
+    return 1
   fi
   if [[ -n $found ]]; then
-    if [[ -n $vm && ${GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK:-} == 1 ]]; then
-      echo "update_migrate: graphical session(s)$found in the VM ($vm): allowed by GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1 (a disposable VM)" >&2
-    else
-      echo "refused: a graphical session is active on this machine ($found ): the container's systemd must not run beside it. Log out of it, or run in the VM (docs/testing/README.md)" >&2
-      return 1
-    fi
+    echo "refused: a graphical session is present on this machine ($found ): the container's systemd must not run beside it (docs/testing/README.md)" >&2
+    return 1
   fi
   return 0
 }

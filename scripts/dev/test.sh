@@ -338,7 +338,7 @@ if want logic; then
   python3 -I tests/ci/socket_errors.py --selftest || rc=1
   ((rc == 0)) || status=1
   record_run logic tests/ci/socket_errors.py "$rc" PASS
-  # No test or script hands the host to a container (--privileged, --device, host /dev or /run/systemd): the 2026-11-10 session
+  # No test or script hands the host to a container (--privileged, --device, host /dev or /run/systemd): the 2026-11-11 session
   # losses. The tree is checked by `just check-containers` (part of check-quick).
   rc=0
   python3 -I tests/ci/no_privileged_containers.py --selftest || rc=1

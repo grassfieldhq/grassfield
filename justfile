@@ -130,7 +130,7 @@ check-secrets:
 check-scripts:
     for f in scripts/dev/*.sh scripts/gates/*.sh tests/*/*.sh tests/visual/scenarios/*.sh packaging/install/*.sh.in; do bash -n "$f"; done
 
-# No test or script hands the host to a container: no --privileged, --device, host /dev or /run/systemd mount (the 2026-11-10 session losses).
+# No test or script hands the host to a container: no --privileged, --device, host /dev or /run/systemd mount (the 2026-11-11 session losses).
 check-containers:
     python3 -I tests/ci/no_privileged_containers.py --selftest
     python3 -I tests/ci/no_privileged_containers.py

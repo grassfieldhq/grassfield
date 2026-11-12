@@ -660,6 +660,7 @@
  {"path": "tests/ci/socket_errors.py", "layer": "logic"},
  {"path": "tests/ci/no_privileged_containers.py", "layer": "logic"},
  {"path": "tests/shell/update_migrate_refusal.sh", "layer": "logic"},
+ {"path": "tests/shell/container_wrapper.sh", "layer": "logic"},
  {"path": "scripts/dev/i18n-cmake-check.sh", "layer": "headless"},
  {"path": "tests/compositor/abi_mismatch.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/compositor/blur_events.sh", "layer": "nested", "runner": "bare"},

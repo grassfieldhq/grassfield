@@ -23,9 +23,20 @@ snap() { # <file>: the console bindings and the foreground VT
   echo "active: $(cat /sys/class/tty/tty0/active 2>/dev/null)"
 }
 snap >"$out/console-before"
-# The VM's own session is disposable: this is the one place that says so.
-(cd "$repo" && GRASSFIELD_UPDATE_MIGRATE_VM_SESSION_OK=1 timeout 3000 ./tests/integration/update_migrate.sh) >"$out/run.log" 2>&1
+# update_migrate.sh refuses beside any graphical session, so the VM's display manager is stopped first (this script only runs in a
+# VM) and started again afterwards.
+dm=''
+if systemctl is-active sddm >/dev/null 2>&1; then
+  dm=sddm
+  systemctl stop sddm
+  for _ in $(seq 1 30); do
+    loginctl list-sessions --no-legend 2>/dev/null | grep -q seat0 || break
+    sleep 1
+  done
+fi
+(cd "$repo" && timeout 3000 ./tests/integration/update_migrate.sh) >"$out/run.log" 2>&1
 rc=$?
+if [[ -n $dm ]]; then systemctl reset-failed "$dm" 2>/dev/null; systemctl start "$dm" 2>/dev/null; fi
 sleep 3
 snap >"$out/console-after"
 journalctl -k --since "$since" --no-pager >"$out/kernel.log" 2>&1
