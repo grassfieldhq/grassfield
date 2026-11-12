@@ -51,13 +51,16 @@ closed outside a VM (`tests/shell/update_migrate_refusal.sh`), and the VM itself
 
 - Every tracked text file is read, whatever its extension (shell, python, lua, `.service`, `.desktop`, zsh, extensionless
   executables, QML, C++, JS), except `docs/` and markdown. Outside the wrapper, EVERY non-comment occurrence of `docker`, `podman`,
-  `nerdctl`, `buildah`, `ctr`, `runc`, `incus`, `lxc`, `machinectl`, `distrobox`, `toolbox` or `systemd-nspawn` as a whole token, hyphenated forms included
+  `nerdctl`, `buildah`, `distrobox`, `toolbox` or `systemd-nspawn` as a whole token, hyphenated forms included (`ctr`, `runc`,
+  `incus`, `lxc` and `machinectl` count only when a command follows them, so a variable named `ctr` passes)
   (`docker-compose`, `podman-compose`, `podman-remote`, `distrobox-enter` ...), is refused, in any position and in any file type:
   a command, a `${X:-docker}` default, a case arm, a for-list, after `&`, a variable, a python `os.system` or `subprocess` string
   (or a list, an f-string, a triple-quoted script), a `$(command -v docker)` or `$(which docker)` lookup that is then run, behind
   a runner (`env exec command nice ionice timeout xargs flock unshare systemd-run` and the privilege wrappers). A `compose`
   subcommand is refused too. The only forms that pass are `docker info`, `command -v docker`, and text inside echo or printf (not
-  `printf -v` in any form, not echo piped into any shell, `/bin/bash` and `env bash` included, not evaluated, not read by `bash <(...)`
+  `printf -v` in any form, not echo piped into the common shells (`sh`, `bash`, `zsh`, `ash`, `/bin/bash`, `env bash`, `exec sh`, a privilege
+  wrapper before them; rarer forms such as `| env FOO=1 bash`, `|& bash` or `| busybox sh` are not caught: the lint targets
+  accidents, see ADR-0057), not evaluated, not read by `bash <(...)`
   or `. <(...)`). A line that names one without running a container (a test stub, a unit
   name, a message) is waived by exact file and line text in `ALLOW`: seven today, each one visible. A compose file, a Dockerfile,
   a Containerfile and a yaml `options:` line are refused too.
