@@ -619,10 +619,10 @@ phase_update_migrate() {
   src=$(git -C "${UM_REPO:-$repo}" rev-parse --show-toplevel 2>/dev/null) || { fail "no repository at ${UM_REPO:-$repo}"; return 1; }
   [[ -f $src/tests/integration/update_migrate_in_vm.sh ]] || { fail "no tests/integration/update_migrate_in_vm.sh in $src"; return 1; }
   vm_running || boot_installed update-migrate || return 1
-  git -C "$src" archive HEAD | vm_ssh 'rm -rf /root/update-migrate-repo && mkdir -p /root/update-migrate-repo && tar -x -C /root/update-migrate-repo' ||
+  git -C "$src" archive HEAD | vm_ssh 'rm -rf /opt/update-migrate-repo && mkdir -p /opt/update-migrate-repo && tar -x -C /opt/update-migrate-repo' ||
     { fail "cannot ship the repository to the VM"; return 1; }
   log=$(d logs/update-migrate.log)
-  vm_ssh 'bash /root/update-migrate-repo/tests/integration/update_migrate_in_vm.sh /root/update-migrate-repo' >"$log" 2>&1
+  vm_ssh 'bash /opt/update-migrate-repo/tests/integration/update_migrate_in_vm.sh /opt/update-migrate-repo' >"$log" 2>&1
   rc=$?
   grep -E '^(== |\(none\)|\(identical\)|FAIL|PASS: update_migrate|update_migrate)' "$log" | tail -20
   if ((rc == 0)); then pass "update_migrate.sh in the VM: $(grep '== update_migrate:' "$log")"; else fail "update_migrate.sh in the VM exited $rc (log $log)"; fi
