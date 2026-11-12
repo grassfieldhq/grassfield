@@ -35,14 +35,20 @@ if [[ ${1:-} != --inside ]]; then
     esac
     shift
   done
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
+  . "$root/tests/integration/container.sh" || exit 2
+  gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -x $omarchy/bin/omarchy-refresh-pacman && -f $omarchy/migrations/1787589206.sh ]] ||
     { echo "SKIP: no Omarchy 4.0.4 tree at $omarchy (--omarchy DIR)"; exit 0; }
-  args=(--rm --network host -v "$root:/src:ro" -v "$(realpath "$omarchy"):/omarchy:ro")
-  [[ -n $next ]] && args+=(-v "$(realpath "$next"):/omarchy-next:ro")
-  [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
-  for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && args+=(-e "$v"); done
-  exec docker run "${args[@]}" "$IMAGE" bash /src/tests/integration/software_update.sh --inside
+  if [[ -n $next ]]; then
+    [[ -d $next/bin && -f $next/migrations/1791403252.sh ]] ||
+      { echo "refused: --omarchy-next $next is not an Omarchy 4.0.6 tree (no bin/, no migrations/1791403252.sh)" >&2; exit 2; }
+  fi
+  gf_container_init "$root" || exit 2
+  gf_standard auto || exit 2
+  omarchy_mounts "$omarchy" /omarchy || exit 2
+  if [[ -n $next ]]; then omarchy_mounts "$next" /omarchy-next || exit 2; fi
+  gf_container_run "$IMAGE" bash /src/tests/integration/software_update.sh --inside
+  exit $?
 fi
 
 [[ -f /.dockerenv && $(id -u) == 0 && -d /src/packaging/pacman && -d /omarchy/bin ]] ||
@@ -142,7 +148,7 @@ DEST=(usr/lib/grassfield/grassfield-channel-helper usr/lib/grassfield/grassfield
   usr/share/polkit-1/actions/org.grassfield.packages.policy usr/share/grassfield/pacman/ usr/share/grassfield/omarchy-hooks/pre-refresh-pacman)
 missing=""
 for d in "${DEST[@]}"; do grep -qF "\$pkgdir/$d" /src/packaging/arch/PKGBUILD || grep -qF "\$pkgdir/${d%/*}/" /src/packaging/arch/PKGBUILD || missing+=" $d"; done
-grep -q 'grassfield-channel-set; do' /src/packaging/arch/PKGBUILD || missing+=" usr/bin/grassfield-channel-set"
+grep -qE 'grassfield-channel-set( [a-z-]+)*; do' /src/packaging/arch/PKGBUILD || missing+=" usr/bin/grassfield-channel-set"
 deps=" $(sed -n '/^package_grassfield-desktop()/,/^}/s/^  depends=(\(.*\))$/\1/p' /src/packaging/arch/PKGBUILD) "
 for p in grassfield-keyring pacman-contrib fakeroot; do [[ $deps == *" $p "* ]] || missing+=" depends:$p"; done
 expect "the PKGBUILD installs every path used here and grassfield-desktop depends on grassfield-keyring, pacman-contrib and fakeroot${missing:+ (missing:$missing)}" test -z "$missing"
@@ -573,6 +579,7 @@ say "A7f/A7h/A8 the checker's own tests as a user (its lock, Omarchy's update lo
 git config --system --add safe.directory '*'
 as alice env TMPDIR=/tmp bash /src/tests/shell/update_check.sh >"$W/unit.log" 2>&1; rc=$?
 grep -E '^(FAIL|SKIP)' "$W/unit.log"
+((rc == 0)) || tail -n 12 "$W/unit.log" | sed 's/^/   unit.log: /'
 expect "tests/shell/update_check.sh as alice: $(grep -c '^PASS' "$W/unit.log") PASS" test "$rc:$(grep -c '^FAIL' "$W/unit.log")" == 0:0
 
 say "done: $fails failure(s)"

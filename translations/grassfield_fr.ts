@@ -12109,6 +12109,45 @@
     </message>
 </context>
 <context>
+    <name>SafeModeCard</name>
+    <message>
+        <source>Grassfield is running in safe mode</source>
+        <translation>Grassfield fonctionne en mode sans échec</translation>
+    </message>
+    <message>
+        <source>The desktop stopped working several times in a row and was turned off. Your open apps keep running.</source>
+        <translation>Le bureau a cessé de fonctionner plusieurs fois de suite et a été désactivé. Vos apps ouvertes continuent de fonctionner.</translation>
+    </message>
+    <message>
+        <source>Restarting the desktop…</source>
+        <translation>Redémarrage du bureau…</translation>
+    </message>
+    <message>
+        <source>Logging out…</source>
+        <translation>Fermeture de la session…</translation>
+    </message>
+    <message>
+        <source>The desktop couldn’t be restarted. Try again, or log out.</source>
+        <translation>Le bureau n’a pas pu être redémarré. Réessayez ou fermez la session.</translation>
+    </message>
+    <message>
+        <source>Some apps are still open, so you weren’t logged out. Save your work and quit them, then log out.</source>
+        <translation>Certaines apps sont encore ouvertes : la session n’a pas été fermée. Enregistrez votre travail et quittez-les, puis fermez la session.</translation>
+    </message>
+    <message>
+        <source>The session couldn’t be ended. Log out again in a moment.</source>
+        <translation>La session n’a pas pu être fermée. Réessayez de la fermer dans un instant.</translation>
+    </message>
+    <message>
+        <source>Log Out</source>
+        <translation>Fermer la session</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Réessayer</translation>
+    </message>
+</context>
+<context>
     <name>SavedSearches</name>
     <message>
         <source>A saved search needs a name.</source>

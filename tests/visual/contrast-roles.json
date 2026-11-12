@@ -28,6 +28,7 @@
    {"file": "shell/security/polkit/AuthAgent.qml", "class": "backdrop", "count": 1},
    {"file": "shell/security/polkit/AuthAgent.qml", "class": "primary", "count": 1},
    {"file": "shell/security/secret/SecretSheet.qml", "class": "primary", "count": 5},
+   {"file": "shell/security/safemode/SafeModeCard.qml", "class": "primary", "count": 3},
    {"file": "shell/security/secret/SecretSheet.qml", "class": "backdrop", "count": 1},
    {"file": "shell/security/secret/SecretAgent.qml", "class": "backdrop", "count": 1},
    {"file": "shell/security/secret/SecretAgent.qml", "class": "primary", "count": 1}
@@ -54,6 +55,7 @@
    {"file": "shell/security/polkit/AuthAgent.qml", "class": "secondary", "count": 1},
    {"file": "shell/security/secret/SecretSheet.qml", "class": "secondary", "count": 9},
    {"file": "shell/security/secret/SecretAgent.qml", "class": "secondary", "count": 1},
+   {"file": "shell/security/safemode/SafeModeCard.qml", "class": "secondary", "count": 1},
    {"file": "shell/widgets/WidgetGallery.qml", "class": "secondary", "count": 2},
    {"file": "shell/widgets/WidgetHost.qml", "class": "secondary", "count": 1},
    {"file": "shell/widgets/LocationEditor.qml", "class": "secondary", "count": 1},
@@ -73,6 +75,7 @@
   {"id": "danger text on material", "fg": "colors.danger", "backdrop": "material", "kind": "text", "sites": [
    {"file": "shell/notifications/NotificationContent.qml", "class": "danger", "count": 1},
    {"file": "shell/security/polkit/AuthDialog.qml", "class": "danger", "count": 1},
+   {"file": "shell/security/safemode/SafeModeCard.qml", "class": "danger", "count": 1},
    {"file": "shell/security/secret/SecretSheet.qml", "class": "danger", "count": 2},
    {"file": "ui/Grassfield/Ui/Button.qml", "class": "danger", "count": 1},
    {"file": "ui/Grassfield/Ui/MenuItem.qml", "class": "danger", "count": 1},

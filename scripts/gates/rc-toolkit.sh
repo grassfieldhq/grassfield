@@ -74,21 +74,9 @@ EOF
 
 # The container's network: "host" only when a proxy URL names this machine's loopback (the container could not reach it
 # through docker's default network), "default" otherwise. Host-network for a root container shares every localhost service.
-rc_network() { # <proxy URL>...
-  local url host
-  for url in "$@"; do
-    [[ -n $url ]] || continue
-    host=${url#*://}
-    host=${host#*@}
-    host=${host%%/*}
-    if [[ $host == \[* ]]; then host=${host#\[}; host=${host%%]*}; else host=${host%%:*}; fi
-    host=${host,,}
-    if [[ $host == localhost || $host == ::1 || $host =~ ^127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-      echo host
-      return 0
-    fi
-  done
-  echo default
+rc_network() { # <proxy URL>...: the wrapper's own answer (tests/integration/container.sh), so the gate and the container agree
+  # shellcheck source=../../tests/integration/container.sh
+  . "$(dirname "$0")/../../tests/integration/container.sh" && gf_proxy_network "$@"
 }
 
 # The channel's Arch mirror (default/pacman/mirrorlist-<channel> at v4.0.4 and v4.0.6: one line).
@@ -374,7 +362,8 @@ case $mode in
 esac
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) || exit 2
-command -v docker >/dev/null && docker info >/dev/null 2>&1 ||
+. "$root/tests/integration/container.sh" || exit 2
+gf_have_docker ||
   { echo "rc-toolkit: INCONCLUSIVE: no docker daemon (this gate runs only in a throwaway docker container; rootless podman is not supported: the inside refuses without /.dockerenv)"; exit 2; }
 commit=$(git -C "$root" rev-parse HEAD)
 dirty=$(git -C "$root" status --porcelain | wc -l)
@@ -388,14 +377,16 @@ git -C "$root" archive --format=tar HEAD >"$logs/snapshot.tar" || { echo "rc-too
 pacman -Q "${TOOLKIT[@]}" 2>/dev/null >"$logs/stable.txt" || true
 echo "rc-toolkit: commit $commit ($dirty uncommitted path(s) are NOT in the snapshot); channel $channel; steps $wanted; report in $logs"
 # Only this script goes in (the snapshot is already in the report directory): package scripts run as root in there.
-args=(--rm -v "$(realpath "$0"):/gate/rc-toolkit.sh:ro" -v "$logs:/out")
+gf_container_init "$root" || exit 2
+gf_mount "$0" /gate/rc-toolkit.sh ro || exit 2
+gf_mount "$logs" /out rw || exit 2
 if [[ $(rc_network "${HTTPS_PROXY:-${https_proxy:-}}" "${HTTP_PROXY:-${http_proxy:-}}") == host ]]; then
   echo "rc-toolkit: the proxy listens on this machine's loopback: the container shares the host's network to reach it"
-  args+=(--network host)
 fi
-[[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
-for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && args+=(-e "$v"); done
-docker run "${args[@]}" "$IMAGE" bash /gate/rc-toolkit.sh --inside --channel "$channel" --only "$wanted"
+if [[ -n ${GRASSFIELD_TEST_CA:-} ]]; then gf_mount "$GRASSFIELD_TEST_CA" /etc/ssl/certs/ca-certificates.crt ro || exit 2; fi
+gf_proxy_env
+gf_network auto
+gf_container_run "$IMAGE" bash /gate/rc-toolkit.sh --inside --channel "$channel" --only "$wanted"
 container_rc=$?
 rm -f "$logs/snapshot.tar"
 

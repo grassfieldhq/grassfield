@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
 # Software Update, step 5 (ADR-0033 s5, owner decision SU-M2: one password for Update Now and its migrations' sudo
 # commands): grassfield-update-helper, grassfield-update-run, the migrations' sudo (/usr/lib/grassfield/update-sudo/sudo)
-# and the polkit rule 49-grassfield-update.rules, with systemd as the container's manager (privileged, a cgroup2 mount),
-# real dbus-broker, polkitd and pkexec. Never on a real machine: inside, it refuses to run unless it is root in a container
+# and the polkit rule 49-grassfield-update.rules, with systemd as the container's manager (CAP_SYS_ADMIN only, NOT
+# privileged: no host device, no host VT, a private cgroup2 mount), real dbus-broker, polkitd and pkexec. Never on a real machine: inside, it refuses to run unless it is root in a container
 # with the repository mounted at /src and an Omarchy tree at /omarchy.
 #
 #   tests/integration/update_migrate.sh [--omarchy DIR]
 #     DIR  an Omarchy 4.x tree (default /usr/share/omarchy): its omarchy-migrate goes into the test's omarchy package
-#   Runs `docker run --privileged` on archlinux:base (digest pinned below) with systemd as PID 1, then the cases through
-#   `docker exec`; HTTPS_PROXY/HTTP_PROXY/NO_PROXY are passed through and GRASSFIELD_TEST_CA, when set, is mounted as the
+#   Runs a container (tests/integration/container.sh: CAP_SYS_ADMIN minus MKNOD, never --privileged) on archlinux:base (digest pinned below) with
+#   systemd as PID 1, then the cases through `docker exec`; HTTPS_PROXY/HTTP_PROXY/NO_PROXY are passed through and GRASSFIELD_TEST_CA, when set, is mounted as the
 #   container's CA bundle. Exit 0 all PASS (or SKIP without docker), 1 a FAIL, 2 usage.
+#
+# Why not --privileged (the owner's live session ended three times on 2026-11-11, 16:47, 19:13 and 20:28): a privileged
+# container shares the host's /dev, so the container's systemd ran systemd-vconsole-setup and udev on the host's devices;
+# about 6 s after the start the host journal shows "fbcon: Taking over console", uwsm "Received SIGHUP", and SDDM could not
+# take /dev/tty1 again. Here the container gets no device, only CAP_SYS_ADMIN (the cgroup2 mount and the units' own mount
+# namespaces), and systemd starts with every unit that touches a tty or /dev masked. tests/ci/no_privileged_containers.py
+# fails `just check-quick` if a test or script runs docker or podman outside container.sh.
+#
+# Where it may run: ONLY in a virtual machine (systemd-detect-virt --vm) or on a CI runner (its own markers), and never beside
+# a graphical session; if that cannot be told, it refuses. It refuses before it calls docker (tests/shell/update_migrate_refusal.sh
+# proves it with a stub docker). In the GF-010 VM, `scripts/gates/vm-drill.sh update-migrate` stops the VM's display manager first
+# (docs/testing/README.md, "Running update_migrate.sh").
 #
 # What it shows:
 #   - the channel: in grassfield-update-migrate.service (as carol, under the group grassfield-update, NoNewPrivileges, its
@@ -34,7 +46,58 @@ set -uo pipefail
 
 IMAGE=archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23adef4c897fa0
 
+# The host-side refusal, and it FAILS CLOSED: a VM, or a CI runner (its own markers: CI, GITHUB_ACTIONS and RUNNER_TEMP, not
+# CI alone); and no graphical session, ever. A session is read from loginctl and from /run/systemd/sessions/*; any session of type
+# wayland, x11 or mir that is not `closing` (active, online, opening, whatever) refuses, a session whose type or state cannot be
+# read refuses, and so does a machine on which neither source can be read. No docker call happens before this returns.
+# GRASSFIELD_TEST_SESSIONS_DIR points the file source at a fixture, and is honoured ONLY when GRASSFIELD_TEST_REFUSAL=1 is set
+# too and the folder is under $TMPDIR (tests/shell/update_migrate_refusal.sh); otherwise it is ignored.
+host_refusal() {
+  local vm='' ci=0 sid st t f k v dir out known=0 found=''
+  vm=$(systemd-detect-virt --vm 2>/dev/null) || vm=''
+  [[ $vm == none ]] && vm=''
+  if [[ ${CI:-} == true && ${GITHUB_ACTIONS:-} == true && -n ${RUNNER_TEMP:-} ]]; then ci=1; fi
+  if [[ -z $vm && $ci == 0 ]]; then
+    echo "refused: update_migrate.sh runs systemd in a container and may only run in a virtual machine or on a CI runner, never on a machine you work on (docs/testing/README.md)" >&2
+    return 1
+  fi
+  if command -v loginctl >/dev/null && out=$(loginctl list-sessions --no-legend 2>/dev/null); then
+    known=1
+    while read -r sid _; do
+      [[ -n $sid ]] || continue
+      t=$(loginctl show-session "$sid" -p Type --value 2>/dev/null) || t='?'
+      st=$(loginctl show-session "$sid" -p State --value 2>/dev/null) || st='?'
+      case $t in wayland | x11 | mir | '?' | '') [[ $st != closing ]] && found="$found loginctl:$sid($t,$st)" ;; esac
+    done <<<"$out"
+  fi
+  dir=/run/systemd/sessions
+  if [[ ${GRASSFIELD_TEST_REFUSAL:-} == 1 && -n ${GRASSFIELD_TEST_SESSIONS_DIR:-} ]]; then
+    t=$(realpath -m -- "$GRASSFIELD_TEST_SESSIONS_DIR") && k=$(realpath -m -- "${TMPDIR:-/tmp}") && [[ $t == "$k"/* ]] && dir=$t
+  fi
+  if [[ -d $dir && -r $dir && -x $dir ]]; then
+    known=1
+    for f in "$dir"/*; do
+      [[ -f $f ]] || continue
+      t='' st=''
+      if ! { while IFS='=' read -r k v; do
+        case $k in TYPE) t=$v ;; STATE) st=$v ;; esac
+      done <"$f"; } 2>/dev/null; then t='?'; fi
+      case $t in wayland | x11 | mir | '?' | '') [[ $st != closing ]] && found="$found ${f##*/}($t,$st)" ;; esac
+    done
+  fi
+  if ((!known)); then
+    echo "refused: cannot tell whether a graphical session is running here (neither loginctl nor /run/systemd/sessions can be read)" >&2
+    return 1
+  fi
+  if [[ -n $found ]]; then
+    echo "refused: a graphical session is present on this machine ($found ): the container's systemd must not run beside it (docs/testing/README.md)" >&2
+    return 1
+  fi
+  return 0
+}
+
 if [[ ${1:-} != --inside ]]; then
+  host_refusal || exit 2
   root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) || exit 2
   omarchy=/usr/share/omarchy
   while (($#)); do
@@ -44,23 +107,38 @@ if [[ ${1:-} != --inside ]]; then
     esac
     shift
   done
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
+  # shellcheck source=container.sh
+  . "$root/tests/integration/container.sh" || exit 2
+  gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -f $omarchy/bin/omarchy-migrate ]] || { echo "SKIP: no Omarchy tree at $omarchy (--omarchy DIR)"; exit 0; }
-  args=(-d --privileged --cgroupns=private --tmpfs /run --tmpfs /tmp --network host -e container=docker
-    -v "$root:/src:ro" -v "$(realpath "$omarchy"):/omarchy:ro")
-  [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
-  envs=()
-  for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && envs+=(-e "$v"); done
-  cid=$(docker run "${args[@]}" "$IMAGE" bash -c 'umount -l /sys/fs/cgroup 2>/dev/null; mount -t cgroup2 none /sys/fs/cgroup && exec /usr/lib/systemd/systemd') ||
-    { echo "FAIL: the container did not start"; exit 1; }
-  trap 'docker rm -f "$cid" >/dev/null 2>&1' EXIT
+  gf_container_init "$root" || exit 2
+  gf_mount "$root" /src ro || exit 2
+  omarchy_mounts "$omarchy" /omarchy || exit 2
+  if [[ -n ${GRASSFIELD_TEST_CA:-} ]]; then gf_mount "$GRASSFIELD_TEST_CA" /etc/ssl/certs/ca-certificates.crt ro || exit 2; fi
+  # The host's network namespace only when a proxy variable is set (a proxy on the host's loopback); otherwise the default network.
+  gf_network auto || exit 2
+  # Masked before systemd starts: everything that opens a tty, a console, a VT or a device node (udev, vconsole, gettys, the
+  # console password and mute units, hwdb, the device and module setup, the FUSE control mount), so nothing here can
+  # reach what the container does not have.
+  mask='systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-udev-trigger.service
+    systemd-udev-settle.service systemd-vconsole-setup.service getty.target getty@.service console-getty.service
+    container-getty@.service serial-getty@.service autovt@.service systemd-logind.service systemd-hwdb-update.service
+    systemd-tmpfiles-setup-dev.service systemd-tmpfiles-setup-dev-early.service systemd-modules-load.service
+    systemd-sysctl.service systemd-binfmt.service systemd-machine-id-commit.service systemd-remount-fs.service
+    systemd-pstore.service sys-kernel-config.mount sys-kernel-debug.mount sys-kernel-tracing.mount dev-hugepages.mount
+    dev-mqueue.mount systemd-boot-update.service sys-fs-fuse-connections.mount systemd-firstboot.service
+    systemd-ask-password-console.service systemd-ask-password-console.path systemd-ask-password-wall.service
+    systemd-ask-password-wall.path systemd-mute-console.service systemd-mute-console.socket'
+  trap gf_container_cleanup EXIT
+  gf_container_systemd_start "$IMAGE" "$mask" >/dev/null || { echo "FAIL: the container did not start"; exit 1; }
+  cid=$gf_cid
   for _ in $(seq 1 60); do
-    state=$(docker exec "$cid" systemctl is-system-running 2>/dev/null)
+    state=$(gf_container_exec "$cid" systemctl is-system-running 2>/dev/null)
     [[ $state == running || $state == degraded ]] && break
     sleep 1
   done
   [[ $state == running || $state == degraded ]] || { echo "FAIL: systemd did not come up in the container ($state)"; exit 1; }
-  docker exec "${envs[@]}" "$cid" bash /src/tests/integration/update_migrate.sh --inside
+  gf_container_exec "$cid" bash /src/tests/integration/update_migrate.sh --inside
   exit $?
 fi
 

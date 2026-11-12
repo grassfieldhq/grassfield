@@ -9,7 +9,9 @@
 # signatures are checked by tests/integration/software_update.sh in a throwaway container); curl is the real one, on
 # file:// URLs. As root, the checker refuses (exit 2); the cases that run it as a whole are then only the refusal.
 set -euo pipefail
-root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# Not git alone: tests/integration/software_update.sh mounts a worktree's files at /src, and its .git file points at a path the
+# container does not have.
+root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || { cd "$(dirname "$0")/../.." && pwd; })
 tmp=$(mktemp -d "${GRASSFIELD_TEST_TMP:-${TMPDIR:-/tmp}}/update-check.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 command -v curl >/dev/null || { echo "SKIP: curl is not installed"; exit 0; }

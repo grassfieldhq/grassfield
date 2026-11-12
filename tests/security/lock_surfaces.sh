@@ -21,7 +21,11 @@
 #   saver     SheetSession.saverShown has one writer, the host's Binding from idle's count of the saver (ADR-0032, S3);
 #   fingerprint  the lock's only fingerprint unlock is fingerprintPam's PamResult.Success; its pacing (Omarchy v4.5.0 review:
 #             backoff, no attempt while the displays are off, resume) never unlocks and reads or logs nothing of the
-#             conversation; MaxTries keeps the reader off until LOCKED anew.
+#             conversation; MaxTries keeps the reader off until LOCKED anew;
+#   safe mode (ADR-0041 S4) the notice that the UI's unit stopped after a crash loop exists only while the session is
+#             unlocked (any lock state but unlocked, and the start-up probe of a stranded lock, count as locked) and no polkit
+#             or secret sheet is up: it is never mapped over or under the lock and takes no key meant for a sheet; Try Again
+#             and Log Out refuse first unless it is on screen; its window takes the keyboard on demand only.
 # Self-test: the checker fails on a copy of the tree with one refusal removed (mutation). Plain shell test: PASS/FAIL lines.
 set -uo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
@@ -736,6 +740,42 @@ expect("fingerprint: LOCKED anew clears MaxTries and offers the reader; the unlo
                                          "root.fingerprintMisses = 0;", "root.fingerprintSpent = false;", "root.fingerprintResumePass = false;"))
        and re.search(r"if\s*\(fingerprintPam\.active\)\s*fingerprintPam\.abort\(\);", fp_release) is not None)
 
+# ADR-0041 S4: safe mode's notice, in the security process. The lock always wins: the notice exists (a LazyLoader) only while
+# SafeModeModel.shown, which needs an exact false for the lock and for the sheets; the host binds both from this process's own
+# lock and sheets; the actions refuse first unless the notice is on screen.
+sm = code(read("shell/security/safemode/SafeMode.qml"))
+smodel = code(read("shell/security/safemode/SafeModeModel.js"))
+snotice = code(read("shell/security/safemode/SafeModeNotice.qml"))
+shost = code(read("shell/security/host/SecurityHost.qml"))
+expect("safe mode: the notice is shown only when confirmed, unlocked and no sheet is up (an exact false each)",
+       stmts(function(smodel, "shown") or "") == ["return isConfirmed === true && locked === false && sheetUp === false && displaysOff === false;"])
+expect("safe mode: an action may start only from the notice on screen for SafeModeModel.GUARD_MS, none under way",
+       stmts(function(smodel, "canAct") or "") == ["return isShown === true && busy === false && armed === true;"])
+expect("safe mode: the guard (MINOR-2): armed falls whenever the notice appears or goes, and only the guard Timer, GUARD_MS later, sets it, to whether it is still shown",
+       re.search(r"onShownChanged:\s*\{\s*root\.armed\s*=\s*false;", sm) is not None
+       and re.search(r"Timer\s*\{\s*id:\s*guardTimer\s+interval:\s*Model\.GUARD_MS\s+onTriggered:\s*root\.armed\s*=\s*root\.shown\s*\}", sm) is not None
+       and len(re.findall(r"\barmed\s*=(?!=)", sm)) == 2 and re.search(r"^\s*property bool armed: false$", sm, re.M) is not None)
+expect("safe mode: the notice's window exists only while shown (one LazyLoader, active: root.shown), read from the lock and the sheets",
+       re.search(r"readonly property bool shown:\s*Model\.shown\(root\.confirmed,\s*root\.locked,\s*root\.sheetUp,\s*root\.displaysOff\)\s*\n", sm) is not None
+       and re.search(r"LazyLoader\s*\{\s*id:\s*notice\s+active:\s*root\.shown\s+source:\s*Qt\.resolvedUrl\(\"SafeModeNotice\.qml\"\)\s*\}", sm) is not None
+       and len(re.findall(r"\bLazyLoader\s*\{", sm)) == 1 and len(re.findall(r"\bactive\s*:", sm)) == 1)
+expect("safe mode: the lock, the sheets and the displays read true until the host binds them (no notice on a default)",
+       re.search(r"^\s*property bool locked: true$", sm, re.M) is not None and re.search(r"^\s*property bool sheetUp: true$", sm, re.M) is not None
+       and re.search(r"^\s*property bool displaysOff: true$", sm, re.M) is not None)
+expect("safe mode: the host binds the lock (any state but unlocked, the stranded-lock probe), the sheets (open, held, the key sink) and the displays idle turned off, of this process",
+       re.search(r"SafeMode\s*\{\s*locked:\s*Lock\.locked\s*\|\|\s*Lock\.strandedProbing\s*\|\|\s*Lock\.publicState\s*!==\s*\"unlocked\"\s+sheetUp:\s*root\.sheets\s*!==\s*null\s*&&\s*\(root\.sheets\.authorizing\s*===\s*true\s*\|\|\s*root\.sheets\.securityKeyboard\s*===\s*true\)\s+displaysOff:\s*idle\.displayOff\s*\}", shost) is not None)
+for action in ("tryAgain", "logOut"):
+    body = stmts(function(sm, action) or "")
+    expect(f"safe mode: {action}() refuses first unless the notice is on screen and nothing runs",
+           body[:1] == ["if (!Model.canAct(root.shown, root.busy, root.armed)) {"] and "return \"refused\";" in body[:4])
+expect("safe mode: the notice's buttons and Return reach the actions only through tryAgain() and logOut() (one Connections, no process started by the notice)",
+       re.search(r"Connections\s*\{\s*target:\s*notice\.item\s+ignoreUnknownSignals:\s*true\s+function onTryAgain\(\):\s*void\s*\{\s*root\.tryAgain\(\);\s*\}\s*function onLogOut\(\):\s*void\s*\{\s*root\.logOut\(\);\s*\}\s*\}", sm) is not None
+       and "Process" not in snotice and "Process" not in code(read("shell/security/safemode/SafeModeCard.qml")))
+expect("safe mode: the notice's window takes the keyboard on demand only (never exclusive), on the overlay layer, not full screen",
+       re.search(r"WlrLayershell\.keyboardFocus:\s*WlrKeyboardFocus\.OnDemand\s*\n", snotice) is not None
+       and "Exclusive" not in snotice and re.search(r"\banchors\b", snotice) is None
+       and re.search(r"WlrLayershell\.layer:\s*WlrLayer\.Overlay\s*\n", snotice) is not None)
+
 for o in oks:
     print("OK " + o)
 for p in problems:
@@ -769,6 +809,23 @@ done
 cp -a "$root/shell/security" "$mut/shell/" # the wall-clock scan reads every file of shell/security
 python3 -I "$tmp/check.py" "$mut" >/dev/null 2>&1 && pass "mutation: the unchanged copy passes" || bad "mutation: the unchanged copy fails"
 for case_ in 'shell/dock/Dock.qml#SessionState.refuses("dock keyboard")#false' \
+  'shell/security/safemode/SafeModeModel.js#return isConfirmed === true && locked === false && sheetUp === false && displaysOff === false;#return isConfirmed === true && sheetUp === false && displaysOff === false;' \
+  'shell/security/safemode/SafeModeModel.js#return isConfirmed === true && locked === false && sheetUp === false && displaysOff === false;#return isConfirmed === true && locked !== true && sheetUp === false && displaysOff === false;' \
+  'shell/security/safemode/SafeModeModel.js#return isConfirmed === true && locked === false && sheetUp === false && displaysOff === false;#return isConfirmed === true && locked === false && displaysOff === false;' \
+  'shell/security/safemode/SafeModeModel.js#return isShown === true && busy === false && armed === true;#return busy === false && armed === true;' \
+  'shell/security/safemode/SafeModeModel.js#return isShown === true && busy === false && armed === true;#return isShown === true && busy === false;' \
+  'shell/security/safemode/SafeModeModel.js#&& sheetUp === false && displaysOff === false;#&& sheetUp === false;' \
+  'shell/security/safemode/SafeMode.qml#        onTriggered: root.armed = root.shown#        onTriggered: root.armed = true' \
+  'shell/security/safemode/SafeMode.qml#    onShownChanged: {\n        root.armed = false;#    onShownChanged: {' \
+  'shell/security/host/SecurityHost.qml#        displaysOff: idle.displayOff#        displaysOff: false' \
+  'shell/security/safemode/SafeMode.qml#        active: root.shown#        active: root.confirmed' \
+  'shell/security/safemode/SafeMode.qml#    property bool locked: true#    property bool locked: false' \
+  'shell/security/safemode/SafeMode.qml#        if (!Model.canAct(root.shown, root.busy, root.armed)) {\n            console.warn("grassfield-safe-mode: Try Again refused#        if (root.busy) {\n            console.warn("grassfield-safe-mode: Try Again refused' \
+  'shell/security/safemode/SafeMode.qml#        if (!Model.canAct(root.shown, root.busy, root.armed)) {\n            console.warn("grassfield-safe-mode: Log Out refused#        if (!Model.canAct(root.confirmed, root.busy, root.armed)) {\n            console.warn("grassfield-safe-mode: Log Out refused' \
+  'shell/security/safemode/SafeMode.qml#            root.tryAgain();\n        }#            tryAgainRun.running = true;\n        }' \
+  'shell/security/host/SecurityHost.qml#        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== "unlocked"#        locked: Lock.locked' \
+  'shell/security/host/SecurityHost.qml#(root.sheets.authorizing === true || root.sheets.securityKeyboard === true)#(root.sheets.authorizing === true)' \
+  'shell/security/safemode/SafeModeNotice.qml#WlrKeyboardFocus.OnDemand#WlrKeyboardFocus.Exclusive' \
   'shell/overlay/ExitCover.qml#SessionState.refuses("exit cover")#false' \
   'shell/services/Emoji.qml#SessionState.refuses("emoji")#false' \
   'shell/services/Emoji.qml#        if (SessionState.locked)\n            return;\n        root.cancelInsert#        root.cancelInsert' \

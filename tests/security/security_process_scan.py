@@ -16,6 +16,8 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
      aside, which name no file of the tree (file: and qrc: addresses are read; the opus delta review of S3, NIT), but never
      as a Loader or createComponent source (QML from the network: round 2, NIT); strings are read decoded (JavaScript
      escapes: round 3, NIT-1);
+  1d. the security tree (shell/security/**, shell/security.qml) calls no Qt.createQmlObject either (the delta opus review of
+     0edece99, NIT-2);
   1c. in every file of shell/ and ui/, the security tree included (round 3, NIT-1): no import (QML `import "..."`, script
      `.import "..."`) and no literal Loader or createComponent source that is no file of this tree: an address with a
      scheme (http:, https:, data:, file:, qrc:, ...), an absolute path, or a relative path out of shell/ and ui/. The tree
@@ -44,7 +46,11 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
      path, and nothing else writes a file named grassfield-lock-state-*;
   5. the UI never writes the state file (the opus review of 77a0ceb3, MINOR-5): shell/services/LockClient.qml, the one UI file
      that knows its path, has no write of a FileView (setText, setData, atomicWrites, blockWrites, an adapter), starts no
-     process with its path, and no other UI file names LockClient.path or LockState.filePath.
+     process with its path, and no other UI file names LockClient.path or LockState.filePath;
+  6. safe mode (ADR-0041 S4) runs in the security process only: the host instantiates exactly one SafeMode, its inputs bound
+     exactly from this process's lock and sheets (SAFE_MODE_INPUTS), and SafeMode.qml reads true for both until bound (the
+     notice never shows on a default); the UI names no safe-mode type (SECURITY_NAMES, STRING_NAMES) and imports no
+     qs.security.* module (rule 1); shell/security/safemode/ uses no qs.services type at all (rule 3).
 
   python3 -I tests/security/security_process_scan.py <repo>             "ok" or one line per finding, exit 1
   python3 -I tests/security/security_process_scan.py --selftest <repo>   each planted mutant is found, the tree is clean
@@ -54,28 +60,36 @@ import re
 import sys
 
 SERVICES_ALLOWED = {"Settings", "VisualFixtures", "FixedTime", "WallClock"}
-HOST_TYPES = {"Scope", "Binding", "Idle"}
+HOST_TYPES = {"Scope", "Binding", "Idle", "SafeMode"}
 SHEET_HOST = "shell/security/host/SheetHost.qml"
 SHEET_HOST_TYPES = {"Scope", "SheetQueue", "AuthAgent", "SecretAgent", "FileView"}
 # Exactly once in SheetHost.qml each.
 SHEET_HOST_ONCE = ("AuthAgent", "SecretAgent", "SheetQueue")
 SHEET_HOST_URL = 'Qt.createComponent(Qt.resolvedUrl("SheetHost.qml"))'
-SECURITY_MODULES = ("shell/security/lock/", "shell/security/idle/", "shell/security/polkit/", "shell/security/secret/")
+SECURITY_MODULES = ("shell/security/lock/", "shell/security/idle/", "shell/security/polkit/", "shell/security/secret/",
+                    "shell/security/safemode/")
 # The sheets: no qs.services type at all (S3).
 SHEET_MODULES = ("shell/security/polkit/", "shell/security/secret/")
+# Safe mode (ADR-0041 S4): no qs.services type either; it reads the lock and the sheets through the host's bindings only.
+SAFE_MODE_MODULE = "shell/security/safemode/"
+SAFE_MODE = "shell/security/safemode/SafeMode.qml"
+# The host's one SafeMode and what each input is bound to (rule 6).
+SAFE_MODE_INPUTS = {"locked": "Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"",
+                    "sheetUp": "root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)",
+                    "displaysOff": "idle.displayOff"}
 SECURITY_SHARED = ("shell/security/SheetQueue.qml", "shell/security/SheetSession.qml", "shell/security/PasswordField.qml",
                    "shell/security/LockController.qml")
 AGENT = "shell/security/polkit/AuthAgent.qml"
 # Named nowhere in the UI (rule 1).
 SECURITY_NAMES = ("Lock", "SleepInhibitor", "AuthAgent", "SecretAgent", "SheetQueue", "SheetSession", "PrompterClient",
-                  "PolkitAgent")
+                  "PolkitAgent", "SafeMode", "SafeModeNotice", "SafeModeCard")
 # SheetSession's one writer and what each property is bound to (rule 3c).
 SHEET_BINDINGS = {"locked": "Lock.locked || Lock.strandedProbing", "displaysOff": "idle.displayOff", "saverShown": "idle.saverShown",
                   "starting": "idle.starting", "sleeping": "idle.sleeping"}
 HOST = "shell/security/host/SecurityHost.qml"
 # Rule 1b: what no string of the UI tree or of ui/ may name (a security path, the polkit module, a security type).
 STRING_NAMES = re.compile(r"security/|qs\.security|Quickshell\.Services\.Polkit|\b(?:PolkitAgent|AuthAgent|SecretAgent|PrompterClient"
-                          r"|SheetHost|SheetSession|SheetQueue|SecurityHost)\b")
+                          r"|SheetHost|SheetSession|SheetQueue|SecurityHost|SafeMode|SafeModeNotice|SafeModeCard)\b")
 _STRING = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`', re.S)
 # The one computed Loader source of the UI tree, allowed only while its function returns plain literals (global_findings).
 ALLOWED_COMPUTED = {("shell/widgets/WidgetHost.qml", "Registry.source(root.widgetId)")}
@@ -240,18 +254,117 @@ def strip(src, keep_strings=False):
     return _CACHE[key]
 
 
-_TOKENS = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`', re.S)
+def _string_end(src, i):
+    """The end (exclusive) of the string literal opening at i, or None when the line ends first (not a string)."""
+    q, j = src[i], i + 1
+    while j < len(src) and src[j] != "\n":
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == q:
+            return j + 1
+        j += 1
+    return None
+
+
+def _expression_end(src, i):
+    """The index of the `}` closing a template literal's `${` whose code starts at i: braces in strings, nested template
+    literals and comments are not counted (the opus review of 39670f1f, NIT: `${"}" && Qt.createQmlObject(...)}`)."""
+    depth = 0
+    while i < len(src):
+        c = src[i]
+        if c in "\"'":
+            end = _string_end(src, i)
+            i = end if end is not None else i + 1
+            continue
+        if c == "`":
+            i = _template_end(src, i)
+            continue
+        if src.startswith("//", i):
+            n = src.find("\n", i)
+            i = len(src) if n < 0 else n
+            continue
+        if src.startswith("/*", i):
+            n = src.find("*/", i + 2)
+            i = len(src) if n < 0 else n + 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            if depth == 0:
+                return i
+            depth -= 1
+        i += 1
+    return len(src)
+
+
+def _template_end(src, i):
+    """The end (exclusive) of the template literal opening at i, its ${...} expressions read as code."""
+    j = i + 1
+    while j < len(src):
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == "`":
+            return j + 1
+        if src.startswith("${", j):
+            j = _expression_end(src, j + 2) + 1
+            continue
+        j += 1
+    return len(src)
+
+
+def _template_expressions(t):
+    """The ${...} expressions of a template literal (its backticks included), each up to its own closing brace."""
+    out, i = [], 1
+    while i < len(t) - 1:
+        if t[i] == "\\":
+            i += 2
+            continue
+        if t.startswith("${", i):
+            j = _expression_end(t, i + 2)
+            out.append(t[i + 2:j])
+            i = j + 1
+            continue
+        i += 1
+    return out
 
 
 def _strip(src, keep_strings):
-    def repl(m):
-        t = m.group(0)
-        if t.startswith("//"):
-            return ""
-        if t.startswith("/*"):
-            return " "
-        return t if keep_strings else t[0] + t[0]
-    return _TOKENS.sub(repl, src)
+    """Comments removed; string contents blanked unless keep_strings; a template literal keeps the code of its ${...}
+    expressions, read as code (the delta opus review of 00eff2bd, MINOR-C: `${Qt.createQmlObject(...)}` hid inside a blanked
+    literal), each expression read up to its own closing brace, strings and nested literals included (the opus review of
+    39670f1f, NIT)."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        c = src[i]
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+            continue
+        if c in "\"'":
+            j = _string_end(src, i)
+            if j is None:
+                out.append(c)
+                i += 1
+                continue
+            out.append(src[i:j] if keep_strings else c + c)
+            i = j
+            continue
+        if c == "`":
+            j = _template_end(src, i)
+            t = src[i:j]
+            out.append(t if keep_strings else "``" + "".join(" (" + _strip(e, False) + ")" for e in _template_expressions(t)))
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def imports_of(src):
@@ -302,6 +415,9 @@ def file_findings(path, src, singletons):
     mods, paths = imports_of(src)
     if ui or path.startswith("ui/"):
         out += built_from_strings(path, src)
+    # The security tree builds no QML from a string either (the delta opus review of 0edece99, NIT-2): code no scan reads.
+    if (path.startswith("shell/security/") or path == "shell/security.qml") and re.search(r"\bcreateQmlObject\b", code):
+        out.append(f"{path}: calls createQmlObject (code built from a string cannot be checked)")
     out += foreign_code(path, src, paths)
     if ui:
         for m in mods:
@@ -317,15 +433,21 @@ def file_findings(path, src, singletons):
     security = path.startswith(SECURITY_MODULES) or path in (HOST, SHEET_HOST) or path in SECURITY_SHARED
     if security:
         for m in mods:
-            if m.startswith("qs.") and m not in ("qs.services", "qs.security", "qs.security.lock", "qs.security.idle", "qs.security.polkit", "qs.security.secret"):
+            if m.startswith("qs.") and m not in ("qs.services", "qs.security", "qs.security.lock", "qs.security.idle", "qs.security.polkit", "qs.security.secret",
+                                                  "qs.security.safemode"):
                 out.append(f"{path}: imports {m} (a UI module in the security process)")
+            if m == "qs.security.safemode" and path != HOST:
+                out.append(f"{path}: imports qs.security.safemode (the host makes the one SafeMode; the opus review of a0df9c3e, NIT)")
         used = set(re.findall(r"\b([A-Z]\w*)\s*\.", code)) | set(re.findall(r"\b([A-Z]\w*)\s*\{", code))
         sheets = path.startswith(SHEET_MODULES) or path in SECURITY_SHARED or path == SHEET_HOST
-        allowed = set() if sheets else SERVICES_ALLOWED
+        safe_mode = path.startswith(SAFE_MODE_MODULE)
+        allowed = set() if sheets or safe_mode else SERVICES_ALLOWED
         for name in sorted((used & singletons) - allowed):
             out.append(f"{path}: uses the qs.services type {name}, which must not run in the security process (allowed here: {', '.join(sorted(allowed)) or 'none'})")
         if sheets and "qs.services" in mods:
             out.append(f"{path}: imports qs.services (the sheets read the session from SheetSession only, ADR-0041 S3)")
+        if safe_mode and "qs.services" in mods:
+            out.append(f"{path}: imports qs.services (safe mode reads the lock and the sheets from the host's bindings only, ADR-0041 S4)")
         for name in ("SessionState", "LockClient"):
             if re.search(r"\b" + name + r"\b", code):
                 out.append(f"{path}: names {name}, the UI's reading of the lock (the security process reads its own lock: MINOR-4)")
@@ -362,6 +484,11 @@ def global_findings(files):
             out.append(f"{HOST}: instantiates {', '.join(sorted(types - HOST_TYPES))} (allowed: {', '.join(sorted(HOST_TYPES))})")
         if len(re.findall(r"\bIdle\s*\{", code)) != 1:
             out.append(f"{HOST}: not exactly one Idle (one idle module, one sleep inhibitor)")
+        # Rule 6: one SafeMode, its two inputs bound exactly from this process's lock and sheets, nothing else set on it.
+        safe = re.findall(r"\bSafeMode\s*\{([^{}]*)\}", strip(host, keep_strings=True))
+        given = dict(re.findall(r"^\s*(\w+)\s*:\s*(.*?)\s*$", safe[0], re.M)) if len(safe) == 1 else {}
+        if len(re.findall(r"\bSafeMode\s*\{", code)) != 1 or given != SAFE_MODE_INPUTS:
+            out.append(f"{HOST}: not exactly one SafeMode bound as {SAFE_MODE_INPUTS} (safe mode reads the lock and the sheets of this process)")
         made = strip(host, keep_strings=True)
         if made.count(SHEET_HOST_URL) != 1 or len(re.findall(r"\bcreateObject\s*\(", code)) != 1 or len(re.findall(r"\bcreateComponent\s*\(", code)) != 1:
             out.append(f"{HOST}: does not make SheetHost.qml exactly once, by its URL ({SHEET_HOST_URL}, one createObject)")
@@ -378,6 +505,13 @@ def global_findings(files):
     returns = re.findall(r"\breturn\b([^;]*);", body.group(1)) if body else []
     if not returns or any(not (r.strip() == '""' or re.fullmatch(r'\s*Qt\.resolvedUrl\("builtin/[A-Za-z0-9_/]+\.qml"\)\s*', r)) for r in returns):
         out.append(f"{REGISTRY}: source() returns something else than Qt.resolvedUrl(\"builtin/....qml\") or \"\" (WidgetHost's computed Loader source must stay a known built-in widget)")
+    safe_mode = strip(files.get(SAFE_MODE, ""))
+    if not (re.search(r"^\s*property bool locked:\s*true\s*$", safe_mode, re.M) and re.search(r"^\s*property bool sheetUp:\s*true\s*$", safe_mode, re.M)
+            and re.search(r"^\s*property bool displaysOff:\s*true\s*$", safe_mode, re.M)):
+        out.append(f"{SAFE_MODE}: does not fail closed until bound (locked: true, sheetUp: true, displaysOff: true)")
+    for path, src in files.items():
+        if path != HOST and not path.startswith(SAFE_MODE_MODULE) and re.search(r"\bSafeMode\s*\{", strip(src)):
+            out.append(f"{path}: instantiates SafeMode (the host does, once)")
     session = strip(files.get("shell/security/SheetSession.qml", ""))
     if not (re.search(r"^\s*property bool locked:\s*true\s*$", session, re.M) and re.search(r"^\s*property bool displaysOff:\s*true\s*$", session, re.M)):
         out.append("shell/security/SheetSession.qml: does not fail closed until bound (locked: true, displaysOff: true)")
@@ -490,6 +624,29 @@ def main(argv):
             ("SheetSession assigned by the secret agent", "shell/security/secret/SecretAgent.qml", lambda s: s.replace("        root.serial++;\n", "        root.serial++;\n        SheetSession.locked = false;\n", 1)),
             ("the UI instantiating Idle", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Idle {\n    }\n    Saver {\n", 1)),
             ("the UI importing the idle module by path", "shell/saver/Saver.qml", lambda s: s.replace("import \"SaverModel.js\" as SaverModel\n", "import \"SaverModel.js\" as SaverModel\nimport \"../security/idle\"\n", 1)),
+            # ADR-0041 S4: safe mode, in the security process only, bound from its own lock and sheets.
+            ("createQmlObject in the lock view (NIT-2 of the review of 0edece99)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject in a template literal of the lock view (MINOR-C of the review of 00eff2bd)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    readonly property string made: `${Qt.createQmlObject(\"import QtQuick; Item {}\", root)}`\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject after a string holding a brace in a template literal's ${...} (NIT of the review of 39670f1f)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    readonly property string made: `${\"}\" && Qt.createQmlObject(\"import QtQuick; Item {}\", root)}`\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject in a template literal of the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    readonly property string made: `x${Qt.createQmlObject(\"import QtQuick; Item {}\", root)}y`\n    Saver {\n", 1)),
+            ("createQmlObject in the safe-mode notice", "shell/security/safemode/SafeModeCard.qml", lambda s: s.replace("    signal tryAgain\n", "    signal tryAgain\n    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n", 1)),
+            ("a second SafeMode in the host", HOST, lambda s: s.replace("    // The state and the beat for `security heartbeat`", "    SafeMode {\n        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n        sheetUp: root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)\n    }\n    // The state and the beat for `security heartbeat`", 1)),
+            ("SafeMode's lock input bound to a constant in the host", HOST, lambda s: s.replace("        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n", "        locked: false\n", 1)),
+            ("SafeMode's lock input without the asked-for lock (locking)", HOST, lambda s: s.replace("        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n", "        locked: Lock.locked || Lock.strandedProbing\n", 1)),
+            ("SafeMode's sheet input without the key sink", HOST, lambda s: s.replace("(root.sheets.authorizing === true || root.sheets.securityKeyboard === true)", "root.sheets.authorizing === true", 1)),
+            ("SafeMode's inputs left unbound in the host", HOST, lambda s: s.replace("        sheetUp: root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)\n", "", 1)),
+            ("SafeMode open by default (locked)", SAFE_MODE, lambda s: s.replace("    property bool locked: true\n", "    property bool locked: false\n", 1)),
+            ("SafeMode open by default (displaysOff)", SAFE_MODE, lambda s: s.replace("    property bool displaysOff: true\n", "    property bool displaysOff: false\n", 1)),
+            ("SafeMode's displays left unbound in the host (MINOR-2)", HOST, lambda s: s.replace("        displaysOff: idle.displayOff\n", "", 1)),
+            ("SafeMode's displays bound to a constant in the host", HOST, lambda s: s.replace("        displaysOff: idle.displayOff\n", "        displaysOff: false\n", 1)),
+            ("idle importing the safe-mode module (only the host does: NIT)", "shell/security/idle/Idle.qml", lambda s: s.replace("import qs.security.lock\n", "import qs.security.lock\nimport qs.security.safemode\n", 1)),
+            ("SafeMode open by default (sheetUp)", SAFE_MODE, lambda s: s.replace("    property bool sheetUp: true\n", "    property bool sheetUp: false\n", 1)),
+            ("SafeMode in the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    SafeMode {\n    }\n    Saver {\n", 1)),
+            ("the UI importing the safe-mode module", "shell/shell.qml", lambda s: s.replace("import qs.services\n", "import qs.services\nimport qs.security.safemode\n", 1)),
+            ("SafeMode made in the lock", "shell/security/lock/LockView.qml", lambda s: s.rstrip("\n").rstrip("}") + "    SafeMode {\n    }\n}\n"),
+            ("safe mode importing qs.services", SAFE_MODE, lambda s: s.replace("import Quickshell.Io\n", "import Quickshell.Io\nimport qs.services\n", 1)),
+            ("safe mode reading the UI's SessionState", SAFE_MODE, lambda s: s.replace("    readonly property bool shown: Model.shown(root.confirmed, root.locked, root.sheetUp, root.displaysOff)", "    readonly property bool shown: Model.shown(root.confirmed, SessionState.locked, root.sheetUp, root.displaysOff)", 1)),
+            ("Settings in the safe-mode notice", "shell/security/safemode/SafeModeCard.qml", lambda s: s.replace("    readonly property bool busy: root.running !== \"\"\n", "    readonly property bool busy: root.running !== \"\" || Settings.reduceMotion\n", 1)),
             ("a second Idle in the host", HOST, lambda s: s.replace("    Idle {\n        id: idle\n    }\n", "    Idle {\n        id: idle\n    }\n    Idle {\n    }\n", 1)),
             ("a window in the host", HOST, lambda s: s.replace("    Idle {\n", "    FloatingWindow {\n    }\n    Idle {\n", 1)),
             ("Popups in the lock", "shell/security/lock/Lock.qml", lambda s: s.replace("        writeMarker(\"locked\");\n        controller.requestLock();", "        Popups.close();\n        writeMarker(\"locked\");\n        controller.requestLock();", 1)),

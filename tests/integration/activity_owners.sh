@@ -16,11 +16,12 @@ IMAGE=archlinux:base@sha256:52dfbd5afb23a220d5ee92dafcb4c788d96c026ed04179890c23
 if [[ ${1:-} != --inside ]]; then
   [[ $# == 0 ]] || { echo "usage: tests/integration/activity_owners.sh" >&2; exit 2; }
   root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) || exit 2
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
-  args=(--rm --network host -v "$root:/src:ro")
-  [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
-  for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && args+=(-e "$v"); done
-  exec docker run "${args[@]}" "$IMAGE" bash /src/tests/integration/activity_owners.sh --inside
+  . "$root/tests/integration/container.sh" || exit 2
+  gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
+  gf_container_init "$root" || exit 2
+  gf_standard auto || exit 2
+  gf_container_run "$IMAGE" bash /src/tests/integration/activity_owners.sh --inside
+  exit $?
 fi
 
 [[ -f /.dockerenv && $(id -u) == 0 && -d /src/apps/activity ]] || { echo "refused: runs only as root inside its throwaway container"; exit 2; }

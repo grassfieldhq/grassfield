@@ -4,8 +4,9 @@
 # refuses to run unless it is root in a container with the repository mounted at /src and an Omarchy 4.0.4 tree at /omarchy.
 #
 #   tests/integration/update_helper.sh [--omarchy DIR]
-#     DIR  an Omarchy 4.0.4 tree (default /usr/share/omarchy): its omarchy-migrate, omarchy-hook, omarchy-update-mise and
-#          its update guard (the hook and its program) go into the test's omarchy package, unchanged
+#     DIR  an Omarchy 4.x tree (default /usr/share/omarchy): its omarchy-migrate, omarchy-hook, omarchy-update-mise and
+#          its update guard (the hook and its program) go into the test's omarchy package, unchanged (the tree's bin/ is
+#          staged with its links followed, tests/integration/container.sh)
 #   Runs `docker run --rm --network host` on archlinux:base (digest pinned below) with the repository and the tree mounted
 #   read-only; HTTPS_PROXY/HTTP_PROXY/NO_PROXY are passed through and GRASSFIELD_TEST_CA, when set, is mounted as the
 #   container's CA bundle (for a proxied network). Exit 0 all PASS (or SKIP without docker), 1 a FAIL, 2 usage.
@@ -34,13 +35,15 @@ if [[ ${1:-} != --inside ]]; then
     esac
     shift
   done
-  command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
+  . "$root/tests/integration/container.sh" || exit 2
+  gf_have_docker || { echo "SKIP: no docker daemon (this test runs only in a throwaway container)"; exit 0; }
   [[ -f $omarchy/bin/omarchy-migrate && -f $omarchy/default/libalpm/hooks/00-omarchy-update-guard.hook ]] ||
     { echo "SKIP: no Omarchy 4.0.4 tree at $omarchy (--omarchy DIR)"; exit 0; }
-  args=(--rm --network host -v "$root:/src:ro" -v "$(realpath "$omarchy"):/omarchy:ro")
-  [[ -n ${GRASSFIELD_TEST_CA:-} ]] && args+=(-v "$(realpath "$GRASSFIELD_TEST_CA"):/etc/ssl/certs/ca-certificates.crt:ro")
-  for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy NO_PROXY no_proxy; do [[ -n ${!v:-} ]] && args+=(-e "$v"); done
-  exec docker run "${args[@]}" "$IMAGE" bash /src/tests/integration/update_helper.sh --inside
+  gf_container_init "$root" || exit 2
+  gf_standard auto || exit 2
+  omarchy_mounts "$omarchy" /omarchy || exit 2
+  gf_container_run "$IMAGE" bash /src/tests/integration/update_helper.sh --inside
+  exit $?
 fi
 
 [[ -f /.dockerenv && $(id -u) == 0 && -f /src/packaging/pacman/grassfield-update-helper && -d /omarchy/bin ]] ||
@@ -399,6 +402,10 @@ publish "${cur[@]}" gu-kernel-2; run_helper
 expect "  its update (same file) needs no kernel restart -> exit 0, no restart kernel" bash -c "test $rc:$(ver gu-kernel) == 0:2-1 && ! grep -qx 'restart kernel' $D/$op.exit && grep -qx 'packages 1' $D/$op.exit"
 publish "${cur[@]}" gu-kernel-3; run_helper
 expect "the kernel package now owns only the running kernel's vmlinuz (4.0.6's file) -> exit 0, still no restart kernel" bash -c "test $rc:$(ver gu-kernel) == 0:3-1 && ! grep -qx 'restart kernel' $D/$op.exit"
+# The container again runs no packaged kernel, for the cases below (left installed, gu-kernel would also read as an app
+# from the AUR once the repository stops carrying it: the runner's case "150 done before" got "done done  aur").
+quiet pacman -Rdd --noconfirm gu-kernel
+expect "  gu-kernel removed: the container's kernel rule is back" test -z "$(ver gu-kernel)"
 
 say "the 16 newest operations are kept"
 publish "${cur[@]}"
@@ -408,13 +415,31 @@ expect "17 more runs -> 16 started files" test "$(find "$D" -maxdepth 1 -name '*
 say "through pkexec: alice's password each time, bob refused"
 cat >"$W/drive.py" <<'PY'
 # Runs one command in a pseudo-terminal as the user; answers each "Password:" prompt; prints the transcript and the count.
-import os, pty, sys, time, select
+# Bounded: past the deadline the child's process group is killed, so an authentication that never answers fails the case
+# instead of hanging the run (a 2026-11-08 run waited 7 h in os.waitpid after the read loop's deadline).
+import os, pty, signal, sys, time, select
+def reap(pid, limit=30):
+    """The child's status; past `limit` seconds after EOF its process group is killed (no hang in waitpid)."""
+    end = time.time() + limit
+    while time.time() < end:
+        done, st = os.waitpid(pid, os.WNOHANG)
+        if done:
+            return st, False
+        time.sleep(0.2)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    return os.waitpid(pid, 0)[1], True
 user, password, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp("runuser", ["runuser", "-u", user, "--", "bash", "-c", cmd])
-out, prompts, deadline = b"", 0, time.time() + 600
-while time.time() < deadline:
+out, prompts, deadline, timed_out = b"", 0, time.time() + 600, False
+while True:
+    if time.time() >= deadline:
+        timed_out = True
+        break
     r, _, _ = select.select([fd], [], [], 1)
     if not r:
         continue
@@ -428,8 +453,17 @@ while time.time() < deadline:
     if out.count(b"Password:") > prompts:
         prompts = out.count(b"Password:")
         os.write(fd, password.encode() + b"\n")
-_, status = os.waitpid(pid, 0)
+if timed_out:
+    try:
+        os.killpg(pid, signal.SIGKILL)  # pty.fork made the child a session leader: the group holds runuser, bash and the rest
+    except ProcessLookupError:
+        pass
+status, late = reap(pid)
+if late:
+    print("the child did not end 30 s after EOF: its process group was killed")
 print(out.decode(errors="replace").replace("\r", ""))
+if timed_out:
+    print("TIMEOUT after 600 s: the child's process group was killed")
 print("password prompts: %d, exit %d" % (prompts, os.waitstatus_to_exitcode(status)))
 PY
 publish "${cur[@]/gu-app-3/gu-app-5}"
@@ -438,9 +472,11 @@ python3 -I "$W/drive.py" alice test-only-password "pkexec $H run $op1; echo rc=\
 codes=$(grep -o 'rc=[0-9]*' "$W/pk.out" | tr '\n' ' ')
 expect "two runs, two password prompts (auth_admin, never kept)" grep -q '^password prompts: 2,' "$W/pk.out"
 expect "gu-app 5 installed by the first, the second up to date ($codes)" test "$codes:$(ver gu-app):$(exitfile "$op2")" == "rc=0 rc=0 :5-1:0|packages 0|"
+grep -q '^password prompts: 2,' "$W/pk.out" || { echo "  the transcript's end:"; tail -n 15 "$W/pk.out" | sed 's/^/    /'; }
 cur=("${cur[@]/gu-app-3/gu-app-5}")
 python3 -I "$W/drive.py" alice wrong-password "pkexec $H run $(newop); echo rc=\$?" >"$W/pk-wrong.out" 2>&1
 expect "a wrong password -> pkexec exit 127" grep -q 'rc=127' "$W/pk-wrong.out"
+grep -q 'rc=127' "$W/pk-wrong.out" || { echo "  the transcript's end:"; tail -n 15 "$W/pk-wrong.out" | sed 's/^/    /'; }
 out=$(as bob pkexec "$H" run "$(newop)" </dev/null 2>&1); rc=$?
 expect "bob (no rule, no session) -> pkexec refuses (exit $rc)" test "$rc" == 126 -o "$rc" == 127
 

@@ -227,7 +227,7 @@ down, how sleep behaves) is written in the table at the end of this step.
   | S1 | the UI, unchanged | unchanged | nothing: the security process hosts nothing yet | unchanged |
   | S2 | the security process, and only it: every lock request goes to it over IPC | the lock, idle and the inhibitor keep running; the UI's refusals read locked from the compositor's signal, the pushed state or the absence of a state; nothing about the lock changes | the compositor keeps an existing lock (lockdead screen, IQ-T5); no idle lock and no inhibitor until its restart (1 s) or its stop at the limit; the UI's refusals read locked (the unit is not active/running); Omarchy's sleep lock is armed by the security unit's `OnFailure=` | the security process's inhibitor while it runs; the gate skips Omarchy's unit only while the security unit is active/running; Omarchy's stand-in starts the security unit and asks it to lock; the same known limit when it cannot start in logind's window |
   | S3 | the security process | as S2; an authorization asked while the security process restarts fails, as it does today while the UI restarts | as S2, plus no polkit agent until the restart | as S2 |
-  | S4 | the security process | as S2; after 1a's stop the safe-mode bar appears under the lock surface | as S2; the safe-mode bar is gone with it | as S2 |
+  | S4 | the security process | as S2; after 1a's stop the safe-mode notice appears while the session is unlocked and no sheet is up, never under or over the lock (S4 as built) | as S2; the notice is gone with it, and back after the restart if the UI is still stopped | as S2 |
 
 - Known limits (written in the spec): a Quickshell bug that takes the security process down in a loop leaves the
   compositor's lock in place and the session out of reach from itself (the TTY or the power button); a second Qt Quick
@@ -832,6 +832,273 @@ down, how sleep behaves) is written in the table at the end of this step.
     one registration, the stall logged, no try (the reviewer saw it detected at 2017 ms with 0 tries). A private-bus phase:
     run bare by the integrator.
   - NIT-3: the beat Timer's id is `stallBeatTimer` (the function keeps `stallBeat`).
+
+### S4 as built (2026-11-11, branch feat/safe-mode-s4 from main af7ec1a8; safe mode, last; the rc7 audit's R7-REL-03)
+- **The gap it closes.** After 1a's stop (three failures of the UI within 10 minutes) the user had no menu bar, Dock,
+  notification server or way back but a sleep, the lid or a TTY. S2 and S3 had already moved the lock, idle, the sleep
+  inhibitor, the polkit agent and the secret sheets into the security process, so those kept working; what was missing
+  was the user-facing part, which this step adds there: a notice with one way forward and one way out.
+- **What the user sees** (`shell/security/safemode/`). One small alert, centred by the compositor on the output it maps it on
+  (a layer surface with no anchor and no output: the one with the focus), the size of the alert and its shadow, nothing full
+  screen and no dim: the caution symbol, "Grassfield is running in safe mode", "The desktop stopped working several times
+  in a row and was turned off. Your open apps keep running.", and two capsules, Log Out and Try Again (the default),
+  stacked with Try Again on top when the French labels do not fit side by side. Drawn with `Grassfield.Ui` and its tokens
+  only, in the shape of the UI's alerts (`shell/overlay/Dialog.qml`: radius.alert, the 64 frame, panel.alertWidth); every
+  text fixed and plain (`SafeModeCard.qml`). Return and Enter are Try Again, the default button, wherever the keyboard is;
+  Tab and Shift+Tab move the keyboard between the two buttons (a focus ring once Tab was used) and Space presses that one;
+  Esc does nothing (no Cancel: closing it would leave no desktop and no way back, and it never logs out); a key held down
+  answers nothing, whatever it is (the buttons take no focus, the alert handles every key: review round 2). The keyboard
+  starts on Try Again and comes back to it after an action that did not finish. Accessible as a dialog named by its title, described by its message.
+  While an action runs both buttons are disabled and a line says "Restarting the desktop…" or "Logging out…"; one that did
+  not finish says so ("The desktop couldn’t be restarted. Try again, or log out.", or that some apps are still open). The
+  window is on the overlay layer (a full-screen window cannot hide it) and takes the keyboard on demand, as an app's
+  alert: the user can click a window to save their work, and click the alert again. English and French in the catalog.
+- **When it shows** (`SafeMode.qml`, the pure rules in `SafeModeModel.js`). The security process looks at the UI's unit
+  every 5 s (every 2 s while a stop is seen or the notice is up): one short process with a fixed command, bounded at 5 s,
+  that tests the loop detector's flag `$XDG_RUNTIME_DIR/grassfield/shell-safe-mode` as a plain file that is not a link
+  (never read: the flag is a flag) and prints `systemctl --user show` of `ActiveState`, `SubState` and `Result` of
+  `grassfield-shell.service`. Safe mode is the flag with the unit down for good (`inactive` or `failed`, never
+  `activating`, which covers the auto-restart wait), or the unit `failed` with `Result=start-limit-hit` with or without the
+  flag (ADR-0056 D-10: the counter can miss the last failures of a sub-second loop). A stale flag with the shell brought back
+  shows nothing (the opus review of b1d826b), nor does a flag in a linked runtime directory (review round 1, MINOR-3); two
+  looks in a row must agree, so a flag left from an earlier loop, read at a
+  login before the autostart starts the shell, or a unit passing through `failed` on its way to a restart, shows nothing.
+  An answer that cannot be read (a missing line, a token outside systemd's form, CRLF, more than 4 KiB, a look killed at its
+  5 s bound) counts for nothing: it never shows the notice on a guess and never hides one already up (logged once).
+- **The lock always wins.** The notice exists only while the session is unlocked and no polkit or secret sheet of this
+  process is up: its window is made by a LazyLoader active only then (`SafeModeModel.shown`: an exact `false` for both), and
+  destroyed the moment either changes. The host (`SecurityHost.qml`, pinned anew) binds the two inputs from this process
+  alone: locked is `Lock.locked || Lock.strandedProbing || Lock.publicState !== "unlocked"` (a lock asked for, `locking`,
+  already counts, so the notice is gone before the compositor draws the lock; the start-up probe of a stranded or foreign
+  lock counts too), a sheet up is the sheets' `authorizing || securityKeyboard` (open, shown or held, or the key sink); both
+  read true until bound. Nothing is drawn under the lock (the plan said "under the lock surface": nothing there can take a
+  key or show, and the notice comes back at the unlock), nothing takes a key meant for a sheet. Try Again and Log Out refuse
+  first unless the notice is on screen and no action runs (`SafeModeModel.canAct`), whatever asks: a button, Return, the
+  dev hook. Nothing here locks, unlocks, approves, delays a lock or reads the UI's state file.
+- **What the actions run** (fixed commands, as the user, nothing read from a file):
+  - Try Again: `timeout -k 2 40 /usr/lib/grassfield/grassfield-shell-failed --try-again`, the loop detector's own helper,
+    which gains this verb (never the unit's: its `ExecStart=` has no argument; an unknown argument does nothing, exit 2). The
+    flag stays until the shell is confirmed running (review round 1, MINOR-1): it is written when missing (a unit at its start
+    limit with no flag), its identity (inode) noted, the ledger cleared (the next loop is counted from zero); then `systemctl
+    --user reset-failed grassfield-shell.service` bounded at 5 s (a unit at its start limit refuses a start until then),
+    `systemctl --user start grassfield-shell.service` bounded at 20 s (Type=simple: it returns once the shell runs, or fails),
+    `systemctl --user is-active grassfield-shell.service` bounded at 5 s; only then is the flag removed, and only if it is still
+    the one noted (a flag a new loop wrote meanwhile stays). The steps fit inside the caller's 40 s, every command by absolute
+    path; a run killed at any point, a start that fails or a unit not active after it leaves the flag, so the notice stays (with
+    its failure line) or comes back. No usable runtime directory (unset, or a link): nothing is done. It never loops: nothing
+    restarts the shell on its own; a shell that fails again is the counter's to stop again (three failures, its stop, a new
+    flag), and the notice comes back. After a start that worked the notice leaves (the next looks see the flag gone).
+  - Log Out: `timeout -k 5 330 /usr/lib/grassfield/grassfield-session-end logout`, the Grassfield menu's own path (every app
+    asked to close, none forced; `uwsm stop`). An app that keeps a window open stops it after its 15 s (its exit 3), and the
+    notice says so; any other failure (its own, its bound, a process that could not start) says the session could not be
+    ended (review round 1, NIT; `SafeModeModel.failureOf`).
+- **Deviations from the plan's text** (step 1 S4 and SD-4, written before later owner decisions; taken under the owner's rule
+  and the integrator's brief of 2026-11-11, to be confirmed by the reviewer and the owner): (1) one centred alert instead of a
+  bar with the Grassfield menu: macOS's "a problem occurred" alerts, and a bar would rebuild a piece of the menu bar in the
+  security process; (2) two actions, Try Again and Log Out, where SD-4 listed Restart and Shut Down too: the login screen
+  offers both after Log Out, and the power button stays logind's; (3) the caution symbol, not the Grassfield mark: the owner's
+  IQ-B1 B (ADR-0040) came after SD-4, dialogs show their subject's symbol (`tests/ci/mark_places.py`); (4) nothing under the
+  lock (above). The owner accepted the centred alert on 2026-11-11 and asked for the light appearance before the merge
+  (below).
+- **Light and dark** (the owner's follow-up of 2026-11-11). Nothing bound the security process's `Appearance.dark`, which
+  defaults to true, so since S3 the polkit sheet and the secret sheets drew dark whatever the user chose (in the UI, before S3,
+  they followed `Settings.dark`), and the first version of the alert did the same. The host now binds `Appearance.dark` to
+  `Settings.dark`, as the UI's root does (`appearance`, "auto" by the local schedule): the alert and both sheets draw from
+  the current palette and the glass tint of their appearance, tokens only; gate A2's token calculation asserts their roles
+  in both appearances (`tests/visual/contrast-roles.json`, `colors.*` foregrounds). The lock does not follow it: LockView
+  draws from `Appearance.darkColors`, gives its password field every colour and no focus ring, and nothing else of the lock
+  or idle reads the current palette (`security_unit.sh` holds the binding and these lines), so the lock screen stays the
+  dark one of both appearances, as on macOS.
+- **Dev session.** The security process of a dev session never asks systemd (it would read the owner's own unit) or reads
+  the owner's flag, and runs neither action (each logs "dev session, suppressed ..."). Its looks are faked by the dev hook
+  `safemode devSet` (`SafeModeModel.devLook`, read through the same parser and settle), `safemode devPress tryAgain|logOut`
+  presses a button through the same refusals, `safemode status` returns what the notice decides from (JSON, no private
+  state). The three are refused outside a dev session; no safe-mode function answers IPC in a real session, Try Again and
+  Log Out are the notice's buttons only (`docs/specs/security.md` IPC surface; `tests/visual/ipc.sh` sends `safemode` to the
+  security instance).
+- **Memory and start (gate P2, P5).** Nothing of the notice exists outside safe mode: the controller is a Timer, three
+  Process objects that run only when asked, a LazyLoader and an IpcHandler; the window and its alert are made only while the
+  notice is on screen and destroyed with it. Not measured (no compositor for the window here; the security root's
+  offscreen proxy would run the real inhibitor outside a dev session on this machine): NOT VERIFIED, the integrator's
+  `scripts/gates/rss.sh --nested` with the notice shown and not.
+- **Tests.** `tests/security/tst_safemode.qml` (the parser, the flag present or absent with every unit state, the settle,
+  the lock and sheet truth table with non-boolean inputs, `canAct`, the intervals, the dev looks; the alert offscreen: its
+  accessible name, role and buttons, Return and Enter as Try Again, Esc never logging out, the clicks, the busy and failure
+  lines, the focus back on Try Again, plain text, the caution symbol; light and dark: every colour from the current palette,
+  the glass tint included); `tests/security/safe_mode.sh` (the real controller
+  under Quickshell offscreen in a dev session, a stand-in window, the probe binding the lock and the sheets as the host:
+  26 checks, and six mutants each caught: shows over the lock, Try Again while locked, Log Out while locked, shows over a
+  sheet, not lazy, one look confirms); `security_process_scan.py` (rule 6: one SafeMode in the host bound exactly from its
+  lock and sheets, true until bound, no SafeMode or safe-mode import in the UI, no `qs.services` type in safemode/; 13 more
+  mutants, 100 in all); `security_unit.sh` (the host and the controller pinned by SHA-256, the lazy notice, the first-statement
+  refusals, the three fixed commands and nothing else that starts a process, reads or writes a file or opens a socket, the
+  dev gate, the dev-only IPC target, the small Overlay window with the keyboard on demand and no anchor);
+  `lock_surfaces.sh` (the notice's rules read from the sources, 12 mutants: shows over the lock in three ways, over a sheet,
+  acts off screen, Try Again and Log Out refusals removed or weakened, the notice's button running the helper directly,
+  the host's bindings weakened, an exclusive keyboard); `tests/shell/shell_failures.sh` (`--try-again`: the order, the
+  reset, the start, the flag back on a failed start, no runtime directory, a linked one, an unknown argument, the
+  counter's own path still without start or reset, the unit without argument; two mutants: the flag removed after the
+  start, the flag not put back); `tests/security/safe_mode_nested.sh` (nested, bare: below). Inventory 784.
+- **Evidence** (this machine, 2026-11-11, the branch's head; GRASSFIELD_SESSION and QT_QPA_PLATFORMTHEME unset in every
+  command). `just check-quick` exit 0 (qmllint 858 files, 0 warnings; i18n 4477 messages, 0 unfinished; inventory 784;
+  check-contrast 57 tests OK, the alert's text roles registered; check-migrate ok; gitleaks no leaks). The security QML suite
+  as `scripts/dev/test.sh` runs it (`qmltestrunner -import ui -import <qs root> -input tests/security`): 373 passed, 0
+  failed, gate Q2 clean; `tst_safemode.qml` alone 18. `safe_mode.sh` exit 0 (26 checks; six mutants caught).
+  `security_unit.sh` 188 PASS (the scan's selftest, 100 mutants, among them); `lock_surfaces.sh` 396 PASS;
+  `ipc_inventory.sh` 104 PASS (177 functions of 38 targets, all documented); `session_services.sh` 58;
+  `tests/shell/shell_failures.sh` 48; `sleep_lock_units.sh` 100. Nested, bare, one slot of the integrator's rule (load 2
+  to 4): `safe_mode_nested.sh` 27 PASS on a fresh `nested-up` and 27 on a fresh `nested-up --lang fr`; the captures
+  `.dev/shots/safe-mode-en.png` and `safe-mode-fr.png` (GF-REF; the French buttons stacked, Réessayer on top) were looked at
+  by the author only (F1 not signed off). The first nested run failed one check (the surface still listed 5 s after Try
+  Again): the notice had mapped on the nested window's output, which was not drawing (its capture waited too), so the
+  surface's fade-out never ended; the test now focuses GF-REF first, and the same check passed in both runs after it.
+- **NOT VERIFIED.** The real session (the owner's L2): three `kill -SEGV` of the UI within ten minutes, unlocked, then the
+  notice within seconds; locked, the notice only after the unlock, the password unlocking at the first attempt; Try Again
+  bringing the desktop back (`grassfield-shell-failed --try-again` against systemd 261: reset-failed, the start, the flag
+  gone); Log Out; the parse of systemd 261's `show` output; Hyprland 0.56 giving the on-demand alert the keyboard when it
+  maps; the alert at the owner's 1.25 scale and its captures (en, fr; visual NOT verified); gate P2 with the notice.
+- **Residual risks.** (1) Same-user code can create or remove the flag, as it can call any IPC target: a flag created while
+  the shell is stopped by hand shows the notice (whose actions the user chooses), a flag removed while the unit is stopped
+  hides it unless the unit is at its start limit (the user is where 1a left them: the lid, a sleep or a TTY). (2) A stale
+  flag with the shell stopped on purpose (`systemctl --user stop`) shows the notice; Try Again then starts it. (3) Log Out
+  while an app keeps a window open cannot offer "Log Out Anyway": grassfield-session-end asks through the notification
+  server, which is the UI's and is down; the logout stops after 15 s, the notice says to save and quit the apps, then log
+  out (macOS offers the forced logout there). (4) One short process every 5 s in the security process for the session's
+  life (`timeout`, `sh`, `systemctl show`): small, not measured (gate P1 counts the UI only). (5) The alert sits at the
+  output's exact centre (a layer surface the compositor centres), not at panel.dialogRaise above it. (6) The polkit and secret
+  sheets change with the appearance too (above): what S3 had lost. (7) Try Again restarts the same desktop (SQ-1 B: safe mode is the UI stopped, not a reduced UI); a second loop comes
+  back here. (8) Should Hyprland not give the on-demand alert the keyboard at map, Return and Esc need a click on it first.
+- **Review:** opus security (R12), by the integrator.
+- **Review round 1** (2026-11-11, the opus security review of a0df9c3e: PASS, no BLOCKER or MAJOR; three MINOR and four NITs,
+  fixed on the branch with the light appearance above, for a delta review):
+  - MINOR-1, Try Again could leave the flag gone with the shell down: it removed the flag first and its reset had no bound, so
+    a run killed by the caller's 40 s (a slow user manager, the security unit restarting) left neither the shell nor the
+    flag, and the notice went (the reviewer reproduced it with stubs: exit 124 after 40 s, the flag gone). Now as above: the
+    flag kept until the unit is active, every step bounded. `tests/shell/shell_failures.sh`: killed in the reset and in the
+    start (the flag stays), a reset that hangs (its own bound, the start goes on), a failed start and a unit not active (the
+    same flag stays), no flag (one is written, and removed only after a confirmed start), a new loop's flag (kept); mutants:
+    the flag removed first, no active check, no identity check (57 PASS). The scratch copies run a stub systemctl and refuse
+    to run if a real one is left.
+  - MINOR-2, the displays off: with a non-default "require password after display off", idle turns the displays off while
+    the session stays unlocked, and the alert kept the keyboard, so the wake key (Space, Return) could press Try Again or
+    Log Out. As the sheets: the alert exists only while the displays are on (the host binds `displaysOff: idle.displayOff`,
+    true until bound), and whenever it appears (the unlock, a sheet closing, the displays waking) nothing it is given acts
+    for `SafeModeModel.GUARD_MS` (500 ms, the sheets' `heldGuardMs`): `armed` falls at every appearance and only the guard
+    Timer sets it. `tst_safemode.qml`, `safe_mode.sh` (the displays off, the wake key's press refused, a press after the
+    guard acts; mutants `shows-with-the-displays-off`, `no-guard`), the scan, `lock_surfaces.sh`, `security_unit.sh`.
+  - MINOR-3, no test ran the real-session paths: `safe_mode.sh` now runs the look's own shell script, taken from
+    SafeMode.qml, against a stub systemctl (a plain file counts; a FIFO, a directory, a link, a dangling link, an empty path,
+    a missing file and a file in a linked directory do not), and the controller outside a dev session with its three commands
+    pointed at stubs in a copy (`safe_mode.d/probe_real.qml`): the looks, Try Again failing, hanging past the action guard
+    (shortened in the copy; the late end then changes nothing) and working, Log Out with apps open and with the session not
+    ended. The reviewer's finding that a flag in a linked runtime directory showed the alert while `--try-again` refused it:
+    the look now refuses a linked directory too, as the counter and `--try-again` do.
+  - NITs: the alert's comment on held keys corrected (a focused button takes its own repeats; the controller refuses all
+    but the first); `qs.security.safemode` may be imported by the host only (`security_process_scan.py`, a mutant: idle
+    importing it); `grassfield-shell-failed` names systemctl and timeout by absolute path; the Log Out failure text split by
+    exit code (above).
+- **Review round 2** (2026-11-12, the delta opus review of b67472da: PASS; one MINOR and three NITs, fixed on the branch):
+  - MINOR, the lock's palette check was a denylist of Appearance names: it missed others (highlight, buttonFill,
+    windowSecondary, inactiveFill, iconTint) and the shared parts whose default colours follow the appearance (an `Icon {}`
+    in LockView would draw a dark glyph on the dark lock for a light user, and the test stayed green). Now
+    `tests/security/lock_palette.py` (from `security_unit.sh`) is an allowlist over the lock's files, PasswordField and the
+    idle dim: Appearance only as darkColors and appearance-free members (motion, fonts, the pure withAlpha), never bare;
+    PasswordField's `Appearance.colors` only as the defaults of the five colours LockView sets itself, from darkColors, with
+    no focus ring, and its own Icon and FocusRing held to the field's colour and to that switch; Tokens colours only
+    colorDark; each file's types as today, so no Icon, Button, Material or FocusRing. Its selftest plants 20 mutants (the
+    review's Icon, Button and `Appearance.highlight` in LockView among them).
+  - NITs: SafeMode.qml's header says what the code does (the displays, the guard, the flag kept by Try Again); the alert's
+    buttons take no focus and the alert handles every key, a held key answering nothing whatever it is (a held Return used
+    to press a focused button again once a failed Try Again gave the focus back; `tst_safemode` test_heldKeys); a flag whose
+    identity `stat` cannot read stays, as "not the same file", and is said (`tests/shell/shell_failures.sh`, where the
+    helper's cases live: a failing stat).
+- **Review round 3** (2026-11-12, the opus review of 0edece99: PASS, merged; one MINOR and five NITs, fixed in a follow-up
+  pull request, branch fix/safe-mode-s4-hardening):
+  - MINOR-1, the palette check read the lock's .qml files only: a `.import Grassfield.Ui as Ui` in LockMachine.js returning
+    `Ui.Appearance.colors.text`, used by LockView, passed it and the scan, and an offscreen probe showed the colour following
+    the appearance. `lock_palette.py` now checks the closure of the lock's files under their file imports (.js included, and
+    `.import` in scripts), the types of this tree they make (GrassfieldArtwork, WallClock, LockController, LockStills made at
+    run time) and the script modules of an imported module they use as a qualifier, transitively; a lock script may import no
+    module, and Appearance is refused through any qualifier. PasswordField's own Icon and FocusRing are the two parts not
+    followed, their colours held by rule 6.
+  - NITs: Qt's palette (`palette.windowText`) refused on the lock; createQmlObject, Qt.createComponent (but Lock.qml's one of
+    LockStills.qml), a Loader source, setSource() and a Loader's `.source =` refused there, and createQmlObject anywhere in
+    the security tree (`security_process_scan.py`); Tokens and Appearance never subscripted, and PasswordField's exception read
+    per statement, not per line; the safe-mode alert's keyboard target has the accessible focus and is announced when Tab
+    moves it (`Accessible.focused`, `Accessible.announce`), with no key focus; only the bare key acts (Shift for Tab, the
+    keypad's Enter), so Ctrl+Space, an input method's switch, never presses Log Out (`tst_safemode` test_modifiers).
+    `lock_palette.py`'s selftest plants 34 mutants (14 new, one per finding).
+  - Residual, recorded (NIT-6): on the path where `stat` cannot read the flag's identity, Try Again leaves the flag in place
+    with the shell running; if the user later stops the shell on purpose (`systemctl --user stop`), the alert appears after
+    two looks. Harmless (Try Again then starts it), and the same as residual (2) above.
+- **Review round 4** (2026-11-12, the opus delta review of 00eff2bd: PASS, three MINOR, NITs; the integrator's decision: stop
+  the static arms race, add a behavioural test):
+  - The behavioural test, `tests/security/lock_palette_render.sh` (headless): `lock_palette_render.d/probe.qml` draws the
+    REAL lock surface content (LockView with its real children: the artwork backdrop, the scrim, the date and clock, the
+    initials, the name, the password field with a password typed, the error line) offscreen under Quickshell, built with
+    `Appearance.dark` true and then false, and one view flipped to light while shown and back, every other input equal (the
+    size, the backdrop, the name, the message, Reduce Motion, the clock's minute: the run is done again if it moves). The
+    grabs must be the same image byte for byte, and every visible item's colour inputs the same: the offscreen renderer is
+    Qt's software scene graph, which draws no shader effect, so an Icon's tint or a MultiEffect's colour is compared by its
+    input. Two things are taken off so the grabs compare: the caret (it blinks; its colour is the dots') and the text
+    shadow's layers (a shader the software renderer does not draw; turned off, the date, the clock and the name it carries
+    are drawn). A control (a rectangle in `Appearance.colors.text`) must differ. Three mutants each make it fail: an Icon
+    with its default tint, a script module's colour (GlassTint.js importing Grassfield.Ui), a template literal's colour.
+  - The static lint stays as a fast first check: MINOR-A, the field's Icon and FocusRing read with brace matching (a second
+    `Icon { anchors { ... } }` was missed); MINOR-C, a template literal's `${...}` read as code, in `lock_palette.py` and
+    `security_process_scan.py` (`${Appearance.colors.text}`, `${Qt.createQmlObject(...)}`); and the NITs: `Settings.dark` and
+    `Settings.appearance` refused on the lock, Qt's palette refused bare too (`pal: palette`, QML only), `Qt[...]` and a
+    `createComponent` named without a call refused, a scope directory's qmldir followed as the engine follows it (a
+    `LockStill` mapped to `../polkit/X.qml`), and nothing in the security tree writes an appearance into Lock (a Binding on
+    Lock, `Lock.<property> = ...`). 45 mutants in `lock_palette.py`, 108 in the scan.
+  - Residual, static-only gaps the behavioural test covers (MINOR-B and what a lint cannot follow): a script module reached
+    through a variable (`property var t: GlassTint; t.probe()`) or through its own directory's qmldir from an allowed file
+    (GrassfieldArtwork calling `GlassTint.probe()` once GlassTint.js imports Grassfield.Ui), and names built at run time,
+    within what the test draws and walks; what it does not is listed under round 5.
+- **Review round 5** (2026-11-12, the opus review of 39670f1f: PASS, one MINOR, NITs; the render test ran the production
+  LockView and was not vacuous, but missed paths a user sees that only the lint covered). Closed in the test, on top of
+  39670f1f, test files and this text only:
+  1. The field keeps the keyboard focus (the caret is hidden with `cursorVisible = false` instead), so the focus-ring path is
+     drawn: deleting `focusRing: false` (LockView) is caught.
+  2. The text shadows' layers are turned on for the walk and off for the grab: their MultiEffects exist while walked, so
+     `shadowColor: Appearance.colors.text` (LockView's TextShadow) is caught as an input, though the software renderer
+     draws no shadow.
+  3. The notice line (Lock's own text: crash recovery unavailable, PAM suppressed) and the user's lock message (a settings
+     file in the private home, read by the real Settings) are shown and compared: their colours are caught.
+  4. The walk reads every property of every visible item (for...in over the QObject: declared properties too, grouped and
+     held objects such as border, gradient stops, palette and its colour groups, layer, non-visual resources, `var` maps and
+     lists), and records every colour value, every string `Qt.color` reads and every URL: a ShaderEffect's own
+     `property color tint` is caught.
+  5. Lock.qml's surface is drawn: `lock_palette_render.d/surface.py` copies Lock.qml's `WlSessionLockSurface` block (the
+     ground colour, the view's loader, every binding given to the LockView it creates) and its `groundOf()` into
+     `ProbeLockSurface.qml`, whose root stands in for the rest of Lock.qml with fixed data (a member it does not stand in
+     for stops the test: stale), the surface window a Rectangle of its colour. The scene holds the main surface and two
+     grounds alone (the view's loader stopped: the first frame), one before its screen is known and one after: the ground
+     colour, `groundOf()`, an item beside the view and an item in the view as Lock creates it are caught.
+  NITs: the probe refuses to save a scene that is not fully shown (the view mid-fade, a line missing, an empty field, no
+  focus, the caret shown, a ground with its view); three guards check it refuses (an empty field, the focus elsewhere, the
+  notice hidden). The probe's XDG_CONFIG_HOME, XDG_DATA_HOME and XDG_STATE_HOME are in the private home. `lock_palette.py`
+  reads a template literal's `${...}` up to its own closing brace, strings, nested literals and comments skipped
+  (`${"}" && Appearance.colors.text}`; the same in `security_process_scan.py`), a Binding on Lock by its whole body, its
+  braced blocks included (`value: { return Appearance.dark; }`), and an assignment into Lock by its whole statement, over
+  lines and through brackets, subscripted too. Mutants: the render test 12 (each caught) and 3 guards (each refused),
+  `lock_palette.py` 52, the scan 109.
+  - Residual, what the behavioural test does not exercise (each still held by `lock_palette.py`, which reads every file of
+    the closure, Lock.qml whole included):
+    - the rest of Lock.qml and its helpers: the controller, the stills (LockStills.qml: a wallpaper's still, a colour
+      backdrop, the ground the stills give, the decoded avatar), LockAvatar and LockPublisher are stood in for with fixed
+      data, so a colour they compute and hand to the surface is not drawn (the ground drawn is `Tokens.sessionGround`, the
+      one without stills), and the real `WlSessionLockSurface` window is a Rectangle of the same colour;
+    - states not shown: Caps Lock's hint (real key events; the error line's Text), "Checking…" while authenticating, the
+      placeholder of an empty field, the release fade, the idle dim carried over, a picture or colour backdrop, the moving
+      artwork, the account picture (a file), "Authentication service unavailable" (the error line's Text), the account
+      hidden (`lock.showUser` off), the pointer over the submit arrow;
+    - what the walk does not compare: invisible items (they draw nothing), objects more than four levels from an item, and
+      values other than colours, colour strings and URLs; the image compares those for what the software renderer draws,
+      so a shader-drawn part's number or vector input (a shadow's opacity or blur) that followed the appearance is not
+      caught, nor a named colour written with spaces;
+    - the platform theme (the test runs without QT_QPA_PLATFORMTHEME; Qt's palette is refused on the lock by the lint), and
+      a colour that differs only on a real compositor or GPU.
 
 ### Step 2: no untested toolkit reaches the session, on any path (U-1, I-1, M-7) — **opus security review** (2a's helper verbs; nothing else runs as root)
 Goal: what Update Now refuses today, every path refuses or at least detects; the user is told what to do in the words
