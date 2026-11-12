@@ -147,8 +147,10 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
     // A member's drag by its revealed bar ends (D75): where its bar hung above the window is drawn again, the gesture goes and
     // the member is dropped at `at` (gf::tiler::memberDrop: over the other half they swap; nullopt: back in its half).
     static void endRevealedDrag(std::optional<Vector2D> at);
-    // Background, lights, glyphs and title on `bar` (monitor-local logical coordinates); `fullscreen`: a revealed bar.
-    void drawBar(const PHLWINDOW& w, const CBox& bar, float scale, double rounding, float power, float alpha, bool hovered, bool fullscreen);
+    // Background, lights, glyphs and title on `bar` (monitor-local logical coordinates) on `monitor`, the display being
+    // drawn; `fullscreen`: a revealed bar. No title for a window hidden from captures while that display is captured (SEC-01).
+    void drawBar(const PHLMONITOR& monitor, const PHLWINDOW& w, const CBox& bar, float scale, double rounding, float power, float alpha, bool hovered,
+                 bool fullscreen);
     bool onButtonPress(const Vector2D& coords, const IPointer::SButtonEvent& e);
     void activate(gf::titlebar::Button button);
     void drawTitlebar(const PHLMONITOR& monitor, float alpha);
@@ -159,8 +161,9 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
     // and minimize none (unavailable); `fixedSize` and `sized`: a window of fixed size neither zoomed nor in full screen shows
     // no zoom glyph (its light is disabled, core lightAvailable).
     void drawGlyphs(const CBox& bar, float scale, float alpha, bool fullscreen, bool fixedSize, bool sized);
-    // The content's own pixels in the surface's rounded top corners (under the surface), when its texture maps 1:1.
-    void drawContentCorners(const PHLWINDOW& w, const CBox& bar, double rounding, float scale, float alpha);
+    // The content's own pixels in the surface's rounded top corners (under the surface), when its texture maps 1:1 and,
+    // for a window hidden from captures, while `monitor` is not captured (SEC-01: outside the box Hyprland blacks out).
+    void drawContentCorners(const PHLMONITOR& monitor, const PHLWINDOW& w, const CBox& bar, double rounding, float scale, float alpha);
 
     PHLWINDOWREF                m_owner;
     bool                        m_lastShown = false;

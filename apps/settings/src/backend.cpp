@@ -1,4 +1,5 @@
 #include "backend.h"
+#include <QStringDecoder>
 
 #include <algorithm>
 #include <numeric>
@@ -528,6 +529,17 @@ bool Backend::hasCommand(const QString &name) const
     return plain.match(name).hasMatch() && !QStandardPaths::findExecutable(name).isEmpty();
 }
 
+bool Backend::programExists(const QString &program) const
+{
+    if (program.isEmpty() || program.size() > 4096 || program.contains(QChar(0)))
+        return false;
+    if (program.startsWith(QLatin1Char('/'))) {
+        const QFileInfo info(program);
+        return info.isFile() && info.isExecutable();
+    }
+    return !program.contains(QLatin1Char('/')) && !QStandardPaths::findExecutable(program).isEmpty();
+}
+
 QVariantList Backend::screens() const
 {
     QVariantList out;
@@ -662,6 +674,16 @@ QStringList Backend::systemAutostartDirs() const
     return out;
 }
 
+QString Backend::xdgConfigDir() const
+{
+    return QDir::cleanPath(grassfield::settings::xdgHome(qEnvironmentVariable("XDG_CONFIG_HOME"), QDir::homePath() + QStringLiteral("/.config")));
+}
+
+QString Backend::grassfieldStateDir() const
+{
+    return QDir::cleanPath(grassfield::apps::runmode::stateDir());
+}
+
 QStringList Backend::applicationDirs() const
 {
     // The XDG Base Directory folders of the desktop entries: $XDG_DATA_HOME (default ~/.local/share) first, then $XDG_DATA_DIRS
@@ -705,6 +727,13 @@ QString Backend::writeAutostart(const QString &path, const QString &text) const
     return writeText(path, text);
 }
 
+QString Backend::writeDefaultAppsFile(const QString &path, const QString &text) const
+{
+    if (!grassfield::settings::isDefaultAppsWrite(path, xdgConfigDir(), grassfieldStateDir(), m_devRoot, m_dev))
+        return QStringLiteral("refused"); // i18n-ignore: a reason the page maps to its own sentence
+    return writeText(path, text);
+}
+
 QString Backend::removeAutostart(const QString &path) const
 {
     if (!autostartWriteAllowed(path))
@@ -734,7 +763,12 @@ QVariantMap Backend::readText(const QString &path) const
     out["exists"] = true;
     if (!f.open(QIODevice::ReadOnly))
         return out;
-    out["text"] = QString::fromUtf8(f.read(kMaxRead));
+    // Strictly UTF-8: a file in another encoding is not read and rewritten as replacement characters (ok stays false).
+    QStringDecoder utf8(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+    const QString text = utf8(f.read(kMaxRead));
+    if (utf8.hasError())
+        return out;
+    out["text"] = text;
     out["ok"] = true;
     return out;
 }

@@ -17,6 +17,7 @@ readonly GF_BASE='@GRASSFIELD_REPO_BASE@'
 readonly GF_FPR='@GRASSFIELD_SIGNING_FINGERPRINT@'
 readonly GF_KEYSERVER=hkps://keys.openpgp.org
 readonly GF_MIN_OMARCHY=4.0.6
+readonly GF_MIN_OMARCHY_DEV=4.0.0.r7608
 readonly GF_MIN_FREE_MIB=4096
 readonly GF_PKGS=(grassfield-desktop grassfield-compositor grassfield-store)
 readonly GF_THEME_PKG=grassfield-login-themes
@@ -41,6 +42,9 @@ YES=0 DRY=0 UNINSTALL=0 SNAPSHOT=1 THEMES=1
 LOG='' STATE_DIR=''
 TMP=''
 PROBLEMS=0
+PENDING_N=0
+UPDATED=0
+SOFT_FAILS=()
 FR=0
 DIED=0
 # 0: nothing changed yet; 1: the repository is being added (a failure rolls it back); 2: packages installed (kept).
@@ -56,7 +60,12 @@ t() { if ((FR)); then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 say() { printf '%s\n' "$(t "$1" "$2")"; }
 die() {
   DIED=1
-  printf '\n%s %s\n' "$(t 'Stopped:' 'Arret :')" "$(t "$1" "$2")" >&2
+  local en=$1 fr=$2
+  if ((UPDATED)); then # the update ran: say what was done, never "nothing was changed"
+    en=${en//Nothing was changed./The system was updated; Grassfield was not installed.}
+    fr=${fr//Rien n a ete modifie./Le systeme a ete mis a jour ; Grassfield n a pas ete installe.}
+  fi
+  printf '\n%s %s\n' "$(t 'Stopped:' 'Arret :')" "$(t "$en" "$fr")" >&2
   exit 1
 }
 # bad <en> <fr> <fix-en> <fix-fr>: one preflight problem and its exact fix (the script changes nothing for it).
@@ -82,7 +91,8 @@ grassfield-install.sh: install Grassfield on Omarchy (as your user; sudo only wh
                            `grassfield-login set grassfield`)
   --without-login-themes   do not install and activate the Grassfield login screen (SDDM) and boot screen (Plymouth)
   --no-snapshot            go on without an Omarchy snapshot
-  --yes                    no confirmation (pacman's own questions are answered by pacman's defaults)
+  --yes                    no confirmation: also accepts the Omarchy system update when updates are pending (pacman's own
+                           questions are answered by pacman's defaults)
   --dry-run                checks and the plan only: nothing is changed, no root, two HEAD requests to the host
   --uninstall              back to stock Omarchy: themes, packages, [grassfield] section, key, session choice
 
@@ -218,6 +228,19 @@ ask() { # <question en> <question fr>: yes by --yes, else the user's answer (std
   [[ $answer == [yYoO]* ]]
 }
 
+# Is there a terminal to ask on? (the tests' fake root says no with a file named no-tty)
+have_tty() {
+  if [[ -n $GF_ROOT ]]; then [[ ! -e $GF_ROOT/no-tty ]]; else [[ -t 0 ]]; fi
+}
+
+ask_yes() { # <question en> <question fr>: like ask, but Enter means yes ([Y/n]); end of input (Ctrl-D, no terminal) means no
+  ((YES)) && return 0
+  local answer=''
+  printf '%s %s ' "$(t "$1" "$2")" "$(t '[Y/n]' '[O/n]')"
+  read -r answer || return 1
+  [[ -z $answer || $answer == [yYoO]* ]]
+}
+
 # Omarchy's update lock, held while this script runs pacman (grassfield-channel-set refuses while it is held, so it is let go
 # before the hand-over and around `off`).
 lock_update() {
@@ -284,6 +307,7 @@ rollback() {
     say "  2. delete /etc/pacman.d/grassfield.conf   3. pacman-key --delete $GF_FPR   (this run's copies: ${PBAK:-none} ${CBAK:-none})" \
       "  2. supprime /etc/pacman.d/grassfield.conf   3. pacman-key --delete $GF_FPR   (copies de cette execution : ${PBAK:-aucune} ${CBAK:-aucune})"
   else
+    ((UPDATED)) && say 'The Omarchy update that ran first stays: the system is up to date.' 'La mise a jour d Omarchy lancee d abord reste : le systeme est a jour.'
     say 'Back to the exact state before this run (pacman.conf, the repository file, the key, the synced database). Nothing new was installed.' \
       'Retour a l etat exact d avant cette execution (pacman.conf, fichier du depot, cle, base synchronisee). Rien de nouveau n a ete installe.'
     say "Retry: run this script again. The log: ${LOG:-}" "Reessayer : relance ce script. Le journal : ${LOG:-}"
@@ -335,7 +359,7 @@ preflight_common() {
 }
 
 preflight_install() {
-  local v os arch repo_list repo i first_o=-1 first_e=-1 repo_of_qs free tmpfree pending foreign cu_rc=0 foreign_sec
+  local v omarchy_dev os arch repo_list repo i first_o=-1 first_e=-1 repo_of_qs free tmpfree pending foreign cu_rc=0 foreign_sec
   os=$GF_ROOT/etc/os-release
   arch=$(uname -m)
   if [[ -r $os ]] && grep -Eq '^(ID|ID_LIKE)=.*\barch\b' "$os" && [[ $arch == x86_64 ]]; then
@@ -346,8 +370,19 @@ preflight_install() {
   fi
 
   v=$(pacman_version omarchy)
-  [[ -n $v ]] || v=$(pacman_version omarchy-dev)
-  if [[ -z $v ]]; then
+  omarchy_dev=$(pacman_version omarchy-dev)
+  if [[ -n $omarchy_dev ]]; then
+    # Development versions use a commit counter, so compare them with their own tested floor.
+    if (($(vercmp "$omarchy_dev" "$GF_MIN_OMARCHY_DEV") < 0)); then
+      bad "Omarchy development build $omarchy_dev is older than the oldest one Grassfield was tested on ($GF_MIN_OMARCHY_DEV)" \
+        "la version de developpement Omarchy $omarchy_dev est plus ancienne que la plus ancienne version testee avec Grassfield ($GF_MIN_OMARCHY_DEV)" \
+        "update Omarchy to development build $GF_MIN_OMARCHY_DEV or newer with its own update, then run this again" \
+        "mets Omarchy a jour vers la version de developpement $GF_MIN_OMARCHY_DEV ou plus recente avec sa mise a jour, puis relance"
+    else
+      note "Omarchy development build $omarchy_dev; minimum tested development build is $GF_MIN_OMARCHY_DEV" \
+        "version de developpement Omarchy $omarchy_dev ; la version de developpement minimale testee est $GF_MIN_OMARCHY_DEV"
+    fi
+  elif [[ -z $v ]]; then
     bad 'Omarchy is not installed' 'Omarchy n est pas installe' 'install Omarchy 4.0.6 or newer first' 'installe d abord Omarchy 4.0.6 ou plus recent'
   elif (($(vercmp "$v" "$GF_MIN_OMARCHY") < 0)); then
     bad "Omarchy $v is older than $GF_MIN_OMARCHY" "Omarchy $v est plus ancien que $GF_MIN_OMARCHY" \
@@ -413,23 +448,18 @@ preflight_install() {
   fi
 
   # Before any sync: checkupdates reads a copy of the databases, so pacman's own are not touched (no partial upgrade).
+  # Pending updates are not a problem of their own: offer_updates (after the preflight) offers to run Omarchy's update.
   if command -v checkupdates >/dev/null; then
-    pending=$(checkupdates 2>/dev/null) || cu_rc=$?
-    case $cu_rc in
-      0)
-        pending=$(grep -v '^grassfield-' <<<"$pending" || true)
-        if [[ -n $pending ]]; then
-          bad 'the system has pending updates; installing now could mix old and new libraries' \
-            'le systeme a des mises a jour en attente ; installer maintenant pourrait melanger anciennes et nouvelles bibliotheques' \
-            'update Omarchy first (its own update command), then run this again' \
-            'mets d abord Omarchy a jour (sa commande de mise a jour) puis relance'
-        else ok 'the system is up to date' 'le systeme est a jour'; fi ;;
-      2) ok 'the system is up to date' 'le systeme est a jour' ;;
-      *) bad "checkupdates failed (exit $cu_rc): the script cannot tell whether the system is up to date" \
-        "checkupdates a echoue (code $cu_rc) : le script ne peut pas savoir si le systeme est a jour" \
+    if PENDING_N=$(pending_count); then
+      if ((PENDING_N > 0)); then note "$PENDING_N update(s) are waiting on this system" "$PENDING_N mise(s) a jour en attente sur ce systeme"
+      else ok 'the system is up to date' 'le systeme est a jour'; fi
+    else
+      PENDING_N=0
+      bad "checkupdates failed: the script cannot tell whether the system is up to date" \
+        "checkupdates a echoue : le script ne peut pas savoir si le systeme est a jour" \
         'run checkupdates yourself, fix what it reports (network, mirrors), then run this again' \
-        'lance checkupdates toi-meme, corrige ce qu il signale (reseau, miroirs), puis relance' ;;
-    esac
+        'lance checkupdates toi-meme, corrige ce qu il signale (reseau, miroirs), puis relance'
+    fi
   else
     bad 'checkupdates (package pacman-contrib) is missing: the script cannot check for pending updates before it syncs' \
       'checkupdates (paquet pacman-contrib) est absent : le script ne peut pas verifier les mises a jour en attente avant de synchroniser' \
@@ -445,6 +475,54 @@ preflight_install() {
   if ((THEMES)) && ! command -v plymouth-set-default-theme >/dev/null; then
     note 'plymouth is not installed: the boot theme will be skipped' 'plymouth n est pas installe : le theme de demarrage sera ignore'
   fi
+}
+
+# The number of pending updates other than Grassfield's own (0 when checkupdates finds none); status 1 when checkupdates fails.
+pending_count() {
+  local out rc=0
+  out=$(checkupdates 2>/dev/null) || rc=$?
+  case $rc in
+    0) out=$(grep -v '^grassfield-' <<<"$out" || true); if [[ -n $out ]]; then wc -l <<<"$out" | tr -d ' '; else echo 0; fi ;;
+    2) echo 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Grassfield installs on an up-to-date system (no old and new libraries mixed): when updates are waiting, say so and offer
+# Omarchy's own update, the same steps as `omarchy update` without its reboot question (-y: the reboot is only a printed line).
+# Declined or failed: the old message and nothing changed.
+offer_updates() {
+  ((PENDING_N > 0)) || return 0
+  local still
+  printf '\n'
+  say "$PENDING_N update(s) are waiting on this system. Grassfield installs on an up-to-date system, so Omarchy's own update has to run first." \
+    "$PENDING_N mise(s) a jour attendent sur ce systeme. Grassfield s installe sur un systeme a jour : la mise a jour d Omarchy doit d abord passer."
+  if ((DRY)); then
+    note 'a real run asks "Install them now?" (--yes answers yes) and runs omarchy-update -y before anything else' \
+      'un vrai lancement demande "Les installer maintenant ?" (--yes repond oui) et lance omarchy-update -y avant tout'
+    return 0
+  fi
+  if ! ((YES)) && ! have_tty; then
+    die 'no terminal to ask on: run it from a terminal, or add --yes.' 'pas de terminal pour demander : lance-le depuis un terminal ou ajoute --yes.'
+  fi
+  ask_yes 'Install them now?' 'Les installer maintenant ?' || updates_pending_stop
+  step 'Update Omarchy first' 'Mise a jour d Omarchy d abord'
+  command -v omarchy-update >/dev/null || updates_pending_stop
+  UPDATED=1
+  omarchy-update -y ||
+    die 'the Omarchy update failed (see above). Grassfield was not installed: fix it, then run this script again.' \
+      'la mise a jour d Omarchy a echoue (voir plus haut). Grassfield n a pas ete installe : corrige puis relance ce script.'
+  still=$(pending_count) || still=1
+  if ((still > 0)); then updates_pending_stop; fi
+  ok 'the system is up to date' 'le systeme est a jour'
+}
+
+updates_pending_stop() {
+  bad 'the system has pending updates; installing now could mix old and new libraries' \
+    'le systeme a des mises a jour en attente ; installer maintenant pourrait melanger anciennes et nouvelles bibliotheques' \
+    'update Omarchy first (its own update command), then run this again' \
+    'mets d abord Omarchy a jour (sa commande de mise a jour) puis relance'
+  finish_preflight
 }
 
 finish_preflight() {
@@ -492,8 +570,10 @@ plan_uninstall() {
     " 4. themes (root)       $GF_SDDM_DROPIN supprime ; si le theme de demarrage est celui de Grassfield : retour a celui memorise (sinon omarchy) et reconstruction de l image de demarrage d Omarchy"
   say " 5. remove (root)      pacman -Rns of the installed ones among: ${GF_ALL_PKGS[*]} (their pre_remove removes [grassfield] and the key too)" \
     " 5. retrait (root)      pacman -Rns de ceux installes parmi : ${GF_ALL_PKGS[*]} (leur pre_remove retire aussi [grassfield] et la cle)"
-  say ' 6. leftovers (root)   a key still in pacman; pacman.conf from this script'"'"'s copy if only our two lines remain; the script'"'"'s copies' \
-    ' 6. restes (root)       une cle encore dans pacman ; pacman.conf depuis la copie de ce script s il ne reste que nos deux lignes ; les copies du script'
+  say " 6. session files      grassfield-portals.conf, grassfield-cursors-custom and the compositor cache are deleted. ~/.config/grassfield, ~/.config/grassfield-mimeapps.list and ~/.local/state/grassfield are KEPT (your settings; the final message prints them and the one command that deletes them). The system group grassfield-update is kept too, as Arch does for system groups" \
+    " 6. fichiers de session grassfield-portals.conf, grassfield-cursors-custom et le cache du compositeur sont supprimes. ~/.config/grassfield, ~/.config/grassfield-mimeapps.list et ~/.local/state/grassfield sont GARDES (tes reglages ; le message final les indique avec la commande qui les supprime). Le groupe systeme grassfield-update est conserve aussi, comme Arch le fait pour les groupes systeme"
+  say ' 7. leftovers (root)   a key still in pacman; pacman.conf from this script'"'"'s copy if only our two lines remain; the script'"'"'s copies' \
+    ' 7. restes (root)       une cle encore dans pacman ; pacman.conf depuis la copie de ce script s il ne reste que nos deux lignes ; les copies du script'
   say "Log: $LOG" "Journal : $LOG"
 }
 
@@ -503,7 +583,7 @@ confirm_plan() {
     say 'Dry run: nothing was changed.' 'Simulation : rien n a ete modifie.'
     exit 0
   fi
-  if ! ((YES)) && [[ -z $GF_ROOT && ! -t 0 ]]; then
+  if ! ((YES)) && ! have_tty; then
     die 'no terminal to ask on: run it from a terminal, or add --yes.' 'pas de terminal pour demander : lance-le depuis un terminal ou ajoute --yes.'
   fi
   printf '\n'
@@ -674,15 +754,25 @@ rebuild_boot_image() {
 # <new theme> <theme to go back to>. Returns 0 (done); 1 (the rebuild failed, the previous theme was set back and a second,
 # clean rebuild confirmed it: the boot theme was NOT changed); 2 (the second rebuild failed too: boot images may be mixed).
 #
+# plymouth-set-default-theme edits plymouthd.conf with `sed -ie`, so every call leaves plymouthd.confe next to it (Plymouth's own
+# script, not Grassfield's): removed here when this call created it. One that was already there is never touched.
+plymouth_set() { # <theme>
+  local bak=$GF_ROOT/etc/plymouth/plymouthd.confe had=0 rc=0
+  if [[ -e $bak || -L $bak ]]; then had=1; fi
+  as_root plymouth-set-default-theme "$1" || rc=$?
+  if ((!had)) && [[ -e $bak || -L $bak ]]; then as_root rm -f -- "$bak"; fi
+  return "$rc"
+}
+
 # The caller runs this as `... || src=$?`, which turns set -e off inside it: EVERY root step is therefore checked by hand.
 # Returns 0 done; 1 rebuild failed, theme set back, second rebuild clean (theme NOT changed); 2 both rebuilds failed (theme
 # set back); 3 the theme setter refused (nothing was changed); 4 the rebuild failed and the previous theme could not be set back.
 switch_boot_theme() {
-  as_root plymouth-set-default-theme "$1" || return 3
+  plymouth_set "$1" || return 3
   if rebuild_boot_image; then return 0; fi
   note 'the boot image rebuild failed: setting the previous boot theme back and running the rebuild again' \
     'la reconstruction de l image de demarrage a echoue : remise de l ancien theme de demarrage et nouvelle reconstruction'
-  as_root plymouth-set-default-theme "$2" || return 4
+  plymouth_set "$2" || return 4
   if rebuild_boot_image; then return 1; fi
   return 2
 }
@@ -821,6 +911,41 @@ revert_themes() {
   esac
 }
 
+# A step that failed without stopping the uninstall: said now, summed up at the end, and the exit status is then non-zero.
+soft_fail() { # <en> <fr>
+  SOFT_FAILS+=("$(t "$1" "$2")")
+  printf ' [x] %s\n' "$(t "$1" "$2")"
+}
+
+# Files Grassfield writes outside its own folders that do nothing outside the Grassfield session, so they go with it: the
+# portal routing link, the generated pointer theme, the compositor build cache. (The session's default-app list,
+# grassfield-mimeapps.list, holds the person's own choices: it is kept with the settings.)
+remove_session_files() {
+  local cfg=${XDG_CONFIG_HOME:-$HOME/.config} data=${XDG_DATA_HOME:-$HOME/.local/share} cache=${XDG_CACHE_HOME:-$HOME/.cache} f gone=0
+  for f in "$cfg/xdg-desktop-portal/grassfield-portals.conf" "$data/icons/grassfield-cursors-custom" "$cache/grassfield"; do
+    if [[ -e $f || -L $f ]]; then
+      if rm -rf -- "$f"; then gone=1
+      else soft_fail "could not remove $f" "impossible de supprimer $f"; fi
+    fi
+  done
+  if ((gone)); then ok 'session-only files removed (portal link, pointer theme, cache)' \
+    'fichiers propres a la session retires (lien des portails, theme de pointeur, cache)'
+  else note 'no session-only file to remove' 'aucun fichier propre a la session a retirer'; fi
+}
+
+# What the uninstall keeps, where it is, and the one command that deletes it (quoted: a copy-paste survives spaces).
+kept_message() {
+  local cfg=${XDG_CONFIG_HOME:-$HOME/.config} state=${XDG_STATE_HOME:-$HOME/.local/state} p
+  local -a kept=()
+  for p in "$cfg/grassfield" "$cfg/grassfield-mimeapps.list" "$state/grassfield"; do
+    if [[ -e $p || -L $p ]]; then kept+=("$p"); fi
+  done
+  ((${#kept[@]})) || return 0
+  say '  Your Grassfield settings and state are kept, in case you come back:' '  Tes reglages et ton etat Grassfield sont gardes, au cas ou tu reviendrais :'
+  printf '    %s\n' "${kept[@]}"
+  say "  To delete them as well:  rm -rf -- $(printf '%q ' "${kept[@]}")" "  Pour les supprimer aussi :  rm -rf -- $(printf '%q ' "${kept[@]}")"
+}
+
 do_uninstall() {
   local pkgs=() left=0 session_file=${XDG_CONFIG_HOME:-$HOME/.config}/grassfield/login-session b ours=''
   mapfile -t pkgs < <(installed_pkgs)
@@ -845,6 +970,9 @@ do_uninstall() {
     step "Remove ${pkgs[*]}" "Retrait de ${pkgs[*]}"
     if ((YES)); then as_root pacman -Rns --noconfirm "${pkgs[@]}"; else as_root pacman -Rns "${pkgs[@]}"; fi
   else note 'no Grassfield package is installed' 'aucun paquet Grassfield n est installe'; fi
+
+  step 'Session files' 'Fichiers de session'
+  remove_session_files
 
   step 'Leftovers' 'Restes'
   if (($(sections) > 0)); then
@@ -878,7 +1006,18 @@ do_uninstall() {
   printf '\n'
   say '== Done: stock Omarchy ==' '== Termine : Omarchy d origine =='
   say '  Restart the computer once. Omarchy was never modified, so nothing else is needed.' '  Redemarre l ordinateur une fois. Omarchy n a jamais ete modifie : rien d autre a faire.'
+  kept_message
+  # Arch's rule: a package never removes a system group (a reused gid would give access to what it left behind).
+  if awk -F: '$1 == "grassfield-update" { f = 1 } END { exit !f }' "$GF_ROOT/etc/group" 2>/dev/null; then
+    say '  The system group grassfield-update is kept, as Arch does for system groups.' '  Le groupe systeme grassfield-update est conserve, comme Arch le fait pour les groupes systeme.'
+  fi
   say "  Log: $LOG" "  Journal : $LOG"
+  if ((${#SOFT_FAILS[@]})); then
+    printf '\n'
+    say "NOT everything was removed (${#SOFT_FAILS[@]}):" "Tout n a PAS ete retire (${#SOFT_FAILS[@]}) :"
+    printf '  - %s\n' "${SOFT_FAILS[@]}"
+    return 1
+  fi
 }
 
 # ---- main -------------------------------------------------------------------------------------------------------------
@@ -917,6 +1056,7 @@ main() {
   else
     preflight_install
     finish_preflight
+    offer_updates
     plan_install
     confirm_plan
     as_root -v

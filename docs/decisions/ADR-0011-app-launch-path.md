@@ -134,3 +134,67 @@ session, with the owner's real trash in its sidebar. Any D-Bus activatable handl
   otherwise give the application no network and its seccomp filter); `uwsm-app` then puts the application in its own
   scope. Only a plain `<name>.desktop` id is passed, after `--`. No Reopen without a unique entry or without `uwsm-app`
   (never a launch outside a scope).
+
+### Amendment 2026-11-08: Files opens apps the Gatekeeper way (GF-070 and DT-10 amended)
+Context: GF-AUDIT-001 DT-10 / GF-070 (commit e6e75bc3) made Grassfield Files refuse every program, script, AppImage and
+Windows or Java type it was asked to open, so that a double-click on a downloaded file never ran code. The owner reported on
+2026-11-08 that no AppImage "or others" could be started from Files and that an app delivered as a `.dmg` did nothing: too
+strict for a desktop. Neither ADR-0022 (the desktop's file operations) nor ADR-0028 (permission changes) owns the open
+policy (it lived in `docs/specs/security.md` alone, `grep GF-070 docs/decisions` finds nothing); this ADR owns the app
+launch path the change starts programs through, so the decision is recorded here. Integrator decision under the owner's
+standing rule "closest to macOS 27, no technical step for the end user"; it relaxes a security control, so an opus security
+review follows.
+Decision: copy Gatekeeper, from "never run" to "run after consent".
+- Opening a native program or AppImage runs it (`apps/files/src/launchguard.h` `RunProgram`, decided by the ELF header and
+  the execute bit, never by the name). It runs through this ADR's path: `grassfield::apps::scopedCommand` (its own
+  `uwsm-app` scope in a real session; a program path uwsm would read as a desktop entry, "…/Tool.desktop:run", is refused),
+  `posix_spawnp` without a shell, its own session, stdin and stdout on `/dev/null`, the home folder as working folder (as
+  the Dock's apps; macOS starts apps in "/") (`apps/files/src/programlaunch.h` `Run`). Its error output is read for one second from
+  a datagram socket (closed afterwards: later writes fail without a signal and never block it) so that a start that fails
+  gets a plain alert (another computer's program, a missing library, an AppImage without fuse2, a refused start).
+- A program that came from the Internet (Chromium's and Firefox's `user.xdg.origin.url` / `user.xdg.referrer.url`; the
+  repository had no quarantine mark of its own) runs only after the user said Open in the Files window's sheet, which names
+  the host it came from; Return and Esc cancel. After Open, Files writes `user.grassfield.approved` = `1 <inode> <mtime ns>
+  <size>` (macOS clears the quarantine): an approved, unchanged file never asks again, a changed one asks again. A program
+  without the user's execute bit gets the same sheet and Open sets u+x (only; ADR-0028's unprivileged path, through the
+  descriptor that was checked, then verified: a FAT mount that ignores it gets the copy, checked against the file as it is
+  after that chmod, which moved its status time); one on a `noexec` or read-only disk is copied to `~/Applications` (macOS:
+  `/Applications`), checked against the approved file, and run from there.
+- Files keeps the download marks on what it makes from a downloaded or remote file (the Archive Utility model, reviews of
+  0c51550e and 48475cf6). Expand of an archive that carries a download mark completes only if every extracted regular file
+  got the archive's marks, fail closed: they are written in the private staging folder before the final rename, on a worker
+  thread, through descriptors that follow no link; files and folders whose user bits keep the marks out (files 0100, 0500,
+  0555; folders 0100, 0300) are opened up for the moment of the walk and given their mode back; there is no entry cap; one
+  file left unmarked, a folder that can't be walked, a tree deeper than 256 folders or a cancel, and nothing is kept and a
+  sheet says the archive couldn't be expanded safely (bsdtar keeps the members' execute bits, so an unmarked program would
+  run with no sheet). A copy or move from a remote location gets its source address, without credentials, as its
+  `user.xdg.origin.url`. Names are judged as the eye reads them (NFKC, combining marks, format, default-ignorable and blank
+  characters dropped, dot lookalikes read as "."), and a program whose extension is not plain ASCII is refused as a
+  disguise, as is one whose name ends in a document's or an archive's letters after any character but an ASCII dot ("Invoice"
+  + any lookalike or combining mark + "pdf", "photo-jpg", "Movie" + a lookalike + "torrent": fail closed, since no list of
+  lookalikes is complete); after a letter of any script only a lure extension or (3 letters or more) a user type counts,
+  so accented names run ("Vidéo", "Mémo", "Tiếng-Việt"). A program whose name can be drawn in another order (a bidi mark or
+  right-to-left text: RLM + "pdf." + RLM + "Invoice" is drawn "Invoice.pdf") always gets the sheet, with the marks written
+  out; an Arabic or Hebrew name is asked about, never refused. Nothing under an Expand or Compress staging name is opened, run, listed, searched, renamed,
+  copied, moved, dragged or trashed from Files; a killed Files' staging items are removed at the next start
+  (`<state>/files-staging`, ADR-0020, read whole, live lines never dropped), and every removal goes by descriptor (a tree
+  deeper than PATH_MAX too), climbing back only into the folder it came down from. Every Open With
+  application of a program, an AppImage, a script, or a Windows or Java program follows the open rule (root refused, no
+  remote program or staging item, the sheet first when downloaded): any of them may run it (second counter-review of
+  fd5823de).
+- Scripts open in the default text editor; Open With > Terminal runs an executable one in the session's terminal
+  (decision F-7, `xdg-terminal-exec`), after the same sheet when downloaded. Windows and Java programs are explained and
+  never run by opening; their own application (Wine, Bottles, java) runs them after "Open with …" in the sheet. A `.dmg` or
+  `.pkg` is explained, with Search the Store.
+- Unchanged: app launchers (`.desktop`) are refused (a launcher outside an applications folder run after a sheet is a
+  follow-up), desktop entries never reach KIO, web links go to the default browser only, KIO never runs an executable
+  (`setRunExecutables(false)`), nothing runs from a remote KIO location or the Trash, and Files never runs anything with
+  other rights (setuid, setgid, file capabilities; Files as root starts nothing on any path: program, Terminal, Java,
+  Wine/Bottles).
+- Security rules held by tests: no name trick (program content shown as a document is refused), a symbolic link follows its
+  target's trust, the file must be the one the user decided on after the sheet (path, inode, time, size), one journal line
+  per decision without file contents. Spec: `docs/specs/security.md` "Files opens apps the Gatekeeper way" and
+  `docs/specs/files.md` F7. Tests: `tests/unit/files/tst_launchguard.cpp`, `tst_programlaunch.cpp`, `tst_fileslaunch.cpp`,
+  `tests/unit/tst_fileskiosheets.qml`, nested `tests/apps/files_dt10.sh`.
+- Limits (said in the spec): the download mark is only as present as the browsers and Files make it; files fetched by other
+  tools, extracted by other archive tools or copied from FAT volumes carry none.

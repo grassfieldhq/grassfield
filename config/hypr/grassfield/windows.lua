@@ -7,11 +7,13 @@ hl.window_rule({ name = "gf-float-all", match = { class = ".*" }, float = true }
 -- Only a client-chrome window (ADR-0015, apps/windowchrome.h; the gf-client-chrome matches below) is exempt: its own zoom
 -- control sends the request, and it is the only one that window has. Hyprland toggles the maximized mode on any maximize
 -- request, so one request per press zooms and unzooms. Every other window, tagged by its toolkit or not, keeps the
--- suppression. Two rules make the negation of those matches (any class but Grassfield's and the third-party list below;
--- or no xdg tag and not in that list) without reading the tag itself: the tag is a dynamic effect, the suppression a
--- static one read at map. tests/shell/client_chrome_rules.sh checks that both negations are built from the two lists.
-hl.window_rule({ name = "gf-no-maximize-event", match = { class = "negative:^(org\\.grassfield\\.(Files|Settings|Preview|Store|Activity|Memos)|chromium|google-chrome|firefox|org\\.mozilla\\.firefox|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$" }, suppress_event = "maximize" })
-hl.window_rule({ name = "gf-no-maximize-event-untagged", match = { class = "negative:^(chromium|google-chrome|firefox|org\\.mozilla\\.firefox|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$", xdg_tag = "negative:.+" }, suppress_event = "maximize" })
+-- suppression. Two rules make the negation of those matches (any class but Grassfield's, the third-party list below and
+-- Firefox; or no xdg tag and not in those) without reading the tag itself: the tag is a dynamic effect, the suppression a
+-- static one read at map. Firefox left the third-party list for the plugin's reading of its negotiation (ADR-0015
+-- amendment 2026-11-08) and keeps its exemption: its own zoom control sends the request when it draws its own frame.
+-- tests/shell/client_chrome_rules.sh checks that both negations are built from those lists.
+hl.window_rule({ name = "gf-no-maximize-event", match = { class = "negative:^(org\\.grassfield\\.(Files|Settings|Preview|Store|Activity|Memos)|chromium|google-chrome|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus|firefox|org\\.mozilla\\.firefox)$" }, suppress_event = "maximize" })
+hl.window_rule({ name = "gf-no-maximize-event-untagged", match = { class = "negative:^(chromium|google-chrome|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus|firefox|org\\.mozilla\\.firefox)$", xdg_tag = "negative:.+" }, suppress_event = "maximize" })
 
 -- Client chrome (ADR-0015): Grassfield apps that draw their own lights and toolbar are tagged
 -- `grassfield-client-chrome`; the compositor plugin draws no titlebar on them (plugin work item P1, docs/specs/compositor.md)
@@ -26,23 +28,24 @@ hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield
 -- set of traffic lights, close, minimize, zoom, top-left; an app that draws its own title bar gets no second bar from the
 -- system. Since the 1.0.0-rc6 report (two title bars on Telegram and the ArtCraft suite) the compositor plugin reads what each
 -- client negotiated (docs/specs/compositor.md P9) and gives the same tag, whatever the app id, only where the request proves a
--- bar of the app's own: a KDE server-decoration client request (GTK header bars) or a decoration manager bound by a client
--- holding no decoration object (a Qt frameless window: Telegram, which therefore needs no entry here, and is better
--- without one: with its "Use system window frame" it asks for server-side decorations and draws no bar). An xdg client_side
+-- bar of the app's own: a KDE server-decoration client request (GTK header bars, Firefox's own frame) or a decoration
+-- manager bound by a client holding no decoration object that draws a frame of its own (a Qt frameless window whose window
+-- geometry lies inside its surface: Telegram and its shadow margins, which therefore needs no entry here, and is better
+-- without one: with its "Use system window frame" it asks for server-side decorations and draws no bar). A frameless window
+-- that draws nothing keeps the plugin's titlebar (rc7 audit R7-REQ-01: every window has its controls). An xdg client_side
 -- request proves nothing (foot -o csd.preferred=client asks it and draws nothing under Hyprland), so Chromium-family browsers
 -- and Electron apps stay this list's. Only apps whose
 -- own close, minimize and zoom were seen to work in the nested session with the session's GTK button layout
 -- (close,minimize,maximize: on the left, packaging/dconf/grassfield.d/20-window-buttons.conf;
 -- tests/compositor/third_party_chrome.sh): Chromium's browser window (its --app web apps draw no frame and keep the
 -- plugin's titlebar), Obsidian (its controls top right, in its own order), Evince (GTK3 header bar) and Nautilus
--- (GTK4/libadwaita). Firefox (`firefox`; `org.mozilla.firefox` for the Flatpak) was added on the owner's rc1-22 screenshot,
--- 2026-11-04: with the plugin's bar it showed a second set of controls (Firefox's own, from the session's GTK button layout,
--- in its tab strip); that its own close, minimize and zoom work here, and that they draw as traffic lights with the
--- Grassfield GTK theme, is NOT VERIFIED (not installed on the dev machine; the owner checks it on the second machine).
--- The one entry that breaks the rule above (controls seen to work here), on the owner's evidence alone. Known risk: with
--- Firefox's "Title Bar" option on (Customize Toolbar), Firefox draws no controls and no plugin bar appears either, a window
--- with none (checked with a stand-in window: tagged, no strip). Firefox's default is its own frame (CSD), the case the
--- screenshot shows; a user who turns "Title Bar" on gets no controls until they turn it off again (or the list drops it).
+-- (GTK4/libadwaita). Firefox (`firefox`; `org.mozilla.firefox` for the Flatpak) joined on the owner's rc1-22 screenshot,
+-- 2026-11-04 (with the plugin's bar it showed a second set of controls, its own, in its tab strip) and left on the rc7 audit,
+-- 2026-11-08: listed, its "Title Bar" option (Customize Toolbar) left a window with no controls at all, since Firefox then
+-- draws none and the list withheld the plugin's. Firefox is GTK 3: its own frame asks KDE server-decoration for client mode
+-- (GTK's client-side decorations, an empty title bar widget) and the plugin tags it; its Title Bar mode asks for server mode
+-- and gets the plugin's titlebar (tests/compositor/frameless_chrome.sh F4, F5, with GTK 3 stand-ins; Firefox itself NOT
+-- VERIFIED: not installed on the dev machine, the owner checks it on the second machine).
 -- Google Chrome (`google-chrome`, the app id of its desktop file and the class Omarchy's own browser rule names,
 -- /usr/share/omarchy/default/hypr/apps/browser.lua) joined on the owner's 1.0.0-rc6 report: it is Chromium's code, so its frame
 -- and controls are Chromium's, seen here; not run on the dev machine (not installed): the owner checks it.
@@ -68,7 +71,7 @@ hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield
 -- controls: take it out of this list. Known limit (ADR-0015 amendment 2026-10-25): the GTK apps and Chromium draw the
 -- buttons of the GTK button layout, so a user layout without minimize or zoom leaves them a partial set (none without
 -- any button).
-hl.window_rule({ name = "gf-client-chrome-third-party", match = { class = "^(chromium|google-chrome|firefox|org\\.mozilla\\.firefox|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$" }, tag = "+grassfield-client-chrome" })
+hl.window_rule({ name = "gf-client-chrome-third-party", match = { class = "^(chromium|google-chrome|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus)$" }, tag = "+grassfield-client-chrome" })
 
 -- The Open and Save panels (grassfield-portal, ADR-0035 D-4) draw a sheet's frame and no lights; a panel takes the Wayland app
 -- id of the application it belongs to (its Dock tile, its menu bar), so its xdg tag alone says it is one: no plugin

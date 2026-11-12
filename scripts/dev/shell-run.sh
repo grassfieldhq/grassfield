@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # (Re)start grassfield-shell inside the nested instance only. Never against the owner's session (R3).
 #
+# The security process (ADR-0041 step 1, S2 and S3: `qs -p shell/security.qml`, the lock, idle, the sleep inhibitor, the
+# polkit agent and the secret sheets; in a real session grassfield-security.service) runs beside it with the same
+# environment, its own record (.dev/security.pid) and log (.dev/security.log). A plain run starts it when it is not running and leaves a running one alone, as systemd does: a
+# restart of the UI never touches the lock. `--security` (re)starts the security process only, as its unit's Restart=
+# would after a crash (the lock survival tests kill it and bring it back this way); the UI is left alone.
+#
 # Private D-Bus session bus (the default; --session-bus or GRASSFIELD_PRIVATE_BUS=0 keeps the owner's session bus for
 # the rare test that needs it): the shell owns org.freedesktop.Notifications without touching the owner's session, and
 # the bus starts nothing of the machine: scripts/dev/dev-bus.conf has no service folder, so no D-Bus activatable handler,
@@ -22,6 +28,8 @@ set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 
 # Same options as nested-up.sh (bare commands match the sandbox exclusion; env prefixes may not).
+only_security=0
+migrated=${GRASSFIELD_MIGRATED:-0}
 while [[ $# -gt 0 ]]; do
   case $1 in
     --private-bus) export GRASSFIELD_PRIVATE_BUS=1 ;;
@@ -33,7 +41,10 @@ while [[ $# -gt 0 ]]; do
     --menu-bridge) export GRASSFIELD_MENU_BRIDGE=${2:?--menu-bridge needs a path}; shift ;;
     --desktop-screen) export GRASSFIELD_DESKTOP_SCREEN=${2:?--desktop-screen needs an output name}; shift ;;
     --cursor-theme) export GRASSFIELD_CURSOR_THEME=${2:?--cursor-theme needs a theme name}; shift ;;
+    --migrated) migrated=1 ;;  # the UI runs the packaged form (ADR-0056): .dev/migrated/shell, rebuilt when shell/ changes. The key bindings
+                               # still address -p <repo>/shell: use `qs ipc --pid $(cat .dev/shell.pid)` (tests/visual/ipc.sh) with it.
     --unit-env) export GRASSFIELD_UNIT_ENV=1 ;;  # the shell gets grassfield-shell.service's own variables (file watcher off, as packaged)
+    --security) only_security=1 ;;  # (re)start the security process only (ADR-0041 S2), the UI left alone
     *) echo "shell-run: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -55,11 +66,52 @@ dev_nested_target "$dev" || exit 1
 sig=$DEV_NESTED_SIG
 sock=$DEV_NESTED_SOCK
 
+shell_dir=$root/shell
+# `--security` without --migrated while the UI runs the migrated tree (its record below) would start security from the source
+# tree, where the UI's lock requests never arrive: refused (review of #40, LOW-2).
+if ((only_security)) && [[ $migrated != 1 && -s $dev/ui.tree ]]; then
+  echo "shell-run: --security: the UI runs the migrated tree (.dev/ui.tree): add --migrated, or restart the UI without it" >&2
+  exit 1
+fi
+if [[ $migrated == 1 ]]; then
+  # The packaged form of the UI tree (scripts/dev/migrate-qs-imports.py, ADR-0056): file: URLs, so Qt's QML disk cache serves
+  # it. The parents of shell/ that dev code reaches (../VERSION, ../packaging, ../branding, ../.dev) are links to the repository.
+  # scripts/dev/migrated-tree.sh never deletes or rewrites a tree a process may use: a changed source is built into a fresh
+  # directory and .dev/migrated is repointed with one rename; its stamp names the tree content (security_sig below).
+  if ((only_security)); then
+    # `--security` never builds: the running UI addresses `<its tree>/security.qml`, so the security process starts from the tree
+    # the UI was started from (the stamp recorded in .dev/ui.tree when it started), even if shell/ changed since.
+    tree_stamp=$(cat "$dev/ui.tree" 2>/dev/null || true)
+    [[ $tree_stamp =~ ^[0-9a-f]{16}$ ]] || { echo "shell-run: --security --migrated: no record of the migrated tree the UI runs from (.dev/ui.tree): start the UI first (shell-run.sh --migrated)" >&2; exit 1; }
+  else
+    tree_stamp=$("$root/scripts/dev/migrated-tree.sh" "$root" "$dev") || { echo "shell-run: the migrated tree did not build" >&2; exit 1; }
+    [[ $tree_stamp =~ ^[0-9a-f]{16}$ ]] || { echo "shell-run: migrated-tree.sh printed no stamp: '$tree_stamp'" >&2; exit 1; }
+  fi
+  # Started and addressed by the REAL path of the stamped tree, built from the stamp migrated-tree.sh printed (it decided under
+  # its lock), never through the .dev/migrated link: a concurrent build could repoint the link after the lock was released, and
+  # Quickshell keeps the literal path, so the process would run another tree than the one security_sig names.
+  tree_dir=$dev/migrated-$tree_stamp
+  if [[ -L $tree_dir || ! -d $tree_dir ]]; then
+    hint=""; ((only_security)) && hint=" (the one the UI was started from: restart the UI)"
+    echo "shell-run: the migrated tree $tree_dir is gone or not a directory$hint" >&2
+    exit 1
+  fi
+  shell_dir=$tree_dir/shell
+fi
 # The shell runs as a session leader (setsid): its whole group stops, so that no orphaned qs stays behind. Only a record
-# that still matches its process is signalled (scripts/dev/pidfile.sh).
-dev_stop "$dev/shell.pid" grassfield-shell >/dev/null || exit 1
+# that still matches its process is signalled (scripts/dev/pidfile.sh). `--security` stops the security process instead
+# (below); the UI keeps running.
+if ((only_security)); then
+  dev_stop "$dev/security.pid" grassfield-security >/dev/null || exit 1
+else
+  dev_stop "$dev/shell.pid" grassfield-shell >/dev/null || exit 1
+fi
 
-launch=(qs -p "$root/shell" --log-times --no-color)
+# The security process runs from the same tree as the UI: the UI's lock requests (shell/security/lock LockClient) and the key
+# bindings address `<shell dir>/security.qml`, and an instance is identified by its path. With --migrated that is the migrated
+# tree's security.qml (kept verbatim by the migration, loaded through qs: as in the package); without it, the source tree's.
+security_qml=$shell_dir/security.qml
+launch=(qs -p "$shell_dir" --log-times --no-color)
 private=""
 bus_env=()
 bridge_sock=""
@@ -101,10 +153,13 @@ if [[ ${GRASSFIELD_PRIVATE_BUS:-1} == 1 ]]; then
   bus_env=(DBUS_SESSION_BUS_ADDRESS="$bus")
   private=1
 
-  # grassfield-menu-bridge on the private bus, (re)started with the shell.
-  dev_stop "$dev/menu-bridge.pid" grassfield-menu-bridge >/dev/null || exit 1
+  # grassfield-menu-bridge on the private bus, (re)started with the shell (not by `--security`: it serves the UI).
   bridge=${GRASSFIELD_MENU_BRIDGE:-$dev/build/grassfield-menu-bridge}
-  if [[ -x $bridge ]]; then
+  if ((only_security)); then
+    [[ -S $dev/run/menu-bridge.sock ]] && bridge_sock=$dev/run/menu-bridge.sock
+  elif ! dev_stop "$dev/menu-bridge.pid" grassfield-menu-bridge >/dev/null; then
+    exit 1
+  elif [[ -x $bridge ]]; then
     bridge_sock=$dev/run/menu-bridge.sock
     env -u GRASSFIELD_SESSION DBUS_SESSION_BUS_ADDRESS="$bus" GRASSFIELD_DEV=1 GRASSFIELD_MENU_BRIDGE_SOCKET="$bridge_sock" \
       setsid "$bridge" >"$dev/menu-bridge.log" 2>&1 </dev/null &
@@ -114,7 +169,7 @@ if [[ ${GRASSFIELD_PRIVATE_BUS:-1} == 1 ]]; then
   else
     echo "shell-run: no menu bridge ($bridge; build it with bridges/menu-bridge/build-direct.sh): T0 menus only" >&2
   fi
-else
+elif ((!only_security)); then
   # Without a private bus there is no bridge: a leftover one would serve the wrong shell.
   dev_stop "$dev/menu-bridge.pid" grassfield-menu-bridge >/dev/null || exit 1
 fi
@@ -155,6 +210,13 @@ timing=()
 # ... and its UnsetEnvironment= (review of 360d6fa): the QML and Qt plugin search paths and Quickshell's config selectors
 # of the calling environment are dropped. QML_IMPORT_PATH below is then only this tree's own module roots, standing in
 # for the packaged shell's Qt built-in import path (/usr/lib/qt6/qml).
+# Quickshell's crash handler is off in both units (packaging/systemd/grassfield-*.service, ADR-0041 S2), and here always:
+# with it, a SIGSEGV leaves the recorded process alive while a child it forked runs a relaunched shell, so .dev/*.pid no
+# longer names the running instance and the crash steps of tests/security/reload_locked.sh (ui-crash) see no exit. As in
+# the units' LimitCORE=0 (the opus delta review of 122f8d67), both processes started below write no core file: the journal
+# keeps the crash (coredumpctl list), without a stack (run qs by hand to debug a crash with a core).
+crash_env=(QS_DISABLE_CRASH_HANDLER=1)
+ulimit -c 0
 unit_unset=()
 if [[ ${GRASSFIELD_UNIT_ENV:-} == 1 ]]; then
   for var in $(sed -n 's/^UnsetEnvironment=//p' "$root/packaging/systemd/grassfield-shell.service"); do
@@ -229,9 +291,46 @@ if jq -e '.dock.folders == null' "$cfg" >/dev/null 2>&1; then
   jq '.dock.folders = []' "$cfg" >"$cfg.new" && mv "$cfg.new" "$cfg"
 fi
 
+# The security process (ADR-0041 S2): the same environment as the shell below (the nested compositor, the private bus, the
+# dev config and state, GRASSFIELD_DEV=1), its own record and log. Started when it is not running (a plain run) or always
+# (`--security`, after the stop above); a restart of the UI leaves a running one alone, unless the settings it was started
+# with changed (the language, the visual fixtures and fixed time, the private bus, the unit environment, the L2 PAM opt-in,
+# the secret sheets' test socket since S3: .dev/security.sig), as when the visual suite switches language: then it is
+# restarted too.
+security_sig="migrated=$migrated tree=${tree_stamp:-} lang=${GRASSFIELD_LANG:-} fixtures=${GRASSFIELD_VISUAL_FIXTURES:-} time=${GRASSFIELD_FIXED_TIME:-} bus=$private unit=${GRASSFIELD_UNIT_ENV:-} pam=${GRASSFIELD_DEV_ALLOW_PAM:-} prompter=${GRASSFIELD_PROMPTER_SOCKET:-}"
+start_security() {
+  # The security modules read no GRASSFIELD_* variable but the dev gate's (ADR-0019): the lock finds the UI's wallpaper.json
+  # under $XDG_STATE_HOME/grassfield, here a link to the dev state the shell writes (.dev/state).
+  mkdir -p "$dev/security-xdg-state"
+  ln -sfn "$dev/state" "$dev/security-xdg-state/grassfield"
+  env "${unit_unset[@]}" "${timing[@]}" "${crash_env[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/open-shims:$PATH" \
+    WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" XDG_STATE_HOME="$dev/security-xdg-state" \
+    GRASSFIELD_STATE_HOME="$dev/state" GRASSFIELD_CONFIG_HOME="$dev/config" GRASSFIELD_DEV=1 \
+    GRASSFIELD_PRIVATE_BUS="$private" \
+    QT_QPA_PLATFORM=wayland QT_NO_XDG_DESKTOP_PORTAL=1 QML_IMPORT_PATH="$root/ui:$dev/build/qml" GRASSFIELD_TRANSLATIONS_DIR="$dev/translations" \
+    setsid qs -p "$security_qml" --log-times --no-color >"$dev/security.log" 2>&1 </dev/null &
+  local security_pid=$!
+  dev_record_pid "$dev/security.pid" "$security_pid"
+  printf '%s\n' "$security_sig" >"$dev/security.sig"
+  echo "shell-run: grassfield-security pid $security_pid (log .dev/security.log)"
+}
+if ((only_security)); then
+  start_security
+  exit 0
+fi
+if dev_live_pid "$dev/security.pid" >/dev/null; then
+  if [[ $(cat "$dev/security.sig" 2>/dev/null) != "$security_sig" ]]; then
+    echo "shell-run: the security process was started with other settings; restarting it too" >&2
+    dev_stop "$dev/security.pid" grassfield-security >/dev/null || exit 1
+    start_security
+  fi
+else
+  start_security
+fi
+
 # The open shims (gio, xdg-open, gtk-launch -> open-policy.sh) come first on the shell's PATH: QProcess resolves a program
 # on the PATH of its parent, so code that runs `gio open` in a Process (shell/desktop/DesktopFiles.qml) gets the policy too.
-env "${unit_unset[@]}" "${timing[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/open-shims:$PATH" GRASSFIELD_MENU_BRIDGE_SOCKET="$bridge_sock" \
+env "${unit_unset[@]}" "${timing[@]}" "${crash_env[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/open-shims:$PATH" GRASSFIELD_MENU_BRIDGE_SOCKET="$bridge_sock" \
   GRASSFIELD_DESKTOP_DIR="$desktop_dir" WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" \
   GRASSFIELD_STATE_HOME="$dev/state" GRASSFIELD_CONFIG_HOME="$dev/config" GRASSFIELD_DEV=1 \
   GRASSFIELD_PRIVATE_BUS="$private" GRASSFIELD_SETTINGS_CMD="$settings_cmd" GRASSFIELD_PREVIEW_CMD="$preview_cmd" \
@@ -242,4 +341,7 @@ env "${unit_unset[@]}" "${timing[@]}" "${bus_env[@]}" PATH="$root/scripts/dev/op
   setsid "${launch[@]}" >"$dev/shell.log" 2>&1 </dev/null &
 shell_pid=$!
 dev_record_pid "$dev/shell.pid" "$shell_pid"
+# The tree the UI runs from, for `--security` (above): written once the new UI is started (a refused stop above leaves the old UI
+# and its record together; review of #40, LOW-1), removed when the UI runs the source tree.
+if [[ $migrated == 1 ]]; then printf '%s\n' "$tree_stamp" >"$dev/ui.tree"; else rm -f "$dev/ui.tree"; fi
 echo "shell-run: grassfield-shell pid $shell_pid (log .dev/shell.log${private:+, private bus: .dev/bus.address}${bridge_sock:+, menu bridge: .dev/menu-bridge.log})"

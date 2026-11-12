@@ -130,8 +130,9 @@ private:
     QPointer<KioPrompts> m_prompts; // gone when Files quits while a job still runs: the safe answer then
 };
 
-// KIO asks before running a program it does not trust: Files never runs one (its LaunchGuard decides first; this is the
-// second guard, docs/specs/security.md "Files never runs what it opens").
+// KIO asks before running a program it does not trust: KIO never runs one for Files (its LaunchGuard decides first and runs
+// programs itself, after its own checks and sheet; this is the second guard, docs/specs/security.md "Files opens apps the
+// Gatekeeper way").
 class GrassfieldUntrustedProgramHandler : public KIO::UntrustedProgramHandlerInterface
 {
     Q_OBJECT

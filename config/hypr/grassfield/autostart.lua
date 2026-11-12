@@ -27,10 +27,10 @@ hl.on("hyprland.start", function()
   -- The Settings portal backend (ADR-0035 D-8) is started next, without waiting for it (--no-block): the shell never waits
   -- on it, and an app that reads the portal before it is up starts it by D-Bus activation and gets its values.
   --
-  -- The security process (ADR-0041 step 1, S1: grassfield-security.service, a second Quickshell process beside the UI
-  -- that hosts nothing moved yet; the lock, idle, the sleep inhibitor and the polkit agent move into it at S2 and S3) is
-  -- started just before the shell, without waiting for it (--no-block): the shell never waits on it, and until S2 the
-  -- shell keeps every security module.
+  -- The security process (ADR-0041 step 1, S2: grassfield-security.service, a second Quickshell process beside the UI
+  -- that hosts the lock, idle and the sleep inhibitor; the polkit agent moves into it at S3) is started just before the
+  -- shell, without waiting for it (--no-block): the shell never waits on it, and reads the session as locked until the
+  -- security process has published its first state.
   --
   -- grassfield-shell runs as a systemd user service so it restarts on crash (gate R1). It starts even when the
   -- import, the bridge, the prompter, the handover, the portal backend or the security process failed (";"): the bar then

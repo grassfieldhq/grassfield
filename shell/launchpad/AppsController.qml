@@ -340,8 +340,13 @@ Scope {
     }
 
     // IPC: qs ipc call apps <toggle|open|close|status>. The hot-corner action `apps` calls toggle().
+    // False while shell.qml's `early` handler answers for this target (a surface built by its LazyLoader, ADR-0056
+    // amendment): two handlers for one target warn and only one is used, so the loader switches them over in order.
+    property bool ipcEnabled: true
+
     IpcHandler {
         target: "apps"
+        enabled: root.ipcEnabled
 
         function toggle(): void {
             root.toggle();

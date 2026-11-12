@@ -5,6 +5,7 @@
 // its degraded mode because no `grassfield` capabilities event is ever posted.
 
 #include "AppmenuServer.hpp"
+#include "CapturePrivacy.hpp"
 #include "ClientChrome.hpp"
 #include "CursorRefresh.hpp"
 #include "DesktopFocus.hpp"
@@ -19,6 +20,7 @@
 #include "Tiling.hpp"
 #include "Titlebar.hpp"
 #include "TopClamp.hpp"
+#include "ToplevelDrag.hpp"
 #include "WindowRim.hpp"
 #include "core/Notices.hpp"
 
@@ -267,11 +269,13 @@ namespace {
         step("top clamp", [] { gf::topClamp::stop(); });     // the clamp scheduled after a drag removed (its callback is in this library)
         step("client chrome", [] { gf::chrome::stop(); });   // per-window toplevel listeners removed
         step("frame probe", [] { gf::frameProbe::stop(); }); // presentation listeners removed
+        step("capture privacy", [] { gf::capturePrivacy::stop(); }); // render.pre and screen-share listeners and the 1 s end-check timer removed
         step("desktop focus", [] { gf::desktopFocus::stop(); }); // no press or commit may reach the policy any more
         step("minimizer", [] { gf::minimizer::stop(); }); // before the Lua entry points go: animations complete, snapshots dropped
         step("overview", [] { gf::overviewer::stop(); });   // every window back to normal rendering, transformers detached
         step("stages", [] { gf::stager::stop(); });          // strip windows shown normally, input unblocked, transformers detached
         step("overview focus", [] { gf::overviewFocus::stop(); }); // a waiting request ends "unavailable"; watches and timer removed
+        step("toplevel drag", [] { gf::toplevelDrag::stop(); });   // before tiling: its preview goes; logger, listeners and global removed
         step("tiling", [] { gf::tiler::stop(); });                 // records forgotten, its callback removed, "unavailable" posted
         step("cursor refresh", [] { gf::cursorRefresh::stop(); }); // trailing-refresh timer removed (its callback is in this library)
         step("layer pointer", [] { gf::layerPointer::stop(); });   // layer listener and event-loop callback removed
@@ -329,6 +333,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     const bool ok = gf::guarded("PLUGIN_INIT", [&] {
         gf::ipc::startEvents(); // before anything can post (spec FR24)
         registerListeners();
+        // SEC-01, before anything draws a window's pixels: without its listeners the content of a window hidden from captures
+        // is never drawn outside Hyprland's black box (core/CapturePrivacy.hpp). Not a capability: nothing to advertise.
+        bool capturePrivacyOk = false;
+        gf::guarded("capture privacy start", [&] { capturePrivacyOk = gf::capturePrivacy::start(); });
+        if (!capturePrivacyOk)
+            gf::log(Log::WARN, "capture privacy listeners failed to register; protected windows' content stays inside their box");
         if (!gf::minimizer::start())
             gf::log(Log::WARN, "minimize render hooks failed to register; minimize not advertised");
         // Optional feature: a failure here only drops overview from the capabilities (the shell keeps thumbnails).
@@ -406,6 +416,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         if (!tilingOk) {
             gf::guarded("tiling rollback", [] { gf::tiler::stop(); });
             gf::log(Log::WARN, "tiling listeners failed to register; tiling-arrange not advertised");
+        }
+        // Optional feature (ADR-0036 amendment 2026-11-08, URR-030): without it no xdg_toplevel_drag_manager_v1 is advertised and a
+        // browser tab torn off stays where it came off, as before.
+        bool toplevelDragOk = false;
+        gf::guarded("toplevel drag start", [&] { toplevelDragOk = gf::toplevelDrag::start(); });
+        if (!toplevelDragOk) {
+            gf::guarded("toplevel drag rollback", [] { gf::toplevelDrag::stop(); });
+            gf::log(Log::WARN, "toplevel drag global failed to start; toplevel-drag not advertised");
         }
         if (!gf::ipc::registerAll())
             gf::log(Log::WARN, "some IPC entry points failed to register");

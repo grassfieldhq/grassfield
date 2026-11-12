@@ -1,5 +1,6 @@
 #include "Titlebar.hpp"
 
+#include "CapturePrivacy.hpp"
 #include "ClientChrome.hpp"
 #include "DeferredFocus.hpp"
 #include "Ipc.hpp"
@@ -967,7 +968,7 @@ void CGrassfieldTitlebar::drawTitlebar(const PHLMONITOR& monitor, float alpha) {
     //    (drawBar). The pointer is checked again here: the window may have moved or gone under a pointer that has not moved
     //    since.
     const bool hovered = pointerInput().hovered == this && g_pInputManager && drawnInPlace(w) && buttonGroupContains(g_pInputManager->getMouseCoordsInternal());
-    drawBar(w, bar, scale, rounding, power, alpha, hovered, gf::tiler::inSplit(w)); // a member's lights are those of full screen (D56)
+    drawBar(monitor, w, bar, scale, rounding, power, alpha, hovered, gf::tiler::inSplit(w)); // a member's lights are those of full screen (D56)
 
     // 2. The surface's rounded top corners, under the surface: Hyprland cuts them away with the window's rounding, so the
     //    bar colour fills them, then the content's own pixels are drawn there unrounded (macOS: bar and content are one
@@ -978,11 +979,12 @@ void CGrassfieldTitlebar::drawTitlebar(const PHLMONITOR& monitor, float alpha) {
         CBox right{bar.x + bar.w - rounding, bar.y + bar.h, rounding, rounding};
         addRect(left.scale(scale).round(), bgColor, 0, power);
         addRect(right.scale(scale).round(), bgColor, 0, power);
-        drawContentCorners(w, bar, rounding, scale, alpha);
+        drawContentCorners(monitor, w, bar, rounding, scale, alpha);
     }
 }
 
-void CGrassfieldTitlebar::drawBar(const PHLWINDOW& w, const CBox& bar, float scale, double rounding, float power, float alpha, bool hovered, bool fullscreen) {
+void CGrassfieldTitlebar::drawBar(const PHLMONITOR& monitor, const PHLWINDOW& w, const CBox& bar, float scale, double rounding, float power, float alpha, bool hovered,
+                                  bool fullscreen) {
     const auto appearance = gf::state().appearance.current;
     const auto palette    = theme::titlebarPalette(appearance);
     const auto bgColor    = toColor(palette.background, alpha);
@@ -1016,9 +1018,11 @@ void CGrassfieldTitlebar::drawBar(const PHLWINDOW& w, const CBox& bar, float sca
     if (hovered)
         drawGlyphs(bar, scale, alpha, fullscreen, fixed, sized);
 
-    // Title, centered on the bar, never over the buttons.
+    // Title, centered on the bar, never over the buttons. None on a window hidden from captures while this display is
+    // captured (SEC-01): the bar lies outside Hyprland's black box and the title is the window's own text, so the bar is
+    // blank in the capture, and on screen meanwhile (core/CapturePrivacy.hpp).
     const int maxWidthPx = static_cast<int>(std::floor(tb::maxTitleWidth(bar.w) * scale));
-    if (w->m_title.empty() || maxWidthPx <= 0)
+    if (w->m_title.empty() || maxWidthPx <= 0 || !gf::capturePrivacy::mayDrawContent(w, monitor))
         return;
 
     if (!m_title.texture || m_title.text != w->m_title || m_title.scale != scale || m_title.maxWidthPx != maxWidthPx || m_title.appearance != appearance) {
@@ -1083,10 +1087,12 @@ void CGrassfieldTitlebar::drawGlyphs(const CBox& bar, float scale, float alpha, 
     }
 }
 
-void CGrassfieldTitlebar::drawContentCorners(const PHLWINDOW& w, const CBox& bar, double rounding, float scale, float alpha) {
+void CGrassfieldTitlebar::drawContentCorners(const PHLMONITOR& monitor, const PHLWINDOW& w, const CBox& bar, double rounding, float scale, float alpha) {
     // Only where the surface's texture maps 1:1 onto its box: no overview or Stages transform, no buffer transform, no
-    // viewport crop. Elsewhere the bar colour drawn before stays (the former look).
-    if (!drawnInPlace(w))
+    // viewport crop. Elsewhere the bar colour drawn before stays (the former look). Not the content of a window hidden
+    // from captures while this display is captured (SEC-01): Hyprland's black box rounds these corners away, so its pixels
+    // there would be in the capture; the bar colour stays (core/CapturePrivacy.hpp).
+    if (!drawnInPlace(w) || !gf::capturePrivacy::mayDrawContent(w, monitor))
         return;
     const auto view    = w->wlSurface();
     const auto surface = view ? view->resource() : nullptr;
@@ -1590,7 +1596,7 @@ void CGrassfieldTitlebar::drawRevealed() {
                 continue;
             bar.translate(-mon->m_position);
             const bool hovered = pointerInput().hovered == deco && g_pInputManager && deco->buttonGroupContains(g_pInputManager->getMouseCoordsInternal());
-            deco->drawBar(w, bar, mon->m_scale, 0.0, w->roundingPower(), 1.F, hovered, true); // square: it spans the monitor
+            deco->drawBar(mon, w, bar, mon->m_scale, 0.0, w->roundingPower(), 1.F, hovered, true); // square: it spans the monitor
         }
     });
 }

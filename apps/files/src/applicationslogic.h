@@ -184,4 +184,43 @@ QStringList lookupLists(const QStringList &configLocations, const QStringList &d
 // that order) counts as a choice unless it is Omarchy's shipped one (its lists under `omarchyDir`); the entries the file has
 // are kept, and a linked file is left as it is (only Change All… writes through a link). Returns whether it was written.
 bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
+
+// Bundled apps (ADR-0055 D-6): Sanaga (the web: http, https, text/html, xhtml) and Notes (Markdown) are the session's defaults
+// once, on a fresh session, and the person's later choice always wins.
+struct BundledGroup {
+    QString name;      // "web" or "notes": the key of its record
+    QString desktopId; // sanaga.desktop, grassfield-notes.desktop
+    QStringList types;
+};
+QList<BundledGroup> bundledGroups();
+// Whether an Exec= line runs a launcher that resolves the default again (omarchy-*, xdg-*, gio, a shell, env...): never a browser
+// to choose or to seed (the fork storm of 2026-10-30). The line is read with its quotes; uwsm-app and `uwsm app [--]` only start
+// the program they are given, which is the one judged. An empty or unreadable line is a launcher.
+bool isLauncherExec(const QString &exec);
+// The text without the [Default Applications] entries of `types` whose first application is `desktopId` (any application when
+// `desktopId` is empty); the rest as it was.
+QString withoutDefaults(const QString &listText, const QStringList &types, const QString &desktopId);
+// The record's "key=value" lines; false when a line is neither blank, a comment nor key=value (a corrupt record).
+bool parseState(const QString &text, QHash<QString, QString> *out);
+// The seed of the bundled apps, `stateFile` being the record (<state dir>/default-apps.state): "<group>.state" = seeded | done |
+// user, "<group>.<type>" = what the user's own lists named for the type when the state was recorded ("-" for nothing), and
+// "<group>.chosen" = the application a user choice named. Per group:
+//  - first time, the desktop file installed and its Exec no launcher: the group's types go to `configDir`/grassfield-mimeapps.list
+//    when no list the lookup reads names one for them, or only Omarchy's own (chromium.desktop, omarchy-browser.desktop) for the
+//    web; a choice of any other application keeps the whole group out for good ("done"). Entries of the session list that already
+//    name the group's own application are not a choice;
+//  - "seeded": watched are the user's own lists (the configuration directory's mimeapps.list and desktop lists, never the system's
+//    or the data directories') and the session list. A different value in the user's lists (xdg-settings outside the session,
+//    omarchy default browser, a browser's "make default"), or a session-list entry that is no more ours (Change All… in Files),
+//    is the person's choice: the seeded entries go from the session list (an entry the person made stays) and the group is
+//    "done". Grassfield never writes, edits or deletes a line of the user's own lists (`xdg-mime default` and `gio mime` lines
+//    for Sanaga or Notes are the person's and survive every start);
+//  - "user" (Settings or the xdg-settings stand-in wrote the choice): the same watch; the lists agreeing with the choice only move
+//    the baseline, any other value is followed (the session entries go) and the group is "done";
+//  - "done", an unknown value, or a record without its baseline: nothing.
+// Additions to the session list (a first seed, entries put back) are written after the record, so that a failed write never leaves
+// entries that read as the person's own; removals (a group the person took over) before it, so that a failed write never leaves
+// our entries behind for a group that is no more ours. An unreadable list, a list or record that is corrupt, a linked session
+// list: nothing is decided and false is returned. True when a file was written.
+bool seedBundledApps(const QString &configDir, const QString &stateFile, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
 } // namespace DefaultApps

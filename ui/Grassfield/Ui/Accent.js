@@ -31,8 +31,23 @@ function resolve(setting, dark, tokens) {
     return {accent: group[name], accentText: group[name + "Text"], accentInk: ink || group[name]};
 }
 
-// A copy of palette `base` with the accent applied (`accentInk` the palette's own accent for the default). The highlight
-// colour (text selection, Automatic) is the accent.
+// Accent text on glass (`accentGlass`): the accent ink mixed toward the palette's text colour by `mix` (sRGB, rounded to a channel
+// value), so that it holds 4.5:1 over the material's tint floor on every wallpaper (A2); macOS draws accent text on vibrancy with
+// a legibility-adjusted accent, never the raw one. "#rrggbb"; the ink itself when a colour cannot be read.
+function glassInk(ink, text, mix) {
+    const a = rgb(ink);
+    const b = rgb(text);
+    if (!a || !b)
+        return ink;
+    const h = i => {
+        const v = Math.round((a[i] + (b[i] - a[i]) * mix) * 255);
+        return (v < 16 ? "0" : "") + v.toString(16);
+    };
+    return "#" + h(0) + h(1) + h(2);
+}
+
+// A copy of palette `base` with the accent applied (`accentInk` the palette's own accent for the default; `accentGlass` its
+// legibility-adjusted variant for text on glass). The highlight colour (text selection, Automatic) is the accent.
 function apply(base, setting, dark, tokens) {
     const c = Object.assign({}, base);
     const a = resolve(setting, dark, tokens);
@@ -43,6 +58,7 @@ function apply(base, setting, dark, tokens) {
     } else {
         c.accentInk = c.accent;
     }
+    c.accentGlass = glassInk(c.accentInk, c.text, dark ? tokens.glassAccentInkMixDark : tokens.glassAccentInkMixLight);
     return c;
 }
 

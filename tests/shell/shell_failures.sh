@@ -131,8 +131,8 @@ desc="nonsense values fall back to the defaults (3 in 600 s): two failures stop 
 check test "$(stops)" = 0 -a "$(ledger)" = "10 11 "
 # 6. Static: the unit starts this script through OnFailure= of the shell, hardened, installed by the PKGBUILD.
 u=$root/packaging/systemd/grassfield-shell-failed.service
-desc="grassfield-shell.service names the counter in OnFailure= next to Omarchy's sleep lock, with the SQ-2 A backstop (10 starts in 5 minutes)"
-check bash -c 'grep -qx "OnFailure=omarchy-sleep-lock.service grassfield-shell-failed.service" "$1" && grep -qx "StartLimitIntervalSec=300" "$1" && grep -qx "StartLimitBurst=10" "$1" && grep -qx "Restart=always" "$1"' _ "$root/packaging/systemd/grassfield-shell.service"
+desc="grassfield-shell.service names the counter as its only OnFailure= (ADR-0041 S2: Omarchy's sleep lock is armed by grassfield-security.service, which holds the inhibitor), with the SQ-2 A backstop (10 starts in 5 minutes)"
+check bash -c 'grep -qx "OnFailure=grassfield-shell-failed.service" "$1" && grep -qx "StartLimitIntervalSec=300" "$1" && grep -qx "StartLimitBurst=10" "$1" && grep -qx "Restart=always" "$1"' _ "$root/packaging/systemd/grassfield-shell.service"
 desc="the counter's unit is a oneshot of the Grassfield session only, hardened, with the shared runtime directory"
 check bash -c 'grep -qx "Type=oneshot" "$1" && grep -qx "ConditionEnvironment=GRASSFIELD_SESSION=1" "$1" && grep -qx "ExecStart=/usr/lib/grassfield/grassfield-shell-failed" "$1" && grep -qx "RuntimeDirectory=grassfield" "$1" && grep -qx "RuntimeDirectoryPreserve=yes" "$1" && grep -qx "NoNewPrivileges=yes" "$1" && grep -qx "ProtectSystem=strict" "$1" && grep -qx "PrivateNetwork=yes" "$1" && grep -qx "SystemCallFilter=@system-service" "$1" && grep -qx "CapabilityBoundingSet=" "$1" && ! grep -q "^Restart=" "$1"' _ "$u"
 desc="the unit clears the script's three test variables, so the session never honours them (opus review of b1d826b, finding 3)"

@@ -1070,6 +1070,7 @@ Window {
         id: desktopPage
         DesktopPage {
             store: cfg
+            backend: root.backend
             onScreenCornersRequested: screenCornersSheet.open()
         }
     }

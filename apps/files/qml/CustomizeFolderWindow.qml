@@ -137,6 +137,7 @@ Window {
                     oversample: Tokens.filesThumbnailOversample
                     folderColor: root.pickedColor
                     folderGlyph: root.glyph
+                    solidMaterial: true
                 }
             }
 

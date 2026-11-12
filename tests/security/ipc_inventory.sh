@@ -3,6 +3,8 @@
 # exactly the table in docs/specs/security.md "IPC surface", and each function is what its class says:
 #   action    has a real-session caller (a binding or gesture in config/hypr/grassfield/*.lua, a session helper in
 #             packaging/bin, packaging/shims or packaging/session-bin, a screen corner in shell/desktop/HotCornerActions.js,
+#             the UI's calls into the security process in shell/services/LockClient.js (ADR-0041 S2: the UI asks for a lock
+#             and leases the screen saver inhibitors there, the same `["target", "function"]` table form),
 #             or a Grassfield app in apps/*/src whose call is built on apps/runmode.h shellIpcArgs(), the target and the
 #             function as the first two QStringLiterals of the QStringList appended to it) and is not gated
 #   dev       refused outside a dev session: its body checks the one dev rule (ADR-0019) by an exact gate, directly or
@@ -858,6 +860,8 @@ def check(files):
     # counts only on a line that runs `qs ipc` (comments say "call" too).
     bindings = files.get("config/hypr/grassfield/bindings.lua", "")
     callers = set(re.findall(r'shell\("(\w+)",\s*"(\w+)', bindings))
+    # The lock key goes to the security instance (ADR-0041 S2): bindings.lua's security() helper.
+    callers |= set(re.findall(r'security\("(\w+)",\s*"(\w+)', bindings))
     callers |= {("switcher", f) for f in re.findall(r'(?:switcher_request|in_switcher_else)\("(\w+)"', bindings)}
     for path in sorted(files):
         if path.startswith(("config/hypr/grassfield/", "packaging/bin/", "packaging/shims/", "packaging/session-bin/")):
@@ -867,6 +871,7 @@ def check(files):
                 if "qs ipc" in line or (path.endswith(".lua") and "qs_ipc .." in line):
                     callers |= set(re.findall(r"call (\w+) (\w+)", line))
     callers |= set(re.findall(r'\["(\w+)",\s*"(\w+)"\]', files.get("shell/desktop/HotCornerActions.js", "")))
+    callers |= set(re.findall(r'\["(\w+)",\s*"(\w+)"\]', files.get("shell/services/LockClient.js", "")))
     # A Grassfield app: `QStringList{QStringLiteral("qs")} + shellIpcArgs() + QStringList{QStringLiteral("<target>"),
     # QStringLiteral("<function>"), ...}` or the same with `ipc` held in a variable: the list appended right after the
     # shellIpcArgs() result names the call. A file that does not build on shellIpcArgs() calls nothing.
@@ -963,7 +968,7 @@ def selftest(files):
         ("a security gate with a look-alike function", LOCK_QML, "devHooks: " + SEC_CALL, "devHooks: " + SEC_CALL.replace("RunMode.dev(", "RunMode.devx(")),
         ("a security gate behind a look-alike alias", idle, "devHooks: " + SEC_CALL, "devHooks: My" + SEC_CALL),
         ("a security module on the Mode singleton", idle, "devHooks: " + SEC_CALL, "devHooks: Mode.dev"),
-        ("a security module importing qs.lib", aa, "import qs.services\n", "import qs.services\nimport qs.lib\n"),
+        ("a security module importing qs.lib", aa, "import qs.security\n", "import qs.security\nimport qs.lib\n"),
         ("a security module on a local RunMode.js", LOCK_QML, 'import "../../lib/RunMode.js" as RunMode', 'import "RunMode.js" as RunMode'),
         ("a non-security gate on a look-alike property", bt, "if (!Mode.dev)", "if (!Mode.devMode)"),
         ("a non-security gate behind a look-alike singleton", "shell/platform/Capabilities.qml", "if (!Mode.dev)", "if (!MyMode.dev)"),

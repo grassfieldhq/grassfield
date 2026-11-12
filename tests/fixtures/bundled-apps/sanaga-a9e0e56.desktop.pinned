@@ -1,0 +1,30 @@
+[Desktop Entry]
+Type=Application
+Name=Sanaga
+GenericName=Web Browser
+GenericName[fr]=Navigateur web
+Comment=A fast, light web browser
+Comment[fr]=Un navigateur web léger et rapide
+Exec=sanaga %U
+Icon=sanaga
+Terminal=false
+StartupWMClass=sanaga
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+Keywords=web;browser;internet;mobile;simulator;
+Actions=new-window;work-profile;welcome;
+
+[Desktop Action new-window]
+Name=New Window
+Name[fr]=Nouvelle fenêtre
+Exec=sanaga --new-window
+
+[Desktop Action work-profile]
+Name=Open with the "Work" profile
+Name[fr]=Ouvrir avec le profil « Travail »
+Exec=sanaga --profile Travail
+
+[Desktop Action welcome]
+Name=Open the welcome page
+Name[fr]=Ouvrir la page de bienvenue
+Exec=sanaga sanaga://welcome

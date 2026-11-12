@@ -398,7 +398,16 @@ TEST(UnicodeNames, DisplayNameWritesOutBidiControlsAndBreaks)
     EXPECT_EQ(displayName(QStringLiteral("a") + QChar(0x2028) + QStringLiteral("b") + QChar(0x2029)), QStringLiteral("a<U+2028>b<U+2029>"));
     EXPECT_EQ(displayName(QString(QChar(0x2066)) + QChar(0x2069)), QStringLiteral("<U+2066><U+2069>"));
     EXPECT_EQ(displayName(QStringLiteral("two\r\nlines")), QString(QStringLiteral("two") + QChar(0x23CE) + QStringLiteral("lines")));
-    EXPECT_EQ(displayName(QString(QChar(0x200E)) + QStringLiteral("kept")), QString(QChar(0x200E)) + QStringLiteral("kept"));
+    // The marks too (Files' fifth security check, V1): RLM + "pdf." + RLM + "Invoice" was drawn "Invoice.pdf", ALM the same.
+    EXPECT_EQ(displayName(QString(QChar(0x200E)) + QStringLiteral("Tool")), QStringLiteral("<U+200E>Tool"));
+    EXPECT_EQ(displayName(QString(QChar(0x200F)) + QStringLiteral("pdf.") + QChar(0x200F) + QStringLiteral("Invoice")),
+              QStringLiteral("<U+200F>pdf.<U+200F>Invoice"));
+    EXPECT_EQ(displayName(QString(QChar(0x061C)) + QStringLiteral("pdf.") + QChar(0x061C) + QStringLiteral("Invoice")),
+              QStringLiteral("<U+061C>pdf.<U+061C>Invoice"));
+    EXPECT_EQ(displayName(QString(QChar(0x200F)) + QStringLiteral("jpg.") + QChar(0x200F) + QStringLiteral("Holiday")),
+              QStringLiteral("<U+200F>jpg.<U+200F>Holiday"));
+    // Right-to-left letters themselves stay (an Arabic or Hebrew name is shown as it is).
+    EXPECT_EQ(displayName(QString(QChar(0x05D0)) + QChar(0x0628)), QString(QChar(0x05D0)) + QChar(0x0628));
     EXPECT_EQ(displayName(QStringLiteral("say \"hi\" \\ there")), QStringLiteral("say \"hi\" \\ there"));
 }
 

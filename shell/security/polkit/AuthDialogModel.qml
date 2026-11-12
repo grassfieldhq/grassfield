@@ -204,7 +204,8 @@ QtObject {
     }
 
     // What the held sheet says, with the time the request arrived (the message names the program for pkexec).
-    // `arrivedAt`: a Date (or milliseconds), only formatted. `why`: "locked", "saver" (the screen saver showed), "queued" (it
+    // `arrivedAt`: a Date (or milliseconds), only formatted. `why`: "locked", "saver" (the screen saver showed), "starting"
+    // (the security process had just started and had not seen the user active yet: SheetSession.starting), "queued" (it
     // followed another request in the same sheet) or "unlock".
     function heldNotice(arrivedAt: var, why: string): string {
         const at = Qt.formatTime(new Date(arrivedAt), Qt.locale().timeFormat(Locale.ShortFormat));
@@ -212,6 +213,8 @@ QtObject {
             return qsTr("This request arrived at %1, while the screen was locked. Click the sheet to answer it.").arg(at);
         if (why === "saver")
             return qsTr("This request arrived at %1 and waited while the screen saver was on. Click the sheet to answer it.").arg(at);
+        if (why === "starting")
+            return qsTr("This request arrived at %1, while Grassfield was starting. Click the sheet to answer it.").arg(at);
         if (why === "queued")
             return qsTr("This request arrived at %1, right after another one. Click the sheet to answer it.").arg(at);
         return qsTr("This request arrived at %1, just as the screen was unlocked. Click the sheet to answer it.").arg(at);

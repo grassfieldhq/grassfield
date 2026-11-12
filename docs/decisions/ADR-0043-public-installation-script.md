@@ -66,7 +66,9 @@ after a plan, so even the one-liner stops at a screen listing every change.
 
 ### d. What it does, in order, and what it changes
 Root is refused **before** the log is opened. Read-only **preflight** (all problems listed at once, each with its exact fix,
-exit 1, nothing changed): sudo; Arch x86_64; Omarchy ≥ 4.0.6 (`pacman -Q omarchy`); `[omarchy]` before `[extra]` and
+exit 1, nothing changed): sudo; Arch x86_64; Omarchy ≥ 4.0.6 (`pacman -Q omarchy`), or, when `omarchy-dev` is
+installed (checked first, since pacman answers `omarchy` through its provides), `omarchy-dev` ≥ 4.0.0.r7608 by
+`vercmp` (PR #17); `[omarchy]` before `[extra]` and
 quickshell offered by `[omarchy]` (the repository field is parsed with `LC_ALL=C`: a French pacman prints "Dépôt"), never the
 installed 0.3.2-N build; an existing `[grassfield]` section holding anything but the Include is refused; no `db.lck`, no
 running Omarchy update; ≥ 4 GiB free; two HEAD requests to the host; `checkupdates` (required: it reads a copy of the
@@ -161,7 +163,7 @@ and a signed `[grassfield]` repository built with a throwaway key, `render.py` r
 | IN1 | Grassfield as the next-login session at install? | yes (`--session grassfield`) · no (`--session omarchy`) | yes | **yes, by default**; `--session omarchy` opts out; uninstall restores Omarchy |
 | IN2 | Login and boot themes (`grassfield-login-themes`) | not by default · install and activate | no (recommended) | **install AND activate by default**; `--without-login-themes` opts out; install and uninstall handle the SDDM drop-in and Plymouth, the boot image rebuilt the way Omarchy does; the snapshot does not cover `/boot` and no image is copied or restored: a failed rebuild sets the previous theme back and runs Omarchy's rebuild again, and a second failure stops with the retry command and Limine's menu as the way out |
 | IN3 | Command published | download-check-run · `curl \| bash` · both | download-check-run | **both**: the one-liner first, the download-check-run form below it; the docs say what each protects against |
-| IN4 | Minimum free space and Omarchy floor | 4 GiB, 4.0.6 | as built | **as built** |
+| IN4 | Minimum free space and Omarchy floor | 4 GiB, 4.0.6 (dev builds: 4.0.0.r7608) | as built | **as built** |
 | IN5 | The `[omarchy]` order | print the fix · opt-in fix | print | **print the fix** |
 | IN6 | Snapshot failure other than "no snapper" | stop · warn | stop | **stop**, `--no-snapshot` overrides |
 | IN7 | Languages | EN + FR · EN | EN + FR | **EN + FR** |
@@ -209,3 +211,19 @@ The script ends with `grassfield-channel-set beta` on a prerelease, which the ru
 - Hyprland is never pinned (packaging rule): a Hyprland newer than the plugin's ABI degrades the session (C2) rather than failing
   the install; the exact dependency check is pacman's own dry run after the sync.
 - Review: security (root steps, trust bootstrap, boot image) with opus before any publication; the legal review precedes it.
+
+## Amendment 2026-11-10 (GF-010, the clean install and uninstall drill on stock Omarchy 4.5.0)
+Owner decisions, closest to macOS with no technical step for the user:
+- **Pending updates are offered, not refused.** The script says how many are waiting, that Grassfield installs on an up-to-date
+  system, and asks "Install them now? [Y/n]" (`--yes` answers yes). On yes it runs Omarchy's own update unattended (`-y`: the
+  reboot is only a printed line), then checks again. On no, or if the update fails or leaves updates pending, it stops with the
+  former message and changes nothing. `--dry-run` reports it and runs nothing.
+- **`--uninstall` leaves nothing the user did not choose to keep.** It removes the session-only files
+  (`grassfield-portals.conf`, the generated pointer theme, the compositor cache). It keeps
+  `~/.config/grassfield`, `~/.config/grassfield-mimeapps.list` (the person's default-app choices) and `~/.local/state/grassfield`
+  (settings and state) and prints where they are and the one
+  command that deletes them. It keeps the `grassfield-update` system group and says so: Arch's convention is that packages never
+  remove system users or groups, because a reused gid would give access to files the group left behind (a removal with a search
+  of the machine was written, reviewed and dropped for that reason).
+- **`plymouthd.confe`.** Plymouth's own `plymouth-set-default-theme` leaves it (`sed -ie`); every call the script makes removes the
+  one it created and never touches one that was already there.

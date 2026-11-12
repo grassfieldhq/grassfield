@@ -190,17 +190,20 @@ does not check its gate.
 <!-- ipc-inventory:begin -->
 | Target | Functions | Class | Caller, or why it is gated |
 |---|---|---|---|
-| lock | lock | action | SUPER+CTRL+Q, screen corner, Grassfield menu (in process). Only ever locks |
-| lock | lid | action | lid switch: `config/hypr/grassfield/system.lua` → `/usr/lib/grassfield/grassfield-lid closed` (D-4). Only ever locks; `docked` in clamshell mode |
+| lock | lock | action | on the security instance (ADR-0041 S2, `qs ipc -p /usr/share/grassfield/shell/security.qml`): SUPER+CTRL+Q, Omarchy's sleep lock through the stand-in (`packaging/shims/omarchy-shell lock lock`), and the UI's requests (Grassfield menu, screen corner, Search) through `shell/services/LockClient.js`. Only ever locks |
+| lock | lid | action | on the security instance: lid switch: `config/hypr/grassfield/system.lua` → `/usr/lib/grassfield/grassfield-lid closed` (D-4). Only ever locks; `docked` in clamshell mode |
+| lock | state | action | on the security instance: `packaging/bin/grassfield-security-status`. `unlocked` or `locked` only (ADR-0010 S3; `locking` answers `locked`), never private state; read-only. The UI reads the published state file instead ("Lock state across processes") |
 | lock | status, devReload, devPauseOwnershipCheck, devForgeUnlockedAnswer, devLockView | dev | `reload_locked.sh`, `l2_wrong_password.sh`; the pause widens the foreign-release window |
-| idle | status, devSleep, devDisplayOff, devAutoSleep | dev | `reload_locked.sh`, `lock_privacy.sh`; `devAutoSleep` shortens the automatic sleep delay (the dev session never suspends) |
+| idle | inhibit | action | on the security instance: the UI's lease of the applications' org.freedesktop.ScreenSaver inhibitors, which the menu bridge serves to the UI (`shell/services/LockClient.js`: 150 s, renewed every 60 s while one is held, 0 ends it; the security side bounds it at 150 s, `IdleModel.inhibitLeaseMs`). Only ever keeps the idle dim and lock off for one lease, as an application's own Wayland idle inhibitor does; a manual lock, the lid and the lock before sleep are unaffected; a UI that crashed cannot keep it on |
+| idle | status, devSleep, devDisplayOff, devAutoSleep | dev | on the security instance: `reload_locked.sh`, `lock_privacy.sh`; `devAutoSleep` shortens the automatic sleep delay (the dev session never suspends) |
 | saver | status, devDelay, devShow | dev | the screen saver's nested checks (ADR-0032): `devDelay` arms it after a test's delay, `devShow` shows it at once (refused while locked); off in a dev session otherwise |
-| polkit | status | dev | registration state (the journal has it in a real session) |
-| secrets | state | dev | the secret sheets' state (ADR-0035 D-9, step 9b): the bridge connection, the name's state, counts of the shown, held, waiting and lingering requests; never a requester or a text (`tests/security/secret_bridge.sh`) |
+| polkit | status | dev | on the security instance since ADR-0041 S3: registration state (the journal has it in a real session) |
+| secrets | state | dev | on the security instance since ADR-0041 S3: the secret sheets' state (ADR-0035 D-9, step 9b): the bridge connection, the name's state, counts of the shown, held, waiting and lingering requests; never a requester or a text (`tests/security/secret_bridge.sh`) |
 | search | toggle | action | SUPER+SPACE |
 | search | clipboard | action | SUPER+CTRL+V (Search in its Clipboard view, ADR-0034; again closes it; refused while locked through `show()`) |
 | search | open, close, query, status | dev | `status` returns what the user types; `query`/`open` inject a query |
 | search | filter | fixtures | visual tests |
+| deferred | release, releaseSurface, status | dev | `tests/shell/deferred_early.sh` (ADR-0056 amendment): with `GRASSFIELD_DEFER_HOLD=1` the deferred surfaces stay unbuilt until `release`; `status` lists what is pending |
 | clipboard | status | dev | returns the clipboard history's items: titles and excerpts are what the user copied (ADR-0034); a real session's helper is reached by no IPC function |
 | emoji | toggle | action | SUPER+CTRL+SPACE (Emoji & Symbols, ADR-0045 OC-3; docs/specs/clipboard.md ES-1): opens the panel at the pointer (it asks Hyprland where the pointer is, `hyprctl cursorpos -j`, read only) or closes it; refused while locked through `SessionState.refuses`. It inserts nothing: only a choice in the panel does, into the window that was active when it opened |
 | emoji | status | dev | the panel's state, counts and the last insertion's outcome (how many recents, whether a glyph waits: it tells what the user inserted) |
@@ -234,7 +237,7 @@ does not check its gate.
 | dock | keyboard, toggleAutohide | action | CTRL+F3, SUPER+ALT+D |
 | dock | reopen | action | a running single-instance app launched again while its window is off screen: Activity Monitor (`qs ipc -p <shell> call dock reopen org.grassfield.Activity`, apps/runmode.h shellIpcArgs; ADR-0038 AD34), Settings (`... dock reopen org.grassfield.Settings`, apps/settings/src/settingsinstance.h; ADR-0040 step 1b) and Grassfield Store (`... dock reopen org.grassfield.Store`, apps/store/src/storeinstance.h; ADR-0037 SD35). Brings that app's windows forward as a click on its tile does (a minimized one back, `Launch.activationPlan`); launches, closes and reads nothing; an id with no window in the Dock does nothing; refused while locked |
 | dock | hover, unhover, reveal, menu | dev | UI automation for tests |
-| dock | pinned, dragstate, forceinterrupt, forcehold, noactivate, holdmenu, popup, tiles, hidestate, screen, targetrect, autohide, size, position, sizenow, fitsize, magnify, click, centre, iconrect, stack, addfolder | fixtures | visual tests; `click` launches an app; `iconrect` reads the drawn icon rectangle; `noactivate` makes a Dock activation do nothing (click tests); `addfolder` changes `dock.folders` |
+| dock | pinned, dragstate, forceinterrupt, forcehold, noactivate, holdmenu, popup, tiles, hidestate, screen, targetrect, autohide, size, position, sizenow, fitsize, magnify, click, centre, iconrect, stack, addfolder, iconsurface | fixtures | visual tests; `click` launches an app; `iconrect` reads the drawn icon rectangle; `noactivate` makes a Dock activation do nothing (click tests); `addfolder` changes `dock.folders`; `iconsurface` reads the luminance the Dock icons follow (read-only) |
 | dockstack | state, depth, enter, back | fixtures | visual tests of the open folder stack (it lists a folder's file names) |
 | osd | display, hide, layout, state | dev | OSD spoofing (`layout` feeds a keyboard layout event) |
 | volume | up, down, mute | action | volume keys |
@@ -243,7 +246,7 @@ does not check its gate.
 | capabilities | status, devBlock | dev | visual tests wait on `status`; `packaging/bin/grassfield-shell-watchdog` asks `status` as the shell's liveness question (ADR-0041 step 6a) and reads no answer: any answer, this `refused` of a real session included, is the GUI thread answering, so the gate stays and nothing is returned to it. `devBlock` holds the GUI thread 1 to 300 s (the probe's nested proof) |
 | session | cover, lift | action | `packaging/bin/grassfield-session-end` once every window has gone (ADR-0040 ID-10): `cover` brings up the exit cover, one opaque fade to the ground over every output (it answers the fade's length and lifts itself after `session.exitCoverHoldMs`), `lift` takes it down when the session could not be ended. Neither ends the session; another process of the user can hide the desktop for that long at most |
 | session | state | dev | the exit cover's nested check (`shown` or `hidden`) |
-| security | state, heartbeat | action | the security process's own target (`shell/security.qml`, ADR-0041 step 1 S1, a second `qs` instance at `/usr/share/grassfield/shell/security.qml`): what it hosts (`starting` at S1) and a sequence number; read by `packaging/bin/grassfield-security-status` and the S1 measurements; never private state, nothing locks or unlocks |
+| security | state, heartbeat | action | the security process's own target (`shell/security.qml`, ADR-0041 step 1, a second `qs` instance at `/usr/share/grassfield/shell/security.qml`): what it hosts (`starting` at S1, `lock idle` since S2, `lock idle polkit secrets` since S3 once the sheets are made) and the lock's public state with the publisher's sequence number (`locked 42`); read by `packaging/bin/grassfield-security-status` and the measurements; never private state, nothing locks or unlocks |
 | stages | activate, newStage | action | SUPER+ALT+1..4 (the n-th recent stage forward), SUPER+ALT+S (focused window to a stage of its own); they do nothing while Stages is off |
 | stages | status, enable | dev | `tests/visual/scenarios/stages.sh`; `enable` changes the persisted setting |
 | bartone | status | dev | visual tests |
@@ -257,7 +260,7 @@ Grassfield processes that serve the security modules over a Unix socket of their
 
 | Socket | Server | Who may connect | What it carries |
 |---|---|---|---|
-| `$XDG_RUNTIME_DIR/grassfield/prompter.sock` (directory 0700, socket 0600) | `grassfield-prompter` (ADR-0035 D-9, step 9a; `grassfield-prompter.service`) | one peer at a time, running as the user, whose cgroup is the unit of the bridge's `--peer-unit` (`grassfield-shell.service`, only slices above it up to the user's manager), read through `SO_PEERPIDFD` (a peer without a pidfd is refused, except on a kernel without `SO_PEERPIDFD`); a refused peer gets `refused` and is closed, the refusals logged once per 10 s | `prompter/1` (docs/specs/system-dialogs.md section 5): the bridge sends the requests of gcr callers (with the requester it resolved from their bus credentials) and, from step 9c, NetworkManager's (kind `nm`, only for calls from the owner of `org.freedesktop.NetworkManager`) and, from step 9e, KIO's (kind `kio`, with the requester resolved from the caller's credentials) and, from step 10, bluetoothd's pairing steps (kind `bluetooth`, only for calls from the owner of `org.bluez`, and `progress` for a code shown), and their withdrawals; the shell sends its hello and its answers, a password once per answer. Nothing it accepts runs a command, unlocks, or reaches polkit; a wrong or unattributable line cancels requests, never invents an answer. The shell's client (`shell/security/secret/PrompterClient.qml`, step 9b) connects in a real session to this socket only, and in a dev session only to the test socket that `GRASSFIELD_PROMPTER_SOCKET` names (ADR-0019 dev plumbing, passed by `shell.qml`; ignored in a real session); it reads the bridge strictly and closes the connection on any line it does not expect |
+| `$XDG_RUNTIME_DIR/grassfield/prompter.sock` (directory 0700, socket 0600) | `grassfield-prompter` (ADR-0035 D-9, step 9a; `grassfield-prompter.service`) | one peer at a time, running as the user, whose cgroup is the unit of the bridge's `--peer-unit` (`grassfield-security.service` since ADR-0041 S3, where the secret sheets run beside the polkit agent, ADR-0035 decision 9-7; `grassfield-shell.service` before; only slices above it up to the user's manager), read through `SO_PEERPIDFD` (a peer without a pidfd is refused, except on a kernel without `SO_PEERPIDFD`); a refused peer gets `refused` and is closed, the refusals logged once per 10 s | `prompter/1` (docs/specs/system-dialogs.md section 5): the bridge sends the requests of gcr callers (with the requester it resolved from their bus credentials) and, from step 9c, NetworkManager's (kind `nm`, only for calls from the owner of `org.freedesktop.NetworkManager`) and, from step 9e, KIO's (kind `kio`, with the requester resolved from the caller's credentials) and, from step 10, bluetoothd's pairing steps (kind `bluetooth`, only for calls from the owner of `org.bluez`, and `progress` for a code shown), and their withdrawals; the shell sends its hello and its answers, a password once per answer. Nothing it accepts runs a command, unlocks, or reaches polkit; a wrong or unattributable line cancels requests, never invents an answer. The shell's client (`shell/security/secret/PrompterClient.qml`, step 9b) connects in a real session to this socket only, and in a dev session only to the test socket that `GRASSFIELD_PROMPTER_SOCKET` names (ADR-0019 dev plumbing, passed by the security process's `shell/security/host/SheetHost.qml`; ignored in a real session); it reads the bridge strictly and closes the connection on any line it does not expect |
 
 ### D-Bus objects of the security modules' processes (not Quickshell IPC)
 What the processes serving the secret sheets export on a message bus (ADR-0035 "Consequences": listed in the step that adds
@@ -275,6 +278,19 @@ the passphrase on its standard output to udiskie, its parent (never to a termina
 
 ## Lock coverage: restart, Omarchy's sleep-lock, failing inhibitor (GF-030, D-12)
 macOS model: the screen always locks before sleep, and the lock never silently goes away.
+- Since ADR-0041 S2 the lock, idle and the sleep inhibitor run in `grassfield-security.service` (`Restart=always`,
+  `RestartSec=1`, 5 starts in 300 s): its `OnFailure=omarchy-sleep-lock.service` arms Omarchy's sleep lock after every
+  failure, the sleep-lock gate below asks its state alone, and the stand-in's `lock lock` starts it. What this section says
+  of "the shell" holding the lock, the inhibitor or the lock key's target, before S2, is now the security process's; the
+  UI's unit keeps its restart and the failure counter only (it holds no inhibitor and no lock). At its start limit the
+  compositor keeps the lock with no client: closing and opening the lid or a sleep (the stand-in resets and starts the
+  unit, which restores the lock from the marker) bring it back; on a desktop without sleep a TTY remains (SQ-1 B's known
+  limit). Unlocked, every lock request ends in a locked session (the opus review of 77a0ceb3, MAJOR-1): the lock key hands
+  a request the security process does not answer within 5 s to the stand-in (`bindings.lua`, a real session only), as
+  `grassfield-lid` does; the Grassfield menu, its Log Out, Restart and Shut Down confirmations, Search and the lock corner
+  stay open while the UI reads locked only because the state is missing, unreadable or stale after an `unlocked`
+  (`SessionState.refusesConfirmed`, "Lock state across processes"), and `LockClient` hands their request to the stand-in
+  (a real session). Only the idle lock is missing until then.
 - `grassfield-shell.service`: `Restart=always` (was `on-failure`: systemd does not restart a unit that exits 0 or is
   stopped by SIGTERM/SIGINT/SIGHUP/SIGPIPE), `RestartSec=1`, start limit 10 starts in 5 minutes (ADR-0041 step 1a: the
   backstop of a crash loop; the first limit, 10 in 30 s, needed a crash within 2 s of each start and never tripped the
@@ -414,6 +430,18 @@ Read in the sources (Quickshell v0.3.1, `quickshell-mirror/quickshell@v0.3.1`; H
   `unlock_and_destroy` sets it false (`src/protocols/SessionLock.cpp`). The session stays locked.
 - SIGTERM: Quickshell installs crash handlers for SIGSEGV/SIGABRT/SIGFPE/SIGILL/SIGBUS/SIGTRAP only
   (`src/crash/handler.cpp`); SIGTERM's default action ends the process at once, which Hyprland sees as a dead client.
+  Since ADR-0041 S2 both units set `QS_DISABLE_CRASH_HANDLER=1` (the integrator's nested run of e1a3ff4c): with the
+  handler a crash 10 s or more after a start left the crashed process alive under a relaunched child, invisible to systemd
+  (no restart, no `OnFailure=`); without it a crash ends the process on the signal, which Hyprland sees as a dead client
+  and keeps the lock for, and which systemd counts as a failure (unlike SIGTERM, which leaves the unit inactive):
+  `OnFailure=` runs, the unit restarts and the marker brings the lock back. Both units also set `LimitCORE=0` (the opus
+  delta review of 122f8d67): the crash is recorded in the journal and no core file is stored, since a core of the
+  security process may hold the typed password, and one of the UI the polkit and secret-sheet passwords. Exactly 0, the
+  hard limit included, never `0:infinity`: a hard limit above 0 lets a same-user process raise the soft one with prlimit,
+  crash the process and read the dump. The applications the shell starts (`uwsm-app --` from the Dock, Search and
+  Launchpad, a scope in the shell's process tree) inherit the hard limit of 0: their crashes still give a notice, but no
+  core file, a terminal opened from the Dock included (ADR-0041 S2: to revisit, by starting them through the user
+  manager).
 - Either way the restarted shell (`Restart=always`) finds the marker `locked` and takes the lock back.
 Expected: locked in both cases. NOT VERIFIED at runtime until the nested `graceful-exit` step of
 `tests/security/reload_locked.sh` runs (bare, outside the sandbox): (a) `kill -TERM`, (b) `qs kill --pid`; after each,
@@ -513,7 +541,8 @@ shell no longer relies on that alone:
   the Overview (through its keyboard release), the Switcher, Dock keyboard mode, the desktop menu and card (the desktop
   lets the keyboard go), the widget menu. `Lock.lock()` also closes popups first.
 - Polkit: a request that arrives while locked waits (macOS shows the authorization sheet after the unlock): the sheet is
-  neither mapped nor given the keyboard until `SessionState.locked` is false; text typed into an open sheet is dropped when
+  neither mapped nor given the keyboard until the lock is released (`SheetSession.locked`, which the security process binds
+  from its own `Lock.locked` since ADR-0041 S3); text typed into an open sheet is dropped when
   the lock hides it. Nothing is answered meanwhile (polkit keeps the request pending; Cancel/Esc work once shown).
   A held request (it arrived, or was open, while locked, or arrived within 1 s after an unlock,
   `AuthDialogModel.heldAfterUnlockMs`, review of d8e654c) appears WITHOUT the keyboard (review of 1d2c856: keys typed right
@@ -525,16 +554,26 @@ shell no longer relies on that alone:
   or end a hold); a click before the sheet was ever noted as shown does not count. polkit gives no program name to the agent
   (only the message, which names the program for pkexec). The screen saver holds a request the same way (ADR-0032, owner
   decision 2026-10-26: over the opaque saver an unheld sheet looked like the lock's prompt and took the keys at once): one
-  that arrives while `SessionState.saverShown` (a mirror of the saver, set in shell.qml), or is open when the saver comes up
-  (its field emptied), is held and says "…and waited while the screen saver was on"; while the saver shows a press (any
+  that arrives while `SheetSession.saverShown` (since ADR-0041 S3 the security process's own count of the saver's idle time,
+  `Idle.saverShown`, by the saver's rule `SaverModel.armed`: it reads nothing from the UI), or is open when the saver comes up
+  (its field emptied), is held and says "…and waited while the screen saver was on" (or "…, while Grassfield was
+  starting" when the saver counts as shown only because the security process has just started and has not seen the user
+  active yet: `SheetSession.starting`, the opus delta review of S3, LOW); while the saver shows a press (any
   button) or the wheel on the sheet goes nowhere (the waking input), and when the saver ends the click guard starts over
   (`noteUncovered`), so no click in the next 500 ms gives the sheet the keyboard, whichever of the press and the saver's end
   comes first (such a click still reaches the control it hits, as after an unlock: Cancel at worst; Allow with an empty
   field does nothing). The saver keeps the keyboard meanwhile (the held sheet takes none). Fail mode: a wrong
   `saverShown` never releases a hold; a wrong false (the Binding lost) brings back a sheet that takes the keyboard over the
   saver, a wrong true holds every request and swallows every press on the sheet until the requester gives up (only the
-  shell.qml Binding writes it; `lock_surfaces.sh` checks that it is the only writer in shell/, apps/ and ui/: no
-  assignment, no other Binding or object property, no other quoted name). Two requests close together (reviews of f513b3b and
+  security host's Binding writes it, from `Idle.saverShown`; `lock_surfaces.sh` checks that it is the only writer in shell/,
+  apps/ and ui/: no assignment, no other Binding or object property, no other quoted name). The count is only ever early,
+  never late (the opus review of S3, MINOR-1): it leaves out the applications' ScreenSaver inhibitors (they reach the
+  security process only as the UI's `idle inhibit` lease, which a lost `idle inhibit 0` or a same-user caller can keep),
+  and it reads the saver as possibly shown from the process's start until the user is seen active (an input after a 1 s
+  pause; Hyprland starts a new idle notification's timer from zero, so a process restarted during idle would read "no
+  saver" while the UI's saver is on screen). It differs from the saver on the holding side only: while the UI is down, an
+  application's inhibitor, the start, and the moment between the input that dismisses the saver and the compositor's
+  activity report; `saver devShow` (dev only) is the UI's alone. Two requests close together (reviews of f513b3b and
   b5d7657): Quickshell 0.3.1 never queues; a request that arrives while one is open replaces it at once (the flow
   switches without `active` changing; the replaced one is abandoned, never answered, which fails closed), and one that
   arrives after the previous ended passes through no request. Both are held, "…right after another one": the replacing
@@ -610,12 +649,16 @@ after; mutants removing a refusal fail it), `tests/security/lock_surfaces.sh` (s
 close-on-lock, IPC routes, screen corners, the polkit sheet; mutation self-test). Nested (bare, outside the sandbox):
 `tests/security/lock_privacy.sh` step `privacy` tries every surface over the lock and checks the captures (DT-08).
 
-## Files never runs what it opens (GF-070, SEC-12, DT-10)
-macOS model (Gatekeeper): double-clicking a downloaded app, script or launcher does not run it; macOS says it was not
-opened, and only a deliberate "Open Anyway" in System Settings runs it. Grassfield Files decides itself, before KIO
-(`KIO::OpenUrlJob::setRunExecutables(false)` documents executables but not every `.desktop` case; KIO's source is not on
-the host): `apps/files/src/launchguard.{h,cpp}` `LaunchGuard::verdict(inspect(url))` for every item `FilesApp::open`
-gets (double-click, File > Open, Ctrl+Down, the context menu; Return renames), before the scripted-test switch:
+## Files opens apps the Gatekeeper way (GF-070, SEC-12, DT-10; amended 2026-11-08)
+macOS model (Gatekeeper). Until 2026-11-08 Files refused every program, script and AppImage it was asked to open (GF-AUDIT-001
+DT-10, commit e6e75bc3). The owner reported (2026-11-08) that no AppImage "or others" could be started from Files and that a
+`.dmg` did nothing: too strict for a desktop. The rule is now Gatekeeper's (ADR-0011 amendment "Files opens apps the
+Gatekeeper way"): opening a program runs it; a program that came from the Internet runs only after the user said Open in a
+sheet that says where it came from; nothing is run silently because of a name. Grassfield Files decides itself, before KIO
+(`KIO::OpenUrlJob::setRunExecutables(false)` stays on every job it starts; KIO's source is not on the host):
+`apps/files/src/launchguard.{h,cpp}` `LaunchGuard::verdict(inspect(url))` for every item `FilesApp::open` gets (double-click,
+File > Open, Ctrl+Down, the context menu; Return renames), before the scripted-test switch. It decides by content (the ELF
+header, a `#!` line, the MIME type of name and content) and by the execute bit, never by the name alone:
 - A desktop entry (named `*.desktop` / `*.kdelnk` / `.directory`, or of type `application/x-desktop`) is never handed to
   KIO, with or without the permission bit, wherever it is (review of a5646b8: KIO downloads a `Type=Link` target and runs
   the handler of the type the server announces, or the application in `X-KDE-LastOpenedWith`; the reviewer ran an
@@ -624,21 +667,187 @@ gets (double-click, File > Open, Ctrl+Down, the context menu; Return renames), b
   application, `ApplicationLauncherJob` with the URL), nothing else; with no default browser it is refused. Any other
   entry is refused, "app launcher": `Type=Application`, `Service`, a missing or unknown Type, an unreadable file, a link to
   a file or another scheme, and an ambiguous entry (a repeated `Type` or `URL`, also across repeated groups, or `URL` with
-  `URL[$e]`: KConfig keeps the last value; or longer than the 64 KiB read).
-- Refused, "program or script": an executable regular file whose type is a program or script (shared-mime-info:
-  `application/x-executable` and its sub-classes, scripts included; `x-pie-executable`; `x-sharedlib`), or that starts
-  with `#!` or the ELF magic; and, even without the permission bit, types whose handler runs them (by type and by name):
-  Windows programs and scripts (`.exe`, `.com`, `.scr`, `.cpl`, `.msi`, `.lnk`, `.bat`, `.cmd`, `.ps1`, `.vbs`, `.vbe`,
-  `.wsf`, `.hta`), registry files (`.reg`), Java archives and Web Start files (`.jar`, `.jnlp`), AppImages.
-- Remote items (a share, sftp, the Trash): desktop entries and the names above are refused (KIO downloads a remote file
-  and runs the handler of its type); everything else goes to KIO as before.
+  `URL[$e]`: KConfig keeps the last value; or longer than the 64 KiB read). Unchanged by the amendment: a launcher that is
+  not in an applications folder, run after a downloaded-file sheet, is a follow-up (KIO's Exec parsing would run it).
+- A native program (`RunProgram`): an ELF file whose header says it is one (`ET_EXEC`, or `ET_DYN` with an interpreter or
+  `DF_1_PIE`; a shared library or an object is a document for KIO), with or without the permission bit; AppImages (the
+  "AI" 1/2 magic at offset 8 of the ELF header) are native programs. It is refused when:
+  - its shown kind is a document's (`RefuseDisguised`): the MIME type Files shows for it (name first, as KIO picks the
+    handler) is not Executable, Shared library, AppImage or unknown, or the types its cleaned name gives are not all of
+    those, or the cleaned name's extension (after its last dot) is not plain ASCII. `LaunchGuard::cleanName` reads the name
+    as the eye does: NFKC (fullwidth forms and the dots U+2024, U+FE52, U+FF0E become "."), then NFKD with every combining
+    mark dropped; every format character, default-ignorable code point and blank glyph dropped (bidirectional controls, the
+    braille blank U+2800, the Hangul fillers); the other full stops and dot lookalikes (U+3002, U+FF61, U+0701, U+0702,
+    U+06D4, U+00B7, ...) read as "."; trailing spaces and dots removed; then NFC. A program has no business with a non-ASCII
+    extension, so a lookalike letter ("pdf" with a Cyrillic er, "exe" in Cyrillic, a Greek rho) is refused without a
+    confusables table (the UTS #39 skeleton would need ICU's i18n library linked directly: not done). Security reviews of
+    0c51550e and 48475cf6: "Invoice.pdf " and + U+200B, "Invoice" + U+202E + "fdp.exe", a trailing U+2800, "Invoice" +
+    U+2024 + "pdf", a Cyrillic er in "pdf" and trailing combining marks all ran without a sheet. A list of dot lookalikes
+    can't be complete (second counter-review of fd5823de: U+A78F, U+16EB, U+1427 and U+10101, the UTS #39 lookalikes of the
+    middle dot, and U+2022, U+2981, U+02D9, U+0F0B, U+2E30, U+2E3C, U+1803 and a combining dot below still ran), so the rule
+    also fails closed (`LaunchGuard::documentTailAfterOtherThanDot`) for a program whose name ends in ASCII letters or digits
+    (one letter at least) right after a character that is not an ASCII dot. What comes before those letters decides; a
+    combining mark is judged with the character it sits on, so a decomposed "é" or "ẹ" is the letter it draws:
+    - a letter of any script (U+A78F, a precomposed or decomposed dot below, an accented letter): refused only when the
+      letters are a lure extension of 2 letters or more (`lureExtension`: pdf, doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp,
+      rtf, txt, csv, md, html, xml, json, epub, jpg, jpeg, png, gif, webp, heic, svg, mp3, mp4, mov, avi, mkv, webm, zip,
+      rar, 7z, gz, tar, iso, img, dmg, pkg, deb, rpm, apk, jar, exe, msi, sh, py, js, ps, ai, kdbx, ofx, ts, qt, rm, crt, pem,
+      p12, ovpn, url, kml, gpx, mbox, the long extensions
+      below, desktop, backup...), or, for 3 letters or more, any user type (`userType`, from the shared MIME database:
+      pictures, sounds, films and fonts; archives; PDF, PostScript, office and ebook files; shell, Python and JavaScript
+      scripts; text documents such as logs, YAML, SQL and subtitles). Fourth check of fd5823de, m-b': refusing every document
+      type there refused "Vidéo", "Météo" (".o"), "Démo", "Mémo" (".mo") and "Tiếng-Việt" (".t"); these run, and "Invoice" +
+      U+A78F + "pdf", "Invoicẹpdf" and "photo" + U+A78F + "jpg" stay refused. Fifth check, v2: the lure list alone let
+      "Photo" + U+A78F + "jfif", "Notes" + U+A78F + "log", "install" + U+A78F + "sh" and the like run; the user types close
+      that. Developer types (gettext, Modelica, object files, troff, source code) are not user types, and two letters count
+      only through the lure list, so "Démo", "Mémo", "Caméra" (".ra" is RealAudio), "Diégo" (".go") and "Système" (".me" is
+      troff) run;
+    - anything else (punctuation, a symbol, a space, a mark on no letter): refused when the letters name a document or an
+      archive (1 to 5 that "x." plus them gives such a MIME type, or a long extension: torrent, sqlite, sqlite3, numbers,
+      markdown, keynote, sketch, drawio, gnumeric, kdenlive, parquet, webarchive, flatpak, flatpakref, flatpakrepo), or, after a
+      character outside ASCII, a lure extension ("App" + U+2981 + "desktop").
+    It is read on the cleaned name and on the name as drawn: nothing folded or decomposed, so a "TM" sign stays a sign, every
+    combining mark kept (third counter-review of fd5823de, m-b: the marks outside combining class 220, and "Movie" + a
+    lookalike + "torrent", still ran), and the blank glyphs (the braille blank, the Hangul fillers U+3164, U+FFA0, U+115F,
+    U+1160) drawn as a space, so "Invoice" + U+3164 + "pdf" reads "Invoice pdf" and is refused (fifth check, nit). So "photo.jpg", "notes.txt", "run.sh" or "setup.exe" with ELF program content,
+    "Invoice" + any punctuation, symbol, mark or lookalike letter + "pdf", and "photo-jpg" never run (banner: "… it is an
+    app, but its name makes it look like a document. If you trust it, rename it first."). The cost, accepted: a program named
+    like "nvim-qt" or "qemu-img" (a document type after a hyphen) must be renamed to run from Files; digits only ("x86_64",
+    "1.95"), a longer last word after a hyphen ("linux64", "signal-desktop", "timeshift-backup") and accented names
+    ("Lecteur-vidéo", "Tiếng-Việt", "Créateur") are not affected. Every other name check (launcher, Windows, Java, AppImage, another system's app, remote) is
+    made on the cleaned name too;
+  - uwsm would read its path as a desktop entry (`RefuseLauncher`, `LaunchGuard::uwsmReadsAsEntry`: uwsm 0.27's MainArg takes
+    an argument that ends in ".desktop" or holds ".desktop:" for an entry, so "…/Tool.desktop:run" would start the entry
+    Tool.desktop beside it); `ProgramLaunch::Run::allowed` refuses such an uwsm-app command again at the start;
+  - it is made for another computer (`RefuseIncompatible`: ELF class, byte order and machine against `/proc/self/exe`;
+    IA-32 runs on x86-64);
+  - it would run with other rights (`RefuseElevated`): setuid or setgid bit, a `security.capability` attribute, or Files
+    itself running as root. Files as root starts nothing on any path (`FilesApp::refuseAsRoot` before a program, the
+    Terminal, Java, the Windows handler, and Open With a program, an AppImage, a script, or a Windows or Java program;
+    `Run::allowed` again at the start).
+  Otherwise `LaunchGuard::plan` says what Open does first, and the sheet (`KioSheetsLogic.openProgram`, the window's sheet
+  style, Return and Esc cancel) is shown when any of these holds:
+  - its name can be drawn in another order (`LaunchGuard::bidiName`: LRM, RLM or ALM, an embedding, override or isolate
+    control, or any strong right-to-left character, bidi class R or AL): always, approved or not, executable or not
+    (`RunPlan::nameUntrusted`; macOS does not trust a name as drawn either). Fifth check of fd5823de, V1: an ELF named RLM +
+    "pdf." + RLM + "Invoice" (or with ALM) is drawn "Invoice.pdf", and it ran without a sheet. The sheet writes the marks out
+    ("<U+200F>pdf.<U+200F>Invoice": DisplayName.js and `FileLogic::displayName` write out LRM, RLM and ALM as they do the
+    embeddings) and adds "Its name contains right-to-left text, which can change the way it is shown: it may not be what its
+    name suggests." An ordinary Arabic or Hebrew program name gets this sheet on every open, never a refusal;
+  - it came from the Internet: `user.xdg.origin.url` or `user.xdg.referrer.url` (what Chromium and Firefox write on a
+    download; Grassfield had no quarantine mark of its own) on the file, or on a symbolic link's final target (a link follows
+    its target's trust), and Files' approval `user.grassfield.approved` = `1 <inode> <mtime ns> <size>` does not name the
+    file as it is now. Title "“Tool.AppImage” is an app downloaded from the Internet. Are you sure you want to open it?",
+    "This app was downloaded from <host>." (the host only: no path, query or user name; a host whose labels mix scripts is
+    shown in ASCII, "xn--…"). Files keeps these marks on what it makes from a downloaded file:
+    - Expand of an archive that carries a download mark (the Archive Utility model; bsdtar's `--no-same-permissions` keeps
+      the members' execute bits) completes only if every extracted regular file got the archive's marks, fail closed: the
+      marks are written in the private staging folder before anything gets a real name, by `LaunchGuard::markTree` on a
+      worker thread (`ArchiveJob::extracted`); entries are reached through descriptors (openat with O_PATH | O_NOFOLLOW, no
+      link followed, nothing looked up by path twice); a file whose user bits lack read or write (0100, 0500, 0555) gets u+rw
+      for the moment of the write and its mode back; a folder the user may not list or enter (0100, 0300) gets u+rx while
+      its entries are walked and its mode back; there is no entry cap. One regular file left unmarked, a folder that can't
+      be walked, a tree deeper than 256 folders or a cancel, and the staging folder is removed (its folders opened up
+      first), nothing is kept, and a sheet says "“Kit.zip” couldn’t be expanded safely." (security review of 48475cf6:
+      members of mode 0500 and 0555, members in folders of mode 0100 and 0300, and archives of more than 100000 entries were
+      expanded with programs left unmarked). Until the final rename, nothing under a staging name (`.grassfield-expand-<8
+      hex>`, and Compress's `.grassfield-compress-<8 hex>.zip`) is opened, run, listed or searched from Files
+      (`RefuseStaging`, `LaunchGuard::insideStaging` on the item's path and on a link's target: "… can’t be opened while Files
+      is still expanding or compressing it."; `FolderModel` lists nothing there, Open With refuses it, `FileSearch` skips
+      it). Nor is it listed in its parent folder (hidden files shown or not), renamed, copied, cut, pasted, moved, dragged
+      out, duplicated, trashed, deleted, aliased, compressed, expanded, given other permissions or dropped into
+      (`FilesApp::refuseApplicationItems` with `stagingItem`: "… can’t be used while Files is still expanding or compressing
+      it."; a drag's `uriList` leaves it out), so its unmarked programs can't be taken out from under the staging name (third
+      counter-review of fd5823de, m-c). The staging names in use are recorded in `<state>/files-staging` (the boot, the Files
+      process and its start time, the path; ADR-0020); a Files killed meanwhile leaves its line, and the next Files to start
+      removes those items off the GUI thread (`ArchiveJob::sweepStaleStaging`: only an absolute path whose last name is a
+      staging name, of the user's own). The registry is read whole (up to 64 MiB; a larger file is left untouched and nothing
+      is recorded, swept or rewritten), the lines of live processes are never dropped, and at most 4096 lines are kept: a
+      Compress or an Expand that can't record its staging name doesn't start ("… can’t be expanded here.") (m-d: the lines
+      past 1 MiB were dropped on the rewrite). Every removal (a cancel, a refusal, the sweep) goes by descriptor
+      (`LaunchGuard::removeTree`: openat and unlinkat, one folder descriptor open at a time and a stack of names, no link
+      followed, each folder pinned with O_PATH and given u+rwx through its /proc/self/fd entry, the root included), so a tree
+      deeper than PATH_MAX goes too (second counter-review of fd5823de, m2: such a tree, and a killed Files' staging folder,
+      stayed behind unmarked); it climbs back through ".." only into the folder it came down from (device and inode recorded
+      on the way down) and stops otherwise, so a part of the tree moved elsewhere meanwhile never makes it empty the folder
+      that now holds that part (m-a: moving a/b into another folder during a removal emptied that folder);
+    - a copy or move from a remote location (sftp, smb, ftp, http, a phone; `FilesApp::markRemoteCopies` on every tracked
+      copy job) gets the source address, without user name or password, as its `user.xdg.origin.url`;
+  - the user's execute bit is missing ("Opening it allows it to run on this computer."): Open sets u+x only (`fchmod`
+    through the descriptor that was checked, mode `& 0777 | S_IXUSR`: never setuid, setgid, group or others), then checks it
+    with `fstat`: a FAT, exFAT or fixed-mode NTFS mount that ignores the chmod (`Approval::ExecIgnored`) gets the copy below.
+    That chmod moves the file's status time (POSIX; FAT's setattr too), so the file is inspected again after it and must be
+    the same program (path, inode, modification time, size) with the status time `approve` saw right after its chmod; the
+    copy is then checked against these fresh facts (second counter-review of fd5823de, R1: checked against the facts from
+    before the chmod, every program on a FAT stick was refused as changed);
+  - it can't run where it is (a `noexec` mount, or not executable on a read-only disk or in another user's file): Open copies
+    it to `~/Applications` (made when missing; a free name "Tool 2.AppImage"; KIO's copy keeps the download marks), then
+    checks that the source is still the approved file (inode, modification and status change times, size: the owner can set an
+    mtime back after a same-size swap, not a ctime) and that the copy has its size (otherwise the copy
+    is removed and nothing runs), allows and approves the copy and runs it ("Copy and Open").
+  After Open the file is inspected again and must be the same file (path, inode, modification and status change times, size) and still a
+  program; then `ProgramLaunch::approve` writes the approval (and u+x), through one `O_NOFOLLOW` descriptor, only while the
+  identity matches. An approved, unchanged file never asks again; a changed one (other inode, time or size) asks again. A
+  file system without user extended attributes keeps no approval and no download mark. A sheet never shows the system's
+  error text: "It changed while you were deciding…", "It belongs to another user.", "Its permissions couldn’t be changed."
+- The start (`ProgramLaunch::Run`): `posix_spawnp` of the program's absolute path (no shell, no argument), through the
+  Dock's launch path (`grassfield::apps::scopedCommand`: `uwsm-app --` in a real session, ADR-0011), in its own session,
+  every signal at its default, stdin and stdout on `/dev/null`, the home folder as its working folder (the folder apps
+  started from the Dock have; macOS starts apps in "/"; never the folder it was opened from), Files' environment. Its error
+  output goes to a datagram socket that Files reads for one second, 64 datagrams per wake-up at most, and closes after the
+  second or at 16 KiB (later writes fail with ECONNREFUSED, never SIGPIPE, and never block the program); the child's pidfd
+  tells its end and it is reaped. A
+  start that fails within that second gets a plain alert (`KioPrompts::tell`): exec format ("… isn’t made for this
+  computer"), a library the loader names ("A component it needs is missing on this computer (libfoo.so.1)."), an AppImage
+  without FUSE (`libfuse.so.2`, "AppImages require FUSE", fusermount): `pacman -Qq fuse2` (read-only) decides between "This
+  AppImage needs a system component (fuse2)." and "This AppImage couldn’t use FUSE on this computer." (no Store or Software
+  Update path installs a library; never sudo); refused where it is (noexec, permission); an error code ("… quit right after
+  it opened."). A crash (a signal) is grassfield-crash-watch's to tell.
+- A script (`OpenScript`: executable, with a `#!` line or a script type) opens in the default text editor (text/plain's
+  application, through Open With's path; none set: the Choose Application panel), as on macOS; it never runs by opening.
+  Without the permission bit it is a document for KIO, as before. Open With lists "Terminal" last for one executable script on
+  this computer (`applicationsFor(urls, true)`; never in Always Open With or Get Info): it runs in the session's terminal
+  (`xdg-terminal-exec -- /bin/bash -c '"$1"; …omarchy-show-done…' grassfield-files <path>`, the path an argument, never
+  command text; decision F-7; the script's folder is the terminal's working folder, as Terminal runs a .command file), after
+  the same sheet when it came from the Internet ("… is a script downloaded from the Internet. Are you sure you want to run it
+  in Terminal?") or when its name can be drawn in another order (`nameUntrusted`, every time; seventh check of fd5823de,
+  m1'). A Windows or Java program's explanation sheet says it too.
+- Windows programs and scripts and registry files (`WindowsFile`: `.exe`, `.com`, `.scr`, `.cpl`, `.msi`, `.lnk`, `.bat`,
+  `.cmd`, `.ps1`, `.vbs`, `.vbe`, `.wsf`, `.hta`, `.reg`, by type and by name) and Java archives and Web Start files
+  (`JavaProgram`: `.jar`, `.jnlp`) never run by opening: a sheet says "This file is a program for Windows; it doesn’t work
+  directly on Linux." (or "This file is a Java program."). When the default application of its exact type is installed
+  (Wine, Bottles: one that names the type itself, never one inherited from a parent type) or `java`/`javaws` is on the PATH,
+  the sheet offers "Open with <app>" (Return and Esc cancel), with the download origin; Open checks the file again and opens
+  it with that application (Java: `java -jar <path>` through the same start).
+- Open With: any application may run what it is given (Wine, Bottles, java, an AppImage helper registered for
+  `application/vnd.appimage`, a terminal registered for scripts), so Open With follows the open rule for programs,
+  AppImages, scripts, and Windows and Java programs (`FilesApp::openWithChecked`; security review of 48475cf6, second
+  counter-review of fd5823de, m3): never as root, never a remote program or a staging item (the open banners), and a
+  downloaded one gets a sheet first, one per item, unless it was approved as it is now, and a program whose name can be
+  drawn in another order (`nameUntrusted`) gets it every time, downloaded or not, approved or not (sixth check of
+  fd5823de, m1): "Open with <app>" for a Windows or Java program; for a program or a script `KioSheetsLogic.openProgram` with the application's name ("“Tool.AppImage” is an
+  app downloaded from the Internet. Are you sure you want to open it with <app>?", Return and Esc cancel). Open writes the
+  approval for a Windows or Java program (only such an application runs it); for a program or a script it covers that open
+  only (no execute bit, no approval: the next Open With asks again, and a double-click has its own sheet). The text editor
+  Files picks for a script it opens is Files' own choice and asks nothing.
+- Another system's app (`ForeignApp`: `.dmg`, `.pkg`, `.mpkg`, `application/x-apple-diskimage`): "This file contains an app
+  made for another operating system, which can’t work on Linux.", with Search the Store (Grassfield Store's
+  `--page=search:<the file's name without version and platform words>`) when the Store is there. The text never names that
+  system (tests/ci/ui_names.py: no Apple trademark in the UI).
+- Remote items (a share, sftp, a phone, the Trash): desktop entries are refused, other systems' apps explained, and Windows,
+  Java and AppImage names refused with "… can’t be opened from here. Copy it to a folder on this computer first."
+  (`RefuseRemoteProgram`: nothing is ever downloaded and run); everything else goes to KIO as before (which never runs a
+  remote executable). A copy made by Files carries the source address as its download mark (above).
 - Opened as before: folders, documents (also with the permission bit: every file of a FAT/NTFS volume has it), scripts
   without the permission bit (text, in their editor, as KIO and macOS do).
-- The user sees one banner: "“t.desktop” was not opened: it is an app launcher, and Files never starts apps from a folder.
-  Open apps from the Dock, Apps or Search." (programs: "… To run it on purpose, use a terminal."); the journal gets
-  `grassfield-files: open refused (<kind>)`. No "Open Anyway" in Files, on purpose: Grassfield has no signed-app notion to
-  base it on, apps start from the Dock, Apps and Search, and a program the user trusts runs from a terminal. "Open With"
-  is unchanged: it opens the item WITH the chosen app (a launcher in a text editor), it never runs the item.
+- Refusals are one banner (several: "%1 items were not opened."); the journal gets one line per decision, never the file's
+  contents: `grassfield-files: open <decision> (<kind>): "<name>"[ from <host>]` (decisions: refused, run, asked, approved,
+  canceled, changed, explained, in the text editor, run in Terminal, failed); names and hosts have their C0, C1 and
+  bidirectional control characters and quotes replaced (`LaunchGuard::logName`).
+- Limits: the download mark is only as present as the browsers and Files make it: a file fetched by another tool (curl, a
+  chat or mail client), extracted by another archive tool, or copied from a FAT volume (every file executable, no attribute)
+  carries none, and a program there that is executable runs at once, as it would from a terminal. Between the last check and
+  the exec the program is named by path (the residual race needs write access to its folder, i.e. the user's own rights).
 - The Applications location (`grassfield-apps:/`, macOS: Finder's Applications) is the one place where Files starts an
   application, and it is not an exception to the rule above: its items are not files and have no path. They are the virtual
   urls `grassfield-app:/<id>` of the apps the shell's Apps grid lists (`ApplicationsLogic`); double-click, Ctrl+O/File > Open and Ctrl+Down call `FilesApp::launchApplication` instead of `FilesApp::open` (`BrowserTab.activate`/`openSelection`), so
@@ -681,13 +890,29 @@ gets (double-click, File > Open, Ctrl+Down, the context menu; Return renames), b
   with the permission message.
 - The desktop already never runs `.desktop` files (`DesktopFiles.qml`, DT-11). The shell's `gio open` / `xdg-open` paths
   (Search results, Dock stacks) hand files to their MIME handler; not changed here.
-Tests: `tests/unit/files/tst_launchguard.cpp` (verdicts; DT-10 on real files: `t.desktop` executable and not,
-`Invoice.pdf.desktop`, web links to the browser only (the review's `.msi` link with `X-KDE-LastOpenedWith` included),
-repeated keys, an oversized entry, `.directory`, file links, an unreadable entry, scripts with and without the bit, a
-copied `/usr/bin/true` and a symlink to it, `.exe`, `.jar`, AppImage without +x, `.ps1`, `.vbs`, `.reg`, `.jnlp`, a
-folder; remote items by name), nested `tests/apps/files_dt10.sh` (bare: pass 1 with the launch switch
-on, four "open refused" and nothing reaching the launch path; pass 2 without it, the marker the launchers would create
-never appears).
+Tests: `tests/unit/files/tst_launchguard.cpp` (verdicts and plans; DT-10 on real files as amended: `t.desktop` executable
+and not, `Invoice.pdf.desktop`, web links to the browser only (the review's `.msi` link with `X-KDE-LastOpenedWith`
+included), repeated keys, an oversized entry, `.directory`, file links, an unreadable entry; scripts with and without the bit
+to the editor or KIO; a copied `/usr/bin/true` (runs; without the bit the sheet allows it), named `photo.jpg`, `notes.txt`,
+`run.sh`, `setup.exe` (refused), through a link (the target decides) and a link named `report.pdf` (refused), with another
+machine (refused), setuid (refused); a downloaded fake AppImage asked about until approved, a forged approval of another
+identity ignored, asked again after a change, a link to it following its trust; `.exe` by name and by content, `.jar`, an
+"AppImage" that is no ELF program, `.ps1`, `.vbs`, `.reg`, `.jnlp`, `.dmg`, a folder; remote items by name; the ELF parser
+on synthetic headers), `tests/unit/files/tst_programlaunch.cpp` (the failure a first second shows, the approval through one
+descriptor, `~/Applications` and its free names), `tests/unit/files/tst_fileslaunch.cpp` (FilesApp::open in a scratch home
+with real programs, `launch_fixture.cpp`: a native program runs in its folder without a sheet; a downloaded non-executable
+fake AppImage asks, Cancel runs and changes nothing, Open allows and runs it, approved it runs without a sheet, changed it asks
+again; a link follows its target's trust and one named as a document is refused; FUSE 2 missing, a missing library and
+another computer's program get their alert or banner, a program that stays gets none; a script never runs by opening,
+Terminal is listed for an executable script only and asks when downloaded; a remote AppImage, a `.dmg`, an `.exe` and a
+`.jar` are explained and never run; after the security review of 0c51550e: a program from a downloaded zip and tar.gz asks
+after Expand, a program changed while its sheet is open does not run, the copy into ~/Applications runs the copy and leaves the
+original, Open With > Terminal hands the terminal the path as bash's argument, Open in the Java and Windows sheets runs
+`java -jar` and the handler (recorders on the PATH), a remote copy gets its source address as its mark; the unit tests add
+cleaned names, uwsm's entry names, mixed-script hosts, marks copied through no link), `tests/unit/tst_fileskiosheets.qml` (the sheets' texts and buttons; Return and Esc
+cancel, only Open runs), nested `tests/apps/files_dt10.sh` (bare: pass 1 with the launch switch on, the three launchers
+refused and the script stopped at the switch, nothing reaching a launch; pass 2 without it, a downloaded program's sheet
+answered with Return, and the marker the launchers, the script or the program would create never appears).
 
 ## Upstream base (GF-031)
 Forks reviewed against Omarchy **v4.0.6** = `basecamp/omarchy@237f1b4071a0bff2296c6d740ba2b9fd695ebfa0`, the installed
@@ -1007,14 +1232,16 @@ request: the message (polkit's text; for `pkexec` it names the program and its a
 identity, and now the action's `iconName` (from the root-installed `.policy` file) with the lock as a badge, macOS style.
 That icon describes the action, not the program that asked: polkit does not tell the agent which process requested it
 through this API (`AuthDialogModel.iconName`: plain theme names only, by the one rule notification icons use,
-`NotificationPrefs.safeIconName`, review of 2dfd992; `AuthAgent` shows it through `ThemeIcons.source`: the system
-theme's icon (Qt searches only directories the user cannot change, `ui/i18n/iconsearchpaths.h`) or a PNG the shell made
-from a user icon of that name (see security-images.md, `tests/security/theme_icon_files.sh`); else the lock alone; the Image
-loads asynchronously, review of 100692f). Unit-tested (`tst_authdialogmodel` `test_iconNameIsAPlainThemeName`, `tst_authdialog`
+`NotificationPrefs.safeIconName`, review of 2dfd992; `AuthAgent` shows it through the security process's lookup,
+`SheetHost.themeIcon` since ADR-0041 S3: the system theme's icon only (Qt searches only directories the user cannot
+change, `ui/i18n/iconsearchpaths.h`), never a copy of a user's icon (the UI's `ThemeIcons` made one before S3: it belongs
+to the UI and empties a directory of its own; `tests/security/theme_icon_files.sh`, "polkit=none"); else the lock alone;
+the Image loads asynchronously, review of 100692f). The secret sheets' requester icon follows the same rule. Unit-tested (`tst_authdialogmodel` `test_iconNameIsAPlainThemeName`, `tst_authdialog`
 `test_10_programIconWithLockBadge`); visual NOT verified (a nested shell cannot register an agent: L5).
 
 **One queue with the secret sheets (ADR-0035 D-9, step 9b, decision 9-15).** The polkit sheet and the secret sheets of
-`shell/security/secret` share one queue (`shell/security/SheetQueue.qml`, made by `shell.qml`): one sheet on screen at a time,
+`shell/security/secret` share one queue (`shell/security/SheetQueue.qml`, made by `shell/security/host/SheetHost.qml` in
+the security process since ADR-0041 S3, `shell.qml` before): one sheet on screen at a time,
 in arrival order. While a secret sheet came first, the polkit agent hands its model no request (`AuthAgent.waiting`, the gated
 `flow`): nothing of it is mapped, focused or held, and nothing is answered meanwhile. When the secret sheet is gone, the queue
 tells the polkit model a sheet ended before it hands the request over, so the request arrives held ("right after another
@@ -1029,12 +1256,16 @@ holder again (a layer mapped as Exclusive takes the keyboard; one turned Exclusi
 polkit or secret sheet such a mapping would take the keyboard from the sheet and send the rest of a password to the toolbar.
 While `SessionState.securityKeyboard` (the polkit sheet or a secret sheet is present, or one of their key sinks still holds
 the keyboard after a request ended under the user's typing: `AuthAgent.queuePresent || SecretAgent.requestActive ||
-SecretAgent.sinkingKeys`, shell.qml's Binding; opus re-review 2, MINOR-3) the toolbar makes nothing Exclusive: no hand-over,
+SecretAgent.sinkingKeys`, opus re-review 2, MINOR-3; since ADR-0041 S3 computed in the security process, `SheetHost.qml`,
+published with the lock state and read by the UI fail closed, `LockClient.securityKeyboard`: true without a fresh state;
+shell.qml's Binding) the toolbar makes nothing Exclusive: no hand-over,
 no remapping, and a toolbar opened then maps without the keyboard; a hand-over under way when a sheet opens maps without it;
 once the sheet is gone the display that wants the keyboard maps again as Exclusive (`CaptureToolbar.qml` `sheetOpen`,
 `followKeyboard`). `lock_surfaces.sh` pins it with mutations (QML with PanelWindow cannot run offscreen). The key sinks'
-linger (at most 3 s) is covered, so the rest of a password never reaches the toolbar, where Return captures. Nested: NOT
-VERIFIED.
+linger (at most 3 s) is covered, so the rest of a password never reaches the toolbar, where Return captures. Since S3 the
+UI learns of a sheet through the file's push (an inotify watch, milliseconds) and its own read every 2 s: a toolbar
+hand-over in that moment could still map as Exclusive over a sheet that has just appeared (residual, as narrow as a push's
+delivery). Nested: NOT VERIFIED.
 
 **A device before the password (ADR-0045 OC-6, security review of the Settings setups, 2026-11-04).** Once Omarchy's
 fingerprint or security key setup ran, `/etc/pam.d/polkit-1` starts with `pam_fprintd` (behind Omarchy's lid-closed gate) or
@@ -1090,7 +1321,8 @@ the event loop (`Qt.callLater(refuseUnseen)`, which checks again), never inside 
 the request inside the cancel, which changes what the binding reads; done inline, QML reported a binding loop and could keep
 the binding stale, leaving the next request unguarded (found by `flows.qml` test_27, whose mock ends the request inside the
 cancel as Quickshell does). `answerable` (default false) is the agent's rule: its sheet is on screen in front, that is not
-locked, no screen saver, the displays on (`SessionState.displaysOff`, a Binding in shell.qml from `Idle.displayOff`: off for
+locked, no screen saver, the displays on (`SheetSession.displaysOff`, bound by the security process's host from `Idle.displayOff`
+in the same process since ADR-0041 S3, a Binding in shell.qml before: off for
 inactivity while unlocked counts too, a reader in the power button pressed to wake the screen must not answer a sheet nobody
 sees; opus re-review 2, MINOR-2), not waiting behind another sheet, in the sheet (`requestOpen`), and not held unless it is
 held as "right after another one" or the user clicked past its guard (`!heldByLock || userFocused || heldWhy === "queued"`).
@@ -1159,7 +1391,10 @@ above ("Upstream base", 4.5.0 review). The device-first assumptions of the two p
 ## L5 polkit (owner, real session)
 Never `pkexec` a real program for this test; `pkcheck` only asks polkit whether this terminal's shell may run the action
 and runs nothing as root. In a terminal of the Grassfield session:
-1. `journalctl --user -u grassfield-shell -b -o cat | grep -c 'authentication agent registered'` → `1`.
+1. `journalctl --user -u grassfield-security -b -o cat | grep -c 'authentication agent registered'` → `1` (since ADR-0041
+   S3 the agent runs in the security process: one more line after each restart of that process, each after an
+   `unregistered` or a crash; `journalctl --user -u grassfield-shell -b -o cat | grep -c 'grassfield-polkit'` → `0`, the UI
+   holds no agent).
 2. `pkcheck --action-id org.freedesktop.policykit.exec --process $$ --allow-user-interaction; echo "exit $?"`. The
    Grassfield sheet appears over a dimmed screen: the message, "Action: org.freedesktop.policykit.exec", "User: <you>",
    a password field and Cancel / Allow. Press Esc → the sheet closes, `exit 3` (dismissed), nothing approved.
@@ -1167,9 +1402,21 @@ and runs nothing as root. In a terminal of the Grassfield session:
    is empty, nothing approved; then Cancel → `exit 3`. (One wrong attempt counts once in faillock, shared with sudo.)
 4. Optional, only if the owner wants the success path: step 2 with the right password → `exit 0`; polkit may then keep
    the authorization for this shell for a few minutes (`auth_admin_keep`): close that terminal afterwards.
-5. Clicking outside the sheet never cancels or approves; `journalctl --user -u grassfield-shell -b -o cat | grep -i
+5. Clicking outside the sheet never cancels or approves; `journalctl --user -u grassfield-security -b -o cat | grep -i
    polkit` shows no password and no "approved" line.
-PASS: 1–3 (and 5) as described. FAIL: any approval without the right password, a second agent, or the sheet missing.
+6. The restart (ADR-0041 S3): run step 2, and while the sheet is open (nothing typed), in another terminal `systemctl --user
+   kill -s SIGSEGV grassfield-security.service` → the sheet disappears, step 2's terminal prints `exit 1` or `exit 3` (not
+   authorized or dismissed: polkitd ends the request with the agent's bus name), nothing approved; within about 2 s the
+   journal shows the agent registered again, and step 2 run once more shows the sheet. A request asked during that restart
+   is not authorized (no agent to ask), as while the UI restarted before S3. The session stays as it was (a lock held
+   stays held: the lock's own restart rules).
+7. The retry (the opus delta review of S3, MAJOR-1): after any start of the security process, `journalctl --user -u
+   grassfield-security -b -o cat | grep -E 'grassfield-polkit|cannot change path'` shows "authentication agent registered"
+   at once, or, when another agent still held the session (an upgrade from a UI that held it), "not registered … asking
+   again (1)" to "(4)" at most per unlock period ("the last try until the next unlock") and then "authentication agent
+   registered" once that agent is gone; never "cannot change path after it has been set.", and no "asking again" while
+   the screen is locked.
+PASS: 1–3 (and 5 to 7) as described. FAIL: any approval without the right password, a second agent, or the sheet missing.
 
 ## Lock survival (crash, reload) — fail closed
 Found in R12 review: a Quickshell soft reload while locked unlocked the session when the marker was missing or not
@@ -1434,10 +1681,28 @@ Display only: nothing below can lock, unlock, delay engaging the lock or keep it
   its first character, so one wrong password attempt. Owner check (L2, real session): with only an external keyboard,
   lock, unplug and replug the keyboard, then type the password; it must unlock at the first attempt.
   `tests/security/lock_keyboard_replaced.sh` (nested, bare) checks it in a session with no keyboard of its own and SKIPs
-  otherwise: the condition depends on the parent seat at nested start and cannot be produced through scripts/nestctl.
+  otherwise: the condition depends on the parent seat at nested start and cannot be produced through scripts/nestctl. It
+  SKIPs too when grassfield-compositor is not loaded (`nested-up: ... plugin none`): then the limit above applies, and
+  the integrator's keyboard-less run of S2 (e1a3ff4c), without the plugin, showed exactly it (every Escape after the
+  first burst lost, the field left filled; nothing reached another window, the session stayed locked), as main 8b04383c
+  did. With the plugin: NOT VERIFIED.
 - A foreign locker that takes over a live Grassfield lock and then dies (no release) leaves the session locked behind
   Hyprland's "lockscreen app died" screen (fail closed); Grassfield's own lock object is no longer used, so the session
-  can only be unlocked after the shell restarts (its crash recovery takes the dead lock over).
+  can only be unlocked after the security process restarts (its crash recovery takes the dead lock over).
+- ADR-0041 S2: a Quickshell bug that takes the security process down in a loop ends at its start limit with the
+  compositor's lock in place and no client: the lid or a sleep start it again, and unlocked any lock request does (the
+  lock key, the lid, the Grassfield menu, Search, the lock corner, through the stand-in); a desktop without sleep needs a
+  TTY once locked there. Meanwhile no idle lock runs. While it restarts the UI reads the session locked (refusals closed,
+  previews hidden) for up to 5 s plus its start, and the paths that only lock stay open.
+- ADR-0041 S2: a security process that hangs (alive, its event loop blocked) while the session is unlocked answers no lock
+  request and systemd does not restart it: the lock key's fallback and the UI reach a stand-in that finds the unit active
+  and waits, so nothing locks until it recovers (no watchdog of the security process yet; step 6a's covers the UI).
+- ADR-0041 S2: an upgrade from a build before S2 runs the earlier and the new halves until both restart: a UI that finds no
+  published state within 15 s restarts the security unit, and the stand-in (the lock key, the lid, a sleep) restarts a
+  security process that answers `security state` with S1's `starting`; a UI still running earlier code keeps its own lock
+  and idle until it restarts. `post_upgrade` asks for one log-out when the old version is 1.0.0rc7 or earlier.
+- ADR-0041 S2, ADR-0040 step 4a (3): the lock's still is decoded by Qt from the path it checked (no per-process restriction
+  to the JPEG plugin, no descriptor handed over); a race between the check and the decode needs code running as the user.
 
 ## The security process (ADR-0041 step 1; the owner's SQ-1 B, ADR-0010 "Separate security process")
 macOS keeps loginwindow (the lock screen and authorization) apart from the Dock and the menu bar; Grassfield moves its
@@ -1457,11 +1722,106 @@ same directory and the modules move without moving a file), one step at a time u
   `autostart.lua` starts it just before the shell without waiting for it. Every security module stays in the UI: nothing
   about the lock, the polkit agent, idle or sleep changes at S1. Tests: `tests/security/security_unit.sh` (static),
   `ipc_inventory.sh` (the target and its caller), `unit_restart_limits.sh`, `session_services.sh`.
-- **S2:** the lock, idle and the sleep inhibitor move together, every `Lock.lock` caller switches to the security instance,
-  `OnFailure=omarchy-sleep-lock.service` and the sleep-lock gate key on the security unit, the UI reads the lock state
-  fail closed (the pushed state OR the compositor's own lock signal OR no state, a stale heartbeat or a stopped security
-  unit). **S3:** the polkit agent. **S4:** safe mode. The invariant of each state (who locks, either process down, sleep)
-  is the table at the end of ADR-0041 step 1.
+- **S2 (built, ADR-0041 "S2 as built"):** the lock, idle and the sleep inhibitor run in the security process only
+  (`shell/security/host/SecurityHost.qml`); the UI imports neither module and asks for every lock over IPC on the security
+  instance (`shell/services/LockClient.qml`); `OnFailure=omarchy-sleep-lock.service`, the sleep-lock gate and the
+  stand-in's `lock lock` key on `grassfield-security.service`; the UI reads the lock state fail closed ("Lock state across
+  processes" below). The lock and idle use no UI module and only the read-only `qs.services` types `Settings`,
+  `VisualFixtures`, `FixedTime` and `WallClock` (`tests/security/security_process_scan.py`); the sleep notice goes
+  through the notification server's D-Bus interface (`busctl --user --auto-start=no`), the wallpaper through the lock's own
+  bounded reader of `wallpaper.json`, the account picture through `services/image-copy.py file`. In the dev session
+  `scripts/dev/shell-run.sh` starts it beside the UI (`.dev/security.pid`, `.dev/security.log`; `--security` restarts it
+  alone).
+- **S3 (built, ADR-0041 "S3 as built"):** the session's polkit agent (`AuthAgent`, its sheet `AuthDialog`), the secret
+  sheets fed by `grassfield-prompter` (`SecretAgent`: gcr's prompts, NetworkManager's secrets, KIO's passwords, Bluetooth
+  pairing; ADR-0035 decision 9-7: one queue with the polkit sheet, so in its process) and their one queue run in the security
+  process (`shell/security/host/SheetHost.qml`, created at run time by `SecurityHost.qml` so that a sheet that cannot load
+  never keeps the lock from loading: then no agent registers, polkitd answers every authorization "not authorized", and
+  the bridge, with no client, releases its names so password prompts fall back to the stock prompters, SC6 of
+  system-dialogs.md), drawn with `Grassfield.Ui` and `qs.security` only (no `qs.services`
+  type). The sheets read the session in process: `shell/security/SheetSession.qml`, written only by the host's Bindings
+  from `Lock.locked`, `Idle.displayOff` and `Idle.saverShown` (the saver's idle time counted here by the saver's rule).
+  `grassfield-prompter.service` accepts a peer of `grassfield-security.service` only (`--peer-unit`). The UI imports no
+  security module and names none of their types (`security_process_scan.py`); what it knows of the sheets comes with the
+  lock state (`authorizing`, `securityKeyboard`, below), and it closes its menus when a sheet is published open (the agent
+  closed them in process before). One agent in the session: one `PolkitAgent` in the tree, in `AuthAgent.qml`, made once,
+  in the security process; polkitd refuses a second registration for the session anyway. An authorization asked while the
+  security process restarts finds no agent and is not authorized, and one open when it ends is ended by polkitd with the
+  agent's bus name after a crash, or cancelled by Quickshell itself on a graceful stop (dismissed), never approved (as
+  while the UI restarted before S3; `authagent_flows.d` test_35 for the QML side, L5 step 6). A refused registration (the
+  UI's earlier agent still held the session) is asked again with a backoff (3, 6, 12 and 24 s), never in a dev session:
+  Quickshell's `PolkitAgent` asks once, when it is made, and sets its path once, so `AuthAgent` holds it in a Loader and,
+  while it is not registered and has no request, lets it go and makes the next one an event-loop turn later (one made in
+  the same turn would find the old one still alive and stay inert); a registered agent is never let go (the opus review of
+  S3, MINOR-3, and its delta review, MAJOR-1). Quickshell's registration is a synchronous D-Bus call on the security
+  process's main thread (a hung polkitd stops the lock for up to 25 s), so the tries are bounded (round 2, MINOR-A): none
+  while the session is locked, the displays are off or a sleep is under way (`SheetSession.sleeping`), at most four per
+  unlock period, and none for the rest of the period once an attempt coincided with a stall of the event loop longer than
+  1 s (a 200 ms beat on a monotonic clock); a real unlock (the session locked while the agent ran, not the end of the
+  start-up probe of a stranded lock: round 3, MINOR-1) starts a new period. The one attempt at each start of the security
+  process stays, whatever the session's state (an accepted residual). `authagent_flows.d` test_36 to test_46,
+  `authagent_registration.sh` on the real Quickshell. The sheets also count the start-up probe of a stranded or foreign
+  lock as locked (LOW-4). The
+  `polkit` and `secrets` dev hooks answer on the security instance. **S4:** safe mode. The invariant of each state (who
+  locks, either process down, sleep) is the table at the end of ADR-0041 step 1.
+
+### Lock state across processes (ADR-0041 S2; ADR-0010 risk 2)
+- The security process publishes one file, `$XDG_RUNTIME_DIR/grassfield-lock-state-<compositor instance>` (the marker's
+  instance id; `shell/lib/LockState.js` is the one definition): one line of JSON, `{v, state, seq, writer, displaysOff,
+  motion, authorizing, securityKeyboard}`, `state` one of `unlocked`, `locking` (requested, not confirmed by the compositor)
+  and `locked` (confirmed; also while a password is checked and during the release fade); since S3 `authorizing` (the polkit
+  sheet or a secret sheet is open, shown or held) and `securityKeyboard` (one of them or its key sink may hold the
+  keyboard), booleans, absent in a file of a security process from before S3 (read false: it hosts no sheet), any other
+  type no state. Written atomically on every change (before the compositor is asked for the lock) and every 2 s with a new
+  sequence number (`shell/security/lock/LockPublisher.qml`). Never private state: no name, message, attempt count, typed
+  text, requester or anything a sheet shows.
+- The UI (`shell/services/LockClient.qml`) watches the file and reads it every 2 s whatever the watch says; it never writes
+  it, and the security process reads nothing from the UI through it (no socket, no process per beat). `SessionState.locked`,
+  which every refusal reads (GF-116, "Show previews: When Unlocked", Overview, Switcher, the capture toolbar, the Dock's
+  reopen), is locked unless a state is known, fresh (a new beat, by sequence or by a new writer, within 5 s: a Timer, and a
+  synchronous read before deciding), says `unlocked`, and the compositor reports no lock (hyprland-lock-notify-v1 as the
+  clipboard helper reads it, `Clipboard.helperLocked`). A security process that is stopped, restarting, failed at its start
+  limit or hung writes no beat, so the UI reads locked within 5 s. The first read is no beat: a file may be the last line
+  of a dead writer, so only a second, different write proves a live one (a UI started next to a dead writer's `unlocked`
+  reads locked). `LockClient.displaysOff` (the screen saver's slideshow) is true without a fresh state. Since S3
+  `SessionState.authorizing` (the clipboard history records nothing, the tiling popover waits) and
+  `SessionState.securityKeyboard` (the capture toolbar maps nothing as Exclusive) follow `LockClient.authorizing` and
+  `securityKeyboard` (`LockState.uiSheet`): the published value of a known, fresh state, true otherwise; the menus close
+  when a sheet is published open in a fresh state (`LockState.sheetPublished`), never on a missing or stale one.
+- `SessionState.lockConfirmed` (`LockState.uiLockConfirmed`) is true when the compositor reports a lock or the last state
+  published, fresh or stale, is `locking` or `locked`; false while the UI reads locked only because the state is missing,
+  unreadable or stale after an `unlocked` (the security process stopped while the session was unlocked). The paths that
+  only lock or end the session ask `SessionState.refusesConfirmed` instead of `refuses`: the Grassfield menu
+  (`Popups.open("system")`), a confirmation of Log Out, Restart or Shut Down (`PopupKinds.endsOrLocks`), `Search.show`
+  (its Lock Screen command; the clipboard view keeps `refuses`) and the lock corner (`HotCornerActions.isBlocked`). They
+  open while the lock is not confirmed, so that a lock request reaches the stand-in, and close once it is; every other
+  surface keeps refusing. Refusing is right for anything that is not a lock request; never for a lock request.
+- A push the UI missed is corrected by the next beat or the UI's own read (2 s); until then the compositor's signal reads
+  locked once the lock is drawn, and the lock surface covers every output and holds the keyboard whatever the UI reads.
+  With the clipboard history off the helper does not run and that signal is absent: the push and the beat alone.
+- A same-user process can write the file, as it can call any IPC target: a forged `unlocked` can make the UI's own
+  refusals open while the session is locked, never the session (the compositor keeps input and rendering on the lock
+  surfaces). Before S3 it also reached the two security modules that stayed in the UI: the polkit agent's device rule
+  (`answerable` read `SessionState.locked` and `displaysOff`) and the secret sheets' hold (the opus review of 77a0ceb3,
+  MINOR-4). Closed by S3 for the lock and the displays: both run in the security process and read the lock and idle of
+  that process (`SheetSession`, bound by the host from `Lock.locked` and the start-up stranded-lock probe,
+  `Idle.displayOff` and `Idle.saverShown`); the file is never read there. The screen saver is the UI's: idle counts its
+  idle time early and never late (above, "Nothing opens over the lock"), so neither a restart during idle nor the lease
+  can open a hold; and `security_process_scan.py` holds it (no security module names `SessionState` or `LockClient`; `SheetSession`
+  has no other writer). A forged `authorizing: false` can make the UI's clipboard history record or its capture toolbar
+  take the keyboard while a sheet is open: same-user code, out of scope as above, and the sheet itself is unaffected.
+- The UI asks for a lock with `lock lock` on the security instance (`qs ipc -p <shell dir>/security.qml`), each try
+  bounded at 5 s, retried every 250 ms for 10 s while it does not answer, and in a real session hands the request once to
+  the stand-in, which starts a stopped security unit. A UI that finds no published state 15 s after its start restarts the security unit once (an
+  upgrade from a build before S2 leaves the earlier, empty process running; or it is hung): never in a dev session, never
+  past its start limit; the restarted process takes any lock back from the marker.
+- The applications' org.freedesktop.ScreenSaver inhibitors, which the menu bridge serves to the UI, reach idle as a lease:
+  `idle inhibit 150`, renewed every 60 s while one is held, `0` when none; the security side bounds it at 150 s
+  (`IdleModel.inhibitLeaseMs`), so a UI that crashed during a video keeps the idle lock off for one lease at most.
+- Tests: `tests/security/tst_lockstate.qml` with `lockstate_mutants.sh` (29 mutants since S3), `lock_client.sh` (the real
+  `LockClient` offscreen, two starts next to an existing file, the sheets' fields fresh, missing and stale, 9 mutants),
+  `security_process_scan.py` (through `security_unit.sh`, 53 mutants since S3), `lock_surfaces.sh` (the unconfirmed lock paths), `lock_request_env.sh` (the lock key's
+  fallback), `dev_gate.sh` (the first publication); nested: `reload_locked.sh ui-crash`, `ui-down-sleep`, `ui-down-idle`.
 
 ## Implementation (M2)
 | Path | Role |
@@ -1471,10 +1831,15 @@ same directory and the modules move without moving a file), one step at a time u
 | `shell/security/LockController.qml` | Auth controller over an injected PAM backend: one prompt answered, 30 s timeout, secret dropped on every outcome |
 | `shell/security/PasswordField.qml` | Shared password entry (Password echo, sensitive-data hints, plain-text placeholder, return arrow) |
 | `shell/security/lock/Lock.qml` | Singleton: `WlSessionLock`, `PamContext` (password; fingerprint only if its PAM file exists, paced: "Fingerprint pacing"), crash marker, IPC `lock` |
-| `shell/security/lock/LockView.qml` | Lock surface (display only): the output's wallpaper, sharp (the still LockStill decoded, else its colour or `WallpaperArt`), the banded scrim, date and clock, avatar/initials, name, dark frosted field, one hint line (gate A2, see Decisions); backdrop, name and picture taken once (ADR-0040 step 4a) |
-| `shell/security/lock/LockStill.qml` | Per output (display only): the lock's backdrop decided while unlocked from `WallpaperState.lockBackdrop`; a picture checked (`/usr/bin/realpath -m`: a plain cache name in the real prepared or video folder; `/usr/bin/stat %f`: a regular file of at most `wallpaper.lockStillMaxBytes`) and decoded into Qt's pixmap cache before any lock (ADR-0040 ID-7, ADR-0016 W8) |
+| `shell/security/lock/LockView.qml` | Lock surface (display only): the output's wallpaper, sharp (the still LockStill decoded, else its colour or `GrassfieldArtwork`), the banded scrim, date and clock, avatar/initials, name, dark frosted field, one hint line (gate A2, see Decisions); backdrop, name and picture taken once (ADR-0040 step 4a) |
+| `shell/security.qml`, `shell/security/host/SecurityHost.qml` | The security process's root (ShellRoot, one SecurityHost, the `security` target) and what it hosts: the Translator and the appearance settings the lock follows, Idle (with SleepInhibitor) and the Lock singleton (ADR-0041 S2), the sheets' session (SheetSession's Bindings) and, made at run time, SheetHost (S3) |
+| `shell/security/host/SheetHost.qml`, `shell/security/SheetSession.qml` | The polkit agent, the secret agent and their one queue in the security process (ADR-0041 S3), their icon lookup (the system theme only) and what the UI may know of them (`authorizing`, `securityKeyboard`); what the sheets read of the session (locked, displays off, the saver), written only by the host from the process's own lock and idle |
+| `shell/security/lock/LockPublisher.qml`, `shell/lib/LockState.js` | The lock state the UI reads: one file pushed on every change and with a heartbeat every 2 s; the format, the reader and the UI's fail-closed reading (pure, shared) |
+| `shell/security/lock/LockWallpaper.qml`, `LockAvatar.qml` | The lock's own reader of `wallpaper.json` (bounded, watched) and its account picture made by `services/image-copy.py file` (display only) |
+| `shell/services/LockClient.qml`, `LockClient.js` | The UI's side: reads the published state (SessionState.locked follows it), asks the security process to lock (`lock lock`), leases the screen saver inhibitors (`idle inhibit`) |
+| `shell/security/lock/LockStill.qml` | Per output (display only): the lock's backdrop decided while unlocked from `LockWallpaper.lockBackdrop`; a picture checked (`/usr/bin/realpath -m`: a plain cache name in the real prepared or video folder; `/usr/bin/stat %f`: a regular file of at most `wallpaper.lockStillMaxBytes`) and decoded into Qt's pixmap cache before any lock (ADR-0040 ID-7, ADR-0016 W8) |
 | `shell/security/lock/LockStills.qml` | The display data the lock surfaces take (one LockStill per output, the account picture decoded ahead), created by `Lock.qml` at run time so that it can never keep the lock from loading |
-| `shell/security/polkit/` | `AuthAgent` (PolkitAgent + overlay window, IPC `polkit status`), `AuthDialog`, `AuthDialogModel` |
+| `shell/security/polkit/` | `AuthAgent` (PolkitAgent + overlay window, IPC `polkit status` on the security instance since ADR-0041 S3), `AuthDialog`, `AuthDialogModel` |
 | `shell/security/idle/` | `Idle` (IdleMonitor, dim layer, idle lock, display power-off on the lock screen, IPC `idle`), `SleepInhibitor` (delay inhibitor, PrepareForSleep watcher, retry and notice, logind budget), `IdleModel.js` |
 | `config/hypr/grassfield/privacy.lua` | Omarchy's `no_screen_share` rules read from Omarchy's own files (SEC-01) |
 | `packaging/systemd/sleep-lock-gate` | `ExecCondition` of Omarchy's sleep-lock unit (D-12), installed to `/usr/lib/grassfield/` |
@@ -1491,7 +1856,8 @@ same directory and the modules move without moving a file), one step at a time u
 | `tests/security/pam_audit.sh` | Read-only PAM attempt audit over every Quickshell instance log of this tree (sourced by `reload_locked.sh`) |
 | `tests/security/nested_ready.sh`, `nested_ready_unit.sh` | Readiness wait of `reload_locked.sh` and `lock_privacy.sh` (bounded, `READY_SECONDS`, default 60): GF-REF listed and a lock state from the shell, before any step and after each shell restart; an empty answer is never a state, a timeout FAILs. Offline test with stub `hyprctl` and `qs` |
 
-IPC (all on the shell instance; classes in "IPC surface"): `lock lock` → `ok` / `already-locked` / `refused: missing-pam`
+IPC (the `lock` and `idle` targets on the security instance since ADR-0041 S2, `qs ipc -p
+/usr/share/grassfield/shell/security.qml`; `polkit` and `secrets` there too since S3; classes in "IPC surface"): `lock lock` → `ok` / `already-locked` / `refused: missing-pam`
 (when already locked, the session lock is re-verified, see "Lock ownership"); `lock lid` → the same or `docked`. Dev
 hooks, only in a dev session (else `refused`): `lock status` → `unlocked|locking|locked|authenticating|releasing`;
 `lock devReload` → `reloading` (soft reload), `lock devPauseOwnershipCheck` → `paused` (periodic ownership check off

@@ -5,7 +5,8 @@ import QtQml
 // Mutual exclusion of the full-attention surfaces that take the keyboard (Overview, Apps, Search): opening one
 // closes the others, so that the keyboard always belongs to the visible top surface (macOS model). The one place
 // of the rule; shell.qml lists the surfaces. Each entry: {target, close}, where `target` has a boolean `open`
-// and `close` is a function that dismisses it (graceful path, e.g. Overview's keyboard release).
+// and `close` is a function that dismisses it (graceful path, e.g. Overview's keyboard release). A surface built late has a
+// null `target` until it exists (the capture toolbar, ADR-0056): it is skipped until then.
 QtObject {
     id: root
 
@@ -22,12 +23,20 @@ QtObject {
 
             target: watcher.modelData.target
 
+            // A surface built late can appear already open (a request made before it existed, performed on its arrival): it is
+            // the newest opener, so it closes the others as an opening would.
+            Component.onCompleted: watcher.closeOthers()
+
             function onOpenChanged(): void {
-                if (!watcher.modelData.target.open)
+                watcher.closeOthers();
+            }
+
+            function closeOthers(): void {
+                if (!watcher.modelData.target || !watcher.modelData.target.open)
                     return;
                 for (let i = 0; i < root.surfaces.length; i++) {
                     const other = root.surfaces[i];
-                    if (i !== watcher.index && other.target.open)
+                    if (i !== watcher.index && other.target && other.target.open)
                         other.close();
                 }
             }

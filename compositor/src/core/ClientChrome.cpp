@@ -26,9 +26,67 @@ namespace gf::chrome {
             return true; // a GTK header bar
         if (request.xdgObject || request.kdeObject)
             return false; // a request that proves no bar (xdg client_side included) or a server-side one
-        // A manager bound and no decoration object at all in the client: Qt's frameless window. An object the client holds
-        // that was not found for this toplevel (another of its windows, or a Hyprland whose private map changed) proves nothing.
-        return request.managerBound && !request.clientHasObject;
+        // A manager bound and no decoration object at all in the client: Qt's frameless window. It draws its own title bar only
+        // with a frame of its own (Telegram's shadow margins); one that draws nothing keeps the plugin's (R7-REQ-01). An object
+        // the client holds that was not found for this toplevel (another of its windows, or a Hyprland whose private map
+        // changed) proves nothing.
+        return request.managerBound && !request.clientHasObject && request.framed;
+    }
+
+    FrameRead frameRead(const titlebar::Rect& geometry, double surfaceW, double surfaceH) {
+        if (!(geometry.w > 0.0) || !(geometry.h > 0.0) || !(surfaceW > 0.0) || !(surfaceH > 0.0))
+            return FrameRead::Unknown; // never set, or no surface yet (NaN fails every comparison too)
+        const double left   = geometry.x;
+        const double top    = geometry.y;
+        const double right  = surfaceW - (geometry.x + geometry.w);
+        const double bottom = surfaceH - (geometry.y + geometry.h);
+        if (!(left >= 0.0) || !(top >= 0.0) || !(right >= 0.0) || !(bottom >= 0.0))
+            return FrameRead::Unknown; // reaches outside the surface: between a geometry and its buffer, or a mistake
+        return std::max({left, top, right, bottom}) >= kFrameInsetMin ? FrameRead::Inside : FrameRead::Whole;
+    }
+
+    void CFrameEvidence::atMap(FrameRead read, bool firstBuffer) {
+        m_framed = read == FrameRead::Inside;
+        m_kept   = m_framed && firstBuffer;
+        m_inside = 0;
+        m_whole  = 0;
+    }
+
+    bool CFrameEvidence::onCommit(FrameRead read, bool sized) {
+        if (m_kept)
+            return false; // a frame of its first buffer, or a sustained one: the window's for its life
+        switch (read) {
+            case FrameRead::Unknown: return false;
+            case FrameRead::Inside: {
+                m_whole  = 0;
+                m_inside = m_inside < kFrameReadsToKeep ? static_cast<uint8_t>(m_inside + 1) : m_inside;
+                m_kept   = m_inside >= kFrameReadsToKeep;
+                if (m_framed || m_inside < kFrameReadsToChange)
+                    return false;
+                m_framed = true;
+                return true;
+            }
+            case FrameRead::Whole:
+                m_inside = 0;
+                if (sized) {
+                    m_whole = 0; // its shadow dropped while zoomed or in full screen: not evidence against a frame
+                    return false;
+                }
+                m_whole = m_whole < kFrameReadsToChange ? static_cast<uint8_t>(m_whole + 1) : m_whole;
+                if (!m_framed || m_whole < kFrameReadsToChange)
+                    return false;
+                m_framed = false;
+                return true;
+        }
+        return false;
+    }
+
+    bool CFrameEvidence::framed() const {
+        return m_framed;
+    }
+
+    bool CFrameEvidence::kept() const {
+        return m_kept;
     }
 
     DecorationInterface decorationInterface(std::string_view interfaceName) {

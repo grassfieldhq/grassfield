@@ -16,6 +16,7 @@ singleton Connectivity 1.0 Connectivity.qml
 singleton Rfkill 1.0 Rfkill.qml
 singleton Battery 1.0 Battery.qml
 singleton SessionState 1.0 SessionState.qml
+singleton LockClient 1.0 LockClient.qml
 singleton NightShift 1.0 NightShift.qml
 singleton TerminalTheme 1.0 TerminalTheme.qml
 singleton Brightness 1.0 Brightness.qml

@@ -23,8 +23,10 @@ QString expandName(const QString &archiveName, const QStringList &topLevel, cons
 
 // bsdtar's argument lists (ADR-0029). Compress: zip format, each name as "./name" (an operand starting with '@' is
 // read as an archive to copy, even after "--"), stored without the "./" (-s with S: symbolic link targets untouched),
-// links stored as links. Expand: no owner, permissions, ACL, flag or xattr from the archive; never -P (bsdtar then
-// refuses absolute members and ".." components). List: the verbose listing, for the size budget.
+// links stored as links. Expand: no owner, ACL, flag or xattr from the archive, and no setuid, setgid or sticky bit
+// (--no-same-permissions; the members' read, write and execute bits stay, less the umask: ArchiveJob copies the archive's
+// download marks onto every extracted file, so a program from a downloaded archive still asks before it runs); never -P
+// (bsdtar then refuses absolute members and ".." components). List: the verbose listing, for the size budget.
 QStringList compressArgs(const QString &archivePath, const QString &folder, const QStringList &names);
 QStringList expandArgs(const QString &archivePath, const QString &intoFolder);
 QStringList listArgs(const QString &archivePath);

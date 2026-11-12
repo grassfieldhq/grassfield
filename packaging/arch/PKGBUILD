@@ -277,7 +277,10 @@ package_grassfield-desktop() {
   # already installed with gnome-keyring (probe P15), declared because Grassfield's own binary needs it. libsecret: the
   # bridge's KIO password server keeps remembered network passwords in the Secret Service with it (ADR-0035 D-12 b, step
   # 9e); already installed with gcr-4, declared for the same reason.
-  depends=(hyprland uwsm bubblewrap quickshell qt6-declarative qt6-wayland wayland qt6-svg inter-font kio solid kcoreaddons kservice kwindowsystem qt6-multimedia qt6-imageformats qt6-webengine ffmpeg curl python librsvg hyprcursor breeze-icons grassfield-icons grassfield-wallpapers networkmanager bluez-utils wireplumber pipewire wl-clipboard grim slurp grassfield-keyring grassfield-hold pacman-contrib fakeroot gnome-keyring xdg-desktop-portal xdg-desktop-portal-gtk libcups gcr-4 libsecret)
+  # grassfield-sanaga (the web browser, binary /usr/bin/sanaga, provides and conflicts `sanaga`) and grassfield-notes (the Notes app)
+  # are the sibling apps of ADR-0055, built from pinned commits by grassfieldhq/grassfield-packages into the same signed channel:
+  # this depends can merge only after that repository builds them.
+  depends=(hyprland uwsm bubblewrap quickshell qt6-declarative qt6-wayland wayland qt6-svg inter-font kio solid kcoreaddons kservice kwindowsystem qt6-multimedia qt6-imageformats qt6-webengine ffmpeg curl python librsvg hyprcursor breeze-icons grassfield-icons grassfield-wallpapers networkmanager bluez-utils wireplumber pipewire wl-clipboard grim slurp grassfield-keyring grassfield-hold grassfield-sanaga grassfield-notes pacman-contrib fakeroot gnome-keyring xdg-desktop-portal xdg-desktop-portal-gtk libcups gcr-4 libsecret)
   # grassfield-hold (ADR-0041 step 2a, SQ-3 A, owner decision of 2026-11-08): the bounds of the toolkit this build was made for;
   # the literal name is what pacman resolves first, and grassfield-unhold provides it without a bound (Software Update's
   # "Allow system updates Grassfield hasn't tested…"). Never constrain hyprland or kcoreaddons there.
@@ -316,6 +319,12 @@ package_grassfield-desktop() {
   # No hidden path ships in a QML root: QML loads one by name (Loader { source: ".x.qml" }) and a glob-based lint skips it
   # (tests/security/ipc_inventory.sh and tests/ci/import_graph.py refuse them in the tree; this refuses them in the package).
   _no_hidden "$pkgdir/usr/share/grassfield/shell" || return 1
+  # ADR-0056 (Proposed): the UI's QML is loaded by file: URLs so that Qt's disk cache serves it (Quickshell's qs:@ URLs are
+  # never cached: every file was compiled at every start). The imports of the packaged copy are rewritten and shell.qml becomes
+  # a stub of shell-core.qml; security.qml and the security process are unchanged (they still load by qs:, ADR-0056 D-5).
+  python3 -I "$root/scripts/dev/migrate-qs-imports.py" --in-place "$pkgdir/usr/share/grassfield/shell" || return 1
+  # The package must be the source apart from its import lines (a change only the package carries would escape every source test).
+  python3 -I "$root/scripts/dev/migrate-qs-imports.py" --verify --src "$root/shell" "$pkgdir/usr/share/grassfield/shell" || return 1
 
   # Design system as a regular QML module; icons copied into the module (repo symlink resolved).
   install -d "$pkgdir/usr/lib/qt6/qml/Grassfield/Ui"
@@ -521,7 +530,8 @@ package_grassfield-compositor() {
   # Stages event): this package needs the desktop of exactly its own version, so pacman upgrades the pair together and
   # refuses a partial upgrade of either. The desktop does not depend on this package: it runs without the plugin (C2).
   depends=(hyprland "grassfield-desktop=$pkgver-$pkgrel")
-  # Own code MIT; the server code generated from the KDE appmenu protocol XML LGPL-2.1-or-later; Hyprland's headers BSD-3-Clause.
+  # Own code MIT; the server code generated from the KDE appmenu protocol XML LGPL-2.1-or-later; Hyprland's headers BSD-3-Clause;
+  # the server code generated from wayland-protocols' xdg-toplevel-drag XML MIT (packaging/licenses/compositor-protocols-notices.txt).
   license=(MIT LGPL-2.1-or-later BSD-3-Clause)
   # Debug symbols stay in the .so (built RelWithDebInfo): a crash inside Hyprland has to be readable. No split package.
   options=(!strip)
@@ -575,6 +585,7 @@ package_grassfield-compositor() {
   install -Dm644 "$root/THIRD_PARTY.md" "$pkgdir/usr/share/licenses/grassfield-compositor/THIRD_PARTY.md"
   install -Dm644 "$root/packaging/licenses/hyprland-BSD-3-Clause.txt" "$pkgdir/usr/share/licenses/grassfield-compositor/hyprland-BSD-3-Clause.txt"
   install -Dm644 "$root/packaging/licenses/appmenu-LGPL-2.1-or-later.txt" "$pkgdir/usr/share/licenses/grassfield-compositor/appmenu-LGPL-2.1-or-later.txt"
+  install -Dm644 "$root/packaging/licenses/compositor-protocols-notices.txt" "$pkgdir/usr/share/licenses/grassfield-compositor/compositor-protocols-notices.txt"
 }
 
 package_grassfield-store() {

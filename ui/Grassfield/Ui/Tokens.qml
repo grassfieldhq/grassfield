@@ -131,8 +131,8 @@ QtObject {
 
     // color roles, accentInkLight appearance
     readonly property var colorAccentInkLight: ({
-        yellow: "#816500",  // the lightest shade of the light yellow accent (HSL hue and saturation kept) that holds 4.5:1 on an opaque app window, its sidebar and their rimmed capsules (A2 role 'text and glyphs in the accent colour on an app window'); on glass it is no worse than the accents that need no ink (2.24:1 at the worst wallpaper and transparency). Text and glyphs drawn in the accent colour in the light appearance (Appearance.colors.accentInk), as macOS draws a light accent's text darker; the integrator's review of 5391761 (ADR-0040 step 1c) [ref: docs/decisions/ADR-0040-identity.md step 1c; docs/specs/ui.md]
-        green: "#467427"  // the lightest shade of the light green accent (HSL hue and saturation kept) that holds 4.5:1 on an opaque app window, its sidebar and their rimmed capsules (A2 role 'text and glyphs in the accent colour on an app window'); on glass it is no worse than the accents that need no ink (2.24:1 at the worst wallpaper and transparency). Text and glyphs drawn in the accent colour in the light appearance (Appearance.colors.accentInk), as macOS draws a light accent's text darker; the integrator's review of 5391761 (ADR-0040 step 1c) [ref: docs/decisions/ADR-0040-identity.md step 1c; docs/specs/ui.md]
+        yellow: "#816500",  // the lightest shade of the light yellow accent (HSL hue and saturation kept) that holds 4.5:1 on an opaque app window, its sidebar and their rimmed capsules (A2 role 'text and glyphs in the accent colour on an app window'); on glass the text reads Appearance.colors.accentGlass instead, this ink mixed toward the text colour (glass.accentInkMixLight; A2 role 'text and glyphs in the accent colour on material'). Text and glyphs drawn in the accent colour in the light appearance (Appearance.colors.accentInk), as macOS draws a light accent's text darker; the integrator's review of 5391761 (ADR-0040 step 1c) [ref: docs/decisions/ADR-0040-identity.md step 1c; docs/specs/ui.md]
+        green: "#467427"  // the lightest shade of the light green accent (HSL hue and saturation kept) that holds 4.5:1 on an opaque app window, its sidebar and their rimmed capsules (A2 role 'text and glyphs in the accent colour on an app window'); on glass the text reads Appearance.colors.accentGlass instead, this ink mixed toward the text colour (glass.accentInkMixLight; A2 role 'text and glyphs in the accent colour on material'). Text and glyphs drawn in the accent colour in the light appearance (Appearance.colors.accentInk), as macOS draws a light accent's text darker; the integrator's review of 5391761 (ADR-0040 step 1c) [ref: docs/decisions/ADR-0040-identity.md step 1c; docs/specs/ui.md]
     })
 
     // color roles, tile appearance
@@ -1042,6 +1042,10 @@ QtObject {
     // estimate [ref: docs/testing/f1-reference-gaps.md § Lock / login, OSD, polkit; docs/specs/osd.md]
     readonly property int osdHideDelay: 1600
 
+    // text and glyphs in the accent colour on glass, dark appearance (Appearance.colors.accentGlass, Accent.glassInk): the share of the text colour mixed into the accent so that it holds 4.5:1 over the class's tint floor on every wallpaper and transparency up to 0.6 (the raw accent measured 2.23:1 to 4.12:1); macOS draws accent text on vibrancy with a legibility-adjusted accent, not the raw one. Over the shell's real glass (every class, the tint alpha GlassTint.alpha gives it, with the fills a row or a tile draws) the red needs the most (0.75); 0.76 leaves a margin (A2 role 'text and glyphs in the accent colour on material', tested for every accent) [ref: docs/specs/ui.md]
+    readonly property real glassAccentInkMixDark: 0.76
+    // the same in the light appearance: the share of the text colour mixed into the accent ink; over the same glass the yellow and the green need the most (0.57); 0.58 leaves a margin (A2 role 'text and glyphs in the accent colour on material', tested for every accent) [ref: docs/specs/ui.md]
+    readonly property real glassAccentInkMixLight: 0.58
     // ADR-0024 section 2 point 1: the Grassfield default of the class at the default slider value (macOS 26 measured menus and Search 0.56-0.76); raised by GlassTint.js to what keeps its text at 4.5:1 over the backdrop (A2: tests/visual/test_contrast_tokens.py)
     readonly property real glassMenu: 0.65
     // ADR-0024 section 2 point 1: the Grassfield default of the class at the default slider value (macOS 26 measured notification cards and banners 0.45-0.60); raised by GlassTint.js to what keeps its text at 4.5:1 over the backdrop (A2: tests/visual/test_contrast_tokens.py)
@@ -2833,6 +2837,9 @@ QtObject {
     // estimate: ms after start before the windows a previous run left parked by Show Desktop are brought back (the window list must be known)
     readonly property int showDesktopRecoverMs: 1500
 
+    // estimate: ms a request for a surface still being built after the shell started (Search, Apps, Overview) stays pending; an older one is dropped, a person having moved on (ADR-0056 amendment)
+    readonly property int deferredRequestMaxAgeMs: 5000
+
     // estimate: Preview app (docs/specs/preview.md) [ref: docs/testing/f1-reference-gaps.md § Glance and Preview]
     readonly property int previewWindowWidth: 860
     // estimate: Preview app (docs/specs/preview.md) [ref: docs/testing/f1-reference-gaps.md § Glance and Preview]
@@ -3078,19 +3085,67 @@ QtObject {
     // ADR-0014 Clear: share of the ink (in linear light, between the glass and the ink) that even black artwork gets, so that a dark monochrome glyph (Breeze network-wired, fcitx: 1.2:1 on a dark panel) stays distinguishable from the glass: about 2:1 against the plate; part of the black-vs-white internal contrast is traded for it
     readonly property real iconModeClearInkFloor: 0.15
     // ADR-0014 Clear over the accent fill of a selected row (Search, Force Quit): opacity of the plate, dark on a bright accent and light on a dark one, so that the plate and the ink keep 4.5:1 against the accent (A2 accent row)
-    readonly property real iconModeClearPlateAlphaAccent: 0.9
+    readonly property real iconModeClearPlateAlphaAccent: 1.0
     // ADR-0014 Tinted, dark appearance: the plate is the tint colour at this fraction of its brightness (a dark tinted plate, macOS 26)
     readonly property real iconModeTintedPlateScale: 0.3
     // ADR-0014 Tinted, light appearance: the plate is the tint colour mixed this far to white (a light tinted plate)
     readonly property real iconModeTintedPlateMixLight: 0.88
-    // ADR-0014 Tinted, dark appearance: the artwork's darkest tone is the tint at this fraction of its brightness
-    readonly property real iconModeTintedRampLowDark: 0.55
-    // ADR-0014 Tinted, dark appearance: the artwork's lightest tone is the tint mixed this far to white
-    readonly property real iconModeTintedRampHighDark: 0.8
+    // ADR-0014 Tinted, dark appearance: the artwork's darkest tone is the tint at this fraction of its brightness (was 0.55; raised with tintedRampHighDark so that a glyph whose lightest tone is a mid one still stands 3:1 out of a dark material: R7-REQ-13, A2 rule E, docs/specs/ui.md)
+    readonly property real iconModeTintedRampLowDark: 0.62
+    // ADR-0014 Tinted, dark appearance: the artwork's lightest tone is the tint mixed this far to white (was 0.8; R7-REQ-13: the glyphs of kdenlive, obs and the terminal stood 2.5-2.8:1 out of a dark material at 24 px, A2 rule E)
+    readonly property real iconModeTintedRampHighDark: 1.0
     // ADR-0014 Tinted, light appearance: the artwork's darkest tone is the tint at this fraction of its brightness (dark on the light plate)
     readonly property real iconModeTintedRampLowLight: 0.12
     // ADR-0014 Tinted, light appearance: the artwork's lightest tone is the tint mixed this far to white (a wide ramp keeps the internal contrast of the icon)
     readonly property real iconModeTintedRampHighLight: 0.2
+    // ADR-0014 tile tone, light appearance with the wallpaper showing through the material (R7-REQ-13, A2 rule E): relative luminance (linear light) above which the pixels of a tile icon are lifted. The material is then anything from a dark grey (0.13: the tint over a black wallpaper) to white (0.9), so only the brightest tones move; GPU run of 2026-11-09: own-tile-squircle Tinted at 24 px, transparency 1.0, over a mid-grey wallpaper (material 0.43) measured 1.98 against a floor of 1.99, on main too, because its brightest tones (0.90) stand 1.98:1 out of the material: lifted to 0.95 they stand 2.08:1
+    readonly property real iconModeTileLightLiftPivot: 0.8
+    // ADR-0014 tile tone, light appearance with the wallpaper showing through: exponent q of the lift v' = P + (1 - P) (1 - (1 - u)^q) above tileLightLiftPivot (an ease-out; modelled on the A2 tile fixtures: rule I and S margins unchanged, 0.2 and more)
+    readonly property real iconModeTileLightLiftExponent: 2.0
+    // ADR-0014 own-tile rule, tile tone, dark appearance over a solid window material (R7-REQ-13, A2 rule E): relative luminance (linear light) above which the pixels of a tile icon are lifted and below which nothing moves: the luminance of the brightest material of the dark appearance (the material tint at material.tintAlphaMin over a white wallpaper, transparency 1.0: 0.38), so a lifted pixel never moves towards the material
+    readonly property real iconModeTileLiftPivot: 0.38
+    // ADR-0014 / R7-REQ-13: relative luminance of the surface under an icon (a nearly clear glass such as the Dock: its tint over the wallpaper under it) below which the icon is drawn for a dark surface and above which for a light one, whatever the system appearance (the macOS model: an icon follows the glass it sits on). Between the two configurations measured on the GPU (2026-11-10): the dark look passes over black (luminance 0), the light look over a mid-grey (0.21) and white, and each fails the other way; 0.10 keeps 0.1 from both, so a wallpaper has to be well on one side for the look to change
+    readonly property real iconModeSurfaceToneThreshold: 0.1
+    // ADR-0014 / R7-REQ-13: half-width of the band around surfaceToneThreshold in which the previous look stays, so that a wallpaper whose luminance drifts around the threshold does not flip the icons back and forth
+    readonly property real iconModeSurfaceToneHysteresis: 0.03
+    // ADR-0014 / R7-REQ-13: relative luminance of a glass surface up to which Clear takes the smoked look (dark plate, light ink) in the light appearance too: the light look's faint plate (alpha 0.14, luma 0.3) is the surface's own tone from mid-grey up (plate 1.11:1 over #808080, GPU 2026-11-10); above it (white) the light look holds
+    readonly property real iconModeClearSmokeSurfaceMax: 0.6
+    // ADR-0014 / R7-REQ-13: least contrast (WCAG ratio) the smoked Clear plate keeps against the glass surface it sits on: its opacity is raised from clearPlateAlphaWallpaper until the plate, over the surface, reaches it (only on mid-tone surfaces; over black and white the base opacity already does)
+    readonly property real iconModeClearPlateMinRatio: 2.0
+    // ADR-0014 / R7-REQ-13: relative luminance of a glass surface from which a tile icon on it gets the light-surface tone (darken, as on a solid light material); between this and the dark look's surface no tone is applied, the pivots do not describe mid-tones
+    readonly property real iconModeGlassToneLightMin: 0.6
+    // ADR-0014 / R7-REQ-13: the deep plate on a dark glass. The Dock over a surface of 0.07 to 0.22 (the hysteresis band of the dark/light decision and the dark greys above it) is as dark as the plates of Dark, Tinted and the smoked Clear, so plate and surface kept only 2.1 to 2.7:1 against Default's 2.8 to 5.3 (GPU 2026-11-11, test_a2_dock band cells 0.10 and 0.13, rule E). Weight 0 up to this luminance (black and the dark look, which pass).
+    readonly property real iconModeDeepPlateFrom: 0.07
+    // ADR-0014 / R7-REQ-13: surface luminance from which the deep plate weight is 1 (a linear ramp from deepPlateFrom).
+    readonly property real iconModeDeepPlateFull: 0.1
+    // ADR-0014 / R7-REQ-13: surface luminance up to which the deep plate weight stays 1.
+    readonly property real iconModeDeepPlateFullTo: 0.16
+    // ADR-0014 / R7-REQ-13: surface luminance at which the deep plate weight is 0 again (a mid-grey glass, 0.25, keeps the plates the GPU measured).
+    readonly property real iconModeDeepPlateTo: 0.22
+    // ADR-0014 / R7-REQ-13: lightness (sRGB 0..1) the graphite plate of Dark and the smoked plate of Clear reach at weight 1: black, 3.0:1 against a surface of 0.10 (modelled: (0.10+0.05)/(0+0.05)), 3.6:1 against 0.13.
+    readonly property real iconModeDeepPlateLuma: 0.0
+    // ADR-0014 / R7-REQ-13: the dark Tinted plate is the tint times this at weight 1 (0.3 normally): 2.95:1 or more against a surface of 0.10 for a mid blue (modelled).
+    readonly property real iconModeDeepTintedPlateScale: 0.03
+    // ADR-0014 / R7-REQ-13: linear value above which the bright tones of plain artwork are lifted on a dark Dock glass (BAND LIFT in icon.frag): the black plate is at its 2.9:1 ceiling against a 0.10 surface, so rule E rests on the glyph (kdenlive 2.61 to 2.75 against a floor of 2.9, GPU 2026-11-11).
+    readonly property real iconModeDeepLiftPivot: 0.25
+    // ADR-0014 / R7-REQ-13: exponent of that one-sided ease-out lift at deep plate weight 1 (1 = none); nothing below the pivot moves. Modelled (.dev/a2model/band.py): kdenlive +0.5 on rule E in Dark, Clear and Tinted.
+    readonly property real iconModeDeepLiftExponent: 1.7
+    // ADR-0014 / R7-REQ-13: how far below the smoked-plate and tone edge (clearSmokeSurfaceMax) the held surface luminance is clamped while it stays on the lower side inside the hysteresis band (IconModes.heldSurface).
+    readonly property real iconModeSurfaceEdgeStep: 0.001
+    // ADR-0014 tile tone, Dark in the dark appearance (R7-REQ-13, A2 rule E): the pivot of Dark's lift, above the brightest dark material (tileLiftPivot 0.38) so that only the lightest tones of a tile move: basecamp's sky (0.60) takes Dark's tile at 24 px, transparency 1.0, over white from 1.57:1 to a modelled 2.06 (floor 1.73) while Dark's rule I and S cells (floor 0.9 of Default's) keep a modelled margin of 0.16 and 0.21: a lift from 0.38 and one from 0.45 broke them (model, 2026-11-10)
+    readonly property real iconModeTileLiftPivotDark: 0.55
+    // ADR-0014 tile tone, Dark: exponent q of the lift above tileLiftPivotDark (an ease-out; 1 = none)
+    readonly property real iconModeTileLiftExponentDark: 2.5
+    // ADR-0014 tile tone, Clear: exponent q of the lift above tileLiftPivot (an ease-out; 1 = none). GPU run of 2026-11-09 with q 2.5: every basecamp rule E cell passed and two rule I/S cells missed by 0.01 (kimagemapeditor 1.99 against 2.0, light-plate-lighter-glyph 1.32 against 1.33); q 2.0 keeps those two with a modelled margin of 0.10 and 0.05 and basecamp at 1.77-1.86 against 1.73 (docs/specs/ui.md). Dark has its own pivot and exponent (tileLiftPivotDark, tileLiftExponentDark): its rule I floor (0.9 of Default) does not take a lift from 0.38
+    readonly property real iconModeTileLiftExponentClear: 2.0
+    // ADR-0014 tile tone, Tinted: exponent q of the lift above tileLiftPivot (same measure as Clear)
+    readonly property real iconModeTileLiftExponentTinted: 2.0
+    // ADR-0014 own-tile rule, tile tone, light appearance (R7-REQ-13, A2 rule E): relative luminance (linear light) below which the pixels of a tile icon are darkened, and above which nothing moves: about the darkest solid material of the light appearance (the material tint over a black wallpaper: 0.63 at the default transparency, 0.57 at the end of the clamp, material.tintClampUntil)
+    readonly property real iconModeTileDarkenPivot: 0.62
+    // ADR-0014 own-tile rule, tile tone, light appearance: exponent e of the darkening v' = P (v / P)^e below tileDarkenPivot (e > 1; 1.75 takes basecamp's edge from 2.0-2.9:1 to 2.9-4.1:1 over the light material, floor 2.17-2.9, modelled on the shader and the A2 fixture, docs/specs/ui.md)
+    readonly property real iconModeTileDarkenExponent: 1.75
+    // ADR-0014 Dark over a DARK accent fill of a selected row (the selection of the light appearance, #195E3F: relative luminance 0.09): lightness of the plate, black, so that the plate keeps 2.5:1 against the fill (graphite 0.13 measured 2.08:1 on the GPU run of 2026-11-09; black is 2.8:1); over a bright accent the graphite plate is unchanged
+    readonly property real iconModeDarkPlateLumaOnDarkAccent: 0.0
     // ADR-0014 Clear: from this material transparency (Control Center slider, 0..1) the wallpaper shows through the window material so much that Clear icons are drawn as over the bare wallpaper (smoked plate, opaque rim); A2 at 1.0 holds a floor of 2.0 in every mode, tint and size (docs/specs/ui.md)
     readonly property real iconModeWallpaperLikeTransparency: 0.8
     // estimate: Settings icon mode picker, sample icon edge (macOS 26 style tiles) [ref: docs/testing/f1-reference-gaps.md § Settings; docs/specs/settings.md]

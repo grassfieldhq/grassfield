@@ -1100,8 +1100,7 @@ this ADR follows it, and any later pull request of either lane that meets one of
     `colors.accentInk`: `color.accentInkLight` gives yellow `#816500`, green `#467427` and pink `#BD2F6C` (pink was 4.34:1
     under a rimmed capsule; pink's entry was removed on 2026-11-03, see the amendment), each the lightest shade of its accent with 4.5:1 on an app window; every other accent and the
     dark appearance draw in the accent itself. Two A2 roles: on an app window (4.5:1, every accent, both appearances) and
-    on glass (exempt: no accent holds 4.5:1 over the worst wallpaper, the Grassfield green 2.36:1; every ink keeps 2.2:1,
-    tested). Ten texts and glyphs moved to it (the widgets' weekday, a Control Center checkmark, the alert glyph, Files'
+    on glass (exempt when this was written; the exemption ended on 2026-11-08, see the amendment below). Ten texts and glyphs moved to it (the widgets' weekday, a Control Center checkmark, the alert glyph, Files'
     Show All and Show More and sidebar glyphs, the Store button label and its sidebar and category glyphs); a test fails
     when a text or glyph reads the bare accent.
   - NITs: ADR-0039's knob wording and the comments of `RadioRow.qml` and `StoragePage.qml` now name green beside yellow;
@@ -1127,3 +1126,20 @@ green keep their inks. Pink accent text is therefore the pink accent itself in b
 
 The floating sidebar (ADR-0024 amendment 2026-11-03, second one) adds a second reason: its light fill goes from 15 to 6 levels
 under the window (#F7F6F3), a lighter ground, so plain pink holds 4.92:1 on it at the worst (the bare sidebar, since the capsules turned white).
+
+## Amendment 2026-11-08 accent text on glass holds 4.5:1; the A2 exemption is gone
+
+Audit defect R7-A11Y-01: the A2 role "text and glyphs in the accent colour on material" was exempt (no accent held 4.5:1 over
+the worst wallpaper). It is not any more. Text and glyphs of the shell's glass (the widgets' weekday, a Control Center
+checkmark, an alert glyph) read `colors.accentGlass`: `Accent.glassInk` mixes the accent ink toward the text colour by
+`glass.accentInkMixDark` (0.76) or `glass.accentInkMixLight` (0.58), as macOS draws accent text on vibrancy with a
+legibility-adjusted accent. App-window text keeps `colors.accentInk`.
+- The first version was tested on the default material (tint 0.85 or 0.82). The shell's glass is thinner: `GlassTint.alpha`
+  protects the text and the secondary text only (0.79 in the light appearance over a window). Gate A2 now uses the shell's
+  real model (every glass class, the worst-case and the known backdrops, bare and under the row and tile fills, from the
+  same tokens and formulas as the QML). Under it the light yellow and green were 4.43:1 and the light pink 4.53:1 at 0.55;
+  0.58 gives 4.58:1 worst (light yellow); the dark red is 4.59:1 at 0.76.
+- The role lists its real sites (`readers` in contrast-roles.json); a test fails when shell glass text reads `accentInk` or
+  app-window text reads `accentGlass`. The 18 colours are pinned in `tst_accent.qml` and in the A2 test.
+- In the dark appearance the variant is a pale shade (OKLCH hue within 12 degrees of the accent's, chroma 0.03 to 0.05);
+  a more saturated variant would need a gamut-mapped OKLCH mix and is not done.

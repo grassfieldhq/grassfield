@@ -287,7 +287,8 @@ namespace gf::tiling {
     inline constexpr uint8_t kSideRight  = 2;
     inline constexpr uint8_t kSideTop    = 4;
     inline constexpr uint8_t kSideBottom = 8;
-    inline constexpr uint8_t kAllSides   = kSideLeft | kSideRight | kSideTop | kSideBottom;
+    // Unsigned from the first operand: kSideLeft | kSideRight alone is an int (both promoted), a signed operand of the next `|`.
+    inline constexpr uint8_t kAllSides = 0U | kSideLeft | kSideRight | kSideTop | kSideBottom;
 
     // The sides a press at (x, y) on a window's resize border grips. `surface`: the box Hyprland's border grab surrounds
     // (the window's geometric box, InputManager processMouseDownNormal). Left of it: left; right of it: right; above or

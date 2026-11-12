@@ -1,7 +1,6 @@
 import QtQuick
 import QtTest
 import qs.security
-import qs.services
 
 // The polkit agent (AuthAgent.qml in the harness authagent_flows.sh generates; it runs this file as tst_flows.qml) through the
 // request orders Quickshell 0.3.1 produces: a first request (isActive and flow set in either order), one replacing the open
@@ -50,9 +49,11 @@ Item {
         property var ag: null
 
         function init() {
-            SessionState.locked = false;
-            SessionState.saverShown = false;
-            SessionState.displaysOff = false;
+            SheetSession.locked = false;
+            SheetSession.saverShown = false;
+            SheetSession.displaysOff = false;
+            SheetSession.starting = false;
+            SheetSession.sleeping = false;
             compare(top.agentC.status, Component.Ready, top.agentC.errorString());
             ag = createTemporaryObject(top.agentC, top);
             verify(ag);
@@ -212,12 +213,12 @@ Item {
         // A was held by the lock, the user clicked it; B replaces it: held again, on the sink, the guard started over.
         function test_02_replacedAfterClickThroughLockHold() {
             const a = mkflow("A"), b = mkflow("B");
-            SessionState.locked = true;
+            SheetSession.locked = true;
             arriveFlow(a, true);
             compare(ag.heldByLock, true);
             compare(ag.heldWhy, "locked");
             compare(ag.sheet.shown, false);
-            SessionState.locked = false;
+            SheetSession.locked = false;
             compare(ag.sheet.shown, true);
             compare(ag.sheet.takesKeys, false);
             wait(600);
@@ -287,14 +288,14 @@ Item {
         // Replaced while locked: not mapped; after the unlock held, without the keyboard, the guard started when shown.
         function test_07_replacedWhileLocked() {
             const a = mkflow("A"), b = mkflow("B");
-            SessionState.locked = true;
+            SheetSession.locked = true;
             arriveFlow(a, true);
             switchTo(b);
             compare(ag.heldByLock, true);
             compare(ag.heldWhy, "locked");
             compare(ag.sheet.shown, false);
             wait(600);
-            SessionState.locked = false;
+            SheetSession.locked = false;
             compare(ag.sheet.shown, true);
             compare(ag.model.heldClickAccepted(), false, "guard restarted when shown");
             compare(ag.sheet.takesKeys, false);
@@ -304,14 +305,14 @@ Item {
         function test_08_replacedUnderSaver() {
             const a = mkflow("A"), b = mkflow("B");
             arriveFlow(a, true);
-            SessionState.saverShown = true;
+            SheetSession.saverShown = true;
             compare(ag.heldByLock, true);
             switchTo(b);
             compare(ag.heldByLock, true);
             wait(600);
             mouseClick(ag.sheet, 5, 5);
             compare(ag.userFocused, false, "the saver swallows the click");
-            SessionState.saverShown = false;
+            SheetSession.saverShown = false;
             compare(ag.model.heldClickAccepted(), false, "guard restarted at the saver's end");
             compare(ag.sheet.takesKeys, false);
         }
@@ -331,7 +332,7 @@ Item {
         function test_11_buttonsSwallowedUnderSaver() {
             const a = mkflow("A");
             arriveFlow(a, true);
-            SessionState.saverShown = true;
+            SheetSession.saverShown = true;
             const c = button("Cancel");
             mouseClick(c, c.width / 2, c.height / 2, Qt.MiddleButton);
             mouseClick(c, c.width / 2, c.height / 2, Qt.RightButton);
@@ -359,7 +360,7 @@ Item {
             verify(ag.model.awaitingDevice);
             wait(1);
             compare(a.cancels, 0, "the user sees the sheet and may touch the reader");
-            SessionState.locked = true;
+            SheetSession.locked = true;
             tryCompare(a, "cancels", 1, 1000, "the lock came while the reader waited: refused at once");
             compare(a.submits.length, 0);
         }
@@ -369,7 +370,7 @@ Item {
         }
         function test_21_arrivedLockedRefusedWhenPamReachesTheReader(d) {
             const a = mkflow("A");
-            SessionState.locked = true;
+            SheetSession.locked = true;
             arriveFlow(a, d.first);
             wait(1);
             compare(a.cancels, 0, "PAM said nothing yet");
@@ -382,10 +383,10 @@ Item {
         // behind the lock and is shown, held, after the unlock.
         function test_22_passwordPromptWaitsBehindTheLock() {
             const a = mkflow("A");
-            SessionState.locked = true;
+            SheetSession.locked = true;
             arriveFlow(a, true);
             a.supplementaryMessage = "The account is locked due to 3 failed logins.";
-            SessionState.locked = false;
+            SheetSession.locked = false;
             compare(ag.sheet.shown, true);
             compare(ag.heldByLock, true);
             wait(1);
@@ -396,7 +397,7 @@ Item {
             const a = mkflow("A"), b = mkflow("B");
             arriveFlow(a, true);
             reader(a);
-            SessionState.saverShown = true;
+            SheetSession.saverShown = true;
             tryCompare(a, "cancels", 1, 1000, "open and awaiting the reader when the saver came");
             endAll(true);
             arriveFlow(b, true);
@@ -414,8 +415,8 @@ Item {
         function test_24_heldShownReaderOnlyRightAfterAnother(d) {
             const a = mkflow("A"), b = mkflow("B"), c = mkflow("C");
             if (d.why === "unlock") {
-                SessionState.locked = true;
-                SessionState.locked = false;
+                SheetSession.locked = true;
+                SheetSession.locked = false;
             } else {
                 arriveFlow(a, true);
                 endAll(true);
@@ -438,8 +439,8 @@ Item {
             // Once the user clicked past its guard, the reader may answer a request held just after an unlock.
             endAll(true);
             wait(1100);
-            SessionState.locked = true;
-            SessionState.locked = false;
+            SheetSession.locked = true;
+            SheetSession.locked = false;
             arriveFlow(c, true);
             compare(ag.heldWhy, "unlock");
             wait(600);
@@ -498,9 +499,9 @@ Item {
             reader(a);
             a.onCancel = () => endAll(true);
             if (d.saver)
-                SessionState.saverShown = true;
+                SheetSession.saverShown = true;
             else
-                SessionState.locked = true;
+                SheetSession.locked = true;
             tryCompare(a, "cancels", 1);
             compare(a.submits.length, 0);
             compare(ag.model.active, false);
@@ -515,11 +516,11 @@ Item {
             compare(b.cancels, 0, "PAM said nothing for B yet");
             reader(b);
             tryCompare(b, "cancels", 1, 1000, "the next request is guarded too (no binding left stale by the first end)");
-            SessionState.saverShown = false;
-            SessionState.locked = false;
+            SheetSession.saverShown = false;
+            SheetSession.locked = false;
         }
 
-        // Opus re-review, MINOR-2: the displays are off for inactivity while the session is unlocked (SessionState.displaysOff):
+        // Opus re-review, MINOR-2: the displays are off for inactivity while the session is unlocked (SheetSession.displaysOff):
         // nobody sees the sheet, so the reader may not answer it (a reader in the power button pressed to wake the screen).
         function test_32_displaysOff() {
             const a = mkflow("A"), b = mkflow("B");
@@ -527,7 +528,7 @@ Item {
             reader(a);
             wait(1);
             compare(a.cancels, 0, "on screen in front");
-            SessionState.displaysOff = true;
+            SheetSession.displaysOff = true;
             tryCompare(a, "cancels", 1, 1000, "the displays went off while the reader waited");
             endAll(true);
             wait(1100);
@@ -541,9 +542,9 @@ Item {
         // its PAM then reach the reader, it is refused unless clicked (only "right after another one" counts).
         function test_33_heldLockedThenTheReader() {
             const a = mkflow("A");
-            SessionState.locked = true;
+            SheetSession.locked = true;
             arriveFlow(a, true);
-            SessionState.locked = false;
+            SheetSession.locked = false;
             compare(ag.sheet.shown, true);
             compare(ag.heldWhy, "locked");
             wait(1);
@@ -560,7 +561,7 @@ Item {
             endAll(true);
             arriveFlow(b, true);
             compare(ag.heldWhy, "queued");
-            SessionState.saverShown = true;
+            SheetSession.saverShown = true;
             compare(ag.heldWhy, "queued", "the first reason is kept");
             reader(b);
             tryCompare(b, "cancels", 1, 1000, "under the saver nobody sees the sheet");
@@ -576,7 +577,7 @@ Item {
             const a = mkflow("A"), b = mkflow("B"), order = [];
             a.onCancel = () => order.push("A");
             b.onCancel = () => order.push("B");
-            SessionState.locked = d.locked;
+            SheetSession.locked = d.locked;
             arriveFlow(a, true);
             switchTo(b);
             compare(ag.model.message, "B");
@@ -619,7 +620,7 @@ Item {
         // Nothing is left mapped or on the sink, and the next request is guarded as usual.
         function test_31_replacedRefusalWithQuickshellsEnd() {
             const a = mkflow("A"), b = mkflow("B"), c = mkflow("C");
-            SessionState.locked = true;
+            SheetSession.locked = true;
             arriveFlow(a, true);
             switchTo(b);
             b.onCancel = () => endAll(true);
@@ -633,6 +634,246 @@ Item {
             reader(c);
             tryCompare(c, "cancels", 1, 1000, "still locked: the next request is refused too");
             compare(a.cancels, 1, "A refused once");
+        }
+
+        // ADR-0041 S3, the opus review's MINOR-3 and its delta review's MAJOR-1: refused (another agent held the session: an
+        // earlier UI after an upgrade, a restart in the wrong order), the agent is made again with a backoff, and the new one
+        // asks again (Quickshell asks only when an agent is made; a later path is refused). Each one is made once the last one
+        // is gone (none made inert: never two at once), and the asking stops once one is registered, which is kept. It
+        // answers nothing meanwhile. tests/security/authagent_registration.sh counts the same on a real Quickshell.
+        function test_36_registrationAskedAgainWhileRefused() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 100});
+            verify(a);
+            compare(a.mockRegistrations, 1, "asked once, when made");
+            compare(a.registered, false);
+            const first = a.agentMock;
+            for (let n = 2; n <= 4; n++)
+                tryCompare(a, "mockRegistrations", n, 5000, "made again: the new agent asks again");
+            verify(a.agentMock !== first, "a new agent");
+            compare(a.agentMock.path, "/org/grassfield/PolkitAgent");
+            compare(a.mockInert, 0, "each one made once the last one was gone");
+            compare(a.registrationTries, 3);
+            // 100, 200 then 400 ms apart (a coarse timer may fire up to 5 % early).
+            const t = a.mockTimes;
+            verify(t[1] - t[0] >= 90, "first wait " + (t[1] - t[0]));
+            verify(t[2] - t[1] >= 180, "second wait, doubled: " + (t[2] - t[1]));
+            verify(t[3] - t[2] >= 360, "third wait, doubled: " + (t[3] - t[2]));
+            a.mockRefused = false;
+            tryVerify(() => a.registered, 5000, "the next one registers");
+            const tries = a.registrationTries;
+            const made = a.mockRegistrations;
+            const kept = a.agentMock;
+            wait(2 * a.registrationRetryInterval);
+            compare(a.registrationTries, tries, "registered: no more asking");
+            compare(a.mockRegistrations, made);
+            verify(a.agentMock === kept, "the registered agent is kept");
+            compare(a.mockInert, 0);
+            compare(a.model.active, false, "nothing was answered or shown meanwhile");
+        }
+
+        // Never in a dev session: the nested agent asks once, and never takes the owner's session when the owner's agent restarts.
+        function test_37_noAskingAgainInADevSession() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, devSession: true, registrationRetryMs: 40});
+            verify(a);
+            wait(400);
+            compare(a.registrationTries, 0);
+            compare(a.mockRegistrations, 1, "asked once, when made");
+            a.retryRegistration();
+            wait(50);
+            compare(a.mockRegistrations, 1, "not even when asked directly");
+            compare(a.registrationTries, 0);
+        }
+
+        // The delta review's MAJOR-1, item 2: the retry never lets go of a registered agent, nor of one with a request open
+        // (polkit hands requests to a registered agent only; kept all the same).
+        function test_38_aRegisteredAgentOrARequestIsNeverLetGo() {
+            verify(ag.registered);
+            const kept = ag.agentMock;
+            ag.retryRegistration();
+            wait(50);
+            verify(ag.agentMock === kept, "registered: kept");
+            compare(ag.mockRegistrations, 1);
+            compare(ag.registrationTries, 0);
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 60000});
+            verify(a);
+            const f = mkflow("A");
+            a.agentMock.isActive = true;
+            a.agentMock.flow = f;
+            const held = a.agentMock;
+            a.retryRegistration();
+            wait(50);
+            verify(a.agentMock === held, "a request open: kept");
+            compare(a.registrationTries, 0);
+            compare(a.mockRegistrations, 1);
+            compare(f.submits, []);
+        }
+
+        // The opus delta review of S3, LOW: held because the security process had just started (the saver counted for the start
+        // alone, SheetSession.starting), the notice says so; held by the saver's own count, it still names the saver.
+        function test_40_heldWhileStarting() {
+            SheetSession.saverShown = true;
+            SheetSession.starting = true;
+            const a = mkflow("A");
+            arriveFlow(a, true);
+            compare(ag.heldByLock, true);
+            compare(ag.heldWhy, "starting");
+            verify(dialog().heldNotice.indexOf("while Grassfield was starting") !== -1, dialog().heldNotice);
+            endAll(true);
+            SheetSession.starting = false;
+            const b = mkflow("B");
+            arriveFlow(b, true);
+            compare(ag.heldWhy, "saver");
+            verify(dialog().heldNotice.indexOf("while the screen saver was on") !== -1, dialog().heldNotice);
+            SheetSession.saverShown = false;
+        }
+
+        // The backoff: registrationRetryMs (3 s) doubled at each try, at most 60 s.
+        function test_39_registrationBackoff() {
+            const waits = [];
+            for (let n = 0; n <= 6; n++) {
+                ag.periodTries = n;
+                waits.push(ag.registrationRetryInterval);
+            }
+            ag.periodTries = 40;
+            waits.push(ag.registrationRetryInterval);
+            compare(waits, [3000, 6000, 12000, 24000, 48000, 60000, 60000, 60000]);
+            compare(ag.registrationTriesMax, 4, "3, 6, 12 and 24 s, then not before the next unlock");
+        }
+
+        // The opus review of S3, round 2, MINOR-A: Quickshell asks polkitd with a synchronous call on the security process's
+        // main thread, so the agent is never made again while the session is locked, the displays are off or a sleep is
+        // under way (a hung polkitd would stop the lock, or the lock before a sleep). It asks again once that ends.
+        function test_41_noRetryWhileQuiet_data() {
+            return [{tag: "locked", key: "locked"}, {tag: "displays off", key: "displaysOff"}, {tag: "sleep under way", key: "sleeping"}];
+        }
+        function test_41_noRetryWhileQuiet(d) {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 40});
+            verify(a);
+            SheetSession[d.key] = true;
+            wait(400);
+            compare(a.registrationTries, 0, "no try while " + d.tag);
+            compare(a.mockRegistrations, 1, "the start's attempt only");
+            SheetSession[d.key] = false;
+            tryCompare(a, "mockRegistrations", 2, 3000, "asked again once that ends");
+            compare(a.mockInert, 0);
+        }
+
+        // A try whose agent is due in the turn the session locks is dropped: no agent is made behind the lock; the next unlock
+        // makes it, in a new period.
+        function test_42_aTryAtTheLockIsDropped() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 60000});
+            verify(a);
+            a.retryRegistration();
+            SheetSession.locked = true;
+            wait(100);
+            compare(a.agentMock, null, "no agent made while locked");
+            compare(a.mockRegistrations, 1);
+            a.registrationRetryMs = 40;
+            SheetSession.locked = false;
+            tryCompare(a, "mockRegistrations", 2, 3000, "the next unlock makes it");
+            compare(a.periodTries, 1, "in a new period");
+            compare(a.mockInert, 0);
+        }
+
+        // At most registrationTriesMax tries per unlock period, then none until the next unlock.
+        function test_43_capPerUnlockPeriod() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 20});
+            verify(a);
+            tryCompare(a, "registrationTries", 4, 5000);
+            wait(800);
+            compare(a.registrationTries, 4, "four tries in the period (a fifth would have come 320 ms after the fourth)");
+            compare(a.mockRegistrations, 5);
+            SheetSession.locked = true;
+            wait(100);
+            compare(a.registrationTries, 4);
+            SheetSession.locked = false;
+            tryCompare(a, "registrationTries", 8, 5000, "an unlock starts a new period");
+            wait(800);
+            compare(a.registrationTries, 8, "four more, no more");
+            compare(a.mockRegistrations, 9);
+            compare(a.mockInert, 0);
+        }
+
+        // An attempt that stops the event loop (a hung polkitd: Quickshell's call is synchronous) stops the tries until the
+        // next unlock, which starts again.
+        function test_44_aStallStopsTheTries() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 300});
+            verify(a);
+            a.mockBlockMs = 1500;
+            tryCompare(a, "mockRegistrations", 2, 3000);
+            tryCompare(a, "registrationStalled", true, 5000, "the stall is seen");
+            wait(1500);
+            compare(a.registrationTries, 1, "no try after the stall (the next was due 600 ms after the first)");
+            compare(a.mockRegistrations, 2);
+            a.mockBlockMs = 0;
+            SheetSession.locked = true;
+            SheetSession.locked = false;
+            compare(a.registrationStalled, false, "an unlock forgets the stall");
+            tryCompare(a, "registrationTries", 2, 3000, "asked again after the next unlock");
+            tryCompare(a, "mockRegistrations", 3, 3000);
+        }
+
+        // Each attempt is watched, not only the start's: the second try, made after the first one's watch ended, stops the
+        // event loop and is seen.
+        function test_45_eachAttemptIsWatched() {
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 2000});
+            verify(a);
+            tryCompare(a, "mockRegistrations", 2, 5000, "the first try, quick");
+            tryCompare(a, "stallWatching", false, 5000, "its watch ends");
+            a.mockBlockMs = 1500;
+            tryCompare(a, "mockRegistrations", 3, 6000, "the second try, 4 s after the first");
+            tryCompare(a, "registrationStalled", true, 3000, "its stall is seen");
+        }
+
+        // The opus review of S3, round 3, MINOR-1: the start-up probe of a stranded lock already runs when the sheets are made
+        // (SheetSession.locked true), and its end ("unlocked") is no unlock: the start's stalled attempt is not forgotten, no
+        // second blocking try follows. A real lock and unlock afterwards starts a new period.
+        function test_46_theStrandedProbeEndIsNoUnlock() {
+            SheetSession.locked = true;
+            const a = createTemporaryObject(top.agentC, top, {mockRefused: true, registrationRetryMs: 300, mockBlockMs: 1500});
+            verify(a);
+            tryCompare(a, "registrationStalled", true, 5000, "the start's attempt stalled");
+            a.mockBlockMs = 0;
+            SheetSession.locked = false;
+            compare(a.registrationStalled, true, "the probe's end is no unlock: the stall stays");
+            wait(1000);
+            compare(a.registrationTries, 0, "no try (one would have come 300 ms after an unlock)");
+            compare(a.mockRegistrations, 1);
+            SheetSession.locked = true;
+            SheetSession.locked = false;
+            compare(a.registrationStalled, false, "a real unlock forgets the stall");
+            tryCompare(a, "mockRegistrations", 2, 3000, "and asks again");
+        }
+
+        // ADR-0041 S3: the agent runs in the security process, which restarts (Restart=always) after a crash or a stop. Its end
+        // with a request open, a password half typed, answers nothing: no password goes out, nothing is approved; polkitd
+        // then ends the request with the agent's bus name ("not authorized"), as when the UI restarted before S3. The agent
+        // made again (the restarted process) starts with no request, no sheet and no keys, and the next request is held or
+        // shown by the usual rules only.
+        function test_35_theProcessEndsWithARequestOpen() {
+            const a = mkflow("A");
+            arriveFlow(a, true);
+            tryVerify(() => field() && field().activeFocus);
+            typeText("half");
+            compare(field().empty, false);
+            ag.destroy();
+            wait(50);
+            compare(a.submits, [], "nothing sent at the end");
+            compare(a.cancels, 0, "nothing answered at all: polkitd ends the request with the agent's bus name");
+            ag = createTemporaryObject(top.agentC, top);
+            verify(ag);
+            compare(ag.model.active, false, "the restarted agent has no request");
+            compare(ag.sheet.visible, false);
+            compare(ag.sinkingKeys, false);
+            compare(ag.sheet.takesKeys, false);
+            const b = mkflow("B");
+            arriveFlow(b, true);
+            compare(ag.model.message, "B");
+            tryVerify(() => field() && field().activeFocus);
+            compare(field().empty, true, "the new request's field is empty");
+            keyClick(Qt.Key_Escape);
+            compare(b.cancels, 1);
+            compare(b.submits, []);
         }
     }
 

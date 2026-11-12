@@ -17,6 +17,10 @@
 set -uo pipefail
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# GRASSFIELD_MIGRATED=1: the nested session runs the packaged form of the UI tree (scripts/dev/shell-run.sh --migrated,
+# ADR-0056): both instances are addressed by the REAL path of the stamped tree (readlink -f .dev/migrated), as they were started.
+ui_dir=$root/shell; sec_qml=$root/shell/security.qml
+[[ ${GRASSFIELD_MIGRATED:-0} == 1 ]] && { ui_dir=$(readlink -f "$root/.dev/migrated")/shell; sec_qml=$ui_dir/security.qml; }
 dev=$root/.dev
 # shellcheck source=../../scripts/dev/pidfile.sh
 . "$root/scripts/dev/pidfile.sh"
@@ -31,7 +35,9 @@ returns=0
 readonly MAX_RETURNS=3
 
 nested() { env WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" "$@"; }
-ipc() { nested qs ipc -p "$root/shell" call "$@" 2>/dev/null; }
+# The lock (and its PamContext) lives in the security process since ADR-0041 step 1, S2: its IPC, and its restarts with
+# and without the PAM opt-in (`shell-run.sh --security`, the UI left alone).
+ipc() { nested qs ipc -p "$sec_qml" call "$@" 2>/dev/null; }
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; status=1; }
 view() { ipc lock devLockView; }
@@ -52,8 +58,8 @@ press_return_once() {
   nested wtype -k Return
 }
 stop_run() { # <why>
-  echo "STOP ($1): restarting the nested shell with PAM suppressed; the session stays locked" >&2
-  env -u GRASSFIELD_DEV_ALLOW_PAM "$root/scripts/dev/shell-run.sh" >&2 || true
+  echo "STOP ($1): restarting the nested security process with PAM suppressed; the session stays locked" >&2
+  env -u GRASSFIELD_DEV_ALLOW_PAM "$root/scripts/dev/shell-run.sh" --security >&2 || true
   exit 4
 }
 
@@ -69,14 +75,14 @@ fi
 
 # --- PAM opt-in ---
 . "$root/tests/security/pam_audit.sh"
-GRASSFIELD_DEV_ALLOW_PAM=1 "$root/scripts/dev/shell-run.sh" >/dev/null
+GRASSFIELD_DEV_ALLOW_PAM=1 "$root/scripts/dev/shell-run.sh" --security >/dev/null
 for _ in $(seq 1 40); do [[ $(field pamSuppressed) == false ]] && break; sleep 0.25; done
 if [[ $(field pamSuppressed) != false ]]; then
   echo "l2_wrong_password: the opt-in did not take effect (lock devLockView: $(view)); nothing was typed" >&2
-  env -u GRASSFIELD_DEV_ALLOW_PAM "$root/scripts/dev/shell-run.sh" >/dev/null
+  env -u GRASSFIELD_DEV_ALLOW_PAM "$root/scripts/dev/shell-run.sh" --security >/dev/null
   exit 2
 fi
-pass "setup: the nested shell hands passwords to PAM (GRASSFIELD_DEV_ALLOW_PAM=1)"
+pass "setup: the nested security process hands passwords to PAM (GRASSFIELD_DEV_ALLOW_PAM=1)"
 read -r _ base_submits _ < <(pam_counts)
 echo "$now" >>"$runs"
 
@@ -123,9 +129,9 @@ done
 read -r _ submits _ < <(pam_counts)
 echo "PAM attempts this run: $((submits - base_submits)); Return pressed $returns times"
 (((submits - base_submits) == 3)) && pass "audit: exactly 3 PAM attempts" || fail "audit: $((submits - base_submits)) PAM attempts (want 3)"
-env -u GRASSFIELD_DEV_ALLOW_PAM "$root/scripts/dev/shell-run.sh" >/dev/null
+env -u GRASSFIELD_DEV_ALLOW_PAM "$root/scripts/dev/shell-run.sh" --security >/dev/null
 for _ in $(seq 1 40); do [[ $(field pamSuppressed) == true ]] && break; sleep 0.25; done
-[[ $(field pamSuppressed) == true && $(ipc lock status) == locked ]] && pass "end: shell restarted with PAM suppressed, still locked" || fail "end: $(view)"
+[[ $(field pamSuppressed) == true && $(ipc lock status) == locked ]] && pass "end: security process restarted with PAM suppressed, still locked" || fail "end: $(view)"
 dev_stop "$dev/l2-foot.pid" "L2 probe foot" >/dev/null || true
 echo "The nested session stays locked: scripts/dev/nested-down.sh"
 exit $status

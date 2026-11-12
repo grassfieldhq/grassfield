@@ -60,7 +60,7 @@ FocusScope {
                 anchors.centerIn: parent
                 size: Tokens.panelAlertIconGlyph
                 name: root.icon
-                color: Appearance.colors.accentInk
+                color: Appearance.colors.accentGlass
             }
         }
 

@@ -86,6 +86,10 @@ TestCase {
     property color tintColor: "#3E7BFA"
     // The material at transparency 1.0: the wallpaper shows through, a floor of 2.0 holds (all modes).
     property bool transparentPass: false
+    // The icons are on the Dock (a nearly clear glass), not on a solid window material: no tile tone (TintedIcon.solidMaterial).
+    property bool dockPass: false
+    // The effective luminance of the Dock's glass in the scenario (set once per scenario, so that the inverse pass keeps the icons' look), -1: unknown.
+    property real dockLuma: -1
 
     Item {
         id: board
@@ -117,9 +121,11 @@ TestCase {
                     source: testCase.fixtures[slot.fixture].url
                     mode: testCase.modes[slot.modeIndex]
                     tint: testCase.tintColor
-                    darkAppearance: testCase.darkPass
+                    darkAppearance: testCase.dockPass ? IconModes.surfaceIsDark(testCase.darkPass, testCase.dockLuma, testCase.darkPass, Tokens) : testCase.darkPass
                     overWallpaper: testCase.wallpaperPass
                     overAccent: testCase.accentPass
+                    solidMaterial: !testCase.dockPass
+                    surfaceLuma: testCase.dockPass ? testCase.dockLuma : -1
                 }
             }
         }
@@ -383,8 +389,12 @@ TestCase {
             const cells = [];
             for (let m = 0; m < testCase.modes.length; m++)
                 cells.push(slots.itemAt(f * testCase.modes.length + m));
-            if (cells[0] === undefined || cells[0].icon.status !== Image.Ready)
+            // A fixture that is not there (a system icon of a package that is not installed) is a failure of the run, not a cell that is skipped: a gate that
+            // skips what it cannot read passes on a machine where it measures nothing.
+            if (cells[0] === undefined || cells[0].icon.status !== Image.Ready) {
+                failures.push(`${testCase.fixtures[f].name}: the icon could not be read (${testCase.fixtures[f].url}): a missing system icon fails the run`);
                 continue;
+            }
             // A glyph that is 1.45:1 against its plate in the default rendering (same hue, a little darker) is below legibility
             // below 48 px by its own design: it is tested from 48 px only.
             if (testCase.iconSize < 48 && testCase.fixtures[f].name === "same-tone-glyph")
@@ -396,7 +406,7 @@ TestCase {
                     const d = testCase.regionDiff(img, cells[0], cells[m]);
                     measured++;
                     console.log(`A2 D ${testCase.fixtures[f].name} ${testCase.modes[m]} ${name}: the Default artwork, largest channel difference ${(d * 255).toFixed(1)}/255`);
-                    if (d > 3 / 255)
+                    if (!(d <= 3 / 255)) // not `d > ...`: a NaN must fail too
                         failures.push(`D ${testCase.fixtures[f].name} ${testCase.modes[m]} ${name}: a ${testCase.iconSize} px icon is not the Default artwork (${(d * 255).toFixed(1)}/255 off)`);
                 }
                 continue;
@@ -418,15 +428,18 @@ TestCase {
                 console.log("A2 " + line);
                 const name1 = testCase.fixtures[f].name;
                 const mode1 = testCase.modes[m];
-                testCase.judge("I", label, line, r.inside, base.inside >= 2 && r.inside < floorIn(base.inside, mode1), failures);
+                // Every comparison below is written `!(value >= floor)`, never `value < floor`: a NaN or a non-finite measure (an icon not drawn yet) fails instead of passing.
+                if (![r.inside, r.internal, r.outside, base.inside, base.internal, base.outside].every(v => isFinite(v)))
+                    failures.push(`${label}: a non-finite measure (${line})`);
+                testCase.judge("I", label, line, r.inside, base.inside >= 2 && !(r.inside >= floorIn(base.inside, mode1)), failures);
                 // Artwork that is only a little different from its plate (a same-hue glyph, a mountain on a sky, a pale gear on a light
                 // plate) must not vanish into it in any mode: its glyph-vs-plate contrast keeps 85 percent of the default's, or 1.5.
-                testCase.judge("S", label, line, r.inside, testCase.separationFixtures.indexOf(name1) >= 0 && base.inside >= 1.2 && r.inside < Math.min(1.5, 0.85 * base.inside), failures);
-                testCase.judge("E", label, line, r.outside, r.outside < floorOf(base.outside), failures);
+                testCase.judge("S", label, line, r.inside, testCase.separationFixtures.indexOf(name1) >= 0 && base.inside >= 1.2 && !(r.inside >= Math.min(1.5, 0.85 * base.inside)), failures);
+                testCase.judge("E", label, line, r.outside, !(r.outside >= floorOf(base.outside)), failures);
                 // N (internal contrast), per-mode tiers (internalTiers): the maps are monotonic with a minimum slope; a dark monochrome glyph must
                 // also stand out from the plate, which costs part of the contrast between black and mid-grey art (tests/unit/tst_iconcontrast.qml).
                 const tier = testCase.internalTiers[mode1][base.internal >= 7 ? 0 : 1];
-                testCase.judge("N", label, line, r.internal, base.internal >= 3 && r.internal < tier, failures);
+                testCase.judge("N", label, line, r.internal, base.internal >= 3 && !(r.internal >= tier), failures);
             }
         }
         return measured;
@@ -552,7 +565,7 @@ TestCase {
                     const plateRatio = ratio(luminance(img.pixel(px, py)), luminance(accent));
                     console.log(`A2 ${label}: plate pixel ${plateRatio.toFixed(2)} (outside ${r.outside.toFixed(2)}: plate ${r.plateOverPanel.toFixed(2)} outline ${r.outlineOverPanel.toFixed(2)} glyph ${r.glyphOverPanel.toFixed(2)})`);
                     const floor = testCase.modes[m] === "clear" ? 4.5 : 2.5;
-                    if (plateRatio < floor)
+                    if (!(plateRatio >= floor))
                         failures.push(`A ${label}: plate pixel ${plateRatio.toFixed(2)} < ${floor}`);
                 }
             }
@@ -600,6 +613,49 @@ TestCase {
     }
 
     // The desktop: bare wallpaper, always styled for it (DesktopIcon passes darkAppearance), also when the windows are light.
+    // The Dock: a nearly clear glass (Tokens.dockTintAlpha*, 0.05) over the wallpaper. The solid-material tile tone is off here (TintedIcon.solidMaterial
+    // false); over a light glass (IconModes.glassToneSide) a tile is darkened as on a light material, and Clear on a mid-tone glass takes the smoked plate at the least ratio
+    // (IconModes.smokeAlpha), the surface luminance being fed as TintedIcon.surfaceLuma. 2026-11-10: with the tone on, a tile at Y 0.28 fell from 1.61:1 to 1.01:1 on the Dock (independent review).
+    function dockOver(appearanceDark, wallpaper) {
+        const tint = Qt.color((appearanceDark ? Tokens.colorDark : Tokens.colorLight).materialTint);
+        const a = appearanceDark ? Tokens.dockTintAlphaDark : Tokens.dockTintAlphaLight;
+        const w = Qt.color(wallpaper);
+        return Qt.rgba(tint.r * a + w.r * (1 - a), tint.g * a + w.g * (1 - a), tint.b * a + w.b * (1 - a), 1);
+    }
+
+    function test_a2_dock() {
+        if (board.GraphicsInfo.api === GraphicsInfo.Software)
+            skip("needs a GPU scene graph: tests/visual/icon-a2.sh");
+        const failures = [];
+        let measured = 0;
+        testCase.iconSize = 48;
+        testCase.dockPass = true;
+        for (const dark of [true, false]) {
+            for (const wallpaper of ["#000000", "#808080", "#ffffff"])
+            {
+                const panel = dockOver(dark, wallpaper);
+                testCase.dockLuma = FolderStyle.relativeLuminance([panel.r, panel.g, panel.b]);
+                measured += runScenario(`48px ${dark ? "dark" : "light"} dock wallpaper ${wallpaper}`, dark, panel, failures);
+            }
+        }
+        // The hysteresis band of the dark/light decision (surface luminance 0.07, 0.10, 0.13, review of 398f94d1): grey wallpapers whose glass lands there in each appearance.
+        // A dark held decision (the dark pass) and a light one (the light pass) must both read.
+        for (const dark of [true, false]) {
+            for (const target of [0.07, 0.10, 0.13]) {
+                const a = dark ? Tokens.dockTintAlphaDark : Tokens.dockTintAlphaLight;
+                const tintLuma = FolderStyle.relativeLuminance(FolderStyle.rgbOf((dark ? Tokens.colorDark : Tokens.colorLight).materialTint));
+                const wl = Math.max(0, (target - a * tintLuma) / (1 - a));
+                const v = wl <= 0.0031308 ? 12.92 * wl : 1.055 * Math.pow(wl, 1 / 2.4) - 0.055;
+                const panel = dockOver(dark, Qt.rgba(v, v, v, 1));
+                testCase.dockLuma = FolderStyle.relativeLuminance([panel.r, panel.g, panel.b]);
+                measured += runScenario(`48px ${dark ? "dark" : "light"} dock band surface ${target}`, dark, panel, failures);
+            }
+        }
+        testCase.dockPass = false;
+        testCase.dockLuma = -1;
+        finishRun(measured, failures);
+    }
+
     function test_a2_desktop() {
         if (board.GraphicsInfo.api === GraphicsInfo.Software)
             skip("needs a GPU scene graph: tests/visual/icon-a2.sh");
@@ -644,6 +700,7 @@ TestCase {
                 tint: "#3E7BFA"
                 darkAppearance: testCase.darkPass
                 overWallpaper: testCase.wallpaperPass
+                solidMaterial: true
             }
         }
     }
@@ -686,8 +743,19 @@ TestCase {
                         cells.forEach(c => c.destroy());
                         continue;
                     }
-                    wait(400);
-                    const img = grabImage(testCase);
+                    // The first scene of a run draws its icons late (the shader is built on first use): read the pixels once every mode cell shows something other than its grey
+                    // background (2026-11-11: the first three cells came back as the bare #808080, "3 folder model differences"), up to five seconds.
+                    let img = null;
+                    for (let tries = 0; tries < 20; tries++) {
+                        wait(tries === 0 ? 400 : 250);
+                        img = grabImage(testCase);
+                        const drawnAll = [1, 2, 3].every(m => {
+                            const c = img.pixel(m * 120 + 56, 560 + 56);
+                            return Math.abs(c.r - 0.5) > 0.02 || Math.abs(c.g - 0.5) > 0.02 || Math.abs(c.b - 0.5) > 0.02;
+                        });
+                        if (drawnAll)
+                            break;
+                    }
                     const rawBox = FolderStyle.glyphBox(96, Tokens);
                     const raw = [];
                     for (let y = Math.floor(rawBox[1]); y < rawBox[3]; y += 4) {
@@ -709,10 +777,10 @@ TestCase {
                         }
                         const drawn = testCase.boxMean(img, m * 120 + 8, 560 + 8, 96, Tokens.iconModeSysGlyphScale);
                         const d = Math.max(Math.abs(mean[0] - drawn[0]), Math.abs(mean[1] - drawn[1]), Math.abs(mean[2] - drawn[2]));
-                        const label = `${String(url).split("/").pop()} ${mode} ${dark ? "dark" : "light"}${wall ? " wallpaper" : ""}: model ${FolderStyle.hexOf(mean)} drawn ${FolderStyle.hexOf(drawn)} (max channel diff ${(d * 255).toFixed(0)}/255)`;
+                        const label = `${String(url).split("/").pop()} ${mode} ${dark ? "dark" : "light"}${wall ? " wallpaper" : ""}: model ${FolderStyle.hexOf(mean)} drawn ${FolderStyle.hexOf(drawn)} (max channel diff ${(d * 255).toFixed(0)}/255; per channel ${[0, 1, 2].map(q => ((mean[q] - drawn[q]) * 255).toFixed(1)).join(" ")}; shader look: wall=${cells[m].icon.effectItem ? cells[m].icon.effectItem.overWallpaper : "?"} tile=${cells[m].icon.ownTile} tone=${cells[m].icon.effectItem ? cells[m].icon.effectItem.tileToneSide : "?"} transparency=${Appearance.effectiveTransparency.toFixed(2)})`;
                         console.log("A2 folder " + label);
                         compared++;
-                        if (d > 4 / 255 + 1e-6)
+                        if (!(d <= 4 / 255 + 1e-6))
                             failures.push(label);
                     }
                     cells.forEach(c => c.destroy());
@@ -722,7 +790,7 @@ TestCase {
         board.visible = true;
         verify(compared >= 12, "compared " + compared);
         if (failures.length > 0)
-            fail(failures.length + " folder model differences over 4/255:\n" + failures.join("\n"));
+            fail(failures.length + " folder model differences over 4/255 (one line, the runner prints only the first): " + failures.join(" | "));
     }
 
     // A folder of the colour black keeps its system plate and the plate's edge in every icon mode, on a black wallpaper: the
@@ -917,27 +985,34 @@ TestCase {
                         cell.destroy();
                         continue;
                     }
-                    wait(300);
-                    const img = grabImage(cell);
                     const bg = Qt.color(Appearance.colors.selection);
                     // A robust statistic: the mean contrast of the top 20 percent of the icon's own pixels (those that differ from the accent), so
-                    // that a stray pixel cannot carry a failing icon.
-                    const rs = [];
-                    for (let y = 0; y < 40; y++) {
-                        for (let x = 0; x < 40; x++) {
-                            const c = img.pixel(x, y);
-                            if (Math.max(Math.abs(c.r - bg.r), Math.abs(c.g - bg.g), Math.abs(c.b - bg.b)) > 0.02)
-                                rs.push(ratio(luminance(c), luminance(bg)));
+                    // that a stray pixel cannot carry a failing icon. Read once the icon is drawn (the first scene draws late, as in the folder-model
+                    // test: at least 20 such pixels), up to five seconds; an icon that never shows fails below (no pixels: not finite).
+                    let rs = [];
+                    let img = null;
+                    for (let tries = 0; tries < 20; tries++) {
+                        wait(tries === 0 ? 300 : 250);
+                        img = grabImage(cell);
+                        rs = [];
+                        for (let y = 0; y < 40; y++) {
+                            for (let x = 0; x < 40; x++) {
+                                const c = img.pixel(x, y);
+                                if (Math.max(Math.abs(c.r - bg.r), Math.abs(c.g - bg.g), Math.abs(c.b - bg.b)) > 0.02)
+                                    rs.push(ratio(luminance(c), luminance(bg)));
+                            }
                         }
+                        if (rs.length >= 20)
+                            break;
                     }
                     rs.sort((p, q) => q - p);
                     const top = rs.slice(0, Math.max(1, Math.ceil(rs.length * 0.2)));
-                    const best = top.reduce((p, q) => p + q, 0) / top.length;
+                    const best = rs.length === 0 ? NaN : top.reduce((p, q) => p + q, 0) / top.length;
                     measured++;
                     const label = `files row ${src[0] ? "folder" : String(src[1]).split("/").pop()} ${mode} ${dark ? "dark" : "light"}: mean of the top 20 percent pixels ${best.toFixed(2)}`;
                     console.log("A2 " + label);
                     // Dark keeps its graphite plate on both fills (2.8:1 against the dark accent of the light appearance): 2.5, as the accent row.
-                    if (best < (mode === "dark" ? 2.5 : 3))
+                    if (!(best >= (mode === "dark" ? 2.5 : 3)))
                         failures.push(label);
                     cell.destroy();
                 }

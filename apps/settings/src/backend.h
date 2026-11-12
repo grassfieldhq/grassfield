@@ -49,6 +49,10 @@ class Backend : public QObject
     Q_PROPERTY(QString autostartDir READ autostartDir CONSTANT)
     Q_PROPERTY(QStringList systemAutostartDirs READ systemAutostartDirs CONSTANT)
     Q_PROPERTY(QStringList applicationDirs READ applicationDirs CONSTANT)
+    // Default web browser (ADR-0055 D-6): $XDG_CONFIG_HOME, where the session's grassfield-mimeapps.list and the user's mimeapps.list
+    // are; and Grassfield's own state folder (runmode.h), where Files' seed keeps default-apps.state.
+    Q_PROPERTY(QString xdgConfigDir READ xdgConfigDir CONSTANT)
+    Q_PROPERTY(QString grassfieldStateDir READ grassfieldStateDir CONSTANT)
     Q_PROPERTY(QStringList currentDesktops READ currentDesktops CONSTANT)
     // Storage: the folders whose size the pane shows lie in the home.
     Q_PROPERTY(QString homeDir READ homeDir CONSTANT)
@@ -99,6 +103,8 @@ public:
     QString autostartDir() const;
     QStringList systemAutostartDirs() const;
     QStringList applicationDirs() const;
+    QString xdgConfigDir() const;
+    QString grassfieldStateDir() const;
     QStringList currentDesktops() const;
     QString homeDir() const { return QDir::cleanPath(QDir::homePath()); }
     QString stateDir() const
@@ -183,6 +189,9 @@ public:
     // setup done meanwhile in Omarchy's terminal counts at once (ADR-0045 OC-0.3). false for anything but 1 to 64 of
     // [A-Za-z0-9._+-] starting with a letter or a digit.
     Q_INVOKABLE bool hasCommand(const QString &name) const;
+    // Whether a program exists as GLib resolves it: an absolute path to an executable regular file, or a name found in $PATH
+    // (Default web browser: a desktop entry whose program is gone is never offered).
+    Q_INVOKABLE bool programExists(const QString &program) const;
     // The outputs the compositor reports to this client (Qt screens): [{name, model, manufacturer, x, y, width,
     // height, scale, pixelWidth, pixelHeight, refreshRate, physicalWidth, physicalHeight (mm), primary}]. Read-only; never
     // talks to Hyprland.
@@ -203,6 +212,9 @@ public:
     Q_INVOKABLE QStringList desktopEntries(const QString &dir) const;
     Q_INVOKABLE QString writeAutostart(const QString &path, const QString &text) const;
     Q_INVOKABLE QString removeAutostart(const QString &path) const;
+    // Default web browser (ADR-0055 D-6): writes the session's list or the record, and nothing else (isDefaultAppsWrite); "" or a
+    // reason. A dev session writes only under <worktree>/.dev, never the owner's ~/.config.
+    Q_INVOKABLE QString writeDefaultAppsFile(const QString &path, const QString &text) const;
     // Emit fileChanged(path) whenever the file is created, replaced, changed or removed.
     Q_INVOKABLE bool watch(const QString &path);
     // Settings > Displays (ADR-0031). displays.conf holds the kept choices (read at every parse by

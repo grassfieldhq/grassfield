@@ -140,3 +140,7 @@ designed above. The tree: a folder (0755), two files (0644), a script (0755), a 
 - PR 4 ships option 1 and the editor; option 2 lands in the same PR only with the review PASS, otherwise in a follow-up.
 - Tests: the mode arithmetic and the argv builder in gtests (no privilege), the stub-pkexec flow in a headless test,
   the polkit prompt itself on the owner's machine (L2).
+- Cross-reference (2026-11-08, ADR-0011 amendment "Files opens apps the Gatekeeper way"): when the user says Open in the
+  downloaded-app sheet, Files sets the user's execute bit of a program the user owns (u+x only, never setuid, setgid, group
+  or others), through the descriptor it checked: option 1's unprivileged path, no polkit. A program the user does not own
+  or on a read-only disk is copied to `~/Applications` instead; Files never asks for rights to run one.

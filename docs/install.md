@@ -14,11 +14,11 @@ noindex et la revue juridique précède toute annonce.
 
 ## English
 
-Grassfield is a desktop session for **Omarchy 4.0.6 or newer** (Arch Linux, x86_64). Installing it does not remove Omarchy: you
+Grassfield is a desktop session for **Omarchy 4.0.6 or newer**, or an Omarchy development build (`omarchy-dev`) 4.0.0.r7608 or newer (Arch Linux, x86_64). Installing it does not remove Omarchy: you
 choose which one starts at login, and you can go back at any time.
 
 ### Before you start
-- A working Omarchy 4.0.6+, up to date (run Omarchy's own update first), with about 4 GiB free, and `pacman-contrib`.
+- A working Omarchy 4.0.6+ (or `omarchy-dev` 4.0.0.r7608+, the oldest development build Grassfield was tested on) with about 4 GiB free, and `pacman-contrib`. If updates are waiting, the script says how many and asks "Install them now? [Y/n]" (`--yes` answers yes): it then runs Omarchy's own update and goes on; answer no and it stops, changing nothing.
 - An administrator account (the script asks for your password with `sudo`).
 - Omarchy's snapshots are used if they are set up: the script takes one before it changes anything, and stops if it fails.
 
@@ -77,7 +77,10 @@ prompt). At the login screen choose **Grassfield (uwsm)** (it is the default). U
 - Only for the next login: `grassfield-login set omarchy`, then log out.
 - Remove Grassfield completely: run the script again with `--uninstall` (`bash grassfield-install.sh --uninstall`). It takes a
   snapshot, turns Grassfield updates off, switches the session back to Omarchy, puts the previous login and boot screens back,
-  removes the packages, the `[grassfield]` repository and the key. Restart once.
+  removes the packages, the `[grassfield]` repository and the key, deletes the files that only matter inside Grassfield (portal
+  link, pointer theme, cache). Your Grassfield
+  settings and state (including the session's default-app list) are kept: the script prints where they are and the one command
+  that deletes them. The system group `grassfield-update` is kept, as Arch does for system groups. Restart once.
 
 Run the install again at any time to repair or update: it never duplicates anything.
 
@@ -85,11 +88,11 @@ Run the install again at any time to repair or update: it never duplicates anyth
 
 ## Français
 
-Grassfield est une session de bureau pour **Omarchy 4.0.6 ou plus récent** (Arch Linux, x86_64). L'installer ne supprime pas
+Grassfield est une session de bureau pour **Omarchy 4.0.6 ou plus récent**, ou une version de développement d'Omarchy (`omarchy-dev`) 4.0.0.r7608 ou plus récente (Arch Linux, x86_64). L'installer ne supprime pas
 Omarchy : tu choisis ce qui démarre à la connexion et tu peux revenir en arrière à tout moment.
 
 ### Avant de commencer
-- Un Omarchy 4.0.6+ qui fonctionne, à jour (lance d'abord la mise à jour d'Omarchy), avec environ 4 Gio libres, et `pacman-contrib`.
+- Un Omarchy 4.0.6+ (ou `omarchy-dev` 4.0.0.r7608+, la plus ancienne version de développement testée avec Grassfield) qui fonctionne, avec environ 4 Gio libres, et `pacman-contrib`. Si des mises à jour attendent, le script dit combien et demande « Les installer maintenant ? [O/n] » (`--yes` répond oui) : il lance alors la mise à jour d'Omarchy puis continue ; réponds non et il s'arrête sans rien changer.
 - Un compte administrateur (le script demande ton mot de passe via `sudo`).
 - Les snapshots d'Omarchy sont utilisés s'ils sont configurés : le script en prend un avant toute modification et s'arrête s'il échoue.
 
@@ -153,6 +156,9 @@ Les mises à jour arrivent ensuite depuis Réglages > Mise à jour.
 - Seulement pour la prochaine connexion : `grassfield-login set omarchy`, puis ferme la session.
 - Retirer Grassfield complètement : relance le script avec `--uninstall` (`bash grassfield-install.sh --uninstall`). Il prend un
   snapshot, désactive les mises à jour Grassfield, remet la session sur Omarchy, remet les écrans de connexion et de démarrage
-  précédents, retire les paquets, le dépôt `[grassfield]` et la clé. Redémarre une fois.
+  précédents, retire les paquets, le dépôt `[grassfield]` et la clé, supprime les fichiers qui ne servent qu'à Grassfield
+  (lien des portails, thème de pointeur, cache). Tes réglages et ton état Grassfield (dont la liste des applications par défaut de la session) sont gardés : le script
+  indique où ils sont et la commande qui les supprime. Le groupe système `grassfield-update` est conservé, comme Arch le fait pour
+  les groupes système. Redémarre une fois.
 
 Relance l'installation à tout moment pour réparer ou mettre à jour : rien n'est jamais dupliqué.

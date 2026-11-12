@@ -13,6 +13,7 @@ while [[ $# -gt 0 ]]; do
     --session-bus) export GRASSFIELD_PRIVATE_BUS=0 ;;  # the owner's session bus (rare tests only)
     --no-plugin) export GRASSFIELD_NO_PLUGIN=1 ;;
     --visual-fixtures) export GRASSFIELD_VISUAL_FIXTURES=1 ;;  # test hooks and fixed values (shell/services/VisualFixtures.qml, dev only)
+    --migrated) export GRASSFIELD_MIGRATED=1 ;;  # the packaged form of the UI tree (ADR-0056): shell-run.sh --migrated; the bindings address .dev/migrated/shell
     --render-timing) export GRASSFIELD_RENDER_TIMING=1 ;;  # Qt scene graph frame timing in .dev/shell.log (QSG_RENDER_TIMING)
     --unit-env) export GRASSFIELD_UNIT_ENV=1 ;;  # shell with grassfield-shell.service's own variables (shell-run.sh --unit-env)
     --lang) export GRASSFIELD_LANG=${2:?--lang needs a value}; shift ;;
@@ -22,7 +23,7 @@ while [[ $# -gt 0 ]]; do
     --cursor-theme) export GRASSFIELD_CURSOR_THEME=${2:?--cursor-theme needs a theme name}; shift ;;
     # GF-REF at a fractional scale, like the owner's 1.25 panel (config/hypr/dev.lua accepts 1, 1.25, 1.5, 1.75, 2 only).
     --ref-scale) export GRASSFIELD_REF_SCALE=${2:?--ref-scale needs a scale}; shift ;;
-    -h|--help) echo "usage: nested-up.sh [--cursor-theme grassfield-cursors-custom] [--session-bus] [--no-plugin] [--render-timing] [--unit-env] [--visual-fixtures] [--lang LL] [--desktop-dir PATH] [--desktop-screen NAME] [--menu-bridge PATH] [--ref-scale 1|1.25|1.5|1.75|2]"; exit 0 ;;
+    -h|--help) echo "usage: nested-up.sh [--cursor-theme grassfield-cursors-custom] [--session-bus] [--no-plugin] [--render-timing] [--migrated] [--unit-env] [--visual-fixtures] [--lang LL] [--desktop-dir PATH] [--desktop-screen NAME] [--menu-bridge PATH] [--ref-scale 1|1.25|1.5|1.75|2]"; exit 0 ;;
     *) echo "nested-up: unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -58,10 +59,22 @@ rm -f "$dev/nested.instance" "$dev/nested.wayland"
 plugin=${GRASSFIELD_PLUGIN:-$root/compositor/build/grassfield-compositor.so}
 [[ -f $plugin && -z ${GRASSFIELD_NO_PLUGIN:-} ]] || plugin=""
 
+# The shell tree the bindings address (`qs ipc -p`): the source, or with --migrated the packaged form shell-run.sh builds.
+shell_dir=$root/shell
+if [[ ${GRASSFIELD_MIGRATED:-0} == 1 ]]; then
+  # Built now (shell-run.sh finds the same stamp later) and addressed by its REAL path, as the processes are started: the link is
+  # never a process's path (scripts/dev/migrated-tree.sh). The path is built from the stamp it printed, not read back from the link,
+  # which a concurrent build could have repointed after it released its lock.
+  tree_stamp=$("$root/scripts/dev/migrated-tree.sh" "$root" "$dev") || { echo "nested-up: the migrated tree did not build" >&2; exit 1; }
+  [[ $tree_stamp =~ ^[0-9a-f]{16}$ && ! -L $dev/migrated-$tree_stamp && -d $dev/migrated-$tree_stamp ]] \
+    || { echo "nested-up: the migrated tree $dev/migrated-$tree_stamp is missing" >&2; exit 1; }
+  shell_dir=$dev/migrated-$tree_stamp/shell
+fi
+
 # 2. Start Hyprland nested. Its children inherit the nested WAYLAND_DISPLAY/HYPRLAND_INSTANCE_SIGNATURE.
 env -u HYPRLAND_INSTANCE_SIGNATURE -u HYPRLAND_CMD -u DISPLAY \
   GRASSFIELD_CONFIG_DIR="$root/config/hypr" \
-  GRASSFIELD_SHELL_DIR="$root/shell" \
+  GRASSFIELD_SHELL_DIR="$shell_dir" \
   GRASSFIELD_STATE_HOME="$dev/state" \
   GRASSFIELD_CONFIG_HOME="$dev/config" \
   GRASSFIELD_DEV=1 \

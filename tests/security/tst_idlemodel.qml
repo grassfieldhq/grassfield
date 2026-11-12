@@ -2,6 +2,7 @@ import QtQuick
 import QtTest
 import "../../shell/security/idle/IdleModel.js" as IdleModel
 import "../../shell/security/LockMachine.js" as Machine
+import "../../shell/saver/SaverModel.js" as SaverModel
 
 TestCase {
     name: "IdleModel"
@@ -521,5 +522,86 @@ TestCase {
         // logind's own suspend, never with --ignore-inhibitors (-i) and never asking for authorization behind the lock.
         verify(text.indexOf('command: ["systemctl", "--no-ask-password", "suspend"]') >= 0);
         verify(!/systemctl[^\n]*(-i\b|--ignore-inhibitors|--force|-f\b)/.test(text));
+    }
+
+    // ADR-0041 S3: the polkit and secret sheets run in the security process and hold a request while the UI's screen saver
+    // may show; idle counts the same idle time by the saver's own rule (SaverModel.armed), never by anything the UI says.
+    function test_saverRuleIsTheSaversOwn() {
+        compare(IdleModel.SAVER_MAX_SECONDS, SaverModel.MAX_SECONDS);
+        const seconds = [-60, 0, 1, 60, 300, SaverModel.MAX_SECONDS, SaverModel.MAX_SECONDS + 1, NaN];
+        const flags = [true, false, undefined, "true"];
+        for (const s of seconds)
+            for (const locked of flags)
+                for (const inhibited of flags)
+                    for (const rearming of flags)
+                        compare(IdleModel.saverArmed(s, locked, inhibited, rearming), SaverModel.armed(s, locked, inhibited, rearming),
+                                [s, locked, inhibited, rearming].join(" "));
+        // The delay: Settings' minutes x 60, as the saver's idleSeconds; anything that is not a number is never.
+        compare(IdleModel.saverSeconds(5), 300);
+        compare(IdleModel.saverSeconds(0), 0);
+        compare(IdleModel.saverSeconds("5"), 0);
+        compare(IdleModel.saverSeconds(undefined), 0);
+        compare(IdleModel.saverSeconds(Infinity), 0);
+        verify(!IdleModel.saverArmed(IdleModel.saverSeconds(undefined), false, false, false), "no delay: never shown");
+        // The sheets hold more, never less: the count is off while locked (the lock holds them anyway).
+        verify(!IdleModel.saverArmed(300, true, false, false));
+    }
+
+    // ADR-0041 S3, the opus review's MINOR-1: the sheets' count is only ever early, never late. Restarted while the user was
+    // away (Hyprland starts the new monitor's timer from zero), the process reads the saver possibly shown until the user is
+    // seen active, whatever its own monitor says; the UI's `idle inhibit` lease never turns the count off.
+    function test_sheetsSaverRestartDuringIdle() {
+        // The restart, the user away: the new monitor is not idle yet (its timer started at zero), nothing seen.
+        compare(IdleModel.sheetsSaverShown(false, true, false), true, "restarted during idle: possibly shown");
+        compare(IdleModel.sheetsSaverShown(false, false, false), true, "not armed (locked, rearming, no delay): still held until seen");
+        compare(IdleModel.sheetsSaverShown(undefined, true, false), true, "unknown reads not seen");
+        // Seen active: the count decides.
+        compare(IdleModel.sheetsSaverShown(true, true, false), false);
+        compare(IdleModel.sheetsSaverShown(true, true, true), true);
+        compare(IdleModel.sheetsSaverShown(true, false, true), false, "a monitor that is not armed says nothing");
+        // The start's words (the opus delta review of S3, LOW): held for the start alone, not for the saver's own count.
+        compare(IdleModel.sheetsStarting(false, true, false), true, "restarted, the saver not counted: starting");
+        compare(IdleModel.sheetsStarting(false, false, false), true);
+        compare(IdleModel.sheetsStarting(undefined, true, false), true, "unknown reads not seen");
+        compare(IdleModel.sheetsStarting(false, true, true), false, "the saver's own count holds too: the saver's words");
+        compare(IdleModel.sheetsStarting(true, true, false), false, "seen active: never starting again");
+        compare(IdleModel.sheetsStarting(true, true, true), false);
+        for (const seen of [false, true])
+            for (const armed of [false, true])
+                for (const idle of [false, true])
+                    verify(!IdleModel.sheetsStarting(seen, armed, idle) || IdleModel.sheetsSaverShown(seen, armed, idle), "starting only ever words a hold");
+        // The probe: idle (a pause), then active (an input) is activity; active from its start is not; once seen, always.
+        compare(IdleModel.sheetsActivitySeen(false, false, true), false, "the probe went idle: nothing seen yet");
+        compare(IdleModel.sheetsActivitySeen(false, true, false), true, "an input after the pause");
+        compare(IdleModel.sheetsActivitySeen(false, false, false), false, "no pause seen: its own start, not an input");
+        compare(IdleModel.sheetsActivitySeen(true, false, true), true, "seen stays seen");
+        verify(IdleModel.ACTIVITY_PROBE_SECONDS >= 1 && IdleModel.ACTIVITY_PROBE_SECONDS <= 5);
+        // The lease: an application's inhibitor (the UI's lease) never disarms the sheets' count; the saver's own rule does.
+        compare(IdleModel.sheetsSaverArmed(300, false, false), true);
+        compare(IdleModel.saverArmed(300, false, true, false), false, "the saver's rule with an inhibitor");
+        compare(IdleModel.sheetsSaverArmed(300, true, false), false, "locked: the lock holds the sheets anyway");
+        compare(IdleModel.sheetsSaverArmed(300, false, true), false, "rearming");
+        compare(IdleModel.sheetsSaverArmed(0, false, false), false, "no delay");
+    }
+
+    // Idle.qml counts it with IdleMonitors armed by that rule from Settings' delay and this process's lock (never the lease),
+    // and the host binds it into the sheets' SheetSession (static: the monitors need a compositor).
+    function test_saverCountWiring() {
+        const idle = source();
+        verify(/readonly property int saverSeconds: devHooks \? 0 : IdleModel\.saverSeconds\(Settings\.screenSaverIdleMinutes\)/.test(idle));
+        verify(/enabled: timeout === Math\.max\(1, root\.saverSeconds\) && IdleModel\.sheetsSaverArmed\(root\.saverSeconds, Lock\.locked, root\.rearmingSaver\)\n/.test(idle),
+               "armed without the lease (review 1, MINOR-1)");
+        verify(/readonly property bool saverShown: IdleModel\.sheetsSaverShown\(root\.activitySeen, saverMonitor\.enabled, saverMonitor\.isIdle\)\n/.test(idle));
+        verify(/readonly property bool starting: IdleModel\.sheetsStarting\(root\.activitySeen, saverMonitor\.enabled, saverMonitor\.isIdle\)\n/.test(idle),
+               "the start's words from the same inputs (the delta review of S3, LOW)");
+        verify(/readonly property bool sleeping: sleepInhibitor\.sleeping\n/.test(idle), "a sleep under way, for the polkit agent's tries (round 2, MINOR-A)");
+        // The activity probe: on until activity is seen, any input counts (no inhibitor hides it), its state through the model.
+        verify(/id: activityProbe\s+enabled: !root\.activitySeen\s+timeout: IdleModel\.ACTIVITY_PROBE_SECONDS\s+respectInhibitors: false\s/.test(idle));
+        verify(/const seen = IdleModel\.sheetsActivitySeen\(root\.activitySeen, root\.activityProbeWasIdle, isIdle\);/.test(idle));
+        verify(/^    property bool activitySeen: false$/m.test(idle), "not seen at the start");
+        compare((idle.match(/root\.activitySeen = /g) || []).length, 1, "set in one place, true only");
+        verify(/root\.activitySeen = true;/.test(idle));
+        const saver = read("../../shell/saver/Saver.qml");
+        verify(/respectInhibitors: true/.test(saver) && /id: saverMonitor[\s\S]*?respectInhibitors: true/.test(idle), "the same Wayland inhibitors as the saver");
     }
 }
