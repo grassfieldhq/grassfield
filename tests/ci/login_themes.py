@@ -514,7 +514,7 @@ def selftest():
         "an install scriptlet": pkgbuild.replace(body, "  install=grassfield-login-themes.install\n" + body),
         "a hook": pkgbuild.replace(body, body + '  install -Dm644 x "$pkgdir/usr/share/libalpm/hooks/grassfield-plymouth.hook"\n'),
         "a theme file left out": pkgbuild.replace("{Main.qml,Strings.js,metadata.desktop,theme.conf}", "{Main.qml,metadata.desktop,theme.conf}"),
-        "not in pkgname": re.sub(r"\s+grassfield-login-themes\b", "", pkgbuild, count=1),
+        "not in pkgname": re.sub(r"^(pkgname=\([^)]*?)\s+grassfield-login-themes\b", r"\1", pkgbuild, count=1, flags=re.M),
         "no desktop dependency": pkgbuild.replace(body, body.replace('depends=("grassfield-desktop=$pkgver-$pkgrel")', "depends=()")),
     }
     for label, text in package_mutants.items():
