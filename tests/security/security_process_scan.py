@@ -16,6 +16,8 @@ and nothing of the UI's world runs there. Static (data layer), read on the code 
      aside, which name no file of the tree (file: and qrc: addresses are read; the opus delta review of S3, NIT), but never
      as a Loader or createComponent source (QML from the network: round 2, NIT); strings are read decoded (JavaScript
      escapes: round 3, NIT-1);
+  1d. the security tree (shell/security/**, shell/security.qml) calls no Qt.createQmlObject either (the delta opus review of
+     0edece99, NIT-2);
   1c. in every file of shell/ and ui/, the security tree included (round 3, NIT-1): no import (QML `import "..."`, script
      `.import "..."`) and no literal Loader or createComponent source that is no file of this tree: an address with a
      scheme (http:, https:, data:, file:, qrc:, ...), an absolute path, or a relative path out of shell/ and ui/. The tree
@@ -252,18 +254,117 @@ def strip(src, keep_strings=False):
     return _CACHE[key]
 
 
-_TOKENS = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|`(?:\\.|[^`\\])*`', re.S)
+def _string_end(src, i):
+    """The end (exclusive) of the string literal opening at i, or None when the line ends first (not a string)."""
+    q, j = src[i], i + 1
+    while j < len(src) and src[j] != "\n":
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == q:
+            return j + 1
+        j += 1
+    return None
+
+
+def _expression_end(src, i):
+    """The index of the `}` closing a template literal's `${` whose code starts at i: braces in strings, nested template
+    literals and comments are not counted (the opus review of 39670f1f, NIT: `${"}" && Qt.createQmlObject(...)}`)."""
+    depth = 0
+    while i < len(src):
+        c = src[i]
+        if c in "\"'":
+            end = _string_end(src, i)
+            i = end if end is not None else i + 1
+            continue
+        if c == "`":
+            i = _template_end(src, i)
+            continue
+        if src.startswith("//", i):
+            n = src.find("\n", i)
+            i = len(src) if n < 0 else n
+            continue
+        if src.startswith("/*", i):
+            n = src.find("*/", i + 2)
+            i = len(src) if n < 0 else n + 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            if depth == 0:
+                return i
+            depth -= 1
+        i += 1
+    return len(src)
+
+
+def _template_end(src, i):
+    """The end (exclusive) of the template literal opening at i, its ${...} expressions read as code."""
+    j = i + 1
+    while j < len(src):
+        if src[j] == "\\":
+            j += 2
+            continue
+        if src[j] == "`":
+            return j + 1
+        if src.startswith("${", j):
+            j = _expression_end(src, j + 2) + 1
+            continue
+        j += 1
+    return len(src)
+
+
+def _template_expressions(t):
+    """The ${...} expressions of a template literal (its backticks included), each up to its own closing brace."""
+    out, i = [], 1
+    while i < len(t) - 1:
+        if t[i] == "\\":
+            i += 2
+            continue
+        if t.startswith("${", i):
+            j = _expression_end(t, i + 2)
+            out.append(t[i + 2:j])
+            i = j + 1
+            continue
+        i += 1
+    return out
 
 
 def _strip(src, keep_strings):
-    def repl(m):
-        t = m.group(0)
-        if t.startswith("//"):
-            return ""
-        if t.startswith("/*"):
-            return " "
-        return t if keep_strings else t[0] + t[0]
-    return _TOKENS.sub(repl, src)
+    """Comments removed; string contents blanked unless keep_strings; a template literal keeps the code of its ${...}
+    expressions, read as code (the delta opus review of 00eff2bd, MINOR-C: `${Qt.createQmlObject(...)}` hid inside a blanked
+    literal), each expression read up to its own closing brace, strings and nested literals included (the opus review of
+    39670f1f, NIT)."""
+    out, i, n = [], 0, len(src)
+    while i < n:
+        c = src[i]
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+            out.append(" ")
+            continue
+        if c in "\"'":
+            j = _string_end(src, i)
+            if j is None:
+                out.append(c)
+                i += 1
+                continue
+            out.append(src[i:j] if keep_strings else c + c)
+            i = j
+            continue
+        if c == "`":
+            j = _template_end(src, i)
+            t = src[i:j]
+            out.append(t if keep_strings else "``" + "".join(" (" + _strip(e, False) + ")" for e in _template_expressions(t)))
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def imports_of(src):
@@ -314,6 +415,9 @@ def file_findings(path, src, singletons):
     mods, paths = imports_of(src)
     if ui or path.startswith("ui/"):
         out += built_from_strings(path, src)
+    # The security tree builds no QML from a string either (the delta opus review of 0edece99, NIT-2): code no scan reads.
+    if (path.startswith("shell/security/") or path == "shell/security.qml") and re.search(r"\bcreateQmlObject\b", code):
+        out.append(f"{path}: calls createQmlObject (code built from a string cannot be checked)")
     out += foreign_code(path, src, paths)
     if ui:
         for m in mods:
@@ -521,6 +625,11 @@ def main(argv):
             ("the UI instantiating Idle", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    Idle {\n    }\n    Saver {\n", 1)),
             ("the UI importing the idle module by path", "shell/saver/Saver.qml", lambda s: s.replace("import \"SaverModel.js\" as SaverModel\n", "import \"SaverModel.js\" as SaverModel\nimport \"../security/idle\"\n", 1)),
             # ADR-0041 S4: safe mode, in the security process only, bound from its own lock and sheets.
+            ("createQmlObject in the lock view (NIT-2 of the review of 0edece99)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject in a template literal of the lock view (MINOR-C of the review of 00eff2bd)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    readonly property string made: `${Qt.createQmlObject(\"import QtQuick; Item {}\", root)}`\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject after a string holding a brace in a template literal's ${...} (NIT of the review of 39670f1f)", "shell/security/lock/LockView.qml", lambda s: s.replace("    component TextShadow: MultiEffect {", "    readonly property string made: `${\"}\" && Qt.createQmlObject(\"import QtQuick; Item {}\", root)}`\n    component TextShadow: MultiEffect {", 1)),
+            ("createQmlObject in a template literal of the UI", "shell/shell.qml", lambda s: s.replace("    Saver {\n", "    readonly property string made: `x${Qt.createQmlObject(\"import QtQuick; Item {}\", root)}y`\n    Saver {\n", 1)),
+            ("createQmlObject in the safe-mode notice", "shell/security/safemode/SafeModeCard.qml", lambda s: s.replace("    signal tryAgain\n", "    signal tryAgain\n    property var made: Qt.createQmlObject(\"import QtQuick; Item {}\", root)\n", 1)),
             ("a second SafeMode in the host", HOST, lambda s: s.replace("    // The state and the beat for `security heartbeat`", "    SafeMode {\n        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n        sheetUp: root.sheets !== null && (root.sheets.authorizing === true || root.sheets.securityKeyboard === true)\n    }\n    // The state and the beat for `security heartbeat`", 1)),
             ("SafeMode's lock input bound to a constant in the host", HOST, lambda s: s.replace("        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n", "        locked: false\n", 1)),
             ("SafeMode's lock input without the asked-for lock (locking)", HOST, lambda s: s.replace("        locked: Lock.locked || Lock.strandedProbing || Lock.publicState !== \"unlocked\"\n", "        locked: Lock.locked || Lock.strandedProbing\n", 1)),
