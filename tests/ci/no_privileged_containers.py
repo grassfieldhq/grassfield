@@ -48,9 +48,15 @@ import sys
 WRAPPER = "tests/integration/container.sh"
 SYSTEMD_USER = "tests/integration/update_migrate.sh"
 EXEMPT = ("tests/ci/no_privileged_containers.py",)
-CLI = r"(?:docker|podman|nerdctl|buildah|docker-compose|podman-compose|distrobox|toolbox|systemd-nspawn)"
+# Container tools by name; hyphenated forms (docker-compose, podman-remote, distrobox-enter ...) belong to them.
+# ctr, runc, incus, lxc and machinectl are short words that code also uses as names (`int ctr = 0`): in a token scan they count
+# only when something they run follows (tokens()); a lookup through RESOLVED counts always.
+GENERIC = ("ctr", "runc", "incus", "lxc", "machinectl")
+NAME = (r"(?:docker|podman|nerdctl|buildah|ctr|runc|incus|lxc|machinectl)(?:-[a-z][\w-]*)?|distrobox(?:-[a-z][\w-]*)?|toolbox|systemd-nspawn")
+CLI = r"(?:" + NAME + r")"
 # A container CLI word as a whole token (an absolute path before it is fine): docker-compose first, `compose` is the subcommand.
-TOKEN = re.compile(r"(?<![\w.])(?<!\w-)(?:(?:/[\w.+-]+)*/)?((?:docker|podman|nerdctl|buildah)(?:-[a-z][\w-]*)?|distrobox(?:-[a-z][\w-]*)?|toolbox|systemd-nspawn)(?![\w/-])(?!\.\w)")
+# Not a variable (`ctr=$(...)`, "$ctr", ${ctr}): the word on its own, followed by something it runs.
+TOKEN = re.compile(r"(?<![\w.$])(?<!\w-)(?<!\$\{)(?:(?:/[\w.+-]+)*/)?(" + NAME + r")(?![\w/-])(?!\.\w)(?!=)")
 # `compose` alone is an ordinary word (xkb compose keys, a wallpaper's compose step); as the compose subcommand it takes one of these.
 COMPOSE = re.compile(r"(?<![\w.-])compose\s+(?:up|down|run|exec|build|pull|create|start|stop|ps|logs|config|-f|--file|-p|--project-name)\b")
 CLI_PATH = r"(?:/[\w.+-]+)*/"  # an absolute path before the name: /usr/bin/docker, /usr/local/bin/podman
@@ -73,16 +79,20 @@ ALLOW = {
 }
 # Test files that exercise the wrapper itself (stub docker, no container) may name its arrays and its systemd start.
 WRAPPER_TESTS = ("tests/shell/container_wrapper.sh",)
-COMMENT_STARTS = ("#", "//", "/*", "*")
+COMMENT_STARTS = ("//", "/*")  # not "*" (a dereference) and not "#" (#define): only shell, python and yaml have # comments
 ECHOES = ("echo", "printf")
 FILLER = re.compile(r"^(?:@|-|!|then|do|else|elif|if|while|until|\w+=\S*|[\w.-]+:|[\w*|-]+\))$")
 GF_CID_OK = ("gf_args=() gf_trees=() gf_stages=() gf_cid=''", "gf_cid=''",
-             'gf_cid=$(docker run --cap-drop NET_RAW "${gf_args[@]}" "$image" bash -c "$script" "$mask") || return 1')
+             'gf_cid=$(docker run --cap-drop NET_RAW "${gf_args[@]}" "$image" bash -c "$script" "$mask") || rc=1')
 # Every way to write the wrapper's container id (assign, append, read, printf -v, declare ...).
-GF_CID_WRITE = re.compile(r"\bgf_cid\s*\+?=|\b(?:read|mapfile|readarray)\b[^;|&]*\bgf_cid\b|\bprintf\s+-v\s+gf_cid\b|"
-                          r"\b(?:declare|typeset|local|export|unset|eval)\b[^;|&]*\bgf_cid\b")
+GF_CID_WRITE = re.compile(r"(?<![$\{])\bgf_cid\+?=(?!=)|\b(?:read|mapfile|readarray)\b[^;|&]*\bgf_cid\b|\bprintf\s+-v\s*gf_cid\b|"
+                          r"\b(?:declare|typeset|local|export|readonly|unset)\b(?:\s+-\S+)*(?:\s+\w+(?:=\S*)?)*?\s+gf_cid\b|\beval\b[^;|&]*\bgf_cid\b")
 # Text that is run: echo piped into a shell, evaluated, or `sh -c`.
-RUNS_TEXT = re.compile(r"\|\s*(?:ba|z|da|k)?sh\b|\|\s*(?:xargs|eval|source)\b|\beval\b|\b(?:ba|z|da|k)?sh\s+-c\b|\bsource\s+<\(")
+SHELL = r"(?:/\S*/)?(?:ba|z|da|k|a|c|tc)?sh"
+RUNS_TEXT = re.compile(r"\|\s*(?:(?:env|sudo|doas|exec|command|nohup|time|stdbuf|nice)\s+(?:-\S+\s+)*)*" + SHELL + r"\b|"
+                       r"\|\s*(?:xargs|eval|source)\b|\beval\b|(?:^|[\s;&|({/])(?:ba|z|da|k)?sh\s+-c\b|"
+                       r"(?:^|[\s;&|({/])(?:(?:ba|z|da|k)?sh|source|\.)\s+<\(")
+PRINTF_V = re.compile(r"\bprintf\s+-v")  # printf -v var, -vvar, inside if / && / a function
 SHELLISH = (".sh", ".bash", ".zsh", ".py", ".just", ".yml", ".yaml", ".in", ".mk", ".cmake")
 STRINGISH = (".cpp", ".h", ".hpp", ".cc", ".qml", ".js", ".ts", ".mjs")
 BASENAMES = ("justfile", "Makefile", "makefile", "CMakeLists.txt")
@@ -96,7 +106,7 @@ PREFIX_OK = re.compile(r"""^(?:\s*(?:@|-|exec|sudo|env|nohup|time|then|do|else|i
 RUNNERS = {"sudo", "doas", "su", "env", "exec", "command", "builtin", "nice", "ionice", "timeout", "xargs", "flock", "unshare",
            "systemd-run", "nohup", "setsid", "stdbuf", "time", "chroot", "runuser", "script", "watch", "parallel", "ssh"}
 # A command found by lookup and then run: "$(command -v docker)" run, `which podman`, $(type -P docker).
-RESOLVED = re.compile(r"(?:\$\(|`)\s*(?:command\s+-[vV]|which|type\s+-[pP]|whereis)\s+[\"']?(?:" + CLI_PATH + r")?" + CLI + r"(?![\w-])")
+RESOLVED = re.compile(r"(?:\$\(|`)\s*(?:command\s+-[vV]|which|type\s+-[pP]|whereis)\s+[\"']?(?:" + CLI_PATH + r")?" + CLI + r"(?![\w/-])(?!\.\w)")
 SEP = re.compile(r"""(;|&&|\|\||\||\(|\{|\$\(|`)""")
 
 WRAPPER_CALLS = [
@@ -113,22 +123,22 @@ WRAPPER_ARRAYS = {
 }
 
 
-def logical_lines(text):
-    """(line number, text) with `\\` continuations joined; whole-line comments dropped."""
+def logical_lines(text, hash_comments=True):
+    """(line number, text) with `\\` continuations joined; whole-line `#` comments dropped when the language has them (shell, python,
+    yaml ...: not C-family files, where `#define` is code)."""
     out, buf, start = [], "", 0
     for n, line in enumerate(text.split("\n"), 1):
         if not buf:
             start = n
-            if line.lstrip().startswith("#"):
+            if hash_comments and line.lstrip().startswith("#"):
                 continue  # a comment ends at its newline: a trailing backslash does not join the next line
         if line.endswith("\\"):
             buf += line[:-1] + " "
             continue
         buf += line
-        if not buf.lstrip().startswith("#"):
-            out.append((start, buf))
+        out.append((start, buf))
         buf = ""
-    if buf and not buf.lstrip().startswith("#"):
+    if buf:
         out.append((start, buf))
     return out
 
@@ -137,6 +147,8 @@ def tokens(line):
     """Yield (word, segment before it on its command line, text after it up to the next separator) for every container CLI token."""
     line = line.replace("{}", "_")  # xargs -I{} is a placeholder, not a brace group
     for m in TOKEN.finditer(line.replace(SYSTEMD_SET, "_" * len(SYSTEMD_SET))):
+        if m.group(1) in GENERIC and re.match(r"\s*(?:[=+*/<>!,;)\]|&]|-\s|$)", line[m.end():]):
+            continue  # `int ctr = 0;`, `ctr++`, `y = ctr * 2`: a name, not a command
         before = line[:m.start()]
         seps = list(SEP.finditer(before))
         seg = before[seps[-1].end():] if seps else before
@@ -158,13 +170,13 @@ def in_echo_text(before):
     m = re.search(r"\b(?:echo|printf)\b[^;|&]*$", before)
     # a command substitution inside the quotes runs: `echo "$(docker run x)"`
     return (quoted and m is not None and "$(" not in before[m.start():] and "`" not in before[m.start():]
-            and not re.search(r"\bprintf\s+-v\b", before[m.start():]))
+            and not PRINTF_V.search(before[m.start():]))
 
 
 def permitted(word, seg, rest, rel, before="", line=""):
     """The forms that may name a container CLI: text in echo or printf, `command -v docker`, `docker info`, and in the wrapper its
     five exact docker spellings."""
-    if (first_word(seg) in ECHOES or in_echo_text(before)) and not RUNS_TEXT.search(line) and not re.match(r"\s*printf\s+-v\b", line):
+    if (first_word(seg) in ECHOES or in_echo_text(before)) and not RUNS_TEXT.search(line) and not PRINTF_V.search(line):
         return True
     if re.search(r"\bcommand\s+-[vV]\s*$", seg):
         return True
@@ -210,8 +222,8 @@ def check_text(rel, text):
         return ["%s: a compose, Dockerfile or Containerfile: containers are built only by tests/integration/container.sh" % rel]
     ext = os.path.splitext(rel)[1]
     is_wrapper = rel == WRAPPER
-    shellish = ext in SHELLISH or base in BASENAMES or text.startswith("#!")
-    for n, line in logical_lines(text):
+    hash_comments = ext in SHELLISH or base in BASENAMES or text.startswith("#!") or ext == ".py"
+    for n, line in logical_lines(text, hash_comments):
         if ext in STRINGISH and line.lstrip().startswith(COMMENT_STARTS):
             continue
         if RESOLVED.search(line):
@@ -400,6 +412,29 @@ BAD_CALLS = [
     "ssh host docker run img",
     "ExecStart=/usr/bin/docker run img",
     "Exec=docker run img",
+    # follow-up probes: printf -v in any form, pipes into any shell, process substitution, hyphenated lookups, more tools
+    'printf -vcmd "docker run img"',
+    'if printf -v cmd "docker run img"; then true; fi',
+    'cmd=$(printf -v x "%s" "docker run img")',
+    'echo "docker run --privileged img" | /bin/bash',
+    'echo "docker run img" | env bash',
+    'echo "docker run img" | sudo -E /usr/bin/zsh',
+    'echo "docker run img" | exec sh',
+    'bash <(echo "docker run img")',
+    '. <(echo docker run img)',
+    'source <(echo "docker run img")',
+    '/bin/sh <(echo docker run img)',
+    '/bin/sh -c "echo; docker run img"',
+    '"$(command -v podman-remote)" run --privileged img',
+    '"$(command -v distrobox-enter)" box',
+    '"$(which docker-compose)" up',
+    '`which podman-compose` up',
+    'ctr run --rm img x',
+    'runc run x',
+    'incus launch images:alpine x',
+    'lxc launch ubuntu:24.04 x',
+    'machinectl shell root@x',
+    'machinectl start x',
     # round-5 probes: hyphenated and sibling tools, comments, printf -v, text that is run
     "podman-compose -f stack.yml up",
     "podman-remote run --privileged img",
@@ -477,6 +512,12 @@ PY_BAD = [
 ]
 # other file kinds: (file name, text). Every tracked text file is read, whatever its extension.
 OTHER_BAD = [
+    ("apps/x/src/a.cpp", '#define RUN "docker run --privileged img"'),
+    ("apps/x/src/a.cpp", "#define ENGINE \"podman\"\n"),
+    ("apps/x/src/a.cpp", "/*\n * system(\"docker run img\");\n */\nint x;"),
+    ("apps/x/src/a.cpp", "int y = 0;\n*p = system(\"machinectl shell x\");"),
+    ("apps/x/src/a.h", "#define START ctr run x"),
+    ("shell/x.qml", "// not a comment of ours\n * docker run img"),
     ("config/hypr/x.lua", 'hl.exec_cmd("docker run --privileged img")'),
     ("config/hypr/x.lua", "os.execute('/usr/bin/docker run img')"),
     ("packaging/x.service", "ExecStart=/usr/bin/docker run img"),
@@ -492,6 +533,10 @@ OTHER_BAD = [
     ("config/x.toml", 'cmd = "docker run img"'),
 ]
 OTHER_GOOD = [
+    ("apps/x/src/a.cpp", "// docker run is documented in docs/testing/README.md"),
+    ("apps/x/src/a.cpp", "#include <QString>\n#define LIMIT 3\nint ctr = 0; ctr++; int y = ctr * 2;"),
+    ("tests/visual/x.sh", 'ctr=$(fl_shot center)\nn=$(vs_px_diff "$base" "$ctr")\necho "${ctr}"'),
+    ("scripts/dev/x.sh", "# machinectl and docker run are named here in a comment only"),
     ("config/hypr/x.lua", 'hl.exec_cmd("kitty")'),
     ("packaging/x.service", "ExecStart=/usr/bin/true"),
     ("scripts/dev/tool", "#!/bin/sh\necho hello"),
@@ -531,6 +576,8 @@ def selftest():
     for c in ("gf_cid=abc", "gf_cid+=abc", "read gf_cid", "read -r gf_cid <<<abc", "printf -v gf_cid x", "local gf_cid=1", "declare gf_cid=1",
               "mapfile gf_cid <f", "unset gf_cid"):
         want("gf_cid written outside the wrapper", c + "\n", "tests/integration/x.sh", True)
+    for c in ('local id=$gf_cid', '[[ $gf_cid == abc ]]', 'x=${gf_cid}', 'local a=1 b=$gf_cid', '[[ -n $gf_cid && $1 == "$gf_cid" ]]'):
+        want("gf_cid read outside the wrapper", c + "\n", "tests/integration/x.sh", False)
     want("gf_cid outside the wrapper", "gf_cid=abc\n", "tests/integration/x.sh", True)
     want("gf_cid read outside the wrapper", 'gf_container_exec "$gf_cid" ls\n', "tests/integration/x.sh", False)
     want("cpp", 'QProcess::start("docker", {"run"});', "tests/unit/x.cpp", True)
@@ -584,6 +631,12 @@ def selftest():
         "docker network create x",
         "x=docker",
         "gf_cid=abc123",
+        'local a=1 gf_cid',
+        'declare -g gf_cid',
+        'printf -vgf_cid "%s" x',
+        'cmd=$(printf -v x "%s" "docker run --privileged")',
+        'ctr run --rm "${gf_args[@]}" x',
+        "gf_cid=$(docker run --cap-drop NET_RAW \"${gf_args[@]}\" \"$image\" bash -c \"$script\" \"$mask\") || return 1",
         "gf_cid+=abc123",
         "read -r gf_cid <<<abc123",
         'printf -v gf_cid "%s" abc123',
