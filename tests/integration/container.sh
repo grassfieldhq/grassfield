@@ -158,6 +158,9 @@ gf_git_worktree() {
 gf_standard() { # <auto|none> [ca target]
   gf_mount "$GF_ROOT" /src ro || return 1
   gf_git_worktree || return 1
+  # The container's root reads a tree owned by the host user: git refuses it ("dubious ownership") unless told. The tree is
+  # mounted read-only in a throwaway container, so every directory is declared safe there (git's own variables, no file written).
+  gf_args+=(-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*')
   if [[ -n ${GRASSFIELD_TEST_CA:-} ]]; then
     gf_mount "$GRASSFIELD_TEST_CA" "${2:-/etc/ssl/certs/ca-certificates.crt}" ro || return 1
   fi

@@ -74,7 +74,7 @@ WRAPPER_CALLS = [
 ]
 SYSTEMD_SET = '-d --cap-add SYS_ADMIN --cap-drop MKNOD --cgroupns=private --tmpfs /run --tmpfs /run/lock --tmpfs /tmp -e container=docker'
 WRAPPER_ARRAYS = {
-    "gf_args": ['-v "$src:$2:$mode"', "--network none", "--network host", '-e "$v"', SYSTEMD_SET, ""],
+    "gf_args": ["-e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*'", '-v "$src:$2:$mode"', "--network none", "--network host", '-e "$v"', SYSTEMD_SET, ""],
     "envs": ['-e "$v"', ""],
 }
 

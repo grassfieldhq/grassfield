@@ -115,6 +115,9 @@ t "gf_mount '$root/.dev/container-wrapper-test-ca.pem' /ca ro && echo \"args=\${
 has 'a CA bundle under .dev/: accepted' "$out" '/ca:ro'
 rm -f "$root/.dev/container-wrapper-test-ca.pem"
 
+t "gf_standard none && echo \"args=\${gf_args[*]}\""
+has 'a tree owned by another user: git is told by its own variables' "$out" 'GIT_CONFIG_KEY_0=safe.directory'
+
 # --- the globals ---
 t 'echo "root=$GF_ROOT"' GF_ROOT=/
 has 'GF_ROOT=/ in the environment is ignored' "$out" "root=$root"

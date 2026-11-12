@@ -50,5 +50,6 @@ journalctl --since "$since" --no-pager >"$out/journal.log" 2>&1
   echo "== console before / after"
   diff "$out/console-before" "$out/console-after" && echo "(identical)"
   echo "== update_migrate: $(grep -c '^PASS' "$out/run.log") PASS, $(grep -c '^FAIL' "$out/run.log") FAIL, exit $rc"
+  if ((rc != 0)); then echo "== last lines of the run"; tail -n 15 "$out/run.log"; fi
 } | tee "$out/summary"
 exit "$rc"
