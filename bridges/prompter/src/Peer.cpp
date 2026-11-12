@@ -104,7 +104,8 @@ namespace gf::prompter {
         }
     } // namespace
 
-    PeerCheck checkSocketPeer(int fd, uid_t uid, const QString& unit, bool requireUserManager, PidfdQuery query) {
+    PeerCheck checkSocketPeer(int fd, uid_t uid, const QString& unit, bool requireUserManager, PidfdQuery query,
+                              const MainPidQuery& mainPid) {
         PeerCheck check;
         ucred     cred{};
         socklen_t length = sizeof(cred);
@@ -117,16 +118,18 @@ namespace gf::prompter {
             return check;
         }
         const PidfdAnswer answer = (query ? query : kernelPidfd)(fd);
-        const int         pidfd  = answer.pidfd;
-        QByteArray        cgroupText;
+        // The pidfd stays open until the last read below: its process still running then means the PID read at first
+        // was not reused by another process meanwhile.
+        int        pidfd = -1;
+        QByteArray cgroupText;
         if (answer.rc == 0) {
+            pidfd          = answer.pidfd;
             check.raceFree = true;
             check.pid      = pidOfPidfd(pidfd);
             if (check.pid > 0)
                 cgroupText = readSmall(QByteArrayLiteral("/proc/") + QByteArray::number(check.pid) + QByteArrayLiteral("/cgroup"));
-            const bool alive = pidfdAlive(pidfd);
-            ::close(pidfd);
-            if (check.pid <= 0 || !alive) {
+            if (check.pid <= 0 || !pidfdAlive(pidfd)) {
+                ::close(pidfd);
                 check.reason = QStringLiteral("peer process gone or in another PID namespace");
                 return check;
             }
@@ -140,10 +143,34 @@ namespace gf::prompter {
             check.reason = QStringLiteral("no pidfd for the peer: %1").arg(QString::fromLocal8Bit(std::strerror(answer.error)));
             return check;
         }
-        check.cgroup = unifiedCgroupPath(cgroupText);
-        if (!cgroupIsUnit(check.cgroup, unit, uid, requireUserManager)) {
-            check.reason = QStringLiteral("peer is not in %1").arg(unit);
+        const auto refuse = [&](const QString& reason) {
+            if (pidfd >= 0)
+                ::close(pidfd);
+            check.reason = reason;
             return check;
+        };
+        check.cgroup = unifiedCgroupPath(cgroupText);
+        if (!cgroupIsUnit(check.cgroup, unit, uid, requireUserManager))
+            return refuse(QStringLiteral("peer is not in %1").arg(unit));
+        // In a session the peer must also be the unit's main process: the user may write the unit's cgroup.procs, so a process
+        // of theirs can move itself into the cgroup, but systemd's MainPID is the process the unit started (rc7 security
+        // review of R7-SEC-02). Asked at check time; no query, no answer or another PID refuses.
+        if (requireUserManager) {
+            if (!mainPid)
+                return refuse(QStringLiteral("no way to ask systemd for %1's main process").arg(unit));
+            check.mainPid = mainPid(unit);
+            if (check.mainPid <= 0)
+                return refuse(QStringLiteral("systemd names no main process of %1").arg(unit));
+            if (check.mainPid != check.pid)
+                return refuse(QStringLiteral("peer is not %1's main process (pid %2)").arg(unit).arg(check.mainPid));
+        }
+        if (pidfd >= 0) {
+            const bool alive = pidfdAlive(pidfd);
+            ::close(pidfd);
+            if (!alive) {
+                check.reason = QStringLiteral("peer process exited during the check");
+                return check;
+            }
         }
         check.accepted = true;
         return check;

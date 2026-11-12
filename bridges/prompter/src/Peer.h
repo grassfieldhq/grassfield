@@ -3,11 +3,13 @@
 // The shell's socket: where it lives and who may connect (ADR-0035 D-9). Linux only. The parsing and the decisions are pure
 // and unit-tested in tests/unit/prompter/; checkSocketPeer reads the kernel.
 //
-// A peer is accepted when SO_PEERCRED says it runs as this user and its cgroup is the expected unit's
-// (grassfield-security.service by default since ADR-0041 S3, from --peer-unit in the systemd unit). The cgroup is read
-// race-free: the kernel hands out a pidfd of the peer (SO_PEERPIDFD, Linux 6.5), the PID comes from that pidfd's fdinfo,
-// /proc/<pid>/cgroup is read, then the pidfd is checked again: when the process still runs, the PID was not reused
-// between. Only a kernel that
+// A peer is accepted when SO_PEERCRED says it runs as this user, its cgroup is the expected unit's
+// (grassfield-security.service by default since ADR-0041 S3, from --peer-unit in the systemd unit) and, in a session,
+// systemd names it that unit's main process (the user may write the unit's cgroup.procs, so the cgroup alone does not tell
+// the security process from a process that moved itself there: rc7 security review of R7-SEC-02; a development run checks
+// the cgroup's last component only). The cgroup is read race-free: the kernel hands out a pidfd of the peer (SO_PEERPIDFD,
+// Linux 6.5), the PID comes from that pidfd's fdinfo, /proc/<pid>/cgroup is read, then the pidfd is checked again: when
+// the process still runs, the PID was not reused between. Only a kernel that
 // does not know SO_PEERPIDFD at all (ENOPROTOOPT, before 6.5) makes the bridge read the PID of SO_PEERCRED instead, and a
 // peer that exits and whose PID is reused by a process of the expected unit in between would pass there (the residual
 // race, documented in the spec). Any other failure refuses the peer: Linux 6.5 to 6.15 answer EINVAL when the peer has
@@ -16,6 +18,8 @@
 
 #include <QByteArray>
 #include <QString>
+
+#include <functional>
 
 #include <sys/types.h>
 
@@ -53,7 +57,13 @@ namespace gf::prompter {
         qint64  pid      = 0;
         QString cgroup;
         bool    raceFree = false; // the cgroup was read through SO_PEERPIDFD
+        qint64  mainPid  = 0;     // what systemd named as the unit's main process (session runs)
     };
+
+    // The main process of a unit as the user's systemd manager says it now: > 0, 0 when it names none (a stopped unit, a
+    // scope), -1 when it could not be asked. The bridge asks over the session bus (org.freedesktop.systemd1, GetUnit, then
+    // the Service's MainPID); the tests pass their own.
+    using MainPidQuery = std::function<qint64(const QString& unit)>;
 
     // What getsockopt(SO_PEERPIDFD) answered: rc 0 with a pidfd, or -1 with errno in `error`.
     struct PidfdAnswer {
@@ -63,8 +73,11 @@ namespace gf::prompter {
     };
     using PidfdQuery = PidfdAnswer (*)(int fd);
 
-    // The decision for the connected socket `fd`. `query` stands for getsockopt(SO_PEERPIDFD) in the tests.
-    PeerCheck checkSocketPeer(int fd, uid_t uid, const QString& unit, bool requireUserManager, PidfdQuery query = nullptr);
+    // The decision for the connected socket `fd`. `query` stands for getsockopt(SO_PEERPIDFD) in the tests. When
+    // `requireUserManager` (a session run), the peer must also be the unit's main process by `mainPid` (none given: refused);
+    // the pidfd is checked alive after that answer, so the PID compared is still the peer's.
+    PeerCheck checkSocketPeer(int fd, uid_t uid, const QString& unit, bool requireUserManager, PidfdQuery query = nullptr,
+                              const MainPidQuery& mainPid = {});
 
     // One journal line per `windowMs` for a kind of repeated event (refused connections), with the count of those not
     // written since (security review of step 9a, NIT-2).

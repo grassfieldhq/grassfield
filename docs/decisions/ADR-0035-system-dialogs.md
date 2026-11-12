@@ -894,6 +894,14 @@ Decisions of step 7a. Each was delegated by the owner on 2026-10-27 (macOS first
   - Rule applied: only this user's processes can reach the socket. Such a process can already drive the shell's IPC and xdph
     itself, so a check by executable path would add a dependency on where Quickshell is installed and no boundary. A Flatpak
     app sees neither the host's `/proc` nor `$XDG_RUNTIME_DIR/grassfield`.
+  - **Amended after the rc7 audit (R7-SEC-02) and its security review:** with (b) alone, any process of the user that
+    connected first could answer. The stand-in now also takes a connection only from a peer that runs as the user, in
+    `grassfield-shell.service` under the user's own manager (only slices between), and is that unit's main process
+    (systemd's MainPID at check time), read through `SO_PEERPIDFD` and checked alive after the answer (`peer_ok`, the rule
+    of grassfield-prompter's socket, 9-7); any other connection is closed before a line is sent. The unit is the UI's: the
+    picker (`shell/services/SharePicker.qml`, the IPC target `picker` of the UI root) stayed in the UI when ADR-0041 S3
+    moved the secret sheets, and with them the prompter's peer, to `grassfield-security.service`. Still no check by
+    executable path; the same-uid limits are in docs/specs/security.md (private sockets).
 - **7-8. Keys and clicks as the panel appears** (counter-review of step 7a, MINOR 2: an arrow then Return typed for a
   terminal as the panel appeared shared the first display, since an arrow selects the first tile).
   - Options: (a) arrows select nothing until a click; (b) the access alert's rule (D-5, `AccessAlert.qml`): nothing answers
@@ -1573,7 +1581,9 @@ Options:
     libgcr run the protocol and the exchange.
   - **The socket.** It hands each prompt to the shell over a private Unix socket (`$XDG_RUNTIME_DIR/grassfield/prompter.sock`,
     directory 0700, socket 0600), one JSON object per line, versioned (`prompter/1`); it accepts only a peer whose `SO_PEERCRED`
-    uid is the user's and whose cgroup is `grassfield-shell.service`.
+    uid is the user's, whose cgroup is the `--peer-unit` unit's (`grassfield-security.service` since ADR-0041 S3, where the
+    secret sheets run beside the polkit agent; `grassfield-shell.service` before) and which, in a session, is that unit's
+    main process (rc7 audit R7-SEC-02; 9-7).
   - **One queue, no focus theft** (review of PR #13, MAJOR 5: the polkit sheet holds the keyboard exclusively,
     `shell/security/polkit/AuthAgent.qml:241`, and a second sheet must never take it while a password is being typed). The
     shell keeps one queue for every secret sheet and the polkit sheet: one sheet on screen at a time, in arrival order; a new
@@ -1671,7 +1681,8 @@ GDBus; no C source of Grassfield's own; `CMakeLists.txt`, `build-direct.sh`), in
 - **The socket.** `$XDG_RUNTIME_DIR/grassfield/prompter.sock`: directory 0700 (created only in a parent of the user's
   alone, an existing one lstat-checked and narrowed), socket 0600 (umask 077 around `bind`, checked after), a live socket
   of another bridge refused, a stale one replaced, removed at exit only when it is still the bridge's own (device and
-  inode). A peer is accepted when `SO_PEERCRED` says it is the user and its cgroup is the `--peer-unit` unit's (9-7); one
+  inode). A peer is accepted when `SO_PEERCRED` says it is the user and its cgroup is the `--peer-unit` unit's (9-7; since
+  rc7, in a session, also that unit's main process, and since ADR-0041 S3 the unit is `grassfield-security.service`); one
   shell at a time. Reads go into a buffer of gcr's secure memory that is wiped line by line (9-5).
 - **Identification** (`src/Identity.{h,cpp}`): `GetConnectionCredentials` of the caller, `ProcessFD`, its PID from
   `/proc/self/fdinfo`, `/proc/<pid>/exe` read and opened, the pidfd checked again; trusted only when the path names that
@@ -1817,8 +1828,9 @@ GDBus; no C source of Grassfield's own; `CMakeLists.txt`, `build-direct.sh`), in
   the pidfd checked alive, so a reused PID cannot pass. On an older kernel the PID of `SO_PEERCRED` is read (a residual
   race, in the spec's known limitations). The unified-hierarchy path must end with the `--peer-unit` unit and, in a
   session, contain `user@<uid>.service`; the unit comes from the systemd unit's command line only (default
-  `grassfield-shell.service`), never from the environment; a development run (on a private test bus only) matches the
-  last component only, as a container has no user manager. One shell at a time ("busy"). The secret sheets share one
+  `grassfield-security.service` since ADR-0041 S3, `grassfield-shell.service` before), never from the environment; a
+  development run (on a private test bus only) matches the last component only, as a container has no user manager. One
+  shell at a time ("busy"). The secret sheets share one
   queue with the polkit sheet, so they live in the polkit agent's process: when ADR-0041 S3 moves the agent to
   `grassfield-security.service`, the sheets and `--peer-unit` move with it (done: ADR-0041 "S3 as built", 2026-11-09;
   `--peer-unit grassfield-security.service`, the bridge's default too). Rule applied: D-9's socket rule; the brief's
@@ -1829,6 +1841,13 @@ GDBus; no C source of Grassfield's own; `CMakeLists.txt`, `build-direct.sh`), in
   well, checked with the reviewer's probe).
   NIT-1: in a session every component between `user@<uid>.service` and the unit must be a slice (`<name>.slice`), so a
   cgroup nested in a scope or another unit whose last component merely bears the unit's name is refused.
+  **Amended after the rc7 audit (R7-SEC-02) and its security review:** the user may write `cgroup.procs` of their own
+  units, so a process of theirs could move itself into the unit's cgroup and pass. In a session the peer must also be the
+  `--peer-unit` unit's main process, as systemd says at check time (`GetUnit`, then the Service's `MainPID`, over the
+  session bus), and the pidfd is checked alive after that answer; no answer, no main process or another PID refuses the
+  peer. The unit is `grassfield-security.service`: the prompter's client is the security process. The share picker's
+  one-time socket (7-7, amended) applies the same rule to `grassfield-shell.service`, the UI's unit, because the picker
+  is a UI feature that ADR-0041 S3 left in the UI.
 - **9-8. The unit.** **Choice:** hardening without namespaces, as 2c-6 (the bridge reads `/proc/<pid>/exe` of its callers
   and needs root's files to show as root's): `NoNewPrivileges`, `RestrictAddressFamilies=AF_UNIX`, `RestrictNamespaces`,
   `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`, `MemoryDenyWriteExecute`, `SystemCallFilter=@system-service`,

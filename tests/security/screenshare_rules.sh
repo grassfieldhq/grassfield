@@ -52,9 +52,19 @@ for _, rule in ipairs(applied) do
   print(rule.name .. "|" .. tostring(rule.no_screen_share) .. "|" .. table.concat(parts, ";"))
 end
 LUA
-run() { # <OMARCHY_PATH>: evaluates privacy.lua there (its prints go to stdout too)
-  (cd "$tmp" && env OMARCHY_PATH="$1" lua "$tmp/run.lua" "$root/config/hypr/grassfield/privacy.lua")
+run() { # <OMARCHY_PATH> [env...]: evaluates privacy.lua there (its prints go to stdout too), the shell's list from this tree
+  local om=$1
+  shift
+  (cd "$tmp" && env -u GRASSFIELD_SESSION OMARCHY_PATH="$om" GRASSFIELD_DEV=1 GRASSFIELD_SHELL_DIR="$root/shell" "$@" lua "$tmp/run.lua" "$root/config/hypr/grassfield/privacy.lua")
 }
+
+# The password managers always applied: the lines of the shell's protected-classes.txt, the ONE list the clipboard also reads
+# (R7-SEC-03), as run.lua prints them.
+builtin=()
+while IFS= read -r line; do
+  [[ -z ${line//[[:space:]]/} || $line == \#* ]] || builtin+=("class=$line")
+done <"$root/shell/services/protected-classes.txt"
+((${#builtin[@]} == 3)) && pass "the one list: protected-classes.txt holds the 3 password-manager matches" || bad "protected-classes.txt: ${#builtin[@]} lines"
 
 # --- omarchy: the installed rule set ---
 apps=/usr/share/omarchy/default/hypr/apps
@@ -64,9 +74,17 @@ if [[ -d $apps ]]; then
   got=$(grep -c '^gf-no-screen-share-[0-9]*|true|' <<<"$out" || true)
   [[ $out == *"source omarchy"* ]] && pass "omarchy: rules read from Omarchy's files" || bad "omarchy: source is not Omarchy: $out"
   ((want > 0 && got >= want)) && pass "omarchy: $got rules for $want no_screen_share rules in $apps (built-in ones merged)" || bad "omarchy: $got rules, Omarchy has $want"
-  for m in 'class=^(1[p|P]assword)$' 'class=^(Bitwarden)$' 'class=chrome-nngceckbapebfimnlniiiahkandclblb-Default'; do
+  for m in "${builtin[@]}"; do
     grep -qF "|true|$m" <<<"$out" && pass "omarchy: protected $m" || bad "omarchy: $m is not protected"
   done
+  # R7-SEC-03: the built-in list is the installed Omarchy's, so that the clipboard history (which takes the built-in list,
+  # shell/services/ClipboardLogic.js, tests/unit/tst_clipboard.qml) skips every password manager screen sharing hides. A
+  # match Omarchy adds is printed: add it to privacy.lua's BUILTIN and to PROTECTED_CLASSES (a class regex), or decide.
+  extra=$(grep '^gf-no-screen-share-[0-9]*|true|' <<<"$out" | sed 's/^[^|]*|true|//' | while IFS= read -r m; do
+    printf '%s\n' "${builtin[@]}" | grep -qxF -- "$m" || printf '%s\n' "$m"
+  done)
+  [[ -z $extra ]] && pass "omarchy: every window the installed Omarchy hides from screen sharing is in the built-in list (the clipboard's)" \
+    || bad "omarchy: the built-in list (and the clipboard's) misses Omarchy's: $(tr '\n' ' ' <<<"$extra")"
 else
   echo "SKIP: screenshare omarchy: $apps not installed (fixture and fallback cases still run)"
 fi
@@ -106,7 +124,7 @@ else
 fi
 n=$(grep -c '^gf-no-screen-share-' <<<"$out" || true)
 ((n == 6)) && pass "fixture: exactly 6 rules (3 read, 3 built-in)" || bad "fixture: $n rules"
-for m in 'class=^(1[p|P]assword)$' 'class=^(Bitwarden)$' 'class=chrome-nngceckbapebfimnlniiiahkandclblb-Default'; do
+for m in "${builtin[@]}"; do
   grep -qF "|true|$m" <<<"$out" && pass "fixture: built-in $m applied although the tree does not declare it" || bad "fixture: built-in $m missing"
 done
 [[ ! -e $tmp/marker-os && ! -e $tmp/marker-io ]] && pass "fixture: os/io calls of an Omarchy file never ran" || bad "fixture: a marker file was created"
@@ -115,10 +133,10 @@ grep -q 'stopped reading .*b-evil.lua' <<<"$out" && grep -q 'stopped reading .*d
 
 # --- a 1password.lua that stops before its rule (reviewer note b): 1Password stays protected ---
 mkdir -p "$tmp/om2/default/hypr/apps"
-printf 'os.execute("touch marker-1p")\no.window("^(1[p|P]assword)$", { no_screen_share = true })\n' >"$tmp/om2/default/hypr/apps/1password.lua"
-printf 'o.window("^(Bitwarden)$", { no_screen_share = true })\n' >"$tmp/om2/default/hypr/apps/bitwarden.lua"
+printf 'os.execute("touch marker-1p")\no.window("^(1[pP]assword|com\\\\.onepassword\\\\.OnePassword)$", { no_screen_share = true })\n' >"$tmp/om2/default/hypr/apps/1password.lua"
+printf 'o.window("^([bB]itwarden)$", { no_screen_share = true })\n' >"$tmp/om2/default/hypr/apps/bitwarden.lua"
 out=$(run "$tmp/om2")
-grep -qF '|true|class=^(1[p|P]assword)$' <<<"$out" && [[ ! -e $tmp/marker-1p ]] \
+grep -qF "|true|${builtin[0]}" <<<"$out" && [[ ! -e $tmp/marker-1p ]] \
   && pass "stopped file: 1Password still protected by the built-in match, nothing of the file ran" || bad "stopped file: 1Password unprotected: $out"
 n=$(grep -c '^gf-no-screen-share-' <<<"$out" || true)
 ((n == 3)) && pass "stopped file: no duplicate rules (3)" || bad "stopped file: $n rules"
@@ -126,7 +144,7 @@ n=$(grep -c '^gf-no-screen-share-' <<<"$out" || true)
 # --- builtin: nothing readable ---
 out=$(run "$tmp/none")
 [[ $out == *"source builtin"* ]] && pass "builtin: reported when no Omarchy rule can be read" || bad "builtin: source: $out"
-for m in 'class=^(1[p|P]assword)$' 'class=^(Bitwarden)$' 'class=chrome-nngceckbapebfimnlniiiahkandclblb-Default'; do
+for m in "${builtin[@]}"; do
   grep -qF "|true|$m" <<<"$out" && pass "builtin: protected $m" || bad "builtin: $m missing"
 done
 
@@ -151,8 +169,29 @@ for om in /usr/share/omarchy "$tmp/om" "$tmp/none"; do
   [[ $r == ok ]] && pass "layers ($om): the secret and polkit sheets' layers are hidden from screen sharing" || bad "layers ($om): $r"
 done
 sed 's/^hl\.layer_rule({ name = "gf-no-screen-share-secret".*$//' "$root/config/hypr/grassfield/privacy.lua" >"$tmp/privacy-mutant.lua"
-r=$(cd "$tmp" && env OMARCHY_PATH="$tmp/none" lua "$tmp/run.lua" "$tmp/privacy-mutant.lua" | python3 -I "$tmp/layers.py" "$root")
+r=$(cd "$tmp" && env -u GRASSFIELD_SESSION OMARCHY_PATH="$tmp/none" GRASSFIELD_DEV=1 GRASSFIELD_SHELL_DIR="$root/shell" lua "$tmp/run.lua" "$tmp/privacy-mutant.lua" | python3 -I "$tmp/layers.py" "$root")
 [[ $r != ok ]] && pass "layers: mutation: a copy without the secret sheet's rule fails the check" || bad "layers: mutation not caught"
+
+# --- the one list (R7-SEC-03): read from the shell's file, found as bindings.lua finds the shell ---
+mkdir -p "$tmp/othershell/services"
+printf '# a test list\n^(MarkerVault)$\n' >"$tmp/othershell/services/protected-classes.txt"
+out=$(run "$tmp/none" GRASSFIELD_SHELL_DIR="$tmp/othershell")
+grep -qF '|true|class=^(MarkerVault)$' <<<"$out" && ! grep -qF 'nngceck' <<<"$out" \
+  && pass "one list: a dev session's GRASSFIELD_SHELL_DIR gives the list privacy.lua applies (no copy of it in privacy.lua)" || bad "one list: dev shell dir: $out"
+out=$(run "$tmp/none" GRASSFIELD_SHELL_DIR="$tmp/othershell" GRASSFIELD_SESSION=1)
+! grep -qF 'MarkerVault' <<<"$out" \
+  && pass "one list: a real session ignores GRASSFIELD_SHELL_DIR (the installed shell's file)" || bad "one list: the session read a dev list: $out"
+out=$(run "$tmp/om" GRASSFIELD_SHELL_DIR="$tmp/nowhere")
+fallback_ok=1
+for m in "${builtin[@]}"; do grep -qF "|true|$m" <<<"$out" || fallback_ok=0; done
+grep -q "WARNING: no password-manager class read from $tmp/nowhere/services/protected-classes.txt; the built-in fallback list applies" <<<"$out" \
+  && grep -qF '|true|class=^(NewVault)$' <<<"$out" && ((fallback_ok)) \
+  && pass "one list unreadable: a warning, the built-in fallback (the file's matches) and Omarchy's own rules applied" || bad "one list unreadable: $out"
+out=$(run "$tmp/none" GRASSFIELD_SHELL_DIR="$tmp/nowhere")
+fallback_ok=1
+for m in "${builtin[@]}"; do grep -qF "|true|$m" <<<"$out" || fallback_ok=0; done
+((fallback_ok)) && [[ $out == *"source builtin"* ]] \
+  && pass "neither the list nor Omarchy's rules readable: the fallback still hides the password managers" || bad "nothing readable: $out"
 
 # --- wiring: both sessions load it ---
 grep -qx 'require("grassfield.privacy")' config/hypr/grassfield/core.lua && pass "wiring: core.lua requires grassfield.privacy" || bad "wiring: core.lua"

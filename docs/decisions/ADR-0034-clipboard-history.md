@@ -169,7 +169,8 @@ l'utilisateur » (the owner's work rule of 2026-10-27); each choice follows that
    The shell answers `Y` only while the history is on, the session is not locked by either source (6), no authorization
    dialog is shown and none closed in the last 2 s (Q11), and the active window is not a password manager
    the session hides from screen sharing (`config/hypr/grassfield/privacy.lua`; for apps that set no hint, such as
-   Bitwarden). Neither process logs content: counts, kinds, sizes and reasons only, never text, file names, URLs, titles or
+   Bitwarden; the one list both read is `shell/services/protected-classes.txt`, and while the shell has not read it, or
+   cannot, no copy is recorded: rc7 audit R7-SEC-03). Neither process logs content: counts, kinds, sizes and reasons only, never text, file names, URLs, titles or
    hashes.
    The authorization state (counter-review of the step 0 PASS, minor d): `AuthAgent` exposes no "dialog shown" property
    (`win.shown` is internal; `requestStartedAt` is for display only and never compared). Step 1 adds one read-only property

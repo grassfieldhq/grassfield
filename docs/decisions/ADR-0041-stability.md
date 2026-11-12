@@ -625,7 +625,9 @@ down, how sleep behaves) is written in the table at the end of this step.
   sheet in one queue, a QML object of one process, and ADR-0035 decision 9-7 says it in so many words ("when ADR-0041 S3
   moves the agent to `grassfield-security.service`, the sheets and `--peer-unit` move with it"); S2 as built had kept them in
   the UI "until S3". `grassfield-prompter.service` now accepts a peer of `grassfield-security.service` only (`--peer-unit`,
-  and the bridge's default), so the UI's unit is refused. Nothing stayed: the UI (`shell/shell.qml`) imports no security
+  and the bridge's default), so the UI's unit is refused (since the rc7 fixes, R7-SEC-02, in a session only that unit's main
+  process; the share picker's socket, a UI feature, takes `grassfield-shell.service`'s: ADR-0035 7-7 and 9-7). Nothing
+  stayed: the UI (`shell/shell.qml`) imports no security
   module at all and names none of their types.
 - **How they are hosted.** `shell/security/host/SheetHost.qml` (the queue, the two agents, the sheets' icon lookup and the
   two booleans the UI may know) is created at run time by `SecurityHost.qml`, at the end of its `Component.onCompleted`,

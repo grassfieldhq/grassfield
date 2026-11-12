@@ -24,6 +24,7 @@
 #include <QTemporaryDir>
 
 #include <csignal>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <memory>
@@ -791,6 +792,139 @@ TEST(PrompterPeer, APeerThatExitedAndWasReapedIsRefused) {
     ::close(keep[1]);
     ::close(keep[0]);
     ::close(listener);
+}
+
+namespace {
+    // A session's check needs this process's cgroup to look like a unit under the user's manager (only slices between).
+    bool ownCgroupIsAUserUnit(const QString& leaf) {
+        QFile f(QStringLiteral("/proc/self/cgroup"));
+        return f.open(QIODevice::ReadOnly) && cgroupIsUnit(unifiedCgroupPath(f.readAll()), leaf, ::getuid(), true);
+    }
+
+    // The main-process cases need a user systemd manager. When they skip, they also print "SKIP: <suite>.<case>: <reason>"
+    // on a line of its own, so a run without one shows in the output and cannot pass as covered (opus review of #26, NIT).
+    std::string announceSkip(const std::string& reason) {
+        const ::testing::TestInfo* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        std::printf("SKIP: %s.%s: %s\n", info ? info->test_suite_name() : "?", info ? info->name() : "?", reason.c_str());
+        std::fflush(stdout);
+        return reason;
+    }
+
+    // The peer the injected SO_PEERPIDFD names, for the liveness case below.
+    pid_t g_childPeer = -1;
+    PidfdAnswer pidfdOfChild(int) {
+        const int pidfd = pidfdOpen(g_childPeer);
+        return pidfd >= 0 ? PidfdAnswer{0, 0, pidfd} : PidfdAnswer{-1, errno, -1};
+    }
+} // namespace
+
+TEST(PrompterPeer, ASessionPeerMustBeTheUnitsMainProcess) {
+    // rc7 security review of R7-SEC-02: the user may write the unit's cgroup.procs, so a process of theirs can move itself
+    // into the shell's cgroup; in a session only the unit's main process (systemd's MainPID, asked at check time) passes.
+    const QString leaf = ownCgroupLeaf();
+    if (leaf.isEmpty() || !ownCgroupIsAUserUnit(leaf))
+        GTEST_SKIP() << announceSkip("this process's cgroup is not a unit under the user's manager (no user systemd)");
+    int pair[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair), 0);
+    int asked = 0;
+    const auto answer = [&asked](qint64 pid) {
+        return [&asked, pid](const QString&) {
+            ++asked;
+            return pid;
+        };
+    };
+    const PeerCheck ok = checkSocketPeer(pair[0], ::getuid(), leaf, true, nullptr, answer(::getpid()));
+    EXPECT_TRUE(ok.accepted) << ok.reason.toStdString();
+    EXPECT_EQ(ok.mainPid, ::getpid());
+    EXPECT_EQ(asked, 1);
+    const PeerCheck other = checkSocketPeer(pair[0], ::getuid(), leaf, true, nullptr, answer(::getpid() + 1));
+    EXPECT_FALSE(other.accepted);
+    EXPECT_TRUE(other.reason.contains(QStringLiteral("main process"))) << other.reason.toStdString();
+    EXPECT_FALSE(checkSocketPeer(pair[0], ::getuid(), leaf, true, nullptr, answer(0)).accepted);  // none (stopped, a scope)
+    EXPECT_FALSE(checkSocketPeer(pair[0], ::getuid(), leaf, true, nullptr, answer(-1)).accepted); // systemd not asked
+    EXPECT_FALSE(checkSocketPeer(pair[0], ::getuid(), leaf, true).accepted);                      // no query at all
+    // Another uid fails first, whatever systemd says.
+    asked = 0;
+    EXPECT_FALSE(checkSocketPeer(pair[0], ::getuid() + 1, leaf, true, nullptr, answer(::getpid())).accepted);
+    EXPECT_EQ(asked, 0);
+    // A development run checks the cgroup alone: the query is not consulted.
+    asked = 0;
+    EXPECT_TRUE(checkSocketPeer(pair[0], ::getuid(), leaf, false, nullptr, answer(0)).accepted);
+    EXPECT_EQ(asked, 0);
+    ::close(pair[0]);
+    ::close(pair[1]);
+}
+
+TEST(PrompterPeer, APeerThatExitsDuringTheMainProcessQueryIsRefused) {
+    // The pidfd is checked again after systemd's answer: a peer that exits meanwhile (its PID free for another process,
+    // which systemd might then name) is refused even though every answer matched its PID.
+    const QString leaf = ownCgroupLeaf();
+    if (leaf.isEmpty() || !ownCgroupIsAUserUnit(leaf))
+        GTEST_SKIP() << announceSkip("this process's cgroup is not a unit under the user's manager (no user systemd)");
+    const pid_t child = ::fork();
+    if (child == 0) {
+        ::pause();
+        ::_exit(0);
+    }
+    ASSERT_GT(child, 0);
+    g_childPeer = child;
+    int pair[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair), 0);
+    const auto exitsWhileAsked = [child](const QString&) -> qint64 {
+        ::kill(child, SIGKILL);
+        ::waitpid(child, nullptr, 0);
+        return child;
+    };
+    const PeerCheck check = checkSocketPeer(pair[0], ::getuid(), leaf, true, pidfdOfChild, exitsWhileAsked);
+    EXPECT_EQ(check.pid, child);
+    EXPECT_FALSE(check.accepted) << check.reason.toStdString();
+    EXPECT_TRUE(check.reason.contains(QStringLiteral("exited"))) << check.reason.toStdString();
+    // Control: the same child alive through the query is taken.
+    const pid_t live = ::fork();
+    if (live == 0) {
+        ::pause();
+        ::_exit(0);
+    }
+    ASSERT_GT(live, 0);
+    g_childPeer = live;
+    const PeerCheck taken = checkSocketPeer(pair[0], ::getuid(), leaf, true, pidfdOfChild, [live](const QString&) -> qint64 { return live; });
+    EXPECT_TRUE(taken.accepted) << taken.reason.toStdString();
+    ::kill(live, SIGKILL);
+    ::waitpid(live, nullptr, 0);
+    ::close(pair[0]);
+    ::close(pair[1]);
+}
+
+TEST(PrompterPeer, TheMainProcessAskedIsTheExpectedUnits) {
+    // ADR-0041 S3 moved the secret sheets into the security process: the bridge's --peer-unit names
+    // grassfield-security.service, and the main process compared is that unit's, asked for by that name alone. A check that
+    // asked another unit (the UI's grassfield-shell.service, the client before S3) would compare the peer with the wrong
+    // process. Here systemd names this process for one unit only, and any other unit's main process is another PID.
+    const QString leaf = ownCgroupLeaf();
+    if (leaf.isEmpty() || !ownCgroupIsAUserUnit(leaf))
+        GTEST_SKIP() << announceSkip("this process's cgroup is not a unit under the user's manager (no user systemd)");
+    int pair[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair), 0);
+    QString    asked;
+    const auto mainOf = [&asked](const QString& owner) {
+        return [&asked, owner](const QString& unit) -> qint64 {
+            asked += unit + QLatin1Char(';');
+            return unit == owner ? ::getpid() : ::getpid() + 1;
+        };
+    };
+    const PeerCheck ok = checkSocketPeer(pair[0], ::getuid(), leaf, true, nullptr, mainOf(leaf));
+    EXPECT_TRUE(ok.accepted) << ok.reason.toStdString();
+    EXPECT_EQ(asked.toStdString(), (leaf + QLatin1Char(';')).toStdString());
+    for (const QString& other : {QStringLiteral("grassfield-shell.service"), QStringLiteral("grassfield-security.service")}) {
+        if (other == leaf)
+            continue;
+        asked.clear();
+        const PeerCheck wrong = checkSocketPeer(pair[0], ::getuid(), leaf, true, nullptr, mainOf(other));
+        EXPECT_FALSE(wrong.accepted) << other.toStdString();
+        EXPECT_EQ(asked.toStdString(), (leaf + QLatin1Char(';')).toStdString());
+    }
+    ::close(pair[0]);
+    ::close(pair[1]);
 }
 
 TEST(PrompterPeer, RefusalsAreLoggedOncePerWindow) {

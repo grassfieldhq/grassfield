@@ -129,15 +129,24 @@ exec /usr/bin/timeout "$@"
 SH
 chmod +x "$tmp/fake/timeout"
 
+# The probe shell is this script's child, in its cgroup: the stand-in's peer check (rc7 audit R7-SEC-02) is told that this
+# cgroup stands for the shell's unit (GRASSFIELD_PICKER_PEER_UNIT, dev plumbing).
+leaf=$(awk -F: '$1 == "0" {print $3}' /proc/self/cgroup | sed 's#.*/##')
+[[ -n $leaf ]] || { echo "SKIP: share_picker_ipc: this process sits at the root of its cgroup tree (no unit to stand for the shell's)"; exit 0; }
 base_env=(-u WAYLAND_DISPLAY -u GRASSFIELD_SESSION -u DBUS_SESSION_BUS_ADDRESS -u QS_CONFIG_PATH -u QS_CONFIG_NAME -u QS_MANIFEST
   GRASSFIELD_DEV=1 GRASSFIELD_STATE_HOME="$tmp/state" GRASSFIELD_CONFIG_HOME="$tmp/config" HYPRLAND_INSTANCE_SIGNATURE="$sig"
-  XDG_RUNTIME_DIR="$runtime" XDG_CACHE_HOME="$tmp/cache")
+  XDG_RUNTIME_DIR="$runtime" XDG_CACHE_HOME="$tmp/cache" GRASSFIELD_PICKER_PEER_UNIT="$leaf")
 # Qt's offscreen platform names its screen only through its configuration file: two displays, as Hyprland names them.
 printf '{"screens": [{"name": "DP-1", "x": 0, "y": 0, "width": 800, "height": 600, "logicalDpi": 96, "dpr": 1},
   {"name": "HDMI-A-1", "x": 800, "y": 0, "width": 640, "height": 480, "logicalDpi": 96, "dpr": 1}]}\n' >"$tmp/screens.json"
 env "${base_env[@]}" PATH="$tmp/fake:$PATH" QT_QPA_PLATFORM="offscreen:configfile=$tmp/screens.json" \
   QML_IMPORT_PATH="$root/ui:$root/.dev/build/qml" timeout 300 qs -p "$tmp/cfg" --no-color >"$tmp/shell.log" 2>&1 &
 shell=$!
+# The stand-in asks systemd for the shell unit's main process (rc7 security review of R7-SEC-02): the probe shell is the
+# Quickshell process `timeout` started, its one child. A systemctl of its own, on the stand-in's PATH only.
+mkdir -p "$tmp/sysd"
+printf '#!/bin/sh\n[ "$1 $2 $3 $4" = "--user show --property=MainPID --value" ] || exit 3\nread -r main _ </proc/%s/task/%s/children 2>/dev/null\necho "${main:-0}"\n' "$shell" "$shell" >"$tmp/sysd/systemctl"
+chmod +x "$tmp/sysd/systemctl"
 for _ in $(seq 150); do grep -q 'picker-probe: ready' "$tmp/shell.log" && break; sleep 0.1; done
 ready=$(grep -o 'picker-probe: ready .*' "$tmp/shell.log" | head -1 || true)
 display=$(python3 -I -c 'import json, sys; o = json.loads(sys.argv[1].split(" ")[2]); print(o[-1] if o else "")' "$ready" 2>/dev/null || true)
@@ -150,7 +159,8 @@ ipc() { env "${base_env[@]}" timeout 5 qs ipc -p "$tmp/cfg" call "$@" 2>&1; }
 state() { ipc picker status | python3 -I -c 'import json, sys; d = json.load(sys.stdin); print(sys.argv[1] % d)' "$1"; }
 
 # The stand-in: its stock pickers are recorders; its hyprctl lists the shell's display, unlocked.
-sed "s|^STOCK_DIR = \"/usr/bin\"\$|STOCK_DIR = \"$tmp/stock\"|" packaging/session-bin/hyprland-share-picker >"$tmp/bin/hyprland-share-picker"
+sed -e "s|^STOCK_DIR = \"/usr/bin\"\$|STOCK_DIR = \"$tmp/stock\"|" -e "s|^SYSTEMCTL = \"/usr/bin/systemctl\"\$|SYSTEMCTL = \"$tmp/sysd/systemctl\"|" \
+  packaging/session-bin/hyprland-share-picker >"$tmp/bin/hyprland-share-picker"
 chmod +x "$tmp/bin/hyprland-share-picker"
 printf '#!/bin/sh\necho ran >"%s/stock.ran"\n' "$tmp" >"$tmp/stock/hyprland-share-picker"
 printf '[{"name": "DP-1", "width": 800, "height": 600, "scale": 1, "transform": 0, "solitaryBlockedBy": []},
@@ -162,7 +172,7 @@ share() { # runs the stand-in as xdph does (with --allow-token, as Omarchy's xdp
   local token=--allow-token
   [[ ${1:-} != no-token ]] || token=""
   rm -f "$tmp/stock.ran" "$tmp/standin.out"
-  env "${base_env[@]}" GRASSFIELD_SHELL_DIR="$tmp/cfg" PATH="$tmp/fake:$PATH" XDPH_WINDOW_SHARING_LIST="$windows" \
+  env "${base_env[@]}" GRASSFIELD_SHELL_DIR="$tmp/cfg" PATH="$tmp/sysd:$tmp/fake:$PATH" XDPH_WINDOW_SHARING_LIST="$windows" \
     "$tmp/bin/hyprland-share-picker" ${token:+"$token"} >"$tmp/standin.out" 2>"$tmp/standin.err" &
   standin=$!
 }
@@ -292,7 +302,7 @@ exit $rc
 ' "$(command -v qs)" >"$tmp/slow/qs"
 chmod +x "$tmp/slow/qs"
 rm -f "$tmp/stock.ran" "$tmp/standin.out"
-env "${base_env[@]}" GRASSFIELD_SHELL_DIR="$tmp/cfg" PATH="$tmp/slow:$tmp/fake:$PATH" XDPH_WINDOW_SHARING_LIST="$windows" \
+env "${base_env[@]}" GRASSFIELD_SHELL_DIR="$tmp/cfg" PATH="$tmp/sysd:$tmp/slow:$tmp/fake:$PATH" XDPH_WINDOW_SHARING_LIST="$windows" \
   "$tmp/bin/hyprland-share-picker" --allow-token >"$tmp/standin.out" 2>"$tmp/standin.err" &
 standin=$!
 ended_within "$standin" 5 || true

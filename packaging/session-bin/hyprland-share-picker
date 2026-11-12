@@ -11,7 +11,10 @@
 # The way (ADR-0035 D-6): the session locked, or its lock unknown, cancels at once (owner decision Q15). Otherwise a one-time
 # Unix socket ($XDG_RUNTIME_DIR/grassfield/picker/<random>.sock, 0600 in a 0700 directory, removed on every exit) and a random
 # request id; the shell is asked with `picker request <id> <socket>` under 1 s. "accepted": the shell connects within 2 s
-# (else cancelled), gets `<id> options {"allowToken": …}` (xdph's --allow-token; the panel opens Remember this choice ticked
+# (else cancelled); only a peer that runs as this user, in the shell's unit, and IS that unit's main process (systemd's
+# MainPID, asked at check time; peer_ok, the prompter's rule: rc7 audit R7-SEC-02 and its security review) is taken; any other
+# connection is closed unanswered and the wait goes on within those 2 s. The shell
+# gets `<id> options {"allowToken": …}` (xdph's --allow-token; the panel opens Remember this choice ticked
 # from it only while SharePickerPanel.followAllowToken is true, pending the owner's agreement to amend Q14, so that xdph gives
 # the app a restore token and a browser that asks again for the same share is not asked twice) and the window list on
 # the socket (never in a command line other users can read), shows its panel,
@@ -20,6 +23,7 @@
 # a display Hyprland lists (a region inside it). "busy" or "locked" cancels. No answer at all (no shell): the socket file is
 # removed first, then the stock picker runs with the same arguments and environment. Never two pickers; never a guess.
 # Nothing is written to stderr; no window title or class is ever logged.
+import errno
 import json
 import os
 import re
@@ -28,11 +32,14 @@ import select
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import time
 
 STOCK_DIR = "/usr/bin"
+# The user manager's client, by its path: never one found through PATH (rc7 security review of R7-SEC-02).
+SYSTEMCTL = "/usr/bin/systemctl"
 SUSPEND_STATS = "/sys/power/suspend_stats/success"
 STOCK_NAMES = ("hyprland-share-picker", "hyprland-preview-share-picker")
 SHELL_DIR = "/usr/share/grassfield/shell"
@@ -43,6 +50,11 @@ MAX_WINDOWS = 256
 MAX_TEXT = 256
 MAX_LINE = 4096
 NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
+# The only process that may take a request: one of the shell's unit, under this user's own systemd manager (the rule of
+# grassfield-prompter's socket, bridges/prompter/src/Peer.cpp; docs/specs/security.md, private sockets).
+PEER_UNIT = "grassfield-shell.service"
+# getsockopt(SOL_SOCKET, SO_PEERPIDFD), Linux 6.5 (asm-generic/socket.h: 77); the socket module may not name it.
+SO_PEERPIDFD = getattr(socket, "SO_PEERPIDFD", 77)
 # The shell's lock marker line (shell/security/LockMachine.js MARKER_LINE).
 MARKER = re.compile(r"(locked|unlocked)(?: sleeps=([0-9]{1,12}))?")
 SELECTION = re.compile(r"(r?)/(?:screen:(?P<screen>[A-Za-z0-9._-]{1,64})|window:(?P<window>[0-9]{1,10})|"
@@ -210,6 +222,134 @@ def shell_dir():
     return SHELL_DIR
 
 
+def peer_unit():
+    # (unit, under the user's manager): PEER_UNIT in a session. Dev plumbing (ADR-0019, the gate of shell_dir()): a dev shell
+    # runs in no unit of its own, so a dev session may name the cgroup that stands for the shell's in
+    # GRASSFIELD_PICKER_PEER_UNIT (one path component; the tests name their own), matched by its last component alone, as
+    # the prompter does in a development run; unset, PEER_UNIT, by its last component alone.
+    env = os.environ
+    if env.get("GRASSFIELD_DEV") == "1" and env.get("GRASSFIELD_SESSION") != "1":
+        unit = env.get("GRASSFIELD_PICKER_PEER_UNIT") or PEER_UNIT
+        if "/" in unit or unit in (".", "..") or len(unit) > 255:
+            return None, False
+        return unit, False
+    return PEER_UNIT, True
+
+
+UNIT_NAME = re.compile(r"[A-Za-z0-9:_.@-]{1,255}")
+
+
+def unit_main_pid(unit):
+    # The main process of `unit` as the user's systemd manager says now (/usr/bin/systemctl --user show, which asks the manager
+    # over its D-Bus): > 0, or None when there is none or no answer within 1 s (a stopped unit says 0; a scope has no main process).
+    if not UNIT_NAME.fullmatch(unit) or unit.startswith("-"):
+        return None
+    out = run([SYSTEMCTL, "--user", "show", "--property=MainPID", "--value", unit], ACK_SECONDS)
+    text = out.strip() if out is not None else ""
+    return int(text) if re.fullmatch(r"[1-9][0-9]{0,9}", text) else None
+
+
+def unified_cgroup(text):
+    # The cgroup v2 path of a /proc/<pid>/cgroup text (its "0::" line), "" when there is none.
+    for line in text.splitlines():
+        if line.startswith("0::"):
+            return line[3:]
+    return ""
+
+
+def cgroup_is_unit(path, unit, uid, user_manager):
+    # Peer.cpp cgroupIsUnit: the last component is exactly the unit; under the user's manager, an earlier component is
+    # exactly user@<uid>.service and every one between the two is a slice. A removed cgroup or a relative path never matches.
+    if not unit or not path.startswith("/") or path.endswith(" (deleted)"):
+        return False
+    parts = [part for part in path.split("/") if part]
+    if not parts or parts[-1] != unit:
+        return False
+    if not user_manager:
+        return True
+    manager = "user@%d.service" % uid
+    if manager not in parts or parts.index(manager) + 1 >= len(parts):
+        return False
+    return all(part.endswith(".slice") and part != ".slice" for part in parts[parts.index(manager) + 1:-1])
+
+
+def pid_from_fdinfo(text):
+    # Peer.cpp pidFromFdinfo: the "Pid:" line of a pidfd's fdinfo; > 0, -1 when the process has exited, 0 otherwise.
+    for line in text.splitlines():
+        if line.startswith("Pid:"):
+            try:
+                value = int(line[4:].strip())
+            except ValueError:
+                return 0
+            return value if value > 0 else (-1 if value == -1 else 0)
+    return 0
+
+
+def read_small(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(65536).decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def peer_ok(conn):
+    # The connected peer runs as this user, in the shell's unit (peer_unit), and is that unit's main process (unit_main_pid:
+    # a process of the user's that moved itself into the unit's cgroup, which the user may write, is not; rc7 security review
+    # of R7-SEC-02). Read race-free: the kernel's pidfd of the peer (SO_PEERPIDFD), its PID from the pidfd's fdinfo,
+    # /proc/<pid>/cgroup, systemd's MainPID, then the pidfd again: the process still runs, so the PID was not reused in
+    # between. Only a kernel without SO_PEERPIDFD (ENOPROTOOPT, before 6.5) makes it take SO_PEERCRED's PID instead (the
+    # prompter's documented residual race). Any other failure refuses the peer.
+    unit, user_manager = peer_unit()
+    if unit is None:
+        return False
+    try:
+        pid, uid, _ = struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+    except (OSError, struct.error):
+        return False
+    if uid != os.getuid():
+        return False
+    try:
+        pidfd = struct.unpack("i", conn.getsockopt(socket.SOL_SOCKET, SO_PEERPIDFD, 4))[0]
+    except OSError as e:
+        if e.errno != errno.ENOPROTOOPT or pid <= 0:
+            return False
+        return (cgroup_is_unit(unified_cgroup(read_small("/proc/%d/cgroup" % pid)), unit, uid, user_manager)
+                and unit_main_pid(unit) == pid)
+    except struct.error:
+        return False
+    if pidfd < 0:
+        return False
+    try:
+        pid = pid_from_fdinfo(read_small("/proc/self/fdinfo/%d" % pidfd))
+        cgroup = unified_cgroup(read_small("/proc/%d/cgroup" % pid)) if pid > 0 else ""
+        if pid <= 0 or not cgroup_is_unit(cgroup, unit, uid, user_manager) or unit_main_pid(unit) != pid:
+            return False
+        poller = select.poll()
+        poller.register(pidfd, select.POLLIN)
+        alive = not poller.poll(0)
+    finally:
+        os.close(pidfd)
+    return alive
+
+
+def accept_shell(server):
+    # The shell's connection within CONNECT_SECONDS, or None. A peer peer_ok refuses is closed unanswered and the wait goes on.
+    deadline = time.monotonic() + CONNECT_SECONDS
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        server.settimeout(left)
+        try:
+            conn, _ = server.accept()
+        except OSError:
+            return None
+        if peer_ok(conn):
+            return conn
+        conn.close()
+
+
 def ask_shell(request_id, path):
     # "accepted", "busy", "locked", or None (no shell, or no answer in 1 s).
     command = "qs ipc -p SHELL_DIR call picker request".split()
@@ -338,10 +478,8 @@ def main():
             cancel()
     if answer != "accepted":
         cancel()
-    server.settimeout(CONNECT_SECONDS)
-    try:
-        conn, _ = server.accept()
-    except OSError:
+    conn = accept_shell(server)
+    if conn is None:
         cancel()
     server.close()
     remove_socket()

@@ -34,6 +34,14 @@ main=$(cat "$dev/main.instance" 2>/dev/null || true)
 [[ $sig != "$main" && $sock != "${WAYLAND_DISPLAY:-}" ]] || { echo "share_picker: refusing the main session"; exit 2; }
 shell_pid=$(dev_live_pid "$dev/shell.pid" || true)
 [[ -n $shell_pid ]] && kill -0 "$shell_pid" 2>/dev/null || { echo "share_picker: grassfield-shell is not running (scripts/dev/shell-run.sh)"; exit 2; }
+# The dev shell runs in no unit of its own: the stand-in's peer check (rc7 audit R7-SEC-02) is told which cgroup stands for
+# grassfield-shell.service (GRASSFIELD_PICKER_PEER_UNIT, dev plumbing: the last component of the nested shell's cgroup).
+shell_unit=$(awk -F: '$1 == "0" {print $3}' "/proc/$shell_pid/cgroup" 2>/dev/null | sed 's#.*/##')
+[[ -n $shell_unit ]] || { echo "share_picker: the nested shell's cgroup cannot be read"; exit 2; }
+# ... and the stand-in asks systemd for that unit's main process: a systemctl of its own names the nested shell's PID.
+sysd=$(mktemp -d "${TMPDIR:-/tmp}/share-picker-sysd.XXXXXX")
+printf '#!/bin/sh\n[ "$1 $2 $3 $4" = "--user show --property=MainPID --value" ] || exit 3\necho %s\n' "$shell_pid" >"$sysd/systemctl"
+chmod +x "$sysd/systemctl"
 command -v foot >/dev/null && command -v jq >/dev/null || { echo "share_picker: foot and jq are needed"; exit 2; }
 # Nothing of the session this runs from routes a request: no GRASSFIELD_SESSION (the stand-in would ask the installed shell),
 # no GRASSFIELD_SHELL_DIR of another tree, no Quickshell config variable.
@@ -67,8 +75,10 @@ tmp=$(mktemp -d)
 # A scratch copy of the stand-in whose stock picker only records that it ran: a request the nested shell did not answer never
 # opens a real picker, on any display.
 mkdir -p "$tmp/stock"
-sed "s|^STOCK_DIR = \"/usr/bin\"\$|STOCK_DIR = \"$tmp/stock\"|" "$root/packaging/session-bin/hyprland-share-picker" >"$tmp/hyprland-share-picker"
-grep -qx "STOCK_DIR = \"$tmp/stock\"" "$tmp/hyprland-share-picker" || { echo "share_picker: the stand-in's stock picker could not be diverted"; rm -rf "$tmp"; exit 2; }
+sed -e "s|^STOCK_DIR = \"/usr/bin\"\$|STOCK_DIR = \"$tmp/stock\"|" -e "s|^SYSTEMCTL = \"/usr/bin/systemctl\"\$|SYSTEMCTL = \"$sysd/systemctl\"|" \
+  "$root/packaging/session-bin/hyprland-share-picker" >"$tmp/hyprland-share-picker"
+grep -qx "STOCK_DIR = \"$tmp/stock\"" "$tmp/hyprland-share-picker" && grep -qx "SYSTEMCTL = \"$sysd/systemctl\"" "$tmp/hyprland-share-picker" ||
+  { echo "share_picker: the stand-in's stock picker or systemctl could not be diverted"; rm -rf "$tmp"; exit 2; }
 chmod +x "$tmp/hyprland-share-picker"
 for name in hyprland-share-picker hyprland-preview-share-picker; do
   printf '#!/bin/sh\necho %s >>"%s/stock.ran"\n' "$name" "$tmp" >"$tmp/stock/$name"
@@ -77,7 +87,7 @@ done
 cleanup() {
   [[ -n $standin ]] && kill "$standin" 2>/dev/null
   [[ -n $foot_pid ]] && kill "$foot_pid" 2>/dev/null
-  rm -rf "$tmp"
+  rm -rf "$tmp" "$sysd"
 }
 trap cleanup EXIT
 WAYLAND_DISPLAY=$sock setsid "$root/scripts/dev/isolated.sh" foot --app-id gf-share --title "Shared window" >/dev/null 2>&1 </dev/null &
@@ -97,6 +107,7 @@ share() { # runs the stand-in as xdph does, at this tree's nested shell only; se
   guard
   : >"$tmp/out"
   env -u GRASSFIELD_SESSION WAYLAND_DISPLAY="$sock" HYPRLAND_INSTANCE_SIGNATURE="$sig" GRASSFIELD_DEV=1 GRASSFIELD_SHELL_DIR="$target" \
+    GRASSFIELD_PICKER_PEER_UNIT="$shell_unit" \
     XDPH_WINDOW_SHARING_LIST="$list" "$tmp/hyprland-share-picker" --allow-token >"$tmp/out" 2>/dev/null &
   standin=$!
 }
