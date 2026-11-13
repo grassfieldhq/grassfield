@@ -57,13 +57,20 @@ TEST(ChildProcess, TheDeadlineStopsTheWholeGroup)
     ASSERT_TRUE(f.open(QIODevice::ReadOnly));
     const pid_t grandchild = pid_t(f.readAll().trimmed().toInt());
     ASSERT_GT(grandchild, 0);
-    // The background sleep got the group's SIGTERM too (a zombie waiting for its new parent counts as gone).
+    // The background sleep got the group's SIGTERM too. Gone means it can no longer run: a zombie waiting for its new parent,
+    // a task its new parent (the user's systemd, a subreaper) is releasing right now (state X, or a /proc read that returns
+    // nothing, which a live task never does) or no task at all. The release passes through those readings at any moment, so
+    // a zombie reading followed by an empty or X one is still the same death.
     auto alive = [&] {
         QFile stat(QStringLiteral("/proc/%1/stat").arg(grandchild));
         if (::kill(grandchild, 0) != 0 || !stat.open(QIODevice::ReadOnly))
             return false;
         const QByteArray s = stat.readAll();
-        return s.mid(s.lastIndexOf(')') + 2, 1) != "Z";
+        const int close = s.lastIndexOf(')');
+        if (close < 0 || s.size() < close + 3)
+            return false; // being released
+        const char state = s.at(close + 2);
+        return state != 'Z' && state != 'X' && state != 'x';
     };
     QElapsedTimer wait;
     wait.start();
