@@ -155,6 +155,7 @@ if command -v chromium >/dev/null; then
     mkdir -p "$prof/Default"
     [[ $mode == gtk ]] && printf '{"extensions":{"theme":{"system_theme":1}}}\n' >"$prof/Default/Preferences"
     label=chromium-$mode
+    # isolation-ok: states() starts it through client_run, which runs scripts/dev/isolated.sh
     states "$label" '^chromium$' $([[ $mode == gtk ]] && echo 1 || echo 0) chromium --user-data-dir="$prof" --no-first-run --no-default-browser-check \
       --password-store=basic --disable-background-networking --disable-component-update --disable-sync --proxy-server="$dead_proxy" \
       --ozone-platform=wayland --window-size=900,520 about:blank

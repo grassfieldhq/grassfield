@@ -119,7 +119,7 @@ def problems(texts):
         out.append("PKGBUILD: sha256sums do not have one entry per source")
     if "grassfield-wallpaper-shrink\" --width 5120 --quality 90" not in pk:
         out.append("PKGBUILD: build() does not shrink the photographs")
-    if not re.search(r"^pkgname=\(.*\bgrassfield-wallpapers\b.*\)$", pk, re.M) or "package_grassfield-wallpapers() {" not in pk:
+    if not re.search(r"^pkgname=\([^)]*\bgrassfield-wallpapers\b[^)]*\)", pk, re.M) or "package_grassfield-wallpapers() {" not in pk:
         out.append("PKGBUILD: no grassfield-wallpapers package")
     if '"$dir/photos.json"' not in pk:
         out.append("PKGBUILD: photos.json is not installed beside the pictures")
@@ -178,7 +178,7 @@ def selftest():
         ("a pin dropped", {"pins": base["pins"].replace("  %s\n" % other["id"], "", 1)}),
         ("the pins in another order", {"pins": base["pins"].replace("  %s\n  %s\n" % (first["id"], other["id"]), "  %s\n  %s\n" % (other["id"], first["id"]), 1)}),
         ("a SHA-1 changed in the PKGBUILD", {"pkgbuild": base["pkgbuild"].replace("'%s'" % first["sha1"], "'%s'" % ("0" * 40), 1)}),
-        ("no grassfield-wallpapers in pkgname", {"pkgbuild": re.sub(r"^(pkgname=\(.*?) grassfield-wallpapers\b", r"\1", base["pkgbuild"], count=1, flags=re.M)}),
+        ("no grassfield-wallpapers in pkgname", {"pkgbuild": re.sub(r"^(pkgname=\([^)]*?)\s+grassfield-wallpapers\b", r"\1", base["pkgbuild"], count=1, flags=re.M)}),
         ("grassfield-desktop without the dependency", {"pkgbuild": base["pkgbuild"].replace("grassfield-icons grassfield-wallpapers networkmanager", "grassfield-icons networkmanager", 1)}),
         ("no shrink in build()", {"pkgbuild": base["pkgbuild"].replace("--width 5120 --quality 90", "--width 9999 --quality 90", 1)}),
         ("THIRD_PARTY.md without a photograph", {"third": base["third"].replace(first["sourceUrl"], "", 1)}),
