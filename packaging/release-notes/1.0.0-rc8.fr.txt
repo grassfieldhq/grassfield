@@ -1,0 +1,12 @@
+Sanaga devient le navigateur par défaut de la session Grassfield, et Grassfield Notes l’app Notes intégrée ; Chromium reste installé et sélectionnable.
+Les apps Qt utilisent maintenant les panneaux Ouvrir et Enregistrer de Grassfield, et LibreOffice aussi.
+Fichiers ouvre les apps et les programmes avec prudence : les lanceurs ne s’exécutent jamais, et un programme téléchargé sur Internet demande confirmation avant de s’ouvrir.
+L’écran de verrouillage et les demandes de mot de passe s’exécutent désormais dans leur propre processus protégé : ils continuent de fonctionner même si le reste du bureau échoue ; si l’échec se répète, une alerte propose Réessayer ou Fermer la session.
+Les mises à jour du système que Grassfield n’a pas encore testées attendent désormais : Réglages > Mise à jour de logiciels affiche Autoriser… et Retenir de nouveau si vous devez trancher.
+Le shell démarre plus vite, et Recherche, Apps et Vue d’ensemble sont prêtes dès l’ouverture de session.
+Une app en cours d’exécution peut être glissée hors du Dock.
+Chaque fenêtre a maintenant ses boutons, et un onglet glissé hors de Chrome suit le pointeur.
+La fenêtre d’un gestionnaire de mots de passe reste noire dans les captures d’écran et le partage d’écran.
+La barre des menus garde le clavier quand vous parcourez ses menus, et les menus des apps ne retardent plus le démarrage de la session.
+Chromium et Google Chrome ne sont ajustés que dans la session Grassfield, et les icônes et les couleurs d’accentuation se lisent mieux sur le verre.
+L’installateur reconnaît maintenant les versions de développement d’Omarchy, propose les mises à jour en attente, et une désinstallation laisse un système d’origine.

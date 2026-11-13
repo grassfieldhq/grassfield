@@ -1,0 +1,12 @@
+Sanaga is now the default browser of the Grassfield session, and Grassfield Notes is the built-in Notes app; Chromium stays installed and selectable.
+Apps built with Qt now use Grassfield’s Open and Save panels, and LibreOffice uses them too.
+Files opens apps and programs the careful way: launchers never run, and a program downloaded from the Internet asks before it opens.
+The lock screen and the password prompts now run in their own protected process, so they keep working even if the rest of the desktop fails; if it keeps failing, an alert offers Try Again or Log Out.
+System updates that Grassfield has not tested yet now wait: Settings > Software Update shows Allow… and Hold Again if you need to decide.
+The shell starts faster, and Search, Apps and Overview are ready right after sign-in.
+A running app can be dragged out of the Dock.
+Every window now has its window buttons, and a tab dragged out of Chrome follows the pointer.
+A password manager’s window stays black in screenshots and screen sharing.
+The menu bar keeps the keyboard while you walk through its menus, and the apps’ menus no longer delay the start of the session.
+Chromium and Google Chrome are adjusted only in the Grassfield session, and icons and accent colours are easier to read on glass.
+The installer now recognizes Omarchy development builds, offers pending updates, and an uninstall leaves a stock system.

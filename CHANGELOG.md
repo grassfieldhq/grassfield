@@ -4,6 +4,54 @@ All notable changes of Grassfield Desktop. The version of every package, library
 file at the repository root (`scripts/dev/check-version.sh`, part of `just check`, keeps the consumers equal to it).
 Format: one section per version, newest first.
 
+## 1.0.0-rc8 (release candidate, 2026-11-13)
+
+Bundled apps, safe mode, the Qt panels and the rc7 follow-ups.
+
+Bundled apps (PR #38, ADR-0055): Sanaga is the default web browser of the Grassfield session and Grassfield Notes the
+built-in Notes app (Dock, Apps, default `.md` handler), as separate signed packages updated by Software Update. Chromium
+stays installed and selectable, a choice of the user always wins, and the Omarchy session keeps its own defaults.
+Chromium and Google Chrome are changed only in the Grassfield session, and fresh profiles open with the traffic lights
+(PR #23).
+
+Safe mode (ADR-0041): the lock, idle and the sleep inhibitor run only in the security process, a crash ends it with no
+core file, and a lock is confirmed on its ground (S2, PR #32). The polkit agent and the secret sheets run only there too
+(S3, PR #36). After repeated shell failures a centred alert offers Try Again or Log Out, follows the light or dark
+appearance, is never shown over the lock, and Try Again keeps the flag until the shell is confirmed active (S4, PRs #45
+and #47). The rc7 security lows are closed: reviewed migrations only, the prompter and the share picker accept only the
+main process of their unit, one password-manager list, no serials (PR #26).
+
+Open and Save (PR #25, ADR-0054): Qt apps use Grassfield's panels through a grassfield platform-theme plugin, and
+LibreOffice runs its Qt 6 plugin.
+
+Files (PR #29, ADR-0011): launchers never run, and a program or script downloaded from the Internet, or one with a
+disguised name, asks before it opens.
+
+Windows (grassfield-compositor): every window has its controls, and a frameless window draws its own bar only with a
+frame of its own (PR #33). A tab dragged out of Chrome follows the pointer: the plugin serves xdg_toplevel_drag_v1 (PR
+#28, ADR-0036 amendment). A password manager's window stays black in every capture with the plugin loaded (PR #34).
+
+Shell: the UI is loaded by file: URLs so Qt's disk cache works, two invisible surfaces are deferred and the restart delay
+is 100 ms (PR #37, ADR-0056). Search, Apps, Overview, the OSD and the switcher are built right after the shell starts,
+and early requests are replayed (PR #42). A running app can be dragged out of the Dock, and apps are identified by their
+resolved entry id (PR #24). The menu bar's keyboard walk keeps the keyboard through a menu swap (PR #22). Every D-Bus call
+of the menu bridge gets a reply, which ends the portal's 25 s start at login (PR #20). Icon modes reach their A2 floor in
+every cell with no exemption (PR #30), and accent text on glass reaches 4.5:1 (PR #31).
+
+Updates (PR #21, ADR-0041 option A): the hold pair. Qt and Quickshell are held at the versions this Grassfield was built
+for, so a system update waits for a tested toolkit. Settings > Software Update has Allow… and Hold Again.
+
+Store (PR #50, ADR-0046): grassfield-store-run follows the helper's deny list again: the session's runtime and
+Grassfield's optional dependencies are protected, Omarchy's optional preinstalls can be removed unless HoldPkg names them,
+and when the optional dependencies cannot be read nothing is run.
+
+Installer: Omarchy development builds at or above the tested floor 4.0.0.r7608 are recognized, an older one is refused with
+a fix in English and French (PRs #17, #46, contributed by 3j27). The installer offers the pending updates and the
+uninstall leaves a stock system (PR #43).
+
+Also: docker test containers go through one guarded wrapper (PRs #27, #48), ADR and ledger updates (PRs #18, #19, #39), and
+test fixes (PRs #35, #40, #44, #49, #51).
+
 ## 1.0.0-rc7 (release candidate, 2026-11-07)
 
 The owner's rc6 report, on two machines.
