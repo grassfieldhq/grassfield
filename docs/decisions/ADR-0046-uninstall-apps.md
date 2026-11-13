@@ -62,8 +62,8 @@ keeps Preview. Justification: macOS lets the user delete its optional bundled ap
 the system uses; Omarchy's own `omarchy-remove-preinstalls` is the authority for which are which.
 The remaining guard against an AUR package taking the name of one of the 13 is `pacman -Sp` in `grassfield-store-run` (all 13
 resolved on 2026-11-13: five from [omarchy], eight from [extra]); if Omarchy drops one from its repository, an AUR package of
-that name becomes buildable. Residual risk, recorded by the integrator on 2026-11-13: no test or watch checks it yet, and
-whether to accept it or add a check is the owner's decision.
+that name becomes buildable. Residual risk accepted by the owner on 2026-11-13, with no check (neither a test nor a watch
+looks for it).
 **D3. What the badge may offer.** Protected by name: `hyprland quickshell networkmanager mesa wireplumber sddm uwsm
 gnome-keyring`, `xdg-desktop-portal[-*]`, `pipewire[-*]`. **Qt is not protected by a prefix** (the first version had `qt6-*`):
 pacman keeps every Qt package the session requires (hyprland, quickshell and grassfield-desktop are installed), and an app's
