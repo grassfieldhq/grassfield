@@ -35,7 +35,8 @@ quiet() { "$@" >>"$W/log" 2>&1; }
 sed -i 's/^#\?DisableSandbox.*//; /^\[options\]/a DisableSandbox' /etc/pacman.conf
 quiet pacman-key --init
 quiet pacman-key --populate archlinux
-quiet pacman -Syu --noconfirm --needed gcc git || { echo "FAIL: pacman -Syu gcc git (see $W/log)"; tail -5 "$W/log"; exit 1; }
+# qt6-base for its moc: build-direct.sh looks it up before any mode, --bench included (the sampler itself uses no Qt).
+quiet pacman -Syu --noconfirm --needed gcc git qt6-base || { echo "FAIL: pacman -Syu gcc git qt6-base (see $W/log)"; tail -5 "$W/log"; exit 1; }
 useradd -m alice
 useradd -m bob
 as() { local u=$1; shift; setpriv --reuid="$u" --regid="$u" --init-groups -- env HOME="/home/$u" "$@"; } # exec, no parent left
