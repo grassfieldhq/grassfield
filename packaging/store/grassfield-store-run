@@ -18,8 +18,9 @@
 #   4. checks again: no db.lck, pacman -Qu answers (exit 0 or 1) and lists nothing but "[ignored]" (S12), the recipe is
 #      Omarchy's and pinned (with omarchy-pkg-missing for omarchy-pkg-aur-add and omarchy-pkg-add, which call it), and every file the
 #      catalog pins (<op-id>.pins, the signed catalog's pins the Store wrote there) is unchanged in the installed
-#      Omarchy; for the AUR (step 3b2), its plan again: Omarchy's package lists read, and no name the deny list (the
-#      helper's, ADR-0037 b.1) names; an install only of names pacman does not resolve from the repositories (a package,
+#      Omarchy; for the AUR (step 3b2), its plan again: Omarchy's package lists read, pacman's HoldPkg and what Grassfield's packages
+#      list as optional dependencies (pacman -Qq, -Qi: kio-extras, cmake; ADR-0046 D3; unreadable: exit 7), and no name the
+#      deny list (the helper's, ADR-0037 b.1, ADR-0046) names; an install only of names pacman does not resolve from the repositories (a package,
 #      a provider, a group: yay would take the repository's), a removal only of packages installed explicitly from
 #      outside the repositories, and whose whole plan (-Rs) names no denied package;
 #   5. runs the recipe, ${OMARCHY_PATH:-/usr/share/omarchy}/bin/<recipe>, with its arguments, as an argument vector;
@@ -32,7 +33,7 @@
 # Exit: 0 done; 1 the recipe failed; 2 usage; 3 busy (Omarchy's update lock, or pacman's db.lck); 4 the last system update
 # did not finish; 5 the installed Omarchy differs from the catalog's pins (or the recipe is missing); 6 too late (the
 # terminal opened after the deadline); 7 the AUR's plan refused (a repository resolves the name; a package protected, needed,
-# not installed as an app or from a repository); 130 stopped with Ctrl+C (before the recipe: nothing was run). A closed
+# not installed as an app or from a repository; Grassfield's optional dependencies unreadable); 130 stopped with Ctrl+C (before the recipe: nothing was run). A closed
 # terminal ends it without an exit file (SIGHUP): the Store reads the system then.
 set -uo pipefail
 umask 077
@@ -204,7 +205,8 @@ denied() { # name: 0 when the system, Omarchy or Grassfield needs it
 # 4b. The AUR's plan, checked again (the Store checked it before; the system may have changed since).
 if [[ $kind == aur ]]; then
   refuse() { finish 7 "$1: nothing was run."; }
-  # What denied() reads, for both commands: Omarchy's two package lists (in the installed Omarchy), pacman's HoldPkg.
+  # What denied() reads, for both commands: Omarchy's two package lists (in the installed Omarchy), pacman's HoldPkg and
+  # Grassfield's optional dependencies (unreadable: exit 7, nothing is run).
   declare -A omarchy_lists=() hold=() explicit=() foreign=() gfopt=()
   for list in "$omarchy/install/omarchy-base.packages" "$omarchy/install/omarchy-other.packages"; do
     [[ -f $list ]] || continue
@@ -215,7 +217,10 @@ if [[ $kind == aur ]]; then
   done
   ((${#omarchy_lists[@]})) || refuse "Omarchy's package lists are missing or empty"
   while IFS= read -r line; do [[ -n $line ]] && hold[$line]=1; done < <(pacman-conf HoldPkg 2>/dev/null 9>&-)
-  gf_names=$(gf_optional_names) || refuse "cannot read what Grassfield's packages list as optional dependencies"
+  gf_names=$(gf_optional_names)
+  code=$?
+  stop
+  ((code == 0)) || refuse "cannot read what Grassfield's packages list as optional dependencies"
   while IFS= read -r line; do [[ -n $line ]] && gfopt[$line]=1; done <<<"$gf_names"
   stop
   if [[ $recipe == omarchy-pkg-aur-add ]]; then
