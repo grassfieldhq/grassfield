@@ -81,7 +81,7 @@ sock=$DEV_NESTED_SOCK sig=$DEV_NESTED_SIG
 for tool in jq foot grim magick python3; do
   command -v "$tool" >/dev/null || { echo "window_edge: $tool not installed" >&2; exit 2; }
 done
-settings_bin=${EDGE_SETTINGS_BIN:-$dev/build/grassfield-settings}
+settings_bin=${EDGE_SETTINGS_BIN:-$dev/build/grassfield-settings} # isolation-ok: a path; open_window starts it through scripts/dev/isolated.sh
 [[ -x $settings_bin ]] || { echo "window_edge: $settings_bin not built (apps/settings/build-direct.sh)" >&2; exit 2; }
 
 stamp=$(date +%Y%m%d-%H%M%S)
