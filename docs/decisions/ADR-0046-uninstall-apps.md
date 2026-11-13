@@ -60,6 +60,9 @@ code in the helper (`denied()`), in `removal.cpp` and in `tests/fixtures/store/r
 Everything else on Omarchy's lists stays "Part of Omarchy" (mpv, imv, foot, btop, fcitx5, cups, gnome-disk-utility…): macOS
 keeps Preview. Justification: macOS lets the user delete its optional bundled apps (GarageBand, Pages) and keeps the ones
 the system uses; Omarchy's own `omarchy-remove-preinstalls` is the authority for which are which.
+The remaining guard against an AUR package taking the name of one of the 13 is `pacman -Sp` in `grassfield-store-run` (all 13
+resolve today: five from [omarchy], eight from [extra]); if Omarchy drops one from its repository, an AUR package of that name
+becomes buildable. Accepted risk, re-checked at each Omarchy update.
 **D3. What the badge may offer.** Protected by name: `hyprland quickshell networkmanager mesa wireplumber sddm uwsm
 gnome-keyring`, `xdg-desktop-portal[-*]`, `pipewire[-*]`. **Qt is not protected by a prefix** (the first version had `qt6-*`):
 pacman keeps every Qt package the session requires (hyprland, quickshell and grassfield-desktop are installed), and an app's
