@@ -198,10 +198,13 @@ for variant in "" --asan; do
   step "the backend's unit tests${variant:+ ($variant)}, the real gpgv included"
   if apps/store/build-direct.sh --tests $variant >/tmp/build.log 2>&1; then
     bin=.dev/build/store-unit-tests${variant:+-asan}
+    # Flatpak.RealFlatpak and Flatpak.RealUpdate need a real Flatpak installation: tests/integration/store_flatpak.sh runs
+    # them. Every other test runs here, and any skip among them is a failure.
     if STORE_TEST_REAL_GPGV=$keys STORE_TEST_PACMAN_KEYRINGS=$pac STORE_TEST_HTTPS=https://localhost:8443 \
-        "$bin" --gtest_brief=1 >/tmp/tests.log 2>&1; then
+        "$bin" --gtest_brief=1 --gtest_filter='-Flatpak.RealFlatpak:Flatpak.RealUpdate' >/tmp/tests.log 2>&1; then
       grep -E '^\[  (PASSED|SKIPPED|FAILED) ' /tmp/tests.log | sed 's/^/  /'
       if grep -q 'SKIPPED' /tmp/tests.log; then
+        grep -E '^\[  SKIPPED \] [A-Za-z]' /tmp/tests.log | sed 's/^/  /'
         echo "FAIL: a test was skipped although the real gpgv is here"; fail=1
       else
         echo "PASS: unit tests${variant:+ ($variant)}, RealGpgv, RealPacmanKeyring, RealPackage, RealHttpsServer and RealSignedCatalog included"
