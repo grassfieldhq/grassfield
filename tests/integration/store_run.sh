@@ -83,6 +83,10 @@ case ${1-} in
     } ;;
   -Qqe) [[ -e /run/test/qe ]] && { cat /run/test/qe; exit 0; } ;;
   -Qqm) [[ -e /run/test/qm ]] && { cat /run/test/qm; exit 0; } ;;
+  -Qq) [[ -e /run/test/gf ]] && { echo grassfield-desktop; exit 0; } ;; # a Grassfield package is installed (ADR-0046 D3)
+  -Qi) [[ -e /run/test/gf-fail ]] && { echo "error: database corrupt" >&2; exit 1; }
+    [[ -e /run/test/gf ]] && { printf '%s\n' "Name            : grassfield-desktop" "Optional Deps   : cmake: rebuild" "                  ninja>=1.11: faster" \
+      "Required By     : None"; exit 0; } ;;
   -Rs) [[ -e /run/test/rs ]] && { cat /run/test/rs; [[ ! -e /run/test/rs-fail ]]; exit; } ;;
 esac
 exec /usr/bin/pacman.real "$@"
@@ -441,6 +445,18 @@ printf 'error: failed to prepare transaction (could not satisfy dependencies)\n:
 touch "$T/rs-fail"
 drop_refused "a plan pacman refuses (another package needs it)" example-tool
 rm -f "$T/rs-fail"
+# What Grassfield's packages list as optional dependencies (ADR-0046 D3) is read from pacman -Qq and -Qi: cmake is one, so it is
+# never removed here, even installed explicitly from the AUR; when pacman cannot be read for it, nothing is run (exit 7).
+printf 'cmake\n' >>"$T/qe"; printf 'cmake\n' >>"$T/qm"; printf 'cmake\n' >"$T/rs"
+touch "$T/gf"
+drop_refused "cmake (an optional dependency of a Grassfield package)" cmake
+expect "  the message names the system, Omarchy or Grassfield" grep -q 'cmake is part of the system, Omarchy or Grassfield' /tmp/run.out
+printf 'example-tool\n' >"$T/rs"
+touch "$T/gf-fail"
+drop_refused "pacman -Qi fails while a Grassfield package is listed (fail closed)" example-tool
+expect "  the message says what could not be read" grep -q "optional dependencies: nothing was run" /tmp/run.out
+rm -f "$T/gf" "$T/gf-fail"
+sed -i '/^cmake$/d' "$T/qe" "$T/qm"
 # A plan line read as a pattern would name the files it matches: "glib?" with a file glibc where the script runs would become
 # glibc (HoldPkg) and refuse; read as the word it is, it is no package of the deny list.
 printf 'example-tool\nglib?\n' >"$T/rs"
