@@ -49,6 +49,12 @@ check test "$(login get)" = grassfield
 desc="set refuses an unknown session"
 status=0; login set windows >/dev/null 2>&1 || status=$?
 check test "$status" = 2
+desc="SS-11: Omarchy's session file has no Exec= line: the stock Hyprland uwsm session is used, not an empty line"
+login set omarchy >/dev/null; sed -i '/^Exec=/d' "$fx/usr/local/share/wayland-sessions/omarchy.desktop"
+printf '[Desktop Entry]\nName=Hyprland (uwsm)\nExec=uwsm start -e -D Hyprland hyprland.desktop\n' >"$fx/usr/share/wayland-sessions/hyprland-uwsm.desktop"
+out=$(login)
+check test "$out" = "uwsm start -e -D Hyprland hyprland.desktop"
+rm "$fx/usr/share/wayland-sessions/hyprland-uwsm.desktop"
 desc="Omarchy chosen but not installed: Grassfield starts (never a dead login)"
 login set omarchy >/dev/null; rm "$fx/usr/local/share/wayland-sessions/omarchy.desktop"
 out=$(login)

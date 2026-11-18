@@ -147,6 +147,23 @@ Singleton {
         else
             root.startFingerprint();
     }
+    // Set by SleepInhibitor from PrepareForSleep(true) until the resume (SS-01): the lock taken for the sleep must not be
+    // opened in the second or two logind takes to suspend, or the computer would sleep and wake unlocked. Meanwhile no
+    // password is checked and a fingerprint match is ignored (controller.sleepPending), the open fingerprint attempt is
+    // dropped (abort: never a success) and no new one starts. Only ever refuses an unlock; never unlocks or locks.
+    property bool sleepPending: false
+    onSleepPendingChanged: {
+        if (root.sleepPending) {
+            if (fingerprintPam.active)
+                fingerprintPam.abort();
+            // Settled like any attempt that ended without a match; the retry it arms is dropped.
+            root.fingerprintEnded();
+            fingerprintRetry.stop();
+        } else {
+            // The reader is offered again after the usual gap (startFingerprint checks everything else).
+            fingerprintRetry.restart();
+        }
+    }
     function motionOf(output: string): real {
         return WallpaperConfig.motionIn(root.motion, output);
     }
@@ -576,6 +593,9 @@ Singleton {
         // The displays are off (Idle): no new attempt; the wake starts one (onDisplaysOffChanged), a resume allows one.
         if (root.displaysOff && !root.fingerprintResumePass)
             return;
+        // The computer is going to sleep (SS-01, sleepPending): the reader is not armed until the resume.
+        if (root.sleepPending)
+            return;
         root.fingerprintResumePass = false;
         fingerprintRetry.stop();
         fingerprintFastEnd.stop();
@@ -639,6 +659,7 @@ Singleton {
         pam: passwordPam
         // ADR-0040 step 4b (IQ-T2 A): the content fades out before the release; Reduce Motion caps it.
         releaseMs: Appearance.duration(Tokens.lockFadeOutMs)
+        sleepPending: root.sleepPending
         onUnlockRequested: root.release()
         onLockStateChanged: {
             // Carried over a soft reload; cleared only by release() (PAM success).
@@ -870,6 +891,22 @@ Singleton {
         id: fingerprintReach
         interval: Machine.FINGERPRINT_REACH_TIMEOUT_MS
         onTriggered: root.fingerprintReachTimedOut()
+    }
+
+    // A lock restored while /etc/pam.d/omarchy-lock-password could not be read (a package transaction under way) would
+    // refuse every password for the life of this process (SS-06): the file is looked at again while the session is locked
+    // without it. It only lets a password reach PAM again; PAM alone still decides, and nothing here unlocks.
+    Timer {
+        id: pamRecheck
+        interval: 5000
+        repeat: true
+        running: controller.locked && !controller.pamAvailable
+        onTriggered: {
+            if (root.pamServiceInstalled()) {
+                console.info("grassfield-lock: /etc/pam.d/omarchy-lock-password is readable again; passwords are accepted");
+                controller.pamAvailable = true;
+            }
+        }
     }
 
     Timer {

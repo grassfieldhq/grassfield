@@ -80,6 +80,10 @@ Scope {
     function beforeSleep(): void {
         console.info("grassfield-idle: system is going to sleep, locking");
         sleeping = true;
+        // No unlock between this lock and the sleep (SS-01, Lock.sleepPending); set first, so that the fingerprint reader
+        // is not armed again when the lock below reaches LOCKED.
+        Lock.sleepPending = true;
+        sleepPendingGuard.restart();
         Lock.lock("sleep");
         if (Lock.currentlySecure())
             release("locked");
@@ -93,9 +97,16 @@ Scope {
         if (!sleeping) {
             console.warn("grassfield-idle: resumed from a sleep this shell did not lock for; locking");
             Lock.lock("resume");
+        } else if (!Lock.currentlyLocked()) {
+            // SS-01: whatever happened since the lock before sleep (refused, or opened after the guard below gave up),
+            // a computer that wakes with its session unlocked is locked now. The state is read afresh.
+            console.warn("grassfield-idle: system resumed with the session unlocked; locking");
+            Lock.lock("resume");
         } else {
             console.info("grassfield-idle: system resumed");
         }
+        sleepPendingGuard.stop();
+        Lock.sleepPending = false;
         // The lock's clock (ADR-0040 ID-7, T-14: the time shown on waking is the time now).
         Lock.resumed();
         sleeping = false;
@@ -170,6 +181,21 @@ Scope {
         function onSecureChanged(): void {
             if (root.sleeping && Lock.currentlySecure())
                 root.release("locked");
+        }
+    }
+
+    // Unlocking is refused from PrepareForSleep(true) to the resume (Lock.sleepPending). If the resume is never seen (the
+    // sleep was given up without PrepareForSleep(false), or the watcher missed it), the refusal ends after a minute awake
+    // (a Timer does not run during the sleep), so that the session can never stay closed for good; afterResume still locks
+    // a session it finds unlocked.
+    Timer {
+        id: sleepPendingGuard
+        interval: 60000
+        onTriggered: {
+            if (!Lock.sleepPending)
+                return;
+            console.warn("grassfield-idle: no resume seen " + interval / 1000 + " s after the sleep request; unlocking is possible again");
+            Lock.sleepPending = false;
         }
     }
 

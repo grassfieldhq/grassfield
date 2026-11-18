@@ -16,9 +16,9 @@ fail=0
 check() { if "$@"; then echo "PASS: $desc"; else echo "FAIL: $desc"; fail=1; fi; }
 
 mkdir -p "$tmp/bin" "$tmp/proc/LID0" "$tmp/drm/card1-eDP-1" "$tmp/drm/card1-DP-3" "$tmp/drm/card1-HDMI-A-1" "$tmp/run"
-printf '#!/bin/sh\necho "hyprctl $*" >>"$FAKE_DIR/calls.log"\n' >"$tmp/bin/hyprctl"
+printf '#!/bin/sh\necho "hyprctl $*" >>"$FAKE_DIR/calls.log"\n[ -n "${FAKE_HYPR_DELAY:-}" ] && sleep "$FAKE_HYPR_DELAY"\nexit 0\n' >"$tmp/bin/hyprctl"
 # The shell's answer to `lock lid` (FAKE_LOCK: ok by default, "fail" = no instance, any other text is printed).
-printf '#!/bin/sh\necho "lock" >>"$FAKE_DIR/calls.log"\n[ "${FAKE_LOCK:-ok}" = fail ] && exit 1\necho "${FAKE_LOCK:-ok}"\n' >"$tmp/bin/lock"
+printf '#!/bin/sh\necho "lock" >>"$FAKE_DIR/calls.log"\n[ "${FAKE_LOCK:-ok}" = fail ] && exit 1\n[ "${FAKE_LOCK:-ok}" = hang ] && exec sleep 60\necho "${FAKE_LOCK:-ok}"\n' >"$tmp/bin/lock"
 # The omarchy-shell stand-in (restart + lock) that grassfield-lid falls back to when the shell does not answer.
 printf '#!/bin/sh\necho "fallback $*" >>"$FAKE_DIR/calls.log"\n' >"$tmp/bin/fallback"
 chmod +x "$tmp/bin/hyprctl" "$tmp/bin/lock" "$tmp/bin/fallback"
@@ -69,6 +69,11 @@ check bash -c '[[ $(grep -c "hyprctl reload" "$1/calls.log") == 1 ]]' _ "$tmp"
 desc="external display unplugged while the lid is closed: the laptop panel comes back"
 reset; setup closed connected; lid closed; reset; setup closed disconnected; lid reconcile
 check bash -c 'grep -q "hyprctl reload" "$1/calls.log" && ! grep -q "disabled = true" "$1/calls.log"' _ "$tmp"
+desc="SS-02: clamshell mode ended with the lid closed: the shell is asked to lock, before the panel comes back"
+check bash -c '[[ $(head -n 1 "$1/calls.log") == lock ]]' _ "$tmp"
+desc="SS-02: the lid opened in clamshell mode: no lock request, the panel comes back"
+reset; setup closed connected; lid closed; reset; setup open connected; lid opened
+check bash -c '! grep -q lock "$1/calls.log" && grep -q "hyprctl reload" "$1/calls.log"' _ "$tmp"
 
 desc="lid open with an external display: nothing to do"
 reset; setup open connected; lid reconcile
@@ -102,6 +107,20 @@ for answer in ok already-locked docked "refused: missing-pam"; do
   reset; setup closed disconnected; FAKE_LOCK="$answer" lid closed; settle
   check bash -c '! grep -q fallback "$1/calls.log"' _ "$tmp"
 done
+
+# SS-03: a security process that is alive but does not answer: the request is given up after its bound, the stand-in is
+# asked and the panel is still handled.
+desc="shell hung, no external display: the lock request is bounded, then the stand-in is asked"
+reset; setup closed disconnected; start=$SECONDS; FAKE_LOCK=hang lid closed; took=$((SECONDS - start)); settle
+check bash -c 'grep -qx "fallback lock lock" "$1/calls.log" && [ "$2" -lt 15 ]' _ "$tmp" "$took"
+desc="the lid's lock request and the stand-in's are bounded by timeout"
+check bash -c 'grep -q "answer=\$(timeout -k 1 5 \$LOCK_CMD 2>/dev/null)" "$1/packaging/bin/grassfield-lid" && grep -q "out=\$(timeout -k 0.2 2 qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock 2>/dev/null)" "$1/packaging/shims/omarchy-shell"' _ "$root"
+
+# SS-04: a reconcile that finds another one at work waits and decides on the state as it is then (it used to leave).
+desc="lid closed then opened while the panel is being switched off: the panel comes back (the second call waits, then reloads)"
+reset; setup closed connected; FAKE_HYPR_DELAY=1 lid closed & sleep 0.3; setup open connected; lid opened; wait
+check bash -c 'grep -q "disabled = true" "$1/calls.log" && [[ $(tail -n 1 "$1/calls.log") == "hyprctl reload" ]] && [ ! -e "$1/run/grassfield-lid-internal-off" ]' _ "$tmp"
+reset; setup open disconnected; lid reconcile
 
 desc="an unknown argument is refused"
 status=0; lid frobnicate 2>/dev/null || status=$?

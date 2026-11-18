@@ -65,12 +65,14 @@ def read_battery(base):
 
 
 def notify(level, capacity):
+    """True when notify-send delivered the warning (exit 0)."""
     critical = level <= 5
     title = tr("Very low battery" if critical else "Low battery")
     body = tr("%d%% of the battery is left. Connect the charger now, the computer will shut down soon." if critical
               else "%d%% of the battery is left. Connect the charger.") % capacity
-    subprocess.run(["notify-send", "-a", "Grassfield", "-u", "critical" if critical else "normal", "--", title, body],
-                   capture_output=True, timeout=10, check=False)
+    r = subprocess.run(["notify-send", "-a", "Grassfield", "-u", "critical" if critical else "normal", "--", title, body],
+                       capture_output=True, timeout=10, check=False)
+    return r.returncode == 0
 
 
 def main():
@@ -82,12 +84,17 @@ def main():
     while True:
         reading = read_battery(base)
         if reading:
-            level, last = next_warning(last, *reading)
+            level, state = next_warning(last, *reading)
+            delivered = level is None
             if level is not None:
                 try:
-                    notify(level, reading[0])
+                    delivered = notify(level, reading[0])
                 except (OSError, subprocess.SubprocessError):
                     pass
+            # A warning that could not be delivered (no notification server yet at login, the shell restarting) is not
+            # counted as given (SS-05): `last` stays, so the next reading tries again.
+            if delivered:
+                last = state
         time.sleep(interval)
 
 

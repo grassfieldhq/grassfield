@@ -25,6 +25,9 @@ QtObject {
     // (faillock). The field is cleared and the session stays LOCKED (fail closed). Always false in a
     // real session, so authentication is unchanged there.
     property bool pamSuppressed: false
+    // Set by Lock.qml while the computer is being put to sleep (SS-01, SleepInhibitor): no attempt starts and a fingerprint
+    // match unlocks nothing, so the lock taken for the sleep cannot be opened before the computer sleeps. Only ever refuses.
+    property bool sleepPending: false
     // ADR-0040 step 4b (IQ-T2 A): after a PAM success the lock's content fades out over this many ms while the session is
     // still locked (state "releasing"); only then is unlockRequested emitted. 0: at once. A lock request, a lost lock or
     // an abort during it brings the lock back, and the PAM success is spent (a new one is needed).
@@ -139,7 +142,7 @@ QtObject {
     }
 
     function submit(password: string): bool {
-        if (!canSubmit || password.length === 0)
+        if (!canSubmit || sleepPending || password.length === 0)
             return false;
         if (pamSuppressed) {
             // Dev/test only: swallow the attempt without touching PAM; stay locked (fail closed).
@@ -220,6 +223,9 @@ QtObject {
     // PAM success of the fingerprint service (only started when its PAM file exists).
     function fingerprintSucceeded(): void {
         if (priv.state !== Machine.LOCKED && priv.state !== Machine.AUTHENTICATING)
+            return;
+        // The computer is going to sleep (SS-01): a finger on the reader after the lock before sleep opens nothing.
+        if (sleepPending)
             return;
         if (priv.state === Machine.AUTHENTICATING)
             abortPam();
