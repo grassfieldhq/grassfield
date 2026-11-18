@@ -40,7 +40,14 @@ Item {
         root.revision++;
     }
 
-    // Set a key. Returns true when the file was written.
+    // The file already says what a change would write: nothing is written then. A slider reports every pointer position, and
+    // most of them round to the value already stored; each write is a synchronous save that the shell reads again.
+    function unchanged(before: string, after: string): bool {
+        const parsed = Store.parse(before);
+        return parsed.ok && !parsed.fresh && JSON.stringify(parsed.data, null, 2) + "\n" === after;
+    }
+
+    // Set a key. Returns true when the file was written, or already said so.
     function set(key: string, newValue: var): bool {
         const file = root.backend.readText(root.path);
         if (file.exists && !file.ok) {
@@ -54,6 +61,10 @@ Item {
             root.reload();
             return false;
         }
+        if (root.unchanged(file.text, result.text)) {
+            root.writeError = "";
+            return true;
+        }
         const failure = root.backend.writeText(root.path, result.text);
         root.writeError = failure;
         if (failure !== "")
@@ -62,7 +73,7 @@ Item {
         return true;
     }
 
-    // Set several keys in one write ({dotted key: value}). Returns true when the file was written.
+    // Set several keys in one write ({dotted key: value}). Returns true when the file was written, or already said so.
     function setMany(entries: var): bool {
         const file = root.backend.readText(root.path);
         if (file.exists && !file.ok) {
@@ -74,6 +85,10 @@ Item {
             root.writeError = result.error;
             root.reload();
             return false;
+        }
+        if (root.unchanged(file.text, result.text)) {
+            root.writeError = "";
+            return true;
         }
         const failure = root.backend.writeText(root.path, result.text);
         root.writeError = failure;
@@ -91,8 +106,10 @@ Item {
     Connections {
         target: root.backend
 
-        function onFileChanged(): void {
-            root.reload();
+        function onFileChanged(path: string): void {
+            // The backend watches other files too: only this one is read again.
+            if (path === root.path)
+                root.reload();
         }
     }
 }

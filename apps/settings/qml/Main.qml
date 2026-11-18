@@ -245,7 +245,20 @@ Window {
     // The output Wallpaper is asked to show; set again, to the same name too, at each request.
     property string wallpaperDisplay: root.displayOf(root.startSection)
 
+    // A sheet is over the window. Its answer goes to the page under it, so the pane does not change meanwhile (the global
+    // menu's View items and a request from another process still reach select: the Wi-Fi password typed, or a display trial
+    // to keep, would be dropped with the page).
+    function sheetShown(): bool {
+        for (let i = 0; i < root.sheets.length; i++) {
+            if ((root.sheets[i] as Sheet)?.shown === true)
+                return true;
+        }
+        return false;
+    }
+
     function select(id: string): void {
+        if (root.sheetShown())
+            return;
         const shown = root.pointerPane(root.paneOf(id));
         root.wallpaperDisplay = "";
         root.wallpaperDisplay = root.paneOf(id) === "wallpaper" ? root.displayOf(id) : "";
@@ -275,11 +288,15 @@ Window {
     }
 
     function navBack(): void {
+        if (root.sheetShown())
+            return;
         root.navState = NavHistory.back(root.navState);
         root.selectedId = root.pointerPane(root.navState.current);
     }
 
     function navForward(): void {
+        if (root.sheetShown())
+            return;
         root.navState = NavHistory.forward(root.navState);
         root.selectedId = root.pointerPane(root.navState.current);
     }

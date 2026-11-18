@@ -26,6 +26,11 @@ SettingsPage {
     // null: unknown or NetworkManager not answering.
     property var radio: null
     property bool answered: false
+    // A reading is on its way (the timer does not ask again meanwhile: a slow service would stack readings until the
+    // Backend's queue refuses those of every other pane), and how many readings in a row brought no answer: the first keeps
+    // what was read (one timeout must not empty the pane), the second says the service is not there.
+    property bool asking: false
+    property int misses: 0
     property var networks: []
     // SSID hex -> UUID of the first saved profile with that SSID.
     property var known: ({})
@@ -73,6 +78,7 @@ SettingsPage {
     }
 
     function refresh(): void {
+        root.asking = true;
         root.system.queryBus("wifi.state", "wifi.state");
     }
 
@@ -94,9 +100,11 @@ SettingsPage {
 
     function startJoin(net: var, spec: var): void {
         root.notice = "";
+        // Refused while another join still runs (one privileged change at a time): that join keeps its "Connecting…".
+        const running = root.pending;
         root.pending = net.key;
         if (!root.system.act("wifi join", spec, "wifi.act"))
-            root.pending = "";
+            root.pending = running;
     }
 
     // A click on a row: join it (the current network stays as it is).
@@ -189,6 +197,12 @@ SettingsPage {
         function onFinished(tag: string, ok: bool, output: string): void {
             switch (tag) {
             case "wifi.state":
+                root.asking = false;
+                if (!ok && root.answered && root.misses < 1) {
+                    root.misses++;
+                    break;
+                }
+                root.misses = ok ? 0 : root.misses;
                 root.setState(ok ? System.parseWifiState(output) : null);
                 break;
             case "wifi.details":
@@ -212,7 +226,10 @@ SettingsPage {
         interval: Tokens.settingsSystemRefreshMs
         running: true
         repeat: true
-        onTriggered: root.refresh()
+        onTriggered: {
+            if (!root.asking)
+                root.refresh();
+        }
     }
 
     // macOS keeps scanning while the pane is open.

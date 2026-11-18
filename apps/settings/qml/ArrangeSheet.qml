@@ -74,7 +74,9 @@ Sheet {
         }
         const p = Object.assign({}, root.placed);
         p[m.name] = best ? Displays.snapBeside(m, x, y, best) : {x: Math.round(x), y: Math.round(y)};
-        root.placed = p;
+        // The dropped display stays there; a display it now covers, or one left apart from the others, moves to the nearest
+        // free place beside them (Displays.settle): the arrangement never overlaps and never leaves a display unreachable.
+        root.placed = Displays.settle(root.monitors.map(o => Object.assign({}, o, p[o.name] ?? {x: o.x, y: o.y})), m.name);
     }
 
     onAccepted: {

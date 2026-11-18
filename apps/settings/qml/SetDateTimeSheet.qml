@@ -10,6 +10,11 @@ Sheet {
 
     // The day, month and year, the hour, minute and second being edited.
     property var fields: [1, 1, 2026, 0, 0, 0]
+    // When the sheet opened (Date.now()), and whether the hour, minute or second was changed since. A time left as it was
+    // goes on running while the sheet is up: Set then means "this date, the clock as it runs", not the time of the opening
+    // (the clock was set back by the time spent in the sheet). A time the user typed is taken as typed.
+    property real openedAt: 0
+    property bool timeTouched: false
 
     signal chosen(var wall)
 
@@ -18,6 +23,8 @@ Sheet {
 
     function openAt(wall: var): void {
         root.fields = [wall.getDate(), wall.getMonth() + 1, wall.getFullYear(), wall.getHours(), wall.getMinutes(), wall.getSeconds()];
+        root.openedAt = Date.now();
+        root.timeTouched = false;
         root.open();
     }
 
@@ -28,6 +35,8 @@ Sheet {
     function setField(i: int, v: int): void {
         const f = root.fields.slice();
         f[i] = v;
+        if (i >= 3)
+            root.timeTouched = true;
         // A day the new month does not have becomes its last.
         f[0] = Math.min(f[0], root.daysIn(f[1], f[2]));
         root.fields = f;
@@ -35,7 +44,8 @@ Sheet {
 
     onAccepted: {
         const f = root.fields;
-        root.chosen(new Date(f[2], f[1] - 1, f[0], f[3], f[4], f[5]));
+        const set = new Date(f[2], f[1] - 1, f[0], f[3], f[4], f[5]);
+        root.chosen(root.timeTouched || root.openedAt <= 0 ? set : new Date(set.getTime() + Math.max(0, Date.now() - root.openedAt)));
     }
 
     SettingsGroup {

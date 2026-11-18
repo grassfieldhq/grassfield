@@ -50,6 +50,11 @@ SettingsPage {
     }
 
     property bool answered: false
+    // A reading is on its way (the timer does not ask again meanwhile: a slow service would stack readings until the
+    // Backend's queue refuses those of every other pane), and how many readings in a row brought no answer: the first keeps
+    // what was read (one timeout must not empty the pane), the second says the service is not there.
+    property bool asking: false
+    property int misses: 0
     property var audio: ({sinks: [], sources: []})
     // PipeWire node id -> System.audioKind, from `wpctl status -n`.
     property var kinds: ({})
@@ -119,6 +124,7 @@ SettingsPage {
     }
 
     function refresh(): void {
+        root.asking = true;
         root.system.query(System.QUERY.audio, "audio.status");
     }
 
@@ -134,6 +140,12 @@ SettingsPage {
         function onFinished(tag: string, ok: bool, output: string): void {
             switch (tag) {
             case "audio.status":
+                root.asking = false;
+                if (!ok && root.answered && root.misses < 1) {
+                    root.misses++;
+                    break;
+                }
+                root.misses = ok ? 0 : root.misses;
                 root.answered = true;
                 // A drag in progress keeps its own value; the next reading follows.
                 if (!volume.busy)
@@ -158,7 +170,10 @@ SettingsPage {
         interval: Tokens.settingsSystemRefreshMs
         running: true
         repeat: true
-        onTriggered: root.refresh()
+        onTriggered: {
+            if (!root.asking)
+                root.refresh();
+        }
     }
 
     Component.onCompleted: root.refresh()

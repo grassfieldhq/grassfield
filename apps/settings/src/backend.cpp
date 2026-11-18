@@ -2,6 +2,8 @@
 #include <QStringDecoder>
 
 #include <algorithm>
+#include <cmath>
+#include <sys/stat.h>
 #include <numeric>
 
 #include "runmode.h"
@@ -626,6 +628,14 @@ QVariantMap Backend::zoneInfo(const QString &zone) const
             {"territory", territory == QLocale::AnyTerritory ? QString() : QLocale::territoryToString(territory)}};
 }
 
+int Backend::zoneOffsetAt(const QString &zone, double ms) const
+{
+    const QTimeZone tz(zone.toUtf8());
+    if (zone.isEmpty() || !tz.isValid() || !std::isfinite(ms))
+        return 0;
+    return tz.offsetFromUtc(QDateTime::fromMSecsSinceEpoch(qint64(ms)));
+}
+
 QVariantList Backend::regionLocales() const
 {
     // The default locale is the UI language (translationloader.h). A region's name carries the script only when it is not
@@ -926,15 +936,32 @@ QString Backend::run(const QStringList &argv) const
     return QString::fromUtf8(p.readAllStandardOutput());
 }
 
+namespace {
+// What tells one state of a file from the next: inode, size and modification time ("" while it is missing). A directory
+// event names no file, so onPath compares this to know which watched file really changed.
+QString watchStamp(const QString &path)
+{
+    struct stat st;
+    if (::stat(QFile::encodeName(path).constData(), &st) != 0)
+        return QString();
+    return QString::number(qulonglong(st.st_ino)) + QLatin1Char(':') + QString::number(qlonglong(st.st_size)) + QLatin1Char(':')
+        + QString::number(qlonglong(st.st_mtim.tv_sec)) + QLatin1Char('.') + QString::number(qlonglong(st.st_mtim.tv_nsec));
+}
+} // namespace
+
 bool Backend::watch(const QString &path)
 {
     // The file is replaced by rename on every atomic write, so its directory is watched too.
     const QString dir = QFileInfo(path).absolutePath();
+    // Pages ask again at every visit: one entry per file, or each change would be announced once per visit.
+    if (m_watched.contains(path))
+        return true;
     m_watched.append(path);
     QDir().mkpath(dir);
     m_watcher.addPath(dir);
     if (QFile::exists(path))
         m_watcher.addPath(path);
+    m_watchStamps.insert(path, watchStamp(path));
     return true;
 }
 
@@ -944,7 +971,14 @@ void Backend::onPath(const QString &path)
         // After a rename the old inode is gone from the watcher: add the new file.
         if (QFile::exists(w) && !m_watcher.files().contains(w))
             m_watcher.addPath(w);
-        if (path == w || path == QFileInfo(w).absolutePath())
-            emit fileChanged(w);
+        if (path != w && path != QFileInfo(w).absolutePath())
+            continue;
+        // A directory changes for any of its files (the runtime directory holds many): only the file whose own state
+        // moved is announced, and a rename is announced once although the file and its directory both report it.
+        const QString stamp = watchStamp(w);
+        if (stamp == m_watchStamps.value(w))
+            continue;
+        m_watchStamps.insert(w, stamp);
+        emit fileChanged(w);
     }
 }
