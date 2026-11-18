@@ -89,7 +89,8 @@ Singleton {
     readonly property string appsFile: Settings.configDir + "/notification-apps.json"
     readonly property var seenApps: {
         const names = [];
-        const seen = {};
+        // No prototype, here and in every table keyed by an app's name: an app may be named "constructor" or "__proto__".
+        const seen = Object.create(null);
         for (const e of history) {
             const k = NotificationPrefs.keyOf(e.appName);
             if (k !== "" && !seen[k]) {
@@ -328,7 +329,7 @@ Singleton {
         centerOpen = false;
         freshKeys = ({});
         if (Object.keys(expandedApps).length > 0) {
-            expandedApps = ({});
+            expandedApps = Object.create(null);
             syncShown();
         }
     }
@@ -419,13 +420,13 @@ Singleton {
     function clearKeys(keys: var): void {
         const doomed = {};
         keys.forEach(k => doomed[k] = true);
-        history.forEach(e => {
-            if (doomed[e.key]) {
-                expireBanner(e.key);
-                finishLive(e.key);
-            }
-        });
+        const gone = history.filter(e => doomed[e.key]).map(e => e.key);
+        gone.forEach(k => expireBanner(k));
         setHistory(history.filter(e => !doomed[e.key]));
+        // The entries leave first, the live notifications are dismissed after (as addEntry does for evictions, ~5 ms each
+        // in the server): closed() then finds no entry to update, where it copied the whole history once per notification.
+        if (gone.length > 0)
+            Qt.callLater(() => gone.forEach(k => finishLive(k)));
     }
 
     function clearApp(appName: string): void {
@@ -433,10 +434,13 @@ Singleton {
     }
 
     function clearAll(): void {
-        history.forEach(e => finishLive(e.key));
+        const gone = history.map(e => e.key);
         while (bannerStore.count > 0)
             expireBanner(bannerStore.get(0).key);
         setHistory([]);
+        // Dismissed after the entries left (see clearKeys).
+        if (gone.length > 0)
+            Qt.callLater(() => gone.forEach(k => finishLive(k)));
     }
 
     // ---- models ----
@@ -478,7 +482,7 @@ Singleton {
     property var shownKeys: []
     property var shownSig: []
     // App names whose group is expanded ("Show All"); reset when the Center closes.
-    property var expandedApps: ({})
+    property var expandedApps: Object.create(null)
     // Rows a collapsed group shows: 1, a stack (macOS 27). The focus tests set it to 3 to drive their scenes with several
     // cards of one collapsed group (the focus invariant does not depend on the count).
     property int groupCollapsed: Tokens.notificationCenterGroupCollapsed
@@ -487,7 +491,7 @@ Singleton {
     property var bannerKeys: []
 
     function setExpanded(app: string, on: bool): void {
-        const next = Object.assign({}, expandedApps);
+        const next = Object.assign(Object.create(null), expandedApps);
         next[app] = on;
         expandedApps = next;
         syncShown();
@@ -499,13 +503,13 @@ Singleton {
     // Show All / Show Less). A role is only written when its value changed.
     function syncShown(): void {
         const collapsed = root.groupCollapsed;
-        const sizes = {};
+        const sizes = Object.create(null);
         for (const a of centerApps)
             sizes[a] = (sizes[a] || 0) + 1;
         // A group that emptied forgets its "Show All": the next notification of that app arrives collapsed.
         const stale = Object.keys(expandedApps).filter(a => !sizes[a]);
         if (stale.length > 0) {
-            const kept = Object.assign({}, expandedApps);
+            const kept = Object.assign(Object.create(null), expandedApps);
             stale.forEach(a => delete kept[a]);
             expandedApps = kept;
         }
@@ -513,7 +517,7 @@ Singleton {
         const wantMeta = [];
         const wantSig = [];
         const wantApps = [];
-        const seen = {};
+        const seen = Object.create(null);
         for (let i = 0; i < centerKeys.length; i++) {
             const app = centerApps[i];
             const rank = seen[app] || 0;
@@ -611,7 +615,7 @@ Singleton {
         centerApps = [];
         shownKeys = [];
         shownSig = [];
-        expandedApps = ({});
+        expandedApps = Object.create(null);
     }
 
     function rebuildCenter(): void {
@@ -759,7 +763,7 @@ Singleton {
     }
 
     function actionsOf(n: var): var {
-        return (n.actions || []).map(a => ({id: a.identifier, text: a.text}));
+        return (n.actions || []).map(a => ({id: a.identifier, text: History.bounded(a.text, History.MAX_LINE)}));
     }
 
     // Local image files (an image hint or an app icon path) are never loaded from where the app named them (reviews of
@@ -799,7 +803,7 @@ Singleton {
     // maxSenderIds names are kept (review of eee45cc: the map grew without bound): past that, only the senders whose copies
     // are on disk or queued stay. Numbers are never reused (senderCount only grows), so a dropped sender's leftover files
     // never count for another one.
-    property var senderIds: ({})
+    property var senderIds: Object.create(null)
     property int senderCount: 0
     readonly property int maxSenderIds: 256
     // POSIX sh; the directory, the size cap, the copy window, the byte budget, one sender's share, the numbers of the copies
@@ -862,7 +866,7 @@ Singleton {
         }
         for (const q of copyQueue.concat(copyBatch))
             used[q.sid] = true;
-        const next = {};
+        const next = Object.create(null);
         for (const key in senderIds) {
             if (used[senderIds[key]])
                 next[key] = senderIds[key];
@@ -1032,15 +1036,21 @@ Singleton {
         return kept;
     }
 
-    function makeEntry(n: var, key: string): var {
+    // `old`: the entry this one replaces when the sender changed the text of a shown notification, else null. The texts are
+    // bounded here, at intake (History.bounded). Pictures the old entry already names are not copied again: each fresh copy
+    // runs the copy helper and reloads the picture in every row, several times a second for a progress notification.
+    function makeEntry(n: var, key: string, old: var): var {
+        const appName = History.bounded(n.appName, History.MAX_LINE);
+        const sameIcon = old && old.appIcon !== "" && History.keptAppIcon(n.appIcon) === old.appIcon;
+        const sameImage = old && old.image === n.image;
         return {
             key: key,
             nid: n.id,
-            appName: n.appName,
-            appIcon: checkedAppIcon(n.appIcon, n.appName),
-            image: keptImage(n.image, n.appName),
-            summary: n.summary,
-            body: n.body,
+            appName: appName,
+            appIcon: sameIcon ? old.appIcon : checkedAppIcon(n.appIcon, appName),
+            image: sameImage ? old.image : keptImage(n.image, appName),
+            summary: History.bounded(n.summary, History.MAX_LINE),
+            body: History.bounded(n.body, History.MAX_BODY),
             bodyHtml: Sanitizer.sanitize(n.body),
             time: Date.now(),
             urgency: n.urgency === NotificationUrgency.Critical ? 2 : (n.urgency === NotificationUrgency.Low ? 0 : 1),
@@ -1066,7 +1076,7 @@ Singleton {
             liveByKey[key] = n;
             tracker.createObject(root, {notif: n, key: key});
         }
-        const entry = makeEntry(n, key);
+        const entry = makeEntry(n, key, null);
         if (isNew)
             addEntry(entry);
         else
@@ -1116,8 +1126,9 @@ Singleton {
     }
 
     function updated(key: string, n: var): void {
-        if (entryFor(key))
-            updateEntry(key, makeEntry(n, key));
+        const old = entryFor(key);
+        if (old)
+            updateEntry(key, makeEntry(n, key, old));
     }
 
     // ---- persistence ----
@@ -1143,7 +1154,12 @@ Singleton {
         found.entries.forEach(e => e.bodyHtml = Sanitizer.sanitize(e.body));
         history = History.prune(history.concat(found.entries), Date.now(), keepMs);
         count = history.length;
-        rebuildCenter();
+        // A failure while the Center is rebuilt must not leave historyReady false: nothing would be saved for the whole run.
+        try {
+            rebuildCenter();
+        } catch (e) {
+            console.warn("notifications: the Notification Center could not be rebuilt from the history: " + e);
+        }
         if (found.status !== "corrupt")
             historyReady = true;
         // Entries saved by an earlier version (bodies of an app whose previews are Never, entries past the retention) leave the

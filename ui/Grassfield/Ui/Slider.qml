@@ -43,7 +43,15 @@ T.Control {
     // until the host sets a new value, so an unbound slider still follows the user.
     property real local: NaN
     readonly property real shown: isNaN(local) ? value : local
-    onValueChanged: local = NaN
+    // While the pointer holds the slider, a value from the host is a late echo of an earlier position (a sound server's or
+    // a backlight's round trip): the fill keeps the user's value, and takes the host's at the release.
+    property bool echoed: false
+    onValueChanged: {
+        if (dragArea.pressed)
+            echoed = true;
+        else
+            local = NaN;
+    }
 
     readonly property real position: to > from ? Math.max(0, Math.min(1, (shown - from) / (to - from))) : 0
     // Where the dots are, 0 to 1 along the knob's travel: the stops, the even ticks or the tick values.
@@ -217,6 +225,13 @@ T.Control {
         onPositionChanged: mouse => {
             if (pressed)
                 at(mouse.x);
+        }
+        // Released or taken away: the host's value shows again when it changed during the hold.
+        onPressedChanged: {
+            if (!pressed && root.echoed) {
+                root.echoed = false;
+                root.local = NaN;
+            }
         }
     }
 }

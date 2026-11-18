@@ -107,6 +107,13 @@ TestCase {
         compare(NotificationPrefs.appsToList(["Zed", "mail", "Alpha"], list), ["Alpha", "Mail", "Signal", "Zed"]);
         compare(NotificationPrefs.appsToList(undefined, []), []);
         compare(NotificationPrefs.appsToList(["", 4], []), []);
+        // An app named like a member of Object.prototype is an app like any other.
+        const odd = NotificationPrefs.appsToList(["constructor", "__proto__", "constructor"], []);
+        compare(odd.length, 2);
+        verify(odd.indexOf("constructor") >= 0 && odd.indexOf("__proto__") >= 0);
+        compare(NotificationPrefs.problem([{app: "constructor", previews: "never"}, {app: "__proto__", previews: "never"}]), "");
+        compare(NotificationPrefs.normalize([{app: "constructor", previews: "never"}, {app: "toString", previews: "never"}]).length, 2);
+        compare(NotificationPrefs.normalizeStyles([{app: "constructor", style: "alerts"}, {app: "constructor", style: "none"}]).length, 1);
     }
 
     // GF-107: alert style per app.

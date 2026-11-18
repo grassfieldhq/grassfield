@@ -379,6 +379,19 @@ TestCase {
         bar.value = 5;
     }
 
+    // A value the host sets while the pointer holds the slider is a late echo: the user's value stays shown until the
+    // release, which takes the host's (audit B-06).
+    function test_sliderHoldsTheUserValueWhilePressed() {
+        mousePress(slider, slider.width - 1, slider.height / 2);
+        compare(slider.shown, 1);
+        slider.value = 0.2;
+        compare(slider.shown, 1, "a late echo does not move a held slider");
+        mouseRelease(slider, slider.width - 1, slider.height / 2);
+        compare(slider.shown, 0.2, "the release takes the host's value");
+        slider.value = 0.5;
+        compare(slider.shown, 0.5);
+    }
+
     function test_sliderKeysReportAndKeepTheHostValue() {
         slider.forceActiveFocus();
         keyClick(Qt.Key_Right);

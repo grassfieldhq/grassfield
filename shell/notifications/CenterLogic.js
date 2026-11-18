@@ -34,7 +34,8 @@ function focusAfterGone(lost, oldKeys, rows) {
 // group controls stay while any part of any card of the app is under the pointer, whatever order the enter and
 // leave events arrive in. Returns the new counts (never negative); the input is not changed.
 function hoverStep(counts, app, over) {
-    const next = Object.assign({}, counts);
+    // No prototype: an app may be named "constructor" or "__proto__".
+    const next = Object.assign(Object.create(null), counts);
     next[app] = Math.max(0, (next[app] || 0) + (over ? 1 : -1));
     return next;
 }
