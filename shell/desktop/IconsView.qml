@@ -91,8 +91,8 @@ FocusScope {
     }
     readonly property var blocked: Logic.blockedSlots(widgetRects, leftInset, topInset, areaW, Tokens.desktopIconCellWidth, Tokens.desktopIconCellHeight, grid.cols, grid.rows)
     readonly property var lay: ready && iconsHere ? Logic.layout(files.names, files.positions, grid.cols, grid.rows, blocked) : ({})
-    readonly property var shown: files.entries.filter(e => lay[e.name] !== undefined)
-    readonly property var selectedNames: Object.keys(selected).filter(n => selected[n] === true && lay[n] !== undefined)
+    readonly property var shown: files.entries.filter(e => Logic.placed(lay, e.name))
+    readonly property var selectedNames: Object.keys(selected).filter(n => selected[n] === true && Logic.placed(lay, n))
     readonly property var selectedPaths: selectedNames.map(n => files.path(n))
 
     // Keyboard focus events for the host's state machine (KeyboardFocus.js): {type: "menuOpened"},
@@ -168,19 +168,19 @@ FocusScope {
             const pos = files.positions;
             let changed = false;
             for (const n of Object.keys(root.lay)) {
-                const p = pos[n];
+                const p = Logic.own(pos, n);
                 if (!p || p.col !== root.lay[n].col || p.row !== root.lay[n].row)
                     changed = true;
             }
             if (changed)
-                files.setPositions(Object.assign({}, pos, root.lay));
+                files.setPositions(Logic.merged(pos, root.lay));
         }
     }
 
     // Cell of an icon; empty for a name without a slot (a delegate can be re-evaluated while a rename
     // swaps the old name for the new one in the folder model).
     function rectOf(name: string): rect {
-        if (lay[name] === undefined)
+        if (!Logic.placed(lay, name))
             return Qt.rect(0, 0, 0, 0);
         const s = Logic.slotPos(lay[name].col, lay[name].row, areaW, Tokens.desktopIconCellWidth, Tokens.desktopIconCellHeight);
         // On whole device pixels: the icons and labels stay crisp at a fractional scale (UI audit 2026-11-05, LOW).
@@ -244,7 +244,7 @@ FocusScope {
 
     // Opens the rename field of one icon.
     function beginRename(name: string): void {
-        if (name === "" || lay[name] === undefined)
+        if (name === "" || !Logic.placed(lay, name))
             return;
         selectOnly(name);
         renameError = "";
@@ -415,7 +415,7 @@ FocusScope {
     // A click (release without drag) on an icon: without Ctrl or Shift it leaves that icon alone
     // selected, also when it was part of a larger selection (kept on press for a group drag).
     function tap(name: string, modifiers: int): void {
-        if (!(modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) && lay[name] !== undefined)
+        if (!(modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) && Logic.placed(lay, name))
             selectOnly(name);
     }
 
@@ -457,10 +457,10 @@ FocusScope {
             } catch (e) {
                 m = null;
             }
-            if (m && Array.isArray(m.names) && typeof m.anchor === "string" && lay[m.anchor] !== undefined) {
+            if (m && Array.isArray(m.names) && typeof m.anchor === "string" && Logic.placed(lay, m.anchor)) {
                 const want = Logic.slotAt(drop.x - m.hx - leftInset, drop.y - m.hy - topInset, areaW, Tokens.desktopIconCellWidth, Tokens.desktopIconCellHeight, grid.cols, grid.rows);
-                const names = m.names.filter(n => typeof n === "string" && lay[n] !== undefined);
-                files.setPositions(Object.assign({}, files.positions, Logic.moveGroup(lay, names, m.anchor, want, grid.cols, grid.rows)));
+                const names = m.names.filter(n => typeof n === "string" && Logic.placed(lay, n));
+                files.setPositions(Logic.merged(files.positions, Logic.moveGroup(lay, names, m.anchor, want, grid.cols, grid.rows)));
                 drop.accept(Qt.MoveAction);
                 return;
             }
@@ -479,12 +479,12 @@ FocusScope {
         const taken = {};
         for (const n of Object.keys(lay))
             taken[Logic.key(lay[n].col, lay[n].row)] = true;
-        const pos = Object.assign({}, files.positions);
+        const pos = Logic.merged(files.positions, null);
         for (const n of added) {
             const spot = Logic.nearestFree(taken, want, grid.cols, grid.rows);
             if (!spot)
                 break;
-            pos[n] = spot;
+            Logic.put(pos, n, spot);
             taken[Logic.key(spot.col, spot.row)] = true;
         }
         files.setPositions(pos);

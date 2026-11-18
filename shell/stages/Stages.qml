@@ -238,9 +238,13 @@ Scope {
             }
 
             readonly property bool dragging: dragSlot >= 0
+            // A change of the tile count rebuilds every tile: a tile dragged at that moment goes without a release or a
+            // cancel, so the drag ends here (else its badge stays and no other drag can start).
+            readonly property int tileCount: shown ? geo.tiles.length : 0
+            onTileCountChanged: dragSlot = -1
 
             Repeater {
-                model: win.shown ? win.geo.tiles.length : 0
+                model: win.tileCount
 
                 Item {
                     id: tile

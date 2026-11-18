@@ -17,6 +17,9 @@ Item {
     readonly property bool empty: sheets.length === 0
     readonly property real sheet: root.size * Tokens.dockStackPileScale
     readonly property var sheets: Stacks.pileSheets(root.items, Tokens.dockStackPileSheets)
+    // The Dock gives the pile the magnified box of its tile: the sheets, laid out for `size`, grow with it like the icons
+    // of the other tiles (a transform, so nothing is decoded again while the magnification moves).
+    readonly property real zoom: root.width > 0 && root.size > 0 ? root.width / root.size : 1
 
     Repeater {
         // Back to front.
@@ -30,7 +33,8 @@ Item {
             width: root.sheet
             height: root.sheet
             anchors.centerIn: parent
-            anchors.verticalCenterOffset: root.size * (modelData.rank === 0 ? Tokens.dockStackPileLift : 0)
+            anchors.verticalCenterOffset: root.size * root.zoom * (modelData.rank === 0 ? Tokens.dockStackPileLift : 0)
+            scale: root.zoom
             rotation: modelData.rank === 0 ? 0 : (modelData.rank === 1 ? -Tokens.dockStackPileTilt : Tokens.dockStackPileTilt)
 
             Rectangle {

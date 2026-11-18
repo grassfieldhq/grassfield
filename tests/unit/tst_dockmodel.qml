@@ -259,6 +259,32 @@ TestCase {
         verify(!DockModel.reorder(items3(), 1, 1).changed);
     }
 
+    // A pinned id whose desktop entry is not there right now has no tile: a reorder keeps it where it was (audit A-09).
+    function test_reorderKeepsUnresolvedPins() {
+        const stored = ["ghost0", "foot", "ghost1", "chromium", "ghost2"];
+        const items = DockModel.withTail(DockModel.merge(stored, [{appId: "org.gnome.Nautilus", ref: "n"}], lookup));
+        const r = DockModel.reorder(items, 0, 1, stored, lookup);
+        verify(r.changed);
+        compare(r.pinned.join(","), "ghost0,chromium,ghost2,foot,ghost1");
+        compare(DockModel.reorder(items, 2, 0, stored, lookup).pinned.join(","), "ghost0,org.gnome.Nautilus,foot,ghost1,chromium,ghost2");
+        verify(!DockModel.reorder(items, 1, 1, stored, lookup).changed);
+        // A running app without an entry, pinned by the drag, is written once.
+        const own = DockModel.withTail(DockModel.merge(["foot", "zz"], [{appId: "zz", ref: "z"}], lookup));
+        compare(DockModel.reorder(own, 1, 0, ["foot", "zz"], lookup).pinned.join(","), "zz,foot");
+    }
+
+    // App ids are clients' strings: one named like a member of Object.prototype is an id like any other (audit A-02).
+    function test_prototypeNamesAreOrdinaryIds() {
+        for (const id of ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"]) {
+            const list = DockModel.merge(["foot"], [{appId: id, ref: "w1"}, {appId: "foot", ref: "w2"}, {appId: id, ref: "w3"}], lookup);
+            compare(list.map(a => a.key + ":" + a.windows.join("+")).join(","), "foot:w2," + id + ":w1+w3", id);
+            compare(DockModel.recentsAfter([], [id, "foot"], ["foot"], [], 3).join(","), id, id);
+            compare(DockModel.recentsAfter([], [id, "foot"], [id], ["foot"], 3).length, 0, id);
+            compare(JSON.stringify(DockModel.diffKeys(["foot", id], [id, "foot"])), JSON.stringify(DockModel.diffKeys(["foot", "x"], ["x", "foot"])), id);
+            compare(DockModel.mimeTypesOf("/x/" + id, DockModel.parseMimeData("G\t50:text/plain:*.txt"), null).length, 0, id);
+        }
+    }
+
     function test_reorderUnpinnedBecomesPinnedOnlyBeforePinned() {
         const a = DockModel.reorder(items3(), 2, 0);
         compare(a.pinned.join(","), "org.gnome.Nautilus,foot,chromium");

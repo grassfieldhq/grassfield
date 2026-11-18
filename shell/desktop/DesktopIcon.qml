@@ -425,6 +425,12 @@ Item {
                     if (drag.active) {
                         root.dragImage = result.url;
                         proxy.Drag.hotSpot = root.dragHotspot;
+                        // Made once, when the drag starts: as a binding every icon encoded the whole selection again at
+                        // each selection change (every pointer move of a rubber band).
+                        proxy.Drag.mimeData = {
+                            "text/uri-list": Logic.uriList(root.dragPaths),
+                            "application/x-grassfield-desktop-icons": JSON.stringify({names: root.dragNames, anchor: root.name, hx: root.dragHotspot.x, hy: root.dragHotspot.y})
+                        };
                         proxy.Drag.active = true;
                     }
                 });
@@ -448,9 +454,5 @@ Item {
         Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
         Drag.proposedAction: Qt.MoveAction
         Drag.imageSource: root.dragImage
-        Drag.mimeData: ({
-                "text/uri-list": Logic.uriList(root.dragPaths),
-                "application/x-grassfield-desktop-icons": JSON.stringify({names: root.dragNames, anchor: root.name, hx: root.dragHotspot.x, hy: root.dragHotspot.y})
-            })
     }
 }

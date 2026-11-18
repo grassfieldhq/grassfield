@@ -200,6 +200,23 @@ Scope {
         chromeActive = next;
     }
 
+    // A chrome that goes with its output while it holds the keyboard never reports "not active": its entry goes here, else
+    // chromeHeld stays true for good and no later Overview sends its layout on the keyboard's arrival.
+    Connections {
+        target: Quickshell
+
+        function onScreensChanged(): void {
+            const names = Quickshell.screens.map(s => s.name);
+            const next = {};
+            for (const k of Object.keys(root.chromeActive)) {
+                if (names.indexOf(k) >= 0)
+                    next[k] = root.chromeActive[k];
+            }
+            if (Object.keys(next).length !== Object.keys(root.chromeActive).length)
+                root.chromeActive = next;
+        }
+    }
+
     onChromeHeldChanged: {
         if (chromeHeld && open && !thumbnailMode && !live)
             sendLayout();
