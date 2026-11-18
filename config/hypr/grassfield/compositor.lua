@@ -136,7 +136,7 @@ M.timeout = "/usr/bin/timeout"
 M.vetted_seconds = 5
 
 -- What grassfield-compositor-rebuild --vetted vouches for (the user's build for `abi`, default the installed Hyprland's),
--- or nil. `abi` comes from M.user_build_abi (letters, digits, dots, dashes, underscores): nothing for the shell to expand.
+-- or nil (and "timeout" when the check was cut off rather than refused). `abi` comes from M.user_build_abi (letters, digits, dots, dashes, underscores): nothing for the shell to expand.
 -- `loaded` (with an ABI): the build this Hyprland instance loaded at its first parse, kept on a reload until the next
 -- login: every check but the source version (a package update in the session may have moved it on).
 function M.vetted(abi, loaded)
@@ -147,8 +147,13 @@ function M.vetted(abi, loaded)
   local ok, p = pcall(io.popen, command)
   if not ok or not p then return nil end
   local line = p:read("l")
-  -- Lua 5.4+: true only for exit status 0 (a timeout exits 124, a kill reports the signal).
-  if not p:close() then return nil end
+  -- Lua 5.4+: true only for exit status 0 (a timeout exits 124, 137 after the kill). A check that was cut off says so
+  -- (second value "timeout"): it vouches for nothing, and it refused nothing either (M.choose, on a reload).
+  local done, _, code = p:close()
+  if not done then
+    if code == 124 or code == 137 then return nil, "timeout" end
+    return nil
+  end
   return line
 end
 
@@ -168,7 +173,7 @@ end
 -- "updated" (the running Hyprland is not the installed one: nothing until the next login), "none" (no extension
 -- installed).
 -- `env` (tests): { read = fn(path) -> text|nil, line = fn(path) -> first line|nil, exists = fn(path) -> bool,
--- getenv = fn(name) -> string|nil, vetted = fn(abi|nil, loaded|nil) -> path|nil }.
+-- getenv = fn(name) -> string|nil, vetted = fn(abi|nil, loaded|nil) -> path|nil[, "timeout"] }.
 function M.choose(env)
   env = env or {}
   local present = env.exists or exists
@@ -184,7 +189,12 @@ function M.choose(env)
   local kept = note and line(note)
   if kept and kept == M.packaged and present(kept) then return kept, "kept" end
   local kept_abi = kept and running and M.user_build_abi(kept, getenv)
-  if kept_abi and kept_abi:sub(1, #running + 1) == running .. "_" and vetted(kept_abi, true) == kept then return kept, "kept" end
+  if kept_abi and kept_abi:sub(1, #running + 1) == running .. "_" then
+    -- A check that was cut off (a heavy package transaction is exactly when the reload comes) is not a refusal: the
+    -- build is already loaded, and naming no plugin would make Hyprland unload it mid-session.
+    local path, why = vetted(kept_abi, true)
+    if path == kept or (path == nil and why == "timeout") then return kept, "kept" end
+  end
   local read_text = env.read or read
   local installed = M.abi(read_text(M.version_h))
   if not installed then return nil, present(M.packaged) and "no-match" or "none" end

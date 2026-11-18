@@ -23,6 +23,8 @@
 -- skipped = { "<file>: <error>"... }, layers = { <namespace regex>... } (the shell's sheets, below) }.
 
 local M = { source = "omarchy", matches = {}, skipped = {} }
+-- The most VM instructions one Omarchy rule file may run (read_rules): far above any real rule file, a blink for a loop.
+M.max_instructions = 1000000
 
 local omarchy_path = os.getenv("OMARCHY_PATH")
 if not omarchy_path or omarchy_path == "" then
@@ -139,7 +141,15 @@ local function read_rules(path)
     M.skipped[#M.skipped + 1] = path .. ": " .. tostring(err)
     return
   end
+  -- Bounded: the chunk runs on Hyprland's main thread at every parse, and a file that loops would freeze the session.
+  -- A rule file is a few dozen calls; the hook stops one that is still running after M.max_instructions.
+  local hooks = type(debug) == "table" and debug.sethook and debug.gethook and debug
+  local before = hooks and table.pack(hooks.gethook())
+  if hooks then
+    hooks.sethook(function() error("stopped: it runs too long for a rule file", 0) end, "", M.max_instructions)
+  end
   local ok, run_err = pcall(chunk)
+  if hooks then hooks.sethook(table.unpack(before, 1, before.n)) end
   if not ok then
     M.skipped[#M.skipped + 1] = path .. ": " .. tostring(run_err)
   end

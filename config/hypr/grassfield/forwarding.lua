@@ -92,8 +92,9 @@ bind("SUPER + DOWN", "End of the document", vertical("CTRL", "Down", "End"))
 bind("SUPER + SHIFT + UP", "Select to the beginning of the document", forward("CTRL SHIFT", "Home"))
 bind("SUPER + SHIFT + DOWN", "Select to the end of the document", forward("CTRL SHIFT", "End"))
 
--- Command+Backspace deletes to the start of the line: select to it (Shift+Home), then Backspace, as two chords 100 ms apart.
+-- Command+Backspace deletes to the start of the line: select to it (Shift+Home), then Backspace, as two chords. The second
+-- goes right after the first one's key-up (50 ms, forward above): a longer wait only lets typed keys land between the two.
 bind("SUPER + BACKSPACE", "Delete to the beginning of the line", function()
   forward("SHIFT", "Home")()
-  hl.timer(forward("", "BackSpace"), { timeout = 100, type = "oneshot" })
+  hl.timer(forward("", "BackSpace"), { timeout = 60, type = "oneshot" })
 end)

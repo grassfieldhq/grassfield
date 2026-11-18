@@ -175,6 +175,7 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
         std::string          text;
         float                scale      = 0.F;
         int                  maxWidthPx = 0;
+        int                  fullWidthPx = -1; // the whole title's width in device pixels; -1: not known
         gf::theme::Appearance appearance = gf::theme::kDefaultAppearance; // the title colour is in the texture
     } m_title;
 
