@@ -59,6 +59,7 @@ struct Helper::Pending {
     int fd = -1;
     QSocketNotifier *notifier = nullptr;
     QTimer deadline;
+    QElapsedTimer age; // of the read of the current type
     QByteArray buffer;
     qint64 cap = 0;
 };
@@ -427,7 +428,8 @@ void Helper::readNext()
     }
     p->notifier = new QSocketNotifier(p->fd, QSocketNotifier::Read, this);
     connect(p->notifier, &QSocketNotifier::activated, this, [this] { readable(); });
-    p->deadline.start();
+    p->age.start();
+    p->deadline.start(kReadDeadlineMs);
 }
 
 void Helper::readable()
@@ -436,6 +438,7 @@ void Helper::readable()
     if (!p || p->fd < 0)
         return;
     char chunk[65536];
+    bool progressed = false;
     for (;;) {
         const ssize_t n = ::read(p->fd, chunk, sizeof chunk);
         if (n > 0) {
@@ -444,6 +447,7 @@ void Helper::readable()
                 readDone(ReadResult::OverCap); // never truncated: over the cap is not recorded
                 return;
             }
+            progressed = true;
             continue;
         }
         if (n == 0) {
@@ -454,6 +458,8 @@ void Helper::readable()
             continue;
         if (errno != EAGAIN)
             readDone(ReadResult::Failed);
+        else if (progressed) // a source that keeps sending (a large image encoded as it goes) is given the answers' limits
+            p->deadline.start(int(writerWaitMs(p->age.elapsed())));
         return;
     }
 }

@@ -56,5 +56,5 @@ private:
     bool ensureDir();
     bool writeFile(const QString &name, const QByteArray &bytes);
     QString m_dir;
-    bool m_readOnly = false; // an index of a newer version: left as it is, never written
+    bool m_readOnly = false; // an index of a newer version, or a store that could not be opened: left as it is, never written
 };

@@ -511,6 +511,35 @@ TEST(MenuClientRefetch, BurstOfSignalsStillRefetchesEveryCoalescingInterval) {
     EXPECT_LE(calls, 18) << "refetch not coalesced";
 }
 
+// A re-read whose layout maps to the same items is not announced again (the shell would rebuild its bar for nothing); one
+// that changed is.
+TEST(MenuClientRefetch, AnUnchangedLayoutIsNotAnnouncedAgain) {
+    PeerMenu peer(QStringLiteral("menu-bridge-test-unchanged"));
+    if (!peer.ok())
+        GTEST_SKIP() << "cannot create a private D-Bus peer socket here";
+    peer.menu.layout = item(0, {{QStringLiteral("children-display"), QStringLiteral("submenu")}}, {item(1, {{QStringLiteral("label"), QStringLiteral("File")}})});
+    MenuClient client(peer.client, QStringLiteral("8"), QString(), QStringLiteral("/MenuBar/1"));
+    int        menus = 0;
+    QObject::connect(&client, &MenuClient::menuChanged, [&](const QString&) { ++menus; });
+    client.start();
+    QElapsedTimer timer;
+    timer.start();
+    while (!client.ready() && timer.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+    ASSERT_TRUE(client.ready());
+    ASSERT_EQ(menus, 1);
+    QMetaObject::invokeMethod(&client, "onMenuSignal", Q_ARG(QDBusMessage, QDBusMessage()));
+    pump(300);
+    EXPECT_EQ(peer.getLayoutCalls(), 2) << "the layout is read again";
+    EXPECT_EQ(menus, 1) << "and, unchanged, not announced";
+    peer.menu.layout = item(0, {{QStringLiteral("children-display"), QStringLiteral("submenu")}}, {item(1, {{QStringLiteral("label"), QStringLiteral("Edit")}})});
+    QMetaObject::invokeMethod(&client, "onMenuSignal", Q_ARG(QDBusMessage, QDBusMessage()));
+    pump(300);
+    EXPECT_EQ(menus, 2);
+    ASSERT_EQ(client.items().size(), 1);
+    EXPECT_EQ(client.items().at(0).toObject().value(QStringLiteral("label")).toString(), QStringLiteral("Edit"));
+}
+
 // More items than any real menu has: refused, no menu, and not a single GetLayout more however many signals follow.
 TEST(MenuClientRefetch, OversizedLayoutIsRefusedAndNeverReread) {
     PeerMenu peer(QStringLiteral("menu-bridge-test-huge"));

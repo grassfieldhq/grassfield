@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -95,6 +96,36 @@ TEST(DiskStore, RoundTripAndModes)
     EXPECT_FALSE(QFile::exists(dir + QStringLiteral("/00000000000000a2.item")));
     ASSERT_TRUE(again.saveIndex({}));
     EXPECT_FALSE(QFileInfo::exists(dir)) << "no empty store is left behind";
+}
+
+// No descriptor left when the store is opened (EMFILE) says nothing about the store: it is neither deleted nor written in
+// that run, and the next start reads it whole.
+TEST(DiskStore, AnOpenThatFailsForLackOfDescriptorsKeepsTheStore)
+{
+    QTemporaryDir tmp;
+    const QString dir = tmp.path() + QStringLiteral("/pinned");
+    QList<Item> items{text("00000000000000d1", QStringLiteral("kept"), 1)};
+    ASSERT_TRUE(DiskStore(dir).save(items.first(), items));
+
+    struct rlimit before {};
+    ASSERT_EQ(::getrlimit(RLIMIT_NOFILE, &before), 0);
+    struct rlimit none = before;
+    none.rlim_cur = 0; // every open fails with EMFILE; the descriptors already open stay
+    ASSERT_EQ(::setrlimit(RLIMIT_NOFILE, &none), 0);
+    DiskStore store(dir);
+    const DiskStore::Loaded loaded = store.load();
+    ASSERT_EQ(::setrlimit(RLIMIT_NOFILE, &before), 0);
+
+    EXPECT_EQ(loaded.status, DiskStore::Status::Empty);
+    EXPECT_TRUE(loaded.items.isEmpty());
+    EXPECT_TRUE(store.readOnly());
+    EXPECT_FALSE(store.save(items.first(), items));
+    EXPECT_TRUE(QFile::exists(dir + QStringLiteral("/index.json")));
+    EXPECT_TRUE(QFile::exists(dir + QStringLiteral("/00000000000000d1.item")));
+    const DiskStore::Loaded again = DiskStore(dir).load();
+    ASSERT_EQ(again.status, DiskStore::Status::Loaded);
+    ASSERT_EQ(again.items.size(), 1);
+    EXPECT_EQ(again.items.first().plain, QStringLiteral("kept"));
 }
 
 TEST(DiskStore, BrokenRulesDeleteTheStore)

@@ -378,6 +378,9 @@ application localized them; Grassfield strings use `qsTr()`.
   in-window menus until restarted (by design: nothing hidden).
 - The T0 File menu is replaced by the app's menus; desktop entry actions stay reachable in the Dock menu only.
 - `RuntimeDirectory=grassfield` and the hardening of the systemd unit are not runtime-verified (owner L2 session).
+  The unit has no option that implies a user namespace (`ProtectSystem=`, `ProtectHome=`, `PrivateTmp=`, `PrivateNetwork=`,
+  nor `CapabilityBoundingSet=`): from one, `/proc/<pid>/exe`, `/proc/<pid>/ns/pid` and `/proc/<pid>/root` of the
+  applications cannot be read (penalty identity, MB17, MB18). `tests/shell/session_services.sh` keeps them out.
 - A reply or any message over ~60-100 MB can still take the bridge over `MemoryMax` (the D-Bus daemon's
   `max_message_size` is 1 GB and libdbus buffers the message, ~2.2x its size at the peak, before the bridge sees it).
   That cannot be prevented from the bridge's side, and the sender cannot be known: MB14 blames an application only for

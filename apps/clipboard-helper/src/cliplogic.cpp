@@ -235,6 +235,18 @@ qint64 Item::size() const
     return n;
 }
 
+qint64 Item::memory() const
+{
+    // What the caps bound is the helper's memory: the text is held as UTF-16 (two bytes a unit), and a second time as its
+    // search key, which NFKD can make several times longer. An item without text has only its title there.
+    qint64 n = 0;
+    for (const Part &part : parts)
+        n += part.data.size();
+    if (!plain.isEmpty())
+        n += 2 * (qint64(plain.size()) + qint64(searchText.size()));
+    return n;
+}
+
 bool Item::formatted() const
 {
     return kind == Kind::Text && !parts.isEmpty();
@@ -309,7 +321,10 @@ QString stripHtml(const QByteArray &html, bool *ok)
             continue;
         }
         if (c == QLatin1Char('&')) {
-            const qsizetype semi = text.indexOf(QLatin1Char(';'), i + 1);
+            // Searched only as far as an entity can reach: over the whole rest, a text of many '&' and no ';' cost its
+            // length for each of them.
+            const qsizetype rel = text.mid(i + 1, 10).indexOf(QLatin1Char(';'));
+            const qsizetype semi = rel < 0 ? -1 : i + 1 + rel;
             if (semi > i + 1 && semi - i <= 10) {
                 bool known = false;
                 const QString value = entity(text.mid(i + 1, semi - i - 1), &known);
@@ -586,7 +601,7 @@ qint64 Store::historyBytes() const
 {
     qint64 n = 0;
     for (const Item &it : m_history)
-        n += it.size();
+        n += it.memory();
     return n;
 }
 
@@ -594,7 +609,7 @@ qint64 Store::pinnedBytes() const
 {
     qint64 n = 0;
     for (const Item &it : m_pinned)
-        n += it.size();
+        n += it.memory();
     return n;
 }
 
@@ -610,7 +625,7 @@ QList<QByteArray> Store::enforceHistoryLimits()
     QList<QByteArray> out;
     qint64 bytes = historyBytes();
     while (!m_history.isEmpty() && (m_history.size() > kHistoryItems || bytes > kHistoryBytes)) {
-        bytes -= m_history.last().size();
+        bytes -= m_history.last().memory();
         out << m_history.last().id;
         m_history.removeLast();
     }
@@ -655,7 +670,7 @@ Store::PinResult Store::pin(const QByteArray &id, qint64 nowMs)
     for (qsizetype i = 0; i < m_history.size(); ++i) {
         if (m_history.at(i).id != id)
             continue;
-        if (m_pinned.size() >= kPinnedItems || pinnedBytes() + m_history.at(i).size() > kPinnedBytes)
+        if (m_pinned.size() >= kPinnedItems || pinnedBytes() + m_history.at(i).memory() > kPinnedBytes)
             return PinResult::Full;
         Item it = m_history.takeAt(i);
         it.pinnedAtMs = std::max<qint64>(nowMs, 1);
@@ -776,12 +791,12 @@ QList<QByteArray> Store::loadPinned(QList<Item> items)
     QList<QByteArray> dropped;
     qint64 bytes = 0;
     for (Item &it : items) {
-        if (find(it.id) || m_pinned.size() >= kPinnedItems || bytes + it.size() > kPinnedBytes) {
+        indexItem(it); // before it is counted: the search key is part of what it holds
+        if (find(it.id) || m_pinned.size() >= kPinnedItems || bytes + it.memory() > kPinnedBytes) {
             dropped << it.id;
             continue;
         }
-        bytes += it.size();
-        indexItem(it);
+        bytes += it.memory();
         it.pinnedAtMs = std::max<qint64>(it.pinnedAtMs, 1);
         m_pinned << std::move(it);
     }

@@ -133,6 +133,23 @@ TEST(Build, HtmlOnlyMakesThePlainText)
     EXPECT_EQ(b.item.parts.size(), 1);
 }
 
+// An entity is looked for only within its longest length: a '&' with a far ';' (or none) stays as it is, and a text of
+// many '&' without ';' is not searched whole for each of them.
+TEST(Build, HtmlEntitiesAreSearchedOnlyNearTheirAmpersand)
+{
+    const Plan p = plan({"text/html"}, false);
+    QHash<QByteArray, ReadResult> r;
+    r.insert("text/html", ok("<p>R&D &lt;x&gt; &amp far away; &amp</p>"));
+    const Built b = build(p, r);
+    ASSERT_TRUE(b.ok) << b.error.constData();
+    EXPECT_EQ(b.item.plain, QStringLiteral("R&D <x> &amp far away; &amp"));
+    QHash<QByteArray, ReadResult> many;
+    many.insert("text/html", ok(QByteArray(200 * 1024, '&') + "x"));
+    const Built m = build(p, many);
+    ASSERT_TRUE(m.ok) << m.error.constData();
+    EXPECT_EQ(m.item.plain.size(), 200 * 1024 + 1);
+}
+
 TEST(Build, FilesOrTheirPlainText)
 {
     const Plan p = plan({"text/uri-list", "text/plain"}, false);
@@ -246,6 +263,14 @@ TEST(Store, HistoryLimits)
         }
     }
     EXPECT_LE(b.historyBytes(), kHistoryBytes);
+
+    // The caps count what a text holds in memory: its UTF-16 units and its search key, which NFKD makes longer than the
+    // text (U+FDFA: one character, eighteen in the key). size(), what the shell is told, stays the text's length.
+    Store t;
+    t.add(textItem(idOf(1), QString(1000, QChar(0xFDFA)), 1));
+    ASSERT_TRUE(t.find(idOf(1)));
+    EXPECT_EQ(t.find(idOf(1))->size(), 1000);
+    EXPECT_GE(t.historyBytes(), 2 * (1000 + 18 * 1000));
 }
 
 TEST(Store, PinLimitsAndUnpin)
