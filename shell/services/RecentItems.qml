@@ -26,6 +26,23 @@ Singleton {
 
     property var state: ({apps: [], clearedAt: 0})
     property var documentList: []
+    // The state file was read (or could not be). Launches made before that wait in `early` ({id, at}): written at once they
+    // would replace the file with that one launch, and the read would then put the old list back in memory.
+    property bool stateRead: false
+    property var early: []
+
+    function stateLoaded(state: var): void {
+        root.state = state;
+        if (root.stateRead)
+            return;
+        root.stateRead = true;
+        const waited = root.early;
+        root.early = [];
+        for (const l of waited)
+            root.state = Logic.withLaunch(root.state, l.id, l.at, 50);
+        if (waited.length > 0)
+            root.save();
+    }
 
     readonly property var applications: {
         void Apps.revision;
@@ -68,6 +85,10 @@ Singleton {
         target: Apps
 
         function onLaunched(appId: string): void {
+            if (!root.stateRead) {
+                root.early = root.early.concat([{id: appId, at: Date.now()}]);
+                return;
+            }
             root.state = Logic.withLaunch(root.state, appId, Date.now(), 50);
             root.save();
         }
@@ -89,11 +110,13 @@ Singleton {
         atomicWrites: true
         onLoaded: {
             try {
-                root.state = Logic.normalize(JSON.parse(stateFile.text() || "{}"));
+                root.stateLoaded(Logic.normalize(JSON.parse(stateFile.text() || "{}")));
             } catch (e) {
-                root.state = Logic.normalize(null);
+                root.stateLoaded(Logic.normalize(null));
             }
         }
+        // An unreadable file: the launches go on from what is in memory.
+        onLoadFailed: root.stateLoaded(root.state)
     }
 
     FileView {
