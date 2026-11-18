@@ -909,6 +909,12 @@ namespace gf::tiler {
             if (!t)
                 return; // closed meanwhile: reconcile() drops the record
             s.book.endResize(idOf(w), toRect(t->position()));
+            // Its output went away during the resize: relayout(OutputGone) skipped it (not Tiled then) and left it marked, never
+            // checked against its box again. Placed on the output that holds it now, as the other tiles were.
+            if (const auto* r = s.book.find(idOf(w)); r && r->relayout) {
+                s.relayoutPending = true;
+                scheduleAfter();
+            }
             notify(tiling::Reason::Resized);
         }
 
@@ -1753,6 +1759,11 @@ namespace gf::tiler {
                 const auto r = s.book.find(e.id);
                 if (t && r && r->state == tiling::TileState::Resizing)
                     s.book.endResize(e.id, toRect(t->position()));
+                // As finishResize(): a window whose output went away during the drag is placed again now.
+                if (const auto* after = s.book.find(e.id); after && after->state == tiling::TileState::Tiled && after->relayout) {
+                    s.relayoutPending = true;
+                    scheduleAfter();
+                }
             }
             notify(tiling::Reason::Resized);
             edgeCursor(std::nullopt);
@@ -2003,9 +2014,12 @@ namespace gf::tiler {
         const tiling::Output output{toRect(box), box.y + m->m_reservedArea.top(), edgeFree(m, true), edgeFree(m, false)};
         const auto           area  = areaFor(m);
         const auto           place = tiling::dragPlace(pointer.x, pointer.y, output, area.box, options, alt);
-        if (!place || !fitsPlace(w, *place, area, m->m_name, w->m_workspace->m_id))
+        // TL7: the tiled neighbours are those of the Desktop the drop lands on. Over another output the window is still on
+        // its own Desktop until the release (followOutput): that output's shown Desktop then.
+        const int64_t desk = monitorOf(w) != m && m->m_activeWorkspace ? m->m_activeWorkspace->m_id : w->m_workspace->m_id;
+        if (!place || !fitsPlace(w, *place, area, m->m_name, desk))
             return std::nullopt; // D69: no preview of a place the window does not fit (the release only moves it)
-        return Snap{*place, toCBox(placeFrame(w, *place, area, m->m_name, w->m_workspace->m_id)), m};
+        return Snap{*place, toCBox(placeFrame(w, *place, area, m->m_name, desk)), m};
     }
 
     std::optional<Snap> dragMotion(const PHLWINDOW& w, const Vector2D& pointer) {
@@ -2074,14 +2088,16 @@ namespace gf::tiler {
         const auto band    = gf::chrome::bandOf(w);
         const auto onDesktop = monitorOf(w) == m ? std::optional<int64_t>{w->m_workspace->m_id} : std::nullopt; // its own Desktop's area, shown or not
         const auto area      = areaFor(m, onDesktop);
-        if (!fitsPlace(w, place, area, m->m_name, w->m_workspace->m_id)) {
+        // TL7: on another output the neighbours are those of its shown Desktop, where followOutput() takes the window below.
+        const int64_t desk = !onDesktop && m->m_activeWorkspace ? m->m_activeWorkspace->m_id : w->m_workspace->m_id;
+        if (!fitsPlace(w, place, area, m->m_name, desk)) {
             // D69: never a tile larger than its place (it would overlap its neighbours and shift their rows or columns); the
             // shell greys that place (unfitZones), so this is a key, a stale menu or a request of another client.
             logRequest(Log::INFO, "tile {:x}: refused: its minimum does not fit {} on {} (TL8, D69)", idOf(w), tiling::nameOf(place), m->m_name);
             notify(tiling::Reason::Invalid);
             return false;
         }
-        const CBox surface = toCBox(tiling::surfaceOf(placeFrame(w, place, area, m->m_name, w->m_workspace->m_id), band));
+        const CBox surface = toCBox(tiling::surfaceOf(placeFrame(w, place, area, m->m_name, desk), band));
         g_layoutManager->setTargetGeom(surface, target);
         followOutput(w); // tiled on another output (a drag's release there, tile() after a drag over): that output's Desktop
         const int64_t workspace = w->m_workspace ? w->m_workspace->m_id : 0;
@@ -2818,6 +2834,10 @@ namespace gf::tiler {
                     for (auto it = all.rbegin(); it != all.rend(); ++it) {
                         const auto& w = *it;
                         if (!w || std::ranges::find(windows, w) != windows.end() || w->m_workspace != workspace || !placeable(w) || monitorOf(w) != m)
+                            continue;
+                        // TL33: a member of a Split View Desktop is placed by its Desktop, as for the given windows above; taking
+                        // it here would put it in a new group while it stays a member (a third app there is no member, D52).
+                        if (tiling::splitOfWindow(s.splits, idOf(w)))
                             continue;
                         if (!tiling::fitsZone(constraintsOf(w), layout->zones[z], area))
                             continue;

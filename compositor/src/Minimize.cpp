@@ -296,6 +296,10 @@ namespace {
             if (!aw || aw == w) {
                 if (g_pHyprRenderer && it->damaged.w > 0)
                     g_pHyprRenderer->damageBox(toCBox(it->damaged));
+                // A restore left it transparent (complete() never runs): the same window mapped again later (an app hidden
+                // to the tray) must not come back invisible.
+                if (it->kind == mz::Kind::Restore && aw)
+                    showWindow(aw);
                 releaseSnapshot(it->snapshot);
                 it = all.erase(it);
             } else
@@ -406,6 +410,8 @@ namespace {
             if (!w || !w->m_isMapped) {
                 if (g_pHyprRenderer && it->damaged.w > 0)
                     g_pHyprRenderer->damageBox(toCBox(it->damaged));
+                if (it->kind == mz::Kind::Restore && w)
+                    showWindow(w); // as cancelFor(): not left transparent for its next map
                 releaseSnapshot(it->snapshot);
                 it = all.erase(it);
                 continue;
@@ -564,7 +570,7 @@ namespace {
         if (!State::monitorState())
             return out;
         for (const auto& m : State::monitorState()->monitors()) {
-            if (m)
+            if (m && m->m_enabled) // not a disconnected monitor Hyprland still lists: no Dock tile there
                 out.push_back(mz::Box{m->m_position.x, m->m_position.y, m->m_size.x, m->m_size.y});
         }
         return out;
@@ -892,11 +898,15 @@ namespace gf::minimizer {
             gf::logRequest(Log::WARN, "restore: no mapped window {:x}", address);
             return;
         }
-        // A Genie minimize still animating: the restore plays it backwards from the shape on screen.
-        std::optional<double> genieProgress;
+        // A Genie minimize still animating: the restore plays it backwards from the shape on screen. Another one (Scale): the
+        // restore starts from its box, as minimize() does the other way, not from the Dock tile.
+        std::optional<mz::Box> from;
+        std::optional<double>  genieProgress;
         if (auto running = takeAnimation(w)) {
             if (running->kind == mz::Kind::Minimize && running->effect == mz::Effect::Genie)
                 genieProgress = running->progress;
+            else if (running->kind == mz::Kind::Minimize)
+                from = running->frame.box;
             complete(*running, true);
         }
         if (!onMinimizedWorkspace(w)) {
@@ -953,6 +963,8 @@ namespace gf::minimizer {
         double elapsed = 0.0;
         if (a.effect == mz::Effect::Genie && genieProgress)
             elapsed = mz::genieElapsedFor(mz::Kind::Restore, *genieProgress);
+        else if (a.effect == mz::Effect::Scale && from)
+            a.from = *from;
         startAnimation(std::move(a), elapsed);
     }
 
