@@ -18,6 +18,7 @@ function keyOf(app) {
     return typeof app === "string" ? app.trim().toLowerCase() : "";
 }
 
+// The tables keyed by an app's name below have no prototype: an app may be named "constructor" or "__proto__".
 function validApp(app) {
     return typeof app === "string" && app.trim() !== "" && app.length <= MAX_NAME && !/[\u0000-\u001f\u007f]/.test(app);
 }
@@ -28,7 +29,7 @@ function problem(list) {
         return "expected a list";
     if (list.length > MAX_APPS)
         return "at most " + MAX_APPS + " apps";
-    const seen = {};
+    const seen = Object.create(null);
     for (const e of list) {
         if (e === null || typeof e !== "object" || Array.isArray(e))
             return "each entry must be an object {app, previews}";
@@ -60,7 +61,7 @@ function asArray(raw) {
 // The valid entries of a stored value, without repeats and at most MAX_APPS; anything else gives [].
 function normalize(raw) {
     const out = [];
-    const seen = {};
+    const seen = Object.create(null);
     for (const e of asArray(raw)) {
         if (e === null || typeof e !== "object" || !validApp(e.app) || !validPreviews(e.previews))
             continue;
@@ -112,7 +113,7 @@ function bodyShown(policy, locked) {
 // The apps the Settings page lists: the senders seen so far plus the apps with a setting, once each (first spelling kept),
 // sorted by name.
 function appsToList(seen, list) {
-    const names = {};
+    const names = Object.create(null);
     const out = [];
     const add = name => {
         if (!validApp(name))
@@ -147,7 +148,7 @@ function problemStyles(list) {
         return "expected a list";
     if (list.length > MAX_APPS)
         return "at most " + MAX_APPS + " apps";
-    const seen = {};
+    const seen = Object.create(null);
     for (const e of list) {
         if (e === null || typeof e !== "object" || Array.isArray(e))
             return "each entry must be an object {app, style}";
@@ -166,7 +167,7 @@ function problemStyles(list) {
 // The valid entries of a stored value, without repeats and at most MAX_APPS; anything else gives [].
 function normalizeStyles(raw) {
     const out = [];
-    const seen = {};
+    const seen = Object.create(null);
     for (const e of asArray(raw)) {
         if (e === null || typeof e !== "object" || !validApp(e.app) || !validStyle(e.style))
             continue;

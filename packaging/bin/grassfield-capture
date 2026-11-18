@@ -1088,6 +1088,36 @@ def record(opts):
     return 0
 
 
+def runs_recorder(pid):
+    # The process's own name for itself (argv[0]) is the recorder's.
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            return os.path.basename(f.read().split(b"\0")[0]) == b"gpu-screen-recorder"
+    except OSError:
+        return False
+
+
+def interrupt(target, since, kill_after):
+    # SIGINT to the process `target` as it started at `since`; `kill_after`: SIGKILL when it has not ended after
+    # STOP_SECONDS. 0 when it was signalled, 1 otherwise.
+    try:
+        handle = os.pidfd_open(target)
+    except OSError:
+        return 1
+    try:
+        # Held by the pidfd now: still the same process (a pid reused between the check and the pidfd would differ here).
+        if not own(target, since):
+            return 1
+        signal.pidfd_send_signal(handle, signal.SIGINT)
+        if not select.select([handle], [], [], STOP_SECONDS)[0] and kill_after:
+            signal.pidfd_send_signal(handle, signal.SIGKILL)
+    except OSError:
+        return 1
+    finally:
+        os.close(handle)
+    return 0
+
+
 def stop():
     # Ends what the state names: the recording (SIGINT to its recorder), or a choice or a countdown (SIGINT to its helper).
     # Exit 0 when something was told to end, 1 otherwise.
@@ -1098,9 +1128,15 @@ def stop():
     lock = take_lock()
     if lock is not None:
         # Nobody holds the lock: the helper that wrote this state is gone (killed); the state is left over.
+        # A recorder it left behind would go on recording with nothing to end it (the lock's poll died with the helper): it
+        # is still told to end when it is provably the recorded one: the pid as it started, this user's, and running the
+        # recorder (its parent is gone, so that check cannot hold here).
+        orphan, since = state.get("recorder"), state.get("recorderStart")
+        told = (phase == "recording" and type(orphan) is int and orphan > 1 and own(orphan, since)
+                and runs_recorder(orphan) and interrupt(orphan, since, True) == 0)
         write_state({"phase": "idle"})
         os.close(lock)
-        return 1
+        return 0 if told else 1
     pid, start = state.get("pid"), state.get("start")
     if type(pid) is not int or pid <= 1 or not own(pid, start):
         return 1
@@ -1110,22 +1146,7 @@ def stop():
         # The recorder this helper started: its own child, as it started (never a process found by its name).
         if type(target) is not int or target <= 1 or not own(target, since) or parent(target) != pid:
             return 1
-    try:
-        handle = os.pidfd_open(target)
-    except OSError:
-        return 1
-    try:
-        # Held by the pidfd now: still the same process (a pid reused between the check and the pidfd would differ here).
-        if not own(target, since):
-            return 1
-        signal.pidfd_send_signal(handle, signal.SIGINT)
-        if not select.select([handle], [], [], STOP_SECONDS)[0] and phase == "recording":
-            signal.pidfd_send_signal(handle, signal.SIGKILL)
-    except OSError:
-        return 1
-    finally:
-        os.close(handle)
-    return 0
+    return interrupt(target, since, phase == "recording")
 
 
 def parse(args):

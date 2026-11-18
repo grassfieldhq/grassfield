@@ -214,9 +214,12 @@ PanelWindow {
         // The height of the shown banners (the gap lives under each banner, inside its slot).
         readonly property real stackHeight: Math.max(0, height - Tokens.notificationBannerGap)
 
+        // Where the stack rests: `y` glides to it (the Behavior below), the glass is judged over it at once.
+        readonly property real restY: Tokens.menubarHeight + Tokens.notificationCenterInset + win.osdOffset
+
         x: win.pad
         // macOS: banners start where the Notifications column starts.
-        y: Tokens.menubarHeight + Tokens.notificationCenterInset + win.osdOffset
+        y: restY
         width: Tokens.notificationBannerWidth
         spacing: 0
 
@@ -360,7 +363,8 @@ PanelWindow {
 
                     sourceComponent: Banner {
                         // The stack's area on the output (the window is anchored top-right): the backdrop of the glass (G-3).
-                        backdropRect: Qt.rect(win.targetScreen ? win.targetScreen.width - win.pad - Tokens.notificationBannerWidth : 0, stack.y, Tokens.notificationBannerWidth, stack.stackHeight)
+                        // From where the stack rests, not its gliding `y`: the tint is not judged again on each frame of a move.
+                        backdropRect: Qt.rect(win.targetScreen ? win.targetScreen.width - win.pad - Tokens.notificationBannerWidth : 0, stack.restY, Tokens.notificationBannerWidth, stack.stackHeight)
                         closeOverhang: win.closeOverhang
                         leaving: slot.leaving
                         exitSlide: slot.slide

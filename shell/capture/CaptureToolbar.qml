@@ -384,8 +384,14 @@ Variants {
                 if (!surface.pressed) {
                     if (win.framing)
                         win.hoverPart = Model.hitTest(win.frame, mouse.x, mouse.y, Tokens.captureHandleHitSize);
-                    else if (win.windowMode)
-                        win.hovered = win.windowUnder(mouse.x, mouse.y);
+                    else if (win.windowMode) {
+                        // Assigned only when the rectangle changed: a new object on every move over the same window rebuilt
+                        // the highlight's outline each time.
+                        const under = win.windowUnder(mouse.x, mouse.y);
+                        const was = win.hovered;
+                        if (!under || !was || under.x !== was.x || under.y !== was.y || under.w !== was.w || under.h !== was.h)
+                            win.hovered = under;
+                    }
                     return;
                 }
                 if (!win.framing || win.part === "" || win.part === "click")

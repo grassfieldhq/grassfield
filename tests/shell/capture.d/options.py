@@ -524,6 +524,27 @@ for p in (grand,):
 os.kill(grandchild, signal.SIGKILL)
 fcntl.flock(lock, fcntl.LOCK_UN)
 os.close(lock)
+# The helper died and left its recorder running (audit B-14): nobody holds the lock, the recorder recognised by pid, start
+# time and its own name is still told to end; a process of another name, or another start time, is left alone.
+orphan = subprocess.Popen(["bash", "-c", "exec -a gpu-screen-recorder sleep 30"])
+bystander = subprocess.Popen(["sleep", "30"])
+time.sleep(0.2)
+for desc, fields in [("is not a recorder", {"recorder": bystander.pid, "recorderStart": ticks(bystander.pid)}),
+                     ("started at another time", {"recorder": orphan.pid, "recorderStart": ticks(orphan.pid) + 1})]:
+    with open(state_file, "w") as f:
+        json.dump(dict({"v": 1, "phase": "recording", "pid": 999999, "start": 1}, **fields), f)
+    r = stop()
+    check(r.returncode == 1 and state().get("phase") == "idle" and orphan.poll() is None and bystander.poll() is None,
+          "a left-over state whose recorder %s: idle, nothing signalled" % desc)
+with open(state_file, "w") as f:
+    json.dump({"v": 1, "phase": "recording", "pid": 999999, "start": 1, "recorder": orphan.pid,
+               "recorderStart": ticks(orphan.pid)}, f)
+r = stop()
+orphan.wait(timeout=10)
+check(r.returncode == 0 and orphan.returncode == -signal.SIGINT and state().get("phase") == "idle" and bystander.poll() is None,
+      "a recorder its dead helper left running is ended by stop (SIGINT), the state idle")
+bystander.kill()
+bystander.wait()
 with open(state_file, "w") as f:
     json.dump({"v": 1, "phase": "idle"}, f)
 

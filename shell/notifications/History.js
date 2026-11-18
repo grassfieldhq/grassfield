@@ -128,7 +128,8 @@ function groupName(entry) {
 
 // Groups by app, newest group first, items newest first: [{appName, appIcon, latest, items}].
 function group(entries) {
-    const byApp = {};
+    // No prototype: an app may be named "constructor" or "__proto__" (audit B-04).
+    const byApp = Object.create(null);
     const order = [];
     const sorted = entries.slice().sort((a, b) => b.time - a.time);
     for (const e of sorted) {
@@ -169,14 +170,30 @@ function relativeParts(time, now) {
 // Banner timeout in ms (spec N2): critical never expires; expire_timeout 0 never; negative = default.
 // expireMs is Quickshell's Notification.expireTimeout, which is in MILLISECONDS (the D-Bus
 // expire_timeout unit; verified with `notify-send -t 2000`).
+// A positive timeout is never shorter than MIN_BANNER_MS: a banner asked for 1 ms would leave before it has slid in.
+const MIN_BANNER_MS = 1500;
+
 function bannerTimeout(urgency, expireMs, defaultMs) {
     if (urgency === 2)
         return 0;
     if (expireMs === 0)
         return 0;
     if (expireMs > 0)
-        return Math.round(expireMs);
+        return Math.max(MIN_BANNER_MS, Math.round(expireMs));
     return defaultMs;
+}
+
+// The longest title, app name and action label kept, and the longest body kept (the sanitizer's own limit): a sender may
+// send megabytes, and every kept text is laid out, read to assistive technology and written to the history file.
+const MAX_LINE = 512;
+const MAX_BODY = 4000;
+
+// `text` cut to `max` UTF-16 units, never between the two halves of a surrogate pair. Anything but a string is returned as it is.
+function bounded(text, max) {
+    if (typeof text !== "string" || text.length <= max)
+        return text;
+    const last = text.charCodeAt(max - 1);
+    return text.slice(0, last >= 0xD800 && last <= 0xDBFF ? max - 1 : max);
 }
 
 // Longest image reference considered (a path or URL; Quickshell's own references are far shorter).
