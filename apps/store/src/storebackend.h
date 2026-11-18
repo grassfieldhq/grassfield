@@ -260,7 +260,11 @@ public:
     void start();
     // Only the read of what is on this computer (no fetch, no recovery of an earlier operation, no lock check): `--removable`
     // runs beside a Store that may be running an operation (ADR-0046 D1). loadingChanged says when it is done.
-    void loadOnly() { run(Job{}); }
+    void loadOnly()
+    {
+        m_loadOnly = true;
+        run(Job{});
+    }
 
     // Screenshots on and the Store online: screenshotSource's answer, and the provider's gate (kept current for it, since
     // it fetches off the GUI thread and a page may still ask after the Store went offline).
@@ -388,6 +392,8 @@ private:
     QVariantMap m_user;
     std::shared_ptr<const Snapshot> m_snapshot;
     bool m_jobRunning = false;
+    // loadOnly(): the first load is the only job (no follow-up fetch, no AUR or Flatpak question after it).
+    bool m_loadOnly = false;
     std::optional<Job> m_pendingJob;
     std::shared_ptr<std::atomic_bool> m_cancel;
     std::shared_ptr<std::atomic_bool> m_screenshotGate = std::make_shared<std::atomic_bool>(true);

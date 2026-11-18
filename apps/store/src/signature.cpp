@@ -81,7 +81,10 @@ SignatureCheck judge(int gpgvExit, const QByteArray &status, const QSet<QString>
         return check;
     }
     check.signer = validSigner(status);
-    if (gpgvExit != 0 || check.signer.isEmpty() || hasStatus(status, {"PLAINTEXT"}))
+    // gpgv judges no validity: for a signature by an expired or revoked key it still prints VALIDSIG and exits 0, so
+    // these lines refuse by themselves (the same list as grassfield-update-check's verify).
+    if (gpgvExit != 0 || check.signer.isEmpty()
+        || hasStatus(status, {"PLAINTEXT", "EXPKEYSIG", "EXPSIG", "REVKEYSIG", "KEYREVOKED", "BADSIG", "ERRSIG"}))
         check.verdict = SignatureVerdict::Bad;
     else if (revoked.contains(check.signer))
         check.verdict = SignatureVerdict::Revoked;

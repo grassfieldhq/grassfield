@@ -89,9 +89,12 @@ int main(int argc, char *argv[])
         // One-shot: the read of this computer's apps, printed once it is done; the launcher and Files run it (never two
         // Stores: it takes no bus name, starts no operation and touches no state file).
         grassfield::store::StoreBackend backend;
-        QObject::connect(&backend, &grassfield::store::StoreBackend::loadingChanged, &app, [&backend, &app] {
-            if (backend.loading())
+        // Printed once: the launcher and Files parse the whole output as one JSON document.
+        bool printed = false;
+        QObject::connect(&backend, &grassfield::store::StoreBackend::loadingChanged, &app, [&backend, &app, &printed] {
+            if (backend.loading() || printed)
                 return;
+            printed = true;
             const QJsonObject doc{{QStringLiteral("version"), 1}, {QStringLiteral("entries"), QJsonObject::fromVariantMap(backend.removalByEntry(true))}};
             const QByteArray text = QJsonDocument(doc).toJson(QJsonDocument::Compact) + '\n';
             fwrite(text.constData(), 1, static_cast<size_t>(text.size()), stdout);

@@ -794,7 +794,9 @@ void StoreBackend::apply(std::shared_ptr<const Snapshot> snapshot)
     m_snapshot = std::move(snapshot);
     m_jobRunning = false;
     rebuildAurApps();
-    askAurForForeign();
+    // `--removable` prints and leaves: nothing asks the network after its one read (no AUR, no Flatpak check, no fetch).
+    if (!m_loadOnly)
+        askAurForForeign();
     ++m_revision;
     const bool wasLoading = m_loading, wasRefreshing = m_refreshing;
     m_loading = false;
@@ -803,7 +805,7 @@ void StoreBackend::apply(std::shared_ptr<const Snapshot> snapshot)
     emit sourcesChanged(); // Flathub added, flatpak installed: what the settings say comes from the system read again
     emit updatesChanged(); // the apps the updates name, Flathub on or off
     // The Flatpaks' updates, when the Store opens and once Flathub is on (SR24); then on Check Now and after an operation.
-    if (m_flathub && !m_flatpakCheckedAt.isValid())
+    if (m_flathub && !m_flatpakCheckedAt.isValid() && !m_loadOnly)
         checkFlatpakUpdates();
     if (wasLoading != m_loading || wasRefreshing != m_refreshing)
         emit loadingChanged();
@@ -811,7 +813,7 @@ void StoreBackend::apply(std::shared_ptr<const Snapshot> snapshot)
         const Job next = *m_pendingJob;
         m_pendingJob.reset();
         run(next);
-    } else if (first) {
+    } else if (first && !m_loadOnly) {
         // After the first load: the catalog when its copy is stale, Arch's AppStream when none is installed or fetched,
         // Flathub's when it is on and its copy is stale.
         const bool catalog = m_snapshot->catalogConfigured && catalogStale();
@@ -2597,7 +2599,10 @@ bool StoreBackend::open(const QString &id)
     if (!other && otherApp.isEmpty() && (!a || !a->installed))
         return false;
     QStringList argv;
-    if (!otherApp.isEmpty() || a->source == CatalogSource::Kind::Flatpak) {
+    // A web app the catalog does not list has no StoreApp (a is null): it is answered before anything reads a.
+    if (other) {
+        argv = {QStringLiteral("omarchy-launch-webapp"), other->url};
+    } else if (!otherApp.isEmpty() || (a && a->source == CatalogSource::Kind::Flatpak)) {
         // Its exported entry when the session sees flatpak's export folder (from the login after flatpak's own install,
         // S20); else `flatpak run <app id>`, in its own scope as well (ADR-0037 f).
         const QString appId = otherApp.isEmpty() ? flatpakRefId(a->flatpakRef) : otherApp;
@@ -2609,8 +2614,8 @@ bool StoreBackend::open(const QString &id)
             argv = {QStringLiteral("uwsm-app"), QStringLiteral("--"), desktop};
         else
             argv = {QStringLiteral("uwsm-app"), QStringLiteral("--"), QStringLiteral("/usr/bin/flatpak"), QStringLiteral("run"), appId};
-    } else if (other) {
-        argv = {QStringLiteral("omarchy-launch-webapp"), other->url};
+    } else if (!a) {
+        return false;
     } else if (a->source == CatalogSource::Kind::WebApp) {
         // Omarchy's own launcher, which scopes the browser itself (S14: the entry's file name has spaces uwsm refuses).
         if (!a->entry || !isHttpsUrl(a->entry->source.url))

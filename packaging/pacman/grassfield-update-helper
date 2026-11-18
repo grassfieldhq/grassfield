@@ -179,7 +179,11 @@ if [[ -d /run/systemd/system ]] && ! in_unit; then
   if (set -C && : >"$GU_DIR/$op.log") 2>/dev/null; then
     echo "grassfield-update-helper: another update is running" >>"$GU_DIR/$op.log"
     printf '3\n' >|"$GU_DIR/.$op.exit" && mv -f -- "$GU_DIR/.$op.exit" "$GU_DIR/$op.exit"
+    exit 3
   fi
+  # The log and the start record are there: the unit ran this operation and ended without its exit file (killed, or
+  # /run full). Not "another update is running": the system can be partly updated, which is 1.
+  [[ -f $GU_DIR/$op.started ]] && exit 1
   exit 3
 fi
 
@@ -820,7 +824,12 @@ rm -f -- "$own_db_lock" && own_db_lock=""
 
 # pacman, its output appended to the log up to the log's cap and, when `report` is 1, read for the progress; its exit
 # code. `downloads`: how many files the plan still has to download. `started`: pacman began changing packages.
+# `saw_conflict`, `saw_initcpio`, `saw_initcpio_ok`: the lines the checks below look for, seen here even when the log is
+# full and no longer takes them.
 started=0
+saw_conflict=0
+saw_initcpio=0
+saw_initcpio_ok=0
 pacman_run() { # report downloads pacman-argument...
   local report=$1 downloads=$2 got=0 done=0 total=0 used line
   shift 2
@@ -830,6 +839,11 @@ pacman_run() { # report downloads pacman-argument...
       printf '%s\n' "$line"
       used=$((used + ${#line} + 1))
     fi
+    case $line in
+      *'unresolvable package conflicts detected'* | *'exists in filesystem'*) saw_conflict=1 ;;
+      *'Updating linux initcpios'*) saw_initcpio=1 ;;
+      *'Initcpio image generation successful'*) saw_initcpio_ok=1 ;;
+    esac
     case $line in
       ' '*' downloading...')
         got=$((got + 1))
@@ -890,7 +904,7 @@ code=$?
 if ((code != 0)); then
   # omarchy-update-system-pkgs-when-conflicted's two cases (a package conflict, files no package owns) are a person's
   # call there: here pacman stopped before changing a package, and Omarchy's terminal update takes it from there.
-  if grep -q 'unresolvable package conflicts detected\|exists in filesystem' -- "$log"; then
+  if ((saw_conflict)) || grep -q 'unresolvable package conflicts detected\|exists in filesystem' -- "$log"; then
     ((started)) || { outcome+=("needs conflict"); finish 7 "pacman needs an answer: nothing was installed"; }
   fi
   ((started)) || finish 8 "pacman stopped before installing anything ($code)"
@@ -961,7 +975,8 @@ fi
 # omarchy-update-analyze-logs, on this run's log and the migrations' output.
 logs=("$log")
 ((migrate_here)) && logs+=("$migrations")
-if grep -q 'Updating linux initcpios' -- "${logs[@]}" && ! grep -q 'Initcpio image generation successful' -- "${logs[@]}"; then
+if { ((saw_initcpio)) || grep -q 'Updating linux initcpios' -- "${logs[@]}"; } &&
+  ! { ((saw_initcpio_ok)) || grep -q 'Initcpio image generation successful' -- "${logs[@]}"; }; then
   outcome+=("bootimage failed")
 fi
 # omarchy-update-restart's kernel rule: no package's kernel under /usr/lib/modules is the running one. Omarchy 4.0.6 looks at

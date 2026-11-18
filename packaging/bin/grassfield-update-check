@@ -753,7 +753,11 @@ class Checker:
                                                               or "").splitlines() if line.strip()}
         revoked = {line.strip().upper() for line in (read_text(os.path.join(KEYRING_DIR, "grassfield-revoked"))
                                                      or "").splitlines() if line.strip()}
-        if rc != 0 or not primaries or any(p.upper() not in trusted or p.upper() in revoked for p in primaries):
+        # gpgv judges no validity: for a signature by an expired or revoked key it still prints VALIDSIG and exits 0, so
+        # these lines refuse by themselves (the same list as the Store's judge()).
+        refused = any(line.split()[1] in ("EXPKEYSIG", "EXPSIG", "REVKEYSIG", "KEYREVOKED", "BADSIG", "ERRSIG")
+                      for line in out.splitlines() if line.startswith("[GNUPG:] ") and len(line.split()) >= 2)
+        if rc != 0 or refused or not primaries or any(p.upper() not in trusted or p.upper() in revoked for p in primaries):
             raise ValueError("the notes' signature is not a trusted Grassfield key's")
 
     def parse_notes(self, raw, installed, available):
