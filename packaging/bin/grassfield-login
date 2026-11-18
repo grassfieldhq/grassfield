@@ -34,7 +34,10 @@ chosen() {
 exec_line() {
   # The first Exec= of a session file (trusted, root-owned system files).
   [ -r "$1" ] || return 1
-  sed -n 's/^Exec=//p' "$1" | head -n 1
+  # A readable file without an Exec= line is no session either (SS-11): fail, so that the caller tries the next file.
+  exec_found=$(sed -n 's/^Exec=//p' "$1" | head -n 1)
+  [ -n "$exec_found" ] || return 1
+  printf '%s\n' "$exec_found"
 }
 
 session_line() {

@@ -160,6 +160,10 @@ def end_session(action):
         if r is None or r.returncode != 0:
             r = run(["hyprctl", "dispatch", "hl.dsp.exit()"])
         return r is not None and r.returncode == 0
+    r = run(["systemctl", "reboot" if action == "restart" else "poweroff", "--no-wall"])
+    if r is None or r.returncode != 0:
+        # Refused (a block inhibitor, another user logged in): the markers below stay, the restart is still owed (SS-07).
+        return False
     state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
     # Omarchy keeps "reboot required" and "restart <service> required" markers; a restart or shutdown satisfies them.
     for marker in glob.glob(os.path.join(state, "omarchy", "re*-required")):
@@ -167,8 +171,7 @@ def end_session(action):
             os.remove(marker)
         except OSError:
             pass
-    r = run(["systemctl", "reboot" if action == "restart" else "poweroff", "--no-wall"])
-    return r is not None and r.returncode == 0
+    return True
 
 
 def finish(action):

@@ -11,7 +11,10 @@ set -u
 lock="${XDG_RUNTIME_DIR:-}/omarchy-update.lock"
 update_in_progress() {
   [[ -n ${XDG_RUNTIME_DIR:-} && -f $lock ]] || return 1
-  ! flock -n "$lock" true 2>/dev/null
+  # Only "the lock is held" (-E 75) means an update is running (SS-12): any other failure of flock (the file cannot be
+  # opened, flock missing) must not silence the notice for good.
+  flock -n -E 75 "$lock" true 2>/dev/null
+  [[ $? == 75 ]]
 }
 
 # Strings: English is the source; the French translation is the `fr:` case of tr (gate I1: scripts/dev/check-i18n.py reads it).

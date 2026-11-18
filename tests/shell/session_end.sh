@@ -107,6 +107,12 @@ touch "$tmp/state/omarchy/reboot-required" "$tmp/state/omarchy/restart-foo-requi
 run '[]' restart
 check bash -c 'grep -qx "systemctl reboot --no-wall" "$1/calls.log" && [[ ! -e "$1/state/omarchy/reboot-required" && ! -e "$1/state/omarchy/restart-foo-required" && -e "$1/state/omarchy/keep" ]]' _ "$tmp"
 
+desc="SS-07: systemctl refuses the restart: Omarchy's reboot-required markers stay (the restart is still owed)"
+touch "$tmp/state/omarchy/reboot-required" "$tmp/state/omarchy/restart-foo-required"
+FAKE_FAIL_systemctl=1 run '[]' restart
+check bash -c 'grep -qx "systemctl reboot --no-wall" "$1/calls.log" && [[ -e "$1/state/omarchy/reboot-required" && -e "$1/state/omarchy/restart-foo-required" && $2 == 4 ]]' _ "$tmp" "$status"
+rm -f "$tmp/state/omarchy/reboot-required" "$tmp/state/omarchy/restart-foo-required"
+
 desc="shutdown: systemctl poweroff"
 run '[]' shutdown
 check grep -qx "systemctl poweroff --no-wall" "$tmp/calls.log"
