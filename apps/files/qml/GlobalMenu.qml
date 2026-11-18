@@ -16,7 +16,11 @@ Platform.MenuBar {
     required property var win
     // The items with a key are live only while no window of the browser's own (Get Info, Customize Folder) is the key
     // window: Qt matches their keys there too (BrowserWindow.childIsKey), and Ctrl+W typed in Get Info closed the browser.
-    readonly property bool keysHere: bar.win.childIsKey !== true
+    // Nor while a sheet of the browser is up (BrowserWindow.sheetUp).
+    readonly property bool keysHere: bar.win.childIsKey !== true && bar.win.sheetUp !== true
+    // The keys of the selection and of text editing also wait while a text field has the keyboard (BrowserWindow.typing):
+    // Qt hands a key to the menu item when the window's Shortcut is off.
+    readonly property bool selectionKeysHere: bar.keysHere && bar.win.typing !== true
     readonly property var app: bar.win.app
     readonly property var tab: bar.win.tab
     // The listing the selection actions apply to (the focused column in the column view).
@@ -122,7 +126,7 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("New Folder with Selection (%1 Items)").arg(bar.count) : qsTr("New Folder with Selection")
             shortcut: "Ctrl+Meta+N"
-            enabled: bar.keysHere && bar.writable && bar.count > 0 && !bar.inTrash && !bar.folder.isSearch
+            enabled: bar.selectionKeysHere && bar.writable && bar.count > 0 && !bar.inTrash && !bar.folder.isSearch
             onTriggered: bar.tab.newFolderWithSelection()
         }
         // A smart folder: an empty search in a new window, its rules added with + (ADR-0027).
@@ -148,7 +152,7 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: qsTr("Open")
             shortcut: "Ctrl+O"
-            enabled: bar.keysHere && bar.count > 0
+            enabled: bar.selectionKeysHere && bar.count > 0
             onTriggered: bar.tab.openSelection()
         }
         Platform.Menu {
@@ -209,7 +213,7 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: qsTr("Get Info")
             shortcut: "Ctrl+I"
-            enabled: bar.keysHere && bar.tab !== null
+            enabled: bar.selectionKeysHere && bar.tab !== null
             onTriggered: bar.tab.getInfo()
         }
         Platform.MenuItem {
@@ -225,7 +229,7 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("Rename %1 Items…").arg(bar.count) : qsTr("Rename")
             shortcut: bar.count > 1 ? "" : "F2"
-            enabled: bar.keysHere && bar.count > 0 && bar.editable
+            enabled: bar.selectionKeysHere && bar.count > 0 && bar.editable
             onTriggered: bar.count > 1 ? bar.win.renameItems(bar.tab.selection(), bar.folder) : bar.tab.renameSelection()
         }
         Platform.MenuItem {
@@ -236,13 +240,13 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: qsTr("Duplicate")
             shortcut: "Ctrl+D"
-            enabled: bar.keysHere && bar.count > 0 && bar.writable && !bar.inTrash
+            enabled: bar.selectionKeysHere && bar.count > 0 && bar.writable && !bar.inTrash
             onTriggered: bar.tab.duplicateSelection()
         }
         Platform.MenuItem {
             text: qsTr("Make Alias")
             shortcut: "Ctrl+Meta+A"
-            enabled: bar.keysHere && bar.count > 0 && bar.writable && !bar.inTrash && String(bar.folder.url).startsWith("file:")
+            enabled: bar.selectionKeysHere && bar.count > 0 && bar.writable && !bar.inTrash && String(bar.folder.url).startsWith("file:")
             onTriggered: bar.app.makeAlias(bar.tab.selection(), bar.folder)
         }
         Platform.MenuItem {
@@ -255,14 +259,14 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: qsTr("Add to Sidebar")
             shortcut: "Ctrl+Meta+T"
-            enabled: bar.keysHere && bar.tab !== null && bar.sidebarCandidates.length > 0
+            enabled: bar.selectionKeysHere && bar.tab !== null && bar.sidebarCandidates.length > 0
             onTriggered: bar.tab.addToSidebar()
         }
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("Glance at %1 Items").arg(bar.count) : bar.count === 1 ? qsTr("Glance at “%1”").arg(bar.firstName) : qsTr("Glance")
             // Finder's File > Quick Look (Cmd+Y); Space in the views too.
             shortcut: "Ctrl+Y"
-            enabled: bar.keysHere && bar.count > 0 && !bar.inTrash && !bar.inApplications
+            enabled: bar.selectionKeysHere && bar.count > 0 && !bar.inTrash && !bar.inApplications
             onTriggered: bar.tab.glance()
         }
         // The colour tags of the selection (the window's item menu shows them as a row of colour dots).
@@ -292,14 +296,14 @@ Platform.MenuBar {
             text: bar.inTrash ? qsTr("Put Back") : qsTr("Move to Trash")
             shortcut: "Ctrl+Backspace"
             // An application of the Applications location the Store may uninstall (ADR-0046): the Store is asked, as the item menu does.
-            enabled: bar.keysHere && bar.count > 0 && (bar.inTrash || bar.editable || (bar.inApplications && bar.tab !== null && bar.tab.applicationRemovable()))
+            enabled: bar.selectionKeysHere && bar.count > 0 && (bar.inTrash || bar.editable || (bar.inApplications && bar.tab !== null && bar.tab.applicationRemovable()))
             onTriggered: bar.tab.trashSelection()
         }
         // Delete Immediately (⌥⌘⌫, FP-52): any item, confirmed.
         Platform.MenuItem {
             text: qsTr("Delete Immediately…")
             shortcut: "Ctrl+Alt+Backspace"
-            enabled: bar.keysHere && bar.count > 0 && (bar.inTrash || bar.editable)
+            enabled: bar.selectionKeysHere && bar.count > 0 && (bar.inTrash || bar.editable)
             onTriggered: bar.tab.deleteImmediately()
         }
         // Empty Trash (⇧⌘⌫) from anywhere, the Finder's app-menu item exported here (decision F-10). A dev session never
@@ -308,7 +312,7 @@ Platform.MenuBar {
             text: qsTr("Empty Trash…")
             shortcut: "Ctrl+Shift+Backspace"
             visible: !bar.app.devSession
-            enabled: bar.keysHere && !bar.app.places.trashEmpty
+            enabled: bar.selectionKeysHere && !bar.app.places.trashEmpty
             onTriggered: bar.tab.emptyTrash()
         }
         Platform.MenuSeparator {}
@@ -326,13 +330,13 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: qsTr("Undo")
             shortcut: "Ctrl+Z"
-            enabled: bar.keysHere && bar.app.canUndo
+            enabled: bar.selectionKeysHere && bar.app.canUndo
             onTriggered: bar.app.undo()
         }
         Platform.MenuItem {
             text: qsTr("Redo")
             shortcut: "Ctrl+Shift+Z"
-            enabled: bar.keysHere && bar.app.canRedo
+            enabled: bar.selectionKeysHere && bar.app.canRedo
             onTriggered: bar.app.redo()
         }
         Platform.MenuSeparator {}
@@ -341,39 +345,39 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("Cut %1 Items").arg(bar.count) : bar.count === 1 ? qsTr("Cut “%1”").arg(bar.firstName) : qsTr("Cut")
             shortcut: "Ctrl+X"
-            enabled: bar.keysHere && bar.count > 0 && bar.editable && !bar.inApplications
+            enabled: bar.selectionKeysHere && bar.count > 0 && bar.editable && !bar.inApplications
             onTriggered: bar.tab.copySelection(true)
         }
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("Copy %1 Items").arg(bar.count) : bar.count === 1 ? qsTr("Copy “%1”").arg(bar.firstName) : qsTr("Copy")
             shortcut: "Ctrl+C"
-            enabled: bar.keysHere && bar.count > 0
+            enabled: bar.selectionKeysHere && bar.count > 0
             onTriggered: bar.tab.copySelection(false)
         }
         // Finder's Copy as Pathname (⌥⌘C; the Finder shows it while ⌥ is held): the paths as text.
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("Copy %1 Items as Pathnames").arg(bar.count) : qsTr("Copy as Pathname")
             shortcut: "Ctrl+Alt+C"
-            enabled: bar.keysHere && bar.count > 0
+            enabled: bar.selectionKeysHere && bar.count > 0
             onTriggered: bar.app.copyPaths(bar.tab.selection())
         }
         Platform.MenuItem {
             text: bar.app.clipboardCount > 1 ? qsTr("Paste %1 Items").arg(bar.app.clipboardCount) : bar.app.clipboardCount === 1 ? qsTr("Paste Item") : qsTr("Paste")
             shortcut: "Ctrl+V"
-            enabled: bar.keysHere && bar.app.canPaste && bar.writable
+            enabled: bar.selectionKeysHere && bar.app.canPaste && bar.writable
             onTriggered: bar.tab.paste()
         }
         // The Finder's Move Item Here (shown there while ⌥ is held; the menu bar has no Option items): the copied items moved here.
         Platform.MenuItem {
             text: bar.app.clipboardCount > 1 ? qsTr("Move %1 Items Here").arg(bar.app.clipboardCount) : qsTr("Move Item Here")
             shortcut: "Ctrl+Alt+V"
-            enabled: bar.keysHere && bar.app.canPaste && bar.writable
+            enabled: bar.selectionKeysHere && bar.app.canPaste && bar.writable
             onTriggered: bar.tab.moveHere()
         }
         Platform.MenuItem {
             text: qsTr("Select All")
             shortcut: "Ctrl+A"
-            enabled: bar.keysHere && bar.folder !== null && bar.folder.count > 0
+            enabled: bar.selectionKeysHere && bar.folder !== null && bar.folder.count > 0
             onTriggered: bar.folder.selectAll()
         }
     }

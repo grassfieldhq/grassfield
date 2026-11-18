@@ -15,6 +15,7 @@
 #include <QDateTime>
 #include <QPointer>
 #include <QProcess>
+#include <QSet>
 #include <QSettings>
 #include <QThreadPool>
 #include <QTimer>
@@ -668,6 +669,8 @@ private:
     QList<CustomCommand> m_undoCustom;
     QList<CustomCommand> m_redoCustom;
     QList<bool> m_redoKinds;
+    // The names Duplicate gave to copies whose jobs have not ended yet: taken for the next Duplicate.
+    QSet<QUrl> m_duplicateNames;
     QList<QPointer<KJob>> m_jobs;
     QList<QPointer<ArchiveJob>> m_archiveJobs;
     QVariantList m_jobList;

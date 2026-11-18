@@ -210,6 +210,18 @@ FilesApp::FilesApp(const QList<QUrl> &initialUrls, QObject *parent)
         m_redoKinds.clear();
         emit undoChanged();
     });
+    // An undo of KIO's that failed or was declined leaves nothing to redo, but undo() already noted one: with KIO's redo
+    // history empty, that note on top hid Files' own redo commands under it. KIO sends this once the job is over and its
+    // history unlocked, after a success has put the command on its redo history.
+    connect(undo, &KIO::FileUndoManager::undoJobFinished, this, [this] {
+        bool dropped = false;
+        while (!m_redoKinds.isEmpty() && !m_redoKinds.last() && !KIO::FileUndoManager::self()->isRedoAvailable()) {
+            m_redoKinds.removeLast();
+            dropped = true;
+        }
+        if (dropped)
+            emit undoChanged();
+    });
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &FilesApp::readClipboardCut);
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &FilesApp::clipboardChanged);
     readClipboardCut();
@@ -1974,7 +1986,10 @@ void FilesApp::restore(const QList<QUrl> &urls)
     // Put Back also refuses to land next to an NFC/NFD twin of the original name (the home trash keeps the original path).
     const QString infoDir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/Trash/info/");
     for (const QUrl &u : std::as_const(trashed)) {
-        QFile info(infoDir + u.fileName() + QStringLiteral(".trashinfo"));
+        // KIO names an item of the Trash "<trash id>-<file id>" (trash:/0-name; 0 is the home trash) and the info file is
+        // named after the file id alone: with the whole name the check never found its file.
+        const QString name = u.fileName();
+        QFile info(infoDir + (name.startsWith(QLatin1String("0-")) ? name.mid(2) : name) + QStringLiteral(".trashinfo"));
         if (!info.open(QIODevice::ReadOnly))
             continue;
         const QString original = FileLogic::trashInfoOriginalPath(info.read(4096));
@@ -2023,7 +2038,9 @@ void FilesApp::newFolder(const QUrl &directory, QObject *folder)
     QPointer<QObject> target = folder;
     connect(job, &KJob::result, this, [this, job, url, target] {
         if (job->error()) {
-            emit operationFailed(job->errorString());
+            // Stop in a conflict sheet is the user's own answer, not an error to show (as track()).
+            if (job->error() != KIO::ERR_USER_CANCELED)
+                emit operationFailed(job->errorString());
             return;
         }
         // A look left at this path by a folder that went away outside Files must not apply to the new folder.
@@ -2135,7 +2152,8 @@ void FilesApp::newFolderWithItems(const QList<QUrl> &urls, const QUrl &directory
     KIO::FileUndoManager::self()->recordJob(KIO::FileUndoManager::Mkdir, {}, url, mkdir);
     connect(mkdir, &KJob::result, this, [this, mkdir, urls, url, target] {
         if (mkdir->error()) {
-            emit operationFailed(mkdir->errorString());
+            if (mkdir->error() != KIO::ERR_USER_CANCELED)
+                emit operationFailed(mkdir->errorString());
             return;
         }
         if (url.isLocalFile())
@@ -2652,16 +2670,43 @@ void FilesApp::moveHere(const QUrl &destination, QObject *folder)
     if (refuseApplicationItems({destination}))
         return;
     const QList<QUrl> urls = KioDialogs::pastableItems(QGuiApplication::clipboard()->mimeData());
-    if (urls.isEmpty() || refuseApplicationItems(urls) || refuseTwin(this, destination, urls))
+    if (urls.isEmpty() || refuseApplicationItems(urls))
         return;
-    KIO::CopyJob *job = KIO::move(urls, destination, KIO::HideProgressInfo);
+    // The checks of a drop (drop()): nothing goes into itself, and an item already in this folder stays (KIO raised a
+    // conflict sheet for a move onto itself).
+    const QUrl dest = destination.adjusted(QUrl::StripTrailingSlash);
+    QList<QUrl> sources;
+    for (const QUrl &u : urls) {
+        const QUrl clean = u.adjusted(QUrl::StripTrailingSlash);
+        if (clean == dest || clean.isParentOf(dest)) {
+            emit operationFailed(tr("“%1” can’t be moved or copied into itself.").arg(FileLogic::displayName(clean.fileName())));
+            return;
+        }
+        if (clean.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash) != dest)
+            sources << clean;
+    }
+    if (sources.isEmpty() || refuseTwin(this, dest, sources))
+        return;
+    KIO::CopyJob *job = KIO::move(sources, dest, KIO::HideProgressInfo);
     attachDelegate(job);
     KIO::FileUndoManager::self()->recordCopyJob(job);
-    track(job, countText(tr("Moving 1 item…"), tr("Moving %1 items…"), urls.size()), tr("Moving"), urls, destination);
+    track(job, countText(tr("Moving 1 item…"), tr("Moving %1 items…"), sources.size()), tr("Moving"), sources, dest);
     QPointer<QObject> target = folder;
-    connect(job, &KIO::CopyJob::copyingDone, this, [target](KIO::Job *, const QUrl &, const QUrl &to, const QDateTime &, bool, bool) {
+    // The folders' looks follow them to where the job really put them, as after a drop.
+    auto done = std::make_shared<QList<QPair<QUrl, QUrl>>>();
+    connect(job, &KIO::CopyJob::copyingDone, this, [target, done](KIO::Job *, const QUrl &from, const QUrl &to, const QDateTime &, bool directory, bool renamed) {
+        if (directory || renamed)
+            done->append({from, to});
         if (auto *f = asFolder(target))
             f->expect(to, false);
+    });
+    const QStringList pending = beginStyleMoves(sources);
+    connect(job, &KJob::result, this, [this, done, pending] {
+        QList<QPair<QUrl, QUrl>> pairs;
+        for (const auto &pair : *done)
+            pairs.append({pair.first, pair.second});
+        styleMovedAll(pairs);
+        endStyleMoves(pending);
     });
 }
 
@@ -2790,7 +2835,8 @@ void FilesApp::rename(const QUrl &url, const QString &newName, QObject *folder)
     connect(job, &KJob::result, this, [this, job, url, destination, target, pending] {
         if (job->error()) {
             endStyleMoves(pending);
-            emit operationFailed(job->errorString());
+            if (job->error() != KIO::ERR_USER_CANCELED)
+                emit operationFailed(job->errorString());
             return;
         }
         styleMoved(url, destination);
@@ -2854,12 +2900,18 @@ void FilesApp::duplicate(const QList<QUrl> &urls, QObject *folder)
             continue;
         const QUrl directory = url.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash);
         const bool isDir = url.isLocalFile() && QFileInfo(url.toLocalFile()).isDir();
-        const QString name = FileLogic::duplicateName(url.fileName(), isDir, tr("copy"), [&directory](const QString &n) { return nameTaken(directory, n); });
+        // A name given to a duplicate whose job has not made its file yet is taken too: Duplicate twice in a row gave both
+        // runs "name copy", and the second one a conflict sheet.
+        const QString name = FileLogic::duplicateName(url.fileName(), isDir, tr("copy"), [this, &directory](const QString &n) {
+            return nameTaken(directory, n) || m_duplicateNames.contains(childUrl(directory, n));
+        });
         const QUrl destination = childUrl(directory, name);
+        m_duplicateNames.insert(destination);
         KIO::CopyJob *job = KIO::copyAs(url, destination, KIO::HideProgressInfo);
         attachDelegate(job);
         KIO::FileUndoManager::self()->recordCopyJob(job);
-        connect(job, &KJob::result, this, [job, destination, target] {
+        connect(job, &KJob::result, this, [this, job, destination, target] {
+            m_duplicateNames.remove(destination);
             if (!job->error()) {
                 if (auto *f = asFolder(target))
                     f->expect(destination, false);
@@ -2905,10 +2957,16 @@ void FilesApp::drop(const QList<QUrl> &urls, const QUrl &destination, QObject *f
     // Across filesystems a drop copies, like the macOS file manager (unless a modifier says otherwise).
     const QString destDevice = dest.isLocalFile() ? QString::fromUtf8(QStorageInfo(dest.toLocalFile()).device()) : QString();
     bool sameVolume = !destDevice.isEmpty();
+    // Out of the Trash an item moves, wherever it goes (the Finder): a copy left the original in the Trash.
+    bool fromTrash = true;
     for (const QUrl &u : std::as_const(sources)) {
         if (!u.isLocalFile() || QString::fromUtf8(QStorageInfo(u.toLocalFile()).device()) != destDevice)
             sameVolume = false;
+        if (u.scheme() != QLatin1String("trash"))
+            fromTrash = false;
     }
+    if (fromTrash)
+        sameVolume = true;
     const FileLogic::DropAction action = FileLogic::dropAction(mods & Qt::ControlModifier, mods & Qt::AltModifier, sameVolume);
     if (action == FileLogic::DropAction::Link) {
         // Make Alias (decision: an alias is a symbolic link); one per item, named after it.

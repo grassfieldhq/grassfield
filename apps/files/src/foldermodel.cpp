@@ -335,6 +335,26 @@ FolderModel::FolderModel(QObject *parent)
             forgetThumbnail(m_large, url, true);
             dropTags(url);
         }
+        // An item renamed elsewhere (another window, another application) stays selected under its new name, as a search
+        // result does (renameResult): its old URL left in the selection kept the count wrong and selected a later item of
+        // that name.
+        bool selectionTouched = false;
+        for (const auto &pair : items) {
+            const QUrl from = pair.first.url();
+            const QUrl to = pair.second.url();
+            if (from == to)
+                continue;
+            if (m_selected.remove(from)) {
+                m_selected.insert(to);
+                selectionTouched = true;
+            }
+            if (m_current == from)
+                m_current = to;
+            if (m_anchor == from)
+                m_anchor = to;
+        }
+        if (selectionTouched)
+            emit selectionChanged();
     });
     connect(m_lister, &KCoreDirLister::jobError, this, [this](KIO::Job *job) {
         if (job)

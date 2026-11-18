@@ -585,6 +585,40 @@ TEST_F(FileOps, ADropOnTheSourcesOwnPlaceMovesNothing)
     EXPECT_FALSE(present(d("dir/dir")));
 }
 
+// Move Item Here has a drop's checks: into the items' own folder nothing happens (KIO raised a conflict sheet for a move
+// onto itself), and a folder moved into its own tree says why. No job runs.
+TEST_F(FileOps, MoveItemHereOnTheItemsOwnPlaceMovesNothing)
+{
+    FilesApp app(QList<QUrl>{});
+    Told told(app);
+    write(d("a.txt"), "a");
+    QDir().mkpath(d("dir/sub"));
+    app.copyToClipboard({url(d("a.txt"))}, false);
+    app.moveHere(url(m_dir.path()), nullptr);
+    EXPECT_TRUE(app.jobs().isEmpty());
+    EXPECT_TRUE(told.messages.isEmpty()) << "its own folder is quiet";
+    app.copyToClipboard({url(d("dir"))}, false);
+    app.moveHere(url(d("dir/sub")), nullptr);
+    EXPECT_TRUE(app.jobs().isEmpty());
+    EXPECT_EQ(told.messages.size(), 1) << "into itself says so";
+    EXPECT_EQ(read(d("a.txt")), QByteArray("a"));
+    EXPECT_FALSE(present(d("dir/sub/dir")));
+}
+
+// Duplicate twice in a row: the second run does not take the name the first one chose while that copy is not made yet (it
+// raised a conflict sheet). Two copies, no message.
+TEST_F(FileOps, DuplicateTwiceInARowGivesTwoCopies)
+{
+    FilesApp app(QList<QUrl>{});
+    Told told(app);
+    write(d("dup/a.txt"), "a");
+    app.duplicate({url(d("dup/a.txt"))}, nullptr);
+    app.duplicate({url(d("dup/a.txt"))}, nullptr);
+    const auto entries = [&] { return QDir(d("dup")).entryList(QDir::Files | QDir::NoDotAndDotDot); };
+    EXPECT_TRUE(waitFor([&] { return entries().size() == 3; })) << entries().join(QLatin1Char(' ')).toStdString();
+    EXPECT_TRUE(told.messages.isEmpty());
+}
+
 // Share > Send with LocalSend… (ADR-0045 OC-13): FilesApp runs nothing but Omarchy's vector with existing local paths, and a
 // development session runs nothing at all (systemd-run --user would open LocalSend on the owner's real desktop; security
 // review LOW 2). The dev refusal comes before LocalSend is looked up, so the test needs no LocalSend.
