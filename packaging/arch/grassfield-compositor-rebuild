@@ -188,6 +188,15 @@ missing_tools() {
   printf '%s' "${out[*]}"
 }
 
+# The Arch packages of the missing tools (g++ is in gcc, pkg-config in pkgconf): the advice names what is missing.
+missing_packages() {
+  local t out=()
+  for t in $(missing_tools); do
+    case $t in g++) out+=(gcc) ;; pkg-config) out+=(pkgconf) ;; *) out+=("$t") ;; esac
+  done
+  printf '%s' "${out[*]}"
+}
+
 # Builds the plugin from the shipped sources into <dir> (grassfield-compositor.so and its stamp there, by CMake), output
 # appended to <log>. Nothing from the caller's environment reaches CMake or the compiler; low priority, bounded, at most 4
 # compilers (each translation unit that includes Hyprland's headers takes about 1 GB).
@@ -232,7 +241,7 @@ build_and_install() { # <abi>
   work=$(mktemp -d "$cache_base/.build.XXXXXX") || return 2
   # shellcheck disable=SC2064 # the directory is known now
   trap "rm -rf '$work'" EXIT
-  [[ -z $(missing_tools) ]] || { say "cannot build: missing $(missing_tools) (install them: pacman -S --needed cmake gcc make pkgconf)"; return 2; }
+  [[ -z $(missing_tools) ]] || { say "cannot build: missing $(missing_tools) (install them: pacman -S --needed $(missing_packages))"; return 2; }
   [[ -r $src_dir/CMakeLists.txt ]] || { say "cannot build: no sources in $src_dir"; return 2; }
   src=$(source_id)
   [[ -n $src ]] || { say "cannot build: the sources have no VERSION ($src_dir/VERSION)"; return 2; }

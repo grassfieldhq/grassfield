@@ -273,7 +273,10 @@ bind("SUPER + ALT + S", "Move the window to a stage of its own", shell("stages",
 
 -- Keyboard launch keys: each opens the user's default app, resolved at press time by grassfield-launch-key (desktop entries
 -- and xdg-mime, no package names). Search is Spotlight. Keys with no target here stay unbound.
-local launch_key = os.getenv("GRASSFIELD_LAUNCH_KEY") or "/usr/lib/grassfield/grassfield-launch-key"
+-- GRASSFIELD_LAUNCH_KEY (another launcher, quoted as is below) is dev plumbing like GRASSFIELD_SHELL_DIR: the real
+-- session ignores it, so a stray value cannot make these keys run another program.
+local launch_key = dev_session and os.getenv("GRASSFIELD_LAUNCH_KEY") or "/usr/lib/grassfield/grassfield-launch-key"
+if launch_key == "" or launch_key:find("'", 1, true) then launch_key = "/usr/lib/grassfield/grassfield-launch-key" end
 local function launch(kind)
   return hl.dsp.exec_cmd("'" .. launch_key .. "' " .. kind)
 end

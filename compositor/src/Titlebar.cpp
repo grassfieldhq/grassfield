@@ -1025,9 +1025,32 @@ void CGrassfieldTitlebar::drawBar(const PHLMONITOR& monitor, const PHLWINDOW& w,
     if (w->m_title.empty() || maxWidthPx <= 0 || !gf::capturePrivacy::mayDrawContent(w, monitor))
         return;
 
-    if (!m_title.texture || m_title.text != w->m_title || m_title.scale != scale || m_title.maxWidthPx != maxWidthPx || m_title.appearance != appearance) {
-        m_title.texture    = g_pHyprRenderer->renderText(w->m_title, toColor(palette.title), static_cast<int>(std::round(theme::kTitleFontSizePt * scale)), false,
-                                                         theme::kTitleFontFamily, maxWidthPx, theme::kTitleFontWeight);
+    // The texture depends on the bar's width only through the elision, and a render (Pango layout, raster, upload) in the
+    // draw path on every frame of an animated or interactive resize costs frames. So a new title is first rendered with
+    // room to spare, which gives its whole width: while that width is under the room the bar gives, before and after a
+    // change of width, the texture is the one a new render would give and is kept. A title that needs the elision is
+    // rendered for each width, as before.
+    constexpr int kTitleMeasureWidthPx = 4096; // above any title's room on the displays supported; else: as before
+    const bool    stale                = !m_title.texture || m_title.text != w->m_title || m_title.scale != scale || m_title.appearance != appearance;
+    const bool    whole                = !stale && m_title.fullWidthPx >= 0 && m_title.fullWidthPx < m_title.maxWidthPx && m_title.fullWidthPx < maxWidthPx;
+    if (stale || (m_title.maxWidthPx != maxWidthPx && !whole)) {
+        if (stale)
+            m_title.fullWidthPx = -1;
+        // One call for both renders (the capture-privacy source scan pins this function's title render to one site): with room
+        // to spare first for a new title, then for the bar's room when the title does not fit it whole.
+        int widthPx = stale && maxWidthPx < kTitleMeasureWidthPx ? kTitleMeasureWidthPx : maxWidthPx;
+        while (true) {
+            m_title.texture = g_pHyprRenderer->renderText(w->m_title, toColor(palette.title), static_cast<int>(std::round(theme::kTitleFontSizePt * scale)), false,
+                                                          theme::kTitleFontFamily, widthPx, theme::kTitleFontWeight);
+            if (widthPx == maxWidthPx)
+                break;
+            if (m_title.texture && m_title.texture->m_size.x > 0) {
+                m_title.fullWidthPx = static_cast<int>(std::ceil(m_title.texture->m_size.x));
+                if (m_title.fullWidthPx < maxWidthPx)
+                    break; // the whole title, as a render for the bar's room would give it
+            }
+            widthPx = maxWidthPx;
+        }
         m_title.text       = w->m_title;
         m_title.scale      = scale;
         m_title.maxWidthPx = maxWidthPx;
@@ -1445,6 +1468,21 @@ void CGrassfieldTitlebar::onSessionLock(bool locked) {
         // Its release, still owed, is cancelled when it comes (revealPresses), as its press was.
         if (locked && input.grab.revealed)
             endRevealedDrag(std::nullopt);
+        // An ordinary titlebar gesture ends at the lock too: the window stays where it is, nothing follows the pointer behind
+        // the lock screen. The press stays owned (dropGesture), so its release, still owed, is the titlebars' and not a client's.
+        if (locked && !input.grab.revealed && input.presses.gestureButton()) {
+            if (input.grab.dragging)
+                gf::tiler::dragDone(); // no preview, no tile
+            if (input.grab.member) {
+                gf::tiler::memberDrop(input.grab.window.lock(), std::nullopt); // back in its half
+            } else {
+                gf::tiler::endMove(input.grab.window.lock());
+                if (input.grab.moved)
+                    gf::tiler::followOutput(input.grab.window.lock());
+            }
+            input.grab = {};
+            input.presses.dropGesture();
+        }
         postHover(input.zoomHover.update(std::nullopt, nowMs()), nullptr, CBox{});
         if (!locked)
             armZoomTimer(0);

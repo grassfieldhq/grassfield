@@ -41,6 +41,14 @@ LUA
     grep -q "^XF86Tools.*launch-key. settings" <<<"$1" && grep -q "^XF86AudioMedia.*launch-key. music" <<<"$1" &&
     grep -q "^CTRL + SHIFT + ESCAPE.*launch-key. activity" <<<"$1" &&
     grep -q "^XF86Search.*ipc.* call search toggle" <<<"$1"' _ "$out"
+  # CIO-11: GRASSFIELD_LAUNCH_KEY is dev plumbing (ADR-0019), ignored by the real session like GRASSFIELD_SHELL_DIR.
+  desc="a stray GRASSFIELD_LAUNCH_KEY does not change the launch keys of the real session"
+  out=$(env -u GRASSFIELD_DEV GRASSFIELD_SESSION=1 GRASSFIELD_LAUNCH_KEY=/tmp/other-launcher lua "$tmp/run.lua" "$root")
+  check bash -c '! grep -q other-launcher <<<"$1" && grep -q "^XF86Calculator.*/usr/lib/grassfield/grassfield-launch-key. calculator" <<<"$1"' _ "$out"
+  desc="a dev session honours GRASSFIELD_LAUNCH_KEY, but not a value that would break the quoting"
+  out=$(env -u GRASSFIELD_SESSION GRASSFIELD_DEV=1 GRASSFIELD_LAUNCH_KEY=/tmp/other-launcher lua "$tmp/run.lua" "$root")
+  quoted=$(env -u GRASSFIELD_SESSION GRASSFIELD_DEV=1 GRASSFIELD_LAUNCH_KEY="/tmp/x'; touch y; '" lua "$tmp/run.lua" "$root")
+  check bash -c 'grep -q "^XF86Calculator.*/tmp/other-launcher. calculator" <<<"$1" && ! grep -q "touch y" <<<"$2"' _ "$out" "$quoted"
 else
   echo "SKIP: no Lua interpreter (bind checks)"
 fi

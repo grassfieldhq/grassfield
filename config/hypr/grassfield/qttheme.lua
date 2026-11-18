@@ -25,6 +25,16 @@ local function read(path)
   return text
 end
 
+-- The first four bytes and the size of a file, without reading it: the plugin is a shared object, and this runs at every
+-- config parse on Hyprland's main thread.
+local function probe(path)
+  local f = io.open(path, "rb")
+  if not f then return nil end
+  local magic, size = f:read(4), f:seek("end")
+  f:close()
+  return magic, size
+end
+
 local function exists(path)
   local f = io.open(path, "r")
   if not f then return false end
@@ -42,14 +52,23 @@ function M.minor(text)
   return major .. "." .. minor
 end
 
--- choose(read_text, file_exists) -> theme, reason. reason is nil when the plugin is used.
+-- choose(read_text, file_exists) -> theme, reason. reason is nil when the plugin is used. With a read_text (tests) the
+-- plugin's magic and size come from its text; the session probes the file instead.
 function M.choose(read_text, file_exists)
+  local probe_file = probe
+  if read_text then
+    probe_file = function(path)
+      local text = read_text(path)
+      if type(text) ~= "string" then return nil end
+      return text:sub(1, 4), #text
+    end
+  end
   read_text = read_text or read
   file_exists = file_exists or exists
   if not file_exists(M.plugin) then return "gtk3", "no platform-theme plugin installed (" .. M.plugin .. ")" end
   -- A file that is not a whole shared object (a truncated or empty download) would make Qt fall back to Fusion for every app.
-  local binary = read_text(M.plugin)
-  if type(binary) ~= "string" or binary:sub(1, 4) ~= "\127ELF" or #binary < M.min_size then
+  local magic, size = probe_file(M.plugin)
+  if magic ~= "\127ELF" or type(size) ~= "number" or size < M.min_size then
     return "gtk3", "the platform-theme plugin is not a complete shared object (" .. M.plugin .. ")"
   end
   local built = M.minor(read_text(M.stamp))
