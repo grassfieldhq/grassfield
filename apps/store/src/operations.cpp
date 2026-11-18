@@ -702,7 +702,9 @@ void Operations::countProgress(Item &item)
     QStringList names;
     for (const PlannedPackage &p : item.record.plan)
         names.append(p.name);
-    const int done = countLogged(tail, item.record.kind == QLatin1String("install") ? QStringLiteral("installed") : QStringLiteral("removed"), names);
+    // Never past the plan's count: a name logged twice (a reinstall by a hook, an older line) is still one package.
+    const int done = qMin(int(names.size()),
+                          countLogged(tail, item.record.kind == QLatin1String("install") ? QStringLiteral("installed") : QStringLiteral("removed"), names));
     if (done != item.done) {
         item.done = done;
         emit changed();
@@ -1093,7 +1095,9 @@ void Operations::recover()
         if (!helperExitCode(dir, record->id)
             && ((started && helperRunning(dir, record->id)) || (!started && since >= 0 && since <= qint64(m_config.terminalStartMs) + m_config.terminalGraceMs))) {
             m_current->state = started ? State::Running : State::Opening;
-            m_logOffset = 0;
+            // From here on, as a fresh start does: the whole of pacman's log holds every earlier install of these names
+            // (and is megabytes to read at each poll).
+            m_logOffset = QFileInfo(m_config.pacmanLog).size();
             m_runningSince = QDateTime::currentDateTimeUtc();
             m_poll.start();
             emit changed();
@@ -1105,7 +1109,7 @@ void Operations::recover()
     if (record->path == QLatin1String("helper") && !helperExitCode(m_config.statusDir, record->id) && helperRunning(m_config.statusDir, record->id)) {
         // Still running: followed again until its exit file comes (its lock is taken when free).
         m_followOnly = true;
-        m_logOffset = 0;
+        m_logOffset = QFileInfo(m_config.pacmanLog).size(); // as above: only what pacman logs from now on
         m_runningSince = QDateTime::currentDateTimeUtc();
         takeUpdateLock();
         m_poll.start();

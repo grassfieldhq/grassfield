@@ -1565,12 +1565,15 @@ TEST(StoreBackend, Flathub)
     s.env->set("XDG_DATA_DIRS", exports + QStringLiteral(":/usr/share"));
     EXPECT_TRUE(backend.open(QStringLiteral("org.example.Notes")));
     EXPECT_TRUE(backend.open(QStringLiteral("flatpak:com.other.App")));
-    // Three detached programs, each writing its line: all three, whatever their order.
+    // A web app the catalog does not list (no StoreApp behind it): Omarchy's launcher with its address, not a crash.
+    EXPECT_TRUE(backend.open(QStringLiteral("webapp:Chat")));
+    EXPECT_FALSE(backend.open(QStringLiteral("webapp:Nothing")));
+    // Four detached programs, each writing its line: all four, whatever their order.
     const auto openedLines = [&s] {
         QFile f(s.path(QStringLiteral("opened")));
         return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
     };
-    for (int i = 0; i < 500 && openedLines().count('\n') < 3; ++i) {
+    for (int i = 0; i < 500 && openedLines().count('\n') < 4; ++i) {
         QTimer::singleShot(20, &loop, &QEventLoop::quit);
         loop.exec();
     }
@@ -1578,6 +1581,7 @@ TEST(StoreBackend, Flathub)
     EXPECT_TRUE(lines.contains("uwsm-app -- /usr/bin/flatpak run org.example.Notes\n")) << lines.toStdString();
     EXPECT_TRUE(lines.contains("uwsm-app -- org.example.Notes.desktop\n")) << lines.toStdString();
     EXPECT_TRUE(lines.contains("uwsm-app -- /usr/bin/flatpak run com.other.App\n")) << lines.toStdString();
+    EXPECT_TRUE(lines.contains("omarchy-launch-webapp https://chat.example.org\n")) << lines.toStdString();
 
     // Removed: the app, then the runtimes no app needs (SD27).
     backend.plan(QStringLiteral("org.example.Notes"), QStringLiteral("remove"));
