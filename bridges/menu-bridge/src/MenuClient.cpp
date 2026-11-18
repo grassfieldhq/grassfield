@@ -22,8 +22,8 @@ namespace gf::menubridge {
         constexpr int kFirstReadTries = 4;
         constexpr int kRetryDelayMs   = 500;
         // A menu shown before keeps its last layout when a re-read fails (macOS keeps a busy application's menus): the bridge
-        // does not read it again by itself, the application's next signal does, and it is given up only after this many
-        // failed re-reads in a row.
+        // does not read it again by itself, the application's next signal does (or one that arrived during the failed read,
+        // after kRetryDelayMs), and it is given up only after this many failed re-reads in a row.
         constexpr int kMaxRereadFailures = 3;
     } // namespace
 
@@ -116,10 +116,15 @@ namespace gf::menubridge {
         m_failures = 0;
         m_retry.stop();
         LayoutBudget mapBudget;
-        m_items = mapChildren(root, mapBudget);
+        const QJsonArray items = mapChildren(root, mapBudget);
+        // A re-read that changed nothing the shell is given (an application signalling without a change, or a property the
+        // mapping does not keep) is not sent again: the shell would parse the whole menu and build its bar anew.
+        const bool same = m_ready && items == m_items;
+        m_items = items;
         m_index = indexItems(m_items);
         m_ready = true;
-        emit menuChanged(m_window);
+        if (!same)
+            emit menuChanged(m_window);
         if (std::exchange(m_again, false))
             fetch();
     }
@@ -128,8 +133,14 @@ namespace gf::menubridge {
         ++m_failures;
         if (m_ready) {
             // A re-read: the last good layout stays shown; the application's next signal reads it again.
-            if (m_failures >= kMaxRereadFailures)
+            if (m_failures >= kMaxRereadFailures) {
                 giveUp(code, why);
+                return;
+            }
+            // A signal that arrived during the failed read would otherwise be lost with it (the menu changed while the
+            // application was busy): that one is read again, later; its failure counts toward the limit above.
+            if (std::exchange(m_again, false))
+                m_retry.start(kRetryDelayMs);
             return;
         }
         // The first read: tried again later when the application did not answer (it used to fail at once, and a window whose

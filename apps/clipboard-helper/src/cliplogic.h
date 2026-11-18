@@ -97,6 +97,8 @@ struct Item {
     QString searchText;
 
     qint64 size() const;
+    // The bytes it holds in memory, for the stores' caps (size() is what the shell is told).
+    qint64 memory() const;
     bool formatted() const;
     bool pinned() const { return pinnedAtMs > 0; }
 };

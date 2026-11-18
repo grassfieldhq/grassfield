@@ -495,7 +495,9 @@ namespace gf::prompter::kio {
             entry->expire = CacheEntry::Expire::Never;
         } else if (windowId && entry->expire != CacheEntry::Expire::Never) {
             entry->expire = CacheEntry::Expire::WindowClose;
-            if (!entry->windows.contains(windowId))
+            // The ids come from the callers: bounded, so that one entry cannot grow with every id a caller invents.
+            constexpr qsizetype kMaxWindows = 64;
+            if (entry->windows.size() < kMaxWindows && !entry->windows.contains(windowId))
                 entry->windows.append(windowId);
         } else if (entry->expire == CacheEntry::Expire::Time) {
             entry->expireAt = m_clock() + kExpireSeconds;

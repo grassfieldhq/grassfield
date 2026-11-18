@@ -92,7 +92,7 @@ namespace gf::menubridge {
         QString             m_path;
         QDBusServiceWatcher m_watcher;
         QTimer              m_refetch;
-        QTimer              m_retry; // the next first read after a failed one
+        QTimer              m_retry; // the next read after a failed one (a first read, or a re-read a signal arrived during)
         QJsonArray          m_items;
         ItemIndex           m_index;
         bool                m_ready    = false;

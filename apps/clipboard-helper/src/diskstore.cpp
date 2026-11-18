@@ -24,14 +24,21 @@ constexpr int kMaxIndexItems = 200;
 const char kItemMagic[] = "GFCLIP1\n";
 const QByteArray kPlainPart = "text/plain;charset=utf-8";
 
-enum class Read { Missing, Bad, Ok };
+enum class Read { Missing, Bad, Later, Ok };
+
+// An open that failed for a reason that says nothing about the store (no descriptor or memory left, an I/O error): the store
+// broke no rule, so it is not deleted for it.
+bool transientError(int error)
+{
+    return error == EMFILE || error == ENFILE || error == ENOMEM || error == EIO || error == EINTR;
+}
 
 // Reads <name> in the directory <dirfd>: a regular file of the user, mode 0600, at most `max` bytes, read whole.
 Read readBounded(int dirfd, const char *name, qint64 max, QByteArray *out)
 {
     const int fd = ::openat(dirfd, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0)
-        return errno == ENOENT ? Read::Missing : Read::Bad;
+        return errno == ENOENT ? Read::Missing : transientError(errno) ? Read::Later : Read::Bad;
     struct stat st {};
     if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != ::getuid() || (st.st_mode & 07777) != 0600 || st.st_size > max) {
         ::close(fd);
@@ -219,6 +226,11 @@ DiskStore::Loaded DiskStore::load()
     }
     const int dirfd = ::open(path.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dirfd < 0) {
+        if (transientError(errno)) {
+            // Not read this time: left as it is and never written in this run (as a newer index), read at the next start.
+            m_readOnly = true;
+            return result;
+        }
         deleteAll();
         result.status = Status::Deleted;
         return result;
@@ -227,6 +239,10 @@ DiskStore::Loaded DiskStore::load()
     const Read index = readBounded(dirfd, "index.json", kMaxIndexBytes, &indexBytes);
     if (index != Read::Ok) {
         ::close(dirfd);
+        if (index == Read::Later) {
+            m_readOnly = true; // as above
+            return result;
+        }
         deleteAll();
         result.status = index == Read::Missing ? Status::Empty : Status::Deleted;
         return result;
@@ -261,8 +277,13 @@ DiskStore::Loaded DiskStore::load()
         const QByteArray file = id + ".item";
         Item item;
         QByteArray bytes;
-        const bool good = validId(id) && kind != Kind::None && readBounded(dirfd, file.constData(), kMaxItemBytes, &bytes) == Read::Ok
-            && decodeItem(bytes, kind, &item);
+        const Read read = validId(id) && kind != Kind::None ? readBounded(dirfd, file.constData(), kMaxItemBytes, &bytes) : Read::Bad;
+        if (read == Read::Later) {
+            ::close(dirfd);
+            m_readOnly = true; // as above: no item is dropped from the index for an open that may work at the next start
+            return Loaded{};
+        }
+        const bool good = read == Read::Ok && decodeItem(bytes, kind, &item);
         if (!good) {
             if (validId(id))
                 ::unlinkat(dirfd, file.constData(), 0);

@@ -56,6 +56,10 @@ int main(int argc, char** argv) {
     sigaddset(&blocked, SIGHUP);
     pthread_sigmask(SIG_BLOCK, &blocked, nullptr);
     const int signalFd = signalfd(-1, &blocked, SFD_CLOEXEC | SFD_NONBLOCK);
+    // Without the signalfd nothing would ever read them: unblocked again, so a stop ends the process at once and not
+    // after the unit's TimeoutStopSec with SIGKILL.
+    if (signalFd < 0)
+        pthread_sigmask(SIG_UNBLOCK, &blocked, nullptr);
 
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("grassfield-menu-bridge"));
