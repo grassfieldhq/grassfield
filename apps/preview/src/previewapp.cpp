@@ -76,7 +76,7 @@ QByteArray recognitionImage(const QString &path)
     return out;
 }
 
-QVariantList filesFor(const QStringList &paths)
+QVariantList filesFor(const QStringList &paths, const PreviewApp *app)
 {
     QVariantList files;
     for (const QString &p : paths) {
@@ -84,7 +84,8 @@ QVariantList filesFor(const QStringList &paths)
         files.append(QVariantMap{{QStringLiteral("path"), p},
                                  {QStringLiteral("name"), info.fileName()},
                                  {QStringLiteral("url"), QUrl::fromLocalFile(p)},
-                                 {QStringLiteral("kind"), preview::kindName(preview::classify(p))}});
+                                 {QStringLiteral("kind"), preview::kindName(preview::classify(p))},
+                                 {QStringLiteral("token"), app->tokenFor(p)}});
     }
     return files;
 }
@@ -99,7 +100,7 @@ PreviewApp::PreviewApp(const QStringList &paths, const QStringList &errors, bool
     , m_browsing(browsing)
     , m_startIndex(qBound(0, startIndex, qMax(0, paths.size() - 1)))
 {
-    m_files = filesFor(paths);
+    m_files = filesFor(paths, this);
     m_firstPath = paths.value(m_startIndex);
     // Appearance follows grassfield.json (read only), like every Grassfield surface.
     const QString file = configFile();
@@ -164,6 +165,24 @@ QString PreviewApp::pathAt(int index) const
     return index >= 0 && index < m_paths.size() ? m_paths.at(index) : QString();
 }
 
+int PreviewApp::tokenFor(const QString &path) const
+{
+    const QMutexLocker lock(&m_lock);
+    const auto it = m_tokens.constFind(path);
+    if (it != m_tokens.constEnd())
+        return it.value();
+    const int token = m_tokenPaths.size();
+    m_tokenPaths.append(path);
+    m_tokens.insert(path, token);
+    return token;
+}
+
+QString PreviewApp::pathForToken(int token) const
+{
+    const QMutexLocker lock(&m_lock);
+    return token >= 0 && token < m_tokenPaths.size() ? m_tokenPaths.at(token) : QString();
+}
+
 void PreviewApp::cancelBrowse()
 {
     m_cancel = true;
@@ -187,7 +206,7 @@ void PreviewApp::startBrowse(preview::BrowseKinds kinds)
     m_worker = QThread::create([this, path, kinds] {
         const preview::Browse browse = preview::browseFolder(path, kinds, preview::filesSortSpec(), &m_cancel);
         // The per-file kind (content sniffing) is also off the GUI thread.
-        const QVariantList files = m_cancel ? QVariantList() : filesFor(browse.paths);
+        const QVariantList files = m_cancel ? QVariantList() : filesFor(browse.paths, this);
         if (!m_cancel)
             QMetaObject::invokeMethod(this, [this, browse, files] { applyBrowse(browse, files); }, Qt::QueuedConnection);
     });
@@ -297,6 +316,7 @@ QVariantMap PreviewApp::inspectPath(const QString &path) const
     out[QStringLiteral("name")] = info.fileName();
     out[QStringLiteral("kind")] = preview::kindName(kind);
     out[QStringLiteral("url")] = QUrl::fromLocalFile(path);
+    out[QStringLiteral("token")] = tokenFor(path);
     out[QStringLiteral("size")] = sizeText(info.size());
     out[QStringLiteral("frames")] = 1;
     out[QStringLiteral("animated")] = false;
@@ -551,10 +571,12 @@ QImage PreviewImageProvider::requestImage(const QString &id, QSize *size, const 
     bool okFrame = false;
     bool okIndex = false;
     const int frame = thumbnail ? 0 : id.left(slash).toInt(&okFrame);
-    const int index = id.mid(slash + 1).toInt(&okIndex);
-    if (slash < 0 || (!thumbnail && !okFrame) || !okIndex || frame < 0 || index < 0)
+    // The last part is the file's token, not its place in the list: the folder listing moves the opened file to another
+    // index, and the same file must keep the same URL (no second decode, no cached picture under another file's name).
+    const int token = id.mid(slash + 1).toInt(&okIndex);
+    if (slash < 0 || (!thumbnail && !okFrame) || !okIndex || frame < 0 || token < 0)
         return {};
-    const QString path = m_app->pathAt(index);
+    const QString path = m_app->pathForToken(token);
     if (path.isEmpty())
         return {};
     QImageReader reader(path);

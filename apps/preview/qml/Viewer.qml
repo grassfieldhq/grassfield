@@ -768,7 +768,8 @@ Window {
                             anchors.fill: parent
                             visible: row.modelData.kind === "image"
                             // Decoded at its size by the provider (image://preview/thumb), twice for a sharp edge.
-                            source: row.modelData.kind === "image" && !fileList.compact ? "image://preview/thumb/" + row.index : ""
+                            // (by the file's token: an index names another file once the folder is listed, and the cache is on).
+                            source: row.modelData.kind === "image" && !fileList.compact && row.modelData.token !== undefined ? "image://preview/thumb/" + row.modelData.token : ""
                             // A fixed box (the size follows the picture's own shape).
                             sourceSize: Qt.size(Tokens.previewThumbnailWidth * 2, Tokens.previewThumbnailWidth * 2)
                             asynchronous: true

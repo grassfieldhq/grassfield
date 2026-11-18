@@ -77,9 +77,14 @@ public:
     // How long a change waits before it is written, and how often the windows' positions are read.
     static constexpr int kSaveDelayMs = 800;
     static constexpr int kFrameCheckMs = 15000;
+    // A failed write is tried again after this long, then twice as long each time, up to the maximum.
+    static constexpr int kRetryMinMs = 2000;
+    static constexpr int kRetryMaxMs = 60000;
 
     // The memos as they would be written now (tests).
     const QList<Memo> &memos() const { return m_memos; }
+    // Tests only: every write fails while set (MemoStore::injectWriteFault).
+    void injectWriteFault(bool fault) { m_store.injectWriteFault(fault); }
 
 signals:
     void openedChanged();
@@ -106,6 +111,8 @@ private:
     bool m_opened = false;
     bool m_dirty = false;
     QTimer m_saveTimer;
+    QTimer m_retryTimer;
+    int m_retryMs = kRetryMinMs;
     QTimer m_frameTimer;
 
     QFileSystemWatcher m_watcher;

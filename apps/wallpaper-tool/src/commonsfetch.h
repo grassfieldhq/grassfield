@@ -36,7 +36,7 @@ struct Options {
 
 // ---- pure rules ----
 
-// The User-Agent: product and major version, and the project contact (no machine or user identifier).
+// The User-Agent: product and version, and the project contact (no machine or user identifier, no person's address).
 QString userAgent();
 
 bool validDate(const QString &date);

@@ -102,7 +102,9 @@ check "the settled desktop shows the downloaded picture ($(rgb_now))" near "$(rg
 n=$(( $(online_requests) - req0 ))
 check "the first fetch made 4 requests (3 API, 1 picture) (made $n)" test "$n" = 4
 check "the picture request has no utm_ query string" bash -c "! grep -q utm_ '$online_fix/requests.log'"
-check "every request carried the fixed User-Agent, no Referer, no cookie" bash -c "! grep -vq '| ua=Grassfield/0 (chapdel.kamga2@gmail.com) | referer= | cookie=\$' '$online_fix/requests.log'"
+# The build's version (VERSION) and the project's repository as the contact (commonsfetch.cpp userAgent()).
+ua="Grassfield/$(tr -d '[:space:]' <"$VS_ROOT/VERSION") (https://github.com/grassfieldhq/grassfield)"
+check "every request carried the fixed User-Agent, no Referer, no cookie" bash -c "! grep -vq '| ua=$ua | referer= | cookie=\$' '$online_fix/requests.log'"
 check "no request went anywhere but the loopback server (every logged path is an API or picture path)" bash -c "! grep -vqE '^(/w/api.php\\?|/thumb/)' '$online_fix/requests.log'"
 
 # --- 2. what Settings is told

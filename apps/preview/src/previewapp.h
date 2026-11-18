@@ -80,6 +80,10 @@ public:
 
     // Path of file `index` for the image provider (render thread): empty when out of range.
     QString pathAt(int index) const;
+    // A number that stands for this path as long as the app runs (the image provider's URLs carry it: the folder listing
+    // changes a file's index, never its token), and the path it stands for. Thread-safe, as pathAt().
+    int tokenFor(const QString &path) const;
+    QString pathForToken(int token) const;
 
     // {ok, error, kind, name, url, size(Text), width, height, frames, animated, text, type, modified, folder}
     Q_INVOKABLE QVariantMap inspect(int index) const;
@@ -125,8 +129,10 @@ private:
     void applyBrowse(const preview::Browse &browse, const QVariantList &files);
     void startTool(int request, const QString &tool, const preview::Recognition &command, const QByteArray &image);
 
-    mutable QMutex m_lock; // guards m_paths (written on the GUI thread, read by the image provider)
+    mutable QMutex m_lock; // guards m_paths (written on the GUI thread, read by the image provider) and the tokens
     QStringList m_paths;
+    mutable QHash<QString, int> m_tokens;
+    mutable QStringList m_tokenPaths;
     QStringList m_errors;
     QVariantList m_files;
     bool m_glance = false;
@@ -159,8 +165,9 @@ private:
     QSet<QString> m_missingTools;
 };
 
-// image://preview/<frame>/<file index>: decoded with the allocation and size caps, EXIF rotation applied.
-// image://preview/thumb/<file index>: the same at the requested (source) size, for the sidebar thumbnails.
+// image://preview/<frame>/<file token>: decoded with the allocation and size caps, EXIF rotation applied.
+// image://preview/thumb/<file token>: the same at the requested (source) size, for the sidebar thumbnails.
+// The token is PreviewApp::tokenFor(path) (the "token" of inspect() and of each entry of files).
 class PreviewImageProvider : public QQuickImageProvider
 {
 public:

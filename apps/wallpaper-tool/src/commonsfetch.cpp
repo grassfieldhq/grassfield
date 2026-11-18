@@ -28,11 +28,10 @@ namespace wallpaper::commons {
 
 namespace {
 
-// The product's major version (CMakeLists.txt project VERSION 0.1.0) and the project contact required by Wikimedia's
-// User-Agent policy (ADR-0016). No project URL exists yet (packaging uses a placeholder
-// domain), so that part is omitted rather than invented.
-constexpr int kMajorVersion = 0;
-const char kContact[] = "chapdel.kamga2@gmail.com";
+// The project contact required by Wikimedia's User-Agent policy (ADR-0016): the project's public repository, where an
+// operator can open an issue (no person's address in every request). The version is the build's (GRASSFIELD_VERSION,
+// from the VERSION file, as every app).
+const char kContact[] = "https://github.com/grassfieldhq/grassfield";
 
 const QStringList kHosts = {QStringLiteral("commons.wikimedia.org"), QStringLiteral("thumb.wikimedia.org"), QStringLiteral("upload.wikimedia.org")};
 // NASA APOD: the API and the picture host. science.nasa.gov (where the logo answer pointed) is deliberately not listed.
@@ -168,7 +167,7 @@ QDate dateOfName(const QString &name)
 
 QString userAgent()
 {
-    return QStringLiteral("Grassfield/%1 (%2)").arg(kMajorVersion).arg(QString::fromLatin1(kContact));
+    return QStringLiteral("Grassfield/%1 (%2)").arg(QStringLiteral(GRASSFIELD_VERSION), QString::fromLatin1(kContact));
 }
 
 bool validDate(const QString &date)

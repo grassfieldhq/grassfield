@@ -148,9 +148,15 @@ TEST(PreviewLogic, PlaylistsAreTextWhateverTheMimeName)
         {"pls", "[playlist]\nFile1=http://example.invalid/a\n"},
         {"xspf", "<?xml version=\"1.0\"?><playlist version=\"1\" xmlns=\"http://xspf.org/ns/0/\"></playlist>"},
         {"wpl", "<?wpl version=\"1.0\"?><smil><body><seq><media src=\"http://example.invalid/a\"/></seq></body></smil>"},
+        // Audit P8: a DASH manifest and FFmpeg's concat script name other files too.
+        {"dash", "<?xml version=\"1.0\"?>\n<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"><BaseURL>http://example.invalid/</BaseURL></MPD>"},
+        {"dash-plain", "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"></MPD>"},
+        {"ffconcat", "ffconcat version 1.0\nfile 'http://example.invalid/a.mp4'\n"},
     };
     for (const auto &s : samples)
         EXPECT_EQ(classify(touch(dir, QString::fromLatin1(s.name), s.data)), Kind::Text) << s.name;
+    EXPECT_EQ(classify(touch(dir, QStringLiteral("manifest.mp4"), "<?xml version=\"1.0\"?><MPD></MPD>")), Kind::Text);
+    EXPECT_EQ(classify(touch(dir, QStringLiteral("list.mp4"), "ffconcat version 1.0\nfile /etc/passwd\n")), Kind::Text);
     // The same content under a media suffix is still a playlist.
     EXPECT_EQ(classify(touch(dir, QStringLiteral("clip.mp3"), "<asx version=\"3.0\"></asx>")), Kind::Text);
     // A plain binary stays unsupported.

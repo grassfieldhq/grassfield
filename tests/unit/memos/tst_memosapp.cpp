@@ -172,6 +172,26 @@ TEST(MemosApp, PendingChangesAreWrittenWhenTheAppGoes)
     EXPECT_EQ(fx.written().size(), 1);
 }
 
+TEST(MemosApp, AFailedSaveIsTriedAgainUntilItPasses)
+{
+    // Audit M1: a failed write was forgotten until the next edit, focus loss or Quit. It is retried by itself.
+    Fixture fx;
+    MemosApp app(fx.data.path(), fx.reader());
+    app.open(240, 200);
+    int failed = 0;
+    int saved = 0;
+    QObject::connect(&app, &MemosApp::saved, [&](bool ok) { ++(ok ? saved : failed); });
+    app.injectWriteFault(true);
+    app.createMemo(QString(), 240, 200, 22);
+    EXPECT_FALSE(app.saveNow());
+    EXPECT_EQ(failed, 1);
+    EXPECT_TRUE(fx.written().isEmpty());
+    // No edit, no focus change: the retry alone writes once the fault is gone.
+    app.injectWriteFault(false);
+    ASSERT_TRUE(waitFor([&] { return saved > 0; }, MemosApp::kRetryMinMs + 3000));
+    EXPECT_EQ(fx.written().size(), 1);
+}
+
 TEST(MemosApp, SaveNowLetsTheWindowsPushTheirTextFirst)
 {
     // Review of the memos slice: text typed in the window's last 300 ms was still in the window when Quit or SIGTERM saved.

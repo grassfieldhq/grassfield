@@ -33,6 +33,13 @@ MemosApp::MemosApp(const QString &storeDir, std::function<QHash<QString, Frame>(
     m_saveTimer.setSingleShot(true);
     m_saveTimer.setInterval(kSaveDelayMs);
     connect(&m_saveTimer, &QTimer::timeout, this, [this] { saveNow(); });
+    // A write that failed (disk full, quota, a read-only remount) is tried again, less and less often, until one passes:
+    // without this the next attempt came only with the next edit, a focus loss or Quit.
+    m_retryTimer.setSingleShot(true);
+    connect(&m_retryTimer, &QTimer::timeout, this, [this] {
+        if (m_dirty)
+            saveNow();
+    });
     // Moving a window tells the client nothing on Wayland: its position is read now and then, and written when it changed.
     m_frameTimer.setInterval(kFrameCheckMs);
     connect(&m_frameTimer, &QTimer::timeout, this, [this] {
@@ -216,6 +223,14 @@ bool MemosApp::saveNow()
     applyFrames();
     const bool ok = m_store.save(m_memos);
     m_dirty = !ok;
+    if (ok) {
+        m_retryTimer.stop();
+        m_retryMs = kRetryMinMs;
+    } else {
+        // Still dirty: the next try comes by itself, each time twice as late, up to kRetryMaxMs.
+        m_retryTimer.start(m_retryMs);
+        m_retryMs = qMin(m_retryMs * 2, kRetryMaxMs);
+    }
     emit saved(ok);
     return ok;
 }

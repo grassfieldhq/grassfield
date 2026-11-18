@@ -278,6 +278,24 @@ TEST(MemoStore, IoErrorsAndHugeFilesAreRefusedUntouched)
     EXPECT_EQ(QFileInfo(file).size(), kMaxFileBytes + 1);
 }
 
+TEST(MemoStore, NeverWritesAFileItWouldRefuseToOpen)
+{
+    // Audit M2: open() refuses a file above kMaxFileBytes, and save() had no bound: one large paste locked every memo out at
+    // the next launch. The write is refused instead, and the file of the last good save stays.
+    QTemporaryDir tmp;
+    const QString file = tmp.path() + QStringLiteral("/memos.json");
+    MemoStore store(tmp.path());
+    ASSERT_EQ(store.open(240, 200), OpenState::Ok);
+    ASSERT_TRUE(store.save({memo(QStringLiteral("small"))}));
+    const QByteArray before = readAll(file);
+    EXPECT_FALSE(store.save({memo(QString(int(kMaxFileBytes) + 1, QLatin1Char('x')))}));
+    EXPECT_FALSE(store.errorString().isEmpty());
+    EXPECT_EQ(readAll(file), before);
+    MemoStore again(tmp.path());
+    EXPECT_EQ(again.open(240, 200), OpenState::Ok);
+    ASSERT_EQ(again.memos().size(), 1);
+}
+
 TEST(MemoStore, EveryEntryIsCheckedAndRepaired)
 {
     QTemporaryDir tmp;
@@ -429,6 +447,12 @@ TEST(MemoStore, EntriesThatWouldBeDroppedAreKeptAsideFirst)
         ASSERT_EQ(kept.size(), 1) << doc.constData();
         EXPECT_EQ(readAll(tmp.path() + QLatin1Char('/') + kept.first()), doc);
         EXPECT_EQ(modeOf(tmp.path() + QLatin1Char('/') + kept.first()), kPrivateFile);
+        // Audit M5: a launch that saved nothing finds the same file again, and keeps no second copy of it (a name with
+        // another time stands for a later launch).
+        ASSERT_TRUE(QFile::rename(tmp.path() + QLatin1Char('/') + kept.first(), tmp.path() + QStringLiteral("/memos.json.dropped-earlier")));
+        MemoStore later(tmp.path());
+        EXPECT_EQ(later.open(240, 200), OpenState::Ok) << doc.constData();
+        EXPECT_EQ(QDir(tmp.path()).entryList({QStringLiteral("memos.json.dropped-*")}, QDir::Files).size(), 1) << doc.constData();
         EXPECT_TRUE(store.save(store.memos()));
     }
     // A clean file keeps nothing aside.

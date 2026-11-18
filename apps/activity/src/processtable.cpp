@@ -194,6 +194,24 @@ void ProcessTable::setRows(std::vector<TableRow> rows)
             alive.insert(rowId(r));
         m_collapsed.removeIf([&](const EntryKey &k) { return !(k.id == kHeaderId) && !alive.contains(k.id); });
     }
+    // An app unit that ended is forgotten too, with its collapsed header: each app ever launched left an entry for the run.
+    // The kinds' and the GPUs' identities stay.
+    if (!m_groupIds.isEmpty()) {
+        QSet<quint64> units;
+        for (const TableRow &r : m_all) {
+            if (r.process.unitKey != 0)
+                units.insert(r.process.unitKey);
+        }
+        const QLatin1String prefix("unit/");
+        for (auto it = m_groupIds.begin(); it != m_groupIds.end();) {
+            if (it.key().startsWith(prefix) && !units.contains(it.key().mid(prefix.size()).toULongLong(nullptr, 16))) {
+                m_collapsed.remove(EntryKey{kHeaderId, it.value()});
+                it = m_groupIds.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
     rebuild();
     m_previous = {};
 }
@@ -634,24 +652,29 @@ std::vector<Entry> ProcessTable::tree() const
     const auto order = [this](const TableRow *a, const TableRow *b) { return less(*a, *b); };
     const bool searching = !m_search.isEmpty();
     QSet<const TableRow *> kept, seen;
+    // Both walks below call themselves once per level: a chain of forks tens of thousands deep (within a user's process
+    // limit) would overflow the stack. Past this depth the rows under a row start again as rows of the first level.
+    constexpr int kMaxTreeDepth = 1000;
     // Post-order: a row is kept when it or a row under it matches.
-    const std::function<bool(const TableRow *)> keep = [&](const TableRow *r) -> bool {
+    const std::function<bool(const TableRow *, int)> keep = [&](const TableRow *r, int depth) -> bool {
         seen.insert(r);
         bool any = matches(*r);
-        for (const TableRow *c : children.value(r)) {
-            if (!seen.contains(c) && keep(c))
-                any = true;
+        if (depth < kMaxTreeDepth) {
+            for (const TableRow *c : children.value(r)) {
+                if (!seen.contains(c) && keep(c, depth + 1))
+                    any = true;
+            }
         }
         if (any)
             kept.insert(r);
         return any;
     };
     for (const TableRow *r : roots)
-        keep(r);
+        keep(r, 0);
     for (const TableRow &r : m_all) { // rows no root leads to
         if (!seen.contains(&r)) {
             roots.push_back(&r);
-            keep(&r);
+            keep(&r, 0);
         }
     }
     std::stable_sort(roots.begin(), roots.end(), order);
@@ -663,9 +686,11 @@ std::vector<Entry> ProcessTable::tree() const
             return;
         placed.insert(r);
         std::vector<const TableRow *> kids;
-        for (const TableRow *c : children.value(r)) {
-            if ((!searching || kept.contains(c)) && !placed.contains(c))
-                kids.push_back(c);
+        if (depth < kMaxTreeDepth) {
+            for (const TableRow *c : children.value(r)) {
+                if ((!searching || kept.contains(c)) && !placed.contains(c))
+                    kids.push_back(c);
+            }
         }
         std::stable_sort(kids.begin(), kids.end(), order);
         Entry e;
@@ -722,7 +747,7 @@ quint64 ProcessTable::groupId(const QString &key)
 {
     quint64 &id = m_groupIds[key];
     if (id == 0)
-        id = static_cast<quint64>(m_groupIds.size());
+        id = ++m_nextGroupId; // not the count: an entry that was forgotten must not give its identity to a new group
     return id;
 }
 

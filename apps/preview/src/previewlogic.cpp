@@ -91,11 +91,12 @@ static bool looksLikePlaylist(const QString &path)
     if (head.startsWith("\xEF\xBB\xBF"))
         head.remove(0, 3);
     head = head.trimmed().toLower();
-    if (head.startsWith("#extm3u") || head.startsWith("[playlist]") || head.startsWith("<asx") || head.startsWith("<?wpl"))
+    if (head.startsWith("#extm3u") || head.startsWith("[playlist]") || head.startsWith("<asx") || head.startsWith("<?wpl")
+        || head.startsWith("ffconcat")) // FFmpeg's concat script ("ffconcat version 1.0"): a list of files to play
         return true;
-    // XML playlists (ASX with a declaration, WPL, XSPF): the root element follows the declaration.
+    // XML playlists (ASX with a declaration, WPL, XSPF, a DASH manifest): the root element follows the declaration.
     if (head.startsWith("<?xml") || head.startsWith("<")) {
-        static const QByteArrayList roots = {"<asx", "<smil", "<playlist"};
+        static const QByteArrayList roots = {"<asx", "<smil", "<playlist", "<mpd"};
         for (const QByteArray &root : roots)
             if (head.contains(root))
                 return true;
