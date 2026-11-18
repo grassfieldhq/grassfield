@@ -326,6 +326,20 @@ TestCase {
         compare(ctl.lockState, "locked");
     }
 
+    // SS-01: while the computer is being put to sleep nothing opens the lock: no password is handed to PAM and a
+    // fingerprint match is ignored; both work again once the flag is cleared.
+    function test_sleepPendingRefusesEveryUnlock() {
+        ctl.sleepPending = true;
+        verify(!ctl.submit("pw"));
+        compare(pam.starts, 0);
+        ctl.fingerprintSucceeded();
+        compare(ctl.lockState, "locked");
+        compare(unlockSpy.count, 0);
+        ctl.sleepPending = false;
+        verify(ctl.submit("pw"));
+        compare(pam.starts, 1);
+    }
+
     function test_fingerprintSuccess() {
         ctl.fingerprintSucceeded();
         compare(ctl.lockState, "unlocked");
