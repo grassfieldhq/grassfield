@@ -115,11 +115,16 @@ FocusScope {
         }
     }
 
+    // passwordRequired is a signal of PdfDocument, not a property (always truthy when read): the document's error says
+    // whether it is the password that stops it.
+    readonly property bool locked: doc.status === PdfDocument.Error
+        && (doc.error === PdfDocument.IncorrectPassword || doc.error === PdfDocument.UnsupportedSecurityScheme)
+
     Message {
         anchors.fill: parent
         visible: doc.status === PdfDocument.Error
-        title: doc.status === PdfDocument.Error && doc.passwordRequired ? qsTr("Password protected") : qsTr("This PDF cannot be opened")
-        text: doc.status === PdfDocument.Error && doc.passwordRequired ? qsTr("Encrypted documents are not supported yet.") : qsTr("The file is damaged or not a PDF document.")
+        title: root.locked ? qsTr("Password protected") : qsTr("This PDF cannot be opened")
+        text: root.locked ? qsTr("Encrypted documents are not supported yet.") : qsTr("The file is damaged or not a PDF document.")
     }
 
     Message {

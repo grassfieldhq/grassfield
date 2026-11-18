@@ -11,6 +11,7 @@
 #include "procparse.h"
 #include "units.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -40,6 +41,9 @@ enum Read : unsigned {
     ReadMemory = 1u << 12,     // statm of every process, status of one fifth of them in turn (Memory tab, AD32)
     ReadEfficiency = 1u << 13, // AM68: cpu.idle and cpu.weight of each own app unit once (the window shown)
 };
+
+// The most bytes of a command line a table row keeps (the Command column and its search); Inspect shows the whole line.
+inline constexpr size_t kCommandMax = 4096;
 
 enum class Tab { Cpu, Memory, Energy, Disk, Network };
 

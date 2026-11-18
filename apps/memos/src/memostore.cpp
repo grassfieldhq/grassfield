@@ -244,7 +244,17 @@ OpenState MemoStore::open(int defaultWidth, int defaultHeight)
         const QString what = notAList ? QStringLiteral("its memos are not a list") : QStringLiteral("%1 entries are not memos").arg(skipped);
         qWarning("grassfield-memos: %s: %s; dropped at the next save, the original kept beside it", qUtf8Printable(filePath()),
                  qUtf8Printable(what));
-        if (!migrated
+        // One copy per content: a launch that saves nothing finds the same file at the next one, and would add a copy each time.
+        bool alreadyKept = false;
+        const QFileInfoList copies = QDir(m_dir).entryInfoList({QStringLiteral("memos.json.dropped-*")}, QDir::Files);
+        for (const QFileInfo &copy : copies) {
+            QFile kept(copy.absoluteFilePath());
+            if (copy.size() == bytes.size() && kept.open(QIODevice::ReadOnly) && kept.readAll() == bytes) {
+                alreadyKept = true;
+                break;
+            }
+        }
+        if (!migrated && !alreadyKept
             && !keepCopy(QStringLiteral(".dropped-") + QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd'T'HHmmss'Z'")), bytes)) {
             m_error = QStringLiteral("cannot keep a copy of %1 before dropping what is not a memo").arg(filePath());
             qWarning("grassfield-memos: %s; the memos stay read only", qUtf8Printable(m_error));
@@ -292,6 +302,13 @@ bool MemoStore::save(const QList<Memo> &memos)
 bool MemoStore::writeDocument(const QJsonObject &doc)
 {
     assertPrivate();
+    const QByteArray bytes = QJsonDocument(doc).toJson(QJsonDocument::Indented);
+    // The bound open() reads with: a larger file would be refused at the next launch, with every memo behind it. The file
+    // on disk stays as it is and the caller stays unsaved.
+    if (bytes.size() > kMaxFileBytes) {
+        m_error = QStringLiteral("cannot write %1: the memos would be larger than %2 bytes").arg(filePath()).arg(kMaxFileBytes);
+        return false;
+    }
     QSaveFile f(filePath());
     if (!f.open(QIODevice::WriteOnly)) {
         m_error = QStringLiteral("cannot write %1: %2").arg(filePath(), f.errorString());
@@ -299,7 +316,6 @@ bool MemoStore::writeDocument(const QJsonObject &doc)
     }
     // The temporary file is private before any byte is in it (the directory is too).
     f.setPermissions(kFilePerms);
-    const QByteArray bytes = QJsonDocument(doc).toJson(QJsonDocument::Indented);
     if (f.write(bytes) != bytes.size() || !f.flush() || (m_beforeCommit && !m_beforeCommit())) {
         m_error = QStringLiteral("cannot write %1: %2").arg(filePath(), f.error() == QFileDevice::NoError ? QStringLiteral("write fault") : f.errorString());
         f.cancelWriting();

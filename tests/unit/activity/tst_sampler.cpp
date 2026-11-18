@@ -216,6 +216,24 @@ TEST(Sampler, AnExecThatKeepsStatsNameIsSeenByItsCodeAddresses)
     EXPECT_EQ(snap.counters.exeLinks, 1u);
 }
 
+TEST(Sampler, AVeryLongCommandLineIsCutForTheTable)
+{
+    // Audit A1: a 1 MiB argv was kept whole in every row and laid out by the Command column at each sample.
+    Fixture f;
+    // Two-byte characters across the limit: the cut falls between characters, never inside one.
+    std::string longArg = "x";
+    while (longArg.size() < 3 * kCommandMax)
+        longArg += "\u00e9";
+    f.process(100, "make", kMe, 1, 5000, nul({"/usr/bin/make", longArg.c_str()}), user + "/app.slice/x.service");
+    Sampler s(options(f));
+    const ProcessRow *r = row(s.sample(ReadProcesses | ReadStatus | ReadCommand, 1.0), 100);
+    ASSERT_NE(r, nullptr);
+    EXPECT_LE(r->command.size(), kCommandMax);
+    EXPECT_GE(r->command.size(), kCommandMax - 4);
+    EXPECT_EQ(r->command.rfind("/usr/bin/make x", 0), 0u);
+    EXPECT_EQ(r->command.find("\uFFFD"), std::string::npos);
+}
+
 TEST(Sampler, ATitleWrittenOverArgv0NeverNamesTheProcess)
 {
     // Chromium's and Electron's helpers write a title over argv[0] (review of 949fc98).
@@ -1184,6 +1202,13 @@ TEST(Sampler, WholePhysicalDisksAndInterfacesButLo)
     EXPECT_EQ(snap.system.netTotal.packetsIn, 30u);
     EXPECT_DOUBLE_EQ(snap.system.netTotal.bytesInPerSec, 1000.0);
     EXPECT_DOUBLE_EQ(snap.system.netTotal.packetsOutPerSec, 2.5);
+    // Audit A8: an interface new since the last sample has no rate yet; the total keeps the others' (no gap in the graph).
+    f.write("proc/net/dev", "Inter-| Receive | Transmit\n face |bytes packets\n    lo: 900 9 0 0 0 0 0 0 900 9 0 0 0 0 0 0\n"
+                            " wlan0: 4000 40 0 0 0 0 0 0 2500 25 0 0 0 0 0 0\n"
+                            " veth0: 7000 70 0 0 0 0 0 0 7000 70 0 0 0 0 0 0\n");
+    const Snapshot more = s.sample(reads, 4.0);
+    ASSERT_EQ(more.system.interfaces.size(), 2u);
+    EXPECT_DOUBLE_EQ(more.system.netTotal.bytesInPerSec, 1000.0);
 }
 
 TEST(Sampler, AWindowOwnerIsAnApp)

@@ -49,6 +49,19 @@ bool isNumeric(const char *s)
     return true;
 }
 
+// The command line kept for the table: cut to kCommandMax (at a character's first byte) before it is cleaned. A 1 MiB argv
+// (a build, xargs) was copied into every row and laid out whole by the Command column at each sample; Inspect reads its own.
+std::string tableCommand(std::string joined)
+{
+    if (joined.size() > kCommandMax) {
+        size_t n = kCommandMax;
+        while (n > 0 && (static_cast<unsigned char>(joined[n]) & 0xC0) == 0x80)
+            --n;
+        joined.resize(n);
+    }
+    return sanitizeDisplay(joined);
+}
+
 double rate(uint64_t now, uint64_t before, double seconds)
 {
     if (seconds <= 0 || now < before)
@@ -338,7 +351,7 @@ void Sampler::identify(int pid, Proc &p, bool own, unsigned reads, const std::st
     if (readFile(procPath(pid, "cmdline"), buf_, true)) {
         argv0 = cmdlineFirstWord(buf_);
         if (reads & ReadCommand) {
-            p.command = sanitizeDisplay(cmdlineJoined(buf_));
+            p.command = tableCommand(cmdlineJoined(buf_));
             p.haveCommand = true;
         }
     }
@@ -778,7 +791,7 @@ const Snapshot &Sampler::sample(unsigned reads, double now)
             } else if (own && (reads & ReadCommand) && !p.haveCommand) {
                 ++c.cmdlineReads;
                 if (readFile(procPath(pid, "cmdline"), buf_, true))
-                    p.command = sanitizeDisplay(cmdlineJoined(buf_));
+                    p.command = tableCommand(cmdlineJoined(buf_));
                 p.haveCommand = true;
             }
 
@@ -1241,7 +1254,7 @@ void Sampler::readSystem(unsigned reads, double now, SystemSnapshot &out, Counte
             if (dt > 0 && !out.disks.empty()) {
                 out.diskTotal.readsPerSec = out.diskTotal.writesPerSec = out.diskTotal.readBytesPerSec = out.diskTotal.writeBytesPerSec = 0;
                 for (const DiskSnapshot &ds : out.disks) {
-                    if (ds.readsPerSec < 0) // a disk new since the last sample: no total rate this time
+                    if (ds.readsPerSec < 0) // a disk new since the last sample has no rate yet: the others still count
                         continue;
                     out.diskTotal.readsPerSec += ds.readsPerSec;
                     out.diskTotal.writesPerSec += ds.writesPerSec;
@@ -1260,7 +1273,9 @@ void Sampler::readSystem(unsigned reads, double now, SystemSnapshot &out, Counte
         if (readFile(opt_.procRoot + "/net/dev", buf_)) {
             const double dt = lastNetTime_ >= 0 ? now - lastNetTime_ : 0;
             std::map<std::string, NetDev> nowNet;
-            bool rates = dt > 0;
+            // A total rate as soon as one interface has one, as for the disks: an interface new since the last sample (a
+            // container's veth, a VPN) has none yet, and left the whole total without a value for one sample (a gap in the graph).
+            bool rates = false;
             for (NetDev &n : parseNetDev(buf_)) {
                 if (n.name == "lo")
                     continue;
@@ -1276,8 +1291,7 @@ void Sampler::readSystem(unsigned reads, double now, SystemSnapshot &out, Counte
                     ns.packetsOutPerSec = rate(n.txPackets, last->second.txPackets, dt);
                     ns.bytesInPerSec = rate(n.rxBytes, last->second.rxBytes, dt);
                     ns.bytesOutPerSec = rate(n.txBytes, last->second.txBytes, dt);
-                } else {
-                    rates = false;
+                    rates = true;
                 }
                 out.netTotal.packetsIn += ns.packetsIn;
                 out.netTotal.packetsOut += ns.packetsOut;
