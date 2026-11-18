@@ -478,6 +478,12 @@ TestCase {
         verify(after.length > 0, "afterResume found");
         verify(/Lock\.lock\("resume"\);[\s\S]*Lock\.resumed\(\);\s*sleeping = false;\s*releaseTimer\.stop\(\);\s*take\(\);\s*root\.resumed\(\);\s*$/.test(after), "afterResume: " + after);
         compare(inhibitor.split("\n").filter(l => l.indexOf("root.resumed()") >= 0).length, 1);
+        // SS-01: a session found unlocked at the resume is locked whatever `sleeping` says, and unlocking is refused from
+        // the sleep request (set before the lock is asked for) to the resume.
+        verify(/\} else if \(!Lock\.currentlyLocked\(\)\) \{\s*(\/\/[^\n]*\s*)*console\.warn\([^\n]*\);\s*Lock\.lock\("resume"\);/.test(after), "afterResume: " + after);
+        verify(/Lock\.sleepPending = false;[\s\S]*Lock\.resumed\(\);/.test(after));
+        const before = functionBody(inhibitor, "beforeSleep");
+        verify(/Lock\.sleepPending = true;\s*sleepPendingGuard\.restart\(\);\s*Lock\.lock\("sleep"\);/.test(before), "beforeSleep: " + before);
     }
 
     // The body of `function <name>(): void { ... }` at the Scope's indent (four spaces), or "".
