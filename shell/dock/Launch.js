@@ -11,7 +11,8 @@ function stateOf(launching, key, windowCount, now, timeoutMs) {
     if (windowCount > 0)
         return "running";
     const started = launching ? launching[key] : undefined;
-    if (started === undefined || now - started > timeoutMs)
+    // Not a number: absent, or a key such as "constructor" read from the map's prototype.
+    if (typeof started !== "number" || now - started > timeoutMs)
         return "idle";
     return "launching";
 }
@@ -137,7 +138,7 @@ function menuWindows(windows, max, appName, appKey) {
         if (!live.has(ref))
             mine.delete(ref);
     }
-    const count = {};
+    const count = Object.create(null);
     for (const l of titled)
         count[l.title] = (count[l.title] || 0) + 1;
     const rawTitles = new Set(titled.map(l => l.title));

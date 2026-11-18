@@ -27,10 +27,11 @@ function apps(dockMerge, windows, lookup, recency, excluded) {
 
 // Keeps the frozen order of `current` for apps still present, drops closed ones, appends new apps at the end.
 function refresh(current, fresh) {
-    const byKey = {};
+    // No prototype: the keys are app ids, a client's strings ("constructor").
+    const byKey = Object.create(null);
     fresh.forEach(a => byKey[a.key] = a);
     const kept = current.filter(a => byKey[a.key] !== undefined).map(a => byKey[a.key]);
-    const have = {};
+    const have = Object.create(null);
     kept.forEach(a => have[a.key] = true);
     return kept.concat(fresh.filter(a => !have[a.key]));
 }

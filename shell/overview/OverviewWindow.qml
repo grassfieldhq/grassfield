@@ -263,8 +263,13 @@ Variants {
             wins = liveWins;
             relayout();
             const keys = liveWins.map(w => w.address);
-            if (keys.join(",") !== winKeys.join(","))
+            if (keys.join(",") !== winKeys.join(",")) {
+                // The new list rebuilds every window item: a drag in progress loses its item without a release or a
+                // cancel, so it ends here (else hover selection and the title stay off until Overview opens again).
+                dragKey = "";
+                dropIndex = -1;
                 winKeys = keys;
+            }
             const map = {};
             for (const w of liveWins)
                 map[w.address] = w;

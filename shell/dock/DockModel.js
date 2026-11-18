@@ -12,7 +12,8 @@
 
 function merge(pinned, running, lookup) {
     const list = [];
-    const byKey = {};
+    // No prototype: an app id is a client's string, and "constructor" or "__proto__" must be a key like any other.
+    const byKey = Object.create(null);
     const pins = pinned ? pinned : [];
     for (let i = 0; i < pins.length; i++) {
         const entry = lookup(pins[i]);
@@ -315,11 +316,11 @@ function pushRecent(recent, id, max) {
 // A function of the two running sets and the old list only: an app that is still running is never added (it shows as a
 // running tile), so the cap evicting a key can not make it "new" again, and an unchanged running set returns `recent`.
 function recentsAfter(recent, previous, now, pinned, max) {
-    const nowSet = {};
+    const nowSet = Object.create(null);
     (now ? now : []).forEach(k => {
         nowSet[k] = true;
     });
-    const kept = {};
+    const kept = Object.create(null);
     (pinned ? pinned : []).forEach(k => {
         kept[k] = true;
     });
@@ -346,7 +347,7 @@ function recentsStep(ready, recent, previous, now, pinned, max) {
 // ({kind: "app", recent: true, windows: [], pinned: false}). `apps` is the result of merge(). `listed` (optional) is a
 // predicate on the desktop entry: NoDisplay / hidden entries are never shown as recents.
 function withRecents(apps, recent, lookup, max, listed) {
-    const have = {};
+    const have = Object.create(null);
     apps.forEach(a => {
         have[a.key] = true;
     });
@@ -371,7 +372,9 @@ function withRecents(apps, recent, lookup, max, listed) {
 // Drag to reorder: move the app tile `from` to slot `to` (indices in the app list, the first items of `items`).
 // Returns {changed, pinned}: the new pinned key list. An unpinned app (running or recent) dropped before a pinned
 // one becomes pinned there; dropped after every pinned app it stays as it is (its place follows the launch order).
-function reorder(items, from, to) {
+// `stored` and `lookup` (optional): the pinned list as stored and the entry resolution; the stored ids that resolve to no
+// entry right now (a desktop file briefly missing) have no tile, and stay pinned where they were (keepUnresolved).
+function reorder(items, from, to, stored, lookup) {
     const apps = items.filter(it => it.kind === "app");
     if (from < 0 || from >= apps.length)
         return {changed: false, pinned: apps.filter(a => a.pinned).map(a => a.key)};
@@ -389,7 +392,36 @@ function reorder(items, from, to) {
         }
     }
     const pinned = order.filter(a => a.key === moved.key ? becomesPinned : a.pinned).map(a => a.key);
-    return {changed: pinned.join("\n") !== pinnedBefore.join("\n"), pinned: pinned};
+    return {changed: pinned.join("\n") !== pinnedBefore.join("\n"), pinned: stored && lookup ? keepUnresolved(pinned, stored, lookup) : pinned};
+}
+
+// The pinned `keys` with the ids of `stored` that resolve to no entry put back, each after the pin it followed (first when
+// it followed none): a reorder writes the whole list, and must not unpin an app only because its entry is not there now
+// (unpinKey keeps such ids too).
+function keepUnresolved(keys, stored, lookup) {
+    const out = [];
+    const after = new Map();
+    let prev = null;
+    for (const id of (stored ? stored : [])) {
+        if (isFilesId(id))
+            continue;
+        const entry = lookup(id);
+        if (entry)
+            prev = entry.id;
+        else if (keys.indexOf(id) >= 0)
+            continue;
+        else if (prev === null)
+            out.push(id);
+        else
+            after.set(prev, (after.get(prev) || []).concat([id]));
+    }
+    for (const key of keys) {
+        out.push(key);
+        (after.get(key) || []).forEach(id => out.push(id));
+        after.delete(key);
+    }
+    after.forEach(ids => ids.forEach(id => out.push(id)));
+    return out;
 }
 
 // Item indices of the app tiles (the recent applications divider sits between app tiles).
@@ -429,7 +461,9 @@ function draggedOut(y, threshold) {
 // Parsed output of dock/mime-data.sh: {entries: {id: [mime]}, suffix: {".ext": [mime]}, names: {"name": [mime]},
 // parents: {mime: [mime]}, aliases: {alias: mime}, ready}.
 function parseMimeData(text) {
-    const out = {entries: {}, suffix: {}, names: {}, parents: {}, aliases: {}, ready: false};
+    // Maps without a prototype: an entry id or a file name such as "constructor" is a key like any other.
+    const out = {entries: Object.create(null), suffix: Object.create(null), names: Object.create(null), parents: Object.create(null),
+        aliases: Object.create(null), ready: false};
     for (const raw of String(text || "").split("\n")) {
         const f = raw.replace(/\r$/, "").split("\t");
         if (f[0] === "E" && f.length >= 3) {
@@ -477,7 +511,7 @@ function mimeTypesOf(path, data, resolved) {
         if (resolved[path] === "inode/directory" || found.length === 0)
             found = [resolved[path]];
     }
-    const all = {};
+    const all = Object.create(null);
     const queue = found.slice();
     while (queue.length > 0) {
         const m = queue.shift();
@@ -706,7 +740,7 @@ function layoutTransition(before, after, min) {
     if (!known)
         return {slide: slide, enter: enter};
     for (const key of Object.keys(after ? after : {})) {
-        if (before[key] === undefined)
+        if (!Object.prototype.hasOwnProperty.call(before, key))
             enter.push(key);
         else if (Math.abs(before[key] - after[key]) > min)
             slide[key] = before[key] - after[key];
@@ -722,13 +756,13 @@ function layoutTransition(before, after, min) {
 // a repeated key in `from` loses its later rows (removed), and a repeated key in `to` is wanted once (its first place).
 function diffKeys(from, to) {
     const target = to.filter((k, i) => to.indexOf(k) === i);
-    const want = {};
+    const want = Object.create(null);
     target.forEach(k => {
         want[k] = true;
     });
     const list = from.slice();
     const ops = [];
-    const seen = {};
+    const seen = Object.create(null);
     const drop = [];
     list.forEach((k, i) => {
         if (!want[k] || seen[k])

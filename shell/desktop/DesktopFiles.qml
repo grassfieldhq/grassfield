@@ -106,16 +106,19 @@ Scope {
         }, Apps.openEnvironment());
     }
 
-    // Returns "" when started, else the validation reason (see IconsLogic.validateName).
+    // Returns "" when started, else the validation reason (see IconsLogic.validateName). Never overwrites: a name held by
+    // an operation still running counts as taken (takenNames), and one the listing does not show (a hidden file, a file
+    // made since the last listing) makes the command fail instead, as in importPaths.
     function rename(name: string, next: string): string {
-        const why = Logic.validateName(next, name, names);
+        const why = Logic.validateName(next, name, takenNames());
         if (why !== "")
             return why;
         positions = Logic.renamed(positions, name, next);
         scheduleSave();
         markBusy(next);
-        // gio move (not gio rename) so that a name starting with "-" is not an option.
-        run(["gio", "move", "--no-target-directory", "--", path(name), path(next)], "rename", ok => {
+        // mv with --update=none-fail and --no-target-directory never replaces an existing name nor moves into a folder of
+        // that name (gio move does both); the paths are absolute and follow "--", so a name starting with "-" is no option.
+        run(["mv", "--update=none-fail", "--no-target-directory", "--", path(name), path(next)], "rename", ok => {
             if (!ok) {
                 positions = Logic.renamed(positions, next, name);
                 lastError = qsTr("Could not rename \"%1\".").arg(name);

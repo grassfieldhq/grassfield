@@ -60,7 +60,8 @@ Scope {
     function setItems(next: var): void {
         const ops = DockModel.diffKeys(tileKeys, next.map(DockModel.tileKey));
         applyOps(ops.filter(o => o.op === "remove"));
-        const map = {};
+        // No prototype: a tile key is an app id, a client's string ("constructor").
+        const map = Object.create(null);
         next.forEach(it => {
             map[DockModel.tileKey(it)] = it;
         });
@@ -627,6 +628,10 @@ Scope {
 
         function onScreensChanged(): void {
             root.interruptDrag();
+            // The output whose Dock had the keyboard is gone: the mode ends with it (else it would hold the auto-hide of the
+            // Dock's next output).
+            if (root.keyboardMode && !Quickshell.screens.some(s => s.name === root.keyboardScreen))
+                root.keyboardMode = false;
         }
     }
 
@@ -1101,7 +1106,7 @@ Scope {
                     tileItem.glideFrom(dx, dy);
                     return;
                 }
-                const r = DockModel.reorder(all, fromApp, slot);
+                const r = DockModel.reorder(all, fromApp, slot, Settings.dockPinned, Apps.lookup);
                 if (r.changed) {
                     holdLayout = true;
                     holdTimer.restart();
@@ -1341,6 +1346,19 @@ Scope {
                 }
             }
 
+            // After a tile went (its app quit, a recent left): when it was the focused one nothing is left to take Esc, so
+            // keyboard mode ends rather than keep the exclusive keyboard.
+            function checkKeyboardFocus(): void {
+                if (!root.keyboardMode || win.screenName !== root.keyboardScreen)
+                    return;
+                for (let i = 0; i < tileRepeater.count; i++) {
+                    const t = tileRepeater.itemAt(i) as Item;
+                    if (t && t.focus)
+                        return;
+                }
+                root.keyboardMode = false;
+            }
+
             // Test hook (IPC dock holdmenu): the pressed tile `index` counts as having opened the hold menu.
             function markHoldMenu(index: int): void {
                 const t = tileRepeater.itemAt(index);
@@ -1575,6 +1593,10 @@ Scope {
                 hideMachine = AutoHide.initial(autohide);
             }
             Component.onDestruction: {
+                // A separator resize that ends with this window (its output went): the live size is shared by every Dock
+                // window and would hide the stored size until the next resize.
+                if (win.resizing)
+                    root.liveSize = -1;
                 Compositor.unregisterDock(screenName, win);
                 if (win.reveal && win.isDockScreen)
                     Journal.hidden("dock", screenName);
@@ -1777,6 +1799,7 @@ Scope {
                         Repeater {
                             id: tileRepeater
                             model: tileModel
+                            onItemRemoved: Qt.callLater(() => win.checkKeyboardFocus())
 
                             delegate: Item {
                                 id: tile
@@ -1820,7 +1843,7 @@ Scope {
                                 property bool ownsPress: true
                                 // root.dragInterruptions when the button went down (a drag of this press is refused when it changed).
                                 property int dragMark: 0
-                                readonly property bool bouncing: isApp && !running && root.launching[modelData.key] !== undefined && !Appearance.reduceMotion && Settings.dockAnimateOpening
+                                readonly property bool bouncing: isApp && !running && typeof root.launching[modelData.key] === "number" && !Appearance.reduceMotion && Settings.dockAnimateOpening
                                 // An app asking for attention: its icon hops again and again until the app is activated. With Reduce Motion
                                 // it does not move: a static accent plate shows it instead.
                                 readonly property bool attentive: isApp && running && root.attentionKeys.indexOf(modelData.key) >= 0
