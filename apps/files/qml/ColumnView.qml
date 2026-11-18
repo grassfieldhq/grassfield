@@ -537,9 +537,15 @@ FocusScope {
                             col.model.select(entry.index, 0, true);
                             root.userSelected(col.index);
                             // After the columns' own focus call (sync), so that the menu keeps the keyboard.
+                            // The item is kept by its URL: rows listed above it meanwhile shift its row, and the menu
+                            // would select and act on another file.
                             const model = col.model;
-                            const row = entry.index;
-                            Qt.callLater(() => root.tab.contextMenu(model, row, p.x, p.y, false));
+                            const url = model.urlAt(entry.index);
+                            Qt.callLater(() => {
+                                const row = model.rowForUrl(url);
+                                if (row >= 0)
+                                    root.tab.contextMenu(model, row, p.x, p.y, false);
+                            });
                             return;
                         }
                         const mods = event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier);

@@ -149,10 +149,9 @@ void SearchRunner::stop()
         return;
     disconnect(search, nullptr, this, nullptr);
     search->cancel();
-    // The walk checks the flag at every entry, so it ends at once; one stuck in a slow system call is left to finish
-    // and delete itself.
-    if (search->wait(200))
-        delete search;
+    // Never waited for here (as FileSearchRunner::stop): this runs on the GUI thread, and a walk stuck in a slow system
+    // call held the navigation back. The walk checks the flag at every entry, emits nothing more (no connection is left)
+    // and deletes itself when its thread has finished (the connection of its constructor).
 }
 
 void SearchRunner::onFound(quint64 generation, const QStringList &paths)
