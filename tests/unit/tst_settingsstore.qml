@@ -313,6 +313,26 @@ TestCase {
         compare(written.dock.pinned, ["foot"]);
     }
 
+    // A value the file already holds is not written again (a slider reports every pointer position), and a change to
+    // another watched file does not read grassfield.json again.
+    function test_storeSkipsUnchangedWritesAndOtherFiles() {
+        const t = makeStore('{"version":1}');
+        verify(t.store.set("dock.size", 61));
+        compare(t.backend.writes, 1);
+        verify(t.store.set("dock.size", 61));
+        compare(t.backend.writes, 1);
+        verify(t.store.setMany({"dock.size": 61}));
+        compare(t.backend.writes, 1);
+        compare(t.store.writeError, "");
+        verify(t.store.set("dock.size", 62));
+        compare(t.backend.writes, 2);
+        const revision = t.store.revision;
+        t.backend.fileChanged("/run/user/1000/grassfield-displays.json");
+        compare(t.store.revision, revision);
+        t.backend.fileChanged("/fake/grassfield.json");
+        compare(t.store.revision, revision + 1);
+    }
+
     function test_storePicksUpExternalChange() {
         const t = makeStore('{"version":1}');
         compare(t.store.value("dock.autohide"), false);

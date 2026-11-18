@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDir>
+#include <QHash>
 #include <QFileSystemWatcher>
 #include <QProcessEnvironment>
 
@@ -203,6 +204,9 @@ public:
     // Date & Time: a zone's names in the UI language {longName, shortName, offset, offsetSeconds, territory}; {} for a zone Qt
     // does not know.
     Q_INVOKABLE QVariantMap zoneInfo(const QString &zone) const;
+    // The zone's offset east of UTC, in seconds, at an instant (milliseconds since the epoch): a date set by hand takes the
+    // offset of that date. 0 for a zone Qt does not know.
+    Q_INVOKABLE int zoneOffsetAt(const QString &zone, double ms) const;
     // Language & Region: the regions of the UI language, as [{name: "fr_CH", territory: "Suisse"}] sorted by the territory's
     // name (Qt's locale data: what region.formats can hold for this language).
     Q_INVOKABLE QVariantList regionLocales() const;
@@ -270,6 +274,8 @@ private:
     QString m_devRoot;
     QFileSystemWatcher m_watcher;
     QStringList m_watched;
+    // Per watched file, its state at the last announcement (backend.cpp watchStamp).
+    QHash<QString, QString> m_watchStamps;
     struct Bus; // the system bus connection and the D-Bus jobs (busjobs.h), in backend.cpp
     std::unique_ptr<Bus> m_bus;
     // The enrolment under way asks it between two waits for fprintd (stopEnroll, and ~Backend before the jobs go).

@@ -21,6 +21,11 @@ SettingsPage {
     title: qsTr("Bluetooth")
 
     property bool answered: false
+    // A reading is on its way (the timer does not ask again meanwhile: a slow service would stack readings until the
+    // Backend's queue refuses those of every other pane), and how many readings in a row brought no answer: the first keeps
+    // what was read (one timeout must not empty the pane), the second says the service is not there.
+    property bool asking: false
+    property int misses: 0
     property var controller: ({present: false, powered: false, discovering: false, alias: ""})
     property var devices: []
     property var nearby: []
@@ -44,6 +49,7 @@ SettingsPage {
     onOnChanged: root.discover(root.on)
 
     function refresh(): void {
+        root.asking = true;
         root.system.queryBus("bt.state", "bt.state");
     }
 
@@ -91,13 +97,27 @@ SettingsPage {
             switch (tag) {
             case "bt.state":
                 {
+                    root.asking = false;
+                    if (!ok && root.answered && root.misses < 1) {
+                        root.misses++;
+                        break;
+                    }
+                    root.misses = ok ? 0 : root.misses;
                     const state = ok ? System.parseBtState(output) : null;
                     root.controller = state ? {present: state.present, powered: state.powered, discovering: state.discovering, alias: state.alias}
                                             : {present: false, powered: false, discovering: false, alias: ""};
                     root.devices = state ? state.devices : [];
                     root.nearby = state ? state.nearby : [];
                     root.answered = true;
+                    // A search that did not start is asked for again, unless the adapter is searching already.
+                    if (root.on && !root.searching && !root.controller.discovering)
+                        root.discover(true);
                 }
+                break;
+            case "bt.discover":
+                // The search did not start: the pane is not searching, and the next reading asks again.
+                if (!ok)
+                    root.searching = false;
                 break;
             case "bt.act":
                 root.pending = "";
@@ -111,7 +131,10 @@ SettingsPage {
         interval: Tokens.settingsSystemRefreshMs
         running: true
         repeat: true
-        onTriggered: root.refresh()
+        onTriggered: {
+            if (!root.asking)
+                root.refresh();
+        }
     }
 
     Component.onCompleted: root.refresh()

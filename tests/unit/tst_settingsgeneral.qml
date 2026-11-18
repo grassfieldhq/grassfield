@@ -152,6 +152,16 @@ TestCase {
         compare(General.wallClock(ms, -14400).getHours(), 5);
         compare(General.fromWallClock(paris, 7200), ms);
         compare(General.fromWallClock(General.wallClock(ms, 0), 0), ms);
+        // A date across a daylight-saving change takes the offset of that date: in a zone at UTC+2 until 2026-10-25 01:00 UTC
+        // and UTC+1 after it (Paris), 15 January 2027 12:00 set in July is 11:00 UTC, not 10:00.
+        const change = Date.UTC(2026, 9, 25, 1, 0, 0);
+        const offsetAt = at => at < change ? 7200 : 3600;
+        const january = General.wallClock(Date.UTC(2027, 0, 15, 11, 0, 0), 3600);
+        compare(january.getHours(), 12);
+        compare(General.fromWallClockAt(january, 7200, offsetAt), Date.UTC(2027, 0, 15, 11, 0, 0));
+        compare(General.fromWallClockAt(paris, 7200, offsetAt), ms);
+        // Two hours after the change (past the hour the clocks read twice), found from the offset before it.
+        compare(General.fromWallClockAt(General.wallClock(change + 7200000, 3600), 7200, offsetAt), change + 7200000);
     }
 
     function test_uses24Hour() {

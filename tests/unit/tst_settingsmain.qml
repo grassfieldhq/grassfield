@@ -396,6 +396,14 @@ TestCase {
         saver.lockScreenRequested();
         verify(!saver.shown);
         compare(t.win.selectedId, "lock");
+        // A sheet over the window: the pane does not change under it (the global menu's View items, a request from another
+        // process), or the sheet's answer would find no page.
+        saver.open();
+        t.win.select("desktop");
+        compare(t.win.selectedId, "lock");
+        saver.close();
+        t.win.select("desktop");
+        compare(t.win.selectedId, "desktop");
     }
 
     // The window closed (src/main.cpp only hides it; the app may live on with About This Computer): a fingerprint enrolment is

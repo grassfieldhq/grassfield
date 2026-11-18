@@ -508,6 +508,10 @@ TestCase {
         const page = openPage("WifiPage.qml", t);
         t.backend.finished("wifi.state", true, wifiJson([ap("486F6D65", 50, 1, 0, 0x188)]));
         verify(page.available);
+        // One reading without an answer (a timeout) keeps what was read; the second says so.
+        t.backend.finished("wifi.state", false, "");
+        verify(page.available);
+        compare(page.networks.length, 1);
         t.backend.finished("wifi.state", false, "");
         verify(!page.available);
         verify(page.answered);
@@ -882,9 +886,20 @@ TestCase {
         t.backend.finished("bt.act", false, "");
         compare(page.pending, "");
         compare(t.service.errors["bt.act"], "Software caused connection abort");
-        // No adapter, or no BlueZ: the page says so.
+        // No adapter, or no BlueZ: the page says so, at the second reading without an answer (the first keeps what was read).
+        t.backend.finished("bt.state", false, "");
+        compare(page.controller.present, true);
         t.backend.finished("bt.state", false, "");
         verify(page.answered);
+        // A search that failed to start is not held as started: the next reading asks again.
+        t.backend.finished("bt.state", true, JSON.stringify({present: true, powered: true, devices: []}));
+        compare(page.searching, true);
+        t.backend.finished("bt.discover", false, "");
+        compare(page.searching, false);
+        t.backend.finished("bt.state", true, JSON.stringify({present: true, powered: true, devices: []}));
+        compare(page.searching, true);
+        t.backend.finished("bt.state", false, "");
+        t.backend.finished("bt.state", false, "");
         compare(page.controller.present, false);
         compare(page.devices.length, 0);
     }

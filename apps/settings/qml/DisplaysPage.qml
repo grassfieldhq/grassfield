@@ -157,8 +157,21 @@ SettingsPage {
     }
 
     function tryChange(change: var): void {
-        if (root.settable)
-            root.tryLines([Displays.lineFor(root.monitor, change)], change);
+        if (!root.settable)
+            return;
+        const fresh = [Displays.lineFor(root.monitor, change)];
+        // A new scale or rotation changes the display's size: the displays beside it move with its edge in the same trial, or
+        // one with a kept position would end up under it or apart from it (Displays.resized).
+        if (change.scale !== undefined || change.transform !== undefined) {
+            const at = Displays.resized(root.monitors, root.monitor.name, change);
+            for (const m of root.monitors) {
+                const p = at[m.name];
+                // A display that cannot be named has no line: it stays where the compositor puts it.
+                if (m.name !== root.monitor.name && p && (p.x !== Math.round(m.x) || p.y !== Math.round(m.y)) && Displays.descOf(m) !== "")
+                    fresh.push(Displays.lineFor(m, {x: p.x, y: p.y}));
+            }
+        }
+        root.tryLines(fresh, change);
     }
 
     // DisplayKeepSheet's answers. Keep is taken only while the shell says the trial is applied: a Keep pressed before the

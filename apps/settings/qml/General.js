@@ -254,6 +254,16 @@ function fromWallClock(wall, offsetSec) {
     return wall.getTime() - offsetSec * 1000 - wall.getTimezoneOffset() * 60000;
 }
 
+// The same when the zone's offset is not the same all year: `offsetAt(ms)` gives the zone's offset at an instant, so a date
+// set across a daylight-saving change uses the offset of that date and not today's (January set in July was an hour off).
+// Today's offset finds the instant near enough to ask for its own; asked twice for a time next to the change itself.
+function fromWallClockAt(wall, offsetSec, offsetAt) {
+    let ms = fromWallClock(wall, offsetSec);
+    for (let i = 0; i < 2; i++)
+        ms = fromWallClock(wall, offsetAt(ms));
+    return ms;
+}
+
 // Whether the clock reads 24-hour: menubar.clockHours "24", or "auto" in a region whose short time has no AM/PM.
 function uses24Hour(setting, shortTimeFormat) {
     if (setting === "24" || setting === "12")
