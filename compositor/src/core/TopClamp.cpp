@@ -19,6 +19,10 @@ namespace gf::topclamp {
             return std::min(right, box.x + box.w) - std::max(left, box.x);
         }
 
+        // The least width of a titlebar that is still easy to grab (px): below it, an output does not hold the top edge when a
+        // lower output shares more of it (outputFor).
+        constexpr double kReachWidth = 64;
+
         // The highest surface top whose frame still starts below the menu bar (whole pixels, rounded up: never under it).
         double lowestAllowedTop(double band, const Output& output) {
             return std::ceil(output.menuBarBottom + band);
@@ -41,8 +45,6 @@ namespace gf::topclamp {
                 onWidth = w;
             }
         }
-        if (on)
-            return on;
         // Out of reach (above the outputs, in a gap): the nearest output below it; of outputs whose tops are level, the one
         // sharing most of its width (review of 9ba1d40: a tie went to the lowest index).
         std::optional<size_t> below;
@@ -59,6 +61,11 @@ namespace gf::topclamp {
                 belowWidth = w;
             }
         }
+        // On an output by a sliver only, the rest above a lower output that shares more of the edge (outputs side by side,
+        // one set lower): the titlebar would stay in the dead space above that output, grabbable by the sliver alone. The
+        // lower output holds it then.
+        if (on && !(below && onWidth < kReachWidth && belowWidth > onWidth))
+            return on;
         if (below)
             return below;
         for (size_t i = 0; i < outputs.size(); ++i) {

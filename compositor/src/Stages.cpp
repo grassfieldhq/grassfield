@@ -181,11 +181,13 @@ namespace {
         return nullptr;
     }
 
+    // Enabled monitors only, here and in shownOn(): Hyprland keeps a disconnected monitor (m_enabled false) in its list for a
+    // while, and its strip must go with it (onMonitorsChanged).
     PHLMONITOR monitorByName(std::string_view name) {
         if (!State::monitorState())
             return nullptr;
         for (const auto& m : State::monitorState()->monitors()) {
-            if (m && m->m_name == name)
+            if (m && m->m_enabled && m->m_name == name)
                 return m;
         }
         return nullptr;
@@ -200,7 +202,7 @@ namespace {
         if (!State::monitorState())
             return nullptr;
         for (const auto& m : State::monitorState()->monitors()) {
-            if (m && m->m_activeWorkspace && m->m_activeWorkspace->m_id == id)
+            if (m && m->m_enabled && m->m_activeWorkspace && m->m_activeWorkspace->m_id == id)
                 return m;
         }
         return nullptr;
@@ -1000,6 +1002,10 @@ namespace {
             s.drop.reset();
             return;
         }
+        // A workspace whose last managed window left (a closed Split View Desktop, a transient named workspace) is forgotten:
+        // retarget() walks every space. Here, from the event loop, nothing holds a pointer into the list; adopt() makes it
+        // again when a window comes.
+        std::erase_if(s.spaces, [](const SSpace& sp) { return sp.model.stages().empty(); });
         PHLWINDOW focus = requested;
         bool      clear = false;
         if (!focus && refocus) {

@@ -66,14 +66,15 @@ namespace gf::topClamp {
             return !fs || fs->getFullscreenModes(w).internal == Fullscreen::FSMODE_NONE;
         }
 
-        // Every output with the bottom of its menu bar strip (its top reserved area).
+        // Every enabled output with the bottom of its menu bar strip (its top reserved area). Hyprland keeps a disconnected
+        // monitor (m_enabled false) in its list for a while: no menu bar there to hold a window under.
         std::vector<topclamp::Output> outputs() {
             std::vector<topclamp::Output> out;
             const auto&                   state = State::monitorState();
             if (!state)
                 return out;
             for (const auto& m : state->monitors()) {
-                if (!m)
+                if (!m || !m->m_enabled)
                     continue;
                 const CBox box = m->logicalBox();
                 out.push_back(topclamp::Output{toRect(box), box.y + m->m_reservedArea.top()});

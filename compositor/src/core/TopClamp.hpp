@@ -28,7 +28,8 @@ namespace gf::topclamp {
     };
 
     // The output whose menu bar holds a window's titlebar, `frame` being the surface with its titlebar band:
-    //  - the output the frame's top edge lies on (the one sharing most of its width when the edge crosses several);
+    //  - the output the frame's top edge lies on (the one sharing most of its width when the edge crosses several), unless
+    //    it holds only a sliver of the edge (under 64 px) and the nearest output below shares more of it: that one then;
     //  - else (the top edge above the outputs or in a gap between them: out of reach there) the nearest output below the
     //    top edge that shares some of its width;
     //  - else the output under the pointer; none when the pointer is on none either.
