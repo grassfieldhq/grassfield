@@ -237,6 +237,16 @@ Singleton {
         root.window = address;
         // A window this shell has not heard about (it started after the window registered): ask the plugin once.
         if (address !== "" && root.registrations[address] === undefined && root.appmenuFeature && !root.queried[address]) {
+            // The windows that closed are forgotten first: the list stays as short as the windows there are, and an address
+            // Hyprland gives again to a new window is asked again.
+            const all = Hyprland.toplevels ? Hyprland.toplevels.values : [];
+            const live = {};
+            for (let i = 0; i < all.length; i++)
+                live[Minimized.normalizeAddress(all[i].address)] = true;
+            for (const known of Object.keys(root.queried)) {
+                if (live[known] !== true)
+                    delete root.queried[known];
+            }
             root.queried[address] = true;
             const call = Minimized.appmenuCall(address);
             if (call !== "")
@@ -399,6 +409,7 @@ Singleton {
         }
         onConnectedChanged: {
             if (connected) {
+                reconnect.interval = 2000;
                 root.helloSent = false;
                 root.sendHello();
                 return;
@@ -420,13 +431,18 @@ Singleton {
     }
 
     // Connects once the capabilities handshake settled (the hello must carry the real appmenu state) and retries
-    // while the bridge is not there (it starts independently, may restart).
+    // while the bridge is not there (it starts independently, may restart). A bridge that stays away (not installed, masked,
+    // past its start limit) is tried less and less often, every minute at the slowest; a connection brings 2 s back.
     Timer {
+        id: reconnect
         interval: 2000
         repeat: true
         triggeredOnStart: true
         running: root.socketPath !== "" && Capabilities.settled && !socket.connected
-        onTriggered: socket.connected = true
+        onTriggered: {
+            socket.connected = true;
+            reconnect.interval = Math.min(reconnect.interval * 2, 60000);
+        }
     }
 
     Timer {

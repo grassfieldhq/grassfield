@@ -72,6 +72,11 @@ Scope {
     // a bound.)
     property var parsedFile: ({})
     property int parsedFileRevision: 0
+    // The text parsedFile was parsed from, while nothing changed the document since (null otherwise: a local change, a part
+    // dropped, a missing file). A load that reads the very same text then leaves the document and its revision alone: the
+    // same parse would give the same document, and every view would be computed again for nothing (a write is read back
+    // twice, by its own read and by the watch).
+    property var parsedText: null
 
     // The stored (raw) value of a dotted key in parsedFile, undefined when the file has none.
     function rawValue(path: string): var {
@@ -110,6 +115,7 @@ Scope {
             node = node[parts[i]];
         }
         node[parts[parts.length - 1]] = value;
+        root.parsedText = null;
         root.parsedFileRevision++;
     }
 
@@ -118,6 +124,8 @@ Scope {
     // but NOT for lock.*: the idle lock fails closed there, it reads what a fresh start reads (the default 5), never the last
     // good value, which may be 0 = never.
     function takeDocument(text: string): void {
+        if (root.parsedText !== null && text === root.parsedText)
+            return;
         let parsed = null;
         try {
             parsed = text.trim() === "" ? {} : JSON.parse(text);
@@ -127,11 +135,13 @@ Scope {
         if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
             if ("lock" in root.parsedFile) {
                 delete root.parsedFile.lock;
+                root.parsedText = null;
                 root.parsedFileRevision++;
             }
             return;
         }
         root.parsedFile = parsed;
+        root.parsedText = text;
         root.parsedFileRevision++;
     }
 
@@ -140,6 +150,7 @@ Scope {
     // on top.
     function takeMissingFile(): void {
         root.parsedFile = ({});
+        root.parsedText = null;
         root.unsafeFile = false;
         root.writeBlocked = false;
         root.validRead = false;
@@ -172,6 +183,7 @@ Scope {
         retryTimer.stop();
         if ("lock" in root.parsedFile) {
             delete root.parsedFile.lock;
+            root.parsedText = null;
             root.parsedFileRevision++;
         }
         root.reapplyDirty();
@@ -544,6 +556,12 @@ Scope {
 
     // A reload from disk replaces the document; put pending local changes back on top.
     function reapplyDirty(): void {
+        // The changes being written too: a read that began before their write landed does not hold them yet. A newer value
+        // of the same key (dirty) wins.
+        for (const path in inFlight) {
+            if (!(path in dirty))
+                setParsed(path, inFlight[path]);
+        }
         for (const path in dirty)
             setParsed(path, dirty[path]);
     }

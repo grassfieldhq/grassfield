@@ -1623,7 +1623,7 @@ Singleton {
         const name = top.workspace ? top.workspace.name : "";
         return {
             workspaceId: top.workspace ? top.workspace.id : 0,
-            parked: name === hiddenWorkspace || name === minimizedWorkspace || minimizedAddresses().indexOf(address) >= 0 || !!(data && (data.mapped === false || data.hidden === true))
+            parked: name === hiddenWorkspace || name === minimizedWorkspace || minimizedAddresses().some(a => Minimized.normalizeAddress(a) === hex) || !!(data && (data.mapped === false || data.hidden === true))
         };
     }
 
@@ -1637,7 +1637,9 @@ Singleton {
     // False when the window does not exist (or has no protocol handle yet): nothing changes.
     function focusWindow(address: string): bool {
         const all = Hyprland.toplevels ? Hyprland.toplevels.values : [];
-        const top = all.find(t => t.address === address);
+        // Either form of the address (with or without 0x, any case), as everywhere else here.
+        const hex = Minimized.normalizeAddress(address);
+        const top = hex !== "" ? all.find(t => Minimized.normalizeAddress(t.address) === hex) : undefined;
         if (!top || !top.wayland)
             return false;
         if (top.workspace && top.workspace.id > 0 && !top.workspace.active)
@@ -1662,13 +1664,13 @@ Singleton {
     // never count.
     function frontWindowOn(id: int): string {
         const all = Hyprland.toplevels ? Hyprland.toplevels.values : [];
-        const parked = minimizedAddresses();
+        const parked = minimizedAddresses().map(a => Minimized.normalizeAddress(a));
         let best = "";
         let bestStamp = -1;
         for (let i = 0; i < all.length; i++) {
             const top = all[i];
             const data = top.lastIpcObject;
-            if (!top.workspace || top.workspace.id !== id || !top.wayland || parked.indexOf(top.address) >= 0 || (data && (data.mapped === false || data.hidden === true)))
+            if (!top.workspace || top.workspace.id !== id || !top.wayland || parked.indexOf(Minimized.normalizeAddress(top.address)) >= 0 || (data && (data.mapped === false || data.hidden === true)))
                 continue;
             const stamp = recency.has(top.wayland) ? recency.get(top.wayland) : 0;
             if (stamp > bestStamp) {
@@ -1709,8 +1711,18 @@ Singleton {
     property var recency: new Map()
 
     onFocusedToplevelChanged: {
-        if (focusedToplevel)
+        if (focusedToplevel) {
             recency.set(focusedToplevel, Date.now());
+            // The windows that closed are forgotten once they outnumber the ones there are (their handles would be kept
+            // for the whole session).
+            const live = root.toplevels ? root.toplevels.values : [];
+            if (recency.size > 2 * live.length + 8) {
+                for (const handle of Array.from(recency.keys())) {
+                    if (live.indexOf(handle) < 0)
+                        recency.delete(handle);
+                }
+            }
+        }
         noteRegularFocus();
     }
 

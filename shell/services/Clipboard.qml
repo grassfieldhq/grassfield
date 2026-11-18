@@ -292,10 +292,15 @@ Singleton {
     readonly property bool sessionLocked: SessionState.locked
     onSessionLockedChanged: root.send([root.sessionLocked ? "P" : "R"])
 
+    // The helper is asked to run.
+    readonly property bool helperAsked: (root.wanted || root.stopping) && !root.waiting && !root.historyClear.running && !root.clearsApply.running
+        && !root.historyAgain && !root.clearsAgain
+
     readonly property Process helper: Process {
+        // Set by started: a run that ends without it never started (see onRunningChanged).
+        property bool didStart: false
         // Never while a store is being cleared without it (it would load what is being deleted).
-        running: (root.wanted || root.stopping) && !root.waiting && !root.historyClear.running && !root.clearsApply.running
-            && !root.historyAgain && !root.clearsAgain
+        running: root.helperAsked
         command: [root.tool, "--display", root.display, "--state", root.storeDir, "--runtime", root.runtimeDir,
             "--retention", String(root.retention), "--history-store", root.keepOnDisk ? "1" : "0",
             "--cleared-at", Logic.clearTimeArg(root.clearedAt), "--pinned-cleared-at", Logic.clearTimeArg(root.pinnedClearedAt)]
@@ -303,7 +308,32 @@ Singleton {
         stdout: SplitParser {
             onRead: line => root.handle(line)
         }
-        onStarted: root.send([SessionState.locked ? "P" : "R"])
+        onStarted: {
+            didStart = true;
+            root.send([SessionState.locked ? "P" : "R"]);
+        }
+        // The helper could not start (Quickshell sends no `exited` then, only running going back to false without a
+        // `started`): an error, and a new try after the same pause as a helper that ended. Not when it was stopped on
+        // purpose before it had started (helperAsked false), nor when an exit already set the pause.
+        onRunningChanged: {
+            if (running)
+                return;
+            if (didStart) {
+                didStart = false;
+                return;
+            }
+            if (!root.helperAsked)
+                return;
+            root.stopping = false;
+            if (!root.wanted || !root.enabled)
+                return;
+            root.state = "error";
+            console.warn("grassfield: the clipboard helper could not start; tried again in " + root.retryMs + " ms");
+            root.waiting = true;
+            root.retry.interval = root.retryMs;
+            root.retry.restart();
+            root.retryMs = Math.min(root.retryMs * 2, 300000);
+        }
         // Quickshell's qmltypes name QProcess::ExitStatus without exporting it (metadata quirk).
         // qmllint disable signal-handler-parameters
         onExited: code => {

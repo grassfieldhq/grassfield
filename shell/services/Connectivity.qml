@@ -162,7 +162,13 @@ Singleton {
     // Written 0600 in a 0700 directory (the repo convention for state files).
     function saveAirplane(state: var): void {
         airplaneState = state;
-        airplaneWriter.command = ["sh", Quickshell.shellPath("services/write-private.sh"), stateDir, airplaneFile, Airplane.serialize(state)];
+        const argv = ["sh", Quickshell.shellPath("services/write-private.sh"), stateDir, airplaneFile, Airplane.serialize(state)];
+        // A write still running is left to end (starting it again would do nothing): this one follows it, the last state winning.
+        if (airplaneWriter.running) {
+            airplaneWriter.next = argv;
+            return;
+        }
+        airplaneWriter.command = argv;
         airplaneWriter.running = true;
     }
 
@@ -198,6 +204,15 @@ Singleton {
 
     Process {
         id: airplaneWriter
+        // The write asked while one was running (null: none), started when that one is gone.
+        property var next: null
+        onRunningChanged: {
+            if (!running && next !== null) {
+                command = next;
+                next = null;
+                running = true;
+            }
+        }
     }
     // Why the soft block is not used, "" while it is (or while the probe has not finished).
     readonly property string airplaneNote: Rfkill.probed && !Rfkill.usable ? qsTr("Airplane Mode: %1; using the Wi-Fi and Bluetooth switches").arg(Rfkill.reasonText) : ""

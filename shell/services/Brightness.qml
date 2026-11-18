@@ -41,9 +41,16 @@ Singleton {
         }
         if (!available)
             return false;
-        const pct = Math.round(Math.abs(delta) * 100);
-        setter.command = ["brightnessctl", "-q", "-d", root.device, "set", pct + "%" + (delta > 0 ? "+" : "-")];
-        setter.running = true;
+        const pct = Math.round(Math.abs(delta) * 100) * (delta > 0 ? 1 : -1);
+        // Starting a process that still runs does nothing: the step waits for the running one to end (setter.next).
+        if (setter.running) {
+            if (setter.pendingSet >= 0)
+                setter.pendingSet = Math.max(0, Math.min(100, setter.pendingSet + pct));
+            else
+                setter.pendingStep += pct;
+            return true;
+        }
+        setter.step(pct);
         return true;
     }
 
@@ -55,8 +62,14 @@ Singleton {
         }
         if (!available)
             return false;
-        setter.command = ["brightnessctl", "-q", "-d", root.device, "set", Math.round(Math.max(0, Math.min(1, fraction)) * 100) + "%"];
-        setter.running = true;
+        const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+        // The same wait as adjust(); the last level asked wins over what waited.
+        if (setter.running) {
+            setter.pendingSet = pct;
+            setter.pendingStep = 0;
+            return true;
+        }
+        setter.set(pct);
         return true;
     }
 
@@ -74,8 +87,13 @@ Singleton {
         }
         if (!kbdAvailable)
             return false;
-        kbdSetter.command = ["brightnessctl", "-q", "-d", root.kbdDevice, "set", Math.round(Math.max(0, Math.min(1, fraction)) * root.kbdMax).toString()];
-        kbdSetter.running = true;
+        const raw = Math.round(Math.max(0, Math.min(1, fraction)) * root.kbdMax);
+        // Starting a process that still runs does nothing: the level waits for the running one to end, the last one winning.
+        if (kbdSetter.running) {
+            kbdSetter.pending = raw;
+            return true;
+        }
+        kbdSetter.set(raw);
         return true;
     }
 
@@ -188,8 +206,12 @@ Singleton {
         if (!root.ddcAllowed)
             return;
         root.ddc = Logic.forget(root.ddc, root.outputNames);
-        ddcCheck.running = false;
-        ddcCheck.running = true;
+        // A check still running is left to end (stopping it would start nothing and its empty answer would read as "no
+        // command", forgetting every display): it runs once more after, and only that last answer is used.
+        if (ddcCheck.running)
+            ddcCheck.again = true;
+        else
+            ddcCheck.running = true;
     }
 
     function ddcProbe(): void {
@@ -231,11 +253,22 @@ Singleton {
     // A fixed command line, no data in it: the command's path, printed only when coreutils' timeout (its bound) is there too.
     Process {
         id: ddcCheck
+        // Set when the outputs changed while the check was running: run it once more.
+        property bool again: false
         command: ["sh", "-c", "command -v " + Logic.BOUND[0] + " >/dev/null && command -v " + Logic.COMMAND]
         stdout: StdioCollector {
             onStreamFinished: {
+                // Another run follows: its answer is the one that counts.
+                if (ddcCheck.again)
+                    return;
                 root.ddcCommand = text.trim() !== "";
                 root.ddcProbe();
+            }
+        }
+        onRunningChanged: {
+            if (!running && again) {
+                again = false;
+                running = true;
             }
         }
     }
@@ -350,9 +383,23 @@ Singleton {
 
     Process {
         id: kbdSetter
+        // Raw level asked while a run was going (-1: none); started when that one is gone.
+        property int pending: -1
+
+        function set(raw: int): void {
+            kbdSetter.command = ["brightnessctl", "-q", "-d", root.kbdDevice, "set", raw.toString()];
+            kbdSetter.running = true;
+        }
+
         onRunningChanged: {
-            if (!running)
-                root.refresh();
+            if (running)
+                return;
+            root.refresh();
+            if (pending >= 0) {
+                const raw = pending;
+                pending = -1;
+                kbdSetter.set(raw);
+            }
         }
     }
 
@@ -382,10 +429,39 @@ Singleton {
 
     Process {
         id: setter
+        // What was asked while a run was going, started when that one is gone: an absolute percent (-1: none, the last one
+        // wins) or else the sum of the steps, in percent.
+        property int pendingSet: -1
+        property int pendingStep: 0
+
+        function set(pct: int): void {
+            setter.command = ["brightnessctl", "-q", "-d", root.device, "set", pct + "%"];
+            setter.running = true;
+        }
+
+        function step(pct: int): void {
+            setter.command = ["brightnessctl", "-q", "-d", root.device, "set", Math.abs(pct) + "%" + (pct > 0 ? "+" : "-")];
+            setter.running = true;
+        }
+
+        function next(): void {
+            if (setter.pendingSet >= 0) {
+                const pct = setter.pendingSet;
+                setter.pendingSet = -1;
+                setter.pendingStep = 0;
+                setter.set(pct);
+            } else if (setter.pendingStep !== 0) {
+                const pct = setter.pendingStep;
+                setter.pendingStep = 0;
+                setter.step(pct);
+            }
+        }
+
         onRunningChanged: {
             if (!running) {
                 root.refresh();
                 root.commandFinished();
+                setter.next();
             }
         }
     }

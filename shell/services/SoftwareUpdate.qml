@@ -143,6 +143,8 @@ Singleton {
         proc.gotExit = false;
         proc.didStart = false;
         proc.stopped = false;
+        // The join of the run before (150 ms after its exit) must not stand in for this run's output.
+        (waiter ? waitJoin : checkJoin).stop();
         proc.command = command(waiter);
         proc.environment = checkerEnv;
         proc.running = true;

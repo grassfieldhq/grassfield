@@ -35,13 +35,24 @@ Singleton {
                 console.info("dev guard: power profile for the power source suppressed");
             return;
         }
-        sourceProfile.running = false;
-        sourceProfile.running = true;
+        // A run still going is left to end (stopping it would start nothing): it runs once more after, for the last source.
+        if (sourceProfile.running)
+            sourceProfile.again = true;
+        else
+            sourceProfile.running = true;
     }
 
     Process {
         id: sourceProfile
+        // Set when the power source changed while the command was running: run it once more.
+        property bool again: false
         command: ["sh", "-c", "command -v omarchy-powerprofiles-set >/dev/null && exec omarchy-powerprofiles-set autodetect"]
+        onRunningChanged: {
+            if (!running && again) {
+                again = false;
+                running = true;
+            }
+        }
     }
 
     function setLowPower(on: bool): void {
