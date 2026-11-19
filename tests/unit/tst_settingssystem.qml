@@ -640,6 +640,20 @@ TestCase {
         sheet.cancel();
         compare(sheet.fieldText, "");
         compare(joined.length, 1);
+        // "Show password" (the sheet's body, built at its first opening) shows it; the next opening hides it again, the
+        // check box with it.
+        sheet.openFor({ssid: "Home", label: "Home"});
+        const box = sheet.bodyItem.children[0];
+        compare(box.text, "Show password");
+        box.toggle();
+        box.toggled();
+        verify(!sheet.fieldPassword, "shown on request");
+        sheet.cancel();
+        sheet.openFor({ssid: "Home", label: "Home"});
+        verify(sheet.fieldPassword, "hidden again");
+        verify(!box.checked);
+        compare(sheet.bodyItem.children[0], box, "the same body");
+        sheet.cancel();
     }
 
     function test_wifiOffShowsTheHeaderOnly() {

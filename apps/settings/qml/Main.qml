@@ -1171,7 +1171,7 @@ Window {
             store: cfg
             onHistoryDeleteRequested: deleteSearchHistory.open()
             onClipboardClearRequested: {
-                alsoPinned.checked = false;
+                clearClipboardHistory.alsoPinned = false;
                 clearClipboardHistory.open();
             }
         }
@@ -1526,11 +1526,22 @@ Window {
         message: qsTr("The items you copied are deleted from Search. Pinned items stay unless you delete them too.")
         confirmText: qsTr("Clear")
         destructive: true
-        onAccepted: (root.pageItem as SearchPage)?.clearClipboard(alsoPinned.checked)
+        // "Also delete pinned items" (the check box of the body, built at the first opening).
+        property bool alsoPinned: false
+        onAccepted: (root.pageItem as SearchPage)?.clearClipboard(clearClipboardHistory.alsoPinned)
 
-        CheckBox {
-            id: alsoPinned
-            text: qsTr("Also delete pinned items")
+        bodyComponent: Component {
+            CheckBox {
+                id: alsoPinned
+                text: qsTr("Also delete pinned items")
+                onToggled: clearClipboardHistory.alsoPinned = alsoPinned.checked
+
+                Binding {
+                    target: alsoPinned
+                    property: "checked"
+                    value: clearClipboardHistory.alsoPinned
+                }
+            }
         }
     }
 

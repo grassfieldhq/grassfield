@@ -313,17 +313,9 @@ FilesApp::FilesApp(const QList<QUrl> &initialUrls, QObject *parent)
         m_watcher.addPath(configDir);
     if (QFileInfo::exists(file))
         m_watcher.addPath(file);
-    // The shell's capabilities file (chromecaps.h, ADR-0015 Q4b) is watched the same way: it may not exist yet, so its directory too.
-    const auto watchCapabilities = [this] {
-        const QString caps = grassfield::apps::capabilitiesFile();
-        if (caps.isEmpty())
-            return;
-        const QString capsDir = QFileInfo(caps).absolutePath();
-        if (QFileInfo(capsDir).isDir() && !m_watcher.directories().contains(capsDir))
-            m_watcher.addPath(capsDir);
-        if (QFileInfo::exists(caps) && !m_watcher.files().contains(caps))
-            m_watcher.addPath(caps);
-    };
+    // The shell's capabilities file (chromecaps.h, ADR-0015 Q4b): its own folder (Grassfield's runtime folder, not all of
+    // $XDG_RUNTIME_DIR) and the file; the parent only until the folder exists.
+    const auto watchCapabilities = [this] { grassfield::apps::watchCapabilities(m_watcher); };
     watchCapabilities();
     const auto reread = [this, watchCapabilities] {
         const QString f = configFile();

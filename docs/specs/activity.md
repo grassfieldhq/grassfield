@@ -88,6 +88,16 @@ items (Settings does it); a background collector; any network access.
   graph | Data received, Data sent and their rates. A figure that the graph draws has a square of its colour
   (`activity.swatchSize`) before its label (ADR-0038 AD38). Every graph keeps `activity.historySamples` samples, each tab's
   at every sample whichever tab is shown (AD37); a rate the sampler could not give is a gap, never a zero.
+  Drawing (audit apps-misc, round 2): every graph is a `GraphItem` (`src/graphitem.h`, registered as
+  `Grassfield.Activity`; `qml/Graph.qml` makes it and resolves the colour names): filled bands without a line, their edge
+  antialiased by a coverage strip half a device pixel wide, as the Qt Quick Shapes graph it replaces looked. Its triangles
+  live in a ring of one block per sample (`src/graphgeometry.h`), in coordinates that slide with one transform: a new sample
+  writes its own block, the one before it and the two at the left edge, and clears the one that left; a new scale, size or
+  style, or an edited value, rebuilds the graph. One exception to "as before": two Memory Pressure bars of one level no
+  longer show the white seam the Shapes' odd-even fill left where they overlap. The software scene graph paints the same
+  shapes with QPainter. Checked by `tests/unit/activity/qml/tst_graph.cpp`: the vertex data, the ring against a full
+  rebuild at every one of 400 samples per style, and the pixels against the former graph (offscreen, and on a GPU scene graph
+  under Xvfb with Mesa: mean difference 0.3 to 1.8 of 255, under 0.4 % of pixels off by more than a third).
 - **AM6** Menus: the app menu (About, Hide, Quit), File (Close Window), Edit (Copy, Select All, Find), View, Window, Help,
   exported to the menu bar (T1, `apps/globalmenu.h`). There is no settings window: the View menu holds the options (macOS).
 - **AM7** Light and dark appearance and the accent follow the session; table rows alternate with the token fill

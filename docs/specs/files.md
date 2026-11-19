@@ -913,7 +913,14 @@ Finder-Home and Finder-Search (toolbar), the macOS
   graph, 5,000 items, `tests/unit/tst_filesgrouped.qml` checks the behaviour): 2,500 groups made in 7.5 s and 4.7 ms per
   changed row before, 1.1 s and 0.3 ms now; 27 groups of 185 made 1,908 cells (4.6 s) when the view was made before it
   had its size, 168 cells (0.4 s) now; the flat grid of the same folder 0.5 s. Not measured nested or on the reference
-  hardware (L2). An
+  hardware (L2). Every view reuses its cells (`reuseItems`: the icon grid and its sections' lines and grids, the list,
+  the columns, the gallery's pages and strip): a cell scrolled out goes to the view's pool and comes back for a row
+  scrolled in, so a fast scroll through a large folder makes no new cell once the pool holds a page. A cell put in the
+  pool drops its row's thumbnail request, ends a rename it showed (canceled, as any field taken out of the view), a band
+  started on it and a click's pending collapse; taken again, it asks its new row's thumbnail once (a cell asks nothing
+  before it is complete: each cell used to ask row 0's thumbnail too while its roles were set). `tests/unit/
+  tst_filesreuse.qml` scrolls 3,000 items a page at a time and checks the reuse, the names, thumbnails and requests,
+  and the rename. An
   icon cell takes drops on its icon and name, like clicks; elsewhere a drop goes to the shown folder. Groups are cached
   per item and dropped item by item when an item changes, goes or is renamed (KDirModel reports each type it finds); at
   midnight (or the first grouping after it) the date groups are made again.

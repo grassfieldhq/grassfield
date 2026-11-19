@@ -381,6 +381,8 @@ FocusScope {
             keyNavigationEnabled: false
             acceptedButtons: Qt.NoButton
             boundsBehavior: Flickable.StopAtBounds
+            // Rows scrolled out are kept in a pool and given the rows scrolled in (the entry's pooled protocol below).
+            reuseItems: true
             onActiveFocusChanged: if (activeFocus) root.activeColumn = col.index
             Accessible.role: Accessible.List
             Accessible.name: col.model ? col.model.title : ""
@@ -423,6 +425,15 @@ FocusScope {
 
                 readonly property bool renaming: root.tab.isRenaming(col.model, entry.url)
                 readonly property bool emphasized: entry.selected && col.active && lv.activeFocus
+
+                // Reused (reuseItems): in the pool a row is hidden but kept; a rename it showed is canceled (a field taken out
+                // of the view cancels, RenameField) and a click's pending collapse is dropped. Taken again, its required
+                // properties are the new row's.
+                ListView.onPooled: {
+                    if (entry.renaming)
+                        root.tab.cancelRename();
+                    entryMouse.collapseOnRelease = false;
+                }
 
                 width: lv.width
                 height: Tokens.filesColumnRowHeight

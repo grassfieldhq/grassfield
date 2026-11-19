@@ -154,10 +154,13 @@ ActivityApp::ActivityApp(Options options, QString statePath, QObject *parent)
         m_watcher.addPath(dir);
     if (QFileInfo::exists(file))
         m_watcher.addPath(file);
+    // The shell's capabilities file (chromecaps.h: the minimize light) in Grassfield's runtime folder.
+    grassfield::apps::watchCapabilities(m_watcher);
     const auto reread = [this] {
         const QString f = configFile();
         if (QFileInfo::exists(f) && !m_watcher.files().contains(f))
             m_watcher.addPath(f);
+        grassfield::apps::watchCapabilities(m_watcher);
         readAppearance();
     };
     connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, reread);

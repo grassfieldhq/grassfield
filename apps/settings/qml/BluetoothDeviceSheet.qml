@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Grassfield.Ui
 
@@ -20,40 +21,47 @@ Sheet {
         root.open();
     }
 
-    SettingsGroup {
-        SettingsRow {
-            title: qsTr("Address")
-            valueText: root.device ? root.device.mac : ""
-        }
-        SettingsRow {
-            visible: root.device !== null && root.device.battery >= 0
-            title: qsTr("Battery")
-            valueText: root.device ? qsTr("%1 %").arg(root.device.battery) : ""
-        }
-        SettingsRow {
-            title: qsTr("Status")
-            valueText: root.device && root.device.connected ? qsTr("Connected") : qsTr("Not Connected")
-        }
-    }
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-    Row {
-        spacing: Tokens.spacingSm
-
-        Button {
-            push: true
-            text: root.device && root.device.connected ? qsTr("Disconnect") : qsTr("Connect")
-            onClicked: {
-                root.close();
-                root.connectRequested(root.device);
+            SettingsGroup {
+                SettingsRow {
+                    title: qsTr("Address")
+                    valueText: root.device ? root.device.mac : ""
+                }
+                SettingsRow {
+                    visible: root.device !== null && root.device.battery >= 0
+                    title: qsTr("Battery")
+                    valueText: root.device ? qsTr("%1 %").arg(root.device.battery) : ""
+                }
+                SettingsRow {
+                    title: qsTr("Status")
+                    valueText: root.device && root.device.connected ? qsTr("Connected") : qsTr("Not Connected")
+                }
             }
-        }
 
-        Button {
-            push: true
-            text: qsTr("Forget This Device…")
-            onClicked: {
-                root.close();
-                root.forgetRequested(root.device);
+            Row {
+                spacing: Tokens.spacingSm
+
+                Button {
+                    push: true
+                    text: root.device && root.device.connected ? qsTr("Disconnect") : qsTr("Connect")
+                    onClicked: {
+                        root.close();
+                        root.connectRequested(root.device);
+                    }
+                }
+
+                Button {
+                    push: true
+                    text: qsTr("Forget This Device…")
+                    onClicked: {
+                        root.close();
+                        root.forgetRequested(root.device);
+                    }
+                }
             }
         }
     }

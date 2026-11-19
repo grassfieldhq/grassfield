@@ -18,28 +18,35 @@ Sheet {
     confirmText: qsTr("Done")
     showCancel: false
 
-    SettingsGroup {
-        footnote: qsTr("Applies on battery and on power adapter. The display turns off and the session locks as set in Lock Screen.")
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        SettingsRow {
-            title: qsTr("Prevent automatic sleeping when the display is off")
-            Toggle {
-                accessibleName: qsTr("Prevent automatic sleeping when the display is off")
-                checked: root.store.value("energy.preventSleep")
-                onToggled: c => root.store.set("energy.preventSleep", c)
+            SettingsGroup {
+                footnote: qsTr("Applies on battery and on power adapter. The display turns off and the session locks as set in Lock Screen.")
+
+                SettingsRow {
+                    title: qsTr("Prevent automatic sleeping when the display is off")
+                    Toggle {
+                        accessibleName: qsTr("Prevent automatic sleeping when the display is off")
+                        checked: root.store.value("energy.preventSleep")
+                        onToggled: c => root.store.set("energy.preventSleep", c)
+                    }
+                }
             }
-        }
-    }
 
-    SettingsGroup {
-        SettingsRow {
-            title: qsTr("Slow down apps you can't see while on battery")
-            subtitle: qsTr("Apps whose windows are covered, minimized or on another desktop get less processor and disk time. The app you are using, and apps that play sound, record, set an alarm or are still working, keep their full speed. Nothing is slowed down on the power adapter.")
+            SettingsGroup {
+                SettingsRow {
+                    title: qsTr("Slow down apps you can't see while on battery")
+                    subtitle: qsTr("Apps whose windows are covered, minimized or on another desktop get less processor and disk time. The app you are using, and apps that play sound, record, set an alarm or are still working, keep their full speed. Nothing is slowed down on the power adapter.")
 
-            Toggle {
-                accessibleName: qsTr("Slow down apps you can't see while on battery")
-                checked: root.store.value("energy.slowHiddenApps") === true
-                onToggled: c => root.store.set("energy.slowHiddenApps", c)
+                    Toggle {
+                        accessibleName: qsTr("Slow down apps you can't see while on battery")
+                        checked: root.store.value("energy.slowHiddenApps") === true
+                        onToggled: c => root.store.set("energy.slowHiddenApps", c)
+                    }
+                }
             }
         }
     }

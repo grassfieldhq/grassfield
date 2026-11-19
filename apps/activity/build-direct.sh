@@ -22,7 +22,7 @@ sampler=("$here"/src/inspect.cpp "$here"/src/machine.cpp "$here"/src/netdiag.cpp
   "$here"/src/textclean.cpp "$here"/src/units.cpp)
 # The window's backend (step 2): Qt Core, Gui and DBus. GCC 16 warns inside Qt headers (-Wsfinae-incomplete).
 window=("$here"/src/actions.cpp "$here"/src/activityapp.cpp "$here"/src/apphistory.cpp "$here"/src/activitystate.cpp "$here"/src/battery.cpp "$here"/src/columns.cpp
-  "$here"/src/desktopapps.cpp "$here"/src/efficiency.cpp "$here"/src/format.cpp "$here"/src/inhibitors.cpp "$here"/src/inspection.cpp
+  "$here"/src/desktopapps.cpp "$here"/src/efficiency.cpp "$here"/src/format.cpp "$here"/src/graphgeometry.cpp "$here"/src/inhibitors.cpp "$here"/src/inspection.cpp
   "$here"/src/performance.cpp "$here"/src/processtable.cpp "$here"/src/runtimefiles.cpp "$here"/src/samplerworker.cpp "$here"/src/summary.cpp)
 mocked=(actions activityapp apphistory battery efficiency inhibitors inspection performance processtable runtimefiles samplerworker summary)
 qtflags=(-Wno-sfinae-incomplete "-DGRASSFIELD_VERSION=\"$(tr -d "[:space:]" <"$root/VERSION")\"" -I"$here/src" -I"$here/.." -I"$root/ui/i18n")
@@ -35,6 +35,10 @@ run_moc() {
     "$moc" "$here/src/$m.h" -o "$out/moc_activity_$m$suffix.cpp"
     generated+=("$out/moc_activity_$m$suffix.cpp")
   done
+}
+# The graph's QQuickItem (graphitem.h): in the app and its QML tests only (Qt Quick).
+moc_graphitem() {
+  "$moc" "$here/src/graphitem.h" -o "$out/moc_activity_graphitem.cpp"
 }
 
 case ${1:-} in
@@ -53,13 +57,15 @@ case ${1:-} in
     # engine's own code is not what it tests. One Qt private header: the window's exposure, as a compositor's suspended
     # state sets it.
     if [[ -z $suffix ]]; then
+      moc_graphitem
       qtver=$(pkg-config --modversion Qt6Gui)
       # shellcheck disable=SC2046
       g++ "${cxxflags[@]}" "${qtflags[@]}" "-DACTIVITY_ROOT=\"$root\"" $(pkg-config --cflags Qt6Gui Qt6Qml Qt6Quick Qt6DBus Qt6Test) \
         -I"/usr/include/qt6/QtGui/$qtver" -I"/usr/include/qt6/QtGui/$qtver/QtGui" -I"/usr/include/qt6/QtCore/$qtver" \
         -I"/usr/include/qt6/QtCore/$qtver/QtCore" \
         "${sampler[@]}" "${window[@]}" "${generated[@]}" "$root"/tests/unit/activity/qml/tst_window.cpp \
-        "$root"/tests/unit/activity/qml/tst_keywindow.cpp \
+        "$root"/tests/unit/activity/qml/tst_keywindow.cpp "$root"/tests/unit/activity/qml/tst_graph.cpp "$here/src/graphitem.cpp" \
+        "$out/moc_activity_graphitem.cpp" \
         $(pkg-config --libs Qt6Gui Qt6Qml Qt6Quick Qt6DBus Qt6Test) -lgtest -pthread -o "$out/activity-window-qml-tests"
       echo "built $out/activity-window-qml-tests"
     fi
@@ -74,13 +80,14 @@ case ${1:-} in
       defs+=("-DGRASSFIELD_ACTIVITY_QML_DIR=\"$here/qml\"")
     fi
     run_moc
+    moc_graphitem
     qtver=$(pkg-config --modversion Qt6Gui)
     # windowchrome.h (ADR-0015) needs one Qt private header and libwayland-client.
     # shellcheck disable=SC2046
     g++ "${cxxflags[@]}" "${qtflags[@]}" "${defs[@]}" \
       $(pkg-config --cflags Qt6Gui Qt6Qml Qt6Quick Qt6DBus wayland-client) \
       -I"/usr/include/qt6/QtGui/$qtver" -I"/usr/include/qt6/QtGui/$qtver/QtGui" -I"/usr/include/qt6/QtCore/$qtver" \
-      "${sampler[@]}" "${window[@]}" "${generated[@]}" "$here/src/main.cpp" \
+      "${sampler[@]}" "${window[@]}" "${generated[@]}" "$here/src/main.cpp" "$here/src/graphitem.cpp" "$out/moc_activity_graphitem.cpp" \
       $(pkg-config --libs Qt6Gui Qt6Qml Qt6Quick Qt6DBus) -lwayland-client -pthread -o "$out/grassfield-activity"
     echo "built $out/grassfield-activity"
     # A dev session (scripts/dev/devenv.sh puts .dev/share first in XDG_DATA_DIRS) finds the entry and the icon here, so the

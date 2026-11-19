@@ -74,9 +74,11 @@ Item {
             root.leaving.destroy();
             root.leaving = null;
         }
-        if (!root.visible && !replacing)
-            enter.restart();
+        const wasVisible = root.visible;
+        // Visible first: a bodyComponent is built now, so the drop-in's travel counts its height.
         root.visible = true;
+        if (!wasVisible && !replacing)
+            enter.restart();
         if (root.withField) {
             field.forceActiveFocus();
             field.selectAll();

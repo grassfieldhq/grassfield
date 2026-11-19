@@ -8,6 +8,7 @@
 #include <QQuickWindow>
 #include <QUrl>
 
+#include "graphitem.h"
 #include "activityapp.h"
 #include "globalmenu.h"
 #include "iconprovider.h"
@@ -79,6 +80,8 @@ int main(int argc, char *argv[])
     // The backend outlives the engine (declared first, destroyed last).
     activity::ActivityApp backend(options, grassfield::apps::runmode::stateDir() + QStringLiteral("/activity.json"));
 
+    // Graph.qml's drawing (graphitem.h): Grassfield.Activity/GraphItem.
+    activity::registerGraphItem();
     QQmlApplicationEngine engine;
     // ADR-0039 step 17: the window keeps its key look while a shell menu or the Control Center holds the keyboard (keywindow.h).
     new grassfield::apps::KeyWindow(&engine);

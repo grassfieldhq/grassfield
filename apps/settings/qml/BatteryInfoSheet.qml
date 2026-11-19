@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Grassfield.Ui
 
@@ -26,29 +27,36 @@ Sheet {
         root.open();
     }
 
-    SettingsGroup {
-        visible: root.topic === "health"
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        SettingsRow {
-            title: qsTr("Maximum capacity")
-            valueText: root.power && root.power.capacity > 0 ? qsTr("%1 %").arg(Math.round(root.power.capacity)) : qsTr("Unknown")
-        }
-        SettingsRow {
-            visible: root.power !== null && root.power.cycles >= 0
-            title: qsTr("Cycle count")
-            valueText: root.power ? String(root.power.cycles) : ""
-        }
-    }
+            SettingsGroup {
+                visible: root.topic === "health"
 
-    SettingsGroup {
-        visible: root.topic === "charging" && root.power !== null && root.power.limitSupported
+                SettingsRow {
+                    title: qsTr("Maximum capacity")
+                    valueText: root.power && root.power.capacity > 0 ? qsTr("%1 %").arg(Math.round(root.power.capacity)) : qsTr("Unknown")
+                }
+                SettingsRow {
+                    visible: root.power !== null && root.power.cycles >= 0
+                    title: qsTr("Cycle count")
+                    valueText: root.power ? String(root.power.cycles) : ""
+                }
+            }
 
-        SettingsRow {
-            title: root.power && root.power.limitEnd > 0 ? qsTr("Limit charging to %1 %").arg(root.power.limitEnd) : qsTr("Limit charging")
-            Toggle {
-                accessibleName: qsTr("Limit charging")
-                checked: root.power ? root.power.limitEnabled : false
-                onToggled: c => root.limitRequested(c)
+            SettingsGroup {
+                visible: root.topic === "charging" && root.power !== null && root.power.limitSupported
+
+                SettingsRow {
+                    title: root.power && root.power.limitEnd > 0 ? qsTr("Limit charging to %1 %").arg(root.power.limitEnd) : qsTr("Limit charging")
+                    Toggle {
+                        accessibleName: qsTr("Limit charging")
+                        checked: root.power ? root.power.limitEnabled : false
+                        onToggled: c => root.limitRequested(c)
+                    }
+                }
             }
         }
     }

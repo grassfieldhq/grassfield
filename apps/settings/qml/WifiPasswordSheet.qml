@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Grassfield.Ui
 import "System.js" as System
@@ -9,6 +10,8 @@ Sheet {
     id: root
 
     property var net: null
+    // "Show password" (the check box of the body, built at the first opening).
+    property bool showPassword: false
 
     signal join(var net, string psk)
 
@@ -16,12 +19,12 @@ Sheet {
     message: qsTr("This network is secured. Its password is saved on this computer once it is joined.")
     confirmText: qsTr("Join")
     withField: true
-    fieldPassword: !show.checked
+    fieldPassword: !root.showPassword
     placeholder: qsTr("Password")
 
     function openFor(net: var): void {
         root.net = net;
-        show.checked = false;
+        root.showPassword = false;
         root.setField("");
         root.open();
     }
@@ -36,8 +39,22 @@ Sheet {
     }
     onCanceled: root.setField("")
 
-    CheckBox {
-        id: show
-        text: qsTr("Show password")
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
+
+            CheckBox {
+                id: show
+                text: qsTr("Show password")
+                onToggled: root.showPassword = show.checked
+
+                Binding {
+                    target: show
+                    property: "checked"
+                    value: root.showPassword
+                }
+            }
+        }
     }
 }

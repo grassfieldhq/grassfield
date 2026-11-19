@@ -50,154 +50,161 @@ Sheet {
         root.open();
     }
 
-    SettingsGroup {
-        visible: root.topic === "automatic"
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        SettingsRow {
-            title: qsTr("Check for updates")
+            SettingsGroup {
+                visible: root.topic === "automatic"
 
-            Toggle {
-                accessibleName: qsTr("Check for updates")
-                checked: root.store.value("updates.automaticCheck") === true
-                onToggled: c => root.store.set("updates.automaticCheck", c)
-            }
-        }
-    }
+                SettingsRow {
+                    title: qsTr("Check for updates")
 
-    SettingsGroup {
-        visible: root.topic === "beta"
-        footnote: root.betaLocked ? qsTr("Beta updates stay on while a beta version of Grassfield is installed. You can turn them off once the release is installed.")
-            : root.updates.channel !== "off" && root.updates.channel !== "" ? qsTr("Turning them off removes Grassfield's package repository from the system; nothing installed is removed.") : ""
-
-        SettingsRow {
-            title: qsTr("Beta updates")
-            subtitle: root.updates.waitingForPermission ? qsTr("Waiting for permission…") : root.setUp ? "" : qsTr("Set up Grassfield updates first.")
-
-            ComboBox {
-                inline: true
-                accessibleName: qsTr("Beta updates")
-                enabled: root.setUp && !root.updates.waitingForPermission && !root.betaLocked
-                model: [{id: "stable", text: qsTr("Off")}, {id: "beta", text: qsTr("Grassfield Beta")}]
-                // The value follows /etc/pacman.d/grassfield.conf (watched): it changes when the change is made (U12).
-                value: root.updates.channel === "beta" ? "beta" : "stable"
-                onPicked: id => {
-                    if (id !== value)
-                        root.updates.setChannel(id, "beta");
-                }
-            }
-        }
-        SettingsRow {
-            visible: root.updates.channel !== "off" && root.updates.channel !== ""
-            title: qsTr("Grassfield updates")
-
-            Button {
-                push: true
-                destructive: true
-                enabled: !root.updates.waitingForPermission
-                text: qsTr("Turn Off Grassfield Updates…")
-                onClicked: root.updates.setChannel("off", "off")
-            }
-        }
-    }
-
-    // The notes of every release newer than the installed one, newest first (U6): plain text.
-    Rectangle {
-        visible: root.topic === "notes" && root.notes.length > 0
-        width: parent.width
-        height: Tokens.settingsPickerListHeight
-        // A group of Settings (radius.group, step 13's role; ADR-0039 step 26).
-        radius: Tokens.radiusGroup
-        color: Appearance.colors.groupFill
-        clip: true
-
-        Flickable {
-            id: notesView
-            anchors.fill: parent
-            anchors.margins: Tokens.settingsRowInset
-            contentWidth: width
-            contentHeight: notesColumn.height
-            boundsBehavior: Flickable.StopAtBounds
-            Accessible.role: Accessible.Document
-            Accessible.name: root.title
-
-            Column {
-                id: notesColumn
-                width: notesView.width
-                spacing: Tokens.spacingMd
-
-                Repeater {
-                    model: root.notes
-
-                    Column {
-                        id: release
-                        required property var modelData
-                        width: notesColumn.width
-                        spacing: Tokens.spacingXs
-
-                        Text {
-                            textFormat: Text.PlainText
-                            width: parent.width
-                            text: qsTr("Grassfield %1 (%2)").arg(SoftwareUpdateLogic.displayVersion(release.modelData.version)).arg(release.modelData.date)
-                            color: Appearance.colors.text
-                            font.family: Appearance.fontFamily
-                            font.pixelSize: Tokens.typographyBodySize
-                            font.weight: Tokens.typographyMenuBoldWeight
-                            wrapMode: Text.Wrap
-                        }
-                        Text {
-                            textFormat: Text.PlainText
-                            width: parent.width
-                            text: release.modelData.text
-                            color: Appearance.colors.text
-                            font.family: Appearance.fontFamily
-                            font.pixelSize: Tokens.typographyBodySize
-                            wrapMode: Text.Wrap
-                        }
+                    Toggle {
+                        accessibleName: qsTr("Check for updates")
+                        checked: root.store.value("updates.automaticCheck") === true
+                        onToggled: c => root.store.set("updates.automaticCheck", c)
                     }
                 }
             }
 
-            ScrollBar.vertical: ScrollBar {}
-        }
-    }
+            SettingsGroup {
+                visible: root.topic === "beta"
+                footnote: root.betaLocked ? qsTr("Beta updates stay on while a beta version of Grassfield is installed. You can turn them off once the release is installed.")
+                    : root.updates.channel !== "off" && root.updates.channel !== "" ? qsTr("Turning them off removes Grassfield's package repository from the system; nothing installed is removed.") : ""
 
-    // The other updates, by name: installed -> available.
-    Rectangle {
-        visible: root.topic === "others"
-        width: parent.width
-        height: Tokens.settingsPickerListHeight
-        // A group of Settings (radius.group, step 13's role; ADR-0039 step 26).
-        radius: Tokens.radiusGroup
-        color: Appearance.colors.groupFill
-        clip: true
+                SettingsRow {
+                    title: qsTr("Beta updates")
+                    subtitle: root.updates.waitingForPermission ? qsTr("Waiting for permission…") : root.setUp ? "" : qsTr("Set up Grassfield updates first.")
 
-        ListView {
-            anchors.fill: parent
-            anchors.margins: Tokens.spacingXs
-            model: root.topic === "others" ? root.view.otherPackages : []
-            boundsBehavior: Flickable.StopAtBounds
-            Accessible.role: Accessible.List
-            Accessible.name: qsTr("Other updates")
+                    ComboBox {
+                        inline: true
+                        accessibleName: qsTr("Beta updates")
+                        enabled: root.setUp && !root.updates.waitingForPermission && !root.betaLocked
+                        model: [{id: "stable", text: qsTr("Off")}, {id: "beta", text: qsTr("Grassfield Beta")}]
+                        // The value follows /etc/pacman.d/grassfield.conf (watched): it changes when the change is made (U12).
+                        value: root.updates.channel === "beta" ? "beta" : "stable"
+                        onPicked: id => {
+                            if (id !== value)
+                                root.updates.setChannel(id, "beta");
+                        }
+                    }
+                }
+                SettingsRow {
+                    visible: root.updates.channel !== "off" && root.updates.channel !== ""
+                    title: qsTr("Grassfield updates")
 
-            delegate: SettingsRow {
-                required property var modelData
-                width: ListView.view.width
-                title: String(modelData.name)
-                valueText: qsTr("%1 → %2").arg(String(modelData.installed)).arg(String(modelData.available))
+                    Button {
+                        push: true
+                        destructive: true
+                        enabled: !root.updates.waitingForPermission
+                        text: qsTr("Turn Off Grassfield Updates…")
+                        onClicked: root.updates.setChannel("off", "off")
+                    }
+                }
             }
 
-            ScrollBar.vertical: ScrollBar {}
-        }
-    }
+            // The notes of every release newer than the installed one, newest first (U6): plain text.
+            Rectangle {
+                visible: root.topic === "notes" && root.notes.length > 0
+                width: parent.width
+                height: Tokens.settingsPickerListHeight
+                // A group of Settings (radius.group, step 13's role; ADR-0039 step 26).
+                radius: Tokens.radiusGroup
+                color: Appearance.colors.groupFill
+                clip: true
 
-    Text {
-        textFormat: Text.PlainText
-        visible: root.topic === "others" && root.view.otherPackagesTruncated
-        width: parent.width
-        wrapMode: Text.Wrap
-        text: qsTr("The list was too long to show in full.")
-        color: Appearance.windowSecondary
-        font.family: Appearance.fontFamily
-        font.pixelSize: Tokens.typographyCaptionSize
+                Flickable {
+                    id: notesView
+                    anchors.fill: parent
+                    anchors.margins: Tokens.settingsRowInset
+                    contentWidth: width
+                    contentHeight: notesColumn.height
+                    boundsBehavior: Flickable.StopAtBounds
+                    Accessible.role: Accessible.Document
+                    Accessible.name: root.title
+
+                    Column {
+                        id: notesColumn
+                        width: notesView.width
+                        spacing: Tokens.spacingMd
+
+                        Repeater {
+                            model: root.notes
+
+                            Column {
+                                id: release
+                                required property var modelData
+                                width: notesColumn.width
+                                spacing: Tokens.spacingXs
+
+                                Text {
+                                    textFormat: Text.PlainText
+                                    width: parent.width
+                                    text: qsTr("Grassfield %1 (%2)").arg(SoftwareUpdateLogic.displayVersion(release.modelData.version)).arg(release.modelData.date)
+                                    color: Appearance.colors.text
+                                    font.family: Appearance.fontFamily
+                                    font.pixelSize: Tokens.typographyBodySize
+                                    font.weight: Tokens.typographyMenuBoldWeight
+                                    wrapMode: Text.Wrap
+                                }
+                                Text {
+                                    textFormat: Text.PlainText
+                                    width: parent.width
+                                    text: release.modelData.text
+                                    color: Appearance.colors.text
+                                    font.family: Appearance.fontFamily
+                                    font.pixelSize: Tokens.typographyBodySize
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+                        }
+                    }
+
+                    ScrollBar.vertical: ScrollBar {}
+                }
+            }
+
+            // The other updates, by name: installed -> available.
+            Rectangle {
+                visible: root.topic === "others"
+                width: parent.width
+                height: Tokens.settingsPickerListHeight
+                // A group of Settings (radius.group, step 13's role; ADR-0039 step 26).
+                radius: Tokens.radiusGroup
+                color: Appearance.colors.groupFill
+                clip: true
+
+                ListView {
+                    anchors.fill: parent
+                    anchors.margins: Tokens.spacingXs
+                    model: root.topic === "others" ? root.view.otherPackages : []
+                    boundsBehavior: Flickable.StopAtBounds
+                    Accessible.role: Accessible.List
+                    Accessible.name: qsTr("Other updates")
+
+                    delegate: SettingsRow {
+                        required property var modelData
+                        width: ListView.view.width
+                        title: String(modelData.name)
+                        valueText: qsTr("%1 → %2").arg(String(modelData.installed)).arg(String(modelData.available))
+                    }
+
+                    ScrollBar.vertical: ScrollBar {}
+                }
+            }
+
+            Text {
+                textFormat: Text.PlainText
+                visible: root.topic === "others" && root.view.otherPackagesTruncated
+                width: parent.width
+                wrapMode: Text.Wrap
+                text: qsTr("The list was too long to show in full.")
+                color: Appearance.windowSecondary
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyCaptionSize
+            }
+        }
     }
 }
