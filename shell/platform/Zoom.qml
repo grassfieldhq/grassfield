@@ -4,6 +4,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
+import qs.platform.shortcuts
 import qs.services // layering-exception: GF-087
 import "Zoom.js" as ZoomLogic
 
@@ -45,6 +46,8 @@ Singleton {
 
     IpcHandler {
         target: "zoom"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function toggle(): void {
             Settings.setZoom(!Settings.zoomOn);

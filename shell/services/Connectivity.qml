@@ -95,8 +95,16 @@ Singleton {
         return true;
     }
 
-    // Scan results as rows for the Control Center (sorted, deduplicated; see Model.sortNetworks).
+    // The Control Center's Wi-Fi list is on screen (setScanning): the rows below are built only then. A binding is evaluated
+    // whether or not anything reads it, and the rows read every scanned network's signal strength: without this, every
+    // strength change of any network around rebuilt and sorted them all day for no reader (audit fluidity note).
+    property bool listing: false
+    readonly property var noNetworks: []
+
+    // Scan results as rows for the Control Center (sorted, deduplicated; see Model.sortNetworks); [] while no list is shown.
     readonly property var networks: {
+        if (!root.listing)
+            return root.noNetworks;
         if (fixture)
             return [{name: fixtureNet.name, strength: fixtureNet.signalStrength, secured: true, enterprise: false, connected: true, known: true, connecting: false, net: null}];
         const nets = wifiDevice && wifiDevice.networks ? wifiDevice.networks.values : [];
@@ -120,6 +128,7 @@ Singleton {
 
     // scannerEnabled lives on the shared WifiDevice: the Control Center sets it while Wi-Fi is expanded.
     function setScanning(on: bool): void {
+        root.listing = on;
         if (wifiDevice)
             wifiDevice.scannerEnabled = on;
     }

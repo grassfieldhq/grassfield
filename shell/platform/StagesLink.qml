@@ -4,12 +4,14 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
+import qs.platform.shortcuts
 import qs.services // layering-exception: GF-087
 import "Minimized.js" as Minimized
 import "StagesState.js" as StagesState
 
 // The shell's side of the compositor plugin's Stages (docs/specs/stages.md "Shell contract"): capability, the user's
-// setting, the plugin's change notices, the state they announce (`hyprctl grassfield-stages`) and the `stages` verb. Only
+// setting, the plugin's change notices, the state they announce (`grassfield-stages`, asked on Hyprland's request socket in
+// process: HyprQuery, what `hyprctl grassfield-stages` asks without a process per notice) and the `stages` verb. Only
 // this file (with Compositor and Capabilities) talks to the compositor; the strip surfaces (shell/stages) read it, and
 // Compositor gets each state for the menu bar (applyStagesState). Event-driven; without the plugin or without
 // `stages-available` nothing here is ever active, fetched or sent.
@@ -31,8 +33,11 @@ Singleton {
     property var fetch: StagesState.newFetch()
     // The running fetch's reply is still wanted (false once it timed out: a stopped fetch's late output is dropped).
     property bool awaiting: false
-    // A fetch was asked while the previous process was still exiting: start it when that one is gone.
+    // A fetch was asked while the previous request was still out: start it when that one ends.
     property bool startPending: false
+    // The request out (a HyprQuery) or null; the fetches started (tests).
+    property var query: null
+    property int queries: 0
     readonly property bool on: state !== null && state.on
     // Last refusal or end reason of an event ("" none): invalid | disabled | no-strip | unknown | unavailable | interrupted.
     property string reason: ""
@@ -77,10 +82,39 @@ Singleton {
         retryTimer.stop();
         root.awaiting = true;
         fetchDeadline.restart();
-        if (stateFetch.running)
+        if (root.query !== null)
             root.startPending = true;
         else
-            stateFetch.running = true;
+            root.startQuery();
+    }
+
+    function startQuery(): void {
+        root.queries++;
+        const path = Hyprland.requestSocketPath || "";
+        if (path === "")
+            return; // nothing to ask: the deadline fails the fetch (as a hyprctl that could not start)
+        const q = hyprQuery.createObject(root, {path: path, line: "grassfield-stages", answerMs: StagesState.fetchDeadlineMs});
+        root.query = q;
+        q.answered.connect((text, ok) => {
+            if (root.query !== q)
+                return; // the fetch ended meanwhile
+            root.query = null;
+            if (root.startPending) {
+                root.startPending = false;
+                root.startQuery();
+                return;
+            }
+            if (!root.awaiting)
+                return;
+            root.awaiting = false;
+            fetchDeadline.stop();
+            root.step(StagesState.onReply(root.fetch, text, root.context()), text);
+        });
+    }
+
+    Component {
+        id: hyprQuery
+        HyprQuery {}
     }
 
     // Stages is no longer active: no state, no fetch, nothing pending (a fetch still running ends unheard).
@@ -90,6 +124,7 @@ Singleton {
         fetchDeadline.stop();
         root.awaiting = false;
         root.startPending = false;
+        root.query = null;
         root.fetch = StagesState.newFetch();
         root.state = null;
         Compositor.applyStagesState("");
@@ -154,29 +189,8 @@ Singleton {
         }
     }
 
-    // One `hyprctl grassfield-stages` at a time; its reply, a failure or the deadline ends the fetch.
-    Process {
-        id: stateFetch
-
-        command: ["hyprctl", "grassfield-stages"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                if (!root.awaiting)
-                    return;
-                root.awaiting = false;
-                fetchDeadline.stop();
-                root.step(StagesState.onReply(root.fetch, text, root.context()), text);
-            }
-        }
-        onRunningChanged: {
-            if (!running && root.startPending) {
-                root.startPending = false;
-                running = true;
-            }
-        }
-    }
-
-    // A fetch that has not answered in this time failed (also covers a hyprctl that could not start).
+    // A fetch that has not answered in this time failed (also covers no Hyprland to ask). One request at a time; its reply, a
+    // failure or this deadline ends the fetch.
     Timer {
         id: fetchDeadline
 
@@ -186,7 +200,7 @@ Singleton {
                 return;
             root.awaiting = false;
             root.startPending = false;
-            stateFetch.running = false;
+            root.query = null;
             root.step(StagesState.onTimeout(root.fetch, root.context()), "");
         }
     }
@@ -208,6 +222,8 @@ Singleton {
     // else "off" | "ready" with the number of strip stages per monitor.
     IpcHandler {
         target: "stages"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function status(): string {
             if (!VisualFixtures.dev)

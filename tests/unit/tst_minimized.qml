@@ -14,6 +14,17 @@ TestCase {
 
     // Compositor.taggedToplevel's match (SettingsApp.openAbout brings an open About This Computer window forward): the class
     // and the xdg tag of Hyprland's window data, both exact; window data not read yet matches nothing.
+    // Audit SC-16: a minimize the compositor refused or dropped (no move to special:minimized seen, the window read elsewhere)
+    // loses its record; one seen moving there, or read there, keeps it.
+    function test_unconfirmedMinimizesAreDropped() {
+        const last = new Map([["a1", "special:minimized"], ["b2", "1"]]);
+        const places = {a1: "1", b2: "2", c3: "special:minimized", d4: ""};
+        const drops = Minimized.unconfirmedDrops(["a1", "b2", "c3", "d4"], last, a => places[a] || "", "special:minimized");
+        compare(drops, ["b2", "d4"]);
+        compare(Minimized.unconfirmedDrops([], last, a => "", "special:minimized"), []);
+        compare(Minimized.unconfirmedDrops(["e5"], null, a => "special:minimized", "special:minimized"), []);
+    }
+
     function test_hasTag() {
         const about = {class: "org.grassfield.Settings", xdgTag: "info", pid: 7};
         verify(Minimized.hasTag(about, "org.grassfield.Settings", "info"));

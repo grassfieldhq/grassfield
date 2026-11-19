@@ -15,6 +15,7 @@ import qs.osd
 import qs.overview
 import qs.overlay
 import qs.platform
+import qs.platform.shortcuts
 import qs.saver
 import qs.search
 import qs.services
@@ -234,6 +235,12 @@ ShellRoot {
         target: Displays
         property: "backlight"
         value: Brightness.deviceAvailable ? {device: Brightness.device, level: Brightness.deviceLevel} : null
+    }
+    // A display without a mode is read again on a timer only where no one sees the reload's flash (audit SC-05).
+    Binding {
+        target: Displays
+        property: "quiet"
+        value: LockClient.locked || LockClient.displaysOff
     }
 
     // Pointer size (Settings > Accessibility > Pointer): the compositor is asked for the new size live.
@@ -824,6 +831,8 @@ ShellRoot {
     // gates as the surface's own handler, which takes over the moment its item exists).
     IpcHandler {
         target: "search"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: !early.live.search
 
         function toggle(): void {
@@ -863,6 +872,8 @@ ShellRoot {
     }
     IpcHandler {
         target: "apps"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: !early.live.apps
 
         function toggle(): void {
@@ -904,6 +915,8 @@ ShellRoot {
     }
     IpcHandler {
         target: "overview"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: !early.live.overview
 
         function toggle(): void {

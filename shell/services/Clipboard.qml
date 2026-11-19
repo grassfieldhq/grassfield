@@ -151,7 +151,40 @@ Singleton {
         root.send(yes ? ["Y", seq, Compositor.focusedAppId] : ["N", seq]);
     }
 
+    // The helper's "I" and "X" lines of one event-loop turn, applied together (Logic.applyOps: one sort, one change of `items`;
+    // the history it lists at its start is hundreds of lines); any other line applies them first, so it sees the items the lines
+    // before it gave. handle() itself stays synchronous (a caller reads `items` right after it).
+    readonly property var itemOps: ({list: []})
+
+    function flushItems(): void {
+        const ops = root.itemOps.list;
+        if (ops.length === 0)
+            return;
+        root.itemOps.list = [];
+        root.items = Logic.applyOps(root.items, ops);
+    }
+
+    // A line from the helper's output: "I"/"X" are batched for the turn, anything else is handled at once.
+    function receive(text: string): void {
+        const f = Logic.parseLine(text);
+        if (f[0] === "I") {
+            const item = Logic.parseItem(f);
+            if (item) {
+                root.itemOps.list.push(["I", item]);
+                Qt.callLater(root.flushItems);
+            }
+            return;
+        }
+        if (f[0] === "X") {
+            root.itemOps.list.push(["X", f[1]]);
+            Qt.callLater(root.flushItems);
+            return;
+        }
+        root.handle(text);
+    }
+
     function handle(text: string): void {
+        root.flushItems();
         const f = Logic.parseLine(text);
         switch (f[0]) {
         case "S":
@@ -217,6 +250,7 @@ Singleton {
             return;
         }
         // Off: the unpinned items go (the helper deletes its history store, then ends; memory ends with it). Pins stay on disk.
+        root.itemOps.list = [];
         root.items = [];
         root.ownedId = "";
         root.state = "off";
@@ -306,7 +340,7 @@ Singleton {
             "--cleared-at", Logic.clearTimeArg(root.clearedAt), "--pinned-cleared-at", Logic.clearTimeArg(root.pinnedClearedAt)]
         stdinEnabled: true
         stdout: SplitParser {
-            onRead: line => root.handle(line)
+            onRead: line => root.receive(line)
         }
         onStarted: {
             didStart = true;
@@ -341,6 +375,7 @@ Singleton {
             root.stopping = false;
             root.helperLocked = false;
             root.ownedId = "";
+            root.itemOps.list = [];
             root.items = [];
             if (!root.wanted || !root.enabled)
                 return;

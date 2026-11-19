@@ -135,7 +135,29 @@ TestCase {
         compare(DisplaysFile.recoveryDelayMs(2), 12000);
         compare(DisplaysFile.recoveryDelayMs(4), 48000);
         compare(DisplaysFile.recoveryDelayMs(5), 60000);
-        compare(DisplaysFile.recoveryDelayMs(500), 60000);
+        compare(DisplaysFile.recoveryDelayMs(7), 60000);
+        // Audit SC-05: after the back-off no reload on a timer while someone may look; one every 10 minutes while quiet.
+        compare(DisplaysFile.recoveryDelayMs(8), 0);
+        compare(DisplaysFile.recoveryDelayMs(500), 0);
+        compare(DisplaysFile.recoveryDelayMs(500, false), 0);
+        compare(DisplaysFile.recoveryDelayMs(8, true), 600000);
+        compare(DisplaysFile.recoveryDelayMs(3, true), 24000);
+        // A nudge asks for one reload past the back-off only.
+        compare(DisplaysFile.nudgeDelayMs(0), -1);
+        compare(DisplaysFile.nudgeDelayMs(7), -1);
+        compare(DisplaysFile.nudgeDelayMs(8), 3000);
+        compare(DisplaysFile.nudgeDelayMs(NaN), -1);
+        // Over a night with a display switched off at its button and the session in use: eight reloads, then none.
+        let total = 0, n = 0;
+        while (n < 1000) {
+            const wait = DisplaysFile.recoveryDelayMs(n, false);
+            if (wait <= 0)
+                break;
+            total += wait;
+            n++;
+        }
+        compare(n, 8);
+        verify(total < 300000, "the back-off ends within five minutes (" + total + " ms)");
         compare(DisplaysFile.recoveryDelayMs(-1), 3000);
         compare(DisplaysFile.recoveryDelayMs(NaN), 3000);
     }

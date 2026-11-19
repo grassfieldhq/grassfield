@@ -72,11 +72,47 @@ Singleton {
     // was probed) and nothing fires when it powers on: the configuration is read again, after DisplaysFile.recoveryDelayMs, until
     // every display has a mode (Omarchy's own session does the same with omarchy-hyprland-monitor-watch, which Grassfield's
     // autostart does not run). While locked the lock refreshes the monitors every second, so a display that gets its mode is
-    // seen at once; the look goes on with the back-off for as long as one stays without a mode. Quickshell's plain `monitors`
+    // seen at once. The reloads follow a back-off (DisplaysFile.recoveryDelayMs: 3 s doubled up to a minute, eight of them); after
+    // it a reload, which flashes the configuration's blur, window edges, ground, zoom and pointer until the shell's pushes land,
+    // is made only where no one sees it (every 10 minutes while the session is locked or the displays are off: `quiet`) and once
+    // on each nudge (the session unlocked, the displays back on, a display added or removed): audit SC-05, a display switched off
+    // at its button no longer costs a flash a minute all night. Quickshell's plain `monitors`
     // answer lists every enabled output that is not a mirror, whatever its mode (Hyprland 0.56.2 MonitorState); a mirror
     // without a mode is only in `monitors all` and is not recovered here (docs/specs/settings.md Known limitations).
     property var modelessNames: []
     property int recoveryAttempts: 0
+    // Nobody can see a reload: the session is locked or the displays are off (shell.qml binds it from LockClient; ADR-0021:
+    // platform imports lib only).
+    property bool quiet: false
+    onQuietChanged: {
+        // Unlocked, or the displays back on: the moment someone looks at a display they may just have switched on.
+        if (!root.quiet)
+            root.nudge("in view again");
+        else if (root.modelessNames.length > 0 && !recovery.running)
+            root.scheduleRecovery();
+    }
+
+    // The next look on the back-off (or, after it, while quiet only).
+    function scheduleRecovery(): void {
+        const wait = DisplaysFile.recoveryDelayMs(root.recoveryAttempts, root.quiet);
+        if (wait <= 0) {
+            recovery.stop();
+            return;
+        }
+        recovery.interval = wait;
+        recovery.restart();
+    }
+
+    // One reload soon past the back-off (DisplaysFile.nudgeDelayMs), when a display is still without a mode.
+    function nudge(why: string): void {
+        if (root.modelessNames.length === 0)
+            return;
+        const wait = DisplaysFile.nudgeDelayMs(root.recoveryAttempts);
+        if (wait < 0)
+            return;
+        recovery.interval = wait;
+        recovery.restart();
+    }
 
     function checkModeless(monitors: var): void {
         const blank = DisplaysFile.modeless(monitors);
@@ -93,10 +129,8 @@ Singleton {
         if (root.modelessNames.join(",") !== blank.join(","))
             console.warn("grassfield-shell: displays: " + blank.join(", ") + " is on without a mode (0x0); the configuration is read again until it has one");
         root.modelessNames = blank;
-        if (!recovery.running) {
-            recovery.interval = DisplaysFile.recoveryDelayMs(root.recoveryAttempts);
-            recovery.restart();
-        }
+        if (!recovery.running)
+            root.scheduleRecovery();
     }
 
     Timer {
@@ -111,9 +145,10 @@ Singleton {
             if (root.running === "") {
                 root.recoveryAttempts++;
                 SessionConfig.reloadQuietly("display without a mode", Tokens.materialBlurAnswerMs);
+                if (root.recoveryAttempts === DisplaysFile.RECOVERY_ATTEMPTS)
+                    console.info("grassfield-shell: displays: " + root.modelessNames.join(", ") + " still without a mode after " + root.recoveryAttempts + " reloads; read again only while locked or the displays are off, and when the session comes back in view");
             }
-            recovery.interval = DisplaysFile.recoveryDelayMs(root.recoveryAttempts);
-            recovery.restart();
+            root.scheduleRecovery();
         }
     }
 
@@ -201,6 +236,8 @@ Singleton {
                 || event.name === "monitorremovedv2" || event.name === "configreloaded") {
                 Hyprland.refreshMonitors();
                 publishDebounce.restart();
+                if (event.name !== "configreloaded")
+                    root.nudge("a display added or removed");
                 // A display arriving or leaving, in the journal with its time: what a wake from sleep costs is read from these
                 // lines next to the kernel's "PM: suspend exit" and the lock's (the owner's rc6 report: slow wake). The v2
                 // event carries the id and the description too: only the connector name is logged (no serial in the journal).

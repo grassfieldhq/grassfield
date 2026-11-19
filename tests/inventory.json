@@ -864,6 +864,9 @@
  {"path": "tests/unit/tst_shelluifluidity.qml", "layer": "headless"},
  {"path": "tests/shell/dock_transform.sh", "layer": "headless"},
  {"path": "tests/shell/overview_keyed.sh", "layer": "headless"},
- {"path": "tests/shell/wallpaper_retarget.sh", "layer": "headless"}
+ {"path": "tests/shell/wallpaper_retarget.sh", "layer": "headless"},
+ {"path": "tests/shell/settings_churn/shell.qml", "layer": "headless"},
+ {"path": "tests/shell/lock_client_reads/shell.qml", "layer": "headless"},
+ {"path": "tests/shell/not_responding_wait/shell.qml", "layer": "headless"}
 ]
 }
