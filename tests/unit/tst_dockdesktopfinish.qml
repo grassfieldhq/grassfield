@@ -29,7 +29,11 @@ TestCase {
         verify(!Logic.darkLabelOver({}, below), "no numbers: white");
         const icon = source("shell/desktop/DesktopIcon.qml");
         verify(/darkLabel \? Appearance\.lightColors\.barText : Appearance\.darkColors\.text/.test(icon), "the bar's dark foreground");
-        compare(icon.split("!root.darkLabel").length - 1, 3, "the three halo passes go for a dark label");
+        // One halo (audit A-12): the outline and ONE shadow layer, off for a dark label only; the selection never switches the layer
+        // (a rubber band crossing the icons created and destroyed three layers per icon), the accent highlight turns its shadow off.
+        compare(icon.split("!root.darkLabel").length - 1, 1, "the one halo goes for a dark label");
+        compare((icon.match(/layer\.enabled:/g) || []).length, 1, "one offscreen layer per label");
+        verify(icon.indexOf("shadowOpacity: root.emphasized ? 0 : Tokens.desktopIconLabelShadowOpacity") > 0, "the highlight turns the shadow off, the layer stays");
         verify(icon.indexOf("style: root.emphasized || root.darkLabel ? Text.Normal : Text.Outline") > 0, "and the outline");
         verify(icon.indexOf("Backdrop.grids[root.screenName]") > 0 && icon.indexOf("Backdrop.wallpapers[root.screenName]") > 0,
                "read from the wallpaper's grid, whatever the windows (not the bare-desktop backdrops)");

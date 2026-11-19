@@ -185,6 +185,31 @@ function layout(names, saved, cols, rows, blocked) {
     return out;
 }
 
+// The slots of `lay` that are to be stored (audit A-19): those of names that have no slot stored yet (a new file, a name whose
+// stored slot is not a slot at all). A name whose stored slot is outside the grid right now (a smaller display, the Dock or a
+// widget taking room, a transient size during a mode or scale change) or taken keeps its stored slot: it shows elsewhere for
+// now and goes back there when the grid allows. User moves store their slots themselves.
+function newSlots(lay, saved) {
+    const out = {};
+    for (const n of Object.keys(lay || {})) {
+        const p = own(saved, n);
+        const stored = p !== undefined && p !== null && typeof p === "object" && Number.isInteger(p.col) && Number.isInteger(p.row) && p.col >= 0 && p.row >= 0;
+        if (!stored)
+            put(out, n, lay[n]);
+    }
+    return out;
+}
+
+// The entries of `map` for `names` only (a move stores the slots of the icons the user moved, not the layout of the others).
+function pick(map, names) {
+    const out = {};
+    for (const n of names) {
+        if (placed(map, n))
+            put(out, n, map[n]);
+    }
+    return out;
+}
+
 // Move `moving` (names) by the slot delta of `anchor` going to `want`; every moved icon keeps its
 // offset from the anchor. Icons that would leave the grid or hit a non-moving icon go to the nearest
 // free slot. Returns a new layout.

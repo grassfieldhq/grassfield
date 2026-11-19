@@ -1039,16 +1039,18 @@ Scope {
                 seconds: (Settings.menubarClockShowSeconds || Settings.menubarClockFlashSeparators) && !win.away
             }
 
+            // The clock's widths for the crowding, from its text with every digit a 0 (ClockFormat.layoutText, tabular figures): the
+            // text, and so the widths and the whole status layout, stay the same from one tick to the next (audit A-21).
             TextMetrics {
                 id: clockFullMetrics
                 font: clockText.font
-                text: win.clockString(true, false)
+                text: ClockFormat.layoutText(win.clockString(true, false))
             }
 
             TextMetrics {
                 id: clockShortMetrics
                 font: clockText.font
-                text: win.clockString(false, false)
+                text: ClockFormat.layoutText(win.clockString(false, false))
             }
 
             // macOS: with several displays the menu bar of the one that is not active is dimmed (band and content). A single

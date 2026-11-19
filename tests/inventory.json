@@ -860,6 +860,10 @@
  {"path": "tests/shell/shortcuts_router/shell.qml", "layer": "headless"},
  {"path": "tests/shell/compositor_vet_cache.sh", "layer": "logic"},
  {"path": "compositor/tests/FileProbeTest.cpp", "layer": "logic"},
- {"path": "tests/shell/placement_settle.sh", "layer": "logic"}
+ {"path": "tests/shell/placement_settle.sh", "layer": "logic"},
+ {"path": "tests/unit/tst_shelluifluidity.qml", "layer": "headless"},
+ {"path": "tests/shell/dock_transform.sh", "layer": "headless"},
+ {"path": "tests/shell/overview_keyed.sh", "layer": "headless"},
+ {"path": "tests/shell/wallpaper_retarget.sh", "layer": "headless"}
 ]
 }

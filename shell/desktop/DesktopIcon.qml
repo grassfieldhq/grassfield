@@ -221,29 +221,20 @@ Item {
         border.color: root.renameError !== "" ? Appearance.darkColors.danger : Appearance.colors.accent
         onWidthChanged: Qt.callLater(root.measureLabel)
         onHeightChanged: Qt.callLater(root.measureLabel)
-        // Second pass of the drop shadow: the shadow of the text and its own shadow, a denser soft halo (gate A2: white text
-        // must stay legible on a white wallpaper). Off on the accent highlight, while renaming, and for a dark label; off on the
-        // grey pill too (it would shade the pill: the text's own two passes keep its halo).
-        layer.enabled: !root.selected && !root.renaming && !root.darkLabel
-        layer.effect: MultiEffect {
-            shadowEnabled: true
-            shadowColor: Appearance.darkColors.shadow
-            shadowOpacity: Tokens.desktopIconLabelShadowOpacity
-            shadowBlur: Tokens.desktopIconLabelShadowBlur
-            shadowVerticalOffset: Tokens.desktopIconLabelShadowOffsetY
-        }
-
-        // Pass 2 of the drop shadow (pass 1 is the layer of the text itself, pass 3 the layer of labelBox): each pass casts the
-        // shadow of the previous result, so the halo gets denser without a harder edge (gate A2 on a white wallpaper).
+        // The halo of a white label (gate A2: white text must stay legible on a white wallpaper): the glyphs' one pixel outline
+        // (labelText's Outline style) and ONE soft shadow pass of it (audit A-12). It was three nested shadow layers, each switched
+        // by the selection, so a rubber band crossing the icons created and destroyed three offscreen layers per icon. The layer
+        // now lives as long as the label is white; the accent highlight only turns its shadow off.
         Item {
             id: labelFx
+            objectName: "labelHalo"
             anchors.fill: parent
             visible: !root.renaming
-            layer.enabled: !root.emphasized && !root.darkLabel
+            layer.enabled: !root.darkLabel
             layer.effect: MultiEffect {
                 shadowEnabled: true
                 shadowColor: Appearance.darkColors.shadow
-                shadowOpacity: Tokens.desktopIconLabelShadowOpacity
+                shadowOpacity: root.emphasized ? 0 : Tokens.desktopIconLabelShadowOpacity
                 shadowBlur: Tokens.desktopIconLabelShadowBlur
                 shadowVerticalOffset: Tokens.desktopIconLabelShadowOffsetY
             }
@@ -276,14 +267,6 @@ Item {
                 // The core of the shadow is a one pixel outline at labelShadowOpacity, softened by the blurred copy below.
                 style: root.emphasized || root.darkLabel ? Text.Normal : Text.Outline
                 styleColor: Appearance.withAlpha(Appearance.darkColors.shadow, Tokens.desktopIconLabelShadowOpacity)
-                layer.enabled: !root.emphasized && !root.darkLabel
-                layer.effect: MultiEffect {
-                    shadowEnabled: true
-                    shadowColor: Appearance.darkColors.shadow
-                    shadowOpacity: Tokens.desktopIconLabelShadowOpacity
-                    shadowBlur: Tokens.desktopIconLabelShadowBlur
-                    shadowVerticalOffset: Tokens.desktopIconLabelShadowOffsetY
-                }
             }
         }
 

@@ -52,6 +52,9 @@ Per-screen top bar with the system menu, the application menus (T0: app, File, W
 7. Keyboard in menus: Up/Down/Home/End, Return/Space activate, Right opens a submenu, Left closes it, Esc closes. Disabled rows are skipped.
 8. Every string uses `qsTr()`; every control has `Accessible.name`/role and a visible focus ring.
 
+### Clock and crowding (audit 2026-11-18, A-21)
+The status area's crowding measures the clock from its text with every digit a 0 (`ClockFormat.layoutText`; the clock draws tabular figures, so this is its width as drawn): the measured text, and so the crowding (`statusList`, the date's room, the hidden items), changes only when the date or the format does, never at the tick of a second.
+
 ## Acceptance criteria
 - Screenshots of the system menu, app menu, volume menu and an app's About panel (L2; About This Computer is Settings' window, docs/specs/settings.md). `qmllint.sh` 0 warnings (L0). `tests/unit/tst_menunav.qml`, `tst_popupmenu.qml` (L0).
 - Dev guard: Shut Down confirmation in the nested session logs `suppressed systemctl poweroff` and shows the notice (L2).
