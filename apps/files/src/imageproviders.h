@@ -31,15 +31,19 @@ public:
     QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override;
 };
 
-// image://icon/<freedesktop icon name>: the current icon theme through QIcon. MUST stay a synchronous Pixmap provider: Qt
-// calls an asynchronous provider on its image-loader thread for every request, and QIcon's theme cache has no lock, so it
-// would race with the GUI thread's QIcon::hasThemeIcon (FolderModel, PlacesModel): a segfault in the review's stress run.
-// tst_imageproviders.cpp pins this.
-class IconProvider : public QQuickImageProvider
+// image://icon/<freedesktop icon name>: the current icon theme through QIcon. Asynchronous for QML (an icon never rasterises on
+// the frame that creates its delegate: the first appearance of each type was a hitch when scrolling), but QIcon is only ever
+// touched on the GUI thread: QIcon's theme cache has no lock, and a provider that rendered on Qt's image-loader thread raced
+// the GUI thread's QIcon::hasThemeIcon (FolderModel, PlacesModel): a segfault in an earlier review's stress run. Requests are
+// queued to the GUI thread and rendered there a few milliseconds per event loop turn (kBudgetMs), oldest first; a cancelled
+// one is finished empty. tst_imageproviders.cpp pins both.
+class IconProvider : public QQuickAsyncImageProvider
 {
 public:
-    IconProvider();
-    QPixmap requestPixmap(const QString &id, QSize *size, const QSize &requestedSize) override;
+    static constexpr int kBudgetMs = 4;
+    QQuickImageResponse *requestImageResponse(const QString &id, const QSize &requestedSize) override;
+    // The rendering itself (GUI thread only).
+    static QImage render(const QString &id, const QSize &requestedSize);
 };
 
 // image://appicon/<absolute path of an application's Icon= file>: validated and decoded off the GUI thread by AppIcons::load

@@ -159,6 +159,31 @@ TEST(StackLogic, NamesCannotForgeALine)
     EXPECT_FALSE(line.contains('\r'));
 }
 
+// Audit F22: a name that is not UTF-8 (a Latin-1 name from an old disk) is written byte for byte (\xHH for each byte that is
+// not part of valid UTF-8), so that the shell can name the file again; valid UTF-8 is written as it is.
+TEST(StackLogic, NamesAreWrittenByteForByte)
+{
+    EXPECT_EQ(escapeName(QByteArray("caf\xe9.txt")), QByteArray("caf\\xe9.txt"));
+    EXPECT_EQ(escapeName(QByteArray("caf\xc3\xa9.txt")), QByteArray("caf\xc3\xa9.txt")) << "UTF-8 as it is";
+    EXPECT_EQ(escapeName(QByteArray("\xf0\x9f\x93\x81 emoji")), QByteArray("\xf0\x9f\x93\x81 emoji"));
+    EXPECT_EQ(escapeName(QByteArray("a\\xe9")), QByteArray("a\\\\xe9")) << "a backslash in the name never reads as an escape";
+    EXPECT_EQ(escapeName(QByteArray("\xc0\x80")), QByteArray("\\xc0\\x80")) << "an overlong form is no character";
+    EXPECT_EQ(escapeName(QByteArray("\xed\xa0\x80")), QByteArray("\\xed\\xa0\\x80")) << "nor a surrogate";
+    EXPECT_EQ(escapeName(QByteArray("cut\xc3")), QByteArray("cut\\xc3")) << "nor a sequence cut short";
+    EXPECT_EQ(escapeName(QByteArray("x\ny\rz\x1f")), QByteArray("x\\ny\\rz\\u"));
+    // The window carries the raw name, not the decoded one (U+FFFD named no file).
+    Entry e;
+    e.raw = QByteArray("old\xe9");
+    e.se.name = QFile::decodeName(e.raw);
+    const QByteArray line = encodeWindow(1, 1, {e});
+    EXPECT_TRUE(line.contains("old\\xe9")) << line.constData();
+    // The folder argument: a path, or a file: URI whose escapes are bytes.
+    EXPECT_EQ(folderArgument("/home/u/Old"), QByteArray("/home/u/Old"));
+    EXPECT_EQ(folderArgument("file:///home/u/Vieux%E9"), QByteArray("/home/u/Vieux\xe9"));
+    EXPECT_TRUE(folderArgument("relative").isEmpty());
+    EXPECT_TRUE(folderArgument("file://host-less%00").isEmpty());
+}
+
 TEST(StackLogic, ScanSkipsHiddenAndDoesNotFollowLinks)
 {
     QTemporaryDir tmp;

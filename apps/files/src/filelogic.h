@@ -3,6 +3,8 @@
 #include <QDateTime>
 #include <QList>
 #include <QLocale>
+#include <QHash>
+#include <QSet>
 #include <QString>
 #include <QUrl>
 #include <QVariant>
@@ -124,6 +126,27 @@ bool sameName(const QString &a, const QString &b);
 // The entry of `names` that is the same name as `name` to a person but not the same string (an NFC/NFD twin), or "".
 // Copying, moving or dropping an item next to such a twin would make two entries that look alike (GF-105).
 QString equivalentName(const QStringList &names, const QString &name);
+
+// A folder's entry names indexed by their composed form (audit F5): built once from one listing (O(M) normalizations), then
+// each question is one normalization and a lookup, where comparing every entry with every item cost O(N×M) on the GUI thread.
+class NameIndex
+{
+public:
+    NameIndex() = default;
+    explicit NameIndex(const QStringList &names);
+    // An entry that is the same name as `name` to a person (equal, or an NFC/NFD twin), other than the entry `except`.
+    bool taken(const QString &name, const QString &except = QString()) const;
+    // An entry that is `name`'s twin but not `name` itself, "" when there is none or when `name` itself is an entry (as
+    // equivalentName, with an exact entry deciding first).
+    QString twin(const QString &name) const;
+    // A name given meanwhile (the next one asked must not take it again).
+    void add(const QString &name);
+    bool contains(const QString &name) const { return m_exact.contains(name); }
+
+private:
+    QHash<QString, QStringList> m_composed;
+    QSet<QString> m_exact;
+};
 
 // The original path of a trashed item from its .trashinfo (the `Path=` line of the [Trash Info] group, percent-decoded), or ""
 // (no such line, or a relative path: a trash outside the home volume, left to the system).

@@ -100,6 +100,9 @@ public:
     // fields too), makes it the most recently set and writes the file at once when the lock is free, dropping the oldest
     // folders past kMaxEntries or kMaxFileSize. Never waits for the lock: Busy keeps the change pending for flush().
     WriteResult set(const QString &key, const Entry &fields, QString *error = nullptr);
+    // The same change kept pending only (entry() reads it at once): flush() writes it later. FilesApp writes a view or sort
+    // click this way, after the click's frame and once for a burst of clicks.
+    void keep(const QString &key, const Entry &fields);
     // Writes the pending changes (merged into the file as it is on disk now). `waitMs`: how long to wait for another
     // process's lock (0: not at all; only the exit flush waits).
     WriteResult flush(QString *error = nullptr, int waitMs = 0);

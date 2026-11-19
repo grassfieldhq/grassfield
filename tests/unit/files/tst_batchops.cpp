@@ -260,3 +260,60 @@ TEST(BatchOps, WithoutRenameNoreplaceTheNameIsLookedAtFirst)
     ASSERT_TRUE(apply({{Step::Kind::Rename, d + QStringLiteral("/b"), d + QStringLiteral("/b2")}}, &f));
     EXPECT_EQ(read(d + QStringLiteral("/b2")), QByteArray("b"));
 }
+
+// Audit F19: on a file system that ignores case (FAT, exFAT; actCaseInsensitive stands in for one) a case-only change in
+// Rename N Items is a rename in place, and it is undone as one; nothing else that only looks like the new name is replaced.
+TEST(BatchOps, ACaseOnlyRenameOnACaseInsensitiveFileSystem)
+{
+    QString why;
+    auto dir = sandbox(&why);
+    if (!dir)
+        GTEST_SKIP() << why.toStdString();
+    const QString d = dir->path();
+    write(d + QStringLiteral("/photo.jpg"), "p");
+    write(d + QStringLiteral("/notes.txt"), "n");
+    write(d + QStringLiteral("/OTHER.txt"), "o");
+    write(d + QStringLiteral("/other.txt.bak"), "b");
+    actCaseInsensitive(true);
+    const Steps steps = {{Step::Kind::Rename, d + QStringLiteral("/photo.jpg"), d + QStringLiteral("/Photo.JPG")},
+                         {Step::Kind::Rename, d + QStringLiteral("/notes.txt"), d + QStringLiteral("/Notes.txt")}};
+    Failure failure;
+    const bool ok = apply(steps, &failure);
+    EXPECT_TRUE(ok) << "a case-only change is no name taken (errno " << failure.error << ")";
+    const QStringList names = QDir(d).entryList(QDir::Files | QDir::Hidden, QDir::Name);
+    EXPECT_EQ(names, (QStringList{QStringLiteral("Notes.txt"), QStringLiteral("OTHER.txt"), QStringLiteral("Photo.JPG"), QStringLiteral("other.txt.bak")}))
+        << "renamed in place, no hidden name left";
+    EXPECT_EQ(read(d + QStringLiteral("/Photo.JPG")), "p");
+    // Undone as one step.
+    EXPECT_TRUE(apply(inverse(steps)));
+    EXPECT_TRUE(QFileInfo::exists(d + QStringLiteral("/photo.jpg")));
+    EXPECT_TRUE(QFileInfo::exists(d + QStringLiteral("/notes.txt")));
+    // Another item spelt like the new name but for case is another file: refused, nothing moved.
+    Failure taken;
+    EXPECT_FALSE(apply({{Step::Kind::Rename, d + QStringLiteral("/other.txt.bak"), d + QStringLiteral("/other.txt")}}, &taken));
+    EXPECT_EQ(taken.error, EEXIST);
+    EXPECT_EQ(read(d + QStringLiteral("/OTHER.txt")), "o");
+    EXPECT_EQ(read(d + QStringLiteral("/other.txt.bak")), "b");
+    actCaseInsensitive(false);
+}
+
+// The in-place exception never takes a hard link of the item for the item itself: the exact name is another entry.
+TEST(BatchOps, AHardLinkUnderTheNewNameIsATakenName)
+{
+    QString why;
+    auto dir = sandbox(&why);
+    if (!dir)
+        GTEST_SKIP() << why.toStdString();
+    const QString d = dir->path();
+    write(d + QStringLiteral("/a"), "a");
+    ASSERT_EQ(::link(QFile::encodeName(d + QStringLiteral("/a")).constData(), QFile::encodeName(d + QStringLiteral("/b")).constData()), 0);
+    for (bool fallback : {false, true}) {
+        forceNoReplaceFallback(fallback);
+        Failure failure;
+        EXPECT_FALSE(apply({{Step::Kind::Rename, d + QStringLiteral("/a"), d + QStringLiteral("/b")}}, &failure));
+        EXPECT_EQ(failure.error, EEXIST);
+        EXPECT_TRUE(QFileInfo::exists(d + QStringLiteral("/a"))) << "the item stays where it is";
+        EXPECT_TRUE(QFileInfo::exists(d + QStringLiteral("/b")));
+    }
+    forceNoReplaceFallback(false);
+}

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "workers.h"
+
 #include <QByteArray>
 #include <QObject>
 #include <QPointer>
@@ -27,7 +29,8 @@ public:
     TagSearch(quint64 generation, const QString &root, const QString &tag, bool showHidden);
 
     void cancel() { m_cancel.store(true); }
-    bool cancelled() const { return m_cancel.load(); }
+    // Also when the app quits (Workers::waitAll): the walk ends before Qt's shutdown.
+    bool cancelled() const { return m_cancel.load() || Workers::stopping(); }
 
 signals:
     // Every signal carries the generation the search was started with (SearchRunner drops superseded ones).

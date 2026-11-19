@@ -65,6 +65,40 @@ QString recursiveOperators(Access owner, Access group, Access others)
     return ops(QLatin1Char('u'), owner) + QLatin1Char(',') + ops(QLatin1Char('g'), group) + QLatin1Char(',') + ops(QLatin1Char('o'), others);
 }
 
+unsigned recursiveMode(unsigned mode, bool isDir, Access owner, Access group, Access others)
+{
+    const Access accesses[3] = {owner, group, others};
+    for (int c = 0; c < 3; ++c) {
+        const int s = shift(Who(c));
+        const Access access = accesses[c];
+        const bool add = access != Access::NoAccess;
+        // `X`: a folder, or a file some class can execute as the mode stands now.
+        const bool execute = add && (isDir || (mode & 0111u));
+        unsigned plus = 0;
+        unsigned minus = 0;
+        switch (access) {
+        case Access::ReadWrite:
+            plus = kRead | kWrite;
+            break;
+        case Access::ReadOnly:
+            plus = kRead;
+            minus = kWrite;
+            break;
+        case Access::WriteOnly:
+            plus = kWrite;
+            minus = kRead;
+            break;
+        case Access::NoAccess:
+            minus = kRead | kWrite | kExec;
+            break;
+        }
+        if (execute)
+            plus |= kExec;
+        mode = (mode | (plus << s)) & ~(minus << s);
+    }
+    return mode;
+}
+
 QString modeText(unsigned mode)
 {
     QString out(9, QLatin1Char('-'));

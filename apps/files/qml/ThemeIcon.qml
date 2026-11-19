@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Effects
 import Grassfield.Ui
@@ -28,15 +29,18 @@ Item {
         visible: !root.tint
     }
 
-    MultiEffect {
-        visible: root.tint
+    // Made only for a tinted icon: an untinted one (the emblems of every row) carries no effect.
+    Loader {
+        active: root.tint
         anchors.fill: parent
-        source: image
-        autoPaddingEnabled: false
-        brightness: 1.0
-        colorization: 1.0
-        // Full alpha, the colour's alpha as the opacity (see Icon.qml).
-        colorizationColor: Qt.rgba(root.color.r, root.color.g, root.color.b, 1)
-        opacity: root.color.a
+        sourceComponent: MultiEffect {
+            source: image
+            autoPaddingEnabled: false
+            brightness: 1.0
+            colorization: 1.0
+            // Full alpha, the colour's alpha as the opacity (see Icon.qml).
+            colorizationColor: Qt.rgba(root.color.r, root.color.g, root.color.b, 1)
+            opacity: root.color.a
+        }
     }
 }

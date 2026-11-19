@@ -5,12 +5,14 @@
 #include "filesapp.h"
 #include "applicationslogic.h"
 #include "filelogic.h"
+#include "permissionlogic.h"
 
 #include <QCoreApplication>
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QVariantMap>
@@ -166,6 +168,59 @@ TEST_F(FileOps, ApplyToEnclosedReachesEveryItemButNeverFollowsALink)
     QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
     EXPECT_EQ(told1, 0);
     EXPECT_TRUE(told.messages.isEmpty()) << told.messages.join(QLatin1Char('|')).toStdString();
+}
+
+// Audit F20: when the owner keeps only Write (or nothing) of a folder, its contents change too: the folder's own mode is set
+// last (chmod -R changed it first, could not enter it any more, and nothing inside changed).
+TEST_F(FileOps, ApplyToEnclosedReachesInsideWhenTheOwnerLosesRead)
+{
+    FilesApp app(QList<QUrl>{});
+    Told told(app);
+    write(d("wo/file.txt"));
+    write(d("wo/sub/deep.txt"));
+    ASSERT_TRUE(setMode(d("wo/file.txt"), 0644));
+    ASSERT_TRUE(setMode(d("wo/sub/deep.txt"), 0644));
+    ASSERT_TRUE(setMode(d("wo/sub"), 0755));
+    ASSERT_TRUE(setMode(d("wo"), 0755));
+    app.setAccess(url(d("wo")), 0, int(PermissionLogic::Access::WriteOnly));
+    EXPECT_EQ(modeOf(d("wo")), 0355u);
+    int done = 0;
+    QObject::connect(&app, &FilesApp::permissionsChanged, &app, [&done](const QUrl &) { ++done; });
+    app.applyToEnclosed(url(d("wo")));
+    ASSERT_TRUE(waitFor([&] { return done > 0; }));
+    // Read back with the owner's read given again for the look.
+    EXPECT_EQ(modeOf(d("wo")), 0355u) << "the folder's own mode, last";
+    ASSERT_TRUE(setMode(d("wo"), 0755));
+    ASSERT_TRUE(setMode(d("wo/sub"), 0755));
+    EXPECT_EQ(modeOf(d("wo/file.txt")), 0244u) << "the files inside lost the owner's read too";
+    EXPECT_EQ(modeOf(d("wo/sub/deep.txt")), 0244u) << "at any depth";
+    EXPECT_TRUE(told.messages.isEmpty()) << told.messages.join(QLatin1Char('|')).toStdString();
+}
+
+// Audit F9: the sidebar's lists are shared by every Files process and the portal's panels. One process's edit is never
+// written over by another that read the lists earlier, and the other shows it without a restart.
+TEST_F(FileOps, AnotherProcessesSidebarEditIsKeptAndShown)
+{
+    FilesApp a(QList<QUrl>{});
+    FilesApp b(QList<QUrl>{}); // started alongside: it read the lists before a's edit
+    write(d("one/x"));
+    write(d("two/x"));
+    a.addToSidebar({url(d("one"))}, -1, QUrl(), QString());
+    ASSERT_TRUE(waitFor([&] { return a.inSidebar(url(d("one"))); }));
+    EXPECT_TRUE(waitFor([&] { return b.inSidebar(url(d("one"))); })) << "the other process shows the edit (the settings file is watched)";
+    b.addToSidebar({url(d("two"))}, -1, QUrl(), QString());
+    ASSERT_TRUE(waitFor([&] { return b.inSidebar(url(d("two"))); }));
+    EXPECT_TRUE(b.inSidebar(url(d("one")))) << "b's edit kept a's";
+    QSettings stored(QStringLiteral("Grassfield"), QStringLiteral("Files"));
+    stored.sync();
+    const QStringList favorites = stored.value(QStringLiteral("sidebar/favorites")).toStringList();
+    EXPECT_TRUE(favorites.contains(url(d("one")).toString())) << favorites.join(QLatin1Char('|')).toStdString();
+    EXPECT_TRUE(favorites.contains(url(d("two")).toString())) << favorites.join(QLatin1Char('|')).toStdString();
+    // Removed in one, gone from the other's next edit too.
+    a.removeFromSidebar(url(d("one")));
+    EXPECT_TRUE(waitFor([&] { return !b.inSidebar(url(d("one"))); }));
+    a.removeFromSidebar(url(d("two")));
+    EXPECT_TRUE(waitFor([&] { return !b.inSidebar(url(d("two"))); }));
 }
 
 TEST_F(FileOps, DeleteImmediatelyDeletesAnyItemAndNeverAnApplication)

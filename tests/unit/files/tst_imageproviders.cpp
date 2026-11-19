@@ -82,13 +82,50 @@ private:
 };
 } // namespace
 
-TEST(ImageProviders, TheThemeProviderIsSynchronousOnTheGuiThread)
+// The theme icons: asynchronous for QML (no rasterising on the frame that creates a delegate), but QIcon is only touched on the
+// GUI thread (its theme cache has no lock): requests made from another thread, as Qt's image loader makes them, are rendered
+// on the GUI thread, a few milliseconds per turn, and every one is finished, a cancelled one too.
+TEST(ImageProviders, TheThemeProviderRendersOnTheGuiThreadOnly)
 {
     IconProvider theme;
-    EXPECT_EQ(theme.imageType(), QQuickImageProvider::Pixmap);
-    EXPECT_FALSE(theme.flags().testFlag(QQuickImageProvider::ForceAsynchronousImageLoading));
+    EXPECT_EQ(theme.imageType(), QQuickImageProvider::ImageResponse);
     AppIconProvider files;
     EXPECT_EQ(files.imageType(), QQuickImageProvider::ImageResponse);
+
+    // Asked from another thread with an event loop of its own, as QQuickPixmapReader asks (the responses live there).
+    QThread loader;
+    auto *context = new QObject;
+    context->moveToThread(&loader);
+    loader.start();
+    std::vector<QQuickImageResponse *> responses;
+    std::vector<std::unique_ptr<Spy>> spies;
+    QMetaObject::invokeMethod(
+        context,
+        [&] {
+            for (int i = 0; i < 40; ++i)
+                responses.push_back(theme.requestImageResponse(i % 2 ? QStringLiteral("text-x-generic") : QStringLiteral("folder"), QSize(32, 32)));
+            responses.back()->cancel();
+        },
+        Qt::BlockingQueuedConnection);
+    // Made here, before any event is processed (the renders run on this thread's event loop).
+    for (QQuickImageResponse *r : responses)
+        spies.emplace_back(new Spy(r));
+    // What FolderModel and PlacesModel do on the GUI thread meanwhile.
+    for (int i = 0; i < 50; ++i) {
+        QIcon::hasThemeIcon(QStringLiteral("text-x-generic"));
+        QCoreApplication::processEvents();
+    }
+    for (const auto &spy : spies)
+        EXPECT_TRUE(spy->wait());
+    QMetaObject::invokeMethod(
+        context,
+        [&] {
+            qDeleteAll(responses);
+            delete context;
+        },
+        Qt::BlockingQueuedConnection);
+    loader.quit();
+    loader.wait();
 }
 
 TEST(ImageProviders, AnIconFileIsDecodedAndEveryRequestIsFinished)

@@ -56,6 +56,9 @@ FocusScope {
     readonly property bool scrolled: root.view !== null && root.view !== undefined && root.view.scrolled === true
     // The listing the selection actions apply to: the focused column in the column view.
     readonly property var activeFolder: root.viewMode === "columns" && root.view && root.view.activeModel ? root.view.activeModel : root.folder
+    // Where Paste, Move Item Here and New Folder put items: the folder the title shows (the Finder's rule, audit F11). In the
+    // column view that is the last column, not the focused one: with folder F selected the title reads F, and Paste goes into F.
+    readonly property var targetFolder: root.viewMode === "columns" && root.view && root.view.titleModel ? root.view.titleModel : root.folder
     readonly property bool canBack: root.historyIndex > 0
     readonly property bool canForward: root.historyIndex >= 0 && root.historyIndex < root.history.length - 1
     readonly property var segments: root.app.pathSegments(root.url)
@@ -601,20 +604,24 @@ FocusScope {
         return root.chooser === null && m !== null && !m.isTrash && (m.writable || m.isSearch);
     }
 
-    function paste(): void {
-        if (root.activeFolder.writable && root.app.canPaste)
-            root.app.paste(root.activeFolder.url, root.activeFolder);
+    // `into`: a listing a menu was opened on (a column's background); else the title's folder (targetFolder).
+    function paste(into: var): void {
+        const m = into ? into : root.targetFolder;
+        if (m && m.writable && root.app.canPaste)
+            root.app.paste(m.url, m);
     }
 
     // Edit > Move Item Here (⌥⌘V, decision F-6): the copied items moved into the shown folder.
-    function moveHere(): void {
-        if (root.chooser === null && root.activeFolder.writable && root.app.canPaste)
-            root.app.moveHere(root.activeFolder.url, root.activeFolder);
+    function moveHere(into: var): void {
+        const m = into ? into : root.targetFolder;
+        if (root.chooser === null && m && m.writable && root.app.canPaste)
+            root.app.moveHere(m.url, m);
     }
 
-    function newFolder(): void {
-        if (root.activeFolder.writable)
-            root.app.newFolder(root.activeFolder.url, root.activeFolder);
+    function newFolder(into: var): void {
+        const m = into ? into : root.targetFolder;
+        if (m && m.writable)
+            root.app.newFolder(m.url, m);
     }
 
     function duplicateSelection(): void {
@@ -1322,16 +1329,16 @@ FocusScope {
             root.copySelection(true);
             break;
         case "paste":
-            root.paste();
+            root.paste(model);
             break;
         case "moveHere":
-            root.moveHere();
+            root.moveHere(model);
             break;
         case "newFolder":
             if (root.chooser)
                 root.chooser.newFolder();
             else
-                root.newFolder();
+                root.newFolder(model);
             break;
         case "enclosing":
             root.showInEnclosingFolder();

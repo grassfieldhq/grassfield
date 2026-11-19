@@ -136,6 +136,7 @@ void SearchRunner::start(const QString &root, const QString &tag, bool showHidde
     m_search = search;
     connect(search, &TagSearch::found, this, &SearchRunner::onFound);
     connect(search, &TagSearch::done, this, &SearchRunner::onDone);
+    Workers::track(search); // joined, bounded, at quit
     search->start(QThread::LowPriority);
 }
 

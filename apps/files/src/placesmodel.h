@@ -5,6 +5,7 @@
 
 #include <QAbstractListModel>
 #include <QDBusMessage>
+#include <QFileSystemWatcher>
 #include <QHash>
 #include <QSet>
 #include <QTimer>
@@ -12,7 +13,6 @@
 #include <QStringList>
 #include <QUrl>
 
-class KCoreDirLister;
 
 // Sidebar entries: Favorites (Home, Applications, the standard user folders that exist), Locations (the system volume and
 // Solid storage volumes, Network only when a KIO smb/sftp worker is installed, Trash) and Tags (the tags in use,
@@ -118,7 +118,17 @@ private:
         int tagColor = -1;
         bool unavailable = false;
         bool udisks = false; // listed from udisks2 (VolumeLogic), mounted through its Filesystem.Mount
+        bool operator==(const Place &o) const
+        {
+            return section == o.section && name == o.name && url == o.url && iconName == o.iconName && kind == o.kind && udi == o.udi
+                && mounted == o.mounted && ejectable == o.ejectable && busy == o.busy && tag == o.tag && tagColor == o.tagColor
+                && unavailable == o.unavailable && udisks == o.udisks;
+        }
     };
+    // Which entry a row is (its section, kind, URL, tag, device): kept across lists, so a new list is applied as the rows that
+    // came, went, moved or changed (audit F18), never as a reset: the sidebar keeps its delegates, hover and drop target.
+    static QString identity(const Place &p);
+    void apply(const QList<Place> &places);
 
     // The list again, then the standard folders asked about.
     void rebuild();
@@ -136,7 +146,15 @@ private:
     QList<QUrl> m_pinned;
     QList<QUrl> m_hidden;
     int m_firstPinnedRow = 0;
-    KCoreDirLister *m_trashLister = nullptr;
+    // The Trash's full or empty state without listing it (a listing of trash:/ in every Files and panel process held every
+    // item of the Trash): KIO's own record ([Status] Empty of trashrc, which kio_trash keeps for every trash folder) and the
+    // home trash's files folder (a tool that bypasses KIO), read on a worker when either changes.
+    QFileSystemWatcher m_trashWatcher;
+    QTimer m_trashTimer;
+    QString m_trashStatus;
+    QString m_trashFiles;
+    void checkTrash();
+    void setTrashEmpty(bool empty);
     bool m_trashEmpty = true;
     DiskProbe m_disk;
     // What the disk last said of each standard folder (DiskProbe kinds); a folder not asked yet is listed.

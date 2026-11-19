@@ -4,6 +4,7 @@
 #include "filelogic.h"
 #include "launchguard.h"
 #include "runmode.h"
+#include "workers.h"
 
 #include <QDir>
 #include <QFile>
@@ -104,6 +105,74 @@ bool editRegistry(const QString &file, const std::function<void(QList<QByteArray
     ::close(fd); // and the lock with it
     return ok;
 }
+
+// The staging item `temp` of a job that ended without a result, removed on a worker once the child and the marking worker
+// have ended (audit F3). Only the job's own hidden name in its folder; its registry line goes once it is gone.
+class StagingReaper : public QObject
+{
+public:
+    StagingReaper(QProcess *process, QThread *marking, const QString &temp, const QString &folder, std::function<void()> beforeRemoval)
+        : m_temp(temp)
+        , m_folder(folder)
+        , m_beforeRemoval(std::move(beforeRemoval))
+    {
+        if (process) {
+            process->setParent(this);
+            if (process->state() != QProcess::NotRunning) {
+                ++m_pending;
+                connect(process, &QProcess::finished, this, &StagingReaper::ended);
+                process->kill(); // SIGKILL: reaped by the event loop, never waited for here
+            }
+        }
+        if (marking) {
+            marking->setParent(this);
+            if (!marking->isFinished() && marking->isRunning()) {
+                ++m_pending;
+                connect(marking, &QThread::finished, this, &StagingReaper::ended);
+            }
+        }
+        if (m_pending == 0)
+            remove();
+    }
+
+private:
+    void ended()
+    {
+        if (--m_pending == 0)
+            remove();
+    }
+
+    void remove()
+    {
+        if (m_temp.isEmpty()) {
+            deleteLater();
+            return;
+        }
+        Workers::run(
+            this,
+            [temp = m_temp, folder = m_folder, before = m_beforeRemoval] {
+                if (before)
+                    before();
+                const QFileInfo info(temp);
+                if (!info.fileName().startsWith(QStringLiteral(".grassfield-")) || QFileInfo(info.absolutePath()) != QFileInfo(folder))
+                    return;
+                // By descriptor, no link followed, each folder opened up first (an archive's 0100 or 0500 folders), a tree
+                // deeper than PATH_MAX too. What stays keeps its line: the next Files to start tries again (sweepStaleStaging).
+                if (!LaunchGuard::removeTree(temp)) {
+                    qInfo("grassfield-files: a staging item could not be removed entirely");
+                    return;
+                }
+                const QByteArray line = holderLine(temp);
+                editRegistry(ArchiveJob::stagingRegistry(), [&line](QList<QByteArray> &lines) { lines.removeAll(line); });
+            },
+            [this] { deleteLater(); });
+    }
+
+    QString m_temp;
+    QString m_folder;
+    std::function<void()> m_beforeRemoval;
+    int m_pending = 0;
+};
 } // namespace
 
 ArchiveJob::ArchiveJob(Kind kind, const QString &bsdtar, QObject *parent)
@@ -137,15 +206,12 @@ ArchiveJob *ArchiveJob::expand(const QString &bsdtar, const QString &archive, QO
 
 ArchiveJob::~ArchiveJob()
 {
-    stopMarking();
     if (!m_done) {
         m_done = true;
-        if (m_process) {
-            m_process->disconnect(this);
-            m_process->kill();
-            m_process->waitForFinished(1000);
-        }
-        cleanUp();
+        discard();
+    } else if (m_marking) {
+        // Done, and a marking worker that has not ended yet can only be a stopped one: it ends at its next entry.
+        discard();
     }
 }
 
@@ -244,16 +310,12 @@ void ArchiveJob::start()
         return;
     }
     m_listing = true;
+    m_tally = ArchiveLogic::ListingTally();
     run(ArchiveLogic::listArgs(m_archive));
-    QTimer::singleShot(kListMs, this, [this] {
-        if (m_listing && !m_done)
-            fail(tr("“%1” takes too long to read.").arg(FileLogic::displayName(subject())));
-    });
 }
 
 void ArchiveJob::run(const QStringList &args)
 {
-    m_output.clear();
     m_errors.clear();
     m_process = new QProcess(this);
     m_process->setProgram(m_bsdtar);
@@ -261,9 +323,10 @@ void ArchiveJob::run(const QStringList &args)
     m_process->setWorkingDirectory(m_folder);
     m_process->setStandardInputFile(QProcess::nullDevice());
     connect(m_process, &QProcess::readyReadStandardOutput, this, [this] {
-        m_output += m_process->readAllStandardOutput();
-        if (m_output.size() > kMaxListing)
-            fail(tr("“%1” lists too many items.").arg(FileLogic::displayName(subject())));
+        // The listing is counted as it comes, never kept; nothing else bsdtar prints on its output is of use.
+        const QByteArray chunk = m_process->readAllStandardOutput();
+        if (m_listing)
+            m_tally.feed(chunk);
     });
     connect(m_process, &QProcess::readyReadStandardError, this, [this] {
         // Only the start matters (the failure's reason).
@@ -277,7 +340,11 @@ void ArchiveJob::run(const QStringList &args)
     connect(m_process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         if (m_done)
             return;
-        m_output += m_process->readAllStandardOutput();
+        const QByteArray rest = m_process->readAllStandardOutput();
+        if (m_listing) {
+            m_tally.feed(rest);
+            m_tally.finish();
+        }
         if (status != QProcess::NormalExit || code != 0) {
             fail(failureText(m_kind == Kind::Compress ? tr("“%1” couldn’t be created.").arg(FileLogic::displayName(subject()))
                                                       : tr("“%1” couldn’t be expanded.").arg(FileLogic::displayName(subject()))));
@@ -307,7 +374,7 @@ QString ArchiveJob::failureText(const QString &fallback) const
 void ArchiveJob::listed()
 {
     m_listing = false;
-    const auto size = ArchiveLogic::listedSize(QString::fromLocal8Bit(m_output));
+    const auto size = m_tally.total();
     const qint64 free = freeSpace(m_folder);
     if (size && free >= 0 && *size > free - kFreeMargin) {
         fail(tr("There isn’t enough space on the disk to expand “%1”.").arg(FileLogic::displayName(subject())));
@@ -348,12 +415,12 @@ void ArchiveJob::extracted()
     m_marking = QThread::create([temp, marks, cap, stop, result] {
         *result = LaunchGuard::markTree(temp, marks, cap, [stop](qint64) { return !stop->load(); });
     });
-    m_marking->setParent(this); // destroyed with the job, after stopMarking() waited for it
+    m_marking->setParent(this); // destroyed with the job once ended; a cancel hands it to the StagingReaper (discard)
     connect(m_marking, &QThread::finished, this, [this, top, result] {
         m_marking->deleteLater();
         m_marking = nullptr;
         if (m_done)
-            return; // canceled meanwhile (fail() waited for the worker and cleaned up)
+            return; // canceled meanwhile (discard() took the worker and the staging item)
         if (!result->complete) {
             qInfo("grassfield-files: expand refused: the download marks could not be copied onto every file (%lld marked, %lld entries)",
                   static_cast<long long>(result->files), static_cast<long long>(result->entries));
@@ -402,15 +469,6 @@ void ArchiveJob::compressed()
     emit finished(true, QString(), target);
 }
 
-void ArchiveJob::stopMarking()
-{
-    // The marking worker stops at its next entry; the staging folder is only removed once it has.
-    if (!m_marking)
-        return;
-    m_stop->store(true);
-    m_marking->wait();
-}
-
 void ArchiveJob::cancel()
 {
     if (m_done)
@@ -424,31 +482,26 @@ void ArchiveJob::fail(const QString &error)
         return;
     m_done = true;
     m_poll.stop();
-    stopMarking();
-    if (m_process) {
-        m_process->disconnect(this);
-        m_process->kill();
-        m_process->waitForFinished(1000);
-        m_process->deleteLater();
-        m_process = nullptr;
-    }
-    cleanUp();
+    discard();
     emit finished(false, error, QString());
 }
 
-void ArchiveJob::cleanUp()
+void ArchiveJob::discard()
 {
-    if (m_temp.isEmpty())
-        return;
-    // Only the job's own hidden temporary name (".grassfield-compress-…" or ".grassfield-expand-…" in the folder).
-    const QFileInfo info(m_temp);
-    if (info.fileName().startsWith(QStringLiteral(".grassfield-")) && QFileInfo(info.absolutePath()) == QFileInfo(m_folder)
-        && !LaunchGuard::removeTree(m_temp)) {
-        // By descriptor, no link followed, each folder opened up first (an archive's 0100 or 0500 folders), a tree deeper
-        // than PATH_MAX too. What stays keeps its line: the next Files to start tries again (sweepStaleStaging).
-        qInfo("grassfield-files: a staging item could not be removed entirely");
-        m_temp.clear();
-        return;
+    QProcess *process = m_process;
+    m_process = nullptr;
+    if (process)
+        process->disconnect(this);
+    QThread *marking = m_marking;
+    m_marking = nullptr;
+    if (marking) {
+        m_stop->store(true); // the marking stops at its next entry
+        marking->disconnect(this);
     }
-    forgetTemp();
+    const QString temp = m_temp;
+    m_temp.clear();
+    if (!process && !marking && temp.isEmpty())
+        return;
+    // Lives on its own (no parent): the job may be deleted right after this returns.
+    new StagingReaper(process, marking, temp, m_folder, s_beforeRemoval);
 }
