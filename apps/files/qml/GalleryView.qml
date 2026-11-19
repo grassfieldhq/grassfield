@@ -137,6 +137,8 @@ FocusScope {
         highlightMoveDuration: 0
         currentIndex: root.model ? root.model.currentRow : -1
         cacheBuffer: Math.max(0, pager.width)
+        // Pages scrolled out are kept in a pool and given the items scrolled in (the page's pooled/reused protocol).
+        reuseItems: true
         Accessible.ignored: true
 
         delegate: Item {
@@ -163,9 +165,34 @@ FocusScope {
             Accessible.role: Accessible.Graphic
             Accessible.name: DisplayName.text(page.name)
 
-            Component.onCompleted: if (page.canPreview) root.model.requestPreview(page.index, true)
-            onCanPreviewChanged: if (page.canPreview) root.model.requestPreview(page.index, true)
-            Component.onDestruction: if (root.model) root.model.cancelPreview(page.url, true)
+            // Reused (reuseItems): a page put in the pool drops its large thumbnail's request and ends a rename it showed;
+            // taken again (its required properties already the new item's), it asks the new item's once.
+            property bool pooled: false
+            // Not before it is complete: its roles are set one by one as it is made, canPreview possibly before its index.
+            property bool completed: false
+
+            function askPreview(): void {
+                if (page.completed && !page.pooled && page.canPreview && root.model)
+                    root.model.requestPreview(page.index, true);
+            }
+
+            Component.onCompleted: {
+                page.completed = true;
+                page.askPreview();
+            }
+            onCanPreviewChanged: page.askPreview()
+            ListView.onPooled: {
+                page.pooled = true;
+                if (root.model)
+                    root.model.cancelPreview(page.url, true);
+                if (page.renaming)
+                    root.tab.cancelRename();
+            }
+            ListView.onReused: {
+                page.pooled = false;
+                page.askPreview();
+            }
+            Component.onDestruction: if (root.model && !page.pooled) root.model.cancelPreview(page.url, true)
 
             Item {
                 id: box
@@ -289,6 +316,8 @@ FocusScope {
         // A short strip is centred, as on macOS.
         leftMargin: Math.max(0, (strip.width - strip.count * Tokens.filesGalleryStripCellWidth) / 2)
         cacheBuffer: Tokens.filesGalleryStripCellWidth * 4
+        // Cells scrolled out are kept in a pool and given the items scrolled in (the cell's pooled/reused protocol).
+        reuseItems: true
         Accessible.role: Accessible.List
         Accessible.name: qsTr("Gallery")
 
@@ -330,9 +359,33 @@ FocusScope {
             Accessible.selected: cell.selected
             Accessible.onPressAction: root.tab.activate(cell.index, root.model, Qt.NoModifier)
 
-            Component.onCompleted: if (cell.canPreview) root.model.requestPreview(cell.index)
-            onCanPreviewChanged: if (cell.canPreview) root.model.requestPreview(cell.index)
-            Component.onDestruction: if (root.model) root.model.cancelPreview(cell.url)
+            // Reused (reuseItems): a cell put in the pool drops its thumbnail's request; taken again (its required properties
+            // already the new item's), it asks the new item's once.
+            property bool pooled: false
+            // Not before it is complete: its roles are set one by one as it is made, canPreview possibly before its index.
+            property bool completed: false
+
+            function askPreview(): void {
+                if (cell.completed && !cell.pooled && cell.canPreview && root.model)
+                    root.model.requestPreview(cell.index);
+            }
+
+            Component.onCompleted: {
+                cell.completed = true;
+                cell.askPreview();
+            }
+            onCanPreviewChanged: cell.askPreview()
+            ListView.onPooled: {
+                cell.pooled = true;
+                if (root.model)
+                    root.model.cancelPreview(cell.url);
+                mouse.collapseOnRelease = false;
+            }
+            ListView.onReused: {
+                cell.pooled = false;
+                cell.askPreview();
+            }
+            Component.onDestruction: if (root.model && !cell.pooled) root.model.cancelPreview(cell.url)
 
             Rectangle {
                 anchors.centerIn: parent

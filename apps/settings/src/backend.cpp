@@ -1238,7 +1238,13 @@ bool Backend::watch(const QString &path)
     if (m_watched.contains(path))
         return true;
     m_watched.append(path);
-    QDir().mkpath(dir);
+    // A folder in $XDG_RUNTIME_DIR (Grassfield's own, where the shell writes the capabilities file) is made private, as
+    // the shell makes it (0700): the first of them to start makes it. Anything else as before.
+    const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+    if (!QFileInfo(dir).isDir() && !runtime.isEmpty() && QDir::cleanPath(QFileInfo(dir).absolutePath()) == QDir::cleanPath(QFileInfo(runtime).absoluteFilePath()))
+        QDir().mkdir(dir, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    else
+        QDir().mkpath(dir);
     m_watcher.addPath(dir);
     if (QFile::exists(path))
         m_watcher.addPath(path);

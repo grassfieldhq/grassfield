@@ -454,6 +454,41 @@ TEST_F(BackendTest, TheRunnersStateIsInTheRuntimeFolder)
     EXPECT_EQ(Backend().softwareUpdateRunFile(), QString());
 }
 
+// The capabilities file is in Grassfield's own runtime folder (apps-misc H1): Settings makes that folder private when it
+// starts first, watches it and not all of $XDG_RUNTIME_DIR, and announces the file's changes only.
+TEST_F(BackendTest, TheCapabilitiesFileIsWatchedInGrassfieldsRuntimeFolder)
+{
+    EnvGuard env{"XDG_RUNTIME_DIR", "GRASSFIELD_STATE_HOME"};
+    QTemporaryDir runtime;
+    ASSERT_TRUE(runtime.isValid());
+    qunsetenv("GRASSFIELD_STATE_HOME");
+    qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path() + QStringLiteral("/")));
+    Backend backend;
+    const QString caps = backend.capabilitiesFile();
+    EXPECT_EQ(caps, runtime.path() + QStringLiteral("/grassfield/capabilities.json"));
+    QStringList changed;
+    QObject::connect(&backend, &Backend::fileChanged, &backend, [&changed](const QString &p) { changed.append(p); });
+    EXPECT_TRUE(backend.watch(caps));
+    const QFileInfo folder(runtime.path() + QStringLiteral("/grassfield"));
+    ASSERT_TRUE(folder.isDir());
+    EXPECT_EQ(folder.permissions() & (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup | QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther), QFileDevice::Permissions());
+
+    // Another program's entry in the runtime dir: nothing.
+    QFile other(runtime.path() + QStringLiteral("/pipewire-0.lock"));
+    ASSERT_TRUE(other.open(QIODevice::WriteOnly));
+    other.close();
+    spinUntil([] { return false; }, 200);
+    EXPECT_TRUE(changed.isEmpty());
+
+    // The shell's write: announced.
+    QFile f(caps);
+    ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+    f.write(R"({"v":1,"pluginPresent":true,"features":["minimize"]})");
+    f.close();
+    EXPECT_TRUE(spinUntil([&changed] { return !changed.isEmpty(); }));
+    EXPECT_EQ(changed.value(0), caps);
+}
+
 // The shell is asked by its directory (never a configuration found through QS_*): `update check user`; "ok" means it checks.
 TEST_F(BackendTest, TheShellIsAskedToCheckByItsDirectory)
 {

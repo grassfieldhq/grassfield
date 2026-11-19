@@ -251,6 +251,8 @@ FocusScope {
         boundsBehavior: Flickable.StopAtBounds
         currentIndex: root.model ? root.model.currentRow : -1
         cacheBuffer: Tokens.filesListRowHeight * 20
+        // Rows scrolled out are kept in a pool and given the rows scrolled in (the row's pooled/reused protocol below).
+        reuseItems: true
         Accessible.role: Accessible.Table
         Accessible.name: qsTr("Files")
 
@@ -316,6 +318,16 @@ FocusScope {
 
             readonly property bool renaming: root.tab.isRenaming(root.model, row.url)
             readonly property bool emphasized: row.selected && list.activeFocus
+
+            // Reused (reuseItems): in the pool a row is hidden but kept; what it held for its old row ends there, as when it
+            // was destroyed: a rename it showed is canceled (a field taken out of the view cancels, RenameField), a band
+            // started on it ends, a click's pending collapse is dropped. Taken again, its required properties are the new row's.
+            ListView.onPooled: {
+                if (row.renaming)
+                    root.tab.cancelRename();
+                mouse.endBand();
+                mouse.collapseOnRelease = false;
+            }
             readonly property color foreground: row.emphasized ? Appearance.colors.selectionText : Appearance.colors.text
             readonly property color secondary: row.emphasized ? Appearance.colors.selectionText : Appearance.windowSecondary
 

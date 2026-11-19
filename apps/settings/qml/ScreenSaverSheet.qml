@@ -54,90 +54,97 @@ Sheet {
         return "";
     }
 
-    ChoicePicker {
-        anchors.horizontalCenter: parent.horizontalCenter
-        accessibleName: qsTr("Screen saver")
-        model: [{id: "artwork", text: qsTr("Grassfield")}, {id: "wallpaperClock", text: qsTr("Wallpaper")}, {id: "slideshow", text: qsTr("Slideshow")}, {id: "clock", text: qsTr("Clock")}, {id: "moving", text: qsTr("Clouds")}]
-        value: root.store.value("screensaver.kind")
-        pictureWidth: Tokens.settingsAppearanceThumbWidth
-        pictureHeight: Tokens.settingsAppearanceThumbHeight
-        pictureRadius: Tokens.settingsAppearanceThumbRadius
-        pitch: Tokens.settingsAppearanceThumbPitch
-        ringGap: Tokens.settingsAppearanceThumbRingGap
-        captionBaseline: Tokens.settingsAppearanceCaptionBaseline
-        picture: Component {
-            SaverThumbnail {}
-        }
-        onPicked: id => root.store.set("screensaver.kind", id)
-    }
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-    SettingsGroup {
-        SettingsRow {
-            title: qsTr("Start screen saver when inactive")
-            ComboBox {
-                inline: true
-                accessibleName: qsTr("Start screen saver when inactive")
-                model: root.minuteChoices
-                value: String(root.minutes)
-                onPicked: id => root.store.set("screensaver.idleMinutes", Number(id))
+            ChoicePicker {
+                anchors.horizontalCenter: parent.horizontalCenter
+                accessibleName: qsTr("Screen saver")
+                model: [{id: "artwork", text: qsTr("Grassfield")}, {id: "wallpaperClock", text: qsTr("Wallpaper")}, {id: "slideshow", text: qsTr("Slideshow")}, {id: "clock", text: qsTr("Clock")}, {id: "moving", text: qsTr("Clouds")}]
+                value: root.store.value("screensaver.kind")
+                pictureWidth: Tokens.settingsAppearanceThumbWidth
+                pictureHeight: Tokens.settingsAppearanceThumbHeight
+                pictureRadius: Tokens.settingsAppearanceThumbRadius
+                pitch: Tokens.settingsAppearanceThumbPitch
+                ringGap: Tokens.settingsAppearanceThumbRingGap
+                captionBaseline: Tokens.settingsAppearanceCaptionBaseline
+                picture: Component {
+                    SaverThumbnail {}
+                }
+                onPicked: id => root.store.set("screensaver.kind", id)
             }
-        }
 
-        // The slideshow's pictures: the folder's name, and Choose… for another one.
-        SettingsRow {
-            visible: root.store.value("screensaver.kind") === "slideshow"
-            title: qsTr("Pictures")
-            Row {
-                spacing: Tokens.settingsAccessoryGap
-
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    text: root.folder === "" ? qsTr("Pictures folder") : root.folder.substring(root.folder.lastIndexOf("/") + 1)
-                    color: Appearance.windowSecondary
-                    font.family: Appearance.fontFamily
-                    font.pixelSize: Tokens.typographyBodySize
+            SettingsGroup {
+                SettingsRow {
+                    title: qsTr("Start screen saver when inactive")
+                    ComboBox {
+                        inline: true
+                        accessibleName: qsTr("Start screen saver when inactive")
+                        model: root.minuteChoices
+                        value: String(root.minutes)
+                        onPicked: id => root.store.set("screensaver.idleMinutes", Number(id))
+                    }
                 }
 
-                Button {
-                    anchors.verticalCenter: parent.verticalCenter
-                    push: true
-                    text: qsTr("Choose…")
-                    Accessible.name: qsTr("Choose the slideshow's folder")
-                    onClicked: folderDialog.open()
+                // The slideshow's pictures: the folder's name, and Choose… for another one.
+                SettingsRow {
+                    visible: root.store.value("screensaver.kind") === "slideshow"
+                    title: qsTr("Pictures")
+                    Row {
+                        spacing: Tokens.settingsAccessoryGap
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            textFormat: Text.PlainText
+                            text: root.folder === "" ? qsTr("Pictures folder") : root.folder.substring(root.folder.lastIndexOf("/") + 1)
+                            color: Appearance.windowSecondary
+                            font.family: Appearance.fontFamily
+                            font.pixelSize: Tokens.typographyBodySize
+                        }
+
+                        Button {
+                            anchors.verticalCenter: parent.verticalCenter
+                            push: true
+                            text: qsTr("Choose…")
+                            Accessible.name: qsTr("Choose the slideshow's folder")
+                            onClicked: folderDialog.open()
+                        }
+                    }
                 }
             }
-        }
-    }
 
-    Text {
-        visible: root.timingNote !== ""
-        width: parent.width
-        textFormat: Text.PlainText
-        wrapMode: Text.Wrap
-        text: root.timingNote
-        color: Appearance.windowSecondary
-        font.family: Appearance.fontFamily
-        font.pixelSize: Tokens.typographyCaptionSize
-    }
+            Text {
+                visible: root.timingNote !== ""
+                width: parent.width
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                text: root.timingNote
+                color: Appearance.windowSecondary
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyCaptionSize
+            }
 
-    Button {
-        visible: root.timingNote !== ""
-        anchors.right: parent.right
-        push: true
-        text: qsTr("Lock Screen Settings…")
-        onClicked: root.lockScreenRequested()
-    }
+            Button {
+                visible: root.timingNote !== ""
+                anchors.right: parent.right
+                push: true
+                text: qsTr("Lock Screen Settings…")
+                onClicked: root.lockScreenRequested()
+            }
 
-    // A Qt Quick dialog: with the session's GTK platform theme it is the native chooser (as Wallpaper's). Esc changes nothing.
-    FolderDialog {
-        id: folderDialog
-        title: qsTr("Choose a folder of pictures")
-        onAccepted: {
-            const s = selectedFolder.toString();
-            const path = s.indexOf("file://") === 0 ? decodeURIComponent(s.substring(7)) : "";
-            if (path !== "")
-                root.store.set("screensaver.folder", path);
+            // A Qt Quick dialog: with the session's GTK platform theme it is the native chooser (as Wallpaper's). Esc changes nothing.
+            FolderDialog {
+                id: folderDialog
+                title: qsTr("Choose a folder of pictures")
+                onAccepted: {
+                    const s = selectedFolder.toString();
+                    const path = s.indexOf("file://") === 0 ? decodeURIComponent(s.substring(7)) : "";
+                    if (path !== "")
+                        root.store.set("screensaver.folder", path);
+                }
+            }
         }
     }
 }

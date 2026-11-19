@@ -138,6 +138,37 @@ TestCase {
         return win.sheets.find(x => x.shown) ?? null;
     }
 
+    // The window declares every sheet (34), but builds none of their bodies with it: each sheet's content is made the first time
+    // it opens (Sheet.bodyComponent) and kept for the next time; a sheet without content of its own has only its text.
+    function test_noSheetBodyExistsBeforeItsFirstShow() {
+        const t = make(touchpad);
+        compare(t.win.sheets.length, 34);
+        const lazy = [];
+        for (const s of t.win.sheets) {
+            verify(s.bodyItem === null, s.title + ": no body before the first show");
+            // Only the body's loader is in the slot: an inline body would be built with the window (Timers and Connections
+            // have no geometry).
+            for (let i = 0; i < s.body.length; i++) {
+                const o = s.body[i];
+                verify(o.sourceComponent !== undefined || o.width === undefined, s.title + ": an item of the body made with the window");
+            }
+            if (s.bodyComponent !== null)
+                lazy.push(s);
+        }
+        compare(lazy.length, 23, "every sheet with content of its own builds it lazily");
+        for (const s of lazy) {
+            s.open();
+            const made = s.bodyItem;
+            verify(made !== null, s.title + ": built at the first show");
+            verify(made.width > 0, s.title + ": as wide as the sheet");
+            s.close();
+            compare(s.bodyItem, made, s.title + ": kept once closed");
+            s.open();
+            compare(s.bodyItem, made, s.title + ": the same next time");
+            s.close();
+        }
+    }
+
     // A pane is built across frames behind the one shown, then swapped in: the window never shows an empty pane, and the page
     // left goes once the new one is in front.
     function test_aPageIsBuiltBehindTheOneShown() {

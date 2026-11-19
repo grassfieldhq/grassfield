@@ -39,6 +39,7 @@ add_library(grassfield-activity-window STATIC
     src/desktopapps.cpp src/desktopapps.h
     src/efficiency.cpp src/efficiency.h
     src/format.cpp src/format.h
+    src/graphgeometry.cpp src/graphgeometry.h
     src/inhibitors.cpp src/inhibitors.h
     src/inspection.cpp src/inspection.h src/shownwatch.h
     src/performance.cpp src/performance.h
@@ -50,7 +51,7 @@ target_include_directories(grassfield-activity-window PUBLIC ${CMAKE_CURRENT_SOU
     ${CMAKE_CURRENT_SOURCE_DIR}/../../ui/i18n)
 target_link_libraries(grassfield-activity-window PUBLIC grassfield-activity-sampler Qt6::Core Qt6::Gui Qt6::DBus pthread)
 
-add_executable(grassfield-activity src/main.cpp src/iconprovider.h src/shownwatch.h)
+add_executable(grassfield-activity src/main.cpp src/iconprovider.h src/shownwatch.h src/graphitem.cpp src/graphitem.h)
 # windowchrome.h (ADR-0015): one Qt private header and the three xdg-toplevel-tag requests on libwayland-client.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
@@ -101,7 +102,7 @@ if(GTest_FOUND)
 
     # A-W1: the window with its real backend on a fixture tree, offscreen (its own main).
     add_executable(activity-window-qml-tests ../../tests/unit/activity/qml/tst_window.cpp
-        ../../tests/unit/activity/qml/tst_keywindow.cpp)
+        ../../tests/unit/activity/qml/tst_keywindow.cpp ../../tests/unit/activity/qml/tst_graph.cpp src/graphitem.cpp src/graphitem.h)
     # tst_keywindow: apps/keywindow.h, shared by the five apps (the focus taken away through Qt's window-system API).
     target_include_directories(activity-window-qml-tests PRIVATE ../../tests/unit/activity)
     target_compile_definitions(activity-window-qml-tests PRIVATE ACTIVITY_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../..")

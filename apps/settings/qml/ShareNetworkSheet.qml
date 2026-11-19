@@ -68,66 +68,73 @@ Sheet {
         }
     }
 
-    Item {
-        id: area
-        // A module of the token's size, smaller only for a code wider than the sheet (a long password makes a larger code).
-        readonly property int module: root.code ? Math.max(1, Math.min(Tokens.settingsQrModule, Math.floor(area.width / root.code.size))) : Tokens.settingsQrModule
-        width: parent.width
-        height: card.height
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        Rectangle {
-            id: card
-            visible: root.code !== null
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: (root.code ? root.code.size : 0) * area.module
-            height: width
-            radius: Tokens.settingsQrRadius
-            color: Tokens.settingsQrLight
-            Accessible.role: Accessible.Graphic
-            Accessible.name: root.net ? qsTr("QR code to join “%1”").arg(root.net.label) : ""
-
-            Repeater {
-                model: root.cells
+            Item {
+                id: area
+                // A module of the token's size, smaller only for a code wider than the sheet (a long password makes a larger code).
+                readonly property int module: root.code ? Math.max(1, Math.min(Tokens.settingsQrModule, Math.floor(area.width / root.code.size))) : Tokens.settingsQrModule
+                width: parent.width
+                height: card.height
 
                 Rectangle {
-                    required property var modelData
-                    x: modelData.x * area.module
-                    y: modelData.y * area.module
-                    width: modelData.w * area.module
-                    height: area.module
-                    color: Tokens.settingsQrDark
-                    antialiasing: false
+                    id: card
+                    visible: root.code !== null
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: (root.code ? root.code.size : 0) * area.module
+                    height: width
+                    radius: Tokens.settingsQrRadius
+                    color: Tokens.settingsQrLight
+                    Accessible.role: Accessible.Graphic
+                    Accessible.name: root.net ? qsTr("QR code to join “%1”").arg(root.net.label) : ""
+
+                    Repeater {
+                        model: root.cells
+
+                        Rectangle {
+                            required property var modelData
+                            x: modelData.x * area.module
+                            y: modelData.y * area.module
+                            width: modelData.w * area.module
+                            height: area.module
+                            color: Tokens.settingsQrDark
+                            antialiasing: false
+                        }
+                    }
                 }
             }
+
+            Spinner {
+                visible: root.loading
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            Text {
+                textFormat: Text.PlainText
+                visible: root.code !== null
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideMiddle
+                text: root.net ? root.net.label : ""
+                color: Appearance.colors.text
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyBodySize
+                font.weight: Tokens.typographyMenuBoldWeight
+            }
+
+            Text {
+                textFormat: Text.PlainText
+                visible: !root.loading && root.code === null && root.error !== ""
+                width: parent.width
+                wrapMode: Text.Wrap
+                text: qsTr("The code cannot be made: %1").arg(root.error)
+                color: Appearance.colors.textSecondary
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyCaptionSize
+            }
         }
-    }
-
-    Spinner {
-        visible: root.loading
-        anchors.horizontalCenter: parent.horizontalCenter
-    }
-
-    Text {
-        textFormat: Text.PlainText
-        visible: root.code !== null
-        width: parent.width
-        horizontalAlignment: Text.AlignHCenter
-        elide: Text.ElideMiddle
-        text: root.net ? root.net.label : ""
-        color: Appearance.colors.text
-        font.family: Appearance.fontFamily
-        font.pixelSize: Tokens.typographyBodySize
-        font.weight: Tokens.typographyMenuBoldWeight
-    }
-
-    Text {
-        textFormat: Text.PlainText
-        visible: !root.loading && root.code === null && root.error !== ""
-        width: parent.width
-        wrapMode: Text.Wrap
-        text: qsTr("The code cannot be made: %1").arg(root.error)
-        color: Appearance.colors.textSecondary
-        font.family: Appearance.fontFamily
-        font.pixelSize: Tokens.typographyCaptionSize
     }
 }

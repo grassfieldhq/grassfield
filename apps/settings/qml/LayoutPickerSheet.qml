@@ -37,10 +37,8 @@ Sheet {
         if (event.key !== Qt.Key_Up && event.key !== Qt.Key_Down)
             return;
         const next = Math.max(0, Math.min(root.matches.length - 1, root.chosen < 0 ? 0 : root.chosen + (event.key === Qt.Key_Down ? 1 : -1)));
-        if (root.matches.length > 0) {
+        if (root.matches.length > 0)
             root.chosen = next;
-            list.positionViewAtIndex(next, ListView.Contain);
-        }
         event.accepted = true;
     }
 
@@ -52,70 +50,86 @@ Sheet {
         return "";
     }
 
-    Rectangle {
-        width: parent.width
-        height: Tokens.settingsPickerListHeight
-        radius: Tokens.radiusGroup
-        color: Appearance.colors.groupFill
-        clip: true
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        ListView {
-            id: list
-            anchors.fill: parent
-            anchors.margins: Tokens.spacingXs
-            model: root.matches
-            boundsBehavior: Flickable.StopAtBounds
-            Accessible.role: Accessible.List
-            Accessible.name: qsTr("Keyboard layouts")
+            Rectangle {
+                width: parent.width
+                height: Tokens.settingsPickerListHeight
+                radius: Tokens.radiusGroup
+                color: Appearance.colors.groupFill
+                clip: true
 
-            delegate: Item {
-                id: entry
-                required property var modelData
-                required property int index
-                readonly property bool isChosen: entry.index === root.chosen
-                width: ListView.view.width
-                height: Tokens.settingsRowHeight
-                Accessible.role: Accessible.ListItem
-                Accessible.name: entry.modelData.name
-                Accessible.selected: entry.isChosen
-
-                Rectangle {
+                ListView {
+                    id: list
                     anchors.fill: parent
-                    visible: entry.isChosen
-                    radius: Tokens.settingsNavTileRadius
-                    color: Appearance.colors.selection
-                }
+                    anchors.margins: Tokens.spacingXs
+                    model: root.matches
+                    boundsBehavior: Flickable.StopAtBounds
+                    Accessible.role: Accessible.List
+                    Accessible.name: qsTr("Keyboard layouts")
 
-                Text {
-                    textFormat: Text.PlainText
-                    x: Tokens.settingsRowInset
-                    width: parent.width - 2 * Tokens.settingsRowInset
-                    anchors.verticalCenter: parent.verticalCenter
-                    elide: Text.ElideRight
-                    text: entry.modelData.name
-                    color: entry.isChosen ? Appearance.colors.selectionText : Appearance.colors.text
-                    font.family: Appearance.fontFamily
-                    font.pixelSize: Tokens.typographyBodySize
-                }
+                    // The choice stays in view (the arrows move it while the field keeps the keyboard).
+                    Connections {
+                        target: root
+                        function onChosenChanged(): void {
+                            if (root.chosen >= 0)
+                                list.positionViewAtIndex(root.chosen, ListView.Contain);
+                        }
+                    }
 
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: root.chosen = entry.index
-                    onDoubleClicked: {
-                        root.chosen = entry.index;
-                        root.confirm();
+                    delegate: Item {
+                        id: entry
+                        required property var modelData
+                        required property int index
+                        readonly property bool isChosen: entry.index === root.chosen
+                        width: ListView.view.width
+                        height: Tokens.settingsRowHeight
+                        Accessible.role: Accessible.ListItem
+                        Accessible.name: entry.modelData.name
+                        Accessible.selected: entry.isChosen
+
+                        Rectangle {
+                            anchors.fill: parent
+                            visible: entry.isChosen
+                            radius: Tokens.settingsNavTileRadius
+                            color: Appearance.colors.selection
+                        }
+
+                        Text {
+                            textFormat: Text.PlainText
+                            x: Tokens.settingsRowInset
+                            width: parent.width - 2 * Tokens.settingsRowInset
+                            anchors.verticalCenter: parent.verticalCenter
+                            elide: Text.ElideRight
+                            text: entry.modelData.name
+                            color: entry.isChosen ? Appearance.colors.selectionText : Appearance.colors.text
+                            font.family: Appearance.fontFamily
+                            font.pixelSize: Tokens.typographyBodySize
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root.chosen = entry.index
+                            onDoubleClicked: {
+                                root.chosen = entry.index;
+                                root.confirm();
+                            }
+                        }
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        anchors.centerIn: parent
+                        visible: list.count === 0
+                        text: qsTr("No layouts")
+                        color: Appearance.windowSecondary
+                        font.family: Appearance.fontFamily
+                        font.pixelSize: Tokens.typographyBodySize
                     }
                 }
-            }
-
-            Text {
-                textFormat: Text.PlainText
-                anchors.centerIn: parent
-                visible: list.count === 0
-                text: qsTr("No layouts")
-                color: Appearance.windowSecondary
-                font.family: Appearance.fontFamily
-                font.pixelSize: Tokens.typographyBodySize
             }
         }
     }

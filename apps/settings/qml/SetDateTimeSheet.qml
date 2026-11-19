@@ -48,56 +48,63 @@ Sheet {
         root.chosen(root.timeTouched || root.openedAt <= 0 ? set : new Date(set.getTime() + Math.max(0, Date.now() - root.openedAt)));
     }
 
-    SettingsGroup {
-        SettingsRow {
-            title: qsTr("Date")
-            SpinBox {
-                accessibleName: qsTr("Day")
-                from: 1
-                to: root.daysIn(root.fields[1], root.fields[2])
-                value: root.fields[0]
-                onValueModified: root.setField(0, value)
-            }
-            SpinBox {
-                accessibleName: qsTr("Month")
-                from: 1
-                to: 12
-                value: root.fields[1]
-                onValueModified: root.setField(1, value)
-            }
-            SpinBox {
-                accessibleName: qsTr("Year")
-                from: 2000
-                to: 2199
-                value: root.fields[2]
-                textFromValue: (v, locale) => String(v)
-                onValueModified: root.setField(2, value)
-            }
-        }
-        SettingsRow {
-            title: qsTr("Time")
-            SpinBox {
-                accessibleName: qsTr("Hour")
-                from: 0
-                to: 23
-                value: root.fields[3]
-                onValueModified: root.setField(3, value)
-            }
-            SpinBox {
-                accessibleName: qsTr("Minute")
-                from: 0
-                to: 59
-                value: root.fields[4]
-                textFromValue: (v, locale) => String(v).padStart(2, "0")
-                onValueModified: root.setField(4, value)
-            }
-            SpinBox {
-                accessibleName: qsTr("Second")
-                from: 0
-                to: 59
-                value: root.fields[5]
-                textFromValue: (v, locale) => String(v).padStart(2, "0")
-                onValueModified: root.setField(5, value)
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
+
+            SettingsGroup {
+                SettingsRow {
+                    title: qsTr("Date")
+                    SpinBox {
+                        accessibleName: qsTr("Day")
+                        from: 1
+                        to: root.daysIn(root.fields[1], root.fields[2])
+                        value: root.fields[0]
+                        onValueModified: root.setField(0, value)
+                    }
+                    SpinBox {
+                        accessibleName: qsTr("Month")
+                        from: 1
+                        to: 12
+                        value: root.fields[1]
+                        onValueModified: root.setField(1, value)
+                    }
+                    SpinBox {
+                        accessibleName: qsTr("Year")
+                        from: 2000
+                        to: 2199
+                        value: root.fields[2]
+                        textFromValue: (v, locale) => String(v)
+                        onValueModified: root.setField(2, value)
+                    }
+                }
+                SettingsRow {
+                    title: qsTr("Time")
+                    SpinBox {
+                        accessibleName: qsTr("Hour")
+                        from: 0
+                        to: 23
+                        value: root.fields[3]
+                        onValueModified: root.setField(3, value)
+                    }
+                    SpinBox {
+                        accessibleName: qsTr("Minute")
+                        from: 0
+                        to: 59
+                        value: root.fields[4]
+                        textFromValue: (v, locale) => String(v).padStart(2, "0")
+                        onValueModified: root.setField(4, value)
+                    }
+                    SpinBox {
+                        accessibleName: qsTr("Second")
+                        from: 0
+                        to: 59
+                        value: root.fields[5]
+                        textFromValue: (v, locale) => String(v).padStart(2, "0")
+                        onValueModified: root.setField(5, value)
+                    }
+                }
             }
         }
     }

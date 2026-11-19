@@ -73,99 +73,106 @@ Sheet {
         return Math.max(0, Math.min(root.sources.length - 1, Math.floor(y / Tokens.settingsRowHeight)));
     }
 
-    SettingsGroup {
-        Item {
-            id: list
-            objectName: "inputSourceList"
-            width: parent.width
-            height: Math.max(1, root.sources.length) * Tokens.settingsRowHeight
-            activeFocusOnTab: true
-            Accessible.role: Accessible.List
-            Accessible.name: root.title
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-            Keys.onPressed: event => {
-                if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
-                    const by = event.key === Qt.Key_Up ? -1 : 1;
-                    if (event.modifiers & Qt.AltModifier)
-                        root.move(by);
-                    else
-                        root.selected = Math.max(0, Math.min(root.sources.length - 1, root.selected + by));
-                    event.accepted = true;
-                }
-            }
+            SettingsGroup {
+                Item {
+                    id: list
+                    objectName: "inputSourceList"
+                    width: parent.width
+                    height: Math.max(1, root.sources.length) * Tokens.settingsRowHeight
+                    activeFocusOnTab: true
+                    Accessible.role: Accessible.List
+                    Accessible.name: root.title
 
-            // A press selects; dragged further than the platform's drag distance, the source follows the pointer row by row.
-            MouseArea {
-                id: dragArea
+                    Keys.onPressed: event => {
+                        if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
+                            const by = event.key === Qt.Key_Up ? -1 : 1;
+                            if (event.modifiers & Qt.AltModifier)
+                                root.move(by);
+                            else
+                                root.selected = Math.max(0, Math.min(root.sources.length - 1, root.selected + by));
+                            event.accepted = true;
+                        }
+                    }
 
-                property bool dragging: false
-                property real startY: 0
+                    // A press selects; dragged further than the platform's drag distance, the source follows the pointer row by row.
+                    MouseArea {
+                        id: dragArea
 
-                anchors.fill: parent
-                cursorShape: dragArea.dragging ? Qt.ClosedHandCursor : Qt.ArrowCursor
-                onPressed: mouse => {
-                    root.selected = root.indexAt(mouse.y);
-                    dragArea.startY = mouse.y;
-                    dragArea.dragging = false;
-                    list.forceActiveFocus(Qt.MouseFocusReason);
-                }
-                onPositionChanged: mouse => {
-                    if (!dragArea.dragging && Math.abs(mouse.y - dragArea.startY) < Application.styleHints.startDragDistance)
-                        return;
-                    dragArea.dragging = true;
-                    root.moveTo(root.indexAt(mouse.y));
-                }
-                onReleased: dragArea.dragging = false
-                onCanceled: dragArea.dragging = false
-            }
+                        property bool dragging: false
+                        property real startY: 0
 
-            Repeater {
-                model: root.sources
-
-                delegate: Item {
-                    id: entry
-
-                    required property var modelData
-                    required property int index
-                    readonly property bool isSelected: entry.index === root.selected
-
-                    y: entry.index * Tokens.settingsRowHeight
-                    width: list.width
-                    height: Tokens.settingsRowHeight
-                    Accessible.role: Accessible.ListItem
-                    Accessible.name: Keyboard.sourceName(entry.modelData, root.layouts.names)
-                    Accessible.selected: entry.isSelected
-
-                    Rectangle {
                         anchors.fill: parent
-                        anchors.margins: Tokens.spacingXs
-                        visible: entry.isSelected
-                        radius: Tokens.settingsNavTileRadius
-                        color: list.activeFocus ? Appearance.colors.selection : Appearance.withAlpha(Appearance.colors.fill, Tokens.settingsSoundTableSelectionOpacity)
+                        cursorShape: dragArea.dragging ? Qt.ClosedHandCursor : Qt.ArrowCursor
+                        onPressed: mouse => {
+                            root.selected = root.indexAt(mouse.y);
+                            dragArea.startY = mouse.y;
+                            dragArea.dragging = false;
+                            list.forceActiveFocus(Qt.MouseFocusReason);
+                        }
+                        onPositionChanged: mouse => {
+                            if (!dragArea.dragging && Math.abs(mouse.y - dragArea.startY) < Application.styleHints.startDragDistance)
+                                return;
+                            dragArea.dragging = true;
+                            root.moveTo(root.indexAt(mouse.y));
+                        }
+                        onReleased: dragArea.dragging = false
+                        onCanceled: dragArea.dragging = false
                     }
 
-                    Text {
-                        textFormat: Text.PlainText
-                        x: Tokens.settingsRowInset
-                        width: parent.width - 2 * Tokens.settingsRowInset
-                        anchors.verticalCenter: parent.verticalCenter
-                        elide: Text.ElideRight
-                        text: entry.Accessible.name
-                        color: entry.isSelected && list.activeFocus ? Appearance.colors.selectionText : Appearance.colors.text
-                        font.family: Appearance.fontFamily
-                        font.pixelSize: Tokens.typographyBodySize
+                    Repeater {
+                        model: root.sources
+
+                        delegate: Item {
+                            id: entry
+
+                            required property var modelData
+                            required property int index
+                            readonly property bool isSelected: entry.index === root.selected
+
+                            y: entry.index * Tokens.settingsRowHeight
+                            width: list.width
+                            height: Tokens.settingsRowHeight
+                            Accessible.role: Accessible.ListItem
+                            Accessible.name: Keyboard.sourceName(entry.modelData, root.layouts.names)
+                            Accessible.selected: entry.isSelected
+
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: Tokens.spacingXs
+                                visible: entry.isSelected
+                                radius: Tokens.settingsNavTileRadius
+                                color: list.activeFocus ? Appearance.colors.selection : Appearance.withAlpha(Appearance.colors.fill, Tokens.settingsSoundTableSelectionOpacity)
+                            }
+
+                            Text {
+                                textFormat: Text.PlainText
+                                x: Tokens.settingsRowInset
+                                width: parent.width - 2 * Tokens.settingsRowInset
+                                anchors.verticalCenter: parent.verticalCenter
+                                elide: Text.ElideRight
+                                text: entry.Accessible.name
+                                color: entry.isSelected && list.activeFocus ? Appearance.colors.selectionText : Appearance.colors.text
+                                font.family: Appearance.fontFamily
+                                font.pixelSize: Tokens.typographyBodySize
+                            }
+                        }
                     }
                 }
-            }
-        }
 
-        ListFooter {
-            canAdd: root.sources.length < Keyboard.MAX_LAYOUTS
-            canRemove: root.canRemove
-            addName: qsTr("Add an input source")
-            removeName: qsTr("Remove the selected input source")
-            onAddClicked: root.addRequested(root.layouts, root.sources)
-            onRemoveClicked: root.remove()
+                ListFooter {
+                    canAdd: root.sources.length < Keyboard.MAX_LAYOUTS
+                    canRemove: root.canRemove
+                    addName: qsTr("Add an input source")
+                    removeName: qsTr("Remove the selected input source")
+                    onAddClicked: root.addRequested(root.layouts, root.sources)
+                    onRemoveClicked: root.remove()
+                }
+            }
         }
     }
 }

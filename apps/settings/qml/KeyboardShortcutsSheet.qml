@@ -23,27 +23,34 @@ Sheet {
         root.open();
     }
 
-    Rectangle {
-        visible: root.shortcuts.length > 0
-        width: parent.width
-        height: Tokens.settingsPickerListHeight
-        radius: Tokens.radiusGroup
-        color: Appearance.colors.groupFill
-        clip: true
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        ListView {
-            anchors.fill: parent
-            model: root.shortcuts
-            boundsBehavior: Flickable.StopAtBounds
-            Accessible.role: Accessible.List
-            Accessible.name: root.title
+            Rectangle {
+                visible: root.shortcuts.length > 0
+                width: parent.width
+                height: Tokens.settingsPickerListHeight
+                radius: Tokens.radiusGroup
+                color: Appearance.colors.groupFill
+                clip: true
 
-            delegate: SettingsRow {
-                required property var modelData
-                width: ListView.view.width
-                // The file's English description and key names, translated (Bindings.js lists them).
-                title: qsTranslate("Bindings", Bindings.uiName(modelData.description))
-                valueText: Bindings.translateKeys(modelData.keys, k => qsTranslate("Bindings", k))
+                ListView {
+                    anchors.fill: parent
+                    model: root.shortcuts
+                    boundsBehavior: Flickable.StopAtBounds
+                    Accessible.role: Accessible.List
+                    Accessible.name: root.title
+
+                    delegate: SettingsRow {
+                        required property var modelData
+                        width: ListView.view.width
+                        // The file's English description and key names, translated (Bindings.js lists them).
+                        title: qsTranslate("Bindings", Bindings.uiName(modelData.description))
+                        valueText: Bindings.translateKeys(modelData.keys, k => qsTranslate("Bindings", k))
+                    }
+                }
             }
         }
     }

@@ -262,6 +262,9 @@ FocusScope {
         acceptedButtons: Qt.NoButton
         boundsBehavior: Flickable.StopAtBounds
         cacheBuffer: Tokens.filesIconCellHeight * 2
+        // Cells scrolled out are kept in a pool and given the rows scrolled in (IconCell's pooled/reused protocol): a fast
+        // scroll through a large folder makes no new cell once the pool holds a page.
+        reuseItems: true
         currentIndex: root.model && !root.grouped ? root.model.currentRow : -1
         Accessible.role: Accessible.List
         Accessible.name: qsTr("Files")
@@ -486,6 +489,7 @@ FocusScope {
                             visible: !section.full
                             orientation: ListView.Horizontal
                             model: !section.full && section.near ? range : null
+                            reuseItems: true
                             clip: true
                             interactive: false
                             acceptedButtons: Qt.NoButton
@@ -524,6 +528,7 @@ FocusScope {
                             interactive: false
                             acceptedButtons: Qt.NoButton
                             cacheBuffer: 0
+                            reuseItems: true
                             // Placed by section.place (a binding would be left behind when the view moves itself on a new model).
                             onShownTopChanged: section.place()
                             onModelChanged: Qt.callLater(() => section?.place())
@@ -604,10 +609,46 @@ FocusScope {
         Accessible.selected: cell.selected
         Accessible.onPressAction: root.tab.activate(cell.row, root.model, Qt.NoModifier)
 
-        Component.onCompleted: if (cell.canPreview) root.model.requestPreview(cell.row)
-        onCanPreviewChanged: if (cell.canPreview) root.model.requestPreview(cell.row)
-        // Scrolled away before its thumbnail was started: drop the request.
-        Component.onDestruction: if (root.model) root.model.cancelPreview(cell.url)
+        // The views reuse their cells (reuseItems). In the pool a cell is hidden but kept: it drops its row's thumbnail request
+        // (scrolled away before it was started) and ends a rename it showed (a field taken out of the view cancels, as
+        // RenameField says; the pool keeps the field and its keyboard otherwise). Taken again, its required properties are
+        // already the new row's when `reused` comes: it asks that row's thumbnail once (not again for the changes of
+        // canPreview while it is filled). A drag's or a click's state is the old row's: dropped.
+        property bool pooled: false
+        // Not before the cell is complete: its roles are set one by one as it is made, canPreview possibly before the row
+        // (every cell asked row 0's thumbnail as well as its own).
+        property bool completed: false
+
+        function askPreview(): void {
+            if (cell.completed && !cell.pooled && cell.canPreview && root.model)
+                root.model.requestPreview(cell.row);
+        }
+
+        function enterPool(): void {
+            cell.pooled = true;
+            if (root.model)
+                root.model.cancelPreview(cell.url);
+            if (cell.renaming)
+                root.tab.cancelRename();
+            mouse.collapseOnRelease = false;
+        }
+
+        function leavePool(): void {
+            cell.pooled = false;
+            cell.askPreview();
+        }
+
+        Component.onCompleted: {
+            cell.completed = true;
+            cell.askPreview();
+        }
+        onCanPreviewChanged: cell.askPreview()
+        GridView.onPooled: cell.enterPool()
+        GridView.onReused: cell.leavePool()
+        ListView.onPooled: cell.enterPool()
+        ListView.onReused: cell.leavePool()
+        // Scrolled away before its thumbnail was started: drop the request (a pooled cell did when it went in).
+        Component.onDestruction: if (root.model && !cell.pooled) root.model.cancelPreview(cell.url)
 
         Rectangle {
             id: backdrop

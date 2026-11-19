@@ -44,80 +44,87 @@ Sheet {
         return "";
     }
 
-    Rectangle {
-        width: parent.width
-        height: Tokens.settingsPickerListHeight
-        radius: Tokens.radiusGroup
-        color: Appearance.colors.groupFill
-        clip: true
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        ListView {
-            id: list
-            anchors.fill: parent
-            anchors.margins: Tokens.spacingXs
-            model: root.found
-            boundsBehavior: Flickable.StopAtBounds
-            Accessible.role: Accessible.List
-            Accessible.name: qsTr("Printers found")
+            Rectangle {
+                width: parent.width
+                height: Tokens.settingsPickerListHeight
+                radius: Tokens.radiusGroup
+                color: Appearance.colors.groupFill
+                clip: true
 
-            delegate: Item {
-                id: entry
-                required property var modelData
-                required property int index
-                readonly property bool isChosen: entry.index === root.chosen
-                width: ListView.view.width
-                height: Tokens.settingsRowHeight
-                Accessible.role: Accessible.ListItem
-                Accessible.name: label.text
-                Accessible.selected: entry.isChosen
-
-                Rectangle {
+                ListView {
+                    id: list
                     anchors.fill: parent
-                    visible: entry.isChosen
-                    radius: Tokens.settingsNavTileRadius
-                    color: Appearance.colors.selection
-                }
+                    anchors.margins: Tokens.spacingXs
+                    model: root.found
+                    boundsBehavior: Flickable.StopAtBounds
+                    Accessible.role: Accessible.List
+                    Accessible.name: qsTr("Printers found")
 
-                Text {
-                    id: label
-                    textFormat: Text.PlainText
-                    x: Tokens.settingsRowInset
-                    width: parent.width - 2 * Tokens.settingsRowInset
-                    anchors.verticalCenter: parent.verticalCenter
-                    elide: Text.ElideRight
-                    text: entry.modelData.name.replace(/_+/g, " ")
-                    color: entry.isChosen ? Appearance.colors.selectionText : Appearance.colors.text
-                    font.family: Appearance.fontFamily
-                    font.pixelSize: Tokens.typographyBodySize
-                }
+                    delegate: Item {
+                        id: entry
+                        required property var modelData
+                        required property int index
+                        readonly property bool isChosen: entry.index === root.chosen
+                        width: ListView.view.width
+                        height: Tokens.settingsRowHeight
+                        Accessible.role: Accessible.ListItem
+                        Accessible.name: label.text
+                        Accessible.selected: entry.isChosen
 
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: root.chosen = entry.index
-                    onDoubleClicked: {
-                        root.chosen = entry.index;
-                        root.confirm();
+                        Rectangle {
+                            anchors.fill: parent
+                            visible: entry.isChosen
+                            radius: Tokens.settingsNavTileRadius
+                            color: Appearance.colors.selection
+                        }
+
+                        Text {
+                            id: label
+                            textFormat: Text.PlainText
+                            x: Tokens.settingsRowInset
+                            width: parent.width - 2 * Tokens.settingsRowInset
+                            anchors.verticalCenter: parent.verticalCenter
+                            elide: Text.ElideRight
+                            text: entry.modelData.name.replace(/_+/g, " ")
+                            color: entry.isChosen ? Appearance.colors.selectionText : Appearance.colors.text
+                            font.family: Appearance.fontFamily
+                            font.pixelSize: Tokens.typographyBodySize
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root.chosen = entry.index
+                            onDoubleClicked: {
+                                root.chosen = entry.index;
+                                root.confirm();
+                            }
+                        }
                     }
-                }
-            }
 
-            Row {
-                anchors.centerIn: parent
-                visible: list.count === 0
-                spacing: Tokens.spacingSm
+                    Row {
+                        anchors.centerIn: parent
+                        visible: list.count === 0
+                        spacing: Tokens.spacingSm
 
-                Spinner {
-                    visible: !root.answered
-                    anchors.verticalCenter: parent.verticalCenter
-                }
+                        Spinner {
+                            visible: !root.answered
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
 
-                Text {
-                    textFormat: Text.PlainText
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.answered ? qsTr("No printers were found on your network.") : qsTr("Looking for printers…")
-                    color: Appearance.windowSecondary
-                    font.family: Appearance.fontFamily
-                    font.pixelSize: Tokens.typographyBodySize
+                        Text {
+                            textFormat: Text.PlainText
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.answered ? qsTr("No printers were found on your network.") : qsTr("Looking for printers…")
+                            color: Appearance.windowSecondary
+                            font.family: Appearance.fontFamily
+                            font.pixelSize: Tokens.typographyBodySize
+                        }
+                    }
                 }
             }
         }

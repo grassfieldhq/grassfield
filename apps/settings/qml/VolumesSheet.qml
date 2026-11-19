@@ -25,17 +25,24 @@ Sheet {
         return Qt.locale().formattedDataSize(bytes, 2, Locale.DataSizeSIFormat);
     }
 
-    SettingsGroup {
-        Repeater {
-            model: root.volumes
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-            SettingsRow {
-                required property var modelData
-                title: modelData.isRoot ? qsTr("Startup Disk") : (modelData.name !== "" ? modelData.name : modelData.root)
-                // The mount point, the device and the file system ("/home · /dev/nvme0n1p3 · btrfs"); read-only when it is.
-                subtitle: [modelData.root, modelData.device, modelData.type].concat(modelData.readOnly ? [qsTr("read-only")] : []).join(" · ")
-                glyph: "drive"
-                valueText: qsTr("%1 available of %2").arg(root.sizeText(modelData.available)).arg(root.sizeText(modelData.total))
+            SettingsGroup {
+                Repeater {
+                    model: root.volumes
+
+                    SettingsRow {
+                        required property var modelData
+                        title: modelData.isRoot ? qsTr("Startup Disk") : (modelData.name !== "" ? modelData.name : modelData.root)
+                        // The mount point, the device and the file system ("/home · /dev/nvme0n1p3 · btrfs"); read-only when it is.
+                        subtitle: [modelData.root, modelData.device, modelData.type].concat(modelData.readOnly ? [qsTr("read-only")] : []).join(" · ")
+                        glyph: "drive"
+                        valueText: qsTr("%1 available of %2").arg(root.sizeText(modelData.available)).arg(root.sizeText(modelData.total))
+                    }
+                }
             }
         }
     }
