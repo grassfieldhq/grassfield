@@ -148,9 +148,13 @@ function xbelApps(body) {
     return out;
 }
 
-// recently-used.xbel -> [{path, mime, modified (ms), apps: [{name, cmd}]}], newest first.
+// The recent documents kept from recently-used.xbel: the newest ones (Search matches its query against these on every
+// keystroke; the file itself is not capped by the apps that write it).
+const MAX_RECENT = 400;
+
+// recently-used.xbel -> [{path, mime, modified (ms), apps: [{name, cmd}]}], newest first, at most `max` (MAX_RECENT).
 // With home set, entries outside it (or hidden) are dropped; non-file:// URIs always are.
-function parseXbel(text, home) {
+function parseXbel(text, home, max) {
     const out = [];
     const re = /<bookmark\s([^>]*)>([\s\S]*?)<\/bookmark>/g;
     let m;
@@ -169,5 +173,6 @@ function parseXbel(text, home) {
         out.push({path: path, mime: mime ? mime[1] : "", modified: isNaN(t) ? 0 : t, apps: xbelApps(m[2])});
     }
     out.sort((a, b) => b.modified - a.modified);
-    return out;
+    const limit = max === undefined ? MAX_RECENT : max;
+    return out.length > limit ? out.slice(0, limit) : out;
 }

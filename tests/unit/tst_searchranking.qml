@@ -388,4 +388,26 @@ TestCase {
             + "<bookmark href=\"smb://srv/share/f\" modified=\"2026-01-06T00:00:00Z\"></bookmark></xbel>";
         compare(Files.parseXbel(xbel, "/home/u").map(r => r.path).join(), "/home/u/a.txt");
     }
+
+    // Audit B-20: the recent documents are capped to the newest Files.MAX_RECENT (Search matches them on each keystroke), and
+    // Search reads the file again when it changes, not on every opening.
+    function test_recentsCappedAndReadOnChange() {
+        let xbel = "<xbel>";
+        for (let i = 0; i < 1000; i++)
+            xbel += "<bookmark href=\"file:///home/u/f" + i + ".txt\" modified=\"" + new Date(Date.UTC(2026, 0, 1) + i * 60000).toISOString() + "\"></bookmark>";
+        xbel += "</xbel>";
+        const r = Files.parseXbel(xbel, "/home/u");
+        compare(r.length, Files.MAX_RECENT);
+        compare(r[0].path, "/home/u/f999.txt", "the newest first");
+        compare(r[r.length - 1].path, "/home/u/f" + (1000 - Files.MAX_RECENT) + ".txt", "the oldest are dropped");
+        compare(Files.parseXbel(xbel, "/home/u", 3).length, 3);
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../shell/search/Search.qml"), false);
+        xhr.send();
+        const src = xhr.responseText;
+        const show = src.substring(src.indexOf("function show(text: string)"), src.indexOf("function hide()"));
+        compare(show.indexOf("recentFile.reload()"), -1, "no read of the file on each opening");
+        const view = src.substring(src.indexOf("id: recentFile"), src.indexOf("id: recentReload"));
+        verify(view.indexOf("watchChanges: true") >= 0 && view.indexOf("onFileChanged: recentReload.restart()") >= 0, "read again when it changes");
+    }
 }

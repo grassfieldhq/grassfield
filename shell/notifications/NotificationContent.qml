@@ -22,7 +22,7 @@ Item {
     // shown as a rounded thumbnail at the trailing edge (macOS); "" for none.
     property string iconSource: ""
     property string imageSource: ""
-    readonly property bool hasThumbnail: imageSource !== "" && thumbImage.status !== Image.Error
+    readonly property bool hasThumbnail: imageSource !== "" && !thumbCanvas.failed
     // "default" is the click action, never a button. Dead and restored entries have none.
     readonly property var buttons: live ? JSON.parse(actionsJson).filter(a => a.id !== "default" && a.id !== "") : []
     property bool moreOpen: false
@@ -155,8 +155,12 @@ Item {
         }
     }
 
-    // The attached picture: a rounded thumbnail at the trailing edge, centred on the card as the icon tile (U27). Its
-    // corners are a real mask (as the Overview's thumbnails), not a clip to the bounding box.
+    // The attached picture: a rounded thumbnail at the trailing edge, centred on the card as the icon tile (U27). Drawn once
+    // into a Canvas the thumbnail's size, cropped and with its rounded corners (audit B-19): the picture an app attaches as
+    // image data comes from Quickshell's image provider at the size it was sent (the provider ignores the requested size), up
+    // to about 5.7k x 5.7k pixels, and an Image held that whole texture for a 40 px thumbnail, per notification, behind a
+    // mask layer (two FBOs). The full picture is only decoded for the draw and let go after it; what stays is the Canvas's
+    // own small image.
     Item {
         id: thumbnail
         visible: root.hasThumbnail
@@ -165,41 +169,69 @@ Item {
         width: Tokens.notificationThumbnailSize
         height: width
 
-        Item {
+        Rectangle {
             anchors.fill: parent
-            layer.enabled: thumbnail.visible
-            layer.effect: MultiEffect {
-                maskEnabled: true
-                maskSource: thumbMask
-                maskThresholdMin: 0.5
-                maskSpreadAtMin: 1.0
-            }
+            radius: Tokens.notificationThumbnailRadius
+            color: Appearance.withAlpha(Appearance.colors.fill, Tokens.materialFillOpacity)
+            visible: !thumbCanvas.drawn
+        }
 
-            Rectangle {
-                anchors.fill: parent
-                color: Appearance.withAlpha(Appearance.colors.fill, Tokens.materialFillOpacity)
-                visible: thumbImage.status !== Image.Ready
-            }
-
-            Image {
-                id: thumbImage
-                anchors.fill: parent
-                source: root.imageSource
-                // Images are limited to 256 px (N9).
-                sourceSize: Qt.size(Tokens.notificationImageMax, Tokens.notificationImageMax)
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                smooth: true
-                mipmap: true
+        // Reads the picture's size (never drawn: an invisible Image makes no texture); its source is let go once drawn.
+        Image {
+            id: thumbImage
+            visible: false
+            source: thumbCanvas.drawn ? "" : thumbCanvas.wanted
+            asynchronous: true
+            onStatusChanged: {
+                if (status === Image.Ready) {
+                    thumbCanvas.natural = Qt.size(implicitWidth, implicitHeight);
+                    thumbCanvas.loadImage(thumbCanvas.wanted);
+                    // A picture the canvas already holds gives no imageLoaded.
+                    if (thumbCanvas.isImageLoaded(thumbCanvas.wanted))
+                        thumbCanvas.requestPaint();
+                } else if (status === Image.Error)
+                    thumbCanvas.failed = true;
             }
         }
 
-        Rectangle {
-            id: thumbMask
+        Canvas {
+            id: thumbCanvas
+
+            // The picture to draw; `drawnFrom` is the one on the canvas now.
+            readonly property string wanted: root.imageSource
+            property string drawnFrom: ""
+            readonly property bool drawn: drawnFrom !== "" && drawnFrom === wanted
+            // The picture's size in pixels (thumbImage's), read before its source is let go.
+            property size natural: Qt.size(0, 0)
+            // It could not be read (the card then shows no thumbnail).
+            property bool failed: false
+
             anchors.fill: parent
-            radius: Tokens.notificationThumbnailRadius
-            visible: false
-            layer.enabled: true
+            onWantedChanged: {
+                failed = false;
+                drawnFrom = "";
+                requestPaint();
+            }
+            onImageLoaded: requestPaint()
+            onPaint: {
+                const ctx = getContext("2d");
+                ctx.reset();
+                const url = thumbCanvas.wanted;
+                if (url === "" || !thumbCanvas.isImageLoaded(url) || natural.width <= 0 || natural.height <= 0)
+                    return;
+                // Rounded corners, then the picture cropped to fill the square (PreserveAspectCrop).
+                const r = Math.min(Tokens.notificationThumbnailRadius, width / 2, height / 2);
+                ctx.beginPath();
+                ctx.roundedRect(0, 0, width, height, r, r);
+                ctx.clip();
+                const scale = Math.max(width / natural.width, height / natural.height);
+                const w = natural.width * scale;
+                const h = natural.height * scale;
+                ctx.drawImage(url, (width - w) / 2, (height - h) / 2, w, h);
+                thumbCanvas.unloadImage(url);
+                thumbCanvas.drawnFrom = url;
+                // The full picture is not needed any more (`drawn` lets thumbImage's source go).
+            }
         }
     }
 

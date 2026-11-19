@@ -1,6 +1,7 @@
 module qs.notifications
 singleton Notifications 1.0 Notifications.qml
 Banners 1.0 Banners.qml
+BannerStack 1.0 BannerStack.qml
 Banner 1.0 Banner.qml
 NotificationContent 1.0 NotificationContent.qml
 NotificationList 1.0 NotificationList.qml

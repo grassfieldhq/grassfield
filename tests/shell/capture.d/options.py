@@ -547,6 +547,23 @@ bystander.kill()
 bystander.wait()
 with open(state_file, "w") as f:
     json.dump({"v": 1, "phase": "idle"}, f)
+# The helper is killed outright (SIGKILL: no handler runs) during a recording (audit B-14): its recorder gets SIGINT from the
+# kernel (the parent-death signal set before it started), so it saves and ends instead of recording on.
+for f in files(desktop):
+    os.unlink(os.path.join(desktop, f))
+proc, ok = recording(["screen"])
+rec = calls("gpu-screen-recorder")
+proc.kill()
+proc.wait(timeout=10)
+ended = wait_for(lambda: any(c.get("signal") for c in calls("gpu-screen-recorder")), 10)
+sig = [c for c in calls("gpu-screen-recorder") if c.get("signal")]
+gone = wait_for(lambda: not rec or not os.path.exists("/proc/%d" % rec[0]["pid"]), 10)
+check(ok and ended and sig and sig[0]["signal"] == "SIGINT" and gone,
+      "the helper killed with SIGKILL: its recorder gets SIGINT and ends [%r]" % sig)
+with open(state_file, "w") as f:
+    json.dump({"v": 1, "phase": "idle"}, f)
+for f in files(desktop):
+    os.unlink(os.path.join(desktop, f))
 
 # ---- recording the toolbar's frame ----
 proc, ok = recording(["selection", "--geometry", "2600,40 300x200"])

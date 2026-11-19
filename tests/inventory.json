@@ -846,6 +846,14 @@
  {"path": "tests/shell/update_checked_dbs.sh", "layer": "logic"},
  {"path": "tests/unit/store/tst_screenshotprovider.cpp", "layer": "logic"},
  {"path": "tests/unit/preview/tst_previewapp.cpp", "layer": "logic"},
- {"path": "tests/unit/tst_previewasync.qml", "layer": "headless"}
+ {"path": "tests/unit/tst_previewasync.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_materialshadow.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_glyphicon.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_searchrows.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_glide.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_notifthumb.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_glassrects.qml", "layer": "headless"},
+ {"path": "tests/shell/banner_stack/shell.qml", "layer": "headless"},
+ {"path": "tests/shell/notif_replace/shell.qml", "layer": "headless"}
 ]
 }

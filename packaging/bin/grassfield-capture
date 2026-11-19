@@ -53,6 +53,7 @@
 # Once a picture is taken (saved, or copied alone), the shutter sound plays when Settings > Sound > "Play user
 # interface sound effects" is on (ADR-0047 B-5: pw-play, at the alert volume, through the effects output).
 import contextlib
+import ctypes
 import datetime
 import fcntl
 import json
@@ -978,6 +979,22 @@ def record_target(sel, screens):
     return ("region", "%dx%d+%d+%d" % (sel["w"], sel["h"], sel["x"], sel["y"])), ""
 
 
+PR_SET_PDEATHSIG = 1
+
+
+def die_with_parent(parent):
+    """The recorder's pre-exec step: it gets SIGINT (it closes the file as for a stop) when this helper dies, however it dies.
+    A helper killed without running its handlers (SIGKILL, an uncaught error in its wait loop) left the recorder running:
+    recording on behind the lock, since the lock poll lived in the helper (audit B-14). A helper already gone before the
+    signal was set up starts nothing."""
+    libc = ctypes.CDLL(None, use_errno=True)
+
+    def setup():
+        if libc.prctl(PR_SET_PDEATHSIG, signal.SIGINT, 0, 0, 0) != 0 or os.getppid() != parent:
+            os._exit(127)
+    return setup
+
+
 def record(opts):
     if not shutil.which("gpu-screen-recorder"):
         sys.stderr.write("grassfield-capture: gpu-screen-recorder is not installed\n")
@@ -1031,7 +1048,7 @@ def record(opts):
         RECORDING["starting"] = True
         try:
             RECORDING["proc"] = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                                 stderr=subprocess.DEVNULL)
+                                                 stderr=subprocess.DEVNULL, preexec_fn=die_with_parent(os.getpid()))
         except OSError:
             return 1
         finally:

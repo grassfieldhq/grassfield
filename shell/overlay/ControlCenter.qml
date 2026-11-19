@@ -715,20 +715,38 @@ FocusScope {
                 }
             }
 
-            WifiList {
-                visible: root.expanded === "wifi"
+            // Each section is made when it is opened and let go when it closes: Quick Settings opened with all four built and
+            // hidden (lists, rows, sliders, a dozen glass surfaces) on every click of the menu bar item (audit note).
+            Loader {
+                width: parent.width
+                active: root.expanded === "wifi"
+                visible: active
+
+                sourceComponent: WifiList {}
             }
 
-            BluetoothList {
-                visible: root.expanded === "bluetooth"
+            Loader {
+                width: parent.width
+                active: root.expanded === "bluetooth"
+                visible: active
+
+                sourceComponent: BluetoothList {}
             }
 
-            SoundList {
-                visible: root.expanded === "sound"
+            Loader {
+                width: parent.width
+                active: root.expanded === "sound"
+                visible: active
+
+                sourceComponent: SoundList {}
             }
 
-            AppearanceSection {
-                visible: root.expanded === "appearance"
+            Loader {
+                width: parent.width
+                active: root.expanded === "appearance"
+                visible: active
+
+                sourceComponent: AppearanceSection {}
             }
         }
     }

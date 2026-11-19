@@ -490,14 +490,17 @@ Variants {
                 border.color: Model.qtColor(Tokens.captureBorder)
             }
 
+            // Eight handles made once, each bound to its place on the frame: a model of fresh points destroyed and made the eight
+            // items again on every pointer move of a frame move (audit B-15).
             Repeater {
-                model: Model.handleCentres(win.frame)
+                model: 8
 
                 delegate: Rectangle {
-                    required property var modelData
+                    required property int index
+                    readonly property var centre: Model.handleCentres(win.frame)[index]
 
-                    x: Math.round(modelData.x - width / 2)
-                    y: Math.round(modelData.y - height / 2)
+                    x: Math.round(centre.x - width / 2)
+                    y: Math.round(centre.y - height / 2)
                     width: Tokens.captureHandleSize
                     height: Tokens.captureHandleSize
                     radius: width / 2
@@ -524,6 +527,9 @@ Variants {
                     anchors.fill: parent
                     radius: Tokens.captureReadoutRadius
                     shadowEnabled: false
+                    // Judged over the whole output (the window covers it), once: the readout follows the pointer, and its rect
+                    // measured on each move judged the glass again on each move (audit B-15).
+                    backdropRect: Qt.rect(0, 0, readout.parent.width, readout.parent.height)
                 }
 
                 Text {
