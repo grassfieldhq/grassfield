@@ -296,6 +296,9 @@ fresh()
 b = mod(gpu, COREDUMP_CGROUP=CG + "app-Hyprland-foot-77.scope", COREDUMP_USER_UNIT="app-Hyprland-foot-77.scope", COREDUMP_EXE="/usr/bin/foot")
 open(tmp + "/journal", "w").write(json.dumps(gpu) + "\nnot json\n" + json.dumps(b) + "\n[]\n")
 os.environ["FAKE_JOURNAL"] = tmp + "/journal"; reset("", "3")
+# main() reads the process's environment: the fixture's applications directories, never this machine's (foot and Spotify need
+# not be installed here).
+os.environ.update(env_en)
 t0 = time.monotonic(); rc = m.main(); elapsed = time.monotonic() - t0
 time.sleep(1.0)
 print("loop", rc, elapsed < 2.0, sum(x.startswith("notify-send") for x in logged()))

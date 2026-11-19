@@ -3,7 +3,7 @@
 # the Arch archive, Omarchy's Quickshell 0.3.2.r7, each pinned by sha256; the PKGBUILD's makedepends and the desktop package's
 # depends). The checks and tests run as an unprivileged user. `just check` (with clang-tidy, gate Q1) runs when compositor/
 # changed, `just check-quick` otherwise; `just test` runs the data, logic and headless layers (the nested and visual layers
-# need a compositor session: owner runs).
+# need a compositor session: owner runs), from a copy of the checkout in the user's home, with LANG=en_US.UTF-8.
 # Container rules (tests/ci/no_privileged_containers.py, ADR-0057): the job adds no container options, no device, no host
 # /dev or /run/systemd mount; the runner's defaults only. Replay locally: docs/testing/README.md "CI".
 name: CI
@@ -55,12 +55,14 @@ jobs:
         id: toolkit
         run: scripts/gates/ci.sh toolkit
 
+      # Both run in setup's copy of the checkout in the user's home (as on a machine: the shell reads images only below the
+      # home); the logs go to the workspace's .dev/ci for the summary and the upload.
       - name: Checks
-        run: runuser -u builder -- env HOME=/home/builder scripts/gates/ci.sh check "$BASE_SHA" .dev/ci
+        run: runuser -u builder -- env HOME=/home/builder /home/builder/grassfield/scripts/gates/ci.sh check "$BASE_SHA" "$GITHUB_WORKSPACE/.dev/ci"
 
       - name: Tests (just test)
         if: ${{ !cancelled() && steps.toolkit.outcome == 'success' }}
-        run: runuser -u builder -- env HOME=/home/builder scripts/gates/ci.sh test .dev/ci
+        run: runuser -u builder -- env HOME=/home/builder /home/builder/grassfield/scripts/gates/ci.sh test "$GITHUB_WORKSPACE/.dev/ci"
 
       - name: Summary
         if: ${{ !cancelled() }}

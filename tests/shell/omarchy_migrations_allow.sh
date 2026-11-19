@@ -33,8 +33,14 @@ check bash -c '! python3 -I "$1" --check --list "$2" >/dev/null 2>&1' _ "$tool" 
 desc="control: a line twice fails"
 check bash -c '! python3 -I "$1" --check --list "$2" >/dev/null 2>&1' _ "$tool" "$tmp/twice"
 
-newest=$(find /usr/share/omarchy/migrations -maxdepth 1 -name '*.sh' -printf '%f\n' 2>/dev/null | sort -n | tail -1)
-if [[ -n $newest ]] && grep -qx "# omarchy-newest-migration ${newest%.sh}" "$root"/docs/upstream/omarchy*.lock; then
+# Omarchy's absence is handled here, not by find's exit status (under set -e and pipefail a missing directory ended the run).
+newest=""
+if [[ -d /usr/share/omarchy/migrations ]]; then
+  newest=$(find /usr/share/omarchy/migrations -maxdepth 1 -name '*.sh' -printf '%f\n' | sort -n | tail -1)
+fi
+if [[ ! -d /usr/share/omarchy/migrations ]]; then
+  echo "SKIP: omarchy allow: Omarchy is not installed here (/usr/share/omarchy/migrations absent; its tree is NOT VERIFIED here)"
+elif [[ -n $newest ]] && grep -qx "# omarchy-newest-migration ${newest%.sh}" "$root"/docs/upstream/omarchy*.lock; then
   desc="the installed Omarchy ($newest): every migration listed with its sha256 and its class"
   check gen --check --tree /
   release=$(sed -n "s/^# omarchy-package //p" "$(grep -lx "# omarchy-newest-migration ${newest%.sh}" "$root"/docs/upstream/omarchy*.lock)")
@@ -46,7 +52,7 @@ open(sys.argv[3], \"w\").write(chr(10).join(lines))" "$list" "$release" "$tmp/ch
   desc="control: one allow line of that release with another sha256 fails the tree check"
   check bash -c '! cmp -s "$2" "$3" && ! python3 -I "$1" --check --tree / --list "$3" >/dev/null 2>&1' _ "$tool" "$list" "$tmp/changed"
 else
-  echo "SKIP: omarchy allow: the installed Omarchy is absent or no drift lock names it (its tree is NOT VERIFIED here)"
+  echo "SKIP: omarchy allow: the installed Omarchy has no migration or no drift lock names it (its tree is NOT VERIFIED here)"
 fi
 pkg=$(ls /var/cache/pacman/pkg/omarchy-4.0.6-*.pkg.tar.zst 2>/dev/null | head -1 || true)
 if [[ -n $pkg ]] && command -v bsdtar >/dev/null; then

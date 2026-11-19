@@ -204,7 +204,7 @@ colons_primaries() {
 # The primary fingerprints of an OpenPGP file, read without importing it into anything.
 key_primaries() {
   local home=$TMP/gnupg
-  mkdir -p -m 700 "$home"
+  mkdir -p "$home" && chmod 700 "$home"
   { gpg --homedir "$home" --batch --no-tty --with-colons --import-options show-only --import "$1" 2>/dev/null || true; } |
     colons_primaries
 }
@@ -359,7 +359,7 @@ preflight_common() {
 }
 
 preflight_install() {
-  local v omarchy_dev os arch repo_list repo i first_o=-1 first_e=-1 repo_of_qs free tmpfree pending foreign cu_rc=0 foreign_sec
+  local v omarchy_dev os arch repo_list repo i first_o=-1 first_e=-1 repo_of_qs free tmpfree pending foreign foreign_sec
   os=$GF_ROOT/etc/os-release
   arch=$(uname -m)
   if [[ -r $os ]] && grep -Eq '^(ID|ID_LIKE)=.*\barch\b' "$os" && [[ $arch == x86_64 ]]; then
@@ -612,7 +612,7 @@ do_snapshot() {
 # be exactly the pinned one, the only primary, no secret key. The same check applies to the keyserver's and the host's key.
 fetch_key() {
   local home=$TMP/ks got
-  mkdir -p -m 700 "$home"
+  mkdir -p "$home" && chmod 700 "$home"
   if timeout 90 gpg --homedir "$home" --batch --no-tty --keyserver "$GF_KEYSERVER" --recv-keys "$GF_FPR" >/dev/null 2>&1 &&
     gpg --homedir "$home" --batch --no-tty --export --armor "$GF_FPR" >"$TMP/ks.asc" 2>/dev/null; then
     got=$(key_primaries "$TMP/ks.asc")

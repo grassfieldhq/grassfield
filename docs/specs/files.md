@@ -74,11 +74,12 @@ selection").
    `FileLogic::hiddenNetworkEntry`),
    Trash (`trash:/`, full/empty icon from a KIO listing). Items accept drops.
    **Applications** (`grassfield-apps:/`, macOS: Finder's Applications): a virtual, read-only location listing the desktop
-   applications the shell's Apps grid lists, by the grid's own behaviour (`ApplicationsLogic`: Quickshell 0.3.1's
+   applications the shell's Apps grid lists, by the grid's own behaviour (`ApplicationsLogic`: Quickshell 0.3.2's
    DesktopEntries as measured, `shell/launchpad/hidden-entries.sh`, `Model.disambiguate`; the header of
    `applicationslogic.h` lists the rules). Not the desktop entry specification: Quickshell does not read TryExec, so an entry
-   whose program is missing is listed here as in the grid, and it reads the file as written (a CRLF file, `Name = x` and a
-   `Categories` list that ends without `;` behave as in the grid). Two apps of one name are told apart as in the grid
+   whose program is missing is listed here as in the grid, and it trims each line but not the blanks around `=` (a CRLF file
+   is listed as GLib and KConfig read it, `Name = x` is not understood, and a `Categories` list that ends without `;` behaves
+   as in the grid). Quickshell 0.3.1 read lines untrimmed (it dropped a CRLF file and ignored `  NoDisplay=true`); Files follows 0.3.2, the version CI pins. Two apps of one name are told apart as in the grid
    ("Files" and "Files (GNOME)"). `tests/shell/apps_grid_vs_files.sh` runs the real Quickshell DesktopEntries, the script
    and Model.js and the Files logic on ~130 fixture entries and requires equal lists, in English and French; localized names,
    theme icons through the same provider as the rest of Files, sorted by name. Search filters it by name. Double-click, Ctrl+O (File > Open) and

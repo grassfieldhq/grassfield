@@ -107,3 +107,19 @@ SF Pro and SF Symbols are Apple-licensed and must not be used or redistributed.
 ## Consequences
 - The "Reserved Font Name" clause of OFL-RFN: we ship Inter unmodified; if subsetted/modified, rename.
 - Trade-dress risk remains with a near-identical layout → repository private until the M5 legal review.
+
+## Amendment to ADR-0003 (Visual identity, fonts): a list that starts with monospace gets no Inter
+
+Date: 2026-11-19
+
+The decision "Not touched: `monospace`" also covers font lists that start with it. With the fontconfig of current Arch (2.18)
+`monospace` expands to its fonts with a weak binding, so the strong Inter that the session rules insert before a later
+`system-ui` (a GTK CSS list such as "monospace, system-ui") won over them and a monospace request was drawn in Inter. The
+session's `packaging/fontconfig/fonts.conf` now inserts Inter only when the first family is not `monospace` (the rules
+before the include) or when no family is `monospace` (the rule after it). `tests/shell/fontconfig_session.sh` checks
+"monospace,system-ui" against the system's answer and "system-ui,monospace" still ends on Inter.
+
+The same test's other expectations no longer pin the fonts the system's own fontconfig prefers (Liberation through the metric
+aliases on older fontconfig releases, Noto on 2.18, DejaVu where ttf-dejavu is installed): Roboto ends on the system's
+sans-serif (Liberation Sans when Omarchy's 50-omarchy.conf is present), serif and monospace are never Inter, and the Arabic
+and emoji chains end on the system's font, which must cover the script or the character.

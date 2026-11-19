@@ -36,7 +36,10 @@ ShellRoot {
     }
 }
 EOF
-out=$(QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME= timeout 60 qs -n -p "$tmp/pkg/shell" --no-color 2>&1 || true)
+# Grassfield.Ui is installed system-wide by the package (/usr/lib/qt6/qml/Grassfield/Ui); here it comes from this tree, so the
+# case does not depend on an installed Grassfield.
+out=$(QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME='' QML_IMPORT_PATH="$root/ui${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}" \
+  timeout 60 qs -n -p "$tmp/pkg/shell" --no-color 2>&1 || true)
 want=$(tr -d '[:space:]' <"$root/VERSION")
 desc="the first read of SystemInfo.grassfieldVersion in the packaged layout is $want, not unknown"
 check bash -c 'grep -q "VERSION-AT-START=$2\$" <<<"$1"' _ "$out" "$want"

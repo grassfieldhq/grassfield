@@ -125,13 +125,18 @@ with the runner's defaults only (no container option, device or host mount: the 
 `tests/shell/ci_workflow.sh`). The steps are `scripts/gates/ci.sh` commands, so a run can be replayed:
 
 1. `ci.sh setup [--tidy] builder` (root): pacman set up, the PKGBUILD's makedepends and `package_grassfield-desktop()`'s
-   depends from current Arch (`ci.sh deps` lists them with the tools the suites need), clang when the scope is full, the
-   user `builder`.
+   depends from current Arch (`ci.sh deps` lists them with the tools the suites need: node, foot, Omarchy's font set), clang
+   when the scope is full, the packages whole (the image's `NoExtract` lines removed), the locales en_US.UTF-8 and
+   fr_FR.UTF-8, a real `/etc/machine-id`, the user `builder`, and a copy of the checkout in its home
+   (`/home/builder/grassfield`): the suites' scratch directories are below the checkout, and the shell reads images only
+   below the home and the data directories (`shell/services/image-copy.py`), as on a machine.
 2. `ci.sh toolkit` (root): the audit's toolchain, pinned by sha256 (`ci.sh pins`): the Hyprland 0.56.2 stack from the Arch
    archive of 2026-10-20 (hyprland 0.56.2-4, aquamarine 0.15.1-1, hyprgraphics 0.5.1-4, hyprutils 0.14.2-1, `pacman -Udd`)
    and Omarchy's own Quickshell 0.3.2.r7 (`pkgs.omarchy.org/stable`), then held with `IgnorePkg`. Qt and KF6 are current Arch.
-3. As `builder`: `ci.sh check BASE` runs `just check` when `compositor/` changed since BASE (the pull request's base, or the
-   previous tip of main; an unknown base counts as changed), otherwise `just check-quick`; `ci.sh test` runs `just test`.
+3. As `builder`, in that copy, with `LANG=en_US.UTF-8` (the owner's locale: the suites' sorted expectations are in its
+   collation) and a runtime directory of its own: `ci.sh check BASE` runs `just check` when `compositor/` changed since BASE
+   (the pull request's base, or the previous tip of main; an unknown base counts as changed), otherwise `just check-quick`;
+   `ci.sh test` runs `just test`. Their logs go to the workspace's `.dev/ci`.
 4. The test summary (`.dev/ci/test-summary.txt`: the failures, the skips, the per-layer table) and the logs are uploaded as the
    artifact `ci-summary-<run id>` and shown on the run's page.
 

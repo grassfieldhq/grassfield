@@ -57,8 +57,10 @@ done
 listed() { cut -f1 "$tmp/grid.en_US.UTF-8" | grep -qx -- "$1"; }
 desc="the grid lists an entry whose TryExec program is missing (Quickshell does not read TryExec): so does Files"
 check listed tryexec-missing
-desc="the grid does not list a CRLF file, 'Name = x', 'Type = Application' or an entry without a Name"
-check bash -c '! cut -f1 "$1" | grep -qxE "crlf|name-spaced|type-spaced|no-name|name-empty"' _ "$tmp/grid.en_US.UTF-8"
+desc="the grid lists a CRLF file and a blank-padded [Desktop Entry] line, and hides '  NoDisplay=true' (Quickshell 0.3.2 trims each line)"
+check bash -c 'cut -f1 "$1" | grep -qx crlf && cut -f1 "$1" | grep -qx hdr-lead-space && cut -f1 "$1" | grep -qx hdr-trail-space && ! cut -f1 "$1" | grep -qx lead-ws-nd' _ "$tmp/grid.en_US.UTF-8"
+desc="the grid does not list 'Name = x', 'Type = Application' or an entry without a Name (the blanks around '=' are not cut)"
+check bash -c '! cut -f1 "$1" | grep -qxE "name-spaced|type-spaced|no-name|name-empty"' _ "$tmp/grid.en_US.UTF-8"
 desc="a Categories list that ends in TerminalEmulator without ';' is not a hidden helper (hidden-entries.sh); one with ';' is"
 check bash -c 'cut -f1 "$1" | grep -qx term-noslash && ! cut -f1 "$1" | grep -qx term-first' _ "$tmp/grid.en_US.UTF-8"
 desc="an entry nested deeper than 8 folders is listed; kde/foo.desktop and kde-foo.desktop give the flat file (the later one of the sorted walk)"
@@ -66,7 +68,7 @@ check bash -c 'grep -q "^sub-deep-a-b-c-d-e-f-g-h-i-j-deepest	" "$1" && grep -q 
 desc="two apps of one name are told apart: Twin keeps the plain name for Grassfield's own, 'Twin (Vendor)' for a reverse-DNS id, the id otherwise"
 check bash -c 'grep -q "^org.grassfield.Twin	Twin$" "$1" && grep -q "^org.vendor.twin	Twin (Vendor)$" "$1" && grep -q "^same-name-a	Twin (same-name-a)$" "$1"' _ "$tmp/grid.en_US.UTF-8"
 
-# Mutants of Files' rules: each must make the list differ from the grid's.
+# Mutants of Files' rules: each must make the list differ from the grid's (untrimmed-lines is Quickshell 0.3.1's reading).
 mutant() { # NAME OLD NEW
   python3 -I - "$root/apps/files/src/applicationslogic.cpp" "$tmp/m-$1.cpp" "$2" "$3" <<'PY'
 import sys
@@ -84,7 +86,7 @@ while IFS='^' read -r name old new; do
   check mutant "$name" "$old" "$new"
 done <<'EOF'
 trailing-semicolon-optional^if (!(QLatin1Char(';') + categories).contains(QLatin1String(";TerminalEmulator;")))^if (!categories.contains(QLatin1String("TerminalEmulator")))
-trimmed-lines^const QString line = QString::fromUtf8(raw);^const QString line = QString::fromUtf8(raw).trimmed();
+untrimmed-lines^const QString line = QString::fromUtf8(raw).trimmed();^const QString line = QString::fromUtf8(raw);
 no-disambiguation^    disambiguate(result);^
 nodisplay-ignored^    if ((f.noDisplay == QLatin1String("true") && !asked) || f.hidden == QLatin1String("true"))^    if (f.hidden == QLatin1String("true"))
 depth-limit^constexpr int kMaxDepth = 32;^constexpr int kMaxDepth = 8;
