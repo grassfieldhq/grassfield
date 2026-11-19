@@ -4,6 +4,31 @@ All notable changes of Grassfield Desktop. The version of every package, library
 file at the repository root (`scripts/dev/check-version.sh`, part of `just check`, keeps the consumers equal to it).
 Format: one section per version, newest first.
 
+## Unreleased (the system audit of 2026-11, PR #52)
+
+A whole-system audit (about 214 findings across the compositor plugin, the shell, the security process, the apps, the
+bridges, the root helpers and packaging), fixed in two rounds and verified in an Arch build environment (Qt 6.12, KF6
+6.32, Hyprland 0.56.2 and 0.57.2, Omarchy's Quickshell 0.3.2.r7). Runtime checks that only a real session can make are
+listed in each spec and in the pull request.
+
+- Data: Memos says when it cannot save and never quits on unsaved text; a desktop rename never replaces a file; Files'
+  window keys wait for text fields and sheets; Dock pins survive a reorder; Store installs survive a logout.
+- Security: no unlock between the lock for sleep and the sleep; logind's lock for the session; idle and display-off locks
+  survive restarts; expired or revoked signing keys are refused; the update re-checks its databases before -Su.
+- Fluidity: keys and gestures reach the shell in-process (no process per key); Overview and Apps follow the fingers;
+  animations keep their velocity when retargeted; the Dock magnifies by transforms; layer-free shadows and glyphs; a
+  memoised glass tint; damage-bounded thumbnails; settings changes re-evaluate only their readers; events instead of polls.
+- Hyprland 0.57: the plugin builds against 0.57.2 as well as 0.56.2 (it did not, so updated systems ran the reduced mode).
+- Robustness: names that are JavaScript prototype members no longer break the Dock, Apps, notifications or the desktop;
+  Files no longer freezes on slow mounts; Wi-Fi and VPN joins are followed to the end; the menu bridge's unit no longer
+  hides /proc from it.
+- CI: `.github/workflows/ci.yml` runs `just check-quick` (or `just check` when compositor/ changed) and `just test` on every
+  pull request and push to main, in an archlinux container set up as the audit's toolchain (pinned by sha256); the test
+  summary is uploaded.
+- Gate P3 is measured from wp_presentation timestamps (tests/tools/presentprobe) against the output's own refresh rate
+  (60/120/144/240 Hz): `just gate-frames --real` can PASS; the render-thread proxy stays as `--proxy`.
+- Decisions: ADR-0058 to ADR-0064, amendments to ADR-0006, 0007, 0009, 0010, 0015, 0020, 0030, 0031, 0033, 0035, 0037, 0039.
+
 ## 1.0.0-rc8 (release candidate, 2026-11-13)
 
 Bundled apps, safe mode, the Qt panels and the rc7 follow-ups.

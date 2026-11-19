@@ -292,4 +292,7 @@ The notice ships as `unicode-license-v3.txt` in the grassfield-desktop package (
   Intel Corporation, © 2012-2013 Collabora, Ltd., © 2018 Purism SPC". The file carries the full notice verbatim (as
   reproduced in Hyprland's generated `/usr/include/hyprland/protocols/virtual-keyboard-unstable-v1.hpp`). Test tooling
   (`tests/tools/vkbd/`), not packaged.
+- `tests/tools/presentprobe/wlr-layer-shell-unstable-v1.xml`: the `zwlr_layer_shell_v1` protocol (wlroots), verbatim
+  (version 5, as Quickshell v0.3.1 ships it in src/wayland/wlr_layershell/), HPND-style licence: "Copyright © 2017 Drew
+  DeVault"; the file carries the full notice. Test tooling (`tests/tools/presentprobe/`, gate P3), not packaged.
 - Lua 5.5.1 headers (MIT) at build time; CMake, Ninja, Qt tools (build tools).

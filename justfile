@@ -240,7 +240,7 @@ gate-idle *args:
 gate-rss *args:
     scripts/gates/rss.sh {{args}}
 
-# Gate P3: frame pacing while the Dock magnifies, the Overview and Apps open/close, in the nested session (reference machine; bare command).
+# Gate P3: frames on time (>= 95 % within 1.2 refresh periods of the output's own rate, ADR-0006) while the Dock magnifies and the Overview and Apps open and close, from the presentation-time probe tests/tools/presentprobe: `just gate-frames --real` on the owner's session (the only PASS), `--nested` (default), `--proxy` (render-thread fallback); bare command.
 gate-frames *args:
     scripts/gates/frame-pacing.sh {{args}}
 
@@ -251,6 +251,10 @@ gate-startup *args:
 # GF-013: About, pacman, the plugin (`hyprctl grassfield`) and the menu bridge report the VERSION file's version: `just gate-version --nested` or `--installed` (bare command).
 gate-version *args:
     scripts/gates/version-agreement.sh {{args}}
+
+# The CI job's steps (.github/workflows/ci.yml, scripts/gates/ci.sh): `just ci check [BASE]` and `just ci test` replay its checks and tests here; `just ci deps` and `just ci pins` list what it installs; setup and toolkit refuse outside the CI container.
+ci *args:
+    scripts/gates/ci.sh {{args}}
 
 # The rc-channel gate (ADR-0041 step 2c; T-5, T-10, C3): the tree's QML lint, offscreen suites and plugin build on Omarchy's rc toolkit in a throwaway container (bare; docker). Flags: --only lint,test,plugin --channel rc|stable --logs DIR
 gate-rc *args:
