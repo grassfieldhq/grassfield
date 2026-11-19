@@ -4,6 +4,7 @@
 #include "DeferredFocus.hpp"
 #include "FrameProbe.hpp"
 #include "Ipc.hpp"
+#include "Outputs.hpp"
 #include "Plugin.hpp"
 #include "Stages.hpp"
 #include "Minimize.hpp"
@@ -116,6 +117,7 @@ namespace gf::tiler {
             uint64_t                                    appliedMs = 0;
             uint32_t                                    steps     = 0; // applications that changed a frame
             uint32_t                                    held      = 0; // motions that waited for the next refresh
+            tiling::CFramePacer                         pacer;         // the latest delta, applied at the output's next frame (WM-04)
             std::vector<uint64_t>                       left;          // windows that left it (gate C1): no longer set, still bounds
             std::vector<uint64_t>                       moved;         // windows set at another size than at the press (the probe's mark)
             uint64_t                                    workUs    = 0; // the plugin's own time in the drag's motions and frames
@@ -170,6 +172,10 @@ namespace gf::tiler {
             bool                              edgeCursor      = false; // the handle's cursor is set (Hyprland's special-action override)
             bool                              holdPending     = false; // the shell's menu bar mapped: windows left under it go below it
             SP<CEventLoopTimer>               edgeTimer;       // the frames that waited for the next refresh (code of this library: removed in stop())
+            std::vector<tiling::Rect>         neighbourScratch; // snapFor's neighbour frames, kept between motions (WM-13)
+            uint64_t                          previewDueMs = 0; // when the armed preview timer fires (0: not armed): re-armed only when it moves
+            uint64_t                          groupedAt    = 0; // book generation + 1 that `grouped` was read at (0: never)
+            bool                              grouped      = false; // some record is a Tiled group member (edgeHover)
             SEdgeScene                        edgeHoverScene;  // the edges hover looks up, kept while what they derive from holds
             std::vector<tiling::SplitDesk>    splits;          // TL33: the Split View Desktops the plugin made
             std::unordered_map<uint64_t, tiling::TileRecord> splitHomes; // TL33: a member's tile on its home Desktop before its split
@@ -211,33 +217,21 @@ namespace gf::tiler {
             return nullptr;
         }
 
-        // Enabled outputs only: Hyprland keeps a disconnected monitor (m_enabled false) in its list for a while.
+        // Enabled outputs only (Outputs.hpp): Hyprland keeps a disconnected monitor (m_enabled false) in its list for a while.
+        // A copy, for the rare paths that keep the list (a request, a reply, an output gone); the per-motion ones read
+        // Hyprland's list in place (WM-13).
         std::vector<PHLMONITOR> monitors() {
             std::vector<PHLMONITOR> out;
-            const auto&             state = State::monitorState();
-            if (!state)
-                return out;
-            for (const auto& m : state->monitors()) {
-                if (m && m->m_enabled)
-                    out.push_back(m);
-            }
+            gf::outputs::forEach([&out](const PHLMONITOR& m) { out.push_back(m); });
             return out;
         }
 
         PHLMONITOR monitorAt(const Vector2D& p) {
-            for (const auto& m : monitors()) {
-                if (m->logicalBox().containsPoint(p))
-                    return m;
-            }
-            return nullptr;
+            return gf::outputs::at(p);
         }
 
         PHLMONITOR monitorByName(std::string_view name) {
-            for (const auto& m : monitors()) {
-                if (m->m_name == name)
-                    return m;
-            }
-            return nullptr;
+            return gf::outputs::byName(name);
         }
 
         // The output a window is on now: the one under its middle. Hyprland's m_monitor is not updated by the plugin's own
@@ -256,32 +250,28 @@ namespace gf::tiler {
         // next output (dragging there moves the window over), it never tiles.
         bool edgeFree(const PHLMONITOR& m, bool left) {
             const CBox box = m->logicalBox();
-            for (const auto& o : monitors()) {
+            return !gf::outputs::find([&](const PHLMONITOR& o) {
                 if (o == m)
-                    continue;
+                    return false;
                 const CBox   other    = o->logicalBox();
                 const bool   overlaps = other.y < box.y + box.h && other.y + other.h > box.y;
                 const double edge     = left ? box.x : box.x + box.w;
                 const double touch    = left ? other.x + other.w : other.x;
-                if (overlaps && std::abs(edge - touch) < 1.0)
-                    return false;
-            }
-            return true;
+                return overlaps && std::abs(edge - touch) < 1.0;
+            });
         }
 
         // The top edge of `m` is free when no other monitor's bottom edge touches it along an overlapping span: the menu bar
         // strip is then the top of the screen, never crossed on the way to another output (core showsAtOnce).
         bool topFree(const PHLMONITOR& m) {
             const CBox box = m->logicalBox();
-            for (const auto& o : monitors()) {
+            return !gf::outputs::find([&](const PHLMONITOR& o) {
                 if (o == m)
-                    continue;
+                    return false;
                 const CBox other    = o->logicalBox();
                 const bool overlaps = other.x < box.x + box.w && other.x + other.w > box.x;
-                if (overlaps && std::abs(box.y - (other.y + other.h)) < 1.0)
-                    return false;
-            }
-            return true;
+                return overlaps && std::abs(box.y - (other.y + other.h)) < 1.0;
+            });
         }
 
         bool sameBox(const CBox& a, const CBox& b) {
@@ -386,18 +376,19 @@ namespace gf::tiler {
         }
 
         // TL9 apart from where the window is now: what a window minimized from an output passes to be suggested there (TL28).
-        bool tileableKind(const PHLWINDOW& w) {
+        // `limits`: constraintsOf(w) when the caller has it already (computed here otherwise, after the cheap checks).
+        bool tileableKind(const PHLWINDOW& w, const tiling::Constraints* limits = nullptr) {
             if (!w || !tiling::movable(factsOf(w)) || !w->m_isFloating || w->m_pinned || fullscreenNow(w))
                 return false;
             if (w->parent() || x11FloatedByHyprland(w) || w->m_class == kGlanceClass)
                 return false;
-            const auto c = constraintsOf(w);
+            const auto c = limits ? *limits : constraintsOf(w);
             return !((c.maxW > 0 && c.minW >= c.maxW) || (c.maxH > 0 && c.minH >= c.maxH)); // fixed size on an axis
         }
 
         // TL9 (no drag preview, refused by tile and arrange).
-        bool placeable(const PHLWINDOW& w) {
-            if (!tileableKind(w) || w->isHidden() || !w->m_workspace || w->m_workspace->m_isSpecialWorkspace)
+        bool placeable(const PHLWINDOW& w, const tiling::Constraints* limits = nullptr) {
+            if (!tileableKind(w, limits) || w->isHidden() || !w->m_workspace || w->m_workspace->m_isSpecialWorkspace)
                 return false; // minimized and hidden windows live on special workspaces
             return !gf::stager::inStripStage(w);
         }
@@ -426,7 +417,7 @@ namespace gf::tiler {
         std::vector<uint64_t> stripWindows() {
             std::vector<uint64_t> out;
             for (const auto& r : st().book.records()) {
-                if (const auto w = windowById(r.id); w && gf::stager::inStripStage(w))
+                if (gf::stager::inStripStage(r.id)) // by address: no walk over Hyprland's window list per record (WM-13)
                     out.push_back(r.id);
             }
             return out;
@@ -453,15 +444,20 @@ namespace gf::tiler {
         // same output and Desktop, the rest of the work area beside it. Not for Center (it keeps the window's size).
         // TL7: the frames of the other Tiled or Resizing windows of `output`'s Desktop `workspace` (not those of an inactive stage,
         // drawn in the strip): what a half beside them leaves.
-        std::vector<tiling::Rect> neighbourFramesOf(const PHLWINDOW& w, std::string_view output, int64_t workspace) {
-            const auto                strip = stripWindows();
-            std::vector<tiling::Rect> neighbours;
+        // Written into `out` (cleared first): a drag reuses one buffer for every motion (WM-13).
+        void neighbourFramesInto(uint64_t self, std::string_view output, int64_t workspace, std::vector<tiling::Rect>& out) {
+            out.clear();
             for (const auto& r : st().book.records()) {
-                if (r.id == idOf(w) || r.output != output || r.workspace != workspace || std::ranges::find(strip, r.id) != strip.end())
+                if (r.id == self || r.output != output || r.workspace != workspace)
                     continue;
-                if (r.state == tiling::TileState::Tiled || r.state == tiling::TileState::Resizing)
-                    neighbours.push_back(tiling::frameOf(r.box, r.band));
+                if ((r.state == tiling::TileState::Tiled || r.state == tiling::TileState::Resizing) && !gf::stager::inStripStage(r.id))
+                    out.push_back(tiling::frameOf(r.box, r.band));
             }
+        }
+
+        std::vector<tiling::Rect> neighbourFramesOf(const PHLWINDOW& w, std::string_view output, int64_t workspace) {
+            std::vector<tiling::Rect> neighbours;
+            neighbourFramesInto(idOf(w), output, workspace, neighbours);
             return neighbours;
         }
 
@@ -947,7 +943,8 @@ namespace gf::tiler {
         // still on it. No button held any more: the drag ended without its end seen here. (Not tied to ready(): the titlebar
         // drag tiles without the tiling listeners; stop() removes the timer at the unload.)
         void previewDue() {
-            auto&      s = st();
+            auto& s        = st();
+            s.previewDueMs = 0; // fired
             const auto w = s.drag.window.lock();
             if (!w || !g_pInputManager)
                 return;
@@ -967,6 +964,12 @@ namespace gf::tiler {
                     std::nullopt, [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) { gf::guarded("tiling preview delay", [] { previewDue(); }); }, nullptr);
                 g_pEventLoopManager->addTimer(s.previewTimer);
             }
+            // Every motion of a dwell asks for the same deadline: the timer is set again only when it moves (WM-13: one
+            // timerfd update per pointer motion before).
+            const uint64_t due = nowMs() + ms;
+            if (due == s.previewDueMs)
+                return;
+            s.previewDueMs = due;
             s.previewTimer->updateTimeout(std::chrono::milliseconds(ms));
         }
 
@@ -1559,7 +1562,7 @@ namespace gf::tiler {
                 const auto limits = constraintsOf(w);
                 scene.windows.push_back(tiling::EdgeWindow{.id = r.id, .group = r.group, .frame = tiling::frameOf(toRect(member.box), limits.band), .limits = limits});
             }
-            scene.edges = tiling::sharedEdges(scene.windows, area.margin, tiling::kHandleLength, tiling::kHandleBand);
+            scene.edges = tiling::sharedEdges(scene.windows, tiling::gridMargin(area.margin, area.grid.step), tiling::kHandleLength, tiling::kHandleBand);
             return scene;
         }
 
@@ -1663,10 +1666,26 @@ namespace gf::tiler {
             }
         }
 
+        // Some record is a Tiled group member (a shared edge can exist): read again only when the book changed. A plain
+        // pointer motion with no tiled group anywhere does no more than this (WM-13).
+        bool anyGroupedTile() {
+            auto& s = st();
+            if (s.groupedAt != s.book.generation() + 1) {
+                s.grouped   = std::ranges::any_of(s.book.records(), [](const tiling::TileRecord& r) { return r.state == tiling::TileState::Tiled && r.group != 0; });
+                s.groupedAt = s.book.generation() + 1;
+            }
+            return s.grouped;
+        }
+
         void edgeHover() {
             const auto& s = st();
             if (!g_pInputManager || s.edge)
                 return;
+            if (!anyGroupedTile()) {
+                if (s.edgeCursor)
+                    edgeCursor(std::nullopt);
+                return;
+            }
             const auto edge = g_pInputManager->hasHeldButtons() ? std::nullopt : handleAt(g_pInputManager->getMouseCoordsInternal(), nullptr, nullptr);
             edgeCursor(edge ? std::optional<bool>{edge->vertical} : std::nullopt);
         }
@@ -1729,13 +1748,15 @@ namespace gf::tiler {
             }
         }
 
+        void edgeFrame(const PHLMONITOR& m); // below, with edgeMotion
+
         void armEdgeTimer(uint64_t ms) {
             auto& s = st();
             if (!g_pEventLoopManager)
                 return;
             if (!s.edgeTimer) {
                 s.edgeTimer = makeShared<CEventLoopTimer>(
-                    std::nullopt, [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) { gf::guarded("tiling shared edge frame", [] { edgeTimed(edgeApply); }); },
+                    std::nullopt, [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) { gf::guarded("tiling shared edge frame", [] { edgeTimed([] { edgeFrame(nullptr); }); }); },
                     nullptr);
                 g_pEventLoopManager->addTimer(s.edgeTimer);
             }
@@ -1814,14 +1835,26 @@ namespace gf::tiler {
                 s.book.beginResize(w.id); // Tiled by edgeScene
             const auto now = nowMs();
             s.edge         = SEdgeDrag{.edge = *edge, .windows = std::move(windows), .grid = grid, .press = p, .monitor = monitorAt(p), .delta = 0, .applied = {},
-                                       .beganMs = now, .appliedMs = now, .steps = 0, .held = 0, .left = {}, .moved = {}, .workUs = 0, .maxWorkUs = 0};
+                                       .beganMs = now, .appliedMs = now, .steps = 0, .held = 0, .pacer = {}, .left = {}, .moved = {}, .workUs = 0, .maxWorkUs = 0};
             s.edgeReleaseOwed = true;
             edgeCursor(edge->vertical);
             return true;
         }
 
-        // A motion during the drag: the edge follows the pointer along its axis, applied at most once per refresh of the
-        // output (TL30, P3: the neighbours are configured at most once per refresh), the rest when the frame is due.
+        // The output's frame (render.preChecks of the drag's output, before Hyprland's layout and animation step): the latest
+        // delta is applied now, once for this frame (WM-04).
+        void edgeFrame(const PHLMONITOR& m) {
+            auto& s = st();
+            if (!s.edge || !s.edge->pacer.pending() || (m && s.edge->monitor.lock() != m))
+                return;
+            if (s.edge->pacer.frame())
+                edgeApply();
+        }
+
+        // A motion during the drag: the edge follows the pointer along its axis, applied at the next frame of the output (TL30,
+        // P3: the neighbours are configured at most once per refresh, in step with it, core CFramePacer). The frame is asked
+        // for when none is pending; the timer is a fallback for an output that gives no frame (applied after three refresh
+        // periods).
         void edgeMotion() {
             auto& s = st();
             if (!s.edge)
@@ -1833,16 +1866,15 @@ namespace gf::tiler {
             }
             const Vector2D p = g_pInputManager ? g_pInputManager->getMouseCoordsInternal() : d.press;
             d.delta          = d.edge.vertical ? p.x - d.press.x : p.y - d.press.y;
-            const auto   m       = d.monitor.lock();
-            const double hz      = m && m->m_refreshRate > 1 ? m->m_refreshRate : 60.0;
-            const auto   frameMs = static_cast<uint64_t>(std::ceil(1000.0 / hz));
-            const auto   since   = nowMs() - d.appliedMs;
-            if (since < frameMs) {
-                ++d.held;
-                armEdgeTimer(frameMs - since);
+            const auto m = d.monitor.lock();
+            if (!d.pacer.motion(d.delta)) {
+                ++d.held; // waits for the frame already asked for (or nothing changed)
                 return;
             }
-            edgeApply();
+            const double hz = m && m->m_refreshRate > 1 ? m->m_refreshRate : 60.0;
+            armEdgeTimer(static_cast<uint64_t>(std::ceil(3000.0 / hz)));
+            if (m && m->m_enabled)
+                m->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_ANIMATION);
         }
 
         // TL34: the lock ends a drag at once (the frames its motions before the lock asked for, then Tiled, one `resized`),
@@ -1904,6 +1936,13 @@ namespace gf::tiler {
         auto& ev = bus->m_events;
         auto& l  = s.listeners;
         l.push_back(ev.window.open.listen([](const PHLWINDOW& w) { gf::guarded("tiling window.open", [&] { rememberDesk(w); }); }));
+        // TL30 (WM-04): a shared edge's drag is applied at its output's frames.
+        l.push_back(ev.render.preChecks.listen([](const PHLMONITOR& m) {
+            gf::guarded("tiling shared edge frame", [&] {
+                if (st().edge)
+                    edgeTimed([&] { edgeFrame(m); });
+            });
+        }));
         l.push_back(ev.window.close.listen([](const PHLWINDOW& w) { gf::guarded("tiling window.close", [&] { onClose(w); }); }));
         l.push_back(ev.window.fullscreen.listen([](const PHLWINDOW& w) { gf::guarded("tiling window.fullscreen", [&] { onFullscreen(w); }); }));
         l.push_back(ev.window.moveToWorkspace.listen(
@@ -1946,6 +1985,7 @@ namespace gf::tiler {
             if (g_pEventLoopManager)
                 g_pEventLoopManager->removeTimer(s.previewTimer);
             s.previewTimer.reset();
+            s.previewDueMs = 0;
         }
         s.recheck = false;
         s.press.reset();
@@ -2002,10 +2042,16 @@ namespace gf::tiler {
         return st().ready;
     }
 
+    // Per pointer motion of a drag (WM-13): the window's limits are read once, its neighbours (a half only) once into a buffer
+    // kept between motions, the outputs read in place; then core's frames (as fitsPlace and placeFrame, without reading them
+    // again).
     std::optional<Snap> snapFor(const PHLWINDOW& w, const Vector2D& pointer) {
         const auto& options = state().tilingDrag;
         const bool  alt     = options.altDrag && altHeld();
-        if (!placeable(w) || (!options.edges && !options.menuBar && !alt))
+        if (!w || (!options.edges && !options.menuBar && !alt))
+            return std::nullopt;
+        const auto limits = constraintsOf(w);
+        if (!placeable(w, &limits))
             return std::nullopt;
         const auto m = monitorAt(pointer);
         if (!m || showsSpecial(m))
@@ -2017,9 +2063,22 @@ namespace gf::tiler {
         // TL7: the tiled neighbours are those of the Desktop the drop lands on. Over another output the window is still on
         // its own Desktop until the release (followOutput): that output's shown Desktop then.
         const int64_t desk = monitorOf(w) != m && m->m_activeWorkspace ? m->m_activeWorkspace->m_id : w->m_workspace->m_id;
-        if (!place || !fitsPlace(w, *place, area, m->m_name, desk))
+        if (!place)
+            return std::nullopt;
+        if (*place == tiling::Place::Center)
+            return Snap{*place, toCBox(tiling::centerFrame(toRect(w->layoutTarget()->position()), limits.band, area)), m};
+        auto& near = st().neighbourScratch;
+        if (isHalf(*place))
+            neighbourFramesInto(idOf(w), m->m_name, desk, near);
+        else
+            near.clear();
+        const tiling::Rect start = tiling::placeStartFrame(*place, area, near);
+        if (*place != tiling::Place::Fill && !tiling::fitsFrame(limits, start))
             return std::nullopt; // D69: no preview of a place the window does not fit (the release only moves it)
-        return Snap{*place, toCBox(placeFrame(w, *place, area, m->m_name, desk)), m};
+        const std::array<tiling::Zone, 1>        zones{tiling::zoneOf(*place).value_or(tiling::Zone{})};
+        const std::array<tiling::Rect, 1>        frames{start};
+        const std::array<tiling::Constraints, 1> bounds{limits};
+        return Snap{*place, toCBox(tiling::fitFrames(zones, frames, bounds, area).front()), m};
     }
 
     std::optional<Snap> dragMotion(const PHLWINDOW& w, const Vector2D& pointer) {
@@ -2058,6 +2117,7 @@ namespace gf::tiler {
         s.drag = {};
         if (s.previewTimer)
             s.previewTimer->updateTimeout(std::nullopt);
+        s.previewDueMs = 0;
     }
 
     std::optional<Snap> previewOf(const PHLWINDOW& w) {
@@ -2932,18 +2992,45 @@ namespace gf::tiler {
         std::vector<uint64_t>          unfit;
         std::vector<uint64_t>          fixed;
         std::vector<tiling::WindowFit> fits;
+        // WM-14: per window its limits once (not five times), its output once, the work area once per output and Desktop,
+        // its neighbours into one buffer (Stages' strip by address, no walk over the window list per record): the reply no
+        // longer grows with windows squared on the compositor thread. Same answers as placeable, splittable, fixedSize,
+        // unfitZones and unfitPlaces.
         if (Desktop::windowState()) {
+            struct SAreaOf {
+                PHLMONITOR   monitor;
+                int64_t      workspace = 0;
+                tiling::Area area;
+            };
+            std::vector<SAreaOf>      areas;
+            std::vector<tiling::Rect> neighbours;
+            const auto                areaOf = [&areas](const PHLMONITOR& m, int64_t workspace) -> const tiling::Area& {
+                const auto it = std::ranges::find_if(areas, [&](const SAreaOf& a) { return a.monitor == m && a.workspace == workspace; });
+                if (it != areas.end())
+                    return it->area;
+                areas.push_back(SAreaOf{.monitor = m, .workspace = workspace, .area = areaFor(m, workspace)});
+                return areas.back().area;
+            };
             for (const auto& w : Desktop::windowState()->windows()) {
-                if (w && placeable(w) && !splittable(w))
-                    unfit.push_back(idOf(w));
-                if (w && w->m_isMapped && fixedSize(w))
+                if (!w || !w->m_isMapped)
+                    continue;
+                const auto limits = constraintsOf(w);
+                if (tiling::fixedSize(limits))
                     fixed.push_back(idOf(w));
-                if (w && placeable(w)) {
-                    auto zones  = unfitZones(w);
-                    auto places = unfitPlaces(w);
-                    if (!zones.empty() || !places.empty())
-                        fits.push_back(tiling::WindowFit{.address = idOf(w), .zones = std::move(zones), .places = std::move(places)});
-                }
+                if (!placeable(w, &limits))
+                    continue;
+                const auto m = monitorOf(w);
+                if (!m)
+                    continue;
+                if (!tiling::fitsFrame(limits, splitHalf(m, 0)) || !tiling::fitsFrame(limits, splitHalf(m, 1)))
+                    unfit.push_back(idOf(w));
+                const int64_t workspace = w->m_workspace->m_id;
+                const auto&   area      = areaOf(m, workspace);
+                neighbourFramesInto(idOf(w), m->m_name, workspace, neighbours);
+                auto zones  = tiling::unfitZones(limits, area);
+                auto places = tiling::unfitPlaces(limits, area, neighbours);
+                if (!zones.empty() || !places.empty())
+                    fits.push_back(tiling::WindowFit{.address = idOf(w), .zones = std::move(zones), .places = std::move(places)});
             }
         }
         return tiling::stateJson(s.book.generation(), outputs, suggestion ? &*suggestion : nullptr, splits, unfit, fixed, fits);

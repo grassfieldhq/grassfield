@@ -46,7 +46,30 @@ namespace gf::transform {
     // surface under a black plate while that monitor is captured (SEC-01, core/CapturePrivacy.hpp).
     SP<Render::IFramebuffer> drawFitted(const PHLWINDOW& w, const Box& rect, const SP<Render::IFramebuffer>& in, bool& warnedNoBuffer, uint64_t address);
 
-    // Clears `in` (the bound work buffer): the window is drawn as nothing on the monitor being rendered.
+    // The window is drawn as nothing on the monitor being rendered: a transparent buffer is returned (one of the transforms'
+    // own, cleared where it last held something: usually nothing to clear), else `in` cleared whole.
     SP<Render::IFramebuffer> drawNothing(const SP<Render::IFramebuffer>& in);
+
+    // Who keeps the transforms' own output buffers (WM-01, WM-02: monitor-sized buffers whose drawn box is known, so a frame
+    // clears only that box and the new one instead of a whole buffer per window). They are released, GL context current,
+    // once no user is left (the overview closed and Stages draws nothing): call use() before attaching a transformer and
+    // release() when the module transforms nothing any more (and on unload: nothing of them may outlive dlclose).
+    enum class EUser : uint8_t {
+        Overview = 1U << 0,
+        Stages   = 1U << 1,
+    };
+    void use(EUser user);
+    void release(EUser user);
+
+    // The damage the monitor's next frame has so far (its damage ring's current region, monitor pixels). Read at render.pre:
+    // what changed since the previous frame (a commit, a decoration, a move), before the plugin adds its own.
+    CRegion frameDamage(const PHLMONITOR& mon);
+
+    // Where Hyprland draws (and damages) the window at its real place: its full box with every decoration, at its render
+    // offset (layout).
+    Box realBox(const PHLWINDOW& w);
+
+    // `damage` (monitor pixels of `mon`, frameDamage) touches the layout box `box`. No allocation.
+    bool touches(const CRegion& damage, const PHLMONITOR& mon, const Box& box);
 
 } // namespace gf::transform

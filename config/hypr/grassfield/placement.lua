@@ -120,6 +120,7 @@ local function grow(window)
   want_w, want_h = math.max(w, want_w), math.max(h, want_h)
   hl.dispatch(hl.dsp.window.resize({ x = want_w, y = want_h, window = window }))
   hl.dispatch(hl.dsp.window.center({ window = window }))
+  return true
 end
 
 -- macOS model: a window opens with its title bar below the menu bar and on its screen, never under the bar or off the
@@ -142,12 +143,16 @@ local function fit(window)
   local new_h = math.min(h, area_h - TITLEBAR)
   local new_x = math.max(area_x, math.min(x, area_x + area_w - new_w))
   local new_y = math.max(area_y + TITLEBAR, math.min(y, area_y + area_h - new_h))
+  local changed = false
   if new_w ~= w or new_h ~= h then
     hl.dispatch(hl.dsp.window.resize({ x = new_w, y = new_h, exact = true, window = window }))
+    changed = true
   end
   if new_x ~= x or new_y ~= y then
     hl.dispatch(hl.dsp.window.move({ x = new_x, y = new_y, window = window }))
+    changed = true
   end
+  return changed
 end
 
 -- Grassfield Memos (ADR-0051 D-6): a memo window names the position it had in its xdg-toplevel tag,
@@ -181,6 +186,7 @@ local function memo_place(window)
   local x = math.max(area_x, math.min(tonumber(hx), area_x + area_w - w))
   local y = math.max(area_y + TITLEBAR, math.min(tonumber(hy), area_y + area_h - h))
   hl.dispatch(hl.dsp.window.move({ x = x, y = y, window = window }))
+  return true
 end
 
 -- Grassfield Memos' collapse (ADR-0051 D-6): a Wayland client cannot resize its own floating window, and Hyprland 0.56 keeps a
@@ -255,17 +261,33 @@ hl.on("window.close", function(window)
   end
 end)
 
+-- CIO-17: what the hook below changed is the window's box from its first frame, not a 300 ms windowsMove animation over its
+-- opening (a browser's first window seen growing, an oversized one sliding down from under the menu bar). The compositor
+-- plugin warps the window to its new box (hl.plugin.grassfield.settle); without the plugin the change animates, as before.
+local function settle(window)
+  if not window or window.address == nil then return end
+  pcall(function() hl.plugin.grassfield.settle(tostring(window.address)) end)
+end
+
 hl.on("window.open", function(window)
+  local changed = false
   local ok, err = pcall(memo_place, window)
   if not ok then
     print("grassfield: placing the memo failed: " .. tostring(err))
   end
+  changed = changed or (ok and err == true)
   ok, err = pcall(grow, window)
   if not ok then
     print("grassfield: default size failed: " .. tostring(err))
   end
+  changed = changed or (ok and err == true)
   ok, err = pcall(fit, window)
   if not ok then
     print("grassfield: fitting the window failed: " .. tostring(err))
+  end
+  changed = changed or (ok and err == true)
+  -- Only a window whose box changed here: any other keeps its opening animation untouched.
+  if changed then
+    settle(window)
   end
 end)

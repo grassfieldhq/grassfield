@@ -40,7 +40,7 @@ LUA
     grep -q "^XF86Explorer.*launch-key. files" <<<"$1" && grep -q "^XF86MyComputer.*launch-key. files" <<<"$1" &&
     grep -q "^XF86Tools.*launch-key. settings" <<<"$1" && grep -q "^XF86AudioMedia.*launch-key. music" <<<"$1" &&
     grep -q "^CTRL + SHIFT + ESCAPE.*launch-key. activity" <<<"$1" &&
-    grep -q "^XF86Search.*ipc.* call search toggle" <<<"$1"' _ "$out"
+    grep -q "^XF86Search.gfkey/1 search toggle" <<<"$1"' _ "$out" # in-process (CIO-01), the request of SUPER+SPACE
   # CIO-11: GRASSFIELD_LAUNCH_KEY is dev plumbing (ADR-0019), ignored by the real session like GRASSFIELD_SHELL_DIR.
   desc="a stray GRASSFIELD_LAUNCH_KEY does not change the launch keys of the real session"
   out=$(env -u GRASSFIELD_DEV GRASSFIELD_SESSION=1 GRASSFIELD_LAUNCH_KEY=/tmp/other-launcher lua "$tmp/run.lua" "$root")

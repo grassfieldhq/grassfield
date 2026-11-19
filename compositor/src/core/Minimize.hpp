@@ -114,6 +114,31 @@ namespace gf::minimize {
     // (Minimize) or 0 -> 1 (Restore), linearly.
     Frame fadeFrameAt(Kind kind, const Box& box, double elapsedMs);
 
+    // ---- An animation interrupted by the opposite one (a minimize clicked back from the Dock, WM-06) ----
+    // The new animation continues from the state on screen instead of starting over: no jump, no flash, and only the part
+    // of its duration that is left (macOS reverses an interrupted minimize from where it is).
+
+    // The eased progress (0 window .. 1 its end) of a running shrink animation of `kind` after elapsedMs.
+    double easedProgress(Kind kind, double elapsedMs);
+
+    // The elapsed time (ms) at which a shrink animation of `kind` has eased progress `eased` (its timing inverted; clamped
+    // to [0, 1]).
+    double elapsedForEased(Kind kind, double eased);
+
+    struct Continuation {
+        Box    from;          // the box the animation runs from (frameAt's `from`): chosen so that it shows `current` at elapsedMs
+        double elapsedMs = 0; // where it starts in its own timing
+    };
+
+    // A shrink animation of `kind` toward `to` taking over from the box on screen `current`, with `share` of its way already
+    // behind it (1 - the interrupted animation's eased progress; at most 0.95, so `from` stays near the path): it starts at
+    // elapsedForEased(kind, share), where frameAt gives `current` exactly, with the alpha its timing has there (past the
+    // restore's fade-in once a fifth of its time is behind it: the window is not made transparent again).
+    Continuation continueFrom(Kind kind, const Box& current, const Box& to, double share);
+
+    // A fade of `kind` taking over at `alpha` (the interrupted fade's): the elapsed time where fadeFrameAt gives that alpha.
+    double fadeElapsedFor(Kind kind, float alpha);
+
     // The affine map that sends `src` onto `dst` (per-axis scale + translation), applied to `inner`
     // (e.g. the window's full box with its shadow, for damage).
     Box mapBox(const Box& inner, const Box& src, const Box& dst);

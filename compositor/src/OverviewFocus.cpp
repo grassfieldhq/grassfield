@@ -68,6 +68,10 @@ namespace {
         // The request whose keyboard hand-over was logged: one line per request, never one per attempt (an attempt runs
         // before every key while it waits; review of part B, 2026-10-24).
         uint32_t handOverLogged = 0;
+        // handOverKeyboard's lists, kept between attempts: an attempt runs once per loop turn while a request waits (the
+        // shell's close animation), and allocated two vectors each time.
+        std::vector<PHLLS>              handLayers;
+        std::vector<of::ExclusiveLayer> handFacts;
     };
 
     // Constructed on first use inside a guarded call (R13). Emptied by stop() before dlclose.
@@ -343,8 +347,24 @@ namespace {
         const auto owner = gf::surfaces::ownerOf(gf::surfaces::keyboardFocus());
         if ((owner.window && owner.window->m_isMapped) || layerKeepsKeyboard())
             return; // a window, or a layer surface that takes the keyboard, holds it
-        std::vector<PHLLS>              layers;
-        std::vector<of::ExclusiveLayer> facts;
+        auto& layers = S().handLayers;
+        auto& facts  = S().handFacts;
+        layers.clear();
+        facts.clear();
+        // The strong references to the layers go when this returns (the capacity stays): nothing keeps a surface alive.
+        struct SDropRefs {
+            explicit SDropRefs(std::vector<PHLLS>& r, std::vector<of::ExclusiveLayer>& f) : refs(r), facts(f) {}
+            std::vector<PHLLS>&              refs;
+            std::vector<of::ExclusiveLayer>& facts; // their namespaces are views into those layers
+            ~SDropRefs() {
+                refs.clear();
+                facts.clear();
+            }
+            SDropRefs(const SDropRefs&)            = delete;
+            SDropRefs& operator=(const SDropRefs&) = delete;
+            SDropRefs(SDropRefs&&)                 = delete;
+            SDropRefs& operator=(SDropRefs&&)      = delete;
+        } dropRefs{layers, facts};
         for (const auto& ref : g_pInputManager->m_exclusiveLSes) {
             const auto ls = ref.lock();
             if (!ls)

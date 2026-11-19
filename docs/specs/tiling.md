@@ -94,7 +94,11 @@ the top (M04, Overview) and a Desktop change on a held edge (M05, Desktops); res
   `monitor.layoutChanged` comes only from output arrangement, mode and rule changes, MonitorLayoutController.cpp:70,
   Monitor.cpp:1399, MonitorRuleManager.cpp:204.) Tiles never extend outside the work area they were placed in.
 - **TL2** Margins: with "Tiled windows have margins" on, `tiling.margin` (8) between the work area's edge and each frame,
-  and between frames; off, frames touch each other and the work area edges. Changing the setting re-places every tiled
+  and between frames; off, frames touch each other and the work area edges. On a fractional scale the margin is a whole
+  number of grid steps (TL3), the nearest to 8 (core `gridMargin`: 9 at 133 %, step 3), so that every gap is the same:
+  the outer edges are the first grid lines at least one margin inside the work area (exactly one margin where its edge
+  lies on the grid, as an output's always does), and the two zones each side of an inner boundary keep exactly one margin between them, split on the grid
+  (audit WM-12: an 8 px margin on a 3 px grid gave inner gaps of 6 and 9 px beside outer margins of 8 and 9). Changing the setting re-places every tiled
   window on every output (M39). A tiled window that cannot be placed at that moment (in an inactive stage, drawn in the
   strip) keeps its record and is placed again at the next tiling action (`tile`, `arrange`, a drop in a zone) once it
   can be; if the user moves it meanwhile it is Free (ADR-0036 D8). `hyprctl grassfield-tiling` never moves a window.
@@ -451,8 +455,11 @@ the top (M04, Overview) and a Desktop change on a held edge (M05, Desktops); res
   its axis (core `dragEdge`: the before windows' far side and the after windows' near side move together, the gap kept,
   the edge on the grid line nearest the pointer and never past any window's minimum or maximum, heights counting the
   titlebar band), each window's surface set and its animation ended at once (`setTargetGeom`, `warpPositionSize`, as a
-  step of Hyprland's own resize), at most once per refresh of the output (the motions in between wait for a timer: P3,
-  the neighbours configured at most once per refresh); the release, or the lock the moment it engages, ends it: Tiled
+  step of Hyprland's own resize), once per frame of the output, from that output's frame event (`render.preChecks`,
+  before Hyprland's layout and animation step) with the pointer's latest delta (core `CFramePacer`: a motion asks the
+  output for a frame when none is pending; a 3-refresh timer applies it if the output gives none). P3: the neighbours are
+  configured at most once per refresh and in step with it (audit WM-04: the former millisecond throttle of
+  ceil(1000 / Hz) ran at 111 Hz on a 120 Hz output, one frame in 13 without movement); the release, or the lock the moment it engages, ends it: Tiled
   with the new boxes, one `resized` notice, a DEBUG line with the drag's steps, held motions, duration and the plugin's own
   time in it (total and longest step; each step is also a work span of the frame probe, compositor.md FR54). A window
   closed, unmapped or no longer Resizing meanwhile leaves the drag (logged once, no longer set), but its frame from the

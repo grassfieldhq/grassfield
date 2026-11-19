@@ -230,6 +230,12 @@ namespace gf::tiling {
     inline constexpr int kMaxGridStep = 4;
     int gridStep(double scale);
 
+    // TL2 on the grid (audit WM-12): the margin as a whole number of grid steps, the nearest to `margin` (at least one step
+    // when there is a margin): 9 logical px at 133 % (step 3) instead of 8, so that the gap between two tiles and the
+    // margins at the work area's edges are all the same (an 8 px margin on a 3 px grid gave gaps of 6 and 9 px beside outer
+    // margins of 8 and 9). 0 without a margin.
+    double gridMargin(double margin, int step);
+
     // Edges are snapped to multiples of `step` logical px from the output's logical origin.
     struct Grid {
         double originX = 0;
@@ -566,6 +572,26 @@ namespace gf::tiling {
     // bound the other). Returns the new frames, the before windows then the after ones in the edge's order (a window
     // `windows` lacks is left out).
     std::vector<std::pair<uint64_t, Rect>> dragEdge(const SharedEdge& edge, std::span<const EdgeWindow> windows, double delta, const Grid& grid);
+
+    // TL30, P3 (audit WM-04): a shared edge's drag is applied once per frame of its output, from that output's frame event
+    // (render.preChecks, before Hyprland's layout and animation step), with the pointer's latest delta: never more often than
+    // the output refreshes, and never a frame without the movement the pointer made before it (a millisecond timer of
+    // ceil(1000 / Hz) applied at 111 Hz on a 120 Hz output: one frame in 13 showed no movement). A motion asks for a frame
+    // only when none is pending.
+    class CFramePacer {
+      public:
+        // A motion to `delta`: true when the caller must ask the output for a frame (nothing pending, and the delta differs
+        // from the one applied last).
+        bool motion(double delta);
+        // The output's frame: the delta to apply now, nullopt when nothing is pending.
+        std::optional<double> frame();
+        bool                  pending() const;
+
+      private:
+        double m_latest  = 0;
+        double m_applied = 0;
+        bool   m_pending = false;
+    };
 
     // ---- suggestions (TL28) ----
 

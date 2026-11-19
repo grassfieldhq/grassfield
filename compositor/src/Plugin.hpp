@@ -19,6 +19,7 @@
 #include <utility>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 class CGrassfieldRim;
@@ -62,6 +63,11 @@ namespace gf {
         bool                               luaSplitRegistered         = false;
         bool                               luaUnsplitRegistered       = false;
         bool                               luaWindowSizeRegistered    = false;
+        bool                               luaKeyboardHolderRegistered = false;
+        bool                               luaFileIdentityRegistered   = false;
+        bool                               luaReadFileRegistered       = false;
+        bool                               luaListFilesRegistered      = false;
+        bool                               luaSettleRegistered         = false;
 
         // Settings pushed by the shell (hl.plugin.grassfield.config).
         gfc::DoubleClickAction doubleClickAction = gfc::DoubleClickAction::Zoom;
@@ -80,6 +86,10 @@ namespace gf {
 
         // Live titlebars. Owned by their windows; each removes itself in its destructor.
         std::vector<CGrassfieldTitlebar*> titlebars;
+        // The same titlebars by their window (CIO-07, the WindowRim note): one lookup per window instead of a walk of the list
+        // on every pointer motion and every rim drawn. Keyed by the window's address at the titlebar's construction (one
+        // titlebar per window); CGrassfieldTitlebar::of checks that the entry's window is still that window.
+        std::unordered_map<const void*, CGrassfieldTitlebar*> titlebarByWindow;
         // Live window rims (WindowRim.hpp, the dark appearance's inner rim), one per window next to its titlebar. Owned by
         // their windows; each removes itself in its destructor.
         std::vector<CGrassfieldRim*> rims;

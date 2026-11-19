@@ -260,8 +260,7 @@ TEST(TilingGrid, MarginsAreExactWhenTheStepDividesThem) {
     const Area third = areaFor(2560, 1440, 160.0 / 120.0, 8);
     const auto f     = framesOf("left-right", third);
     const double gap = f[1].x - (f[0].x + f[0].w);
-    EXPECT_GE(gap, 8 - 3) << "within one step of the margin at step 3";
-    EXPECT_LE(gap, 8 + 3);
+    EXPECT_DOUBLE_EQ(gap, gridMargin(8, 3)) << "one grid margin at step 3 (WM-12: was 6 or 9)";
 }
 
 TEST(TilingFit, AMinimumTakesRoomFromItsNeighbourAsFarAsItsMinimumAllows) {
@@ -300,7 +299,8 @@ TEST(TilingGrid, OuterEdgesSnapInsideTheWorkArea) {
     const Area a{Rect{1, 25, 1917, 973}, 0, Grid{0, 0, 4}};
     EXPECT_EQ(zoneFrame(Zone{}, a), (Rect{4, 28, 1912, 968}));
     const Area m{Rect{1, 25, 1917, 973}, 6, Grid{0, 0, 4}};
-    EXPECT_EQ(zoneFrame(Zone{}, m), (Rect{8, 32, 1904, 960})) << "the margin first, then the grid line inside";
+    // A margin of 6 on a 4 px grid is one grid margin, 8 (gridMargin, WM-12): the margin first, then the grid line inside.
+    EXPECT_EQ(zoneFrame(Zone{}, m), (Rect{12, 36, 1896, 952})) << "the margin first, then the grid line inside";
 }
 
 TEST(TilingGrid, InnerEdgesGoToTheNearestLine) {
@@ -1850,4 +1850,95 @@ TEST(TilingSplit, OneMemberFillsNoneEnds) {
     EXPECT_EQ(splitStep(0, false), SplitStep::End);
     EXPECT_EQ(splitStep(0, true), SplitStep::End);
     EXPECT_EQ(splitStep(3, false), SplitStep::Keep);
+}
+
+// ---- WM-12: margins on a fractional scale's grid ----
+
+TEST(TilingGrid, MarginIsAWholeNumberOfSteps) {
+    EXPECT_DOUBLE_EQ(gridMargin(8, 1), 8);
+    EXPECT_DOUBLE_EQ(gridMargin(8, 2), 8);
+    EXPECT_DOUBLE_EQ(gridMargin(8, 3), 9) << "133 %: the nearest multiple of 3";
+    EXPECT_DOUBLE_EQ(gridMargin(8, 4), 8);
+    EXPECT_DOUBLE_EQ(gridMargin(1, 4), 4) << "at least one step";
+    EXPECT_DOUBLE_EQ(gridMargin(0, 3), 0);
+    EXPECT_DOUBLE_EQ(gridMargin(std::nan(""), 3), 0);
+}
+
+// The audit's reproducer: 1440x810 at 4/3 (step 3): outer margins 9 and 8, inner gaps 6 and 9. Every gap is now one grid
+// margin, at the edges and between tiles, on every grid step.
+TEST(TilingGrid, GapsAreEqualOnEveryGrid) {
+    struct SOutput {
+        double scale, w, h; // logical size (a whole number of device px, as Hyprland keeps it)
+    };
+    for (const auto& [scale, W, H] : {SOutput{1.0, 1440, 810}, SOutput{1.25, 1536, 864}, SOutput{4.0 / 3.0, 1440, 810}, SOutput{1.5, 1280, 720},
+                                      SOutput{1.75, 1920, 1080}, SOutput{2.0, 1280, 720}}) {
+        const int    step = gridStep(scale);
+        const Area   a{Rect{0, 0, W, H}, kMargin, Grid{0, 0, step}};
+        const double m    = gridMargin(kMargin, step);
+        const auto   q    = framesOf("quarters", a); // top-left, top-right, bottom-left, bottom-right
+        ASSERT_EQ(q.size(), 4U);
+        EXPECT_DOUBLE_EQ(q[0].x, m) << "scale " << scale;
+        EXPECT_DOUBLE_EQ(q[0].y, m) << "scale " << scale;
+        EXPECT_DOUBLE_EQ(W - (q[1].x + q[1].w), m) << "scale " << scale;
+        EXPECT_DOUBLE_EQ(H - (q[2].y + q[2].h), m) << "scale " << scale;
+        EXPECT_DOUBLE_EQ(q[1].x - (q[0].x + q[0].w), m) << "inner gap across, scale " << scale;
+        EXPECT_DOUBLE_EQ(q[2].y - (q[0].y + q[0].h), m) << "inner gap down, scale " << scale;
+        for (const auto& r : q) {
+            EXPECT_DOUBLE_EQ(std::fmod(r.x, step), 0) << "on the grid";
+            EXPECT_DOUBLE_EQ(std::fmod(r.x + r.w, step), 0) << "on the grid";
+        }
+    }
+}
+
+TEST(TilingSplit, HalvesStillMeetTheOutputEdgesOnAFractionalGrid) {
+    const std::array<Zone, 2> zones{Zone{0, 0, 6, 12}, Zone{6, 0, 6, 12}};
+    const Area                a = splitArea(Rect{0, 0, 1440, 810}, Grid{0, 0, 3});
+    const Rect                l = zoneFrame(zones[0], a);
+    const Rect                r = zoneFrame(zones[1], a);
+    EXPECT_DOUBLE_EQ(l.x, 0);
+    EXPECT_DOUBLE_EQ(l.y, 0);
+    EXPECT_DOUBLE_EQ(r.x + r.w, 1440);
+    EXPECT_DOUBLE_EQ(l.h, 810);
+    EXPECT_DOUBLE_EQ(r.x - (l.x + l.w), gridMargin(kMargin, 3));
+}
+
+// ---- WM-04: the shared edge's drag is applied at the output's frames ----
+
+TEST(TilingEdgePacing, OneApplicationPerFrameWithTheLatestDelta) {
+    CFramePacer p;
+    EXPECT_FALSE(p.frame()) << "a frame with no motion applies nothing";
+    EXPECT_TRUE(p.motion(3)) << "the first motion asks for a frame";
+    EXPECT_FALSE(p.motion(5)) << "more motions before the frame ask for nothing more";
+    EXPECT_FALSE(p.motion(9));
+    EXPECT_TRUE(p.pending());
+    const auto applied = p.frame();
+    ASSERT_TRUE(applied);
+    EXPECT_DOUBLE_EQ(*applied, 9) << "the frame applies the latest delta";
+    EXPECT_FALSE(p.frame()) << "once per frame";
+    EXPECT_FALSE(p.motion(9)) << "no movement since: no frame asked for";
+    EXPECT_TRUE(p.motion(10));
+    EXPECT_DOUBLE_EQ(p.frame().value_or(0), 10);
+}
+
+// Every frame of a steady drag carries movement: the old millisecond throttle (ceil(1000 / Hz) ms) skipped one frame in 13
+// at 120 Hz. Motions at 1000 Hz, frames at 120 Hz: each frame applies a new delta.
+TEST(TilingEdgePacing, NoFrameWithoutMovementDuringASteadyDrag) {
+    CFramePacer p;
+    double      delta       = 0;
+    int         stillFrames = 0;
+    double      last        = 0;
+    double      nextFrameMs = 1000.0 / 120;
+    for (int ms = 1; ms <= 1000; ++ms) {
+        delta += 0.5;
+        p.motion(delta);
+        while (ms >= nextFrameMs) {
+            const auto a = p.frame();
+            if (!a || *a == last)
+                ++stillFrames;
+            if (a)
+                last = *a;
+            nextFrameMs += 1000.0 / 120;
+        }
+    }
+    EXPECT_EQ(stillFrames, 0);
 }

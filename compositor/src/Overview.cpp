@@ -7,6 +7,7 @@
 #include "WindowTransform.hpp"
 #include "core/EventThrottle.hpp"
 #include "core/Minimize.hpp"
+#include "core/Motion.hpp"
 
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
@@ -52,8 +53,11 @@ namespace {
         uint64_t              address = 0;
         PHLMONITORREF         monitor;               // the window's monitor when it entered the overview
         COverviewTransformer* transformer = nullptr; // owned by window->m_transformers; compared, never freed here
-        std::optional<ov::Box> from;                 // nullopt: the window's live surface box
-        std::optional<ov::Box> to;                   // nullopt: the window's live surface box
+        // Where its surface box is drawn, with its own clock: from where it was to its layout rect (to nullopt: its live
+        // surface box). A retarget (the shell's on:true again, a close) continues from the box on screen with its velocity
+        // and keeps the clock of an unchanged target (core/Motion.hpp).
+        gf::motion::Track     track;
+        bool                  moving = false;        // its track had not settled at the last step
         ov::Box               rect;                  // layout rect the surface box is fitted into, at the last tick
         ov::Box               damaged;               // last damaged visual box (layout, with every decoration)
         bool                  kept = false;          // retarget bookkeeping
@@ -65,8 +69,8 @@ namespace {
         ov::Phase                        phase = ov::Phase::Closed;
         ov::Reason                       closeReason = ov::Reason::None;
         std::vector<SEntry>              entries;
-        Time::steady_tp                  start;
-        double                           durationMs = 0;
+        double                           durationMs = 0; // of the latest request (a close the plugin starts uses it)
+        double                           animEndMs  = 0; // when the last track settles (the watchdog)
         ov::Curve                        curve;
         std::vector<CHyprSignalListener> listeners;
         SP<CEventLoopTimer>              watchdog; // shared: CEventLoopManager holds a strong reference too
@@ -181,6 +185,7 @@ namespace {
     COverviewTransformer* attach(const PHLWINDOW& w) {
         auto  transformer = makeUnique<COverviewTransformer>();
         auto* raw         = transformer.get();
+        gf::transform::use(gf::transform::EUser::Overview); // its output buffers (WindowTransform.cpp)
         w->m_transformers.emplace_back(std::move(transformer));
         if (g_pHyprRenderer)
             g_pHyprRenderer->damageWindow(w);
@@ -199,6 +204,9 @@ namespace {
         }
         e.transformer = nullptr;
         e.damaged     = {};
+        // The last transformed window of this module: the transforms' own buffers may go (if the other module has none).
+        if (std::ranges::none_of(st().entries, [](const auto& x) { return x.transformer != nullptr; }))
+            gf::transform::release(gf::transform::EUser::Overview);
     }
 
     void detachAll() {
@@ -214,7 +222,12 @@ namespace {
         post(ov::Phase::Closed, 0, reason);
     }
 
-    void tick();
+    // The animation clock (ms on the steady clock): the tracks' time base.
+    double nowMs() {
+        return std::chrono::duration<double, std::milli>(Time::steadyNow().time_since_epoch()).count();
+    }
+
+    void tick(const PHLMONITOR& mon);
 
     void armWatchdog() {
         auto& s = st();
@@ -225,7 +238,7 @@ namespace {
                 std::nullopt,
                 [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) {
                     gf::guarded("overview watchdog", [] {
-                        tick();
+                        tick(nullptr);
                         const auto& s = st();
                         if ((s.phase == ov::Phase::Opening || s.phase == ov::Phase::Closing) && s.watchdog)
                             s.watchdog->updateTimeout(WATCHDOG_SLACK);
@@ -234,18 +247,20 @@ namespace {
                 nullptr);
             g_pEventLoopManager->addTimer(s.watchdog);
         }
-        s.watchdog->updateTimeout(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::duration<double, std::milli>(s.durationMs)) + WATCHDOG_SLACK);
+        const double left = std::max(0.0, s.animEndMs - nowMs());
+        s.watchdog->updateTimeout(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::duration<double, std::milli>(left)) + WATCHDOG_SLACK);
     }
 
-    // One animation step; called before each monitor frame (render.preChecks, where Hyprland ticks its own animations)
-    // and by the watchdog. Damage schedules the next frames while the animation runs.
-    void tick() {
+    // One animation step of the windows of `mon` (render.preChecks of that monitor, where Hyprland ticks its own animations:
+    // each window is stepped by the frames of the monitor that shows it, once per frame cycle) or of every window (`mon`
+    // null: the watchdog, a request). A track that settled is stepped once more on any monitor's frame (its final box).
+    // Opening becomes Open, Closing becomes Closed, once every track settled. Damage schedules the next frames.
+    void tick(const PHLMONITOR& mon) {
         auto& s = st();
         if (s.phase != ov::Phase::Opening && s.phase != ov::Phase::Closing)
             return;
-        const double elapsedMs = std::chrono::duration<double, std::milli>(Time::steadyNow() - s.start).count();
-        const double t         = ov::progress(elapsedMs, s.durationMs);
-        const double e         = ov::eased(s.curve, t);
+        const double now   = nowMs();
+        bool         still = false;
         for (auto it = s.entries.begin(); it != s.entries.end();) {
             const auto w = it->window.lock();
             if (!w) {
@@ -253,11 +268,23 @@ namespace {
                 it = s.entries.erase(it);
                 continue;
             }
-            it->rect = ov::interpolate(it->from, it->to, surfaceBox(w), e);
+            if (!it->moving) {
+                ++it;
+                continue;
+            }
+            const bool done = gf::motion::settled(it->track, now);
+            if (!done && mon && it->monitor.lock() != mon) {
+                still = true;
+                ++it;
+                continue;
+            }
+            it->rect = gf::motion::positionAt(it->track, surfaceBox(w), now);
             damage(*it, w);
+            it->moving = !done;
+            still      = still || !done;
             ++it;
         }
-        if (t < 1.0)
+        if (still)
             return;
         if (s.phase == ov::Phase::Opening) {
             s.phase = ov::Phase::Open;
@@ -268,23 +295,30 @@ namespace {
     }
 
     // While the overview is shown, a frame of this monitor may come from any damage at a window's real place (its
-    // content changed) that Hyprland does not know is drawn elsewhere: the layout boxes of this monitor are added to
-    // the frame's damage before it is computed (render.pre comes after Hyprland's animation tick and before
-    // beginRender reads the damage ring). Frames without damage are not touched, so an idle overview costs nothing.
-    // The box drawn now becomes the last damaged box: a surface resized while open (the box changes without an animation
-    // tick) has every box it was drawn in damaged again when it leaves it, so no stale pixels stay behind, also at close.
+    // content changed) that Hyprland does not know is drawn elsewhere: that window's layout box is added to the frame's
+    // damage before it is computed (render.pre comes after Hyprland's animation tick and before beginRender reads the
+    // damage ring). Only the windows whose real place the frame's damage touches, or whose drawn box changed (WM-02): an
+    // unrelated change elsewhere no longer repaints every window. Frames without damage are not touched, so an idle overview
+    // costs nothing. The box drawn now becomes the last damaged box: a surface resized while open (the box changes without
+    // an animation tick) has every box it was drawn in damaged again when it leaves it, so no stale pixels stay behind, also
+    // at close. No allocation per window.
     void onRenderPre(const PHLMONITOR& mon) {
         auto& s = st();
         if (s.phase == ov::Phase::Closed || !mon || !mon->m_damage.hasChanged())
             return;
+        std::optional<CRegion> frame; // read once, at the first window of this monitor
         for (auto& e : s.entries) {
             if (e.monitor.lock() != mon)
                 continue;
             const auto w = e.window.lock();
             if (!w)
                 continue;
+            if (!frame)
+                frame = gf::transform::frameDamage(mon);
             const ov::Box box = visualBox(e, w);
-            const auto    boxes = ov::damageStep(e.damaged, box);
+            if (!ov::needsRepaint(e.damaged, box, gf::transform::touches(*frame, mon, gf::transform::realBox(w))))
+                continue;
+            const auto boxes = ov::damageStep(e.damaged, box);
             for (const auto& b : boxes)
                 mon->m_damage.damage(toCBox(b).translate(-mon->m_position).scale(mon->m_scale).round());
             if (s.phase == ov::Phase::Open && boxes.size() == 2) {
@@ -300,38 +334,39 @@ namespace {
         }
     }
 
-    void startAnimation(ov::Phase phase, double durationMs, const ov::Curve& curve) {
+    // The tracks were set for `phase`: the first step now (tracks of 0 ms, Reduce Motion, end at once), the watchdog armed
+    // for the last end.
+    void startAnimation(ov::Phase phase, double durationMs) {
         auto& s      = st();
         s.phase      = phase;
-        s.start      = Time::steadyNow();
         s.durationMs = durationMs;
-        s.curve      = curve;
-        gf::guarded("overview mark", [phase] { gf::frameProbe::mark(phase == ov::Phase::Closing ? "overview-closing" : "overview-opening"); });
-        for (auto& e : s.entries) {
-            if (const auto w = e.window.lock()) {
-                e.rect = ov::interpolate(e.from, e.to, surfaceBox(w), 0.0);
-                damage(e, w);
-            }
+        s.animEndMs  = 0;
+        for (const auto& e : s.entries) {
+            if (e.moving)
+                s.animEndMs = std::max(s.animEndMs, gf::motion::endMs(e.track));
         }
+        gf::guarded("overview mark", [phase] { gf::frameProbe::mark(phase == ov::Phase::Closing ? "overview-closing" : "overview-opening"); });
         post(phase, s.entries.size(), phase == ov::Phase::Closing ? s.closeReason : ov::Reason::None);
-        if (durationMs <= 0)
-            tick(); // no animation (Reduce Motion): the end state now
-        else
+        tick(nullptr);
+        if (s.phase == ov::Phase::Opening || s.phase == ov::Phase::Closing)
             armWatchdog();
     }
 
+    // Every window goes back to its live place from where it is drawn, with its velocity (WM-17: a close right after the
+    // open reverses at once and takes about as long as the way it travelled, core/Motion.hpp).
     void startClosing(double durationMs, const ov::Curve& curve, ov::Reason reason) {
         auto& s = st();
         if (s.phase == ov::Phase::Closed) {
             post(ov::Phase::Closed, 0, reason);
             return;
         }
+        const double now = nowMs();
         for (auto& e : s.entries) {
-            e.from = e.rect; // from where it is now, back to its live place
-            e.to.reset();
+            if (const auto w = e.window.lock(); w && gf::motion::retarget(e.track, std::nullopt, surfaceBox(w), now, durationMs, curve))
+                e.moving = true;
         }
         s.closeReason = reason;
-        startAnimation(ov::Phase::Closing, durationMs, curve);
+        startAnimation(ov::Phase::Closing, durationMs);
     }
 
     // A window that closes, unmaps or leaves its workspace goes back to normal rendering at once.
@@ -419,7 +454,7 @@ namespace gf::overviewer {
             return false;
         auto& ev = bus->m_events;
         auto& l  = st().listeners;
-        l.push_back(ev.render.preChecks.listen([](const PHLMONITOR& /*monitor*/) { gf::guarded("overview tick", [] { tick(); }); }));
+        l.push_back(ev.render.preChecks.listen([](const PHLMONITOR& monitor) { gf::guarded("overview tick", [&] { tick(monitor); }); }));
         l.push_back(ev.render.pre.listen([](const PHLMONITOR& monitor) { gf::guarded("overview damage", [&] { onRenderPre(monitor); }); }));
         l.push_back(ev.window.close.listen([](const PHLWINDOW& w) { gf::guarded("overview window.close", [&] { dropWindow(w); }); }));
         l.push_back(ev.window.destroy.listen([](const PHLWINDOWREF& /*w*/) { gf::guarded("overview window.destroy", [] { dropWindow(nullptr); }); }));
@@ -481,8 +516,10 @@ namespace gf::overviewer {
                     const auto mon = e.monitor.lock();
                     return !w || !mon || mon->m_activeWorkspace != w->m_workspace;
                 });
-                if (moved)
-                    finishClosed(ov::Reason::Interrupted);
+                // WM-17: the windows go back to their places with the closing animation (those of the Desktop sliding out
+                // go back while it slides; macOS zooms out of Mission Control into the chosen Space), never in one frame.
+                if (moved && animatingOrOpen())
+                    startClosing(s.durationMs, s.curve, ov::Reason::Interrupted);
             });
         }));
         l.push_back(ev.monitor.removed.listen([](const PHLMONITOR& /*monitor*/) {
@@ -541,6 +578,7 @@ namespace gf::overviewer {
         }
 
         std::vector<SEntry> next;
+        const double        now = nowMs();
         for (auto& old : s.entries)
             old.kept = false;
         for (const auto& target : r.windows) {
@@ -556,11 +594,23 @@ namespace gf::overviewer {
                                target.rect.y, target.rect.w, target.rect.h, mon->m_name);
                 continue;
             }
-            SEntry e{.window = w, .address = target.address, .monitor = mon, .transformer = nullptr, .from = std::nullopt, .to = target.rect, .rect = {}, .damaged = {}, .kept = false, .boxChangedAt = {}};
-            // A window already in the overview continues from where it is drawn now.
+            SEntry e{.window       = w,
+                     .address      = target.address,
+                     .monitor      = mon,
+                     .transformer  = nullptr,
+                     .track        = gf::motion::start(std::nullopt, target.rect, now, r.durationMs, r.curve),
+                     .moving       = true,
+                     .rect         = {},
+                     .damaged      = {},
+                     .kept         = false,
+                     .boxChangedAt = {}};
+            // A window already in the overview continues from where it is drawn now, with its velocity; its clock goes on
+            // when its rect did not change (core/Motion.hpp).
             const auto old = std::ranges::find_if(s.entries, [&w](const SEntry& o) { return !o.kept && o.window.lock() == w; });
             if (old != s.entries.end()) {
-                e.from        = old->rect;
+                e.track       = old->track;
+                e.moving      = gf::motion::retarget(e.track, target.rect, surfaceBox(w), now, r.durationMs, r.curve) || old->moving;
+                e.rect        = old->rect;
                 e.transformer = old->transformer;
                 e.damaged     = old->damaged;
                 old->kept     = true;
@@ -598,7 +648,8 @@ namespace gf::overviewer {
         s.entries     = std::move(next);
         s.closeReason = ov::Reason::None;
         gf::logRequest(Log::INFO, "overview: {} window(s), {:.0f} ms", s.entries.size(), r.durationMs);
-        startAnimation(ov::Phase::Opening, r.durationMs, r.curve);
+        s.curve       = r.curve;
+        startAnimation(ov::Phase::Opening, r.durationMs);
     }
 
 } // namespace gf::overviewer

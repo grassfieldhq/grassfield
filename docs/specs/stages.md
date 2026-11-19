@@ -399,9 +399,36 @@ change in this environment (every frame with damage redraws the 6 transformed wi
 the price of liveness the special-workspace alternative avoids by freezing. Swaps cost what the overview's animation
 costs (12.2 % for continuous open/close there).
 
-**Swap animation.** One clock for all windows (start, `durationMs`, curve); each window interpolates from where it is
-drawn now (its tile, or its live box) to its target (its new tile, or its live box), like the overview's retarget; windows
-shown normally again lose their transformer at the end; a 150 ms watchdog completes an animation when no monitor renders.
+**Swap animation.** One track per window, with its own clock (`durationMs` and curve of the latest `op:on`, core
+`gf::motion`, compositor/src/core/Motion.hpp): each window goes from where it is drawn now (its tile, or its live box) to
+its target (its new tile, or its live box); windows shown normally again lose their transformer when their own track
+ends; a 150 ms watchdog completes the tracks when no monitor renders. Since the audit fixes of 2026-11 (WM-03, WM-16,
+WM-01 and the design notes):
+- **Retargeting keeps velocity and clocks.** A sync recomputes every target; a window whose target did not change keeps
+  its track (its clock and curve go on: a window opening elsewhere 100 ms into a swap no longer stops and restarts every
+  thumbnail), and a window whose target changed mid-flight continues from the box on screen with the velocity it has
+  there (a cubic Hermite term that carries it and fades out at the end), its duration scaled by the share of the way
+  left (at least 30 %). A sync that changed nothing starts no animation and posts nothing: a notice is posted only when
+  the state differs from the last one (an `op:on` is always answered). Window events of a window that is neither managed
+  nor manageable, on a Desktop without stages, no longer schedule a sync.
+- **A Desktop shown for the first time** since Stages turned on has its strip windows drawn in their tiles at once, from
+  `workspace.active`, before the first frame of the switch (no animation; macOS shows a Space's strip already staged),
+  instead of sliding in at their real places and flying to the strip after the deferred sync.
+- **One ticker per monitor.** A window is stepped by the `render.preChecks` of the monitor that draws it, once per frame
+  cycle (with two outputs every window was stepped and damaged twice per cycle); a settled track takes its final box on
+  any monitor's frame.
+- **Damage only what changed.** In `render.pre` a thumbnail is added to a frame's damage only when that frame's damage
+  (the monitor's damage ring before the plugin adds to it) touches the window's real place (a commit, a decoration, a
+  move: where Hyprland damages it) or its drawn box changed; a blinking cursor in the active stage no longer repaints the
+  whole strip. The strip-overlap check runs only when the frame's damage touches the strip band, and computes a window's
+  full box only for windows near it. No allocation per window per frame (core `damageStep` returns at most two boxes in
+  place).
+- **No whole-buffer clear per thumbnail.** The transforms draw into output buffers the plugin keeps while windows are
+  transformed (taken from the monitor's pool, at most two per monitor, dropped when the monitor's buffers change and
+  released when nothing is transformed); the plugin knows the box it last drew in each, so a frame clears that box and
+  the new one, not the whole monitor-sized buffer, and the draw is clipped to the window's fitted box. A thumbnail off
+  the monitor (a hidden strip) draws nothing and clears nothing. Hyprland's own work buffer for the window's pass is
+  still cleared and rendered by Hyprland every frame (0.56.2 culls no transformed window): what remains is Hyprland's.
 
 **Findings during the prototype runs** (nested, fixed before the final run):
 1. A flood of 1000 `activate` requests in one Lua dispatch, applied one by one, made ~1000 real focus changes: Hyprland
@@ -616,4 +643,8 @@ The shell agent's "Shell side" section (branch of the strip) lists three plugin 
    request's `durationMs` and curve; every window already drawn by Stages animates from where it is drawn at that
    moment (`from = rect`) to its new target, and a stage that loses its tile slides off the monitor to the left (core
    `stripTargets`: beside the last tile, shifted by `hiddenShift`; no `x/y/w/h` for it in the event). An update every
-   frame restarts the animation from the current place each time: send it debounced, as the shell does.
+   frame retargets the windows whose tile moved, from the current place with their velocity (the others keep their
+   clock): still send it debounced, as the shell does.
+
+### Removed outputs (audit 2026-11-18, A-16)
+A Stages window keeps its output's name from creation: the handlers that still run while a removed output destroys it (the strip's reveal and hide) no longer read a null screen.

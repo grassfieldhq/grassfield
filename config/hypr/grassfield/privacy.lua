@@ -160,6 +160,19 @@ end
 -- File names in sorted order (same listing as Omarchy's require_all.lua); plain names only.
 local function rule_files(dir)
   local files = {}
+  -- From the second parse of a login on the compositor plugin lists them in-process (CIO-10): no `find | sort` fork.
+  local probe_ok, probe = pcall(require, "grassfield.probe")
+  if probe_ok and dir:sub(1, 1) == "/" then
+    local names, unavailable = probe.list_files(dir, ".lua")
+    if not unavailable then
+      for _, name in ipairs(names) do
+        if type(name) == "string" and name:match("^[%w._-]+%.lua$") then
+          files[#files + 1] = dir .. "/" .. name
+        end
+      end
+      return files
+    end
+  end
   local quoted = "'" .. dir:gsub("'", "'\\''") .. "'"
   local handle = io.popen("find " .. quoted .. " -maxdepth 1 -type f -name '*.lua' -printf '%f\\n' 2>/dev/null | sort")
   if handle then

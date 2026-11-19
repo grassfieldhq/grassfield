@@ -1841,6 +1841,39 @@ window still on `special:minimized` (`scripts/nestctl -j clients`), keys typed w
   destroyed with the button down) it keeps that button as held until that button's next release, with or
   without the plugin. The plugin only ends its own gesture (FR7).
 
+## Keys, gestures and the config's own work (audit round 2: CIO-01, CIO-03, CIO-06, CIO-08, CIO-10, CIO-17)
+
+- Keys reach the shell in-process (ADR "keys reach the shell in-process"): every shell binding of `bindings.lua` is Hyprland's
+  `event` dispatcher, `custom>>gfkey/1 <target> <function> [argument...]` on socket2, read by `shell/platform/shortcuts`
+  (it accepts exactly the requests the bindings send and calls the IpcHandler of the target). No process per key; socket2
+  keeps the order of the keys. The lock key alone stays `qs ipc` to the security process with Grassfield's stand-in (it
+  must lock with the UI process dead). A Hyprland without the dispatcher gets the `qs ipc` path of before.
+- Overview (3 fingers up/down) and Apps (4-finger pinch in/out) send their progress: `custom>>gfgesture/1 <kind> <phase>
+  <progress>` from Hyprland's Lua gesture callbacks (begin, updates per 1 %, end with commit or back, cancel). Until the
+  Overview and Apps surfaces follow it, the shell opens or closes at a committed end.
+- Forwarded chords (`forwarding.lua`) decide terminal / Files by the keyboard's holder, `hl.plugin.grassfield.keyboard_holder()`
+  ("window:<class>", "layer", "none"); without the plugin a mapped exclusive layer holds the keys. Search open over a terminal
+  gets Ctrl+Left for Alt+Left.
+- The config forks nothing on a reload: the plugin's `file_identity`, `read_file` and `list_files` (core/FileProbe: lstat, a
+  non-blocking regular-file read, a plain sorted listing) replace `stat`, `[ -f ] && timeout head` and `find | sort`;
+  `voxtype` is looked up on PATH by Lua. The loader's `--vetted` check of a user build runs once per build and instance: its
+  verdict is kept next to the runtime note (`<note>.vetted`) under the identity of the plugin, its stamp and every directory
+  up to / (and the installed version); any change asks again. The first parse of a login (no plugin yet) forks as before.
+- Touch on titlebars (CIO-06): a finger's down on a shown titlebar is the titlebar's (cancelled on the bus: Hyprland offers
+  touches to no decoration); a tap on a light acts on its up over that light, a drag on the bar moves the window as the
+  pointer's drag does (snap, tiling preview, drop on another output or the Stages strip), a double tap does the
+  double-click action; the lock or the window's end drops the gesture. A tab torn off by touch follows the finger
+  (xdg_toplevel_drag over Hyprland's touch drag and drop). Not by touch: revealing a full-screen titlebar (it needs the
+  pointer at the top edge) and the zoom light's hover popover.
+- A window `placement.lua` resizes or moves at its opening takes that box at once (`hl.plugin.grassfield.settle`): no 300 ms
+  growth or slide over its opening. Such a window loses its pop-in scale (its fade stays); a window the hook leaves alone
+  keeps its opening animation.
+- VRR and scanout (decision recorded in `looknfeel.lua`): `misc.vrr = 2` (full-screen windows only), `render.direct_scanout =
+  2` (full-screen surfaces with content-type game), tearing off. Owner check on a VRR display.
+- The Genie minimize draws untransformed pixels: on an output whose colour path is not plain sRGB (HDR, wide gamut, an
+  SDR-brightness transform; `needsCM`) the Scale effect is used (`gf::genie::usableOn`). Its GL error checks run on the first
+  32 draws of a load and one in 60 after them, and the mesh is normalised once per element (CIO-13).
+
 ## Session window behaviour (Lua config, not the plugin)
 
 `config/hypr/grassfield/stacking.lua` and `placement.lua`; nested scenarios `tests/compositor/window_stacking.sh` and
