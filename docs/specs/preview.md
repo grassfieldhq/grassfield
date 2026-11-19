@@ -47,12 +47,20 @@ single instance.
    animated GIF and WebP play through `AnimatedImage`; under Reduce Motion they wait on their first frame with a play
    control (a glass capsule at the bottom, Play / Pause), as macOS with "Auto-play animated images" off: Reduce Motion is
    for the chrome, the content is the viewer's to play; the play ends with the setting's change or another file (ADR-0039
-   step 6). Decoding goes through `image://preview/<frame>/<file index>`.
+   step 6). Decoding goes through `image://preview/<frame>/<file token>` (the sidebar's `image://preview/thumb/<file token>`):
+   the token stands for the file's path for the app's life (`PreviewApp::tokenFor`), so the folder listing, which moves the
+   opened file to another index, never decodes it twice nor shows a cached picture under another file's name. A vector
+   picture (`.svg`, `.svgz`) over 8 MiB is refused from its size ("This file is too large to preview."), never parsed.
+   Every file shown is inspected (type sniffing, size, frames, text) on a worker thread (`PreviewApp.requestInspect`,
+   `inspected`; the newest request counts): the window shows the file's name meanwhile, no message and no viewer, and a
+   sidebar text plate's first lines are read on a worker too (`snippetFor`).
 4. P4 PDF (`PdfView.qml`): QtPdf (`PdfMultiPageView`, pdfium, no JavaScript): continuous pages, zoom, fit to width,
    rotation, page navigation (PgUp/PgDn, Home/End, arrows turn pages, toolbar), thumbnails, text search (Ctrl+F,
    Enter next, Shift+Enter previous, Esc closes). Encrypted documents show a notice ("not supported yet").
 5. P5 Text and code (`TextView.qml`): read only, monospace, always `PlainText` (never markup), selectable; zoom
-   scales the font. Files over 2 MiB show "This file is too large to preview"; files with NUL bytes in the first 8 KB
+   scales the font. A text over 64 K characters comes in pieces of whole lines (`inspect` `chunks`) laid out by a list,
+   only the pieces on screen (a zoom step or a window width re-lays out a screenful, not 2 MiB; the width follows a live
+   resize once it settles); Select All and Copy take the whole text, a drag selects within one piece. Files over 2 MiB show "This file is too large to preview"; files with NUL bytes in the first 8 KB
    show "This file is not text". Decoded as UTF-8. Playlists (M3U, PLS, XSPF, WPL, every ASX suffix: asx, wax, wvx,
    wmx) are text, never handed to the player and never followed or fetched: decided by the canonical MIME type,
    its aliases and ancestors, the suffix, and the first 512 bytes (extensionless files).
@@ -110,7 +118,8 @@ single instance.
     General > Language & Region "Select Text in Images"). The viewer and the Glance (one image view, `ImageView.qml`) read
     the text and the QR codes of a still image (one frame, not animated) when the setting is on:
     - Reading (`ImageText.qml`, one per window, held by `Content.qml`): once the view has rested on an image for 300 ms
-      (the arrow keys held through a folder start nothing), `PreviewApp.recognize` runs zbarimg and tesseract in the
+      (1.5 s while the computer runs on its battery, `PreviewApp.onBattery`; the arrow keys held through a folder start
+      nothing), `PreviewApp.recognize` runs zbarimg and tesseract in the
       background; a new image or the setting going off cancels what still runs (`cancelRecognition`); a run per image
       shown, nothing stored. The languages are asked once per window (`tesseract --list-langs`): the traineddata of the
       session's language (`Qt.locale().name`, "fr_FR" → `fra`, Chinese by script) then English, among the installed
@@ -122,8 +131,10 @@ single instance.
       `omarchy-capture-qr`: QR codes only, the other symbologies false-positive on screen content). `<langs>` is one to
       four `[A-Za-z0-9_]` names joined by `+`. The image is the file of the list (an absolute path to a regular file,
       not under /proc, /sys or /dev, an image by type), decoded by Qt in a worker thread with the viewer's caps, EXIF
-      orientation applied, scaled down to 8192 px per side, flattened on white and handed to the tool on its standard
-      input as a grey PGM: the tools never parse the file (zbarimg's ImageMagick coders, tesseract's "list of images"
+      orientation applied, decoded at 4096 px per side where the format scales while decoding (JPEG) and scaled down to it
+      otherwise, flattened on white and handed to the tool on its standard input as a grey PGM, decoded once for both
+      tools of an image (a request that comes while the decode runs waits for the same one; the last picture is kept for
+      the image shown); the tools run at nice 19 with `OMP_THREAD_LIMIT=1`: the tools never parse the file (zbarimg's ImageMagick coders, tesseract's "list of images"
       reading of a text file), and the boxes are in the pixels Preview shows. Each run is killed after 60 s or 4 MiB of
       output; the answer is `recognized(request, tool, exitCode, output)` (-1: not started, killed, crashed, not decoded).
       A missing tool: `recognize` returns 0, no overlay, no chip, no message on screen, one journal line per tool
@@ -157,6 +168,7 @@ single instance.
 | P13 languages, TSV, hit testing, selection and copied text, links, QR codes; one reading per image, cancel, missing tools; the layer on the picture, drag, I-beam, context menu, chips | `tests/unit/tst_previewtextinimages.qml` | L0 |
 | P13 the Settings row | `tests/unit/tst_settingslanguage.qml` | L0 |
 | P11-P12 viewer state, list arriving after the opened file | `tests/unit/tst_previewviewer.qml`, `tests/unit/tst_previewlisting.qml` | L0 |
+| Off the window's thread: inspection on a worker (newest answer kept), the SVG bound, the text pieces, sidebar snippets on a worker, one decode for both recognitions at nice 19 with one OpenMP thread, the battery rule | `tests/unit/preview/tst_previewapp.cpp`, `tst_previewlogic.cpp` (gtest), `tests/unit/tst_previewasync.qml` | L0 |
 | P11 browsing with the arrows, rotate/zoom, sidebar, info, Glance arrows | `tests/visual/preview-browse.sh` (nested, standalone) | L1 |
 | lint | `scripts/dev/qmllint.sh` (covers `apps/**`) and `check-textformat.py` | L0 |
 | config | `Hyprland --verify-config` for `dev.lua` and `session.lua` with `GRASSFIELD_CONFIG_DIR` | L0 |

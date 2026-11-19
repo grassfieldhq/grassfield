@@ -37,9 +37,11 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../branding/icons/apps/org.grassfie
 find_package(GTest)
 if(GTest_FOUND)
     enable_testing()
-    add_executable(preview-unit-tests ../../tests/unit/preview/tst_previewlogic.cpp ../../tests/unit/preview/tst_shortcutstyle.cpp src/previewlogic.cpp
+    # tst_previewapp: the backend's worker-thread inspections, snippets and recognitions (offscreen QGuiApplication).
+    add_executable(preview-unit-tests ../../tests/unit/preview/tst_previewlogic.cpp ../../tests/unit/preview/tst_shortcutstyle.cpp
+                   ../../tests/unit/preview/tst_previewapp.cpp src/previewlogic.cpp src/previewapp.cpp src/previewapp.h
                    ../files/src/filelogic.cpp)
     target_include_directories(preview-unit-tests PRIVATE src ../files/src ..)
-    target_link_libraries(preview-unit-tests PRIVATE Qt6::Core Qt6::Gui GTest::gtest GTest::gtest_main)
+    target_link_libraries(preview-unit-tests PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick GTest::gtest GTest::gtest_main)
     add_test(NAME preview-unit-tests COMMAND preview-unit-tests)
 endif()

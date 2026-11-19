@@ -32,18 +32,45 @@ QTextCursor selectionCursor(QTextDocument *doc, int start, int end)
     return c;
 }
 
+// Calls `visit` with each run of text (a fragment, one format) inside [start, end), clipped to it: one call per run, not per
+// character (M6 of the 2026-11 audit: Select All then Bold probed every character with a cursor). With `separators`, a
+// paragraph end inside the range is a run of its own too, with the format of the paragraph after it (an empty line keeps
+// its height in step with the text around it). Stops when `visit` returns false.
+void forEachRun(QTextDocument *doc, int start, int end, bool separators,
+                const std::function<bool(int, int, const QTextCharFormat &)> &visit)
+{
+    for (QTextBlock block = doc->findBlock(start); block.isValid() && block.position() < end; block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid())
+                continue;
+            const int from = qMax(start, fragment.position());
+            const int to = qMin(end, fragment.position() + fragment.length());
+            if (from >= to)
+                continue;
+            if (!visit(from, to, fragment.charFormat()))
+                return;
+        }
+        const int separator = block.position() + block.length() - 1;
+        if (separators && block.next().isValid() && separator >= start && separator < end
+            && !visit(separator, separator + 1, block.next().charFormat()))
+            return;
+    }
+}
+
 // Whether every character of the selection has the property (`test` of its format).
 bool allHave(const QTextCursor &c, const std::function<bool(const QTextCharFormat &)> &test)
 {
     if (!c.hasSelection())
         return false;
-    QTextCursor probe(c.document());
-    for (int pos = c.selectionStart(); pos < c.selectionEnd(); ++pos) {
-        probe.setPosition(pos + 1); // the format of the character before the position
-        if (!test(probe.charFormat()))
-            return false;
-    }
-    return true;
+    bool any = false;
+    bool all = true;
+    forEachRun(c.document(), c.selectionStart(), c.selectionEnd(), false, [&](int, int, const QTextCharFormat &f) {
+        any = true;
+        all = test(f);
+        return all;
+    });
+    return any && all;
 }
 
 void toggle(QTextDocument *doc, int start, int end, const std::function<bool(const QTextCharFormat &)> &has,
@@ -199,31 +226,28 @@ void MemoFormatter::changeSize(QTextDocument *doc, int start, int end, int delta
     QTextCursor c = selectionCursor(doc, start, end);
     if (!c.hasSelection())
         return;
-    // Each run keeps its own size relative to the others (Bigger on a mixed selection makes every run bigger).
-    QTextCursor probe(doc);
-    int pos = c.selectionStart();
-    const int stop = c.selectionEnd();
-    while (pos < stop) {
-        probe.setPosition(pos + 1);
-        const QTextCharFormat current = probe.charFormat();
-        const int px = current.hasProperty(QTextFormat::FontPixelSize) ? current.intProperty(QTextFormat::FontPixelSize) : basePx;
-        int runEnd = pos + 1;
-        while (runEnd < stop) {
-            probe.setPosition(runEnd + 1);
-            const QTextCharFormat next = probe.charFormat();
-            const int nextPx = next.hasProperty(QTextFormat::FontPixelSize) ? next.intProperty(QTextFormat::FontPixelSize) : basePx;
-            if (nextPx != px)
-                break;
-            ++runEnd;
-        }
+    // Each run keeps its own size relative to the others (Bigger on a mixed selection makes every run bigger). The runs are
+    // collected first: a change merges formats and may join or split the fragments still to come.
+    struct Run { int from; int to; int px; };
+    QList<Run> runs;
+    forEachRun(doc, c.selectionStart(), c.selectionEnd(), true, [&](int from, int to, const QTextCharFormat &f) {
+        const int px = f.hasProperty(QTextFormat::FontPixelSize) ? f.intProperty(QTextFormat::FontPixelSize) : basePx;
+        if (!runs.isEmpty() && runs.last().to == from && runs.last().px == px)
+            runs.last().to = to;
+        else
+            runs.append({from, to, px});
+        return true;
+    });
+    c.beginEditBlock();
+    for (const Run &r : std::as_const(runs)) {
         QTextCursor run(doc);
-        run.setPosition(pos);
-        run.setPosition(runEnd, QTextCursor::KeepAnchor);
+        run.setPosition(r.from);
+        run.setPosition(r.to, QTextCursor::KeepAnchor);
         QTextCharFormat f;
-        f.setProperty(QTextFormat::FontPixelSize, qBound(minPx, px + delta, maxPx));
+        f.setProperty(QTextFormat::FontPixelSize, qBound(minPx, r.px + delta, maxPx));
         run.mergeCharFormat(f);
-        pos = runEnd;
     }
+    c.endEditBlock();
 }
 
 void MemoFormatter::toggleList(QTextDocument *doc, int start, int end)

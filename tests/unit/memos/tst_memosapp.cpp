@@ -9,8 +9,11 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <QThread>
 
 #include <gtest/gtest.h>
+
+#include <atomic>
 
 using namespace memos;
 
@@ -61,8 +64,13 @@ TEST(MemosApp, OpensCreatesNearTheFrontMemoAndSavesAfterTheDebounce)
     EXPECT_EQ(first.value(QStringLiteral("color")).toString(), QStringLiteral("yellow"));
     EXPECT_EQ(first.value(QStringLiteral("tag")).toString(), QStringLiteral("memo:") + a); // no position known yet
 
-    // Hyprland reports where the first one is: the next one opens down and to the right of it.
+    // Hyprland reports where the first one is: the next one opens down and to the right of it (the frames are read on the
+    // worker first, as Main.qml does).
     fx.frames.insert(a, Frame{300, 120, 240, 200});
+    int framesRead = 0;
+    QObject::connect(&app, &MemosApp::framesRead, [&framesRead] { ++framesRead; });
+    app.refreshFrames();
+    ASSERT_TRUE(waitFor([&] { return framesRead > 0; }));
     const QVariantMap second = app.createMemo(a, 240, 200, 22);
     const QString b = second.value(QStringLiteral("id")).toString();
     EXPECT_EQ(second.value(QStringLiteral("tag")).toString(), QStringLiteral("memo:%1@322,142").arg(b));
@@ -203,4 +211,103 @@ TEST(MemosApp, SaveNowLetsTheWindowsPushTheirTextFirst)
     QObject::connect(&app, &MemosApp::aboutToSave, [&] { app.update(a, {{QStringLiteral("html"), QStringLiteral("<p>late</p>")}}); });
     ASSERT_TRUE(app.saveNow());
     EXPECT_EQ(fx.written().at(0).toObject().value(QStringLiteral("html")).toString(), QStringLiteral("<p>late</p>"));
+}
+
+TEST(MemosApp, WritesAndReadsFramesOffTheGuiThread)
+{
+    // Audit M3: the fsync and the Hyprland round trip ran on the GUI thread at each autosave, focus change and collapse.
+    Fixture fx;
+    QThread *gui = QThread::currentThread();
+    QThread *readOn = nullptr;
+    std::atomic<QThread *> writtenOn{nullptr};
+    MemosApp app(fx.data.path(), [&] {
+        readOn = QThread::currentThread();
+        return fx.frames;
+    });
+    app.open(240, 200);
+    // A slow disk: the write takes 400 ms; save() comes back at once.
+    app.setWriteHook([&writtenOn] {
+        writtenOn = QThread::currentThread();
+        QThread::msleep(400);
+        return true;
+    });
+    const QString a = app.createMemo(QString(), 240, 200, 22).value(QStringLiteral("id")).toString();
+    EXPECT_TRUE(app.dirty());
+    int saved = 0;
+    QObject::connect(&app, &MemosApp::saved, [&saved](bool ok) { saved += ok ? 1 : 0; });
+    QElapsedTimer t;
+    t.start();
+    app.save();
+    EXPECT_LT(t.elapsed(), 200) << "save() waited for the write";
+    EXPECT_EQ(saved, 0);
+    ASSERT_TRUE(waitFor([&] { return saved > 0; }));
+    EXPECT_NE(writtenOn.load(), gui);
+    EXPECT_NE(writtenOn.load(), nullptr);
+    EXPECT_NE(readOn, gui);
+    EXPECT_FALSE(app.dirty());
+    EXPECT_EQ(fx.written().size(), 1);
+
+    // Two saves while one is on its way: the second waits and writes what is there then (nothing lost, nothing doubled).
+    saved = 0;
+    app.update(a, {{QStringLiteral("html"), QStringLiteral("<p>one</p>")}});
+    app.save();
+    app.update(a, {{QStringLiteral("html"), QStringLiteral("<p>two</p>")}});
+    app.save();
+    ASSERT_TRUE(waitFor([&] { return saved >= 2; }));
+    EXPECT_EQ(fx.written().at(0).toObject().value(QStringLiteral("html")).toString(), QStringLiteral("<p>two</p>"));
+    EXPECT_FALSE(app.dirty());
+
+    // The frames: read on the worker too.
+    readOn = nullptr;
+    int framesRead = 0;
+    QObject::connect(&app, &MemosApp::framesRead, [&framesRead] { ++framesRead; });
+    fx.frames.insert(a, Frame{7, 8, 240, 200});
+    app.refreshFrames();
+    EXPECT_EQ(framesRead, 0) << "refreshFrames() waited for the compositor";
+    ASSERT_TRUE(waitFor([&] { return framesRead > 0; }));
+    EXPECT_NE(readOn, gui);
+    EXPECT_EQ(app.tagFor(a), QStringLiteral("memo:%1@7,8").arg(a));
+    app.setWriteHook(nullptr);
+}
+
+TEST(MemosApp, AFailedWriteIsSaidUntilOnePasses)
+{
+    // Audit M1: nothing on screen said a write failed. saveError() says why; it clears once a write passes.
+    Fixture fx;
+    MemosApp app(fx.data.path(), fx.reader());
+    app.open(240, 200);
+    int changes = 0;
+    QObject::connect(&app, &MemosApp::saveStateChanged, [&changes] { ++changes; });
+    EXPECT_EQ(app.saveError(), QString());
+    app.injectWriteFault(true);
+    app.createMemo(QString(), 240, 200, 22);
+    EXPECT_FALSE(app.saveNow());
+    EXPECT_EQ(app.saveError(), MemosApp::failureText(WriteFailure::Other));
+    EXPECT_FALSE(app.saveError().isEmpty());
+    EXPECT_TRUE(app.dirty());
+    EXPECT_GT(changes, 0);
+    app.injectWriteFault(false);
+    EXPECT_TRUE(app.saveNow());
+    EXPECT_EQ(app.saveError(), QString());
+    EXPECT_FALSE(app.dirty());
+}
+
+TEST(MemosApp, TooMuchTextIsSaidAndNotWritten)
+{
+    // Audit M2: a store larger than the bound open() reads with is refused at the next launch. It is not written; the memos
+    // say why.
+    Fixture fx;
+    MemosApp app(fx.data.path(), fx.reader());
+    app.open(240, 200);
+    const QString a = app.createMemo(QString(), 240, 200, 22).value(QStringLiteral("id")).toString();
+    ASSERT_TRUE(app.saveNow());
+    app.update(a, {{QStringLiteral("html"), QString(int(kMaxFileBytes) + 16, QLatin1Char('x'))}});
+    EXPECT_FALSE(app.saveNow());
+    EXPECT_EQ(app.saveError(), MemosApp::failureText(WriteFailure::TooLarge));
+    EXPECT_NE(MemosApp::failureText(WriteFailure::TooLarge), MemosApp::failureText(WriteFailure::Other));
+    EXPECT_EQ(fx.written().at(0).toObject().value(QStringLiteral("html")).toString(), QString()); // the file as it was
+    // Shortened: written, and the memos say nothing any more.
+    app.update(a, {{QStringLiteral("html"), QStringLiteral("<p>short</p>")}});
+    EXPECT_TRUE(app.saveNow());
+    EXPECT_EQ(app.saveError(), QString());
 }

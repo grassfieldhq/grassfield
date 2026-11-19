@@ -55,7 +55,7 @@ Singleton {
     // Written once per event-loop turn (a surface opening changes several of the values above in one turn), synchronously
     // (blockWrites): the app reads it before the compositor's deactivation, which waits for the surface to map, reaches it.
     function write(): void {
-        if (root.path === "")
+        if (root.path === "" || !root.folderReady)
             return;
         if (keyFile.path !== root.path)
             keyFile.path = root.path;
@@ -71,5 +71,24 @@ Singleton {
         blockWrites: true
     }
 
-    Component.onCompleted: root.write()
+    // $XDG_RUNTIME_DIR/grassfield is made private (0700) before the first write: FileView would make it with the umask's mode
+    // if the shell came first. Nothing to make in a dev session.
+    readonly property string folder: KeyWindowFile.runtimeFolder(Mode.stateHome, Quickshell.env("XDG_RUNTIME_DIR"))
+    property bool folderReady: root.folder === ""
+    onFolderReadyChanged: root.write()
+
+    Process {
+        id: makeFolder
+        command: ["mkdir", "-m", "0700", "-p", root.folder]
+        onRunningChanged: {
+            if (!running)
+                root.folderReady = true;
+        }
+    }
+
+    Component.onCompleted: {
+        if (root.folder !== "")
+            makeFolder.running = true;
+        root.write();
+    }
 }

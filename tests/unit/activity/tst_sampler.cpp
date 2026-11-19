@@ -1149,6 +1149,42 @@ TEST(Sampler, AFailedTcpDumpChangesNoTotal)
     EXPECT_EQ(row(s.sample(reads, 4.0), 100)->tcpSent, 100001u);
 }
 
+TEST(Sampler, ASocketCountsForTheProcessThatHoldsIt)
+{
+    // Audit A7: a socket was only let go when it left the dump, never when it left the process's own descriptors: a socket
+    // handed to another process kept counting for the first one, and one inherited across a fork counted in both.
+    Fixture f;
+    f.process(100, "parent", kMe, 0, 1, nul({"parent"}), "/");
+    f.process(101, "child", kMe, 0, 100, nul({"child"}), "/");
+    f.link("socket:[4242]", "proc/100/fd/3");
+    f.link("socket:[4242]", "proc/101/fd/3"); // inherited: both hold it
+    Options o = options(f);
+    o.descriptorTurns = 1;
+    o.tcpDump = fakeDump;
+    fakeTcpOk = true;
+    fakeTcp = {TcpCounters{4242, kMe, 1000, 50, 10, 5}};
+    Sampler s(o);
+    const unsigned reads = ReadProcesses | ReadStatus | ReadDescriptors | ReadSockets;
+    Snapshot snap = s.sample(reads, 1.0);
+    EXPECT_EQ(row(snap, 100)->tcpSent + row(snap, 101)->tcpSent, 1000u) << "counted once";
+    EXPECT_EQ(row(snap, 100)->tcpSent, 1000u) << "for the first holder";
+
+    // The parent closes its copy; the child keeps the socket and sends 500 more: the parent keeps its 1000, the child
+    // counts the 500 from the hand-over.
+    std::filesystem::remove(f.proc() + "/100/fd/3");
+    fakeTcp = {TcpCounters{4242, kMe, 1500, 60, 12, 6}};
+    snap = s.sample(reads, 2.0);
+    EXPECT_EQ(row(snap, 100)->tcpSent, 1000u);
+    EXPECT_EQ(row(snap, 101)->tcpSent, 500u);
+    EXPECT_EQ(row(snap, 101)->tcpReceived, 10u);
+
+    // The child closes it: each keeps its share.
+    fakeTcp.clear();
+    snap = s.sample(reads, 3.0);
+    EXPECT_EQ(row(snap, 100)->tcpSent, 1000u);
+    EXPECT_EQ(row(snap, 101)->tcpSent, 500u);
+}
+
 TEST(Sampler, AFailedListingWipesNothing)
 {
     Fixture f;
@@ -1209,6 +1245,60 @@ TEST(Sampler, WholePhysicalDisksAndInterfacesButLo)
     const Snapshot more = s.sample(reads, 4.0);
     ASSERT_EQ(more.system.interfaces.size(), 2u);
     EXPECT_DOUBLE_EQ(more.system.netTotal.bytesInPerSec, 1000.0);
+}
+
+TEST(Sampler, TheSpeedIsReadOnlyWhenAsked)
+{
+    // Audit A3: the processors' current speed was read by the window at each sample; the sampler reads it when asked.
+    Fixture f;
+    f.write("sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "2000000\n");
+    f.write("sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq", "3000000\n");
+    f.write("proc/uptime", "100.5 1.0\n");
+    Sampler s(options(f));
+    const Snapshot without = s.sample(ReadSystemCpu, 1.0);
+    EXPECT_LT(without.system.speedGhz, 0);
+    EXPECT_LT(without.system.uptime, 0);
+    const Snapshot with = s.sample(ReadSystemCpu | ReadSystemSpeed, 2.0);
+    EXPECT_DOUBLE_EQ(with.system.speedGhz, 2.5);
+    EXPECT_DOUBLE_EQ(with.system.uptime, 100.5);
+}
+
+TEST(Sampler, TotalsKeepTheCountersOfDevicesThatWent)
+{
+    // Audit A8 (round 2): "Data read", "Packets in" and the other totals were sums over the devices there now, so they went
+    // back when a USB disk, a VPN or a container's veth went away. The last counters of a gone device stay in them, and so
+    // do those of a device that restarted from zero.
+    Fixture f;
+    f.link("../../../devices/pci0000:00/nvme0", "sys/block/nvme0n1/device");
+    f.link("../../../devices/usb1/sdb", "sys/block/sdb/device");
+    const auto disks = [&f](const std::string &text) { f.write("proc/diskstats", text); };
+    const auto net = [&f](const std::string &text) {
+        f.write("proc/net/dev", "Inter-| Receive | Transmit\n face |bytes packets\n" + text);
+    };
+    disks(" 259 0 nvme0n1 100 0 2000 0 200 0 4000 0 0 0 0 0 0 0 0\n   8 16 sdb 50 0 1000 0 10 0 100 0 0 0 0 0 0 0 0\n");
+    net(" wlan0: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n  tun0: 500 5 0 0 0 0 0 0 600 6 0 0 0 0 0 0\n");
+    Sampler s(options(f));
+    const unsigned reads = ReadSystemDisk | ReadSystemNet;
+    const Snapshot first = s.sample(reads, 1.0);
+    EXPECT_EQ(first.system.diskTotal.reads, 150u);
+    EXPECT_EQ(first.system.netTotal.bytesIn, 1500u);
+
+    // The USB disk and the VPN go.
+    disks(" 259 0 nvme0n1 110 0 2200 0 200 0 4000 0 0 0 0 0 0 0 0\n");
+    net(" wlan0: 1100 11 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n");
+    const Snapshot gone = s.sample(reads, 2.0);
+    EXPECT_EQ(gone.system.diskTotal.reads, 160u);
+    EXPECT_EQ(gone.system.diskTotal.bytesRead, (2200u + 1000u) * 512);
+    EXPECT_EQ(gone.system.diskTotal.writes, 210u);
+    EXPECT_EQ(gone.system.netTotal.bytesIn, 1600u);
+    EXPECT_EQ(gone.system.netTotal.packetsOut, 26u);
+    EXPECT_DOUBLE_EQ(gone.system.netTotal.bytesInPerSec, 100.0) << "the rate is the devices' there now";
+
+    // The VPN comes back from zero, and the Wi-Fi restarted (its counters went back): nothing goes back in the totals.
+    net(" wlan0: 30 1 0 0 0 0 0 0 40 1 0 0 0 0 0 0\n  tun0: 7 1 0 0 0 0 0 0 9 1 0 0 0 0 0 0\n");
+    const Snapshot back = s.sample(reads, 3.0);
+    EXPECT_EQ(back.system.netTotal.bytesIn, 1100u + 500u + 30u + 7u);
+    EXPECT_GE(back.system.netTotal.packetsIn, gone.system.netTotal.packetsIn);
 }
 
 TEST(Sampler, AWindowOwnerIsAnApp)

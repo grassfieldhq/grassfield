@@ -447,3 +447,56 @@ TEST(PreviewLogic, BrowseFolderCanBeCancelled)
     const Browse b = browseFolder(files.at(1), BrowseKinds::ImagesOnly, SortSpec{}, &cancel);
     EXPECT_EQ(b.paths, QStringList{files.at(1)});
 }
+
+TEST(PreviewLogic, VectorPicturesHaveASizeBound)
+{
+    // Audit P4: an SVG's size is known only by parsing it whole; a huge one is refused from its file size.
+    EXPECT_TRUE(preview::vectorTooLarge(QStringLiteral("/x/a.svg"), preview::kMaxVectorBytes + 1));
+    EXPECT_TRUE(preview::vectorTooLarge(QStringLiteral("/x/a.SVGZ"), preview::kMaxVectorBytes + 1));
+    EXPECT_FALSE(preview::vectorTooLarge(QStringLiteral("/x/a.svg"), preview::kMaxVectorBytes));
+    EXPECT_FALSE(preview::vectorTooLarge(QStringLiteral("/x/a.png"), preview::kMaxVectorBytes * 4));
+}
+
+TEST(PreviewLogic, TextChunksAreWholeLines)
+{
+    // Audit P7: a long text in pieces the view lays out one by one.
+    EXPECT_EQ(preview::textChunks(QStringLiteral("abc"), 10), QStringList{QStringLiteral("abc")});
+    EXPECT_EQ(preview::textChunks(QString(), 10), QStringList{});
+    const QStringList c = preview::textChunks(QStringLiteral("aa\nbb\ncc\ndd\n"), 4);
+    EXPECT_EQ(c, (QStringList{QStringLiteral("aa\nbb\n"), QStringLiteral("cc\ndd\n")}));
+    const QString longLine = QString(50, QLatin1Char('x')) + QStringLiteral("\nend");
+    const QStringList l = preview::textChunks(longLine, 10);
+    EXPECT_EQ(l.join(QString()), longLine);
+    EXPECT_EQ(l.first(), QString(50, QLatin1Char('x')) + QStringLiteral("\n")) << "a line longer than a piece is one piece";
+}
+
+TEST(PreviewLogic, OnBatteryOnlyWithoutAnAdapterOnline)
+{
+    // Audit P5: recognition waits longer on battery.
+    QTemporaryDir root;
+    const auto supply = [&root](const char *name, const char *type, const char *online, const char *scope = nullptr) {
+        QDir().mkpath(root.filePath(QString::fromLatin1(name)));
+        const auto put = [&](const char *file, const char *text) {
+            QFile f(root.filePath(QString::fromLatin1(name) + QLatin1Char('/') + QString::fromLatin1(file)));
+            ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+            f.write(text);
+        };
+        put("type", type);
+        if (online)
+            put("online", online);
+        if (scope)
+            put("scope", scope);
+    };
+    EXPECT_FALSE(preview::onBatteryIn(root.path())) << "nothing: a desktop";
+    supply("BAT0", "Battery\n", nullptr);
+    supply("AC", "Mains\n", "1\n");
+    EXPECT_FALSE(preview::onBatteryIn(root.path()));
+    supply("AC", "Mains\n", "0\n");
+    EXPECT_TRUE(preview::onBatteryIn(root.path()));
+    supply("ucsi-source-psy-1", "USB\n", "1\n");
+    EXPECT_FALSE(preview::onBatteryIn(root.path())) << "a USB-C charger";
+    QDir(root.filePath(QStringLiteral("ucsi-source-psy-1"))).removeRecursively();
+    QDir(root.filePath(QStringLiteral("BAT0"))).removeRecursively();
+    supply("hidpp_battery_0", "Battery\n", nullptr, "Device\n");
+    EXPECT_FALSE(preview::onBatteryIn(root.path())) << "a mouse's battery is not the computer's";
+}

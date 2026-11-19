@@ -5,10 +5,14 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLockFile>
 #include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
+#include <QStorageInfo>
+
+#include <chrono>
 
 namespace memos {
 
@@ -285,7 +289,9 @@ OpenState MemoStore::open(int defaultWidth, int defaultHeight)
 bool MemoStore::save(const QList<Memo> &memos)
 {
     m_error.clear();
+    m_failure = WriteFailure::None;
     if (readOnly()) {
+        m_failure = WriteFailure::Other;
         m_error = QStringLiteral("the memos are read only (%1)").arg(filePath());
         return false;
     }
@@ -307,11 +313,13 @@ bool MemoStore::writeDocument(const QJsonObject &doc)
     // on disk stays as it is and the caller stays unsaved.
     if (bytes.size() > kMaxFileBytes) {
         m_error = QStringLiteral("cannot write %1: the memos would be larger than %2 bytes").arg(filePath()).arg(kMaxFileBytes);
+        m_failure = WriteFailure::TooLarge;
         return false;
     }
     QSaveFile f(filePath());
     if (!f.open(QIODevice::WriteOnly)) {
         m_error = QStringLiteral("cannot write %1: %2").arg(filePath(), f.errorString());
+        m_failure = classify(bytes.size());
         return false;
     }
     // The temporary file is private before any byte is in it (the directory is too).
@@ -320,14 +328,50 @@ bool MemoStore::writeDocument(const QJsonObject &doc)
         m_error = QStringLiteral("cannot write %1: %2").arg(filePath(), f.error() == QFileDevice::NoError ? QStringLiteral("write fault") : f.errorString());
         f.cancelWriting();
         f.commit();
+        m_failure = classify(bytes.size());
         return false;
     }
     if (!f.commit()) {
         m_error = QStringLiteral("cannot write %1: %2").arg(filePath(), f.errorString());
+        m_failure = classify(bytes.size());
         return false;
     }
     QFile::setPermissions(filePath(), kFilePerms);
     return true;
+}
+
+WriteFailure MemoStore::classify(qint64 bytes) const
+{
+    // QSaveFile reports only "a write error": the directory's file system says which one it was.
+    const QStorageInfo storage(m_dir);
+    if (storage.isValid() && storage.isReadOnly())
+        return WriteFailure::ReadOnly;
+    if (storage.isValid() && storage.bytesAvailable() >= 0 && storage.bytesAvailable() < bytes + 64 * 1024)
+        return WriteFailure::NoSpace;
+    const QFileInfo dir(m_dir);
+    const QFileInfo file(filePath());
+    if (!dir.isWritable() || (file.exists() && !file.isWritable()))
+        return WriteFailure::Denied;
+    return WriteFailure::Other;
+}
+
+std::unique_ptr<QLockFile> lockStore(const QString &dir, qint64 *holder)
+{
+    if (holder)
+        *holder = 0;
+    QDir().mkpath(dir);
+    QFile::setPermissions(dir, kDirPerms);
+    auto lock = std::make_unique<QLockFile>(QDir(dir).filePath(QStringLiteral("memos.lock")));
+    // Stale only when its process is gone (QLockFile checks the pid, the host and the program's name), never by age: a Memos
+    // that runs for weeks keeps it.
+    lock->setStaleLockTime(std::chrono::milliseconds::zero());
+    if (lock->tryLock(0))
+        return lock;
+    if (holder) {
+        QString host, app;
+        lock->getLockInfo(holder, &host, &app);
+    }
+    return nullptr;
 }
 
 bool MemoStore::keepCopy(const QString &suffix, const QByteArray &bytes)

@@ -60,6 +60,15 @@ Window {
     // The sidebar toggle (button and shortcut) is off while the window is too narrow for the sidebar: a client cannot resize its
     // own window on Wayland, so Preview never writes its width; widening the window brings the sidebar back if it is wanted.
     readonly property bool canToggleSidebar: viewerWin.hasSidebar && viewerWin.roomForSidebar
+    // A text file's first lines for its sidebar plate: read on the backend's worker (snippetFor, never on this thread while
+    // the list scrolls); a backend without it (the tests' doubles) answers at once. `revision` only makes a binding read
+    // it again when a snippet comes in.
+    function snippetOf(index: int, revision: var): string {
+        if (typeof viewerWin.backend.snippetFor === "function")
+            return viewerWin.backend.snippetFor(index);
+        return viewerWin.backend.textSnippet ? viewerWin.backend.textSnippet(index) : "";
+    }
+
     function toggleSidebar(): void {
         if (viewerWin.canToggleSidebar)
             viewerWin.sidebarOpen = !viewerWin.sidebarOpen;
@@ -792,7 +801,8 @@ Window {
                                     margins: Tokens.spacingXs
                                 }
                                 textFormat: Text.PlainText
-                                text: row.modelData.kind === "text" && !fileList.compact ? viewerWin.backend.textSnippet(row.index) : ""
+                                // Read on the backend's worker (snippetFor): "" until it is in; snippetRevision re-reads it then.
+                                text: row.modelData.kind === "text" && !fileList.compact ? viewerWin.snippetOf(row.index, viewerWin.backend.snippetRevision) : ""
                                 color: Tokens.previewPaperInk
                                 font.family: Tokens.typographyMonoFamily
                                 font.pixelSize: Tokens.previewThumbnailTextSize

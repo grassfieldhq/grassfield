@@ -11,7 +11,36 @@ Item {
     property bool autoplay: false
     property string searchText: ""
 
-    readonly property var info: root.backend.inspect(root.fileIndex)
+    // What the backend found in the file (PreviewApp.inspect). Read on the backend's worker (P4 of the 2026-11 audit: the
+    // sniffing, an image's size, a text's 2 MiB never on this thread): until it is in, the file's name and kind from the
+    // list, `pending` set (no message, no viewer yet). A backend without requestInspect (the tests' doubles) answers at once.
+    property var info: ({})
+    property int inspectRequest: 0
+
+    function provisional(index: int): var {
+        const f = root.backend.files[index];
+        return {ok: false, pending: true, name: f?.name ?? "", kind: f?.kind ?? "", url: f?.url ?? ""};
+    }
+
+    function inspect(): void {
+        if (typeof root.backend.requestInspect === "function") {
+            root.info = root.provisional(root.fileIndex);
+            root.inspectRequest = root.backend.requestInspect(root.fileIndex);
+        } else {
+            root.inspectRequest = 0;
+            root.info = root.backend.inspect(root.fileIndex);
+        }
+    }
+
+    Connections {
+        target: root.backend
+        ignoreUnknownSignals: true
+
+        function onInspected(request: int, info: var): void {
+            if (request !== 0 && request === root.inspectRequest)
+                root.info = info;
+        }
+    }
     // The loaded viewer (common interface: canZoom, zoomLabel, pageCount, currentPage, zoomIn() ...).
     readonly property var view: loader.item
 
@@ -36,19 +65,24 @@ Item {
     // A new file gets a fresh viewer (zoom, rotation and page do not carry over).
     // The folder listing can move the opened file to another index: the same file keeps its viewer (no flash).
     property string shownUrl: ""
-    Component.onCompleted: root.shownUrl = String(root.backend.files[root.fileIndex]?.url ?? "")
+    Component.onCompleted: {
+        root.shownUrl = String(root.backend.files[root.fileIndex]?.url ?? "");
+        root.inspect();
+    }
     onFileIndexChanged: {
         const url = String(root.backend.files[root.fileIndex]?.url ?? "");
         const same = url !== "" && url === root.shownUrl;
         root.shownUrl = url;
         if (same)
             return;
+        root.inspect();
         loader.active = false;
         Qt.callLater(() => loader.active = Qt.binding(() => root.info.ok === true));
     }
 
     Loader {
         id: loader
+        objectName: "contentLoader"
         anchors.fill: parent
         active: root.info.ok === true
         source: root.fileSource(root.info.kind ?? "")
@@ -82,7 +116,7 @@ Item {
         target: loader.item
         property: "backend"
         value: root.backend
-        when: loader.item !== null && root.info.kind === "image"
+        when: loader.item !== null && (root.info.kind === "image" || root.info.kind === "text")
     }
 
     Binding {
@@ -114,8 +148,9 @@ Item {
     }
 
     Message {
+        objectName: "contentMessage"
         anchors.fill: parent
-        visible: root.info.ok !== true
+        visible: root.info.ok !== true && root.info.pending !== true
         title: root.info.name ? DisplayName.text(root.info.name) : qsTr("Nothing to show")
         text: root.backend.files.length === 0 && root.backend.errors.length > 0 ? root.backend.errors.join("\n") : (root.info.error ?? "")
     }

@@ -26,6 +26,8 @@
 
 #include <memory>
 
+#include <sys/resource.h>
+
 namespace {
 
 QString configFile()
@@ -58,6 +60,12 @@ QByteArray recognitionImage(const QString &path)
     const QSize native = displaySize(reader);
     if (native.isValid() && !preview::imageSizeAllowed(native))
         return {};
+    // Decoded at the tools' size where the format can (JPEG scales while decoding: a 48 MP photo costs a fraction of its
+    // full decode, P5). The box is square: the rotation applied after it changes nothing.
+    const QSize raw = reader.size();
+    if (raw.isValid() && !reader.supportsAnimation()
+        && (raw.width() > preview::kRecognitionMaxSide || raw.height() > preview::kRecognitionMaxSide))
+        reader.setScaledSize(raw.scaled(preview::kRecognitionMaxSide, preview::kRecognitionMaxSide, Qt::KeepAspectRatio));
     QImage image = reader.read();
     if (image.isNull() || !preview::imageSizeAllowed(image.size()))
         return {};
@@ -102,6 +110,9 @@ PreviewApp::PreviewApp(const QStringList &paths, const QStringList &errors, bool
 {
     m_files = filesFor(paths, this);
     m_firstPath = paths.value(m_startIndex);
+    m_inspectPool.setMaxThreadCount(1);
+    m_snippetPool.setMaxThreadCount(1);
+    readPower();
     // Appearance follows grassfield.json (read only), like every Grassfield surface.
     const QString file = configFile();
     const QString dir = QFileInfo(file).absolutePath();
@@ -142,6 +153,11 @@ PreviewApp::PreviewApp(const QStringList &paths, const QStringList &errors, bool
 
 PreviewApp::~PreviewApp()
 {
+    // The inspections and snippets still queued start nothing; the one running ends (its answer is dropped with this).
+    m_inspectPool.clear();
+    m_snippetPool.clear();
+    m_inspectPool.waitForDone();
+    m_snippetPool.waitForDone();
     cancelBrowse();
     // No recognition answers once the backend goes: the tools are killed, the decoders joined (each finishes its one image).
     m_decoding.clear();
@@ -291,6 +307,42 @@ QVariantMap PreviewApp::inspect(int index) const
     return inspectPath(pathAt(index));
 }
 
+int PreviewApp::requestInspect(int index)
+{
+    const int request = ++m_lastInspect;
+    const QString path = pathAt(index);
+    m_inspectPool.start([this, request, path] {
+        if (request != m_lastInspect.load())
+            return; // the arrow keys went on: a newer file is asked, this one is not read
+        const QVariantMap info = inspectPath(path);
+        QMetaObject::invokeMethod(this, [this, request, info] { emit inspected(request, info); }, Qt::QueuedConnection);
+    });
+    return request;
+}
+
+QString PreviewApp::snippetFor(int index)
+{
+    const QString path = pathAt(index);
+    if (path.isEmpty())
+        return {};
+    const int token = tokenFor(path);
+    const auto it = m_snippets.constFind(token);
+    if (it != m_snippets.constEnd())
+        return *it;
+    if (!m_snippetsAsked.contains(token)) {
+        m_snippetsAsked.insert(token);
+        m_snippetPool.start([this, token, path] {
+            const QString text = preview::classify(path) == preview::Kind::Text ? preview::textSnippetOf(path) : QString();
+            QMetaObject::invokeMethod(this, [this, token, text] {
+                m_snippets.insert(token, text);
+                m_snippetsAsked.remove(token);
+                emit snippetsChanged();
+            }, Qt::QueuedConnection);
+        });
+    }
+    return {};
+}
+
 QString PreviewApp::textSnippet(int index) const
 {
     const QString path = pathAt(index);
@@ -329,6 +381,11 @@ QVariantMap PreviewApp::inspectPath(const QString &path) const
     }
     switch (kind) {
     case preview::Kind::Image: {
+        // A vector picture's size is known only by parsing the whole document: a huge one is refused before (P4).
+        if (preview::vectorTooLarge(path, info.size())) {
+            out[QStringLiteral("error")] = tr("This file is too large to preview.");
+            return out;
+        }
         QImageReader reader(path);
         reader.setAutoTransform(true);
         if (!reader.canRead()) {
@@ -387,7 +444,11 @@ QVariantMap PreviewApp::inspectPath(const QString &path) const
             out[QStringLiteral("error")] = tr("This file is not text.");
             return out;
         }
-        out[QStringLiteral("text")] = QString::fromUtf8(data);
+        const QString text = QString::fromUtf8(data);
+        out[QStringLiteral("text")] = text;
+        // A long text in pieces of whole lines: the view lays out only those on screen (P7).
+        if (text.size() > preview::kTextChunkChars)
+            out[QStringLiteral("chunks")] = preview::textChunks(text, preview::kTextChunkChars);
         out[QStringLiteral("ok")] = true;
         return out;
     }
@@ -460,28 +521,64 @@ int PreviewApp::recognize(const QString &tool, int index, const QString &languag
     if (path.isEmpty() || !info.isAbsolute() || !info.isFile() || preview::isSystemPath(info.canonicalFilePath())
         || preview::classify(path) != preview::Kind::Image)
         return 0;
+    readPower();
     const int request = ++m_lastRequest;
     m_decoding.insert(request);
-    // Decoding a large photograph takes a moment: never on the GUI thread. The answer is applied there, unless the request
-    // was cancelled meanwhile (or the backend went: the destructor joins this thread first).
-    QThread *decoder = QThread::create([this, request, tool, found, path] {
-        const QByteArray image = recognitionImage(path);
-        QMetaObject::invokeMethod(this, [this, request, tool, found, image] {
-            if (!m_decoding.remove(request))
-                return;
-            if (image.isEmpty())
-                emit recognized(request, tool, -1, QString());
-            else
+    // One decode per image for both its recognitions (P5): a picture decoded already is handed out again, and a request
+    // that comes while the decode runs waits for the same one.
+    for (const auto &[decodedPath, image] : std::as_const(m_decodedImages)) {
+        if (decodedPath != path)
+            continue;
+        QMetaObject::invokeMethod(this, [this, request, tool, found, image = image] {
+            if (m_decoding.remove(request))
                 startTool(request, tool, found, image);
         }, Qt::QueuedConnection);
+        return request;
+    }
+    QList<Waiting> &waiting = m_waiting[path];
+    waiting.append(Waiting{request, tool, found});
+    if (waiting.size() > 1)
+        return request;
+    // Decoding a large photograph takes a moment: never on the GUI thread. The answer is applied there, unless the requests
+    // were cancelled meanwhile (or the backend went: the destructor joins this thread first).
+    ++m_recognitionDecodes;
+    QThread *decoder = QThread::create([this, path] {
+        const QByteArray image = recognitionImage(path);
+        QMetaObject::invokeMethod(this, [this, path, image] { decoded(path, image); }, Qt::QueuedConnection);
     });
     m_decoders.append(decoder);
     connect(decoder, &QThread::finished, this, [this, decoder] {
         m_decoders.removeOne(decoder);
         decoder->deleteLater();
     });
-    decoder->start();
+    decoder->start(QThread::LowPriority);
     return request;
+}
+
+void PreviewApp::decoded(const QString &path, const QByteArray &image)
+{
+    const QList<Waiting> waiting = m_waiting.take(path);
+    if (!image.isEmpty()) {
+        // Kept for the image shown only (its other recognition, a second look): one picture.
+        m_decodedImages = {qMakePair(path, image)};
+    }
+    for (const Waiting &w : waiting) {
+        if (!m_decoding.remove(w.request))
+            continue; // cancelled meanwhile
+        if (image.isEmpty())
+            emit recognized(w.request, w.tool, -1, QString());
+        else
+            startTool(w.request, w.tool, w.command, image);
+    }
+}
+
+void PreviewApp::readPower()
+{
+    const bool battery = preview::onBatteryIn(QStringLiteral("/sys/class/power_supply"));
+    if (battery != m_onBattery) {
+        m_onBattery = battery;
+        emit powerChanged();
+    }
 }
 
 void PreviewApp::startTool(int request, const QString &tool, const preview::Recognition &command, const QByteArray &image)
@@ -490,6 +587,12 @@ void PreviewApp::startTool(int request, const QString &tool, const preview::Reco
     m_tools.insert(request, process);
     process->setProgram(command.program);
     process->setArguments(command.arguments);
+    // In the background for real (P5): the lowest CPU priority, and one OpenMP thread (tesseract otherwise takes every
+    // core for one page while the viewer decodes the next picture).
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("OMP_THREAD_LIMIT"), QStringLiteral("1"));
+    process->setProcessEnvironment(environment);
+    process->setChildProcessModifier([] { ::setpriority(PRIO_PROCESS, 0, 19); });
     process->setStandardErrorFile(QProcess::nullDevice());
     if (!command.image)
         process->setStandardInputFile(QProcess::nullDevice());
@@ -577,7 +680,7 @@ QImage PreviewImageProvider::requestImage(const QString &id, QSize *size, const 
     if (slash < 0 || (!thumbnail && !okFrame) || !okIndex || frame < 0 || token < 0)
         return {};
     const QString path = m_app->pathForToken(token);
-    if (path.isEmpty())
+    if (path.isEmpty() || preview::vectorTooLarge(path, QFileInfo(path).size()))
         return {};
     QImageReader reader(path);
     reader.setAutoTransform(true);
