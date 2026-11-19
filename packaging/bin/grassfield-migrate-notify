@@ -36,11 +36,19 @@ command -v omarchy-migrate >/dev/null || exit 0
 pending=$(omarchy-migrate --pending 2>/dev/null | sed '/^[[:space:]]*$/d' | wc -l)
 ((pending > 0)) || exit 0
 
-# The shell claims org.freedesktop.Notifications a moment after the session starts.
+# The shell claims org.freedesktop.Notifications a moment after the session starts. Asked with --auto-start=no, and nothing is
+# sent when no server came (SS-05): a call to the name, or notify-send, would otherwise start another daemon by D-Bus
+# activation (mako or dunst ship an activatable org.freedesktop.Notifications), which would then hold the name the shell's
+# server needs. The next login announces the migrations again.
+server=0
 for _ in $(seq 1 60); do
-  busctl --user call org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications GetServerInformation >/dev/null 2>&1 && break
+  if busctl --user --auto-start=no call org.freedesktop.Notifications /org/freedesktop/Notifications org.freedesktop.Notifications GetServerInformation >/dev/null 2>&1; then
+    server=1
+    break
+  fi
   sleep 0.5
 done
+((server)) || exit 0
 update_in_progress && exit 0
 
 if ((pending == 1)); then body=$(tr "Click to run 1 pending migration."); else body=$(printf "$(tr "Click to run %s pending migrations.")" "$pending"); fi

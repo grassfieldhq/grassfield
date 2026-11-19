@@ -222,6 +222,16 @@ TestCase {
         compare(Machine.probeInterval(0), 100);
         verify(Machine.PROBE_SUSPECTED_MS < Machine.PROBE_INTERVAL_MS);
         verify(Machine.PROBE_SUSPECTED_MS <= 100);
+        // The rate's suspicion (security-session audit, fluidity): a lock inherited at start with the keyboard counts while
+        // the displays are on only; a lost keyboard always counts; anything odd counts.
+        verify(Machine.probeSuspected(true, true, false));
+        compare(Machine.probeSuspected(true, true, true), false);
+        verify(Machine.probeSuspected(false, true, true), "the keyboard lost: a real sign");
+        verify(Machine.probeSuspected(false, false, true));
+        compare(Machine.probeSuspected(true, false, false), false);
+        compare(Machine.probeSuspected(true, false, true), false);
+        verify(Machine.probeSuspected(true, true, "true"), "exact values only");
+        verify(Machine.probeSuspected(true, undefined, true));
     }
 
     // Hyprland 0.56 `hyprctl -j monitors` shapes (verified in nested: LOCK stays after the lock

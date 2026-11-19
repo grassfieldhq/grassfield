@@ -610,4 +610,128 @@ TestCase {
         const saver = read("../../shell/saver/Saver.qml");
         verify(/respectInhibitors: true/.test(saver) && /id: saverMonitor[\s\S]*?respectInhibitors: true/.test(idle), "the same Wayland inhibitors as the saver");
     }
+
+    // ---- Round 2 of the security-session audit ----
+
+    // SS-10: a re-arm of the unlocked display-off monitor (the power source or the setting changed) or a disarm is not input:
+    // a pending display-off lock stays, with its first deadline; only input while armed, or the lock, ends it.
+    function test_displayOffLockStep() {
+        // pending, idle, enabled, rearming, locked, requireMs
+        compare(IdleModel.displayOffLockStep(false, true, true, false, false, 300000), "arm");
+        compare(IdleModel.displayOffLockStep(false, true, true, false, false, 0), "lock");
+        compare(IdleModel.displayOffLockStep(false, true, true, false, false, -1), "none", "never");
+        compare(IdleModel.displayOffLockStep(true, true, true, false, false, 300000), "none", "never restarted: the first deadline");
+        compare(IdleModel.displayOffLockStep(true, false, true, false, false, 300000), "cancel", "input while armed");
+        compare(IdleModel.displayOffLockStep(true, false, true, true, false, 300000), "none", "a re-arm is not input");
+        compare(IdleModel.displayOffLockStep(true, false, false, false, false, 300000), "none", "a disarm is not input");
+        compare(IdleModel.displayOffLockStep(true, false, true, false, true, 300000), "cancel", "locked: done");
+        compare(IdleModel.displayOffLockStep(false, true, true, false, true, 0), "none", "locked: nothing to do");
+        compare(IdleModel.displayOffLockStep(true, false, "true", false, false, 300000), "none", "exact values only");
+        compare(IdleModel.displayOffLockStep(false, false, true, false, false, 300000), "none");
+        verify(IdleModel.inputSeen(true, false));
+        verify(!IdleModel.inputSeen(false, false), "the probe's own start");
+        verify(!IdleModel.inputSeen(true, true));
+    }
+
+    // SS-10, wiring: the delay is never stopped by the monitor's disable or re-arm, its interval is taken at its start, and
+    // the input probe ends it (static: the monitors need a compositor).
+    function test_displayOffLockWiring() {
+        const idle = source();
+        verify(/onIsIdleChanged: \{\s+root\.offForInactivity = isIdle && enabled;[\s\S]{0,200}?root\.displayOffLockChange\(\);/.test(idle));
+        const enabledHandler = idle.match(/onEnabledChanged: \{\s+if \(!enabled\)\s+root\.offForInactivity = false;\s+Qt\.callLater\(root\.updateDisplays\);\s+\}/);
+        verify(enabledHandler !== null, "the disable does not touch the pending lock");
+        compare((idle.match(/displayOffLockTimer\.stop\(\)/g) || []).length, 1, "stopped in one place (cancelDisplayOffLock)");
+        verify(/function cancelDisplayOffLock\(why: string\): void \{\s+if \(!root\.displayOffLockPending\)\s+return;\s+root\.displayOffLockPending = false;\s+displayOffLockTimer\.stop\(\);/.test(idle));
+        verify(/id: displayOffLockTimer\s+onTriggered:/.test(idle), "no bound interval (a setting change would restart it)");
+        verify(/displayOffLockTimer\.interval = Math\.max\(1, root\.requireAfterMs\);\s+displayOffLockTimer\.restart\(\);/.test(idle));
+        verify(/id: displayOffInputProbe\s+enabled: root\.displayOffLockPending\s+timeout: IdleModel\.DISPLAY_OFF_INPUT_PROBE_SECONDS\s+respectInhibitors: false/.test(idle));
+        verify(/if \(input && enabled\)\s+root\.cancelDisplayOffLock\("input"\);/.test(idle));
+        verify(/root\.cancelDisplayOffLock\("locked"\);/.test(idle));
+    }
+
+    // SS-09: the idle period across a restart of the security process.
+    function test_inheritedIdle() {
+        compare(IdleModel.idleRecordName("abc_123", "wayland-1"), "grassfield-idle-abc_123");
+        compare(IdleModel.idleRecordName("", "wayland-1"), "grassfield-idle-wayland-1");
+        compare(IdleModel.idleRecordName("../x", ""), "grassfield-idle-.._x");
+        compare(IdleModel.idleRecordLine(1234.7), "idle 1234");
+        compare(IdleModel.idleRecordLine(null), "active");
+        compare(IdleModel.idleRecordLine(-1), "active");
+        compare(IdleModel.idleRecordSince("idle 1234\n"), 1234);
+        compare(IdleModel.idleRecordSince("active\n"), -1);
+        compare(IdleModel.idleRecordSince("idle -3"), -1);
+        compare(IdleModel.idleRecordSince("idle 12 extra"), -1);
+        compare(IdleModel.idleRecordSince(""), -1);
+        compare(IdleModel.uptimeSeconds("12345.67 4567.89\n"), 12345);
+        compare(IdleModel.uptimeSeconds("garbage"), -1);
+        compare(IdleModel.uptimeSeconds(""), -1);
+        // since, now, lockSeconds, enabled
+        compare(IdleModel.inheritedIdleLockMs(1000, 1400, 300, true), 0, "lasted past the delay: lock at once");
+        compare(IdleModel.inheritedIdleLockMs(1000, 1300, 300, true), 0, "exactly the delay");
+        compare(IdleModel.inheritedIdleLockMs(1000, 1299, 300, true), 1000, "one second left");
+        compare(IdleModel.inheritedIdleLockMs(1000, 1010, 300, true), 290000);
+        compare(IdleModel.inheritedIdleLockMs(-1, 1010, 300, true), -1, "no period");
+        compare(IdleModel.inheritedIdleLockMs(1000, 900, 300, true), -1, "from the future (another boot)");
+        compare(IdleModel.inheritedIdleLockMs(1000, 1400, 300, false), -1, "idle lock off");
+        compare(IdleModel.inheritedIdleLockMs(1000, -1, 300, true), -1, "clock unreadable");
+        compare(IdleModel.inheritedIdleLockMs(1000, 1400, 0, true), -1);
+    }
+
+    // SS-09, wiring: the record is read before anything writes it, written from the idle monitor's state only, and the lock it
+    // leads to is the idle lock, after the user's delay is known (static).
+    function test_inheritedIdleWiring() {
+        const idle = source();
+        verify(/readonly property bool idlePeriod: monitor\.enabled && monitor\.isIdle\n/.test(idle));
+        verify(/Component\.onCompleted: \{\s+if \(root\.idleRecordPath !== ""\) \{\s+idleRecord\.reload\(\);\s+idleRecord\.waitForJob\(\);\s+root\.inheritedSince = IdleModel\.idleRecordSince\(idleRecord\.text\(\)\);/.test(idle), "read first");
+        verify(/function writeIdleRecord\(since: int\): void \{\s+if \(root\.idleRecordPath === "" \|\| !root\.inheritedDecided\)\s+return;/.test(idle), "nothing written before the decision");
+        verify(/const since = Math\.max\(0, now - root\.timing\.dimSeconds\);/.test(idle), "the period began a monitor timeout before it fired");
+        verify(/if \(root\.activitySeen \|\| !root\.timing\.enabled \|\| root\.busInhibited \|\| Lock\.locked\)\s+return;[\s\S]{0,200}?Lock\.lock\("idle"\)/.test(idle));
+        verify(/function onLoadedChanged\(\): void \{\s+if \(Settings\.loaded\)\s+Qt\.callLater\(root\.decideInherited\);/.test(idle));
+        verify(/path: "\/proc\/uptime"/.test(idle), "a monotonic clock (never the wall clock)");
+    }
+
+    // SS-02: logind's session.
+    function test_logindSession() {
+        compare(IdleModel.sessionPathFrom('o "/org/freedesktop/login1/session/_32"\n'), "/org/freedesktop/login1/session/_32");
+        compare(IdleModel.sessionPathFrom('(so) "2" "/org/freedesktop/login1/session/_32"\n'), "/org/freedesktop/login1/session/_32");
+        compare(IdleModel.sessionPathFrom('o "/org/freedesktop/login1/session/self"'), "");
+        compare(IdleModel.sessionPathFrom('o "/org/freedesktop/login1/session/auto"'), "");
+        compare(IdleModel.sessionPathFrom('(so) "" "/"'), "", "no Display session");
+        compare(IdleModel.sessionPathFrom('o "/org/freedesktop/login1/user/_1000"'), "");
+        compare(IdleModel.sessionPathFrom('o "/org/freedesktop/login1/session/_3/../x"'), "");
+        compare(IdleModel.sessionPathFrom(""), "");
+        verify(IdleModel.sessionIdValid("2"));
+        verify(IdleModel.sessionIdValid("c1"));
+        verify(!IdleModel.sessionIdValid(""));
+        verify(!IdleModel.sessionIdValid("2 3"));
+        verify(!IdleModel.sessionIdValid("../2"));
+        verify(!IdleModel.sessionIdValid(undefined));
+        compare(IdleModel.compositorPid("4242\n"), 4242);
+        compare(IdleModel.compositorPid("4242\nwayland-1\n"), 4242);
+        compare(IdleModel.compositorPid("0\n"), 0);
+        compare(IdleModel.compositorPid("-1"), 0);
+        compare(IdleModel.compositorPid("x"), 0);
+        const path = "/org/freedesktop/login1/session/_32";
+        compare(IdleModel.sessionSignal(path + ": org.freedesktop.login1.Session.Lock ()", path), "lock");
+        compare(IdleModel.sessionSignal(path + ": org.freedesktop.login1.Session.Unlock ()", path), "unlock");
+        compare(IdleModel.sessionSignal("/org/freedesktop/login1/session/_33: org.freedesktop.login1.Session.Lock ()", path), null, "another session");
+        compare(IdleModel.sessionSignal(path + ": org.freedesktop.DBus.Properties.PropertiesChanged ('org.freedesktop.login1.Session', {'LockedHint': <true>}, @as [])", path), null);
+        compare(IdleModel.sessionSignal(path + ": org.freedesktop.login1.Session.Lock ()", ""), null, "no session known");
+        compare(IdleModel.sessionSignal("The name org.freedesktop.login1 is owned by :1.3", path), null);
+        compare(IdleModel.lockedHint(false, false), false);
+        compare(IdleModel.lockedHint(true, false), null, "on its way: unchanged");
+        compare(IdleModel.lockedHint(true, true), true);
+        compare(IdleModel.lockedHint(undefined, true), false);
+    }
+
+    // SS-02, wiring: Idle hosts the session watcher, which only ever asks for a lock (static).
+    function test_logindSessionWiring() {
+        const idle = source();
+        verify(/LogindSession \{\s+id: logindSession\s+locked: Lock\.locked\s+holding: Lock\.holding\s+onLockAsked: \{\s+const result = Lock\.lock\("logind"\);/.test(idle));
+        const ls = read("../../shell/security/idle/LogindSession.qml");
+        verify(/"gdbus", "monitor", "--system", "--dest", "org\.freedesktop\.login1", "--object-path", root\.sessionPath\]/.test(ls));
+        verify(/"SetLockedHint", "b", hinter\.value \? "true" : "false"\]/.test(ls));
+        verify(!/release\(|unlock\(|sessionLock|fingerprintSucceeded|controller\./.test(ls), "never opens anything");
+        verify(/if \(root\.dev\) \{[^}]*return;\s+\}\s+root\.resolve\(\);/.test(ls), "nothing in a dev session");
+    }
 }

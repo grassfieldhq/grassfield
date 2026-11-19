@@ -2,3 +2,4 @@ module qs.security.idle
 Idle 1.0 Idle.qml
 SleepInhibitor 1.0 SleepInhibitor.qml
 IdleDim 1.0 IdleDim.qml
+LogindSession 1.0 LogindSession.qml

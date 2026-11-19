@@ -86,6 +86,9 @@ Scope {
             if (!Lock.locked) {
                 root.offForInactivity = false;
                 root.endDimUntilLock();
+            } else {
+                // The lock a pending display-off lock was waiting for is there (SS-10).
+                root.cancelDisplayOffLock("locked");
             }
             root.acquireOnTries = 0;
             Qt.callLater(root.updateDisplays);
@@ -102,8 +105,20 @@ Scope {
         }
     }
 
-    // A lock restored at start (a restarted shell) may not change Lock.locked: light the displays it has to draw on.
-    Component.onCompleted: updateDisplays()
+    // A lock restored at start (a restarted shell) may not change Lock.locked: light the displays it has to draw on. The idle
+    // period the previous process recorded is read first, before anything here writes it (SS-09).
+    Component.onCompleted: {
+        if (root.idleRecordPath !== "") {
+            idleRecord.reload();
+            idleRecord.waitForJob();
+            root.inheritedSince = IdleModel.idleRecordSince(idleRecord.text());
+        }
+        if (Settings.loaded)
+            Qt.callLater(root.decideInherited);
+        else
+            inheritedSettings.start();
+        updateDisplays();
+    }
 
     // While a lock is being acquired, "on" again until it holds (a lost request would leave it undrawn until input), a few
     // times only.
@@ -138,19 +153,62 @@ Scope {
     // ---- ADR-0040 step 5 (IQ-T4 A): a display that turns off for inactivity locks the session, at once (the displays stay
     // on until the lock holds, IdleModel.displaysOff, so the lock is drawn just before they go off) or after
     // lock.requirePasswordAfterDisplayOff without input, or never; lock.idleMinutes stays the ceiling. ----
+    // SS-10: the delay, once started, runs to its first deadline whatever happens to the monitor that started it: a change of
+    // the power source or of the setting re-arms that monitor (disabled, then enabled with the new timeout, which reads as
+    // "not idle"), an application's idle inhibitor disarms it; neither is input. Only real input ends it (the monitor itself
+    // reporting activity while armed, or displayOffInputProbe), or the session locking. Its interval is taken when it starts
+    // (a setting changed meanwhile neither restarts nor shortens it).
     readonly property int requireAfterMs: IdleModel.requireAfterDisplayOffMs(Settings.lockRequirePasswordAfterDisplayOff)
+    property bool displayOffLockPending: false
     function displayOffLock(): void {
         const result = Lock.lock("display-off");
         if (result !== "ok" && result !== "already-locked")
             console.warn("grassfield-idle: display-off lock not engaged:", result);
     }
+    // One change of the unlocked display-off monitor (IdleModel.displayOffLockStep).
+    function displayOffLockChange(): void {
+        const step = IdleModel.displayOffLockStep(root.displayOffLockPending, inactiveMonitor.isIdle, inactiveMonitor.enabled, root.rearmingInactive, Lock.locked, root.requireAfterMs);
+        if (step === "lock") {
+            root.displayOffLock();
+        } else if (step === "arm") {
+            root.displayOffLockPending = true;
+            displayOffLockTimer.interval = Math.max(1, root.requireAfterMs);
+            displayOffLockTimer.restart();
+            console.info("grassfield-idle: displays off for inactivity; the session locks in " + displayOffLockTimer.interval / 1000 + " s without input");
+        } else if (step === "cancel") {
+            root.cancelDisplayOffLock(Lock.locked ? "locked" : "input");
+        }
+    }
+    function cancelDisplayOffLock(why: string): void {
+        if (!root.displayOffLockPending)
+            return;
+        root.displayOffLockPending = false;
+        displayOffLockTimer.stop();
+        console.info("grassfield-idle: the display-off lock is no longer due (" + why + ")");
+    }
     Timer {
         id: displayOffLockTimer
-        interval: Math.max(1, root.requireAfterMs)
         onTriggered: {
-            if (root.offForInactivity && !Lock.locked)
+            if (root.displayOffLockPending && !Lock.locked)
                 root.displayOffLock();
+            root.displayOffLockPending = false;
         }
+    }
+    // Input while a display-off lock is pending (respectInhibitors false: a video does not mean someone is there): the end of
+    // an idle period of IdleModel.DISPLAY_OFF_INPUT_PROBE_SECONDS. Its own start, and the re-arm of inactiveMonitor, are not.
+    property bool displayOffProbeWasIdle: false
+    IdleMonitor {
+        id: displayOffInputProbe
+        enabled: root.displayOffLockPending
+        timeout: IdleModel.DISPLAY_OFF_INPUT_PROBE_SECONDS
+        respectInhibitors: false
+        onIsIdleChanged: {
+            const input = IdleModel.inputSeen(root.displayOffProbeWasIdle, isIdle);
+            root.displayOffProbeWasIdle = isIdle && enabled;
+            if (input && enabled)
+                root.cancelDisplayOffLock("input");
+        }
+        onEnabledChanged: root.displayOffProbeWasIdle = false
     }
 
     function update(): void {
@@ -265,6 +323,139 @@ Scope {
         }
     }
 
+    // ---- SS-09: the idle lock across a restart of this process. Hyprland starts a new idle notification's count from zero, so
+    // a restarted process counted the idle time again from its start (a crash at T-1 s locked at about 2T; a slow crash loop
+    // never locked). The idle period is kept in $XDG_RUNTIME_DIR (IdleModel.idleRecordName: one line per compositor
+    // instance, "idle <uptime s when it began>" while `monitor` reports idle, "active" otherwise; /proc/uptime: monotonic,
+    // never moved by a wall-clock change). At start the line left by the previous process is read before anything is written:
+    // a period that already lasted lock.idleMinutes locks at once, a shorter one locks at its own deadline unless input comes
+    // first (activitySeen, the sheets' activity probe). Decided once grassfield.json is read (the idle delay is the user's),
+    // or after IdleModel.INHERITED_IDLE_SETTINGS_MS on the defaults. Only ever adds a lock. ----
+    readonly property string idleRecordPath: {
+        const dir = Quickshell.env("XDG_RUNTIME_DIR") || "";
+        return dir !== "" ? dir + "/" + IdleModel.idleRecordName(Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE"), Quickshell.env("WAYLAND_DISPLAY")) : "";
+    }
+    readonly property bool idlePeriod: monitor.enabled && monitor.isIdle
+    // The period the previous process recorded (-1: none), and whether its lock is still to come.
+    property int inheritedSince: -1
+    property bool inheritedIdle: false
+    property bool inheritedDecided: false
+    property bool idleRecordFailing: false
+
+    onIdlePeriodChanged: {
+        if (!root.idlePeriod) {
+            root.writeIdleRecord(-1);
+            return;
+        }
+        const now = root.uptime();
+        if (now < 0)
+            return;
+        const since = Math.max(0, now - root.timing.dimSeconds);
+        // No input since the inherited period began: it is still the same period.
+        root.writeIdleRecord(root.inheritedIdle && root.inheritedSince >= 0 ? Math.min(root.inheritedSince, since) : since);
+    }
+    onActivitySeenChanged: {
+        if (!root.activitySeen || !root.inheritedIdle)
+            return;
+        root.inheritedIdle = false;
+        inheritedIdleLock.stop();
+        console.info("grassfield-idle: activity since this process started; the idle period of the previous process ended");
+        if (!root.idlePeriod)
+            root.writeIdleRecord(-1);
+    }
+
+    function uptime(): int {
+        uptimeFile.reload();
+        uptimeFile.waitForJob();
+        return IdleModel.uptimeSeconds(uptimeFile.text());
+    }
+
+    function writeIdleRecord(since: int): void {
+        if (root.idleRecordPath === "" || !root.inheritedDecided)
+            return;
+        idleRecord.setText(IdleModel.idleRecordLine(since >= 0 ? since : null) + "\n");
+    }
+
+    function decideInherited(): void {
+        if (root.inheritedDecided)
+            return;
+        root.inheritedDecided = true;
+        inheritedSettings.stop();
+        const ms = IdleModel.inheritedIdleLockMs(root.inheritedSince, root.uptime(), root.timing.lockSeconds, root.timing.enabled);
+        if (ms < 0)
+            return;
+        // Input came already: the period ended (and must not count at the next start).
+        if (root.activitySeen) {
+            if (!root.idlePeriod)
+                root.writeIdleRecord(-1);
+            return;
+        }
+        root.inheritedIdle = true;
+        if (ms === 0) {
+            root.inheritedIdleDue();
+            return;
+        }
+        console.info("grassfield-idle: the previous process saw the user idle; the idle lock is due in " + Math.round(ms / 1000) + " s unless input comes");
+        inheritedIdleLock.interval = ms;
+        inheritedIdleLock.restart();
+    }
+
+    function inheritedIdleDue(): void {
+        if (!root.inheritedIdle)
+            return;
+        root.inheritedIdle = false;
+        if (root.activitySeen || !root.timing.enabled || root.busInhibited || Lock.locked)
+            return;
+        console.info("grassfield-idle: idle for lock.idleMinutes across a restart of this process; locking");
+        const result = Lock.lock("idle");
+        if (result !== "ok" && result !== "already-locked")
+            console.warn("grassfield-idle: idle lock not engaged:", result);
+    }
+
+    Timer {
+        id: inheritedIdleLock
+        onTriggered: root.inheritedIdleDue()
+    }
+    Timer {
+        id: inheritedSettings
+        interval: IdleModel.INHERITED_IDLE_SETTINGS_MS
+        onTriggered: root.decideInherited()
+    }
+    Connections {
+        target: Settings
+        function onLoadedChanged(): void {
+            if (Settings.loaded)
+                Qt.callLater(root.decideInherited);
+        }
+    }
+
+    FileView {
+        id: idleRecord
+        path: root.idleRecordPath
+        preload: false
+        blockLoading: true
+        blockWrites: true
+        atomicWrites: true
+        printErrors: false
+        onSaved: {
+            if (root.idleRecordFailing)
+                console.info("grassfield-idle: the idle period is recorded again");
+            root.idleRecordFailing = false;
+        }
+        onSaveFailed: error => {
+            if (!root.idleRecordFailing)
+                console.warn("grassfield-idle: the idle period could not be recorded (" + FileViewError.toString(error) + "); a restart of this process counts idle time from its start");
+            root.idleRecordFailing = true;
+        }
+    }
+    FileView {
+        id: uptimeFile
+        path: "/proc/uptime"
+        preload: false
+        blockLoading: true
+        printErrors: false
+    }
+
     Timer {
         id: lockTimer
         interval: root.timing.lockDelayMs
@@ -296,22 +487,14 @@ Scope {
         respectInhibitors: true
         onIsIdleChanged: {
             root.offForInactivity = isIdle && enabled;
-            // IQ-T4 A: the lock first (at once), or after the delay without input, or never.
-            if (root.offForInactivity && !Lock.locked) {
-                if (root.requireAfterMs === 0)
-                    root.displayOffLock();
-                else if (root.requireAfterMs > 0)
-                    displayOffLockTimer.restart();
-            } else {
-                displayOffLockTimer.stop();
-            }
+            // IQ-T4 A: the lock first (at once), or after the delay without input, or never; a re-arm keeps a pending one
+            // (SS-10, displayOffLockChange).
+            root.displayOffLockChange();
             root.updateDisplays();
         }
         onEnabledChanged: {
-            if (!enabled) {
+            if (!enabled)
                 root.offForInactivity = false;
-                displayOffLockTimer.stop();
-            }
             Qt.callLater(root.updateDisplays);
         }
         // The power source changed (or the setting): re-enable so that the new timeout applies (see `rearming`).
@@ -510,6 +693,18 @@ Scope {
     SleepInhibitor {
         id: sleepInhibitor
         onResumed: resumeWake.restart()
+    }
+
+    // logind's Lock signal for this session, and its LockedHint (SS-02).
+    LogindSession {
+        id: logindSession
+        locked: Lock.locked
+        holding: Lock.holding
+        onLockAsked: {
+            const result = Lock.lock("logind");
+            if (result !== "ok" && result !== "already-locked")
+                console.warn("grassfield-idle: logind's lock not engaged:", result);
+        }
     }
 
     // Dim layer (IdleDim.qml): no input region, so pointer motion reaches the compositor and counts as activity. Its windows exist only

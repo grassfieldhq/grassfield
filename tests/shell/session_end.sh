@@ -50,6 +50,14 @@ PY
 for name in uwsm systemctl gdbus; do   # FAKE_FAIL_<name>: that helper fails
   printf '#!/bin/sh\necho "%s $*" >>"$FAKE_DIR/calls.log"\n[ -z "$FAKE_FAIL_%s" ] || exit 1\n' "$name" "$name" >"$bin/$name"
 done
+# The bus's own answer to NameHasOwner (SS-05: the notice is sent only while a notification server owns the name): yes unless
+# FAKE_NO_SERVER; not logged.
+cat >"$bin/gdbus" <<'SH'
+#!/bin/sh
+case "$*" in *org.freedesktop.DBus.NameHasOwner*) if [ -n "$FAKE_NO_SERVER" ]; then echo "(false,)"; else echo "(true,)"; fi; exit 0 ;; esac
+echo "gdbus $*" >>"$FAKE_DIR/calls.log"
+[ -z "$FAKE_FAIL_gdbus" ] || exit 1
+SH
 # The shell's IPC (ADR-0040 ID-10, the exit cover). Always this stand-in: the real `qs` would reach the session's own shell.
 cat >"$bin/qs" <<'SH'
 #!/bin/sh
@@ -164,6 +172,10 @@ for _ in $(seq 50); do flock -n "$tmp/grassfield-session-end.lock" true || break
 FAKE_REFUSE="0x2" run "$two" logout
 check bash -c '[[ $2 == 0 ]] && [[ ! -s "$1/calls.log" ]] && [[ ! -s "$1/hyprctl.log" ]]' _ "$tmp" "$status"
 wait "$holder" || true
+
+desc="SS-05: with no notification server on the bus the blocked logout shows nothing (no D-Bus activation by notify-send or gdbus) and ends nothing"
+FAKE_NO_SERVER=1 FAKE_REFUSE="0x2" run "$two" logout
+check bash -c '! grep -q "^notify-send" "$1/calls.log" && ! grep -q "dest org.freedesktop.Notifications" "$1/calls.log" && ! grep -q "uwsm stop" "$1/calls.log" && [[ $2 == 3 ]]' _ "$tmp" "$status"
 
 desc="without notify-send the blocked logout still shows a notice through the shell's notification service (gdbus), ends nothing"
 FAKE_NOTIFY_FAIL=1 FAKE_REFUSE="0x2" run "$two" logout

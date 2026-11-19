@@ -74,6 +74,12 @@ ExecStart=/usr/bin/qs -n -p /usr/share/grassfield/shell/security.qml
 Restart=always
 RestartSec=1
 TimeoutStopSec=5
+# $XDG_RUNTIME_DIR/grassfield (0700, shared with the menu bridge, the prompter, the shell's failure counter and watchdog;
+# kept when this unit ends): made before this process starts, so that safe mode's watch of the loop detector's files there
+# (shell/security/safemode/SafeMode.qml) has its directory from the first second.
+RuntimeDirectory=grassfield
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
 # Memory guard: the lock keeps the headroom it had in the UI's unit before S2 (MemoryHigh=1536M, MemoryMax=3G,
 # grassfield-shell.service at main 8b04383c), the integrator's decision on the opus review of 77a0ceb3 (MAJOR-2): the
 # process that draws the lock and runs the PAM exchange must never be throttled, nor killed into its start limit, before its

@@ -1584,6 +1584,75 @@ File watching is disabled in `shell.qml` (`settings.watchFiles: false`, re-appli
 Quickshell resets it), so only an explicit `Quickshell.reload()` reloads the shell (none in production code; the dev
 hook `lock devReload` needs a dev session, see "Dev gate"). Development restarts the shell with `scripts/dev/shell-run.sh`.
 
+## logind, restarts and refusals (security-session audit, round 2)
+
+What changed, all on the lock's side of the rule "only ever adds or keeps a lock; never unlocks, skips or delays one":
+
+- **logind's Lock signal (SS-02).** `loginctl lock-session` / `lock-sessions` and logind.conf's lock actions
+  (`HandleLidSwitch=lock`, `HandleLidSwitchExternalPower=lock`, `HandleLidSwitchDocked=lock`, `HandlePowerKey=lock`) make
+  logind emit `org.freedesktop.login1.Session.Lock` on the session's object. `shell/security/idle/LogindSession.qml`
+  (hosted by Idle) finds this login's session object and runs a second `gdbus monitor` on that path only; a Lock signal
+  asks for `Lock.lock("logind")`. The session is found, in order, by `GetSession(XDG_SESSION_ID)` (uwsm exports it to the
+  user manager), by the user's `Display` session (`/org/freedesktop/login1/user/self`), then by
+  `GetSessionByPID(<compositor pid>)` (Hyprland's instance lock file); the security process itself runs in the user
+  manager, outside the session's scope, so logind's "self" session cannot name it. None found: logged, tried again every
+  minute. The watcher is restarted after an exit like the PrepareForSleep watcher. **Unlock is ignored** (logged): only a
+  PAM success opens the lock (macOS has no remote unlock either). **LockedHint** is set with `SetLockedHint` (the
+  session's owner needs no authorization): true once the compositor confirmed the lock, false once the session is
+  unlocked; information for other tools only. A dev session follows nothing and sets nothing (its session is the
+  owner's).
+- **A lock with no screen (SS-08).** `Lock.engage()` asks the compositor for the lock whatever the screen count:
+  ext-session-lock allows a lock with no surface, and Quickshell adds a surface to the held lock for each screen that
+  appears. A request kept back until a screen existed let an output that came up meanwhile show the desktop until the retry.
+- **The idle lock across a restart of the security process (SS-09).** Hyprland counts a new idle notification from zero,
+  so a restart counted the idle time again (a crash at T-1 s locked at about 2T; a slow crash loop never locked). The
+  process keeps `$XDG_RUNTIME_DIR/grassfield-idle-<compositor instance>`: `idle <s>` while its idle monitor reports the
+  user idle (s: the `/proc/uptime` second the period began, the monitor's firing minus its timeout), `active` otherwise
+  (any input, the lock, an application's inhibitor). A restarted process reads it before writing it, once
+  grassfield.json is read (at most 10 s on the defaults): a period that already lasted `lock.idleMinutes` locks at once;
+  a shorter one locks at its own deadline unless input comes first (the sheets' activity probe: an input after a pause of
+  one second). A user who came back in the second of the restart and gave no pause of a second until the deadline is
+  locked (fail closed).
+- **The display-off lock across a re-arm (SS-10).** "Require password after the display turns off" starts its delay when
+  the unlocked display-off monitor fires; the delay now runs to its first deadline whatever happens to that monitor: a
+  change of the power source or of the setting re-arms it (Quickshell reports that as "not idle"), an application's
+  inhibitor disarms it; neither is input. Only real input ends it (the monitor reporting activity while armed and not
+  being re-armed, or a one-second input probe beside it), or the lock. Its interval is taken at its start.
+- **A password typed while the computer goes to sleep** (SS-01's refusal) is dropped and the lock says "The computer is
+  going to sleep. Try again after it wakes."; the message goes when the refusal ends. No shake: nothing was wrong with
+  the password.
+- **No notification daemon started by D-Bus activation (SS-05).** battery-watch, crash-watch and session-end ask the bus
+  (`NameHasOwner` / `GetNameOwner`, answered by the bus itself) before notify-send or a call to the name, and send
+  nothing while no server owns `org.freedesktop.Notifications` (battery and crash notices are retried; session-end's
+  blocked-logout notice is not shown, nothing is ended); migrate-notify waits with `busctl --auto-start=no` and sends
+  nothing when no server came. A mako or dunst that ships an activatable service would otherwise take the name the shell's
+  server needs. A server that leaves between the question and notify-send is the remaining window.
+- **A session that dies at once (SS-11).** `grassfield-login` runs the session as its child (TERM, HUP and INT passed on)
+  and keeps `~/.local/state/grassfield/login-quick-exits`. Two exits in a row within 20 s of the start of the chosen
+  session make the next login start the other session, once (said in the journal); that login sets the chosen session's
+  count to one, so the login after it tries the chosen session again and one more quick exit falls back again. A session
+  that lived longer clears its count; `grassfield-login set` clears both. Nothing loops by itself.
+
+Fluidity (same audit):
+
+- Safe mode no longer polls systemd every 5 s (about 50,000 processes a day): it watches the loop detector's flag and its
+  failure ledger in `$XDG_RUNTIME_DIR/grassfield` (the shell unit's OnFailure= counter rewrites the ledger at every
+  failure: that is the signal), looks every 2 s for 30 s after a change (a unit stopped at its own start limit with no
+  flag is seen then), and once a minute as a backstop. grassfield-security.service now makes that directory
+  (RuntimeDirectory=, preserved) so the watch has it from the start.
+- The lock's ownership probe: a lock inherited at start whose surface holds the keyboard is probed every 100 ms only while
+  the displays are on; while they are off for lack of input it is probed every second, the rate of any held lock (the
+  first input lights them and brings the 100 ms back). A lock surface that lost the keyboard keeps 100 ms. Before, a
+  crash-restore kept ten Hyprland queries a second all night.
+- The crash-recovery marker is still written before the lock request (a crash while the lock surfaces are created must
+  find "locked" at the restart; moving it after the request would lose that lock), but costs one write instead of two
+  reads and a write.
+- The UI's double read of the published state and `LockClient.motion` are the UI's (shell/services, another scope).
+
+What a real session must show (not offscreen): `loginctl lock-session` locks; `loginctl show-session -p LockedHint`
+follows the lock; a lid close with `HandleLidSwitch=lock` locks; a crash of the security process 1 s before the idle
+deadline locks at the deadline.
+
 ## Test safety: never submit to PAM in nested
 A password submitted on the lock screen is checked against the owner's real account (`omarchy-lock-password`), and a
 wrong one counts a `faillock` failure shared with sudo (deny=10 → a 120 s lockout). The nested lock tests must never
