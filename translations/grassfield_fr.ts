@@ -1672,14 +1672,6 @@
         <translation>« %1 » ne peut pas être créé ici.</translation>
     </message>
     <message>
-        <source>“%1” takes too long to read.</source>
-        <translation>La lecture de « %1 » prend trop de temps.</translation>
-    </message>
-    <message>
-        <source>“%1” lists too many items.</source>
-        <translation>« %1 » contient trop d’éléments.</translation>
-    </message>
-    <message>
         <source>Compress and Expand need bsdtar (libarchive), which can’t be started.</source>
         <translation>Compresser et Décompresser ont besoin de bsdtar (libarchive), qui ne peut pas être démarré.</translation>
     </message>
@@ -5005,6 +4997,10 @@
         <translation>L’action a échoué.</translation>
     </message>
     <message>
+        <source>Another change is still in progress. Try again when it is done.</source>
+        <translation>Une autre modification est encore en cours. Réessayez quand elle sera terminée.</translation>
+    </message>
+    <message>
         <source>The action failed: %1</source>
         <translation>L’action a échoué&#xa0;: %1</translation>
     </message>
@@ -5619,10 +5615,6 @@
     <message>
         <source>Some items in “%1” weren’t changed: they belong to someone else or can’t be changed.</source>
         <translation>Certains éléments de « %1 » n’ont pas été modifiés : ils appartiennent à quelqu’un d’autre ou ne peuvent pas être modifiés.</translation>
-    </message>
-    <message>
-        <source>The permissions couldn’t be changed: chmod can’t be started.</source>
-        <translation>Les autorisations n’ont pas pu être modifiées : chmod ne peut pas être démarré.</translation>
     </message>
     <message>
         <source>The name “%1” is already taken. Please choose a different name.</source>
@@ -8615,6 +8607,10 @@
 <context>
     <name>LockController</name>
     <message>
+        <source>The computer is going to sleep. Try again after it wakes.</source>
+        <translation>L’ordinateur va se mettre en veille. Réessayez après son réveil.</translation>
+    </message>
+    <message>
         <source>Incorrect password</source>
         <translation>Mot de passe incorrect</translation>
     </message>
@@ -9406,6 +9402,10 @@
         <translation>Ne pas installer «&#xa0;%1&#xa0;»</translation>
     </message>
     <message>
+        <source>Stop Updating “%1”</source>
+        <translation>Arrêter la mise à jour de « %1 »</translation>
+    </message>
+    <message>
         <source>Stop Installing “%1”</source>
         <translation>Arrêter l’installation de «&#xa0;%1&#xa0;»</translation>
     </message>
@@ -9524,6 +9524,10 @@
         <translation>Fermer</translation>
     </message>
     <message>
+        <source>Not saved</source>
+        <translation>Non enregistré</translation>
+    </message>
+    <message>
         <source>Expand</source>
         <translation>Déplier</translation>
     </message>
@@ -9534,6 +9538,10 @@
     <message>
         <source>Memo text</source>
         <translation>Texte du mémo</translation>
+    </message>
+    <message>
+        <source>Not saved: %1</source>
+        <translation>Non enregistré : %1</translation>
     </message>
     <message>
         <source>Delete this memo?</source>
@@ -9550,6 +9558,18 @@
     <message>
         <source>Delete</source>
         <translation>Supprimer</translation>
+    </message>
+    <message>
+        <source>Quit without saving?</source>
+        <translation>Quitter sans enregistrer ?</translation>
+    </message>
+    <message>
+        <source>Your latest changes couldn&apos;t be saved.</source>
+        <translation>Vos dernières modifications n’ont pas pu être enregistrées.</translation>
+    </message>
+    <message>
+        <source>Quit Anyway</source>
+        <translation>Quitter quand même</translation>
     </message>
 </context>
 <context>
@@ -12935,6 +12955,10 @@
         <source>Pinned items are full</source>
         <translation>Le nombre maximal d’éléments épinglés est atteint</translation>
     </message>
+    <message>
+        <source>Couldn&apos;t pin the item</source>
+        <translation>Impossible d’épingler l’élément</translation>
+    </message>
 </context>
 <context>
     <name>SearchCapsule</name>
@@ -15944,6 +15968,10 @@
         <source>Stop installing %1</source>
         <translation>Arrêter l’installation de %1</translation>
     </message>
+    <message>
+        <source>Stop updating %1</source>
+        <translation>Arrêter la mise à jour de %1</translation>
+    </message>
 </context>
 <context>
     <name>StoreOngoing</name>
@@ -16080,6 +16108,10 @@
         <translation>l’essai est mal formé</translation>
     </message>
     <message>
+        <source>another change is still being kept</source>
+        <translation>Une autre modification est encore en cours d’enregistrement</translation>
+    </message>
+    <message>
         <source>empty reply</source>
         <translation>Réponse vide</translation>
     </message>
@@ -16138,6 +16170,30 @@
     <message>
         <source>the network could not be joined</source>
         <translation>Impossible de rejoindre le réseau</translation>
+    </message>
+    <message>
+        <source>the password was not accepted</source>
+        <translation>Le mot de passe n’a pas été accepté</translation>
+    </message>
+    <message>
+        <source>the network did not accept the connection</source>
+        <translation>Le réseau n’a pas accepté la connexion</translation>
+    </message>
+    <message>
+        <source>the network gave this computer no address</source>
+        <translation>Le réseau n’a donné aucune adresse à cet ordinateur</translation>
+    </message>
+    <message>
+        <source>the VPN could not be connected</source>
+        <translation>Impossible de connecter le VPN</translation>
+    </message>
+    <message>
+        <source>%1, and its new settings could not be removed: %2</source>
+        <translation>%1, et ses nouveaux réglages n’ont pas pu être supprimés : %2</translation>
+    </message>
+    <message>
+        <source>the VPN&apos;s state could not be read: it may still be connecting</source>
+        <translation>L’état du VPN n’a pas pu être lu : il est peut-être encore en cours de connexion</translation>
     </message>
     <message>
         <source>the network&apos;s state could not be read: it may still be joining</source>
@@ -18539,6 +18595,29 @@
     <message>
         <source>Data sent/sec:</source>
         <translation>Données envoyées/s&#xa0;:</translation>
+    </message>
+</context>
+<context>
+    <name>memos::MemosApp</name>
+    <message>
+        <source>There&apos;s too much text to save. Shorten a memo.</source>
+        <translation>Il y a trop de texte à enregistrer. Raccourcissez un mémo.</translation>
+    </message>
+    <message>
+        <source>The disk is full.</source>
+        <translation>Le disque est plein.</translation>
+    </message>
+    <message>
+        <source>The disk is read-only.</source>
+        <translation>Le disque est en lecture seule.</translation>
+    </message>
+    <message>
+        <source>You don&apos;t have permission to save the memos.</source>
+        <translation>Vous n’avez pas l’autorisation d’enregistrer les mémos.</translation>
+    </message>
+    <message>
+        <source>The memos couldn&apos;t be written.</source>
+        <translation>Les mémos n’ont pas pu être enregistrés.</translation>
     </message>
 </context>
 <context>

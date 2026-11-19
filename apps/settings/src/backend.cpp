@@ -310,11 +310,11 @@ qint64 Backend::installedBytes(const QByteArray &pacmanQi)
     static const QHash<QByteArray, double> units{{"B", 1.0}, {"KiB", 1024.0}, {"MiB", 1048576.0}, {"GiB", 1073741824.0}, {"TiB", 1099511627776.0}};
     double sum = 0;
     for (const QByteArray &raw : pacmanQi.split('\n')) {
-        if (!raw.startsWith("Installed Size"))
+        if (!raw.startsWith("Installed Size")) // i18n-ignore: pacman -Qi field name
             continue;
         const int colon = raw.indexOf(':');
         const QList<QByteArray> parts = colon < 0 ? QList<QByteArray>{} : raw.mid(colon + 1).simplified().split(' ');
-        if (raw.left(colon).trimmed() != "Installed Size" || parts.size() != 2 || !units.contains(parts.at(1)))
+        if (raw.left(colon).trimmed() != "Installed Size" || parts.size() != 2 || !units.contains(parts.at(1))) // i18n-ignore: pacman -Qi field name
             continue;
         bool ok = false;
         const double value = parts.at(0).toDouble(&ok);
