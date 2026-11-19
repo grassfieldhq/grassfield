@@ -41,7 +41,8 @@
  {"path": "tests/integration/container.sh", "reason": "helper sourced by the docker tests and gates: the only place that runs docker (options held to a short list by tests/ci/no_privileged_containers.py), and the Omarchy tree mounts with bin/ links followed"},
  {"path": "tests/compositor/window_geometry.sh", "reason": "helper sourced by soak.sh and input_consistency.sh (real window geometry from hyprctl clients)"},
  {"path": "scripts/gates/lib.sh", "reason": "helper sourced by the gate scripts (tested by tests/shell/gates.sh)"},
- {"path": "scripts/gates/frame_pacing.py", "reason": "judge of scripts/gates/frame-pacing.sh; --selftest and cases run by tests/shell/gates.sh"},
+ {"path": "scripts/gates/ci.sh", "reason": "the CI job's steps (.github/workflows/ci.yml), not a test; its --selftest is run by tests/shell/ci_workflow.sh"},
+ {"path": "scripts/gates/frame_pacing.py", "reason": "judge of scripts/gates/frame-pacing.sh (presentation-time records of tests/tools/presentprobe, and the render-thread proxy); --selftest run by tests/shell/gates.sh, recorded probe runs by tests/shell/frame_pacing_probe.sh"},
  {"path": "scripts/gates/vm-drill.sh", "reason": "gate H / GF-010 drill: installs and removes Grassfield in a QEMU VM of stock Omarchy (ISO download, tens of minutes, KVM); run by hand, never by just test or CI"},
  {"path": "scripts/gates/session_start.py", "reason": "journal parser of scripts/gates/session-start.sh; --selftest and cases run by tests/shell/gates.sh"},
  {"path": "scripts/gates/coverage_report.py", "reason": "gcov summariser of scripts/gates/coverage.sh; tested on a toy program by tests/shell/gates.sh"},
@@ -871,6 +872,8 @@
  {"path": "tests/unit/settings/tst_iconlookup.cpp", "layer": "logic"},
  {"path": "tests/unit/tst_filesrename.qml", "layer": "headless"},
  {"path": "tests/unit/tst_filesreuse.qml", "layer": "headless"},
- {"path": "tests/unit/activity/qml/tst_graph.cpp", "layer": "logic"}
+ {"path": "tests/unit/activity/qml/tst_graph.cpp", "layer": "logic"},
+ {"path": "tests/shell/frame_pacing_probe.sh", "layer": "logic"},
+ {"path": "tests/shell/ci_workflow.sh", "layer": "logic"}
 ]
 }
