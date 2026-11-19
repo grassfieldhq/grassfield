@@ -223,7 +223,10 @@ Update Now without a terminal (step 3, owner decision SU-M1; ADR-0033 "Step 3")
   update."); another run, or a `db.lck` a process holds ("Another update is running."); a `db.lck` no process holds, left by
   a pacman that stopped mid-way ("An earlier update stopped before it finished.", with Update in Terminal…, where pacman
   says how to clear it); Omarchy's signing key missing (U28, after the compatibility check of U27). A dismissed dialog says
-  nothing; a refused one says "Software Update was not allowed to update this computer.".
+  nothing; a refused one says "Software Update was not allowed to update this computer.". Right before the keyring step and
+  again right before `pacman -Su`, the helper re-hashes the system's sync databases against the checked copies (sha256):
+  another `pacman -Sy` that replaced them after the swap ends the run with exit 9, nothing installed (`synced`), and the pane
+  says "Another update is running." (the runner's `busy`): the transaction never installs a plan that was not checked.
 - U27. Compatibility (ADR-0033 s3.4). grassfield-desktop records the toolkit it was built with
   (`/usr/share/grassfield/BUILD-DEPS`: `qt6-base`, `quickshell`, `hyprland`, `aquamarine`, `kcoreaddons`). When the plan
   changes grassfield-desktop or one of them, every one installed after the transaction must match the record of the

@@ -146,6 +146,9 @@ case $code in
   5) conclude power ;;
   6) conclude incompatible ;;
   7) if has "needs stalelock"; then conclude stalelock; else conclude terminal; fi ;;
+  # Another pacman -Sy replaced the checked databases before the transaction (SU-10): nothing was installed; the person
+  # tries again once that pacman is done, as for another update running.
+  9) conclude busy ;;
   126) conclude cancelled ;;
   127) conclude denied ;;
   *) conclude failed ;;

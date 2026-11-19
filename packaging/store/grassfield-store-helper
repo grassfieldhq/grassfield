@@ -30,7 +30,17 @@
 # pacman's output, 0644, at most 8 MiB), <op-id>.started (its pid and start time from /proc, for the Store to know it still
 # runs), <op-id>.exit (the exit code, by rename, last), helper.lock (0600). Only the 16 newest operations' files are kept.
 # Its descriptors are /dev/null and the log, never the pipe it was started with, and it ignores SIGHUP and SIGPIPE: the
-# Store quitting cannot stop pacman (S6). It never signals anything.
+# Store quitting cannot stop pacman (S6). The only processes it signals are its own sleep inhibitor's.
+#
+# On a system run by systemd it starts itself again as the transient system service grassfield-store-helper.service
+# (`systemd-run --wait`, as `unit <verb> <op-id> <package>...`, a form taken only inside that unit) and waits for it, as
+# grassfield-update-helper does: pacman then belongs to no user session, so a log out, a shutdown that stops the user's
+# manager or the Store's own end cannot kill it mid-transaction (a stale db.lck, a half-written package); the unit's name
+# allows one run at a time. A stop of the unit (KillMode=mixed: SIGTERM to this process only) ends the run at once while
+# nothing has changed (exit 1); from pacman's transaction on, it is logged and the run goes on to its end (pacman is never
+# signalled), within TimeoutStopSec (30 min). While pacman runs, sleep, idle and shutdown wait (systemd-inhibit). The Store
+# follows the unit by the files below (<op-id>.started names the unit's process), whatever happens to pkexec. Without
+# systemd as the system's manager (a container) it runs in place.
 if IFS= read -r -d '' _ 2>/dev/null </proc/$$/environ; then   # stderr first: without /proc, no message
   exec /usr/bin/env -i /usr/bin/bash -p /usr/lib/grassfield/grassfield-store-helper "$@"
 fi
@@ -48,7 +58,11 @@ exec </dev/null
 [[ -t 1 ]] || exec >/dev/null
 [[ -t 2 ]] || exec 2>/dev/null
 
+GS_SELF=/usr/lib/grassfield/grassfield-store-helper
 GS_DIR=/run/grassfield-store
+GS_UNIT=grassfield-store-helper
+GS_SYSTEMD=/run/systemd/system   # there when systemd is the system's manager
+GS_CGROUP=/proc/self/cgroup
 GS_LOG_MAX=$((8 << 20))
 GS_KEEP=16
 GS_OMARCHY_LISTS=(/usr/share/omarchy/install/omarchy-base.packages /usr/share/omarchy/install/omarchy-other.packages)
@@ -59,6 +73,11 @@ usage() {
   exit 2
 }
 ((EUID == 0)) || { echo "grassfield-store-helper: must run as root" >&2; exit 2; }
+in_unit() { grep -qxF "0::/system.slice/$GS_UNIT.service" "$GS_CGROUP" 2>/dev/null; }
+# The unit's form: `unit` first, taken only inside the unit (anywhere else it is a usage error).
+if [[ ${1-} == unit ]] && in_unit; then
+  shift
+fi
 (($# >= 3 && $# <= 66)) || usage
 verb=$1 op=$2
 shift 2
@@ -72,6 +91,28 @@ done
 (umask 022 && mkdir -p -- "$GS_DIR") 2>/dev/null
 [[ -d $GS_DIR && ! -L $GS_DIR && $(stat -c %u:%a -- "$GS_DIR") == 0:755 ]] ||
   { echo "grassfield-store-helper: $GS_DIR is not root's own folder (0755): refused" >&2; exit 1; }
+# The transient unit (systemd only). This instance makes no file of the operation: the unit's does. When the unit never
+# ran this operation (its name is taken by another run), this one says busy.
+if [[ -d $GS_SYSTEMD ]] && ! in_unit; then
+  systemd-run --unit="$GS_UNIT" --description="Grassfield Store" --collect --quiet --wait \
+    --service-type=exec -p KillMode=mixed -p TimeoutStopSec=30min -- \
+    "$GS_SELF" unit "$verb" "$op" "$@"
+  if [[ -f $GS_DIR/$op.exit && ! -L $GS_DIR/$op.exit ]]; then
+    read -r code <"$GS_DIR/$op.exit"
+    [[ $code =~ ^[0-9]{1,3}$ ]] && exit "$code"
+    exit 1
+  fi
+  if (set -C && : >"$GS_DIR/$op.log") 2>/dev/null; then
+    echo "grassfield-store-helper: another installation is running" >>"$GS_DIR/$op.log"
+    printf '3\n' >|"$GS_DIR/.$op.exit" && mv -f -- "$GS_DIR/.$op.exit" "$GS_DIR/$op.exit"
+    exit 3
+  fi
+  # The log and the start record are there: the unit ran this operation and ended without its exit file (killed, or /run
+  # full). Not "busy": pacman may have changed packages, which is 1.
+  [[ -f $GS_DIR/$op.started ]] && exit 1
+  exit 3
+fi
+
 log=$GS_DIR/$op.log
 # An operation id is used once: its log is made here or the run stops (noclobber makes > fail on an existing file).
 (set -C && : >"$log") 2>/dev/null || { echo "grassfield-store-helper: operation $op was used before" >&2; exit 2; }
@@ -79,11 +120,34 @@ exec >>"$log" 2>&1
 
 # Every message goes to the log and, best effort, to the journal (ADR-0046 D4: a removal is an audit event).
 say() { echo "grassfield-store-helper: $*"; logger -t grassfield-store-helper -p authpriv.notice -- "$*" 9<&- 2>/dev/null || true; }
+inhibitor=""
+changing=0
+cleanup() {
+  [[ -n $inhibitor ]] && kill "$inhibitor" 2>/dev/null
+}
+trap cleanup EXIT
 # The exit file, by rename (the Store never reads half a file), then the exit.
 finish() { # code [message]
   (($# > 1)) && say "$2"
   printf '%s\n' "$1" >|"$GS_DIR/.$op.exit" && mv -f -- "$GS_DIR/.$op.exit" "$GS_DIR/$op.exit"
   exit "$1"
+}
+# A stop (the unit's SIGTERM): at once while nothing has changed; once pacman changes packages, the run goes on to its end.
+on_term() {
+  if ((changing)); then
+    say "asked to stop while pacman changes packages: going on to the end"
+  else
+    finish 1 "stopped before anything changed"
+  fi
+}
+trap on_term TERM
+# Sleep, idle and shutdown wait for as long as this process lives (the inhibitor's command ends with it, whatever ends it);
+# taken when pacman is about to change packages. A failure (no logind) is no reason to stop.
+inhibit() { # why
+  [[ -n $inhibitor ]] && return 0
+  systemd-inhibit --what=sleep:idle:shutdown --who="Grassfield Store" --why="$1" \
+    --mode=block tail --pid=$$ -f /dev/null >/dev/null 2>&1 9<&- &
+  inhibitor=$!
 }
 
 # Its pid and start time (field 22 of /proc/<pid>/stat, in clock ticks since boot; the command name before it is in
@@ -176,6 +240,7 @@ if [[ $verb == install ]]; then
       wanted+=("$name")
     fi
   done
+  inhibit "Installing apps"
   if ((${#wanted[@]})); then
     say "downloading ${wanted[*]} to check what each one holds"
     pacman_logged -Sw --noconfirm --noprogressbar -- "${wanted[@]}" || finish 1 "pacman could not download the packages"
@@ -192,6 +257,7 @@ if [[ $verb == install ]]; then
       pacman -Qlpq -- "$path" 2>/dev/null 9<&- | grep -Eq "$GS_ENTRY" || finish 7 "$name owns no application entry: not an app"
     done
   fi
+  changing=1
   say "pacman -S --needed --noconfirm --noprogressbar -- $*"
   pacman_logged -S --needed --noconfirm --noprogressbar -- "$@"
   code=$?
@@ -258,6 +324,8 @@ plan=$(pacman -Rs --print --print-format '%n' -- "$@" 2>&1 9<&-) || { echo "$pla
 for name in $plan; do
   denied "$name" && finish 6 "removing $* would also remove $name, part of the system, Omarchy or Grassfield: not removed"
 done
+inhibit "Removing apps"
+changing=1
 say "pacman -Rns --noconfirm --noprogressbar -- $*"
 pacman_logged -Rns --noconfirm --noprogressbar -- "$@"
 code=$?

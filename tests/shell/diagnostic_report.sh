@@ -84,6 +84,10 @@ echo "2026-11-05T10:00:08+0000 vm grassfield-shell[1]: audio: default sink alsa_
 echo "2026-11-05T10:00:09+0000 vm grassfield-shell[1]: audio routing: connected USB Headset (usb:0x0d8c:0x0014:SN-7Y3K9QX2): personal"
 echo "2026-11-05T10:00:10+0000 vm grassfield-shell[1]: grassfield: display desc:Iiyama PL2792Q 1173930A0284: no such mode"
 echo "2026-11-05T10:00:11+0000 vm grassfield-shell[1]: displays: LG Electronics LG ULTRAFINE 012NTPC1A234 is back"
+echo "2026-11-05T10:00:12+0000 vm grassfield-shell[1]: window title=\"Bank-Statement March\" moved to DP-3"
+echo "2026-11-05T10:00:13+0000 vm grassfield-shell[1]: wifi: connected to ssid CafeLuna-Guest, strength 70"
+echo "2026-11-05T10:00:14+0000 vm grassfield-shell[1]: notification from Mail: “Dinner with Bob tonight” (kind \"banner\")"
+echo "2026-11-05T10:00:15+0000 vm grassfield-shell[1]: overlay on \"DP-1\": open with no popup"
 SH
 chmod 755 "$tmp/bin"/*
 
@@ -167,6 +171,8 @@ desc="the lock screen message (free text) is redacted, the lock settings are kep
 check bash -c '! grep -q "FREE-TEXT-LOCK\|0612345678" "$1" && grep -q "\"showMessage\": true" "$1" && grep -q "\"idleMinutes\": 5" "$1"' _ "$out"
 desc="interface possessives in the journal keep their words (the Dock's tile, Wayland's socket, Activity Monitor's list); an audio line still loses the person's name"
 check bash -c 'grep -qF "the Dock'"'"'s tile moved; Wayland'"'"'s socket is back; Activity Monitor'"'"'s list refreshed" "$1" && grep -qF "default output is now <name>’s AirPods" "$1"' _ "$out"
+desc="SU-15: free text in the journal (a window title, a network name, a notification's text) is replaced by <text>; technical words and connectors stay"
+check bash -c '! grep -q "Bank-Statement\|CafeLuna\|Dinner with Bob" "$1" && grep -qF "window title=\"<text>\" moved to DP-3" "$1" && grep -qF "wifi: <text>, strength 70" "$1" && grep -qF "notification from Mail: “<text>” (kind \"banner\")" "$1" && grep -qF "overlay on \"DP-1\": open with no popup" "$1"' _ "$out"
 desc="people's names in device names (Marie’s AirPods, Paul's Headphones) and Bluetooth addresses are removed; the device kind stays"
 check bash -c '! grep -q "Marie\|Paul" "$1" && grep -q "<name>’s AirPods" "$1" && grep -q "<name>'"'"'s Headphones" "$1" && ! grep -qi "A0:B1:C2:D3:E4:F5" "$1" && grep -q "bluez_output\." "$1"' _ "$out"
 desc="the real name (GECOS) is replaced whole and word by word (3 characters or more, not generic); its other fields are not names"

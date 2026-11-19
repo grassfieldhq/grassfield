@@ -70,7 +70,13 @@ Discover and sections (step 2)
 Search (step 2)
 - SR6. Typing in the sidebar field (Ctrl+F focuses it) shows results while typing from the local merged catalog (our catalog,
   AppStream, the `[omarchy]` list): name, keywords, summary and package name, ranked name-prefix first; Esc clears, then
-  leaves the field. Empty result: "No Results for “…”" (« Aucun résultat pour « … » »).
+  leaves the field. Empty result: "No Results for “…”" (« Aucun résultat pour « … » »). The search runs on a worker
+  (`searchAsync`, SU-06): typing asks once keys pause (120 ms), an answer to an older query is dropped, and "No Results" waits
+  for the answer. The result lists, a category, Installed and a type's apps are virtualized grids (AppGrid: a GridView the
+  size of what the page shows, delegates reused, a model keyed by app id); a new snapshot updates the page shown in place
+  (its lists change row by row, its scroll and focus stay), and a change of the buttons' state alone (`revisionChanged`: a
+  Flatpak update checked or planned) re-reads only the buttons. A screenshot the page no longer wants is cancelled: it
+  leaves the queue, or its transfer stops.
 - SR6b. The search by document type (step 4, ADR-0035 5c-3, ADR-0037 SD34): `--page=type:<type>` (what Files' "Search the
   Store" opens when no application opens a document) lists the apps whose AppStream says they open the type (`<provides>
   <mediatype>`, the older `<mimetypes>`), those of the type itself first, then those of its parents in the MIME
@@ -125,8 +131,11 @@ Get, Open, Uninstall (step 3; the paths of ADR-0037 b, owner ST4)
   compile pas depuis l'AUR. »; ADR-0037 SD30), or while Omarchy's package lists cannot be read ("Omarchy's package lists
   can't be read, so the Store installs nothing from the AUR."). The ring is the operation's (macOS 27's download ring): its count from pacman's log once there is one (a Flatpak's,
   flatpak's "Installing <ref>" lines against its plan), else turning; a square in it while the operation waits in the
-  queue, which takes it out, or while a Flatpak install runs, which stops it ("Stop installing …" « Arrêter l’installation
-  de … », ADR-0037 SD26: SIGTERM; what flatpak finished stays; nothing is said).
+  queue, which takes it out, or while a Flatpak install or update runs, which stops it ("Stop installing …" « Arrêter
+  l’installation de … », "Stop updating …" « Arrêter la mise à jour de … », ADR-0037 SD26, SU-09: SIGTERM; what flatpak
+  finished stays; an update's later commands do not run; nothing is said). Any Flatpak operation (a removal and its
+  `--unused` included) that prints nothing for 30 minutes is stopped the same way and ends "did not finish" (its reason in
+  Details), so the queue behind it moves on.
 - SR14. "Get" opens the confirmation sheet; its default button is "Install" (« Installer »). For the AUR the button is
   "Install from the AUR" (« Installer depuis l'AUR ») and the default is Cancel: Return and Esc close the sheet, the
   install takes a click or Tab and Space (common rule 3: the build runs the package's script before any password; the
@@ -177,7 +186,13 @@ Get, Open, Uninstall (step 3; the paths of ADR-0037 b, owner ST4)
 - SR18. One operation at a time, whatever its path; later ones wait in the queue (shown on their buttons and in a queue
   popover in the toolbar: a button while the queue holds anything, whose menu lists each operation with what it does, and
   "Don't Install “…”" for a waiting one). The next one starts only when the previous one has its exit
-  code, Omarchy's update lock is free and `db.lck` is absent. The running one shows progress: indeterminate while
+  code, Omarchy's update lock is free and `db.lck` is absent. Its record is written to store.json on a writer thread before
+  it starts (never on the click path). `grassfield-store-helper` runs pacman in the transient system service
+  `grassfield-store-helper.service` (`systemd-run --wait`, KillMode=mixed, TimeoutStopSec=30 min, as
+  grassfield-update-helper does, SU-03) under a sleep, idle and shutdown inhibitor while pacman runs: a log out, a shutdown
+  that stops the user's manager or the Store's end cannot kill pacman mid-transaction; a stop of the unit before pacman
+  changes anything ends the run (exit 1), after that it goes on to its end. The Store follows the unit by its status files
+  (`<op>.started`, `<op>.exit`) when pkexec ends first, as after a restart. The running one shows progress: indeterminate while
   downloading, then "n of N" from pacman's log; in Omarchy's terminal it also says so ("Opening Terminal…" « Ouverture du
   Terminal… » until the script started, then "Installing in Terminal…" « Installation dans le Terminal… » or "Uninstalling
   in Terminal…" until pacman's log counts). While an operation runs, Omarchy's update lock is held, by the Store for the
@@ -476,6 +491,10 @@ installed on Omarchy), Omarchy 4.0.4's commands, `pacman` 7.1, `yay` (Omarchy's,
   catalog; search under 50 ms per keystroke (P4's rule) on 2000 catalog apps plus 1390 AppStream apps; AppStream is read once
   per start in a worker thread; images decode off the GUI thread.
 - Accessibility and i18n: above.
+- Quitting (SU-07): the bus name `org.grassfield.Store` is released as soon as the Store quits, so a launch meanwhile opens a
+  new Store at once; the workers are told to stop (fetches abort within 0.1 s, children get SIGTERM) and are waited for 5 s at
+  most, then the process leaves without them. `--removable` runs each repository app's `-Rs` plan on the workers, several at
+  once, with the GUI thread free (its 120 s watchdog always fires).
 
 ## Known limitations
 - No per-app update for repository or AUR apps, and no "Update" button for them: they update with the whole system (Arch).
