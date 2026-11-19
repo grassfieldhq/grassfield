@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import Grassfield.Ui
+import qs.platform
 
 // Volume/brightness OSD: a compact pill under the menu bar at the top-right (icon + level bar),
 // on the active display (Compositor.activeScreenName), a brightness change on the display that changed (Osd.screenName).
@@ -25,8 +26,16 @@ Variants {
         readonly property bool primary: modelData !== null && modelData.name === Osd.screenName
         readonly property int pad: Tokens.spacingLg
 
+        // The pill is in view (shown, or fading out).
+        readonly property bool showing: Osd.shown || pill.opacity > 0
+        // A full-screen window on this output: a mapped overlay surface, even an empty one, would keep the compositor from
+        // scanning the window out directly (games, video), so the idle surface is unmapped there.
+        readonly property bool fullscreenHere: modelData !== null && Compositor.fullscreenOn(modelData.name, Compositor.topologyRevision)
+
         screen: modelData
-        visible: primary && (Osd.shown || pill.opacity > 0)
+        // Mapped for good on the display the OSD shows on, empty and without input while hidden: the first key press after a
+        // hide only fades the pill in, it no longer maps a surface and waits for its first frame (as Overview's surface).
+        visible: primary && (showing || !fullscreenHere)
         anchors {
             top: true
             right: true
@@ -41,7 +50,7 @@ Variants {
         // qmllint disable missing-type
         // Empty input region: clicks go through.
         mask: Region {}
-        BackgroundEffect.blurRegion: Appearance.effectiveTransparency > 0 && win.visible ? blur : null
+        BackgroundEffect.blurRegion: Appearance.effectiveTransparency > 0 && win.visible && win.showing ? blur : null
         // qmllint enable missing-type
 
         Region {

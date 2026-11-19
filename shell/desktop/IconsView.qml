@@ -156,7 +156,8 @@ FocusScope {
         onWheel: wheel => wheel.accepted = true
     }
 
-    // Persist the slots handed out to icons that had none (new files, a smaller grid).
+    // Persist the slots handed out to icons that had none (new files). An icon whose stored slot does not fit the grid now keeps
+    // it stored (Logic.newSlots, audit A-19): the arrangement comes back when the larger grid does.
     onLayChanged: syncTimer.restart()
 
     Timer {
@@ -166,14 +167,9 @@ FocusScope {
             if (!root.ready)
                 return;
             const pos = files.positions;
-            let changed = false;
-            for (const n of Object.keys(root.lay)) {
-                const p = Logic.own(pos, n);
-                if (!p || p.col !== root.lay[n].col || p.row !== root.lay[n].row)
-                    changed = true;
-            }
-            if (changed)
-                files.setPositions(Logic.merged(pos, root.lay));
+            const add = Logic.newSlots(root.lay, pos);
+            if (Object.keys(add).length > 0)
+                files.setPositions(Logic.merged(pos, add));
         }
     }
 
@@ -460,7 +456,8 @@ FocusScope {
             if (m && Array.isArray(m.names) && typeof m.anchor === "string" && Logic.placed(lay, m.anchor)) {
                 const want = Logic.slotAt(drop.x - m.hx - leftInset, drop.y - m.hy - topInset, areaW, Tokens.desktopIconCellWidth, Tokens.desktopIconCellHeight, grid.cols, grid.rows);
                 const names = m.names.filter(n => typeof n === "string" && Logic.placed(lay, n));
-                files.setPositions(Logic.merged(files.positions, Logic.moveGroup(lay, names, m.anchor, want, grid.cols, grid.rows)));
+                // Only the moved icons' slots are stored: an icon shown out of its stored slot for now keeps it (audit A-19).
+                files.setPositions(Logic.merged(files.positions, Logic.pick(Logic.moveGroup(lay, names, m.anchor, want, grid.cols, grid.rows), names)));
                 drop.accept(Qt.MoveAction);
                 return;
             }

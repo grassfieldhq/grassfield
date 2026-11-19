@@ -392,7 +392,46 @@ function reorder(items, from, to, stored, lookup) {
         }
     }
     const pinned = order.filter(a => a.key === moved.key ? becomesPinned : a.pinned).map(a => a.key);
-    return {changed: pinned.join("\n") !== pinnedBefore.join("\n"), pinned: stored && lookup ? keepUnresolved(pinned, stored, lookup) : pinned};
+    if (!stored || !lookup)
+        return {changed: pinned.join("\n") !== pinnedBefore.join("\n"), pinned: pinned};
+    // The tiles may be older than the stored list (a rebuild is deferred while a tile is dragged, and Settings can change the pins
+    // meanwhile): the move is applied to the stored list as it is now, not written from the tiles (audit A-09). Only the dragged app
+    // moves, next to the pin it now follows (or before the one it now precedes); the other pins, and ids with no entry right now,
+    // stay as stored.
+    const known = new Set(apps.map(a => a.key));
+    const current = storedKeys(stored, lookup, known);
+    if (!becomesPinned)
+        return {changed: false, pinned: keepUnresolved(current, stored, lookup)};
+    const next = current.filter(k => k !== moved.key);
+    const at = pinned.indexOf(moved.key);
+    let place = -1;
+    for (let i = at - 1; i >= 0 && place < 0; i--) {
+        const j = next.indexOf(pinned[i]);
+        if (j >= 0)
+            place = j + 1;
+    }
+    for (let i = at + 1; i < pinned.length && place < 0; i++) {
+        const j = next.indexOf(pinned[i]);
+        if (j >= 0)
+            place = j;
+    }
+    next.splice(place < 0 ? (at === 0 ? 0 : next.length) : place, 0, moved.key);
+    return {changed: next.join("\n") !== current.join("\n"), pinned: keepUnresolved(next, stored, lookup)};
+}
+
+// The keys of the stored pins, in order: an id's entry id when it resolves, the id itself when it has a tile (`known`: a running app
+// without an entry), nothing for an id with neither (keepUnresolved puts those back). The Files ids are not pins.
+function storedKeys(stored, lookup, known) {
+    const out = [];
+    for (const id of (stored ? stored : [])) {
+        if (isFilesId(id))
+            continue;
+        const entry = lookup(id);
+        const key = entry ? entry.id : (known.has(id) ? id : null);
+        if (key !== null && out.indexOf(key) < 0)
+            out.push(key);
+    }
+    return out;
 }
 
 // The pinned `keys` with the ids of `stored` that resolve to no entry put back, each after the pin it followed (first when

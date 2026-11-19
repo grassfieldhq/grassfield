@@ -62,6 +62,9 @@ media-key bindings (the session config binds keys to the IPC targets below), sli
    again (to `timeout`, which passes it to the group) and is still waited for, so two commands never share a bus. Tests:
    `tests/unit/tst_brightnesslogic.qml` (the command's answer, the step, which display a key acts on, the queue, the bound).
 
+### Surface (audit 2026-11-18)
+The pill's layer surface stays mapped on the display the OSD shows on, empty and without input while the pill is hidden (blur region off), so a key press after a hide only fades the pill in instead of mapping a surface and waiting for its first frame. It is unmapped while hidden on an output that shows a full-screen window: a mapped overlay surface, even an empty one, would keep the compositor from scanning that window out directly.
+
 ## Acceptance criteria
 | ID | Test | Level |
 |---|---|---|

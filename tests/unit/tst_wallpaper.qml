@@ -1032,7 +1032,7 @@ TestCase {
         const wall = read("shell/desktop/Wallpaper.qml");
         verify(!/movingWanted/.test(wall));
         verify(/IdleMonitor \{\s*id: idleMonitor\s*enabled: win\.videoWanted\n/.test(wall), "the idle monitor for a video only");
-        compare((wall.match(/motionMs: WallpaperState\.motionOf\(win\.modelData \? win\.modelData\.name : ""\)/g) || []).length, 2, "both slots");
+        compare((wall.match(/motionMs: WallpaperState\.motionOf\(win\.modelData \? win\.modelData\.name : ""\)/g) || []).length, 3, "every slot (the third takes a change that arrives during a fade)");
         const state = read("shell/services/WallpaperState.qml");
         verify(/readonly property bool moving: WallpaperConfig\.normalize\(Settings\.wallpaper\)\.moving/.test(state));
         verify(/function motionOf\(output: string\): real \{\s*return WallpaperConfig\.motionIn\(root\.motion, output\);/.test(state));

@@ -49,6 +49,9 @@ a recents row, the header more-menu and the grid/list switch of the reference (n
 - The earlier full-screen layout (pages, dots, folders, drag, `apps-layout.json`) is gone; an old `apps-layout.json` in the state directory is ignored and never written again.
 - Search usage (`search-usage.json`) is read for ranking only; launching from Apps does not bump it.
 
+### One window (audit 2026-11-18)
+Apps has ONE layer window (`AppsWindow.qml`), on the controller's display: one grid, one warmed cell pool, one copy of each list change at a keystroke (it was one window per display, each with its own grid and pool). The window is unmapped whenever Apps is closed, so moving it to the display Apps opens on costs nothing beyond the mapping every opening does.
+
 ## Known limitations
 - The chip padding is an estimate (not measured in the reference).
 - No recents row, no more-menu, no list view; no folders or custom order.

@@ -65,6 +65,14 @@ function cornerDistance(corner, screen, px, py) {
     return Math.max(dx, dy);
 }
 
+// The in-process request of an action ({target, fn, args}, as platform/shortcuts delivers a key), or null for none and for direct
+// actions (audit A-20: the corner reaches the surface's IpcHandler in the shell itself, no `qs ipc` process after the dwell).
+function request(action) {
+    const name = normalize(action);
+    const target = isDirect(name) ? null : IPC[name];
+    return target ? {target: target[0], fn: target[1], args: []} : null;
+}
+
 // True when `qs ipc show` output lists the target (the Apps surface may not exist yet).
 function hasTarget(showOutput, target) {
     const re = new RegExp("^\\s*target " + target.replace(/[^\w.-]/g, "") + "\\s*$", "m");
