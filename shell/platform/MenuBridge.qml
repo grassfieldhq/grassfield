@@ -439,9 +439,15 @@ Singleton {
         repeat: true
         triggeredOnStart: true
         running: root.socketPath !== "" && Capabilities.settled && !socket.connected
+        // After the handler: an interval set inside the first tick of a triggeredOnStart timer ticks at once again (two
+        // tries and a doubled pause at every start), and a try that connected at once has already brought 2 s back.
+        function slower(): void {
+            if (!socket.connected)
+                reconnect.interval = Math.min(reconnect.interval * 2, 60000);
+        }
         onTriggered: {
             socket.connected = true;
-            reconnect.interval = Math.min(reconnect.interval * 2, 60000);
+            Qt.callLater(reconnect.slower);
         }
     }
 
