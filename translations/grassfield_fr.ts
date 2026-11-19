@@ -9403,7 +9403,7 @@
     </message>
     <message>
         <source>Stop Updating “%1”</source>
-        <translation>Arrêter la mise à jour de « %1 »</translation>
+        <translation>Arrêter la mise à jour de «&#xa0;%1&#xa0;»</translation>
     </message>
     <message>
         <source>Stop Installing “%1”</source>
@@ -9541,7 +9541,7 @@
     </message>
     <message>
         <source>Not saved: %1</source>
-        <translation>Non enregistré : %1</translation>
+        <translation>Non enregistré&#xa0;: %1</translation>
     </message>
     <message>
         <source>Delete this memo?</source>
@@ -9561,7 +9561,7 @@
     </message>
     <message>
         <source>Quit without saving?</source>
-        <translation>Quitter sans enregistrer ?</translation>
+        <translation>Quitter sans enregistrer&#xa0;?</translation>
     </message>
     <message>
         <source>Your latest changes couldn&apos;t be saved.</source>
@@ -16189,11 +16189,11 @@
     </message>
     <message>
         <source>%1, and its new settings could not be removed: %2</source>
-        <translation>%1, et ses nouveaux réglages n’ont pas pu être supprimés : %2</translation>
+        <translation>%1, et ses nouveaux réglages n’ont pas pu être supprimés&#xa0;: %2</translation>
     </message>
     <message>
         <source>the VPN&apos;s state could not be read: it may still be connecting</source>
-        <translation>L’état du VPN n’a pas pu être lu : il est peut-être encore en cours de connexion</translation>
+        <translation>L’état du VPN n’a pas pu être lu&#xa0;: il est peut-être encore en cours de connexion</translation>
     </message>
     <message>
         <source>the network&apos;s state could not be read: it may still be joining</source>
