@@ -1913,7 +1913,7 @@ TEST(TilingEdgePacing, OneApplicationPerFrameWithTheLatestDelta) {
     EXPECT_TRUE(p.pending());
     const auto applied = p.frame();
     ASSERT_TRUE(applied);
-    EXPECT_DOUBLE_EQ(*applied, 9) << "the frame applies the latest delta";
+    EXPECT_DOUBLE_EQ(applied.value_or(0.0), 9) << "the frame applies the latest delta";
     EXPECT_FALSE(p.frame()) << "once per frame";
     EXPECT_FALSE(p.motion(9)) << "no movement since: no frame asked for";
     EXPECT_TRUE(p.motion(10));

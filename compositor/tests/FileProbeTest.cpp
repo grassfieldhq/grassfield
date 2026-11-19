@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <string>
 
@@ -18,13 +19,14 @@ namespace {
     class FileProbe : public ::testing::Test {
       protected:
         void SetUp() override {
-            std::string tmpl = std::string{std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp"} + "/gf-fileprobe.XXXXXX";
+            const char* tmp = std::getenv("TMPDIR");
+            std::string tmpl = std::string{tmp != nullptr ? tmp : "/tmp"} + "/gf-fileprobe.XXXXXX";
             ASSERT_NE(::mkdtemp(tmpl.data()), nullptr);
             dir = tmpl;
         }
         void TearDown() override {
-            std::string cmd = "rm -rf '" + dir + "'";
-            (void)std::system(cmd.c_str()); // NOLINT(cert-env33-c): test cleanup of its own directory
+            std::error_code ec;
+            std::filesystem::remove_all(dir, ec); // test cleanup of its own directory
         }
         void write(const std::string& name, const std::string& text) const {
             std::ofstream(dir + "/" + name) << text;
@@ -37,11 +39,11 @@ TEST_F(FileProbe, IdentityChangesWithTheFileNotWithItsDirectoryTimes) {
     write("plugin.so", "one");
     const auto a = identity(dir + "/plugin.so");
     ASSERT_TRUE(a.has_value());
-    EXPECT_EQ(a->substr(0, 2), "f:");
+    EXPECT_EQ(a.value_or(std::string{}).substr(0, 2), "f:");
     EXPECT_EQ(identity(dir + "/plugin.so"), a) << "stable while nothing changes";
     const auto d = identity(dir);
     ASSERT_TRUE(d.has_value());
-    EXPECT_EQ(d->substr(0, 2), "d:");
+    EXPECT_EQ(d.value_or(std::string{}).substr(0, 2), "d:");
     write("other", "x"); // the directory's mtime/ctime move
     EXPECT_EQ(identity(dir), d) << "a directory's identity ignores its times (an entry made in $HOME must not re-vet)";
     // Replaced by rename (what the rebuild does): another inode.
@@ -61,7 +63,7 @@ TEST_F(FileProbe, IdentityLooksAtASymlinkItself) {
     ASSERT_EQ(::symlink((dir + "/target").c_str(), (dir + "/link").c_str()), 0);
     const auto l = identity(dir + "/link");
     ASSERT_TRUE(l.has_value());
-    EXPECT_EQ(l->substr(0, 2), "l:");
+    EXPECT_EQ(l.value_or(std::string{}).substr(0, 2), "l:");
     EXPECT_FALSE(identity(dir + "/missing").has_value());
     EXPECT_FALSE(identity("relative/path").has_value());
     EXPECT_FALSE(identity(std::string{"/tmp/a\0b", 8}).has_value());
@@ -81,7 +83,7 @@ TEST_F(FileProbe, ReadRegularIsBoundedAndNeverBlocks) {
     EXPECT_FALSE(readRegular(dir + "/missing", 4096).has_value());
     // The cap.
     write("big", std::string(kMaxRead + 10, 'x'));
-    EXPECT_EQ(readRegular(dir + "/big", kMaxRead * 2)->size(), kMaxRead);
+    EXPECT_EQ(readRegular(dir + "/big", kMaxRead * 2).value_or(std::string{}).size(), kMaxRead);
 }
 
 TEST_F(FileProbe, ListPlainFilesIsSortedAndPlain) {

@@ -165,7 +165,7 @@ namespace {
         }));
         // A finger on a titlebar (CIO-06): Hyprland offers touches to no decoration, so a down on a shown bar, and that finger's
         // motion, up and cancel, are the titlebar's and cancelled (no client saw the down).
-        l.push_back(ev.input.touch.down.listen([](ITouch::SDownEvent e, Event::SCallbackInfo& info) {
+        l.push_back(ev.input.touch.down.listen([](const ITouch::SDownEvent& e, Event::SCallbackInfo& info) {
             if (CGrassfieldTitlebar::onTouchDown(e))
                 info.cancelled = true;
         }));

@@ -700,7 +700,7 @@ namespace gf::ipc {
             lua_createtable(L, static_cast<int>(names.size()), 0);
             for (size_t i = 0; i < names.size(); ++i) {
                 lua_pushlstring(L, names[i].data(), names[i].size());
-                lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+                lua_rawseti(L, -2, static_cast<lua_Integer>(i) + 1);
             }
             return 1;
         }

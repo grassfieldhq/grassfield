@@ -1,4 +1,4 @@
-#include "core/FileProbe.hpp"
+#include "FileProbe.hpp"
 
 #include <algorithm>
 #include <cerrno>
