@@ -363,8 +363,10 @@ check "... SetNTP(false, true)" logged general SetNTP /org/freedesktop/timedate1
 out=$(probe act '{"op":"time.zone","zone":"Europe/Zurich"}')
 check "time zone: ok, SetTimezone('Europe/Zurich', interactive true)" logged general SetTimezone /org/freedesktop/timedate1 "'Europe/Zurich', true"
 out=$(probe act '{"op":"time.set","usec":"1800000000000000"}')
-check "set the time: ok, SetTime(usec, absolute, interactive true)" logged general SetTime /org/freedesktop/timedate1 "1800000000000000, false, true"
-check "... and timedate1 now reads the new zone, NTP off and the new time" py "$(probe time-state)" 'j["zone"] == "Europe/Zurich" and not j["ntp"] and j["usec"] == "1800000000000000"'
+# SP-13 (audit fix 7c9abeb, systembus.h runAction time.set): the time goes as the step from the clock now (relative), which
+# timedated adds after the polkit dialog; the fake adds it to its own clock as timedated does.
+check "set the time: ok, SetTime(step, relative, interactive true)" logged general SetTime /org/freedesktop/timedate1 ", true, true"
+check "... and timedate1 now reads the new zone, NTP off and the new time (within a minute)" py "$(probe time-state)" 'j["zone"] == "Europe/Zurich" and not j["ntp"] and abs(int(j["usec"]) - 1800000000000000) < 60000000'
 before=$(calls general)
 out=$(probe act '{"op":"time.zone","zone":"../../etc/passwd"}')
 check "a bad zone is refused before the bus (invalid request, no call)" bash -c '[[ $1 == "failed: invalid request" && $(wc -l <"$2") -eq $3 ]]' _ "$out" "$work/general.log" "$before"

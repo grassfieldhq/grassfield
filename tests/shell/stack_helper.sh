@@ -127,7 +127,8 @@ bad=$(awk 'BEGIN { FS = "\037" } !/^(A|G)$/ && !/^W\037/ { c++ } END { print c +
 check "no line but A, G and W: a name cannot forge a record" 0 "$bad"
 fields=$(awk 'BEGIN { FS = "\037" } /^W\037/ { n = NF } END { print n }' "$out")
 check "the fields are counted by US only (4 + 5 x 7)" 39 "$fields"
-ok "a name that is not UTF-8 is listed" grep -a -q "$(printf 'caf\xef\xbf\xbd')" "$out"
+# Its byte that is not UTF-8 is written as \xHH, so the name can be told back byte for byte (audit F22, StackLogic::escapeName).
+ok "a name that is not UTF-8 is listed, its byte 0xe9 as \\xe9" grep -a -q -F 'caf\xe9.txt' "$out"
 isdir=$(awk 'BEGIN { FS = "\037" } /^W\037/ { last = $0 } END { n = split(last, f, "\037"); for (i = 0; i < f[4]; i++) if (f[5 + i * 5] == "linkto" || f[5 + i * 5] == "broken") printf "%s", f[6 + i * 5] }' "$out")
 check "links are not followed (items, not folders)" "00" "$isdir"
 stop

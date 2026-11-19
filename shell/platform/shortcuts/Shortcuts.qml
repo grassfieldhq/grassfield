@@ -75,7 +75,7 @@ Singleton {
         // Not attached (yet): the request still reaches the shell, by the process it took before.
         if (!root.reported[request.target]) {
             root.reported = Object.assign({}, root.reported, {[request.target]: true});
-            console.warn("grassfield-shell: key target", request.target, "has no attached handler: served through qs ipc");
+            console.warn("grassfield-shell: key target", request.target, "has no attached handler: served through its IPC handler");
         }
         Quickshell.execDetached(["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "qs", "ipc", "-p", Quickshell.shellDir, "call", request.target, request.fn].concat(request.args.map(a => String(a))));
         return true;
