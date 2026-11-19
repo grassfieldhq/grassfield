@@ -7,12 +7,11 @@
 #include "core/EventThrottle.hpp"
 
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/LayerState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
@@ -98,8 +97,8 @@ namespace {
     PHLWORKSPACE regularWorkspace(of::WorkspaceId id) {
         if (id <= 0 || !State::workspaceState())
             return nullptr;
-        auto ws = State::workspaceState()->query().id(id).run();
-        return ws && !ws->m_isSpecialWorkspace ? ws : nullptr;
+        auto ws = gf::compat::workspaceById(id);
+        return ws && !gf::compat::isSpecial(ws) ? ws : nullptr;
     }
 
     // The Desktop is the one its monitor shows.
@@ -113,11 +112,11 @@ namespace {
         const auto fs  = Desktop::focusState();
         const auto mon = fs ? fs->monitor() : nullptr;
         const auto ws  = mon ? mon->m_activeWorkspace : nullptr;
-        return ws && !ws->m_isSpecialWorkspace ? ws : nullptr;
+        return ws && !gf::compat::isSpecial(ws) ? ws : nullptr;
     }
 
     std::optional<of::WorkspaceId> idOf(const PHLWORKSPACE& ws) {
-        return ws ? std::optional<of::WorkspaceId>{ws->m_id} : std::nullopt;
+        return ws ? std::optional<of::WorkspaceId>{gf::compat::workspaceId(ws)} : std::nullopt;
     }
 
     // ---- events ----
@@ -216,7 +215,7 @@ namespace {
     // holds the keyboard afterwards: Hyprland may refuse it (a no_focus rule, a modal child).
     bool focusWindow(const PHLWINDOW& w, Desktop::eFocusReason reason) {
         const auto fs = Desktop::focusState();
-        if (!fs || !w || !w->m_isMapped)
+        if (!fs || !w || !gf::compat::mapped(w))
             return false;
         bool       stateReset = false;
         const bool held       = gf::deferredFocus::focusWindow(w, reason, &stateReset);
@@ -244,10 +243,10 @@ namespace {
             const auto mark = std::ranges::find_if(S().marks, [&w](const SFocusMark& m) { return m.window.lock() == w; });
             candidates.push_back(of::Candidate{.id          = addressOf(w),
                                                .onWorkspace = w->m_workspace == ws,
-                                               .mapped      = w->m_isMapped,
+                                               .mapped      = gf::compat::mapped(w),
                                                .hidden      = w->isHidden(),
                                                .takesInput  = w->acceptsInput(),
-                                               .focusable   = !w->m_X11ShouldntFocus,
+                                               .focusable   = !gf::compat::shouldntFocus(w),
                                                .focusSeq    = mark == S().marks.end() ? 0 : mark->seq});
             windows.push_back(w);
         }
@@ -263,7 +262,7 @@ namespace {
     // holds it. A released chrome (keyboard None) that Hyprland left the keyboard on does not count: its keys go nowhere.
     bool layerKeepsKeyboard() {
         const auto owner = gf::surfaces::ownerOf(gf::surfaces::keyboardFocus());
-        return owner.layer && owner.layer->m_mapped && gf::surfaces::interactivity(owner.layer) != 0;
+        return owner.layer && gf::compat::layerMapped(owner.layer) && gf::surfaces::interactivity(owner.layer) != 0;
     }
 
     // No window gets the keyboard on that Desktop (the desktop; macOS: no app window is key): Hyprland's active window is
@@ -306,9 +305,9 @@ namespace {
         const bool namesWindow = r.target == of::Target::Window || r.target == of::Target::Remembered || r.target == of::Target::Press;
         const auto target      = namesWindow ? windowByAddress(r.window) : nullptr;
         const auto targetSpace = target ? target->m_workspace : nullptr;
-        const of::WindowFacts window{.exists    = target && target->m_isMapped,
+        const of::WindowFacts window{.exists    = target && gf::compat::mapped(target),
                                      .hidden    = target && target->isHidden(),
-                                     .minimized = target && (!targetSpace || targetSpace->m_isSpecialWorkspace),
+                                     .minimized = target && (!targetSpace || gf::compat::isSpecial(targetSpace)),
                                      .shown     = shown(targetSpace)};
         const auto space = r.target == of::Target::Workspace ? regularWorkspace(r.workspace) : nullptr;
         const auto plan  = of::plan(r.target, of::judgeWindow(window), of::WorkspaceFacts{.exists = space != nullptr, .shown = shown(space)});
@@ -325,7 +324,7 @@ namespace {
                 // shown, so workspace_back_and_forth never applies), then the front window as for a shown Desktop.
                 const auto result = Config::Actions::changeWorkspace(space);
                 if (!result)
-                    gf::logRequest(Log::WARN, "overview focus: switching to Desktop {} failed: {}", space->m_id, result.error().message);
+                    gf::logRequest(Log::WARN, "overview focus: switching to Desktop {} failed: {}", gf::compat::workspaceId(space), result.error().message);
                 [[fallthrough]];
             }
             case of::Plan::Front: {
@@ -345,7 +344,7 @@ namespace {
         if (!fs || !g_pInputManager || gf::deferredFocus::sessionLocked())
             return;
         const auto owner = gf::surfaces::ownerOf(gf::surfaces::keyboardFocus());
-        if ((owner.window && owner.window->m_isMapped) || layerKeepsKeyboard())
+        if ((owner.window && gf::compat::mapped(owner.window)) || layerKeepsKeyboard())
             return; // a window, or a layer surface that takes the keyboard, holds it
         auto& layers = S().handLayers;
         auto& facts  = S().handFacts;
@@ -365,12 +364,12 @@ namespace {
             SDropRefs(SDropRefs&&)                 = delete;
             SDropRefs& operator=(SDropRefs&&)      = delete;
         } dropRefs{layers, facts};
-        for (const auto& ref : g_pInputManager->m_exclusiveLSes) {
+        for (const auto& ref : gf::compat::exclusiveLayers()) {
             const auto ls = ref.lock();
             if (!ls)
                 continue;
             layers.push_back(ls);
-            facts.push_back(of::ExclusiveLayer{.ns = ls->m_namespace, .mapped = ls->m_mapped, .exclusive = gf::surfaces::interactivity(ls) == 1, .underCursor = false});
+            facts.push_back(of::ExclusiveLayer{.ns = ls->m_namespace, .mapped = gf::compat::layerMapped(ls), .exclusive = gf::surfaces::interactivity(ls) == 1, .underCursor = false});
         }
         auto pick = of::keyboardHandOver(facts, S().closing, false);
         if (!pick)

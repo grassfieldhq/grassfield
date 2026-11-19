@@ -282,7 +282,7 @@ void main() {
 
     CGenieElement::CGenieElement(SDrawData&& data) : m_data(std::move(data)) {}
 
-    std::vector<UP<IPassElement>> CGenieElement::draw() {
+    void CGenieElement::drawGf() {
         gf::guarded("genie draw", [this] {
             const auto t0 = std::chrono::steady_clock::now();
             auto&      s  = gl();
@@ -297,7 +297,8 @@ void main() {
 
             // Damage of this frame (pixels of the monitor, before its transform) inside the mesh's box: nothing is drawn
             // outside it (those pixels are not repainted this frame; anything drawn there would stay on screen).
-            CRegion damage = g_pHyprRenderer->m_renderData.damage.copy();
+            auto&   ctx    = gf::compat::currentContext();
+            CRegion damage = gf::compat::renderData(ctx).damage.copy();
             damage.intersect(CBox{d.pixelBounds}.expand(1.0));
             if (damage.empty())
                 return;
@@ -327,7 +328,7 @@ void main() {
             glBindBuffer(GL_ARRAY_BUFFER, s.vbo);
             glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(float)), verts.data(), GL_STREAM_DRAW);
 
-            const auto proj = g_pHyprRenderer->projectBoxToTarget(d.pixelBounds, HYPRUTILS_TRANSFORM_NORMAL).getMatrix();
+            const auto proj = gf::compat::projectBoxToTarget(ctx, d.pixelBounds, HYPRUTILS_TRANSFORM_NORMAL).getMatrix();
             glUseProgram(s.program);
             glUniformMatrix3fv(s.locProj, 1, GL_TRUE, proj.data());
             glUniform1i(s.locTex, 0);
@@ -341,9 +342,9 @@ void main() {
             d.tex->setTexParameter(GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
             Render::GL::g_pHyprOpenGL->blend(true);
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // premultiplied, Hyprland's blend function
-            damage.forEachRect([&s](const pixman_box32_t& rect) {
-                Render::GL::g_pHyprOpenGL->scissor(&rect);
+            gf::compat::blendPremultiplied(); // premultiplied, Hyprland's blend function
+            damage.forEachRect([&s, &ctx](const pixman_box32_t& rect) {
+                gf::compat::scissor(ctx, &rect);
                 glDrawElements(GL_TRIANGLES, s.indexCount, GL_UNSIGNED_SHORT, nullptr);
             });
             g_pHyprRenderer->disableScissor();
@@ -356,15 +357,6 @@ void main() {
             const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
             s.maxDrawMicro      = std::max(s.maxDrawMicro, micros);
         });
-        return {};
-    }
-
-    bool CGenieElement::needsLiveBlur() {
-        return false;
-    }
-
-    bool CGenieElement::needsPrecomputeBlur() {
-        return false;
     }
 
     const char* CGenieElement::passName() {
@@ -375,12 +367,8 @@ void main() {
         return EK_CUSTOM;
     }
 
-    std::optional<CBox> CGenieElement::boundingBox() {
+    std::optional<CBox> CGenieElement::boundingBoxGf() {
         return m_data.logicalBounds;
-    }
-
-    CRegion CGenieElement::opaqueRegion() {
-        return {};
     }
 
 } // namespace gf::genie

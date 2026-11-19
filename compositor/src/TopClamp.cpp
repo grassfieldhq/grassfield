@@ -6,7 +6,7 @@
 #include "Plugin.hpp"
 #include "core/TopClamp.hpp"
 
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/supplementary/DragController.hpp>
 #include <hyprland/src/layout/target/Target.hpp>
@@ -63,7 +63,7 @@ namespace gf::topClamp {
 
         // A floating window with its own frame: not full screen or zoomed (those cover the menu bar on purpose).
         bool holdable(const PHLWINDOW& w) {
-            if (!w || !w->m_isMapped || !w->m_isFloating || !w->layoutTarget())
+            if (!w || !gf::compat::mapped(w) || !gf::compat::isFloating(w) || !w->layoutTarget())
                 return false;
             const auto& fs = Fullscreen::controller();
             return !fs || fs->getFullscreenModes(w).internal == Fullscreen::FSMODE_NONE;

@@ -12,7 +12,7 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
 
@@ -128,7 +128,7 @@ namespace {
         if (!surface || !Desktop::windowState())
             return nullptr;
         for (const auto& w : Desktop::windowState()->windows()) {
-            if (w && w->m_isMapped && w->resource() == surface)
+            if (w && gf::compat::mapped(w) && w->resource() == surface)
                 return w;
         }
         return nullptr;
@@ -138,7 +138,7 @@ namespace {
         if (!Desktop::windowState())
             return nullptr;
         for (const auto& w : Desktop::windowState()->windows()) {
-            if (w && w->m_isMapped && idOf(w.get()) == address)
+            if (w && gf::compat::mapped(w) && idOf(w.get()) == address)
                 return w;
         }
         return nullptr;
@@ -157,7 +157,7 @@ namespace {
     // Wayland client is Xwayland, never served) and for a window that is not mapped (a clear).
     int unregisteredPid(uint64_t window) {
         const auto w = mappedWindowByAddress(window);
-        if (!w || w->m_isX11)
+        if (!w || gf::compat::isX11(w))
             return 0;
         const auto surface = w->resource();
         wl_client* client  = surface ? surface->client() : nullptr;
@@ -303,7 +303,7 @@ namespace {
     // ---- windows ---------------------------------------------------------------------------------------
 
     void onWindowMapped(const PHLWINDOW& w) {
-        if (!w || !w->m_isMapped)
+        if (!w || !gf::compat::mapped(w))
             return;
         const auto surface = w->resource();
         if (surface)
@@ -329,7 +329,7 @@ namespace {
     // until the keyboard went elsewhere (a layer surface, nothing), as when a shell popup that held it closes.
     void onKeyboardFocus(const SP<CWLSurfaceResource>& surface) {
         const auto owner  = gf::surfaces::ownerOf(surface);
-        const auto window = owner.window && owner.window->m_isMapped && !owner.popup ? idOf(owner.window.get()) : 0;
+        const auto window = owner.window && gf::compat::mapped(owner.window) && !owner.popup ? idOf(owner.window.get()) : 0;
         auto&      s      = st();
         if (window == s.keyboardWindow)
             return;
@@ -339,7 +339,7 @@ namespace {
     }
 
     void onWindowFocused(const PHLWINDOW& w) {
-        if (w && w->m_isMapped)
+        if (w && gf::compat::mapped(w))
             post(st().registry.query(idOf(w.get())));
     }
 

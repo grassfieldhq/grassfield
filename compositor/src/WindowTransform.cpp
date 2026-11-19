@@ -5,8 +5,7 @@
 #include "core/CapturePrivacy.hpp"
 #include "core/Overview.hpp"
 
-#include <hyprland/src/desktop/Workspace.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/helpers/Color.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/output/MonitorResources.hpp>
@@ -37,8 +36,8 @@ namespace gf::transform {
     }
 
     Vector2D renderOffset(const PHLWINDOW& w) {
-        Vector2D off = w->m_floatingOffset;
-        if (!w->m_pinned && w->m_workspace && w->m_workspace->m_renderOffset)
+        Vector2D off = gf::compat::floatingOffset(w);
+        if (!gf::compat::pinned(w) && w->m_workspace && w->m_workspace->m_renderOffset)
             off = off + w->m_workspace->m_renderOffset->value();
         return off;
     }
@@ -47,25 +46,6 @@ namespace gf::transform {
         Box translated(const Box& b, const Vector2D& by) {
             return Box{b.x + by.x, b.y + by.y, b.w, b.h};
         }
-
-        // Sets the render damage for the draws below and restores it afterwards. Hyprland leaves the render damage at the
-        // window's own box once it has rendered the window into its work buffer (CRenderPass::render stores its damage).
-        class CDamageOverride {
-          public:
-            explicit CDamageOverride(const CRegion& damage) : m_saved(g_pHyprRenderer->m_renderData.damage.copy()) {
-                g_pHyprRenderer->m_renderData.damage = damage;
-            }
-            ~CDamageOverride() {
-                g_pHyprRenderer->m_renderData.damage = m_saved;
-            }
-            CDamageOverride(const CDamageOverride&)            = delete;
-            CDamageOverride& operator=(const CDamageOverride&) = delete;
-            CDamageOverride(CDamageOverride&&)                 = delete;
-            CDamageOverride& operator=(CDamageOverride&&)      = delete;
-
-          private:
-            CRegion m_saved;
-        };
 
         // WM-01, WM-02: the output buffers of the transforms. Hyprland composites a transformer's output over the whole frame
         // damage, so every pixel of it that is not the window must be transparent. A buffer of Hyprland's pool holds whatever
@@ -96,11 +76,7 @@ namespace gf::transform {
         }
 
         bool fits(const SScratch& sc, const PHLMONITOR& mon) {
-            const auto resources = mon->resources();
-            if (!resources || resources.expired() || !resources->m_blurFB || !sc.fb)
-                return false;
-            const auto& ref = resources->m_blurFB;
-            return sc.fb->m_size == ref->m_size && sc.fb->m_drmFormat == ref->m_drmFormat && sc.fb->imageDescription() == ref->imageDescription();
+            return sc.fb && gf::compat::workBufferFits(sc.fb, mon);
         }
 
         // A buffer of `mon` nothing else holds (Hyprland releases the previous window's output once it is composited), or a
@@ -152,27 +128,27 @@ namespace gf::transform {
             sc.dirty = {};
             if (region.empty())
                 return;
-            const CDamageOverride damage{region};
-            const auto            guard = g_pHyprRenderer->bindTempFB(sc.fb);
-            g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor(0, 0, 0, 0)});
+            auto&                          ctx = gf::compat::currentContext();
+            const gf::compat::CCanvasScope canvas{ctx, sc.fb, region};
+            gf::compat::draw(ctx, CClearPassElement::SClearData{CHyprColor(0, 0, 0, 0)});
         }
 
         // Draws the transformer's input `tex` at `texBox`, clipped to `drawn` (and a black plate there, SEC-01), into the
         // transparent `sc`; `drawn` is then what it holds.
         void drawInto(SScratch& sc, const SP<Render::ITexture>& tex, const Box& texBox, const Box& drawn, const std::optional<Box>& plate) {
-            const CRegion         region{toCBox(drawn)};
-            const CDamageOverride damage{region};
-            const auto            guard = g_pHyprRenderer->bindTempFB(sc.fb);
-            CTexPassElement::SRenderData data;
+            const CRegion                  region{toCBox(drawn)};
+            auto&                          ctx = gf::compat::currentContext();
+            const gf::compat::CCanvasScope canvas{ctx, sc.fb, region};
+            CTexPassElement::SRenderData   data;
             data.tex = tex;
             data.box = toCBox(texBox);
             data.a   = 1.F;
-            g_pHyprRenderer->draw(data, region);
+            gf::compat::draw(ctx, data, region);
             if (plate) {
                 CRectPassElement::SRectData black;
                 black.box   = toCBox(*plate);
                 black.color = Colors::BLACK; // Hyprland's own box over a protected window (ScreenshareFrame.cpp renderMonitor)
-                g_pHyprRenderer->draw(black, region);
+                gf::compat::draw(ctx, black, region);
             }
             sc.dirty = toCBox(drawn);
         }
@@ -190,14 +166,21 @@ namespace gf::transform {
     }
 
     bool monitorFrame() {
-        return g_pHyprRenderer && !g_pHyprRenderer->m_bRenderingSnapshot && g_pHyprRenderer->m_renderData.projectionType == Render::RPT_MONITOR;
+        return gf::compat::monitorFrame(gf::compat::currentContext());
     }
 
-    SP<Render::IFramebuffer> drawFitted(const PHLWINDOW& w, const Box& rect, const SP<Render::IFramebuffer>& in, bool& warnedNoBuffer, uint64_t address) {
-        if (!in || !w || !g_pHyprRenderer)
-            return in;
-        const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
-        const auto tex = in->getTexture();
+    CBox fittedExtents(const PHLWINDOW& w, const Box& rect, const PHLMONITOR& mon, const CBox& currentBox) {
+        if (!w || !mon)
+            return currentBox;
+        const Box visual = visualBox(w, rect);
+        return CBox{visual.x - mon->m_position.x, visual.y - mon->m_position.y, visual.w, visual.h}.expand(1.0);
+    }
+
+    Output drawFitted(const PHLWINDOW& w, const Box& rect, const Input& in, bool& warnedNoBuffer, uint64_t address) {
+        if (!in.fb || !w || !g_pHyprRenderer)
+            return {.fb = in.fb, .box = in.box};
+        const auto mon = in.monitor;
+        const auto tex = in.fb->getTexture();
         if (!mon || !tex)
             return drawNothing(in); // as nothing where possible (drawNothing needs the monitor), never at its real place
         // resources() is a weak reference to a unique pointer: it must not be lock()ed (hyprutils aborts), only checked and
@@ -216,7 +199,11 @@ namespace gf::transform {
                                                        .monitorScale = mon->m_scale,
                                                        .texW         = mon->m_transformedSize.x,
                                                        .texH         = mon->m_transformedSize.y};
-        const Box texBox = gf::minimize::textureBox(geometry, dst, mon->m_position.x, mon->m_position.y, mon->m_scale);
+        // That mapping is for a texture of the whole monitor; the input covers in.box (0.56: the whole monitor; 0.57: a canvas
+        // around the window, HyprCompat.hpp STransformInput), with one texture pixel per monitor pixel.
+        const Box whole = gf::minimize::textureBox(geometry, dst, mon->m_position.x, mon->m_position.y, mon->m_scale);
+        const double kx = whole.w / mon->m_transformedSize.x, ky = whole.h / mon->m_transformedSize.y;
+        const Box texBox{whole.x + (in.box.x * kx), whole.y + (in.box.y * ky), tex->m_size.x * kx, tex->m_size.y * ky};
         // SEC-01: Hyprland blacks out a window hidden from captures at its real place only, never here
         // (core/CapturePrivacy.hpp). While this display is captured the miniature's surface and subsurfaces are under a
         // black plate, on screen too (the bar above shows no title then: Titlebar.cpp); without a plate the window is
@@ -250,27 +237,25 @@ namespace gf::transform {
             clearScratch(once, {});
             if (draws)
                 drawInto(once, tex, texBox, drawn, hidden ? std::optional<Box>{plate} : std::nullopt);
-            return out;
+            return {.fb = out, .box = gf::compat::monitorPixels(mon)};
         }
         clearScratch(*sc, draws ? drawn : Box{});
         if (draws)
             drawInto(*sc, tex, texBox, drawn, hidden ? std::optional<Box>{plate} : std::nullopt);
-        return sc->fb;
+        return {.fb = sc->fb, .box = gf::compat::monitorPixels(mon)};
     }
 
-    SP<Render::IFramebuffer> drawNothing(const SP<Render::IFramebuffer>& in) {
-        if (!in || !g_pHyprRenderer)
-            return in;
-        const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
+    Output drawNothing(const Input& in) {
+        if (!in.fb || !g_pHyprRenderer)
+            return {.fb = in.fb, .box = in.box};
+        const auto mon = in.monitor;
         if (!mon)
-            return in;
+            return {.fb = in.fb, .box = in.box};
         if (auto* sc = scratchFor(mon)) {
             clearScratch(*sc, {}); // usually nothing to clear: the buffer is transparent already
-            return sc->fb;
+            return {.fb = sc->fb, .box = gf::compat::monitorPixels(mon)};
         }
-        const CDamageOverride whole{CRegion{0, 0, mon->m_transformedSize.x, mon->m_transformedSize.y}};
-        g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor(0, 0, 0, 0)});
-        return in;
+        return gf::compat::drawNothingFallback(gf::compat::currentContext(), in);
     }
 
     void use(EUser user) {

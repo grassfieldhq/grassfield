@@ -17,7 +17,7 @@
 
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/ViewHitTester.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
@@ -126,7 +126,7 @@ namespace {
         for (const auto& level : mon->m_layerSurfaceLayers) {
             for (const auto& ref : level) {
                 const auto ls = ref.lock();
-                if (ls && ls->m_mapped && ls->m_namespace == kMenubarNamespace)
+                if (ls && gf::compat::layerMapped(ls) && ls->m_namespace == kMenubarNamespace)
                     return ls->m_geometry.h > 0.0 && ls->m_geometry.h <= kMaxMenubarInset ? ls->m_geometry.h : 0.0;
             }
         }
@@ -198,7 +198,7 @@ namespace {
         data.round         = round;
         data.roundingPower = roundingPower;
         data.clipBox       = clip;
-        g_pHyprRenderer->addPassElement(makeUnique<CRectPassElement>(data));
+        gf::compat::addPassElement(makeUnique<CRectPassElement>(data));
     }
 
     // A rect over Hyprland's blur of what is already drawn behind it (live blur, not xray: the windows behind count), under
@@ -213,7 +213,7 @@ namespace {
         data.blur          = true;
         data.xray          = false;
         data.blurA         = blurAlpha;
-        g_pHyprRenderer->addPassElement(makeUnique<CRectPassElement>(data));
+        gf::compat::addPassElement(makeUnique<CRectPassElement>(data));
     }
 
     const char* hitName(tb::HitTarget hit) {
@@ -269,7 +269,7 @@ namespace {
 
     // Alt (Option) held on any keyboard.
     bool altHeld() {
-        return g_pInputManager && (g_pInputManager->getModsFromAllKBs() & HL_MODIFIER_ALT) != 0;
+        return (gf::compat::heldModifiers() & gf::compat::kModAlt) != 0;
     }
 
     // The zoom light (ADR-0015 P6, REQ-ADR0002-6): zoom (maximized) and back; with Alt held, true full screen (the shell
@@ -501,7 +501,7 @@ namespace {
     // A window drawn where it is, taking input: no overview or Stages transform, no input block. Only such a window
     // shows hover glyphs (a transformed window is drawn away from where the pointer hovers its real lights).
     bool drawnInPlace(const PHLWINDOW& w) {
-        return w && w->m_transformers.empty() && !w->isInputBlocked();
+        return w && !gf::compat::hasTransformers(w) && !w->isInputBlocked();
     }
 
     // The topmost window under `pos` and its titlebar, found once per pointer motion and shared by the glyph hover and the zoom
@@ -532,7 +532,7 @@ namespace {
         const auto& windows = Desktop::windowState()->windows();
         for (auto it = windows.rbegin(); it != windows.rend(); ++it) {
             const auto& w = *it;
-            if (!w || !w->m_isMapped || w->isHidden() || !w->m_workspace || !w->m_workspace->isVisible())
+            if (!w || !gf::compat::mapped(w) || w->isHidden() || !w->m_workspace || !gf::compat::workspaceVisible(w->m_workspace))
                 continue;
             auto*      deco  = CGrassfieldTitlebar::of(w);
             const bool onBar = deco && deco->barContains(pos);
@@ -616,9 +616,9 @@ namespace {
     gf::tiling::HoverCoverEffect zoomLightsCover(const Vector2D& pos) {
         gf::tiling::HoverCover cover{.locked = gf::deferredFocus::sessionLocked(), .exclusiveNamespaces = {}, .layerUnderPointer = false};
         if (g_pInputManager) {
-            for (const auto& ref : g_pInputManager->m_exclusiveLSes) {
+            for (const auto& ref : gf::compat::exclusiveLayers()) {
                 const auto ls = ref.lock();
-                if (ls && ls->m_mapped)
+                if (ls && gf::compat::layerMapped(ls))
                     cover.exclusiveNamespaces.push_back(ls->m_namespace);
             }
         }
@@ -693,7 +693,7 @@ namespace {
     }
 } // namespace
 
-CGrassfieldTitlebar::CGrassfieldTitlebar(const PHLWINDOW& window) : IHyprWindowDecoration(window), m_owner(window), m_ownerKey(window.get()) {
+CGrassfieldTitlebar::CGrassfieldTitlebar(const PHLWINDOW& window) : CDecorationBase(window), m_owner(window), m_ownerKey(window.get()) {
     gf::state().titlebars.push_back(this);
     gf::state().titlebarByWindow[m_ownerKey] = this;
     m_lastShown = shouldShow();
@@ -751,9 +751,9 @@ CGrassfieldTitlebar* CGrassfieldTitlebar::of(const PHLWINDOW& w) {
 
 bool CGrassfieldTitlebar::titlebarAllowed() const {
     const auto w = window();
-    if (!w || !w->m_isMapped || w->isHidden())
+    if (!w || !gf::compat::mapped(w) || w->isHidden())
         return false;
-    if (w->m_isX11 && (w->isX11OverrideRedirect() || w->m_X11DoesntWantBorders))
+    if (gf::compat::x11Borderless(w))
         return false;
     if (w->m_ruleApplicator && !w->m_ruleApplicator->decorate().valueOrDefault())
         return false;
@@ -762,7 +762,7 @@ bool CGrassfieldTitlebar::titlebarAllowed() const {
 
 bool CGrassfieldTitlebar::shouldShow() const {
     const auto w = window();
-    if (!w || !w->m_isFloating || !titlebarAllowed())
+    if (!w || !gf::compat::isFloating(w) || !titlebarAllowed())
         return false;
     if (const auto& fs = Fullscreen::controller(); fs && fs->getFullscreenModes(w).internal == Fullscreen::FSMODE_FULLSCREEN)
         return false; // away; the pointer at the top edge reveals it (P6, revealable)
@@ -771,7 +771,7 @@ bool CGrassfieldTitlebar::shouldShow() const {
 
 bool CGrassfieldTitlebar::revealable() const {
     const auto w = window();
-    if (!w || !w->m_workspace || !w->m_workspace->isVisible())
+    if (!w || !w->m_workspace || !gf::compat::workspaceVisible(w->m_workspace))
         return false;
     const auto& fs = Fullscreen::controller();
     if (!fs || (fs->getFullscreenModes(w).internal != Fullscreen::FSMODE_FULLSCREEN && !gf::tiler::inSplit(w)))
@@ -817,9 +817,9 @@ std::optional<CBox> CGrassfieldTitlebar::zoomLightOf(const PHLWINDOW& w) {
         return CBox{bar.x + light.x, bar.y + light.y, light.w, light.h};
     }
     // TL24: a Grassfield app draws its lights itself at the tokens' places (ADR-0015 WindowControls), not in full screen.
-    if (!gf::chrome::isClientChrome(w) || !w->m_class.starts_with("org.grassfield.") || fullscreenMode(w) == Fullscreen::FSMODE_FULLSCREEN)
+    if (!gf::chrome::isClientChrome(w) || !gf::compat::appClass(w).starts_with("org.grassfield.") || fullscreenMode(w) == Fullscreen::FSMODE_FULLSCREEN)
         return std::nullopt;
-    const auto  role    = w->xdgTag();
+    const auto  role    = gf::compat::xdgTag(w);
     const auto  light   = tb::appZoomLight(role && *role == "info");
     const CBox  surface = w->getWindowMainSurfaceBox();
     return CBox{surface.x + light.x, surface.y + light.y, light.w, light.h};
@@ -833,7 +833,7 @@ void CGrassfieldTitlebar::popoverRequest(std::string_view address) {
     }
     PHLWINDOW w;
     for (const auto& candidate : Desktop::windowState()->windows()) {
-        if (candidate && candidate->m_isMapped && addressOf(candidate) == *id)
+        if (candidate && gf::compat::mapped(candidate) && addressOf(candidate) == *id)
             w = candidate;
     }
     if (!w) {
@@ -907,13 +907,13 @@ void CGrassfieldTitlebar::refresh() {
     m_lastShown = show;
     if (g_pDecorationPositioner)
         g_pDecorationPositioner->repositionDeco(this);
-    w->updateWindowDecos();
+    gf::compat::updateDecorations(w);
     if (g_pHyprRenderer)
         g_pHyprRenderer->damageWindow(w);
 }
 
 void CGrassfieldTitlebar::onTitleChanged() {
-    if (m_title.text == (window() ? window()->m_title : std::string{}))
+    if (m_title.text == (window() ? gf::compat::title(window()) : std::string{}))
         return;
     m_title.texture.reset(); // rebuilt lazily in draw()
     damageEntire();
@@ -997,12 +997,12 @@ void CGrassfieldTitlebar::damageEntire() {
             return;
         }
         CBox box = layoutBox();
-        box.translate(w->m_floatingOffset);
+        box.translate(gf::compat::floatingOffset(w));
         g_pHyprRenderer->damageBox(box.expand(2));
     });
 }
 
-void CGrassfieldTitlebar::draw(PHLMONITOR monitor, float const& alpha) {
+void CGrassfieldTitlebar::drawGf(PHLMONITOR monitor, float alpha) {
     gf::guarded("titlebar draw", [&] {
         drawPreview(monitor, alpha);
         drawTitlebar(monitor, alpha);
@@ -1022,8 +1022,8 @@ void CGrassfieldTitlebar::drawPreview(const PHLMONITOR& monitor, float alpha) {
     if (!snap || snap->monitor.lock() != monitor)
         return;
     const float  scale    = monitor->m_scale;
-    const double rounding = std::max(0.0, static_cast<double>(w->rounding()));
-    const float  power    = w->roundingPower();
+    const double rounding = std::max(0.0, static_cast<double>(gf::compat::rounding(w)));
+    const float  power    = gf::compat::roundingPower(w);
     const auto   palette  = theme::titlebarPalette(gf::state().appearance.current);
     const int    roundPx  = tb::windowCornerPx(static_cast<float>(rounding), scale); // the window's own corner, as Hyprland cuts it
     CBox preview = snap->frame;
@@ -1046,14 +1046,14 @@ void CGrassfieldTitlebar::drawTitlebar(const PHLMONITOR& monitor, float alpha) {
         return;
 
     // Follow the window during workspace slides and floating offsets, like Hyprland's own decorations.
-    Vector2D offset = w->m_floatingOffset;
-    if (w->m_workspace && !w->m_pinned)
+    Vector2D offset = gf::compat::floatingOffset(w);
+    if (w->m_workspace && !gf::compat::pinned(w))
         offset = offset + w->m_workspace->m_renderOffset->value();
     bar.translate(offset - monitor->m_position);
 
     const float  scale    = monitor->m_scale;
-    const double rounding = std::max(0.0, static_cast<double>(w->rounding()));
-    const float  power    = w->roundingPower();
+    const double rounding = std::max(0.0, static_cast<double>(gf::compat::rounding(w)));
+    const float  power    = gf::compat::roundingPower(w);
     const auto   appearance = gf::state().appearance.current; // follows the shell (config "appearance", audit UX-06)
     const auto   palette    = theme::titlebarPalette(appearance);
     const auto   bgColor    = toColor(palette.background, alpha);
@@ -1116,7 +1116,7 @@ void CGrassfieldTitlebar::drawBar(const PHLMONITOR& monitor, const PHLWINDOW& w,
     // captured (SEC-01): the bar lies outside Hyprland's black box and the title is the window's own text, so the bar is
     // blank in the capture, and on screen meanwhile (core/CapturePrivacy.hpp).
     const int maxWidthPx = static_cast<int>(std::floor(tb::maxTitleWidth(bar.w) * scale));
-    if (w->m_title.empty() || maxWidthPx <= 0 || !gf::capturePrivacy::mayDrawContent(w, monitor))
+    if (gf::compat::title(w).empty() || maxWidthPx <= 0 || !gf::capturePrivacy::mayDrawContent(w, monitor))
         return;
 
     // The texture depends on the bar's width only through the elision, and a render (Pango layout, raster, upload) in the
@@ -1125,7 +1125,7 @@ void CGrassfieldTitlebar::drawBar(const PHLMONITOR& monitor, const PHLWINDOW& w,
     // change of width, the texture is the one a new render would give and is kept. A title that needs the elision is
     // rendered for each width, as before.
     constexpr int kTitleMeasureWidthPx = 4096; // above any title's room on the displays supported; else: as before
-    const bool    stale                = !m_title.texture || m_title.text != w->m_title || m_title.scale != scale || m_title.appearance != appearance;
+    const bool    stale                = !m_title.texture || m_title.text != gf::compat::title(w) || m_title.scale != scale || m_title.appearance != appearance;
     const bool    whole                = !stale && m_title.fullWidthPx >= 0 && m_title.fullWidthPx < m_title.maxWidthPx && m_title.fullWidthPx < maxWidthPx;
     if (stale || (m_title.maxWidthPx != maxWidthPx && !whole)) {
         if (stale)
@@ -1134,7 +1134,7 @@ void CGrassfieldTitlebar::drawBar(const PHLMONITOR& monitor, const PHLWINDOW& w,
         // to spare first for a new title, then for the bar's room when the title does not fit it whole.
         int widthPx = stale && maxWidthPx < kTitleMeasureWidthPx ? kTitleMeasureWidthPx : maxWidthPx;
         while (true) {
-            m_title.texture = g_pHyprRenderer->renderText(w->m_title, toColor(palette.title), static_cast<int>(std::round(theme::kTitleFontSizePt * scale)), false,
+            m_title.texture = g_pHyprRenderer->renderText(gf::compat::title(w), toColor(palette.title), static_cast<int>(std::round(theme::kTitleFontSizePt * scale)), false,
                                                           theme::kTitleFontFamily, widthPx, theme::kTitleFontWeight);
             if (widthPx == maxWidthPx)
                 break;
@@ -1145,7 +1145,7 @@ void CGrassfieldTitlebar::drawBar(const PHLMONITOR& monitor, const PHLWINDOW& w,
             }
             widthPx = maxWidthPx;
         }
-        m_title.text       = w->m_title;
+        m_title.text       = gf::compat::title(w);
         m_title.scale      = scale;
         m_title.maxWidthPx = maxWidthPx;
         m_title.appearance = appearance;
@@ -1165,7 +1165,7 @@ void CGrassfieldTitlebar::drawBar(const PHLMONITOR& monitor, const PHLWINDOW& w,
     data.tex = tex;
     data.box = CBox{bar.x + placement.x, bar.y + ((bar.h - texH) / 2.0), std::min(texW, placement.maxWidth), texH}.scale(scale).round();
     data.a   = alpha;
-    g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(data));
+    gf::compat::addPassElement(makeUnique<CTexPassElement>(data));
 }
 
 void CGrassfieldTitlebar::drawGlyphs(const CBox& bar, float scale, float alpha, bool fullscreen, bool fixedSize, bool sized) {
@@ -1200,7 +1200,7 @@ void CGrassfieldTitlebar::drawGlyphs(const CBox& bar, float scale, float alpha, 
         data.tex = glyph.texture;
         data.box = CBox{box.x + std::floor((box.w - sizePx) / 2.0), box.y + std::floor((box.h - sizePx) / 2.0), static_cast<double>(sizePx), static_cast<double>(sizePx)};
         data.a   = alpha;
-        g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(data));
+        gf::compat::addPassElement(makeUnique<CTexPassElement>(data));
     }
 }
 
@@ -1221,8 +1221,8 @@ void CGrassfieldTitlebar::drawContentCorners(const PHLMONITOR& monitor, const PH
     // The window's box (right below the bar) is its xdg geometry; the texture starts at the surface's origin, the
     // geometry's offset up-left of it (client-side shadows). XWayland surfaces have no offset.
     Vector2D origin{0.0, 0.0};
-    if (!w->m_isX11) {
-        const auto xdg = w->m_xdgSurface.lock();
+    if (!gf::compat::isX11(w)) {
+        const auto xdg = gf::compat::xdgSurface(w);
         if (!xdg)
             return;
         origin = xdg->m_current.geometry.pos();
@@ -1241,7 +1241,7 @@ void CGrassfieldTitlebar::drawContentCorners(const PHLMONITOR& monitor, const PH
         data.box     = texBox;
         data.clipBox = clip.scale(scale).round();
         data.a       = alpha;
-        g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(data));
+        gf::compat::addPassElement(makeUnique<CTexPassElement>(data));
     }
 }
 
@@ -1714,7 +1714,7 @@ void CGrassfieldTitlebar::updateReveal() {
             members.emplace();
             for (const auto* d : gf::state().titlebars) {
                 const auto mw = d->window();
-                if (!mw || !mw->m_isMapped || !mw->m_workspace || !mw->m_workspace->isVisible() || !gf::tiler::inSplit(mw))
+                if (!mw || !gf::compat::mapped(mw) || !mw->m_workspace || !gf::compat::workspaceVisible(mw->m_workspace) || !gf::tiler::inSplit(mw))
                     continue;
                 const CBox surface = mw->getWindowMainSurfaceBox();
                 members->push_back(SMember{.deco = d, .workspace = mw->m_workspace, .mode = fullscreenMode(mw), .left = surface.x, .right = surface.x + surface.w});
@@ -1782,7 +1782,7 @@ void CGrassfieldTitlebar::drawRevealed() {
     gf::guarded("titlebar drawRevealed", [] {
         if (!g_pHyprRenderer)
             return;
-        const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        const auto mon = gf::compat::renderMonitor();
         if (!mon)
             return;
         for (auto* deco : gf::state().titlebars) {
@@ -1796,7 +1796,7 @@ void CGrassfieldTitlebar::drawRevealed() {
                 continue;
             bar.translate(-mon->m_position);
             const bool hovered = pointerInput().hovered == deco && g_pInputManager && deco->buttonGroupContains(g_pInputManager->getMouseCoordsInternal());
-            deco->drawBar(mon, w, bar, mon->m_scale, 0.0, w->roundingPower(), 1.F, hovered, true); // square: it spans the monitor
+            deco->drawBar(mon, w, bar, mon->m_scale, 0.0, gf::compat::roundingPower(w), 1.F, hovered, true); // square: it spans the monitor
         }
     });
 }

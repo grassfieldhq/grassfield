@@ -9,6 +9,7 @@
 #include "core/DeferredFocus.hpp"
 
 #include <hyprland/src/desktop/DesktopTypes.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/helpers/math/Math.hpp>
 #include <hyprland/src/helpers/memory/Memory.hpp>
 
@@ -17,9 +18,6 @@
 #include <optional>
 
 class CWLSurfaceResource;
-namespace Desktop {
-    enum eFocusReason : uint8_t;
-}
 
 namespace gf::deferredFocus {
 

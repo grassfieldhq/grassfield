@@ -9,12 +9,11 @@
 #include "core/Minimize.hpp"
 #include "core/Motion.hpp"
 
-#include <hyprland/src/desktop/Workspace.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/LayerState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
@@ -41,18 +40,19 @@ namespace {
     // Ends animations whose frames stopped (no monitor rendered): checked this long after the expected end.
     constexpr auto WATCHDOG_SLACK = std::chrono::milliseconds(150);
 
-    // Attached to a transformed window (CWindow::m_transformers, owned by the window). Hyprland calls transform() with
-    // a monitor-sized work buffer holding the window's main pass at its real place; it returns the buffer to composite.
-    class COverviewTransformer final : public Render::IWindowTransformer {
+    // Attached to a transformed window (owned by the window's transformers). Hyprland calls transform() with the window's
+    // main pass at its real place (HyprCompat.hpp CTransformerBase); it returns the buffer to composite.
+    class COverviewTransformer final : public gf::compat::CTransformerBase {
       public:
-        SP<Render::IFramebuffer> transform(SP<Render::IFramebuffer> in) override;
+        gf::compat::STransformOutput transformGf(const gf::compat::STransformInput& in) override;
+        CBox                         extentsGf(const CBox& currentBox) const override;
     };
 
     struct SEntry {
         PHLWINDOWREF          window;
         uint64_t              address = 0;
         PHLMONITORREF         monitor;               // the window's monitor when it entered the overview
-        COverviewTransformer* transformer = nullptr; // owned by window->m_transformers; compared, never freed here
+        COverviewTransformer* transformer = nullptr; // owned by the window's transformers; compared, never freed here
         // Where its surface box is drawn, with its own clock: from where it was to its layout rect (to nullopt: its live
         // surface box). A retarget (the shell's on:true again, a close) continues from the box on screen with its velocity
         // and keeps the clock of an unchanged target (core/Motion.hpp).
@@ -112,11 +112,11 @@ namespace {
     // pinned (pinned windows are drawn on every workspace), not on a special workspace (minimized windows live on
     // special:minimized), not full screen and not on a workspace that shows a full-screen window (maximized is fine).
     bool eligible(const PHLWINDOW& w) {
-        if (!w || !w->m_isMapped || w->isHidden() || w->m_pinned)
+        if (!w || !gf::compat::mapped(w) || w->isHidden() || gf::compat::pinned(w))
             return false;
         const auto ws  = w->m_workspace;
         const auto mon = w->m_monitor.lock();
-        if (!ws || ws->m_isSpecialWorkspace || !mon || mon->m_activeWorkspace != ws)
+        if (!ws || gf::compat::isSpecial(ws) || !mon || mon->m_activeWorkspace != ws)
             return false;
         const auto& fullscreen = Fullscreen::controller();
         return fullscreen && fullscreen->getFullscreenModes(w).internal != Fullscreen::FSMODE_FULLSCREEN && !showsFullscreen(ws);
@@ -144,7 +144,7 @@ namespace {
             if (!isChrome(ls))
                 continue;
             out.push_back(ov::ChromeSurface{.monitor   = monitorId(ls->m_monitor.lock()),
-                                            .mapped    = ls->m_mapped,
+                                            .mapped    = gf::compat::layerMapped(ls),
                                             .exclusive = gf::surfaces::interactivity(ls) == 1 /* ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE */,
                                             .keyboard  = keyboardLayer == ls});
         }
@@ -183,10 +183,8 @@ namespace {
     }
 
     COverviewTransformer* attach(const PHLWINDOW& w) {
-        auto  transformer = makeUnique<COverviewTransformer>();
-        auto* raw         = transformer.get();
         gf::transform::use(gf::transform::EUser::Overview); // its output buffers (WindowTransform.cpp)
-        w->m_transformers.emplace_back(std::move(transformer));
+        auto* raw = gf::compat::attachTransformer<COverviewTransformer>(w);
         if (g_pHyprRenderer)
             g_pHyprRenderer->damageWindow(w);
         return raw;
@@ -198,7 +196,7 @@ namespace {
             g_pHyprRenderer->damageBox(toCBox(e.damaged));
         const auto w = e.window.lock();
         if (w && e.transformer) {
-            std::erase_if(w->m_transformers, [&e](const UP<Render::IWindowTransformer>& t) { return t.get() == e.transformer; });
+            gf::compat::detachTransformer(w, e.transformer);
             if (g_pHyprRenderer)
                 g_pHyprRenderer->damageWindow(w);
         }
@@ -420,28 +418,41 @@ namespace {
         post(s.phase, s.entries.size(), ov::Reason::Fullscreen);
     }
 
-    SP<Render::IFramebuffer> drawTransformed(const COverviewTransformer* self, const SP<Render::IFramebuffer>& in) {
+    gf::compat::STransformOutput drawTransformed(const COverviewTransformer* self, const gf::compat::STransformInput& in) {
+        gf::compat::STransformOutput same{.fb = in.fb, .box = in.box}; // returned by value: not const (moved)
         // Only the monitor frame: snapshots (close and minimize animations) and window captures (toplevel export,
         // RPT_EXPORT) show the window as it is.
-        if (!in || !gf::transform::monitorFrame())
-            return in;
+        if (!in.fb || !gf::transform::monitorFrame())
+            return same;
         const auto& all = st().entries;
         const auto  it  = std::ranges::find_if(all, [self](const SEntry& e) { return e.transformer == self; });
         if (it == all.end())
-            return in;
+            return same;
         const auto w   = it->window.lock();
-        const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        const auto mon = in.monitor;
         if (!w || !mon)
-            return in;
+            return same;
         // A window that spans monitors is shown only in the overview of its own monitor: here it is drawn as nothing.
         if (mon != it->monitor.lock())
             return gf::transform::drawNothing(in);
         return gf::transform::drawFitted(w, it->rect, in, st().warnedNoBuffer, it->address);
     }
 
-    SP<Render::IFramebuffer> COverviewTransformer::transform(SP<Render::IFramebuffer> in) {
-        SP<Render::IFramebuffer> out = in;
+    gf::compat::STransformOutput COverviewTransformer::transformGf(const gf::compat::STransformInput& in) {
+        gf::compat::STransformOutput out{.fb = in.fb, .box = in.box};
         gf::guarded("overview transform", [&] { out = drawTransformed(this, in); });
+        return out;
+    }
+
+    // The fitted window on its overview monitor; unchanged for a window this transformer no longer knows.
+    CBox COverviewTransformer::extentsGf(const CBox& currentBox) const {
+        CBox out = currentBox;
+        gf::guarded("overview transform extents", [&] {
+            const auto& all = st().entries;
+            const auto  it  = std::ranges::find_if(all, [this](const SEntry& e) { return e.transformer == this; });
+            if (it != all.end())
+                out = gf::transform::fittedExtents(it->window.lock(), it->rect, it->monitor.lock(), currentBox);
+        });
         return out;
     }
 } // namespace
@@ -477,7 +488,7 @@ namespace gf::overviewer {
             gf::guarded("overview window.active", [&] {
                 if (!w || !animatingOrOpen())
                     return;
-                const bool ends = w->m_isMapped && !keyboardOnChrome() && ov::focusEndsOverview(causeOf(reason));
+                const bool ends = gf::compat::mapped(w) && !keyboardOnChrome() && ov::focusEndsOverview(causeOf(reason));
                 gf::logRequest(Log::DEBUG, "overview: window {:x} focused (reason {}): {}", reinterpret_cast<uintptr_t>(w.get()), static_cast<int>(reason),
                                ends ? "the overview ends" : "the overview stays");
                 if (ends)

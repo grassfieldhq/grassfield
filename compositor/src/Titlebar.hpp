@@ -5,7 +5,7 @@
 
 #include "core/TitlebarLayout.hpp"
 
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/devices/ITouch.hpp>
 #include <hyprland/src/event/EventBus.hpp>
@@ -19,7 +19,7 @@ namespace Render {
     class ITexture;
 }
 
-class CGrassfieldTitlebar : public IHyprWindowDecoration {
+class CGrassfieldTitlebar : public gf::compat::CDecorationBase {
   public:
     explicit CGrassfieldTitlebar(const PHLWINDOW& window);
     ~CGrassfieldTitlebar() override;
@@ -29,7 +29,7 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
 
     SDecorationPositioningInfo getPositioningInfo() override;
     void                       onPositioningReply(const SDecorationPositioningReply& reply) override;
-    void                       draw(PHLMONITOR monitor, float const& alpha) override;
+    void                       drawGf(PHLMONITOR monitor, float alpha) override;
     eDecorationType            getDecorationType() override;
     void                       updateWindow(PHLWINDOW window) override;
     void                       damageEntire() override;
