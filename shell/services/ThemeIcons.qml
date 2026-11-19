@@ -57,8 +57,84 @@ Singleton {
     }
     property bool copyDirReady: false
     // Key ("name:<theme name>", "icon:<path>", "picture:<path>", "tray:<name>|<IconThemePath>") -> {state: "pending" |
-    // "ok" | "no", url, file}; reassigned on every change so bindings that asked re-evaluate.
+    // "ok" | "no", url, file}; reassigned on every change (setCopies), for the code that reads the whole map.
     property var copies: ({})
+    // The same map as the views read it (copyOf, fileState, artSource): through `held`, a constant holder, so a view does not
+    // depend on the map as a whole, only on the revision of its key's bucket (`buckets`: 32 revisions, a key's hash picks
+    // one). A copy made (a helper batch, an ask) re-evaluates the views of the keys it changed and of their bucket's
+    // neighbours, not every icon binding of the shell (audit fluidity note: each track change of the media art, each batch,
+    // re-evaluated every icon of the Dock, Launchpad, menu bar, notifications ...).
+    readonly property var held: ({map: {}})
+    QtObject {
+        id: buckets
+        property int b0: 0
+        property int b1: 0
+        property int b2: 0
+        property int b3: 0
+        property int b4: 0
+        property int b5: 0
+        property int b6: 0
+        property int b7: 0
+        property int b8: 0
+        property int b9: 0
+        property int b10: 0
+        property int b11: 0
+        property int b12: 0
+        property int b13: 0
+        property int b14: 0
+        property int b15: 0
+        property int b16: 0
+        property int b17: 0
+        property int b18: 0
+        property int b19: 0
+        property int b20: 0
+        property int b21: 0
+        property int b22: 0
+        property int b23: 0
+        property int b24: 0
+        property int b25: 0
+        property int b26: 0
+        property int b27: 0
+        property int b28: 0
+        property int b29: 0
+        property int b30: 0
+        property int b31: 0
+    }
+    // The bucket revisions moved (tests).
+    property int bucketMoves: 0
+
+    function bucketOf(key: string): string {
+        let h = 0;
+        for (let i = 0; i < key.length; i++)
+            h = (h * 31 + key.charCodeAt(i)) | 0;
+        return "b" + ((h >>> 0) % 32);
+    }
+
+    // The entry of `key` as a view reads it: the view depends on the key's bucket only.
+    function entryOf(key: string): var {
+        void buckets[root.bucketOf(key)];
+        return root.held.map[key];
+    }
+
+    // The new map: the buckets of the keys whose entry changed (added, replaced, removed) move.
+    function setCopies(next: var): void {
+        const old = root.held.map;
+        const moved = {};
+        for (const key in old) {
+            if (old[key] !== next[key])
+                moved[root.bucketOf(key)] = true;
+        }
+        for (const key in next) {
+            if (!(key in old))
+                moved[root.bucketOf(key)] = true;
+        }
+        root.held.map = next;
+        root.copies = next;
+        for (const b in moved) {
+            buckets[b] = buckets[b] + 1;
+            root.bucketMoves++;
+        }
+    }
     // The least-recently-used order: at[key] is the value of `tick` at the key's last use. Mutated in place, never
     // reassigned: a use (a binding asking) notifies nobody.
     readonly property var lru: ({tick: 0, at: {}})
@@ -113,7 +189,7 @@ Singleton {
 
     // "pending", "ok" or "no" for picture file `icon` (fileSource's), "" when never asked.
     function fileState(icon: string): string {
-        const entry = copies["picture:" + plainIconPath(icon)];
+        const entry = entryOf("picture:" + plainIconPath(icon));
         return entry === undefined ? "" : entry.state;
     }
 
@@ -168,7 +244,7 @@ Singleton {
         if (path !== "")
             return fileSource(path);
         const remote = ArtUrl.remoteUrl(url);
-        if (remote === "" || (SessionState.locked && copies["url:" + remote] === undefined))
+        if (remote === "" || (SessionState.locked && entryOf("url:" + remote) === undefined))
             return "";
         return copyOf("url", remote);
     }
@@ -184,7 +260,7 @@ Singleton {
 
     function copyOf(kind: string, value: string): string {
         const key = kind + ":" + value;
-        const entry = copies[key];
+        const entry = entryOf(key);
         if (entry === undefined) {
             asks.list.push([kind, value]);
             Qt.callLater(root.flushAsks);
@@ -237,7 +313,7 @@ Singleton {
             return;
         queue = queue.concat(added);
         if (next !== null)
-            copies = Object.keys(next).length > maxKeys ? forget(next) : next;
+            setCopies(Object.keys(next).length > maxKeys ? forget(next) : next);
         run();
     }
 
@@ -281,7 +357,7 @@ Singleton {
                 if (next[q.key] !== undefined && next[q.key].state === "pending")
                     delete next[q.key];
             }
-            copies = next;
+            setCopies(next);
         }
         const ready = SessionState.locked ? queue.filter(q => q.kind !== "url") : queue;
         if (ready.length === 0)
@@ -365,7 +441,7 @@ Singleton {
         }
         batch = [];
         queue = again.concat(queue);
-        copies = next;
+        setCopies(next);
         Qt.callLater(run);
     }
 
@@ -416,7 +492,7 @@ Singleton {
             }
         }
         if (next !== null)
-            copies = next;
+            setCopies(next);
         retryTimer.running = Object.keys(retries).length > 0;
     }
 

@@ -243,7 +243,6 @@ Singleton {
 
     Component.onCompleted: {
         finder.running = true;
-        kbdFinder.running = true;
         if (root.ddcAllowed)
             root.ddcSync();
         else if (root.devSession)
@@ -374,14 +373,6 @@ Singleton {
     }
 
     Process {
-        id: kbdFinder
-        command: ["sh", "-c", "ls -1 /sys/class/leds 2>/dev/null | grep kbd_backlight | head -n 1"]
-        stdout: StdioCollector {
-            onStreamFinished: root.kbdDevice = text.trim()
-        }
-    }
-
-    Process {
         id: kbdSetter
         // Raw level asked while a run was going (-1: none); started when that one is gone.
         property int pending: -1
@@ -419,11 +410,18 @@ Singleton {
         onLoaded: root.kbdValue = parseInt(kbdCurrent.text().trim(), 10) || 0
     }
 
+    // The backlight and the keyboard backlight, both found by one shell with its own globbing (no ls, grep or head child: one
+    // process at start instead of two pipelines of three): line 1 the first /sys/class/backlight device, line 2 the first
+    // /sys/class/leds/*kbd_backlight* (either empty when there is none).
     Process {
         id: finder
-        command: ["sh", "-c", "ls -1 /sys/class/backlight 2>/dev/null | head -n 1"]
+        command: ["sh", "-c", "b=; for d in /sys/class/backlight/*; do [ -e \"$d\" ] && { b=${d##*/}; break; }; done; k=; for d in /sys/class/leds/*kbd_backlight*; do [ -e \"$d\" ] && { k=${d##*/}; break; }; done; printf '%s\\n%s\\n' \"$b\" \"$k\""]
         stdout: StdioCollector {
-            onStreamFinished: root.device = text.trim()
+            onStreamFinished: {
+                const lines = text.split("\n");
+                root.device = (lines[0] || "").trim();
+                root.kbdDevice = (lines[1] || "").trim();
+            }
         }
     }
 
@@ -473,6 +471,11 @@ Singleton {
         onLoaded: root.max = parseInt(maximum.text().trim(), 10) || 0
     }
 
+    // The level is followed through events, never a timer (audit SC-08: a read every 1.5 s for the whole session). Two
+    // sources: the backlight class notifies `actual_brightness` (sysfs_notify, which reaches inotify through kernfs) on every
+    // change it makes, a hotkey handled by the firmware included; and any program that writes the level (brightnessctl,
+    // logind's SetBrightness, a script) writes `brightness`, which raises a modify event on that file. Either one reads
+    // `actual_brightness` again. The shell's own changes read it when brightnessctl ends (refresh()).
     FileView {
         id: current
         path: root.device !== "" ? "/sys/class/backlight/" + root.device + "/actual_brightness" : ""
@@ -485,11 +488,12 @@ Singleton {
         }
     }
 
-    // sysfs does not always raise inotify events; poll slowly as a fallback.
-    Timer {
-        interval: 1500
-        running: root.available
-        repeat: true
-        onTriggered: current.reload()
+    FileView {
+        id: written
+        path: root.device !== "" ? "/sys/class/backlight/" + root.device + "/brightness" : ""
+        preload: false
+        printErrors: false
+        watchChanges: true
+        onFileChanged: current.reload()
     }
 }

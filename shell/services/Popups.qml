@@ -107,6 +107,17 @@ Singleton {
     // a release 15 ms after the press and the real release reached no surface), which ends the drag. The overlay takes the
     // keyboard when the button is up.
     property bool pointerHeld: false
+    // Every popup closed (whichever way): the hold is over too (audit A-17: a bar destroyed while its button was down, an output
+    // removed mid-press, left it set and every later popup mapped without the keyboard until the next press on a bar).
+    // Judged a turn later: a press that closes one menu and opens another in the same handler keeps its hold.
+    onKindChanged: {
+        if (root.kind === "")
+            Qt.callLater(root.releaseHoldIfClosed);
+    }
+    function releaseHoldIfClosed(): void {
+        if (root.kind === "")
+            root.pointerHeld = false;
+    }
 
     // True while the open popup's Overlay window is the one the compositor gave the keyboard to (the Wayland window is active:
     // wl_keyboard.enter). Written by the Overlay of the popup's output; read only by the dev hook `menubar keyboardHolder`

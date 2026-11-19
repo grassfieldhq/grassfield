@@ -5,6 +5,7 @@ import Quickshell
 import Quickshell.Io
 import qs.lib
 import qs.platform
+import qs.platform.shortcuts
 import "EmojiLogic.js" as Logic
 
 // Emoji & Symbols (ADR-0045 OC-3; docs/specs/clipboard.md "Emoji & Symbols", ES-1 to ES-9): Ctrl+Super+Space (bindings.lua, IPC
@@ -342,6 +343,8 @@ Singleton {
     // session (it would tell another process what the user inserted).
     IpcHandler {
         target: "emoji"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function toggle(): void {
             root.toggle();

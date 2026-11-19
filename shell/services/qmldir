@@ -35,6 +35,7 @@ singleton WallpaperOnline 1.0 WallpaperOnline.qml
 singleton RecentItems 1.0 RecentItems.qml
 singleton ThemeIcons 1.0 ThemeIcons.qml
 WallClock 1.0 WallClock.qml
+singleton WallTicker 1.0 WallTicker.qml
 DisplayArrival 1.0 DisplayArrival.qml
 singleton Clipboard 1.0 Clipboard.qml
 singleton TilingHover 1.0 TilingHover.qml

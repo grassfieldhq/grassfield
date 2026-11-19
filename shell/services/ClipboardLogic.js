@@ -177,6 +177,24 @@ function removeId(items, id) {
     return items.filter(i => i.id !== id);
 }
 
+// The items after a run of the helper's lines, in order: ["I", item] (upsert) and ["X", id] (removeId); the same list as
+// applying them one by one, with one sort (audit fluidity note: the history the helper lists at its start is hundreds of
+// "I" lines, one sort and one reassignment of the list each).
+function applyOps(items, ops) {
+    const byId = new Map();
+    for (const i of items)
+        byId.set(i.id, i);
+    for (const op of ops) {
+        if (op[0] === "I") {
+            byId.delete(op[1].id);
+            byId.set(op[1].id, op[1]);
+        } else if (op[0] === "X") {
+            byId.delete(op[1]);
+        }
+    }
+    return order(Array.from(byId.values()));
+}
+
 // Whether the paste may be sent now (ADR-0034 §4). s: {locked, helperLocked, rememberedAddress, activeAddress, closedSinceOpen,
 // otherSurfaceOpen, ownsItem, expired}. closedSinceOpen: Hyprland reported `closewindow` for the remembered address since Search
 // opened (an address can be reused by a new window); ownsItem: the helper still owns the item chosen (a Copy chosen since, or

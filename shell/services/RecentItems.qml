@@ -58,12 +58,14 @@ Singleton {
     function documentsFor(entry: var, max: int): var {
         if (!entry)
             return [];
+        root.freshDocuments();
         const args = DockModel.entryArgs(entry);
         return Logic.documentsForApp(root.documentList, {name: entry.name ? String(entry.name) : "", cmd: args.length > 0 ? String(args[0]) : ""}, root.state, max);
     }
 
     // The submenu rows of the Grassfield menu (PopupMenu model).
     function menu(): var {
+        root.freshDocuments();
         return Logic.menu(root.applications, root.documents, {
             applications: qsTr("Applications"),
             documents: qsTr("Documents"),
@@ -119,12 +121,51 @@ Singleton {
         onLoadFailed: root.stateLoaded(root.state)
     }
 
+    // The documents (recently-used.xbel: GTK applications rewrite it at every file they open, and it can hold hundreds of KB) are
+    // read and parsed only when they are needed: a change marks them stale (audit fluidity note: the whole file was read and
+    // parsed with regular expressions on the GUI thread at every rewrite). They are read once the changes have settled
+    // (xbelSettle), or at once when a menu that lists them opens (menu(), documentsFor()).
+    property bool documentsStale: true
+    // The parses made (tests).
+    property int documentParses: 0
+
+    function freshDocuments(): void {
+        if (!root.documentsStale)
+            return;
+        xbelSettle.stop();
+        recentFile.reload();
+        recentFile.waitForJob();
+    }
+
     FileView {
         id: recentFile
         path: root.dataHome + "/recently-used.xbel"
+        preload: false
         printErrors: false
         watchChanges: true
-        onFileChanged: reload()
-        onLoaded: root.documentList = Files.parseXbel(recentFile.text(), root.filesRoot)
+        onFileChanged: {
+            root.documentsStale = true;
+            xbelSettle.restart();
+        }
+        onLoaded: {
+            root.documentsStale = false;
+            root.documentParses++;
+            root.documentList = Files.parseXbel(recentFile.text(), root.filesRoot);
+        }
+        // No file (no application recorded a document yet): no documents.
+        onLoadFailed: {
+            root.documentsStale = false;
+            root.documentList = [];
+        }
+    }
+
+    Timer {
+        id: xbelSettle
+        interval: 2000
+        running: true
+        onTriggered: {
+            if (root.documentsStale)
+                recentFile.reload();
+        }
     }
 }

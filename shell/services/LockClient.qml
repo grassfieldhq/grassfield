@@ -10,7 +10,9 @@ import "../lib/LockState.js" as LockState
 // The UI's side of the session lock (ADR-0041 step 1, S2; ADR-0010 "Separate security process", risk 2). The lock, idle and
 // the sleep inhibitor run in the security process (shell/security.qml); this singleton is how the UI knows and asks:
 //   - it reads the state that process publishes (shell/security/lock/LockPublisher.qml: a file it rewrites on every
-//     change and every LockState.HEARTBEAT_MS), through a file watch and a read every POLL_MS whatever the watch says;
+//     change and every LockState.HEARTBEAT_MS), through a file watch: one read per write. A read is forced only when the watch
+//     has been silent for longer than a beat (`pollMs`: a missed notification never leaves the UI on an old state for longer
+//     than that), so a working watch costs one read per beat, not two;
 //   - `locked` (what SessionState.locked follows, and with it every refusal of the UI) is fail closed
 //     (LockState.uiLocked): no state yet, a state that cannot be read, no new beat for LockState.STALE_MS (the security
 //     process is down, restarting, stopped at its start limit or hung), a state other than "unlocked", or the compositor's
@@ -29,9 +31,11 @@ Singleton {
 
     readonly property string path: LockState.filePath(Quickshell.env("XDG_RUNTIME_DIR"), Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE"), Quickshell.env("WAYLAND_DISPLAY"))
     readonly property string securityRoot: Client.securityRoot(Quickshell.shellDir)
-    // The file is read again this often whatever the watch says (a missed change notification never leaves the UI on an old
-    // state for longer than one beat; the stale check reads it again before it decides).
-    readonly property int pollMs: LockState.HEARTBEAT_MS
+    // The file is read again when nothing was read for this long (ms): one beat and a margin (a missed change notification never
+    // leaves the UI on an old state for longer than that; the stale check reads it again before it decides). Every read restarts it.
+    readonly property int pollMs: LockState.HEARTBEAT_MS + 500
+    // The reads made (tests: one per beat with a working watch).
+    property int reads: 0
 
     // The last state read that parsed (LockState.parse), or null.
     property var last: null
@@ -55,8 +59,10 @@ Singleton {
     // The displays are off (idle, in the security process); without a fresh state, true: the screen saver's slideshow then
     // stops preparing pictures (the polkit agent, which also reads it, reads idle in its own process since ADR-0041 S3).
     readonly property bool displaysOff: !root.known || root.stale || (root.last !== null && root.last.displaysOff === true)
-    // Where the lock's clouds came to rest on each output (the desktop draws them there, WallpaperState.setMotion).
-    readonly property var motion: root.known && root.last ? root.last.motion : ({})
+    // Where the lock's clouds came to rest on each output (the desktop draws them there, WallpaperState.setMotion). The object
+    // changes only when a position does: a beat that repeats them keeps it (its readers are not woken every beat).
+    readonly property var motion: root.known && root.last ? root.last.motion : root.noMotion
+    readonly property var noMotion: ({})
     // The polkit sheet or a secret sheet is open, shown or held (ADR-0041 S3: they run in the security process), and one of
     // them or its key sink may hold the keyboard: SessionState.authorizing and securityKeyboard follow them (shell.qml).
     // Without a fresh state, true (LockState.uiSheet): the clipboard history records nothing and the capture toolbar takes no
@@ -82,6 +88,9 @@ Singleton {
         if (fresh && root.last !== null && read.writer !== root.last.writer)
             console.info("grassfield: the security process restarted (writer " + read.writer + ")");
         const restarted = root.last === null || read.writer !== root.last.writer;
+        // The positions the last state had, when they are the same (the beat repeats them).
+        if (root.last !== null && JSON.stringify(root.last.motion) === JSON.stringify(read.motion))
+            read.motion = root.last.motion;
         root.last = read;
         root.known = true;
         if (fresh) {
@@ -111,13 +120,24 @@ Singleton {
         blockLoading: true
         watchChanges: true
         printErrors: false
-        onLoaded: root.take(String(text()))
+        onLoaded: {
+            root.reads++;
+            watchdog.restart();
+            root.take(String(text()));
+        }
         // A missing or unreadable file: no state (locked).
-        onLoadFailed: root.take("")
+        onLoadFailed: {
+            root.reads++;
+            watchdog.restart();
+            root.take("");
+        }
         onFileChanged: reload()
     }
 
+    // The watch's backstop: no read for a beat and a margin (a notification lost, an inotify watch that could not be set) reads
+    // now. With a working watch every beat's read restarts it before it fires.
     Timer {
+        id: watchdog
         interval: root.pollMs
         repeat: true
         running: root.path !== ""
