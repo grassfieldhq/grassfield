@@ -489,7 +489,8 @@ def general_world(svc):
                         '<method name="ListTimezones"><arg direction="out" type="as"/></method></interface>',
                  methods={"SetNTP": lambda p: setp(time_, ti, "NTP", V("b", p[0])),
                           "SetTimezone": lambda p: setp(time_, ti, "Timezone", V("s", p[0])),
-                          "SetTime": lambda p: setp(time_, ti, "TimeUSec", V("t", p[0])),
+                          # timedated's SetTime(usec, relative, interactive): relative adds the step to the clock as it reads now.
+                          "SetTime": lambda p: setp(time_, ti, "TimeUSec", V("t", time.time_ns() // 1000 + p[0] if p[1] else p[0])),
                           "ListTimezones": lambda p: V("(as)", (["Europe/Paris", "Europe/Zurich", "America/New_York", "UTC", "../etc/passwd"],))},
                  props={"Timezone": V("s", "Europe/Paris"), "NTP": V("b", True), "CanNTP": V("b", True), "NTPSynchronized": V("b", True),
                         "LocalRTC": V("b", False), "TimeUSec": V("t", 1792832460000000)})
