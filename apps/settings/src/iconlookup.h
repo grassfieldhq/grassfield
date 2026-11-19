@@ -150,7 +150,7 @@ private:
                 continue;
             const QString key = line.left(eq).trimmed();
             const QString value = line.mid(eq + 1).trimmed();
-            if (group == QLatin1String("Icon Theme")) {
+            if (group == QLatin1String("Icon Theme")) { // i18n-ignore: index.theme group
                 if (key == QLatin1String("Inherits"))
                     t.inherits = value.split(QLatin1Char(','), Qt::SkipEmptyParts);
                 else if (key == QLatin1String("Directories"))
@@ -182,7 +182,7 @@ private:
             if (d.maxSize <= 0)
                 d.maxSize = d.size;
             if (d.type.isEmpty())
-                d.type = QStringLiteral("Threshold");
+                d.type = QStringLiteral("Threshold"); // i18n-ignore: index.theme directory type
             t.dirs << d;
         }
         return *m_themes.insert(name, t);
