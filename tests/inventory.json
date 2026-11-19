@@ -844,6 +844,8 @@
  {"path": "tests/security/logind_session.sh", "layer": "headless"},
  {"path": "tests/security/idle_restart.sh", "layer": "headless"},
  {"path": "tests/shell/update_checked_dbs.sh", "layer": "logic"},
- {"path": "tests/unit/store/tst_screenshotprovider.cpp", "layer": "logic"}
+ {"path": "tests/unit/store/tst_screenshotprovider.cpp", "layer": "logic"},
+ {"path": "tests/unit/preview/tst_previewapp.cpp", "layer": "logic"},
+ {"path": "tests/unit/tst_previewasync.qml", "layer": "headless"}
 ]
 }

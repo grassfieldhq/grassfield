@@ -312,6 +312,42 @@ rnd({300: "focused"}, 32)
 check("foreign: a release (focused again) never resets a weight set elsewhere, still puts IOWeight back",
       log() == ["systemctl --user set-property --runtime -- %s IOWeight=" % PLAYER] and state()["apps"][PLAYER]["applied"] == {})
 
+# E1 of the 2026-11 audit: our limit undone elsewhere (Efficiency Mode turned off puts the default weight back) was still
+# recorded as applied and never set again. It is seen and applied again.
+reset_fs(); base(weight=100)()
+rnd({300: "hidden"}, 0); rnd({300: "hidden"}, 15); rnd({300: "hidden"}, 31)
+check("undone: precondition limited", state()["apps"][PLAYER]["applied"] == {"CPUWeight": 20, "IOWeight": 30})
+open(CG + SLICE + PLAYER + "/cpu.weight", "w").write("20\n"); open(LOG, "w").close()
+rnd({300: "hidden"}, 100)
+check("undone: our own weight read back: nothing set again", log() == [])
+open(CG + SLICE + PLAYER + "/cpu.weight", "w").write("100\n")
+rnd({300: "hidden"}, 170)
+check("undone: the default weight back while limited: applied again",
+      log() == ["systemctl --user set-property --runtime -- %s CPUWeight=20 IOWeight=30" % PLAYER] and state()["apps"][PLAYER]["applied"] == {"CPUWeight": 20, "IOWeight": 30})
+
+# E2 of the 2026-11 audit: a wake waited for a running round's lock (a pw-dump and fd scans), the app in front kept its
+# limit meanwhile. It lifts at once, notes itself, and the round takes the note: it does not limit that app again.
+import fcntl, time
+reset_fs(); base(weight=100)()
+rnd({300: "hidden"}, 0); rnd({300: "hidden"}, 15); rnd({300: "hidden"}, 31)
+open(CG + SLICE + PLAYER + "/cpu.weight", "w").write("20\n"); open(LOG, "w").close()
+held = os.open(STATE + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(held, fcntl.LOCK_EX)  # a round is running
+started = time.monotonic()
+code, out, _ = run(["wake", "--pid", "300"], 40)
+took = time.monotonic() - started
+check("wake during a round: does not wait for its lock", code == 0 and took < 3 and json.loads(out) == {"woken": 1})
+check("wake during a round: the limit is lifted at once", log() == ["systemctl --user set-property --runtime -- %s CPUWeight= IOWeight=" % PLAYER])
+check("wake during a round: noted for the round", os.path.exists(STATE + ".wakes"))
+data = {"v": 1, "apps": {PLAYER: dict(state()["apps"][PLAYER])}}
+check("take_wakes: the round sees the noted app as released", m.take_wakes(STATE, data, 41.0) == {PLAYER} and data["apps"][PLAYER]["applied"] == {} and data["apps"][PLAYER]["state"] == "visible")
+open(STATE + ".wakes", "w").write(json.dumps({"all": False, "units": [PLAYER], "at": 40}) + "\n")  # noted again for the CLI round
+fcntl.flock(held, fcntl.LOCK_UN); os.close(held)
+open(CG + SLICE + PLAYER + "/cpu.weight", "w").write("100\n"); open(LOG, "w").close()
+rnd({300: "hidden"}, 41)
+check("wake during a round: the next round records it released and limits nothing yet",
+      log() == [] and state()["apps"][PLAYER]["applied"] == {} and state()["apps"][PLAYER]["waiting"] == 30 and not os.path.exists(STATE + ".wakes"))
+
 # Protection and unreadable processes.
 reset_fs()
 proc(400, "/user.slice/user-%d.slice/user@%d.service/session.slice/xdg-desktop-portal.service" % (uid, uid), "xdg-desktop-por")

@@ -115,6 +115,14 @@ int main(int argc, char *argv[])
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (bus.isConnected() && memos::claimOrHandOver(bus, &instance, qEnvironmentVariable("XDG_ACTIVATION_TOKEN")) == memos::Launch::Leave)
         return 0;
+    // And one writer of the store, with or without a session bus (M4 of the 2026-11 audit: without a bus connection both
+    // processes rewrote the whole file, the last one winning). A lock left by a process that is gone is taken over.
+    qint64 holder = 0;
+    const std::unique_ptr<QLockFile> storeLock = memos::lockStore(memos::MemoStore::dataDir(), &holder);
+    if (!storeLock) {
+        qWarning("grassfield-memos: another Memos (pid %lld) has these memos open; this one leaves", static_cast<long long>(holder));
+        return 0;
+    }
 
     quitOnSignals(app);
 

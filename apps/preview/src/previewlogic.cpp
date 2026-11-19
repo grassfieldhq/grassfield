@@ -376,4 +376,51 @@ SortSpec filesSortSpec()
     return spec;
 }
 
+
+bool vectorTooLarge(const QString &path, qint64 bytes)
+{
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    return (suffix == QLatin1String("svg") || suffix == QLatin1String("svgz")) && bytes > kMaxVectorBytes;
+}
+
+QStringList textChunks(const QString &text, int chars)
+{
+    QStringList out;
+    qsizetype from = 0;
+    while (from < text.size()) {
+        qsizetype end = from + chars;
+        if (end >= text.size()) {
+            out.append(text.mid(from));
+            break;
+        }
+        // At the end of the line the piece reaches (the newline stays with it); a line longer than the piece ends it.
+        const qsizetype newline = text.indexOf(QLatin1Char('\n'), end - 1);
+        end = newline < 0 ? text.size() : newline + 1;
+        out.append(text.mid(from, end - from));
+        from = end;
+    }
+    return out;
+}
+
+bool onBatteryIn(const QString &powerSupplyRoot)
+{
+    const auto read = [](const QString &file) {
+        QFile f(file);
+        return f.open(QIODevice::ReadOnly) ? QString::fromLatin1(f.read(64)).trimmed() : QString();
+    };
+    bool battery = false;
+    const QStringList supplies = QDir(powerSupplyRoot).entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::System);
+    for (const QString &name : supplies) {
+        const QString dir = powerSupplyRoot + QLatin1Char('/') + name + QLatin1Char('/');
+        const QString type = read(dir + QStringLiteral("type"));
+        if (type == QLatin1String("Mains") || type.startsWith(QLatin1String("USB"))) {
+            if (read(dir + QStringLiteral("online")) == QLatin1String("1"))
+                return false;
+        } else if (type == QLatin1String("Battery") && read(dir + QStringLiteral("scope")) != QLatin1String("Device")) {
+            battery = true;
+        }
+    }
+    return battery;
+}
+
 } // namespace preview

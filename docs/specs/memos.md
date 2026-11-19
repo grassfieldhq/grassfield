@@ -26,10 +26,12 @@ Decision record: `docs/decisions/ADR-0051-memos.md` (D-1 to D-7). The app is "Me
 | MM8 | Memos restored at launch with size, colour, collapsed state, flags; position through the tag and `placement.lua` | built (positions NOT VERIFIED) |
 | MM9 | A new memo opens `memos.cascadeStep` down and right of the front memo (when its position is known) | built (NOT VERIFIED on screen) |
 | MM10 | Close on an empty memo deletes it; with text, the in-memo alert "Delete this memo?" (Cancel, Delete) | built |
-| MM11 | Quit keeps every memo; the last memo deleted quits the app; a compositor close (the Dock's Quit) keeps the memo; SIGTERM and SIGINT save first | built |
+| MM11 | Quit keeps every memo; the last memo deleted quits the app; a compositor close (the Dock's Quit) keeps the memo; SIGTERM and SIGINT save first. Quit (Ctrl+Q, the last window closed) waits for a write that passes: while it fails the memos come back if the compositor had closed them and the front one shows "Quit without saving?" with the reason (Cancel, Quit Anyway); a later write that passes lets Quit go on by itself. With no memo left (only a deletion unsaved) it quits | built, gtest + tst_memos.qml |
 | MM12 | Global menus T1 (File, Edit, Font, Color, Note) while the registrar exists, the same keys without it | built (export NOT VERIFIED) |
-| MM13 | One instance per user (D-Bus name); a second launch brings the memos forward, or opens a new memo when none is open | built |
+| MM13 | One instance per user (D-Bus name); a second launch brings the memos forward, or opens a new memo when none is open. Without a session bus the store's lock file (`memos.lock`, `QLockFile`, stale when its process is gone) keeps a second process out | built, gtest |
 | MM14 | Store: one JSON file, 0700/0600 re-asserted, atomic, debounced (each window flushed first; a memo left is saved), dropped entries kept aside, forward-only migration, newer schema refused untouched, no text in logs | built, gtest |
+| MM17 | Saving never blocks typing: the windows' text is taken on the GUI thread (a snapshot), the write (`QSaveFile`, fsync) and the Hyprland frame read run on the backend's worker thread. A collapse and a New Memo near a memo wait for the frames read there (`refreshFrames`, `framesRead`); the first line comes from the live document's plain text | built, gtest + tst_memos.qml |
+| MM18 | A write that fails is said in every memo ("Not saved: <reason>" band at the bottom; "Not saved" on a collapsed strip) until one passes; it is tried again after 2 s, then twice as late each time up to 60 s. Reasons: disk full, read-only disk, no permission, too much text (the file would pass the 16 MiB bound open() reads with: never written, not retried until the next edit), any other error | built, gtest + tst_memos.qml |
 | MM15 | Dock icon and Apps entry (`org.grassfield.Memos.desktop`, `branding/icons/apps/org.grassfield.Memos.svg`) | built |
 | MM16 | Shell Search finds memo text | not built (optional; ADR-0051 Options rejected) |
 
@@ -48,7 +50,7 @@ Decision record: `docs/decisions/ADR-0051-memos.md` (D-1 to D-7). The app is "Me
 | Ctrl+Alt+T, Ctrl+Alt+C | Translucent, Collapse |
 
 ## Interfaces
-- Store: `$XDG_DATA_HOME/grassfield/memos/memos.json` (ADR-0051 D-3), schema 1.
+- Store: `$XDG_DATA_HOME/grassfield/memos/memos.json` (ADR-0051 D-3), schema 1; its lock `memos.lock` beside it.
 - Session bus: `org.grassfield.Memos` (`.Dev` and a digest in dev or isolated runs), object `/org/grassfield/Memos`, method
   `Activate(s token)`.
 - Hyprland: `j/clients` read on the request socket (read only); window tag `memo:<id>[@<x>,<y>]`
@@ -60,4 +62,5 @@ Decision record: `docs/decisions/ADR-0051-memos.md` (D-1 to D-7). The app is "Me
 - `tests/unit/tst_memos.qml`: `apps/memos/qml/MemoLogic.js` and a memo window offscreen with a fake backend.
 
 ## NOT VERIFIED
-Everything that needs Hyprland or a nested session (ADR-0051 "NOT VERIFIED"): positions, the global menu export, the window's look on a real screen.
+Everything that needs Hyprland or a nested session (ADR-0051 "NOT VERIFIED"): positions, the global menu export, the window's look on a real screen;
+that a collapse waiting for the frames (a few ms) shows no visible delay, and the "Not saved" band and Quit alert on a real full disk.

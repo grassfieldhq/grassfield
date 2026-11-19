@@ -71,6 +71,8 @@ public:
     void setShown(const QString &kind, bool shown);
     bool anyShown() const { return !m_shown.isEmpty(); }
     bool shown(const QString &kind) const { return m_shown.contains(kind); }
+    // The processors' speed and the uptime are shown (Performance on CPU): the samples read them (ReadSystemSpeed).
+    bool wantsSpeed() const { return m_shown.contains(QStringLiteral("performance")) && m_selected == QLatin1String("cpu"); }
 
     // A sample: the histories take it; the texts follow while a window shows them.
     void take(const Snapshot &snapshot);

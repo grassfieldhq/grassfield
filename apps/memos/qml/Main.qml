@@ -19,6 +19,12 @@ QtObject {
     // The memo the user worked in last (New Memo opens near it).
     property var lastActive: null
     property var refusalWindow: null
+    // Quit waits for a write that passes (M1 of the 2026-11 audit): the memo that holds the alert, null when none.
+    property var quitAlertWindow: null
+    // New Memo near the front memo waits for the frames the backend reads on its worker: how many are waiting, and the
+    // front memo's id when they were asked for.
+    property int newMemosWaiting: 0
+    property string newMemoFront: ""
 
     property Theme theme: Theme {
         backend: root.backend
@@ -30,6 +36,17 @@ QtObject {
         target: root.backend
         function onAboutToSave(): void {
             root.flushAll();
+        }
+        // A write passed while Quit waited for one: Quit goes on.
+        function onSaved(ok: bool): void {
+            if (ok && root.quitAlertWindow)
+                root.requestQuit();
+        }
+        function onFramesRead(): void {
+            const n = root.newMemosWaiting;
+            root.newMemosWaiting = 0;
+            for (let i = 0; i < n; i++)
+                root.createNear(root.newMemoFront);
         }
     }
 
@@ -69,11 +86,22 @@ QtObject {
         return w;
     }
 
+    // With a memo open, the new one waits for the frames (where the front memo is now, read on the backend's worker) and
+    // opens when they are in (null is returned); with none, it opens at once.
     function newMemo(): var {
         if (root.backend.refusal !== "")
             return null;
         const front = MemoLogic.frontMemo(root.windows, root.lastActive);
-        const m = root.backend.createMemo(front ? front.memoId : "", Tokens.memosWindowWidth, Tokens.memosWindowHeight, Tokens.memosCascadeStep);
+        if (!front)
+            return root.createNear("");
+        root.newMemoFront = front.memoId;
+        root.newMemosWaiting++;
+        root.backend.refreshFrames();
+        return null;
+    }
+
+    function createNear(frontId: string): var {
+        const m = root.backend.createMemo(frontId, Tokens.memosWindowWidth, Tokens.memosWindowHeight, Tokens.memosCascadeStep);
         if (!m.id)
             return null;
         const w = root.openMemo(m);
@@ -86,13 +114,59 @@ QtObject {
         root.windows = root.windows.filter(x => x !== w);
         if (root.lastActive === w)
             root.lastActive = null;
+        if (root.quitAlertWindow === w)
+            root.quitAlertWindow = null;
     }
 
     function quitWhenEmpty(): void {
         if (root.windows.length > 0)
             return;
-        root.backend.saveNow();
-        Qt.quit();
+        root.requestQuit();
+    }
+
+    // Quit (Ctrl+Q, the last memo closed): every change is written first, and the app stays while that fails. The memos come
+    // back if the compositor had closed them, and the front one asks: Cancel (the backend keeps trying; each memo says "Not
+    // saved") or Quit Anyway. With no memo left only deletions would be lost: it quits.
+    function requestQuit(): void {
+        if (root.backend.saveNow() || root.backend.count() === 0) {
+            root.quitAlertWindow = null;
+            root.backend.quit();
+            return;
+        }
+        if (root.windows.length === 0)
+            root.reopenStored();
+        const front = MemoLogic.frontMemo(root.windows, root.lastActive);
+        if (!front) {
+            root.backend.quit();
+            return;
+        }
+        if (front.collapsed)
+            front.setCollapsed(false);
+        root.quitAlertWindow = front;
+        front.raise();
+        front.requestActivate();
+    }
+
+    function cancelQuit(): void {
+        const w = root.quitAlertWindow;
+        root.quitAlertWindow = null;
+        if (w)
+            w.editor.forceActiveFocus();
+    }
+
+    function quitAnyway(): void {
+        root.quitAlertWindow = null;
+        root.backend.quit();
+    }
+
+    // Every stored memo without a window gets one again.
+    function reopenStored(): void {
+        const open = root.windows.map(w => w.memoId);
+        const stored = root.backend.current();
+        for (let i = 0; i < stored.length; i++) {
+            if (open.indexOf(stored[i].id) < 0)
+                root.openMemo(stored[i]);
+        }
     }
 
     // Close box, Ctrl+W, File > Close (after the alert for a memo with text): the memo is deleted.
@@ -120,12 +194,7 @@ QtObject {
             root.refusalWindow.requestActivate();
             return;
         }
-        const open = root.windows.map(w => w.memoId);
-        const stored = root.backend.current();
-        for (let i = 0; i < stored.length; i++) {
-            if (open.indexOf(stored[i].id) < 0)
-                root.openMemo(stored[i]);
-        }
+        root.reopenStored();
         if (root.windows.length === 0) {
             root.newMemo();
             return;

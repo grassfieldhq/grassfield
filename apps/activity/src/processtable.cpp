@@ -524,6 +524,14 @@ QString ProcessTable::sortText(const TableRow &row, Column column) const
     return cellText(row, column);
 }
 
+const QString &ProcessTable::sortKeyOf(const TableRow &row) const
+{
+    auto it = m_sortKeys.find(&row);
+    if (it == m_sortKeys.end())
+        it = m_sortKeys.emplace(&row, sortText(row, m_sort)).first;
+    return it->second;
+}
+
 bool ProcessTable::less(const TableRow &a, const TableRow &b) const
 {
     if (columnIsNumeric(m_sort)) {
@@ -532,7 +540,10 @@ bool ProcessTable::less(const TableRow &a, const TableRow &b) const
         if (va != vb)
             return m_descending ? va > vb : va < vb;
     } else {
-        const int c = m_collator.compare(sortText(a, m_sort), sortText(b, m_sort));
+        // Each row's text is made once per rebuild, not twice per comparison (the Kind and Status columns translated inside
+        // the comparator; the 2026-11 audit's sort-key note). QCollatorSortKey would be cheaper still, but this Qt's keys
+        // ignore the numeric and case-insensitive modes (tst_processtable NamesSortBy...): the collator compares the texts.
+        const int c = m_collator.compare(sortKeyOf(a), sortKeyOf(b));
         if (c != 0)
             return m_descending ? c > 0 : c < 0;
     }
@@ -871,9 +882,29 @@ std::vector<Entry> ProcessTable::byType()
     return out;
 }
 
+bool ProcessTable::entryChanged(const Entry &before, const Entry &now) const
+{
+    if (!before.row || !now.row || before.depth != now.depth || before.expandable != now.expandable || before.expanded != now.expanded
+        || before.title != now.title || before.icon != now.icon)
+        return true;
+    if (before.row == now.row)
+        return false;
+    const TableRow &a = *before.row;
+    const TableRow &b = *now.row;
+    if (a.icon != b.icon || a.windowed != b.windowed || a.notResponding != b.notResponding || a.preventingSleep != b.preventingSleep
+        || a.process.efficient != b.process.efficient || a.name != b.name)
+        return true;
+    for (Column c : m_columns) {
+        if (columnIsNumeric(c) ? sortValue(a, c) != sortValue(b, c) : cellText(a, c) != cellText(b, c))
+            return true;
+    }
+    return false;
+}
+
 void ProcessTable::rebuild()
 {
     const int before = count();
+    m_sortKeys.clear(); // the rows, the column or the locale may have changed since the last one
     // The target: the rows the view and the search keep, sorted (and grouped); pointers into the last sample, nothing copied.
     std::vector<Entry> target;
     if (m_view == View::Tree) {
@@ -914,12 +945,18 @@ void ProcessTable::rebuild()
         endRemoveRows();
     }
     // The rows that stay take their new values where they are; the new ones come in at the end.
+    // Which of them show other values: only those are announced (the 2026-11 audit's note: every row and every role at
+    // each sample made each delegate read all its cells again).
     QSet<EntryKey> present;
+    QSet<EntryKey> changed;
     present.reserve(static_cast<qsizetype>(m_shown.size()));
     for (Entry &e : m_shown) {
         const EntryKey key = keyOf(e);
         present.insert(key);
-        e = target[static_cast<size_t>(wanted.value(key))];
+        const Entry &next = target[static_cast<size_t>(wanted.value(key))];
+        if (entryChanged(e, next))
+            changed.insert(key);
+        e = next;
     }
     std::vector<Entry> added;
     for (const Entry &e : target) {
@@ -950,8 +987,18 @@ void ProcessTable::rebuild()
     } else {
         m_shown = std::move(target);
     }
-    if (!m_shown.empty())
-        emit dataChanged(index(0), index(count() - 1));
+    // In runs of neighbouring rows.
+    for (int i = 0; i < count();) {
+        if (!changed.contains(keyOf(m_shown[static_cast<size_t>(i)]))) {
+            ++i;
+            continue;
+        }
+        const int first = i;
+        while (i < count() && changed.contains(keyOf(m_shown[static_cast<size_t>(i)])))
+            ++i;
+        emit dataChanged(index(first), index(i - 1));
+    }
+    m_sortKeys.clear();
     pruneSelection();
     if (count() != before)
         emit countChanged();

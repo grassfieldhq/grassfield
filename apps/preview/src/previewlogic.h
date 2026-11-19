@@ -18,6 +18,8 @@ constexpr int kMaxImageSide = 16384;               // px per side
 constexpr int kAllocationLimitMb = 256;            // QImageReader allocation limit
 constexpr qint64 kMaxImageBytes = qint64(kAllocationLimitMb) * 1024 * 1024;
 constexpr qint64 kMaxTextBytes = 2 * 1024 * 1024; // plain text / code
+constexpr qint64 kMaxVectorBytes = 8 * 1024 * 1024; // an SVG (svgz) file: its size is known only by parsing it whole (P4)
+constexpr int kTextChunkChars = 64 * 1024;         // a longer text is shown in pieces of whole lines of about this many characters (P7)
 constexpr int kMaxFiles = 200;                     // files accepted on one command line
 
 // Local path for a command line argument (a path or a file: URL), empty with `error` set when the
@@ -33,6 +35,16 @@ Kind classify(const QString &path);
 // matter), and one larger than `maxSize` bytes gives "" (a thumbnail of a huge log is not worth the disk).
 QString textSnippetOf(const QString &path, qint64 maxSize = 16 * 1024 * 1024);
 QString kindName(Kind kind);
+
+// A vector picture (.svg, .svgz) larger than kMaxVectorBytes: refused before any parse (its size alone needs the whole
+// document parsed).
+bool vectorTooLarge(const QString &path, qint64 bytes);
+// `text` in pieces of whole lines of about `chars` characters each (a piece holds at least one line, however long); the
+// pieces joined give the text back.
+QStringList textChunks(const QString &text, int chars);
+// Whether the computer runs on its battery: under `powerSupplyRoot` (/sys/class/power_supply) a system battery is there
+// and no power adapter (type Mains, USB or USB_C) is online. False when nothing can be read.
+bool onBatteryIn(const QString &powerSupplyRoot);
 
 // An image of this size (4 bytes per pixel) fits the per-side and allocation caps.
 bool imageSizeAllowed(const QSize &size);
@@ -51,7 +63,8 @@ bool isSystemPath(const QString &canonical);
 // PATH at use time, with fixed arguments, never through a shell; the image reaches it on its standard input as a grey PGM
 // that Preview decoded itself (EXIF orientation applied, at most kRecognitionMaxSide per side), never as a path: the tool
 // never parses the file, and the boxes it answers are in the pixels Preview shows.
-constexpr int kRecognitionMaxSide = 8192;                 // px per side of the picture handed to the tools
+constexpr int kRecognitionMaxSide = 4096;                 // px per side of the picture handed to the tools (P5: 8192 kept
+                                                          // tesseract on a 64 MP page for seconds; 4096 still reads body text)
 constexpr int kRecognitionTimeoutMs = 60000;              // a tool still running then is killed
 constexpr qint64 kRecognitionOutputMax = 4 * 1024 * 1024; // bytes of standard output; more is a failure
 struct Recognition {

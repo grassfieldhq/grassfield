@@ -40,6 +40,7 @@ enum Read : unsigned {
     ReadSystemNet = 1u << 11,  // /proc/net/dev
     ReadMemory = 1u << 12,     // statm of every process, status of one fifth of them in turn (Memory tab, AD32)
     ReadEfficiency = 1u << 13, // AM68: cpu.idle and cpu.weight of each own app unit once (the window shown)
+    ReadSystemSpeed = 1u << 14, // the processors' current speed (scaling_cur_freq) and the uptime (Performance on CPU, A3)
 };
 
 // The most bytes of a command line a table row keeps (the Command column and its search); Inspect shows the whole line.
@@ -211,6 +212,8 @@ struct SystemSnapshot {
     DiskSnapshot diskTotal;
     std::vector<NetSnapshot> interfaces; // every interface but lo (AM44)
     NetSnapshot netTotal;
+    double speedGhz = -1; // ReadSystemSpeed: the mean current speed of the processors, -1 when not read or unknown
+    double uptime = -1;   // ReadSystemSpeed: seconds since boot
 };
 
 // What one sample read, for the cost gates (AM-P2) and the dev counters.
@@ -320,7 +323,13 @@ private:
         double energySum = 0, energyTime = 0; // Σ EI × seconds, Σ seconds (AM37)
         std::map<std::string, double> enginePercent; // "<pdev>|<engine>" → this process's share, for the GPUs
         std::vector<std::string> gpuDevices;
-        std::unordered_map<uint64_t, TcpCounters> live; // its sockets seen in the dump
+        // Its sockets seen in the dump: their counters now, and what they held when this process took them over from another
+        // one (zero for a socket of its own): its share is the difference (A7 of the 2026-11 audit).
+        struct LiveSocket {
+            TcpCounters now;
+            TcpCounters base;
+        };
+        std::unordered_map<uint64_t, LiveSocket> live;
         SocketTotals closed;                            // sockets that went, their last counters
     };
 
@@ -361,8 +370,14 @@ private:
     // The Memory tab's last samples (AD32): coming back to it after another tab or a pause reads every status once.
     uint64_t lastMemoryIndex_ = UINT64_MAX - 1;
     double lastMemoryTime_ = -1;
+    // Which own process a socket's traffic counts for (inode → pid): one, while several hold it (inherited across a fork).
+    std::unordered_map<uint64_t, int> socketOwner_;
     std::map<std::string, DiskStat> lastDisks_;
     std::map<std::string, NetDev> lastNet_;
+    // The counters of the disks and interfaces that went away (or restarted from zero), added to the totals: "Data read",
+    // "Packets in" and the others never go back when a USB disk, a VPN or a container's veth goes (A8 of the 2026-11 audit).
+    DiskStat goneDisks_;
+    NetDev goneNet_;
     double lastDiskTime_ = -1, lastNetTime_ = -1;
     std::vector<std::string> physicalDisks_, zramDevices_;
     double devicesListedAt_ = -1e9;

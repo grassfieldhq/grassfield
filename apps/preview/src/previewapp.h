@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QStringList>
 #include <QThread>
+#include <QThreadPool>
 #include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
@@ -50,6 +51,11 @@ class PreviewApp : public QObject
     Q_PROPERTY(QString shortcutStyle READ shortcutStyle NOTIFY appearanceChanged)
     // preview.textInImages of grassfield.json (default true): Select Text in Images (ADR-0045 OC-2), off when it is false.
     Q_PROPERTY(bool textInImages READ textInImages NOTIFY appearanceChanged)
+    // The computer runs on its battery (no power adapter online): Select Text in Images waits longer before it reads an
+    // image (ImageText.qml), as tesseract keeps a core busy for seconds. Read again at each recognition.
+    Q_PROPERTY(bool onBattery READ onBattery NOTIFY powerChanged)
+    // Counts the sidebar snippets read so far (snippetFor): a binding that reads it reads its snippet again.
+    Q_PROPERTY(int snippetRevision READ snippetRevision NOTIFY snippetsChanged)
 
 public:
     PreviewApp(const QStringList &paths, const QStringList &errors, bool glance, int startIndex = 0, bool browsing = false, QObject *parent = nullptr);
@@ -77,6 +83,8 @@ public:
     QString accentHighlight() const { return m_accentHighlight; }
     QString shortcutStyle() const { return m_shortcutStyle; }
     bool textInImages() const { return m_textInImages; }
+    bool onBattery() const { return m_onBattery; }
+    int snippetRevision() const { return m_snippets.size(); }
 
     // Path of file `index` for the image provider (render thread): empty when out of range.
     QString pathAt(int index) const;
@@ -85,11 +93,20 @@ public:
     int tokenFor(const QString &path) const;
     QString pathForToken(int token) const;
 
-    // {ok, error, kind, name, url, size(Text), width, height, frames, animated, text, type, modified, folder}
+    // {ok, error, kind, name, url, size(Text), width, height, frames, animated, text, chunks, type, modified, folder}
+    // `chunks`: a long text in pieces of whole lines (TextView lays out only the pieces on screen, P7).
+    // Synchronous (the tests; Glance's first file before its window is sized).
     Q_INVOKABLE QVariantMap inspect(int index) const;
+    // The same on a worker thread (P4 of the 2026-11 audit: content sniffing, an image's size, a whole SVG parsed or a HEIC
+    // decoded for it, 2 MiB of text, a slow mount: never on the window's thread any more). Returns its number; the answer
+    // comes as inspected(). A request made while an older one waits makes the older one start nothing.
+    Q_INVOKABLE int requestInspect(int index);
     // The first lines of a text file for its sidebar thumbnail (at most 12 lines of 40 characters, control characters
-    // replaced); "" for any other kind, an unreadable file or an empty one.
+    // replaced); "" for any other kind, an unreadable file or an empty one. Synchronous (tests).
     Q_INVOKABLE QString textSnippet(int index) const;
+    // The snippet of file `index` read on a worker thread, kept by token: "" until it is in (snippetsChanged() then; the
+    // sidebar's delegates read it again). Never reads on the window's thread.
+    Q_INVOKABLE QString snippetFor(int index);
     // The same for the file that was opened first (stays that file when the folder list replaces the files).
     Q_INVOKABLE QVariantMap inspectFirst() const;
     // Start the full viewer (Glance "Open with Preview"); detached. When the list is the folder of one file (browsing)
@@ -114,6 +131,9 @@ public:
     // preview::isOpenableLink, never from a dev session (ADR-0019). Returns whether it started.
     Q_INVOKABLE bool openLink(const QString &link) const;
 
+    // Tests: how many recognition pictures were decoded (one per image for both tools, P5).
+    int recognitionDecodes() const { return m_recognitionDecodes; }
+
 signals:
     void appearanceChanged();
     void filesChanged();
@@ -122,12 +142,17 @@ signals:
     // preview::kRecognitionTimeoutMs, wrote more than preview::kRecognitionOutputMax, or the image could not be decoded)
     // and its standard output as UTF-8.
     void recognized(int request, const QString &tool, int exitCode, const QString &output);
+    void inspected(int request, const QVariantMap &info);
+    void snippetsChanged();
+    void powerChanged();
 
 private:
     QVariantMap inspectPath(const QString &path) const;
     void readAppearance();
     void applyBrowse(const preview::Browse &browse, const QVariantList &files);
     void startTool(int request, const QString &tool, const preview::Recognition &command, const QByteArray &image);
+    void decoded(const QString &path, const QByteArray &image);
+    void readPower();
 
     mutable QMutex m_lock; // guards m_paths (written on the GUI thread, read by the image provider) and the tokens
     QStringList m_paths;
@@ -163,6 +188,24 @@ private:
     QHash<int, QProcess *> m_tools;
     QList<QThread *> m_decoders;
     QSet<QString> m_missingTools;
+    // One decode per image for its recognitions (P5): the requests waiting for the picture of each path, and the pictures
+    // decoded, kept for the image shown (the last few).
+    struct Waiting {
+        int request;
+        QString tool;
+        preview::Recognition command;
+    };
+    QHash<QString, QList<Waiting>> m_waiting;
+    QList<QPair<QString, QByteArray>> m_decodedImages;
+    bool m_onBattery = false;
+    int m_recognitionDecodes = 0;
+    // Inspections and snippets: one worker each (one at a time: the newest inspection is the one that counts), the last
+    // inspection asked, the snippets read and those on their way (by token).
+    QThreadPool m_inspectPool;
+    QThreadPool m_snippetPool;
+    std::atomic_int m_lastInspect{0};
+    QHash<int, QString> m_snippets;
+    QSet<int> m_snippetsAsked;
 };
 
 // image://preview/<frame>/<file token>: decoded with the allocation and size caps, EXIF rotation applied.

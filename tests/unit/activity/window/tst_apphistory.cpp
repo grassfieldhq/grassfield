@@ -4,6 +4,10 @@
 #include "apphistory.h"
 
 #include <QSignalSpy>
+#include <QTest>
+#include <QThread>
+
+#include <atomic>
 
 #include <gtest/gtest.h>
 
@@ -81,7 +85,7 @@ TEST(AppHistory, TheModelItsCaptionAndSort)
             return app == QLatin1String("foot") ? AppHistory::App{QStringLiteral("Foot"), QStringLiteral("foot")}
                                                 : AppHistory::App{app, QString()};
         },
-        [] { return std::vector<LiveUnit>{}; });
+        [] { return AppHistory::LiveReader([] { return std::vector<LiveUnit>{}; }); });
     history.setUser(QStringLiteral("alice"));
     history.setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
     QByteArray text = record("app-Hyprland-foot-1a2b3c4d.scope", "2000000000", "52428800", kNow - kHour);
@@ -141,4 +145,50 @@ TEST(AppHistory, ThreePeriods)
     history.setAnswer(text, true, kNow);
     EXPECT_FALSE(history.loading());
     EXPECT_EQ(history.count(), 1);
+}
+
+TEST(AppHistory, TheJournalIsReadOnTheWorker)
+{
+    // Audit A2: up to 16 MiB of journal lines were parsed on the window's thread inside a model reset, with the live
+    // units' cgroups read there too. They are read on the worker; the window's thread only swaps the rows in.
+    QThread thread;
+    QObject worker;
+    worker.moveToThread(&thread);
+    thread.start();
+    QThread *gui = QThread::currentThread();
+    std::atomic<QThread *> resolvedOn{nullptr}, liveOn{nullptr}, liveMadeOn{nullptr};
+    AppHistory history(
+        [&](const QString &app) {
+            resolvedOn = QThread::currentThread();
+            return AppHistory::App{app, QString()};
+        },
+        [&] {
+            liveMadeOn = QThread::currentThread();
+            return AppHistory::LiveReader([&] {
+                liveOn = QThread::currentThread();
+                return std::vector<LiveUnit>{{QStringLiteral("app-Hyprland-zed-99999999.scope"), 1000, 10}};
+            });
+        });
+    history.setWorker(&worker);
+    QByteArray text;
+    for (int i = 0; i < 2000; ++i)
+        text += record("app-Hyprland-foot-1a2b3c4d.scope", "2000000000", "52428800", kNow - kHour);
+    QSignalSpy loaded(&history, &AppHistory::loaded);
+    history.setAnswer(text, true, kNow);
+    EXPECT_TRUE(history.loading()) << "the answer is being read";
+    EXPECT_EQ(history.count(), 0);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !history.loading(); }, 5000));
+    EXPECT_EQ(history.count(), 2);
+    EXPECT_EQ(liveMadeOn.load(), gui) << "the candidates are taken on the window's thread";
+    EXPECT_EQ(liveOn.load(), &thread);
+    EXPECT_EQ(resolvedOn.load(), &thread);
+    // A read made again before the first answer is in: only the newest answer is installed.
+    history.setAnswer(text, true, kNow);
+    history.setAnswer({}, false, kNow);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !history.loading(); }, 5000));
+    QTest::qWait(100);
+    EXPECT_TRUE(history.unavailable());
+    EXPECT_EQ(history.count(), 0);
+    thread.quit();
+    thread.wait();
 }

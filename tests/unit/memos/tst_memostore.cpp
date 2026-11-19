@@ -4,13 +4,16 @@
 #include "memoformatter.h"
 #include "memostore.h"
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStringList>
+#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -19,6 +22,8 @@
 #include <gtest/gtest.h>
 
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 using namespace memos;
 
@@ -566,4 +571,75 @@ TEST(MemoText, PasteIsAlwaysPlainText)
     MemoFormatter::insertPlain(&doc, 0, doc.characterCount() - 1, QStringLiteral("z"));
     EXPECT_EQ(doc.toPlainText(), QStringLiteral("z"));
     EXPECT_FALSE(doc.toHtml().contains(QStringLiteral("<img")));
+}
+
+TEST(MemoText, StylesOnALargeSelectionGoRunByRun)
+{
+    // Audit M6: Bold, Italic, Underline and the sizes probed the format with a cursor per character, so Select All then Bold
+    // on a long memo stalled the window. They go by runs now: the result is the same, the time bounded by the runs.
+    QTextDocument doc;
+    QString text;
+    for (int i = 0; i < 20000; ++i)
+        text += QStringLiteral("line %1 of a long memo with some words in it\n").arg(i);
+    doc.setPlainText(text);
+    // A mixed selection: every other line bold first.
+    for (QTextBlock b = doc.begin(); b.isValid(); b = b.next().next()) {
+        QTextCursor c(b);
+        c.select(QTextCursor::BlockUnderCursor);
+        QTextCharFormat bold;
+        bold.setFontWeight(QFont::Bold);
+        c.mergeCharFormat(bold);
+        if (!b.next().isValid())
+            break;
+    }
+    const int end = doc.characterCount() - 1;
+    QElapsedTimer t;
+    t.start();
+    MemoFormatter::toggleBold(&doc, 0, end); // not all bold: all become bold
+    MemoFormatter::changeSize(&doc, 0, end, 1, 13, 9, 30);
+    MemoFormatter::changeSize(&doc, 0, end, 1, 13, 9, 30);
+    const qint64 elapsed = t.elapsed();
+    QTextCursor c(&doc);
+    for (int pos : {1, 60, end / 2, end - 1}) {
+        c.setPosition(pos);
+        EXPECT_EQ(c.charFormat().fontWeight(), QFont::Bold) << pos;
+        EXPECT_EQ(c.charFormat().intProperty(QTextFormat::FontPixelSize), 15) << pos;
+    }
+    MemoFormatter::toggleBold(&doc, 0, end); // all bold: none
+    c.setPosition(end / 2);
+    EXPECT_NE(c.charFormat().fontWeight(), QFont::Bold);
+    // About 900 000 characters: per character this took 2.4 s (an -O2 build); by runs 0.13 s.
+    EXPECT_LT(elapsed, 1200);
+}
+
+TEST(MemoStore, OneProcessHoldsTheStoreAStaleLockIsTakenOver)
+{
+    // Audit M4: without a session bus two Memos processes both rewrote the store. The lock file lets only one in.
+    QTemporaryDir dir;
+    const QString store = dir.path() + QStringLiteral("/memos");
+    qint64 holder = -1;
+    std::unique_ptr<QLockFile> first = lockStore(store, &holder);
+    ASSERT_TRUE(first);
+    EXPECT_EQ(holder, 0);
+    EXPECT_TRUE(QFileInfo::exists(store + QStringLiteral("/memos.lock")));
+    EXPECT_EQ(QFileInfo(store).permissions() & (kPrivateDir | QFileDevice::ReadGroup | QFileDevice::ReadOther), kPrivateDir);
+    // Another holder (here the same process: QLockFile sees a live owner) is refused, and named.
+    EXPECT_FALSE(lockStore(store, &holder));
+    EXPECT_EQ(holder, QCoreApplication::applicationPid());
+    first.reset();
+    EXPECT_TRUE(lockStore(store, &holder));
+
+    // A lock left by a process that is gone (a crash, a SIGKILL) is taken over.
+    const pid_t child = ::fork();
+    if (child == 0)
+        ::_exit(0);
+    ASSERT_GT(child, 0);
+    int status = 0;
+    ::waitpid(child, &status, 0);
+    {
+        QFile f(store + QStringLiteral("/memos.lock"));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(QByteArray::number(child) + "\nmemos-unit-tests\n" + QSysInfo::machineHostName().toUtf8() + "\n");
+    }
+    EXPECT_TRUE(lockStore(store, &holder));
 }
