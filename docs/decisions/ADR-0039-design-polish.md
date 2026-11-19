@@ -372,3 +372,25 @@ palette, not which controls read it.
   Accessibility > Display; the text lab; `metrics.txt`, `corners.txt`; the pixel-grid walker and the control sizes).
 - Tools: `docs/audits/design-polish-2026-10-29/tools/` (`run.sh`, `gallery.qml`, `qml-literals.py`) and the 2026-10-25 tools
   they reuse.
+
+## Amendment to ADR-0039 (design polish), step 17 — where the key-window file lives
+
+Date: 2026-11-19 · Status: accepted (2026-11 audit, finding H1)
+
+## Change
+The key-window file the shell writes for the apps moves from `$XDG_RUNTIME_DIR/grassfield-keywindow.json` to
+`$XDG_RUNTIME_DIR/grassfield/keywindow.json` (a dev session keeps `$GRASSFIELD_STATE_HOME/keywindow.json`). Format and rule
+are unchanged (`shell/services/KeyWindowFile.js`).
+
+## Why
+Each app watches the file's directory, because the shell replaces the file atomically and a watch on the file goes with the
+old inode. With the file directly in `$XDG_RUNTIME_DIR`, every entry any program created or removed there (sockets, locks,
+pid files: Wayland, PipeWire, D-Bus, systemd, browsers) made every running Grassfield app open, read and parse the file.
+Grassfield's own runtime folder (0700, already shared by the menu bridge, the prompter, the security service and the
+capture notice) changes rarely.
+
+## Consequences
+- `apps/keywindow.h` watches `$XDG_RUNTIME_DIR/grassfield`; while that folder does not exist yet it watches the runtime
+  directory and lets it go as soon as the folder appears.
+- The shell writes the new path (`KeyWindowFile.path`); the folder must be 0700 (made with that mode by whoever comes first).
+- Line 109 of ADR-0039 ("`$XDG_RUNTIME_DIR/grassfield-keywindow.json`") reads `$XDG_RUNTIME_DIR/grassfield/keywindow.json`.

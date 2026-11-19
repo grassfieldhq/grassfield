@@ -218,6 +218,19 @@ Option 1 adapted to the Lua config, versioned `gfc/1`:
   `config/hypr/grassfield/bindings.lua` calls it at each press of Super+Ctrl+F and Super+Alt+F and dispatches the result;
   without the verb (no plugin, an older one), when it fails or returns nothing, Hyprland's dispatcher as before (C2). Not a
   shell verb (the shell does not call it); no feature: the binding tests the verb itself.
+- The configuration's own calls (2026-11-19, additive, audit round 2 CIO-03, CIO-08, CIO-10, CIO-17). None is a shell verb;
+  each is a plain Lua function the session's config calls under `pcall`, and the config works as before without it (the
+  first parse of a login, a session without the plugin):
+  - `keyboard_holder()` → `"window:<class>"` (the class, at most 128 bytes) | `"layer"` | `"none"`: who holds the keyboard;
+    `forwarding.lua` decides a forwarded chord on it (a terminal or Files behind Search no longer decides for Search).
+  - `file_identity(path)` → string|nil: lstat identity (`d:dev:ino:mode:uid` for a directory, `f|l|o:dev:ino:mode:uid:size:
+    mtime_ns:ctime_ns` otherwise); `read_file(path, max)` → string|nil (a regular file only: O_NOFOLLOW, O_NONBLOCK, at most
+    64 KiB); `list_files(dir, suffix)` → {names} (plain regular files, sorted bytewise, at most 256). The config's forks on
+    Hyprland's main thread (`[ -f ] && timeout head`, `find | sort`, the loader's `--vetted` once per build and instance)
+    go through them (core/FileProbe.*). Read only; an absolute path without NUL; nothing blocks.
+  - `settle(address)`: a floating mapped window takes its goal box now (its layout target's warpPositionSize);
+    `placement.lua` calls it after resizing or moving a window in its `window.open` hook, so the window does not grow or
+    slide over its opening. Untrusted: the address is compared with the live windows.
 - Window tiling, step 6d (2026-10-31, additive, ADR-0036 D70-D72, docs/specs/tiling.md TL33): `unsplit(address[, how])`
   takes an optional second argument, `how` ∈ desktop|fullscreen|replace (no argument, or `desktop`: Exit Full Screen as
   before, the popover's Move Window to Desktop). `fullscreen` (Make Window Full Screen) sends the window back to its home
@@ -289,7 +302,7 @@ feature decorations minimize config appmenu overview desktop-focus desktop-focus
 feature cursor-refresh overview-focus minimize-effect window-tiling layer-pointer appearance client-chrome frame-times
 feature keyboard-focus tiling-arrange tiling-layouts tile-hover tiling-groups tiling-shared-edge tiling-split tiling-split-rows
 feature tiling-split-titles zoom-fill toplevel-drag
-verb hello minimize restore config appmenu overview stages cursor_refresh overview_focus tile arrange tile_popover move_to group_front split unsplit window_size
+verb hello minimize restore config appmenu overview stages cursor_refresh overview_focus tile arrange tile_popover move_to group_front split unsplit window_size keyboard_holder file_identity read_file list_files settle
 ```
 
 ## Evidence
@@ -347,3 +360,8 @@ request socket has no such limit (a `hyprctl` reply is written whole).
 - No event may grow with the number of windows or monitors: a payload that can grow is a `hyprctl` reply announced by a
   small event (amendment 2026-10-24).
 - Depends on Quickshell keeping the `usingLua` dispatch wrapping; re-verify on every Quickshell minor update.
+
+## Amendment 2026-11-19: verbs the session's Lua configuration calls (additive)
+Five plain Lua functions the configuration calls under `pcall` (`keyboard_holder`, `file_identity`, `read_file`,
+`list_files`, `settle`) are in the list of additive changes above and in the `gfc1` verb line (audit round 2,
+CIO-03, CIO-08, CIO-10, CIO-17). None is called by the shell.
