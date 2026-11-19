@@ -63,7 +63,8 @@ void FileChooser::handle(chooser::Kind kind, const QDBusObjectPath &handle, cons
         }
         qml.insert(QStringLiteral("places"), answered);
         qml.insert(QStringLiteral("folderKinds"), gathered->kinds);
-        emit opened(id, qml);
+        // The application's name (the panel's sentences) read off this thread first (SP-18).
+        whenAppKnown(id, [this, id, qml] { emit opened(id, qml); });
     };
     QStringList calls{qml.value(QStringLiteral("currentFolder")).toString(), memory(parsed.appId).value(QStringLiteral("folder")).toString()};
     calls << placeList;

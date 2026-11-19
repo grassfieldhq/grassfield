@@ -23,6 +23,7 @@ TestCase {
     Component {
         id: fakeBackend
         QtObject {
+            id: fake
             property bool devSession: false
             property string displaysStateFile: "/run/user/1000/grassfield-displays.json"
             property string stateText: ""
@@ -53,6 +54,39 @@ TestCase {
             function markDisplayTrial(state: string, id: string): string {
                 calls.push({call: "mark", state: state, id: id});
                 return "";
+            }
+            // Backend.keepDisplayTrial as the Backend does it: the mark now, displays.conf once the state says kept
+            // (answerKeep, called as the shell publishes), "silent" after answerMs.
+            signal displayKeepSettled(string id, string state, string error)
+            property string keepId: ""
+            property var keepLines: []
+            function keepDisplayTrial(id: string, lines: var, answerMs: int): string {
+                if (keepId !== "")
+                    return "another change is still being kept";
+                markDisplayTrial("kept", id);
+                keepId = id;
+                keepLines = lines;
+                keepTimer.interval = answerMs;
+                keepTimer.restart();
+                return "";
+            }
+            function answerKeep(trial: var): void {
+                if (keepId === "" || !trial || trial.id !== keepId || (trial.state !== "kept" && trial.state !== "reverted"))
+                    return;
+                const id = keepId;
+                keepId = "";
+                keepTimer.stop();
+                if (trial.state === "kept")
+                    writeDisplaysConf(keepLines);
+                displayKeepSettled(id, trial.state, "");
+            }
+            property Timer keepTimer: Timer {
+                onTriggered: fake.keepSilent()
+            }
+            function keepSilent(): void {
+                const id = keepId;
+                keepId = "";
+                displayKeepSettled(id, "silent", "");
             }
             function act(what: string, argv: var, tag: string): bool {
                 actions.push(argv);
@@ -103,6 +137,7 @@ TestCase {
         j.trial = trial;
         t.backend.stateText = JSON.stringify(j);
         t.page.refresh();
+        t.backend.answerKeep(trial);
     }
 
     readonly property var panelIpc: ({name: "eDP-1", description: "BOE 0x0BCA", width: 2880, height: 1800, physicalWidth: 300, physicalHeight: 190,
@@ -198,6 +233,32 @@ TestCase {
         tryCompare(t.page, "trialId", "", 6000);
         compare(t.backend.calls.filter(c => c.call === "conf"), []);
         verify(t.page.notice.indexOf("did not answer") >= 0, t.page.notice);
+    }
+
+    // SP-14: Keep belongs to the Backend once taken: the page going (another pane, the window closing) before the shell's answer
+    // still gets displays.conf written; and a page shown meanwhile does not take the answer for a trial of its own.
+    function test_page_aKeepOutlivesThePage() {
+        const t = makePage(false, [panelIpc]);
+        t.page.tryChange({scale: 2.5});
+        const trial = t.backend.calls[0];
+        publish(t, {id: trial.id, state: "applied"});
+        verify(t.page.keep());
+        t.page.destroy();
+        wait(0);
+        const j = JSON.parse(t.backend.stateText);
+        j.trial = {id: trial.id, state: "kept"};
+        t.backend.stateText = JSON.stringify(j);
+        t.backend.answerKeep(j.trial);
+        compare(t.backend.calls.filter(c => c.call === "conf"), [{call: "conf", lines: trial.lines}]);
+        // A Keep refused by the Backend (another one still waits) is said, and the trial goes on.
+        const u = makePage(false, [panelIpc]);
+        u.page.tryChange({scale: 2.5});
+        const id = u.backend.calls[0].id;
+        publish(u, {id: id, state: "applied"});
+        u.backend.keepId = "other";
+        verify(!u.page.keep());
+        verify(u.page.notice.indexOf("another change") >= 0, u.page.notice);
+        compare(u.page.trialId, id);
     }
 
     function test_page_revertAndTheShellsAnswers() {

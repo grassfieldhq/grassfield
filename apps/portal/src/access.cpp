@@ -1,7 +1,5 @@
 #include "access.h"
 
-#include <KService>
-
 #include <QCoreApplication>
 #include <QRegularExpression>
 #include <QSet>
@@ -140,12 +138,12 @@ void Access::handle(const QDBusObjectPath &handle, const QString &appId, const Q
     // The frontend's title names the application already ("Allow Example to Use the Camera?"): no line of its own.
     QVariantMap alert = toQml(appId, parentWindow, title, subtitle, body, options);
     // The application's icon (its desktop entry's Icon=: a theme name or a file, IconSource.js), "" when the frontend could
-    // not name it or it has none.
-    const QString desktopId = windowAppId(appId);
-    const KService::Ptr service = appId.isEmpty() || desktopId == QLatin1String("org.grassfield.Files") ? KService::Ptr()
-                                                                                                       : KService::serviceByDesktopName(desktopId);
-    alert.insert(QStringLiteral("appIcon"), service ? service->icon() : QString());
-    emit opened(id, alert);
+    // not name it or it has none: read on a worker (SP-18: a stale ksycoca is rebuilt there, never on the GUI thread inside
+    // the alert's first-frame deadline), the alert made once it is known.
+    whenAppKnown(id, [this, id, alert, appId]() mutable {
+        alert.insert(QStringLiteral("appIcon"), appIcon(appId));
+        emit opened(id, alert);
+    });
 }
 
 void Access::answer(int id, bool grant, const QVariantList &choices)

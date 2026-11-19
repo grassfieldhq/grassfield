@@ -12,8 +12,16 @@
 #include <QMap>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QProcess>
+#include <QStandardPaths>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QThreadPool>
 
 #include <algorithm>
+#include <cmath>
+#include <memory>
+#include <thread>
 
 #include "backend.h"
 
@@ -707,4 +715,246 @@ TEST_F(BackendTest, AProgramExistsAsGlibResolvesIt)
     EXPECT_FALSE(backend.programExists(QString()));
     EXPECT_FALSE(backend.programExists(QStringLiteral("dir/relative"))) << "a relative path is no program";
     EXPECT_FALSE(backend.programExists(QStringLiteral("a\0b")));
+}
+
+// ---- Displays: Keep belongs to the Backend (SP-14) ----
+
+// Keep is taken by the Backend, not the page: displays.conf is written once the shell's state says it kept the trial, whatever
+// page is shown then; the shell taking it back first or not answering writes nothing; and a window that closes right after Keep
+// still writes it when the shell answers within a moment.
+TEST_F(BackendTest, AKeptTrialIsSavedByTheBackendEvenWhenThePageIsGone)
+{
+    EnvGuard env({"XDG_RUNTIME_DIR", "GRASSFIELD_CONFIG_HOME", "GRASSFIELD_SESSION"});
+    qputenv("XDG_RUNTIME_DIR", QFile::encodeName(scratch(QStringLiteral("run"))));
+    qputenv("GRASSFIELD_CONFIG_HOME", QFile::encodeName(scratch(QStringLiteral("cfg"))));
+    QDir().mkpath(scratch(QStringLiteral("run")));
+    const QString state = scratch(QStringLiteral("run/grassfield-displays.json"));
+    const QString trialFile = scratch(QStringLiteral("run/grassfield-display-trial.conf"));
+    const QString conf = scratch(QStringLiteral("cfg/displays.conf"));
+    const QString line = QStringLiteral("v1\tdesc:BOE 0x0BCA\t2880x1800@120.00\t0x0\t2.5\t0");
+    const auto publish = [&state](const QString &id, const QString &s) {
+        QFile f(state + QStringLiteral(".tmp"));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write(QStringLiteral("{\"v\":1,\"monitors\":[],\"backlight\":null,\"trial\":{\"id\":\"%1\",\"state\":\"%2\"}}\n").arg(id, s).toUtf8());
+        f.close();
+        QFile::remove(state);
+        ASSERT_TRUE(QFile::rename(state + QStringLiteral(".tmp"), state));
+    };
+    const auto read = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+    publish(QStringLiteral("a1b2c3d4"), QStringLiteral("applied"));
+    {
+        Backend backend;
+        QStringList settled;
+        QObject::connect(&backend, &Backend::displayKeepSettled, [&settled](const QString &id, const QString &s, const QString &error) {
+            settled << id + QLatin1Char(' ') + s + QLatin1Char(' ') + error;
+        });
+        EXPECT_EQ(backend.keepDisplayTrial(QStringLiteral("a1b2c3d4"), {line}, 5000), QString());
+        EXPECT_EQ(read(trialFile), QStringLiteral("kept a1b2c3d4\n"));
+        // One Keep at a time.
+        EXPECT_FALSE(backend.keepDisplayTrial(QStringLiteral("e5f6a7b8"), {line}, 5000).isEmpty());
+        EXPECT_FALSE(QFile::exists(conf)) << "nothing is written before the shell kept it";
+        publish(QStringLiteral("a1b2c3d4"), QStringLiteral("kept"));
+        ASSERT_TRUE(spinUntil([&] { return !settled.isEmpty(); }));
+        EXPECT_EQ(settled, QStringList{QStringLiteral("a1b2c3d4 kept ")});
+        EXPECT_TRUE(read(conf).contains(line));
+
+        // Taken back first: nothing written.
+        QFile::remove(conf);
+        settled.clear();
+        publish(QStringLiteral("c1c2c3c4"), QStringLiteral("applied"));
+        EXPECT_EQ(backend.keepDisplayTrial(QStringLiteral("c1c2c3c4"), {line}, 5000), QString());
+        publish(QStringLiteral("c1c2c3c4"), QStringLiteral("reverted"));
+        ASSERT_TRUE(spinUntil([&] { return !settled.isEmpty(); }));
+        EXPECT_EQ(settled, QStringList{QStringLiteral("c1c2c3c4 reverted ")});
+        EXPECT_FALSE(QFile::exists(conf));
+
+        // No answer: "silent", nothing written.
+        settled.clear();
+        EXPECT_EQ(backend.keepDisplayTrial(QStringLiteral("d1d2d3d4"), {line}, 50), QString());
+        ASSERT_TRUE(spinUntil([&] { return !settled.isEmpty(); }));
+        EXPECT_EQ(settled, QStringList{QStringLiteral("d1d2d3d4 silent ")});
+        EXPECT_FALSE(QFile::exists(conf));
+
+        // A malformed line is refused before anything is marked.
+        EXPECT_FALSE(backend.keepDisplayTrial(QStringLiteral("f1f2f3f4"), {QStringLiteral("v1\tbad")}, 5000).isEmpty());
+        EXPECT_NE(read(trialFile), QStringLiteral("kept f1f2f3f4\n"));
+    }
+    // The window closes right after Keep (no page, no event loop left): the shell's answer, a moment later, still writes it.
+    {
+        auto backend = std::make_unique<Backend>();
+        publish(QStringLiteral("b1b2b3b4"), QStringLiteral("applied"));
+        EXPECT_EQ(backend->keepDisplayTrial(QStringLiteral("b1b2b3b4"), {line}, 5000), QString());
+        std::thread shell([&publish] {
+            QThread::msleep(200);
+            publish(QStringLiteral("b1b2b3b4"), QStringLiteral("kept"));
+        });
+        backend.reset();
+        shell.join();
+        EXPECT_TRUE(read(conf).contains(line));
+    }
+}
+
+// ---- Desktop entries off the GUI thread (SP-05) ----
+
+// The applications folders are read on a worker and answered on this thread, in folder order; with a needle only the names one
+// of whose copies holds it come back, every copy of them (a user's copy without the category still hides the system's); a file
+// changed since is read again.
+TEST_F(BackendTest, DesktopEntriesAreReadOnAWorkerAndAnsweredHere)
+{
+    const QString user = scratch(QStringLiteral("apps-user"));
+    const QString system = scratch(QStringLiteral("apps-system"));
+    QDir().mkpath(user);
+    QDir().mkpath(system);
+    const auto write = [](const QString &path, const QByteArray &text) {
+        QFile f(path);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(text);
+    };
+    write(system + QStringLiteral("/firefox.desktop"), "[Desktop Entry]\nType=Application\nName=Firefox\nCategories=Network;WebBrowser;\n");
+    write(system + QStringLiteral("/editor.desktop"), "[Desktop Entry]\nType=Application\nName=Editor\n");
+    write(user + QStringLiteral("/firefox.desktop"), "[Desktop Entry]\nHidden=true\n");
+    write(user + QStringLiteral("/notes.txt"), "not an entry");
+
+    Backend backend;
+    QList<QPair<QString, QVariantList>> answers;
+    QObject::connect(&backend, &Backend::desktopEntriesRead, [&answers](const QString &tag, const QVariantList &entries) { answers.append({tag, entries}); });
+    const QThread *gui = QThread::currentThread();
+    const QThread *answeredOn = nullptr;
+    QObject::connect(&backend, &Backend::desktopEntriesRead, [&answeredOn] { answeredOn = QThread::currentThread(); });
+
+    backend.readDesktopEntries({user, system}, QStringLiteral("all"));
+    EXPECT_TRUE(answers.isEmpty()) << "answered later, never during the call";
+    ASSERT_TRUE(spinUntil([&] { return answers.size() == 1; }));
+    EXPECT_EQ(answeredOn, gui);
+    EXPECT_EQ(answers[0].first, QStringLiteral("all"));
+    QStringList seen;
+    for (const QVariant &v : answers[0].second)
+        seen << v.toMap().value(QStringLiteral("dir")).toString().section(QLatin1Char('/'), -1) + QLatin1Char(':') + v.toMap().value(QStringLiteral("file")).toString();
+    EXPECT_EQ(seen, (QStringList{QStringLiteral("apps-user:firefox.desktop"), QStringLiteral("apps-system:editor.desktop"), QStringLiteral("apps-system:firefox.desktop")}));
+
+    backend.readDesktopEntries({user, system}, QStringLiteral("browsers"), QStringLiteral("WebBrowser"));
+    ASSERT_TRUE(spinUntil([&] { return answers.size() == 2; }));
+    seen.clear();
+    for (const QVariant &v : answers[1].second)
+        seen << v.toMap().value(QStringLiteral("file")).toString() + QLatin1Char('=') + v.toMap().value(QStringLiteral("text")).toString().section(QLatin1Char('\n'), 1, 1);
+    EXPECT_EQ(seen, (QStringList{QStringLiteral("firefox.desktop=Hidden=true"), QStringLiteral("firefox.desktop=Type=Application")}));
+
+    // Changed since (another size): read again, not taken from the run's cache.
+    write(system + QStringLiteral("/editor.desktop"), "[Desktop Entry]\nType=Application\nName=Editor\nCategories=WebBrowser;\n");
+    backend.readDesktopEntries({system}, QStringLiteral("again"), QStringLiteral("WebBrowser"));
+    ASSERT_TRUE(spinUntil([&] { return answers.size() == 3; }));
+    EXPECT_EQ(answers[2].second.size(), 2);
+}
+
+// A Backend that goes while a read runs is never answered (the worker posts nowhere).
+TEST_F(BackendTest, ADesktopEntriesReadOutlivesNoBackend)
+{
+    const QString dir = scratch(QStringLiteral("apps-many"));
+    QDir().mkpath(dir);
+    for (int i = 0; i < 300; ++i) {
+        QFile f(dir + QStringLiteral("/app%1.desktop").arg(i));
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("[Desktop Entry]\nType=Application\nName=App\n");
+    }
+    int answered = 0;
+    {
+        Backend backend;
+        QObject::connect(&backend, &Backend::desktopEntriesRead, [&answered] { ++answered; });
+        backend.readDesktopEntries({dir}, QStringLiteral("all"));
+    }
+    QThreadPool::globalInstance()->waitForDone(5000);
+    QCoreApplication::processEvents();
+    EXPECT_EQ(answered, 0);
+}
+
+// ---- Change signals instead of polls (the audit's notes) ----
+
+namespace {
+struct SystemBusDaemon {
+    QProcess daemon;
+    QString address;
+    SystemBusDaemon()
+    {
+        // The fixture's PATH holds only fake commands: the daemon is looked up where the system keeps it.
+        const QString program = QStandardPaths::findExecutable(QStringLiteral("dbus-daemon"), {QStringLiteral("/usr/bin"), QStringLiteral("/usr/sbin"), QStringLiteral("/bin")});
+        if (program.isEmpty())
+            return;
+        daemon.start(program, {QStringLiteral("--session"), QStringLiteral("--nofork"), QStringLiteral("--print-address=1")});
+        if (daemon.waitForStarted(3000) && daemon.waitForReadyRead(3000))
+            address = QString::fromUtf8(daemon.readLine()).trimmed();
+    }
+    ~SystemBusDaemon()
+    {
+        daemon.kill();
+        daemon.waitForFinished(3000);
+    }
+};
+} // namespace
+
+// The pages follow NetworkManager's, BlueZ's and UPower's change signals: busSignals turns true once subscribed (the pages then
+// stop polling), a change is announced at once, and a burst of changes (an access point's strength at every scan) is one more
+// announcement after the window, not one per signal. A service not followed is not announced.
+TEST_F(BackendTest, ChangeSignalsOfTheSystemServicesAreFollowedAndCoalesced)
+{
+    SystemBusDaemon bus;
+    if (bus.address.isEmpty())
+        GTEST_SKIP() << "no dbus-daemon here";
+    EnvGuard env({"DBUS_SYSTEM_BUS_ADDRESS"});
+    qputenv("DBUS_SYSTEM_BUS_ADDRESS", bus.address.toUtf8());
+    QDBusConnection nm = QDBusConnection::connectToBus(bus.address, QStringLiteral("fake-nm"));
+    ASSERT_TRUE(nm.isConnected());
+    ASSERT_TRUE(nm.registerService(QStringLiteral("org.freedesktop.NetworkManager")));
+    QDBusConnection upower = QDBusConnection::connectToBus(bus.address, QStringLiteral("fake-upower"));
+    ASSERT_TRUE(upower.registerService(QStringLiteral("org.freedesktop.UPower")));
+    const auto changed = [](QDBusConnection &c, const QString &path, const QString &iface) {
+        QDBusMessage m = QDBusMessage::createSignal(path, QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("PropertiesChanged"));
+        m << iface << QVariantMap{{QStringLiteral("Strength"), QVariant::fromValue<uchar>(40)}} << QStringList{};
+        c.send(m);
+    };
+    {
+        Backend backend;
+        QStringList announced;
+        QObject::connect(&backend, &Backend::busChanged, [&announced](const QString &what) { announced << what; });
+        EXPECT_FALSE(backend.busSignals());
+        backend.followBus(QStringLiteral("nm"));
+        ASSERT_TRUE(spinUntil([&] { return backend.busSignals(); }));
+        changed(nm, QStringLiteral("/org/freedesktop/NetworkManager/AccessPoint/7"), QStringLiteral("org.freedesktop.NetworkManager.AccessPoint"));
+        ASSERT_TRUE(spinUntil([&] { return announced.size() == 1; }));
+        EXPECT_EQ(announced, QStringList{QStringLiteral("nm")});
+        for (int i = 0; i < 10; ++i)
+            changed(nm, QStringLiteral("/org/freedesktop/NetworkManager/AccessPoint/%1").arg(i), QStringLiteral("org.freedesktop.NetworkManager.AccessPoint"));
+        // UPower is not followed: nothing for it.
+        changed(upower, QStringLiteral("/org/freedesktop/UPower/devices/DisplayDevice"), QStringLiteral("org.freedesktop.UPower.Device"));
+        spinUntil([] { return false; }, 500);
+        EXPECT_EQ(announced.size(), 1) << "a burst waits for the window";
+        ASSERT_TRUE(spinUntil([&] { return announced.size() == 2; }, 4000));
+        spinUntil([] { return false; }, 2000);
+        EXPECT_EQ(announced, (QStringList{QStringLiteral("nm"), QStringLiteral("nm")}));
+    }
+    QDBusConnection::disconnectFromBus(QStringLiteral("fake-nm"));
+    QDBusConnection::disconnectFromBus(QStringLiteral("fake-upower"));
+}
+
+// Without a system bus nothing is followed: the pages keep their polls.
+TEST_F(BackendTest, WithoutASystemBusThePagesKeepPolling)
+{
+    EnvGuard env({"DBUS_SYSTEM_BUS_ADDRESS"});
+    qputenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/nonexistent/gf-no-bus");
+    Backend backend;
+    backend.followBus(QStringLiteral("bt"));
+    spinUntil([] { return false; }, 500);
+    EXPECT_FALSE(backend.busSignals());
+}
+
+// Storage's package sizes are added up here, the page gets a number (the audit's notes: pacman's megabyte was parsed in JS on
+// the GUI thread).
+TEST(BackendInstalledSize, TheInstalledSizeLinesAreAddedUp)
+{
+    EXPECT_EQ(Backend::installedBytes("Name            : a\nInstalled Size  : 1.50 GiB\nName : b\nInstalled Size  : 512.00 KiB\nInstalled Size  : 10 B\n"),
+              qint64(std::llround(1.5 * 1073741824 + 512 * 1024 + 10)));
+    EXPECT_EQ(Backend::installedBytes(""), 0);
+    EXPECT_EQ(Backend::installedBytes("Installed Size  : 3 parsecs\nInstalled Sizes : 4 KiB\nInstalled Size  : -1 KiB\n"), 0);
 }

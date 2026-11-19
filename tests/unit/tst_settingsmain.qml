@@ -127,8 +127,35 @@ TestCase {
         return s;
     }
 
+    // The pane is built across frames (Main.qml's two loaders): select, then wait until the new page is in front.
+    function showPage(win, id) {
+        win.select(id);
+        tryVerify(() => !win.pageLoading, 5000);
+        wait(0);
+    }
+
     function shownSheet(win) {
         return win.sheets.find(x => x.shown) ?? null;
+    }
+
+    // A pane is built across frames behind the one shown, then swapped in: the window never shows an empty pane, and the page
+    // left goes once the new one is in front.
+    function test_aPageIsBuiltBehindTheOneShown() {
+        const t = make(touchpad);
+        showPage(t.win, "desktop");
+        const before = t.win.pageItem;
+        verify(before !== null);
+        t.win.select("appearance");
+        verify(t.win.pageLoading, "built asynchronously, not within select()");
+        compare(t.win.pageItem, before, "the page shown stays meanwhile");
+        tryVerify(() => !t.win.pageLoading && t.win.pageItem !== before, 5000);
+        verify(t.win.pageItem !== null);
+        compare(t.win.pageItem.title, "Appearance");
+        // Back and forth before the new one is ready: the last choice wins.
+        t.win.select("desktop");
+        t.win.select("appearance");
+        tryVerify(() => !t.win.pageLoading, 5000);
+        compare(t.win.selectedId, "appearance");
     }
 
     // UPower's display device decides: a laptop battery shows Battery, none (or no answer) hides it.
@@ -136,7 +163,7 @@ TestCase {
     // under the toolbar, as Files does.
     function test_theToolbarRuleShowsOnceScrolled() {
         const t = make(touchpad);
-        t.win.select("desktop");
+        showPage(t.win, "desktop");
         wait(50);
         const rule = find(t.win.contentItem, i => i.objectName === "toolbarRule");
         verify(rule !== null);
@@ -164,7 +191,7 @@ TestCase {
     // with the label in the text colour, and takes the accent back when the window is key.
     function test_theSelectionTurnsNeutralWhileNotKey() {
         const t = make(touchpad);
-        t.win.select("desktop");
+        showPage(t.win, "desktop");
         t.win.requestActivate();
         tryVerify(() => t.win.active, 2000);
         wait(50);
@@ -217,7 +244,7 @@ TestCase {
         const energy = t.win.available.find(s => s.id === "energy");
         compare(energy.title, "Energy");
         compare(energy.group, t.win.available.find(s => s.id === "wifi").group, "in Battery's group");
-        t.win.select("battery");
+        showPage(t.win, "battery");
         compare(t.win.selectedId, "energy");
         compare(t.win.sectionTitle, "Energy");
         tryVerify(() => find(t.win.contentItem, i => i.title === "Energy" && i.setMode !== undefined && i.store !== undefined) !== null);
@@ -230,7 +257,7 @@ TestCase {
         compare(t.win.selectedId, "battery");
         compare(t.win.navState.back.length, back);
         tryVerify(() => find(t.win.contentItem, i => i.setLimit !== undefined) !== null, 2000, "the Battery page");
-        t.win.select("energy");
+        showPage(t.win, "energy");
         compare(t.win.selectedId, "battery", "Energy asked for with a battery: Battery");
         // Search finds Energy by its words on a computer without a battery.
         t.backend.finished("main.power", true, JSON.stringify({present: false}));
@@ -253,20 +280,20 @@ TestCase {
         compare(pad.win.pointerPane("mouse"), "trackpad");
         compare(pad.win.pointerPane("sound"), "sound");
         verify(ids(pad.win).indexOf("mouse") < 0 && ids(pad.win).indexOf("trackpad") >= 0);
-        pad.win.select("mouse");
+        showPage(pad.win, "mouse");
         compare(pad.win.selectedId, "trackpad");
         const started = make(testCase.touchpad, {startSection: "mouse"});
         compare(started.win.selectedId, "trackpad", "--section=mouse on a laptop without a mouse");
         const desk = make(testCase.mouse);
         verify(desk.win.hasMouse && !desk.win.hasTouchpad);
         compare(desk.win.pointerPane("trackpad"), "mouse");
-        desk.win.select("trackpad");
+        showPage(desk.win, "trackpad");
         compare(desk.win.selectedId, "mouse");
         // A mouse plugged in later: read again with the system state, the pane stays the one asked for.
         desk.backend.files = {"/proc/bus/input/devices": testCase.touchpad + "\n" + testCase.mouse};
         desk.win.readPointers();
         verify(desk.win.hasMouse && desk.win.hasTouchpad);
-        desk.win.select("trackpad");
+        showPage(desk.win, "trackpad");
         compare(desk.win.selectedId, "trackpad");
         // The touchpad gone while its pane shows: the mouse's.
         desk.backend.files = {"/proc/bus/input/devices": testCase.mouse};
@@ -306,9 +333,9 @@ TestCase {
         verify(findDeep(general, i => i.count === 2 && i.spoken !== undefined && i.visible), "and draws it");
         const appearance = findDeep(win.contentItem, i => i.modelData !== undefined && i.modelData.id === "appearance");
         compare(appearance.Accessible.name, "Appearance", "on General only");
-        win.select("general");
+        showPage(win, "general");
         tryVerify(() => findDeep(win.contentItem, i => i.text === "Software Update" && i.badge === 2));
-        win.select("software-update");
+        showPage(win, "software-update");
         compare(win.sectionTitle, "Software Update");
         const pane = find(win.contentItem, i => i.infoRequested !== undefined && i.endSessionRequested !== undefined);
         verify(pane);
@@ -348,7 +375,7 @@ TestCase {
         const t = make(testCase.touchpad);
         t.backend.finished("main.power", true, testCase.battery);
         // Battery > (i) Charging: the sheet; its charge limit goes to the page (refused in a dev session: the page's note).
-        t.win.select("battery");
+        showPage(t.win, "battery");
         const batteryPage = find(t.win.contentItem, i => i.infoRequested !== undefined && i.setLimit !== undefined);
         verify(batteryPage);
         batteryPage.infoRequested("charging", batteryPage.power);
@@ -365,7 +392,7 @@ TestCase {
         options.accepted();
         options.close();
         // Printers: a printer's sheet, then Remove Printer…'s confirmation.
-        t.win.select("printers");
+        showPage(t.win, "printers");
         const printers = find(t.win.contentItem, i => i.detailsRequested !== undefined && i.addRequested !== undefined);
         verify(printers);
         printers.detailsRequested({name: "GF_Office", title: "GF Office", status: "Idle", message: "", location: "", kind: "USB", isDefault: false,
@@ -382,7 +409,7 @@ TestCase {
         for (const c of cases) {
             for (const s of t.win.sheets)
                 s.close();
-            t.win.select(c.id);
+            showPage(t.win, c.id);
             const p = find(t.win.contentItem, i => i[c.signal] !== undefined);
             verify(p, c.signal);
             p[c.signal]();
@@ -399,10 +426,10 @@ TestCase {
         // A sheet over the window: the pane does not change under it (the global menu's View items, a request from another
         // process), or the sheet's answer would find no page.
         saver.open();
-        t.win.select("desktop");
+        showPage(t.win, "desktop");
         compare(t.win.selectedId, "lock");
         saver.close();
-        t.win.select("desktop");
+        showPage(t.win, "desktop");
         compare(t.win.selectedId, "desktop");
     }
 
@@ -525,7 +552,7 @@ TestCase {
         for (const grey of [Tokens.settingsSidebarTileInactiveLight, Tokens.settingsSidebarTileInactiveDark])
             verify((lum(glyph) + 0.05) / (lum(Qt.color(grey)) + 0.05) >= 3.0, grey + " under the white glyph is under 3:1");
         const t = make(touchpad);
-        t.win.select("desktop");
+        showPage(t.win, "desktop");
         // The window sets the appearance from its own source once made: the light one is the one under test here.
         Appearance.dark = false;
         t.win.requestActivate();
@@ -677,7 +704,7 @@ TestCase {
         }, 1000, "the selection is back in view");
 
         // Selected from elsewhere (search, a deep link, back): the first section comes back into view.
-        win.select(win.filtered[0].id);
+        showPage(win, win.filtered[0].id);
         tryVerify(() => list.contentY <= top + 1);
     }
 }

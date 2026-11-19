@@ -91,6 +91,8 @@ TestCase {
         compare(du["/home/u/Pictures"], 41700000000);
         compare(General.packagesBytes("Name : a\nInstalled Size  : 1.50 GiB\nInstalled Size  : 512.00 KiB\nInstalled Size  : 10 B\n"), Math.round(1.5 * 1073741824 + 512 * 1024 + 10));
         compare(General.packagesBytes(""), 0);
+        // Backend.installedSize's answer: the sum already.
+        compare(General.packagesBytes("1610612736"), 1610612736);
         const argv = General.duArgv("/home/u");
         compare(argv.slice(0, 5), ["du", "-s", "-x", "--block-size=1", "--"]);
         compare(argv.length, 5 + 7);

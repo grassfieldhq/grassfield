@@ -867,6 +867,7 @@
  {"path": "tests/shell/wallpaper_retarget.sh", "layer": "headless"},
  {"path": "tests/shell/settings_churn/shell.qml", "layer": "headless"},
  {"path": "tests/shell/lock_client_reads/shell.qml", "layer": "headless"},
- {"path": "tests/shell/not_responding_wait/shell.qml", "layer": "headless"}
+ {"path": "tests/shell/not_responding_wait/shell.qml", "layer": "headless"},
+ {"path": "tests/unit/settings/tst_iconlookup.cpp", "layer": "logic"}
 ]
 }

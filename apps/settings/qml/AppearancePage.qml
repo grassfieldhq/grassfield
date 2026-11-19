@@ -147,7 +147,8 @@ SettingsPage {
                 anchors.rightMargin: Tokens.settingsRowInset
                 y: parent.contentY + Tokens.settingsGlassPreviewTop
                 transparency: root.store.value("material.transparency")
-                onMoved: t => root.store.set("material.transparency", t)
+                onMoved: t => root.store.setSoon("material.transparency", t)
+                onReleased: root.store.flush()
             }
         }
     }

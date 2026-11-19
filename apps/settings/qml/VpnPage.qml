@@ -32,14 +32,24 @@ SettingsPage {
         return link === "connected" ? qsTr("Connected") : link === "connecting" ? qsTr("Connecting…") : qsTr("Not connected");
     }
 
+    // Refused while another VPN is being connected (one change at a time): that one keeps its "Changing…".
     function toggle(uuid: string, on: bool): void {
+        const running = root.pending;
         root.pending = uuid;
         if (!root.system.act("vpn " + (on ? "on" : "off"), System.vpnConnect(uuid, on), "vpn.act"))
-            root.pending = "";
+            root.pending = running;
     }
 
     Connections {
         target: root.backend
+        ignoreUnknownSignals: true
+
+        // A change on the system bus (Backend.busChanged, coalesced there): read again; a reading on its way reads once more after.
+        function onBusChanged(what: string): void {
+            if (what === "nm") {
+                root.refresh();
+            }
+        }
 
         function onFinished(tag: string, ok: bool, output: string): void {
             if (tag === "vpn.state") {
@@ -48,20 +58,26 @@ SettingsPage {
                 root.answered = true;
                 System.syncModel(vpnModel, st ? st.vpns.map(v => ({uuid: v.uuid, name: v.name, kind: v.kind, link: v.state})) : [], "uuid");
             } else if (tag === "vpn.act") {
-                root.pending = "";
+                if (!root.system.busy("vpn.act"))
+                    root.pending = "";
                 root.refresh();
             }
         }
     }
 
+    // A poll only while the system bus's change signals are not followed (Backend.followBus: no bus, a test's backend).
     Timer {
         interval: Tokens.settingsSystemRefreshMs
-        running: true
+        running: root.backend.busSignals !== true
         repeat: true
         onTriggered: root.refresh()
     }
 
-    Component.onCompleted: root.refresh()
+    Component.onCompleted: {
+        if (typeof root.backend.followBus === "function")
+            root.backend.followBus("nm");
+        root.refresh();
+    }
 
     SettingsGroup {
         visible: vpnModel.count > 0

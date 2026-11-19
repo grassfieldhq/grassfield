@@ -1718,3 +1718,15 @@ The capture toolbar and recording (ADR-0045 OC-1) differ from macOS 27 here:
 - The glyphs, the bar's height and padding and the countdown plate are estimates (`capture.*`
   tokens), not measurements of macOS 27; NOT VERIFIED on screen (no nested capture was taken by the cloud session that built
   them).
+
+## Request lifetime additions (2026-11 audit, SP-16, SP-18)
+
+- A request whose frontend leaves the bus (xdg-desktop-portal stopped or crashed) ends: `RequestHost` watches the unique name
+  of every caller (`QDBusServiceWatcher`); its open panels go, a forwarded one is closed at x-d-p-gtk.
+- Print with a ticket: a request closed (or its frontend gone) while Save as PDF writes, Open in Preview copies or the CUPS
+  job is sent stops that work: the writer removes its temporary file, Preview does not open, the CUPS job stops at its next
+  step and a job already created is cancelled in the queue (`PrintSystem::submit` returns its stop). The CUPS cancel flag is
+  an atomic int (`printsystem.cpp`).
+- The application's desktop entry (its name and icon) is read on a worker thread at the request's start (ksycoca is per
+  thread; a stale one is rebuilt there, never on the GUI thread inside the 3-s first-frame deadline); Access, AppChooser and
+  FileChooser make their window once it is known (`RequestHost::whenAppKnown`); `appName` answers only from what was read.

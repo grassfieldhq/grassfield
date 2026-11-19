@@ -15,6 +15,11 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <mutex>
+#include <QThreadPool>
+#include <QJsonObject>
+#include <QThread>
+#include <QElapsedTimer>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
@@ -44,6 +49,9 @@ constexpr int kMaxReason = 160;
 constexpr int kQueryJobMs = 10000;  // a D-Bus state read: past this the page gets "timed out"
 constexpr int kActionJobMs = 60000; // a D-Bus action: its look-ups are 3 s reads (kReadMs), then exactly one call of up to kActMs (30 s)
 constexpr int kPrivilegedJobMs = 370000; // three calls that may each wait for the polkit dialog (kPrivilegedMs, 120 s): Add Printer, ADR-0030
+// A join followed until it is up (systembus.h awaitActivation): a polkit dialog for a new profile (120 s), the session's password
+// sheet while NetworkManager asks for secrets (150 s), the activation itself (30 s) and a failed join's Delete (120 s).
+constexpr int kJoinJobMs = 440000;
 constexpr int kUpdateCheckMs = 200000;   // the checker stops itself after 180 s (SIGTERM, then SIGKILL 5 s later): U1
 // fprintd's enrolment (ADR-0045 OC-0.7): it ends itself after a minute without a status from the reader (the person left), and
 // the job gets room for Claim and EnrollStart, which may each wait for the polkit dialog (120 s), and for a slow enrolment.
@@ -52,6 +60,9 @@ constexpr int kUpdateCheckMs = 200000;   // the checker stops itself after 180 s
 constexpr int kEnrollIdleMs = 60000;
 constexpr int kEnrollTotalMs = 300000;
 constexpr int kEnrollJobMs = 600000;
+// A Keep still waiting when the window closes: the shell answers within a moment (it applies the mark on the file's change).
+constexpr qint64 kKeepAtExitMs = 1500;
+constexpr unsigned long kKeepPollMs = 50;
 
 // Every tool runs in the C locale: the parsers (qml/System.js) read the English, untranslated output.
 QProcessEnvironment cLocaleEnvironment()
@@ -100,6 +111,17 @@ QString resolveBindingsFile()
 }
 } // namespace
 
+struct Backend::EntryReads {
+    std::mutex lock;
+    Backend *target = nullptr;
+    struct Read {
+        qint64 size = -1;
+        qint64 mtime = 0;
+        QString text;
+    };
+    QHash<QString, Read> cache; // path -> what was read
+};
+
 Backend::Backend(QObject *parent)
     : QObject(parent)
     , m_configFile(resolveConfigFile())
@@ -108,8 +130,25 @@ Backend::Backend(QObject *parent)
 {
     grassfield::settings::registerBusTypes();
     m_bus = std::make_unique<Bus>();
+    m_entryReads = std::make_shared<EntryReads>();
+    m_entryReads->target = this;
     connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, &Backend::onPath);
     connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, &Backend::onPath);
+    // A Keep waiting for the shell (keepDisplayTrial) is settled by the state file's changes, whatever page is shown.
+    m_keepTimer = new QTimer(this);
+    m_keepTimer->setSingleShot(true);
+    connect(m_keepTimer, &QTimer::timeout, this, [this] {
+        if (settleDisplayKeep() || m_keepId.isEmpty())
+            return;
+        const QString id = m_keepId;
+        m_keepId.clear();
+        m_keepLines.clear();
+        emit displayKeepSettled(id, QStringLiteral("silent"), QString());
+    });
+    connect(this, &Backend::fileChanged, this, [this](const QString &path) {
+        if (!m_keepId.isEmpty() && path == displaysStateFile())
+            settleDisplayKeep();
+    });
     if (m_dev) {
         // The dev binary sits in <worktree>/.dev/build: the helper next to it, the cache and the pictures under .dev.
         const QString dev = QDir(QCoreApplication::applicationDirPath() + QStringLiteral("/..")).canonicalPath();
@@ -150,6 +189,19 @@ struct Backend::Bus {
 
 Backend::~Backend()
 {
+    // No answer of a .desktop read reaches this object once it goes (a read still running posts nowhere).
+    {
+        std::lock_guard<std::mutex> hold(m_entryReads->lock);
+        m_entryReads->target = nullptr;
+    }
+    // A Keep the shell has not answered yet (the window closed right after Keep): its answer comes within a moment, and
+    // displays.conf is written then; without one in kKeepAtExitMs nothing is (the shell's countdown takes the trial back).
+    if (!m_keepId.isEmpty()) {
+        QElapsedTimer waited;
+        waited.start();
+        while (!settleDisplayKeep() && !m_keepId.isEmpty() && waited.elapsed() < kKeepAtExitMs)
+            QThread::msleep(kKeepPollMs);
+    }
     // Never destroy a running QProcess. This comes first: the D-Bus jobs below may abandon the process (_Exit), which skips every
     // destructor, and a wpctl or the wallpaper helper still running would be left behind.
     const auto procs = findChildren<QProcess *>(QString(), Qt::FindDirectChildrenOnly);
@@ -171,7 +223,8 @@ void Backend::start(const QStringList &argv, const QString &tag, int timeoutMs, 
     start(argv, tag, timeoutMs, track, cLocaleEnvironment());
 }
 
-void Backend::start(const QStringList &argv, const QString &tag, int timeoutMs, Track track, const QProcessEnvironment &env)
+void Backend::start(const QStringList &argv, const QString &tag, int timeoutMs, Track track, const QProcessEnvironment &env,
+                    const std::function<QString(const QByteArray &)> &reduce)
 {
     auto *p = new QProcess(this);
     // Once, whichever way the process ends: the query or action it held is over.
@@ -196,13 +249,13 @@ void Backend::start(const QStringList &argv, const QString &tag, int timeoutMs, 
             p->deleteLater();
         }
     });
-    connect(p, &QProcess::finished, this, [this, p, tag, settle](int code, QProcess::ExitStatus status) {
+    connect(p, &QProcess::finished, this, [this, p, tag, settle, reduce](int code, QProcess::ExitStatus status) {
         settle();
         const bool ok = status == QProcess::NormalExit && code == 0;
         const QByteArray out = p->readAllStandardOutput();
         if (!ok)
             emit failed(tag, p->property("timedOut").toBool() ? QCoreApplication::translate("SystemBus", "timed out") : reasonOf(p->readAllStandardError(), out));
-        emit finished(tag, ok, QString::fromUtf8(out));
+        emit finished(tag, ok, reduce ? reduce(out) : QString::fromUtf8(out));
         p->deleteLater();
     });
     p->start(argv.first(), argv.mid(1), QIODevice::ReadOnly);
@@ -250,6 +303,39 @@ void Backend::readOnlyQuery(const QStringList &argv, const QString &tag, int tim
         return;
     }
     query(argv, tag, timeoutMs, shared);
+}
+
+qint64 Backend::installedBytes(const QByteArray &pacmanQi)
+{
+    static const QHash<QByteArray, double> units{{"B", 1.0}, {"KiB", 1024.0}, {"MiB", 1048576.0}, {"GiB", 1073741824.0}, {"TiB", 1099511627776.0}};
+    double sum = 0;
+    for (const QByteArray &raw : pacmanQi.split('\n')) {
+        if (!raw.startsWith("Installed Size"))
+            continue;
+        const int colon = raw.indexOf(':');
+        const QList<QByteArray> parts = colon < 0 ? QList<QByteArray>{} : raw.mid(colon + 1).simplified().split(' ');
+        if (raw.left(colon).trimmed() != "Installed Size" || parts.size() != 2 || !units.contains(parts.at(1)))
+            continue;
+        bool ok = false;
+        const double value = parts.at(0).toDouble(&ok);
+        if (ok && value >= 0)
+            sum += value * units.value(parts.at(1));
+    }
+    return qint64(std::llround(sum));
+}
+
+void Backend::installedSize(const QString &tag, int timeoutMs)
+{
+    const QStringList argv{QStringLiteral("pacman"), QStringLiteral("-Qi")};
+    if (!grassfield::settings::isReadOnlyQuery(argv)) {
+        emit finished(tag, false, QString());
+        return;
+    }
+    const QString key = argv.join(QChar(0x1f));
+    if (m_queries.runs(tag, key))
+        return;
+    start(argv, tag, timeoutMs, m_queries.begin(tag, key) ? Track::Query : Track::None, cLocaleEnvironment(),
+          [](const QByteArray &out) { return QString::number(installedBytes(out)); });
 }
 
 bool Backend::beginAction(const QString &tag, const QString &what)
@@ -422,6 +508,90 @@ void Backend::runBus(const QString &tag, std::function<QString(grassfield::setti
         timeoutMs);
 }
 
+namespace {
+constexpr int kBusChangeMs = 1500;
+const QString kPropertiesIface = QStringLiteral("org.freedesktop.DBus.Properties");
+const QString kObjectManagerIface = QStringLiteral("org.freedesktop.DBus.ObjectManager");
+} // namespace
+
+void Backend::followBus(const QString &what)
+{
+    if (what != QLatin1String("nm") && what != QLatin1String("bt") && what != QLatin1String("power"))
+        return;
+    m_followed.insert(what);
+    if (m_busSignals || m_subscribing)
+        return;
+    m_subscribing = true;
+    // The connection is made on a worker (a stalled bus blocks that worker only); the match rules are added once it exists.
+    m_bus->jobs.start([](grassfield::settings::BusCaller &, QString *) { return QString(); },
+                      [this](const QString &reason, const QString &) {
+                          m_subscribing = false;
+                          if (reason.isEmpty())
+                              subscribeBus();
+                      },
+                      kQueryJobMs);
+}
+
+void Backend::subscribeBus()
+{
+    QDBusConnection bus(m_bus->connection.name());
+    if (!bus.isConnected())
+        return;
+    const QString any;
+    bool ok = bus.connect(QStringLiteral("org.freedesktop.NetworkManager"), any, kPropertiesIface, QStringLiteral("PropertiesChanged"), this,
+                          SLOT(nmSignal(QDBusMessage)));
+    ok = bus.connect(QStringLiteral("org.bluez"), any, kPropertiesIface, QStringLiteral("PropertiesChanged"), this, SLOT(bluezSignal(QDBusMessage))) && ok;
+    ok = bus.connect(QStringLiteral("org.bluez"), any, kObjectManagerIface, QStringLiteral("InterfacesAdded"), this, SLOT(bluezSignal(QDBusMessage))) && ok;
+    ok = bus.connect(QStringLiteral("org.bluez"), any, kObjectManagerIface, QStringLiteral("InterfacesRemoved"), this, SLOT(bluezSignal(QDBusMessage))) && ok;
+    ok = bus.connect(QStringLiteral("org.freedesktop.UPower"), any, kPropertiesIface, QStringLiteral("PropertiesChanged"), this,
+                     SLOT(upowerSignal(QDBusMessage)))
+        && ok;
+    if (!ok)
+        return;
+    m_busSignals = true;
+    emit busSignalsChanged();
+}
+
+void Backend::nmSignal(const QDBusMessage &)
+{
+    busChange(QStringLiteral("nm"));
+}
+
+void Backend::bluezSignal(const QDBusMessage &)
+{
+    busChange(QStringLiteral("bt"));
+}
+
+void Backend::upowerSignal(const QDBusMessage &)
+{
+    busChange(QStringLiteral("power"));
+}
+
+void Backend::busChange(const QString &what)
+{
+    if (!m_followed.contains(what))
+        return;
+    QTimer *&timer = m_changeTimers[what];
+    if (!timer) {
+        timer = new QTimer(this);
+        timer->setSingleShot(true);
+        timer->setInterval(kBusChangeMs);
+        connect(timer, &QTimer::timeout, this, [this, what] {
+            // Changes came meanwhile: one more, and the window starts again.
+            if (m_changedMeanwhile.remove(what)) {
+                emit busChanged(what);
+                m_changeTimers.value(what)->start();
+            }
+        });
+    }
+    if (timer->isActive()) {
+        m_changedMeanwhile.insert(what);
+        return;
+    }
+    emit busChanged(what);
+    timer->start();
+}
+
 void Backend::busQuery(const QString &what, const QString &tag)
 {
     using namespace grassfield::settings;
@@ -493,7 +663,9 @@ bool Backend::busAct(const QString &what, const QVariantMap &op, const QString &
     }
     // A polkit action runs one at a time per tag: a page shown again while the dialog is up cannot send a second one, and
     // blocked calls cannot fill the jobs' kMaxInFlight (integrator review of PR #6).
-    const bool latch = privilegedAction(op);
+    // So does a join or a VPN followed until it is up (it may wait for the session's password sheet): one at a time per page.
+    const bool joins = followsActivation(op);
+    const bool latch = privilegedAction(op) || joins;
     if (latch && !beginAction(tag, what))
         return false;
     // fprintd's enrolment (ADR-0045 OC-0.7): each status reaches the page as it comes (progress), through the jobs' mailbox, so
@@ -515,7 +687,8 @@ bool Backend::busAct(const QString &what, const QVariantMap &op, const QString &
         return true;
     }
     const QStringList own = userUnitDirs();
-    runBus(tag, [op, own](BusCaller &bus, QString *) { return runAction(bus, op, own); }, latch ? kPrivilegedJobMs : kActionJobMs, sessionAction(op), latch);
+    runBus(tag, [op, own](BusCaller &bus, QString *) { return runAction(bus, op, own); }, joins ? kJoinJobMs : latch ? kPrivilegedJobMs : kActionJobMs,
+           sessionAction(op), latch);
     return true;
 }
 
@@ -714,6 +887,70 @@ QStringList Backend::currentDesktops() const
     return qEnvironmentVariable("XDG_CURRENT_DESKTOP").split(QLatin1Char(':'), Qt::SkipEmptyParts);
 }
 
+namespace {
+constexpr qint64 kMaxEntryBytes = 256 * 1024;
+constexpr int kMaxEntries = 4096;
+} // namespace
+
+void Backend::readDesktopEntries(const QStringList &dirs, const QString &tag, const QString &needle)
+{
+    QStringList clean;
+    for (const QString &d : dirs) {
+        if (d.startsWith(QLatin1Char('/')) && !clean.contains(QDir::cleanPath(d)))
+            clean << QDir::cleanPath(d);
+    }
+    const std::shared_ptr<EntryReads> reads = m_entryReads;
+    QThreadPool::globalInstance()->start([reads, clean, tag, needle] {
+        QVariantList out;
+        QSet<QString> wanted;
+        struct Found {
+            QString dir, file, text;
+        };
+        QList<Found> found;
+        int count = 0;
+        for (const QString &dir : clean) {
+            const QFileInfoList files = QDir(dir).entryInfoList({QStringLiteral("*.desktop")}, QDir::Files | QDir::Readable, QDir::Name);
+            for (const QFileInfo &info : files) {
+                if (++count > kMaxEntries || info.size() > kMaxEntryBytes)
+                    continue;
+                const QString path = info.absoluteFilePath();
+                const qint64 mtime = info.lastModified().toMSecsSinceEpoch();
+                QString text;
+                bool cached = false;
+                {
+                    std::lock_guard<std::mutex> hold(reads->lock);
+                    const auto it = reads->cache.constFind(path);
+                    if (it != reads->cache.cend() && it->size == info.size() && it->mtime == mtime) {
+                        text = it->text;
+                        cached = true;
+                    }
+                }
+                if (!cached) {
+                    QFile f(path);
+                    if (!f.open(QIODevice::ReadOnly))
+                        continue;
+                    QStringDecoder utf8(QStringDecoder::Utf8, QStringConverter::Flag::Stateless);
+                    text = utf8(f.read(kMaxEntryBytes));
+                    if (utf8.hasError())
+                        text.clear();
+                    std::lock_guard<std::mutex> hold(reads->lock);
+                    reads->cache.insert(path, {info.size(), mtime, text});
+                }
+                if (needle.isEmpty() || text.contains(needle))
+                    wanted.insert(info.fileName());
+                found.append({dir, info.fileName(), text});
+            }
+        }
+        for (const Found &f : std::as_const(found)) {
+            if (wanted.contains(f.file))
+                out.append(QVariantMap{{QStringLiteral("dir"), f.dir}, {QStringLiteral("file"), f.file}, {QStringLiteral("text"), f.text}});
+        }
+        std::lock_guard<std::mutex> hold(reads->lock);
+        if (Backend *target = reads->target)
+            QMetaObject::invokeMethod(target, [target, tag, out] { emit target->desktopEntriesRead(tag, out); }, Qt::QueuedConnection);
+    });
+}
+
 QStringList Backend::desktopEntries(const QString &dir) const
 {
     // The .desktop files of one folder (no recursion, regular files only), sorted.
@@ -908,6 +1145,50 @@ QString Backend::markDisplayTrial(const QString &state, const QString &id) const
     if ((state != QLatin1String("kept") && state != QLatin1String("revert")) || !grassfield::settings::isDisplayTrialId(id))
         return QCoreApplication::translate("SystemBus", "the trial is not well formed");
     return writeText(path, state + QLatin1Char(' ') + id + QLatin1Char('\n'));
+}
+
+QString Backend::keepDisplayTrial(const QString &id, const QStringList &lines, int answerMs)
+{
+    if (!m_keepId.isEmpty())
+        return QCoreApplication::translate("SystemBus", "another change is still being kept");
+    const QString problem = displayLinesProblem(lines);
+    if (!problem.isEmpty())
+        return problem;
+    const QString mark = markDisplayTrial(QStringLiteral("kept"), id);
+    if (!mark.isEmpty())
+        return mark;
+    m_keepId = id;
+    m_keepLines = lines;
+    const QString state = displaysStateFile();
+    if (!state.isEmpty())
+        watch(state);
+    m_keepTimer->start(std::clamp(answerMs, 1, int(kMaxTrialSeconds * 1000)));
+    return QString();
+}
+
+bool Backend::settleDisplayKeep()
+{
+    if (m_keepId.isEmpty())
+        return false;
+    const QString path = displaysStateFile();
+    if (path.isEmpty())
+        return false;
+    const QVariantMap r = readText(path);
+    const QJsonObject trial = QJsonDocument::fromJson(r.value(QStringLiteral("text")).toString().toUtf8()).object().value(QStringLiteral("trial")).toObject();
+    if (trial.value(QStringLiteral("id")).toString() != m_keepId)
+        return false;
+    const QString state = trial.value(QStringLiteral("state")).toString();
+    if (state != QLatin1String("kept") && state != QLatin1String("reverted"))
+        return false;
+    const QString id = m_keepId;
+    const QStringList lines = m_keepLines;
+    m_keepId.clear();
+    m_keepLines.clear();
+    m_keepTimer->stop();
+    // Kept: the next login reads it. Taken back first (a Keep after the shell's deadline): nothing is written.
+    const QString error = state == QLatin1String("kept") ? writeDisplaysConf(lines) : QString();
+    emit displayKeepSettled(id, state, error);
+    return true;
 }
 
 QString Backend::run(const QStringList &argv) const
