@@ -17,7 +17,7 @@ v2 (M3): live transforms of real windows by `grassfield-compositor` (`hl.plugin.
 "v2 shell side"). Non-goal: capturing protected surfaces.
 
 ## Functional requirements
-1. O1 Toggle via IPC `overview toggle` (CTRL+UP) and gesture (owner config, L2).
+1. O1 Toggle via IPC `overview toggle` (CTRL+UP) and gesture (owner config, L2). The three-finger swipe up follows the fingers (bindings.lua `tracked.gesture("overview-open", swipe_up)`, shell/platform/shortcuts GestureFollower): the chrome, the backdrop and the thumbnails draw the swipe's progress and complete or go back from where the fingers left it; with live windows (v2) the layout is sent when the swipe completes (the plugin has no request for a given progress, so the real windows animate over its own duration then). The swipe down closes the same way. Reduce Motion: the swipe opens or closes at its end.
 2. O2 Layout: non-overlapping grid preserving relative positions, max scale 0.8, min gap 24 px; unit-tested.
 3. O3 Thumbnails live-update (Full profile) or snapshot once (Reduced profile).
 4. O4 Desktops bar: one tile per workspace on the monitor + "+" creates the next workspace.

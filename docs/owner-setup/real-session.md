@@ -411,6 +411,8 @@ A new `grassfield-compositor` package built for the new Hyprland also fixes it (
 **Cannot reach Omarchy.** The login now starts Grassfield. In a Grassfield terminal: `grassfield-login set omarchy`, log out, log in.
 If Grassfield does not start at all: Ctrl+Alt+F3, log in, run `grassfield-login set omarchy`, then `reboot` (or
 `sudo rm /etc/sddm.conf.d/grassfield.conf` to restore Omarchy's own login completely; `grassfield-login-check` explains what it found).
+A session that ends within 20 s of its start twice in a row makes the next login start the other session once
+(grassfield-login, SS-11).
 
 ## 9. Uninstall
 

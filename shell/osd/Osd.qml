@@ -5,6 +5,7 @@ import Quickshell
 import Quickshell.Io
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "../services/BrightnessLogic.js" as BrightnessLogic
 
@@ -269,6 +270,8 @@ Singleton {
 
     IpcHandler {
         target: "volume"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function up(): void {
             root.volumeStep("up");
@@ -285,6 +288,8 @@ Singleton {
 
     IpcHandler {
         target: "brightness"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function up(): void {
             root.brightnessStep("up");
@@ -297,6 +302,8 @@ Singleton {
 
     IpcHandler {
         target: "keyboard"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function up(): void {
             root.keyboardStep("up");

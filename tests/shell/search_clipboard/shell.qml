@@ -12,7 +12,8 @@ import "services/ClipboardLogic.js" as Logic
 // Clipboard.handle() as the helper would print them, and nothing touches a real clipboard or compositor.
 // - entering and leaving the view (⌘4 / the button, Backspace, Super+Ctrl+V's toggle), the first-use prompt, Not Now, Allow;
 // - the rows (pinned first), the helper's search answers (stale ones ignored), Copy (the row says Copied once the helper owns
-//   the item; a refusal says so), Delete (the next row takes the selection), the pin-full notice, the preview;
+//   the item; a refusal says so), Delete (the next row takes the selection), the pin-full and pin-failed notices, a copy
+//   cleared soon by its app (K: forgotten while the app has a window), the preview;
 // - the paste never lands where the user did not just ask for it: Search closes only once the helper owns the item; closing
 //   Search first (Esc, a click outside) drops it, so a late confirmation pastes nothing; once copied it is dropped when this
 //   shell or another program locks the session, another surface opens, the target closes, Search opens again or the 1 s
@@ -83,6 +84,9 @@ ShellRoot {
                     search.toggleClipboard();
                     check("Super+Ctrl+V over open Search enters the view", search.open && search.clipboardView);
                     search.toggleClipboard();
+                    // The view resets once the panel is unmapped after its fade-out (SearchPanel -> released(), U9), not at hide().
+                    check("Super+Ctrl+V in the view closes Search, the view kept during the fade", !search.open && search.clipboardView);
+                    search.released();
                     check("Super+Ctrl+V in the view closes Search", !search.open && search.view === "");
                     search.toggleClipboard();
                     check("Super+Ctrl+V opens Search in the view", search.open && search.clipboardView);
@@ -143,6 +147,22 @@ ShellRoot {
 
                     Clipboard.handle(Logic.line(["N", "pin-full", ids[1]]));
                     check("pin-full shows the notice", search.clipNotice === "Pinned items are full");
+                    // B-09: the pin could not be written (an `I` line with pinnedAt 0 precedes it): its own notice.
+                    Clipboard.handle(Logic.line(["N", "pin-failed", ids[1]]));
+                    check("pin-failed shows its notice", search.clipNotice === "Couldn't pin the item");
+                    // B-10: `K` (cleared soon after the copy): forgotten when the app it came from still has a window, else kept;
+                    // a pinned item is the user's and stays.
+                    const hasWindow = Clipboard.hasWindow;
+                    Clipboard.hasWindow = app => false;
+                    Clipboard.handle(Logic.line(["K", ids[1]]));
+                    check("K with the app's windows gone: kept (" + keys() + ")", keys() === "32");
+                    Clipboard.hasWindow = app => app === "kitty";
+                    Clipboard.handle(Logic.line(["K", ids[2]]));
+                    check("K on a pinned item: kept", keys() === "32");
+                    Clipboard.handle(Logic.line(["K", ids[1]]));
+                    check("K with the app's window open: forgotten (" + keys() + ")", keys() === "3");
+                    Clipboard.hasWindow = hasWindow;
+                    Clipboard.handle(item(ids[1], 0, 2000, "bravo"));
 
                     search.selected = 0;
                     search.clipTogglePreview();
@@ -255,6 +275,7 @@ ShellRoot {
                     check("an unanswered paste: Search stays and says so (" + Clipboard.lastPaste + ")", search.open && Clipboard.pendingPaste === null && Clipboard.lastPaste === "not copied in time" && search.clipNotice === "The item could not be copied");
                     Clipboard.handle(Logic.line(["L", "1"]));
                     check("the helper's lock closes Search", !search.open);
+                    search.released(); // the panel's fade-out ended (U9)
                     search.toggleClipboard();
                     check("locked by another program: Super+Ctrl+V opens nothing", !search.open && !search.clipboardView);
                     Clipboard.handle(Logic.line(["L", "0"]));

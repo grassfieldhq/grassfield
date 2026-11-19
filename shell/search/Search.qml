@@ -5,6 +5,7 @@ import qs.lib
 import Quickshell.Io
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "../platform/ScreenChoice.js" as ScreenChoice
 import "Calc.js" as Calc
@@ -844,6 +845,11 @@ Scope {
             noticeTimer.restart();
         }
 
+        function onPinFailed(id: string): void {
+            root.clipNotice = qsTr("Couldn't pin the item");
+            noticeTimer.restart();
+        }
+
         function onPreviewReady(id: string, path: string, text: string): void {
             if (!root.clipPreview || root.clipPreview.id !== id)
                 return;
@@ -971,6 +977,8 @@ Scope {
 
     IpcHandler {
         target: "search"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: root.ipcEnabled
 
         function toggle(): void {

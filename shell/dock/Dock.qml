@@ -9,6 +9,7 @@ import Quickshell.Wayland
 import Grassfield.Ui
 import qs.notifications
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "DockModel.js" as DockModel
 import "Launch.js" as Launch
@@ -707,6 +708,8 @@ Scope {
     // is no test hook: apps call it.
     IpcHandler {
         target: "dock"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         // A running app launched again asks for its windows (macOS: launching a running app brings it forward, a minimized
         // window back): what a click on its tile does (bringForward). Called by the app itself, `qs ipc -p <shell> call dock

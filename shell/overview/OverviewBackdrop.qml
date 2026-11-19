@@ -26,8 +26,8 @@ Variants {
         required property ShellScreen modelData
 
         readonly property bool shown: root.controller.open && !root.controller.thumbnailMode
-        // 0 = clear, 1 = fully dimmed.
-        property real progress: shown ? 1 : 0
+        // 0 = clear, 1 = fully dimmed. While a swipe drives the Overview, the fingers' progress (Overview.gesture).
+        property real progress: shown && root.controller.gesture.progress >= 0 ? root.controller.gesture.progress : (shown ? 1 : 0)
 
         screen: modelData
         visible: shown || progress > 0.001
@@ -56,7 +56,8 @@ Variants {
 
         Behavior on progress {
             NumberAnimation {
-                duration: Appearance.duration(Tokens.motionSlow)
+                // Each step of a swipe is drawn as it comes; the rest of the way animates from there.
+                duration: root.controller.gesture.active ? 0 : Appearance.duration(Tokens.motionSlow)
                 easing.type: Easing.BezierSpline
                 easing.bezierCurve: Appearance.curve
             }

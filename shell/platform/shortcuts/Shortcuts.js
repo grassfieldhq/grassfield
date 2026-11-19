@@ -129,3 +129,49 @@ function attached(list, handler) {
     out.push(handler);
     return out;
 }
+
+// What a surface that follows the gesture (Overview: target "overview", Apps: "apps") does with one step, given whether it
+// is open and the progress it draws (`current`, 0..1, or -1 when no gesture drives it): null (nothing), or {action,
+// progress}: action "show" (open it, from progress 0 when `progress` is 0), "close" (the surface's own close; the drawn
+// progress stays where it is and goes on to 0 from there once the surface has closed) or "" (the progress alone), and
+// `progress` the value it draws from now on (-1: its own state again, animated from where it is: 1 open, 0 closed).
+// The *-close kinds mirror the *-open ones (progress 1 - p). With Reduce Motion nothing follows the fingers: the end
+// alone counts, as the discrete gesture did (macOS: the gesture still works, without the zoom).
+function followStep(target, open, current, step, reduceMotion) {
+    if (!step || typeof step.kind !== "string")
+        return null;
+    const parts = step.kind.split("-");
+    if (parts[0] !== target)
+        return null;
+    const opening = parts[1] === "open";
+    const tracking = current >= 0;
+    switch (step.phase) {
+    case "begin":
+        if (reduceMotion || tracking)
+            return null;
+        if (opening)
+            return open ? null : {action: "show", progress: 0};
+        return open ? {action: "", progress: 1} : null;
+    case "update":
+        if (!tracking)
+            return null;
+        return {action: "", progress: Math.max(0, Math.min(1, opening ? step.progress : 1 - step.progress))};
+    case "end":
+        if (step.commit) {
+            if (opening)
+                return open && !tracking ? null : {action: open ? "" : "show", progress: -1};
+            if (open)
+                return {action: "close", progress: tracking ? current : -1};
+            return tracking ? {action: "", progress: -1} : null;
+        }
+        break;
+    case "cancel":
+        break;
+    default:
+        return null;
+    }
+    // Gone back (an end without commit, or a cancel): the surface returns to where the gesture found it.
+    if (!tracking)
+        return null;
+    return opening ? {action: "close", progress: current} : {action: "", progress: -1};
+}

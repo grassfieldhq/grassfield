@@ -1,2 +1,3 @@
 module qs.platform.shortcuts
 singleton Shortcuts 1.0 Shortcuts.qml
+GestureFollower 1.0 GestureFollower.qml

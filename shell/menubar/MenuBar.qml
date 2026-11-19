@@ -8,6 +8,7 @@ import Quickshell.Services.UPower
 import Grassfield.Ui
 import qs.notifications
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "BarHide.js" as BarHide
 import "../dock/AutoHide.js" as AutoHide
@@ -33,6 +34,8 @@ Scope {
     // Test and keyboard hook: qs ipc call menubar open <system|app|volume|network|battery|controlcenter> <output|"">.
     IpcHandler {
         target: "menubar"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         // screen: output name, empty for the first one.
         function open(kind: string, screen: string): void {

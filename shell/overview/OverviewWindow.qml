@@ -46,8 +46,9 @@ Variants {
         // compositor plugin (`overview-focus`) or, without it, from the controller's checked retry.
         readonly property bool holdsKeyboard: root.controller.keyboardPlan[screenName] === "exclusive"
 
-        // 0 = windows at their real place, 1 = fully laid out.
-        property real progress: shown ? 1 : 0
+        // 0 = windows at their real place, 1 = fully laid out. While a swipe drives the Overview, the fingers' progress
+        // (Overview.gesture, CIO-01).
+        property real progress: shown && root.controller.gesture.progress >= 0 ? root.controller.gesture.progress : (shown ? 1 : 0)
         readonly property real zoom: Appearance.reduceMotion ? 1 : progress
 
         // Windows of the current workspace and the Spaces of this output, kept while the
@@ -251,7 +252,8 @@ Variants {
 
         Behavior on progress {
             NumberAnimation {
-                duration: Appearance.duration(Tokens.motionSlow)
+                // Each step of a swipe is drawn as it comes; the rest of the way animates from there.
+                duration: root.controller.gesture.active ? 0 : Appearance.duration(Tokens.motionSlow)
                 easing.type: Easing.BezierSpline
                 easing.bezierCurve: Appearance.curve
             }
