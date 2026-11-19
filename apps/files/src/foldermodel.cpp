@@ -4,6 +4,7 @@
 #include "filelogic.h"
 #include "filesearch.h"
 #include "folderstylestore.h"
+#include "fskind.h"
 #include "imageproviders.h"
 #include "imagesize.h"
 #include "launchguard.h"
@@ -266,27 +267,28 @@ FolderModel::FolderModel(QObject *parent)
     // again (KDirModel reports each item whose type it found, one by one).
     connect(m_dirModel, &QAbstractItemModel::dataChanged, this, [this](const QModelIndex &topLeft, const QModelIndex &bottomRight) {
         for (int row = topLeft.row(); row <= bottomRight.row(); row++)
-            m_groupCache.remove(m_dirModel->itemForIndex(topLeft.siblingAtRow(row)).url());
+            forgetSorted(m_dirModel->itemForIndex(topLeft.siblingAtRow(row)).url());
     });
     connect(m_results, &QAbstractItemModel::dataChanged, this, [this](const QModelIndex &topLeft, const QModelIndex &bottomRight) {
         for (int row = topLeft.row(); row <= bottomRight.row(); row++)
-            m_groupCache.remove(m_results->item(row).url());
+            forgetSorted(m_results->item(row).url());
     });
     // Items that go, and the old names of renamed ones, leave the cache too: a new item at the same URL is grouped afresh.
     connect(m_dirModel, &QAbstractItemModel::rowsAboutToBeRemoved, this, [this](const QModelIndex &parent, int first, int last) {
         for (int row = first; row <= last; row++)
-            m_groupCache.remove(m_dirModel->itemForIndex(m_dirModel->index(row, 0, parent)).url());
+            forgetSorted(m_dirModel->itemForIndex(m_dirModel->index(row, 0, parent)).url());
     });
     connect(m_results, &QAbstractItemModel::rowsAboutToBeRemoved, this, [this](const QModelIndex &, int first, int last) {
         for (int row = first; row <= last; row++)
-            m_groupCache.remove(m_results->item(row).url());
+            forgetSorted(m_results->item(row).url());
     });
     connect(m_lister, &KCoreDirLister::refreshItems, this, [this](const QList<QPair<KFileItem, KFileItem>> &items) {
         for (const auto &change : items)
-            m_groupCache.remove(change.first.url());
+            forgetSorted(change.first.url());
     });
     m_dayTimer.setSingleShot(true);
     connect(&m_dayTimer, &QTimer::timeout, this, &FolderModel::regroupForNewDay);
+    connect(FsKindCache::instance(), &FsKindCache::known, this, &FolderModel::probeAnswered);
     setSourceModel(m_dirModel);
     setDynamicSortFilter(true);
 
@@ -496,16 +498,10 @@ void FolderModel::setUrl(const QUrl &url)
         if (sourceModel() != m_results)
             setSourceModel(m_results);
         loadApplications();
-    } else if (m_url.isLocalFile()
-               && (LaunchGuard::insideStaging(m_url.toLocalFile()) || LaunchGuard::insideStaging(QFileInfo(m_url.toLocalFile()).canonicalFilePath()))) {
-        // An Expand or Compress staging folder (".grassfield-expand-…", or a link into one): its files are not marked yet
-        // (second counter-review of fd5823de, m2). Nothing is listed there.
-        m_lister->stop();
-        m_results->clear();
-        m_apps.clear();
-        if (sourceModel() != m_results)
-            setSourceModel(m_results);
-        setError(tr("This folder can’t be shown: Files is expanding or compressing items in it."));
+    } else if (m_url.isLocalFile() && LaunchGuard::insideStaging(m_url.toLocalFile())) {
+        // An Expand or Compress staging folder (".grassfield-expand-…"): its files are not marked yet (second counter-review
+        // of fd5823de, m2). Nothing is listed there. A link into one is found by the folder's probe (probeAnswered).
+        refuseStaging();
     } else {
         if (sourceModel() != m_dirModel)
             setSourceModel(m_dirModel);
@@ -513,8 +509,17 @@ void FolderModel::setUrl(const QUrl &url)
         m_apps.clear();
         m_dirModel->openUrl(m_url);
     }
+    // The shown folder's file system is probed off the GUI thread (audit F2): nothing here resolves its path or watches it;
+    // probeAnswered does, once the kind is known (at once when a recent probe of this folder answered already).
+    m_localDir = !search && !applications && m_url.isLocalFile() ? m_url.toLocalFile() : QString();
+    m_waitingKind.clear();
     watchApplications();
     watchShownFolder();
+    if (!m_localDir.isEmpty()) {
+        FsKindCache *kinds = FsKindCache::instance();
+        if (kinds->kindOf(m_localDir) != FsKind::Kind::Unknown || !kinds->canonicalOf(m_localDir).isEmpty())
+            probeAnswered(m_localDir);
+    }
     emit urlChanged();
     emit rootChanged();
     emit currentRowChanged();
@@ -577,6 +582,7 @@ void FolderModel::startRecents()
         if (gen != m_recentsGeneration || !isRecents())
             return;
         m_recentTimes.clear();
+        m_sortCache.clear(); // Date Last Opened is read from these
         for (int i = 0; i < paths.size() && i < used.size(); ++i)
             m_recentTimes.insert(QUrl::fromLocalFile(paths.at(i)), used.at(i).toDateTime());
         // The list as it is now: files that left it go, new ones come (the selection keeps what is still listed).
@@ -619,6 +625,7 @@ void FolderModel::setSortKey(int key)
     if (key == m_sortKey)
         return;
     m_sortKey = key;
+    m_sortCache.clear();
     QElapsedTimer sortTimer;
     sortTimer.start();
     invalidate();
@@ -774,7 +781,8 @@ QVariant FolderModel::data(const QModelIndex &index, int role) const
     }
     // Lazy refinement: the lister only guessed the type from the name (setDelayedMimeTypes). A row a
     // view actually shows reads its content once (a few hundred bytes); sorting never does.
-    if ((role == IconNameRole || role == KindRole || role == CanPreviewRole) && !item.isMimeTypeKnown())
+    // Only on a local disk (audit F2): on a network or FUSE mount, or before the folder's probe answered, the name's type stands.
+    if ((role == IconNameRole || role == KindRole || role == CanPreviewRole) && !item.isMimeTypeKnown() && onDisk(item))
         item.determineMimeType();
     switch (role) {
     case NameRole:
@@ -852,8 +860,11 @@ QStringList FolderModel::tagsOf(const KFileItem &item) const
     const auto it = m_tags.constFind(url);
     if (it != m_tags.cend())
         return *it;
-    // Local items only (trash items have a local path too); links carry no user attributes (TagStore).
+    // Local items only (trash items have a local path too); links carry no user attributes (TagStore). Read on a local disk
+    // only (audit F2): nothing is kept for an item whose folder's probe has not answered yet (read once it has).
     const QString path = item.localPath();
+    if (!path.isEmpty() && !item.isLink() && !onDisk(item))
+        return {};
     const QStringList tags = path.isEmpty() || item.isLink() ? QStringList() : TagStore::read(path);
     m_tags.insert(url, tags);
     bool fresh = false;
@@ -877,6 +888,8 @@ FolderStyleLogic::Style FolderModel::styleOf(const KFileItem &item) const
     if (it != m_styles.cend())
         return *it;
     const QString path = item.localPath();
+    if (!path.isEmpty() && !onDisk(item))
+        return {}; // as tagsOf (audit F2)
     const FolderStyleLogic::Style style = path.isEmpty() ? FolderStyleLogic::Style() : m_styleStore->read(path);
     m_styles.insert(url, style);
     return style;
@@ -889,9 +902,69 @@ void FolderModel::watchShownFolder()
         m_attrWatcher.removePaths(old);
     m_attrTimer.stop();
     m_attrBurst.invalidate();
-    // A local folder only (a watch on a network mount is KIO's business), and only when looks are shown at all.
-    if (m_styleStore && m_url.isLocalFile() && !TagLogic::isSearchUrl(m_url))
-        m_attrWatcher.addPath(m_url.toLocalFile());
+    // A folder on a local disk only (a watch on a network mount is KIO's business, and adding one resolves the path on the
+    // GUI thread), once its probe said so (audit F2), and only when looks are shown at all.
+    if (m_styleStore && !m_localDir.isEmpty() && FsKindCache::instance()->kindOf(m_localDir) == FsKind::Kind::Disk)
+        m_attrWatcher.addPath(m_localDir);
+}
+
+namespace
+{
+// The folder that holds `path` ("/" for an item at the root).
+QString parentFolder(const QString &path)
+{
+    const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
+    return slash <= 0 ? QStringLiteral("/") : path.left(slash);
+}
+} // namespace
+
+bool FolderModel::onDisk(const KFileItem &item) const
+{
+    const QString path = item.localPath();
+    if (path.isEmpty())
+        return false;
+    const QString dir = parentFolder(path);
+    const FsKind::Kind kind = FsKindCache::instance()->kindOf(dir);
+    if (kind == FsKind::Kind::Unknown) {
+        // Shown again once the probe answers (probeAnswered).
+        QSet<QUrl> &waiting = m_waitingKind[dir];
+        if (waiting.size() < 4096)
+            waiting.insert(item.url());
+    }
+    return kind == FsKind::Kind::Disk;
+}
+
+void FolderModel::probeAnswered(const QString &dir)
+{
+    if (dir == m_localDir) {
+        // A link into a staging folder is refused as the folder itself is (setUrl).
+        const QString canonical = FsKindCache::instance()->canonicalOf(dir);
+        if (!canonical.isEmpty() && canonical != dir && LaunchGuard::insideStaging(canonical) && m_error.isEmpty()) {
+            refuseStaging();
+            return;
+        }
+        if (m_attrWatcher.directories().isEmpty())
+            watchShownFolder();
+    }
+    const QSet<QUrl> waiting = m_waitingKind.take(dir);
+    for (const QUrl &url : waiting)
+        emitRowChanged(url, {IconNameRole, KindRole, CanPreviewRole, TagsRole, TagColorsRole, FolderColorRole, FolderGlyphRole});
+    // A sort or grouping by tags read none of them before: sorted again with what is read now.
+    if (!waiting.isEmpty() && (m_sortKey == int(FileLogic::SortKey::Tags) || m_groupBy == int(FileLogic::GroupBy::Tags))) {
+        for (const QUrl &url : waiting)
+            forgetSorted(url);
+        invalidate();
+    }
+}
+
+void FolderModel::refuseStaging()
+{
+    m_lister->stop();
+    m_results->clear();
+    m_apps.clear();
+    if (sourceModel() != m_results)
+        setSourceModel(m_results);
+    setError(tr("This folder can’t be shown: Files is expanding or compressing items in it."));
 }
 
 // The rows whose look was read: read again, and only the ones that changed are announced.
@@ -971,7 +1044,7 @@ void FolderModel::tagsChanged(const QList<QUrl> &urls)
     // Tags are read by the proxy, not its source: a sort or grouping by tags is redone here.
     if (m_sortKey == int(FileLogic::SortKey::Tags) || m_groupBy == int(FileLogic::GroupBy::Tags)) {
         for (const QUrl &url : urls)
-            m_groupCache.remove(url);
+            forgetSorted(url);
         invalidate();
     }
 }
@@ -1042,9 +1115,16 @@ void FolderModel::groupsDirty()
     });
 }
 
+void FolderModel::forgetSorted(const QUrl &url) const
+{
+    m_groupCache.remove(url);
+    m_sortCache.remove(url);
+}
+
 void FolderModel::clearGroupCache()
 {
     m_groupCache.clear();
+    m_sortCache.clear();
     m_groupDay = QDate();
 }
 
@@ -1120,7 +1200,20 @@ bool FolderModel::lessThan(const QModelIndex &left, const QModelIndex &right) co
             return g < 0;
     }
     const auto key = FileLogic::SortKey(m_sortKey);
-    return FileLogic::compareEntries(sortEntry(a, key), sortEntry(b, key), key, m_descending, m_foldersFirst, m_collator) < 0;
+    if (key == FileLogic::SortKey::Name)
+        return FileLogic::compareEntries(sortEntry(a, key), sortEntry(b, key), key, m_descending, m_foldersFirst, m_collator) < 0;
+    // Any other key reads dates, types or tags: each item's facts once per sort key, not once per comparison (a sort by date
+    // of 100,000 items made millions of QDateTimes on the GUI thread).
+    return FileLogic::compareEntries(sortedFacts(a, key), sortedFacts(b, key), key, m_descending, m_foldersFirst, m_collator) < 0;
+}
+
+const FileLogic::SortEntry &FolderModel::sortedFacts(const KFileItem &item, FileLogic::SortKey key) const
+{
+    const QUrl url = item.url();
+    auto it = m_sortCache.find(url);
+    if (it == m_sortCache.end())
+        it = m_sortCache.insert(url, sortEntry(item, key));
+    return *it;
 }
 
 bool FolderModel::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const
@@ -1613,19 +1706,26 @@ bool FolderModel::previewSupported(const KFileItem &item) const
 {
     if (item.isNull() || item.isDir() || item.size() == 0)
         return false;
-    const PreviewMimes &mimes = previewMimes();
+    // Answered once per type (a delegate asks at creation; allAncestors walks the MIME database each time).
+    static QHash<QString, bool> answers;
     const QMimeType type = item.currentMimeType();
+    const auto known = answers.constFind(type.name());
+    if (known != answers.cend())
+        return *known;
+    const PreviewMimes &mimes = previewMimes();
     QStringList names = {type.name()};
     names += type.allAncestors();
+    bool supported = false;
     for (const QString &name : std::as_const(names)) {
         if (mimes.exact.contains(name))
-            return true;
+            supported = true;
         for (const QString &prefix : mimes.prefixes) {
             if (name.startsWith(prefix))
-                return true;
+                supported = true;
         }
     }
-    return false;
+    answers.insert(type.name(), supported);
+    return supported;
 }
 
 void FolderModel::reload()
@@ -1892,7 +1992,7 @@ void FolderModel::renameResult(const QUrl &from, const QUrl &to)
         }
     }
     const bool selected = m_selected.remove(from);
-    m_groupCache.remove(from);
+    forgetSorted(from);
     forgetThumbnail(m_small, from, false);
     forgetThumbnail(m_large, from, false);
     m_tags.remove(from);

@@ -13,6 +13,7 @@
 #include "programlaunch.h"
 #include "foldermodel.h"
 #include "folderstylelogic.h"
+#include "fskind.h"
 #include "imagerotate.h"
 #include "kioprompts.h"
 #include "placesmodel.h"
@@ -21,6 +22,7 @@
 #include "searchlogic.h"
 #include "taglogic.h"
 #include "tagstore.h"
+#include "workers.h"
 
 #include <QClipboard>
 #include <QDateTime>
@@ -49,6 +51,7 @@
 
 #include <memory>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
@@ -119,36 +122,90 @@ bool localExists(const QUrl &url)
     return url.isLocalFile() && QFileInfo::exists(url.toLocalFile());
 }
 
-// Whether `directory` (local) holds an entry named `name` or a canonically equivalent one (NFC/NFD), other than `except`.
-bool nameTaken(const QUrl &directory, const QString &name, const QString &except = QString())
+// The entries of the local folder `directory`, listed once and indexed by composed name (audit F5); empty for any other.
+// Whether a name is taken there is then a lookup: `index.taken(name, except)` (equal or an NFC/NFD twin, other than `except`).
+FileLogic::NameIndex folderIndex(const QUrl &directory)
 {
     if (!directory.isLocalFile())
-        return false;
-    const QStringList entries = QDir(directory.toLocalFile()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
-    for (const QString &entry : entries) {
-        if (entry != except && FileLogic::sameName(entry, name))
-            return true;
-    }
-    return false;
+        return {};
+    return FileLogic::NameIndex(QDir(directory.toLocalFile()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System));
+}
+
+// The one listing per folder of a batch (Rename N Items, Duplicate, Put Back): each parent listed once.
+FileLogic::NameIndex &indexFor(QHash<QUrl, FileLogic::NameIndex> &indexes, const QUrl &directory)
+{
+    auto it = indexes.find(directory);
+    if (it == indexes.end())
+        it = indexes.insert(directory, folderIndex(directory));
+    return *it;
 }
 
 // True (after saying why) when an item of `sources` would land next to a name that only differs from its own by Unicode
-// normalization in the local folder `destination`: the file system would keep both, the person sees two of the same name.
-// An exact match is left to the file operation (its conflict handling asks).
-bool refuseTwin(FilesApp *app, const QUrl &destination, const QList<QUrl> &sources)
+// normalization in the local folder whose entries are `entries`: the file system would keep both, the person sees two of the
+// same name. An exact match is left to the file operation (its conflict handling asks).
+bool refuseTwin(FilesApp *app, const FileLogic::NameIndex &entries, const QList<QUrl> &sources)
 {
-    if (!destination.isLocalFile())
-        return false;
-    const QStringList entries = QDir(destination.toLocalFile()).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
     for (const QUrl &u : sources) {
-        const QString twin = FileLogic::equivalentName(entries, u.fileName());
-        if (!twin.isEmpty() && !entries.contains(u.fileName())) {
+        const QString twin = entries.twin(u.fileName());
+        if (!twin.isEmpty()) {
             emit app->operationFailed(FilesApp::tr("“%1” can’t be copied or moved here: the folder has “%2”, which has the same name once accents are composed. Rename one of them first.")
                                           .arg(FileLogic::displayName(u.fileName()), FileLogic::displayName(twin)));
             return true;
         }
     }
     return false;
+}
+
+// A copy, move or drop of at least this many items looks at its destination off the GUI thread (audit F5).
+constexpr int kBigBatch = 64;
+
+// What a copy, move or drop needs to know of its destination: its entries (refuseTwin) and, for a drop, whether every
+// item comes from the destination's volume (the device of each item's folder, looked up once per folder).
+struct DestinationFacts {
+    FileLogic::NameIndex names;
+    bool sameVolume = false;
+};
+
+DestinationFacts destinationFacts(const QUrl &destination, const QList<QUrl> &sources, bool volumes)
+{
+    DestinationFacts facts;
+    facts.names = folderIndex(destination);
+    if (!volumes || !destination.isLocalFile())
+        return facts;
+    const QByteArray device = QStorageInfo(destination.toLocalFile()).device();
+    facts.sameVolume = !device.isEmpty();
+    QHash<QString, QByteArray> devices;
+    for (const QUrl &u : sources) {
+        if (!u.isLocalFile()) {
+            facts.sameVolume = false;
+            break;
+        }
+        const QString parent = u.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash).toLocalFile();
+        auto it = devices.find(parent);
+        if (it == devices.end())
+            it = devices.insert(parent, QStorageInfo(parent.isEmpty() ? QStringLiteral("/") : parent).device());
+        if (*it != device) {
+            facts.sameVolume = false;
+            break;
+        }
+    }
+    return facts;
+}
+
+// Runs `then` with the destination's facts: at once for a few items, after a worker found them for a big batch (one listing
+// of a folder of 20,000 entries and a mount table read per folder of the items, never on the GUI thread then). Nothing runs
+// when `context` is gone by then.
+void withDestination(QObject *context, const QUrl &destination, const QList<QUrl> &sources, bool volumes,
+                     const std::function<void(const DestinationFacts &)> &then)
+{
+    if (sources.size() < kBigBatch || !destination.isLocalFile()) {
+        then(destinationFacts(destination, sources, volumes));
+        return;
+    }
+    auto facts = std::make_shared<DestinationFacts>();
+    Workers::run(
+        context, [facts, destination, sources, volumes] { *facts = destinationFacts(destination, sources, volumes); },
+        [facts, then] { then(*facts); });
 }
 
 // Scripted scenarios set GRASSFIELD_FILES_NO_LAUNCH=1: opening reports an error instead of starting
@@ -170,6 +227,10 @@ constexpr int kMaxHiddenTags = 256;
 
 // View settings that found another Files process writing (FolderViews Busy): the first retry, the longest pause, and the
 // one bounded wait, at exit.
+// How long what a menu read of an item is kept (FilesApp::menuFacts).
+constexpr int kMenuFactsMs = 2000;
+// A view or sort choice is written this long after the click (FilesApp::setFolderView).
+constexpr int kFolderViewsWriteDelayMs = 300;
 constexpr int kFolderViewsRetryFirstMs = 50;
 constexpr int kFolderViewsRetryMaxMs = 5000;
 constexpr int kFolderViewsExitWaitMs = 500;
@@ -293,18 +354,12 @@ FilesApp::FilesApp(const QList<QUrl> &initialUrls, QObject *parent)
     });
     m_autoTimer.start();
 
-    // The sidebar's Tags section: the tags seen in use (on shown items, set or searched in Files), kept across sessions.
-    m_knownTags = TagLogic::displayOrder(m_settings.value(QStringLiteral("tags/known")).toStringList()).mid(0, kMaxKnownTags);
-    m_hiddenTags = m_settings.value(QStringLiteral("tags/hidden")).toStringList().mid(0, kMaxHiddenTags);
+    // The sidebar's Tags section (the tags seen in use: on shown items, set or searched in Files) and the sidebar's Favorites
+    // as the user edited them (FP-27), kept across sessions and shared with the other processes (rereadShared).
+    rereadShared();
     publishKnownTags();
-    // The sidebar's Favorites as the user edited them (FP-27).
-    m_sidebarFolders = NavLogic::sidebarList(m_settings.value(QStringLiteral("sidebar/favorites")).toStringList());
-    for (const QString &text : m_settings.value(QStringLiteral("sidebar/hidden")).toStringList().mid(0, NavLogic::kMaxSidebarFavorites)) {
-        const QUrl url = NavLogic::sidebarUrl(QUrl(text));
-        if (url.isValid() && !url.scheme().isEmpty() && !m_sidebarHidden.contains(url))
-            m_sidebarHidden.append(url);
-    }
     m_places->setFavorites(m_sidebarFolders, m_sidebarHidden);
+    watchSettings();
 
     m_folderViewsRetry.setSingleShot(true);
     connect(&m_folderViewsRetry, &QTimer::timeout, this, [this] {
@@ -791,9 +846,11 @@ void FilesApp::setFolderView(const QUrl &url, const QVariantMap &fields)
         e.descending = fields.value(QStringLiteral("sortDescending")).toBool() ? 1 : 0;
     if (fields.contains(QStringLiteral("groupBy")))
         e.groupBy = fields.value(QStringLiteral("groupBy")).toInt();
-    QString error;
-    const FolderViews::WriteResult result = m_folderViews.set(FolderViews::keyFor(url), e, &error);
-    folderViewsWritten(result, error);
+    // Kept now (folderView reads it at once), written a moment later: the JSON and its fsync never land on the frame of the
+    // click, and a burst of clicks (View, then Sort By) is one write. The exit flush writes what is still pending.
+    m_folderViews.keep(FolderViews::keyFor(url), e);
+    if (!m_folderViewsRetry.isActive() || m_folderViewsRetryMs == 0)
+        m_folderViewsRetry.start(kFolderViewsWriteDelayMs);
 }
 
 void FilesApp::folderViewsWritten(FolderViews::WriteResult result, const QString &error)
@@ -1474,11 +1531,13 @@ QVariantList FilesApp::applicationsFor(const QList<QUrl> &urls, bool withTermina
     const QUrl &first = urls.first();
     if (first.scheme() == QLatin1String("grassfield-app") || ApplicationsLogic::isLocationUrl(first))
         return out; // an application of the Applications location is no file: nothing opens it "with"
-    QMimeDatabase db;
-    const QMimeType type = first.isLocalFile() ? db.mimeTypeForFile(first.toLocalFile()) : db.mimeTypeForUrl(first);
-    const KService::List services = KApplicationTrader::queryByMimeType(type.name());
+    // What the menu needs of the item, read once per item while menus are built for it (menuFacts): its content type and the
+    // launch facts of its Terminal entry. Nothing is read of an item whose folder is known not to be on a local disk (FsKind, audit F2):
+    // its type comes from its name and it has no Terminal entry.
+    const MenuFacts &facts = menuFacts(first);
+    const KService::List services = KApplicationTrader::queryByMimeType(facts.mimeType);
     // The default first (the one just chosen, before KService's cache has read it, else KService's first), marked.
-    const QString preferred = defaultApplication(type.name());
+    const QString preferred = defaultApplication(facts.mimeType);
     for (const KService::Ptr &s : services) {
         if (s->desktopEntryName() == QLatin1String("org.grassfield.files"))
             continue;
@@ -1490,10 +1549,44 @@ QVariantList FilesApp::applicationsFor(const QList<QUrl> &urls, bool withTermina
             out.append(entry);
     }
     // Open With > Terminal (macOS: Terminal is in a script's Open With): one executable script on this computer runs there.
-    if (withTerminal && urls.size() == 1 && first.isLocalFile() && LaunchGuard::verdict(LaunchGuard::inspect(first)) == LaunchGuard::Verdict::OpenScript)
+    if (withTerminal && urls.size() == 1 && facts.openScript)
         out.append(QVariantMap{{QStringLiteral("id"), kTerminalEntry}, {QStringLiteral("name"), tr("Terminal")}, {QStringLiteral("isDefault"), false},
                                {QStringLiteral("terminal"), true}});
     return out;
+}
+
+const FilesApp::MenuFacts &FilesApp::menuFacts(const QUrl &url) const
+{
+    // Kept for a moment: one menu asks several times, a menu opened again on the same item asks again. Never used to open
+    // anything (open() and openWith() inspect the item as it is then).
+    // The item as it is now (one lstat): a change of its mode, size or contents (its status time) asks again.
+    QByteArray signature;
+    if (url.isLocalFile()) {
+        struct stat st{};
+        if (::lstat(QFile::encodeName(url.toLocalFile()).constData(), &st) == 0)
+            signature = QByteArray::number(qulonglong(st.st_ino)) + ':' + QByteArray::number(qlonglong(st.st_ctim.tv_sec)) + '.'
+                + QByteArray::number(qlonglong(st.st_ctim.tv_nsec)) + ':' + QByteArray::number(uint(st.st_mode));
+    }
+    auto it = m_menuFacts.find(url);
+    if (it != m_menuFacts.end() && !it->fresh.hasExpired() && it->signature == signature)
+        return *it;
+    if (m_menuFacts.size() > 256)
+        m_menuFacts.clear();
+    MenuFacts facts;
+    facts.fresh = QDeadlineTimer(kMenuFactsMs);
+    facts.signature = signature;
+    QMimeDatabase db;
+    if (url.isLocalFile()) {
+        const QString path = url.toLocalFile();
+        // A folder known not to be a local disk is not read; one not probed yet is (a menu is opened on an item of a listed
+        // folder, whose probe has answered: an unknown kind is a folder Files has not shown, asked about directly).
+        const bool onDisk = FsKindCache::instance()->kindOf(QFileInfo(path).absolutePath()) != FsKind::Kind::Other;
+        facts.mimeType = db.mimeTypeForFile(path, onDisk ? QMimeDatabase::MatchDefault : QMimeDatabase::MatchExtension).name();
+        facts.openScript = onDisk && LaunchGuard::verdict(LaunchGuard::inspect(url)) == LaunchGuard::Verdict::OpenScript;
+    } else {
+        facts.mimeType = db.mimeTypeForUrl(url).name();
+    }
+    return *m_menuFacts.insert(url, facts);
 }
 
 void FilesApp::openWith(const QString &storageId, const QList<QUrl> &urls)
@@ -1903,8 +1996,15 @@ void FilesApp::paste(const QUrl &destination, QObject *folder)
             duplicate(urls, folder);
         return;
     }
-    if (refuseTwin(this, destination, urls))
-        return;
+    QPointer<QObject> target = folder;
+    withDestination(this, destination, urls, false, [this, urls, cut, destination, target](const DestinationFacts &facts) {
+        if (!refuseTwin(this, facts.names, urls))
+            startPaste(urls, cut, destination, target);
+    });
+}
+
+void FilesApp::startPaste(const QList<QUrl> &urls, bool cut, const QUrl &destination, const QPointer<QObject> &target)
+{
     // KIO::paste records the copy or move in FileUndoManager itself.
     // KIO::paste reads its data when the job starts, after this returns: the items checked above, owned by the job, not
     // the clipboard's data, which may change or go meanwhile.
@@ -1918,7 +2018,6 @@ void FilesApp::paste(const QUrl &destination, QObject *folder)
     }
     items->setParent(job);
     attachDelegate(job);
-    QPointer<QObject> target = folder;
     // What the job really created: a Rename or Skip answer in the conflict dialog puts a folder elsewhere than
     // destination/name, or nowhere, and a look must not land on a different folder that happens to have that name.
     auto created = std::make_shared<QSet<QUrl>>();
@@ -1985,6 +2084,7 @@ void FilesApp::restore(const QList<QUrl> &urls)
         return;
     // Put Back also refuses to land next to an NFC/NFD twin of the original name (the home trash keeps the original path).
     const QString infoDir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/Trash/info/");
+    QHash<QUrl, FileLogic::NameIndex> indexes; // one listing per folder put back into
     for (const QUrl &u : std::as_const(trashed)) {
         // KIO names an item of the Trash "<trash id>-<file id>" (trash:/0-name; 0 is the home trash) and the info file is
         // named after the file id alone: with the whole name the check never found its file.
@@ -1996,7 +2096,7 @@ void FilesApp::restore(const QList<QUrl> &urls)
         if (original.isEmpty())
             continue;
         const QUrl parent = QUrl::fromLocalFile(QFileInfo(original).absolutePath());
-        if (refuseTwin(this, parent, {QUrl::fromLocalFile(original)}))
+        if (refuseTwin(this, indexFor(indexes, parent), {QUrl::fromLocalFile(original)}))
             return;
     }
     KIO::RestoreJob *job = KIO::restoreFromTrash(trashed, KIO::HideProgressInfo);
@@ -2030,7 +2130,8 @@ void FilesApp::newFolder(const QUrl &directory, QObject *folder)
 {
     if (refuseApplicationItems({directory}))
         return;
-    const QString name = FileLogic::uniqueName(tr("untitled folder"), [&directory](const QString &n) { return nameTaken(directory, n); });
+    const FileLogic::NameIndex names = folderIndex(directory);
+    const QString name = FileLogic::uniqueName(tr("untitled folder"), [&names](const QString &n) { return names.taken(n); });
     const QUrl url = childUrl(directory, name);
     KIO::MkdirJob *job = KIO::mkdir(url);
     attachDelegate(job);
@@ -2105,7 +2206,8 @@ void FilesApp::newFolderWithItems(const QList<QUrl> &urls, const QUrl &directory
             return;
         }
     }
-    const QString name = FileLogic::uniqueName(tr("New Folder With Items"), [&directory](const QString &n) { return nameTaken(directory, n); });
+    const FileLogic::NameIndex names = folderIndex(directory);
+    const QString name = FileLogic::uniqueName(tr("New Folder With Items"), [&names](const QString &n) { return names.taken(n); });
     const QUrl url = childUrl(directory, name);
     QPointer<QObject> target = folder;
     bool local = directory.isLocalFile();
@@ -2318,12 +2420,15 @@ QString FilesApp::renameItems(const QList<QUrl> &urls, const QVariantMap &option
         return QString();
     }
     // Every target is looked at first: a name already taken on the disk refuses the whole command.
+    // One listing per folder (audit F5), and the listing decides, not a lookup of the new name: on a file system that ignores
+    // case (FAT, exFAT) "Photo.JPG" finds "photo.jpg" itself, and a case-only change is a rename in place (audit F19).
     BatchOps::Steps steps;
     QList<QPair<QUrl, QUrl>> pairs;
+    QHash<QUrl, FileLogic::NameIndex> indexes;
     for (int i : std::as_const(changed)) {
         const QUrl parent = urls.at(i).adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash);
         const QUrl to = childUrl(parent, next.at(i));
-        if (QFileInfo(to.toLocalFile()).isSymLink() || localExists(to) || nameTaken(parent, next.at(i), names.at(i)))
+        if (indexFor(indexes, parent).taken(next.at(i), names.at(i)))
             return tr("The name “%1” is already taken. Please choose a different name.").arg(FileLogic::displayName(next.at(i)));
         steps.append({BatchOps::Step::Kind::Rename, urls.at(i).toLocalFile(), to.toLocalFile()});
         pairs.append({urls.at(i), to});
@@ -2495,6 +2600,78 @@ QByteArray procName(int fd)
 {
     return QByteArrayLiteral("/proc/self/fd/") + QByteArray::number(fd);
 }
+
+// "Apply to enclosed items" (audit F20), on a worker: every item under the folder pinned as `pathFd` (O_PATH) gets
+// PermissionLogic::recursiveMode, the deepest first and each folder's own mode last, so a folder whose owner loses read or
+// execute is entered before it changes (chmod -R changed the top folder first and could not go on). Everything goes by
+// descriptor: each entry is pinned (O_PATH | O_NOFOLLOW) where its folder was read, a link is neither followed nor changed, a
+// folder is opened through its pin; another user's item is left as it is (and reported). A folder that the owner may not
+// read or enter is given u+rx for the walk. False when something could not be changed.
+struct EnclosedAccess {
+    PermissionLogic::Access owner;
+    PermissionLogic::Access group;
+    PermissionLogic::Access others;
+};
+constexpr int kMaxEnclosedDepth = 200; // two descriptors per level
+
+bool applyEnclosed(int pathFd, const struct stat &st, const EnclosedAccess &access, int depth)
+{
+    bool complete = true;
+    const unsigned mode = st.st_mode & 07777;
+    const QByteArray self = procName(pathFd);
+    if ((mode & (S_IRUSR | S_IXUSR)) != (S_IRUSR | S_IXUSR) && ::chmod(self.constData(), mode | S_IRUSR | S_IXUSR) != 0)
+        complete = false;
+    const int fd = depth < kMaxEnclosedDepth ? ::open(self.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC) : -1;
+    DIR *dir = fd >= 0 ? ::fdopendir(fd) : nullptr;
+    if (!dir) {
+        if (fd >= 0)
+            ::close(fd);
+        complete = false;
+    }
+    while (dir) {
+        errno = 0;
+        const struct dirent *entry = ::readdir(dir);
+        if (!entry) {
+            if (errno != 0)
+                complete = false;
+            break;
+        }
+        if (qstrcmp(entry->d_name, ".") == 0 || qstrcmp(entry->d_name, "..") == 0)
+            continue;
+        if (Workers::stopping()) {
+            complete = false;
+            break;
+        }
+        const int child = ::openat(::dirfd(dir), entry->d_name, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+        struct stat cst{};
+        if (child < 0 || ::fstat(child, &cst) != 0) {
+            if (child >= 0)
+                ::close(child);
+            complete = false;
+            continue;
+        }
+        if (S_ISLNK(cst.st_mode)) {
+            ::close(child);
+            continue;
+        }
+        if (cst.st_uid != geteuid()) {
+            complete = false;
+        } else if (S_ISDIR(cst.st_mode)) {
+            complete = applyEnclosed(child, cst, access, depth + 1) && complete;
+        } else {
+            const unsigned next = PermissionLogic::recursiveMode(cst.st_mode & 07777, false, access.owner, access.group, access.others);
+            if (next != (cst.st_mode & 07777u) && ::chmod(procName(child).constData(), next) != 0)
+                complete = false;
+        }
+        ::close(child);
+    }
+    if (dir)
+        ::closedir(dir);
+    const unsigned next = PermissionLogic::recursiveMode(mode, true, access.owner, access.group, access.others);
+    if (::chmod(self.constData(), next) != 0)
+        complete = false;
+    return complete;
+}
 } // namespace
 
 QVariantMap FilesApp::permissionsOf(const QUrl &url) const
@@ -2593,29 +2770,30 @@ void FilesApp::applyToEnclosed(const QUrl &url)
     if (!p.value(QStringLiteral("editable")).toBool() || !p.value(QStringLiteral("isDir")).toBool())
         return;
     const QVariantList access = p.value(QStringLiteral("access")).toList();
-    const QString ops = PermissionLogic::recursiveOperators(PermissionLogic::Access(access.value(0).toInt()), PermissionLogic::Access(access.value(1).toInt()),
-                                                            PermissionLogic::Access(access.value(2).toInt()));
-    // The system's chmod (ADR-0028 probe 12): it never follows the links it meets inside the folder; the folder itself was
-    // checked above to be no link. The user's own rights only: items of others fail and are reported.
-    auto *process = new QProcess(this);
-    process->setProgram(QStringLiteral("/usr/bin/chmod"));
-    process->setArguments({QStringLiteral("-R"), QStringLiteral("--"), ops, url.toLocalFile()});
-    process->setStandardInputFile(QProcess::nullDevice());
-    process->setStandardOutputFile(QProcess::nullDevice());
-    connect(process, &QProcess::finished, this, [this, process, url](int code, QProcess::ExitStatus status) {
-        if (status != QProcess::NormalExit || code != 0)
-            emit operationFailed(tr("Some items in “%1” weren’t changed: they belong to someone else or can’t be changed.").arg(FileLogic::displayName(url.fileName())));
-        org::kde::KDirNotify::emitFilesChanged({url});
-        emit permissionsChanged(url);
-        process->deleteLater();
-    });
-    connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart) {
-            emit operationFailed(tr("The permissions couldn’t be changed: chmod can’t be started."));
-            process->deleteLater();
-        }
-    });
-    process->start();
+    const EnclosedAccess wanted{PermissionLogic::Access(access.value(0).toInt()), PermissionLogic::Access(access.value(1).toInt()),
+                                PermissionLogic::Access(access.value(2).toInt())};
+    // On a worker (a large folder takes a while), by descriptor from the folder pinned here: permissionsOf checked it is the
+    // user's own folder and no link. The user's own items only: items of others are left and reported.
+    struct stat st{};
+    const int fd = pinItem(url.toLocalFile(), &st);
+    if (fd < 0 || !S_ISDIR(st.st_mode) || st.st_uid != geteuid()) {
+        if (fd >= 0)
+            ::close(fd);
+        return;
+    }
+    auto complete = std::make_shared<bool>(false);
+    Workers::run(
+        this,
+        [fd, st, wanted, complete] {
+            *complete = applyEnclosed(fd, st, wanted, 0);
+            ::close(fd);
+        },
+        [this, url, complete] {
+            if (!*complete)
+                emit operationFailed(tr("Some items in “%1” weren’t changed: they belong to someone else or can’t be changed.").arg(FileLogic::displayName(url.fileName())));
+            org::kde::KDirNotify::emitFilesChanged({url});
+            emit permissionsChanged(url);
+        });
 }
 
 void FilesApp::setProgressDelayForTests(int ms)
@@ -2685,13 +2863,21 @@ void FilesApp::moveHere(const QUrl &destination, QObject *folder)
         if (clean.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash) != dest)
             sources << clean;
     }
-    if (sources.isEmpty() || refuseTwin(this, dest, sources))
+    if (sources.isEmpty())
         return;
+    QPointer<QObject> target = folder;
+    withDestination(this, dest, sources, false, [this, sources, dest, target](const DestinationFacts &facts) {
+        if (!refuseTwin(this, facts.names, sources))
+            startMoveHere(sources, dest, target);
+    });
+}
+
+void FilesApp::startMoveHere(const QList<QUrl> &sources, const QUrl &dest, const QPointer<QObject> &target)
+{
     KIO::CopyJob *job = KIO::move(sources, dest, KIO::HideProgressInfo);
     attachDelegate(job);
     KIO::FileUndoManager::self()->recordCopyJob(job);
     track(job, countText(tr("Moving 1 item…"), tr("Moving %1 items…"), sources.size()), tr("Moving"), sources, dest);
-    QPointer<QObject> target = folder;
     // The folders' looks follow them to where the job really put them, as after a drop.
     auto done = std::make_shared<QList<QPair<QUrl, QUrl>>>();
     connect(job, &KIO::CopyJob::copyingDone, this, [target, done](KIO::Job *, const QUrl &from, const QUrl &to, const QDateTime &, bool directory, bool renamed) {
@@ -2822,7 +3008,7 @@ void FilesApp::rename(const QUrl &url, const QString &newName, QObject *folder)
     // A case-only change on a case-sensitive filesystem is a different name and fine.
     const QUrl parent = url.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash);
     if ((localExists(destination) && QFileInfo(destination.toLocalFile()).canonicalFilePath() != QFileInfo(url.toLocalFile()).canonicalFilePath())
-        || nameTaken(parent, newName, url.fileName())) {
+        || folderIndex(parent).taken(newName, url.fileName())) {
         emit operationFailed(tr("The name “%1” is already taken. Please choose a different name.").arg(FileLogic::displayName(newName)));
         return;
     }
@@ -2895,16 +3081,20 @@ void FilesApp::duplicate(const QList<QUrl> &urls, QObject *folder)
     if (refuseApplicationItems(urls))
         return;
     QPointer<QObject> target = folder;
+    // One listing per folder for the whole command (audit F5), each name given added to it.
+    QHash<QUrl, FileLogic::NameIndex> indexes;
     for (const QUrl &url : urls) {
         if (url.scheme() == QLatin1String("trash"))
             continue;
         const QUrl directory = url.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash);
         const bool isDir = url.isLocalFile() && QFileInfo(url.toLocalFile()).isDir();
+        FileLogic::NameIndex &names = indexFor(indexes, directory);
         // A name given to a duplicate whose job has not made its file yet is taken too: Duplicate twice in a row gave both
         // runs "name copy", and the second one a conflict sheet.
-        const QString name = FileLogic::duplicateName(url.fileName(), isDir, tr("copy"), [this, &directory](const QString &n) {
-            return nameTaken(directory, n) || m_duplicateNames.contains(childUrl(directory, n));
+        const QString name = FileLogic::duplicateName(url.fileName(), isDir, tr("copy"), [this, &directory, &names](const QString &n) {
+            return names.taken(n) || m_duplicateNames.contains(childUrl(directory, n));
         });
+        names.add(name);
         const QUrl destination = childUrl(directory, name);
         m_duplicateNames.insert(destination);
         KIO::CopyJob *job = KIO::copyAs(url, destination, KIO::HideProgressInfo);
@@ -2951,17 +3141,23 @@ void FilesApp::drop(const QList<QUrl> &urls, const QUrl &destination, QObject *f
         if (clean.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash) != dest)
             sources << clean;
     }
-    if (sources.isEmpty() || refuseTwin(this, dest, sources))
+    if (sources.isEmpty())
         return;
+    // The keys held at the drop decide, read now (a big batch looks at its destination on a worker first).
     const Qt::KeyboardModifiers mods = QGuiApplication::queryKeyboardModifiers();
+    QPointer<QObject> target = folder;
+    withDestination(this, dest, sources, true, [this, sources, dest, mods, target](const DestinationFacts &facts) {
+        if (!refuseTwin(this, facts.names, sources))
+            startDrop(sources, dest, mods, facts.sameVolume, target);
+    });
+}
+
+void FilesApp::startDrop(const QList<QUrl> &sources, const QUrl &dest, Qt::KeyboardModifiers mods, bool sameVolume, const QPointer<QObject> &target)
+{
     // Across filesystems a drop copies, like the macOS file manager (unless a modifier says otherwise).
-    const QString destDevice = dest.isLocalFile() ? QString::fromUtf8(QStorageInfo(dest.toLocalFile()).device()) : QString();
-    bool sameVolume = !destDevice.isEmpty();
     // Out of the Trash an item moves, wherever it goes (the Finder): a copy left the original in the Trash.
     bool fromTrash = true;
     for (const QUrl &u : std::as_const(sources)) {
-        if (!u.isLocalFile() || QString::fromUtf8(QStorageInfo(u.toLocalFile()).device()) != destDevice)
-            sameVolume = false;
         if (u.scheme() != QLatin1String("trash"))
             fromTrash = false;
     }
@@ -2986,7 +3182,6 @@ void FilesApp::drop(const QList<QUrl> &urls, const QUrl &destination, QObject *f
         KIO::FileUndoManager::self()->recordCopyJob(job);
     else
         KIO::FileUndoManager::self()->recordJob(KIO::FileUndoManager::Move, sources, dest, job);
-    QPointer<QObject> target = folder;
     for (const QUrl &u : std::as_const(sources)) {
         if (auto *f = asFolder(target))
             f->expect(childUrl(dest, u.fileName()), false);
@@ -3698,6 +3893,7 @@ void FilesApp::noteFolder(const QUrl &url)
     if (scheme != QLatin1String("file") && !NavLogic::serverUrl(url.toString()).isValid())
         return;
     const QString clean = url.adjusted(QUrl::StripTrailingSlash | QUrl::NormalizePathSegments | QUrl::RemovePassword).toString();
+    m_settings.sync(); // the list as the other processes left it (audit F9)
     const QStringList before = storedUrls(QStringLiteral("go/recentFolders"), kMaxRecentFolders);
     const QStringList after = NavLogic::pushRecent(before, clean, kMaxRecentFolders);
     if (after == before)
@@ -3732,6 +3928,7 @@ void FilesApp::noteServer(const QUrl &url)
     const QUrl clean = NavLogic::serverUrl(url.toString());
     if (!clean.isValid())
         return;
+    m_settings.sync();
     m_settings.setValue(QStringLiteral("servers/recent"), NavLogic::pushRecent(recentServers(), clean.toString(), kMaxServers));
     emit serversChanged();
 }
@@ -3741,6 +3938,7 @@ bool FilesApp::addFavoriteServer(const QString &text)
     const QUrl url = NavLogic::serverUrl(text);
     if (!url.isValid())
         return false;
+    m_settings.sync();
     QStringList favorites = favoriteServers();
     if (!favorites.contains(url.toString()) && favorites.size() < kMaxServers)
         favorites.append(url.toString());
@@ -3751,6 +3949,7 @@ bool FilesApp::addFavoriteServer(const QString &text)
 
 void FilesApp::removeFavoriteServer(int index)
 {
+    m_settings.sync();
     QStringList favorites = favoriteServers();
     if (index < 0 || index >= favorites.size())
         return;
@@ -3876,12 +4075,14 @@ QString FilesApp::searchedTag(const QUrl &url) const
 
 void FilesApp::noteTags(const QStringList &tags)
 {
+    rereadShared();
     // A tag removed from the sidebar stays off it (macOS: Remove from Sidebar hides it; files keep the tag).
     const QStringList next = TagLogic::mergeKnown(m_knownTags, m_hiddenTags, tags, kMaxKnownTags);
     if (next == m_knownTags)
         return;
     m_knownTags = next;
     m_settings.setValue(QStringLiteral("tags/known"), m_knownTags);
+    m_settings.sync();
     publishKnownTags();
 }
 
@@ -3889,12 +4090,14 @@ void FilesApp::forgetTag(const QString &tag)
 {
     if (tag.trimmed().isEmpty())
         return;
+    rereadShared();
     if (!TagLogic::hasTag(m_hiddenTags, tag)) {
         m_hiddenTags = TagLogic::withTag(m_hiddenTags, tag, true);
         // The oldest entries go first when the list is full.
         while (m_hiddenTags.size() > kMaxHiddenTags)
             m_hiddenTags.removeFirst();
         m_settings.setValue(QStringLiteral("tags/hidden"), m_hiddenTags);
+        m_settings.sync();
         emit hiddenTagsChanged();
     }
     const QStringList next = TagLogic::withTag(m_knownTags, tag, false);
@@ -3902,15 +4105,18 @@ void FilesApp::forgetTag(const QString &tag)
         return;
     m_knownTags = next;
     m_settings.setValue(QStringLiteral("tags/known"), m_knownTags);
+    m_settings.sync();
     publishKnownTags();
 }
 
 void FilesApp::unhideTag(const QString &tag)
 {
+    rereadShared();
     if (!TagLogic::hasTag(m_hiddenTags, tag))
         return;
     m_hiddenTags = TagLogic::withTag(m_hiddenTags, tag, false);
     m_settings.setValue(QStringLiteral("tags/hidden"), m_hiddenTags);
+    m_settings.sync();
     emit hiddenTagsChanged();
 }
 
@@ -3919,6 +4125,57 @@ void FilesApp::showTag(const QString &tag)
     unhideTag(tag);
     // Listed at once, not only when an item holding it is shown next.
     noteTags({tag});
+}
+
+bool FilesApp::rereadShared()
+{
+    // QSettings::sync() reads the file again when another process changed it (and writes what this one changed, under its
+    // lock file); the lists below are then what every process sees.
+    m_settings.sync();
+    const QStringList known = TagLogic::displayOrder(m_settings.value(QStringLiteral("tags/known")).toStringList()).mid(0, kMaxKnownTags);
+    const QStringList hidden = m_settings.value(QStringLiteral("tags/hidden")).toStringList().mid(0, kMaxHiddenTags);
+    const QList<QUrl> folders = NavLogic::sidebarList(m_settings.value(QStringLiteral("sidebar/favorites")).toStringList());
+    QList<QUrl> hiddenPlaces;
+    for (const QString &text : m_settings.value(QStringLiteral("sidebar/hidden")).toStringList().mid(0, NavLogic::kMaxSidebarFavorites)) {
+        const QUrl url = NavLogic::sidebarUrl(QUrl(text));
+        if (url.isValid() && !url.scheme().isEmpty() && !hiddenPlaces.contains(url))
+            hiddenPlaces.append(url);
+    }
+    const bool tags = known != m_knownTags;
+    const bool hiddenTags = hidden != m_hiddenTags;
+    const bool sidebar = folders != m_sidebarFolders || hiddenPlaces != m_sidebarHidden;
+    m_knownTags = known;
+    m_hiddenTags = hidden;
+    m_sidebarFolders = folders;
+    m_sidebarHidden = hiddenPlaces;
+    if (tags)
+        publishKnownTags();
+    if (hiddenTags)
+        emit hiddenTagsChanged();
+    if (sidebar)
+        m_places->setFavorites(m_sidebarFolders, m_sidebarHidden);
+    return tags || hiddenTags || sidebar;
+}
+
+void FilesApp::watchSettings()
+{
+    // QSettings replaces its file (a new inode on each write): its folder is watched too, and a burst read once.
+    m_settingsTimer.setSingleShot(true);
+    m_settingsTimer.setInterval(150);
+    connect(&m_settingsTimer, &QTimer::timeout, this, [this] {
+        const QString file = m_settings.fileName();
+        if (QFileInfo::exists(file) && !m_settingsWatcher.files().contains(file))
+            m_settingsWatcher.addPath(file);
+        rereadShared();
+    });
+    const QString file = m_settings.fileName();
+    const QString folder = QFileInfo(file).absolutePath();
+    QDir().mkpath(folder);
+    m_settingsWatcher.addPath(folder);
+    if (QFileInfo::exists(file))
+        m_settingsWatcher.addPath(file);
+    connect(&m_settingsWatcher, &QFileSystemWatcher::fileChanged, &m_settingsTimer, qOverload<>(&QTimer::start));
+    connect(&m_settingsWatcher, &QFileSystemWatcher::directoryChanged, &m_settingsTimer, qOverload<>(&QTimer::start));
 }
 
 void FilesApp::publishKnownTags()
@@ -3930,11 +4187,13 @@ void FilesApp::publishSidebar()
 {
     m_settings.setValue(QStringLiteral("sidebar/favorites"), NavLogic::sidebarStored(m_sidebarFolders));
     m_settings.setValue(QStringLiteral("sidebar/hidden"), NavLogic::sidebarStored(m_sidebarHidden));
+    m_settings.sync(); // at once: the other processes read it on their next change
     m_places->setFavorites(m_sidebarFolders, m_sidebarHidden);
 }
 
 void FilesApp::addToSidebar(const QList<QUrl> &urls, int position, const QUrl &fallback, const QString &token)
 {
+    rereadShared();
     QList<QUrl> asked;
     bool unhidden = false;
     bool listed = false; // a dropped item is a folder of Favorites already
@@ -3990,6 +4249,7 @@ void FilesApp::addToSidebar(const QList<QUrl> &urls, int position, const QUrl &f
             }
             if (folders.size() < pending->urls.size())
                 emit operationFailed(tr("Only folders can be added to the sidebar."));
+            rereadShared(); // another process may have changed the list while KIO looked
             const QList<QUrl> next = NavLogic::withSidebarFolders(m_sidebarFolders, folders, position);
             if (next == m_sidebarFolders)
                 return;
@@ -4001,6 +4261,7 @@ void FilesApp::addToSidebar(const QList<QUrl> &urls, int position, const QUrl &f
 
 void FilesApp::removeFromSidebar(const QUrl &raw)
 {
+    rereadShared();
     const QUrl url = NavLogic::sidebarUrl(raw);
     if (m_sidebarFolders.removeAll(url) > 0) {
         publishSidebar();
@@ -4015,6 +4276,7 @@ void FilesApp::removeFromSidebar(const QUrl &raw)
 
 void FilesApp::moveInSidebar(const QUrl &url, int position)
 {
+    rereadShared();
     const QList<QUrl> next = NavLogic::movedInSidebar(m_sidebarFolders, url, position);
     if (next == m_sidebarFolders)
         return;

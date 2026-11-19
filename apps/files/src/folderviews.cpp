@@ -257,13 +257,21 @@ FolderViews::WriteResult FolderViews::set(const QString &key, const Entry &field
     const Entry valid = merged(Entry(), fields);
     if (key.isEmpty() || valid.isEmpty())
         return hasPending() ? flush(error) : WriteResult::Written;
+    keep(key, valid);
+    return flush(error);
+}
+
+void FolderViews::keep(const QString &key, const Entry &fields)
+{
+    const Entry valid = merged(Entry(), fields);
+    if (key.isEmpty() || valid.isEmpty())
+        return;
     m_pending.insert(key, merged(m_pending.value(key), valid));
     m_pendingOrder.removeOne(key);
     m_pendingOrder.append(key);
     // The pending folders are bounded like the file: the oldest would be dropped from it anyway.
     while (m_pendingOrder.size() > kMaxEntries)
         m_pending.remove(m_pendingOrder.takeFirst());
-    return flush(error);
 }
 
 FolderViews::WriteResult FolderViews::flush(QString *error, int waitMs)

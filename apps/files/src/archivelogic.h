@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QString>
 #include <QStringList>
 
@@ -33,6 +34,28 @@ QStringList listArgs(const QString &archivePath);
 
 // The members' total size from `bsdtar -tvf`'s listing (its fifth column), or nothing when a line can't be read.
 std::optional<qint64> listedSize(const QString &listing);
+
+// The same count, fed the listing as it comes (audit F4): nothing of it is kept but the line being read, so an archive of
+// any number of members, listed for as long as it takes, is counted in constant memory. A line longer than kMaxLine (only a
+// member name could make it) makes the size unknown, as an unreadable line does.
+class ListingTally
+{
+public:
+    static constexpr int kMaxLine = 64 * 1024;
+    void feed(const QByteArray &chunk);
+    // The last line, when the listing does not end with a newline.
+    void finish();
+    std::optional<qint64> total() const { return m_known ? std::optional<qint64>(m_total) : std::nullopt; }
+    qint64 entries() const { return m_entries; }
+
+private:
+    void line(const QByteArray &text);
+    QByteArray m_partial;
+    qint64 m_total = 0;
+    qint64 m_entries = 0;
+    bool m_known = true;
+    bool m_skipping = false;
+};
 
 // What a failed bsdtar said, for the user: a password-protected archive, else the tool's own first line.
 enum class Failure { Other = 0, Encrypted };

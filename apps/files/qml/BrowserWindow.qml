@@ -499,7 +499,7 @@ Window {
     Shortcut {
         sequence: "Ctrl+Alt+V"
         enabled: !win.keysHeld && !win.typing
-        onActivated: win.tab.moveHere()
+        onActivated: win.tab.moveHere(null)
         onActivatedAmbiguously: activated()
     }
     // Empty Trash from anywhere (Shift+Cmd+Backspace) and Delete Immediately (Alt+Cmd+Backspace), both confirmed.
@@ -518,7 +518,7 @@ Window {
     Shortcut {
         sequence: "Ctrl+V"
         enabled: !win.keysHeld && !win.typing
-        onActivated: win.tab.paste()
+        onActivated: win.tab.paste(null)
         onActivatedAmbiguously: activated()
     }
     Shortcut {
@@ -542,7 +542,7 @@ Window {
     Shortcut {
         sequence: "Ctrl+Shift+N"
         enabled: !win.keysHeld
-        onActivated: win.tab.newFolder()
+        onActivated: win.tab.newFolder(null)
         onActivatedAmbiguously: activated()
     }
     Shortcut {

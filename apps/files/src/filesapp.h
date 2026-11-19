@@ -619,6 +619,20 @@ private:
     // Every folder pair a job moved, in one call (each pair protected before any is handled); and the registration of the
     // sources while the job runs, so a prune that looks at the disk after the rename cannot drop their entries.
     void styleMovedAll(const QList<QPair<QUrl, QUrl>> &pairs);
+    // The jobs of paste(), moveHere() and drop() once their destination was looked at (at once, or on a worker for a big
+    // batch: audit F5).
+    // What the Open With menu read of an item (applicationsFor), kept kMenuFactsMs.
+    struct MenuFacts {
+        QString mimeType;
+        bool openScript = false;
+        QDeadlineTimer fresh;
+        QByteArray signature;
+    };
+    mutable QHash<QUrl, MenuFacts> m_menuFacts;
+    const MenuFacts &menuFacts(const QUrl &url) const;
+    void startPaste(const QList<QUrl> &urls, bool cut, const QUrl &destination, const QPointer<QObject> &target);
+    void startMoveHere(const QList<QUrl> &sources, const QUrl &dest, const QPointer<QObject> &target);
+    void startDrop(const QList<QUrl> &sources, const QUrl &dest, Qt::KeyboardModifiers mods, bool sameVolume, const QPointer<QObject> &target);
     QStringList beginStyleMoves(const QList<QUrl> &sources);
     void endStyleMoves(const QStringList &paths);
     QVariantMap changeFolderStyles(const QList<QUrl> &urls, const FolderStyleLogic::Style &style);
@@ -694,6 +708,13 @@ private:
     QList<QUrl> m_sidebarFolders;
     QList<QUrl> m_sidebarHidden;
     void publishSidebar();
+    // The lists Files keeps in QSettings and shares with its other processes and the portal's panels (sidebar favourites and
+    // hidden places, known and hidden tags; audit F9): read again from the file before each change (an edit of another
+    // process is never written over), and whenever the file changes (m_settingsWatcher). True when a list changed.
+    bool rereadShared();
+    QFileSystemWatcher m_settingsWatcher;
+    QTimer m_settingsTimer;
+    void watchSettings();
     // Tag state of the items asked about by the menus (selection), probed once per few seconds.
     mutable TagStore::Cache m_tagCache;
     int m_tagRevision = 0;

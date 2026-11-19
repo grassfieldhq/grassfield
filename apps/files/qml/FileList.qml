@@ -28,12 +28,15 @@ FocusScope {
     property point bandOrigin
     property point bandEnd
     property var bandBase: []
+    // The rows the band covered at the last move: the same rows are not selected again (IconView's bandCells).
+    property string bandRows: ""
 
     function bandPress(item: Item, x: real, y: real, modifiers: int): void {
         root.bandOrigin = item.mapToItem(list.contentItem, x, y);
         root.bandEnd = root.bandOrigin;
         root.bandBase = (modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) ? root.model.selectedUrls() : [];
         root.banding = false;
+        root.bandRows = "";
     }
 
     function bandMove(item: Item, x: real, y: real): void {
@@ -45,10 +48,14 @@ FocusScope {
         const groups = root.model.groupBy > 0 ? root.model.groups : [];
         const rows = groups.length > 0 ? Nav.groupedRowsInSpan(root.bandOrigin.y, p.y, Tokens.filesListRowHeight, Tokens.filesListGroupHeight, groups)
                                        : Nav.cellsInRect(0, root.bandOrigin.y, 0, p.y, 1, Tokens.filesListRowHeight, 1, list.count);
-        const urls = root.bandBase.slice();
-        for (let i = 0; i < rows.length; i++)
-            urls.push(root.model.urlAt(rows[i]));
-        root.model.selectUrls(urls);
+        const covered = rows.join(",");
+        if (covered !== root.bandRows) {
+            root.bandRows = covered;
+            const urls = root.bandBase.slice();
+            for (let i = 0; i < rows.length; i++)
+                urls.push(root.model.urlAt(rows[i]));
+            root.model.selectUrls(urls);
+        }
         // Scroll while the band reaches past the edges.
         const inList = item.mapToItem(list, x, y);
         if (inList.y > list.height)

@@ -193,6 +193,9 @@ FocusScope {
         property point origin
         property bool banding: false
         property var baseSelection: []
+        // The cells the band covered at the last move: a move that covers the same ones selects nothing again (a move per
+        // pixel otherwise asked for every covered cell's URL and selected them all again).
+        property string bandCells: ""
 
         onPressed: mouse => {
             root.focusView();
@@ -207,6 +210,7 @@ FocusScope {
             if (baseSelection.length === 0)
                 root.model.clearSelection();
             banding = false;
+            bandCells = "";
         }
         onPositionChanged: mouse => {
             if (!pressed || mouse.buttons !== Qt.LeftButton)
@@ -223,10 +227,14 @@ FocusScope {
             band.height = Math.abs(y - origin.y);
             const rows = root.grouped ? Nav.groupedIconCells(origin.x, origin.y, x, y, root.cellWidth, Tokens.filesIconCellHeight, Tokens.filesIconGroupHeight, root.bandGroups())
                                       : Nav.cellsInRect(origin.x, origin.y, x, y, grid.cellWidth, grid.cellHeight, root.columns, grid.count);
-            const urls = baseSelection.slice();
-            for (let i = 0; i < rows.length; i++)
-                urls.push(root.model.urlAt(rows[i]));
-            root.model.selectUrls(urls);
+            const cells = rows.join(",");
+            if (cells !== bandCells) {
+                bandCells = cells;
+                const urls = baseSelection.slice();
+                for (let i = 0; i < rows.length; i++)
+                    urls.push(root.model.urlAt(rows[i]));
+                root.model.selectUrls(urls);
+            }
             // Scroll while the band reaches past the edges.
             if (mouse.y > f.y + f.height)
                 f.contentY = Math.min(f.contentY + Tokens.spacingSm, Math.max(f.originY, f.contentHeight - f.height + f.originY));

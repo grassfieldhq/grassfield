@@ -44,7 +44,9 @@ TestCase {
         function selectedUrls(): var {
             return [];
         }
+        property int selects: 0
         function selectUrls(urls: var): void {
+            listing.selects++;
         }
         function clearSelection(): void {
         }
@@ -239,6 +241,25 @@ TestCase {
         view.reveal(listing.count - 1);
         waitForRendering(view);
         tryVerify(() => listing.asked[listing.count - 1] === true, 2000, "the revealed item is made");
+    }
+
+    // A rubber band selects again only when it covers other rows: moves within the same rows ask nothing of the listing
+    // (each move asked for every covered row's URL and selected them all again).
+    function test_aBandSelectsOnlyWhenItCoversOtherRows() {
+        fill(2, 20);
+        const view = createTemporaryObject(listComponent, test);
+        verify(view !== null);
+        waitForRendering(view);
+        listing.selects = 0;
+        view.bandPress(view, 300, 40, 0);
+        view.bandMove(view, 300, 120);
+        const first = listing.selects;
+        verify(first === 1, "the band selected once: " + first);
+        for (let i = 1; i <= 3; i++)
+            view.bandMove(view, 300 + i, 120);
+        compare(listing.selects, first, "the same rows: nothing selected again");
+        view.bandMove(view, 300, 400);
+        compare(listing.selects, first + 1, "other rows: selected again");
     }
 
     // Every MouseArea of the cells that can drag (left and right buttons, a drag target).

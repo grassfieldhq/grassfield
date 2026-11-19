@@ -5,6 +5,7 @@
 #include "recents.h"
 #include "runmode.h"
 #include "taglogic.h"
+#include "workers.h"
 
 #include <QDBusConnection>
 #include <QDBusMessage>
@@ -13,13 +14,13 @@
 #include <QDBusPendingReply>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QIcon>
 #include <QStandardPaths>
 
-#include <KCoreDirLister>
 #include <KProtocolInfo>
 #include <Solid/Device>
 #include <Solid/DeviceNotifier>
@@ -27,6 +28,9 @@
 #include <Solid/StorageAccess>
 #include <Solid/StorageDrive>
 #include <Solid/StorageVolume>
+
+#include <dirent.h>
+#include <memory>
 
 namespace
 {
@@ -117,30 +121,70 @@ PlacesModel::PlacesModel(QObject *parent, const DiskProbe::Options &disk)
     connect(notifier, &Solid::DeviceNotifier::deviceAdded, this, &PlacesModel::rebuild);
     connect(notifier, &Solid::DeviceNotifier::deviceRemoved, this, &PlacesModel::rebuild);
 
-    // The Trash entry shows full/empty from a KIO listing of trash:/ (kept up to date by KDirWatch).
+    // The Trash entry shows full or empty (checkTrash), read again when KIO's record or the home trash changes.
     if (devSession())
         return;
-    m_trashLister = new KCoreDirLister(this);
-    m_trashLister->setAutoErrorHandlingEnabled(false);
-    m_trashLister->setDelayedMimeTypes(true);
-    const auto update = [this] {
-        const bool empty = m_trashLister->items().isEmpty();
-        if (empty == m_trashEmpty)
-            return;
-        m_trashEmpty = empty;
-        emit trashEmptyChanged();
-        for (int i = 0; i < m_places.size(); ++i) {
-            if (m_places[i].kind == QLatin1String("trash")) {
-                m_places[i].iconName = empty ? QStringLiteral("user-trash-symbolic") : symbolic(QStringLiteral("user-trash-full"), QStringLiteral("user-trash-symbolic"));
-                emit dataChanged(index(i), index(i), {IconNameRole});
+    m_trashStatus = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/trashrc");
+    m_trashFiles = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/Trash/files");
+    m_trashTimer.setSingleShot(true);
+    m_trashTimer.setInterval(200);
+    connect(&m_trashTimer, &QTimer::timeout, this, &PlacesModel::checkTrash);
+    connect(&m_trashWatcher, &QFileSystemWatcher::fileChanged, &m_trashTimer, qOverload<>(&QTimer::start));
+    connect(&m_trashWatcher, &QFileSystemWatcher::directoryChanged, &m_trashTimer, qOverload<>(&QTimer::start));
+    checkTrash();
+}
+
+void PlacesModel::checkTrash()
+{
+    // The watches follow files that are replaced or made later (trashrc is rewritten whole; Trash/files appears with the first
+    // item ever trashed).
+    for (const QString &path : {QFileInfo(m_trashStatus).absolutePath(), m_trashStatus, QFileInfo(m_trashFiles).absolutePath(), m_trashFiles}) {
+        if (!m_trashWatcher.files().contains(path) && !m_trashWatcher.directories().contains(path) && QFileInfo::exists(path))
+            m_trashWatcher.addPath(path);
+    }
+    auto empty = std::make_shared<bool>(true);
+    Workers::run(
+        this,
+        [status = m_trashStatus, files = m_trashFiles, empty] {
+            bool recorded = true;
+            QFile f(status);
+            if (f.open(QIODevice::ReadOnly)) {
+                bool inStatus = false;
+                while (!f.atEnd()) {
+                    const QByteArray line = f.readLine(4096).trimmed();
+                    if (line.startsWith('['))
+                        inStatus = line == "[Status]";
+                    else if (inStatus && line.startsWith("Empty="))
+                        recorded = line.mid(6).trimmed() != "false";
+                }
             }
+            bool none = true;
+            if (DIR *dir = ::opendir(QFile::encodeName(files).constData())) {
+                while (const struct dirent *entry = ::readdir(dir)) {
+                    if (qstrcmp(entry->d_name, ".") != 0 && qstrcmp(entry->d_name, "..") != 0) {
+                        none = false; // the first entry is enough
+                        break;
+                    }
+                }
+                ::closedir(dir);
+            }
+            *empty = recorded && none;
+        },
+        [this, empty] { setTrashEmpty(*empty); });
+}
+
+void PlacesModel::setTrashEmpty(bool empty)
+{
+    if (empty == m_trashEmpty)
+        return;
+    m_trashEmpty = empty;
+    emit trashEmptyChanged();
+    for (int i = 0; i < m_places.size(); ++i) {
+        if (m_places[i].kind == QLatin1String("trash")) {
+            m_places[i].iconName = empty ? QStringLiteral("user-trash-symbolic") : symbolic(QStringLiteral("user-trash-full"), QStringLiteral("user-trash-symbolic"));
+            emit dataChanged(index(i), index(i), {IconNameRole});
         }
-    };
-    connect(m_trashLister, &KCoreDirLister::itemsAdded, this, update);
-    connect(m_trashLister, &KCoreDirLister::itemsDeleted, this, update);
-    connect(m_trashLister, qOverload<>(&KCoreDirLister::completed), this, update);
-    connect(m_trashLister, qOverload<>(&KCoreDirLister::clear), this, update);
-    m_trashLister->openUrl(QUrl(QStringLiteral("trash:/")));
+    }
 }
 
 bool PlacesModel::networkAvailable() const
@@ -291,10 +335,75 @@ void PlacesModel::relist()
         places.append(p);
     }
 
-    beginResetModel();
-    m_places = places;
-    endResetModel();
+    apply(places);
     emit favoritesChanged();
+}
+
+QString PlacesModel::identity(const Place &p)
+{
+    const QChar sep(0x1f);
+    return p.section + sep + p.kind + sep + p.url.toString() + sep + p.tag + sep + p.udi;
+}
+
+void PlacesModel::apply(const QList<Place> &places)
+{
+    QStringList keys;
+    QSet<QString> wanted;
+    keys.reserve(places.size());
+    for (const Place &p : places) {
+        const QString key = identity(p);
+        if (wanted.contains(key)) {
+            // Two rows alike (none of the lists makes one): no diff can tell them apart.
+            beginResetModel();
+            m_places = places;
+            endResetModel();
+            return;
+        }
+        wanted.insert(key);
+        keys.append(key);
+    }
+    // The rows that went, a run of neighbours at a time, from the end.
+    for (int i = int(m_places.size()) - 1; i >= 0; --i) {
+        if (wanted.contains(identity(m_places.at(i))))
+            continue;
+        int first = i;
+        while (first > 0 && !wanted.contains(identity(m_places.at(first - 1))))
+            --first;
+        beginRemoveRows(QModelIndex(), first, i);
+        m_places.remove(first, i - first + 1);
+        endRemoveRows();
+        i = first;
+    }
+    // Then in the new order: a row in place may have changed, one further down moves up, a new one comes in.
+    for (int i = 0; i < places.size(); ++i) {
+        if (i < m_places.size() && identity(m_places.at(i)) == keys.at(i)) {
+            if (!(m_places.at(i) == places.at(i))) {
+                m_places[i] = places.at(i);
+                emit dataChanged(index(i), index(i));
+            }
+            continue;
+        }
+        int from = -1;
+        for (int j = i + 1; j < m_places.size(); ++j) {
+            if (identity(m_places.at(j)) == keys.at(i)) {
+                from = j;
+                break;
+            }
+        }
+        if (from >= 0) {
+            beginMoveRows(QModelIndex(), from, from, QModelIndex(), i);
+            m_places.move(from, i);
+            endMoveRows();
+            if (!(m_places.at(i) == places.at(i))) {
+                m_places[i] = places.at(i);
+                emit dataChanged(index(i), index(i));
+            }
+        } else {
+            beginInsertRows(QModelIndex(), i, i);
+            m_places.insert(i, places.at(i));
+            endInsertRows();
+        }
+    }
 }
 
 void PlacesModel::setFavorites(const QList<QUrl> &pinned, const QList<QUrl> &hidden)

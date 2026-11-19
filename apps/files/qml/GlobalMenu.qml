@@ -29,6 +29,9 @@ Platform.MenuBar {
     readonly property bool inTrash: bar.folder !== null && bar.folder.isTrash
     readonly property bool inApplications: bar.folder !== null && bar.folder.isApplications === true
     readonly property bool writable: bar.folder !== null && bar.folder.writable
+    // Where Paste, Move Item Here and New Folder put items: the title's folder (BrowserTab.targetFolder, audit F11).
+    readonly property var target: bar.tab ? bar.tab.targetFolder : null
+    readonly property bool targetWritable: bar.target !== null && bar.target !== undefined && bar.target.writable
     // Items can be renamed, cut and trashed (BrowserTab.itemsEditable: a writable folder or a tag search).
     readonly property bool editable: bar.folder !== null && !bar.inTrash && (bar.folder.writable || bar.folder.isSearch)
     // Colour tags of the selection, read again on every selection change and every tag write.
@@ -120,8 +123,8 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: qsTr("New Folder")
             shortcut: "Ctrl+Shift+N"
-            enabled: bar.keysHere && bar.writable && !bar.inTrash
-            onTriggered: bar.tab.newFolder()
+            enabled: bar.keysHere && bar.targetWritable && !bar.inTrash
+            onTriggered: bar.tab.newFolder(null)
         }
         Platform.MenuItem {
             text: bar.count > 1 ? qsTr("New Folder with Selection (%1 Items)").arg(bar.count) : qsTr("New Folder with Selection")
@@ -364,15 +367,15 @@ Platform.MenuBar {
         Platform.MenuItem {
             text: bar.app.clipboardCount > 1 ? qsTr("Paste %1 Items").arg(bar.app.clipboardCount) : bar.app.clipboardCount === 1 ? qsTr("Paste Item") : qsTr("Paste")
             shortcut: "Ctrl+V"
-            enabled: bar.selectionKeysHere && bar.app.canPaste && bar.writable
-            onTriggered: bar.tab.paste()
+            enabled: bar.selectionKeysHere && bar.app.canPaste && bar.targetWritable
+            onTriggered: bar.tab.paste(null)
         }
         // The Finder's Move Item Here (shown there while ⌥ is held; the menu bar has no Option items): the copied items moved here.
         Platform.MenuItem {
             text: bar.app.clipboardCount > 1 ? qsTr("Move %1 Items Here").arg(bar.app.clipboardCount) : qsTr("Move Item Here")
             shortcut: "Ctrl+Alt+V"
-            enabled: bar.selectionKeysHere && bar.app.canPaste && bar.writable
-            onTriggered: bar.tab.moveHere()
+            enabled: bar.selectionKeysHere && bar.app.canPaste && bar.targetWritable
+            onTriggered: bar.tab.moveHere(null)
         }
         Platform.MenuItem {
             text: qsTr("Select All")

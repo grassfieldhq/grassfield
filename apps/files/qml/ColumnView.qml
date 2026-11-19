@@ -27,6 +27,13 @@ FocusScope {
         return root.activeColumn >= 0 ? columns.itemAt(root.activeColumn) : null;
     }
     readonly property var activeModel: root.activeItem ? (root.activeItem as FileColumn).model : null
+    // The listing of the folder the title shows (the last column): where Paste, Move Item Here and New Folder put items, as in
+    // the Finder (audit F11), whichever column has the keyboard.
+    readonly property var titleModel: {
+        root.columnsMade;
+        const c = columnsModel.count > 0 ? columns.itemAt(columnsModel.count - 1) as FileColumn : null;
+        return c ? c.model : null;
+    }
     readonly property var previewInfo: {
         const m = root.activeModel;
         if (!m || root.activeColumn !== columnsModel.count - 1 || m.selectedCount !== 1)
@@ -264,6 +271,8 @@ FocusScope {
         property point bandOrigin
         property point bandEnd
         property var bandBase: []
+        // The rows the band covered at the last move: the same rows are not selected again (IconView's bandCells).
+        property string bandRows: ""
 
         function rowPosition(row: int): point {
             return lv.mapToItem(null, Tokens.spacingLg, (Math.max(0, row) + 1) * Tokens.filesColumnRowHeight - lv.contentY + lv.originY);
@@ -327,6 +336,7 @@ FocusScope {
                 col.bandEnd = col.bandOrigin;
                 col.bandBase = (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) ? col.model.selectedUrls() : [];
                 col.banding = false;
+                col.bandRows = "";
             }
             onPositionChanged: mouse => {
                 if (!pressed || mouse.buttons !== Qt.LeftButton)
@@ -337,10 +347,14 @@ FocusScope {
                 col.banding = true;
                 col.bandEnd = p;
                 const rows = Nav.cellsInRect(0, col.bandOrigin.y, 0, p.y, 1, Tokens.filesColumnRowHeight, 1, lv.count);
-                const urls = col.bandBase.slice();
-                for (let i = 0; i < rows.length; i++)
-                    urls.push(col.model.urlAt(rows[i]));
-                col.model.selectUrls(urls);
+                const covered = rows.join(",");
+                if (covered !== col.bandRows) {
+                    col.bandRows = covered;
+                    const urls = col.bandBase.slice();
+                    for (let i = 0; i < rows.length; i++)
+                        urls.push(col.model.urlAt(rows[i]));
+                    col.model.selectUrls(urls);
+                }
                 if (mouse.y > lv.y + lv.height)
                     lv.contentY = Math.min(lv.contentY + Tokens.spacingSm, Math.max(lv.originY, lv.contentHeight - lv.height + lv.originY));
                 else if (mouse.y < lv.y)

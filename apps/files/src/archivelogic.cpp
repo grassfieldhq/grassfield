@@ -82,23 +82,71 @@ QStringList listArgs(const QString &archivePath)
 
 std::optional<qint64> listedSize(const QString &listing)
 {
+    ListingTally tally;
+    tally.feed(listing.toLocal8Bit());
+    tally.finish();
+    return tally.total();
+}
+
+void ListingTally::feed(const QByteArray &chunk)
+{
+    qsizetype from = 0;
+    while (from < chunk.size()) {
+        const qsizetype newline = chunk.indexOf('\n', from);
+        const qsizetype end = newline < 0 ? chunk.size() : newline;
+        if (!m_skipping) {
+            if (m_partial.size() + (end - from) > kMaxLine) {
+                // Too long to be a listing line: the size is unknown, and the rest of the line is skipped.
+                m_known = false;
+                m_skipping = true;
+                m_partial.clear();
+            } else {
+                m_partial.append(chunk.constData() + from, end - from);
+            }
+        }
+        if (newline < 0)
+            return;
+        if (!m_skipping)
+            line(m_partial);
+        else
+            ++m_entries;
+        m_partial.clear();
+        m_skipping = false;
+        from = newline + 1;
+    }
+}
+
+void ListingTally::finish()
+{
+    if (m_skipping)
+        ++m_entries;
+    else if (!m_partial.isEmpty())
+        line(m_partial);
+    m_partial.clear();
+    m_skipping = false;
+}
+
+void ListingTally::line(const QByteArray &text)
+{
     // "-rw-r--r--  0 user   group     1234 Oct 26 12:00 name": permissions, links, owner, group, size, date… An owner or
     // group with a space would shift the columns: any line whose fifth column is no number makes the size unknown.
-    qint64 total = 0;
-    static const QRegularExpression kSpaces(QStringLiteral("\\s+"));
-    for (const QString &line : listing.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
-        const QStringList columns = line.trimmed().split(kSpaces);
-        if (columns.size() < 6)
-            return std::nullopt;
-        bool ok = false;
-        const qint64 size = columns.at(4).toLongLong(&ok);
-        if (!ok || size < 0)
-            return std::nullopt;
-        total += size;
-        if (total < 0)
-            return std::nullopt;
+    const QList<QByteArray> columns = text.simplified().split(' ');
+    if (text.trimmed().isEmpty())
+        return;
+    ++m_entries;
+    if (!m_known)
+        return;
+    if (columns.size() < 6) {
+        m_known = false;
+        return;
     }
-    return total;
+    bool ok = false;
+    const qint64 size = columns.at(4).toLongLong(&ok);
+    if (!ok || size < 0 || m_total + size < m_total) {
+        m_known = false;
+        return;
+    }
+    m_total += size;
 }
 
 Failure failureOf(const QString &stderrText)

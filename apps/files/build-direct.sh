@@ -47,7 +47,7 @@ if [[ ${1:-} == "--tests" ]]; then
     "$root/tests/unit/files/tst_tagsearch.cpp" "$root/tests/unit/files/tst_folderstyle.cpp" "$root/tests/unit/files/tst_folderviews.cpp" "$root/tests/unit/files/tst_imagerotate.cpp" "$root/tests/unit/files/tst_imagesize.cpp" "$root/tests/unit/files/tst_recents.cpp" "$root/tests/unit/files/tst_folderprune.cpp" "$root/tests/unit/files/tst_search.cpp" "$root/tests/unit/files/tst_navlogic.cpp" "$root/tests/unit/files/tst_renamelogic.cpp" "$root/tests/unit/files/tst_archive.cpp" "$root/tests/unit/files/tst_batchops.cpp" "$root/tests/unit/files/tst_permissionlogic.cpp" \
     "$root/tests/unit/files/tst_appscope.cpp" "$root/tests/unit/files/tst_runmode.cpp" "$root/tests/unit/files/tst_applications.cpp" "$root/tests/unit/files/tst_autoappearance.cpp" "$root/tests/unit/files/tst_launchguard.cpp" "$root/tests/unit/files/tst_programlaunch.cpp" "$root/tests/unit/files/tst_appicons.cpp" "$root/tests/unit/files/tst_imageproviders.cpp" \
     "$root/tests/unit/files/tst_menushortcuts.cpp" "$root/tests/unit/files/tst_volumelogic.cpp" "$here/src/volumelogic.cpp" \
-    "$here/src/filelogic.cpp" "$here/src/launchguard.cpp" "$here/src/programlaunch.cpp" "$out/moc_tests_programlaunch.cpp" "$here/src/taglogic.cpp" "$here/src/tagstore.cpp" "$here/src/tagsearch.cpp" "$here/src/applicationslogic.cpp" "$here/src/appicons.cpp" "$here/src/imageproviders.cpp" "$here/src/folderstylelogic.cpp" "$here/src/folderstylestore.cpp" "$here/src/folderviews.cpp" "$here/src/imagerotate.cpp" "$here/src/imagesize.cpp" "$here/src/recents.cpp" "$here/src/searchlogic.cpp" "$here/src/navlogic.cpp" "$here/src/renamelogic.cpp" "$here/src/archivelogic.cpp" "$here/src/batchops.cpp" "$here/src/archivejob.cpp" "$here/src/permissionlogic.cpp" "$here/src/filesearch.cpp" "$here/src/savedsearches.cpp" "$out/moc_tests_tagsearch.cpp" "$out/moc_tests_recents.cpp" "$out/moc_tests_filesearch.cpp" "$out/moc_tests_savedsearches.cpp" "$out/moc_tests_archivejob.cpp" \
+    "$here/src/filelogic.cpp" "$here/src/launchguard.cpp" "$here/src/programlaunch.cpp" "$out/moc_tests_programlaunch.cpp" "$here/src/taglogic.cpp" "$here/src/tagstore.cpp" "$here/src/tagsearch.cpp" "$here/src/applicationslogic.cpp" "$here/src/appicons.cpp" "$here/src/imageproviders.cpp" "$here/src/folderstylelogic.cpp" "$here/src/folderstylestore.cpp" "$here/src/folderviews.cpp" "$here/src/imagerotate.cpp" "$here/src/imagesize.cpp" "$here/src/recents.cpp" "$here/src/searchlogic.cpp" "$here/src/navlogic.cpp" "$here/src/renamelogic.cpp" "$here/src/archivelogic.cpp" "$here/src/batchops.cpp" "$here/src/archivejob.cpp" "$here/src/permissionlogic.cpp" "$here/src/filesearch.cpp" "$here/src/savedsearches.cpp" "$here/src/workers.cpp" "$out/moc_tests_tagsearch.cpp" "$out/moc_tests_recents.cpp" "$out/moc_tests_filesearch.cpp" "$out/moc_tests_savedsearches.cpp" "$out/moc_tests_archivejob.cpp" \
     $(pkg-config --libs Qt6Core Qt6Gui Qt6Quick Qt6Widgets Qt6Qml Qt6DBus Qt6Test) -lgtest -lgtest_main -pthread \
     -o "$out/files-unit-tests$suffix"
   echo "built $out/files-unit-tests$suffix"
@@ -105,7 +105,7 @@ compile() {
 
 defs=()
 mocs=()
-for h in foldermodel placesmodel filesapp tagsearch filesearch savedsearches archivejob recents kioprompts applicationchooser diskprobe programlaunch; do
+for h in foldermodel placesmodel filesapp tagsearch filesearch savedsearches archivejob recents kioprompts applicationchooser diskprobe programlaunch fskind; do
   "$moc" "${kf_includes[@]}" "$here/src/$h.h" -o "$out/moc_files_$h.cpp"
   mocs+=("$out/moc_files_$h.cpp")
 done
@@ -115,7 +115,7 @@ mocs+=("$out/moc_files_ongoing.cpp")
 compile "$out/files-core-obj" "$here/src/filesapp.cpp" "$here/src/foldermodel.cpp" "$here/src/placesmodel.cpp" "$here/src/diskprobe.cpp" "$here/src/volumelogic.cpp" \
   "$here/src/imageproviders.cpp" "$here/src/filelogic.cpp" "$here/src/launchguard.cpp" "$here/src/programlaunch.cpp" "$here/src/taglogic.cpp" "$here/src/tagstore.cpp" \
   "$here/src/tagsearch.cpp" "$here/src/searchlogic.cpp" "$here/src/navlogic.cpp" "$here/src/renamelogic.cpp" "$here/src/archivelogic.cpp" "$here/src/batchops.cpp" "$here/src/archivejob.cpp" "$here/src/permissionlogic.cpp" "$here/src/filesearch.cpp" "$here/src/savedsearches.cpp" "$here/src/applicationslogic.cpp" "$here/src/appicons.cpp" "$here/src/folderstylelogic.cpp" "$here/src/folderstylestore.cpp" "$here/src/folderviews.cpp" "$here/src/imagerotate.cpp" "$here/src/imagesize.cpp" "$here/src/recents.cpp" \
-  "$here/src/kioprompts.cpp" "$here/src/kiopromptlogic.cpp" "$here/src/applicationchooser.cpp" "${mocs[@]}"
+  "$here/src/kioprompts.cpp" "$here/src/kiopromptlogic.cpp" "$here/src/applicationchooser.cpp" "$here/src/fskind.cpp" "$here/src/workers.cpp" "${mocs[@]}"
 core=$out/libgrassfield-files-core.a
 rm -f "$core"
 ar rcs "$core" "${objs[@]}"

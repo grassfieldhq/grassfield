@@ -26,7 +26,11 @@ if(GTest_FOUND)
     enable_testing()
     add_executable(files-unit-tests ../../tests/unit/files/tst_filelogic.cpp ../../tests/unit/files/tst_previewqueue.cpp
         ../../tests/unit/files/tst_appicons.cpp ../../tests/unit/files/tst_imageproviders.cpp ../../tests/unit/files/tst_tags.cpp ../../tests/unit/files/tst_folderstyle.cpp ../../tests/unit/files/tst_folderviews.cpp ../../tests/unit/files/tst_imagerotate.cpp ../../tests/unit/files/tst_imagesize.cpp ../../tests/unit/files/tst_recents.cpp ../../tests/unit/files/tst_appscope.cpp ../../tests/unit/files/tst_runmode.cpp ../../tests/unit/files/tst_applications.cpp ../../tests/unit/files/tst_autoappearance.cpp ../../tests/unit/files/tst_launchguard.cpp ../../tests/unit/files/tst_programlaunch.cpp ../../tests/unit/files/tst_menushortcuts.cpp ../../tests/unit/files/tst_navlogic.cpp ../../tests/unit/files/tst_renamelogic.cpp ../../tests/unit/files/tst_permissionlogic.cpp ../../tests/unit/files/tst_batchops.cpp src/batchops.cpp src/navlogic.cpp src/renamelogic.cpp src/permissionlogic.cpp src/filelogic.cpp src/taglogic.cpp src/tagstore.cpp src/launchguard.cpp src/programlaunch.cpp
-        src/applicationslogic.cpp src/appicons.cpp src/imageproviders.cpp src/folderstylelogic.cpp src/folderstylestore.cpp src/folderviews.cpp src/imagerotate.cpp src/imagesize.cpp src/recents.cpp src/recents.h ../../tests/unit/files/tst_volumelogic.cpp src/volumelogic.cpp)
+        src/applicationslogic.cpp src/appicons.cpp src/imageproviders.cpp src/folderstylelogic.cpp src/folderstylestore.cpp src/folderviews.cpp src/imagerotate.cpp src/imagesize.cpp src/recents.cpp src/recents.h ../../tests/unit/files/tst_volumelogic.cpp src/volumelogic.cpp
+        # The tests build-direct.sh --tests also runs (searches, archives, staging prune) and what they need.
+        ../../tests/unit/files/tst_tagsearch.cpp ../../tests/unit/files/tst_folderprune.cpp ../../tests/unit/files/tst_search.cpp ../../tests/unit/files/tst_archive.cpp
+        src/tagsearch.cpp src/tagsearch.h src/searchlogic.cpp src/archivelogic.cpp src/archivejob.cpp src/archivejob.h src/filesearch.cpp src/filesearch.h
+        src/savedsearches.cpp src/savedsearches.h src/programlaunch.h src/workers.cpp src/workers.h)
     target_include_directories(files-unit-tests PRIVATE src ..)
     # tst_menushortcuts runs Qt.labs.platform menus offscreen (Qml, Widgets, Test) and includes globalmenu.h (DBus).
     find_package(Qt6 REQUIRED COMPONENTS Test)

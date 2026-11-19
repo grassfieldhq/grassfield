@@ -92,8 +92,15 @@ ScanResult scanFolder(const QByteArray &dir, Window *window, const BeforeStat &b
 bool statEntry(const QByteArray &dir, const QByteArray &raw, Entry *entry);
 
 // One line of the helper's output for a window: "W", the total, the entries, fields separated by US (0x1f), no line break inside
-// (names are escaped: backslash, line break, return and US become \\, \n, \r and \u).
+// (names are escaped, escapeName).
 QByteArray encodeWindow(qint64 sequence, qint64 total, const std::vector<Entry> &entries);
-QByteArray escapeName(const QString &name);
+// A name as the file system has it, written so that it can be told back byte for byte (audit F22): valid UTF-8 as it is, but
+// backslash, line break, return and US as \\, \n, \r and \u, and each byte that is not part of valid UTF-8 as \xHH (two
+// lower-case hex digits). A name that is not UTF-8 (a Latin-1 name from an old disk) then names its file again: the shell shows
+// U+FFFD for each such byte and opens the file through a file: URI whose escapes are those bytes.
+QByteArray escapeName(const QByteArray &raw);
+// The folder of the command line: an absolute path, or a file: URI whose escapes are taken as bytes (the shell's way to name a
+// folder whose name is not UTF-8). "" when it is neither.
+QByteArray folderArgument(const QByteArray &argument);
 
 } // namespace StackLogic

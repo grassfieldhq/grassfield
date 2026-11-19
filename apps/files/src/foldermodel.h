@@ -311,6 +311,11 @@ private:
     QStringList tagsOf(const KFileItem &item) const;
     // What sorting by `key` and grouping by m_groupBy read of an item (only those fields are filled).
     FileLogic::SortEntry sortEntry(const KFileItem &item, FileLogic::SortKey key) const;
+    // sortEntry for the active key, kept per url until the item, the key, the grouping or the folder changes (lessThan).
+    mutable QHash<QUrl, FileLogic::SortEntry> m_sortCache;
+    const FileLogic::SortEntry &sortedFacts(const KFileItem &item, FileLogic::SortKey key) const;
+    // The item's cached group and sort facts go (it changed, went or was renamed).
+    void forgetSorted(const QUrl &url) const;
     // An item's group (cached per url until the item, the folder, the grouping or the day changes).
     FileLogic::Group groupFor(const KFileItem &item) const;
     // The rows or their groups changed: groupsChanged follows (once per event loop turn).
@@ -419,6 +424,14 @@ private:
     static constexpr int kAttrQuietMs = 200;
     static constexpr int kAttrMaxWaitMs = 500;
     void watchShownFolder();
+    // The shown folder when it is a local path ("" otherwise), and the rows whose folder's file system kind was not known
+    // when they were shown, by folder (FsKindCache, audit F2).
+    QString m_localDir;
+    mutable QHash<QString, QSet<QUrl>> m_waitingKind;
+    // Whether the item's folder is on a local disk (FsKind::Kind::Disk): only then are its content, tags and look read here.
+    bool onDisk(const KFileItem &item) const;
+    void probeAnswered(const QString &dir);
+    void refuseStaging();
     void revalidateStyles();
     mutable QTimer m_seenTimer;
 
