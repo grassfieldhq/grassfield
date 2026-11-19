@@ -54,6 +54,13 @@ TestCase {
             function urlAt(row: int): url {
                 return listing.get(row).url;
             }
+            function rowForUrl(target: url): int {
+                for (let i = 0; i < listing.count; i++) {
+                    if (String(listing.get(i).url) === String(target))
+                        return i;
+                }
+                return -1;
+            }
             function selectedUrls(): var {
                 return listing.currentRow >= 0 ? [listing.get(listing.currentRow).url] : [];
             }
