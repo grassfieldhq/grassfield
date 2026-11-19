@@ -52,6 +52,17 @@ Singleton {
         root.tracking = next;
     }
 
+    // One step of gesture `kind` for the surface of `target` ("overview", "apps") that follows it: null or {action, progress}
+    // (Shortcuts.js followStep). `current` is the progress the surface draws, -1 when no gesture drives it.
+    function followStep(target: string, open: bool, current: real, kind: string, phase: string, progress: real, commit: bool, reduceMotion: bool): var {
+        return Logic.followStep(target, open, current, {
+            kind: kind,
+            phase: phase,
+            progress: progress,
+            commit: commit
+        }, reduceMotion);
+    }
+
     // Performs a key request ({target, fn, args}); false when it was not a known request.
     function deliver(request: var): bool {
         if (!request)

@@ -166,6 +166,19 @@ TestCase {
         compare(r["default"], "8h");
     }
 
+    // B-10: `K <id>` forgets the copy only while the app it came from has a window (a password manager clearing it), never a
+    // pinned item, nor one without a recorded app.
+    function test_forgetOnClear() {
+        const items = [{id: "a", app: "KeePassXC", pinned: false}, {id: "b", app: "kitty", pinned: true}, {id: "c", app: "", pinned: false}];
+        const open = app => app === "KeePassXC" || app === "kitty";
+        verify(Logic.forgetOnClear(items, "a", open));
+        verify(!Logic.forgetOnClear(items, "a", app => false), "the app closed: kept");
+        verify(!Logic.forgetOnClear(items, "b", open), "pinned: kept");
+        verify(!Logic.forgetOnClear(items, "c", open), "no app recorded: kept");
+        verify(!Logic.forgetOnClear(items, "z", open), "unknown id");
+        verify(!Logic.forgetOnClear(null, "a", open));
+    }
+
     function test_linesAndItems() {
         const raw = "a\\b\nc\rd" + us + "e";
         compare(Logic.unescapeField(Logic.escapeField(raw)), raw);

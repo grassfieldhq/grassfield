@@ -5,6 +5,7 @@ import qs.lib
 import Quickshell.Io
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "../platform/ScreenChoice.js" as ScreenChoice
 import "../search/Ranking.js" as Ranking // layering-exception: GF-087
@@ -26,6 +27,16 @@ Scope {
             FocusReturn.opened("apps");
         else
             FocusReturn.closed("apps", true);
+    }
+
+    // The four-finger pinch follows the fingers (CIO-01 R2, macOS): while a pinch drives Apps, AppsWindow draws
+    // `gesture.progress` instead of its own fade and scale; at the end Apps opens or closes from where the fingers left it.
+    // Reduce Motion: the pinch opens or closes at its end.
+    readonly property GestureFollower gesture: GestureFollower {
+        target: "apps"
+        open: root.open
+        onShow: root.show()
+        onClose: root.hide()
     }
     property string screenName: ""
     property string query: ""
@@ -346,6 +357,8 @@ Scope {
 
     IpcHandler {
         target: "apps"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: root.ipcEnabled
 
         function toggle(): void {

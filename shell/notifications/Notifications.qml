@@ -7,6 +7,7 @@ import Quickshell.Io
 import Quickshell.Services.Notifications
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "History.js" as History
 import "../platform/ScreenChoice.js" as ScreenChoice
@@ -1472,6 +1473,8 @@ Singleton {
 
     IpcHandler {
         target: "notifications"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function toggleCenter(): void {
             root.toggleCenter("");

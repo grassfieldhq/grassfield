@@ -75,6 +75,8 @@ prompt). At the login screen choose **Grassfield (uwsm)** (it is the default). U
 
 ### Go back to Omarchy
 - Only for the next login: `grassfield-login set omarchy`, then log out.
+- A session that ends within 20 s of its start twice in a row makes the next login start the other session once
+  (grassfield-login, SS-11).
 - Remove Grassfield completely: run the script again with `--uninstall` (`bash grassfield-install.sh --uninstall`). It takes a
   snapshot, turns Grassfield updates off, switches the session back to Omarchy, puts the previous login and boot screens back,
   removes the packages, the `[grassfield]` repository and the key, deletes the files that only matter inside Grassfield (portal
@@ -154,6 +156,8 @@ Les mises à jour arrivent ensuite depuis Réglages > Mise à jour.
 
 ### Revenir à Omarchy
 - Seulement pour la prochaine connexion : `grassfield-login set omarchy`, puis ferme la session.
+- Une session qui se termine moins de 20 s après son début deux fois de suite fait démarrer l'autre session une fois à la
+  connexion suivante (grassfield-login, SS-11).
 - Retirer Grassfield complètement : relance le script avec `--uninstall` (`bash grassfield-install.sh --uninstall`). Il prend un
   snapshot, désactive les mises à jour Grassfield, remet la session sur Omarchy, remet les écrans de connexion et de démarrage
   précédents, retire les paquets, le dépôt `[grassfield]` et la clé, supprime les fichiers qui ne servent qu'à Grassfield

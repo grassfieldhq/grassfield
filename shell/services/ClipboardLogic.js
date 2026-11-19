@@ -173,6 +173,15 @@ function upsert(items, item) {
     return order(items.filter(i => i.id !== item.id).concat([item]));
 }
 
+// B-10: the helper's `K <id>` (the clipboard was cleared, or replaced by blank text, less than 60 s after that copy was
+// recorded). A password manager clears what it copied: when the app the copy came from (the class recorded at `Y`) still has
+// an open window, the copy is forgotten (true); otherwise it is kept (the compositor clears the clipboard of a client that
+// closes, which is no request to forget). `hasWindow(app)` says whether that app has a window open.
+function forgetOnClear(items, id, hasWindow) {
+    const item = (items ?? []).find(i => i.id === id);
+    return !!item && typeof item.app === "string" && item.app !== "" && !item.pinned && hasWindow(item.app) === true;
+}
+
 function removeId(items, id) {
     return items.filter(i => i.id !== id);
 }

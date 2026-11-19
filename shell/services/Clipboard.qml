@@ -31,6 +31,8 @@ Singleton {
 
     signal searched(int seq, var ids)
     signal pinFull(string id)
+    // The helper could not write the pin (a full disk, a read-only store): the item stays unpinned (B-09).
+    signal pinFailed(string id)
     signal previewReady(string id, string path, string text)
 
     // Dev: the helper built by apps/clipboard-helper/build-direct.sh (GRASSFIELD_CLIPBOARD_HELPER names another, for tests); the
@@ -99,6 +101,9 @@ Singleton {
         root.enabled = Settings.clipboardEnabled;
         root.init();
     }
+
+    // Whether an app (a window class) has a window open: what `K` asks (a test replaces it).
+    property var hasWindow: app => Compositor.toplevelsFor(app).length > 0
 
     function send(fields: var): void {
         if (root.helper.running)
@@ -218,6 +223,15 @@ Singleton {
         case "N":
             if (f[1] === "pin-full")
                 root.pinFull(f[2] || "");
+            else if (f[1] === "pin-failed")
+                root.pinFailed(f[2] || "");
+            break;
+        case "K":
+            // Cleared soon after it was copied (B-10): a password manager that still has a window forgot it; so does the history.
+            if (Logic.forgetOnClear(root.items, f[1] || "", root.hasWindow)) {
+                root.remove(f[1]);
+                root.items = Logic.removeId(root.items, f[1]);
+            }
             break;
         case "V":
             root.previewReady(f[1] || "", f[2] || "", f[3] || "");

@@ -139,6 +139,81 @@ TestCase {
         compare(Shortcuts.pick(undefined), null);
     }
 
+    // R2 (CIO-01): a surface that follows the gesture (Overview, Apps) opens at its begin and draws the fingers' progress,
+    // completes or goes back at the end from where the fingers left it; *-close mirrors *-open; Reduce Motion: the end only.
+    function g(text) {
+        return Shortcuts.parseGesture("gfgesture/1 " + text);
+    }
+
+    function test_followTheFingers() {
+        const f = Shortcuts.followStep;
+        compare(JSON.stringify(f("apps", false, -1, g("apps-open begin 0"), false)), JSON.stringify({action: "show", progress: 0}));
+        compare(JSON.stringify(f("apps", true, 0, g("apps-open update 0.4"), false)), JSON.stringify({action: "", progress: 0.4}));
+        compare(JSON.stringify(f("apps", true, 0.6, g("apps-open end 0.6 commit"), false)), JSON.stringify({action: "", progress: -1}), "completes from there");
+        compare(JSON.stringify(f("apps", true, 0.3, g("apps-open end 0.3 back"), false)), JSON.stringify({action: "close", progress: 0.3}), "goes back from there");
+        compare(JSON.stringify(f("apps", true, 0.3, g("apps-open cancel 0.3"), false)), JSON.stringify({action: "close", progress: 0.3}));
+        compare(f("apps", true, -1, g("apps-open begin 0"), false), null, "already open: nothing");
+        compare(f("apps", false, -1, g("apps-open update 0.5"), false), null, "no begin seen (refused): nothing drawn");
+        compare(JSON.stringify(f("apps", false, -1, g("apps-open end 0.8 commit"), false)), JSON.stringify({action: "show", progress: -1}), "a refused begin: the end asks again");
+        // Closing mirrors it.
+        compare(f("overview", false, -1, g("overview-close begin 0"), false), null, "nothing to close");
+        compare(JSON.stringify(f("overview", true, -1, g("overview-close begin 0"), false)), JSON.stringify({action: "", progress: 1}));
+        compare(JSON.stringify(f("overview", true, 1, g("overview-close update 0.25"), false)), JSON.stringify({action: "", progress: 0.75}));
+        compare(JSON.stringify(f("overview", true, 0.4, g("overview-close end 0.6 commit"), false)), JSON.stringify({action: "close", progress: 0.4}));
+        compare(JSON.stringify(f("overview", true, 0.9, g("overview-close end 0.1 back"), false)), JSON.stringify({action: "", progress: -1}), "back to open");
+        // Another surface's gesture is not this one's.
+        compare(f("overview", false, -1, g("apps-open begin 0"), false), null);
+        // Reduce Motion: nothing follows the fingers; the completed end opens or closes, a gone-back end does nothing.
+        compare(f("apps", false, -1, g("apps-open begin 0"), true), null);
+        compare(f("apps", false, -1, g("apps-open update 0.5"), true), null);
+        compare(JSON.stringify(f("apps", false, -1, g("apps-open end 0.7 commit"), true)), JSON.stringify({action: "show", progress: -1}));
+        compare(f("apps", false, -1, g("apps-open end 0.2 back"), true), null);
+        compare(JSON.stringify(f("apps", true, -1, g("apps-close end 0.7 commit"), true)), JSON.stringify({action: "close", progress: -1}));
+        compare(f("apps", false, -1, null, false), null);
+    }
+
+    function shellText(path) {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../shell/" + path), false);
+        xhr.send();
+        return xhr.responseText;
+    }
+
+    // Every target a binding calls is answered in-process: the IpcHandler(s) of that target attach to the router
+    // (`Component.onCompleted: Shortcuts.attach(this)` right in the handler, and the module imported), or the key would go
+    // through a `qs ipc` process (the router's logged fallback). A new target must name its host file here.
+    function test_everyKeyTargetIsAttached() {
+        const hosts = {
+            switcher: ["switcher/Switcher.qml"],
+            windows: ["platform/Compositor.qml"],
+            search: ["shell.qml", "search/Search.qml"],
+            emoji: ["services/Emoji.qml"],
+            apps: ["shell.qml", "launchpad/AppsController.qml"],
+            overview: ["shell.qml", "overview/Overview.qml"],
+            notifications: ["notifications/Notifications.qml"],
+            capture: ["capture/Capture.qml"],
+            menubar: ["menubar/MenuBar.qml"],
+            dock: ["dock/Dock.qml"],
+            zoom: ["platform/Zoom.qml"],
+            stages: ["platform/StagesLink.qml"],
+            volume: ["osd/Osd.qml"],
+            brightness: ["osd/Osd.qml"],
+            keyboard: ["osd/Osd.qml"]
+        };
+        for (const target in Shortcuts.requests) {
+            verify(hosts[target] !== undefined, target + ": its host file is listed");
+            for (const file of hosts[target]) {
+                const text = shellText(file);
+                verify(text.length > 0, file + " read");
+                verify(/^import qs\.platform\.shortcuts\s*$/m.test(text), file + " imports qs.platform.shortcuts");
+                // The handler's body up to its first function: target and attach are both in it.
+                const re = new RegExp("IpcHandler \\{[^{}]*?target: \"" + target + "\"[^{}]*?Component\\.onCompleted: Shortcuts\\.attach\\(this\\)");
+                const loose = new RegExp("IpcHandler \\{[^{}]*?Component\\.onCompleted: Shortcuts\\.attach\\(this\\)[^{}]*?target: \"" + target + "\"");
+                verify(re.test(text) || loose.test(text), file + ": the IpcHandler of \"" + target + "\" attaches to the router");
+            }
+        }
+    }
+
     function test_theLockKeyStaysAProcess() {
         const text = bindingsText();
         verify(/bind\("SUPER \+ CTRL \+ Q", "Lock screen", security\("lock", "lock"\)\)/.test(text), "the lock key uses security()");

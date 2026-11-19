@@ -5,6 +5,7 @@ import Quickshell.Io
 import Quickshell.Hyprland // layering-exception: GF-087
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "V2.js" as V2
 
@@ -145,7 +146,7 @@ Scope {
 
     // Sends the layout (open, or retarget while open). Only once a chrome holds the keyboard.
     function sendLayout(): void {
-        if (!open || thumbnailMode || releasing || !chromeHeld || closing)
+        if (!open || thumbnailMode || releasing || !chromeHeld || closing || layoutHeld)
             return;
         const list = layoutWindows();
         if (list.length === 0)
@@ -226,6 +227,28 @@ Scope {
             releaseTimer.restart();
         }
     }
+    // The three-finger swipe follows the fingers (CIO-01 R2, macOS): while a swipe drives the Overview, OverviewWindow and
+    // OverviewBackdrop draw `gesture.progress` instead of their own animation. A swipe up opens the chrome and the thumbnails
+    // with the fingers; with the plugin's live windows (v2) the layout is sent once the swipe completes (`layoutHeld`: the
+    // plugin animates the real windows over its own duration and has no request for a given progress). Gone back, or a
+    // completed swipe down, closes the usual way (closeAnd) from where the fingers left it. Reduce Motion: the swipe opens or
+    // closes at its end.
+    readonly property GestureFollower gesture: GestureFollower {
+        target: "overview"
+        open: root.open
+        onShow: root.show()
+        onClose: root.requestClose()
+    }
+    readonly property bool layoutHeld: gesture.opening
+    onLayoutHeldChanged: {
+        if (!layoutHeld && stage === "open" && !thumbnailMode && !live) {
+            if (chromeHeld)
+                sendLayout();
+            else
+                chromeWait.restart();
+        }
+    }
+
     onOpenChanged: {
         if (open) {
             closing = false;
@@ -247,7 +270,7 @@ Scope {
         id: chromeWait
         interval: Tokens.overviewChromeWaitMs
         onTriggered: {
-            if (root.open && !root.live && !root.thumbnailMode)
+            if (root.open && !root.live && !root.thumbnailMode && !root.layoutHeld)
                 root.fallbackToThumbnails();
         }
     }
@@ -599,6 +622,8 @@ Scope {
 
     IpcHandler {
         target: "overview"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: root.ipcEnabled
 
         function toggle(): void {

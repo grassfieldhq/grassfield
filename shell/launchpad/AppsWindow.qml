@@ -29,8 +29,9 @@ Scope {
         readonly property ShellScreen modelData: Quickshell.screens.find(s => s.name === root.controller.screenName) ?? (Quickshell.screens.length > 0 ? Quickshell.screens[0] : null)
 
         readonly property bool shown: root.controller.open && root.controller.screenName === (modelData ? modelData.name : "")
-        // 0 = hidden, 1 = fully shown (fade and slight scale; Reduce Motion: fade only).
-        property real progress: shown ? 1 : 0
+        // 0 = hidden, 1 = fully shown (fade and slight scale; Reduce Motion: fade only). While a pinch drives Apps, the
+        // fingers' progress (AppsController.gesture, CIO-01).
+        property real progress: shown && root.controller.gesture.progress >= 0 ? root.controller.gesture.progress : (shown ? 1 : 0)
 
         screen: modelData
         // Never unmapped in the same turn that drops the keyboard (also with Reduce Motion, where the fade is instant):
@@ -85,7 +86,8 @@ Scope {
 
         Behavior on progress {
             NumberAnimation {
-                duration: Appearance.duration(Tokens.motionNormal)
+                // Each step of a pinch is drawn as it comes; the rest of the way animates from there.
+                duration: root.controller.gesture.active ? 0 : Appearance.duration(Tokens.motionNormal)
                 easing.type: Easing.BezierSpline
                 easing.bezierCurve: Appearance.curve
             }
