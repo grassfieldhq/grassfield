@@ -163,6 +163,24 @@ namespace {
             if (CGrassfieldTitlebar::onRevealedBarButton(e))
                 info.cancelled = true;
         }));
+        // A finger on a titlebar (CIO-06): Hyprland offers touches to no decoration, so a down on a shown bar, and that finger's
+        // motion, up and cancel, are the titlebar's and cancelled (no client saw the down).
+        l.push_back(ev.input.touch.down.listen([](ITouch::SDownEvent e, Event::SCallbackInfo& info) {
+            if (CGrassfieldTitlebar::onTouchDown(e))
+                info.cancelled = true;
+        }));
+        l.push_back(ev.input.touch.motion.listen([](ITouch::SMotionEvent e, Event::SCallbackInfo& info) {
+            if (CGrassfieldTitlebar::onTouchMotion(e))
+                info.cancelled = true;
+        }));
+        l.push_back(ev.input.touch.up.listen([](ITouch::SUpEvent e, Event::SCallbackInfo& info) {
+            if (CGrassfieldTitlebar::onTouchUp(e))
+                info.cancelled = true;
+        }));
+        l.push_back(ev.input.touch.cancel.listen([](ITouch::SCancelEvent e, Event::SCallbackInfo& info) {
+            if (CGrassfieldTitlebar::onTouchCancel(e))
+                info.cancelled = true;
+        }));
         // The revealed titlebar of a full-screen window: Hyprland draws no decoration in full screen (P6).
         l.push_back(ev.render.stage.listen([](eRenderStage stage) {
             if (stage == RENDER_POST_WINDOWS)

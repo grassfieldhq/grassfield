@@ -34,6 +34,9 @@ namespace gf::stager {
 
     // `w` belongs to an inactive stage (drawn in a strip): tiling neither fills nor counts it (tiling.md TL6, TL10).
     bool inStripStage(const PHLWINDOW& w);
+    // The same by window address (compared, never dereferenced): no walk over Hyprland's window list (tiling's per-motion
+    // and per-reply paths, WM-13, WM-14).
+    bool inStripStage(uint64_t address);
 
     // Called from the plugin's first pointer button listener, before anything else of the plugin and before Hyprland
     // delivers the button: a pointer focus left on a window Stages blocks (no motion since the block) is refreshed to the

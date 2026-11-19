@@ -188,6 +188,13 @@ namespace gf::tiling {
         return movable(w) && w.floating && output.has_value() && !sameSpace;
     }
 
+    double gridMargin(double margin, int step) {
+        if (!(margin > 0) || !std::isfinite(margin))
+            return 0.0;
+        const int s = std::max(1, step);
+        return s * std::max(1.0, std::round(margin / s));
+    }
+
     int gridStep(double scale) {
         if (!std::isfinite(scale) || scale <= 0)
             return 1;
@@ -215,16 +222,21 @@ namespace gf::tiling {
             return std::max(1, area.grid.step);
         }
 
-        // An edge of a zone along one axis: `k` twelfths into the inner span [inner0, inner0 + innerLen]; `start` for the
-        // left or top edge of the zone. Outer edges go to the nearest grid line inside; inner ones lose half a margin each
-        // side of the exact boundary and go to the nearest grid line.
-        double zoneEdge(int k, bool start, double inner0, double innerLen, double margin, double origin, int step) {
+        // An edge of a zone along one axis of the area [lo, hi] with the grid margin `margin` (gridMargin): `k` twelfths
+        // into the span between the outer edges; `start` for the left or top edge of the zone. The outer edges are the first
+        // grid lines at least one margin inside the area's edges (exactly one margin when an edge lies on the grid, which
+        // an output's always does; less than a step more otherwise, e.g. beside a Dock that ends off the grid). An inner boundary goes to the nearest grid line and the zones
+        // each side keep exactly one margin between them, split on the grid (WM-12: the same gap everywhere).
+        double zoneEdge(int k, bool start, double lo, double hi, double margin, double origin, int step) {
+            const double outer0 = snapUp(lo + margin, origin, step);
+            const double outer1 = snapDown(hi - margin, origin, step);
             if (k <= 0)
-                return snapUp(inner0, origin, step);
+                return outer0;
             if (k >= kZoneGrid)
-                return snapDown(inner0 + innerLen, origin, step);
-            const double boundary = inner0 + innerLen * k / kZoneGrid;
-            return snapNearest(start ? boundary + margin / 2 : boundary - margin / 2, origin, step);
+                return outer1;
+            const double boundary = snapNearest(outer0 + ((outer1 - outer0) * k / kZoneGrid), origin, step);
+            const double before   = step * std::floor(margin / step / 2.0); // the share of the gap before the boundary
+            return start ? boundary + (margin - before) : boundary - before;
         }
 
         bool overlaps(int a0, int a1, int b0, int b1) {
@@ -406,14 +418,13 @@ namespace gf::tiling {
     } // namespace
 
     Rect zoneFrame(const Zone& zone, const Area& area) {
-        const double m    = std::max(0.0, area.margin);
         const int    step = stepOf(area);
-        const double ix = area.box.x + m, iy = area.box.y + m;
-        const double iw = area.box.w - 2 * m, ih = area.box.h - 2 * m;
-        const double left   = zoneEdge(zone.x, true, ix, iw, m, area.grid.originX, step);
-        const double right  = zoneEdge(zone.x + zone.w, false, ix, iw, m, area.grid.originX, step);
-        const double top    = zoneEdge(zone.y, true, iy, ih, m, area.grid.originY, step);
-        const double bottom = zoneEdge(zone.y + zone.h, false, iy, ih, m, area.grid.originY, step);
+        const double m    = gridMargin(area.margin, step);
+        const double x0 = area.box.x, x1 = area.box.x + area.box.w, y0 = area.box.y, y1 = area.box.y + area.box.h;
+        const double left   = zoneEdge(zone.x, true, x0, x1, m, area.grid.originX, step);
+        const double right  = zoneEdge(zone.x + zone.w, false, x0, x1, m, area.grid.originX, step);
+        const double top    = zoneEdge(zone.y, true, y0, y1, m, area.grid.originY, step);
+        const double bottom = zoneEdge(zone.y + zone.h, false, y0, y1, m, area.grid.originY, step);
         return Rect{left, top, std::max(1.0, right - left), std::max(1.0, bottom - top)};
     }
 
@@ -438,8 +449,8 @@ namespace gf::tiling {
     std::optional<Rect> halfBesideNeighbour(Place place, const Area& area, std::span<const Rect> neighbourFrames) {
         if (place != Place::Left && place != Place::Right && place != Place::Top && place != Place::Bottom)
             return std::nullopt;
-        const double m    = std::max(0.0, area.margin);
         const int    step = stepOf(area);
+        const double m    = gridMargin(area.margin, step);
         const double tol  = step + 0.5;
         const double ix = area.box.x + m, iy = area.box.y + m;
         const double ir = area.box.x + area.box.w - m, ib = area.box.y + area.box.h - m;
@@ -1357,10 +1368,32 @@ namespace gf::tiling {
         return out;
     }
 
+    bool CFramePacer::motion(double delta) {
+        m_latest = delta;
+        if (m_pending || delta == m_applied)
+            return false;
+        m_pending = true;
+        return true;
+    }
+
+    std::optional<double> CFramePacer::frame() {
+        if (!m_pending)
+            return std::nullopt;
+        m_pending = false;
+        m_applied = m_latest;
+        return m_latest;
+    }
+
+    bool CFramePacer::pending() const {
+        return m_pending;
+    }
+
     Area splitArea(const Rect& output, const Grid& grid) {
         // zoneFrame keeps a margin inside the area's outer edges and half a margin each side of an inner one: the area one
         // margin larger on every side puts the outer edges on the output's and leaves one margin between the halves.
-        return Area{.box = Rect{output.x - kMargin, output.y - kMargin, output.w + 2 * kMargin, output.h + 2 * kMargin}, .margin = kMargin, .grid = grid};
+        // The grid margin (gridMargin: 9 at step 3), so that the outer edges still land on the output's.
+        const double m = gridMargin(kMargin, grid.step);
+        return Area{.box = Rect{output.x - m, output.y - m, output.w + (2 * m), output.h + (2 * m)}, .margin = kMargin, .grid = grid};
     }
 
     bool fitsFrame(const Constraints& c, const Rect& frame) {

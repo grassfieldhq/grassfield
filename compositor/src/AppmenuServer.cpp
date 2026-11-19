@@ -81,6 +81,22 @@ namespace {
         return *r;
     }
 
+    // The global an unload with live client objects removed (wl_global_remove: clients are told it is gone, but libwayland
+    // frees a removed global only with the display; CIO-16). Kept here, in the pinned library, and destroyed at the next load
+    // (by then every client has seen the removal), so load/unload cycles do not pile up removed globals, nor leave their bind
+    // callback reachable.
+    wl_global*& removedGlobal() {
+        static auto* g = new wl_global*(nullptr);
+        return *g;
+    }
+
+    void destroyRemovedGlobal() {
+        if (auto*& g = removedGlobal(); g) {
+            wl_global_destroy(g);
+            g = nullptr;
+        }
+    }
+
     uint64_t idOf(const void* p) {
         return reinterpret_cast<uintptr_t>(p);
     }
@@ -361,6 +377,7 @@ namespace gf::appmenuServer {
         l.push_back(ev.window.active.listen([](const PHLWINDOW& w, Desktop::eFocusReason /*reason*/) { gf::guarded("appmenu window.active", [&] { onWindowFocused(w); }); }));
         l.push_back(ev.input.keyboard.focus.listen([](const SP<CWLSurfaceResource>& surface) { gf::guarded("appmenu keyboard.focus", [&] { onKeyboardFocus(surface); }); }));
 
+        destroyRemovedGlobal();
         s.global = wl_global_create(g_pCompositor->m_wlDisplay, &org_kde_kwin_appmenu_manager_interface, kGlobalVersion, nullptr, bindManager);
         if (!s.global) {
             gf::log(Log::ERR, "appmenu: wl_global_create(org_kde_kwin_appmenu_manager) failed");
@@ -402,7 +419,11 @@ namespace gf::appmenuServer {
             s.live.managers.clear();
             s.live.objects.clear();
             if (s.global)
-                wl_global_remove(s.global); // clients are told it is gone; libwayland frees it with the display
+                wl_global_remove(s.global); // clients are told it is gone; destroyed at the next load (destroyRemovedGlobal)
+            if (s.global) {
+                destroyRemovedGlobal(); // one removed earlier and never reloaded since
+                removedGlobal() = s.global;
+            }
             s.global = nullptr;
             gf::log(Log::WARN, "appmenu: unloaded with {} client object(s) alive: they stay inert and this library stays in memory; a rebuilt plugin at the same path loads after Hyprland restarts",
                     clientObjs);

@@ -9,6 +9,7 @@
 
 #include "Minimize.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -133,7 +134,34 @@ namespace gf::overview {
     // `previous` when it differs and has an area, then `current` when it has an area. The caller then stores `current` as
     // the last damaged box, so a box drawn once is always damaged again when the window leaves it (a resized surface leaves
     // no stale pixels, and the box detached at close is the one drawn last).
-    std::vector<Box> damageStep(const Box& previous, const Box& current);
+    // At most two boxes, no allocation: the overview and Stages call it per window per frame.
+    struct DamageBoxes {
+        std::array<Box, 2> boxes{};
+        size_t             count = 0;
+
+        const Box*         begin() const {
+            return boxes.data();
+        }
+        const Box* end() const {
+            return boxes.data() + count;
+        }
+        size_t size() const {
+            return count;
+        }
+        bool empty() const {
+            return count == 0;
+        }
+        const Box& operator[](size_t i) const {
+            return boxes.at(i);
+        }
+    };
+    DamageBoxes damageStep(const Box& previous, const Box& current);
+
+    // Whether a frame that already has damage must repaint a window drawn elsewhere (WM-01, WM-02): only when its drawn box
+    // changed (`previous` -> `current`, an animation step or a resized surface) or its content did (`contentDamaged`: the
+    // frame's damage touches its real place, where Hyprland damages a commit, a decoration change or a move). A blinking
+    // cursor elsewhere on the screen no longer repaints every thumbnail.
+    bool needsRepaint(const Box& previous, const Box& current, bool contentDamaged);
 
     // {"v":"gfc/1","type":"overview","state":"<phase>","windows":N} (N = windows transformed in that state), plus
     // "reason":"<reason>" when a request was refused (the state is then the unchanged current one) or the overview was

@@ -4,6 +4,7 @@
 #include "ClientChrome.hpp"
 #include "GenieDraw.hpp"
 #include "Ipc.hpp"
+#include "Outputs.hpp"
 #include "Plugin.hpp"
 #include "core/Genie.hpp"
 #include "core/Protocol.hpp"
@@ -307,6 +308,46 @@ namespace {
         }
     }
 
+    // What an animation interrupted by the opposite one (WM-06) hands over: its state on screen, for the new animation to
+    // continue from (core continueFrom, fadeElapsedFor, genieElapsedFor) instead of starting over from the Dock tile or the
+    // window, transparent again, for a whole duration.
+    struct STakeover {
+        mz::Effect effect   = mz::Effect::Scale;
+        double     progress = 0; // Genie: its progress (0 window .. 1 tile); Scale: its eased progress toward its end
+        mz::Box    box;          // Scale: the box on screen
+        float      alpha = 1.F;  // Fade: the alpha on screen
+    };
+
+    STakeover takeoverOf(const SAnimation& a) {
+        const double elapsed = std::chrono::duration<double, std::milli>(Time::steadyNow() - a.start).count() / a.timeScale;
+        return STakeover{.effect   = a.effect,
+                         .progress = a.effect == mz::Effect::Genie ? a.progress : mz::easedProgress(a.kind, elapsed),
+                         .box      = a.frame.box,
+                         .alpha    = a.frame.alpha};
+    }
+
+    // The new animation `a` (the opposite kind) continues from `from`; returns where it starts in its own timing.
+    double continueAfter(SAnimation& a, const STakeover& from) {
+        switch (a.effect) {
+            case mz::Effect::Genie:
+                // From the shape on screen (a shrink one in flight: its share of the way, as toShrink does the other way).
+                // Genie progress runs window -> tile both ways; a shrink restore's eased progress runs tile -> window.
+                return mz::genieElapsedFor(a.kind, a.kind == mz::Kind::Minimize && from.effect != mz::Effect::Genie ? 1.0 - from.progress : from.progress);
+            case mz::Effect::Scale: {
+                if (from.effect == mz::Effect::Genie) // the funnel's progress as a share of the shrink's way (toShrink)
+                    return mz::elapsedForEased(a.kind, a.kind == mz::Kind::Minimize ? from.progress : 1.0 - from.progress);
+                if (from.effect == mz::Effect::Fade)
+                    return 0.0;
+                // From the box on screen, the share of the way the interrupted one had not covered being behind it now.
+                const auto c = mz::continueFrom(a.kind, from.box, a.to, 1.0 - from.progress);
+                a.from       = c.from;
+                return c.elapsedMs;
+            }
+            case mz::Effect::Fade: return from.effect == mz::Effect::Fade ? mz::fadeElapsedFor(a.kind, from.alpha) : 0.0;
+        }
+        return 0.0;
+    }
+
     // Genie mesh of this frame (layout coordinates).
     void updateMesh(SAnimation& a) {
         const mz::CGenie genie{a.geometry.visible, a.tileFit, a.edge};
@@ -396,16 +437,35 @@ namespace {
         }
     }
 
-    // One step of every animation; called before each monitor frame (render.preChecks, like Hyprland's
-    // Animation::mgr()->frameTick()) and by the watchdog. Damages the old and new boxes, which also schedules
-    // the next frame on the monitors they touch.
-    void tick() {
+    mz::Box boxOf(const PHLMONITOR& m) {
+        return mz::Box{m->m_position.x, m->m_position.y, m->m_size.x, m->m_size.y};
+    }
+
+    // Whether the frame of `mon` steps `a`: one shared ticker per monitor (the design note on per-frame cost): an animation
+    // is stepped by the frames of the monitors it is drawn on (its last damaged box touches them), not by every monitor's
+    // frame (with two outputs every animation was stepped and damaged twice per frame cycle, and a monitor was made to
+    // render at the other's cadence). One drawn on no enabled monitor is stepped by any. No allocation.
+    bool stepsOn(const SAnimation& a, const PHLMONITOR& mon) {
+        if (!mon || mz::intersects(a.damaged, boxOf(mon)))
+            return true;
+        // Another monitor draws it: its frames step it.
+        return !gf::outputs::find([&a](const PHLMONITOR& m) { return mz::intersects(a.damaged, boxOf(m)); });
+    }
+
+    // One step of the animations drawn on `mon` (render.preChecks of that monitor, like Hyprland's
+    // Animation::mgr()->frameTick()) or of every one (`mon` null: the watchdog, unload). Damages the old and new boxes,
+    // which also schedules the next frame on the monitors they touch.
+    void tick(const PHLMONITOR& mon) {
         auto& all = st().animations;
         if (all.empty())
             return;
         checkFunnelUsable();
         const auto now = Time::steadyNow();
         for (auto it = all.begin(); it != all.end();) {
+            if (!stepsOn(*it, mon)) {
+                ++it;
+                continue;
+            }
             const auto w = it->window.lock();
             if (!w || !w->m_isMapped) {
                 if (g_pHyprRenderer && it->damaged.w > 0)
@@ -435,7 +495,7 @@ namespace {
                 std::nullopt,
                 [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) {
                     gf::guarded("minimize watchdog", [] {
-                        tick();
+                        tick(nullptr);
                         if (!st().animations.empty() && st().watchdog)
                             st().watchdog->updateTimeout(WATCHDOG_DELAY);
                     });
@@ -566,13 +626,8 @@ namespace {
     }
 
     std::vector<mz::Box> monitorBoxes() {
-        std::vector<mz::Box> out;
-        if (!State::monitorState())
-            return out;
-        for (const auto& m : State::monitorState()->monitors()) {
-            if (m && m->m_enabled) // not a disconnected monitor Hyprland still lists: no Dock tile there
-                out.push_back(mz::Box{m->m_position.x, m->m_position.y, m->m_size.x, m->m_size.y});
-        }
+        std::vector<mz::Box> out; // not a disconnected monitor Hyprland still lists: no Dock tile there (Outputs.hpp)
+        gf::outputs::forEach([&out](const PHLMONITOR& m) { out.push_back(mz::Box{m->m_position.x, m->m_position.y, m->m_size.x, m->m_size.y}); });
         return out;
     }
 
@@ -621,14 +676,7 @@ namespace {
     // The display under the middle of `box` (layout). The plugin's own titlebar drags do not update a window's m_monitor
     // (Tiling.cpp): where the user sees the window is what counts.
     PHLMONITOR monitorUnder(const mz::Box& box) {
-        if (!State::monitorState())
-            return nullptr;
-        const Vector2D middle{box.x + (box.w / 2.0), box.y + (box.h / 2.0)};
-        for (const auto& m : State::monitorState()->monitors()) {
-            if (m && m->m_enabled && m->logicalBox().containsPoint(middle))
-                return m;
-        }
-        return nullptr;
+        return gf::outputs::at(Vector2D{box.x + (box.w / 2.0), box.y + (box.h / 2.0)});
     }
 
     // A floating window that is not full screen or zoomed: its frame is its own (what tiler::placeable checks too).
@@ -742,7 +790,7 @@ namespace gf::minimizer {
             gf::guarded("minimize tick", [&] {
                 if (monitor)
                     frameStarted(monitor, Time::steadyNow());
-                tick();
+                tick(monitor);
             });
         }));
         l.push_back(ev.render.stage.listen([](eRenderStage stage) {
@@ -839,14 +887,11 @@ namespace gf::minimizer {
                         *held > 0 ? std::format(" ({} similar line(s) held back)", *held) : std::string{});
         }
 
-        // A restore still animating: the new animation starts where that one is (Scale: its box; Genie: its shape).
-        std::optional<mz::Box> from;
-        std::optional<double>  genieProgress;
+        // A restore still animating: the new animation continues from where that one is (its shape, box or alpha).
+        std::optional<STakeover> takeover;
         if (auto running = takeAnimation(w)) {
-            if (running->kind == mz::Kind::Restore && running->effect == mz::Effect::Genie)
-                genieProgress = running->progress;
-            else if (running->kind == mz::Kind::Restore)
-                from = running->frame.box;
+            if (running->kind == mz::Kind::Restore)
+                takeover = takeoverOf(*running);
             complete(*running, true);
         }
 
@@ -872,12 +917,8 @@ namespace gf::minimizer {
             postState(mz::Kind::Minimize, address);
             return;
         }
-        auto   a       = makeAnimation(mz::Kind::Minimize, w, address, std::move(snapshot), geometry, full, *target, mon);
-        double elapsed = 0.0;
-        if (a.effect == mz::Effect::Genie && genieProgress)
-            elapsed = mz::genieElapsedFor(mz::Kind::Minimize, *genieProgress);
-        else if (a.effect == mz::Effect::Scale && from)
-            a.from = *from;
+        auto         a       = makeAnimation(mz::Kind::Minimize, w, address, std::move(snapshot), geometry, full, *target, mon);
+        const double elapsed = takeover ? continueAfter(a, *takeover) : 0.0;
         startAnimation(std::move(a), elapsed);
     }
 
@@ -898,15 +939,13 @@ namespace gf::minimizer {
             gf::logRequest(Log::WARN, "restore: no mapped window {:x}", address);
             return;
         }
-        // A Genie minimize still animating: the restore plays it backwards from the shape on screen. Another one (Scale): the
-        // restore starts from its box, as minimize() does the other way, not from the Dock tile.
-        std::optional<mz::Box> from;
-        std::optional<double>  genieProgress;
+        // A minimize still animating: the restore continues from the state on screen (WM-06): a funnel plays backwards from
+        // its shape, a shrink from its box, already opaque past its fade, with the rest of its duration; a fade from its
+        // alpha. Never from the Dock tile, transparent again.
+        std::optional<STakeover> takeover;
         if (auto running = takeAnimation(w)) {
-            if (running->kind == mz::Kind::Minimize && running->effect == mz::Effect::Genie)
-                genieProgress = running->progress;
-            else if (running->kind == mz::Kind::Minimize)
-                from = running->frame.box;
+            if (running->kind == mz::Kind::Minimize)
+                takeover = takeoverOf(*running);
             complete(*running, true);
         }
         if (!onMinimizedWorkspace(w)) {
@@ -959,12 +998,8 @@ namespace gf::minimizer {
         if (g_pHyprRenderer)
             g_pHyprRenderer->damageWindow(w);
 
-        auto   a       = makeAnimation(mz::Kind::Restore, w, address, std::move(snapshot), snapshotGeometry(w, mon), fullBox(w), *target, mon);
-        double elapsed = 0.0;
-        if (a.effect == mz::Effect::Genie && genieProgress)
-            elapsed = mz::genieElapsedFor(mz::Kind::Restore, *genieProgress);
-        else if (a.effect == mz::Effect::Scale && from)
-            a.from = *from;
+        auto         a       = makeAnimation(mz::Kind::Restore, w, address, std::move(snapshot), snapshotGeometry(w, mon), fullBox(w), *target, mon);
+        const double elapsed = takeover ? continueAfter(a, *takeover) : 0.0;
         startAnimation(std::move(a), elapsed);
     }
 

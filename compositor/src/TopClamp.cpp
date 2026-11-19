@@ -2,6 +2,7 @@
 
 #include "ClientChrome.hpp"
 #include "DeferredFocus.hpp"
+#include "Outputs.hpp"
 #include "Plugin.hpp"
 #include "core/TopClamp.hpp"
 
@@ -14,8 +15,10 @@
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
 
+#include <array>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -67,18 +70,27 @@ namespace gf::topClamp {
         }
 
         // Every enabled output with the bottom of its menu bar strip (its top reserved area). Hyprland keeps a disconnected
-        // monitor (m_enabled false) in its list for a while: no menu bar there to hold a window under.
-        std::vector<topclamp::Output> outputs() {
-            std::vector<topclamp::Output> out;
-            const auto&                   state = State::monitorState();
-            if (!state)
-                return out;
-            for (const auto& m : state->monitors()) {
-                if (!m || !m->m_enabled)
-                    continue;
-                const CBox box = m->logicalBox();
-                out.push_back(topclamp::Output{toRect(box), box.y + m->m_reservedArea.top()});
+        // monitor (m_enabled false) in its list for a while: no menu bar there to hold a window under (Outputs.hpp). A fixed
+        // array, filled in place: a held move asks for it at every pointer motion (WM-13). Outputs past kMaxOutputs (more
+        // than any desk has) are not clamped against.
+        constexpr size_t kMaxOutputs = 16;
+        struct SOutputs {
+            std::array<topclamp::Output, kMaxOutputs> items{};
+            size_t                                    count = 0;
+
+            operator std::span<const topclamp::Output>() const { // NOLINT(google-explicit-constructor): passed where core takes a span
+                return {items.data(), count};
             }
+        };
+
+        SOutputs outputs() {
+            SOutputs out;
+            gf::outputs::forEach([&out](const PHLMONITOR& m) {
+                if (out.count == kMaxOutputs)
+                    return;
+                const CBox box          = m->logicalBox();
+                out.items.at(out.count++) = topclamp::Output{toRect(box), box.y + m->m_reservedArea.top()};
+            });
             return out;
         }
 

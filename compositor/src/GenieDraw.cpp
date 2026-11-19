@@ -1,5 +1,7 @@
 #include "GenieDraw.hpp"
 
+#include <hyprland/src/output/Monitor.hpp>
+
 #include "Plugin.hpp"
 
 #include <hyprland/src/render/OpenGL.hpp>
@@ -52,6 +54,10 @@ void main() {
 
         // glGetError calls per check: enough to drain the usual one or two flags, never a loop on a lost context.
         constexpr int GL_ERROR_CHECK_LIMIT = 8;
+        // CIO-13: glGetError is a synchronous driver query; a draw checks it on the first draws of a load (a driver that
+        // refuses the funnel does so at once) and then on one draw in kErrorCheckEvery, not on every frame of every genie.
+        constexpr uint64_t kErrorCheckFirst = 32;
+        constexpr uint64_t kErrorCheckEvery = 60;
 
         struct SGl {
             bool   failed      = false; // disable() ran: no more funnel draws until the plugin is loaded again
@@ -222,6 +228,13 @@ void main() {
         return !gl().failed && rendererIsGl();
     }
 
+    bool usableOn(const PHLMONITOR& mon) {
+        // CIO-14: the funnel's shader writes the snapshot's pixels as they are; on an output whose colour path is not plain
+        // sRGB (HDR, wide gamut, an ICC or SDR-brightness transform) Hyprland's own texture shader converts them, so the
+        // window would change colour for the animation and snap back. The Scale effect goes through Hyprland's path there.
+        return available() && mon && !mon->needsCM();
+    }
+
     void disable(std::string_view why) {
         auto& s = gl();
         if (!s.failed)
@@ -274,7 +287,8 @@ void main() {
             const auto t0 = std::chrono::steady_clock::now();
             auto&      s  = gl();
             ++s.drawn;
-            const auto& d = m_data;
+            auto&      d       = m_data;
+            const bool checked = s.drawn <= kErrorCheckFirst || s.drawn % kErrorCheckEvery == 0;
             if (!rendererIsGl() || s.failed || !d.tex || d.tex->m_texID == 0 || d.alpha <= 0.F || d.pixelBounds.w < 1 || d.pixelBounds.h < 1)
                 return;
             const size_t vertexCount = static_cast<size_t>(gf::minimize::meshVertexCount(d.across, d.along));
@@ -289,7 +303,8 @@ void main() {
                 return;
 
             // Error flags left by earlier GL work (not ours) are cleared first, so that the check after the draw sees ours.
-            (void)firstGlError();
+            if (checked)
+                (void)firstGlError();
             const CSavedBindings saved;
             if (!ensureObjects())
                 return;
@@ -297,13 +312,17 @@ void main() {
             if (!ensureIndices(d.across, d.along))
                 return;
 
-            // Positions as fractions of the pixel box, for Hyprland's box projection.
-            std::vector<float> verts(d.vertices);
-            const auto         bx = static_cast<float>(d.pixelBounds.x), by = static_cast<float>(d.pixelBounds.y);
-            const auto         bw = static_cast<float>(d.pixelBounds.w), bh = static_cast<float>(d.pixelBounds.h);
-            for (size_t i = 0; i < verts.size(); i += FLOATS_PER_VERTEX) {
-                verts[i]     = (verts[i] - bx) / bw;
-                verts[i + 1] = (verts[i + 1] - by) / bh;
+            // Positions as fractions of the pixel box, for Hyprland's box projection: made once, in place (the element is this
+            // frame's; no copy of the mesh per draw, CIO-13).
+            auto& verts = d.vertices;
+            if (!m_normalized) {
+                const auto bx = static_cast<float>(d.pixelBounds.x), by = static_cast<float>(d.pixelBounds.y);
+                const auto bw = static_cast<float>(d.pixelBounds.w), bh = static_cast<float>(d.pixelBounds.h);
+                for (size_t i = 0; i < verts.size(); i += FLOATS_PER_VERTEX) {
+                    verts[i]     = (verts[i] - bx) / bw;
+                    verts[i + 1] = (verts[i + 1] - by) / bh;
+                }
+                m_normalized = true;
             }
             glBindBuffer(GL_ARRAY_BUFFER, s.vbo);
             glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(float)), verts.data(), GL_STREAM_DRAW);
@@ -331,7 +350,7 @@ void main() {
             d.tex->unbind();
             // Any GL error raised by this draw disables the funnel for the plugin's life (one line); running funnel
             // animations continue as shrink ones (Minimize.cpp checkFunnelUsable).
-            if (const GLenum err = firstGlError(); err != GL_NO_ERROR)
+            if (const GLenum err = checked ? firstGlError() : GL_NO_ERROR; err != GL_NO_ERROR)
                 disable(std::format("GL error 0x{:x} after a funnel draw", err));
 
             const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();

@@ -298,3 +298,73 @@ TEST(MinimizeRestorePlace, FitFrameShrinksThenMovesIn) {
     EXPECT_EQ(fitFrame({5, 6, 7, 8}, Box{0, 0, 0.5, 900}, kTb), (Box{5, 6, 7, 8})) << "degenerate area: unchanged";
     EXPECT_EQ(fitFrame({5, 6, 7, 8}, Box{0, 0, 900, Inf}, kTb), (Box{5, 6, 7, 8})) << "non-finite area: unchanged";
 }
+
+// ---- an animation interrupted by the opposite one (WM-06) ----
+
+TEST(MinimizeTakeover, ElapsedForEasedInvertsTheTiming) {
+    for (const Kind kind : {Kind::Minimize, Kind::Restore}) {
+        for (const double e : {0.0, 0.1, 0.5, 0.9, 1.0}) {
+            const double ms = elapsedForEased(kind, e);
+            EXPECT_NEAR(easedProgress(kind, ms), e, 1e-6);
+        }
+    }
+    EXPECT_NEAR(elapsedForEased(Kind::Restore, NaN), durationMs(Kind::Restore), 1e-6);
+}
+
+// The scenario of WM-06: the shrink minimize clicked back from the Dock 100 ms in. The restore continues from the box on
+// screen (no jump to the tile), opaque (no transparent flash: it starts past its fade-in), with the rest of its time.
+TEST(MinimizeTakeover, ARestoreContinuesAShrinkMinimizeWithoutJumpOrFlash) {
+    const Box  window{100, 100, 800, 600}, tile{700, 1000, 64, 48};
+    const Box  fit       = fitInside(window, tile);
+    const auto minimized = frameAt(Kind::Minimize, window, fit, 100);
+    ASSERT_FLOAT_EQ(minimized.alpha, 1.F);
+    const double progress = easedProgress(Kind::Minimize, 100);
+    ASSERT_GT(progress, 0.0);
+    ASSERT_LT(progress, 0.5);
+
+    const auto c     = continueFrom(Kind::Restore, minimized.box, window, 1.0 - progress);
+    const auto first = frameAt(Kind::Restore, c.from, window, c.elapsedMs);
+    EXPECT_NEAR(first.box.x, minimized.box.x, 1e-6) << "no jump";
+    EXPECT_NEAR(first.box.y, minimized.box.y, 1e-6);
+    EXPECT_NEAR(first.box.w, minimized.box.w, 1e-6);
+    EXPECT_NEAR(first.box.h, minimized.box.h, 1e-6);
+    EXPECT_FLOAT_EQ(first.alpha, 1.F) << "no transparent flash";
+    EXPECT_GT(c.elapsedMs, kFadeFraction * durationMs(Kind::Restore));
+    EXPECT_LT(durationMs(Kind::Restore) - c.elapsedMs, durationMs(Kind::Restore)) << "only the rest of the way";
+    const auto last = frameAt(Kind::Restore, c.from, window, durationMs(Kind::Restore));
+    EXPECT_TRUE(last.done);
+    EXPECT_NEAR(last.box.x, window.x, 1e-9);
+    EXPECT_NEAR(last.box.y, window.y, 1e-9);
+
+    // Before round 1 the restore started at the tile, transparent: the very jump and flash.
+    const auto old = frameAt(Kind::Restore, fit, window, 0);
+    EXPECT_FLOAT_EQ(old.alpha, 0.F);
+}
+
+TEST(MinimizeTakeover, AMinimizeContinuesAShrinkRestore) {
+    const Box  window{0, 0, 600, 400}, fit{300, 900, 60, 40};
+    const auto restoring = frameAt(Kind::Restore, fit, window, 200);
+    const auto c         = continueFrom(Kind::Minimize, restoring.box, fit, 1.0 - easedProgress(Kind::Restore, 200));
+    const auto first     = frameAt(Kind::Minimize, c.from, fit, c.elapsedMs);
+    EXPECT_NEAR(first.box.x, restoring.box.x, 1e-6);
+    EXPECT_NEAR(first.box.w, restoring.box.w, 1e-6);
+    EXPECT_NEAR(frameAt(Kind::Minimize, c.from, fit, durationMs(Kind::Minimize)).box.x, fit.x, 1e-9);
+}
+
+TEST(MinimizeTakeover, ShareIsBoundedAndNonFiniteIsAFreshStart) {
+    const Box  current{10, 10, 100, 100}, to{500, 500, 50, 50};
+    const auto c = continueFrom(Kind::Restore, current, to, 5.0);
+    EXPECT_TRUE(isFinite(c.from)) << "share at most 0.95: `from` stays finite";
+    EXPECT_LE(easedProgress(Kind::Restore, c.elapsedMs), 0.95 + 1e-6);
+    const auto n = continueFrom(Kind::Restore, current, to, NaN);
+    EXPECT_NEAR(n.elapsedMs, 0, 1e-6);
+    EXPECT_NEAR(n.from.x, current.x, 1e-6);
+    EXPECT_NEAR(n.from.w, current.w, 1e-6);
+}
+
+TEST(MinimizeTakeover, AFadeContinuesFromItsAlpha) {
+    const auto out = fadeFrameAt(Kind::Minimize, Box{0, 0, 10, 10}, 30); // alpha 0.7
+    const double ms = fadeElapsedFor(Kind::Restore, out.alpha);
+    EXPECT_NEAR(fadeFrameAt(Kind::Restore, Box{0, 0, 10, 10}, ms).alpha, out.alpha, 1e-6);
+    EXPECT_NEAR(fadeFrameAt(Kind::Minimize, Box{0, 0, 10, 10}, fadeElapsedFor(Kind::Minimize, 0.25F)).alpha, 0.25F, 1e-6);
+}

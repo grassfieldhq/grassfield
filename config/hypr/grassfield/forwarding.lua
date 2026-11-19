@@ -23,11 +23,33 @@ local function forward(mods, key)
   end
 end
 
+-- The class of the window that receives the forwarded chord, lower case; "" when a shell panel (a layer surface such as
+-- Search, the switcher, a menu) or nothing holds the keyboard (CIO-08): the chord goes to the keyboard's holder, and
+-- Hyprland keeps the last window active while a panel has the keys, so the active window would decide for Search. With the
+-- compositor plugin it asks it (hl.plugin.grassfield.keyboard_holder); without it, a mapped layer that takes the keyboard
+-- exclusively holds it, else the active window does.
+local function holder_class()
+  local ok, holder = pcall(function() return hl.plugin.grassfield.keyboard_holder() end)
+  if ok and type(holder) == "string" then
+    return (holder:match("^window:(.*)$") or ""):lower()
+  end
+  local listed, layers = pcall(hl.get_layers)
+  for _, layer in ipairs(listed and type(layers) == "table" and layers or {}) do
+    if layer.mapped and layer.interactivity == 1 then
+      return ""
+    end
+  end
+  local window = hl.get_active_window()
+  return window and (window.class or ""):lower() or ""
+end
+
 -- Terminals (Omarchy's definition, default/hypr/apps/terminals.lua) keep Alt+arrows: tmux, vim and readline bind them.
 local TERMINAL_CLASSES = { "alacritty", "kitty", "com.mitchellh.ghostty", "foot", "org.codeberg.dnkl.foot", "wezterm", "org.wezfurlong.wezterm" }
 local function terminal_focused()
-  local window = hl.get_active_window()
-  local class = window and (window.class or ""):lower() or ""
+  local class = holder_class()
+  if class == "" then
+    return false
+  end
   for _, name in ipairs(TERMINAL_CLASSES) do
     if class == name then
       return true
@@ -70,8 +92,7 @@ end
 -- they select. Terminals receive the plain keys too. Grassfield Files keeps Finder's meaning: Command+Up is Enclosing Folder
 -- (Ctrl+Up there) and Command+Down is Open (Ctrl+Down). Nothing else binds these chords (the tiling binds all carry Ctrl).
 local function files_focused()
-  local window = hl.get_active_window()
-  return window ~= nil and (window.class or ""):lower() == "org.grassfield.files"
+  return holder_class() == "org.grassfield.files"
 end
 local function vertical(mods, key_in_files, key_elsewhere)
   local in_files, elsewhere = forward("CTRL", key_in_files), forward(mods, key_elsewhere)
