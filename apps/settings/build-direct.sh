@@ -20,7 +20,7 @@ if [[ ${1:-} == "--tests" ]]; then
   # The dev guard of the system sections and the wallpaper helper door (systemguard.cpp), the Wi-Fi/Bluetooth logic over
   # D-Bus (systembus.cpp, against a canned bus: no bus needed), the Backend's glue (backend.cpp: its processes run fake
   # commands from a scratch PATH; it never connects to a bus) and the one-instance hand-over (settingsinstance.h, on a private
-  # dbus-daemon of its own): Qt Core, Qt Gui and the Qt DBus types.
+  # dbus-daemon of its own), the icon theme lookup of image://icon (iconlookup.h, any thread): Qt Core, Qt Gui and the Qt DBus types.
   # --asan: the same with -fsanitize=address,undefined (.dev/build/settings-unit-tests-asan).
   extra=()
   suffix=""
@@ -32,7 +32,7 @@ if [[ ${1:-} == "--tests" ]]; then
   g++ -std=c++17 -O2 -Wall -Wextra -Wno-sfinae-incomplete -fPIC "${extra[@]}" -I"$here/src" -I"$here/.." -I"$out" $(pkg-config --cflags Qt6Core Qt6Gui Qt6DBus) \
     "$root/tests/unit/settings/tst_systemguard.cpp" "$root/tests/unit/settings/tst_systembus.cpp" "$here/src/systemguard.cpp" "$here/src/systembus.cpp" "$here/src/busjobs.cpp" "$root/tests/unit/settings/tst_busjobs.cpp" \
     "$here/src/backend.cpp" "$out/moc_backend.cpp" "$out/moc_signalqueue.cpp" "$root/tests/unit/settings/tst_backend.cpp" \
-    "$out/moc_settingsinstance.cpp" "$root/tests/unit/settings/tst_settingsinstance.cpp" \
+    "$out/moc_settingsinstance.cpp" "$root/tests/unit/settings/tst_settingsinstance.cpp" "$root/tests/unit/settings/tst_iconlookup.cpp" \
     $(pkg-config --libs Qt6Core Qt6Gui Qt6DBus) -lgtest -lgtest_main -pthread -o "$out/settings-unit-tests$suffix"
   echo "built $out/settings-unit-tests$suffix"
   exit 0

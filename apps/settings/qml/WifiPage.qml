@@ -30,6 +30,8 @@ SettingsPage {
     // Backend's queue refuses those of every other pane), and how many readings in a row brought no answer: the first keeps
     // what was read (one timeout must not empty the pane), the second says the service is not there.
     property bool asking: false
+    // The system bus said something changed while a reading was on its way: read once more after it.
+    property bool stale: false
     property int misses: 0
     property var networks: []
     // SSID hex -> UUID of the first saved profile with that SSID.
@@ -193,11 +195,26 @@ SettingsPage {
 
     Connections {
         target: root.backend
+        ignoreUnknownSignals: true
+
+        // A change on the system bus (Backend.busChanged, coalesced there): read again; a reading on its way reads once more after.
+        function onBusChanged(what: string): void {
+            if (what === "nm") {
+                if (!root.asking)
+                    root.refresh();
+                else
+                    root.stale = true;
+            }
+        }
 
         function onFinished(tag: string, ok: bool, output: string): void {
             switch (tag) {
             case "wifi.state":
                 root.asking = false;
+                if (root.stale) {
+                    root.stale = false;
+                    root.refresh();
+                }
                 if (!ok && root.answered && root.misses < 1) {
                     root.misses++;
                     break;
@@ -215,16 +232,19 @@ SettingsPage {
                 }
                 break;
             case "wifi.act":
-                root.pending = "";
+                // The switch or Disconnect answered while a join still runs: that join keeps its "Connecting…".
+                if (!root.system.busy("wifi.act"))
+                    root.pending = "";
                 root.refresh();
                 break;
             }
         }
     }
 
+    // A poll only while the system bus's change signals are not followed (Backend.followBus: no bus, a test's backend).
     Timer {
         interval: Tokens.settingsSystemRefreshMs
-        running: true
+        running: root.backend.busSignals !== true
         repeat: true
         onTriggered: {
             if (!root.asking)
@@ -247,6 +267,8 @@ SettingsPage {
     }
 
     Component.onCompleted: {
+        if (typeof root.backend.followBus === "function")
+            root.backend.followBus("nm");
         root.refresh();
         // Ask for a fresh scan when the pane opens (the radio is not known yet: NetworkManager ignores a scan with the radio off).
         if (!root.system.dev && root.system.act("wifi scan", System.wifiScan(), "wifi.scan")) {

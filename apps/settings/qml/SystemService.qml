@@ -50,10 +50,27 @@ QtObject {
             root.suppressedNote = true;
             return false;
         }
+        // One change per tag at a time: while one waits (for a password, a network to answer), the switch, Disconnect or another
+        // network of that page is refused, and the page says so instead of doing nothing (the note goes when that change ends).
+        if (root.busy(tag)) {
+            const e = Object.assign({}, root.errors);
+            e[tag] = root.busyMark;
+            root.errors = e;
+            return false;
+        }
         root.clearError(tag);
         if (!Array.isArray(spec))
             return root.backend.busAct(what, spec, tag);
         return root.backend.act(what, spec, tag);
+    }
+
+    // `errors[tag]` while an action was refused because another of its tag still runs (ErrorNote words it).
+    readonly property string busyMark: "\u0001busy"
+
+    // An action of that tag that may wait for the user still runs (Backend.pendingActions).
+    function busy(tag: string): bool {
+        const pending = root.backend.pendingActions ?? {};
+        return pending[tag] !== undefined;
     }
 
     // A program started and left running (Backend.launch: Software Update's Update Now, Log Out…, Restart…). Returns true when
@@ -79,7 +96,8 @@ QtObject {
         }
 
         function onFinished(tag: string, ok: bool, output: string): void {
-            if (ok && tag.endsWith(".act"))
+            // A success clears the tag's note; so does the end of the change that made another one wait.
+            if (tag.endsWith(".act") && (ok || root.errors[tag] === root.busyMark))
                 root.clearError(tag);
         }
     }

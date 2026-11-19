@@ -3,6 +3,12 @@
 // fake frontend and a fake x-d-p-gtk: the answer, Close, the bounds and the forward.
 #include <gtest/gtest.h>
 
+#include <QDir>
+
+#include <QFile>
+
+#include <QTemporaryDir>
+
 #include "access.h"
 #include "chooserlogic.h"
 
@@ -275,6 +281,32 @@ TEST(AccessToQml, TheFrontendsOwnWordingIsInGrassfieldsLanguage)
         EXPECT_EQ(Access::toQml({}, {}, {}, {}, {}, {{QStringLiteral("deny_label"), QString::fromLatin1(known)}}).value("denyLabel").toString(), QString()) << known;
     QCoreApplication::removeTranslator(&french);
     EXPECT_EQ(title(QStringLiteral("Allow Foot to Use the Camera?")), QStringLiteral("Allow Foot to Use the Camera?")) << "English: as it came";
+}
+
+// SP-18: the application's entry (its name and icon) is read on a worker, never on the GUI thread (a stale ksycoca is
+// rebuilt there): the alert comes once it is known, with the entry's icon, and appName answers from what was read.
+TEST_F(AccessTest, TheApplicationsEntryIsReadOffTheGuiThread)
+{
+    QTemporaryDir home;
+    ASSERT_TRUE(home.isValid());
+    const QByteArray dataHome = qgetenv("XDG_DATA_HOME"), cacheHome = qgetenv("XDG_CACHE_HOME");
+    qputenv("XDG_DATA_HOME", QFile::encodeName(home.filePath(QStringLiteral("data"))));
+    qputenv("XDG_CACHE_HOME", QFile::encodeName(home.filePath(QStringLiteral("cache"))));
+    QDir().mkpath(home.filePath(QStringLiteral("data/applications")));
+    QFile entry(home.filePath(QStringLiteral("data/applications/org.example.Booth.desktop")));
+    ASSERT_TRUE(entry.open(QIODevice::WriteOnly));
+    entry.write("[Desktop Entry]\nType=Application\nName=Booth Camera\nIcon=booth-camera\nExec=booth\n");
+    entry.close();
+    access->setUiLoader([] { return true; });
+    EXPECT_EQ(access->appName(QStringLiteral("org.example.Booth")), QString()) << "nothing read on the GUI thread";
+    auto reply = call(QStringLiteral("/r/booth"), {}, QStringLiteral("org.example.Booth"));
+    ASSERT_TRUE(waitFor([&] { return opened.size() == 1; }, 20000));
+    EXPECT_EQ(opened.first().second.value("appIcon").toString(), QStringLiteral("booth-camera"));
+    EXPECT_EQ(access->appName(QStringLiteral("org.example.Booth")), QStringLiteral("Booth Camera"));
+    access->answer(opened.first().first, false);
+    ASSERT_TRUE(waitFor([&] { return reply->done; }));
+    qputenv("XDG_DATA_HOME", dataHome);
+    qputenv("XDG_CACHE_HOME", cacheHome);
 }
 
 TEST_F(AccessTest, TheAlertsAnswerGoesBack)

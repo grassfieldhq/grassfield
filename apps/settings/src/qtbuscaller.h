@@ -109,6 +109,8 @@ public:
         , m_name(name)
     {
     }
+    // The connection's name (QDBusConnection(name) reaches it from any thread once caller() made it).
+    QString name() const { return m_name; }
     ~SystemBusConnection()
     {
         if (m_made)

@@ -44,11 +44,17 @@ SettingsPage {
             root.selectedFile = "";
     }
 
-    function applications(): var {
+    // + : the applications folders are read off the GUI thread (Backend.readDesktopEntries), and the picker opens with them; a
+    // backend without that door (a test's) is read here.
+    function askApplications(): void {
+        if (typeof root.backend.readDesktopEntries === "function") {
+            root.backend.readDesktopEntries(root.backend.applicationDirs, "login.applications");
+            return;
+        }
         let all = [];
         for (const dir of root.backend.applicationDirs)
             all = all.concat(root.entries(dir));
-        return General.applications(all, root.backend.currentDesktops, Qt.locale().name);
+        root.addRequested(General.applications(all, root.backend.currentDesktops, Qt.locale().name));
     }
 
     function write(file: string, text: string): void {
@@ -94,6 +100,12 @@ SettingsPage {
 
     Connections {
         target: root.backend
+        ignoreUnknownSignals: true
+
+        function onDesktopEntriesRead(tag: string, entries: var): void {
+            if (tag === "login.applications")
+                root.addRequested(General.applications(entries, root.backend.currentDesktops, Qt.locale().name));
+        }
 
         function onFinished(tag: string, ok: bool, output: string): void {
             if (tag === "user.units") {
@@ -179,7 +191,7 @@ SettingsPage {
             canRemove: root.canRemove
             addName: qsTr("Add a login item")
             removeName: qsTr("Remove the selected login item")
-            onAddClicked: root.addRequested(root.applications())
+            onAddClicked: root.askApplications()
             onRemoveClicked: root.removeSelected()
         }
     }

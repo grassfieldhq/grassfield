@@ -1,4 +1,5 @@
 import QtQuick
+import Grassfield.Ui
 import "Store.js" as Store
 
 // grassfield.json access for the Settings app: reads the file fresh before every change so that
@@ -98,10 +99,69 @@ Item {
         return true;
     }
 
+    // A slider's writes (Dock size, Magnification, Transparency, Pointer size): the first change is written at once, the ones
+    // that follow within settingsColorWriteMs are held and only the last of them is written when that time is up, so a drag
+    // writes a few times a second and its final position is always written (also when the slider gives no release: the
+    // trailing write does it). The store lives with the window: a page left in the middle of a drag still gets its last value
+    // written, and closing the window writes what waits (flush).
+    property var waiting: null
+    property bool waitingMany: false
+
+    function setSoon(key: string, newValue: var): void {
+        root.hold(false, ({[key]: newValue}));
+    }
+
+    function setManySoon(entries: var): void {
+        root.hold(true, entries);
+    }
+
+    function hold(many: bool, entries: var): void {
+        if (writeThrottle.running) {
+            // Entries of different keys wait together; the latest value of a key wins.
+            root.waiting = Object.assign({}, root.waiting ?? {}, entries);
+            root.waitingMany = root.waitingMany || many;
+            return;
+        }
+        root.writeNow(many, entries);
+        writeThrottle.restart();
+    }
+
+    function writeNow(many: bool, entries: var): void {
+        const keys = Object.keys(entries);
+        if (!many && keys.length === 1)
+            root.set(keys[0], entries[keys[0]]);
+        else
+            root.setMany(entries);
+    }
+
+    // Writes what waits now (the slider was released, or the window goes).
+    function flush(): void {
+        writeThrottle.stop();
+        const w = root.waiting;
+        root.waiting = null;
+        if (w !== null)
+            root.writeNow(root.waitingMany, w);
+        root.waitingMany = false;
+    }
+
+    Timer {
+        id: writeThrottle
+        interval: Tokens.settingsColorWriteMs
+        onTriggered: {
+            if (root.waiting === null)
+                return;
+            root.flush();
+            // Still dragging: the next change waits for the next interval.
+            writeThrottle.restart();
+        }
+    }
+
     Component.onCompleted: {
         root.backend.watch(root.path);
         root.reload();
     }
+
+    Component.onDestruction: root.flush()
 
     Connections {
         target: root.backend

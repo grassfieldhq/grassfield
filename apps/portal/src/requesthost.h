@@ -8,6 +8,7 @@
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusObjectPath>
+#include <QDBusServiceWatcher>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
@@ -67,9 +68,13 @@ public:
     // For the QML: the window for `id` waits for another one to go (one alert at a time, as macOS shows them): no deadline runs
     // until present() (integrator nested pass of 1745c0c, MINOR 5).
     Q_INVOKABLE void queue(int id);
-    // The application's name as its desktop entry gives it in the UI language, "" when the frontend could not name it or it
-    // has no entry.
+    // The application's name as its desktop entry gives it in the UI language, "" when the frontend could not name it, it has
+    // no entry, or its entry has not been read yet. Never reads the desktop entries itself (SP-18: a stale ksycoca was rebuilt
+    // on the GUI thread, inside the panel's 3-s first-frame deadline): begin() has them read on a worker, and the panel is
+    // asked for once they were (whenAppKnown).
     Q_INVOKABLE QString appName(const QString &appId) const;
+    // The same for the entry's Icon= (a theme name or a file), "" when none or not read yet.
+    QString appIcon(const QString &appId) const;
 
     // The Wayland app id a window of `appId` gets (exposed for the tests): the application's own when the frontend named it
     // (a desktop id), so the window counts as that application's (Dock, menu bar, Force Quit), as a macOS sheet does;
@@ -112,6 +117,10 @@ protected:
     virtual bool forwardable(int id) { Q_UNUSED(id) return true; }
     // The idle time starts again now, when no request is open (a subclass's own reason to stay has just gone).
     void armIdle();
+    // Runs `fn` once request `id`'s application entry has been read (at once when it was already, as for an id without one;
+    // later on this thread otherwise), unless the request has ended by then: the subclasses emit their panel's `opened` through
+    // it, so the panel's name and icon are there from its first frame, and the GUI thread never waits on ksycoca.
+    void whenAppKnown(int id, std::function<void()> fn);
 
     QDBusConnection m_bus;
 
@@ -130,6 +139,21 @@ private:
     int m_nextId = 1;
     QHash<int, std::shared_ptr<Request>> m_requests;
     QTimer m_idle;
+    // The frontends that called (xdg-desktop-portal's unique name): one that leaves the bus ends its requests, whose panels
+    // would otherwise stay with nobody to answer (SP-16).
+    QDBusServiceWatcher m_callers;
+    void callerGone(const QString &service);
+    // The applications' entries (desktop id -> name and icon), read on a worker (lookUpApp); the requests waiting for one.
+    struct AppInfo {
+        QString name;
+        QString icon;
+    };
+    struct AppLookups;
+    void lookUpApp(const QString &desktopId);
+    void appKnown(const QString &desktopId, const AppInfo &info);
+    QHash<QString, AppInfo> m_apps;
+    QHash<QString, QList<QPair<int, std::function<void()>>>> m_waitingForApp;
+    std::shared_ptr<AppLookups> m_lookups;
 };
 
 // org.freedesktop.impl.portal.Request at a request's handle: Close() ends it (the application went away or cancelled).

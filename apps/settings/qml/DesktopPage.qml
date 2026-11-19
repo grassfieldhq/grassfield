@@ -32,12 +32,12 @@ SettingsPage {
     function setMagnification(position: real): void {
         const small = Tokens.settingsDockMagnificationSmallAt;
         if (position < small / 2) {
-            root.store.set("dock.magnificationEnabled", false);
+            root.store.setManySoon({"dock.magnificationEnabled": false});
             return;
         }
         const t = Math.max(0, (position - small) / (1 - small));
         const m = Math.round((Tokens.settingsDockMagnificationSmall + t * (root.magnificationLarge - Tokens.settingsDockMagnificationSmall)) * 100) / 100;
-        root.store.setMany({"dock.magnificationEnabled": true, "dock.magnification": m});
+        root.store.setManySoon({"dock.magnificationEnabled": true, "dock.magnification": m});
     }
 
     SettingsGroup {
@@ -57,7 +57,8 @@ SettingsPage {
                 slider.stepSize: 1 / (Tokens.dockSizeMax - Tokens.dockSizeMin)
                 slider.ticks: 2
                 slider.value: root.store.value("dock.size")
-                slider.onMoved: v => root.store.set("dock.size", Math.round(v))
+                slider.onMoved: v => root.store.setSoon("dock.size", Math.round(v))
+                slider.onReleased: root.store.flush()
             }
 
             DockSlider {
@@ -71,6 +72,7 @@ SettingsPage {
                 slider.tickValues: [Tokens.settingsDockMagnificationSmallAt, 1]
                 slider.value: root.magnificationPosition
                 slider.onMoved: v => root.setMagnification(v)
+                slider.onReleased: root.store.flush()
             }
         }
     }
@@ -292,14 +294,24 @@ SettingsPage {
         return texts;
     }
 
+    // The applications folders are read off the GUI thread (Backend.readDesktopEntries: only the entries that name WebBrowser,
+    // and every copy of such a name); a backend without that door (a test's) is read here.
     function readBrowsers(): void {
-        if (!root.backend) {
+        if (!root.backend || (typeof root.backend.desktopEntries !== "function" && typeof root.backend.readDesktopEntries !== "function")) {
             root.browserChoices = [];
+            return;
+        }
+        if (typeof root.backend.readDesktopEntries === "function") {
+            root.backend.readDesktopEntries(root.backend.applicationDirs, "desktop.browsers", "WebBrowser");
             return;
         }
         let all = [];
         for (const dir of root.backend.applicationDirs)
             all = all.concat(root.entriesOf(dir));
+        root.takeBrowsers(all);
+    }
+
+    function takeBrowsers(all: var): void {
         root.browserChoices = DefaultBrowser.browsers(all, Qt.locale().name, program => root.backend.programExists(program));
         const own = root.ownListTexts();
         const session = root.backend.readText(root.backend.xdgConfigDir + "/" + DefaultBrowser.LIST_NAME);
@@ -342,6 +354,16 @@ SettingsPage {
     }
 
     Component.onCompleted: readBrowsers()
+
+    Connections {
+        target: root.backend
+        ignoreUnknownSignals: true
+
+        function onDesktopEntriesRead(tag: string, entries: var): void {
+            if (tag === "desktop.browsers")
+                root.takeBrowsers(entries);
+        }
+    }
 
     SettingsGroup {
         visible: root.browserChoices.length > 0

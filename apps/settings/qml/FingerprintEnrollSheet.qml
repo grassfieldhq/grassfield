@@ -107,6 +107,8 @@ Sheet {
 
     Connections {
         target: root.backend
+        // Only while it waits for an answer: a Backend answer is not handed to every row and sheet of the window (the audit's notes).
+        enabled: root.shown || root.lastReason !== ""
         // A backend without the enrolment's progress (a test's) leaves the sheet waiting for its end.
         ignoreUnknownSignals: true
 

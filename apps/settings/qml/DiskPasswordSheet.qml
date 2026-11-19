@@ -74,6 +74,8 @@ Sheet {
 
     Connections {
         target: root.backend
+        // Only while it waits for an answer: a Backend answer is not handed to every row and sheet of the window (the audit's notes).
+        enabled: root.shown
 
         function onFailed(tag: string, reason: string): void {
             if (tag !== root.tag || !root.shown)

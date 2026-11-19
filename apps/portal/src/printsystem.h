@@ -42,8 +42,12 @@ public:
     virtual void destinations(QObject *context, DestinationsDone done) = 0;
     // `known` false when the printer did not say in time.
     virtual void capabilities(const QString &printer, QObject *context, CapabilitiesDone done) = 0;
-    // Sends what `fd` holds (taken: closed when done) to `printer` as one job named `title`, with `options`.
-    virtual void submit(const QString &printer, const QString &title, const Options &options, int fd, QObject *context, JobDone done) = 0;
+    // Sends what `fd` holds (taken: closed when done) to `printer` as one job named `title`, with `options`. Returns how to stop
+    // it (SP-16: the request closed while the document is still being sent): called on the caller's thread, the job stops at its
+    // next step, a job already created in the printer's queue is cancelled there, and `done` says why (or never runs, once
+    // `context` has gone).
+    using Stop = std::function<void()>;
+    virtual Stop submit(const QString &printer, const QString &title, const Options &options, int fd, QObject *context, JobDone done) = 0;
 };
 
 class CupsPrintSystem : public PrintSystem
@@ -71,13 +75,14 @@ public:
 
     void destinations(QObject *context, DestinationsDone done) override;
     void capabilities(const QString &printer, QObject *context, CapabilitiesDone done) override;
-    void submit(const QString &printer, const QString &title, const Options &options, int fd, QObject *context, JobDone done) override;
+    Stop submit(const QString &printer, const QString &title, const Options &options, int fd, QObject *context, JobDone done) override;
 
 private:
     struct Call;
     // Runs `work` on a thread; `deliver` on this thread with its result, unless the deadline (ms; 0: none) came first, in which
     // case `timeout` runs instead. Both see the call's state.
-    void run(int deadlineMs, std::function<void(Call &)> work, std::function<void(Call &)> deliver, std::function<void()> timeout);
+    // Returns the call (its cancel flag is how it is stopped).
+    std::shared_ptr<Call> run(int deadlineMs, std::function<void(Call &)> work, std::function<void(Call &)> deliver, std::function<void()> timeout);
 
     Limits m_limits;
     QList<std::shared_ptr<Call>> m_calls;

@@ -253,6 +253,13 @@ private:
     QHash<int, QString> m_saving;
     // Set when Print goes: the writes still running stop and remove their temporary files.
     std::shared_ptr<std::atomic<bool>> m_stopWriting = std::make_shared<std::atomic<bool>>(false);
+    // SP-16: the job of a request that prints with a ticket (Save as PDF's write, Open in Preview's copy, the CUPS job) stops when
+    // its request ends without it (Close, the frontend gone): a flag for the writers, and the print system's stop for a job.
+    struct JobStop {
+        std::shared_ptr<std::atomic<bool>> flag = std::make_shared<std::atomic<bool>>(false);
+        std::function<void()> cups;
+    };
+    QHash<int, JobStop> m_jobs;
     int m_saves = 0;
     std::unique_ptr<QDBusConnection> m_panelBus;
     std::shared_ptr<SpoolBudget> m_budget;

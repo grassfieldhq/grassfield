@@ -127,8 +127,16 @@ public:
         }
         QTimer::singleShot(0, context, [c, done] { done(c); });
     }
-    void submit(const QString &printer, const QString &title, const Options &options, int fd, QObject *context, JobDone done) override
+    // A job held (holdJobs): its document is not read and its answer waits until the test lets it go; `stops` counts the stops
+    // the backend asked for (a request closed while its job was being sent).
+    bool holdJobs = false;
+    int stops = 0;
+    Stop submit(const QString &printer, const QString &title, const Options &options, int fd, QObject *context, JobDone done) override
     {
+        if (holdJobs) {
+            ::close(fd);
+            return [this] { ++stops; };
+        }
         Job job{printer, title, options, {}};
         char buffer[4096];
         ssize_t n;
@@ -137,6 +145,7 @@ public:
         ::close(fd);
         jobs << job;
         QTimer::singleShot(0, context, [this, done] { done(refuse); });
+        return [this] { ++stops; };
     }
 };
 
@@ -935,6 +944,81 @@ TEST_F(PrintTest, NoSheetGoesToGtkAndItsAnswerIsRelayed)
 }
 
 // Close during the sheet: it goes, and nothing is answered after.
+// SP-16: a Print with a ticket whose request is closed while its job runs: Save as PDF stops writing (no file, no temporary
+// file left), and a CUPS job is told to stop; the frontend gets its answer at once.
+TEST_F(PrintTest, CloseStopsTheJobOfAPrintWithATicket)
+{
+    make([](Print::Options &o) { o.uiDeadlineMs = 60000; });
+    const QString target = dir.filePath(QStringLiteral("Closed.pdf"));
+    auto prepared = savedAs(kHandle, target);
+    ASSERT_EQ(prepared->response, 0u);
+    // The document is still coming (the application renders it) when the frontend closes the request.
+    int ends[2];
+    ASSERT_EQ(::pipe2(ends, O_CLOEXEC), 0);
+    ASSERT_EQ(::write(ends[1], "%PDF-1.7 first", 14), 14);
+    const QString handle = QStringLiteral("/org/freedesktop/portal/desktop/request/1_1/closed");
+    QDBusMessage m = QDBusMessage::createMethodCall(QString::fromLatin1(kService), QStringLiteral("/org/freedesktop/portal/desktop"),
+                                                    QStringLiteral("org.freedesktop.impl.portal.Print"), QStringLiteral("Print"));
+    m << QVariant::fromValue(QDBusObjectPath(handle)) << QStringLiteral("org.example.Writer") << QString() << QStringLiteral("Print")
+      << QVariant::fromValue(QDBusUnixFileDescriptor(ends[0])) << QVariantMap{{QStringLiteral("token"), QVariant::fromValue(prepared->results.value("token").toUInt())}};
+    ::close(ends[0]);
+    auto job = send(m);
+    QTest::qWait(300); // the writer reads the first bytes and waits for more
+    EXPECT_FALSE(job->done);
+    frontendBus->asyncCall(QDBusMessage::createMethodCall(QString::fromLatin1(kService), handle, QStringLiteral("org.freedesktop.impl.portal.Request"),
+                                                          QStringLiteral("Close")));
+    ASSERT_TRUE(waitFor([&] { return job->done; }));
+    EXPECT_NE(job->response, 0u);
+    // The rest arrives: nothing is written any more, well before the source's own idle limit (2 s here).
+    ::write(ends[1], " the rest", 9);
+    ::close(ends[1]);
+    QTest::qWait(500);
+    EXPECT_FALSE(QFile::exists(target)) << "a closed request writes no file";
+    EXPECT_EQ(QDir(dir.path()).entryList({QStringLiteral(".*Closed*"), QStringLiteral("*Closed*")}, QDir::Files | QDir::Hidden), QStringList{});
+
+    // A CUPS job: the print system is told to stop it.
+    system.holdJobs = true;
+    const qsizetype before = chosen.size();
+    auto second = prepare(QStringLiteral("/org/freedesktop/portal/desktop/request/1_1/cups"), {}, {}, {});
+    ASSERT_TRUE(waitFor([&] { return chosen.size() > before; }));
+    ASSERT_TRUE(printer->answer(chosen.last().id, 0, chosen.last().choices));
+    ASSERT_TRUE(waitFor([&] { return second->done; }));
+    const QString jobHandle = QStringLiteral("/org/freedesktop/portal/desktop/request/1_1/cupsjob");
+    auto held = printWith(jobHandle, second, "%PDF-1.7 to the printer");
+    QTest::qWait(200);
+    EXPECT_FALSE(held->done);
+    const int stopsBefore = system.stops;
+    frontendBus->asyncCall(QDBusMessage::createMethodCall(QString::fromLatin1(kService), jobHandle, QStringLiteral("org.freedesktop.impl.portal.Request"),
+                                                          QStringLiteral("Close")));
+    ASSERT_TRUE(waitFor([&] { return held->done; }));
+    EXPECT_EQ(system.stops, stopsBefore + 1);
+    system.holdJobs = false;
+}
+
+// SP-16: the frontend (xdg-desktop-portal) leaving the bus ends its open requests: their sheets go instead of staying with
+// nobody to answer.
+TEST_F(PrintTest, AFrontendThatLeavesTheBusEndsItsRequests)
+{
+    make([](Print::Options &o) { o.uiDeadlineMs = 60000; });
+    {
+        // A frontend of its own, which nothing else holds: its connection closes when it goes.
+        QDBusConnection leaving = QDBusConnection::connectToBus(g_address, QStringLiteral("print-leaving-frontend"));
+        ASSERT_TRUE(leaving.isConnected());
+        QDBusMessage m = QDBusMessage::createMethodCall(QString::fromLatin1(kService), QStringLiteral("/org/freedesktop/portal/desktop"),
+                                                        QStringLiteral("org.freedesktop.impl.portal.Print"), QStringLiteral("PreparePrint"));
+        m << QVariant::fromValue(QDBusObjectPath(kHandle)) << QStringLiteral("org.example.Writer") << QStringLiteral("wayland:abc")
+          << QStringLiteral("Print") << QVariantMap{} << QVariantMap{} << QVariantMap{};
+        ASSERT_TRUE(leaving.send(m));
+        ASSERT_TRUE(waitFor([&] { return !chosen.isEmpty(); }));
+        EXPECT_EQ(printer->pending(), 1);
+        QDBusConnection::disconnectFromBus(QStringLiteral("print-leaving-frontend"));
+    }
+    const int id = chosen.first().id;
+    ASSERT_TRUE(waitFor([&] { return closed.contains(id); }));
+    EXPECT_EQ(printer->pending(), 0);
+    EXPECT_TRUE(printer->answer(id, 0, chosen.first().choices)) << "gone: ignored";
+}
+
 TEST_F(PrintTest, CloseTakesTheSheetAway)
 {
     auto reply = prepare(kHandle, {}, {}, {});

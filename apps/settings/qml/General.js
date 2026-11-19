@@ -104,7 +104,10 @@ function parseDu(text) {
 var UNITS = {"B": 1, "KiB": 1024, "MiB": 1048576, "GiB": 1073741824, "TiB": 1099511627776};
 
 // The sum of the "Installed Size" lines of `pacman -Qi` (C locale): the size of the installed packages, in bytes.
+// Backend.installedSize answers the sum already (its digits only).
 function packagesBytes(text) {
+    if (/^[0-9]+$/.test(String(text)))
+        return Number(text);
     let sum = 0;
     for (const line of String(text).split("\n")) {
         const m = /^Installed Size\s*:\s*([0-9.]+)\s*(B|KiB|MiB|GiB|TiB)\s*$/.exec(line);

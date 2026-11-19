@@ -2,7 +2,10 @@
 
 #include <QDir>
 #include <QHash>
+#include <QDBusMessage>
 #include <QFileSystemWatcher>
+#include <QSet>
+#include <QTimer>
 #include <QProcessEnvironment>
 
 #include <atomic>
@@ -82,6 +85,8 @@ class Backend : public QObject
     // one per tag, busjobs.h InFlight). A page shows its waiting state from it, also when it is opened again while the dialog
     // is up.
     Q_PROPERTY(QVariantMap pendingActions READ pendingActions NOTIFY pendingActionsChanged)
+    // The system services' change signals are followed (followBus): the pages refresh on busChanged and stop their polls.
+    Q_PROPERTY(bool busSignals READ busSignals NOTIFY busSignalsChanged)
 
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -125,6 +130,16 @@ public:
     bool updateRunner() const;
     bool reportTool() const;
     QVariantMap pendingActions() const { return m_actions.map(); }
+    bool busSignals() const { return m_busSignals; }
+
+    // Instead of reading the system services every few seconds (the notes of the 2026 audit: wifi.state alone is a round trip
+    // per access point and per saved profile, every 4 s), Settings follows their change signals on the system bus:
+    // NetworkManager's and UPower's PropertiesChanged, BlueZ's PropertiesChanged, InterfacesAdded and InterfacesRemoved. `what`
+    // is "nm", "bt" or "power"; the first call subscribes (the connection is made on a worker; the match rules are added from
+    // this thread, which waits for nothing). busChanged(what) follows a change: at once, then at most once per kBusChangeMs while
+    // changes keep coming (an access point's strength changes at every scan). busSignals turns true once subscribed; until
+    // then (no system bus, a test's backend) the pages keep their polls.
+    Q_INVOKABLE void followBus(const QString &what);
 
     // {exists: bool, ok: bool, text: string}. Reads at most 4 MiB.
     Q_INVOKABLE QVariantMap readText(const QString &path) const;
@@ -147,6 +162,12 @@ public:
     // isPrivateQuery (Share Network's QR code, ADR-0045 OC-10: never in a dev session). Anything else is refused (logged,
     // finished(tag, false)).
     Q_INVOKABLE void readOnlyQuery(const QStringList &argv, const QString &tag, int timeoutMs = 5000, bool shared = false);
+    // Storage: the size of the installed packages, in bytes, as finished(tag, ok, "<bytes>"): `pacman -Qi` (shared under `tag`,
+    // as query's `shared`) with its "Installed Size" lines added up here, so the page never takes its megabyte of text (the
+    // audit's notes: it was parsed in JS on the GUI thread, after being handed to every handler of finished).
+    Q_INVOKABLE void installedSize(const QString &tag, int timeoutMs = 5000);
+    // The sum of the "Installed Size" lines of `pacman -Qi` (C locale), in bytes (the tests read it).
+    static qint64 installedBytes(const QByteArray &pacmanQi);
     // State-changing action (Wi-Fi, Bluetooth, volume). Only nmcli, bluetoothctl and wpctl run. In a dev session
     // nothing runs: one "dev guard: <what> suppressed" line is logged, suppressed(what) is emitted, false returned.
     // Otherwise finished(tag, ok, stdout) follows the command and true is returned when it started. An action that may wait
@@ -214,6 +235,13 @@ public:
     // system's ($XDG_CONFIG_DIRS/autostart). Writes go only to the user's folder, one plain <name>.desktop at a time, and in a dev
     // session only when that folder lies under the worktree's .dev (writeAutostart, removeAutostart: "" or a reason).
     Q_INVOKABLE QStringList desktopEntries(const QString &dir) const;
+    // The same files read off the GUI thread (SP-05: hundreds of entries hitched the window at each visit of Desktop & Dock and at
+    // Login Items' +): the .desktop files of each folder of `dirs` (no recursion, regular files, at most kMaxEntryBytes each and
+    // kMaxEntries in all) are read on a worker, which keeps what it read per run and reads again only a file whose size or time
+    // changed; the answer is desktopEntriesRead(tag, [{dir, file, text}]) on this thread, in the order of `dirs`. With `needle`,
+    // only the names one of whose copies contains it come back (every copy of such a name, so a user's override still hides a
+    // system entry): Desktop & Dock asks for "WebBrowser".
+    Q_INVOKABLE void readDesktopEntries(const QStringList &dirs, const QString &tag, const QString &needle = QString());
     Q_INVOKABLE QString writeAutostart(const QString &path, const QString &text) const;
     Q_INVOKABLE QString removeAutostart(const QString &path) const;
     // Default web browser (ADR-0055 D-6): writes the session's list or the record, and nothing else (isDefaultAppsWrite); "" or a
@@ -229,8 +257,15 @@ public:
     Q_INVOKABLE QString writeDisplaysConf(const QStringList &lines) const;
     // `until`: the trial's deadline in Unix seconds, at most a minute ahead.
     Q_INVOKABLE QString writeDisplayTrial(const QString &id, qint64 until, const QStringList &lines) const;
-    // `state`: "kept" (displays.conf written first) or "revert".
+    // `state`: "kept" or "revert".
     Q_INVOKABLE QString markDisplayTrial(const QString &state, const QString &id) const;
+    // Keep (SP-14): marks the trial kept, and the Backend, not the page, writes displays.conf with `lines` once the shell's state
+    // (displaysStateFile) says it kept that trial: whatever page is shown then, also when the window closes meanwhile (~Backend
+    // waits up to kKeepAtExitMs for the shell's answer). displayKeepSettled(id, state, error) follows once: "kept" (`error`: why
+    // displays.conf could not be written, else ""), "reverted" (the shell took it back first: nothing is written) or "silent"
+    // (no answer within answerMs: nothing is written, and the shell's own countdown takes the trial back). Returns "" when Keep
+    // was taken, else why not (another Keep waits, a malformed trial, the mark could not be written).
+    Q_INVOKABLE QString keepDisplayTrial(const QString &id, const QStringList &lines, int answerMs);
 
 signals:
     void fileChanged(const QString &path);
@@ -239,18 +274,37 @@ signals:
     // or the start error), at most 160 characters. Plain text from a tool: show it as text only.
     void failed(const QString &tag, const QString &reason);
     void suppressed(const QString &what);
+    void displayKeepSettled(const QString &id, const QString &state, const QString &error);
+    void desktopEntriesRead(const QString &tag, const QVariantList &entries);
     void pendingActionsChanged();
+    void busSignalsChanged();
+    void busChanged(const QString &what);
     // One status of fprintd's enrolment under way (fprint.enroll), as fprintd names it ("enroll-stage-passed", ...).
     void progress(const QString &tag, const QString &status);
 
+private Q_SLOTS:
+    // The change signals of followBus (Qt D-Bus delivers them here, on this thread).
+    void nmSignal(const QDBusMessage &message);
+    void bluezSignal(const QDBusMessage &message);
+    void upowerSignal(const QDBusMessage &message);
+
 private:
+    void busChange(const QString &what);
+    void subscribeBus();
+    bool m_busSignals = false;
+    bool m_subscribing = false;
+    QSet<QString> m_followed;
+    QHash<QString, QTimer *> m_changeTimers;
+    QSet<QString> m_changedMeanwhile;
     bool wallpaperAllowed(const QStringList &argv) const;
     void onPath(const QString &path);
     // What a process ends when it finishes: nothing, its query (m_queries) or its action (m_actions).
     enum class Track { None, Query, Action };
     void start(const QStringList &argv, const QString &tag, int timeoutMs, Track track);
     // The same with its own environment (Software Update's check and the shell's IPC).
-    void start(const QStringList &argv, const QString &tag, int timeoutMs, Track track, const QProcessEnvironment &env);
+    // `reduce`: what finished carries instead of the whole output (installedSize).
+    void start(const QStringList &argv, const QString &tag, int timeoutMs, Track track, const QProcessEnvironment &env,
+               const std::function<QString(const QByteArray &)> &reduce = {});
     void runBus(const QString &tag, std::function<QString(grassfield::settings::BusCaller &, QString *)> job, int timeoutMs, bool session = false,
                 bool action = false);
     bool beginAction(const QString &tag, const QString &what);
@@ -263,6 +317,15 @@ private:
     QString displaysConfFile() const;
     QString displayTrialFile() const;
     QString displayLinesProblem(const QStringList &lines) const;
+    // The Keep waiting for the shell's answer (keepDisplayTrial): settles it when the state file says so; true once settled.
+    bool settleDisplayKeep();
+    // readDesktopEntries: the worker posts to this mailbox, which ~Backend closes under its lock (no answer after the Backend went),
+    // and its per-run cache of the files read.
+    struct EntryReads;
+    std::shared_ptr<EntryReads> m_entryReads;
+    QString m_keepId;
+    QStringList m_keepLines;
+    QTimer *m_keepTimer = nullptr;
 
     QString m_configFile;
     QString m_bindingsFile;
