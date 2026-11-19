@@ -5,6 +5,8 @@
 #include "hyprland-lock-notify-v1-client-protocol.h"
 
 #include <QAbstractEventDispatcher>
+#include <QTimer>
+#include <chrono>
 
 #include <cerrno>
 #include <cstring>
@@ -185,6 +187,7 @@ void WaylandClipboard::registryRemove(void *, wl_registry *, uint32_t)
 
 void WaylandClipboard::setCapturing(bool on)
 {
+    m_wantCapture = on;
     if (on == capturing() || !supported() || m_failed)
         return;
     if (!on) {
@@ -259,7 +262,23 @@ void WaylandClipboard::devicePrimary(void *data, ext_data_control_device_v1 *, e
 
 void WaylandClipboard::deviceFinished(void *data, ext_data_control_device_v1 *)
 {
-    static_cast<WaylandClipboard *>(data)->destroyDevice();
+    auto *self = static_cast<WaylandClipboard *>(data);
+    self->destroyDevice();
+    self->flush();
+    if (!self->m_wantCapture || self->m_failed)
+        return;
+    // Made again (B-15), unless the compositor keeps ending it: then the helper stops and says why.
+    const qint64 now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    self->m_recreations.removeIf([now](qint64 t) { return now - t > kRecreateWindowMs; });
+    if (self->m_recreations.size() >= kMaxRecreations) {
+        self->fail(QStringLiteral("the compositor keeps ending the clipboard device"));
+        return;
+    }
+    self->m_recreations << now;
+    QTimer::singleShot(kRecreateMs, self, [self] {
+        if (self->m_wantCapture && !self->capturing())
+            self->setCapturing(true);
+    });
 }
 
 int WaylandClipboard::receive(Offer *offer, const QByteArray &mime)

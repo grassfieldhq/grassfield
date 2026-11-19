@@ -421,25 +421,33 @@ bool DiskStore::saveIndex(const QList<Item> &items)
     return writeFile(QStringLiteral("index.json"), QJsonDocument(root).toJson(QJsonDocument::Compact));
 }
 
-bool DiskStore::save(const Item &item, const QList<Item> &items)
+bool DiskStore::saveItemFile(const Item &item, bool rewrite)
 {
     if (m_readOnly || !validId(item.id) || !ensureDir())
         return false;
     const QString name = QString::fromLatin1(item.id) + QStringLiteral(".item");
     struct stat st {};
-    if (::lstat(QFile::encodeName(m_dir + QLatin1Char('/') + name).constData(), &st) != 0 || !S_ISREG(st.st_mode)) {
-        if (!writeFile(name, encodeItem(item)))
-            return false;
-    }
-    return saveIndex(items);
+    if (rewrite || ::lstat(QFile::encodeName(m_dir + QLatin1Char('/') + name).constData(), &st) != 0 || !S_ISREG(st.st_mode))
+        return writeFile(name, encodeItem(item));
+    return true;
 }
 
-bool DiskStore::removeItem(const QByteArray &id, const QList<Item> &items)
+bool DiskStore::removeItemFile(const QByteArray &id)
 {
     if (m_readOnly || !validId(id))
         return false;
     ::unlink(QFile::encodeName(m_dir + QLatin1Char('/') + QString::fromLatin1(id) + QStringLiteral(".item")).constData());
-    return saveIndex(items);
+    return true;
+}
+
+bool DiskStore::save(const Item &item, const QList<Item> &items)
+{
+    return saveItemFile(item) && saveIndex(items);
+}
+
+bool DiskStore::removeItem(const QByteArray &id, const QList<Item> &items)
+{
+    return removeItemFile(id) && saveIndex(items);
 }
 
 void DiskStore::deleteAll()

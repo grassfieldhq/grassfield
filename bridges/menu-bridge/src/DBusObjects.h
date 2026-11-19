@@ -90,6 +90,10 @@ namespace gf::menubridge {
         const registrar::Book& book() const {
             return m_book;
         }
+        // A registration of `sender` now serves a window (it is kept when newcomers need room).
+        void markServed(const QString& sender) {
+            m_book.markServed(sender);
+        }
         // Forgets every registration (the registrar name was released: applications register again when it returns).
         void clear();
 

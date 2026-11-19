@@ -293,9 +293,11 @@ namespace gf::prompter {
             answerCancel(prompt);
             return;
         }
-        const QString id = m_book.reserve(prompt);
+        const QString caller = promptCaller(prompt);
+        const QString id     = m_book.reserve(prompt, Lane::Keyring, caller);
         if (id.isEmpty()) {
-            log(QStringLiteral("a %1 request answered \"cancelled\": %2 requests are outstanding").arg(kindName(kind)).arg(m_book.count()));
+            log(QStringLiteral("a %1 request answered \"cancelled\": %2 requests are outstanding (the slots left are kept for Wi-Fi and Bluetooth, or its connection holds %3)")
+                    .arg(kindName(kind)).arg(m_book.count()).arg(kPerCaller));
             answerCancel(prompt);
             return;
         }
@@ -304,7 +306,6 @@ namespace gf::prompter {
         pending.kind   = kind;
         m_pending.insert(id, pending);
 
-        const QString caller = promptCaller(prompt);
         if (caller.isEmpty()) {
             identified(id, prompt, RequesterView());
             return;
@@ -444,7 +445,7 @@ namespace gf::prompter {
             log(QStringLiteral("an nm request answered NoSecrets: the shell does not draw that kind"));
             return {};
         }
-        const QString id = m_book.reserve(request);
+        const QString id = m_book.reserve(request, Lane::Nm);
         if (id.isEmpty()) {
             log(QStringLiteral("an nm request answered NoSecrets: %1 requests are outstanding").arg(m_book.count()));
             return {};
@@ -527,9 +528,10 @@ namespace gf::prompter {
     QString Bridge::submitKio(KioRequest* request) {
         if (m_client < 0 || !m_ready || !m_kinds.contains(QStringLiteral("kio")))
             return {};
-        const QString id = m_book.reserve(request);
+        const QString id = m_book.reserve(request, Lane::Kio, request->sender);
         if (id.isEmpty()) {
-            log(QStringLiteral("a kio request answered with nothing: %1 requests are outstanding").arg(m_book.count()));
+            log(QStringLiteral("a kio request answered with nothing: %1 requests are outstanding (the slots left are kept for Wi-Fi and Bluetooth, or its connection holds %2)")
+                    .arg(m_book.count()).arg(kPerCaller));
             return {};
         }
         Pending pending;
@@ -630,7 +632,7 @@ namespace gf::prompter {
             log(QStringLiteral("a bluetooth request answered Rejected: the shell does not draw that kind"));
             return {};
         }
-        const QString id = m_book.reserve(request);
+        const QString id = m_book.reserve(request, Lane::Bluetooth);
         if (id.isEmpty()) {
             log(QStringLiteral("a bluetooth request answered Rejected: %1 requests are outstanding").arg(m_book.count()));
             return {};

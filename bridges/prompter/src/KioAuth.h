@@ -72,6 +72,12 @@ namespace gf::prompter::kio {
     // An entry that is neither kept for the session nor tied to a window lives this long after its last use (10 s,
     // kpasswdserver.cpp:704).
     inline constexpr qint64 kExpireSeconds = 10;
+    // An entry tied to a window (B-04, decision 9-39 as amended): kiod6 keeps it until KDE tells it the window closed, which
+    // never happens on Wayland, so the bridge ends it when every bus connection that tied it to a window has left the bus,
+    // and at the latest this long after its last use.
+    inline constexpr qint64 kWindowExpireSeconds = 15 * 60;
+    // Windows (with their connection) one entry is tied to: the ids come from the callers.
+    inline constexpr qsizetype kMaxWindows = 64;
     // UTF-16 code units of the texts the sheet shows: the server (a host name of at most 253 characters, its port), the
     // name's first text, the realm.
     inline constexpr int kServerCap = 262;
@@ -194,11 +200,19 @@ namespace gf::prompter::kio {
     // The session cache (kpasswdserver's m_authDict).
     struct CacheEntry {
         enum class Expire { Never, WindowClose, Time };
+        struct Window {
+            qint64  id = 0;
+            QString caller; // the unique bus name that tied it (empty: not known, kept until the time limit)
+            bool    operator==(const Window&) const = default;
+        };
         AuthInfo      info;
         QString       directory;
         Expire        expire   = Expire::Time;
-        QList<qint64> windows;
-        qint64        expireAt = 0; // on the cache's clock, for Expire::Time
+        QList<Window> windows;
+        qint64        expireAt = 0; // on the cache's clock: Expire::Time (10 s) and Expire::WindowClose (kWindowExpireSeconds)
+        bool          expired(qint64 now) const {
+            return expire != Expire::Never && now > expireAt;
+        }
         qint64        seqNr    = 0;
         bool          canceled = false;
         quint64       order    = 0; // when it was added, for the bound
@@ -216,9 +230,12 @@ namespace gf::prompter::kio {
         CacheEntry* find(const QString& key, const AuthInfo& info);
         // addAuthInfoItem: replaces the key's entry of the same realm (keeping how long it lives) or adds one, then
         // touch(..., keepPassword && !canceled).
-        void add(const QString& key, const AuthInfo& info, qint64 windowId, qint64 seqNr, bool canceled);
-        // updateAuthExpire.
-        void touch(CacheEntry* entry, qint64 windowId, bool keep);
+        void add(const QString& key, const AuthInfo& info, qint64 windowId, qint64 seqNr, bool canceled, const QString& caller = QString());
+        // updateAuthExpire, with `caller` (the unique bus name asking for `windowId`) and the time limit of a window's entry.
+        void touch(CacheEntry* entry, qint64 windowId, bool keep, const QString& caller = QString());
+        // The bus connection `caller` left: its windows are untied; an entry tied to no window any more goes. Returns how
+        // many entries went.
+        int  callerGone(const QString& caller);
         // removeAuthInfoItem: the key's entries of that realm.
         void remove(const QString& key, const QString& realm);
         // removeAuthInfo: every entry of that scheme and host (and user, when not empty), with the other entries of their

@@ -15,8 +15,9 @@
 //                              <bytes> <ms>, reads at most <bytes> at a time and waits <ms> between reads (a slow reader)
 //   STALL <mime>               asks the client that owns the selection for <mime> and never reads it; reports when the client
 //                              closes its end
+//   FINISH                     sends ext_data_control_device_v1.finished to every device (the client must make a new one)
 //   QUIT
-// stdout: READY, CLIENT <n>, BIND <global>, DEVICE, DEVICE_GONE, NOTIFIER, RECEIVE <mime>, SELECTION <mime>..., CLEARED, PASTED <mime> <bytes>,
+// stdout: READY, CLIENT <n>, BIND <global>, DEVICE, DEVICE_GONE, NOTIFIER, RECEIVE <mime>, SELECTION <mime>..., CLEARED, PASTED <mime> <bytes>, FINISHED,
 //         STALL_CLOSED <ms>.
 #include "ext-data-control-v1-server-protocol.h"
 #include "hyprland-lock-notify-v1-server-protocol.h"
@@ -505,6 +506,11 @@ void command(const std::string &line)
         std::string mime;
         in >> mime;
         stall(mime);
+    } else if (verb == "FINISH") {
+        // The compositor ends every data-control device (ext_data_control_device_v1.finished): a client must make a new one.
+        for (wl_resource *d : g.devices)
+            ext_data_control_device_v1_send_finished(d);
+        say("FINISHED");
     } else if (verb == "QUIT") {
         wl_display_terminate(g.display);
     }

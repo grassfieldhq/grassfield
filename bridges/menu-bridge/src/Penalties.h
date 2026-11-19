@@ -16,7 +16,9 @@
 //    certainty puts the peer into ONE shared bucket "unknown", which is refused only for kUnknownDenySec and never
 //    doubles, so innocents behind it recover. A pid is never a key.
 //
-// Offences: LayoutFailed (short back-off, 2^n s up to 64 s), Oversized and Crash (blamed as above): refused for
+// Offences: LayoutFailed (short back-off, 2^n s up to 64 s), Flood (an application that re-announces its menu faster
+// than RefetchBudget allows for penalty::kFloodMs: refused kFloodBaseSec, doubling per flood up to kFloodMaxSec, not
+// ended by a delivery, not written to the state file), Oversized and Crash (blamed as above): refused for
 // 15 min, doubling per strike up to 6 h. A clean exit does not clear the doubling inside the decay window: an entry is
 // dropped after 24 h without a new strike. Refused entries are not evicted by idle churn, but at most kMaxRefused are
 // kept: past that the refusal closest to its expiry goes (capRefused). Idle entries (not refused) are bounded
@@ -59,9 +61,45 @@ namespace gf::menubridge {
         inline constexpr int       kMaxCrashesKept = 64;
         // An application that kills the bridge with a fresh single call costs one restart: the next run refuses it.
         inline constexpr int       kRestartsBeforeRefusal = 1;
+        // Re-reads of a menu (LayoutUpdated / ItemsPropertiesUpdated, AboutToShow's needUpdate) per identity, all its
+        // windows together: kRefetchBurst at once, then one per kRefetchRefillMs. A re-read over the budget waits for it.
+        inline constexpr int       kRefetchBurst    = 4;
+        inline constexpr qint64    kRefetchRefillMs = 1000;
+        // Demand over the budget, with no pause of kFloodQuietMs, for kFloodMs: a flood (the menu is dropped, T0 menus).
+        inline constexpr qint64    kFloodMs         = 30 * 1000;
+        inline constexpr qint64    kFloodQuietMs    = 2000;
+        inline constexpr qint64    kFloodBaseSec    = 60;
+        inline constexpr qint64    kFloodMaxSec     = 15 * 60;
+        inline constexpr int       kRefetchTracked  = 256; // identities with a budget (least recently asked first out)
     } // namespace penalty
 
-    enum class Offence { LayoutFailed, Oversized, Crash };
+    enum class Offence { LayoutFailed, Flood, Oversized, Crash };
+
+    // The re-read budget of every identity (pure; the clock in ms is injected for tests).
+    class RefetchBudget {
+      public:
+        explicit RefetchBudget(std::function<qint64()> clockMs);
+
+        // A re-read wanted now: 0 = go (a token was taken), > 0 = wait this many ms and ask again, -1 = a sustained flood
+        // (penalty::kFloodMs over the budget): the caller drops the menu and records Offence::Flood.
+        qint64 ask(const QString& id);
+        void   forget(const QString& id);
+        qsizetype size() const {
+            return m_entries.size();
+        }
+
+      private:
+        struct Entry {
+            double  tokens       = penalty::kRefetchBurst;
+            qint64  refilledAt   = 0;
+            qint64  floodStart   = -1; // first refusal of the current flood, -1 none
+            qint64  lastRefusal  = 0;
+            quint64 touch        = 0;
+        };
+        std::function<qint64()> m_clock;
+        QHash<QString, Entry>   m_entries;
+        quint64                 m_touch = 0;
+    };
 
     // CLOCK_BOOTTIME in seconds (counts across suspend, same value in every bridge run of this boot).
     qint64  nowSec();
@@ -147,6 +185,8 @@ namespace gf::menubridge {
         struct Entry {
             int     layoutFailures = 0;
             int     strikes        = 0;
+            int     floods         = 0;
+            qint64  floodUntil     = 0;
             qint64  layoutUntil    = 0;
             qint64  denyUntil      = 0;
             qint64  lastStrike     = 0;

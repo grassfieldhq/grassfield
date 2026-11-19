@@ -41,7 +41,7 @@ namespace gf::menubridge {
 
     Bridge::Bridge(const QDBusConnection& bus, QString socketPath, QObject* parent)
         : QObject(parent), m_bus(bus), m_socketPath(std::move(socketPath)), m_registrarObject([this] { onRegistrations(); }),
-          m_launcher(bus,
+          m_refetchBudget(monotonicMs), m_launcher(bus,
                      LauncherWatcher::Hooks{
                          .refused = [this](const QString& identity) {
                              QString why;
@@ -395,6 +395,7 @@ namespace gf::menubridge {
         msg.path    = registration.path;
         msg.pid     = pid;
         m_viaRegistrar.insert(window, pid);
+        m_registrarObject.markServed(registration.sender);
         open(msg); // the sender's process is checked again (GetConnectionUnixProcessID): a reused pid gets nothing
     }
 
@@ -440,6 +441,7 @@ namespace gf::menubridge {
         m_opened.insert(msg.window, SOpened{.service = msg.service, .path = msg.path, .pid = msg.pid});
         m_order.append(msg.window);
         m_keyOf.insert(msg.window, key);
+        c->setRefetchGate([this, key] { return m_refetchBudget.ask(key); });
         connect(c, &MenuClient::callBegun, this, [this, key] { beginCall(key); });
         connect(c, &MenuClient::callEnded, this, [this, key] { endCall(key); });
         connect(c, &MenuClient::menuChanged, this, [this, c, key](const QString& window) {
@@ -452,7 +454,8 @@ namespace gf::menubridge {
             if (m_menus.value(window) != c)
                 return;
             recordFailure(window, code);
-            sendError(window, code, message);
+            // A flood is a refusal to the shell (its menuLost codes): the window shows T0 menus, as for any back-off.
+            sendError(window, code == QLatin1String("flood") ? QStringLiteral("backoff") : code, message);
             close(window);
         });
         log(QStringLiteral("window %1: menu %2 %3 (pid %4, %5) opened").arg(msg.window, owner, msg.path).arg(msg.pid).arg(key));
@@ -469,6 +472,10 @@ namespace gf::menubridge {
             m_penalties.record(key, Offence::Oversized);
         else if (code == QLatin1String("layout-failed"))
             m_penalties.record(key, Offence::LayoutFailed);
+        else if (code == QLatin1String("flood")) {
+            m_penalties.record(key, Offence::Flood);
+            log(QStringLiteral("window %1: \"%2\" announced menu changes over its budget for %3 s: refused").arg(window, displayIdentity(key)).arg(penalty::kFloodMs / 1000));
+        }
         saveState();
     }
 

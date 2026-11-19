@@ -27,7 +27,9 @@ namespace gf::menubridge::registrar {
             return same->seq;
         }
         const auto mine = std::ranges::count_if(m_entries, [&](const Registration& r) { return r.sender == sender; });
-        if (mine >= kMaxPerSender || m_entries.size() >= kMaxTotal)
+        if (mine >= kMaxPerSender)
+            return 0;
+        if (m_entries.size() >= kMaxTotal && !evictUnserved(sender))
             return 0;
         m_entries.append(Registration{.sender = sender, .windowId = windowId, .path = path, .seq = ++m_seq});
         return m_seq;
@@ -45,14 +47,58 @@ namespace gf::menubridge::registrar {
         return m_entries.removeIf([&](const Registration& r) { return r.sender == sender && r.windowId == windowId; }) > 0;
     }
 
+    bool Book::evictUnserved(const QString& except) {
+        qsizetype victim = -1;
+        for (qsizetype i = 0; i < m_entries.size(); ++i) {
+            const Registration& r = m_entries.at(i);
+            if (r.sender == except || m_served.contains(r.sender))
+                continue;
+            if (victim < 0 || r.seq < m_entries.at(victim).seq)
+                victim = i;
+        }
+        if (victim < 0)
+            return false;
+        const QString sender = m_entries.at(victim).sender;
+        m_entries.removeAt(victim);
+        if (!holds(sender))
+            m_pids.remove(sender);
+        return true;
+    }
+
+    void Book::markServed(const QString& sender) {
+        if (holds(sender))
+            m_served.insert(sender);
+    }
+
     bool Book::senderGone(const QString& sender) {
         m_pids.remove(sender);
+        m_served.remove(sender);
         return m_entries.removeIf([&](const Registration& r) { return r.sender == sender; }) > 0;
     }
 
     void Book::setPid(const QString& sender, qint64 pid) {
-        if (pid > 0 && holds(sender))
-            m_pids.insert(sender, pid);
+        if (pid <= 0 || !holds(sender))
+            return;
+        m_pids.insert(sender, pid);
+        // One process, however many connections it opens, holds at most kMaxPerProcess registrations: the oldest go.
+        for (;;) {
+            qsizetype count = 0, oldest = -1;
+            for (qsizetype i = 0; i < m_entries.size(); ++i) {
+                if (m_pids.value(m_entries.at(i).sender, 0) != pid)
+                    continue;
+                ++count;
+                if (oldest < 0 || m_entries.at(i).seq < m_entries.at(oldest).seq)
+                    oldest = i;
+            }
+            if (count <= kMaxPerProcess)
+                break;
+            const QString gone = m_entries.at(oldest).sender;
+            m_entries.removeAt(oldest);
+            if (!holds(gone)) {
+                m_pids.remove(gone);
+                m_served.remove(gone);
+            }
+        }
     }
 
     qint64 Book::pidOf(const QString& sender) const {
@@ -77,6 +123,7 @@ namespace gf::menubridge::registrar {
     void Book::clear() {
         m_entries.clear();
         m_pids.clear();
+        m_served.clear();
     }
 
     Answer handle(Book& book, const QString& member, const QString& signature, const QVariantList& args, const QString& sender) {
