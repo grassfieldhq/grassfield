@@ -59,8 +59,9 @@ lock_on_close() {
   # No answer (or "Not ready to accept queries yet"): the security process is down or starting. Clamshell decides here
   # instead.
   external_connected && return 0
-  # In the background: the panel handling must not wait for a restart (the stand-in waits up to ~10 s).
-  [[ -x $FALLBACK ]] && setsid -f "$FALLBACK" lock lock >/dev/null 2>&1 </dev/null
+  # In the background: the panel handling must not wait for a restart (the stand-in waits up to ~10 s). Without
+  # reconcile's lock file (fd 9, when called from there): the stand-in would hold it and later calls would give up.
+  [[ -x $FALLBACK ]] && setsid -f "$FALLBACK" lock lock >/dev/null 2>&1 </dev/null 9>&-
   return 0
 }
 
