@@ -7,6 +7,7 @@
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 
+#include <algorithm>
 #include <utility>
 
 namespace gf::menubridge {
@@ -31,7 +32,7 @@ namespace gf::menubridge {
         QObject(parent), m_bus(bus), m_window(std::move(window)), m_service(std::move(service)), m_path(std::move(path)) {
         m_refetch.setSingleShot(true);
         m_refetch.setInterval(kRefetchDelayMs);
-        connect(&m_refetch, &QTimer::timeout, this, &MenuClient::fetch);
+        connect(&m_refetch, &QTimer::timeout, this, &MenuClient::refetchDue);
         m_retry.setSingleShot(true);
         connect(&m_retry, &QTimer::timeout, this, &MenuClient::fetch);
 
@@ -69,7 +70,24 @@ namespace gf::menubridge {
         // Not restarted while pending: a burst of signals less than kRefetchDelayMs apart would otherwise push the
         // refetch back for as long as it lasts. During a burst the layout is read at most every kRefetchDelayMs.
         if (!m_gone && !m_stopped && !m_refetch.isActive())
-            m_refetch.start();
+            m_refetch.start(kRefetchDelayMs);
+    }
+
+    void MenuClient::refetchDue() {
+        if (m_gone || m_stopped)
+            return;
+        // The application's re-reads are budgeted per identity (all its windows): a flood of LayoutUpdated costs at most
+        // one GetLayout a second once the burst is spent, and a flood that lasts drops the menu (Bridge records it).
+        const qint64 wait = m_gate ? m_gate() : 0;
+        if (wait < 0) {
+            giveUp(QStringLiteral("flood"), QStringLiteral("the application changes its menu continuously"));
+            return;
+        }
+        if (wait > 0) {
+            m_refetch.start(static_cast<int>(std::min<qint64>(wait, 60 * 1000)));
+            return;
+        }
+        fetch();
     }
 
     void MenuClient::fetch() {

@@ -26,13 +26,59 @@ bool isLatin1Type(const QByteArray &type)
 }
 
 // Characters a title or an excerpt never shows: C0 and C1 controls (but the excerpt's line breaks) and format characters
-// (bidirectional overrides, zero-width marks), which could make one item look like another.
-bool hidden(QChar c, bool keepNewline)
+// (bidirectional overrides, zero-width marks, tags), which could make one item look like another (visibleOnly).
+// A zero-width joiner or non-joiner between two of these is part of the text (B-19): emoji ZWJ sequences, and the joiners
+// Persian, Arabic and the Indic scripts need.
+bool joinable(char32_t c)
 {
-    if (keepNewline && c == QLatin1Char('\n'))
-        return false;
-    const QChar::Category cat = c.category();
-    return cat == QChar::Other_Control || cat == QChar::Other_Format || c == QChar(0x2028) || c == QChar(0x2029);
+    if (QChar::isLetter(c) || QChar::isMark(c))
+        return true;
+    const QChar::Category cat = QChar::category(c);
+    return cat == QChar::Symbol_Other || cat == QChar::Symbol_Modifier || (c >= 0x1F000 && c <= 0x1FAFF);
+}
+
+char32_t codePointAt(const QString &text, qsizetype i, int *units)
+{
+    *units = 1;
+    if (i >= text.size())
+        return 0;
+    const QChar c = text.at(i);
+    if (c.isHighSurrogate() && i + 1 < text.size() && text.at(i + 1).isLowSurrogate()) {
+        *units = 2;
+        return QChar::surrogateToUcs4(c, text.at(i + 1));
+    }
+    return c.unicode();
+}
+
+// `text` without the hidden characters above, read by code point (a format character beyond the BMP, a tag, is one too),
+// keeping a joiner between two joinable characters.
+QString visibleOnly(const QString &text, bool keepNewline)
+{
+    QString out;
+    out.reserve(text.size());
+    char32_t previous = 0;
+    for (qsizetype i = 0; i < text.size();) {
+        int units = 1;
+        const char32_t c = codePointAt(text, i, &units);
+        bool keep;
+        if (c == 0x200C || c == 0x200D) {
+            int nextUnits = 1;
+            keep = joinable(previous) && joinable(codePointAt(text, i + units, &nextUnits));
+        } else if (keepNewline && c == '\n') {
+            keep = true;
+        } else {
+            const QChar::Category cat = QChar::category(c);
+            keep = !(cat == QChar::Other_Control || cat == QChar::Other_Format || c == 0x2028 || c == 0x2029);
+        }
+        if (keep) {
+            out += text.mid(i, units);
+            previous = c;
+        } else {
+            previous = 0; // a removed character separates what was around it
+        }
+        i += units;
+    }
+    return out;
 }
 
 QString cut(const QString &text, int chars)
@@ -376,12 +422,7 @@ QString titleOf(const QString &text)
         line.reserve(raw.size());
         for (const QChar c : raw)
             line += c == QLatin1Char('\t') ? QLatin1Char(' ') : c;
-        QString clean;
-        clean.reserve(line.size());
-        for (const QChar c : line)
-            if (!hidden(c, false))
-                clean += c;
-        clean = clean.trimmed();
+        const QString clean = visibleOnly(line, false).trimmed();
         if (!clean.isEmpty())
             return cut(clean, kTitleChars);
     }
@@ -390,16 +431,9 @@ QString titleOf(const QString &text)
 
 QString excerptOf(const QString &text)
 {
-    QString clean;
-    const QString head = cut(text, kExcerptChars * 2);
-    clean.reserve(head.size());
-    for (const QChar c : head) {
-        if (c == QLatin1Char('\t'))
-            clean += QLatin1Char(' ');
-        else if (!hidden(c, true))
-            clean += c;
-    }
-    return cut(clean.trimmed(), kExcerptChars);
+    QString head = cut(text, kExcerptChars * 2);
+    head.replace(QLatin1Char('\t'), QLatin1Char(' '));
+    return cut(visibleOnly(head, true).trimmed(), kExcerptChars);
 }
 
 QString searchKey(const QString &text)
@@ -570,6 +604,13 @@ qint64 writerWaitMs(qint64 elapsedMs)
     return std::clamp(kWriterMaxMs - std::max<qint64>(elapsedMs, 0), qint64(0), kWriterIdleMs);
 }
 
+qint64 readWaitMs(qint64 elapsedMs, bool started)
+{
+    if (started)
+        return writerWaitMs(elapsedMs);
+    return std::clamp(kWriterMaxMs - std::max<qint64>(elapsedMs, 0), qint64(0), kReadFirstByteMs);
+}
+
 ClearAction clearAction(qint64 asked, qint64 applied, bool recordKnown)
 {
     if (asked <= 0)
@@ -644,6 +685,9 @@ Store::AddResult Store::add(Item item)
     for (qsizetype i = 0; i < m_history.size(); ++i) {
         if (m_history.at(i).kind == item.kind && m_history.at(i).hash == item.hash) {
             Item same = m_history.takeAt(i);
+            // The same text copied again elsewhere (a browser after a terminal): the newer copy's formats replace the old
+            // ones, so a paste from the history gives what was copied last (B-11). Pinned items keep what the user kept.
+            same.parts = item.parts;
             same.copiedAtMs = item.copiedAtMs;
             same.bootAtMs = item.bootAtMs;
             same.bootId = item.bootId;

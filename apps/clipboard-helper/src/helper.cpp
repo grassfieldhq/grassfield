@@ -3,6 +3,7 @@
 
 #include <QDateTime>
 #include <QElapsedTimer>
+#include <QProcess>
 #include <QFile>
 #include <QRandomGenerator>
 #include <QSaveFile>
@@ -11,6 +12,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <ctime>
+#include <utility>
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -21,7 +23,6 @@ using namespace ClipLogic;
 
 namespace
 {
-constexpr int kReadDeadlineMs = 2000;
 constexpr int kExpiryMs = 60 * 1000;
 constexpr int kMaxWriters = 16;
 constexpr int kPreviewTextChars = 64 * 1024;
@@ -31,6 +32,9 @@ constexpr int kMaxWaitingImages = 4;
 // this many times in a run, a minute apart; the next start tries again.
 constexpr int kThumbnailAttempts = 3;
 constexpr int kThumbnailRetryMs = 60 * 1000;
+// The history store's index is written this long after the change that dirtied it (one write for a copy and the items it
+// pushed out, or for the switch turned on with a full history).
+constexpr int kIndexDelayMs = 200;
 
 QByteArray readBootId()
 {
@@ -60,6 +64,7 @@ struct Helper::Pending {
     QSocketNotifier *notifier = nullptr;
     QTimer deadline;
     QElapsedTimer age; // of the read of the current type
+    bool started = false; // a byte of the current type arrived
     QByteArray buffer;
     qint64 cap = 0;
 };
@@ -87,6 +92,9 @@ Helper::Helper(Options options, Output output, Quit quit, QObject *parent)
     m_options.retentionMs = clampRetention(m_options.retentionMs);
     m_expiry.setInterval(kExpiryMs);
     connect(&m_expiry, &QTimer::timeout, this, [this] { expire(); });
+    m_indexTimer.setSingleShot(true);
+    m_indexTimer.setInterval(kIndexDelayMs);
+    connect(&m_indexTimer, &QTimer::timeout, this, [this] { flushHistoryIndex(); });
 }
 
 Helper::~Helper()
@@ -225,6 +233,10 @@ int Helper::start()
     callbacks.send = [this](const QByteArray &mime, int fd) { send(mime, fd); };
     callbacks.sourceCancelled = [this] {
         m_owned = Item();
+        if (m_keeping) {
+            m_quit(0); // another client took the clipboard: nothing left to keep
+            return;
+        }
         emitLine({"A", ""});
     };
     callbacks.fatal = [this](const QString &why) {
@@ -290,8 +302,9 @@ DiskStore::Clears Helper::applyClears(const QString &stateDir, qint64 clearedAtM
             } else {
                 for (const ClipLogic::Item &it : loaded.items) {
                     if (!std::any_of(kept.cbegin(), kept.cend(), [&](const ClipLogic::Item &k) { return k.id == it.id; }))
-                        store.removeItem(it.id, kept);
+                        store.removeItemFile(it.id);
                 }
+                store.saveIndex(kept); // one index for the whole clear
             }
             std::fprintf(stderr, "grassfield-clipboard: a clear asked before the record existed was carried out (the %s store)\n", name);
             break;
@@ -309,6 +322,7 @@ DiskStore::Clears Helper::applyClears(const QString &stateDir, qint64 clearedAtM
 
 void Helper::cleanup()
 {
+    flushHistoryIndex();
     const QByteArray runtime = QFile::encodeName(m_options.runtimeDir);
     const int dirfd = ::open(runtime.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dirfd < 0)
@@ -334,7 +348,7 @@ void Helper::cleanup()
 
 void Helper::updateCapture()
 {
-    if (!m_wl || !m_wl->supported())
+    if (!m_wl || !m_wl->supported() || m_keeping)
         return;
     // Both lock sources say unlocked (the compositor's notifier and the shell's resume), or there is no device at all.
     const bool on = !m_wl->compositorLocked() && m_shellResumed;
@@ -346,8 +360,15 @@ void Helper::updateCapture()
 void Helper::selection(WaylandClipboard::Offer *offer, bool first)
 {
     abortPending(); // a newer selection replaces the one being decided or read
-    if (!offer)
+    if (m_keeping) {
+        m_wl->release(offer); // keeping the clipboard only: nothing is recorded
         return;
+    }
+    if (!offer) {
+        if (!first)
+            clearedSoon();
+        return;
+    }
     if (first) {
         // It may have been copied during a lock, or before the history was on: never recorded.
         m_wl->release(offer);
@@ -356,9 +377,13 @@ void Helper::selection(WaylandClipboard::Offer *offer, bool first)
     const Plan p = plan(offer->types, offer->tooMany);
     if (p.hasMarker && m_wl->ownsSelection()) {
         m_wl->release(offer);
+        m_recentId.clear();
         ownSelectionConfirmed();
         return;
     }
+    // A new text may still be blank (a source that "clears" by copying nothing): the last copy stays a candidate until it is read.
+    if (p.kind != Kind::Text || p.refusal != Refusal::None)
+        m_recentId.clear();
     if (p.refusal != Refusal::None) {
         m_wl->release(offer);
         if (p.refusal == Refusal::Secret)
@@ -372,7 +397,7 @@ void Helper::selection(WaylandClipboard::Offer *offer, bool first)
     m_pending->seq = ++m_seq;
     m_pending->plan = p;
     m_pending->deadline.setSingleShot(true);
-    m_pending->deadline.setInterval(kReadDeadlineMs);
+    m_pending->deadline.setInterval(int(readWaitMs(0, false)));
     connect(&m_pending->deadline, &QTimer::timeout, this, [this] { readDone(ReadResult::Failed); });
     emitLine({"O", number(qint64(m_pending->seq)), kindName(p.kind)});
 }
@@ -398,6 +423,7 @@ void Helper::answer(quint64 seq, bool yes, const QString &app)
     if (!m_pending || m_pending->seq != seq || m_pending->approved)
         return;
     if (!yes) {
+        m_recentId.clear();
         abortPending();
         return;
     }
@@ -429,7 +455,9 @@ void Helper::readNext()
     p->notifier = new QSocketNotifier(p->fd, QSocketNotifier::Read, this);
     connect(p->notifier, &QSocketNotifier::activated, this, [this] { readable(); });
     p->age.start();
-    p->deadline.start(kReadDeadlineMs);
+    p->started = false;
+    // A source may take a while before its first byte (a large image encoded when asked, B-13).
+    p->deadline.start(int(readWaitMs(0, false)));
 }
 
 void Helper::readable()
@@ -448,6 +476,7 @@ void Helper::readable()
                 return;
             }
             progressed = true;
+            p->started = true;
             continue;
         }
         if (n == 0) {
@@ -459,7 +488,7 @@ void Helper::readable()
         if (errno != EAGAIN)
             readDone(ReadResult::Failed);
         else if (progressed) // a source that keeps sending (a large image encoded as it goes) is given the answers' limits
-            p->deadline.start(int(writerWaitMs(p->age.elapsed())));
+            p->deadline.start(int(readWaitMs(p->age.elapsed(), true)));
         return;
     }
 }
@@ -491,6 +520,10 @@ void Helper::finishRead()
     if (!built.ok) {
         const QByteArray why = "not recorded: " + built.error;
         log(why.constData());
+        if (built.error == "the text is blank")
+            clearedSoon(); // replaced by nothing: as good as a clear
+        else
+            m_recentId.clear();
         return;
     }
     Item item = built.item;
@@ -513,10 +546,18 @@ void Helper::addItem(Item item, const QByteArray &thumbnail)
     if (r.added && !thumbnail.isEmpty() && writeRuntimeFile(thumbPath(r.id), thumbnail))
         m_thumbs.insert(r.id, thumbPath(r.id));
     if (m_options.historyStore) {
+        // A copy of a text already in the history took its formats (B-11): its file is written again.
         if (const Item *it = m_store.find(r.id); it && !it->pinned())
-            m_historyDisk.save(*it, m_store.history());
+            m_historyDisk.saveItemFile(*it, !r.added);
         for (const QByteArray &id : r.evicted)
-            m_historyDisk.removeItem(id, m_store.history());
+            m_historyDisk.removeItemFile(id);
+        historyChanged();
+    }
+    if (const Item *it = m_store.find(r.id); it && !it->pinned()) {
+        m_recentId = r.id;
+        m_recentBootMs = nowBoot();
+    } else {
+        m_recentId.clear();
     }
     emitRemoved(r.evicted);
     emitItem(r.id);
@@ -621,6 +662,8 @@ void Helper::cancelNewImages()
 
 void Helper::command(const QByteArray &line)
 {
+    if (m_keeping)
+        return;
     const QList<QByteArray> f = splitLine(line);
     if (f.isEmpty())
         return;
@@ -679,7 +722,7 @@ void Helper::expire()
     if (gone.isEmpty())
         return;
     if (m_options.historyStore)
-        m_historyDisk.saveIndex(m_store.history());
+        historyChanged();
     for (const QByteArray &id : gone)
         ::unlink(QFile::encodeName(m_historyDisk.dir() + QLatin1Char('/') + QString::fromLatin1(id) + QStringLiteral(".item")).constData());
     emitRemoved(gone);
@@ -689,12 +732,27 @@ void Helper::pin(const QByteArray &id)
 {
     switch (m_store.pin(id, nowWall())) {
     case Store::PinResult::Pinned:
-        if (const Item *it = m_store.find(id)) {
-            if (!m_pinnedDisk.save(*it, m_store.pinnedItems()))
-                log("the pinned item could not be written");
+        if (const Item *it = m_store.find(id); it && !m_pinnedDisk.save(*it, m_store.pinnedItems())) {
+            // Not on disk (a full disk, a store left read-only): a pin that a restart would lose is no pin. The item goes
+            // back to the history and the shell says so (B-09).
+            log("the pinned item could not be written: it stays in the history");
+            m_pinnedDisk.removeItemFile(id); // its file, if only the index failed
+            bool found = false;
+            const QList<QByteArray> evicted = m_store.unpin(id, &found);
+            if (m_options.historyStore) {
+                for (const QByteArray &gone : evicted)
+                    m_historyDisk.removeItemFile(gone);
+                historyChanged();
+            }
+            emitRemoved(evicted);
+            emitItem(id);
+            emitLine({"N", "pin-failed", id});
+            break;
         }
-        if (m_options.historyStore)
-            m_historyDisk.removeItem(id, m_store.history());
+        if (m_options.historyStore) {
+            m_historyDisk.removeItemFile(id);
+            historyChanged();
+        }
         emitItem(id);
         break;
     case Store::PinResult::Full:
@@ -715,9 +773,10 @@ void Helper::unpin(const QByteArray &id)
     m_pinnedDisk.removeItem(id, m_store.pinnedItems());
     if (m_options.historyStore) {
         if (const Item *it = m_store.find(id))
-            m_historyDisk.save(*it, m_store.history());
+            m_historyDisk.saveItemFile(*it);
         for (const QByteArray &gone : evicted)
-            m_historyDisk.removeItem(gone, m_store.history());
+            m_historyDisk.removeItemFile(gone);
+        historyChanged();
     }
     emitRemoved(evicted);
     emitItem(id);
@@ -733,8 +792,10 @@ void Helper::remove(const QByteArray &id)
     m_store.remove(id);
     if (wasPinned)
         m_pinnedDisk.removeItem(id, m_store.pinnedItems());
-    else if (m_options.historyStore)
-        m_historyDisk.removeItem(id, m_store.history());
+    else if (m_options.historyStore) {
+        m_historyDisk.removeItemFile(id);
+        historyChanged();
+    }
     emitRemoved({id});
 }
 
@@ -742,6 +803,7 @@ void Helper::clearHistory()
 {
     cancelNewImages();
     const QList<QByteArray> ids = m_store.clearHistory();
+    m_historyIndexDirty = false;
     m_historyDisk.deleteAll();
     emitRemoved(ids);
 }
@@ -760,11 +822,97 @@ void Helper::setHistoryStore(bool on)
         return;
     m_options.historyStore = on;
     if (!on) {
+        m_historyIndexDirty = false;
         m_historyDisk.deleteAll();
         return;
     }
+    // Every item's file, then one index (it used to be one index per item: 100 items, 100 index writes with fsync).
     for (const Item &it : m_store.history())
-        m_historyDisk.save(it, m_store.history());
+        m_historyDisk.saveItemFile(it);
+    historyChanged();
+}
+
+void Helper::historyChanged()
+{
+    if (!m_options.historyStore)
+        return;
+    m_historyIndexDirty = true;
+    if (!m_indexTimer.isActive())
+        m_indexTimer.start();
+}
+
+void Helper::flushHistoryIndex()
+{
+    m_indexTimer.stop();
+    if (!std::exchange(m_historyIndexDirty, false) || !m_options.historyStore)
+        return;
+    if (!m_historyDisk.saveIndex(m_store.history()))
+        log("the history store's index could not be written");
+}
+
+void Helper::clearedSoon()
+{
+    const QByteArray id = std::exchange(m_recentId, QByteArray());
+    if (id.isEmpty() || nowBoot() - m_recentBootMs > kClearedSoonMs || (m_wl && m_wl->ownsSelection()))
+        return;
+    const Item *it = m_store.find(id);
+    if (!it || it->pinned())
+        return;
+    // The shell knows whether the copying application still runs (a password manager clearing what it copied) or left (the
+    // compositor clears the clipboard of a client that closes): it removes the item (X) or keeps it.
+    log("the clipboard was cleared within a minute of the last copy: the shell decides whether to keep it");
+    emitLine({"K", id});
+}
+
+bool Helper::keepSelection()
+{
+    if (m_keeping)
+        return true;
+    if (!m_wl || !m_wl->ownsSelection() || m_owned.id.isEmpty())
+        return false;
+    m_keeping = true;
+    abortPending();
+    flushHistoryIndex();
+    cancelNewImages();
+    m_imageQueue.clear();
+    m_expiry.stop();
+    m_output = [](const QByteArray &) {}; // nobody reads any more
+    // Only the item served is kept: the history and the pins are on disk or gone with the shell, as before.
+    m_store = Store();
+    m_recentId.clear();
+    cleanup();
+    log("the shell is gone: the clipboard's item is kept until another one is copied");
+    QTimer::singleShot(kKeepMs, this, [this] { m_quit(0); });
+    return true;
+}
+
+void Helper::leaveShellUnit()
+{
+    if (qEnvironmentVariableIsEmpty("XDG_RUNTIME_DIR") || qEnvironmentVariableIsEmpty("DBUS_SESSION_BUS_ADDRESS"))
+        return; // no user manager to ask (a test, a development run without one)
+    const QString pid = QString::number(qint64(::getpid()));
+    auto *busctl = new QProcess(this);
+    busctl->setProgram(QStringLiteral("busctl"));
+    busctl->setArguments({QStringLiteral("--user"), QStringLiteral("--quiet"), QStringLiteral("call"), QStringLiteral("org.freedesktop.systemd1"),
+                          QStringLiteral("/org/freedesktop/systemd1"), QStringLiteral("org.freedesktop.systemd1.Manager"), QStringLiteral("StartTransientUnit"),
+                          QStringLiteral("ssa(sv)a(sa(sv))"), QStringLiteral("grassfield-clipboard-helper-%1.scope").arg(pid), QStringLiteral("fail"),
+                          QStringLiteral("3"), QStringLiteral("Description"), QStringLiteral("s"), QStringLiteral("Grassfield clipboard history"),
+                          QStringLiteral("PIDs"), QStringLiteral("au"), QStringLiteral("1"), pid, QStringLiteral("CollectMode"), QStringLiteral("s"),
+                          QStringLiteral("inactive-or-failed"), QStringLiteral("0")});
+    busctl->setStandardOutputFile(QProcess::nullDevice());
+    busctl->setStandardErrorFile(QProcess::nullDevice());
+    connect(busctl, &QProcess::finished, this, [this, busctl](int code, QProcess::ExitStatus status) {
+        if (status != QProcess::NormalExit || code != 0)
+            log("could not leave the shell's unit: a restart of the shell ends the clipboard it serves");
+        busctl->deleteLater();
+    });
+    connect(busctl, &QProcess::errorOccurred, this, [this, busctl](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            log("busctl is missing: a restart of the shell ends the clipboard it serves");
+            busctl->deleteLater();
+        }
+    });
+    busctl->start();
 }
 
 // --- Serving an item --------------------------------------------------------------------------------------------------------
@@ -804,8 +952,7 @@ void Helper::ownSelectionConfirmed()
     if (m_owned.id.isEmpty())
         return;
     if (m_store.touch(m_owned.id, nowWall(), nowBoot(), m_bootId)) {
-        if (m_options.historyStore)
-            m_historyDisk.saveIndex(m_store.history());
+        historyChanged();
         emitItem(m_owned.id);
     }
     m_requestedId.clear();

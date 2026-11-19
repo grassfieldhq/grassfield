@@ -11,13 +11,23 @@
 
 namespace gf::prompter {
 
+    // Who asks (B-05): the session's own applications (gcr prompts, KIO) share what the system's daemons do not keep for
+    // themselves. NetworkManager and BlueZ each keep kReservedNm / kReservedBluetooth of the slots, so one application that
+    // opens prompts and leaves them can never make a Wi-Fi password or a pairing answer "no"; one application connection
+    // holds at most kPerCaller requests.
+    enum class Lane { Keyring, Kio, Nm, Bluetooth };
+    inline constexpr int kReservedNm        = 2;
+    inline constexpr int kReservedBluetooth = 2;
+    inline constexpr int kPerCaller         = 2;
+
     class RequestBook {
       public:
         explicit RequestBook(int capacity);
 
-        // A new id for `owner` (one request per owner at a time); empty when `capacity` requests are outstanding or
-        // `owner` already has one.
-        QString     reserve(const void* owner);
+        // A new id for `owner` (one request per owner at a time); empty when `capacity` requests are outstanding, when the
+        // slots left are the ones kept for the other lanes, when `caller` (a bus name, empty when not known) already holds
+        // kPerCaller requests, or when `owner` already has one.
+        QString     reserve(const void* owner, Lane lane, const QString& caller = QString());
         // The owner of `id`, nullptr when the id is not outstanding.
         const void* owner(const QString& id) const;
         // The outstanding id of `owner`, empty when it has none.
@@ -39,6 +49,8 @@ namespace gf::prompter {
         QHash<QString, const void*>   m_byId;
         QHash<const void*, QString>   m_byOwner;
         QHash<QString, quint64>       m_serial; // id -> its number, for ids()
+        QHash<QString, Lane>          m_lane;   // id -> its lane
+        QHash<QString, QString>       m_caller; // id -> its caller (when known)
     };
 
 } // namespace gf::prompter

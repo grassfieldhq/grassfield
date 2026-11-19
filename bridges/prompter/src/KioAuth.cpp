@@ -447,7 +447,7 @@ namespace gf::prompter::kio {
         const QString      path2 = directoryOf(info.parsed);
         const qint64       now   = m_clock();
         for (auto it = list.begin(); it != list.end();) {
-            if (it->expire == CacheEntry::Expire::Time && now > it->expireAt) {
+            if (it->expired(now)) {
                 it = list.erase(it);
                 continue;
             }
@@ -461,7 +461,7 @@ namespace gf::prompter::kio {
         return nullptr;
     }
 
-    void Cache::add(const QString& key, const AuthInfo& info, qint64 windowId, qint64 seqNr, bool canceled) {
+    void Cache::add(const QString& key, const AuthInfo& info, qint64 windowId, qint64 seqNr, bool canceled, const QString& caller) {
         QList<CacheEntry>& list = m_dict[key];
         CacheEntry         entry;
         bool               found = false;
@@ -484,24 +484,50 @@ namespace gf::prompter::kio {
         entry.seqNr     = seqNr;
         entry.canceled  = canceled;
         entry.order     = ++m_order;
-        touch(&entry, windowId, info.keepPassword && !canceled);
+        touch(&entry, windowId, info.keepPassword && !canceled, caller);
         QList<CacheEntry>& again = m_dict[key]; // evictOne may have changed the table
         again.append(entry);
         std::stable_sort(again.begin(), again.end(), [](const CacheEntry& a, const CacheEntry& b) { return a.directory.size() < b.directory.size(); });
     }
 
-    void Cache::touch(CacheEntry* entry, qint64 windowId, bool keep) {
+    void Cache::touch(CacheEntry* entry, qint64 windowId, bool keep, const QString& caller) {
         if (keep && !windowId) {
             entry->expire = CacheEntry::Expire::Never;
         } else if (windowId && entry->expire != CacheEntry::Expire::Never) {
             entry->expire = CacheEntry::Expire::WindowClose;
+            // kiod6 keeps it until the window closes, which it never hears of on Wayland: the bridge keeps it while a
+            // connection that tied it to a window is on the bus (callerGone), and at most kWindowExpireSeconds after its
+            // last use (B-04).
+            entry->expireAt = m_clock() + kWindowExpireSeconds;
             // The ids come from the callers: bounded, so that one entry cannot grow with every id a caller invents.
-            constexpr qsizetype kMaxWindows = 64;
-            if (entry->windows.size() < kMaxWindows && !entry->windows.contains(windowId))
-                entry->windows.append(windowId);
+            const CacheEntry::Window window{windowId, caller};
+            if (entry->windows.size() < kMaxWindows && !entry->windows.contains(window))
+                entry->windows.append(window);
         } else if (entry->expire == CacheEntry::Expire::Time) {
             entry->expireAt = m_clock() + kExpireSeconds;
         }
+    }
+
+    int Cache::callerGone(const QString& caller) {
+        if (caller.isEmpty())
+            return 0;
+        int gone = 0;
+        for (auto it = m_dict.begin(); it != m_dict.end();) {
+            QList<CacheEntry>& list = it.value();
+            for (qsizetype i = 0; i < list.size();) {
+                CacheEntry& e = list[i];
+                if (e.expire == CacheEntry::Expire::WindowClose && e.windows.removeIf([&](const CacheEntry::Window& w) { return w.caller == caller; }) > 0
+                    && e.windows.isEmpty()) {
+                    // Tied only to connections that left: no window of a living caller can ask for it again.
+                    list.removeAt(i);
+                    ++gone;
+                    continue;
+                }
+                ++i;
+            }
+            it = list.isEmpty() ? m_dict.erase(it) : std::next(it);
+        }
+        return gone;
     }
 
     void Cache::remove(const QString& key, const QString& realm) {
@@ -542,7 +568,7 @@ namespace gf::prompter::kio {
         const qint64 now = m_clock();
         // Expired entries first.
         for (auto it = m_dict.begin(); it != m_dict.end();) {
-            it.value().removeIf([&](const CacheEntry& e) { return e.expire == CacheEntry::Expire::Time && now > e.expireAt; });
+            it.value().removeIf([&](const CacheEntry& e) { return e.expired(now); });
             it = it.value().isEmpty() ? m_dict.erase(it) : std::next(it);
         }
         if (size() < m_capacity)

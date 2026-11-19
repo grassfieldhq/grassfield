@@ -12,7 +12,8 @@
 //   GRASSFIELD_MENU_BRIDGE_SOCKET    socket path of a development run only (ADR-0019 dev plumbing: ignored, and noted,
 //                                    in a session); otherwise $XDG_RUNTIME_DIR/grassfield/menu-bridge.sock. --socket
 //                                    (an explicit argument, never inherited) is honoured in both
-// Exit status: 0 stopped by a signal, 2 environment error, 3 refused by a safety check.
+// Exit status: 0 stopped by a signal, 1 the session bus connection closed (B-21: the unit restarts it), 2 environment error,
+// 3 refused by a safety check.
 
 #include "Bridge.h"
 #include "DBusObjects.h"
@@ -26,6 +27,7 @@
 #include <QDBusError>
 #include <QSocketNotifier>
 #include <QStringList>
+#include <QTimer>
 
 #include <csignal>
 #include <cstdio>
@@ -35,6 +37,8 @@
 using namespace gf::menubridge;
 
 namespace {
+    constexpr int kBusCheckMs = 1000;
+
     int refuse(const QString& why) {
         log(QStringLiteral("refusing to start: %1").arg(why));
         return 3;
@@ -135,6 +139,18 @@ int main(int argc, char** argv) {
             QCoreApplication::quit();
         });
     }
+    // QtDBus says nothing when its connection closes (a bus daemon restarted): a bridge left on a closed connection would
+    // stay up, deaf to every application, and never be restarted. Polled (no call is made: libdbus marks the connection
+    // closed when it reads the hang-up); exit 1, so Restart=on-failure brings it back on the new bus.
+    QTimer busCheck;
+    busCheck.setInterval(kBusCheckMs);
+    QObject::connect(&busCheck, &QTimer::timeout, &app, [&bus] {
+        if (bus.isConnected())
+            return;
+        log(QStringLiteral("the session bus connection closed: stopping"));
+        QCoreApplication::exit(1);
+    });
+    busCheck.start();
     log(QStringLiteral("%1 %2 on %3 (%4)").arg(QLatin1String(kBridgeVersion), QLatin1String(kProtocol), bus.baseService(), dev ? QStringLiteral("development, private bus") : QStringLiteral("session")));
 
     const int rc = QCoreApplication::exec();

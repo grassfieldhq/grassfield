@@ -484,7 +484,7 @@ namespace gf::prompter {
         }
         kio::CacheEntry* entry = m_cache.find(r->key, r->info);
         if (entry && !entry->canceled) {
-            m_cache.touch(entry, r->windowId, false);
+            m_cache.touch(entry, r->windowId, false, r->sender);
             kio::AuthInfo info = entry->info;
             info.modified      = true;
             log(QStringLiteral("check %1 (%2) answered from the session's cache").arg(r->requestId).arg(scheme(*r)));
@@ -549,7 +549,7 @@ namespace gf::prompter {
             processLater(); // kpasswdserver.cpp:407-409: only when the queue was empty, the next after each answer
     }
 
-    void KioServer::add(GDBusMethodInvocation* invocation, GVariant* parameters, const QString& /*sender*/) {
+    void KioServer::add(GDBusMethodInvocation* invocation, GVariant* parameters, const QString& sender) {
         GVariant*     raw      = nullptr;
         gint64        windowId = 0;
         g_variant_get(parameters, "(@(ysssssssssbbbba{s(siv)})x)", &raw, &windowId);
@@ -578,7 +578,7 @@ namespace gf::prompter {
         const bool    stored = info.keepPassword && store(key, info);
         if (stored)
             cached.keepPassword = false;
-        m_cache.add(key, cached, windowId, m_seqNr, false);
+        m_cache.add(key, cached, windowId, m_seqNr, false, sender);
         log(QStringLiteral("addAuthInfo (%1): kept in the session's cache%2")
                 .arg(flatten(info.parsed.scheme(), 16), stored ? QStringLiteral(" while its window lives, and sent to the keychain") : QString()));
     }
@@ -654,7 +654,7 @@ namespace gf::prompter {
             if (entry->canceled) {
                 info.modified = false;
             } else {
-                m_cache.touch(entry, r->windowId, false);
+                m_cache.touch(entry, r->windowId, false, r->sender);
                 r->info          = entry->info;
                 r->info.modified = true;
             }
@@ -912,7 +912,7 @@ namespace gf::prompter {
             kio::AuthInfo cached = info;
             if (!kio::extraBool(info, kio::kExtraSkipCaching) && info.keepPassword && store(r->key, info))
                 cached.keepPassword = false;
-            m_cache.add(r->key, cached, r->windowId, m_seqNr, false);
+            m_cache.add(r->key, cached, r->windowId, m_seqNr, false, r->sender);
         }
         info.modified = true;
         log(QStringLiteral("request %1 answered: a name and a password%2").arg(r->id, info.keepPassword ? QStringLiteral(", to be remembered") : QString()));
@@ -963,7 +963,7 @@ namespace gf::prompter {
             if (!entry || entry->canceled) {
                 info.modified = false;
             } else {
-                m_cache.touch(entry, w->windowId, false);
+                m_cache.touch(entry, w->windowId, false, w->sender);
                 info          = entry->info;
                 info.modified = true;
             }
@@ -1225,6 +1225,10 @@ namespace gf::prompter {
     }
 
     void KioServer::callerGone(const QString& name) {
+        // The session cache's entries tied to this connection's windows go with it (B-04: kiod6 would keep them until the
+        // window closes, which nothing reports on Wayland).
+        if (const int n = m_cache.callerGone(name); n > 0)
+            log(QStringLiteral("%1 cached password(s) forgotten: the connection that used them left the bus").arg(n));
         const QList<Request> all = m_requests;
         for (const Request& r : all) {
             if (r->sender != name || r->stage == KioRequest::Stage::Ended)

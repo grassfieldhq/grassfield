@@ -6,8 +6,11 @@
 #include <QDir>
 #include <QFile>
 
+#include <cerrno>
 #include <climits>
+#include <ctime>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -199,6 +202,77 @@ namespace gf::prompter {
         return program;
     }
 
+    namespace {
+        // What was read of one desktop entry file, by the file's identity and change times (B-note "requesterFor's cost": the
+        // directory was read and every entry parsed for each prompt). A file that changes (content, mode, owner: ctime) is
+        // read again; the trust of the path is checked at every use, never cached.
+        struct ParsedEntry {
+            dev_t        dev = 0;
+            ino_t        ino = 0;
+            qint64       size = 0;
+            timespec     mtime{};
+            timespec     ctime{};
+            DesktopEntry entry;
+        };
+
+        bool sameTime(const timespec& a, const timespec& b) {
+            return a.tv_sec == b.tv_sec && a.tv_nsec == b.tv_nsec;
+        }
+
+        QHash<QString, ParsedEntry>& parsedEntries() {
+            static QHash<QString, ParsedEntry> cache;
+            return cache;
+        }
+
+        // The parsed entry of `path` (a regular file, not a symlink, at most 64 KiB), from the cache while the file is the
+        // same; nullptr when it cannot be read.
+        const DesktopEntry* parsedEntry(const QString& path) {
+            auto&            cache = parsedEntries();
+            const QByteArray local = QFile::encodeName(path);
+            const int        fd    = ::open(local.constData(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | O_NOCTTY);
+            if (fd < 0) {
+                cache.remove(path);
+                return nullptr;
+            }
+            struct stat st{};
+            if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > 64 * 1024) {
+                ::close(fd);
+                cache.remove(path);
+                return nullptr;
+            }
+            auto it = cache.find(path);
+            if (it != cache.end() && it->dev == st.st_dev && it->ino == st.st_ino && it->size == st.st_size && sameTime(it->mtime, st.st_mtim)
+                && sameTime(it->ctime, st.st_ctim)) {
+                ::close(fd);
+                return &it->entry;
+            }
+            QByteArray text(static_cast<qsizetype>(st.st_size), Qt::Uninitialized);
+            qsizetype  got = 0;
+            while (got < text.size()) {
+                const ssize_t n = ::read(fd, text.data() + got, static_cast<size_t>(text.size() - got));
+                if (n < 0 && errno == EINTR)
+                    continue;
+                if (n <= 0)
+                    break;
+                got += n;
+            }
+            ::close(fd);
+            text.truncate(got);
+            ParsedEntry parsed;
+            parsed.dev   = st.st_dev;
+            parsed.ino   = st.st_ino;
+            parsed.size  = st.st_size;
+            parsed.mtime = st.st_mtim;
+            parsed.ctime = st.st_ctim;
+            parsed.entry = parseDesktopEntry(text);
+            // Bounded: a directory of more files than the scan reads never grows it past that.
+            if (cache.size() >= 8192)
+                cache.clear();
+            it = cache.insert(path, parsed);
+            return &it->entry;
+        }
+    } // namespace
+
     std::optional<DesktopEntry> desktopEntryFor(const FileId& exe, const QString& dir, const QStringList& programDirs, uid_t owner,
                                                 const QString& top) {
         if (!exe.valid)
@@ -209,22 +283,21 @@ namespace gf::prompter {
         for (const QString& name : names) {
             if (++read > 4096)
                 break;
-            const QString path = dir + u'/' + name;
-            if (!trustedPath(path, owner, top))
+            const QString       path   = dir + u'/' + name;
+            const DesktopEntry* parsed = parsedEntry(path);
+            if (!parsed || !parsed->application || parsed->hidden)
                 continue;
-            QFile file(path);
-            if (!file.open(QIODevice::ReadOnly) || file.size() > 64 * 1024)
-                continue;
-            DesktopEntry entry = parseDesktopEntry(file.read(64 * 1024));
-            if (!entry.application || entry.hidden)
-                continue;
-            const QString program = resolveProgram(execProgramOnly(entry.exec), programDirs);
+            const QString program = resolveProgram(execProgramOnly(parsed->exec), programDirs);
             if (program.isEmpty() || !(fileIdOf(program) == exe))
+                continue;
+            // Only an entry that runs this very file is worth the trust check (every directory above it), at every use.
+            if (!trustedPath(path, owner, top))
                 continue;
             if (found)
                 return std::nullopt; // two entries run the same file: neither is shown
-            entry.id = name;
-            found    = entry;
+            DesktopEntry entry = *parsed;
+            entry.id           = name;
+            found              = entry;
         }
         return found;
     }
@@ -317,8 +390,38 @@ namespace gf::prompter {
     }
 
     QHash<quint64, QPair<quint32, quint32>> selfMountDevices() {
-        QFile mountinfo(QStringLiteral("/proc/self/mountinfo"));
-        return mountinfo.open(QIODevice::ReadOnly) ? mountDevices(mountinfo.read(4 * 1024 * 1024)) : QHash<quint64, QPair<quint32, quint32>>();
+        // Read again only when the mount table changed (the kernel flags /proc/self/mountinfo with POLLPRI then), not for
+        // every prompt (B-note "requesterFor's cost").
+        static int                                     fd = -1;
+        static QHash<quint64, QPair<quint32, quint32>> devices;
+        static bool                                    known = false;
+        if (fd < 0) {
+            fd    = ::open("/proc/self/mountinfo", O_RDONLY | O_CLOEXEC);
+            known = false;
+            if (fd < 0)
+                return {};
+        }
+        pollfd p{fd, POLLPRI, 0};
+        const bool changed = ::poll(&p, 1, 0) > 0 && (p.revents & (POLLPRI | POLLERR));
+        if (known && !changed)
+            return devices;
+        QByteArray text;
+        char       chunk[65536];
+        off_t      offset = 0;
+        for (;;) {
+            const ssize_t n = ::pread(fd, chunk, sizeof chunk, offset);
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0)
+                break;
+            text.append(chunk, n);
+            offset += n;
+            if (text.size() > 4 * 1024 * 1024)
+                break;
+        }
+        devices = mountDevices(text);
+        known   = !devices.isEmpty();
+        return devices;
     }
 
     CodeMapping fileMapping(const QString& path, const QHash<quint64, QPair<quint32, quint32>>& devices) {

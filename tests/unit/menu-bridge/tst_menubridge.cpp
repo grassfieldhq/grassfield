@@ -540,6 +540,47 @@ TEST(MenuClientRefetch, AnUnchangedLayoutIsNotAnnouncedAgain) {
     EXPECT_EQ(client.items().at(0).toObject().value(QStringLiteral("label")).toString(), QStringLiteral("Edit"));
 }
 
+// B-02: the re-read budget is asked before every signalled re-read: a wait delays it (the menu keeps its layout), a flood
+// gives the menu up with "flood" and no GetLayout follows.
+TEST(MenuClientRefetch, TheGateDelaysReReadsAndAFloodGivesTheMenuUp) {
+    PeerMenu peer(QStringLiteral("menu-bridge-test-gate"));
+    if (!peer.ok())
+        GTEST_SKIP() << "cannot create a private D-Bus peer socket here";
+    peer.menu.layout = item(0, {{QStringLiteral("children-display"), QStringLiteral("submenu")}}, {item(1, {{QStringLiteral("label"), QStringLiteral("File")}})});
+    MenuClient client(peer.client, QStringLiteral("10"), QString(), QStringLiteral("/MenuBar/1"));
+    qint64     gate  = 300;
+    int        asked = 0;
+    client.setRefetchGate([&] {
+        ++asked;
+        const qint64 answer = gate;
+        gate                = 0; // the next ask goes through
+        return answer;
+    });
+    QString code;
+    QObject::connect(&client, &MenuClient::failed, [&](const QString&, const QString& c, const QString&) { code = c; });
+    client.start();
+    QElapsedTimer timer;
+    timer.start();
+    while (!client.ready() && timer.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+    ASSERT_TRUE(client.ready());
+    EXPECT_EQ(asked, 0) << "the first read is not budgeted";
+    QMetaObject::invokeMethod(&client, "onMenuSignal", Q_ARG(QDBusMessage, QDBusMessage()));
+    pump(150);
+    EXPECT_EQ(peer.getLayoutCalls(), 1) << "the gate said wait 300 ms";
+    pump(400);
+    EXPECT_EQ(peer.getLayoutCalls(), 2) << "read once the wait is over";
+    EXPECT_EQ(asked, 2);
+    gate = -1;
+    QMetaObject::invokeMethod(&client, "onMenuSignal", Q_ARG(QDBusMessage, QDBusMessage()));
+    pump(150);
+    EXPECT_EQ(code, QStringLiteral("flood"));
+    for (int i = 0; i < 5; ++i)
+        QMetaObject::invokeMethod(&client, "onMenuSignal", Q_ARG(QDBusMessage, QDBusMessage()));
+    pump(200);
+    EXPECT_EQ(peer.getLayoutCalls(), 2) << "nothing more is read after a flood";
+}
+
 // More items than any real menu has: refused, no menu, and not a single GetLayout more however many signals follow.
 TEST(MenuClientRefetch, OversizedLayoutIsRefusedAndNeverReread) {
     PeerMenu peer(QStringLiteral("menu-bridge-test-huge"));
@@ -1005,6 +1046,87 @@ TEST(Penalties, LayoutFailureBacksOffShortlyAndDeliveryEndsIt) {
     EXPECT_FALSE(b.refused(kApp, &why));
 }
 
+// B-02: re-reads per identity: a burst, then one a second; a flood that lasts is refused, a bursty application is not.
+TEST(RefetchBudget, BurstThenOneASecond) {
+    qint64        ms = 0;
+    RefetchBudget budget([&ms] { return ms; });
+    for (int i = 0; i < penalty::kRefetchBurst; ++i)
+        EXPECT_EQ(budget.ask(kApp), 0) << "the burst, read " << i;
+    const qint64 wait = budget.ask(kApp);
+    EXPECT_GT(wait, 0);
+    EXPECT_LE(wait, penalty::kRefetchRefillMs);
+    EXPECT_EQ(budget.ask(kOther), 0) << "another identity has its own budget";
+    ms += wait;
+    EXPECT_EQ(budget.ask(kApp), 0) << "one more once the wait is over";
+    EXPECT_GT(budget.ask(kApp), 0);
+    ms += 10 * penalty::kRefetchRefillMs;
+    for (int i = 0; i < penalty::kRefetchBurst; ++i)
+        EXPECT_EQ(budget.ask(kApp), 0) << "refilled to the burst, never beyond";
+    EXPECT_GT(budget.ask(kApp), 0);
+}
+
+TEST(RefetchBudget, ASustainedFloodIsReportedAPausedOneIsNot) {
+    qint64        ms = 0;
+    RefetchBudget budget([&ms] { return ms; });
+    // A client asking every 100 ms (10 a second, as LayoutUpdated spam does after coalescing at 40 ms or more).
+    int    floods = 0;
+    qint64 at     = -1;
+    while (ms < penalty::kFloodMs + 5000) {
+        const qint64 r = budget.ask(kApp);
+        if (r < 0) {
+            ++floods;
+            at = ms;
+            break;
+        }
+        ms += 100;
+    }
+    EXPECT_EQ(floods, 1);
+    EXPECT_GE(at, penalty::kFloodMs);
+    EXPECT_LE(at, penalty::kFloodMs + 1000);
+    // Bursts of 20 s separated by quiet pauses: throttled, never a flood.
+    RefetchBudget bursty([&ms] { return ms; });
+    ms = 0;
+    for (int round = 0; round < 6; ++round) {
+        for (int i = 0; i < 200; ++i) {
+            EXPECT_GE(bursty.ask(kOther), 0) << "round " << round;
+            ms += 100;
+        }
+        ms += penalty::kFloodQuietMs;
+    }
+    // Bounded: identities beyond the cap push the least recently asked out.
+    for (int i = 0; i < penalty::kRefetchTracked + 10; ++i)
+        budget.ask(QStringLiteral("id:exe=/usr/bin/app%1").arg(i));
+    EXPECT_LE(budget.size(), penalty::kRefetchTracked);
+}
+
+TEST(Penalties, AFloodIsRefusedThenDoublesAndADeliveryDoesNotEndIt) {
+    Clock       c;
+    PenaltyBook b = book(c);
+    QString     why;
+    b.record(kApp, Offence::Flood);
+    EXPECT_TRUE(b.refused(kApp, &why));
+    EXPECT_TRUE(why.contains(QLatin1String("continuously"))) << qPrintable(why);
+    b.delivered(kApp);
+    b.leftCleanly(kApp);
+    EXPECT_TRUE(b.refused(kApp, &why)) << "neither a delivered menu nor leaving ends it";
+    c.now += penalty::kFloodBaseSec;
+    EXPECT_FALSE(b.refused(kApp, &why));
+    b.record(kApp, Offence::Flood);
+    c.now += penalty::kFloodBaseSec * 2 - 1;
+    EXPECT_TRUE(b.refused(kApp, &why)) << "the second flood doubles";
+    c.now += 1;
+    EXPECT_FALSE(b.refused(kApp, &why));
+    for (int i = 0; i < 20; ++i)
+        b.record(kApp, Offence::Flood);
+    c.now += penalty::kFloodMaxSec;
+    EXPECT_FALSE(b.refused(kApp, &why)) << "capped";
+    b.record(kUnknownIdentity, Offence::Flood);
+    b.record(kUnknownIdentity, Offence::Flood);
+    c.now += penalty::kFloodBaseSec;
+    EXPECT_FALSE(b.refused(kUnknownIdentity, &why)) << "the shared bucket never doubles";
+    EXPECT_FALSE(b.serialize({}, kBoot, true).contains("deny")) << "a flood is not written to the state file";
+}
+
 TEST(Penalties, CleanExitDoesNotResetTheDoublingInsideTheDecayWindow) {
     Clock       c;
     PenaltyBook b = book(c);
@@ -1359,21 +1481,52 @@ TEST(Registrar, MalformedCallsAndOtherMethods) {
     EXPECT_EQ(book.count(), 0);
 }
 
-TEST(Registrar, TheBookIsCappedWithoutEviction) {
+TEST(Registrar, TheBookIsCappedAndIdleSendersMakeRoom) {
     registrar::Book book;
     for (quint32 id = 1; id <= registrar::kMaxPerSender; ++id)
         EXPECT_TRUE(book.add(QStringLiteral(":1.5"), id, QStringLiteral("/m/%1").arg(id)));
     EXPECT_FALSE(book.add(QStringLiteral(":1.5"), 99, QStringLiteral("/m/99"))) << "16 per sender";
     EXPECT_TRUE(book.add(QStringLiteral(":1.5"), 3, QStringLiteral("/m/3b"))) << "re-registering the same window replaces it";
     EXPECT_EQ(call(book, "RegisterWindow", "uo", registerArgs(99, "/m/99"), ":1.5").error, QStringLiteral("org.freedesktop.DBus.Error.LimitsExceeded"));
+    book.markServed(QStringLiteral(":1.5"));
     for (int s = 0; book.count() < registrar::kMaxTotal; ++s) {
         for (quint32 id = 1; id <= registrar::kMaxPerSender && book.count() < registrar::kMaxTotal; ++id)
             ASSERT_TRUE(book.add(QStringLiteral(":2.%1").arg(s), id, QStringLiteral("/m")));
     }
-    EXPECT_FALSE(book.add(QStringLiteral(":3.1"), 1, QStringLiteral("/m"))) << "128 in all";
+    // B-16: 128 in all, but idle connections (never served to a window) cannot keep a real application out: the oldest
+    // registration of a never-served sender makes room, never one of a served sender.
+    EXPECT_TRUE(book.add(QStringLiteral(":3.1"), 1, QStringLiteral("/m"))) << "an idle sender's oldest registration made room";
     EXPECT_EQ(book.count(), registrar::kMaxTotal);
-    EXPECT_TRUE(book.senderGone(QStringLiteral(":1.5")));
-    EXPECT_TRUE(book.add(QStringLiteral(":3.1"), 1, QStringLiteral("/m"))) << "a sender that left frees room";
+    EXPECT_TRUE(book.holds(QStringLiteral(":1.5"))) << "the served sender kept all its registrations";
+    int served = 0;
+    for (quint32 id = 1; id <= registrar::kMaxPerSender; ++id)
+        served += book.remove(QStringLiteral(":1.5"), id) ? 1 : 0;
+    EXPECT_EQ(served, registrar::kMaxPerSender);
+    // Every other sender served: nothing can be pushed out, LimitsExceeded.
+    registrar::Book full;
+    for (int s = 0; full.count() < registrar::kMaxTotal; ++s) {
+        for (quint32 id = 1; id <= registrar::kMaxPerSender && full.count() < registrar::kMaxTotal; ++id)
+            ASSERT_TRUE(full.add(QStringLiteral(":2.%1").arg(s), id, QStringLiteral("/m")));
+        full.markServed(QStringLiteral(":2.%1").arg(s));
+    }
+    EXPECT_FALSE(full.add(QStringLiteral(":3.1"), 1, QStringLiteral("/m"))) << "128 served registrations in all";
+    EXPECT_TRUE(full.senderGone(QStringLiteral(":2.0")));
+    EXPECT_TRUE(full.add(QStringLiteral(":3.1"), 1, QStringLiteral("/m"))) << "a sender that left frees room";
+}
+
+// B-16: one process cannot multiply its connections to take the whole book: its registrations together are capped.
+TEST(Registrar, OneProcessHoldsAtMostItsShareWhateverItsConnections) {
+    registrar::Book book;
+    for (int s = 0; s < 4; ++s) {
+        for (quint32 id = 1; id <= registrar::kMaxPerSender; ++id)
+            ASSERT_TRUE(book.add(QStringLiteral(":4.%1").arg(s), id, QStringLiteral("/m")));
+    }
+    for (int s = 0; s < 4; ++s)
+        book.setPid(QStringLiteral(":4.%1").arg(s), 4242);
+    EXPECT_EQ(book.count(), registrar::kMaxPerProcess);
+    EXPECT_FALSE(book.holds(QStringLiteral(":4.0"))) << "the oldest went first";
+    EXPECT_TRUE(book.holds(QStringLiteral(":4.3")));
+    EXPECT_EQ(book.pidOf(QStringLiteral(":4.0")), 0) << "a sender with nothing left is forgotten";
 }
 
 // The PID -> windows link: a window is served the newest registration of a sender of its own process.
@@ -1688,12 +1841,89 @@ TEST(LauncherBook, AtMost64Apps) {
     EXPECT_EQ(b.submit(kA, uri(K("app0")), props({{K("count"), qlonglong(2)}}), 80000).forward.size(), 1u);
 }
 
-TEST(LauncherBook, AtMost64Senders) {
+TEST(LauncherBook, AtMost64SendersIdleOnesMakeRoom) {
     Book b;
     for (int i = 0; i < kMaxSenders; ++i)
-        EXPECT_FALSE(b.submit(QStringLiteral(":1.%1").arg(i), uri(QStringLiteral("a%1").arg(i % 8)), props({{K("count"), qlonglong(1)}}), 0).dropped);
+        EXPECT_FALSE(b.submit(QStringLiteral(":1.%1").arg(i), uri(QStringLiteral("a%1").arg(i % 8)), props({{K("count"), qlonglong(1)}}), i).dropped);
     EXPECT_EQ(b.senders(), kMaxSenders);
-    EXPECT_TRUE(b.submit(QStringLiteral(":1.999"), uri(K("x")), props({{K("count"), qlonglong(1)}}), 0).dropped);
+    // B-16: senders :1.0 .. :1.55 hold no app any more (the last sender of an app owns it): the least recently heard one
+    // gives its place.
+    const Book::Result r = b.submit(QStringLiteral(":1.999"), uri(K("x")), props({{K("count"), qlonglong(1)}}), 100);
+    EXPECT_FALSE(r.dropped);
+    EXPECT_EQ(r.evicted, QStringLiteral(":1.0"));
+    EXPECT_EQ(b.senders(), kMaxSenders);
+    // Every sender holding an app: a newcomer is dropped.
+    Book full;
+    for (int i = 0; i < kMaxSenders; ++i)
+        ASSERT_FALSE(full.submit(QStringLiteral(":1.%1").arg(i), uri(QStringLiteral("a%1").arg(i)), props({{K("count"), qlonglong(1)}}), i).dropped);
+    EXPECT_TRUE(full.submit(QStringLiteral(":1.999"), uri(K("x")), props({{K("count"), qlonglong(1)}}), 100).dropped);
+}
+
+// B-17: an identified sender in an application's scope may only set its own application's badge.
+TEST(LauncherScope, AnAppScopedIdentitySetsOnlyItsOwnBadge) {
+    const QString foot = QStringLiteral("id:scope=app-Hyprland-foot|exe=/usr/bin/foot");
+    EXPECT_TRUE(mayUpdate(foot, K("foot")));
+    EXPECT_TRUE(mayUpdate(foot, K("Foot")));
+    EXPECT_FALSE(mayUpdate(foot, K("firefox")));
+    const QString chrome = QStringLiteral("id:scope=app-Hyprland-google\\x2dchrome|exe=/opt/google/chrome/chrome");
+    EXPECT_TRUE(mayUpdate(chrome, K("google-chrome")));
+    EXPECT_FALSE(mayUpdate(chrome, K("signal-desktop")));
+    const QString flatpak = QStringLiteral("id:scope=app-flatpak-org.telegram.desktop|exe=/app/bin/Telegram");
+    EXPECT_TRUE(mayUpdate(flatpak, K("org.telegram.desktop")));
+    EXPECT_TRUE(mayUpdate(flatpak, K("telegram"))) << "the executable's name";
+    EXPECT_FALSE(mayUpdate(flatpak, K("org.mozilla.firefox")));
+    const QString kio = QStringLiteral("id:scope=app-org.mozilla.Thunderbird|exe=/usr/lib/thunderbird/thunderbird");
+    EXPECT_TRUE(mayUpdate(kio, K("thunderbird"))) << "the last part of a reverse-DNS id";
+    EXPECT_TRUE(mayUpdate(kio, K("org.mozilla.Thunderbird")));
+    // Without a scope, or the unknown bucket: nothing tells which application it is.
+    EXPECT_TRUE(mayUpdate(QStringLiteral("id:exe=/usr/bin/python3|script=badge.py"), K("anything")));
+    EXPECT_TRUE(mayUpdate(QStringLiteral("unknown"), K("anything")));
+}
+
+TEST(LauncherScope, UpdatesWaitForTheIdentityThenObeyIt) {
+    Book    b;
+    QString evicted;
+    ASSERT_TRUE(b.awaitIdentity(kA, &evicted));
+    Book::Result r = b.submit(kA, uri(K("firefox")), props({{K("count"), qlonglong(3)}}), 0);
+    EXPECT_TRUE(r.waiting);
+    EXPECT_TRUE(r.forward.empty()) << "nothing is forwarded before the sender is known";
+    b.submit(kA, uri(K("foot")), props({{K("count"), qlonglong(2)}}), 1);
+    b.submit(kA, uri(K("foot")), props({{K("count"), qlonglong(5)}}), 2); // the last per uri
+    r = b.setIdentity(kA, QStringLiteral("id:scope=app-Hyprland-foot|exe=/usr/bin/foot"), 3);
+    EXPECT_TRUE(r.foreign) << "firefox's badge refused";
+    ASSERT_EQ(r.forward.size(), 1u);
+    EXPECT_EQ(r.forward.at(0).app, K("foot"));
+    EXPECT_EQ(r.forward.at(0).count, 5);
+    r = b.submit(kA, uri(K("firefox")), props({{K("urgent"), true}}), 4);
+    EXPECT_TRUE(r.dropped);
+    EXPECT_TRUE(r.foreign);
+    EXPECT_FALSE(r.malformed) << "no penalty: an application started from a terminal runs in the terminal's scope";
+    // A refused identity's early updates are dropped.
+    ASSERT_TRUE(b.awaitIdentity(kB, &evicted));
+    b.submit(kB, uri(K("x")), props({{K("count"), qlonglong(1)}}), 5);
+    EXPECT_TRUE(b.setIdentity(kB, QStringLiteral("id:exe=/usr/bin/x"), 6, false).forward.empty());
+}
+
+TEST(LauncherScope, OneIdentityHoldsAtMostItsShareOfSendersAndApps) {
+    Book          b;
+    const QString id = QStringLiteral("id:exe=/usr/bin/spam");
+    QString       evicted;
+    for (int i = 0; i < kMaxSendersPerIdentity + 2; ++i) {
+        const QString sender = QStringLiteral(":5.%1").arg(i);
+        ASSERT_TRUE(b.awaitIdentity(sender, &evicted));
+        const Book::Result r = b.setIdentity(sender, id, i);
+        EXPECT_EQ(r.dropped, i >= kMaxSendersPerIdentity) << i;
+    }
+    EXPECT_TRUE(b.submit(QStringLiteral(":5.9"), uri(K("a")), props({{K("count"), qlonglong(1)}}), 20).dropped) << "a refused sender";
+    int kept = 0;
+    for (int i = 0; i < kMaxAppsPerIdentity + 4; ++i)
+        kept += b.submit(QStringLiteral(":5.0"), uri(QStringLiteral("app%1").arg(i)), props({{K("count"), qlonglong(1)}}), 1000 * (i + 30)).dropped ? 0 : 1;
+    EXPECT_EQ(kept, kMaxAppsPerIdentity);
+    // The refused senders give their places first.
+    for (int i = 0; b.senders() < kMaxSenders; ++i)
+        ASSERT_TRUE(b.awaitIdentity(QStringLiteral(":6.%1").arg(i), &evicted));
+    ASSERT_TRUE(b.awaitIdentity(QStringLiteral(":7.1"), &evicted));
+    EXPECT_TRUE(evicted == QStringLiteral(":5.8") || evicted == QStringLiteral(":5.9")) << qPrintable(evicted);
 }
 
 TEST(LauncherBook, TwentyUpdatesPerSecondPerSenderThenCoalescing) {

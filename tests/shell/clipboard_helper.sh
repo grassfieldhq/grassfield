@@ -369,6 +369,7 @@ sleep 0.3
 srv main "SELECT text/plain;charset=utf-8|hex:$(hex 'kept on disk')"
 approve c 0 x >/dev/null
 waitline "$tmp/c.out" '^I\|[0-9a-f]+\|text\|.*\|kept on disk\|' 3 >/dev/null
+sleep 0.4 # the history's index is written once per change, a moment after it
 check "the opt-in history store is 0600" 600 "$(mode "$tmp/state/history/index.json")"
 stop_helper c
 # The one-shot clears the shell runs while the history is off: each deletes its own store only.
@@ -540,6 +541,104 @@ waitline "$tmp/r.out" '^S\|ok' 5 >/dev/null || bad "helper r did not start"
 check "no record: the history from before the clear goes" 0 "$(count "$tmp/r.out" '\|after search clear\|')"
 check "...and the record is written" "GFCLEARS1 $later 1" "$(cat "$s6/clears" 2>/dev/null)"
 stop_helper r
+
+# --- 10d. Audit round 2: a clear right after a copy (B-10), a pin that cannot be written (B-09), a device the compositor ends
+# (B-15), a shell that does not read (B-14), the clipboard kept when the shell goes ------------------------------------------
+s7=$tmp/state7
+offers_of() { count "$tmp/$1.out" '^O\|'; }
+devices=$(count "$tmp/main.out" '^DEVICE$')
+start_helper t "$tmp/main.sock" --state "$s7"
+waitline "$tmp/t.out" '^S\|ok' 5 >/dev/null || bad "helper t did not start"
+hlp t R
+waitline_nth "$tmp/main.out" '^DEVICE$' $((devices + 1)) 3 >/dev/null || bad "helper t has no device"
+sleep 0.2
+k1=$(copy_in t "$(offers_of t)" 'copied by a password manager')
+srv main CLEAR
+waitline "$tmp/t.out" "^K\\|$k1\$" 3 >/dev/null && pass "a clear within a minute of a copy is reported (K) for the shell to decide" || bad "no K line after a clear"
+srv main CLEAR
+sleep 0.3
+check "...once only" 1 "$(count "$tmp/t.out" '^K\|')"
+k2=$(copy_in t "$(offers_of t)" 'replaced by a blank copy')
+o=$(offers_of t)
+srv main "SELECT text/plain;charset=utf-8|hex:$(hex '   ')"
+approve t "$o" x >/dev/null
+waitline "$tmp/t.out" "^K\\|$k2\$" 3 >/dev/null && pass "a blank copy right after one counts as a clear" || bad "no K line after a blank copy"
+k3=$(copy_in t "$(offers_of t)" 'pinned, never reported')
+hlp t PIN "$k3"
+waitline "$tmp/t.out" "^I\\|$k3\\|text\\|[^|]*\\|[0-9]+\\|[0-9]+\\|[1-9]" 3 >/dev/null || bad "the pin was not reported"
+srv main CLEAR
+sleep 0.3
+check "a pinned copy is never reported by a clear" 0 "$(count "$tmp/t.out" "^K\\|$k3")"
+# B-09: the pinned item's file cannot be written (a directory in its place): the shell is told, the item stays in the history.
+k4=$(copy_in t "$(offers_of t)" 'a pin that cannot be written')
+mkdir "$s7/pinned/$k4.item"
+hlp t PIN "$k4"
+waitline "$tmp/t.out" "^N\\|pin-failed\\|$k4\$" 3 >/dev/null && pass "a pin that cannot be written is reported (N pin-failed)" || bad "no pin-failed line"
+last=$(tr "$US" '|' <"$tmp/t.out" | grep -a -E "^I\\|$k4\\|" | tail -n 1)
+check "...and the item stays unpinned" 0 "$(field "$last" 7)"
+rmdir "$s7/pinned/$k4.item"
+# B-15: the compositor ends the device: a new one is made, and copies are recorded again.
+devices=$(count "$tmp/main.out" '^DEVICE$')
+srv main FINISH
+waitline_nth "$tmp/main.out" '^DEVICE$' $((devices + 1)) 3 >/dev/null && pass "a device the compositor ends is made again" || bad "no new device after finished"
+sleep 0.3
+copy_in t "$(offers_of t)" 'after the device came back' >/dev/null && pass "...and copies are recorded again" || bad "nothing recorded after the new device"
+stop_helper t
+# B-14: a shell that reads nothing for a while (its thread busy): the helper's lines wait, and it goes on serving pastes.
+mkfifo "$tmp/u.in" "$tmp/u.pipe"
+exec {upipe}<>"$tmp/u.pipe"
+env -i PATH=/usr/bin:/bin "$helper" --display "$tmp/main.sock" --state "$s7" --runtime "$tmp/run/clipboard-u" \
+  <"$tmp/u.in" >"$tmp/u.pipe" 2>"$tmp/u.err" &
+pid_u=$!
+pids+=("$pid_u")
+exec {ufd}>"$tmp/u.in"
+selections=$(count "$tmp/main.out" '^SELECTION ')
+( # in the background: with a helper that blocks on its output, these writes block too
+  printf 'R\n'
+  for ((i = 1; i <= 12000; i++)); do printf 'Q\037%d\037zz\n' "$i"; done
+  printf 'C\037%s\0370\n' "$k3"
+) >&"$ufd" &
+writer=$!
+if waitline_nth "$tmp/main.out" '^SELECTION ' $((selections + 1)) 5 >/dev/null; then
+  pasted=$(count "$tmp/main.out" '^PASTED ')
+  srv main "PASTE text/plain;charset=utf-8 $tmp/u.paste"
+  waitline_nth "$tmp/main.out" '^PASTED ' $((pasted + 1)) 3 >/dev/null && check "a helper whose shell reads nothing still serves a paste" \
+    "pinned, never reported" "$(cat "$tmp/u.paste" 2>/dev/null)" || bad "no paste while the shell read nothing"
+else
+  bad "a helper whose shell reads nothing stopped (its output blocked it)"
+fi
+wait "$writer" 2>/dev/null
+timeout 3 cat <&"$upipe" >"$tmp/u.out"
+check "...and every line waited for the shell, in order" "12000 1" "$(count "$tmp/u.out" '^R\|') $(count "$tmp/u.out" "^A\\|$k3\$")"
+# The shell goes (its stdin closed) while the helper serves the clipboard: it keeps serving it until another client takes it.
+exec {ufd}>&-
+sleep 0.5
+if kill -0 "$pid_u" 2>/dev/null; then
+  pass "the helper that serves the clipboard outlives its shell"
+  pasted=$(count "$tmp/main.out" '^PASTED ')
+  rm -f "$tmp/u.paste"
+  srv main "PASTE text/plain;charset=utf-8 $tmp/u.paste"
+  waitline_nth "$tmp/main.out" '^PASTED ' $((pasted + 1)) 3 >/dev/null
+  check "...and still serves its item" "pinned, never reported" "$(cat "$tmp/u.paste" 2>/dev/null)"
+  srv main "SELECT text/plain;charset=utf-8|hex:$(hex 'another app')"
+  for _ in $(seq 1 50); do kill -0 "$pid_u" 2>/dev/null || break; sleep 0.05; done
+  wait "$pid_u" 2>/dev/null
+  check "...until another client takes the clipboard (exit 0)" 0 "$?"
+  grep -a -q "the shell is gone: the clipboard's item is kept" "$tmp/u.err" && pass "...logged by reason" || bad "the kept clipboard is not logged"
+else
+  wait "$pid_u" 2>/dev/null
+  bad "the helper ended with its shell although it served the clipboard"
+fi
+exec {upipe}<&-
+# Without a clipboard to serve, the helper ends with its shell (exit 0).
+start_helper w "$tmp/main.sock" --state "$s7"
+waitline "$tmp/w.out" '^S\|ok' 5 >/dev/null || bad "helper w did not start"
+v="hlp_w"
+f=${!v}
+exec {f}>&-
+# shellcheck disable=SC2154 # set by start_helper (printf -v)
+wait "$pid_w" 2>/dev/null
+check "a helper that serves nothing ends with its shell (exit 0)" 0 "$?"
 
 # --- 11. No content in the logs, unsupported compositors -----------------------------------------------------------------
 if grep -a -q -- "$canary" "$tmp"/*.err; then bad "a copied text reached a log"; else pass "no copied text in any log"; fi
