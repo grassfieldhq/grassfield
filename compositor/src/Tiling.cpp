@@ -146,20 +146,15 @@ namespace gf::tiler {
         };
 
         struct SState {
-            bool                             ready = false;
             tiling::CTileBook                book;
             uint64_t                         posted = 0; // generation of the latest notice
             PHLWINDOWREF                     resizing;   // a tiled window one of Hyprland's resizes holds
-            bool                             relayoutPending = false;
-            bool                             gatherPending   = false; // an output went away: windows left off every output come back (D67)
             std::vector<SResume>             resuming;
             gf::deferredFocus::CLater        later; // after Hyprland's own handling (its callback is code of this library)
             std::vector<CHyprSignalListener> listeners;
             SDrag                            drag;
             SP<CEventLoopTimer>              previewTimer; // draws the preview once the delay passed (code of this library: removed in stop())
-            bool                             recheck = false;  // a key may have changed Alt: the drag's place is read again
             std::optional<Vector2D>          press;            // the pointer at the left button's press (the grip of Hyprland's move)
-            uint32_t                         pressMs = 0;
             std::optional<SMoveRelease>      moveRelease;
             SBorderClicks                    border;
             SSeparatorClicks                 separator;
@@ -167,14 +162,10 @@ namespace gf::tiler {
             std::optional<SExtend>           extend;
             std::optional<tiling::Suggestion> suggestion; // TL28: valid while the book is at its generation
             std::optional<SEdgeDrag>          edge;            // TL30: a shared edge being dragged
-            bool                              edgeReleaseOwed = false; // the release of the handle's cancelled press is cancelled too
-            bool                              edgeCursor      = false; // the handle's cursor is set (Hyprland's special-action override)
-            bool                              holdPending     = false; // the shell's menu bar mapped: windows left under it go below it
             SP<CEventLoopTimer>               edgeTimer;       // the frames that waited for the next refresh (code of this library: removed in stop())
             std::vector<tiling::Rect>         neighbourScratch; // snapFor's neighbour frames, kept between motions (WM-13)
             uint64_t                          previewDueMs = 0; // when the armed preview timer fires (0: not armed): re-armed only when it moves
             uint64_t                          groupedAt    = 0; // book generation + 1 that `grouped` was read at (0: never)
-            bool                              grouped      = false; // some record is a Tiled group member (edgeHover)
             SEdgeScene                        edgeHoverScene;  // the edges hover looks up, kept while what they derive from holds
             std::vector<tiling::SplitDesk>    splits;          // TL33: the Split View Desktops the plugin made
             std::unordered_map<uint64_t, tiling::TileRecord> splitHomes; // TL33: a member's tile on its home Desktop before its split
@@ -183,6 +174,16 @@ namespace gf::tiler {
             std::vector<PHLWINDOWREF>         fitting;         // Free windows moved to another output's Desktop: fitted once Hyprland placed them
             std::unordered_map<uint64_t, tiling::DeskPlace> lastDesk; // the Desktop each window was last on (core fitsOnMove)
             SMoveFrom                         moveFrom;        // the output one of Hyprland's moves began on (fitted at its release; no window: none)
+
+            bool                             ready = false;
+            bool                             relayoutPending = false;
+            bool                             gatherPending   = false; // an output went away: windows left off every output come back (D67)
+            bool                             recheck = false;  // a key may have changed Alt: the drag's place is read again
+            uint32_t                         pressMs = 0;
+            bool                              edgeReleaseOwed = false; // the release of the handle's cancelled press is cancelled too
+            bool                              edgeCursor      = false; // the handle's cursor is set (Hyprland's special-action override)
+            bool                              holdPending     = false; // the shell's menu bar mapped: windows left under it go below it
+            bool                              grouped      = false; // some record is a Tiled group member (edgeHover)
         };
 
         // Constructed on first use inside a guarded call (R13).
