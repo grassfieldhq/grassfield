@@ -2,7 +2,7 @@ import QtQuick
 import QtTest
 import Grassfield.Ui
 
-// A glyph colour's alpha fades the glyph (refinement batch 6 delta review): MultiEffect reads the alpha of its colorization
+// A glyph colour's alpha fades the glyph (refinement batch 6 delta review; the effect is the glyph shader since audit B-07): MultiEffect read the alpha of its colorization
 // colour as the tint's STRENGTH over the white-lifted glyph, which lightens a glyph on a dark window. Icon tints at alpha 1 and
 // the alpha is the effect's opacity. The structure is asserted always; the pixels where the scene graph draws the effect (the
 // software backend of an offscreen run does not draw it, so the pixel check then says so and is skipped).
@@ -39,7 +39,8 @@ TestCase {
 
     function effectOf(icon) {
         for (let i = 0; i < icon.children.length; i++) {
-            if (icon.children[i].colorizationColor !== undefined)
+            // The glyph shader (shaders/glyph.frag, audit B-07): its `ink` is the tint.
+            if (icon.children[i].ink !== undefined)
                 return icon.children[i];
         }
         return null;
@@ -49,7 +50,7 @@ TestCase {
         const f = effectOf(full);
         const h = effectOf(half);
         verify(f !== null && h !== null, "the tint effect");
-        compare(h.colorizationColor.a, 1, "the tint is opaque");
+        compare(h.ink.a, 1, "the tint is opaque");
         fuzzyCompare(h.opacity, 0.4, 0.001);
         compare(f.opacity, 1);
     }

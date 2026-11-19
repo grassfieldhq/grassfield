@@ -38,6 +38,9 @@ T.Control {
 
     // Emitted when the user changes the value (not when it is set from outside).
     signal moved(real value)
+    // The pointer let go of the slider after a drag or a click (or the press was taken away): a host that throttles its
+    // writes (Settings' ConfigStore) writes the last position now.
+    signal released
 
     // `value` stays a pure input (external bindings survive). A user change is held in `local`
     // until the host sets a new value, so an unbound slider still follows the user.
@@ -228,6 +231,8 @@ T.Control {
         }
         // Released or taken away: the host's value shows again when it changed during the hold.
         onPressedChanged: {
+            if (!pressed)
+                root.released();
             if (!pressed && root.echoed) {
                 root.echoed = false;
                 root.local = NaN;

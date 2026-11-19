@@ -105,4 +105,28 @@ TestCase {
         compare(Model.navTarget(grid, 0, -1, 0), -1);
         compare(Model.navTarget(grid, 99, 1, 0), -1);
     }
+
+    function source(path) {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../" + path), false);
+        xhr.send();
+        verify(xhr.responseText.length > 0, path);
+        return xhr.responseText;
+    }
+
+    // Quick Settings opens without building what it does not show (audit note): each detail section (Wi-Fi, Bluetooth, Sound,
+    // Appearance) is a Loader active only while it is the opened one, and the whole panel is made once in the background
+    // after start (its types compiled before the first click), then let go.
+    function test_sectionsBuiltWhenOpened() {
+        const cc = source("shell/overlay/ControlCenter.qml");
+        for (const pair of [["wifi", "WifiList"], ["bluetooth", "BluetoothList"], ["sound", "SoundList"], ["appearance", "AppearanceSection"]]) {
+            const re = new RegExp("Loader \\{\\s*width: parent.width\\s*active: root.expanded === \"" + pair[0] + "\"\\s*visible: active\\s*sourceComponent: " + pair[1] + " \\{\\}");
+            verify(re.test(cc), pair[1] + " is made only while open");
+        }
+        const overlay = source("shell/overlay/Overlay.qml");
+        const pre = overlay.substring(overlay.indexOf("id: prewarm\n"));
+        verify(pre.indexOf("asynchronous: true") >= 0 && pre.indexOf("sourceComponent: controlCenter") >= 0, "made in the background");
+        verify(pre.indexOf("onLoaded: Qt.callLater(() => prewarm.active = false)") >= 0, "and let go");
+        verify(/id: prewarmDelay[\s\S]{0,200}win\.modelData === Quickshell\.screens\[0\]/.test(overlay), "once, on the first output");
+    }
 }

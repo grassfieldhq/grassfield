@@ -16,7 +16,7 @@ cd "$root" || exit 2
 fail=0
 check() { if "$@"; then echo "PASS: $desc"; else echo "FAIL: $desc"; fail=1; fi; }
 
-surfaces=(shell/notifications/Banner.qml shell/notifications/Banners.qml shell/notifications/NotificationCenter.qml
+surfaces=(shell/notifications/Banner.qml shell/notifications/Banners.qml shell/notifications/BannerStack.qml shell/notifications/NotificationCenter.qml
   shell/notifications/NotificationList.qml
   shell/overview/OverviewWindow.qml shell/search/SearchPanel.qml shell/overlay/StackPopup.qml shell/osd/OsdWindow.qml
   shell/saver/SaverView.qml)
