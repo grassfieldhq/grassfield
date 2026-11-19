@@ -145,6 +145,8 @@ local function read_rules(path)
   -- A rule file is a few dozen calls; the hook stops one that is still running after M.max_instructions.
   local hooks = type(debug) == "table" and debug.sethook and debug.gethook and debug
   local before = hooks and table.pack(hooks.gethook())
+  -- A hook set from C (the host's own; gethook names it "external hook") cannot be put back from Lua: it is left alone.
+  if before and before[1] ~= nil and type(before[1]) ~= "function" then hooks = nil end
   if hooks then
     hooks.sethook(function() error("stopped: it runs too long for a rule file", 0) end, "", M.max_instructions)
   end
