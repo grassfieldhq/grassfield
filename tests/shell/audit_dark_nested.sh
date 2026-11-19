@@ -5,6 +5,11 @@
 #   tests/shell/audit_dark_nested.sh [scenario ...]     default: settings controlcenter files menubar search apps overview
 set -uo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# The scenarios start a nested session (scripts/dev/nested-up.sh), which refuses inside a PID namespace (a container, the
+# Claude Code sandbox, a CI job): nothing can be captured there, so that is a SKIP with its reason, not a failure.
+# shellcheck source=../../scripts/dev/pidfile.sh
+. "$root/scripts/dev/pidfile.sh"
+dev_host_namespace || { echo "SKIP audit_dark_nested: a nested session cannot start in a PID namespace (container or sandbox; run it as a bare command)"; exit 0; }
 export VISUAL_APPEARANCE=dark VISUAL_LANG=en VISUAL_SHOTS=$root/.dev/f1-audit-dark
 mkdir -p "$VISUAL_SHOTS"
 scenarios=("$@")

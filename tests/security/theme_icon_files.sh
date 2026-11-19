@@ -68,7 +68,10 @@ root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root"
 unset QT_QPA_PLATFORMTHEME
 ui/i18n/build-direct.sh >/dev/null
-tmp=$(mktemp -d "${GRASSFIELD_TEST_TMP:-${TMPDIR:-/tmp}}/theme-icon-files.XXXXXX")
+# The scratch tree lies in /tmp, one of the places the helper accepts a picture from (image-copy.py ROOTS: where applications
+# leave notification images and media art), whatever GRASSFIELD_TEST_TMP is: the regular pictures "elsewhere" below must be
+# accepted for what they are, not refused for where test.sh's scratch directory happens to be (the checkout's .dev).
+tmp=$(mktemp -d /tmp/theme-icon-files.XXXXXX)
 watchers=()
 cleanup() {
   ((${#watchers[@]} == 0)) || kill "${watchers[@]}" 2>/dev/null || true

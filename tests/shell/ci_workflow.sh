@@ -39,6 +39,9 @@ try:
     expect("yaml: scope, setup, toolkit, check, test in this order", -1 not in order and order == sorted(order))
     expect("yaml: the checks and the tests run as the unprivileged user",
            all(r.startswith("runuser -u builder -- ") for r in runs if "ci.sh check" in r or "ci.sh test" in r))
+    expect("yaml: the checks and the tests run in setup's copy in the user's home, their logs in the workspace",
+           all("/home/builder/grassfield/scripts/gates/ci.sh" in r and '"$GITHUB_WORKSPACE/.dev/ci"' in r and "HOME=/home/builder" in r
+               for r in runs if "ci.sh check" in r or "ci.sh test" in r))
     expect("yaml: clang-tidy is installed when the scope is full", "steps.scope.outputs.scope == 'full' && '--tidy'" in next(r for r in runs if "ci.sh setup" in r))
     upload = [s for s in steps if s.get("uses", "").startswith("actions/upload-artifact@")]
     expect("yaml: the test summary is uploaded, also after a failure",

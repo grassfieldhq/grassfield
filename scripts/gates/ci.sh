@@ -42,9 +42,16 @@ PINS=(
 # plugins some suites load, kio-extras (Files' thumbnails and network places), shellcheck, and a headless weston for the P3
 # probe's live test (with wayland-protocols for the probe's build). The pinned Quickshell's depends come from the repositories
 # (cpptrace, jemalloc, ...), as the Hyprland stack's do (installed at their current versions first, then replaced by the pins).
+# The suites' own needs: node (the desktop clipboard probe), foot (the terminal entries and theme), and an Omarchy machine's
+# fonts for the session fontconfig test (Noto with its emoji and CJK fonts, Liberation and the URW fonts of the metric aliases,
+# JetBrains Mono Nerd Font, Omarchy's monospace).
 EXTRA=(base-devel git just gitleaks jq python python-gobject python-yaml dbus ttf-dejavu inter-font xorg-server-xvfb qt6-imageformats
-  kimageformats kio-extras shellcheck weston wayland-protocols
+  kimageformats kio-extras shellcheck weston wayland-protocols nodejs foot
+  noto-fonts noto-fonts-emoji noto-fonts-cjk ttf-liberation gsfonts ttf-jetbrains-mono-nerd
   cpptrace jemalloc libpipewire libxcb libdrm mesa pam polkit qt6-base qt6-declarative qt6-svg qt6-wayland)
+# The locales the suites sort and translate with: en_US (the collation the expectations are written in, the owner's) and fr_FR
+# (the French runs).
+LOCALES=(en_US.UTF-8 fr_FR.UTF-8)
 
 # The PKGBUILD's global makedepends and package_grassfield-desktop()'s depends, version constraints off, Grassfield's own
 # packages out (built from this tree), quickshell out (pinned): the reader of scripts/gates/rc-toolkit.sh.
@@ -110,14 +117,55 @@ setup() { # [--tidy] [user]
   ci_only setup || return 2
   # The container has no user namespace for pacman's download sandbox (scripts/gates/rc-toolkit.sh does the same).
   grep -q '^DisableSandbox' /etc/pacman.conf || sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
-  pacman-key --init >/dev/null && pacman-key --populate archlinux >/dev/null || { echo "ci.sh setup: pacman-key failed" >&2; return 1; }
+  # The archlinux image leaves out the locale sources and the translations (NoExtract): the packages go in whole, as on a
+  # machine, and glibc once more for its locale sources.
+  sed -i '/^NoExtract/d' /etc/pacman.conf
+  { pacman-key --init >/dev/null && pacman-key --populate archlinux >/dev/null; } || { echo "ci.sh setup: pacman-key failed" >&2; return 1; }
   mapfile -t pkgs < <(deps)
   ((tidy)) && pkgs+=(clang)
   echo "ci.sh setup: ${#pkgs[@]} packages$( ((tidy)) && echo ', clang for clang-tidy')"
   pacman -Syu --noconfirm --needed "${pkgs[@]}" || { echo "ci.sh setup: pacman -Syu failed" >&2; return 1; }
+  pacman -S --noconfirm glibc || { echo "ci.sh setup: glibc reinstall failed" >&2; return 1; }
+  locales || return 1
+  # A machine has an identity (D-Bus and the suites' private buses read it); the image's is empty.
+  if ! grep -qxE '[0-9a-f]{32}' /etc/machine-id 2>/dev/null; then
+    { dbus-uuidgen >/etc/machine-id.new && mv /etc/machine-id.new /etc/machine-id; } || { echo "ci.sh setup: no machine-id" >&2; return 1; }
+  fi
   id -u "$user" >/dev/null 2>&1 || useradd -m "$user" || return 1
   chown -R "$user:$user" "$root" || return 1
+  workdir_copy "$user" || return 1
   pacman -Q qt6-base qt6-declarative kcoreaddons
+}
+
+# The locales of LOCALES generated (/etc/locale.gen lists them commented out).
+locales() {
+  local l
+  for l in "${LOCALES[@]}"; do
+    grep -qx "$l UTF-8" /etc/locale.gen || sed -i "s/^#${l/./\\.} UTF-8/$l UTF-8/" /etc/locale.gen
+    grep -qx "$l UTF-8" /etc/locale.gen || echo "$l UTF-8" >>/etc/locale.gen
+  done
+  locale-gen >/dev/null || { echo "ci.sh setup: locale-gen failed" >&2; return 1; }
+  for l in "${LOCALES[@]}"; do
+    locale -a | grep -qix "${l%.UTF-8}.utf8" || { echo "ci.sh setup: locale $l missing after locale-gen" >&2; return 1; }
+  done
+}
+
+# The checks and tests run from a copy of the checkout in the user's home, as on a machine: the suites' scratch directories
+# are below the checkout (.dev/test-tmp.*), and the shell reads images and icons only below the home and the data
+# directories (notification images, theme icon files: shell/services/image-copy.py). The runner's workspace keeps the logs
+# (ci.sh check and test take it as DIR).
+workdir_of() { # <user>: <home>/grassfield
+  local home
+  home=$(getent passwd "$1" | cut -d: -f6)
+  [[ $home == /* ]] || return 1
+  echo "$home/grassfield"
+}
+workdir_copy() { # <user>
+  local dest
+  dest=$(workdir_of "$1") || { echo "ci.sh setup: $1 has no home" >&2; return 1; }
+  [[ $(cd "$root" && pwd -P) != "$dest" ]] || return 0
+  rm -rf -- "$dest" && mkdir -p "$dest" && cp -a -- "$root/." "$dest/" && chown -R "$1:$1" "$dest" || return 1
+  echo "ci.sh setup: the checkout copied to $dest (the checks and tests run there)"
 }
 
 # The pinned packages: downloaded, checked, installed, held. The Hyprland stack goes in with -dd (its current depends are
@@ -147,11 +195,17 @@ toolkit() {
   qs --version
 }
 
-# The environment of the checks and tests: a UTF-8 locale (Qt warns under C/POSIX, and a warning fails the suites), a runtime
-# directory of the user's own.
+# The environment of the checks and tests: the owner's locale, en_US.UTF-8 (the suites' sorted expectations are written in its
+# collation; Qt warns under C/POSIX, and a warning fails the suites), C.UTF-8 only where en_US is not generated (with a
+# warning), and a runtime directory of the user's own.
 user_env() {
-  export LANG=${LANG:-C.UTF-8}
-  [[ $LANG == C || $LANG == POSIX ]] && export LANG=C.UTF-8
+  unset LC_ALL LC_COLLATE LC_CTYPE LC_MESSAGES LANGUAGE
+  if locale -a 2>/dev/null | grep -qix 'en_US.utf8'; then
+    export LANG=en_US.UTF-8
+  else
+    echo "ci.sh: en_US.UTF-8 is not generated here: C.UTF-8 (sorted expectations may differ)" >&2
+    export LANG=C.UTF-8
+  fi
   if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
     XDG_RUNTIME_DIR=/tmp/runtime-$(id -u)
     export XDG_RUNTIME_DIR
@@ -249,6 +303,14 @@ EOF
     "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
   expect "pins: Quickshell is not the refused 0.3.2 tag" "$(pins | awk '$1 == "quickshell" && $2 !~ /^0\.3\.2-/ { print "ok" }')" ok
   expect "toolkit refuses on a bare machine" "$(env -u CI bash "$0" toolkit >/dev/null 2>&1; echo $?)" 2
+  # The environment of check and test: en_US.UTF-8 where it is generated (LC_ALL and the other overrides cleared), a runtime
+  # directory; the copy of the checkout lives in the user's home.
+  local want_lang=C.UTF-8
+  locale -a 2>/dev/null | grep -qix 'en_US.utf8' && want_lang=en_US.UTF-8
+  expect "user_env: LANG is en_US.UTF-8 where generated, LC_ALL cleared, a runtime directory" \
+    "$(LC_ALL=C LANG=fr_FR.UTF-8 XDG_RUNTIME_DIR="$w/rt" bash -c '. "$1" --source-only; user_env 2>/dev/null; echo "$LANG|${LC_ALL-unset}|$XDG_RUNTIME_DIR"' _ "$0")" \
+    "$want_lang|unset|$w/rt"
+  expect "workdir: <home of the user>/grassfield" "$(workdir_of "$(id -un)")" "$(getent passwd "$(id -un)" | cut -d: -f6)/grassfield"
   # The summary of a test log.
   printf 'x\nFAIL: tests/shell/a.sh\n  FAIL inner\nsummary: 1 check(s) SKIPPED\n  SKIP: y\nlayer pass\nlogic 3\n' >"$w/test.log"
   expect "summary: the failures, then the summary block to the end" "$(summarize "$w/test.log" 1 | tr '\n' '|')" \
@@ -257,6 +319,8 @@ EOF
   if ((fails == 0)); then echo "ci.sh selftest: PASS"; else echo "ci.sh selftest: $fails failure(s)"; return 1; fi
 }
 
+# Sourced by the selftest for its functions only.
+[[ ${1:-} == --source-only ]] && return 0
 cmd=${1:-}
 shift || true
 case $cmd in

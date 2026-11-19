@@ -61,7 +61,8 @@ bool terminalHelper(const QString &categories, const QString &exec)
     return false;
 }
 
-// What Quickshell's DesktopEntries reads. See applicationslogic.h: nothing is trimmed, the first [Desktop Entry] group only.
+// What Quickshell's DesktopEntries reads. See applicationslogic.h: each line trimmed at both ends (Quickshell 0.3.2), nothing
+// around '=', the first [Desktop Entry] group only.
 struct Fields {
     QString type, icon, exec, categories, noDisplay, hidden;
     QString name, genericName, comment;
@@ -76,7 +77,7 @@ Fields readFields(QByteArray text)
         text.remove(0, 3);
     bool inEntry = false, seen = false;
     for (const QByteArray &raw : text.split('\n')) {
-        const QString line = QString::fromUtf8(raw);
+        const QString line = QString::fromUtf8(raw).trimmed();
         if (line.startsWith(QLatin1Char('['))) {
             inEntry = !seen && line == QLatin1String("[Desktop Entry]");
             seen = seen || inEntry;
