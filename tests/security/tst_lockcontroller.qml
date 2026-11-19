@@ -340,6 +340,35 @@ TestCase {
         compare(pam.starts, 1);
     }
 
+    // A password submitted while the computer goes to sleep is refused AND said so (round 2 of the security-session audit):
+    // the field is emptied, the message names the sleep, no shake (nothing was wrong with the password), nothing is kept, and
+    // the message goes when the flag ends (a later attempt's message is left alone).
+    function test_sleepPendingSaysWhy() {
+        ctl.sleepPending = true;
+        const clears = clearSpy.count;
+        verify(!ctl.submit("pw"));
+        compare(pam.starts, 0);
+        verify(!ctl.holdsSecret);
+        compare(ctl.lockState, "locked");
+        compare(ctl.message, "The computer is going to sleep. Try again after it wakes.");
+        compare(clearSpy.count, clears + 1);
+        compare(failedSpy.count, 0);
+        // An empty field or an unconfirmed lock says nothing.
+        ctl.sleepPending = false;
+        compare(ctl.message, "");
+        ctl.sleepPending = true;
+        verify(!ctl.submit(""));
+        compare(ctl.message, "");
+        ctl.sleepPending = false;
+        verify(ctl.submit("pw"));
+        prompt();
+        ctl.pamCompleted("failed");
+        compare(ctl.message, "Incorrect password");
+        ctl.sleepPending = true;
+        ctl.sleepPending = false;
+        compare(ctl.message, "Incorrect password");
+    }
+
     function test_fingerprintSuccess() {
         ctl.fingerprintSucceeded();
         compare(ctl.lockState, "unlocked");

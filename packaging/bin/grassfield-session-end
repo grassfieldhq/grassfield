@@ -185,6 +185,16 @@ def finish(action):
     return 4
 
 
+def server_present():
+    """True when a notification server owns org.freedesktop.Notifications. Asked of the bus itself (NameHasOwner), which starts
+    nothing: notify-send or a gdbus call to the name with no owner would start another daemon by D-Bus activation (mako or dunst
+    ship an activatable org.freedesktop.Notifications), which would then hold the name the shell's server needs (SS-05; a
+    Log Out from safe mode runs while the shell's server is down)."""
+    r = run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+             "--method", "org.freedesktop.DBus.NameHasOwner", "org.freedesktop.Notifications"], timeout=5)
+    return r is not None and r.returncode == 0 and r.stdout.strip() == "(true,)"
+
+
 def notify_plain(title, body):
     """One notification without an answer, for when libnotify (notify-send, an optional dependency) is missing: the shell's
     own notification service is asked over the session bus with gdbus (glib2). True when it was delivered."""
@@ -244,13 +254,18 @@ def ask(title, body, anyway, timeout):
 
 def notify_blocked(action, names, unknown=False):
     """Show the notice and wait for "<Action> Anyway". Returns True when the user chose it. Without notify-send the notice
-    is still shown (through notify_plain, without the button): nothing is ended then."""
+    is still shown (through notify_plain, without the button): nothing is ended then. Without a notification server nothing is
+    shown (nothing is started by D-Bus activation) and nothing is ended."""
     anyway, title = ACTIONS[action]
     anyway, title = tr(anyway), tr(title)
     if unknown:
         body = tr(UNKNOWN_BODY)
     else:
         body = tr(OPEN_BODY) % ", ".join(names[:5])
+    if not server_present():
+        # Nothing ended, and said in the journal; the caller's exit 3 tells safe mode's notice that apps are still open.
+        print("grassfield-session-end: no notification server: the applications still open were not announced (%s)" % ", ".join(names[:5] or ["unknown"]), file=sys.stderr)
+        return False
     answer = ask(title, body, anyway, bounded_seconds(os.environ.get("GRASSFIELD_SESSION_END_ASK_TIMEOUT"), float(ASK_TIMEOUT), 1.0, 3600.0))
     if answer is None:
         notify_plain(title, body)

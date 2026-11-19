@@ -308,3 +308,119 @@ function sheetsStarting(activitySeen, armed, idle) {
 function sheetsActivitySeen(seen, wasIdle, idle) {
     return seen === true || (wasIdle === true && idle === false);
 }
+
+// ---- The unlocked display-off lock across a re-arm (SS-10) ----
+// What a change of the unlocked display-off monitor (`inactiveMonitor`) does to the lock that "require password after the
+// display turns off" (IQ-T4 A) schedules: "lock" (the delay is 0: lock now), "arm" (start the delay; never restarted while
+// one runs, so its deadline stays the first one), "cancel" (real input: the monitor, enabled and not being re-armed,
+// reports activity), "none". A re-arm (the power source or the setting changed: the monitor is disabled and enabled again
+// with a new timeout, which Quickshell reports as "not idle") and a disarm (an application's idle inhibitor, the lock
+// itself) are not input: a pending lock stays. The session already locked ends it (the lock is there). Exact values only.
+function displayOffLockStep(pending, idle, enabled, rearming, locked, requireMs) {
+    if (locked === true)
+        return pending === true ? "cancel" : "none";
+    if (rearming === true || enabled !== true)
+        return "none";
+    if (idle === true) {
+        if (pending === true)
+            return "none";
+        if (requireMs === 0)
+            return "lock";
+        return typeof requireMs === "number" && requireMs > 0 ? "arm" : "none";
+    }
+    return pending === true ? "cancel" : "none";
+}
+
+// The input probe beside a pending display-off lock (an idle monitor of DISPLAY_OFF_INPUT_PROBE_SECONDS, any inhibitor
+// ignored): input is an end of an idle period, never the probe's own start or a re-arm of the other monitor.
+var DISPLAY_OFF_INPUT_PROBE_SECONDS = 1;
+
+function inputSeen(wasIdle, idle) {
+    return wasIdle === true && idle === false;
+}
+
+// ---- The idle lock across a restart of the security process (SS-09) ----
+// Hyprland starts a new idle notification's count from zero (IdleNotify, 0.56.2), so a restarted process would count the
+// idle time again from its start: a crash at T-1 s locked at about 2T, and a slow crash loop never locked. The process
+// therefore keeps one line in $XDG_RUNTIME_DIR (one file per compositor instance, idleRecordName): "idle <s>" while its
+// idle monitor reports the user idle (s: /proc/uptime seconds at which the idle period began, i.e. when the monitor fired
+// minus its timeout), "active" otherwise. A restarted process reads it before writing anything: a period that has lasted
+// lock.idleMinutes already locks at once, a shorter one at its own deadline unless input comes first.
+function idleRecordName(instance, display) {
+    var id = String(instance || display || "default").replace(/[^A-Za-z0-9_.-]/g, "_");
+    return "grassfield-idle-" + id;
+}
+
+function idleRecordLine(idleSince) {
+    return typeof idleSince === "number" && isFinite(idleSince) && idleSince >= 0 ? "idle " + Math.floor(idleSince) : "active";
+}
+
+// The second at which the recorded idle period began, or -1 (no period, or a line that is not ours).
+function idleRecordSince(text) {
+    var m = String(text || "").trim().match(/^idle ([0-9]{1,12})$/);
+    return m ? Number(m[1]) : -1;
+}
+
+// /proc/uptime ("12345.67 4567.89") -> whole seconds, or -1.
+function uptimeSeconds(text) {
+    var m = String(text || "").match(/^\s*([0-9]{1,12})(?:\.[0-9]+)?\s/);
+    return m ? Number(m[1]) : -1;
+}
+
+// What a start does with the record: -1 nothing (no period, idle locking off, an unreadable clock, a period from the future:
+// another boot), 0 lock now (the period has lasted lockSeconds), else the ms left before the idle lock is due.
+function inheritedIdleLockMs(idleSince, now, lockSeconds, enabled) {
+    if (enabled !== true || typeof idleSince !== "number" || idleSince < 0 || typeof now !== "number" || now < 0 || now < idleSince)
+        return -1;
+    if (typeof lockSeconds !== "number" || !isFinite(lockSeconds) || lockSeconds <= 0)
+        return -1;
+    var left = idleSince + lockSeconds - now;
+    return left <= 0 ? 0 : left * 1000;
+}
+
+// ---- logind's session (SS-02) ----
+// `loginctl lock-session`, `lock-sessions` and logind.conf's HandleLidSwitch=lock or HandlePowerKey=lock make logind emit
+// org.freedesktop.login1.Session.Lock on the session's object; the security process locks on it. The session is found by
+// `busctl` (sessionPathFrom reads its answer): GetSession(XDG_SESSION_ID), the user's Display session, then
+// GetSessionByPID(the compositor's pid). Unlock is never followed: only a PAM success opens the lock.
+
+// The session object path in a busctl answer (`o "/org/freedesktop/login1/session/_32"` or `(so) "2" "/org/..."`), or "".
+function sessionPathFrom(busctlOutput) {
+    var m = String(busctlOutput || "").match(/"(\/org\/freedesktop\/login1\/session\/[A-Za-z0-9_]{1,64})"\s*$/);
+    if (!m || m[1] === "/org/freedesktop/login1/session/auto" || m[1] === "/org/freedesktop/login1/session/self")
+        return "";
+    return m[1];
+}
+
+// A session id as logind prints them ("2", "c1"); anything else is not used.
+function sessionIdValid(id) {
+    return typeof id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(id);
+}
+
+// The compositor's pid from Hyprland's instance lock file (first line), or 0.
+function compositorPid(text) {
+    var m = String(text || "").match(/^\s*([1-9][0-9]{0,9})\s*(?:\n|$)/);
+    return m ? Number(m[1]) : 0;
+}
+
+// One line of `gdbus monitor --system --dest org.freedesktop.login1 --object-path <path>`: "lock", "unlock" or null. Only a
+// signal of that path counts.
+function sessionSignal(line, path) {
+    if (typeof path !== "string" || path === "")
+        return null;
+    var m = String(line || "").match(/^(\/[A-Za-z0-9_\/]+): org\.freedesktop\.login1\.Session\.(Lock|Unlock) \(\)\s*$/);
+    if (!m || m[1] !== path)
+        return null;
+    return m[2] === "Lock" ? "lock" : "unlock";
+}
+
+// LockedHint follows the lock: true once it holds (the compositor confirmed it), false only once the session is unlocked;
+// null while a lock is on its way (nothing changes).
+function lockedHint(locked, holding) {
+    if (locked !== true)
+        return false;
+    return holding === true ? true : null;
+}
+
+// How long a start waits for grassfield.json before it decides on the inherited idle period with the default delay.
+var INHERITED_IDLE_SETTINGS_MS = 10000;

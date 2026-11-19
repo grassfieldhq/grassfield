@@ -464,6 +464,12 @@ class Watcher:
 
     def send(self, job, now):
         info = job["info"]
+        # No notification server owns the name (the shell starting or restarting, safe mode): not sent, retried. notify-send
+        # would start one by D-Bus activation (mako or dunst ship an activatable org.freedesktop.Notifications), which would
+        # then hold the name the shell's server needs (SS-05). GetNameOwner is answered by the bus itself and starts nothing.
+        if server_owner() is None:
+            self.retry(job, now)
+            return
         with_action = bool(info["desktop_id"]) and len(self.waiting) < MAX_WAITING and shutil.which("uwsm-app") is not None
         try:
             if with_action:

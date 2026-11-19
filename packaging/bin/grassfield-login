@@ -13,12 +13,60 @@
 #   grassfield-login set omarchy      then log out and in again (and back with `set grassfield`).
 # The session files started are the ones Omarchy and Grassfield install; their Exec lines are read, never copied.
 #
-# Test hooks: GRASSFIELD_LOGIN_ROOT (prefix of /usr), GRASSFIELD_LOGIN_DRY_RUN=1 (print the Exec line instead of running it).
+# A session that dies at once (SS-11: a broken configuration, a compositor that cannot start) must not leave the user at the
+# login screen with no way in but a TTY: Omarchy's greeter has no session picker. The session runs as this script's child (no
+# exec), and how long it lived is kept in ${XDG_STATE_HOME:-~/.local/state}/grassfield/login-quick-exits: one line per
+# session, "<session> <consecutive exits within QUICK_SECONDS of the start>". Bounded policy:
+#   - after QUICK_LIMIT (2) quick exits in a row of the chosen session, the next login starts the other one, once, and says
+#     so in the journal; the chosen session stays the user's choice;
+#   - that login sets the chosen session's count to QUICK_LIMIT - 1: the login after it tries the chosen session again, and
+#     one more quick exit falls back again (a session that stays broken alternates, a session that works again stays);
+#   - a session that lived longer than QUICK_SECONDS clears its own count; `grassfield-login set` clears both.
+# Nothing loops on its own: each start is a login (or SDDM's autologin, once per boot). A logout within QUICK_SECONDS of the
+# login counts too: at worst one later login starts the other session, and the next one the chosen session again. The
+# clock is /proc/uptime (monotonic); unreadable, nothing is counted. TERM, HUP and INT are passed on to the session.
+#
+# Test hooks: GRASSFIELD_LOGIN_ROOT (prefix of /usr), GRASSFIELD_LOGIN_DRY_RUN=1 (print the Exec line instead of running it),
+# GRASSFIELD_LOGIN_QUICK_SECONDS (the threshold, default 20).
 
 set -eu
 
 config=${XDG_CONFIG_HOME:-$HOME/.config}/grassfield/login-session
 root=${GRASSFIELD_LOGIN_ROOT:-}
+quick_state=${XDG_STATE_HOME:-$HOME/.local/state}/grassfield/login-quick-exits
+QUICK_LIMIT=2
+QUICK_SECONDS=${GRASSFIELD_LOGIN_QUICK_SECONDS:-20}
+case $QUICK_SECONDS in '' | *[!0-9]*) QUICK_SECONDS=20 ;; esac
+
+other_of() {
+  if [ "$1" = grassfield ]; then echo omarchy; else echo grassfield; fi
+}
+
+# The consecutive quick exits recorded for a session (0 when none or unreadable).
+quick_count() {
+  n=
+  [ -f "$quick_state" ] && [ ! -L "$quick_state" ] && n=$(sed -n "s/^$1 \([0-9]\{1,3\}\)\$/\1/p" "$quick_state" 2>/dev/null | head -n 1)
+  case $n in '' | *[!0-9]*) n=0 ;; esac
+  echo "$n"
+}
+
+# Records a session's count (the other one's is kept): written whole, then renamed. A failure records nothing.
+set_quick_count() {
+  other=$(other_of "$1")
+  kept=$(quick_count "$other")
+  mkdir -p "$(dirname "$quick_state")" 2>/dev/null || return 0
+  if { printf '%s %s\n' "$1" "$2"; printf '%s %s\n' "$other" "$kept"; } >"$quick_state.new" 2>/dev/null; then
+    mv -f "$quick_state.new" "$quick_state" 2>/dev/null || rm -f "$quick_state.new"
+  else
+    rm -f "$quick_state.new"
+  fi
+}
+
+uptime_seconds() {
+  up=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+  up=${up%%.*}
+  case $up in '' | *[!0-9]*) echo "" ;; *) echo "$up" ;; esac
+}
 
 chosen() {
   choice=grassfield
@@ -64,15 +112,27 @@ case ${1:-start} in
     esac
     mkdir -p "$(dirname "$config")"
     printf '%s\n' "$2" >"$config"
+    # The user's choice starts afresh: no fallback from earlier quick exits.
+    rm -f "$quick_state"
     echo "Next login starts: $2 (log out and in to switch)."
     ;;
   start)
     first=$(chosen)
-    if [ "$first" = grassfield ]; then second=omarchy; else second=grassfield; fi
-    line=$(session_line "$first") || line=
+    second=$(other_of "$first")
+    started=$first
+    fallback=0
+    quick=$(quick_count "$first")
+    if [ "$quick" -ge "$QUICK_LIMIT" ] && session_line "$second" >/dev/null; then
+      # SS-11: the chosen session died at once at its last starts: the other one, this time only.
+      echo "grassfield-login: the $first session ended within $QUICK_SECONDS s of its start $quick times in a row: starting $second this time; the next login tries $first again" >&2
+      started=$second
+      fallback=1
+    fi
+    line=$(session_line "$started") || line=
     if [ -z "$line" ]; then
-      # The chosen session is not installed (a removed package must not lock the user out): the other one.
-      line=$(session_line "$second") || line=
+      # The session is not installed (a removed package must not lock the user out): the other one.
+      started=$(other_of "$started")
+      line=$(session_line "$started") || line=
     fi
     if [ -z "$line" ]; then
       echo "grassfield-login: no session found (grassfield.desktop and omarchy.desktop missing)" >&2
@@ -82,7 +142,31 @@ case ${1:-start} in
       printf '%s\n' "$line"
       exit 0
     fi
-    exec sh -c "exec $line"
+    # One fallback per streak: the login after this one tries the chosen session again.
+    [ "$fallback" = 1 ] && set_quick_count "$first" $((QUICK_LIMIT - 1))
+    set +e
+    t0=$(uptime_seconds)
+    sh -c "exec $line" &
+    child=$!
+    trap 'kill -TERM "$child" 2>/dev/null' TERM
+    trap 'kill -HUP "$child" 2>/dev/null' HUP
+    trap 'kill -INT "$child" 2>/dev/null' INT
+    # wait returns early when a signal is passed on: wait again until the session is gone.
+    while :; do
+      wait "$child"
+      rc=$?
+      kill -0 "$child" 2>/dev/null || break
+    done
+    t1=$(uptime_seconds)
+    if [ -n "$t0" ] && [ -n "$t1" ]; then
+      if [ $((t1 - t0)) -lt "$QUICK_SECONDS" ]; then
+        set_quick_count "$started" $(($(quick_count "$started") + 1))
+        echo "grassfield-login: the $started session ended $((t1 - t0)) s after its start (exit $rc)" >&2
+      else
+        set_quick_count "$started" 0
+      fi
+    fi
+    exit "$rc"
     ;;
   *)
     echo "usage: grassfield-login [get | set grassfield|omarchy]" >&2

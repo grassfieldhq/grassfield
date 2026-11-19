@@ -64,8 +64,24 @@ def read_battery(base):
     return None
 
 
+def server_present():
+    """True when a notification server owns org.freedesktop.Notifications. Asked of the bus itself (NameHasOwner), which starts
+    nothing: notify-send with no owner would start another daemon by D-Bus activation (mako or dunst ship an activatable
+    org.freedesktop.Notifications), which would then hold the name the shell's server needs (SS-05)."""
+    try:
+        r = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+                            "--method", "org.freedesktop.DBus.NameHasOwner", "org.freedesktop.Notifications"],
+                           capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and r.stdout.strip() == "(true,)"
+
+
 def notify(level, capacity):
-    """True when notify-send delivered the warning (exit 0)."""
+    """True when notify-send delivered the warning (exit 0). Nothing is sent while no server owns the name (retried by the
+    next reading)."""
+    if not server_present():
+        return False
     critical = level <= 5
     title = tr("Very low battery" if critical else "Low battery")
     body = tr("%d%% of the battery is left. Connect the charger now, the computer will shut down soon." if critical

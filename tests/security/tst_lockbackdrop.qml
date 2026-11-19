@@ -166,7 +166,8 @@ TestCase {
         verify(/if \(Lock\.holding\) \{\s*root\.endDimUntilLock\(\);\s*root\.dimmed = false;/.test(idle));
         // A display that turns off for inactivity locks: at once, after the delay, or never.
         verify(/readonly property int requireAfterMs: IdleModel\.requireAfterDisplayOffMs\(Settings\.lockRequirePasswordAfterDisplayOff\)/.test(idle));
-        verify(/if \(root\.offForInactivity && !Lock\.locked\) \{\s*if \(root\.requireAfterMs === 0\)\s*root\.displayOffLock\(\);\s*else if \(root\.requireAfterMs > 0\)\s*displayOffLockTimer\.restart\(\);/.test(idle));
+        // (SS-10: through IdleModel.displayOffLockStep, which keeps a pending lock across a re-arm; tst_idlemodel.qml.)
+        verify(/const step = IdleModel\.displayOffLockStep\(root\.displayOffLockPending, inactiveMonitor\.isIdle, inactiveMonitor\.enabled, root\.rearmingInactive, Lock\.locked, root\.requireAfterMs\);\s*if \(step === "lock"\) \{\s*root\.displayOffLock\(\);\s*\} else if \(step === "arm"\) \{[\s\S]{0,200}?displayOffLockTimer\.restart\(\);/.test(idle));
         verify(/const result = Lock\.lock\("display-off"\);/.test(idle));
         // The displays stay on until a lock holds (unchanged rule): the lock is drawn before they go off.
         verify(/return inactiveOff === true && \(locked !== true \|\| holding === true\);/.test(source("shell/security/idle/IdleModel.js")));
