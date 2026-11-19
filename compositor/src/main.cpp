@@ -25,7 +25,7 @@
 #include "core/Notices.hpp"
 
 #include <hyprland/src/desktop/state/WindowState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/helpers/Color.hpp>
@@ -77,11 +77,11 @@ namespace {
     // Every mapped window gets the plugin's titlebar (shown or not, CGrassfieldTitlebar::shouldShow) and its rim (drawn in
     // the dark appearance only, core/WindowRim.hpp).
     void decorate(const PHLWINDOW& w) {
-        if (!w || !w->m_isMapped)
+        if (!w || !gf::compat::mapped(w))
             return;
-        if (!titlebarFor(w) && !HyprlandAPI::addWindowDecoration(state().handle, w, makeUnique<CGrassfieldTitlebar>(w)))
+        if (!titlebarFor(w) && !HyprlandAPI::addWindowDecoration(state().handle, w, gf::compat::makeDecoration<CGrassfieldTitlebar>(w)))
             gf::log(Log::WARN, "addWindowDecoration failed for window {:x}", reinterpret_cast<uintptr_t>(w.get()));
-        if (!hasRim(w) && !HyprlandAPI::addWindowDecoration(state().handle, w, makeUnique<CGrassfieldRim>(w)))
+        if (!hasRim(w) && !HyprlandAPI::addWindowDecoration(state().handle, w, gf::compat::makeDecoration<CGrassfieldRim>(w)))
             gf::log(Log::WARN, "addWindowDecoration (rim) failed for window {:x}", reinterpret_cast<uintptr_t>(w.get()));
     }
 
@@ -182,8 +182,8 @@ namespace {
                 info.cancelled = true;
         }));
         // The revealed titlebar of a full-screen window: Hyprland draws no decoration in full screen (P6).
-        l.push_back(ev.render.stage.listen([](eRenderStage stage) {
-            if (stage == RENDER_POST_WINDOWS)
+        l.push_back(gf::compat::onRenderStage([](eRenderStage stage, gf::compat::RenderContext* ctx) {
+            if (stage == RENDER_POST_WINDOWS && ctx)
                 CGrassfieldTitlebar::drawRevealed();
         }));
         // Keys are observed, never cancelled: Alt changes the zoom glyph of the hovered lights (ADR-0015 P6) and the place of a
@@ -197,7 +197,7 @@ namespace {
     // The window whose m_windowDecorations owns `deco` (normally its own window, `hint`; scanned as a fallback).
     PHLWINDOW ownerOf(const IHyprWindowDecoration* deco, const PHLWINDOW& hint) {
         const auto owns = [deco](const PHLWINDOW& w) {
-            return w && std::ranges::any_of(w->m_windowDecorations, [deco](const UP<IHyprWindowDecoration>& d) { return d.get() == deco; });
+            return w && gf::compat::ownsDecoration(w, deco);
         };
         if (owns(hint))
             return hint;
@@ -208,29 +208,11 @@ namespace {
         return nullptr;
     }
 
-    // Destroys one of the plugin's decorations (a titlebar or a rim) now, whatever its window's state.
-    // HyprlandAPI::removeWindowDecoration only queues the removal (CWindow::m_decosToRemove) and runs
-    // CWindow::updateWindowDecos(), which in 0.56.2 returns at once for an unmapped or hidden window (it tests m_isMapped,
-    // then isHidden(); read from the binary): such a decoration would survive dlclose. This does what updateWindowDecos
-    // does for a queued removal (uncache it from the positioner, erase it from m_windowDecorations) without that early
-    // return.
+    // Destroys one of the plugin's decorations (a titlebar or a rim) now, whatever its window's state (HyprCompat.hpp
+    // destroyDecorationNow: HyprlandAPI::removeWindowDecoration only queues the removal in 0.56).
     bool destroyNow(IHyprWindowDecoration* deco, const PHLWINDOW& hint) {
         const auto w = ownerOf(deco, hint);
-        if (!w)
-            return false;
-        auto&      decos = w->m_windowDecorations;
-        const auto it    = std::ranges::find_if(decos, [deco](const UP<IHyprWindowDecoration>& d) { return d.get() == deco; });
-        if (it == decos.end())
-            return false;
-        std::erase(w->m_decosToRemove, deco);
-        if (g_pDecorationPositioner)
-            g_pDecorationPositioner->uncacheDecoration(deco); // pointer comparison only; deco still alive
-        UP<IHyprWindowDecoration> owned = std::move(*it);
-        decos.erase(it);
-        owned.reset(); // its destructor runs here, while this library is still loaded
-        if (g_pDecorationPositioner)
-            g_pDecorationPositioner->forceRecalcFor(w);
-        return true;
+        return w && gf::compat::destroyDecorationNow(w, deco);
     }
 
     // Removes every decoration of one kind (`live`: state().titlebars or state().rims, which each decoration leaves in its
@@ -241,7 +223,7 @@ namespace {
         // decoration. It destroys the decoration synchronously for a mapped, visible window.
         for (auto* deco : std::vector(live)) { // copy: removal destroys entries
             const auto w = deco->window();
-            if (w && w->m_isMapped && !w->isHidden())
+            if (w && gf::compat::mapped(w) && !w->isHidden())
                 HyprlandAPI::removeWindowDecoration(state().handle, deco);
         }
 

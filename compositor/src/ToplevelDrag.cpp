@@ -25,7 +25,7 @@
 #include <hyprland/src/desktop/state/ViewHitTester.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/target/Target.hpp>
@@ -227,7 +227,7 @@ namespace {
             if (!o->drag.excludes()) {
                 const auto top = o->toplevel.lock();
                 const auto w   = top ? top->m_window.lock() : nullptr;
-                if (w && w->m_isMapped)
+                if (w && gf::compat::mapped(w))
                     o->drag.mapped(idOf(top.get()));
             }
             if (o->drag.excludes())
@@ -537,7 +537,7 @@ namespace {
         if (!o || !o->drag.follows() || !hyprlandDragRunning())
             return;
         const auto w      = windowOf(*o);
-        const auto target = w && w->m_isMapped ? w->layoutTarget() : nullptr;
+        const auto target = w && gf::compat::mapped(w) ? w->layoutTarget() : nullptr;
         if (!target)
             return;
         const auto now = target->position();
@@ -652,7 +652,7 @@ namespace {
             return;
         }
         const auto w = windowOf(*o);
-        if (!w || !w->m_isMapped)
+        if (!w || !gf::compat::mapped(w))
             return;
         if (o->drag.follows()) {
             o->corrections = 0;
@@ -695,7 +695,7 @@ namespace {
 
     void onWindowOpen(const PHLWINDOW& w) {
         auto& s = st();
-        if (!s.ready || !w || !w->m_isMapped || s.live.objects.empty())
+        if (!s.ready || !w || !gf::compat::mapped(w) || s.live.objects.empty())
             return;
         for (const auto& o : s.live.objects) {
             const auto top = o->toplevel.lock();
@@ -769,7 +769,7 @@ namespace {
             if (!top)
                 return; // its role is gone: nothing to attach (protocol-safe no-op)
             const auto w      = top->m_window.lock();
-            const bool mapped = w && w->m_isMapped;
+            const bool mapped = w && gf::compat::mapped(w);
             if (o->drag.attach(idOf(top.get()), mapped, x, y) == td::Error::ToplevelAttached) {
                 gf::logRequest(Log::WARN, "toplevel drag: attach while a toplevel is attached: protocol error toplevel_attached (pid {})", clientPid(o->resource->client()));
                 o->resource->error(XDG_TOPLEVEL_DRAG_V1_ERROR_TOPLEVEL_ATTACHED, "valid toplevel already attached");

@@ -15,6 +15,7 @@
 // flags left by earlier GL work are drained first) or when Hyprland never draws the elements; the minimizer then uses
 // the Scale (shrink) effect, for running animations too. A plugin load (minimizer::start) resets it.
 
+#include "HyprCompat.hpp"
 #include "core/Genie.hpp"
 
 #include <hyprland/src/helpers/math/Math.hpp>
@@ -71,7 +72,7 @@ namespace gf::genie {
         float              alpha = 1.F;
     };
 
-    class CGenieElement : public IPassElement {
+    class CGenieElement : public gf::compat::CPassElementBase {
       public:
         explicit CGenieElement(SDrawData&& data);
         ~CGenieElement() override = default;
@@ -81,13 +82,10 @@ namespace gf::genie {
         CGenieElement(CGenieElement&&)                 = delete;
         CGenieElement& operator=(CGenieElement&&)      = delete;
 
-        std::vector<UP<IPassElement>> draw() override;
-        bool                          needsLiveBlur() override;
-        bool                          needsPrecomputeBlur() override;
-        const char*                   passName() override;
-        ePassElementType              type() override;
-        std::optional<CBox>           boundingBox() override;
-        CRegion                       opaqueRegion() override;
+        void                drawGf() override;
+        const char*         passName() override;
+        ePassElementType    type() override;
+        std::optional<CBox> boundingBoxGf() override;
 
       private:
         SDrawData m_data;

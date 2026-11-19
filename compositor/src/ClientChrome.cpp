@@ -5,9 +5,8 @@
 #include "Tiling.hpp"
 #include "core/ClientChrome.hpp"
 
-#include <hyprland/src/desktop/Workspace.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/desktop/state/WindowState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/supplementary/DragController.hpp>
@@ -118,9 +117,9 @@ namespace gf::chrome {
         }
 
         SP<CXDGToplevelResource> toplevelOf(const PHLWINDOW& w) {
-            if (!w || w->m_isX11)
+            if (!w)
                 return nullptr;
-            const auto xdg = w->m_xdgSurface.lock();
+            const auto xdg = gf::compat::xdgSurface(w); // null for an X11 window
             return xdg ? xdg->m_toplevel.lock() : nullptr;
         }
 
@@ -150,14 +149,14 @@ namespace gf::chrome {
             const auto w = e.window.lock();
             if (!w)
                 return;
-            const bool suppressed = (w->m_suppressedEvents & Desktop::View::SUPPRESS_MAXIMIZE) != 0;
+            const bool suppressed = gf::compat::maximizeSuppressed(w);
             if (own && !suppressed) {
-                w->m_suppressedEvents |= Desktop::View::SUPPRESS_MAXIMIZE;
+                gf::compat::setMaximizeSuppressed(w, true);
                 e.suppressAdded = true;
                 logRequest(Log::DEBUG, "client chrome: {:x} maximize requests are the plugin's zoom (D78)", addressOf(w));
             } else if (!own && e.suppressAdded) {
                 if (suppressed)
-                    w->m_suppressedEvents &= ~static_cast<uint64_t>(Desktop::View::SUPPRESS_MAXIMIZE);
+                    gf::compat::setMaximizeSuppressed(w, false);
                 e.suppressAdded = false;
                 logRequest(Log::DEBUG, "client chrome: {:x} maximize requests are Hyprland's again", addressOf(w));
             }
@@ -177,7 +176,7 @@ namespace gf::chrome {
         // one: the request is the plugin's whenever the plugin owns this window's maximize and Hyprland ignores it.
         void onMaximizeRequest(const PHLWINDOW& w) {
             SWatch* e = watchOf(w);
-            if (!e || !ownsMaximizeOf(w) || (w->m_suppressedEvents & Desktop::View::SUPPRESS_MAXIMIZE) == 0)
+            if (!e || !ownsMaximizeOf(w) || !gf::compat::maximizeSuppressed(w))
                 return; // Hyprland handled it as before
             if (maximizeEcho(e->leftFullscreenMs, nowMs())) {
                 e->leftFullscreenMs = 0;
@@ -207,13 +206,13 @@ namespace gf::chrome {
         void onStateChanged(const PHLWINDOWREF& ref, const WP<CXDGToplevelResource>& weakTop) {
             const auto w   = ref.lock();
             const auto top = weakTop.lock();
-            if (!w || !top || !w->m_isMapped || !isClientChrome(w))
+            if (!w || !top || !gf::compat::mapped(w) || !isClientChrome(w))
                 return;
             if (top->m_state.requestsMaximize.has_value())
                 onMaximizeRequest(w);
             if (!top->m_state.requestsMinimize.value_or(false))
                 return;
-            if (w->m_workspace && w->m_workspace->m_isSpecialWorkspace)
+            if (w->m_workspace && gf::compat::isSpecial(w->m_workspace))
                 return; // already parked (special:minimized or a scratchpad): nothing to do
             logRequest(Log::DEBUG, "client chrome: {:x} asks to be minimized", addressOf(w));
             ipc::postMinimizeRequest(addressOf(w));
@@ -227,7 +226,7 @@ namespace gf::chrome {
         void onRequestMove(const PHLWINDOWREF& ref) {
             auto&      s = st();
             const auto w = ref.lock();
-            if (!w || !w->m_isMapped || !isClientChrome(w) || !g_pInputManager || !g_layoutManager)
+            if (!w || !gf::compat::mapped(w) || !isClientChrome(w) || !g_pInputManager || !g_layoutManager)
                 return;
             if (!s.press || !moveAnswersPress(s.press, addressOf(w), g_pInputManager->hasHeldButtons(), nowMs()))
                 return;
@@ -371,7 +370,7 @@ namespace gf::chrome {
         // CXDGSurfaceResource::m_current.geometry) against its surface's size (CWLSurfaceResource::m_current.size), both in
         // layout px.
         FrameRead frameReadOf(const PHLWINDOW& w) {
-            const auto xdg     = w ? w->m_xdgSurface.lock() : nullptr;
+            const auto xdg     = w ? gf::compat::xdgSurface(w) : nullptr;
             const auto surface = w ? w->resource() : nullptr;
             if (!xdg || !surface)
                 return FrameRead::Unknown;
@@ -417,7 +416,7 @@ namespace gf::chrome {
         void syncDecoration(SWatch& e, bool bridged) {
             const auto w   = e.window.lock();
             const auto top = e.toplevel.lock();
-            if (!w || !top || !w->m_isMapped || w->m_isX11 || !w->m_ruleApplicator)
+            if (!w || !top || !gf::compat::mapped(w) || gf::compat::isX11(w) || !w->m_ruleApplicator)
                 return;
             const auto request = requestOf(e, w);
             const bool drawsOwn = drawsOwnTitlebar(request);
@@ -456,7 +455,7 @@ namespace gf::chrome {
                 return;
             const auto w       = e->window.lock();
             const auto surface = w ? w->resource() : nullptr;
-            const auto xdg     = w ? w->m_xdgSurface.lock() : nullptr;
+            const auto xdg     = w ? gf::compat::xdgSurface(w) : nullptr;
             if (!surface || !xdg)
                 return;
             const CBox& geometry = xdg->m_current.geometry;
@@ -504,7 +503,7 @@ namespace gf::chrome {
             // says what an unchanged commit still costs); a client that switches later is read at that commit, or at
             // window.updateRules. The xdg surface's own commit event: it comes once the xdg surface took the commit's state (its
             // window geometry), which the surface's event may precede.
-            if (const auto xdg = w->m_xdgSurface.lock())
+            if (const auto xdg = gf::compat::xdgSurface(w))
                 e.commit = xdg->m_events.commit.listen([key] { guarded("client chrome commit", [key] { onCommit(key); }); });
             e.stateChanged = top->m_events.stateChanged.listen([key] {
                 guarded("client chrome stateChanged", [key] {
@@ -568,7 +567,7 @@ namespace gf::chrome {
             const auto& windows = Desktop::windowState()->windows();
             for (auto it = windows.rbegin(); it != windows.rend(); ++it) {
                 const auto& w = *it;
-                if (!w || !w->m_isMapped || w->isHidden() || !w->m_workspace || !w->m_workspace->isVisible())
+                if (!w || !gf::compat::mapped(w) || w->isHidden() || !w->m_workspace || !gf::compat::workspaceVisible(w->m_workspace))
                     continue;
                 if (w->getWindowMainSurfaceBox().containsPoint(pos))
                     return w;
@@ -606,7 +605,7 @@ namespace gf::chrome {
         s.listeners.push_back(ev.fullscreen.listen([](const PHLWINDOW& w) { guarded("client chrome window.fullscreen", [&] { onFullscreen(w); }); }));
         if (Desktop::windowState()) {
             for (const auto& w : Desktop::windowState()->windows()) {
-                if (w && w->m_isMapped)
+                if (w && gf::compat::mapped(w))
                     watch(w, false); // already mapped: not its first buffer
             }
         }

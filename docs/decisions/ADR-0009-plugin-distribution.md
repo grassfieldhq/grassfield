@@ -116,3 +116,36 @@ owner needs root to set up), root and symlink refusal, the cache install, the `-
 `tests/unit/tst_extensionstatus.qml`: the shell's reading of those answers. `tests/compositor/abi_mismatch.sh` (nested,
 audit plan 1.8): the real plugin built against another commit and loaded by hand refuses itself, Hyprland stays up, the
 shell stays degraded with its one notice, menu bar and Dock stay mapped, minimize falls back, the unload is clean.
+
+# ADR-0009 amendment: one plugin source for Hyprland 0.56 and 0.57
+Status: Accepted (fix round 2, 2026-11-19; owner delegation for the audit fixes) · Amends: ADR-0009 "Plugin distribution"
+
+## Context
+ADR-0009 keeps `hyprland` unconstrained and rebuilds the plugin for the installed Hyprland (`grassfield-compositor-rebuild`,
+amendment 2026-10-23). The rebuild only helps while the sources compile against that Hyprland. Current Arch, and so Omarchy,
+ships Hyprland 0.57.2; its headers moved (`desktop/view/window/Window.hpp`, `workspace/HLWorkspace.hpp`) and its API changed
+(window and workspace state behind accessors, numbered-only workspace ids, `IPC::Socket1/2`, an explicit render context for
+decorations, pass elements, transformers and render stages, a new transformer pipeline). Against 0.57 the plugin did not
+compile: every user who updated Hyprland was left in degraded mode (gate C2).
+
+## Options
+1. Pin `hyprland<0.57` in the package. Blocks `omarchy update` (rejected in ADR-0009).
+2. A branch or a source copy per Hyprland minor. Two plugins to fix and review for every change.
+3. One source; every difference behind a small compatibility layer chosen at compile time from the headers.
+
+## Decision
+Option 3. `compositor/src/HyprCompat.hpp` is the only file that tests the Hyprland version (`GF_HYPRLAND_057`, from
+`__has_include(<hyprland/src/workspace/HLWorkspace.hpp>)`: Hyprland has no numeric version macro). Each mapping keeps the 0.56
+behaviour and, for 0.57, does what Hyprland 0.57 itself does where it replaced the 0.56 call; where 0.57 no longer exposes the
+data (an X11 window's resize increments, the X11 float test without its size rule) the difference is written down
+(docs/specs/compositor.md HV4) rather than reached through private members. The ABI stamp format is unchanged (0.57 builds the
+same string). CI builds the plugin and runs its unit tests against both: the 0.56.2 stack and the 0.57.2 headers in a pinned
+sysroot (`compositor/hypr-sysroot.sh`). Support follows Arch: when Hyprland 0.58 lands, its differences are added to the same
+header and its job to CI; the oldest version is dropped when no supported Omarchy channel ships it any more.
+
+## Consequences
+- A Hyprland update within the supported versions keeps the full plugin through the rebuild; the reduced mode remains the
+  answer for an unsupported version (unchanged).
+- A plugin change must build on both versions (CI); code outside HyprCompat.hpp uses `gf::compat::` accessors for the members
+  that differ.
+- Runtime on 0.57 needs an owner check in a real session (docs/compat.md "Hyprland 0.57") before it is called verified.

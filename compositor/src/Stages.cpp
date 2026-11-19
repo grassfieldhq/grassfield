@@ -11,7 +11,7 @@
 #include "core/EventThrottle.hpp"
 #include "core/Motion.hpp"
 
-#include <hyprland/src/desktop/Workspace.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/rule/Rule.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
@@ -19,11 +19,9 @@
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/target/Target.hpp>
-#include <hyprland/src/managers/EventManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
@@ -62,7 +60,6 @@ namespace {
     // MONOCLE_INACTIVE 1 << 1, BELOW_FULLSCREEN 1 << 2). CWindow::acceptsInput() is false while any reason is set:
     // CViewHitTester::windowAt then skips the window for pointer focus, clicks, titlebar presses and hovers.
     constexpr uint8_t INPUT_BLOCK_STAGES_BIT = 1U << 6;
-    const auto        INPUT_BLOCK_STAGES     = static_cast<Desktop::View::eWindowInputBlockReason>(INPUT_BLOCK_STAGES_BIT);
 
     // Ends animations whose frames stopped (no monitor rendered): checked this long after the expected end.
     constexpr auto WATCHDOG_SLACK = std::chrono::milliseconds(150);
@@ -70,16 +67,17 @@ namespace {
     // An active window closer than this to the strip's tiles counts as overlapping it (the shell then hides the strip).
     constexpr double OVERLAP_MARGIN = 8;
 
-    class CStageTransformer final : public Render::IWindowTransformer {
+    class CStageTransformer final : public gf::compat::CTransformerBase {
       public:
-        SP<Render::IFramebuffer> transform(SP<Render::IFramebuffer> in) override;
+        gf::compat::STransformOutput transformGf(const gf::compat::STransformInput& in) override;
+        CBox                         extentsGf(const CBox& currentBox) const override;
     };
 
     // A window Stages draws or has drawn: its transformer, input block and animation.
     struct SWin {
         PHLWINDOWREF           window;
         uint64_t               address     = 0;
-        CStageTransformer*     transformer = nullptr; // owned by window->m_transformers; compared, never freed here
+        CStageTransformer*     transformer = nullptr; // owned by the window's transformers; compared, never freed here
         bool                   blocked     = false;   // INPUT_BLOCK_STAGES set by this plugin
         bool                   inStrip     = false;   // its target is a strip position (tile or off screen)
         // Where its surface box is drawn, with its own clock (WM-03): from where it was to its target (track.to nullopt: its
@@ -203,7 +201,7 @@ namespace {
 
     // The monitor that shows this workspace as its active workspace, if any.
     PHLMONITOR shownOn(st::WorkspaceId id) {
-        return gf::outputs::find([id](const PHLMONITOR& m) { return m->m_activeWorkspace && m->m_activeWorkspace->m_id == id; });
+        return gf::outputs::find([id](const PHLMONITOR& m) { return m->m_activeWorkspace && gf::compat::workspaceId(m->m_activeWorkspace) == id; });
     }
 
     bool showsFullscreen(const PHLWORKSPACE& ws) {
@@ -215,9 +213,9 @@ namespace {
     // not pinned (drawn on every workspace), on a regular workspace (minimized windows live on special:minimized), not an
     // X11 override-redirect window. A full-screen window keeps its stage (its workspace's strip is then hidden).
     bool manageable(const PHLWINDOW& w) {
-        if (!w || !w->m_isMapped || w->isHidden() || !w->m_isFloating || w->m_pinned || !w->m_workspace || w->m_workspace->m_isSpecialWorkspace)
+        if (!w || !gf::compat::mapped(w) || w->isHidden() || !gf::compat::isFloating(w) || gf::compat::pinned(w) || !w->m_workspace || gf::compat::isSpecial(w->m_workspace))
             return false;
-        return !(w->m_isX11 && w->isX11OverrideRedirect());
+        return !gf::compat::x11OverrideRedirect(w);
     }
 
     bool fullscreenNow(const PHLWINDOW& w) {
@@ -226,7 +224,7 @@ namespace {
     }
 
     st::WindowInfo infoOf(const PHLWINDOW& w) {
-        return st::WindowInfo{.id = addressOf(w), .app = w->m_class};
+        return st::WindowInfo{.id = addressOf(w), .app = gf::compat::appClass(w)};
     }
 
     SSpace* spaceOf(st::WorkspaceId id) {
@@ -274,7 +272,7 @@ namespace {
         if (!Desktop::layerState() || !mon)
             return nullptr;
         for (const auto& ls : Desktop::layerState()->layers()) {
-            if (ls && ls->m_mapped && ls->m_namespace == STRIP_NAMESPACE && ls->m_monitor.lock() == mon)
+            if (ls && gf::compat::layerMapped(ls) && ls->m_namespace == STRIP_NAMESPACE && ls->m_monitor.lock() == mon)
                 return ls;
         }
         return nullptr;
@@ -311,12 +309,12 @@ namespace {
                     continue;
                 st::EventMonitor m;
                 m.monitor   = strip.monitor;
-                m.workspace = mon->m_activeWorkspace->m_id;
+                m.workspace = gf::compat::workspaceId(mon->m_activeWorkspace);
                 m.hidden    = strip.hidden;
                 m.overlap   = strip.overlap;
                 if (const auto* sp = spaceOf(m.workspace)) {
                     if (const auto front = frontOfActive(*sp))
-                        m.front = st::EventFront{.id = addressOf(front), .app = front->m_class};
+                        m.front = st::EventFront{.id = addressOf(front), .app = gf::compat::appClass(front)};
                     m.active          = sp->model.active();
                     const auto& order = sp->model.stages();
                     for (size_t k = 0; k < order.size(); ++k) {
@@ -354,10 +352,8 @@ namespace {
     }
 
     CStageTransformer* attach(const PHLWINDOW& w) {
-        auto  transformer = makeUnique<CStageTransformer>();
-        auto* raw         = transformer.get();
         gf::transform::use(gf::transform::EUser::Stages); // its output buffers (WindowTransform.cpp)
-        w->m_transformers.emplace_back(std::move(transformer));
+        auto* raw = gf::compat::attachTransformer<CStageTransformer>(w);
         if (g_pHyprRenderer)
             g_pHyprRenderer->damageWindow(w);
         return raw;
@@ -369,7 +365,7 @@ namespace {
             g_pHyprRenderer->damageBox(tf::toCBox(e.damaged));
         const auto w = e.window.lock();
         if (w && e.transformer) {
-            std::erase_if(w->m_transformers, [&e](const UP<Render::IWindowTransformer>& t) { return t.get() == e.transformer; });
+            gf::compat::detachTransformer(w, e.transformer);
             if (g_pHyprRenderer)
                 g_pHyprRenderer->damageWindow(w);
         }
@@ -385,7 +381,7 @@ namespace {
         const auto w      = e.window.lock();
         const bool change = w && e.blocked != blocked;
         if (change)
-            w->setInputBlocked(INPUT_BLOCK_STAGES, blocked);
+            gf::compat::setInputBlocked(w, INPUT_BLOCK_STAGES_BIT, blocked);
         e.blocked = blocked && w;
         return change;
     }
@@ -467,12 +463,12 @@ namespace {
     // window Stages blocks counts when the model now puts it in the active stage of a shown workspace (the pending
     // retarget unblocks it) and nothing else blocks it.
     bool mayHoldKeyboard(const PHLWINDOW& w) {
-        if (!w || !w->m_isMapped || w->isHidden() || !w->m_workspace || !w->m_workspace->isVisible())
+        if (!w || !gf::compat::mapped(w) || w->isHidden() || !w->m_workspace || !gf::compat::workspaceVisible(w->m_workspace))
             return false;
         if (!blockedByStages(w))
             return w->acceptsInput();
         const auto* sp = spaceHolding(addressOf(w));
-        return sp && sp->model.isActive(addressOf(w)) && shownOn(sp->id) && w->noInputBlockedReasonsBesides(INPUT_BLOCK_STAGES_BIT);
+        return sp && sp->model.isActive(addressOf(w)) && shownOn(sp->id) && gf::compat::noInputBlockedReasonsBesides(w, INPUT_BLOCK_STAGES_BIT);
     }
 
     std::string_view originName(st::FocusOrigin origin) {
@@ -545,17 +541,15 @@ namespace {
             // keyboard is already on that surface (read from the binary: the comparison at the function's start): then
             // nothing is set again and only the seat keeps the holder; otherwise the holder is the focus surface again.
             fs->rawSurfaceFocus(holder);
-        if (old && old->m_isMapped && old->m_workspace) {
+        if (old && gf::compat::mapped(old) && old->m_workspace) {
             if (old->m_ruleApplicator)
                 old->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_FOCUS);
             if (g_pXWaylandManager)
                 g_pXWaylandManager->activateWindow(old, false);
-            old->updateDecorationValues();
+            gf::compat::refreshDecorationValues(old);
         }
-        if (g_pEventManager) {
-            g_pEventManager->postEvent(SHyprIPCEvent{.event = "activewindow", .data = ","});
-            g_pEventManager->postEvent(SHyprIPCEvent{.event = "activewindowv2", .data = ""});
-        }
+        gf::compat::postIpcEvent("activewindow", ",");
+        gf::compat::postIpcEvent("activewindowv2", "");
         if (const auto& bus = Event::bus())
             bus->m_events.window.active.emit(nullptr, Desktop::FOCUS_REASON_OTHER);
         if (g_pInputManager)
@@ -584,7 +578,7 @@ namespace {
         auto&       s  = S();
         const auto* sp = spaceHolding(addressOf(w));
         s.pendingFront  = w;
-        s.pendingSpace  = sp ? std::optional<st::WorkspaceId>{sp->id} : (w->m_workspace ? std::optional<st::WorkspaceId>{w->m_workspace->m_id} : std::nullopt);
+        s.pendingSpace  = sp ? std::optional<st::WorkspaceId>{sp->id} : (w->m_workspace ? std::optional<st::WorkspaceId>{gf::compat::workspaceId(w->m_workspace)} : std::nullopt);
         s.pendingHolder = gf::surfaces::ownerOf(keyboardHolder()).layer;
         forgetPressBesideLayer();
         gf::logRequest(Log::DEBUG, "stages: focus of {:x} ({}) deferred: Hyprland refuses window focus while {}", addressOf(w), why,
@@ -596,7 +590,7 @@ namespace {
     // deferred. The plugin never works around that refusal (R13 counter-review #3 of e9ebc7f).
     void focusOrDefer(const PHLWINDOW& w, std::string_view why) {
         const auto fs = Desktop::focusState();
-        if (!fs || !w || !w->m_isMapped)
+        if (!fs || !w || !gf::compat::mapped(w))
             return;
         if (windowFocusRefused()) {
             deferFocus(w, why);
@@ -617,11 +611,11 @@ namespace {
         const auto* sp    = spaceOf(*s.pendingSpace);
         const auto  front = sp ? frontOfActive(*sp) : nullptr;
         auto        w     = s.pendingFront.lock();
-        if (w && w == front && w->m_isMapped && !w->isHidden()) {
+        if (w && w == front && gf::compat::mapped(w) && !w->isHidden()) {
             remembered = true;
             return w;
         }
-        return front && front->m_isMapped && !front->isHidden() ? front : nullptr;
+        return front && gf::compat::mapped(front) && !front->isHidden() ? front : nullptr;
     }
 
     std::string_view dropReason(const st::PendingFocusState& state) {
@@ -656,7 +650,7 @@ namespace {
                                           .shown       = target && target->m_workspace && target->m_workspace->isVisibleNotCovered(),
                                           .locked      = sessionLocked(),
                                           .exclusive   = exclusiveLayerMapped(),
-                                          .holderKeeps = holder && holder->m_mapped && owner.layer == holder,
+                                          .holderKeeps = holder && gf::compat::layerMapped(holder) && owner.layer == holder,
                                           .focused     = target && fs->window() == target && owner.window == target};
         switch (st::pendingFocusAction(state)) {
             case st::PendingFocusAction::Wait: return;
@@ -736,7 +730,7 @@ namespace {
         if (!active || !inStrip(active))
             return;
         const auto* sp     = spaceHolding(addressOf(active));
-        auto        front  = preferred && preferred->m_isMapped ? preferred : (sp ? frontOfActive(*sp) : nullptr);
+        auto        front  = preferred && gf::compat::mapped(preferred) ? preferred : (sp ? frontOfActive(*sp) : nullptr);
         front              = inStrip(front) ? nullptr : front;
         const auto  holder = keyboardHolder();
         st::ActiveWindowState state{.hidden        = true,
@@ -976,7 +970,7 @@ namespace {
                 if (w && endGrabOf(w, "as its window goes to the strip"))
                     break; // one grab at a time (Hyprland has one)
             }
-            if (focus && focus->m_isMapped)
+            if (focus && gf::compat::mapped(focus))
                 focusOrDefer(focus, "the incoming front window");
             keepActiveOffStrip(focus, "as windows go to the strip");
         }
@@ -1104,7 +1098,7 @@ namespace {
         auto& s = S();
         if (!s.on || !manageable(w))
             return;
-        auto& sp = ensureSpace(w->m_workspace->m_id);
+        auto& sp = ensureSpace(gf::compat::workspaceId(w->m_workspace));
         if (!sp.model.add(infoOf(w), s.nextId)) {
             if (!sp.model.contains(addressOf(w)))
                 gf::logRequest(Log::INFO, "stages: window {:x} not managed (workspace full: {} windows)", addressOf(w), st::kMaxWindowsPerWorkspace);
@@ -1150,7 +1144,7 @@ namespace {
             if (const auto stage = sp->model.stageOf(address))
                 sp->model.activate(*stage);
             scheduleSync();
-        } else if (sp || (w->m_workspace && spaceOf(w->m_workspace->m_id)))
+        } else if (sp || (w->m_workspace && spaceOf(gf::compat::workspaceId(w->m_workspace))))
             scheduleSync(); // e.g. full screen on its workspace: its strip goes away while it is shown
         // Neither managed nor manageable, on a Desktop without stages (a tiled or pinned window elsewhere): nothing of Stages
         // depends on it (WM-03: every such event used to retarget and post).
@@ -1174,7 +1168,7 @@ namespace {
             return;
         const uint64_t address = addressOf(w);
         // The last window Hyprland focused on each workspace (what a WORKSPACE_CHANGE back to it restores).
-        auto*      shown   = w->m_workspace ? spaceOf(w->m_workspace->m_id) : nullptr;
+        auto*      shown   = w->m_workspace ? spaceOf(gf::compat::workspaceId(w->m_workspace)) : nullptr;
         const bool wasLast = shown && shown->lastFocused == address;
         if (shown)
             shown->lastFocused = address;
@@ -1222,7 +1216,7 @@ namespace {
     // the deferred sync runs. Inside Hyprland's workspace change: no focus change here (the sync that follows applies the
     // keyboard rule), the pointer focus is refreshed from the event loop.
     void stageArriving(const PHLWORKSPACE& ws) {
-        const auto* sp  = ws ? spaceOf(ws->m_id) : nullptr;
+        const auto* sp  = ws ? spaceOf(gf::compat::workspaceId(ws)) : nullptr;
         const auto  mon = sp ? shownOn(sp->id) : nullptr;
         if (!mon || !stripOn(mon))
             return;
@@ -1271,9 +1265,9 @@ namespace {
         PHLLS best;
         if (!g_pInputManager)
             return best;
-        for (const auto& ref : g_pInputManager->m_exclusiveLSes) {
+        for (const auto& ref : gf::compat::exclusiveLayers()) {
             const auto ls = ref.lock();
-            if (ls && ls->m_mapped && ls->resource() && gf::surfaces::interactivity(ls) == 1 &&
+            if (ls && gf::compat::layerMapped(ls) && ls->resource() && gf::surfaces::interactivity(ls) == 1 &&
                 st::replacesFrontmost(ls->m_layer, best ? std::optional<uint32_t>{best->m_layer} : std::nullopt))
                 best = ls;
         }
@@ -1293,7 +1287,7 @@ namespace {
     // Hyprland's active window may take the keyboard: mapped, not hidden, on a workspace shown, takes input (no input
     // block, Stages' included), not a strip window.
     bool activeWindowTakesKeys(const PHLWINDOW& w) {
-        return w && w->m_isMapped && !w->isHidden() && w->m_workspace && w->m_workspace->isVisible() && w->acceptsInput() && !inStrip(w);
+        return w && gf::compat::mapped(w) && !w->isHidden() && w->m_workspace && gf::compat::workspaceVisible(w->m_workspace) && w->acceptsInput() && !inStrip(w);
     }
 
     // Before every key, before Hyprland delivers it, and from the event loop after Hyprland changed the keyboard focus, a
@@ -1308,7 +1302,7 @@ namespace {
     // loaded only (the listeners go on unload); before a key it allocates nothing and logs nothing (a key path,
     // core/Quiet.hpp): the common case (no Exclusive layer, the seat's keyboard on a surface) returns after two reads.
     bool keepKeyboardFocus(bool keyArriving) {
-        const bool exclusive = g_pInputManager && !g_pInputManager->m_exclusiveLSes.empty();
+        const bool exclusive = g_pInputManager && !gf::compat::exclusiveLayers().empty();
         if (!exclusive)
             S().keysOnLayer = false; // no Exclusive layer left: Hyprland refocused, nothing to set again on unload
         const auto seat = gf::surfaces::keyboardFocus();
@@ -1632,7 +1626,7 @@ namespace {
         const st::Box    near{band.x - kDecorationReach, band.y - kDecorationReach, band.w + (2 * kDecorationReach), band.h + (2 * kDecorationReach)};
         bool             overlap = false;
         for (const auto& w : Desktop::windowState()->windows()) {
-            if (!w || !w->m_isMapped || w->isHidden() || w->m_workspace != mon->m_activeWorkspace || !w->acceptsInput())
+            if (!w || !gf::compat::mapped(w) || w->isHidden() || w->m_workspace != mon->m_activeWorkspace || !w->acceptsInput())
                 continue;
             if (!gf::minimize::intersects(tf::surfaceBox(w), near))
                 continue;
@@ -1649,27 +1643,44 @@ namespace {
 
     // ---- transformer ----
 
-    SP<Render::IFramebuffer> drawStage(const CStageTransformer* self, const SP<Render::IFramebuffer>& in) {
-        if (!in || !tf::monitorFrame())
-            return in;
+    gf::compat::STransformOutput drawStage(const CStageTransformer* self, const gf::compat::STransformInput& in) {
+        gf::compat::STransformOutput same{.fb = in.fb, .box = in.box}; // returned by value: not const (moved)
+        if (!in.fb || !tf::monitorFrame())
+            return same;
         auto&      all = S().wins;
         const auto it  = std::ranges::find_if(all, [self](const SWin& e) { return e.transformer == self; });
         if (it == all.end())
-            return in;
+            return same;
         const auto w   = it->window.lock();
-        const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        const auto mon = in.monitor;
         if (!w || !mon)
-            return in;
+            return same;
         if (gf::overviewer::transforms(w))
-            return in; // the overview draws this window now (its transformer comes after or before this one: both see `in`)
+            return same; // the overview draws this window now (its transformer comes after or before this one: both see `in`)
         if (mon != w->m_monitor.lock())
             return tf::drawNothing(in); // a window spanning monitors is shown only in its own monitor's strip
         return tf::drawFitted(w, it->rect, in, S().warnedNoBuffer, it->address);
     }
 
-    SP<Render::IFramebuffer> CStageTransformer::transform(SP<Render::IFramebuffer> in) {
-        SP<Render::IFramebuffer> out = in;
+    gf::compat::STransformOutput CStageTransformer::transformGf(const gf::compat::STransformInput& in) {
+        gf::compat::STransformOutput out{.fb = in.fb, .box = in.box};
         gf::guarded("stages transform", [&] { out = drawStage(this, in); });
+        return out;
+    }
+
+    // The thumbnail on the window's own monitor; unchanged while the overview draws the window, or for a window this
+    // transformer no longer knows.
+    CBox CStageTransformer::extentsGf(const CBox& currentBox) const {
+        CBox out = currentBox;
+        gf::guarded("stages transform extents", [&] {
+            const auto& all = S().wins;
+            const auto  it  = std::ranges::find_if(all, [this](const SWin& e) { return e.transformer == this; });
+            if (it == all.end())
+                return;
+            const auto w = it->window.lock();
+            if (w && !gf::overviewer::transforms(w))
+                out = tf::fittedExtents(w, it->rect, w->m_monitor.lock(), currentBox);
+        });
         return out;
     }
 
@@ -1715,10 +1726,10 @@ namespace {
         for (const auto& w : Desktop::windowState()->windows()) { // bottom to top
             if (!manageable(w))
                 continue;
-            const auto id = w->m_workspace->m_id;
+            const auto id = gf::compat::workspaceId(w->m_workspace);
             auto       it = std::ranges::find_if(perSpace, [id](const SPending& p) { return p.id == id; });
             if (it == perSpace.end()) {
-                const auto last = w->m_workspace->m_lastFocusedWindow.lock();
+                const auto last = gf::compat::lastFocusedWindow(w->m_workspace);
                 perSpace.push_back(SPending{.id = id, .windows = {}, .lastFocused = last ? addressOf(last) : 0});
                 it = perSpace.end() - 1;
             }
@@ -1837,7 +1848,7 @@ namespace gf::stager {
                 if (!S().on)
                     return;
                 stageArriving(ws);
-                scheduleSync(ws && spaceOf(ws->m_id) ? std::optional<st::WorkspaceId>{ws->m_id} : std::nullopt);
+                scheduleSync(ws && spaceOf(gf::compat::workspaceId(ws)) ? std::optional<st::WorkspaceId>{gf::compat::workspaceId(ws)} : std::nullopt);
             });
         }));
         // After an unlock Hyprland refocuses at the cursor only (CSessionLockManager): its active window may still be the

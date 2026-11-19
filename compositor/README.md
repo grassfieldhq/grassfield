@@ -46,7 +46,12 @@ Spec: [`docs/specs/compositor.md`](../docs/specs/compositor.md).
 
 ## Requirements
 
-- Hyprland **0.56.2** headers (`pkg-config --modversion hyprland`), built with the same compiler (GCC).
+- Hyprland **0.56.2** headers (`pkg-config --modversion hyprland`), built with the same compiler (GCC). The sources also build
+  against **0.57.x** (current Arch): every difference is in `src/HyprCompat.hpp` (docs/specs/compositor.md "Hyprland
+  versions"). To build against 0.57.2 without replacing the installed Hyprland: `compositor/hypr-sysroot.sh <dir>` (the pinned
+  0.57.2 packages in a sysroot), then configure with `PKG_CONFIG_SYSROOT_DIR=<dir>/sysroot
+  PKG_CONFIG_LIBDIR=<dir>/sysroot/usr/lib/pkgconfig:<dir>/sysroot/usr/share/pkgconfig` and `-DCMAKE_SYSROOT=<dir>/sysroot`
+  (docs/compat.md "Hyprland 0.57").
 - C++23 (the 0.56.2 headers use `std::expected` and `std::string_view::contains`).
 - Lua 5.5 headers (`pkg-config lua`); Lua symbols resolve at load time from Hyprland's own `liblua`.
 - `hyprwayland-scanner` (0.4.6 tested): generates the appmenu server code from `protocols/appmenu.xml`, and the toplevel-drag

@@ -7,7 +7,7 @@
 #include <hyprland/src/desktop/state/ViewHitTester.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
@@ -25,7 +25,7 @@ namespace gf::deferredFocus {
     }
 
     bool exclusiveLayerMapped() {
-        return g_pInputManager && !g_pInputManager->m_exclusiveLSes.empty();
+        return g_pInputManager && !gf::compat::exclusiveLayers().empty();
     }
 
     bool windowFocusRefused() {
@@ -41,7 +41,7 @@ namespace gf::deferredFocus {
         if (stateReset)
             *stateReset = false;
         const auto fs = Desktop::focusState();
-        if (!fs || !w || !w->m_isMapped || windowFocusRefused())
+        if (!fs || !w || !gf::compat::mapped(w) || windowFocusRefused())
             return false;
         if (windowHoldsKeyboard(w))
             return true;
@@ -62,9 +62,9 @@ namespace gf::deferredFocus {
         if (auto surface = gf::surfaces::keyboardFocus())
             return surface;
         if (g_pInputManager) {
-            for (const auto& ref : g_pInputManager->m_exclusiveLSes) {
+            for (const auto& ref : gf::compat::exclusiveLayers()) {
                 const auto ls = ref.lock();
-                if (ls && ls->m_mapped && ls->resource())
+                if (ls && gf::compat::layerMapped(ls) && ls->resource())
                     return ls->resource();
             }
         }
@@ -74,21 +74,21 @@ namespace gf::deferredFocus {
     bool cursorOnExclusiveLayer(const Vector2D& at) {
         if (!g_pInputManager || !Desktop::viewState())
             return false;
-        std::vector<PHLLSREF> exclusive = g_pInputManager->m_exclusiveLSes;
+        std::vector<PHLLSREF> exclusive = gf::compat::exclusiveLayers();
         Vector2D              local;
         PHLLS                 found;
         const auto            tester = Desktop::viewState()->hitTest();
-        return tester.layerPopupSurfaceAt(at, static_cast<const std::vector<PHLLSREF>*>(&exclusive), &local, &found) || tester.layerSurfaceAt(at, &exclusive, &local, &found);
+        return gf::compat::layerPopupSurfaceAt(at, exclusive, &local, &found) || tester.layerSurfaceAt(at, &exclusive, &local, &found);
     }
 
     PHLLS exclusiveLayerAt(const Vector2D& at) {
         if (!g_pInputManager || !Desktop::viewState())
             return nullptr;
-        std::vector<PHLLSREF> exclusive = g_pInputManager->m_exclusiveLSes;
+        std::vector<PHLLSREF> exclusive = gf::compat::exclusiveLayers();
         Vector2D              local;
         PHLLS                 found;
         const auto            tester = Desktop::viewState()->hitTest();
-        if (tester.layerPopupSurfaceAt(at, static_cast<const std::vector<PHLLSREF>*>(&exclusive), &local, &found) && found)
+        if (gf::compat::layerPopupSurfaceAt(at, exclusive, &local, &found) && found)
             return found;
         found.reset();
         if (tester.layerSurfaceAt(at, &exclusive, &local, &found) && found)
@@ -112,7 +112,7 @@ namespace gf::deferredFocus {
     }
 
     df::FocusCause causeOf(Desktop::eFocusReason reason) {
-        switch (reason) {
+        switch (gf::compat::baseFocusReason(reason)) {
             case Desktop::FOCUS_REASON_UNKNOWN: return df::FocusCause::Unknown;
             case Desktop::FOCUS_REASON_FFM: return df::FocusCause::PointerFollow;
             case Desktop::FOCUS_REASON_KEYBIND: return df::FocusCause::KeyBinding;
@@ -131,6 +131,7 @@ namespace gf::deferredFocus {
             case Desktop::FOCUS_REASON_UNMAP_GROUPED_WINDOW: return df::FocusCause::UnmapGrouped;
             case Desktop::FOCUS_REASON_NEW_WINDOW: return df::FocusCause::NewWindow;
             case Desktop::FOCUS_REASON_GHOSTS: return df::FocusCause::Ghosts;
+            default: break; // Hyprland 0.57's CLICK_DOWN and CLICK_UP: folded into CLICK above (gf::compat::baseFocusReason)
         }
         return df::FocusCause::Unknown;
     }

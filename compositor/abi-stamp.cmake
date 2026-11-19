@@ -1,6 +1,7 @@
 # The plugin's ABI stamp (ADR-0009 "Amendment 2026-10-23"): the string Hyprland compares with its own hash
 # (PluginAPI.hpp __hyprland_api_get_client_hash: the commit, then the aquamarine, hyprutils, hyprgraphics, hyprcursor and
-# hyprlang versions without their patch number), computed from the version.h the plugin is compiled against and written
+# hyprlang versions without their patch number; the same string in 0.56 and 0.57, which builds it with std::format), computed
+# from the version.h the plugin is compiled against and written
 # next to it, so that a stamp always belongs to its build.
 # Usage (CMakeLists.txt runs it): cmake -DVERSION_H=<hyprland/src/version.h> -DOUT=<grassfield-compositor.abi> -P abi-stamp.cmake
 # The same formula: packaging/arch/grassfield-compositor-rebuild abi_of, config/hypr/grassfield/compositor.lua M.abi
