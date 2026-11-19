@@ -8,7 +8,8 @@ Writes ONE private text file (mode 0600, never overwriting) and prints its path 
     or at PATH (a file, or an existing folder to write into);
   - named grassfield-report-<YYYYMMDD-HHMMSS>.txt (-2, -3... when that name exists).
 It holds the versions (Grassfield, its packages, Omarchy, Hyprland, Quickshell, Qt), the compositor plugin's status, the
-displays, the audio devices, the crashes of the last 7 days, this boot's journal of the Grassfield user units (bounded) and
+displays, the audio devices, the crashes of the last 7 days, this boot's journal of the Grassfield user units (bounded, its
+free text such as window titles, network names and notification bodies replaced by <text>) and
 Grassfield's configuration files with secret-looking values removed. The home path, the user name, the real name and the
 host name are replaced everywhere, and so are hardware serial numbers (the displays', R7-SEC-04; a USB audio device's in
 ALSA and PipeWire names) and Bluetooth or network hardware addresses. The person reads it and decides whether to share it.
@@ -315,6 +316,42 @@ def redact_device_names(text, every_line=False):
     return "\n".join(one(l) for l in text.split("\n"))
 
 
+# Free text in the journal (SU-15): what a person wrote or named, which a Grassfield unit may log, such as a window's title,
+# a network's name (SSID), a notification's summary and body, a search, a clipboard entry, an app's own message. Two rules:
+# 1. a value after one of these keys (`title=…`, `ssid: …`, `body "…"`): replaced whole by <text>, quoted or not (an unquoted
+#    one up to , ; ) ] } or the end of the line);
+# 2. any quoted text (“…”, "…", «…», '…' standing alone): replaced by <text> unless it is a technical word: lowercase letters,
+#    digits and _ . : / @ + - only (a kind, a state, an id), or a display connector (DP-3, eDP-1, HDMI-A-1), or what an earlier
+#    rule already put there. The interface's own words around them are kept.
+FREE_KEYS = (r"(?:window[ _-]?title|title|ssid|network[ _-]?name|wifi|summary|body|subject|query|search|clipboard|"
+             r"notification[ _-]?text|app[ _-]?message|message[ _-]?text)")
+FREE_PAIR = re.compile(r"(?i)\b(" + FREE_KEYS + r")(\s*[=:]\s*|\s+(?=[\"“«']))(“[^”\n]*”|\"[^\"\n]*\"|«[^»\n]*»|'[^'\n]*'|[^,;)\]}\n]+)")
+QUOTED_TEXT = re.compile(r"“([^”\n]{0,400})”|«([^»\n]{0,400})»|\"([^\"\n]{0,400})\"|(?<![\w'])'([^'\n]{0,400})'(?![\w'])")
+TECHNICAL = re.compile(r"^(?:[a-z0-9_.:/@+-]*|(?:e?DP|HDMI|DVI|VGA|DSI|HEADLESS|Virtual|WL)(?:-[A-Z]?[0-9]+)+|<\w+>|\[\w+\]|~[\w./-]*)$")
+
+
+def redact_free_text(text):
+    def pair(m):
+        value = m.group(3)
+        if value[:1] in "\"“«'":
+            closing = {"\"": "\"", "“": "”", "«": "»", "'": "'"}[value[0]]
+            return m.group(1) + m.group(2) + value[0] + "<text>" + closing
+        return m.group(1) + m.group(2) + "<text>"
+
+    def quoted(m):
+        for i, (open_, close) in enumerate((("“", "”"), ("«", "»"), ("\"", "\""), ("'", "'")), start=1):
+            inner = m.group(i)
+            if inner is not None:
+                return m.group(0) if TECHNICAL.match(inner) else open_ + "<text>" + close
+        return m.group(0)
+
+    out = []
+    for line in text.split("\n"):
+        line = FREE_PAIR.sub(pair, line)
+        out.append(QUOTED_TEXT.sub(quoted, line))
+    return "\n".join(out)
+
+
 # Possessives that are not people.
 PRODUCT_NAMES = {"grassfield", "omarchy", "hyprland", "quickshell", "pipewire", "wireplumber", "linux", "arch", "qt", "gtk", "kde",
                  "gnome", "firefox", "chromium", "bluez", "systemd", "today", "yesterday", "it", "that", "there", "here", "let",
@@ -577,8 +614,8 @@ def report(now):
         "Grassfield diagnostic report",
         "Created: %s UTC by grassfield-report (read-only; nothing was sent anywhere)." % now.strftime("%Y-%m-%d %H:%M:%S"),
         "Removed: the home folder (shown as ~), the user name (<user>), the real name (<name>), the computer's name (<host>),",
-        "values that look like passwords, tokens or keys ([redacted]) and hardware serial numbers ([serial]). Read it before",
-        "you share it.",
+        "values that look like passwords, tokens or keys ([redacted]), hardware serial numbers ([serial]) and, in the journal,",
+        "free text such as window titles, network names and notification bodies (<text>). Read it before you share it.",
         "",
         "Grassfield version: %s" % version,
         "Session: GRASSFIELD_SESSION=%s XDG_CURRENT_DESKTOP=%s XDG_SESSION_TYPE=%s" % (
@@ -593,7 +630,7 @@ def report(now):
         ("Displays", monitors(displays, failed)),
         ("Audio devices", redact_device_names(run(["wpctl", "status"])[1], every_line=True)),
         ("Crashes (last 7 days)", crashes()),
-        ("Journal of the Grassfield units (this boot)", redact_device_names(journal())),
+        ("Journal of the Grassfield units (this boot)", redact_device_names(redact_free_text(journal()))),
         ("Configuration (%s)" % config_dir(), configuration(known, found)),
     ]
     body = "\n".join(head) + "\n"

@@ -98,6 +98,44 @@ TestCase {
         compare(t.win.sidebarItems.length, 3);
     }
 
+    // SU-06: a large category makes delegates only for what shows (and a screen around it), not one per app; a new snapshot
+    // (dataChanged) keeps the page and its delegates, changing what they show in place; scrolling makes the rows below.
+    function test_largeCategoryVirtualizedAndKeptInPlace() {
+        const t = make({height: 600});
+        const many = [];
+        for (let i = 0; i < 400; ++i)
+            many.push(t.backend.app_("org.example.App" + i, "App " + String(i).padStart(3, "0"), "repo", false, true));
+        t.backend.manyApps = many;
+        t.win.openCategory("many");
+        compare(t.win.pageKind, "category");
+        const page = t.win.page;
+        const grid = find(page, i => i.byKey !== undefined && i.rowCount !== undefined);
+        verify(grid);
+        tryCompare(grid, "count", 400);
+        const lockups = () => findAll(grid, i => i.app !== undefined && i.separator !== undefined && i.visible && i.app.id !== "");
+        tryVerify(() => lockups().length > 0);
+        verify(lockups().length < 200, "delegates for what shows only: " + lockups().length + " of 400");
+        verify(grid.height > page.flickable.height * 3, "the grid is as tall as all its rows");
+        const first = grid.itemAt(0);
+        verify(first);
+        compare(first.app.name, "App 000");
+        // A new snapshot: the same page, the same delegate, its app read again.
+        many[0] = Object.assign({}, many[0], {name: "App 000 renamed"});
+        t.backend.manyApps = many.slice();
+        t.backend.dataChanged();
+        verify(t.win.page === page, "the page is not made again");
+        verify(grid.itemAt(0) === first, "the delegate is not made again");
+        compare(first.app.name, "App 000 renamed");
+        // The end of the page: its last rows get delegates.
+        page.flickable.contentY = page.flickable.contentHeight - page.flickable.height;
+        tryVerify(() => grid.itemAt(399) !== null);
+        compare(grid.itemAt(399).app.name, "App 399");
+        // The keyboard: the first item focused from the end scrolls the page back to it.
+        grid.focusItem(0);
+        tryVerify(() => grid.itemAt(0) !== null && grid.itemAt(0).activeFocus);
+        verify(page.flickable.contentY < grid.rowHeight * 4);
+    }
+
     // Back and Forward: a page left keeps its scroll; a sidebar row starts a new page.
     function test_backForwardKeepsScroll() {
         const t = make({height: 400});
@@ -131,6 +169,7 @@ TestCase {
         keyClick("a");
         compare(t.win.pageKind, "search");
         compare(t.win.page.query, "pa");
+        tryCompare(t.win.page, "searching", false); // the worker answers once typing pauses (SU-06 note)
         compare(t.win.page.results.map(a => a.id), ["org.example.Paint", "org.example.Tool"]); // Paint, Pack Tool
         compare(t.win.page.title, "Results for “pa”");
         compare(t.win.nav.back.length, backs, "one page for the whole query");
@@ -144,6 +183,7 @@ TestCase {
         t.win.focusSearch();
         keyClick("z");
         keyClick("z");
+        tryCompare(t.win.page, "searching", false);
         compare(t.win.page.results.length, 0);
         compare(t.win.page.Accessible.name, "No Results for “zz”");
         // An app opened from the results, then Back: the results and the query come back.
@@ -151,6 +191,7 @@ TestCase {
         keyClick(Qt.Key_Backspace);
         keyClick(Qt.Key_Backspace);
         keyClick("g");
+        tryCompare(t.win.page, "searching", false);
         compare(t.win.page.results.map(a => a.id), ["org.example.Games"]);
         t.win.openApp("org.example.Games");
         compare(t.win.searchField.text, "g", "the field keeps its text while the app's page shows");
@@ -193,8 +234,8 @@ TestCase {
         compare(t.win.page.aurState, "done");
         compare(t.win.page.title, "Results for “exa”");
         verify(findAll(t.win.page, i => i.text === "From the AUR (not reviewed)" && i.visible).length === 1);
-        verify(findAll(t.win.page, i => i.text === "AUR · 120 votes").length === 1);
-        verify(findAll(t.win.page, i => i.text === "AUR · 7 votes · Flagged out of date").length === 1);
+        tryVerify(() => findAll(t.win.page, i => i.text === "AUR · 120 votes").length === 1); // a GridView makes its delegates at its next layout
+        tryVerify(() => findAll(t.win.page, i => i.text === "AUR · 7 votes · Flagged out of date").length === 1);
         compare(t.win.page.aurLine(), "");
         // Typing goes on: the AUR's section empties until Return asks again.
         t.win.focusSearch();
@@ -205,6 +246,7 @@ TestCase {
         keyClick(Qt.Key_Return);
         t.backend.aurResults("exam", [], "tooMany");
         compare(t.win.page.aurLine(), "The AUR has too many results for “exam”: type more of the name.");
+        tryCompare(t.win.page, "searching", false);
         compare(t.win.page.Accessible.name, "No Results for “exam”");
     }
 
@@ -739,6 +781,8 @@ TestCase {
         const again = find(t.win.page, i => i.text === "Try Again" && i.visible);
         verify(again);
         const before = t.backend.calls.filter(c => c === "refresh").length;
+        // The page is updated in place (SU-06): its column settles at the next frame, then the button is where it shows.
+        waitForRendering(t.win.contentItem);
         mouseClick(again);
         compare(t.backend.calls.filter(c => c === "refresh").length, before + 1);
         // Arch's app data that could not be downloaded (the owner's rc1-7: a package database older than the mirror): said

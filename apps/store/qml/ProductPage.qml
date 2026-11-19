@@ -28,6 +28,8 @@ ScrollPage {
     signal softwareUpdateRequested(string id)
     signal tryAgainRequested(var app, string kind)
     signal buildScriptRequested(var app)
+    // The AUR answered for this app: its data is read again (Main.qml's binding, never an assignment that would cut it).
+    signal appStale
 
     // What the buttons may do (StoreBackend::actions), the app's operation and how its last one ended (spec SR13, SR19, SR22).
     readonly property var actions: root.app.id && root.backend.revision >= 0 ? root.backend.actions(root.app.id) : ({})
@@ -41,7 +43,7 @@ ScrollPage {
 
     readonly property var aur: root.app.aur || ({})
 
-    Component.onCompleted: {
+    function requestFacts(): void {
         if (root.factsPackage !== "" && (root.app.kind === "repo" || root.app.kind === "setup"))
             root.backend.requestPackageInfo(root.factsPackage);
         if (root.app.kind === "aur")
@@ -49,6 +51,11 @@ ScrollPage {
         if (root.app.kind === "flatpak")
             root.backend.requestFlatpakInfo(root.app.id);
     }
+
+    Component.onCompleted: root.requestFacts()
+    // The page stays across snapshots (SU-06): an app installed, removed or updated meanwhile has its facts asked again.
+    readonly property bool installedNow: root.app.installed === true
+    onInstalledNowChanged: root.requestFacts()
 
     Connections {
         target: root.backend
@@ -58,7 +65,7 @@ ScrollPage {
         }
         function onAurInfo(id: string): void {
             if (id === root.app.id)
-                root.app = root.backend.app(id);
+                root.appStale();
         }
         function onFlatpakInfo(id: string, facts: var): void {
             if (id === root.app.id)

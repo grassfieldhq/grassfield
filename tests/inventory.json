@@ -842,6 +842,8 @@
  {"path": "tests/visual/scenarios/titlebar.sh", "layer": "visual", "runner": "bare"},
  {"path": "tests/shell/notify_no_autostart.sh", "layer": "logic"},
  {"path": "tests/security/logind_session.sh", "layer": "headless"},
- {"path": "tests/security/idle_restart.sh", "layer": "headless"}
+ {"path": "tests/security/idle_restart.sh", "layer": "headless"},
+ {"path": "tests/shell/update_checked_dbs.sh", "layer": "logic"},
+ {"path": "tests/unit/store/tst_screenshotprovider.cpp", "layer": "logic"}
 ]
 }

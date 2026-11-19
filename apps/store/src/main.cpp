@@ -9,6 +9,7 @@
 #include <QTimer>
 
 #include <cstdio>
+#include <unistd.h>
 #include <QLibraryInfo>
 #include <QQmlApplicationEngine>
 #include <QQuickWindow>
@@ -89,21 +90,28 @@ int main(int argc, char *argv[])
         // One-shot: the read of this computer's apps, printed once it is done; the launcher and Files run it (never two
         // Stores: it takes no bus name, starts no operation and touches no state file).
         grassfield::store::StoreBackend backend;
-        // Printed once: the launcher and Files parse the whole output as one JSON document.
-        bool printed = false;
-        QObject::connect(&backend, &grassfield::store::StoreBackend::loadingChanged, &app, [&backend, &app, &printed] {
-            if (backend.loading() || printed)
+        // Printed once: the launcher and Files parse the whole output as one JSON document. The plans (a pacman -Rs each) run
+        // on the workers (SU-02): the GUI thread stays free, so the watchdog below can always fire.
+        bool asked = false;
+        QObject::connect(&backend, &grassfield::store::StoreBackend::loadingChanged, &app, [&backend, &app, &asked] {
+            if (backend.loading() || asked)
                 return;
-            printed = true;
-            const QJsonObject doc{{QStringLiteral("version"), 1}, {QStringLiteral("entries"), QJsonObject::fromVariantMap(backend.removalByEntry(true))}};
-            const QByteArray text = QJsonDocument(doc).toJson(QJsonDocument::Compact) + '\n';
-            fwrite(text.constData(), 1, static_cast<size_t>(text.size()), stdout);
-            fflush(stdout);
-            app.quit();
+            asked = true;
+            backend.removalByEntryAsync([&app](const QVariantMap &entries) {
+                const QJsonObject doc{{QStringLiteral("version"), 1}, {QStringLiteral("entries"), QJsonObject::fromVariantMap(entries)}};
+                const QByteArray text = QJsonDocument(doc).toJson(QJsonDocument::Compact) + '\n';
+                fwrite(text.constData(), 1, static_cast<size_t>(text.size()), stdout);
+                fflush(stdout);
+                app.quit();
+            });
         });
         QTimer::singleShot(120000, &app, [&app] { app.exit(1); });
         backend.loadOnly();
-        return app.exec();
+        const int code = app.exec();
+        // A job still running (the watchdog fired): not waited for (SU-07).
+        if (!backend.drain(2000))
+            _exit(code);
+        return code;
     }
 
     // One Store per user (storeinstance.h): a second launch hands its page and its activation token to the running one and
@@ -158,6 +166,15 @@ int main(int argc, char *argv[])
     // lock and keeps the result), then quits.
     app.setQuitOnLastWindowClosed(false);
     QObject::connect(&app, &QGuiApplication::lastWindowClosed, &backend, &grassfield::store::StoreBackend::quitWhenIdle);
+    // SU-07: the bus name goes as soon as the Store quits, before its workers are waited for: a launch meanwhile (the Dock,
+    // Files' "Search the Store", the launcher's uninstall) takes the name and opens a new Store at once, never handing its
+    // page to one that is going away.
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &app, [&bus] {
+        if (!bus.isConnected())
+            return;
+        bus.unregisterService(grassfield::store::StoreInstance::serviceName());
+        bus.unregisterObject(grassfield::store::StoreInstance::objectPath());
+    });
     // The first load starts once the window has its first frame: the window never waits for pacman or AppStream.
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
     if (window) {
@@ -171,5 +188,15 @@ int main(int argc, char *argv[])
     } else {
         backend.start();
     }
-    return app.exec();
+    const int code = app.exec();
+    // SU-07: the quit is bounded. Every job is told to stop (fetches abort within 0.1 s, children get SIGTERM) and is waited
+    // for 5 s at most; one still running then is left behind with the process (_exit: no destructor waits for it). Nothing
+    // is lost: store.json and the caches are written whole by rename, and a running operation is the helper's, the terminal's
+    // or flatpak's own (flatpak gets SIGTERM with the Store, S25).
+    if (!backend.drain(5000)) {
+        fflush(stdout);
+        fflush(stderr);
+        _exit(code);
+    }
+    return code;
 }

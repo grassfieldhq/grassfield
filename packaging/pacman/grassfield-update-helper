@@ -41,7 +41,8 @@
 # or an operation id used before; 3 busy (another run, or a process holding pacman's db.lck); 4 less than 10 GiB free on /;
 # 5 on battery below 50 %; 6 needs a newer Grassfield (the compatibility check, or pacman's own refusal naming grassfield-hold, ADR-0041 step 2a); 7 needs a person (Omarchy's terminal; also a
 # db.lck no process holds: `needs stalelock`); 8 failed before installing anything (`synced` when the checked sync databases
-# had already become the system's). pkexec itself exits 126 (the dialog dismissed) and 127 (not authorized). A run that ran
+# had already become the system's); 9 the sync databases changed after the check (another `pacman -Sy` replaced them between
+# the swap and the transaction): nothing was installed, `synced` (SU-10). pkexec itself exits 126 (the dialog dismissed) and 127 (not authorized). A run that ran
 # the migrations (SU-M2) says `migrations ran`.
 #
 # Its only input is its argument vector. -p keeps bash from reading BASH_ENV or importing a function; then, while its
@@ -821,6 +822,26 @@ for repo in "${repos[@]}"; do
   done
 done
 rm -f -- "$own_db_lock" && own_db_lock=""
+# The system's sync databases are still the checked ones, re-hashed against the checked copies (SU-10): pacman's own lock is free between the swap
+# and each transaction below, and another root `pacman -Sy` (a terminal, omarchy-refresh-pacman) could replace them there;
+# `-Su --noconfirm` would then install a plan that was never checked. Each pacman run below is preceded by this, right
+# before it takes its lock; a difference is exit 9 and nothing is installed.
+checked_dbs() {
+  local repo ext src dst a b
+  for repo in "${repos[@]}"; do
+    for ext in db db.sig; do
+      src=$tmpdb/sync/$repo.$ext
+      dst=$dbpath/sync/$repo.$ext
+      if [[ -f $src && ! -L $src ]]; then
+        [[ -f $dst && ! -L $dst ]] || return 1
+        a=$(sha_of "$src") b=$(sha_of "$dst")
+        [[ -n $a && $a == "$b" ]] || return 1
+      elif [[ -e $dst || -L $dst ]]; then
+        return 1
+      fi
+    done
+  done
+}
 
 # pacman, its output appended to the log up to the log's cap and, when `report` is 1, read for the progress; its exit
 # code. `downloads`: how many files the plan still has to download. `started`: pacman began changing packages.
@@ -882,6 +903,7 @@ done
 if ((${#keyrings[@]})); then
   progress keyring
   no_db_lock
+  checked_dbs || finish 9 "the sync databases changed after they were checked (another pacman -Sy): nothing was installed"
   pacman_run 0 0 -S --needed --noconfirm --noprogressbar "${keyrings[@]}" || finish 8 "the signing keyrings (${keyrings[*]}) could not be updated"
   started=0
 fi
@@ -898,6 +920,7 @@ else
   progress installing 0 0
 fi
 no_db_lock
+checked_dbs || finish 9 "the sync databases changed after they were checked (another pacman -Sy): nothing was installed"
 say "pacman -Su --noconfirm --noprogressbar --overwrite /usr/share/omarchy/*"
 pacman_run 1 "$downloads" -Su --noconfirm --noprogressbar --overwrite '/usr/share/omarchy/*'
 code=$?

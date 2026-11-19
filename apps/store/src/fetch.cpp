@@ -14,6 +14,27 @@
 
 namespace grassfield::store {
 
+namespace {
+thread_local std::shared_ptr<const std::atomic_bool> t_cancel;
+constexpr int kCancelPollMs = 100;
+}
+
+FetchCancelScope::FetchCancelScope(std::shared_ptr<const std::atomic_bool> cancel)
+    : m_previous(std::move(t_cancel))
+{
+    t_cancel = std::move(cancel);
+}
+
+FetchCancelScope::~FetchCancelScope()
+{
+    t_cancel = std::move(m_previous);
+}
+
+bool fetchCancelled()
+{
+    return t_cancel && t_cancel->load();
+}
+
 QNetworkRequest storeRequest(const QUrl &url, const FetchLimits &limits, const QByteArray &etag)
 {
     QNetworkRequest request(url);
@@ -36,6 +57,10 @@ FetchResult fetch(const QUrl &url, const FetchLimits &limits, const QByteArray &
     if (!requestAllowed(url, devPlumbing)) {
         result.status = FetchResult::Status::Refused;
         result.error = QStringLiteral("not an https URL");
+        return result;
+    }
+    if (fetchCancelled()) {
+        result.error = QStringLiteral("cancelled");
         return result;
     }
     QNetworkAccessManager manager;
@@ -74,15 +99,30 @@ FetchResult fetch(const QUrl &url, const FetchLimits &limits, const QByteArray &
     guard.setSingleShot(true);
     QObject::connect(&guard, &QTimer::timeout, reply, [reply] { reply->abort(); });
     guard.start(2 * limits.timeoutMs);
+    // The worker's cancel flag (FetchCancelScope), looked at ten times a second.
+    QTimer cancelPoll;
+    bool cancelled = false;
+    QObject::connect(&cancelPoll, &QTimer::timeout, reply, [reply, &cancelled] {
+        if (fetchCancelled()) {
+            cancelled = true;
+            reply->abort();
+        }
+    });
+    if (t_cancel)
+        cancelPoll.start(kCancelPollMs);
     if (!reply->isFinished())
         loop.exec();
+    cancelPoll.stop();
     if (!tooLarge && !refused)
         body += reply->read(limits.maxBytes + 1 - body.size());
     if (body.size() > limits.maxBytes)
         tooLarge = true;
 
     const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (refused) {
+    if (cancelled) {
+        result.status = FetchResult::Status::Failed;
+        result.error = QStringLiteral("cancelled");
+    } else if (refused) {
         result.status = FetchResult::Status::Refused;
         result.error = QStringLiteral("redirected to a URL that is not https");
     } else if (tooLarge) {
@@ -149,6 +189,13 @@ QList<int> headStatuses(const QList<QUrl> &urls, int timeoutMs, int deadlineMs, 
         deadline.setSingleShot(true);
         QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
         deadline.start(deadlineMs);
+        QTimer cancelPoll;
+        QObject::connect(&cancelPoll, &QTimer::timeout, &loop, [&loop] {
+            if (fetchCancelled())
+                loop.quit();
+        });
+        if (t_cancel)
+            cancelPoll.start(kCancelPollMs);
         loop.exec();
     }
     // What has not answered by now (the deadline, or one file already gone) is dropped: 0.

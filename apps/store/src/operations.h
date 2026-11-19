@@ -13,8 +13,9 @@
 //   webapp  Omarchy's omarchy-webapp-install / -remove as the Store's own child (b.3), 10 minutes at most
 //   flatpak a Flatpak of Flathub (b.3, step 3c): `flatpak install --user --noninteractive flathub <ref>`, or `flatpak
 //           uninstall --user --noninteractive <app id>` then `--unused` (the runtimes no app needs any more, SD27), as the
-//           Store's own child (it dies with the Store: SIGTERM, which stops flatpak cleanly, S25); no time limit, and an
-//           install can be stopped (SIGTERM, SD26); progress from its "Installing <ref>" lines against flatpak's own plan
+//           Store's own child (it dies with the Store: SIGTERM, which stops flatpak cleanly, S25); stopped when it prints
+//           nothing for 30 minutes (a stalled network, SU-09), and an install or an update can be stopped (SIGTERM, SD26);
+//           progress from its "Installing <ref>" lines against flatpak's own plan
 // Before an operation starts, it is written to store.json; on the next start a record still there is compared with what is
 // there (recover): done, still running (followed again), interrupted (a part there), or not finished. The Store never
 // signals pacman, the helper, the terminal or Omarchy's commands, except a web app command past its limit, and pkexec while
@@ -34,6 +35,7 @@
 #include <QProcessEnvironment>
 #include <QString>
 #include <QStringList>
+#include <QThreadPool>
 #include <QTimer>
 #include <QVariantList>
 
@@ -130,6 +132,9 @@ struct OperationsConfig {
     int authorizationMs = 120 * 1000;
     qint64 helperMs = 2LL * 3600 * 1000;
     int webAppMs = 10 * 60 * 1000;
+    // A Flatpak operation (install, update, removal) that prints nothing for this long is stalled (a network that stopped
+    // answering, SU-09): flatpak gets SIGTERM, SIGKILL 10 s later, and the operation ends "not finished".
+    qint64 flatpakIdleMs = 30LL * 60 * 1000;
     // The terminal (b.2): the script must start within terminalStartMs (its deadline; the Store waits 15 s more for its
     // started file, the script being past the deadline check by then), and is followed up to terminalMs.
     int terminalStartMs = 60 * 1000;
@@ -170,9 +175,11 @@ public:
     bool removeWaiting(const QString &id);
     // A failure's line goes (the user read it, or tries again).
     void dismiss(const QString &app);
-    // The running Flatpak install stops (SD26: SIGTERM, which ends flatpak at once and leaves nothing half-installed, S25);
-    // false for anything else, which cannot be stopped.
+    // The running Flatpak install or update stops (SD26, SU-09: SIGTERM, which ends flatpak at once and leaves nothing
+    // half-installed, S25; an update's refs done so far stay); false for anything else, which cannot be stopped.
     bool stop(const QString &id);
+    // SU-07: the quit waits for the workers (the state read after an operation, store.json's writes), `ms` at most.
+    bool drain(int ms);
     // The record left in store.json by an earlier run of the Store, compared with what is there.
     void recover();
 
@@ -207,7 +214,9 @@ private:
     void poll();
     void processEnded(int exitCode, QProcess::ExitStatus status);
     void conclude(std::optional<int> exitCode, const QString &output);
-    void writeRecord(const OperationRecord &record);
+    // store.json's record, written on the writer's thread (never on the click path), in order; `then` runs here once it is
+    // on disk (an operation starts only after its record is written: the recovery needs it).
+    void writeRecord(const OperationRecord &record, std::function<void()> then = {});
     void clearRecord();
     QString helperLog(const QString &id) const;
     // The state after an operation, off the GUI thread; `then` runs back here with (present, total).
@@ -229,11 +238,19 @@ private:
     bool m_concluding = false;
     bool m_followOnly = false; // recover(): a helper of an earlier run is followed, not owned
     bool m_stopping = false;   // stop(): the running Flatpak install was asked to stop
+    bool m_idleStopped = false; // the running Flatpak operation printed nothing for flatpakIdleMs and was stopped (SU-09)
+    QDateTime m_lastOutput;     // flatpak's last output (or its start)
     std::optional<int> m_firstExit; // a Flatpak removal's own exit code, while `--unused` runs after it
     QByteArray m_flatpakOutput;     // what flatpak printed (1 MiB at most): its progress
     QList<QStringList> m_flatpakSteps; // an update's commands still to run, each after the one before succeeded
     QList<std::pair<QString, QString>> m_flatpakGuards; // with each, its ref and the commit it must still have ("" none)
     void startUpdateStep();
+    void begin(); // startNext's second half, once the record is written
+    // SU-14: the workers' answers go to this object, which outlives the pools (declared before them): never to a QPointer
+    // read on a worker's thread. Its own pools, waited for when the Operations go (never the global one, which outlives it).
+    QObject m_context;
+    QThreadPool m_writer; // store.json's writes, one at a time, in order
+    QThreadPool m_pool;   // the state after an operation, a Flatpak's installed commit
 };
 
 } // namespace grassfield::store

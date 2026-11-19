@@ -4,6 +4,7 @@
 #include "flatpak.h"
 #include "statefile.h"
 
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -310,6 +311,15 @@ Operations::Operations(const OperationsConfig &config, QObject *parent)
     m_retry.setSingleShot(true);
     m_retry.setInterval(2000);
     connect(&m_retry, &QTimer::timeout, this, &Operations::startNext);
+    m_writer.setMaxThreadCount(1);
+    m_pool.setMaxThreadCount(2);
+}
+
+bool Operations::drain(int ms)
+{
+    QDeadlineTimer deadline(ms);
+    const bool written = m_writer.waitForDone(int(qMax<qint64>(0, deadline.remainingTime())));
+    return m_pool.waitForDone(int(qMax<qint64>(0, deadline.remainingTime()))) && written;
 }
 
 Operations::~Operations()
@@ -351,12 +361,24 @@ void Operations::dismiss(const QString &app)
         emit changed();
 }
 
+namespace {
+// What the user may stop (SD26, SU-09): a Flatpak's install or update while it runs; never a removal (it ends on its own, or
+// at the idle limit), never pacman's or Omarchy's paths.
+bool stoppable(const OperationRecord &r)
+{
+    return r.path == QLatin1String("flatpak") && (r.kind == QLatin1String("install") || r.kind == QLatin1String("update"));
+}
+} // namespace
+
 bool Operations::stop(const QString &id)
 {
-    if (!m_current || m_current->record.id != id || m_current->record.path != QLatin1String("flatpak")
-        || m_current->record.kind != QLatin1String("install") || m_current->state != State::Running || !m_process || m_stopping)
+    if (!m_current || m_current->record.id != id || !stoppable(m_current->record) || m_current->state != State::Running || !m_process
+        || m_stopping)
         return false;
     m_stopping = true;
+    // An update's commands still to run do not run.
+    m_flatpakSteps.clear();
+    m_flatpakGuards.clear();
     // SIGTERM: flatpak ends at once; what it finished stays, what it was downloading waits in its own folder for the next
     // install, which takes it up (S25, store_flatpak.sh).
     m_process->terminate();
@@ -394,8 +416,8 @@ QVariantList Operations::list() const
                                {QStringLiteral("blocked"), i.blocked},
                                {QStringLiteral("done"), i.done},
                                {QStringLiteral("total"), int(i.record.kind == QLatin1String("update") ? i.record.packages.size() : i.record.plan.size())},
-                               {QStringLiteral("stoppable"), i.record.path == QLatin1String("flatpak") && i.record.kind == QLatin1String("install")
-                                                                 && i.state == State::Running && !m_stopping}});
+                               {QStringLiteral("stoppable"), stoppable(i.record) && i.state == State::Running && !m_stopping
+                                                                 && m_current && i.record.id == m_current->record.id && m_process}});
     }
     return out;
 }
@@ -424,14 +446,21 @@ void Operations::releaseUpdateLock()
     }
 }
 
-void Operations::writeRecord(const OperationRecord &record)
+void Operations::writeRecord(const OperationRecord &record, std::function<void()> then)
 {
-    updateStoreState(m_config.stateFile, [&record](QJsonObject &state) { state.insert(kOperationKey, record.toJson()); });
+    const QString file = m_config.stateFile;
+    const QJsonObject json = record.toJson();
+    m_writer.start([this, file, json, then] {
+        updateStoreState(file, [&json](QJsonObject &state) { state.insert(kOperationKey, json); });
+        if (then)
+            QMetaObject::invokeMethod(&m_context, then, Qt::QueuedConnection);
+    });
 }
 
 void Operations::clearRecord()
 {
-    updateStoreState(m_config.stateFile, [](QJsonObject &state) { state.remove(kOperationKey); });
+    const QString file = m_config.stateFile;
+    m_writer.start([file] { updateStoreState(file, [](QJsonObject &state) { state.remove(kOperationKey); }); });
 }
 
 void Operations::startNext()
@@ -461,7 +490,21 @@ void Operations::startNext()
     m_flatpakOutput.clear();
     m_flatpakSteps.clear();
     m_flatpakGuards.clear();
-    writeRecord(m_current->record);
+    m_idleStopped = false;
+    // The record first, on the writer's thread (off the click path); the operation starts once it is on disk.
+    m_current->state = helper ? State::Authorizing : terminal ? State::Opening : State::Running;
+    const QString id = m_current->record.id;
+    writeRecord(m_current->record, [this, id] {
+        if (m_current && m_current->record.id == id && !m_concluding)
+            begin();
+    });
+    emit changed();
+}
+
+void Operations::begin()
+{
+    const bool helper = m_current->record.path == QLatin1String("helper");
+    const bool terminal = m_current->record.path == QLatin1String("terminal");
     if (helper) {
         startHelper(*m_current);
     } else if (terminal) {
@@ -572,6 +615,7 @@ void Operations::startFlatpak(const QStringList &args)
     const bool install = m_current && m_current->record.kind != QLatin1String("remove"); // "Installing" or "Updating" lines
     connect(p, &QProcess::readyReadStandardOutput, this, [this, p, install] {
         const QByteArray out = p->readAllStandardOutput();
+        m_lastOutput = QDateTime::currentDateTimeUtc();
         if (m_output.size() < kMaxDetails)
             m_output += out.left(kMaxDetails - m_output.size());
         if (m_flatpakOutput.size() < 1024 * 1024)
@@ -592,7 +636,9 @@ void Operations::startFlatpak(const QStringList &args)
             conclude(std::nullopt, p->errorString());
     });
     m_runningSince = QDateTime::currentDateTimeUtc();
+    m_lastOutput = m_runningSince;
     p->start();
+    m_poll.start(); // the idle limit (SU-09)
 }
 
 void Operations::startUpdateStep()
@@ -613,11 +659,11 @@ void Operations::startUpdateStep()
     tools.flatpak = m_config.flatpak;
     tools.env = m_config.flatpakEnv;
     const QString id = m_current->record.id;
-    QPointer<Operations> self(this);
-    QThreadPool::globalInstance()->start([self, tools, args, ref, from, id] {
+    Operations *const self = this; // its pool ends before it is gone; the answer goes to m_context (SU-14)
+    m_pool.start([self, tools, args, ref, from, id] {
         const QString installed = flatpakInstalledCommit(tools, ref);
-        QMetaObject::invokeMethod(self.data(), [self, args, ref, from, id, installed] {
-            if (!self || !self->m_current || self->m_current->record.id != id)
+        QMetaObject::invokeMethod(&self->m_context, [self, args, ref, from, id, installed] {
+            if (!self->m_current || self->m_current->record.id != id || self->m_stopping)
                 return;
             if (installed == from) {
                 self->startFlatpak(args);
@@ -771,8 +817,24 @@ void Operations::poll()
         pollTerminal(item, elapsed);
         return;
     }
-    if (item.record.path == QLatin1String("flatpak"))
-        return; // waited for, with no limit (b.3, SD26)
+    if (item.record.path == QLatin1String("flatpak")) {
+        // Waited for with no overall limit (b.3, SD26), but not past flatpakIdleMs without a line (SU-09): a stalled
+        // network. SIGTERM (flatpak stops cleanly, S25), SIGKILL 10 s later if it is still there.
+        if (m_process && !m_idleStopped && m_lastOutput.isValid()
+            && m_lastOutput.msecsTo(QDateTime::currentDateTimeUtc()) > m_config.flatpakIdleMs) {
+            m_idleStopped = true;
+            m_flatpakSteps.clear();
+            m_flatpakGuards.clear();
+            m_output += "\n(stopped: flatpak printed nothing for a long time)";
+            m_process->terminate();
+            QTimer::singleShot(10000, this, [p = m_process] {
+                if (p && p->state() != QProcess::NotRunning)
+                    p->kill();
+            });
+            emit changed();
+        }
+        return;
+    }
     if (item.record.path == QLatin1String("webapp")) {
         // Past its limit: SIGTERM to its group, SIGKILL 5 s later (it touches only the user's files).
         if (m_process && m_process->processId() > 0 && elapsed > m_config.webAppMs) {
@@ -830,13 +892,28 @@ void Operations::processEnded(int exitCode, QProcess::ExitStatus status)
         code = exitCode;
     if (m_current && m_current->record.path == QLatin1String("helper")) {
         // The helper's own exit file is the code when there is one (pkexec's is the same; pkexec alone gives 126, 127).
-        if (const auto fileCode = helperExitCode(m_config.statusDir, m_current->record.id))
+        if (const auto fileCode = helperExitCode(m_config.statusDir, m_current->record.id)) {
             code = fileCode;
+        } else if (helperRunning(m_config.statusDir, m_current->record.id)) {
+            // pkexec ended but the helper's run goes on in its transient system unit (grassfield-store-helper.service,
+            // SU-03): it is followed by its files from here, as after a restart of the Store, until its exit file comes.
+            m_process->disconnect(this);
+            m_process->deleteLater();
+            m_process.clear();
+            m_followOnly = true;
+            if (m_current->state != State::Running) {
+                m_current->state = State::Running;
+                m_runningSince = QDateTime::currentDateTimeUtc();
+                emit changed();
+            }
+            m_poll.start();
+            return;
+        }
     }
     if (m_current && m_current->record.path == QLatin1String("flatpak")) {
         if (m_firstExit) {
             code = m_firstExit; // `--unused` ran after the removal: the removal's own code is the operation's
-        } else if (m_current->record.kind == QLatin1String("update") && code == 0 && !m_flatpakSteps.isEmpty()) {
+        } else if (m_current->record.kind == QLatin1String("update") && code == 0 && !m_flatpakSteps.isEmpty() && !m_stopping && !m_idleStopped) {
             // The next of the update's commands; a failed one ends it, its code the operation's (S32d).
             m_process->disconnect(this);
             m_process->deleteLater();
@@ -844,7 +921,7 @@ void Operations::processEnded(int exitCode, QProcess::ExitStatus status)
             m_output += "\n";
             startUpdateStep();
             return;
-        } else if (m_current->record.kind == QLatin1String("remove") && code == 0) {
+        } else if (m_current->record.kind == QLatin1String("remove") && code == 0 && !m_idleStopped) {
             // The app is gone: the runtimes no other app needs go too (SD27; a runtime installed by name stays, S26).
             m_firstExit = code;
             m_process->disconnect(this);
@@ -865,13 +942,13 @@ QString Operations::helperLog(const QString &id) const
 
 void Operations::readState(const OperationRecord &record, std::function<void(int, int)> then)
 {
-    QPointer<Operations> self(this);
+    Operations *const self = this; // its pool ends before it is gone; the answer goes to m_context (SU-14)
     const QString pacman = m_config.pacman;
     const QString applications = m_config.applications;
     FlatpakTools flatpak;
     flatpak.flatpak = m_config.flatpak;
     flatpak.env = m_config.flatpakEnv;
-    QThreadPool::globalInstance()->start([self, record, pacman, applications, flatpak, then] {
+    m_pool.start([self, record, pacman, applications, flatpak, then] {
         int present = 0, total = 0;
         if (record.path == QLatin1String("flatpak") && record.kind == QLatin1String("update")) {
             // Never the exit code alone, which is 0 offline with nothing updated (S31d): a pinned ref is done when its
@@ -928,10 +1005,7 @@ void Operations::readState(const OperationRecord &record, std::function<void(int
             const bool there = urls.value(record.webName) == record.webUrl;
             present = record.kind == QLatin1String("install") ? there : !urls.contains(record.webName);
         }
-        QMetaObject::invokeMethod(self.data(), [self, then, present, total] {
-            if (self)
-                then(present, total);
-        });
+        QMetaObject::invokeMethod(&self->m_context, [then, present, total] { then(present, total); }, Qt::QueuedConnection);
     });
 }
 
@@ -957,7 +1031,8 @@ void Operations::conclude(std::optional<int> exitCode, const QString &output)
     emit changed();
     const OperationRecord record = m_current->record;
     const bool stopped = m_stopping;
-    readState(record, [this, record, exitCode, lostTrack, didNotOpen, stopped](int present, int total) {
+    const bool stalled = m_idleStopped;
+    readState(record, [this, record, exitCode, lostTrack, didNotOpen, stopped, stalled](int present, int total) {
         releaseUpdateLock();
         Result result;
         result.app = record.app;
@@ -984,8 +1059,10 @@ void Operations::conclude(std::optional<int> exitCode, const QString &output)
             // update whose commands did part of its refs before one failed or the Store ended: how many. Else flatpak's own
             // failure (its words in Details), or no exit code and nothing there.
             const bool partial = record.kind == QLatin1String("update") && present > 0 && present < total;
+            // Stalled and stopped at the idle limit (SU-09): it did not finish (its words, and the limit's, in Details).
             result.outcome = stopped && present == 0 ? QStringLiteral("stopped")
                 : partial                          ? QStringLiteral("interrupted")
+                : stalled                          ? QStringLiteral("notFinished")
                 : exitCode && *exitCode != 0       ? QStringLiteral("failed")
                                                    : QStringLiteral("notFinished");
         } else if (didNotOpen && present == 0) {
@@ -1063,6 +1140,7 @@ void Operations::conclude(std::optional<int> exitCode, const QString &output)
         m_current.reset();
         m_concluding = false;
         m_stopping = false;
+        m_idleStopped = false;
         m_firstExit.reset();
         m_flatpakSteps.clear();
         m_flatpakGuards.clear();

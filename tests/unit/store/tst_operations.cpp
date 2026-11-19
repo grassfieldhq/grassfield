@@ -27,9 +27,23 @@ namespace {
 // pkexec's stand-in: `<helper> <verb> <op> <names>`; its mode file says what happens.
 const QByteArray kPkexec = R"SH(root=$(dirname "$0")
 shift; verb=$1; op=$2; shift 2
+# The Store writes the operation's record before the helper starts (recover() needs it): one started without it is noted.
+grep -q "$op" "$root/state/store.json" 2>/dev/null || echo "$op" >>"$root/norecord"
 mode=$(cat "$root/mode" 2>/dev/null)
 [ "$mode" = cancel ] && exit 126
 [ "$mode" = wait ] && exec sleep 30
+# The helper's run in its transient system unit (SU-03): pkexec's side ends without an exit file (killed with the session, say)
+# while the unit's process, named by the started file, installs and writes the exit file a second later.
+if [ "$mode" = unit ]; then
+  sh -c 'sleep 1; root=$1; op=$2; shift 2
+    for p in "$@"; do echo "[x] [ALPM] installed $p (1-1)" >>"$root/pacman.log"; echo "$p 1-1" >>"$root/installed"; done
+    echo 0 >"$root/run/.$op.exit" && mv "$root/run/.$op.exit" "$root/run/$op.exit"' unit "$root" "$op" "$@" </dev/null >/dev/null 2>&1 &
+  child=$!
+  start=$(awk '{sub(/.*\) /, ""); print $20}' /proc/$child/stat)
+  echo "$child $start" >"$root/run/$op.started"
+  echo "grassfield-store-helper: $verb $* (operation $op)" >"$root/run/$op.log"
+  exit 143
+fi
 start=$(awk '{sub(/.*\) /, ""); print $20}' /proc/$$/stat)
 echo "$$ $start" >"$root/run/$op.started"
 echo "grassfield-store-helper: $verb $* (operation $op)" >"$root/run/$op.log"
@@ -136,6 +150,12 @@ case "$1" in
     echo "$id" >>"$root/flatpaks"
     echo "Installation complete." ;;
   uninstall)
+    if [ "$mode" = silent ]; then
+      trap 'echo stopped >>"$root/fcalls"; kill $! 2>/dev/null; exit 1' TERM
+      echo waiting >>"$root/fcalls"
+      sleep 30 >/dev/null 2>&1 &
+      wait
+    fi
     if [ "$4" = --unused ]; then echo "Uninstalling runtime/org.example.Platform/x86_64/1"; exit 0; fi
     grep -vx "$5" "$root/flatpaks" >"$root/f2"; mv "$root/f2" "$root/flatpaks"
     echo "Uninstalling app/$5/x86_64/stable" ;;
@@ -147,6 +167,13 @@ case "$1" in
     commit=
     case "$1" in --commit=*) commit=${1#--commit=}; shift ;; esac
     shift
+    if [ "$mode" = slow ]; then
+      trap 'echo stopped >>"$root/fcalls"; kill $! 2>/dev/null; exit 1' TERM
+      echo waiting >>"$root/fcalls"
+      echo "Looking for updates…"
+      sleep 30 >/dev/null 2>&1 &
+      wait
+    fi
     for ref in "$@"; do
       [ "$ref" = "$(cat "$root/failref" 2>/dev/null)" ] && { echo "error: Server returned status 404"; exit 1; }
       echo "Updating $ref"
@@ -316,11 +343,27 @@ TEST(Operations, InstallThroughTheHelper)
     Ended finished(ops);
     ops.enqueue(helperRecord(QStringLiteral("xterm"), QStringLiteral("install"), {QStringLiteral("xterm"), QStringLiteral("libxaw")}));
     EXPECT_TRUE(ops.running());
-    EXPECT_EQ(f.record().value(QStringLiteral("app")).toString(), QStringLiteral("xterm")) << "written before it starts";
     ASSERT_TRUE(waitFor([&] { return finished.count() == 1; }));
+    EXPECT_TRUE(f.read(QStringLiteral("norecord")).isEmpty()) << "store.json had the record before the helper started (written off the click path)";
     EXPECT_TRUE(ops.results().isEmpty()) << "done: nothing to say";
-    EXPECT_TRUE(f.record().isEmpty()) << "the record goes once it ended";
+    EXPECT_TRUE(waitFor([&] { return f.record().isEmpty(); })) << "the record goes once it ended";
     EXPECT_FALSE(ops.running());
+}
+
+// SU-03: pkexec's side of the helper ends while the run goes on in its transient system unit; the Store follows the unit by
+// its files (the started file's process, then its exit file) and judges the operation by them, not by pkexec's end.
+TEST(Operations, HelperFollowedInItsUnit)
+{
+    Fixture f;
+    f.mode("unit");
+    Operations ops(f.config);
+    Ended finished(ops);
+    ops.enqueue(helperRecord(QStringLiteral("xterm"), QStringLiteral("install"), {QStringLiteral("xterm"), QStringLiteral("libxaw")}));
+    ASSERT_TRUE(waitFor([&] { return !ops.items().isEmpty() && ops.items().constFirst().state == Operations::State::Running; }));
+    ASSERT_TRUE(waitFor([&] { return finished.count() == 1; }));
+    EXPECT_TRUE(ops.results().isEmpty()) << "done in the unit: nothing to say (" << ops.results().value(QStringLiteral("xterm")).outcome.toStdString() << ")";
+    EXPECT_TRUE(f.read(QStringLiteral("installed")).contains("libxaw 1-1"));
+    EXPECT_TRUE(waitFor([&] { return f.record().isEmpty(); })); // cleared on the writer's thread
 }
 
 TEST(Operations, OutcomesFromCodeAndState)
@@ -475,7 +518,7 @@ TEST(Operations, RecoveryAtStart)
         ops.recover();
         ASSERT_TRUE(waitFor([&] { return finished.count() == 1; }));
         EXPECT_TRUE(ops.results().isEmpty());
-        EXPECT_TRUE(f.record().isEmpty());
+        EXPECT_TRUE(waitFor([&] { return f.record().isEmpty(); })); // cleared on the writer's thread
     }
     // Interrupted: no exit file, no helper running, one of two packages there.
     OperationRecord cut = helperRecord(QStringLiteral("gimp"), QStringLiteral("install"), {QStringLiteral("gimp"), QStringLiteral("babl")});
@@ -1194,6 +1237,52 @@ TEST(Operations, FlatpakStop)
     ASSERT_TRUE(waitFor([&] { return ended.count() == 2; }));
 }
 
+// SU-09: a Flatpak update can be stopped as an install can (the ring's square, the menu bar's Stop), its later commands not run;
+// and any Flatpak operation that prints nothing past the idle limit (a stalled network) is stopped and ends "not finished",
+// with the reason in Details, so the queue behind it moves on.
+TEST(Operations, FlatpakUpdateStopAndIdleLimit)
+{
+    Fixture f;
+    const QString notes = QStringLiteral("app/org.example.Notes/x86_64/stable");
+    const QString platform = QStringLiteral("runtime/org.example.Platform/x86_64/1");
+    storetest::writeFile(f.dir.filePath(QStringLiteral("fupdates")), (notes + QLatin1Char('\n') + platform + QLatin1Char('\n')).toUtf8());
+    storetest::writeFile(f.dir.filePath(QStringLiteral("fmode")), "slow");
+    {
+        Operations ops(f.config);
+        Ended finished(ops);
+        const OperationRecord update = flatpakUpdate(QStringLiteral("store:flatpak-updates"), {notes, platform}, QString());
+        ops.enqueue(update);
+        ASSERT_TRUE(waitFor([&] { return f.read(QStringLiteral("fcalls")).contains("waiting"); }));
+        ASSERT_TRUE(waitFor([&] { return !ops.list().isEmpty() && ops.list().constFirst().toMap().value(QStringLiteral("stoppable")).toBool(); }));
+        EXPECT_TRUE(ops.stop(update.id));
+        ASSERT_TRUE(waitFor([&] { return finished.count() == 1; }));
+        EXPECT_TRUE(f.read(QStringLiteral("fcalls")).contains("stopped")) << "flatpak had SIGTERM";
+        EXPECT_EQ(ops.results().value(QStringLiteral("store:flatpak-updates")).outcome, QStringLiteral("stopped"));
+    }
+
+    // The idle limit: a removal (which the user cannot stop) that prints nothing.
+    QFile::remove(f.dir.filePath(QStringLiteral("fcalls")));
+    storetest::writeFile(f.dir.filePath(QStringLiteral("fmode")), "silent");
+    storetest::writeFile(f.dir.filePath(QStringLiteral("flatpaks")), "org.example.Notes\n");
+    f.config.flatpakIdleMs = 600;
+    Operations ops(f.config);
+    Ended finished(ops);
+    const OperationRecord removal = flatpakRecord(QStringLiteral("org.example.Notes"), QStringLiteral("remove"));
+    ops.enqueue(removal);
+    const OperationRecord next = helperRecord(QStringLiteral("xterm"), QStringLiteral("install"), {QStringLiteral("xterm")});
+    f.mode("ok");
+    ops.enqueue(next);
+    ASSERT_TRUE(waitFor([&] { return f.read(QStringLiteral("fcalls")).contains("uninstall"); }));
+    EXPECT_FALSE(ops.stop(removal.id)) << "a removal is not stopped by the user";
+    ASSERT_TRUE(waitFor([&] { return finished.count() == 1; }, 15000)) << "stopped at the idle limit, not left hanging";
+    EXPECT_TRUE(f.read(QStringLiteral("fcalls")).contains("stopped"));
+    const Operations::Result r = ops.results().value(QStringLiteral("org.example.Notes"));
+    EXPECT_EQ(r.outcome, QStringLiteral("notFinished"));
+    EXPECT_TRUE(r.details.contains(QLatin1String("printed nothing"))) << r.details.toStdString();
+    EXPECT_FALSE(f.read(QStringLiteral("fcalls")).contains("--unused")) << "nothing more runs after a stalled step";
+    ASSERT_TRUE(waitFor([&] { return finished.count() == 2; })) << "the queue moved on";
+}
+
 // Recovery (f): the child died with the Store (SIGTERM), so a recorded Flatpak operation is judged by the app's state.
 TEST(Operations, FlatpakRecovery)
 {
@@ -1216,6 +1305,6 @@ TEST(Operations, FlatpakRecovery)
         ops.recover();
         ASSERT_TRUE(waitFor([&] { return finished.count() == 1; }));
         EXPECT_EQ(ops.results().value(QStringLiteral("org.example.Paint")).outcome, QStringLiteral("notFinished"));
-        EXPECT_TRUE(f.record().isEmpty());
+        EXPECT_TRUE(waitFor([&] { return f.record().isEmpty(); })); // cleared on the writer's thread
     }
 }
