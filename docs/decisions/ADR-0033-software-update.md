@@ -1659,3 +1659,16 @@ and minors, answered here:
   - b.3a ends with `grassfield-channel-set` (step 5);
   - stale text fixed (spec non-goals, ADR-0020's amendment), ADR-0030 amended;
   - the decisions table has its options again.
+
+## Amendment to ADR-0033 (Software Update), step 3 s3.2: the checked databases are re-hashed before each transaction step
+
+Status: proposed (store-update fix round 2, audit finding SU-10)
+
+## Decision
+After the checked sync databases are swapped in and pacman's lock is released, `grassfield-update-helper` compares the
+system's `<repo>.db` and `<repo>.db.sig` with the checked copies by sha256 right before the keyring step and again right
+before `pacman -Su`. Any difference (another root `pacman -Sy` in between) ends the run with the new exit code 9, nothing
+installed, `synced` in the exit file. grassfield-update-run maps 9 to `busy` ("Another update is running. Try again when it
+has finished."), so Settings needs no new result. The guarantee "the transaction installs what was checked, never a newer
+plan" now holds up to the instant pacman takes its own lock (a window of one process start).
+Test: tests/shell/update_checked_dbs.sh.

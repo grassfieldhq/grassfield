@@ -214,3 +214,17 @@ adapter; on a desktop, Energy's switch as before. Tests: battery with the switch
 - Never in the nested dev session (a due suspend is counted and logged, `idle status`); the new dev hook `idle
   devAutoSleep <1..600>` only shortens the delay there.
 - Real suspend: NOT VERIFIED until the owner's L2 run (L3†).
+
+## Amendment to ADR-0010 (lock ownership probe rate), security-session audit round 2 · 2026-11-19 · Proposed
+
+The lock's ownership probe asked Hyprland every 100 ms for as long as a lock inherited at start (a crash-restore, a stranded
+lock taken over) was held: ten queries a second all night after any restart of the security process. Amended rule
+(`LockMachine.probeSuspected`): a lock inherited at start whose lock surface holds the keyboard counts as a suspected
+takeover only while the displays are on. While idle has turned them off for lack of input, it is probed every second, the
+rate of any held lock; the first input lights them and the 100 ms rate comes back. A lock surface that lost the keyboard (a
+sign of a real takeover) keeps 100 ms whatever the displays. Cost of the change: a foreign locker that sat under an inherited
+lock and releases while the displays are dark is noticed within about 1 s instead of 0.1 s; no unlock path changes.
+
+Also recorded: the crash-recovery marker stays written BEFORE the lock request (moving it after, as the audit's fluidity note
+suggested, would lose the lock when the process crashes while the lock surfaces are created); its cost on that path drops
+from two reads and a write to one write.

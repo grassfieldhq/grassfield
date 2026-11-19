@@ -3498,3 +3498,40 @@ picker and the menu-bar indicator; there are no update, donation or welcome scre
   that print or pick files in-process (Chromium's and Firefox's previews, LibreOffice, Electron's print, Qt apps) keep their own
   dialogs (themed), remote file picks refused, Hyprland's safe-mode dialog and a few toasts stay Hyprland's, VPN secrets are
   not asked (no agent runs a VPN plugin's dialog, as today; D-9), a user's own picker or portal configuration wins.
+
+## Amendment to ADR-0035, decision 9-39 (audit round 2, finding B-04) · Date: 2026-11-19 · Decider: owner (via the audit brief)
+
+This amends decision 9-39 ("An entry tied to a window lives for the bridge's life, as in kiod6, ..."):
+
+**Amended after the audit of 2026-11 (B-04).** kiod6 ends a window's entry when KDE tells it the window closed, which never
+happens on Wayland, so the rule "for the bridge's life" kept a password the user chose not to remember answerable without a
+prompt, to any session-bus caller of `checkAuthInfoAsync`, for the whole session (keyring locked or not). The bridge now
+records, for each window an entry is tied to, the unique bus name that tied it (`CacheEntry::Window{id, caller}`, at most 64);
+when a connection leaves the bus (NameOwnerChanged) its windows are untied, and an entry tied to no window any more goes at
+once; an entry tied to a window also expires `kWindowExpireSeconds` (15 min) after its last use, whatever its callers do.
+Rule applied: never keep a secret longer than something the user can see or end (macOS keeps an unsaved network password
+while the connection lives). Cost: a KIO worker process that exits (KIO keeps idle workers about 3 min) takes the entries it
+tied with it, so a password that was not remembered is asked again on the next connection; a remembered one comes from the
+keychain. Test: `tests/unit/prompter/tst_prompter.cpp` PrompterKio.AWindowsEntryEndsWithItsCallersAndAfterATimeLimit and the
+amended PrompterKio.HowLongAnEntryLives. The sentence of docs/specs/system-dialogs.md that repeats the old rule is to be
+updated likewise (requests/bridges.md).
+
+## Amendment to ADR-0035 (system dialogs), step 3 (Not Responding) — the stand-ins are waited for, not polled
+
+Date: 2026-11-19 · Status: accepted (2026-11 audit, finding SC-20)
+
+## Change
+Replaces "while there is one, the stand-ins' pids are checked every 250 ms (`kill -0`)" (and the same words under choice (b)
+and in system-dialogs.md NR3): the shell runs one util-linux `waitpid -v -c 1 <stand-ins>` (a pidfd per stand-in: no wake
+while they live). It reports the stand-in that ended ("PID n finished", or "could not open PID n" for one already gone); that
+mark goes and the waiter starts again on the others. A new mark starts it again with the new list. Where `waitpid` is missing
+(util-linux before 2.40: exit 127) the 250 ms `kill -0` check stands in; a waiter that ends without naming a stand-in is
+followed by one `kill -0` look and started again after 250 ms. NR3 (the mark clears within 1 s) holds.
+
+## Why
+An app left marked for hours cost a forked `sh` four times a second for all that time.
+
+## Consequences
+`tests/shell/not_responding_wait` checks NR3 for two stand-ins and a gone one, and that nothing is started again while nothing
+ends. A pid reused by another process between the report and the wait is waited for instead (the earlier check had the same
+limit).
