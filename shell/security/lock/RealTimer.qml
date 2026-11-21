@@ -8,10 +8,11 @@ import Quickshell
 // GUI thread busy 200 ms every third frame: a 2 s Timer fired every 8.9 s (tests/security/lock_beat_realtime.sh). On the owner's
 // machine (2026-11-21) the idle lock announced "lock in 10 s" came after 17 s, and the security process's 2 s beat missed the
 // UI's 5 s bound while that process drew the idle dim.
-// This one counts monotonic time (Quickshell's ElapsedTimer: QElapsedTimer) and is woken by Quickshell's SystemClock (a QTimer
-// on the event loop, at every second): it fires within half a second of `interval`, and only while the event loop of its
-// process runs (a hung process fires nothing, which is what the fail-closed readers rely on). Resolution: one second, so
-// `interval` is meant in seconds (at least 1000 ms).
+// This one counts monotonic time (Quickshell's ElapsedTimer: QElapsedTimer) and is only woken by a short Timer (WAKE_MS): a
+// late wake-up delays a deadline by about one stretched wake-up, never by the whole interval's stretch. Quickshell's
+// SystemClock would wake it on the event loop's own QTimer, but it schedules from local time and spins during the repeated hour
+// of a daylight saving fall-back (tests/shell/wall_clock_only.sh), so it is not used here. It fires only while the event loop
+// of its process runs (a hung process fires nothing, which is what the fail-closed readers rely on).
 Scope {
     id: root
 
@@ -55,8 +56,8 @@ Scope {
             return;
         const elapsed = since.elapsedMs();
         root.lastElapsed = elapsed;
-        // Half a tick of tolerance: the clock wakes at every second, so this fires within ±500 ms of the interval.
-        if (elapsed + 500 < Math.max(1000, root.interval))
+        // Half a wake-up of tolerance: this fires within ±WAKE_MS/2 of the interval while frames come on time.
+        if (elapsed + root.wakeMs / 2 < Math.max(root.wakeMs, root.interval))
             return;
         if (root.repeat) {
             since.restart();
@@ -71,9 +72,14 @@ Scope {
         id: since
     }
 
-    SystemClock {
-        enabled: root.running
-        precision: SystemClock.Seconds
-        onDateChanged: root.tick()
+    // Wake-up period. Short, so that the Timer's stretch under late frames (the reason for this type) costs at most about one
+    // stretched period on a deadline.
+    readonly property int wakeMs: 250
+
+    Timer {
+        interval: root.wakeMs
+        repeat: true
+        running: root.running
+        onTriggered: root.tick()
     }
 }

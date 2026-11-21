@@ -137,7 +137,7 @@ Singleton {
 
     // Both clocks below are real time (owner's report of 2026-11-21: "no beat from the security process for 5 s" while it was
     // healthy). A QML Timer follows the scene graph's animation clock, which falls behind wall time while this process draws
-    // with frames that come late (shell/lib/RealTimer.qml): it can only stretch the bound, never shorten it, but the publisher's
+    // with frames that come late (shell/security/lock/RealTimer.qml): it can only stretch the bound, never shorten it, but the publisher's
     // beat had the same clock, and the stale bound must be the same 5 s here whatever this process draws (fail closed: a hung
     // security process reads locked within LockState.STALE_MS and a second, tests/security/lock_beat_realtime.sh). The
     // monotonic time since the last read and since the last new beat (QElapsedTimer) is looked at every second, on a QTimer
@@ -168,11 +168,14 @@ Singleton {
         root.stale = true;
     }
 
-    SystemClock {
+    // A short wake-up (not Quickshell's SystemClock, which spins during a daylight saving fall-back: wall_clock_only.sh); the
+    // stale check itself is on monotonic time, so a Timer stretched by late frames delays it by at most one stretched period.
+    Timer {
         id: clock
-        enabled: root.path !== ""
-        precision: SystemClock.Seconds
-        onDateChanged: root.tick()
+        interval: 250
+        repeat: true
+        running: root.path !== ""
+        onTriggered: root.tick()
     }
 
     // ---- a security process that publishes nothing ----

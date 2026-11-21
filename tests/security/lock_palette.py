@@ -61,7 +61,7 @@ ALLOWED_TYPES = {
     "shell/security/lock/LockAvatar.qml": {"Process", "Scope"},
     "shell/security/lock/LockPublisher.qml": {"FileView", "RealTimer", "Scope", "Timer"},
     # The beat's real-time timer (ADR-0065): draws nothing.
-    "shell/lib/RealTimer.qml": {"ElapsedTimer", "Scope", "SystemClock"},
+    "shell/security/lock/RealTimer.qml": {"ElapsedTimer", "Scope", "Timer"},
     "shell/security/lock/LockWallpaper.qml": {"FileView", "Process", "Scope", "StdioCollector"},
     FIELD: {"FocusRing", "FocusScope", "Icon", "Item", "MouseArea", "QtObject", "Rectangle", "Text", "TextInput"},
     DIM: {"NumberAnimation", "PanelWindow", "Rectangle", "Region", "Scope", "Variants"},

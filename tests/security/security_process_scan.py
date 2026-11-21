@@ -433,9 +433,7 @@ def file_findings(path, src, singletons):
     security = path.startswith(SECURITY_MODULES) or path in (HOST, SHEET_HOST) or path in SECURITY_SHARED
     if security:
         for m in mods:
-            # qs.lib: the code both processes share (LockState.js, RunMode.js, RealTimer: the real-time deadlines of the beat and
-            # the idle lock, owner's report of 2026-11-21), no UI.
-            if m.startswith("qs.") and m not in ("qs.lib", "qs.services", "qs.security", "qs.security.lock", "qs.security.idle", "qs.security.polkit", "qs.security.secret",
+            if m.startswith("qs.") and m not in ("qs.services", "qs.security", "qs.security.lock", "qs.security.idle", "qs.security.polkit", "qs.security.secret",
                                                   "qs.security.safemode"):
                 out.append(f"{path}: imports {m} (a UI module in the security process)")
             if m == "qs.security.safemode" and path != HOST:

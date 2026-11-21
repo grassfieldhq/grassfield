@@ -9,7 +9,6 @@ import Quickshell.Io
 import Quickshell.Services.UPower
 import Quickshell.Wayland
 import Grassfield.Ui
-import qs.lib
 import qs.services
 import qs.security.lock
 import "IdleModel.js" as IdleModel
@@ -187,7 +186,7 @@ Scope {
         displayOffLockTimer.stop();
         console.info("grassfield-idle: the display-off lock is no longer due (" + why + ")");
     }
-    // Real time (shell/lib/RealTimer.qml): a QML Timer stretches while this process draws late frames (the dim fade).
+    // Real time (shell/security/lock/RealTimer.qml): a QML Timer stretches while this process draws late frames (the dim fade).
     RealTimer {
         id: displayOffLockTimer
         onTriggered: {
@@ -459,7 +458,7 @@ Scope {
         printErrors: false
     }
 
-    // Real time (shell/lib/RealTimer.qml), not a QML Timer: on the owner's machine (2026-11-21) "lock in 10 s" locked after 17 s,
+    // Real time (shell/security/lock/RealTimer.qml), not a QML Timer: on the owner's machine (2026-11-21) "lock in 10 s" locked after 17 s,
     // the Timer following the animation clock while the dim fade drew late frames.
     RealTimer {
         id: lockTimer
