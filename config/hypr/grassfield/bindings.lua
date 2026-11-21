@@ -22,7 +22,10 @@ local qs_ipc = "env -u QS_CONFIG_PATH -u QS_CONFIG_NAME -u QS_MANIFEST qs ipc " 
 -- forked `sh`, `env` and a whole Quickshell client: a held volume key started 40 of them a second, in no guaranteed order.
 -- socket2 keeps the order of the keys. With a Hyprland that lacks the dispatcher, keys go through `qs ipc` as before. An empty
 -- argument ('') is left out of the event (the shell reads a missing output name as "").
-local in_process = select(2, pcall(function() return hl.dsp.event end)) ~= nil
+local in_process = (function()
+  local ok, event = pcall(function() return hl.dsp.event end)
+  return ok and event ~= nil
+end)()
 
 local function shell_event(target, fn)
   return "gfkey/1 " .. target .. " " .. (fn:gsub(" ''", ""))
@@ -362,7 +365,8 @@ function tracked.gesture(kind, progress_of)
         send("update", p)
       end
     end,
-    ["end"] = function(e)
+    -- Hyprland reads the end callback as `finish` (LuaBindingsConfigRules.cpp, 0.56 and 0.57): an `end` key is never called.
+    finish = function(e)
       if e.cancelled then
         send("cancel", state.p or 0)
         return

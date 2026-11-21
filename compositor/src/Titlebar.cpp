@@ -1482,8 +1482,10 @@ bool CGrassfieldTitlebar::onTouchDown(const ITouch::SDownEvent& e) {
     bool consumed = false;
     gf::guarded("titlebar touch down", [&] {
         auto& input = pointerInput();
-        if (input.touchId || sessionLocked() || !State::monitorState() || !Desktop::focusState())
-            return; // one finger at a time; the lock screen takes every touch
+        // One finger at a time, and none during a pointer's titlebar gesture (the tiling preview is one drag's); the lock
+        // screen takes every touch.
+        if (input.touchId || input.presses.gestureButton() || input.grab.revealed || sessionLocked() || !State::monitorState() || !Desktop::focusState())
+            return;
         // The output the touch device maps to (its bound output, else the focused one), as Hyprland reads it.
         auto mon = (e.device && !e.device->m_boundOutput.empty()) ? State::monitorState()->query().name(e.device->m_boundOutput).run() : nullptr;
         if (!mon)
@@ -1635,11 +1637,10 @@ void CGrassfieldTitlebar::onSessionLock(bool locked) {
             input.grab = {};
             input.presses.dropGesture();
         }
-        // A finger's gesture on a titlebar ends at the lock too (CIO-06); its remaining events go to the lock screen.
-        if (locked && input.touchId) {
-            input.touchId.reset();
+        // A finger's gesture on a titlebar ends at the lock too (CIO-06). The finger stays the titlebars' until its up: Hyprland
+        // never saw its down, and would send its motion and up to the surface of an earlier touch (its stale touch focus).
+        if (locked && input.touchId)
             dropGrab(input.touchGrab);
-        }
         postHover(zoomHoverUpdate(std::nullopt, nowMs()), nullptr, CBox{});
         if (!locked)
             armZoomTimer(0);

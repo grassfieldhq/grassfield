@@ -52,8 +52,8 @@ namespace gf::transform {
         // its previous use left: it had to be cleared whole, per window per frame (a monitor-sized clear for each strip
         // thumbnail and overview window). These buffers stay the plugin's while windows are transformed, and the plugin knows
         // what it left in each (`dirty`, the box it last drew): a frame clears that box and the new one, nothing else.
-        // Taken from the monitor's pool (its format, size and colour description), at most kMaxScratch per monitor (a window
-        // with blur is transformed twice in a frame: its content, then its blur matte, both alive until the composite); one
+        // Allocated with the monitor's pool's parameters (format, size and colour description), at most kMaxScratch per
+        // monitor (a window with blur is transformed twice in a frame: its content, then its blur matte, both alive until the composite); one
         // whose monitor's buffers changed (mode, format, colour description: compared with the monitor's blur buffer, made
         // with the pool's parameters) is dropped. Released (GL context current) when nothing is transformed any more.
         struct SScratch {
@@ -80,7 +80,7 @@ namespace gf::transform {
         }
 
         // A buffer of `mon` nothing else holds (Hyprland releases the previous window's output once it is composited), or a
-        // new one from the pool (its content unknown: dirty whole). Only inside a frame (GL context current: a dropped
+        // new one (its content unknown: dirty whole). Only inside a frame (GL context current: a dropped
         // buffer is deleted here). Null when none can be had.
         SScratch* scratchFor(const PHLMONITOR& mon) {
             auto& all = scratchState().buffers;
@@ -97,11 +97,15 @@ namespace gf::transform {
                     return &sc;
             }
             const auto resources = mon->resources();
-            if (mine >= kMaxScratch || !resources || resources.expired())
+            if (mine >= kMaxScratch || !resources || resources.expired() || !resources->m_blurFB)
                 return nullptr;
-            auto fb = resources->getUnusedWorkBuffer();
-            if (!fb)
+            // The plugin's own buffer, with the pool's parameters (those of the blur buffer, as fits() compares), never one of
+            // the pool's: the pool keeps a reference to each of its buffers (0.56 until 5 s after it last handed it out, 0.57
+            // while anything else holds it), so a pool buffer never reads as free (strongRef 1) here and was never reused.
+            auto fb = g_pHyprRenderer->createFB("grassfield transform");
+            if (!fb || !fb->alloc(static_cast<int>(mon->m_transformedSize.x), static_cast<int>(mon->m_transformedSize.y), resources->m_blurFB->m_drmFormat))
                 return nullptr;
+            fb->setImageDescription(resources->m_blurFB->imageDescription());
             all.push_back(SScratch{.monitor = mon, .fb = std::move(fb), .dirty = CBox{0, 0, mon->m_transformedSize.x, mon->m_transformedSize.y}});
             return &all.back();
         }
