@@ -549,7 +549,8 @@ def plugin():
 
 def crash_rows():
     """(ok, [line, ...] of `coredumpctl list` for the last 7 days) or (False, the line the section shows instead)."""
-    ok, text = run(["coredumpctl", "--no-pager", "--no-legend", "list", "--since=-7d"])
+    # The newest rows are kept when the list is longer than a section (coredumpctl lists the oldest first).
+    ok, text = run(["coredumpctl", "--no-pager", "--no-legend", "list", "--since=-7d"], tail=True)
     if not ok and "No coredumps found" in text:  # coredumpctl exits 1 when there is none
         return True, []
     if not ok:
@@ -561,6 +562,8 @@ def crash_rows():
         m = CRASH_UID.match(l)
         if m and m.group(1) == uid:
             own.append(l)
+        elif l.startswith("[... ") and l.endswith(" left out ...]"):
+            own.insert(0, "[... older crash rows left out ...]")
     return True, own
 
 

@@ -2,8 +2,9 @@
 # SS-09 (security-session audit, round 2), offscreen: the idle lock across a restart of the security process. Hyprland counts a
 # new idle notification from zero, so the process keeps its idle period in $XDG_RUNTIME_DIR/grassfield-idle-<instance>
 # ("idle <uptime s>" / "active") and a restarted process reads it first. tests/security/idle_restart.d/probe.qml starts the
-# REAL Idle and Lock (a dev session, stubs for gdbus and setpriv first on PATH, no compositor, no PAM file: Lock refuses the
-# request and logs it, which is what is looked for) next to a record:
+# REAL Idle and Lock (a dev session, stubs for gdbus and setpriv first on PATH, no compositor) next to a record. Lock logs the
+# request: without /etc/pam.d/omarchy-lock-password (a build container) it refuses it (missing-pam), on an Omarchy host it
+# logs "lock requested (idle)"; either line is what is looked for:
 #   past     the period began 400 s ago (lock.idleMinutes 5): the idle lock is asked for at start
 #   due      it began 296 s ago: the lock is due in about 4 s and asked for then, not at start (each run lasts 14 s: past
 #            the 10 s a start waits at most for grassfield.json)
@@ -87,7 +88,7 @@ run past "idle $since" "$tmp/cfg"
 # exists and the lock is engaged as far as this compositor-less run goes. Either way the request itself is what is checked.
 engaged_or_refused() {
   if [[ -e /etc/pam.d/omarchy-lock-password ]]; then
-    ! grep -q "idle lock not engaged" <<<"$out"
+    ! grep -q "idle lock not engaged" <<<"$out" && grep -qF "grassfield-lock: lock requested (idle)" <<<"$out"
   else
     grep -q "idle lock not engaged: refused: missing-pam" <<<"$out"
   fi
