@@ -157,8 +157,11 @@ FocusScope {
     // Night Shift has no event source: read its state each time Quick Settings opens.
     Component.onCompleted: NightShift.refresh()
 
+    // Only an instance that asked for scanning stops it: the instance built in the background after start (Overlay's prewarm)
+    // must not stop the scan of the Quick Settings the user has open (review of this series).
     Component.onDestruction: {
-        Connectivity.setScanning(false);
+        if (scanWanted)
+            Connectivity.setScanning(false);
     }
 
     Timer {

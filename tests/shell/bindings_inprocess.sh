@@ -77,7 +77,7 @@ for _, g in ipairs(gestures) do
     print("gesture\t" .. g.fingers .. " " .. g.direction .. "\t" .. type(a))
   end
 end
-print("format " .. module.tracked.format(0) .. " " .. module.tracked.format(0.12345) .. " " .. module.tracked.format(0.5) .. " " .. module.tracked.format(1.2) .. " " .. module.tracked.format(0.00001))
+print("format " .. module.tracked.format(0) .. " " .. module.tracked.format(0.12345) .. " " .. module.tracked.format(0.5) .. " " .. module.tracked.format(1.2) .. " " .. module.tracked.format(0.00001) .. " " .. module.tracked.format(0.99996))
 LUA
 
 on=$(env -i PATH="$PATH" lua "$tmp/run.lua" "$root" event)
@@ -109,7 +109,7 @@ check bash -c 'n=$(grep -P "^gesture\t3 up\t" <<<"$1" | cut -f3); (( n >= 3 && n
 desc="a short slow gesture goes back, a cancelled one says cancel"
 check bash -c 'grep -qP "^short\tup\tgfgesture/1 overview-open end 0.05 back$" <<<"$1" && grep -qP "^cancel\tup\tgfgesture/1 overview-open cancel 0.05$" <<<"$1"' _ "$on"
 desc="progress is written as the shell parses it: 0, 1 or 0.xxxx"
-check grep -qx "format 0 0.1235 0.5 1 0" <<<"$on"
+check grep -qx "format 0 0.1235 0.5 1 0 1" <<<"$on"
 desc="without the event dispatcher (an older Hyprland) every shell key and gesture uses qs ipc as before"
 check bash -c 'grep -qx "in_process false" <<<"$1" &&
   grep -qP "^bind\tSUPER \+ SPACE\tdsp.exec_cmd\t.*qs ipc -p .* call search toggle$" <<<"$1" &&

@@ -381,6 +381,8 @@ function tracked.format(p)
   if p <= 0 then return "0" end
   if p >= 1 then return "1" end
   local s = string.format("%.4f", p):gsub("0+$", "")
+  -- 0.99996 rounds to "1.0000": "1." would be refused by the parser and the gesture's end lost (review of this series).
+  if s == "1." then return "1" end
   return s == "0." and "0" or s
 end
 
