@@ -49,6 +49,8 @@ end
 for _, g in ipairs(gestures) do
   local a = g.action
   if type(a) == "table" then
+    -- Hyprland calls start, update and finish (an `end` key is never read).
+    assert(type(a.finish) == "function" and a["end"] == nil, "the end callback must be named finish")
     dispatched = {}
     local pinch = g.direction:find("pinch") ~= nil
     local up = g.direction == "up" or g.direction == "pinchin"
@@ -60,16 +62,16 @@ for _, g in ipairs(gestures) do
     end
     a.start(ev(0))
     for i = 1, 20 do a.update(ev(i)) end
-    a["end"]({ time_ms = 1300, cancelled = false })
+    a.finish({ time_ms = 1300, cancelled = false })
     local out = {}
     for _, d in ipairs(dispatched) do out[#out + 1] = d.args[1] end
     print("gesture\t" .. g.fingers .. " " .. g.direction .. "\t" .. #dispatched .. "\t" .. out[1] .. "\t" .. out[#out - 1] .. "\t" .. out[#out])
     -- A short, slow gesture goes back; a cancelled one says so.
     dispatched = {}
-    a.start(ev(0)); a.update(ev(1)); a["end"]({ time_ms = 5000, cancelled = false })
+    a.start(ev(0)); a.update(ev(1)); a.finish({ time_ms = 5000, cancelled = false })
     print("short\t" .. g.direction .. "\t" .. dispatched[#dispatched].args[1])
     dispatched = {}
-    a.start(ev(0)); a.update(ev(1)); a["end"]({ time_ms = 5000, cancelled = true })
+    a.start(ev(0)); a.update(ev(1)); a.finish({ time_ms = 5000, cancelled = true })
     print("cancel\t" .. g.direction .. "\t" .. dispatched[#dispatched].args[1])
   else
     print("gesture\t" .. g.fingers .. " " .. g.direction .. "\t" .. type(a))
