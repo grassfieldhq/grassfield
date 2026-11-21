@@ -874,6 +874,9 @@
  {"path": "tests/unit/tst_filesreuse.qml", "layer": "headless"},
  {"path": "tests/unit/activity/qml/tst_graph.cpp", "layer": "logic"},
  {"path": "tests/shell/frame_pacing_probe.sh", "layer": "logic"},
- {"path": "tests/shell/ci_workflow.sh", "layer": "logic"}
+ {"path": "tests/shell/ci_workflow.sh", "layer": "logic"},
+ {"path": "tests/security/lock_beat_realtime.sh", "layer": "headless"},
+ {"path": "tests/shell/shell_health.sh", "layer": "headless"},
+ {"path": "tests/unit/tst_processhealth.qml", "layer": "headless"}
 ]
 }

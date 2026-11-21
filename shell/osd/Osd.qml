@@ -142,6 +142,8 @@ Singleton {
             console.warn("osd: unknown brightness command", direction);
             return;
         }
+        // An active display that did not answer DDC/CI is asked again (the person asks for it); this key still goes where it went.
+        Brightness.keyOn(Compositor.activeScreenName);
         const target = BrightnessLogic.keyTarget(Compositor.activeScreenName, Quickshell.screens.map(s => s.name), Brightness.available, Brightness.ddc);
         if (target.kind === "ddc") {
             const level = Brightness.stepOutput(target.output, direction);

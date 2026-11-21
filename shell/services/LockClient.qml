@@ -41,7 +41,8 @@ Singleton {
     property var last: null
     // A state was read and parsed, and the file still parses.
     property bool known: false
-    // No new beat for LockState.STALE_MS (monotonic: a Timer), or none yet.
+    // No new beat for LockState.STALE_MS (monotonic: an ElapsedTimer since the last new beat, checked every second of real
+    // time), or none yet.
     property bool stale: true
     // The compositor reports a session lock (any locker's): set by shell.qml from the clipboard helper's reading of
     // hyprland-lock-notify-v1; false while that helper does not run (the history is off), which leaves the other inputs.
@@ -96,8 +97,8 @@ Singleton {
         if (fresh) {
             if (root.stale)
                 console.info("grassfield: the security process's lock state is fresh again (" + read.state + ")");
+            sinceBeat.restart();
             root.stale = false;
-            staleTimer.restart();
         }
         // A new security process has no lease yet: renew it at once if an application holds an inhibitor.
         if (restarted && root.busInhibited)
@@ -122,41 +123,56 @@ Singleton {
         printErrors: false
         onLoaded: {
             root.reads++;
-            watchdog.restart();
+            sinceRead.restart();
             root.take(String(text()));
         }
         // A missing or unreadable file: no state (locked).
         onLoadFailed: {
             root.reads++;
-            watchdog.restart();
+            sinceRead.restart();
             root.take("");
         }
         onFileChanged: reload()
     }
 
-    // The watch's backstop: no read for a beat and a margin (a notification lost, an inotify watch that could not be set) reads
-    // now. With a working watch every beat's read restarts it before it fires.
-    Timer {
-        id: watchdog
-        interval: root.pollMs
-        repeat: true
-        running: root.path !== ""
-        onTriggered: root.readNow()
+    // Both clocks below are real time (owner's report of 2026-11-21: "no beat from the security process for 5 s" while it was
+    // healthy). A QML Timer follows the scene graph's animation clock, which falls behind wall time while this process draws
+    // with frames that come late (shell/lib/RealTimer.qml): it can only stretch the bound, never shorten it, but the publisher's
+    // beat had the same clock, and the stale bound must be the same 5 s here whatever this process draws (fail closed: a hung
+    // security process reads locked within LockState.STALE_MS and a second, tests/security/lock_beat_realtime.sh). The
+    // monotonic time since the last read and since the last new beat (QElapsedTimer) is looked at every second, on a QTimer
+    // (Quickshell's SystemClock):
+    //   - the watch's backstop: no read for `pollMs` (a notification lost, an inotify watch that could not be set): read now.
+    //     With a working watch every beat's read comes first;
+    //   - the stale check: no new beat for LockState.STALE_MS: read once more before deciding (this process may have been busy,
+    //     the notification still queued behind this tick), then stale. A read that finds a new beat is never stale, whatever
+    //     this process was doing meanwhile.
+    ElapsedTimer {
+        id: sinceRead
+    }
+    ElapsedTimer {
+        id: sinceBeat
     }
 
-    // No new beat for LockState.STALE_MS: read once more before deciding (an event loop that was busy may have queued the
-    // change notification behind this Timer), then stale.
-    Timer {
-        id: staleTimer
-        interval: LockState.STALE_MS
-        onTriggered: {
+    function tick(): void {
+        if (root.path === "")
+            return;
+        if (sinceRead.elapsedMs() >= root.pollMs)
             root.readNow();
-            if (!staleTimer.running) {
-                if (!root.stale)
-                    console.warn("grassfield: no beat from the security process for " + LockState.STALE_MS / 1000 + " s (stopped, restarting or hung): the session reads locked");
-                root.stale = true;
-            }
-        }
+        if (root.stale || !LockState.isStale(sinceBeat.elapsedMs()))
+            return;
+        root.readNow();
+        if (root.stale || !LockState.isStale(sinceBeat.elapsedMs()))
+            return;
+        console.warn("grassfield: no beat from the security process for " + LockState.STALE_MS / 1000 + " s (stopped, restarting or hung): the session reads locked");
+        root.stale = true;
+    }
+
+    SystemClock {
+        id: clock
+        enabled: root.path !== ""
+        precision: SystemClock.Seconds
+        onDateChanged: root.tick()
     }
 
     // ---- a security process that publishes nothing ----

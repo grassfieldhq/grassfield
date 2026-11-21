@@ -118,6 +118,60 @@ Singleton {
     property var ddcJobs: ({})
     property int ddcSerial: 0
     readonly property var outputNames: Quickshell.screens.map(s => s.name)
+    // Displays that did not answer, remembered for the session by identity (BrightnessLogic.identity: model and serial number),
+    // in the runtime directory so that a restart of the shell does not ask them again: identity -> wall ms of the last failure.
+    readonly property string ddcSilentPath: Logic.silentPath(Quickshell.env("XDG_RUNTIME_DIR"), Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE"), Quickshell.env("WAYLAND_DISPLAY"))
+    property var ddcSilent: ({})
+    // Output name -> wall ms of its last query (a brightness key asks a silent display again at most every KEY_REPROBE_MS).
+    property var ddcProbedAt: ({})
+
+    // Output name -> identity of the display on it now.
+    function ddcIdentities(): var {
+        const ids = {};
+        for (const sc of Quickshell.screens)
+            ids[sc.name] = Logic.identity(sc.model, sc.serialNumber, sc.name);
+        return ids;
+    }
+
+    function ddcRemember(name: string, answered: bool): bool {
+        const id = root.ddcIdentities()[name] || "";
+        if (id === "")
+            return true;
+        const known = Object.prototype.hasOwnProperty.call(root.ddcSilent, id);
+        if (answered) {
+            if (!known)
+                return false;
+            root.ddcSilent = Logic.forgetSilent(root.ddcSilent, id);
+        } else {
+            root.ddcSilent = Logic.rememberSilent(root.ddcSilent, id, Date.now());
+        }
+        if (root.ddcSilentPath !== "")
+            silentFile.setText(Logic.formatSilent(root.ddcSilent) + "\n");
+        return !known;
+    }
+
+    // A brightness key while `name` is the active display (Osd.brightnessStep, before it picks its target): a display that did
+    // not answer is asked again, the person asking for it (at most every BrightnessLogic.KEY_REPROBE_MS). This key goes where
+    // it went before (the built-in panel, as for a display that cannot be changed); the next ones drive the display once it
+    // answers.
+    function keyOn(name: string): void {
+        if (!root.ddcAllowed || !root.ddcCommand || !Object.prototype.hasOwnProperty.call(root.ddc, name))
+            return;
+        const now = Date.now();
+        if (!Logic.keyReprobe(root.ddc[name], name, now, root.ddcProbedAt[name]))
+            return;
+        root.ddcQuery(name, now);
+    }
+
+    function ddcQuery(name: string, now: real): void {
+        const at = Object.assign({}, root.ddcProbedAt);
+        at[name] = now;
+        root.ddcProbedAt = at;
+        const r = Logic.request(root.ddc[name], name, {kind: "query"});
+        root.ddcStore(name, r.entry);
+        if (r.start !== null)
+            root.ddcRun(name, r.entry.serial, r.start);
+    }
 
     // The known level of external output `name` changed (a key, the slider, or the command's answer).
     signal outputLevelChanged(string name)
@@ -193,7 +247,13 @@ Singleton {
         const entry = root.ddc[name];
         const r = entry.serial === serial ? Logic.finished(entry, name, text) : Logic.released(entry, name);
         root.ddcStore(name, r.entry);
+        // Remembered (or forgotten once it answers); the explanatory line once per display and session.
+        let first = false;
         if (r.failed === true)
+            first = root.ddcRemember(name, false);
+        else if (entry.serial === serial && r.entry.status === "ok")
+            root.ddcRemember(name, true);
+        if (first)
             console.info("brightness: " + name + " does not answer DDC/CI (" + Logic.COMMAND + "); its brightness is left to the display."
                 + " It needs the i2c-dev module, access to /dev/i2c-* and DDC/CI on in the display's own menu");
         if (r.start !== null)
@@ -225,13 +285,12 @@ Singleton {
             root.ddc = ({});
             return;
         }
-        root.ddc = s.ddc;
-        for (const name of s.ask) {
-            const r = Logic.request(root.ddc[name], name, {kind: "query"});
-            root.ddcStore(name, r.entry);
-            if (r.start !== null)
-                root.ddcRun(name, r.entry.serial, r.start);
-        }
+        // A display remembered as silent is not asked on a new connection before BrightnessLogic.REPROBE_AFTER_MS.
+        const now = Date.now();
+        const kept = Logic.skipSilent(s, root.ddcIdentities(), root.ddcSilent, now);
+        root.ddc = kept.ddc;
+        for (const name of kept.ask)
+            root.ddcQuery(name, now);
     }
 
     onOutputNamesChanged: root.ddcSync()
@@ -243,6 +302,11 @@ Singleton {
 
     Component.onCompleted: {
         finder.running = true;
+        if (root.ddcAllowed && root.ddcSilentPath !== "") {
+            silentFile.reload();
+            silentFile.waitForJob();
+            root.ddcSilent = Logic.parseSilent(silentFile.text());
+        }
         if (root.ddcAllowed)
             root.ddcSync();
         else if (root.devSession)
@@ -486,6 +550,15 @@ Singleton {
             root.value = parseInt(current.text().trim(), 10) || 0;
             root.loaded = true;
         }
+    }
+
+    // The displays remembered as silent (ddcSilent), read once at start, before the first probe (Component.onCompleted).
+    FileView {
+        id: silentFile
+        path: root.ddcSilentPath
+        blockLoading: true
+        atomicWrites: true
+        printErrors: false
     }
 
     FileView {
