@@ -308,7 +308,7 @@ int main(int argc, char** argv) {
         if (!strcmp(argv[i], "--seconds") && i + 1 < argc) {
             char* end;
             seconds = strtod(argv[++i], &end);
-            if (*end || seconds < 0)
+            if (end == argv[i] || *end || !(seconds >= 0 && seconds <= 1e6)) // NaN, inf or a value whose ns overflow int64_t
                 return usage();
         } else if (!strcmp(argv[i], "--output") && i + 1 < argc)
             want_output = argv[++i];
