@@ -139,6 +139,27 @@ TestCase {
         compare(Shortcuts.pick(undefined), null);
     }
 
+    Component {
+        id: handlerComponent
+        QtObject {
+            property string target: "search"
+            property bool enabled: true
+        }
+    }
+
+    // A handler destroyed while attached (a surface unloaded) is not null in the list but an empty wrapper: it neither answers
+    // nor stays attached.
+    function test_aDestroyedHandlerIsPassedOver() {
+        const gone = handlerComponent.createObject(null);
+        const live = {target: "search", enabled: true};
+        const list = [gone, live];
+        gone.destroy();
+        wait(0);
+        verify(list[0] !== null, "the wrapper of a destroyed object is not null");
+        compare(Shortcuts.pick(list), live);
+        compare(Shortcuts.attached(list, {target: "search", enabled: true}).length, 2, "the destroyed handler is dropped");
+    }
+
     // R2 (CIO-01): a surface that follows the gesture (Overview, Apps) opens at its begin and draws the fingers' progress,
     // completes or goes back at the end from where the fingers left it; *-close mirrors *-open; Reduce Motion: the end only.
     function g(text) {
