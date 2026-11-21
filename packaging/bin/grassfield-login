@@ -146,7 +146,11 @@ case ${1:-start} in
     [ "$fallback" = 1 ] && set_quick_count "$first" $((QUICK_LIMIT - 1))
     set +e
     t0=$(uptime_seconds)
-    sh -c "exec $line" &
+    # As `exec` gave it: the login's stdin (an asynchronous command of a shell without job control gets /dev/null) and
+    # SIGINT/SIGQUIT at their default (it gets them ignored, inherited by everything the session starts).
+    exec 3<&0
+    env --default-signal=INT,QUIT sh -c "exec $line" 0<&3 3<&- &
+    exec 3<&-
     child=$!
     trap 'kill -TERM "$child" 2>/dev/null' TERM
     trap 'kill -HUP "$child" 2>/dev/null' HUP

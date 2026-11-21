@@ -5,7 +5,7 @@ import Quickshell
 // stale check (ADR-0041 S2), the idle lock's delay. A QML Timer is synchronized with the animation clock: with the threaded
 // render loop (every Wayland session) that clock advances by one vsync per frame and never catches up a frame that came late,
 // so a Timer falls behind wall time whenever its process misses frames. Measured offscreen with QSG_RENDER_LOOP=threaded and a
-// GUI thread busy 200 ms every third frame: a 2 s Timer fired every 8.9 s (tests/security/real_timer.sh). On the owner's
+// GUI thread busy 200 ms every third frame: a 2 s Timer fired every 8.9 s (tests/security/lock_beat_realtime.sh). On the owner's
 // machine (2026-11-21) the idle lock announced "lock in 10 s" came after 17 s, and the security process's 2 s beat missed the
 // UI's 5 s bound while that process drew the idle dim.
 // This one counts monotonic time (Quickshell's ElapsedTimer: QElapsedTimer) and is woken by Quickshell's SystemClock (a QTimer
