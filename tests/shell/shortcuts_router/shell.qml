@@ -162,9 +162,13 @@ ShellRoot {
         appsSurface.refuses = true;
         s("apps-open begin 0");
         s("apps-open update 0.5");
-        check("refused: nothing drawn", !appsSurface.open && follower.progress === -1 && !follower.active);
+        check("refused: nothing drawn, nothing opening", !appsSurface.open && follower.progress === -1 && !follower.active && !follower.opening);
         s("apps-open end 0.8 commit");
-        check("refused: still closed", !appsSurface.open && follower.progress === -1);
+        check("refused: still closed", !appsSurface.open && follower.progress === -1 && !follower.opening);
+        // A refused begin that ends in a cancel: `opening` (Overview's layoutHeld) does not stay set.
+        s("apps-open begin 0");
+        s("apps-open cancel 0.1");
+        check("refused then cancelled: nothing opening", !appsSurface.open && !follower.opening);
         appsSurface.refuses = false;
         // Reduce Motion: the end alone.
         follower.reduceMotion = true;

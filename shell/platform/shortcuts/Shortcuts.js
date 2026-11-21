@@ -117,15 +117,21 @@ function pick(list) {
         return null;
     for (let i = 0; i < list.length; i++) {
         const h = list[i];
-        if (h && h.enabled !== false)
+        if (live(h) && h.enabled !== false)
             return h;
     }
     return null;
 }
 
-// `list` without the handlers that are gone (a destroyed QObject reads as null) and without `handler` twice.
+// A handler that still exists: a destroyed QObject kept in a JS array is not null but an empty wrapper (truthy, every
+// property undefined), so it is told by its `target`.
+function live(h) {
+    return h !== null && h !== undefined && typeof h.target === "string";
+}
+
+// `list` without the handlers that are gone and without `handler` twice.
 function attached(list, handler) {
-    const out = (list ?? []).filter(h => h !== null && h !== undefined && h !== handler);
+    const out = (list ?? []).filter(h => live(h) && h !== handler);
     out.push(handler);
     return out;
 }

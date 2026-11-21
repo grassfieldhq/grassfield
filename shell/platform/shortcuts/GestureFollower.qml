@@ -40,8 +40,13 @@ QtObject {
 
     function step(kind: string, phase: string, value: real, commit: bool): void {
         const r = Shortcuts.followStep(target, open, progress, kind, phase, value, commit, reduceMotion);
-        if (!r)
+        if (!r) {
+            // A begin refused by the surface (the lock screen) leaves nothing to follow: its end or cancel still clears
+            // `opening`, which would otherwise hold the next open's layout.
+            if (phase === "end" || phase === "cancel" || !open)
+                opening = false;
             return;
+        }
         // Set before the surface opens (it holds its live layout from the start), cleared once it has completed or closed.
         if (phase === "begin")
             opening = r.action === "show" && r.progress >= 0;
@@ -56,8 +61,11 @@ QtObject {
         }
         if (phase === "end" || phase === "cancel")
             opening = false;
-        if (!open)
+        if (!open) {
+            // Not open after `show()`: the surface refused (it opens synchronously), so nothing is opening.
+            opening = false;
             set(-1);
+        }
     }
 
     onOpenChanged: {
