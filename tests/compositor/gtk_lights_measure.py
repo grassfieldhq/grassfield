@@ -129,10 +129,12 @@ def check(directory):
                f"{pr.get('close', {}).get('n')} of the colour]")
     classic = cases.get("chromium-classic-active")
     if classic:
-        # What the owner's second screenshot shows: a fresh Chromium profile (Omarchy's seed sets no theme) draws its own plain
-        # buttons, no lights, whatever the GTK theme.
-        ok(all(classic.get(n, {}).get("n", 0) < 20 for n in NAMES),
-           f"chromium Classic (fresh profile): no traffic lights, its own buttons {[classic.get(n, {}).get('n') for n in NAMES]}")
+        # A fresh profile started through the session stand-in is created with the GTK appearance, so it draws the lights at
+        # the plugin's size (R7-FUN-04; before rc7 a fresh profile drew Chromium's own plain buttons).
+        found = all("d" in classic.get(n, {}) for n in NAMES)
+        ok(found and all(abs(classic[n]["d"] - ref[n]["d"]) <= 1.5 for n in NAMES),
+           f"chromium fresh profile through the session stand-in: the three lights at the plugin's disc "
+           f"{[classic.get(n, {}).get('d') for n in NAMES]} vs {[ref[n]['d'] for n in NAMES]} device px")
     return 1 if fails else 0
 
 
