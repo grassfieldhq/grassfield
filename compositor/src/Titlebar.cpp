@@ -1482,6 +1482,12 @@ bool CGrassfieldTitlebar::onTouchDown(const ITouch::SDownEvent& e) {
     bool consumed = false;
     gf::guarded("titlebar touch down", [&] {
         auto& input = pointerInput();
+        // A new finger with the id the bar still holds: that touch never ended (its up or cancel was lost, the device went away
+        // mid-touch). It is dropped, so the id never stays the bar's and a client's touch with it is not eaten.
+        if (input.touchId && *input.touchId == e.touchID) {
+            input.touchId.reset();
+            dropGrab(input.touchGrab);
+        }
         // One finger at a time, and none during a pointer's titlebar gesture (the tiling preview is one drag's); the lock
         // screen takes every touch.
         if (input.touchId || input.presses.gestureButton() || input.grab.revealed || sessionLocked() || !State::monitorState() || !Desktop::focusState())
