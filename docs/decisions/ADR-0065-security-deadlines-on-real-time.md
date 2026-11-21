@@ -13,7 +13,7 @@ bound and the idle lock's delay were all such Timers.
 
 ## Decision
 1. Deadlines that carry a security meaning (the lock state's heartbeat, the UI's stale check and its backstop read, the idle
-   lock's delay and the display-off lock's delay) run on real time: `shell/lib/RealTimer.qml` (monotonic time from
+   lock's delay and the display-off lock's delay) run on real time: `shell/security/lock/RealTimer.qml` (monotonic time from
    Quickshell's ElapsedTimer, woken every second by Quickshell's SystemClock; it fires within ±0.5 s of its interval, only
    while its process's event loop runs) or, in LockClient, the same two types directly.
 2. Fail closed is unchanged: a hung security process writes no beat, the UI reads locked within 5 to 6 s of real time; a

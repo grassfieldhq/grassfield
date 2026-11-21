@@ -4,7 +4,7 @@
 # faded in, the security process being healthy; the idle lock announced "in 10 s" came after 17 s).
 # Cause: a QML Timer is synchronized with the scene graph's animation clock; with the threaded render loop (every Wayland
 # session) that clock advances one vsync per frame and never catches up a late frame, so in a process that draws late frames a
-# 2 s Timer fires every ~9 s. The beat (LockPublisher) and the UI's stale check (LockClient) now run on shell/lib/RealTimer.qml /
+# 2 s Timer fires every ~9 s. The beat (LockPublisher) and the UI's stale check (LockClient) now run on shell/security/lock/RealTimer.qml /
 # a SystemClock tick with a monotonic ElapsedTimer.
 #   A  the REAL LockPublisher in a process with late frames (Stall.qml, QSG_RENDER_LOOP=threaded): read from outside, the
 #      longest real gap between two beats stays well under LockState.STALE_MS (5 s): at most 3.5 s. Before: about 9 s.

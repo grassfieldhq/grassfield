@@ -1940,7 +1940,7 @@ same directory and the modules move without moving a file), one step at a time u
   offscreen, `tests/security/lock_beat_realtime.sh`). So the beat (`LockPublisher`), the UI's stale check and its backstop
   read (`LockClient`: a monotonic `ElapsedTimer` since the last new beat and since the last read, looked at every second on
   Quickshell's `SystemClock`, a QTimer) and the idle lock's two deadlines (`Idle.qml` `lockTimer`, `displayOffLockTimer`) run
-  on `shell/lib/RealTimer.qml` (monotonic time, woken every second, ±0.5 s). A hung event loop still beats nothing: the UI reads
+  on `shell/security/lock/RealTimer.qml` (monotonic time, woken every second, ±0.5 s). A hung event loop still beats nothing: the UI reads
   locked within 5 to 6 s of real time, whatever either process draws.
 - `SessionState.lockConfirmed` (`LockState.uiLockConfirmed`) is true when the compositor reports a lock or the last state
   published, fresh or stale, is `locking` or `locked`; false while the UI reads locked only because the state is missing,
