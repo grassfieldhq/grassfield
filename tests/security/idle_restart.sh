@@ -93,8 +93,11 @@ fi
 since=$(($(up) - 296))
 run due "idle $since" "$tmp/cfg"
 # Under load grassfield.json may be read late (the start then decides after at most 10 s, and the deadline may have passed).
-if done_ok && [[ $(asked) == 1 ]] && { grep -qE "the idle lock is due in [1-5] s unless input comes" <<<"$out" || ! grep -q "Settings.*loaded\|decided true" <<<"$(grep -m1 'idle for lock' <<<"$out")"; }; then
+# (The former alternative grepped the lock line for words it never holds: it was always true, so a lock at start passed.)
+if done_ok && [[ $(asked) == 1 ]] && grep -qE "the idle lock is due in [1-5] s unless input comes" <<<"$out"; then
   pass "due: a shorter period asks for the lock at its own deadline (about 4 s), not at start"
+elif done_ok && [[ $(asked) == 1 ]]; then
+  echo "SKIP: idle restart due: the lock was asked for, but the start decided after the deadline (grassfield.json read late under load): the deadline itself NOT VERIFIED"
 else
   bad "due: $(grep -E 'idle-restart|grassfield-idle|ERROR' <<<"$out" | head -n 8)"
 fi

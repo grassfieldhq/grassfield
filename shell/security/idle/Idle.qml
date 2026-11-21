@@ -414,7 +414,8 @@ Scope {
             console.warn("grassfield-idle: idle lock not engaged:", result);
     }
 
-    Timer {
+    // Real time, as lockTimer: a lock deadline.
+    RealTimer {
         id: inheritedIdleLock
         onTriggered: root.inheritedIdleDue()
     }
