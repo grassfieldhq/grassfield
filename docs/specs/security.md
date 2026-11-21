@@ -310,6 +310,22 @@ macOS model: the screen always locks before sleep, and the lock never silently g
   stay open while the UI reads locked only because the state is missing, unreadable or stale after an `unlocked`
   (`SessionState.refusesConfirmed`, "Lock state across processes"), and `LockClient` hands their request to the stand-in
   (a real session). Only the idle lock is missing until then.
+- A shell killed by SIGKILL (owner's report of 2026-11-21: `code=killed, status=9/KILL`, result `signal`, twice, with no
+  "Stopping" line, no liveness-probe line and no OOM kill). What can send it, and what each leaves in the journal: systemd's
+  stop (a "Stopping" line, then "State 'stop-sigterm' timed out. Killing" after `TimeoutStopSec=`); the liveness probe
+  (`grassfield-shell-watchdog`: "did not answer ... SIGKILL"); the kernel's OOM killer or `MemoryMax=` (result `oom-kill`,
+  a kernel line); systemd-oomd (its own line, result `oom-kill`); Force Quit and Hyprland's kill and ANR "Terminate" (only a
+  window's pid: the shell maps no toplevel, `FloatingWindow` is not used); Quickshell's `Process.signal()` (`kill(pid)` of a
+  child, never 0 while the child runs, Qt 6.12 `processFinished` clears it only after the QML side is told). Nothing in
+  Omarchy 4.5.0 kills `qs` or `quickshell` by name (its `omarchy-restart-shell` runs `quickshell kill -p` on its own
+  config, which exits 0). Silent ones: another process's `kill(2)`, and the kernel's realtime CPU limit (RLIMIT_RTTIME:
+  PipeWire's module-rt sets 200 ms through RTKit; a thread under SCHED_FIFO/RR that runs that long without sleeping gets
+  the whole process killed). `shell/services/ShellHealth.qml` logs the shell's memory (RSS, PSS, the unit's cgroup by kind),
+  its realtime threads and that limit a minute after the start, 10 s after every display change and every 5 minutes, and
+  warns once when a realtime thread runs under such a limit; the unit's `ExecStopPost` (`shell/services/shell-stopped.sh`)
+  prints the last sample after a SIGKILL. To name the sender next time, as root: `bpftrace -e 'tracepoint:signal:signal_generate
+  /args->sig == 9 && args->comm == "qs"/ { printf("%s %s[%d] -> qs[%d]\n", strftime("%H:%M:%S", nsecs), comm, pid,
+  args->pid); }'` (or the same event through `/sys/kernel/tracing/events/signal/signal_generate` with the filter `sig==9`).
 - `grassfield-shell.service`: `Restart=always` (was `on-failure`: systemd does not restart a unit that exits 0 or is
   stopped by SIGTERM/SIGINT/SIGHUP/SIGPIPE), `RestartSec=1`, start limit 10 starts in 5 minutes (ADR-0041 step 1a: the
   backstop of a crash loop; the first limit, 10 in 30 s, needed a crash within 2 s of each start and never tripped the
@@ -1907,8 +1923,8 @@ same directory and the modules move without moving a file), one step at a time u
 - The UI (`shell/services/LockClient.qml`) watches the file and reads it every 2 s whatever the watch says; it never writes
   it, and the security process reads nothing from the UI through it (no socket, no process per beat). `SessionState.locked`,
   which every refusal reads (GF-116, "Show previews: When Unlocked", Overview, Switcher, the capture toolbar, the Dock's
-  reopen), is locked unless a state is known, fresh (a new beat, by sequence or by a new writer, within 5 s: a Timer, and a
-  synchronous read before deciding), says `unlocked`, and the compositor reports no lock (hyprland-lock-notify-v1 as the
+  reopen), is locked unless a state is known, fresh (a new beat, by sequence or by a new writer, within 5 s of real time,
+  and a synchronous read before deciding), says `unlocked`, and the compositor reports no lock (hyprland-lock-notify-v1 as the
   clipboard helper reads it, `Clipboard.helperLocked`). A security process that is stopped, restarting, failed at its start
   limit or hung writes no beat, so the UI reads locked within 5 s. The first read is no beat: a file may be the last line
   of a dead writer, so only a second, different write proves a live one (a UI started next to a dead writer's `unlocked`
@@ -1917,6 +1933,15 @@ same directory and the modules move without moving a file), one step at a time u
   `SessionState.securityKeyboard` (the capture toolbar maps nothing as Exclusive) follow `LockClient.authorizing` and
   `securityKeyboard` (`LockState.uiSheet`): the published value of a known, fresh state, true otherwise; the menus close
   when a sheet is published open in a fresh state (`LockState.sheetPublished`), never on a missing or stale one.
+- Real time, not the animation clock (owner's report of 2026-11-21: "no beat from the security process for 5 s" 30 to 40 s
+  after each restart of the UI and while the idle dim faded in, the security process healthy; "lock in 10 s" locked after
+  17 s). A QML `Timer` follows the scene graph's animation clock, which with the threaded render loop advances one vsync per
+  frame and never catches up a late frame: in a process that draws late frames a 2 s Timer fired every 8.9 s (measured
+  offscreen, `tests/security/lock_beat_realtime.sh`). So the beat (`LockPublisher`), the UI's stale check and its backstop
+  read (`LockClient`: a monotonic `ElapsedTimer` since the last new beat and since the last read, looked at every second on
+  Quickshell's `SystemClock`, a QTimer) and the idle lock's two deadlines (`Idle.qml` `lockTimer`, `displayOffLockTimer`) run
+  on `shell/lib/RealTimer.qml` (monotonic time, woken every second, ±0.5 s). A hung event loop still beats nothing: the UI reads
+  locked within 5 to 6 s of real time, whatever either process draws.
 - `SessionState.lockConfirmed` (`LockState.uiLockConfirmed`) is true when the compositor reports a lock or the last state
   published, fresh or stale, is `locking` or `locked`; false while the UI reads locked only because the state is missing,
   unreadable or stale after an `unlocked` (the security process stopped while the session was unlocked). The paths that

@@ -26,6 +26,17 @@ var MAX_FAILURES = 3;
 // leaves room for the first call after a plug, which detects the bus (seconds with several displays); Settings > Displays
 // runs the same bounded form (apps/settings/qml/System.js, systemguard.cpp) inside its Backend's 15 s wait.
 var BOUND = ["timeout", "-k", "2", "12"];
+// A display that did not answer DDC/CI is remembered for the session by its identity (identity(): the model and serial number
+// the compositor reports for it), so that a shell restart or a display change does not ask it again (owner's report of
+// 2026-11-21: 18 "Remote I/O error" lines from ddcutil, an HP LA2205 asked again at every display change and every restart).
+// It is asked again only when the person asks for it: a brightness key while it is the active display (at most once every
+// KEY_REPROBE_MS), or a new connection of it REPROBE_AFTER_MS or more after it last failed. Its one explanatory journal line
+// is written once per session.
+var REPROBE_AFTER_MS = 10 * 60 * 1000;
+var KEY_REPROBE_MS = 30 * 1000;
+// At most this many displays are remembered (the oldest failures go first).
+var MAX_SILENT = 32;
+
 // The shell's own backstop: a run still going this long after it started (the bound plus the kill delay plus a margin) is
 // asked to stop again (TERM to timeout, which passes it to the group); its output stays busy until it has really exited, so
 // two commands never share a bus.
@@ -279,4 +290,100 @@ function sync(ddc, names, running, serial) {
         }
     }
     return {ddc: next, ask: ask, serial: last};
+}
+
+// ---- Displays that do not answer DDC/CI, remembered for the session ----
+
+// The identity of a display: "<model>|<serial>" as the compositor reports them (EDID), "connector:<name>" when both are empty
+// (nothing better to tell it apart by). Control characters are dropped and each part is cut at 64 characters.
+function identity(model, serial, name) {
+    const clean = v => String(v === undefined || v === null ? "" : v).replace(/[\u0000-\u001f\u007f|]/g, "").trim().slice(0, 64);
+    const m = clean(model), s = clean(serial);
+    if (m === "" && s === "")
+        return isConnector(name) ? "connector:" + name : "";
+    return m + "|" + s;
+}
+
+// The file that keeps them across restarts of the shell, per compositor instance, in the session's runtime directory (gone at
+// logout): "" without a runtime directory.
+function silentPath(runtimeDir, instance, display) {
+    const dir = String(runtimeDir || "");
+    if (dir === "" || dir.charAt(0) !== "/")
+        return "";
+    const id = String(instance || display || "default").replace(/[^A-Za-z0-9_.-]/g, "_");
+    return dir + "/grassfield-ddc-silent-" + id;
+}
+
+// The remembered displays: identity -> {at: wall ms of the last failure}. Anything malformed is dropped.
+function parseSilent(text) {
+    const out = {};
+    let o;
+    try {
+        o = JSON.parse(String(text || ""));
+    } catch (e) {
+        return out;
+    }
+    if (o === null || typeof o !== "object" || Array.isArray(o) || o.v !== 1 || o.silent === null || typeof o.silent !== "object")
+        return out;
+    for (const k of Object.keys(o.silent)) {
+        const at = o.silent[k];
+        if (typeof k === "string" && k.length > 0 && k.length <= 160 && typeof at === "number" && isFinite(at) && at >= 0)
+            out[k] = at;
+    }
+    return out;
+}
+
+function formatSilent(silent) {
+    return JSON.stringify({v: 1, silent: silent || {}});
+}
+
+// `id` failed at `now` (wall ms): the map with it, the oldest dropped past MAX_SILENT.
+function rememberSilent(silent, id, now) {
+    const next = Object.assign({}, silent || {});
+    if (typeof id !== "string" || id === "")
+        return next;
+    next[id] = now;
+    const keys = Object.keys(next).sort((a, b) => next[a] - next[b]);
+    while (keys.length > MAX_SILENT)
+        delete next[keys.shift()];
+    return next;
+}
+
+function forgetSilent(silent, id) {
+    const next = Object.assign({}, silent || {});
+    delete next[id];
+    return next;
+}
+
+// `id` is remembered and its failure is recent enough that a new connection does not ask it again. A failure time in the
+// future (the wall clock moved back) does not count as recent: the display is asked.
+function isSilent(silent, id, now) {
+    if (!silent || typeof id !== "string" || id === "" || !Object.prototype.hasOwnProperty.call(silent, id))
+        return false;
+    const age = now - silent[id];
+    return age >= 0 && age < REPROBE_AFTER_MS;
+}
+
+// sync() for displays remembered as silent: the outputs in `s.ask` whose identity (`ids`: output name -> identity) is silent are
+// not asked; their entries read "none" at once (no command, no journal line). Returns {ddc, ask}.
+function skipSilent(s, ids, silent, now) {
+    const ddc = Object.assign({}, s.ddc);
+    const ask = [];
+    for (const n of s.ask) {
+        if (isSilent(silent, ids ? ids[n] : "", now))
+            ddc[n] = Object.assign({}, ddc[n], {status: "none"});
+        else
+            ask.push(n);
+    }
+    return {ddc: ddc, ask: ask};
+}
+
+// A brightness key on output `name` while it reads "none": ask it again (the person asks for it) unless a command runs for it
+// or it was asked less than KEY_REPROBE_MS ago (`probedAt`: wall ms of its last query, 0 for none). A clock that moved back
+// allows it.
+function keyReprobe(entry, name, now, probedAt) {
+    if (!entry || entry.status !== "none" || entry.busy === true || isBuiltIn(name) || isVirtual(name) || !isConnector(name))
+        return false;
+    const age = now - (typeof probedAt === "number" && isFinite(probedAt) ? probedAt : 0);
+    return age < 0 || age >= KEY_REPROBE_MS;
 }

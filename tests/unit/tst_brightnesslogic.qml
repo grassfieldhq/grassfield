@@ -261,4 +261,93 @@ TestCase {
         compare(Logic.forget(null, ["DP-1"]), {});
         compare(Logic.forget(known, undefined), {});
     }
+
+    // Owner's report of 2026-11-21: an HP LA2205 on DP-2 does not answer DDC/CI and was asked again at every display change and
+    // every restart of the shell (18 "Remote I/O error" lines). A display that did not answer is remembered for the session by
+    // its identity and asked again only on a brightness key on it or a new connection 10 minutes or more after it failed.
+    function test_identity() {
+        compare(Logic.identity("LA2205", "CN12345", "DP-2"), "LA2205|CN12345");
+        compare(Logic.identity("DELL P2419H", "", "DP-3"), "DELL P2419H|");
+        compare(Logic.identity("", "", "DP-3"), "connector:DP-3");
+        compare(Logic.identity("", "", "../x"), "");
+        compare(Logic.identity(undefined, null, "DP-1"), "connector:DP-1");
+        compare(Logic.identity("A|B\n", "s", "DP-1"), "AB|s", "the separator and control characters are dropped");
+        compare(Logic.identity("x".repeat(100), "", "DP-1").length, 65);
+    }
+
+    function test_silentFile() {
+        compare(Logic.silentPath("/run/user/1000", "abc_123", "wayland-1"), "/run/user/1000/grassfield-ddc-silent-abc_123");
+        compare(Logic.silentPath("/run/user/1000", "", "wayland-1"), "/run/user/1000/grassfield-ddc-silent-wayland-1");
+        compare(Logic.silentPath("/run/user/1000", "a/../b", ""), "/run/user/1000/grassfield-ddc-silent-a_.._b");
+        compare(Logic.silentPath("", "x", ""), "");
+        compare(Logic.silentPath("relative", "x", ""), "");
+        const map = Logic.rememberSilent({}, "LA2205|", 1000);
+        compare(Logic.parseSilent(Logic.formatSilent(map)), map);
+        for (const t of ["", "x", "[]", "null", "{\"v\":2,\"silent\":{}}", "{\"v\":1,\"silent\":[]}"])
+            compare(Logic.parseSilent(t), {}, t);
+        compare(Logic.parseSilent("{\"v\":1,\"silent\":{\"a|\":5,\"b|\":\"x\",\"c|\":-1}}"), {"a|": 5});
+    }
+
+    function test_silentWindow() {
+        const m = Logic.rememberSilent({}, "LA2205|", 1000000);
+        verify(Logic.isSilent(m, "LA2205|", 1000000));
+        verify(Logic.isSilent(m, "LA2205|", 1000000 + Logic.REPROBE_AFTER_MS - 1));
+        verify(!Logic.isSilent(m, "LA2205|", 1000000 + Logic.REPROBE_AFTER_MS), "a new connection after 10 minutes asks again");
+        verify(!Logic.isSilent(m, "LA2205|", 1000000 - 1), "a clock moved back asks again");
+        verify(!Logic.isSilent(m, "DELL P2419H|", 1000000));
+        verify(!Logic.isSilent(m, "", 1000000));
+        compare(Logic.forgetSilent(m, "LA2205|"), {});
+        let big = {};
+        for (let i = 0; i < Logic.MAX_SILENT + 5; i++)
+            big = Logic.rememberSilent(big, "m" + i + "|", i);
+        compare(Object.keys(big).length, Logic.MAX_SILENT);
+        verify(!Object.prototype.hasOwnProperty.call(big, "m0|"), "the oldest goes first");
+        verify(Object.prototype.hasOwnProperty.call(big, "m" + (Logic.MAX_SILENT + 4) + "|"));
+    }
+
+    // The owner's displays: DP-2 (HP) silent; the shell restarts, then DP-3 (Dell) is unplugged and plugged back. Only the Dell
+    // is asked; the HP reads "none" at once, without a command.
+    function test_silentNotAskedAgain() {
+        const ids = {"eDP-1": "0x63ED|", "DP-2": "LA2205|", "DP-3": "DELL P2419H|"};
+        const silent = Logic.rememberSilent({}, "LA2205|", 5000);
+        // A restart: nothing known yet.
+        let s = Logic.sync({}, ["eDP-1", "DP-2", "DP-3"], {}, 0);
+        compare(s.ask, ["DP-2", "DP-3"]);
+        let kept = Logic.skipSilent(s, ids, silent, 6000);
+        compare(kept.ask, ["DP-3"]);
+        compare(kept.ddc["DP-2"].status, "none");
+        verify(!Logic.answers(kept.ddc, "DP-2"));
+        compare(kept.ddc["DP-3"].status, "unknown");
+        // DP-3 replugged (it went away, then came back): the Dell asked again, the HP still not.
+        const gone = Logic.forget(kept.ddc, ["eDP-1", "DP-2"]);
+        s = Logic.sync(gone, ["eDP-1", "DP-2", "DP-3"], {}, kept.ddc["DP-3"].serial);
+        kept = Logic.skipSilent(s, ids, silent, 7000);
+        compare(kept.ask, ["DP-3"]);
+        // The HP replugged 10 minutes after it failed: asked again.
+        s = Logic.sync({}, ["DP-2"], {}, 0);
+        compare(Logic.skipSilent(s, ids, silent, 5000 + Logic.REPROBE_AFTER_MS).ask, ["DP-2"]);
+        // Without a memory every new display is asked, as before.
+        compare(Logic.skipSilent(Logic.sync({}, ["DP-2"], {}, 0), ids, {}, 6000).ask, ["DP-2"]);
+    }
+
+    // A brightness key on a silent display asks it again, at most every KEY_REPROBE_MS, never while a command runs.
+    function test_keyReprobe() {
+        const none = Object.assign(Logic.fresh(), {status: "none"});
+        verify(Logic.keyReprobe(none, "DP-2", 100000, 0));
+        verify(Logic.keyReprobe(none, "DP-2", 100000, undefined));
+        verify(!Logic.keyReprobe(none, "DP-2", 100000, 100000 - Logic.KEY_REPROBE_MS + 1));
+        verify(Logic.keyReprobe(none, "DP-2", 100000, 100000 - Logic.KEY_REPROBE_MS));
+        verify(Logic.keyReprobe(none, "DP-2", 100000, 200000), "a clock moved back allows it");
+        verify(!Logic.keyReprobe(Object.assign({}, none, {busy: true}), "DP-2", 100000, 0));
+        verify(!Logic.keyReprobe(Object.assign(Logic.fresh(), {status: "ok"}), "DP-2", 100000, 0));
+        verify(!Logic.keyReprobe(none, "eDP-1", 100000, 0));
+        verify(!Logic.keyReprobe(none, "HEADLESS-1", 100000, 0));
+        verify(!Logic.keyReprobe(undefined, "DP-2", 100000, 0));
+        // The query it starts is allowed on a "none" display; its answer makes it "ok" (the next keys drive it).
+        const r = Logic.request(none, "DP-2", {kind: "query"});
+        verify(r.start !== null);
+        const f = Logic.finished(r.entry, "DP-2", "40\n");
+        compare(f.entry.status, "ok");
+        compare(f.entry.level, 40);
+    }
 }

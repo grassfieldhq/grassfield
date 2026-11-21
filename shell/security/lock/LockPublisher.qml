@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.lib
 import "../../lib/LockState.js" as LockState
 
 // The lock state the UI reads (ADR-0041 step 1, S2; ADR-0010 risk 2: "a missed or stale push makes the UI refusals fail
@@ -91,7 +92,12 @@ Scope {
         }
     }
 
-    Timer {
+    // The heartbeat runs on real time (RealTimer), never on a QML Timer: a Timer follows the scene graph's animation clock, which
+    // falls behind wall time while this process draws with frames that come late (the idle dim, the lock surfaces, a display
+    // plugged in). On the owner's machine (2026-11-21) the beat then missed the UI's LockState.STALE_MS bound while this process
+    // was healthy, and the UI read the session as locked (tests/security/lock_beat_realtime.sh). A hung event loop still
+    // writes nothing: the UI reads that as stale, hence locked (fail closed).
+    RealTimer {
         interval: LockState.HEARTBEAT_MS
         repeat: true
         running: root.ready

@@ -83,6 +83,10 @@ ExecStart=/usr/bin/qs -n -p /usr/share/grassfield/shell
 # ADR-0048 D-4: the CPU and I/O limits the shell set on apps the person could not see are lifted when it stops or crashes
 # (the restarted shell resets them again at start). "-": a failure here never marks the unit failed.
 ExecStopPost=-/usr/lib/grassfield/grassfield-energy reset
+# Owner's report of 2026-11-21 (two SIGKILLs, nothing naming the sender): after a SIGKILL, one journal line with the last health
+# sample the shell wrote (services/ShellHealth.qml: memory, realtime threads and their CPU limit, and when). Prints nothing after
+# any other end. "-": never marks the unit failed. docs/specs/security.md "A shell killed by SIGKILL".
+ExecStopPost=-/bin/sh /usr/share/grassfield/shell/services/shell-stopped.sh
 # Gate R1 and GF-030: back after 100 ms after ANY exit (the start itself is what gate R1 measures; ADR-0056; a loop is still ended by the start limit above, 10 starts x (0.1 s + the 10 s of the slowest loop the model knows) = 101 s < 300 s, and by the failure counter at the third failure) while the session runs: a crash, SIGTERM, `qs kill`, exit 0. The
 # session lock is the security process's (ADR-0041 S2): a lock shown when this shell goes away stays drawn and keeps the
 # keyboard. A stop through systemd is never restarted: logout (graphical-session.target stops, PartOf=) or

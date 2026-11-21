@@ -49,7 +49,11 @@ media-key bindings (the session config binds keys to the IPC targets below), sli
    (no new look, ADR-0045 OC-0.7): a backlight change shows on the built-in display (the active display when none is connected, an
    all-in-one's panel); a DDC/CI key shows the level expected at once, and the command's printed answer corrects it.
    `Brightness.qml` asks each connected external output its level once when it appears (the command with the output alone; the
-   compositor's own `HEADLESS-`/`WAYLAND-`/`X11-` outputs are never asked), runs at most one command per output at a time (what comes
+   compositor's own `HEADLESS-`/`WAYLAND-`/`X11-` outputs are never asked; a display that did not answer is remembered for the
+   session by its model and serial number, `$XDG_RUNTIME_DIR/grassfield-ddc-silent-<instance>`, so neither a restart of the shell
+   nor another display change asks it again: only a brightness key while it is the active display, at most every 30 s, or a new
+   connection of it 10 minutes or more after it failed, `BrightnessLogic.REPROBE_AFTER_MS`, `KEY_REPROBE_MS`; its one journal line
+   "does not answer DDC/CI" is written once per session; owner's report of 2026-11-21, 18 "Remote I/O error" lines), runs at most one command per output at a time (what comes
    meanwhile waits, merged: a set replaces what waited, key steps add up; DDC writes take 50 to 200 ms), and runs it as an argument
    vector, never through a shell, bounded by coreutils' `timeout -k 2 12` (the script's ddcutil is a child: `timeout` runs the command
    in a process group of its own and ends the whole group, TERM after 12 s, KILL 2 s later; a TERM to the script alone would leave

@@ -1,2 +1,3 @@
 module qs.lib
 singleton Mode 1.0 Mode.qml
+RealTimer 1.0 RealTimer.qml
