@@ -140,8 +140,8 @@ Singleton {
     // with frames that come late (shell/security/lock/RealTimer.qml): it can only stretch the bound, never shorten it, but the publisher's
     // beat had the same clock, and the stale bound must be the same 5 s here whatever this process draws (fail closed: a hung
     // security process reads locked within LockState.STALE_MS and a second, tests/security/lock_beat_realtime.sh). The
-    // monotonic time since the last read and since the last new beat (QElapsedTimer) is looked at every second, on a QTimer
-    // (Quickshell's SystemClock):
+    // monotonic time since the last read and since the last new beat (QElapsedTimer) is looked at every 250 ms, on the QML
+    // Timer below (never Quickshell's SystemClock):
     //   - the watch's backstop: no read for `pollMs` (a notification lost, an inotify watch that could not be set): read now.
     //     With a working watch every beat's read comes first;
     //   - the stale check: no new beat for LockState.STALE_MS: read once more before deciding (this process may have been busy,

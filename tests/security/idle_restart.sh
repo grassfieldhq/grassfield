@@ -83,7 +83,16 @@ up() { cut -d' ' -f1 /proc/uptime | cut -d. -f1; }
 
 since=$(($(up) - 400))
 run past "idle $since" "$tmp/cfg"
-if done_ok && [[ $(asked) == 1 ]] && grep -q "idle lock not engaged: refused: missing-pam" <<<"$out"; then
+# Where /etc/pam.d/omarchy-lock-password is missing (a build container) the lock refuses with missing-pam; on an Omarchy host it
+# exists and the lock is engaged as far as this compositor-less run goes. Either way the request itself is what is checked.
+engaged_or_refused() {
+  if [[ -e /etc/pam.d/omarchy-lock-password ]]; then
+    ! grep -q "idle lock not engaged" <<<"$out"
+  else
+    grep -q "idle lock not engaged: refused: missing-pam" <<<"$out"
+  fi
+}
+if done_ok && [[ $(asked) == 1 ]] && engaged_or_refused; then
   pass "past: a period that already lasted lock.idleMinutes asks for the idle lock at start"
 else
   bad "past: $(grep -E 'idle-restart|grassfield-idle|ERROR' <<<"$out" | head -n 8)"

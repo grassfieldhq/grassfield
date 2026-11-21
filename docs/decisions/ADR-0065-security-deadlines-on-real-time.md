@@ -14,8 +14,9 @@ bound and the idle lock's delay were all such Timers.
 ## Decision
 1. Deadlines that carry a security meaning (the lock state's heartbeat, the UI's stale check and its backstop read, the idle
    lock's delay and the display-off lock's delay) run on real time: `shell/security/lock/RealTimer.qml` (monotonic time from
-   Quickshell's ElapsedTimer, woken every second by Quickshell's SystemClock; it fires within ±0.5 s of its interval, only
-   while its process's event loop runs) or, in LockClient, the same two types directly.
+   Quickshell's ElapsedTimer, woken every 250 ms by a QML Timer; never Quickshell's SystemClock, which spins during a daylight
+   saving fall-back, tests/shell/wall_clock_only.sh) or, in LockClient, an ElapsedTimer and the same short Timer directly. A
+   Timer stretched by late frames delays a deadline by at most one stretched period; the deadline itself is monotonic time.
 2. Fail closed is unchanged: a hung security process writes no beat, the UI reads locked within 5 to 6 s of real time; a
    process that only draws late frames keeps beating and is never read as stale.
 3. Sub-second timers, animations and anything without a security meaning keep QML Timers (their stretching under load is
