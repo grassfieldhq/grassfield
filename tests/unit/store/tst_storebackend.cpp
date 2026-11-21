@@ -16,6 +16,7 @@
 #include <QTimer>
 
 #include <functional>
+#include <optional>
 
 #include <gtest/gtest.h>
 
@@ -379,6 +380,47 @@ TEST(StoreBackend, ABadgeNeverLeadsToARefusal)
     EXPECT_EQ(block(planned, "aether.desktop"), QString()) << "a clean plan stays offered";
     EXPECT_EQ(block(planned, "needed.desktop"), QStringLiteral("dependency"));
     EXPECT_EQ(block(planned, "taker.desktop"), QStringLiteral("protected"));
+
+    // SU-02: `--removable`'s plans on the workers give the same answer, and the GUI thread is free meanwhile (the call
+    // returns before any plan ran; the answer comes through the event loop).
+    std::optional<QVariantMap> async;
+    backend.removalByEntryAsync([&async](const QVariantMap &m) { async = m; });
+    EXPECT_FALSE(async.has_value()) << "answered later, not inside the call";
+    QEventLoop loop;
+    for (int i = 0; i < 500 && !async; ++i) {
+        QTimer::singleShot(20, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    ASSERT_TRUE(async.has_value());
+    EXPECT_EQ(*async, planned);
+}
+
+// SR6 off the GUI thread (SU-06 note): searchAsync answers what search() answers, through searchResults, and an answer to
+// an older query never arrives after a newer one was asked.
+TEST(StoreBackend, SearchOnAWorker)
+{
+    Scratch s;
+    StoreBackend backend;
+    backend.start();
+    ASSERT_TRUE(settle(backend));
+    QList<std::pair<QString, QVariantList>> answers;
+    QObject::connect(&backend, &StoreBackend::searchResults, &backend,
+                     [&answers](const QString &q, const QVariantList &apps) { answers.append({q, apps}); });
+    backend.searchAsync(QStringLiteral("gim"));
+    backend.searchAsync(QStringLiteral("gimp"));
+    QEventLoop loop;
+    for (int i = 0; i < 250 && answers.isEmpty(); ++i) {
+        QTimer::singleShot(20, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    for (int i = 0; i < 10; ++i) { // anything late would come now
+        QTimer::singleShot(20, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    ASSERT_EQ(answers.size(), 1) << "only the latest query is answered";
+    EXPECT_EQ(answers.constFirst().first, QStringLiteral("gimp"));
+    EXPECT_EQ(answers.constFirst().second, backend.search(QStringLiteral("gimp")));
+    EXPECT_EQ(ids(answers.constFirst().second).value(0), QStringLiteral("org.gimp.GIMP"));
 }
 
 // Arch's app data fetched from the mirror (archlinux-appstream-data not installed), each failure with its own reason (the
@@ -1565,12 +1607,15 @@ TEST(StoreBackend, Flathub)
     s.env->set("XDG_DATA_DIRS", exports + QStringLiteral(":/usr/share"));
     EXPECT_TRUE(backend.open(QStringLiteral("org.example.Notes")));
     EXPECT_TRUE(backend.open(QStringLiteral("flatpak:com.other.App")));
-    // Three detached programs, each writing its line: all three, whatever their order.
+    // A web app the catalog does not list (no StoreApp behind it): Omarchy's launcher with its address, not a crash.
+    EXPECT_TRUE(backend.open(QStringLiteral("webapp:Chat")));
+    EXPECT_FALSE(backend.open(QStringLiteral("webapp:Nothing")));
+    // Four detached programs, each writing its line: all four, whatever their order.
     const auto openedLines = [&s] {
         QFile f(s.path(QStringLiteral("opened")));
         return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
     };
-    for (int i = 0; i < 500 && openedLines().count('\n') < 3; ++i) {
+    for (int i = 0; i < 500 && openedLines().count('\n') < 4; ++i) {
         QTimer::singleShot(20, &loop, &QEventLoop::quit);
         loop.exec();
     }
@@ -1578,6 +1623,7 @@ TEST(StoreBackend, Flathub)
     EXPECT_TRUE(lines.contains("uwsm-app -- /usr/bin/flatpak run org.example.Notes\n")) << lines.toStdString();
     EXPECT_TRUE(lines.contains("uwsm-app -- org.example.Notes.desktop\n")) << lines.toStdString();
     EXPECT_TRUE(lines.contains("uwsm-app -- /usr/bin/flatpak run com.other.App\n")) << lines.toStdString();
+    EXPECT_TRUE(lines.contains("omarchy-launch-webapp https://chat.example.org\n")) << lines.toStdString();
 
     // Removed: the app, then the runtimes no app needs (SD27).
     backend.plan(QStringLiteral("org.example.Notes"), QStringLiteral("remove"));

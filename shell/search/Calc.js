@@ -194,9 +194,13 @@ function evaluate(input) {
     return {ok: true, value: value};
 }
 
-// True when the input is more than a bare number (an operator, function or constant).
+// True when the input is more than a bare number or a bare word (an operator, a function call, a constant in a
+// calculation). A word alone is no calculation, even the name of a constant: "pi" or "e" typed on the way to an app
+// must not put a Calculator row before it.
 function isExpression(input) {
     if (/^\s*[\d.]+(e[+-]?\d+)?\s*$/i.test(input))
+        return false;
+    if (/^\s*[a-z]+\s*$/i.test(input))
         return false;
     return /[a-z+\-*/%^()×÷]/i.test(input);
 }

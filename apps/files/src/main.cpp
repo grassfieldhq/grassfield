@@ -118,7 +118,9 @@ int main(int argc, char *argv[])
     });
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
 
-    QString qmlDir = qEnvironmentVariable("GRASSFIELD_FILES_QML");
+    // A dev knob like the others (runmode.h): an installed Files never loads its interface from a directory the
+    // environment names.
+    QString qmlDir = grassfield::apps::runmode::devValue("FILES_QML");
     if (qmlDir.isEmpty())
         qmlDir = QStringLiteral(GRASSFIELD_FILES_QML_DIR);
 

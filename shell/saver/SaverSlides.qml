@@ -131,6 +131,14 @@ Scope {
         id: watchdog
         onTriggered: {
             root.generation++;
+            // The job is not left behind: a process still running is stopped (the job destroys itself once it has exited),
+            // a job whose process never ran is destroyed here.
+            if (root.activeJob) {
+                if (root.activeJob.running)
+                    root.activeJob.stop(15);
+                else
+                    root.activeJob.destroy();
+            }
             root.activeJob = null;
             if (root.url === "")
                 root.empty = true;

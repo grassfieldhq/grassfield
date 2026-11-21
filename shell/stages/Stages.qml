@@ -138,6 +138,10 @@ Scope {
             id: win
 
             required property ShellScreen modelData
+            // The output's name, taken once: modelData is already null when a removed output destroys the window, and the state
+            // change that comes with it still runs the handlers below (audit A-16).
+            property string screenName: ""
+            Component.onCompleted: screenName = modelData ? modelData.name : ""
 
             readonly property var geo: root.geometryOf(modelData)
             readonly property var monitorState: modelData ? StagesLink.monitorState(modelData.name) : null
@@ -183,20 +187,20 @@ Scope {
                     grace.stop();
             }
             onMonitorStateChanged: {
-                if (!monitorState || !monitorState.overlap)
-                    root.setRevealed(modelData.name, false);
+                if ((!monitorState || !monitorState.overlap) && win.screenName !== "")
+                    root.setRevealed(win.screenName, false);
             }
 
             Timer {
                 id: dwell
                 interval: Tokens.stagesRevealDwell
-                onTriggered: root.setRevealed(win.modelData.name, true)
+                onTriggered: root.setRevealed(win.screenName, true)
             }
 
             Timer {
                 id: grace
                 interval: Tokens.stagesHideGrace
-                onTriggered: root.setRevealed(win.modelData.name, false)
+                onTriggered: root.setRevealed(win.screenName, false)
             }
 
             Item {
@@ -211,7 +215,7 @@ Scope {
                     id: edgeHover
                     onHoveredChanged: {
                         const mon = win.monitorState;
-                        if (hovered && mon && mon.overlap && root.stripCount(win.modelData.name) > 0)
+                        if (hovered && mon && mon.overlap && root.stripCount(win.screenName) > 0)
                             dwell.restart();
                         else
                             dwell.stop();
@@ -238,9 +242,13 @@ Scope {
             }
 
             readonly property bool dragging: dragSlot >= 0
+            // A change of the tile count rebuilds every tile: a tile dragged at that moment goes without a release or a
+            // cancel, so the drag ends here (else its badge stays and no other drag can start).
+            readonly property int tileCount: shown ? geo.tiles.length : 0
+            onTileCountChanged: dragSlot = -1
 
             Repeater {
-                model: win.shown ? win.geo.tiles.length : 0
+                model: win.tileCount
 
                 Item {
                     id: tile

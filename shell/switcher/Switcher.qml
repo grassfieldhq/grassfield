@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "../platform/ScreenChoice.js" as ScreenChoice
 import "../dock/DockModel.js" as DockModel
@@ -278,6 +279,8 @@ Scope {
 
     IpcHandler {
         target: "switcher"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function next(id: string): void {
             root.step(1, false, id);

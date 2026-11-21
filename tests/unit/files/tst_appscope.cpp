@@ -2,6 +2,10 @@
 #include "appscope.h"
 #include "chromecaps.h"
 
+#include <QDir>
+#include <QFileSystemWatcher>
+#include <QTemporaryDir>
+
 #include <gtest/gtest.h>
 
 using grassfield::apps::scopedCommand;
@@ -67,5 +71,52 @@ TEST(ChromeCaps, FileLocationFollowsTheDevStateHomeThenTheRuntimeDir)
     EXPECT_EQ(grassfield::apps::capabilitiesFile(), QStringLiteral("/s/capabilities.json"));
     qunsetenv("GRASSFIELD_STATE_HOME");
     qputenv("XDG_RUNTIME_DIR", "/run/user/1");
-    EXPECT_EQ(grassfield::apps::capabilitiesFile(), QStringLiteral("/run/user/1/grassfield-capabilities.json"));
+    EXPECT_EQ(grassfield::apps::capabilitiesFile(), QStringLiteral("/run/user/1/grassfield/capabilities.json"));
+}
+
+// apps-misc H1 for the capabilities file: the readers watch Grassfield's runtime folder, not all of $XDG_RUNTIME_DIR; its
+// parent only while the folder is missing.
+TEST(ChromeCaps, WatchesGrassfieldsRuntimeFolderNotTheWholeRuntimeDir)
+{
+    QTemporaryDir runtime;
+    ASSERT_TRUE(runtime.isValid());
+    qunsetenv("GRASSFIELD_STATE_HOME");
+    qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+    const QString folder = runtime.path() + QStringLiteral("/grassfield");
+    QFileSystemWatcher watcher;
+
+    // No folder yet (the shell has not written): the runtime dir, to see the folder appear.
+    EXPECT_EQ(grassfield::apps::watchCapabilities(watcher), QStringList{runtime.path()});
+    EXPECT_EQ(watcher.directories(), QStringList{runtime.path()});
+
+    // The shell made it and wrote the file: the folder and the file only, the runtime dir let go.
+    ASSERT_TRUE(QDir().mkdir(folder));
+    QFile f(folder + QStringLiteral("/capabilities.json"));
+    ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+    f.write(R"({"v":1,"pluginPresent":false,"features":[]})");
+    f.close();
+    EXPECT_EQ(grassfield::apps::watchCapabilities(watcher), QStringList{folder});
+    EXPECT_EQ(watcher.directories(), QStringList{folder});
+    EXPECT_EQ(watcher.files(), QStringList{f.fileName()});
+    EXPECT_FALSE(grassfield::apps::minimizeAvailableInFile());
+    // Called again on every event: nothing doubles.
+    grassfield::apps::watchCapabilities(watcher);
+    EXPECT_EQ(watcher.directories().size(), 1);
+    EXPECT_EQ(watcher.files().size(), 1);
+    qunsetenv("XDG_RUNTIME_DIR");
+}
+
+// A runtime dir watched for its own sake is never let go by the helper.
+TEST(ChromeCaps, KeepsAParentWatchedByItsOwner)
+{
+    QTemporaryDir runtime;
+    ASSERT_TRUE(runtime.isValid());
+    qunsetenv("GRASSFIELD_STATE_HOME");
+    qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+    ASSERT_TRUE(QDir().mkdir(runtime.path() + QStringLiteral("/grassfield")));
+    QFileSystemWatcher watcher;
+    watcher.addPath(runtime.path());
+    grassfield::apps::watchCapabilities(watcher);
+    EXPECT_TRUE(watcher.directories().contains(runtime.path()));
+    qunsetenv("XDG_RUNTIME_DIR");
 }

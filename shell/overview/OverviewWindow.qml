@@ -46,8 +46,9 @@ Variants {
         // compositor plugin (`overview-focus`) or, without it, from the controller's checked retry.
         readonly property bool holdsKeyboard: root.controller.keyboardPlan[screenName] === "exclusive"
 
-        // 0 = windows at their real place, 1 = fully laid out.
-        property real progress: shown ? 1 : 0
+        // 0 = windows at their real place, 1 = fully laid out. While a swipe drives the Overview, the fingers' progress
+        // (Overview.gesture, CIO-01).
+        property real progress: shown && root.controller.gesture.progress >= 0 ? root.controller.gesture.progress : (shown ? 1 : 0)
         readonly property real zoom: Appearance.reduceMotion ? 1 : progress
 
         // Windows of the current workspace and the Spaces of this output, kept while the
@@ -251,7 +252,8 @@ Variants {
 
         Behavior on progress {
             NumberAnimation {
-                duration: Appearance.duration(Tokens.motionSlow)
+                // Each step of a swipe is drawn as it comes; the rest of the way animates from there.
+                duration: root.controller.gesture.active ? 0 : Appearance.duration(Tokens.motionSlow)
                 easing.type: Easing.BezierSpline
                 easing.bezierCurve: Appearance.curve
             }
@@ -263,8 +265,16 @@ Variants {
             wins = liveWins;
             relayout();
             const keys = liveWins.map(w => w.address);
-            if (keys.join(",") !== winKeys.join(","))
+            if (keys.join(",") !== winKeys.join(",")) {
+                // The window items are keyed by address (winModel): a window arriving or leaving creates or destroys only its
+                // own item, the others glide to their new places. A dragged window that left takes its item and its drag
+                // with it (no release or cancel comes): the drag ends here, else hover selection and the title stay off.
+                if (dragKey !== "" && keys.indexOf(dragKey) < 0) {
+                    dragKey = "";
+                    dropIndex = -1;
+                }
                 winKeys = keys;
+            }
             const map = {};
             for (const w of liveWins)
                 map[w.address] = w;
@@ -725,20 +735,29 @@ Variants {
                 }
             }
 
-            // Window thumbnails (v1) or hit areas of the transformed real windows (v2).
+            // Window thumbnails (v1) or hit areas of the transformed real windows (v2). Keyed by window address (audit A-06): a
+            // window opening or closing while Overview is open adds or removes its own item only; the others keep their item,
+            // their capture and a drag in progress, and glide to the new layout (the tx/ty/tw/th Behaviors).
             Repeater {
-                model: win.winKeys
+                model: ScriptModel {
+                    id: winModel
+                    values: win.winKeys.map(k => ({
+                                address: k
+                            }))
+                    objectProp: "address"
+                }
 
                 delegate: Item {
                     id: thumb
 
-                    required property string modelData
+                    required property var modelData
+                    readonly property string key: modelData.address
 
-                    readonly property var info: win.byKey[modelData]
-                    readonly property var target: win.placedMap[modelData]
+                    readonly property var info: win.byKey[key]
+                    readonly property var target: win.placedMap[key]
                     readonly property bool valid: info !== undefined && target !== undefined
-                    readonly property bool isSelected: win.marked === modelData && win.spaceFocus < 0 && win.minFocus < 0
-                    readonly property bool dragging: win.dragKey === modelData
+                    readonly property bool isSelected: win.marked === key && win.spaceFocus < 0 && win.minFocus < 0
+                    readonly property bool dragging: win.dragKey === key
 
                     // Layout rectangle, animated when the layout changes while open.
                     property real tx: target ? target.x : 0
@@ -761,10 +780,27 @@ Variants {
                     width: v2 ? Math.max(1, tw) : Math.max(1, realW + (tw - realW) * win.zoom)
                     height: v2 ? Math.max(1, th) : Math.max(1, realH + (th - realH) * win.zoom)
                     z: dragging ? 100 : (isSelected ? 2 : 1)
-                    opacity: (dragging ? Tokens.overviewDragOpacity : 1) * (Appearance.reduceMotion ? win.progress : 1)
+                    opacity: (dragging ? Tokens.overviewDragOpacity : 1) * (Appearance.reduceMotion ? win.progress : 1) * appear
+                    // A window that opens while Overview is open fades in at its place while the others make room.
+                    property real appear: 1
+                    Component.onCompleted: {
+                        if (win.progress >= 1 && !Appearance.reduceMotion) {
+                            appear = 0;
+                            appearAnim.start();
+                        }
+                    }
+                    NumberAnimation {
+                        id: appearAnim
+                        target: thumb
+                        property: "appear"
+                        to: 1
+                        duration: Appearance.duration(Tokens.motionNormal)
+                        easing.type: Easing.BezierSpline
+                        easing.bezierCurve: Appearance.curveEnter
+                    }
                     Accessible.role: Accessible.Button
                     Accessible.name: info ? (info.title !== "" ? info.title : Apps.nameFor(info.appId)) : ""
-                    Accessible.onPressAction: win.activateWindow(modelData)
+                    Accessible.onPressAction: win.activateWindow(key)
 
                     // The tiles re-lay out and settle back after a drag; under Reduce Motion they jump (ADR-0039 step 5).
                     Behavior on tx {
@@ -812,49 +848,64 @@ Variants {
                         }
                     }
 
-                    // Rounded mask for the live content.
-                    Rectangle {
-                        id: maskShape
-                        anchors.fill: parent
-                        radius: Tokens.overviewThumbRadius
-                        visible: false
-                        layer.enabled: !thumb.v2
-                    }
-
+                    // The live content at a fixed size, scaled to the item (audit A-11): the zoom changes the
+                    // scale only, so the two offscreen layers (mask, clipper) are allocated once, not on every frame of the open and
+                    // close animation. The radius is the token as drawn, whatever the scale.
                     Item {
-                        id: clipper
-                        anchors.fill: parent
+                        id: content
+                        objectName: "thumbContent"
                         visible: !thumb.v2
-                        layer.enabled: !thumb.v2
-                        layer.effect: MultiEffect {
-                            maskEnabled: true
-                            maskSource: maskShape
+                        // The larger of the two ends of the zoom (the real window, its place in the layout): scaled down, never up.
+                        width: Math.max(1, thumb.tw, thumb.realW)
+                        height: Math.max(1, thumb.th, thumb.realH)
+                        transform: Scale {
+                            xScale: thumb.width / content.width
+                            yScale: thumb.height / content.height
                         }
 
+                        // Rounded mask for the live content.
                         Rectangle {
+                            id: maskShape
                             anchors.fill: parent
-                            color: Appearance.withAlpha(Appearance.colors.materialTint, 1)
+                            radius: Tokens.overviewThumbRadius * content.width / Math.max(1, thumb.width)
+                            visible: false
+                            layer.enabled: !thumb.v2
                         }
 
-                        ScreencopyView {
-                            id: view
+                        Item {
+                            id: clipper
                             anchors.fill: parent
-                            captureSource: thumb.info && !thumb.v2 ? thumb.info.toplevel : null
-                            live: root.controller.profile === "full"
-                            paintCursor: false
-                            // A single frame can only be requested once the capture context knows
-                            // the buffer size (sourceSize); earlier calls warn "Cannot capture frame".
-                            readonly property bool ready: captureSource !== null && sourceSize.width > 0 && sourceSize.height > 0
-                            property bool snapshotTaken: false
-                            function snapshot(): void {
-                                if (!live && ready && !snapshotTaken) {
-                                    snapshotTaken = true;
-                                    captureFrame();
-                                }
+                            layer.enabled: !thumb.v2
+                            layer.effect: MultiEffect {
+                                maskEnabled: true
+                                maskSource: maskShape
                             }
-                            onReadyChanged: snapshot()
-                            onLiveChanged: snapshot()
-                            onCaptureSourceChanged: snapshotTaken = false
+
+                            Rectangle {
+                                anchors.fill: parent
+                                color: Appearance.withAlpha(Appearance.colors.materialTint, 1)
+                            }
+
+                            ScreencopyView {
+                                id: view
+                                anchors.fill: parent
+                                captureSource: thumb.info && !thumb.v2 ? thumb.info.toplevel : null
+                                live: root.controller.profile === "full"
+                                paintCursor: false
+                                // A single frame can only be requested once the capture context knows
+                                // the buffer size (sourceSize); earlier calls warn "Cannot capture frame".
+                                readonly property bool ready: captureSource !== null && sourceSize.width > 0 && sourceSize.height > 0
+                                property bool snapshotTaken: false
+                                function snapshot(): void {
+                                    if (!live && ready && !snapshotTaken) {
+                                        snapshotTaken = true;
+                                        captureFrame();
+                                    }
+                                }
+                                onReadyChanged: snapshot()
+                                onLiveChanged: snapshot()
+                                onCaptureSourceChanged: snapshotTaken = false
+                            }
                         }
                     }
 
@@ -900,7 +951,7 @@ Variants {
                         acceptedButtons: Qt.LeftButton
                         onEntered: {
                             if (win.dragKey === "")
-                                root.controller.hoverSelect(thumb.modelData);
+                                root.controller.hoverSelect(thumb.key);
                         }
                         onPressed: mouse => {
                             pressAt = mapToItem(contentRoot, mouse.x, mouse.y);
@@ -914,7 +965,7 @@ Variants {
                             const dy = p.y - pressAt.y;
                             if (!moved && Math.hypot(dx, dy) > Tokens.overviewDragThreshold) {
                                 moved = true;
-                                win.dragKey = thumb.modelData;
+                                win.dragKey = thumb.key;
                             }
                             if (moved) {
                                 thumb.ox = dx;
@@ -925,11 +976,11 @@ Variants {
                         }
                         onReleased: mouse => {
                             if (!moved) {
-                                win.activateWindow(thumb.modelData);
+                                win.activateWindow(thumb.key);
                                 return;
                             }
                             const index = win.tileIndexAt(mapToItem(contentRoot, mouse.x, mouse.y));
-                            const key = thumb.modelData;
+                            const key = thumb.key;
                             win.dragKey = "";
                             win.dropIndex = -1;
                             thumb.ox = 0;
@@ -1076,14 +1127,17 @@ Variants {
                 readonly property string appName: info ? Apps.nameFor(info.appId) : ""
                 readonly property string title: info && info.title !== "" ? info.title : appName
 
-                visible: info !== undefined && rect !== undefined && win.dragKey === ""
+                visible: info !== undefined && rect !== undefined && box !== null && win.dragKey === ""
                 opacity: win.progress >= 1 ? 1 : 0
                 radius: Tokens.overviewLabelHeight / 2
                 shadowEnabled: false
                 width: Math.min(Tokens.overviewLabelMaxWidth, labelRow.implicitWidth + 2 * Tokens.spacingMd)
                 height: Tokens.overviewLabelHeight
                 // Never over another window's rectangle (Layout.labelRect).
-                readonly property var box: rect ? Layout.labelRect(win.placement.rects, win.placement.rects.indexOf(rect), width, height, Tokens.spacingSm, {
+                // The rectangle's index in the placement: placedMap and placement change in one step, but a binding can read one before
+                // the other is re-evaluated (-1 then: no label for that turn, not a TypeError).
+                readonly property int at: rect ? win.placement.rects.indexOf(rect) : -1
+                readonly property var box: at >= 0 ? Layout.labelRect(win.placement.rects, at, width, height, Tokens.spacingSm, {
                     w: win.width,
                     h: win.height
                 }) : null

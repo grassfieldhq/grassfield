@@ -253,6 +253,26 @@ TestCase {
         compare(Object.keys(r.positions), ["a"]);
     }
 
+    // Audit A-18: a file may be called like a member of Object.prototype; it is a key like any other.
+    function test_prototypeNamesAreOrdinaryFiles() {
+        const names = ["a", "__proto__", "toString", "constructor"];
+        const lay = Logic.layout(names, {}, 2, 2);
+        compare(Object.keys(lay).sort().join(","), names.slice().sort().join(","));
+        verify(Logic.placed(lay, "__proto__"));
+        const full = Logic.layout(["a", "b", "toString"], {}, 1, 2);
+        verify(!Logic.placed(full, "toString"), "no slot is no slot, whatever the prototype holds");
+        verify(Logic.placed(full, "a"));
+        const merged = Logic.merged({a: {col: 5, row: 5}, gone: {col: 9, row: 9}}, lay);
+        compare(Object.keys(merged).length, 5);
+        compare(merged.a.col, lay.a.col);
+        compare(Logic.own(merged, "__proto__").col, Logic.own(lay, "__proto__").col);
+        verify(Logic.serialize(merged).indexOf('"__proto__": {') >= 0);
+        compare(Object.keys(Logic.prune(merged, ["__proto__", "a", "nope"])).sort().join(","), "__proto__,a");
+        compare(Object.keys(Logic.renamed({a: {col: 0, row: 0}}, "a", "__proto__")).join(","), "__proto__");
+        compare(Object.keys(Logic.moveGroup(lay, ["__proto__"], "__proto__", {col: 1, row: 1}, 2, 3)).length, 4);
+        compare(Logic.navigate(full, "toString", "down"), "a");
+    }
+
     function test_renameKeepsPosition() {
         const out = Logic.renamed({a: {col: 1, row: 1}, b: {col: 0, row: 0}}, "a", "z");
         compare(out, {z: {col: 1, row: 1}, b: {col: 0, row: 0}});

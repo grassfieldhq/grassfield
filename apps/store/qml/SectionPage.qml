@@ -27,12 +27,25 @@ ScrollPage {
     Accessible.role: Accessible.Pane
     Accessible.name: root.title
 
+    // The blocks keyed by their kind, title and place, kept in step in place (SU-06): a new snapshot of the same section
+    // changes what each block shows, never the blocks' items (a carousel keeps its card, a row its delegates).
+    function blockKeys(): var {
+        return (root.section.blocks || []).map((b, i) => (b.kind || "") + "|" + (b.title || "") + "|" + (b.category || "") + "|" + i);
+    }
+    onSectionChanged: sectionKeys.sync(root.blockKeys())
+    Component.onCompleted: sectionKeys.sync(root.blockKeys())
+
+    KeyedModel {
+        id: sectionKeys
+    }
+
     Repeater {
-        model: root.section.blocks
+        model: sectionKeys
 
         delegate: Loader {
             id: block
-            required property var modelData
+            required property int index
+            readonly property var modelData: (root.section.blocks || [])[block.index] || ({kind: "row", title: "", apps: []})
             width: root.contentWidth
             sourceComponent: modelData.kind === "hero" ? hero : modelData.kind === "cards" ? cards : row
 
@@ -61,7 +74,7 @@ ScrollPage {
                     AppShelf {
                         id: shelf
                         width: parent.width
-                        title: block.modelData.title
+                        title: block.modelData.title || ""
                         apps: block.modelData.apps
                         onOpened: id => root.opened(id)
                     }
@@ -71,7 +84,7 @@ ScrollPage {
                         anchors.right: parent.right
                         y: Math.round((shelf.titleHeight - height) / 2)
                         text: qsTr("See All")
-                        target: block.modelData.title
+                        target: block.modelData.title || ""
                         onActivated: root.categoryRequested(block.modelData.category)
                     }
                 }

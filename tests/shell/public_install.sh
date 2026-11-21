@@ -310,7 +310,7 @@ EOF
 
 # A stock machine: Omarchy 4.0.6, [omarchy] first, quickshell from [omarchy], Omarchy's boot theme.
 fresh() {
-  rm -rf "$S" "$R" "$W/home"
+  rm -rf "${S:?}" "${R:?}" "${W:?}/home"
   mkdir -p "$S" "$R/etc/pacman.d" "$R/var/lib/pacman/sync" "$R/usr/share/plymouth/themes/omarchy" "$W/home" "$R/boot/EFI/Linux"
   echo OLD >"$R/boot/initramfs-linux.img"; echo OLD >"$R/boot/EFI/Linux/omarchy.efi"
   cp "$W/offlogic" "$S/offlogic"
@@ -593,7 +593,7 @@ sudo pacman-key --add KEY
 sudo pacman-key --lsign-key $FPR
 sudo pacman -Sy
 sudo pacman -S --needed --noconfirm $PKGS4"
-expect 'rerun: still one copy of pacman.conf from the first run' "$(ls "$R"/etc/pacman.conf.grassfield-install-bak.* | wc -l)" 1
+expect 'rerun: still one copy of pacman.conf from the first run' "$(compgen -G "$R/etc/pacman.conf.grassfield-install-bak.*" | wc -l)" 1
 expect 'rerun: the remembered boot theme is still the original' "$(cat "$LOGDIR/plymouth-previous")" omarchy
 # A rerun after a half-done install: section there, file missing.
 rm -f "$R/etc/pacman.d/grassfield.conf"; run '' --yes
@@ -601,17 +601,17 @@ expect 'repair: rewrites the missing file' "$(cat "$R/etc/pacman.d/grassfield.co
 Server = $BASE/stable/\$arch"
 cmp -s "$R/etc/pacman.conf" "$W/after1.conf" && pass 'repair: pacman.conf still identical' || fail 'repair changed pacman.conf'
 # A file naming another host is replaced, the old one kept (timestamped).
-printf 'SigLevel = Required\nServer = https://old.example.test/stable/$arch\n' >"$R/etc/pacman.d/grassfield.conf"
+printf "SigLevel = Required\nServer = https://old.example.test/stable/\$arch\n" >"$R/etc/pacman.d/grassfield.conf"
 run '' --yes
 has 'foreign file: ours written' "$BASE/stable" "$R/etc/pacman.d/grassfield.conf"
-has 'foreign file: copy kept' 'old.example.test' "$(ls "$R"/etc/pacman.d/grassfield.conf.grassfield-install-bak.* | head -n 1)"
+has 'foreign file: copy kept' 'old.example.test' "$(compgen -G "$R/etc/pacman.d/grassfield.conf.grassfield-install-bak.*" | head -n 1)"
 # Our host with SigLevel = Never is NOT kept: the plan says signatures are required.
-printf 'SigLevel = Never\nServer = %s/stable/$arch\n' "$BASE" >"$R/etc/pacman.d/grassfield.conf"
+printf "SigLevel = Never\nServer = %s/stable/\$arch\n" "$BASE" >"$R/etc/pacman.d/grassfield.conf"
 run '' --yes
 expect 'SigLevel = Never is rewritten' "$(cat "$R/etc/pacman.d/grassfield.conf")" "SigLevel = Required
 Server = $BASE/stable/\$arch"
 # The channel's own file (mirrors, comments) is kept.
-printf '# written by grassfield-channel-set\nSigLevel = Required\nServer = %s/stable/$arch\nServer = https://mirror.example.test/stable/$arch\n' "$BASE" >"$R/etc/pacman.d/grassfield.conf"
+printf "# written by grassfield-channel-set\nSigLevel = Required\nServer = %s/stable/\$arch\nServer = https://mirror.example.test/stable/\$arch\n" "$BASE" >"$R/etc/pacman.d/grassfield.conf"
 cp "$R/etc/pacman.d/grassfield.conf" "$W/channel.conf"
 run '' --yes
 cmp -s "$R/etc/pacman.d/grassfield.conf" "$W/channel.conf" && pass 'the channel helper file with mirrors is kept' || fail 'the channel helper file was rewritten'
@@ -786,7 +786,7 @@ fresh; echo "$FPR" >"$S/keys"; touch "$S/sync_fail"; run '' --yes
 grep -q "$FPR" "$S/keys" && pass 'a key that was there before is kept by a rollback' || fail 'a pre-existing key was deleted by the rollback'
 conf_unchanged && pass 'pre-existing key: pacman.conf restored' || fail 'pre-existing key: pacman.conf not restored'
 # A grassfield.conf that was there before comes back as it was.
-fresh; printf 'SigLevel = Required\nServer = https://old.example.test/stable/$arch\n' >"$R/etc/pacman.d/grassfield.conf"
+fresh; printf "SigLevel = Required\nServer = https://old.example.test/stable/\$arch\n" >"$R/etc/pacman.d/grassfield.conf"
 cp "$R/etc/pacman.d/grassfield.conf" "$W/old.grassfield"; touch "$S/sync_fail"; run '' --yes
 cmp -s "$R/etc/pacman.d/grassfield.conf" "$W/old.grassfield" && pass 'a replaced grassfield.conf is restored by the rollback' || fail 'the old grassfield.conf was not restored'
 # The user changes pacman.conf during the run: the rollback never undoes that; it says what to do.

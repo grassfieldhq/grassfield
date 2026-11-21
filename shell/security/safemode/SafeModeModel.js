@@ -15,10 +15,18 @@
 
 // The loop detector's flag, in $XDG_RUNTIME_DIR/grassfield (packaging/bin/grassfield-shell-failed).
 var MARKER = "shell-safe-mode";
-// How often the security process looks at the shell's unit while nothing is seen, and while a stop is seen or the notice
-// is up (it leaves soon after the desktop is back). One look is one short process (SafeMode.qml `probe`).
-var LOOK_IDLE_MS = 5000;
+// The loop detector's failure ledger beside it (one line per failure of the last 10 minutes), rewritten at every failure.
+var LEDGER = "shell-failures";
+// When the security process looks at the shell's unit (one look is one short process, SafeMode.qml `probe`). It does not poll
+// (fluidity note of the security-session audit: a look every 5 s was about 50,000 processes a day): it watches the loop
+// detector's two files in $XDG_RUNTIME_DIR/grassfield (its ledger, written at every failure of the shell by the unit's
+// OnFailure= counter, and the flag), and looks every LOOK_WATCH_MS for LOOK_BURST_MS after either changes (a unit that ends
+// at its own start limit, with no flag, ADR-0056 D-10, is seen then: the counter wrote the ledger at the loop's first
+// failure), while a stop is seen and while the notice is up (it leaves soon after the desktop is back). LOOK_IDLE_MS is the
+// backstop for a change the watch missed (no directory to watch yet, a counter that could not write).
+var LOOK_IDLE_MS = 60000;
 var LOOK_WATCH_MS = 2000;
+var LOOK_BURST_MS = 30000;
 // Looks in a row that must say "safe mode" before the notice shows: a flag left from an earlier loop, read at a login before
 // the session's autostart has started the shell, or a unit passing through "failed" on its way to a restart, shows nothing.
 var SETTLE_LOOKS = 2;
@@ -131,9 +139,10 @@ function failureOf(action, code) {
     return "tryAgain";
 }
 
-// The delay before the next look.
-function lookInterval(count, isShown) {
-    return (typeof count === "number" && count > 0) || isShown === true ? LOOK_WATCH_MS : LOOK_IDLE_MS;
+// The delay before the next look: LOOK_WATCH_MS while a stop is seen, the notice is up or a change of the loop detector's
+// files is recent (`burst`), else LOOK_IDLE_MS.
+function lookInterval(count, isShown, burst) {
+    return (typeof count === "number" && count > 0) || isShown === true || burst === true ? LOOK_WATCH_MS : LOOK_IDLE_MS;
 }
 
 // The look a dev session fakes (SafeMode.qml `safemode devSet`): the security process of a dev session never asks systemd

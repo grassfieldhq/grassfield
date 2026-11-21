@@ -16,11 +16,14 @@
 #include <QSslKey>
 #include <QSslServer>
 #include <QStandardPaths>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTimer>
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <memory>
 
 using namespace grassfield::store;
@@ -260,3 +263,47 @@ TEST(Fetch, DownloadToAFile)
     EXPECT_FALSE(downloadTo(QUrl(QStringLiteral("http://example.org/p")), out, {}));
 }
 
+
+// SU-07: a worker's fetches stop once its cancel flag is set (FetchCancelScope): a transfer that hangs (a server that accepts
+// and never answers) ends within a fraction of a second, not at its 15 s timeout; a fetch asked after the flag is set does
+// not start; HEADs stop the same way. Outside a scope nothing changes.
+TEST(Fetch, CancelledByItsWorkersFlag)
+{
+    storetest::ensureApp();
+    QTcpServer silent;
+    QList<QTcpSocket *> held;
+    QObject::connect(&silent, &QTcpServer::newConnection, &silent, [&] {
+        while (QTcpSocket *s = silent.nextPendingConnection())
+            held.append(s); // kept open, never answered
+    });
+    ASSERT_TRUE(silent.listen(QHostAddress::LocalHost));
+    const QUrl url(QStringLiteral("https://127.0.0.1:%1/catalog.json").arg(silent.serverPort()));
+    const bool systemProxy = QNetworkProxyFactory::usesSystemConfiguration();
+    QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
+    const auto restore = qScopeGuard([systemProxy] {
+        QNetworkProxy::setApplicationProxy(QNetworkProxy());
+        QNetworkProxyFactory::setUseSystemConfiguration(systemProxy);
+    });
+
+    auto cancel = std::make_shared<std::atomic_bool>(false);
+    {
+        const FetchCancelScope scope(cancel);
+        EXPECT_FALSE(fetchCancelled());
+        QTimer::singleShot(300, [cancel] { *cancel = true; });
+        QElapsedTimer clock;
+        clock.start();
+        const FetchResult r = fetch(url, FetchLimits{1024, 15000});
+        EXPECT_LT(clock.elapsed(), 2000) << "aborted by the flag, not by the 15 s timeout";
+        EXPECT_EQ(r.status, FetchResult::Status::Failed);
+        EXPECT_EQ(r.error, QStringLiteral("cancelled"));
+        EXPECT_TRUE(fetchCancelled());
+        clock.restart();
+        EXPECT_EQ(fetch(url, FetchLimits{1024, 15000}).error, QStringLiteral("cancelled")) << "not started once set";
+        EXPECT_LT(clock.elapsed(), 500);
+        clock.restart();
+        EXPECT_EQ(headStatuses({url}, 15000, 15000), QList<int>{0});
+        EXPECT_LT(clock.elapsed(), 2000);
+    }
+    EXPECT_FALSE(fetchCancelled()) << "the scope is gone with its block";
+    qDeleteAll(held);
+}

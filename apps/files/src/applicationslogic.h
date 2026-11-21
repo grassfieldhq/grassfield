@@ -17,15 +17,18 @@
 //
 // "The grid's behaviour" is three things, each reproduced here and checked against the real ones on the same fixture tree by
 // tests/shell/apps_grid_vs_files.sh (Quickshell's DesktopEntries run offscreen, hidden-entries.sh, Model.disambiguate):
-//   1. Quickshell 0.3.1's DesktopEntries (what AppsController.qml iterates). Measured, not the desktop entry specification:
+//   1. Quickshell 0.3.2's DesktopEntries (what AppsController.qml iterates; Omarchy's 0.3.2.r7, the version CI pins). Measured,
+//      not the desktop entry specification:
 //      - applications directories of XDG_DATA_HOME, then XDG_DATA_DIRS; the first one that has an id wins, and an id whose
 //        winning file is not listed (Hidden=true, NoDisplay=true, not an application, no Name) is not listed from a later one;
 //      - every *.desktop file below them, symlinked folders followed, any depth, never dot files or dot folders; the id is
 //        the path below the directory with "/" written "-"; when two files give one id (kde/foo.desktop and kde-foo.desktop)
 //        the one that comes last in a case-insensitive name sort of the folder wins;
-//      - the file is read as written: no trimming of keys, values or the "[Desktop Entry]" line (a CRLF file, "Type = Application",
-//        "  NoDisplay=true" and "Name = x" are therefore not understood), a UTF-8 byte order mark is skipped, only the first
-//        [Desktop Entry] group counts, a key given twice takes its last value;
+//      - each line is trimmed at both ends and nothing else: a CRLF file (as GLib and KConfig read it), "  [Desktop Entry]  ",
+//        "  NoDisplay=true" and "Name=Trail   " (the name "Trail") are understood, the blanks around '=' are not cut
+//        ("Type = Application" and "Name = x" are not understood, "Name=  Lead" keeps its blanks); a UTF-8 byte order mark is
+//        skipped, only the first [Desktop Entry] group counts, a key given twice takes its last value. (Quickshell 0.3.1 read
+//        the lines untrimmed: on it the grid drops a CRLF file and shows an entry with "  NoDisplay=true", which Files does not.)
 //      - listed: Type=Application exactly, a Name (localized by Name[fr_FR] then Name[fr]; else Name; else the first Name[...]
 //        of the file), not NoDisplay=true, not Hidden=true. TryExec is NOT read (the grid lists an entry whose TryExec program is
 //        missing; the desktop entry specification says to hide it. Not changed here: the grid is the reference).

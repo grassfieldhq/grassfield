@@ -44,7 +44,9 @@ TestCase {
         // Items only (findPopup finds the menus): an attached Accessible on anything else warns.
         if (item.childrenRect !== undefined && pred(item))
             out.push(item);
-        for (const k of item.data || item.children || [])
+        // A model's `data` is a method (ListModel: AppGrid's keyed model), not a list of objects.
+        const kids = item.data && typeof item.data === "object" ? item.data : (item.children || []);
+        for (const k of kids)
             findAll(k, pred, out, seen);
         if (item.contentItem && item.contentItem !== item)
             findAll(item.contentItem, pred, out, seen);

@@ -26,7 +26,8 @@ namespace gf::prompter {
     //   separators U+2028 and U+2029 become spaces;
     // - characters that change how other text is shown and show nothing themselves are removed: bidirectional marks,
     //   embeddings, overrides and isolates (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069), zero-width and invisible
-    //   formatting characters (U+00AD, U+034F, U+180E, U+200B-U+200D, U+2060-U+2064, U+FEFF), interlinear annotation
+    //   formatting characters (U+00AD, U+034F, U+180E, U+200B, U+2060-U+2064, U+FEFF), the joiners U+200C and U+200D
+    //   except between two letters, marks or symbols (emoji ZWJ sequences, Persian and Indic text: B-19), interlinear annotation
     //   (U+FFF9-U+FFFB), tag characters (U+E0000-U+E007F) and noncharacters;
     // - an unpaired surrogate becomes U+FFFD;
     // - every run of white space becomes one space, and the ends are trimmed;

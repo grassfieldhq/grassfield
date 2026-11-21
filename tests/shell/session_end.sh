@@ -50,6 +50,14 @@ PY
 for name in uwsm systemctl gdbus; do   # FAKE_FAIL_<name>: that helper fails
   printf '#!/bin/sh\necho "%s $*" >>"$FAKE_DIR/calls.log"\n[ -z "$FAKE_FAIL_%s" ] || exit 1\n' "$name" "$name" >"$bin/$name"
 done
+# The bus's own answer to NameHasOwner (SS-05: the notice is sent only while a notification server owns the name): yes unless
+# FAKE_NO_SERVER; not logged.
+cat >"$bin/gdbus" <<'SH'
+#!/bin/sh
+case "$*" in *org.freedesktop.DBus.NameHasOwner*) if [ -n "$FAKE_NO_SERVER" ]; then echo "(false,)"; else echo "(true,)"; fi; exit 0 ;; esac
+echo "gdbus $*" >>"$FAKE_DIR/calls.log"
+[ -z "$FAKE_FAIL_gdbus" ] || exit 1
+SH
 # The shell's IPC (ADR-0040 ID-10, the exit cover). Always this stand-in: the real `qs` would reach the session's own shell.
 cat >"$bin/qs" <<'SH'
 #!/bin/sh
@@ -107,6 +115,12 @@ touch "$tmp/state/omarchy/reboot-required" "$tmp/state/omarchy/restart-foo-requi
 run '[]' restart
 check bash -c 'grep -qx "systemctl reboot --no-wall" "$1/calls.log" && [[ ! -e "$1/state/omarchy/reboot-required" && ! -e "$1/state/omarchy/restart-foo-required" && -e "$1/state/omarchy/keep" ]]' _ "$tmp"
 
+desc="SS-07: systemctl refuses the restart: Omarchy's reboot-required markers stay (the restart is still owed)"
+touch "$tmp/state/omarchy/reboot-required" "$tmp/state/omarchy/restart-foo-required"
+FAKE_FAIL_systemctl=1 run '[]' restart
+check bash -c 'grep -qx "systemctl reboot --no-wall" "$1/calls.log" && [[ -e "$1/state/omarchy/reboot-required" && -e "$1/state/omarchy/restart-foo-required" && $2 == 4 ]]' _ "$tmp" "$status"
+rm -f "$tmp/state/omarchy/reboot-required" "$tmp/state/omarchy/restart-foo-required"
+
 desc="shutdown: systemctl poweroff"
 run '[]' shutdown
 check grep -qx "systemctl poweroff --no-wall" "$tmp/calls.log"
@@ -158,6 +172,10 @@ for _ in $(seq 50); do flock -n "$tmp/grassfield-session-end.lock" true || break
 FAKE_REFUSE="0x2" run "$two" logout
 check bash -c '[[ $2 == 0 ]] && [[ ! -s "$1/calls.log" ]] && [[ ! -s "$1/hyprctl.log" ]]' _ "$tmp" "$status"
 wait "$holder" || true
+
+desc="safe mode (no notification server): the blocked logout still asks (the session is ending, so a daemon D-Bus activation starts is harmless) and ends nothing unanswered"
+FAKE_NO_SERVER=1 FAKE_REFUSE="0x2" run "$two" logout
+check bash -c 'grep -q "^notify-send .*kate" "$1/calls.log" && ! grep -q "uwsm stop" "$1/calls.log" && [[ $2 == 3 ]]' _ "$tmp" "$status"
 
 desc="without notify-send the blocked logout still shows a notice through the shell's notification service (gdbus), ends nothing"
 FAKE_NOTIFY_FAIL=1 FAKE_REFUSE="0x2" run "$two" logout

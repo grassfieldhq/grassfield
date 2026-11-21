@@ -4,7 +4,7 @@
 
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
@@ -182,8 +182,8 @@ namespace gf::capturePrivacy {
         // The surface's origin: the window's box is its xdg geometry, which starts that far into the surface (client-side
         // shadows). XWayland surfaces have no offset.
         Vector2D origin{surface.x, surface.y};
-        if (!w->m_isX11) {
-            if (const auto xdg = w->m_xdgSurface.lock())
+        if (!gf::compat::isX11(w)) {
+            if (const auto xdg = gf::compat::xdgSurface(w))
                 origin = origin - xdg->m_current.geometry.pos();
         }
         root->breadthfirst(

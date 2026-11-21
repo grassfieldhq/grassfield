@@ -70,6 +70,8 @@ SettingsRow {
 
     Connections {
         target: root.system ? root.system.backend : null
+        // Only while it waits for an answer: a Backend answer is not handed to every row and sheet of the window (the audit's notes).
+        enabled: root.running
 
         function onFinished(tag: string, ok: bool, output: string): void {
             if (tag !== root.tag || !root.running)

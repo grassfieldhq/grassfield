@@ -15,6 +15,7 @@
 #include <QString>
 
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace activity {
@@ -165,6 +166,9 @@ private:
     bool accepts(const TableRow &row) const;
     bool matches(const TableRow &row) const; // the search alone (AM14)
     bool less(const TableRow &a, const TableRow &b) const;
+    const QString &sortKeyOf(const TableRow &row) const;
+    // Whether an entry that stays shows other values than before (its row in the last sample, its row now).
+    bool entryChanged(const Entry &before, const Entry &now) const;
     std::vector<Entry> tree() const;
     std::vector<Entry> byGpu();
     std::vector<Entry> byType();
@@ -193,10 +197,13 @@ private:
     QSet<EntryKey> m_collapsed;           // the tree's rows and the GPU headers collapsed (AM13)
     QHash<QString, QString> m_gpuNames;   // by drm-pdev
     QHash<QString, quint64> m_groupIds;   // by drm-pdev, kind or unit, from 1: a group's identity for the run
+    quint64 m_nextGroupId = 0;            // the last identity given (never given twice: the units that ended are forgotten)
     QSet<RowId> m_selected;
     QSet<RowId> m_selectedView; // Selected Processes: the rows selected when the view was chosen
     std::optional<RowId> m_anchor, m_current;
     QCollator m_collator;
+    // The sort texts of the rows of one rebuild (by row), made at their first comparison.
+    mutable std::unordered_map<const TableRow *, QString> m_sortKeys;
 };
 
 } // namespace activity

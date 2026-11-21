@@ -359,10 +359,12 @@ def weight_now(cgroup):
 class Probe:
     """The claims of an app that would be limited (D-3), read from /proc and the cgroup tree."""
 
-    def __init__(self, media_units, keep_units):
+    def __init__(self, media_units, keep_units, verify=True):
         # media_units: a function giving the set of units (called once, only when an app would be limited), or a set.
+        # verify: whether the weights read back are this helper's (a dry run never applied any: nothing to compare).
         self._media = media_units
         self.keep_units = keep_units
+        self.verify = verify
 
     @property
     def media_units(self):
@@ -380,6 +382,11 @@ class Probe:
         mine = r["applied"].get("CPUWeight") if r["applied"] else None
         if weight != DEFAULT_WEIGHT and weight != mine:
             found.append("foreign")
+        elif self.verify and mine is not None and mine != DEFAULT_WEIGHT and weight == DEFAULT_WEIGHT:
+            # Our limit was undone elsewhere (Activity Monitor's Efficiency Mode turned off puts the default back): it is
+            # no longer held, and is applied again below if the app still qualifies (E1 of the 2026-11 audit: the records
+            # said "applied" and nothing was ever set again until the app's state changed).
+            r["applied"] = {}
         pids = scope_pids(r["cgroup"])
         for pid in pids:
             comm = (read("%s/%d/comm" % (PROC_ROOT, pid), 64) or "").strip()
@@ -512,10 +519,15 @@ def save(path, data):
     os.replace(tmp, path)
 
 
-def locked(path):
+def locked(path, wait=True):
+    """The state file's lock (None when `wait` is false and another run holds it)."""
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     fd = os.open(path + ".lock", os.O_RDWR | os.O_CREAT, 0o600)
-    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+    except BlockingIOError:
+        os.close(fd)
+        return None
     return fd
 
 
@@ -576,7 +588,7 @@ def cmd_round(args, data, dry):
         dump = read_pw_dump() if streams else None
         return units_of(sorted(stream_client_pids(dump, streams)), uid, cache) if dump is not None else set()
 
-    probe = Probe(media_units, units_of(parse_pids(args.get("keep")), uid, cache))
+    probe = Probe(media_units, units_of(parse_pids(args.get("keep")), uid, cache), verify=not dry)
     gone = {u: dict(r) for u, r in apps.items() if u not in report}
     for unit in report:
         if unit not in apps:
@@ -584,8 +596,13 @@ def cmd_round(args, data, dry):
                           "cgroup": cgroups[unit]}
     actions, nxt = plan(apps, report, now, on_battery, probe, Probe.working)
     actor = Actor(data, dry)
+    woken = set()
     for action in actions:
         if action[0] == "set":
+            # A wake that came while this round ran (wake_now): that app is in front now, never limited by this round.
+            woken |= take_wakes(args["path"], data, now)
+            if action[1] in woken:
+                continue
             actor.set(action[1], apps[action[1]], action[2], action[3])
         else:
             r = apps.get(action[1]) or gone.get(action[1])
@@ -599,19 +616,82 @@ def cmd_round(args, data, dry):
     return 0, {"next": nxt, "limited": held, "apps": len(apps)}
 
 
-def cmd_wake(args, data, dry):
-    now = clock()
-    actor = Actor(data, dry)
+def wake_targets(args, data):
     pids = set(parse_pids(",".join(args.get("pid", []))))
-    uid = os.getuid()
-    targets = set(data["apps"]) if args.get("all") else units_of(pids, uid, {})
-    for unit in targets:
+    return set(data["apps"]) if args.get("all") else units_of(pids, os.getuid(), {})
+
+
+def mark_woken(data, units, now, actor=None):
+    """The apps woken: released (when `actor` is given) and back to the start of their delay."""
+    for unit in units:
         r = data["apps"].get(unit)
         if not r:
             continue
-        actor.release(unit, r)
+        if actor:
+            actor.release(unit, r)
+        else:
+            r["applied"], r["uclamp"] = {}, None  # released by a wake that did not wait for the lock (wake_now)
         r["state"], r["since"], r["mark"], r["busy"], r["waiting"] = VISIBLE, now, None, True, 0
+
+
+def cmd_wake(args, data, dry):
+    now = clock()
+    targets = wake_targets(args, data)
+    mark_woken(data, targets, now, Actor(data, dry))
     return 0, {"woken": len(targets & set(data["apps"]))}
+
+
+def wake_now(args, path, dry):
+    """A wake while a round holds the lock (E2 of the 2026-11 audit: the app coming to the front waited for the round, a
+    pw-dump and fd scans included, at its limited weight). The limits are lifted at once from the state as last saved; the
+    wake is noted beside the state file, and the round takes it before it acts or saves (take_wakes): it limits none of
+    these apps again in this round and records them released."""
+    now = clock()
+    data = load(path)
+    if data.get("dry") and not dry:
+        data = {"v": 1, "apps": {}}
+    targets = wake_targets(args, data)
+    actor = Actor(data, dry)
+    for unit in sorted(targets):
+        r = data["apps"].get(unit)
+        if r:
+            actor.release(unit, r)
+    note = json.dumps({"all": bool(args.get("all")), "units": sorted(targets), "at": now}) + "\n"
+    fd = os.open(path + ".wakes", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(fd, note.encode("utf-8"))
+    finally:
+        os.close(fd)
+    return 0, {"woken": len(targets & set(data["apps"]))}
+
+
+def take_wakes(path, data, now):
+    """The wakes noted while this process held the lock: their apps are released already; recorded so. Returns the units."""
+    taking = path + ".wakes.taking"
+    try:
+        os.replace(path + ".wakes", taking)
+    except OSError:
+        return set()
+    units = set()
+    try:
+        text = read(taking, 1 << 20) or ""
+        for line in text.splitlines():
+            try:
+                note = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(note, dict):
+                continue
+            if note.get("all") is True:
+                units |= set(data["apps"])
+            units |= {u for u in note.get("units") or [] if isinstance(u, str) and u in data["apps"]}
+    finally:
+        try:
+            os.unlink(taking)
+        except OSError:
+            pass
+    mark_woken(data, units, now)
+    return units
 
 
 def cmd_reset(args, data, dry):
@@ -684,14 +764,21 @@ def main(argv):
         else:
             print(describe(data, clock()))
         return 0
-    fd = locked(path)
+    fd = locked(path, wait=args["cmd"] != "wake")
+    if fd is None:  # a wake never waits for a round (wake_now)
+        code, summary = wake_now(args, path, dry)
+        print(json.dumps(summary, sort_keys=True))
+        return code
     try:
         data = load(path)
         if data.get("dry") and not dry:
             data = {"v": 1, "apps": {}}  # a dry run's records were never applied: never "release" them for real
+        args["path"] = path
+        take_wakes(path, data, clock())
         command = {"round": cmd_round, "wake": cmd_wake, "reset": cmd_reset}[args["cmd"]]
         code, summary = command(args, data, dry)
         if code == 0:
+            take_wakes(path, data, clock())
             data["dry"] = dry
             save(path, data)
             print(json.dumps(summary, sort_keys=True))

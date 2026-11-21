@@ -79,12 +79,14 @@ if(GTest_FOUND)
         ../../tests/unit/store/tst_pacman.cpp
         ../../tests/unit/store/tst_plancheck.cpp
         ../../tests/unit/store/tst_removal.cpp
+        ../../tests/unit/store/tst_screenshotprovider.cpp src/screenshotprovider.cpp src/screenshotprovider.h
         ../../tests/unit/store/tst_signature.cpp
         ../../tests/unit/store/tst_storebackend.cpp
         ../../tests/unit/store/tst_storeinstance.cpp src/storeinstance.h
         ../../tests/unit/store/tst_storemodel.cpp
         ../../tests/unit/store/tst_storeview.cpp)
-    target_link_libraries(store-unit-tests PRIVATE grassfield-store-backend Qt6::DBus GTest::gtest GTest::gtest_main)
+    # Qt6::Quick: the screenshot provider's cancel (tst_screenshotprovider.cpp).
+    target_link_libraries(store-unit-tests PRIVATE grassfield-store-backend Qt6::DBus Qt6::Quick GTest::gtest GTest::gtest_main)
     target_compile_definitions(store-unit-tests PRIVATE STORE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/fixtures/store")
     add_test(NAME store-unit-tests COMMAND store-unit-tests)
 endif()

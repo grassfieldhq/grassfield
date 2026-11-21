@@ -166,6 +166,19 @@ TestCase {
         compare(r["default"], "8h");
     }
 
+    // B-10: `K <id>` forgets the copy only while the app it came from has a window (a password manager clearing it), never a
+    // pinned item, nor one without a recorded app.
+    function test_forgetOnClear() {
+        const items = [{id: "a", app: "KeePassXC", pinned: false}, {id: "b", app: "kitty", pinned: true}, {id: "c", app: "", pinned: false}];
+        const open = app => app === "KeePassXC" || app === "kitty";
+        verify(Logic.forgetOnClear(items, "a", open));
+        verify(!Logic.forgetOnClear(items, "a", app => false), "the app closed: kept");
+        verify(!Logic.forgetOnClear(items, "b", open), "pinned: kept");
+        verify(!Logic.forgetOnClear(items, "c", open), "no app recorded: kept");
+        verify(!Logic.forgetOnClear(items, "z", open), "unknown id");
+        verify(!Logic.forgetOnClear(null, "a", open));
+    }
+
     function test_linesAndItems() {
         const raw = "a\\b\nc\rd" + us + "e";
         compare(Logic.unescapeField(Logic.escapeField(raw)), raw);
@@ -345,5 +358,28 @@ TestCase {
         compare(View.menuIds({kind: "text", formatted: true, pinned: false}).join(" "), "paste pastePlain copy - pin - delete");
         compare(View.menuIds({kind: "image", pinned: true}).join(" "), "paste copy - unpin - delete");
         compare(View.menuIds(null).length, 0);
+    }
+
+    // Audit fluidity note: the helper's "I"/"X" lines of one turn applied together give the very list applying them one by one
+    // gives (ids, pins, ties in the copy times included).
+    function test_applyOpsIsTheSequentialResult() {
+        let seed = 7;
+        const rnd = n => {
+            seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+            return seed % n;
+        };
+        for (let round = 0; round < 200; round++) {
+            let base = [];
+            for (let i = 0; i < rnd(6); i++)
+                base = Logic.upsert(base, {id: "i" + rnd(8), pinned: rnd(3) === 0, pinnedAt: rnd(4), copiedAt: rnd(5)});
+            const ops = [];
+            for (let i = 0; i < rnd(12); i++)
+                ops.push(rnd(4) === 0 ? ["X", "i" + rnd(8)] : ["I", {id: "i" + rnd(8), pinned: rnd(3) === 0, pinnedAt: rnd(4), copiedAt: rnd(5)}]);
+            let one = base;
+            for (const op of ops)
+                one = op[0] === "I" ? Logic.upsert(one, op[1]) : Logic.removeId(one, op[1]);
+            const all = Logic.applyOps(base, ops);
+            compare(all.map(x => x.id + ":" + x.copiedAt + ":" + x.pinned), one.map(x => x.id + ":" + x.copiedAt + ":" + x.pinned), "round " + round);
+        }
     }
 }

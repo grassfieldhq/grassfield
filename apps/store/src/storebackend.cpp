@@ -16,6 +16,7 @@
 
 #include <QCollator>
 #include <QDir>
+#include <QDeadlineTimer>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
@@ -259,6 +260,8 @@ std::shared_ptr<const Snapshot> buildSnapshot(const JobInput &in, const std::ato
     // pacman's lists, as the user (no root, no lock).
     const Pacman pacman(env::pacman());
     snap->sync = pacman.syncList();
+    for (const SyncPackage &p : std::as_const(snap->sync))
+        snap->syncNames.insert(p.name);
     snap->pacmanRead = !snap->sync.isEmpty();
     snap->explicitPackages = pacman.explicitlyInstalled();
     if (cancel)
@@ -572,6 +575,8 @@ StoreBackend::StoreBackend(QObject *parent)
         ops.flatpak.clear(); // a dev session runs no real flatpak operation (SR30)
     ops.flatpakEnv = flatpakEnvironment();
     m_operations = std::make_unique<Operations>(ops);
+    // Every new snapshot moves the buttons' revision too; revisionChanged alone is a change of the buttons' state only.
+    connect(this, &StoreBackend::dataChanged, this, &StoreBackend::revisionChanged);
     connect(m_operations.get(), &Operations::changed, this, &StoreBackend::operationsChanged);
     // The running operation in the menu bar (ADR-0052); its Stop is the ring's square (SD26).
     m_ongoing = new apps::OngoingPublisher(this);
@@ -622,6 +627,10 @@ StoreBackend::StoreBackend(QObject *parent)
 StoreBackend::~StoreBackend()
 {
     *m_cancel = true;
+    // Jobs not started yet never start (each would only run to post an answer no one reads).
+    m_searchPool.clear();
+    m_pool.clear();
+    m_updatePool.clear();
 }
 
 bool StoreBackend::devSession() const
@@ -781,10 +790,11 @@ void StoreBackend::run(Job job)
                 m_flathub, job.fetchFlathub && (job.forced || !m_metered)};
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     m_pool.start([this, in, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         std::shared_ptr<const Snapshot> snapshot = buildSnapshot(in, *cancel);
         if (*cancel)
             return;
-        QMetaObject::invokeMethod(this, [this, snapshot] { apply(snapshot); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(&m_context, [this, snapshot] { apply(snapshot); }, Qt::QueuedConnection);
     });
 }
 
@@ -793,8 +803,11 @@ void StoreBackend::apply(std::shared_ptr<const Snapshot> snapshot)
     const bool first = !m_snapshot;
     m_snapshot = std::move(snapshot);
     m_jobRunning = false;
+    m_executable.clear(); // per snapshot (SU-12): a tool installed or removed meanwhile is seen with the system's new state
     rebuildAurApps();
-    askAurForForeign();
+    // `--removable` prints and leaves: nothing asks the network after its one read (no AUR, no Flatpak check, no fetch).
+    if (!m_loadOnly)
+        askAurForForeign();
     ++m_revision;
     const bool wasLoading = m_loading, wasRefreshing = m_refreshing;
     m_loading = false;
@@ -803,7 +816,7 @@ void StoreBackend::apply(std::shared_ptr<const Snapshot> snapshot)
     emit sourcesChanged(); // Flathub added, flatpak installed: what the settings say comes from the system read again
     emit updatesChanged(); // the apps the updates name, Flathub on or off
     // The Flatpaks' updates, when the Store opens and once Flathub is on (SR24); then on Check Now and after an operation.
-    if (m_flathub && !m_flatpakCheckedAt.isValid())
+    if (m_flathub && !m_flatpakCheckedAt.isValid() && !m_loadOnly)
         checkFlatpakUpdates();
     if (wasLoading != m_loading || wasRefreshing != m_refreshing)
         emit loadingChanged();
@@ -811,7 +824,7 @@ void StoreBackend::apply(std::shared_ptr<const Snapshot> snapshot)
         const Job next = *m_pendingJob;
         m_pendingJob.reset();
         run(next);
-    } else if (first) {
+    } else if (first && !m_loadOnly) {
         // After the first load: the catalog when its copy is stale, Arch's AppStream when none is installed or fetched,
         // Flathub's when it is on and its copy is stale.
         const bool catalog = m_snapshot->catalogConfigured && catalogStale();
@@ -968,6 +981,27 @@ QVariantList StoreBackend::search(const QString &query) const
     return out;
 }
 
+void StoreBackend::searchAsync(const QString &query)
+{
+    const int generation = ++m_searchGeneration;
+    const std::shared_ptr<const Snapshot> snapshot = m_snapshot;
+    const QString language = m_language;
+    StoreBackend *const self = this;
+    // Only the latest query matters: one that waits for the thread is replaced (the pool's queue keeps its last job only).
+    m_searchPool.clear();
+    m_searchPool.start([self, generation, snapshot, language, query] {
+        QVariantList out;
+        if (snapshot && generation == self->m_searchGeneration.load()) {
+            for (const int i : searchApps(snapshot->apps, query, language))
+                out.append(view::summary(snapshot->apps.at(i), language));
+        }
+        QMetaObject::invokeMethod(&self->m_context, [self, generation, query, out] {
+            if (generation == self->m_searchGeneration.load())
+                emit self->searchResults(query, out);
+        }, Qt::QueuedConnection);
+    });
+}
+
 QVariantMap StoreBackend::app(const QString &id) const
 {
     const StoreApp *a = storeApp(id);
@@ -995,11 +1029,12 @@ void StoreBackend::requestPackageInfo(const QString &package)
     const QString program = env::pacman();
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     m_pool.start([this, package, program, locale, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         const std::optional<PackageInfo> info = Pacman(program).info(package);
         if (*cancel)
             return;
         const QVariantMap facts = info ? view::packageFacts(*info, locale) : QVariantMap();
-        QMetaObject::invokeMethod(this, [this, package, facts] { emit packageInfo(package, facts); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(&m_context, [this, package, facts] { emit packageInfo(package, facts); }, Qt::QueuedConnection);
     });
 }
 
@@ -1107,8 +1142,20 @@ QVariantList StoreBackend::installed() const
 
 QVariantMap StoreBackend::updates() const
 {
-    const QByteArray json = readSmall(env::softwareUpdateFile(), 512 * 1024);
-    QVariantMap u = view::updates(json, m_snapshot ? m_snapshot->apps : QList<StoreApp>(), m_language, m_formats);
+    // The shell's file parsed once per change of it (its size and time) and per snapshot (SU-12): the page's bindings read
+    // this at every updatesChanged.
+    const QFileInfo file(env::softwareUpdateFile());
+    const qint64 size = file.exists() ? file.size() : -2;
+    // Its change time too: the shell writes it by rename (a new inode, a new change time even at the same size and second).
+    const QDateTime modified = file.exists() ? qMax(file.lastModified(), file.fileTime(QFileDevice::FileMetadataChangeTime)) : QDateTime();
+    if (m_updatesFile_.size != size || m_updatesFile_.modified != modified || m_updatesFile_.revision != m_revision) {
+        const QByteArray json = readSmall(env::softwareUpdateFile(), 512 * 1024);
+        m_updatesFile_.parsed = view::updates(json, m_snapshot ? m_snapshot->apps : QList<StoreApp>(), m_language, m_formats);
+        m_updatesFile_.size = size;
+        m_updatesFile_.modified = modified;
+        m_updatesFile_.revision = m_revision;
+    }
+    QVariantMap u = m_updatesFile_.parsed;
     const QString state = u.value(QStringLiteral("state")).toString();
     // Omarchy's update lock held by another program (Software Update's run, omarchy update; the Store's own operation holds
     // it too, and is not an update), or the checker saw one.
@@ -1217,11 +1264,11 @@ void StoreBackend::askShellToCheck()
     const QString program = env::shellProgram();
     const QStringList args = ipc + QStringList{QStringLiteral("update"), QStringLiteral("check"), QStringLiteral("user")};
     options.cancel = m_cancel;
-    QPointer<StoreBackend> self(this);
+    StoreBackend *const self = this; // its jobs end before it is gone (SU-14: m_context)
     m_updatePool.start([self, program, args, options] {
         const ChildResult r = runChild(program, args, options);
         const bool asked = r.ok() && r.out.trimmed() == "ok";
-        QMetaObject::invokeMethod(self.data(), [self, asked] {
+        QMetaObject::invokeMethod(&self->m_context, [self, asked] {
             if (!self || asked)
                 return; // the shell checks: its answer is the file
             self->m_systemChecking = false;
@@ -1238,13 +1285,13 @@ void StoreBackend::readUnfinished()
     const QString pacman = env::pacman();
     ChildOptions options;
     options.cancel = m_cancel;
-    QPointer<StoreBackend> self(this);
+    StoreBackend *const self = this; // its jobs end before it is gone (SU-14: m_context)
     m_updatePool.start([self, pacman, options] {
         const ChildResult r = runChild(pacman, {QStringLiteral("-Qu")}, options);
         const int count = r.started && !r.timedOut && !r.overflow && (r.exitCode == 0 || r.exitCode == 1)
             ? int(unfinishedUpdates(r.out).size())
             : 0;
-        QMetaObject::invokeMethod(self.data(), [self, count] {
+        QMetaObject::invokeMethod(&self->m_context, [self, count] {
             if (!self || self->m_unfinished == count)
                 return;
             self->m_unfinished = count;
@@ -1261,12 +1308,13 @@ void StoreBackend::checkFlatpakUpdates()
     emit updatesChanged();
     const FlatpakTools tools = flatpakTools();
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
-    QPointer<StoreBackend> self(this);
+    StoreBackend *const self = this; // its jobs end before it is gone (SU-14: m_context)
     m_updatePool.start([self, tools, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         const std::optional<QList<FlatpakUpdate>> all = listFlatpakUpdates(tools);
         if (*cancel)
             return;
-        QMetaObject::invokeMethod(self.data(), [self, all] {
+        QMetaObject::invokeMethod(&self->m_context, [self, all] {
             if (!self)
                 return;
             self->m_flatpakCheckedAt = QDateTime::currentDateTimeUtc();
@@ -1281,7 +1329,7 @@ void StoreBackend::checkFlatpakUpdates()
             self->m_flatpakUpdatesState = all ? QString() : QStringLiteral("failed");
             ++self->m_revision; // the buttons' Update
             emit self->updatesChanged();
-            emit self->dataChanged();
+            emit self->revisionChanged(); // the buttons only: no page reads its data again (SU-06)
             if (all)
                 self->reviewFlatpakUpdates();
         });
@@ -1309,8 +1357,9 @@ void StoreBackend::reviewFlatpakUpdates()
     const int generation = ++m_reviewGeneration;
     const FlatpakTools tools = flatpakTools();
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
-    QPointer<StoreBackend> self(this);
+    StoreBackend *const self = this; // its jobs end before it is gone (SU-14: m_context)
     m_updatePool.start([self, generation, refs, tools, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         for (const QString &ref : refs) {
             if (*cancel)
                 return;
@@ -1322,7 +1371,7 @@ void StoreBackend::reviewFlatpakUpdates()
             review.asks = changes && asksForMore(*changes);
             if (changes)
                 review.changes = view::permissionChanges(*changes);
-            QMetaObject::invokeMethod(self.data(), [self, generation, ref, review] {
+            QMetaObject::invokeMethod(&self->m_context, [self, generation, ref, review] {
                 if (!self || generation != self->m_reviewGeneration)
                     return;
                 if (std::none_of(self->m_flatpakUpdates.cbegin(), self->m_flatpakUpdates.cend(), [&ref](const FlatpakUpdate &u) { return u.ref == ref; }))
@@ -1422,11 +1471,12 @@ void StoreBackend::planFlatpakUpdate(const QString &id)
     m_updatePlanning.insert(id, {0, int(apps.size())});
     ++m_revision; // its button says it is checked
     emit updatesChanged();
-    emit dataChanged();
+    emit revisionChanged();
     const FlatpakTools tools = flatpakTools();
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
-    QPointer<StoreBackend> self(this);
+    StoreBackend *const self = this; // its jobs end before it is gone (SU-14: m_context)
     m_updatePool.start([self, id, kind, refs, apps, all, tools, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         QVariantList changed;
         QStringList unknown, held;
         QSet<QString> heldRefs;
@@ -1456,7 +1506,7 @@ void StoreBackend::planFlatpakUpdate(const QString &id)
                 pinned.insert(ref, commit);
                 installedThen.insert(ref, flatpakInstalledCommit(tools, ref));
             }
-            QMetaObject::invokeMethod(self.data(), [self, id, done = ++done] {
+            QMetaObject::invokeMethod(&self->m_context, [self, id, done = ++done] {
                 if (!self || !self->m_updatePlanning.contains(id))
                     return;
                 self->m_updatePlanning[id].first = done;
@@ -1482,7 +1532,7 @@ void StoreBackend::planFlatpakUpdate(const QString &id)
                               {QStringLiteral("changed"), changed},
                               {QStringLiteral("unknown"), unknown},
                               {QStringLiteral("held"), held}};
-        QMetaObject::invokeMethod(self.data(), [self, id, kind, plan, out, nothing] {
+        QMetaObject::invokeMethod(&self->m_context, [self, id, kind, plan, out, nothing] {
             if (!self)
                 return;
             self->m_updatePlanning.remove(id);
@@ -1492,7 +1542,7 @@ void StoreBackend::planFlatpakUpdate(const QString &id)
                 self->m_updatePlans.insert(id, plan);
             ++self->m_revision;
             emit self->updatesChanged();
-            emit self->dataChanged();
+            emit self->revisionChanged();
             emit self->planReady(id, kind, out);
         });
     });
@@ -1605,19 +1655,125 @@ QVariantMap StoreBackend::results() const
 
 void StoreBackend::checkStaleLock()
 {
-    // db.lck there and no pacman running (its process name, /proc/<pid>/comm): pacman stopped mid-way (S6).
-    bool stale = QFileInfo::exists(env::dbLock());
-    if (stale && env::fixture().isEmpty()) {
-        QDirIterator it(QStringLiteral("/proc"), QDir::Dirs | QDir::NoDotAndDotDot);
-        while (stale && it.hasNext()) {
-            const QString dir = it.next();
-            if (QFileInfo(dir).fileName().toLongLong() > 0 && readSmall(dir + QStringLiteral("/comm"), 64).trimmed() == "pacman")
-                stale = false;
+    // db.lck there and no pacman running (its process name, /proc/<pid>/comm): pacman stopped mid-way (S6). The walk of
+    // /proc runs on a worker (SU-12); a lock that is not there is answered at once.
+    const QString lock = env::dbLock();
+    if (!QFileInfo::exists(lock)) {
+        if (m_staleLock) {
+            m_staleLock = false;
+            emit operationsChanged();
         }
+        return;
     }
-    if (stale != m_staleLock) {
-        m_staleLock = stale;
-        emit operationsChanged();
+    if (m_staleChecking)
+        return;
+    m_staleChecking = true;
+    const bool walk = env::fixture().isEmpty();
+    m_pool.start([this, lock, walk] {
+        bool stale = QFileInfo::exists(lock);
+        if (stale && walk) {
+            QDirIterator it(QStringLiteral("/proc"), QDir::Dirs | QDir::NoDotAndDotDot);
+            while (stale && it.hasNext()) {
+                const QString dir = it.next();
+                if (QFileInfo(dir).fileName().toLongLong() > 0 && readSmall(dir + QStringLiteral("/comm"), 64).trimmed() == "pacman")
+                    stale = false;
+            }
+        }
+        QMetaObject::invokeMethod(&m_context, [this, stale] {
+            m_staleChecking = false;
+            if (stale != m_staleLock) {
+                m_staleLock = stale;
+                emit operationsChanged();
+            }
+        }, Qt::QueuedConnection);
+    });
+}
+
+bool StoreBackend::executable(const QString &path) const
+{
+    const auto it = m_executable.constFind(path);
+    if (it != m_executable.cend())
+        return *it;
+    const bool can = QFileInfo(path).isExecutable();
+    m_executable.insert(path, can);
+    return can;
+}
+
+bool StoreBackend::drain(int ms)
+{
+    *m_cancel = true;
+    QDeadlineTimer deadline(ms);
+    const auto left = [&deadline] { return int(qMax<qint64>(0, deadline.remainingTime())); };
+    m_searchPool.clear();
+    m_pool.clear();
+    m_updatePool.clear();
+    bool done = m_pool.waitForDone(left());
+    done = m_updatePool.waitForDone(left()) && done;
+    done = m_searchPool.waitForDone(left()) && done;
+    if (m_operations)
+        done = m_operations->drain(left()) && done;
+    return done;
+}
+
+void StoreBackend::removalByEntryAsync(std::function<void(const QVariantMap &)> done)
+{
+    QVariantMap out = removalByEntry(false);
+    if (!m_snapshot) {
+        done(out);
+        return;
+    }
+    // The entries of each repository app offered for removal, by package: one -Rs plan each, on the workers.
+    QHash<QString, QStringList> byPackage;
+    for (auto it = out.cbegin(); it != out.cend(); ++it) {
+        const QVariantMap e = it.value().toMap();
+        if (!e.value(QStringLiteral("block")).toString().isEmpty())
+            continue;
+        const StoreApp *a = storeApp(e.value(QStringLiteral("app")).toString());
+        if (a && a->source == CatalogSource::Kind::Repo)
+            byPackage[a->package].append(it.key());
+    }
+    if (byPackage.isEmpty()) {
+        done(out);
+        return;
+    }
+    struct Pending {
+        QVariantMap out;
+        int left = 0;
+        std::function<void(const QVariantMap &)> done;
+    };
+    auto pending = std::make_shared<Pending>();
+    pending->out = out;
+    pending->left = int(byPackage.size());
+    pending->done = std::move(done);
+    const DenyList deny = m_snapshot->deny;
+    const PlanTools tools = planTools();
+    const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
+    for (auto it = byPackage.cbegin(); it != byPackage.cend(); ++it) {
+        const QString package = it.key();
+        const QStringList entries = it.value();
+        m_pool.start([this, package, entries, deny, tools, cancel, pending] {
+            QString block;
+            if (!*cancel) {
+                const RemovePlan plan = checkRemove({package}, deny, tools, false);
+                if (plan.refusal == Refusal::Dependency)
+                    block = QStringLiteral("dependency");
+                else if (plan.refusal == Refusal::Protected)
+                    block = QStringLiteral("protected");
+                else if (plan.refusal == Refusal::Failed)
+                    block = QStringLiteral("plan");
+            }
+            QMetaObject::invokeMethod(&m_context, [pending, entries, block] {
+                if (!block.isEmpty()) {
+                    for (const QString &entry : entries) {
+                        QVariantMap e = pending->out.value(entry).toMap();
+                        e.insert(QStringLiteral("block"), block);
+                        pending->out.insert(entry, e);
+                    }
+                }
+                if (--pending->left == 0)
+                    pending->done(pending->out);
+            }, Qt::QueuedConnection);
+        });
     }
 }
 
@@ -1650,13 +1806,13 @@ QString StoreBackend::getBlock(const StoreApp &a) const
     case CatalogSource::Kind::Repo:
         if (env::pkexec().isEmpty())
             return QStringLiteral("dev");
-        if (!apps::runmode::dev() && (!QFileInfo(env::helperPath).isExecutable() || !QFileInfo(env::pkexec()).isExecutable()))
+        if (!apps::runmode::dev() && (!executable(env::helperPath) || !executable(env::pkexec())))
             return QStringLiteral("missing");
         break;
     case CatalogSource::Kind::WebApp:
         if (apps::runmode::dev() && env::installer().isEmpty())
             return QStringLiteral("dev");
-        if (!apps::runmode::dev() && !QFileInfo(env::omarchyCommand(QStringLiteral("omarchy-webapp-install"))).isExecutable())
+        if (!apps::runmode::dev() && !executable(env::omarchyCommand(QStringLiteral("omarchy-webapp-install"))))
             return QStringLiteral("missing");
         if (!a.entry)
             return QStringLiteral("source");
@@ -1670,7 +1826,7 @@ QString StoreBackend::getBlock(const StoreApp &a) const
     case CatalogSource::Kind::Aur:
         if (!m_aur)
             return QStringLiteral("aurOff");
-        if (m_snapshot && std::any_of(m_snapshot->sync.cbegin(), m_snapshot->sync.cend(), [&a](const SyncPackage &p) { return p.name == a.package; }))
+        if (m_snapshot && m_snapshot->syncNames.contains(a.package))
             return QStringLiteral("repository"); // yay would install the repository's: the Store does, from its page
         // Never a name of the deny list (b.1): what the Store could not remove it does not build, and the AUR is anyone's.
         if (m_snapshot && protection(a.package, m_snapshot->deny) != Protection::None)
@@ -1723,7 +1879,7 @@ QString StoreBackend::terminalBlock() const
     const QString launcher = QStringLiteral("omarchy-launch-floating-terminal-with-presentation");
     if (apps::runmode::dev() && env::installer().isEmpty())
         return QStringLiteral("dev");
-    if (!apps::runmode::dev() && (!QFileInfo(env::omarchyCommand(launcher)).isExecutable() || !QFileInfo(env::runPath).isExecutable()))
+    if (!apps::runmode::dev() && (!executable(env::omarchyCommand(launcher)) || !executable(env::runPath)))
         return QStringLiteral("missing");
     if (env::runDir().isEmpty())
         return QStringLiteral("missing");
@@ -1826,10 +1982,11 @@ void StoreBackend::askAurForForeign()
     const AurConfig config = aurConfig();
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     m_pool.start([this, config, names, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         const AurAnswer answer = grassfield::store::aurInfo(config, names);
         if (*cancel)
             return;
-        QMetaObject::invokeMethod(this, [this, answer] {
+        QMetaObject::invokeMethod(&m_context, [this, answer] {
             rememberAur(answer.packages, true);
             ++m_revision;
             emit dataChanged(); // Installed's "AUR" group
@@ -1854,10 +2011,11 @@ void StoreBackend::searchAur(const QString &term)
     const AurConfig config = aurConfig();
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     m_pool.start([this, config, term, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         const AurAnswer answer = aurSearch(config, term);
         if (*cancel)
             return;
-        QMetaObject::invokeMethod(this, [this, term, answer] {
+        QMetaObject::invokeMethod(&m_context, [this, term, answer] {
             rememberAur(answer.packages, false);
             QSet<QString> repository;
             if (m_snapshot) {
@@ -1889,10 +2047,11 @@ void StoreBackend::requestAur(const QString &id)
     const AurConfig config = aurConfig();
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     m_pool.start([this, config, id, name, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         const AurAnswer answer = grassfield::store::aurInfo(config, {name});
         if (*cancel)
             return;
-        QMetaObject::invokeMethod(this, [this, id, name, answer] {
+        QMetaObject::invokeMethod(&m_context, [this, id, name, answer] {
             if (answer.ok && answer.packages.isEmpty())
                 m_aurUnknown.insert(name);
             rememberAur(answer.packages, true);
@@ -1912,10 +2071,11 @@ void StoreBackend::requestBuildScript(const QString &id)
     const AurConfig config = aurConfig();
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     m_pool.start([this, config, id, base, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         const std::optional<QString> text = aurPkgbuild(config, base);
         if (*cancel)
             return;
-        QMetaObject::invokeMethod(this, [this, id, text] { emit buildScript(id, text.value_or(QString()), text.has_value()); },
+        QMetaObject::invokeMethod(&m_context, [this, id, text] { emit buildScript(id, text.value_or(QString()), text.has_value()); },
                                   Qt::QueuedConnection);
     });
 }
@@ -1938,7 +2098,7 @@ QString StoreBackend::uninstallBlock(const StoreApp &a) const
     if (a.source == CatalogSource::Kind::WebApp) {
         if (apps::runmode::dev() && env::installer().isEmpty())
             return QStringLiteral("dev");
-        if (!apps::runmode::dev() && !QFileInfo(env::omarchyCommand(QStringLiteral("omarchy-webapp-remove"))).isExecutable())
+        if (!apps::runmode::dev() && !executable(env::omarchyCommand(QStringLiteral("omarchy-webapp-remove"))))
             return QStringLiteral("missing");
         return {};
     }
@@ -1988,7 +2148,7 @@ QString StoreBackend::uninstallBlock(const StoreApp &a) const
     RemovalFacts facts;
     facts.installed = a.installed;
     facts.explicitlyInstalled = m_snapshot->explicitPackages.contains(a.package);
-    facts.inRepository = std::any_of(m_snapshot->sync.cbegin(), m_snapshot->sync.cend(), [&a](const SyncPackage &p) { return p.name == a.package; });
+    facts.inRepository = m_snapshot->syncNames.contains(a.package);
     facts.ownsEntry = m_snapshot->entries.contains(a.package);
     switch (removal(a.package, facts, m_snapshot->deny)) {
     case Removal::Removable:
@@ -2012,7 +2172,7 @@ QString StoreBackend::uninstallBlock(const StoreApp &a) const
     }
     if (env::pkexec().isEmpty())
         return QStringLiteral("dev");
-    if (!apps::runmode::dev() && (!QFileInfo(env::helperPath).isExecutable() || !QFileInfo(env::pkexec()).isExecutable()))
+    if (!apps::runmode::dev() && (!executable(env::helperPath) || !executable(env::pkexec())))
         return QStringLiteral("missing");
     return {};
 }
@@ -2021,7 +2181,7 @@ QVariantMap StoreBackend::actions(const QString &id) const
 {
     if (const auto w = otherWebApp(id)) {
         const bool can = apps::runmode::dev() ? !env::installer().isEmpty()
-                                              : QFileInfo(env::omarchyCommand(QStringLiteral("omarchy-webapp-remove"))).isExecutable();
+                                              : executable(env::omarchyCommand(QStringLiteral("omarchy-webapp-remove")));
         return {{QStringLiteral("installed"), true}, {QStringLiteral("launcher"), true}, {QStringLiteral("get"), QStringLiteral("installed")},
                 {QStringLiteral("uninstall"), can ? QString() : (apps::runmode::dev() ? QStringLiteral("dev") : QStringLiteral("missing"))}};
     }
@@ -2166,6 +2326,7 @@ void StoreBackend::planGetFlatpak()
     const QLocale locale = m_formats;
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     m_pool.start([this, kind, check, tools, online, own, locale, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         const InstallPlan p = checkSetupInstall({kFlatpakPackage}, check, tools, online, own);
         const QVariantMap out{{QStringLiteral("refusal"), refusalName(p.refusal)},
                               {QStringLiteral("packages"), packageList(p.packages, locale)},
@@ -2176,7 +2337,7 @@ void StoreBackend::planGetFlatpak()
                               {QStringLiteral("detail"), p.detail}};
         if (*cancel)
             return;
-        QMetaObject::invokeMethod(this, [this, kind, out, p] {
+        QMetaObject::invokeMethod(&m_context, [this, kind, out, p] {
             if (p.refusal == Refusal::None)
                 m_installPlans.insert(kGetFlatpakApp, p);
             else
@@ -2250,6 +2411,7 @@ void StoreBackend::plan(const QString &id, const QString &kind)
         const QLocale locale = m_formats;
         const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
         m_pool.start([this, id, kind, ref, tools, online, locale, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
             const InstallPlan p = checkFlatpakInstall(ref, tools, online);
             const QVariantMap out{{QStringLiteral("refusal"), refusalName(p.refusal)},
                                   {QStringLiteral("packages"), packageList(p.packages, locale)},
@@ -2262,7 +2424,7 @@ void StoreBackend::plan(const QString &id, const QString &kind)
                 qInfo("grassfield-store: %s: flatpak's plan: %s", qPrintable(id), qPrintable(p.detail));
             if (*cancel)
                 return;
-            QMetaObject::invokeMethod(this, [this, id, kind, out, p] {
+            QMetaObject::invokeMethod(&m_context, [this, id, kind, out, p] {
                 if (p.refusal == Refusal::None)
                     m_installPlans.insert(id, p);
                 else
@@ -2284,6 +2446,7 @@ void StoreBackend::plan(const QString &id, const QString &kind)
     const QLocale locale = m_formats;
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     m_pool.start([this, id, kind, install, aur, setup, packages, check, aurService, tools, online, own, deny, locale, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         QVariantMap out;
         if (install) {
             const auto info = [&aurService](const QStringList &names) { return grassfield::store::aurInfo(aurService, names); };
@@ -2304,7 +2467,7 @@ void StoreBackend::plan(const QString &id, const QString &kind)
                 qInfo("grassfield-store: %s: update the system first: %s", qPrintable(id), qPrintable(p.detail));
             if (*cancel)
                 return;
-            QMetaObject::invokeMethod(this, [this, id, kind, out, p] {
+            QMetaObject::invokeMethod(&m_context, [this, id, kind, out, p] {
                 if (p.refusal == Refusal::None)
                     m_installPlans.insert(id, p);
                 else
@@ -2320,7 +2483,7 @@ void StoreBackend::plan(const QString &id, const QString &kind)
                    {QStringLiteral("detail"), p.detail}};
             if (*cancel)
                 return;
-            QMetaObject::invokeMethod(this, [this, id, kind, out, p] {
+            QMetaObject::invokeMethod(&m_context, [this, id, kind, out, p] {
                 if (p.refusal == Refusal::None)
                     m_removePlans.insert(id, p);
                 else
@@ -2566,6 +2729,7 @@ void StoreBackend::requestFlatpakInfo(const QString &id)
     const QLocale locale = m_formats;
     const std::shared_ptr<std::atomic_bool> cancel = m_cancel;
     m_pool.start([this, id, target, installed, tools, locale, cancel] {
+        const FetchCancelScope fetchScope(cancel); // SU-07: a quit aborts its transfers
         const std::optional<FlatpakFacts> facts = flatpakFacts(tools, target, installed);
         if (*cancel)
             return;
@@ -2580,7 +2744,7 @@ void StoreBackend::requestFlatpakInfo(const QString &id)
             if (facts->permissions)
                 out.insert(QStringLiteral("permissions"), view::permissions(facts->permissions->grants, facts->permissions->more));
         }
-        QMetaObject::invokeMethod(this, [this, id, out] { emit flatpakInfo(id, out); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(&m_context, [this, id, out] { emit flatpakInfo(id, out); }, Qt::QueuedConnection);
     });
 }
 
@@ -2597,7 +2761,10 @@ bool StoreBackend::open(const QString &id)
     if (!other && otherApp.isEmpty() && (!a || !a->installed))
         return false;
     QStringList argv;
-    if (!otherApp.isEmpty() || a->source == CatalogSource::Kind::Flatpak) {
+    // A web app the catalog does not list has no StoreApp (a is null): it is answered before anything reads a.
+    if (other) {
+        argv = {QStringLiteral("omarchy-launch-webapp"), other->url};
+    } else if (!otherApp.isEmpty() || (a && a->source == CatalogSource::Kind::Flatpak)) {
         // Its exported entry when the session sees flatpak's export folder (from the login after flatpak's own install,
         // S20); else `flatpak run <app id>`, in its own scope as well (ADR-0037 f).
         const QString appId = otherApp.isEmpty() ? flatpakRefId(a->flatpakRef) : otherApp;
@@ -2609,8 +2776,8 @@ bool StoreBackend::open(const QString &id)
             argv = {QStringLiteral("uwsm-app"), QStringLiteral("--"), desktop};
         else
             argv = {QStringLiteral("uwsm-app"), QStringLiteral("--"), QStringLiteral("/usr/bin/flatpak"), QStringLiteral("run"), appId};
-    } else if (other) {
-        argv = {QStringLiteral("omarchy-launch-webapp"), other->url};
+    } else if (!a) {
+        return false;
     } else if (a->source == CatalogSource::Kind::WebApp) {
         // Omarchy's own launcher, which scopes the browser itself (S14: the entry's file name has spaces uwsm refuses).
         if (!a->entry || !isHttpsUrl(a->entry->source.url))

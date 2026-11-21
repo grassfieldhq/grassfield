@@ -1,0 +1,88 @@
+# CI: the offline checks and the offline test layers of every pull request and every push to main, in a throwaway
+# archlinux:latest container set up as the audit's toolchain (scripts/gates/ci.sh: current Arch, the Hyprland 0.56.2 stack from
+# the Arch archive, Omarchy's Quickshell 0.3.2.r7, each pinned by sha256; the PKGBUILD's makedepends and the desktop package's
+# depends). The checks and tests run as an unprivileged user. `just check` (with clang-tidy, gate Q1) runs when compositor/
+# changed, `just check-quick` otherwise; `just test` runs the data, logic and headless layers (the nested and visual layers
+# need a compositor session: owner runs), from a copy of the checkout in the user's home, with LANG=en_US.UTF-8.
+# Container rules (tests/ci/no_privileged_containers.py, ADR-0057): the job adds no container options, no device, no host
+# /dev or /run/systemd mount; the runner's defaults only. Replay locally: docs/testing/README.md "CI".
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-and-test:
+    name: check and test (Arch Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    container:
+      image: archlinux:latest
+    env:
+      # The commit the changes are compared with: the pull request's base, or the previous tip of main.
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - name: Pacman, git and python (the checkout needs git for the history the secret scan reads)
+        run: |
+          grep -q '^DisableSandbox' /etc/pacman.conf || sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Syu --noconfirm --needed git python
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # No token left in .git/config: setup copies the checkout into the build user's home, where the suites run.
+          persist-credentials: false
+
+      - name: Scope (just check when compositor/ changed, else just check-quick)
+        id: scope
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "scope=$(scripts/gates/ci.sh scope "$BASE_SHA")" >>"$GITHUB_OUTPUT"
+
+      - name: Packages (the PKGBUILD's makedepends and the desktop's depends) and the build user
+        run: scripts/gates/ci.sh setup ${{ steps.scope.outputs.scope == 'full' && '--tidy' || '' }} builder
+
+      - name: Toolkit (Hyprland 0.56.2 stack and Omarchy's Quickshell, pinned by sha256)
+        id: toolkit
+        run: scripts/gates/ci.sh toolkit
+
+      # Both run in setup's copy of the checkout in the user's home (as on a machine: the shell reads images only below the
+      # home); the logs go to the workspace's .dev/ci for the summary and the upload.
+      - name: Checks
+        run: runuser -u builder -- env HOME=/home/builder /home/builder/grassfield/scripts/gates/ci.sh check "$BASE_SHA" "$GITHUB_WORKSPACE/.dev/ci"
+
+      - name: Tests (just test)
+        if: ${{ !cancelled() && steps.toolkit.outcome == 'success' }}
+        run: runuser -u builder -- env HOME=/home/builder /home/builder/grassfield/scripts/gates/ci.sh test "$GITHUB_WORKSPACE/.dev/ci"
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          for f in .dev/ci/check-summary.txt .dev/ci/test-summary.txt; do
+            [ -f "$f" ] && { echo '```'; cat "$f"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          done
+          true
+
+      - name: Upload the test summary and logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-summary-${{ github.run_id }}
+          path: |
+            .dev/ci/test-summary.txt
+            .dev/ci/test.log
+            .dev/ci/check-summary.txt
+            .dev/ci/check.log
+          if-no-files-found: warn
+          retention-days: 30

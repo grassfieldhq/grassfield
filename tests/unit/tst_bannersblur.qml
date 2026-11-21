@@ -8,9 +8,10 @@ import QtTest
 TestCase {
     name: "BannersBlur"
 
-    function source() {
+    // The window (its regions) is Banners.qml; the slots and their rects are BannerStack.qml.
+    function source(file) {
         const xhr = new XMLHttpRequest();
-        xhr.open("GET", Qt.resolvedUrl("../../shell/notifications/Banners.qml"), false);
+        xhr.open("GET", Qt.resolvedUrl("../../shell/notifications/" + (file || "Banners.qml")), false);
         xhr.send();
         verify(xhr.responseText.length > 0);
         return xhr.responseText;
@@ -18,15 +19,16 @@ TestCase {
 
     function test_regionsAreExplicitRects() {
         const s = source();
-        const v = s.substring(s.indexOf("id: blurRegions"), s.indexOf("// The window's input region"));
+        const v = s.substring(s.indexOf("id: blurRegions"), s.indexOf("BannerStack {"));
         verify(v.indexOf("x: modelData.blurX") >= 0 && v.indexOf("y: modelData.blurY") >= 0, "x and y from the slot's notifying properties");
         verify(v.indexOf("width: modelData.blurW") >= 0 && v.indexOf("height: modelData.blurH") >= 0);
         compare(v.indexOf("item:"), -1, "no Region that follows an Item");
-        verify(/blurY: card \? Math\.round\(stack\.y \+ slot\.y \+ card\.y\)/.test(s), "the slot's place is a dependency");
+        verify(v.indexOf("model: stack.cards") >= 0, "one region per drawn card of the stack");
+        verify(/blurY: card \? Math\.round\(stack\.y \+ slot\.y \+ card\.y\)/.test(source("BannerStack.qml")), "the slot's place is a dependency");
     }
 
     function test_registryDropsDeadEntries() {
-        const s = source();
+        const s = source("BannerStack.qml");
         const filters = s.split("\n").filter(l => l.indexOf("win.cards.filter(") >= 0);
         verify(filters.length >= 2);
         for (const l of filters)

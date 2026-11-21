@@ -45,6 +45,19 @@ is() { # pattern expected-family
   local got; got=$(ses "$1")
   if [[ $got == "$2" ]]; then echo "PASS: [$mode] $1 -> $got"; else echo "FAIL: [$mode] $1 -> $got (want $2)"; fail=1; fi
 }
+# The generic chains end on fonts the system's own fontconfig prefers, which this file leaves alone: the fontconfig release
+# and the installed set decide them (Omarchy's fonts without DejaVu: Noto Naskh Arabic and Noto Color Emoji; with ttf-dejavu,
+# which covers both, DejaVu Sans; older fontconfig releases preferred Liberation through the metric aliases, 2.18 prefers Noto).
+# So these are checked against the system's answer, plus what the chain is for: the font covers the script or character.
+chain() { # pattern fc-list-property: the system's font, never Inter, and one that has the property
+  local a b; a=$(sys "$1"); b=$(ses "$1")
+  if [[ $a == "$b" && $b != Inter && -n $(fl ":family=$b:$2" family) ]]; then echo "PASS: [$mode] $1 -> $b (the system's chain, has $2)"
+  else echo "FAIL: [$mode] $1 -> $b, system gives $a (want the system's font, not Inter, with $2)"; fail=1; fi
+}
+isnt() { # pattern family: the session never resolves the pattern to that family
+  local got; got=$(ses "$1")
+  if [[ $got != "$2" ]]; then echo "PASS: [$mode] $1 -> $got (not $2)"; else echo "FAIL: [$mode] $1 -> $got"; fail=1; fi
+}
 same() { # pattern: unchanged against the system configuration
   local a b; a=$(sys "$1"); b=$(ses "$1")
   if [[ $a == "$b" ]]; then echo "PASS: [$mode] $1 unchanged -> $b"; else echo "FAIL: [$mode] $1 -> $b, system gives $a"; fail=1; fi
@@ -88,7 +101,8 @@ for mode in none omarchy; do
   same Roboto
   same Verdana
   same Ubuntu
-  is Roboto 'Liberation Sans'
+  is Roboto "$(sys 'sans\-serif')"
+  if [[ $mode == omarchy && -r $omarchy_default ]]; then is Roboto 'Liberation Sans'; fi
   # unchanged
   same monospace
   same serif
@@ -103,11 +117,14 @@ for mode in none omarchy; do
   is Helvetica 'Nimbus Sans'
   is 'Liberation Sans' 'Liberation Sans'
   is Arimo 'Liberation Sans'
-  is serif 'Liberation Serif'
+  isnt serif Inter
+  isnt monospace Inter
+  # system-ui first still ends on Inter (the user's monospace rule of the Omarchy mode applies to any list naming monospace)
+  [[ $mode == none ]] && is 'system\-ui,monospace' Inter
   # alias chains behind the generics still fire
-  is ':lang=ar' 'Noto Naskh Arabic'
+  chain ':lang=ar' 'lang=ar'
   is 'emoji' 'Noto Color Emoji'
-  is 'sans\-serif:charset=1f600' 'Noto Color Emoji'
+  chain 'sans\-serif:charset=1f600' 'charset=1f600'
   if ses_fc -s ':lang=ja' family | grep -q 'CJK'; then echo "PASS: [$mode] :lang=ja still has a CJK fallback"
   else echo "FAIL: [$mode] :lang=ja has no CJK fallback"; fail=1; fi
   style=$(ses_fc 'system\-ui:weight=bold' family style | head -1)

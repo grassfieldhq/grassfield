@@ -75,6 +75,9 @@ namespace {
 
     void onSystemClosed(GDBusConnection* /*bus*/, gboolean /*remotePeerVanished*/, GError* /*error*/, gpointer /*data*/) {
         log(QStringLiteral("the system bus connection closed: NetworkManager and bluetoothd have no agent until the bridge restarts"));
+        // As for the session bus: the unit's Restart=on-failure brings the bridge back with new agents (it used to stay
+        // up without them for the rest of the session).
+        QCoreApplication::exit(1);
     }
 
     GDBusConnection* connectBus(const QString& address, GError** error) {
@@ -113,6 +116,10 @@ int main(int argc, char** argv) {
     sigaddset(&blocked, SIGHUP);
     pthread_sigmask(SIG_BLOCK, &blocked, nullptr);
     const int signalFd = signalfd(-1, &blocked, SFD_CLOEXEC | SFD_NONBLOCK);
+    // Without the signalfd nothing would ever read them: unblocked again, so a stop ends the process at once and not
+    // after the unit's TimeoutStopSec with SIGKILL.
+    if (signalFd < 0)
+        pthread_sigmask(SIG_UNBLOCK, &blocked, nullptr);
 
     QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("grassfield-prompter"));

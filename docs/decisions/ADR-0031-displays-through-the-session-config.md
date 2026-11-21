@@ -133,3 +133,68 @@ a display trial. A choice then applies at once, as on a Mac. No countdown is nee
 leave the screen unusable. Keyboard choices stay in the order GF-066 set for the pointer: after Omarchy's defaults, before
 the user's own `input.lua`, which still wins. `keyboard.lua` holds only the keys the user changed. With two layouts or more,
 `input.lua` sets no xkb group option (amended 2026-11-04): `bindings.lua` binds Ctrl+Space (previous input source) and Ctrl+Option+Space (next) for every keyboard from two layouts on.
+
+## Amendment 2026-11-19: Keep is held by the Settings Backend, not by the page (audit SP-14)
+
+Before: DisplaysPage wrote `displays.conf` itself once the shell's state file said "kept". A page gone by then (another pane,
+the window closed, a crash of the page) left the mode applied for the session but never saved: the next Hyprland reload or
+login went back silently.
+
+Decision: Keep calls `Backend.keepDisplayTrial(id, lines, answerMs)`. The Backend (one per process, outliving every page)
+writes the "kept <id>" mark, watches the shell's state file and writes `displays.conf` with the trial's lines once the state
+says "kept" for that id; "reverted" first, or no answer within `settings.displayAppliedMs`, writes nothing (unchanged rule: a
+Keep after the shell's deadline never saves). A window closed right after Keep: `~Backend` waits up to 1.5 s for the shell's
+answer and writes the file then. The page only shows the outcome (`displayKeepSettled(id, state, error)`). One Keep at a time.
+The shell's role is unchanged (it still owns the countdown and the revert; it does not write `displays.conf`): the file stays
+written by the program the user acted in, with the same line checks (`systemguard.h isDisplayLine`).
+
+Tests: tests/unit/settings/tst_backend.cpp `AKeptTrialIsSavedByTheBackendEvenWhenThePageIsGone`,
+tests/unit/tst_settingsdisplays.qml `test_page_aKeepOutlivesThePage`.
+
+## Amendment to ADR-0031 (Settings > Displays) — a display without a mode is read again where no one sees it
+
+Date: 2026-11-19 · Status: accepted (2026-11 audit, finding SC-05)
+
+## Change
+The recovery of a display enabled without a mode (Hyprland at 0x0 after it answered no video modes; `Displays.qml`
+`checkModeless`) reloads the configuration on a back-off of 3, 6, 12, 24, 48, 60, 60 and 60 s (eight reloads, about 4.5
+minutes). After that it reloads:
+- every 10 minutes while nobody can see it (the session locked or the displays off: `Displays.quiet`, from LockClient);
+- once, 3 s after a nudge: the session unlocked or the displays back on from idle, a display added or removed.
+While the session is in use and nothing happens, no more reloads.
+
+## Why
+A reload puts the configuration's blur, window edges, ground colour, zoom and pointer back until the shell's pushes land: a
+flash of the window borders and blur, a jump of a zoomed screen, and several requests and socket connections each time. With
+a display switched off at its button (it stays without a mode all night) that happened every minute, forever. Hyprland 0.56.2
+has no lighter request that re-reads a monitor's modes: re-adding the same monitor rule compares equal to the active rule and
+applies nothing (`MonitorRuleManager::ensureMonitorStatus`), so a per-monitor re-apply is not available.
+
+## Consequences
+A display switched on at its button while the session is in use, after the back-off, gets its mode at the next nudge (an
+unlock, the displays waking, a hot-plug), not within a minute. Pure rules: `DisplaysFile.recoveryDelayMs(attempts, quiet)` and
+`nudgeDelayMs`, `tests/unit/tst_displaysfile.qml`.
+
+## Amendment to ADR-0015 (unified toolbar), Q4(b) channel, and ADR-0031 — where the capabilities file lives
+
+Date: 2026-11-19 · Status: accepted (2026-11 audit, apps-misc H1 / settings-portal (b), round 2)
+
+## Change
+The capabilities file the shell writes for the apps moves from `$XDG_RUNTIME_DIR/grassfield-capabilities.json` to
+`$XDG_RUNTIME_DIR/grassfield/capabilities.json` (a dev session keeps `$GRASSFIELD_STATE_HOME/capabilities.json`). Format
+and rule are unchanged (`shell/platform/CapabilitiesFile.js`, `apps/chromecaps.h`, `ui/Grassfield/Ui/WindowActions.js`).
+
+## Why
+The same reason as the key-window file (amendment to ADR-0039 step 17): a reader watches the file's directory because the
+shell replaces the file atomically. With the file directly in `$XDG_RUNTIME_DIR`, every socket, lock or pid file any program
+made or removed there woke Files, Activity Monitor and Settings, and Settings' backend watched the whole runtime directory.
+
+## Consequences
+- The shell makes `$XDG_RUNTIME_DIR/grassfield` private (`mkdir -m 0700 -p`) before its first write (Capabilities.qml, as
+  KeyWindow.qml). Settings' backend, when it starts first, makes the folder with the same mode.
+- `apps/chromecaps.h` `watchCapabilities()` watches that folder and the file; while the folder does not exist it watches the
+  runtime directory and lets it go as soon as the folder appears (Files, Activity Monitor). Activity Monitor now follows the
+  file live (it read it only when grassfield.json changed).
+- ADR-0015 line 744 and ADR-0031 line 25 read `$XDG_RUNTIME_DIR/grassfield/capabilities.json`.
+- Upgrade: a shell and apps of different versions disagree on the path for one session at most; a missing file means
+  "not known" (the minimize light stays enabled), so nothing breaks.

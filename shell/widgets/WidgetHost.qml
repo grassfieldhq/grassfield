@@ -26,6 +26,9 @@ FocusScope {
     readonly property var footprint: Placements.px(size, cell, gap)
     readonly property WidgetBase widget: loader.item as WidgetBase
     readonly property bool hovered: hover.hovered
+    // The area of the output the tile's glass is judged over (Material.backdropRect): a host whose list scrolls or slides the
+    // tile sets it (the Notifications column); empty: measured where the tile is laid out and again whenever the tile moves.
+    property alias backdropRect: tileGlass.backdropRect
 
     // (x, y) in this item's coordinates; keyboard requests use the center.
     signal menuRequested(real x, real y)
@@ -35,6 +38,9 @@ FocusScope {
 
     width: footprint.w
     height: footprint.h
+    // The tile's Material does not hear its host move it (a drag, a new place): measured again then (audit B-13).
+    onXChanged: Qt.callLater(tileGlass.measureRect)
+    onYChanged: Qt.callLater(tileGlass.measureRect)
     activeFocusOnTab: interactive
     Accessible.role: Accessible.Grouping
     Accessible.name: qsTr("%1 widget, %2").arg(Registry.title(widgetId)).arg(Registry.sizeLabel(size))
@@ -55,6 +61,7 @@ FocusScope {
 
     // Near-opaque glass (ADR-0024 section 2: the widgets' class, 0.92; ADR-0039 step 22).
     Material {
+        id: tileGlass
         glassClass: "widgets"
         anchors.fill: parent
         visible: !root.flat

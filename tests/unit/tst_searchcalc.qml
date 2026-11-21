@@ -78,7 +78,11 @@ TestCase {
         compare(Calc.answer("0.1+0.2").text, "0.3");
         compare(Calc.answer("2*(3+4)^2").text, "98");
         compare(Calc.answer("1/3").text, "0.333333333333");
-        compare(Calc.answer("pi").text, "3.14159265359");
+        compare(Calc.answer("pi*1").text, "3.14159265359");
+        // A constant's name alone is a word on the way to an app, not a calculation (audit B-16).
+        compare(Calc.answer("pi"), null);
+        compare(Calc.answer(" e "), null);
+        compare(Calc.answer("(pi)").text, "3.14159265359");
     }
 
     // Capture defect 5: the decimal comma is read and the answer is written the way the language does (grouping included).
@@ -89,7 +93,7 @@ TestCase {
         const g = fr.groupSeparator;
         compare(Calc.answer("120*163", fr).text, "19" + g + "560");
         compare(Calc.answer("1/3", fr).text, "0,333333333333");
-        compare(Calc.answer("pi", fr).text, "3,14159265359");
+        compare(Calc.answer("pi*1", fr).text, "3,14159265359");
         compare(Calc.answer("1000000*3", fr).text, "3" + g + "000" + g + "000");
         compare(Calc.answer("0,1+0,2", fr).text, "0,3");
         compare(Calc.answer("1,5*2", fr).text, "3");

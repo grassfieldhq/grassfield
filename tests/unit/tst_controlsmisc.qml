@@ -14,6 +14,8 @@ TestCase {
 
     property var picks: []
     property int moves: 0
+    property int releases: 0
+    property int bodiesMade: 0
 
     Item {
         id: stage
@@ -51,6 +53,7 @@ TestCase {
                 value: 0.5
                 accessibleName: "Level"
                 onMoved: v => tc.moves++
+                onReleased: tc.releases++
             }
 
             Item {
@@ -78,6 +81,15 @@ TestCase {
             title: "Go to"
             withField: true
             confirmHandler: text => text === "bad" ? "No such folder" : ""
+        }
+
+        Sheet {
+            id: lazySheet
+            title: "Lazy"
+            bodyComponent: Text {
+                text: "body"
+                Component.onCompleted: tc.bodiesMade++
+            }
         }
     }
 
@@ -377,6 +389,45 @@ TestCase {
         Appearance.reduceMotion = false;
         bar.indeterminate = false;
         bar.value = 5;
+    }
+
+    // A value the host sets while the pointer holds the slider is a late echo: the user's value stays shown until the
+    // release, which takes the host's (audit B-06).
+    function test_sliderHoldsTheUserValueWhilePressed() {
+        mousePress(slider, slider.width - 1, slider.height / 2);
+        compare(slider.shown, 1);
+        slider.value = 0.2;
+        compare(slider.shown, 1, "a late echo does not move a held slider");
+        mouseRelease(slider, slider.width - 1, slider.height / 2);
+        compare(slider.shown, 0.2, "the release takes the host's value");
+        slider.value = 0.5;
+        compare(slider.shown, 0.5);
+    }
+
+    // A host that throttles its writes writes the last one at the release (settings-portal SP-02).
+    function test_sliderReleaseSignal() {
+        tc.releases = 0;
+        mousePress(slider, slider.width / 2, slider.height / 2);
+        compare(tc.releases, 0);
+        mouseMove(slider, slider.width - 2, slider.height / 2);
+        mouseRelease(slider, slider.width - 2, slider.height / 2);
+        compare(tc.releases, 1, "released once, at the release");
+        slider.value = 0.5;
+    }
+
+    // A sheet's bodyComponent is made the first time it opens, and kept (Settings declares 34 sheets).
+    function test_sheetBodyMadeOnFirstShow() {
+        compare(tc.bodiesMade, 0, "not made while the sheet was never shown");
+        compare(lazySheet.bodyItem, null);
+        lazySheet.visible = true;
+        tryVerify(() => lazySheet.bodyItem !== null);
+        compare(tc.bodiesMade, 1);
+        lazySheet.visible = false;
+        wait(20);
+        verify(lazySheet.bodyItem !== null, "kept when hidden");
+        lazySheet.visible = true;
+        compare(tc.bodiesMade, 1, "made once");
+        lazySheet.visible = false;
     }
 
     function test_sliderKeysReportAndKeepTheHostValue() {

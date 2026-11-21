@@ -74,7 +74,12 @@ SettingsPage {
     // Shared: the page shown again while the counts run gets their answers instead of starting them again (Backend.query).
     Component.onCompleted: {
         root.backend.query(General.duArgv(root.backend.homeDir), "storage.du", Tokens.settingsStorageCountMs, true);
-        root.backend.query(["pacman", "-Qi"], "storage.packages", Tokens.settingsStorageCountMs, true);
+        // The Backend adds the sizes up itself (installedSize: the page gets a number, not pacman's megabyte of text); a
+        // backend without it (a test's) answers pacman's text.
+        if (typeof root.backend.installedSize === "function")
+            root.backend.installedSize("storage.packages", Tokens.settingsStorageCountMs);
+        else
+            root.backend.query(["pacman", "-Qi"], "storage.packages", Tokens.settingsStorageCountMs, true);
     }
 
     Connections {

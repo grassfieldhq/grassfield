@@ -8,14 +8,23 @@
 
 var VERSION = 1;
 
-// $GRASSFIELD_STATE_HOME/capabilities.json in a dev session, else $XDG_RUNTIME_DIR/grassfield-capabilities.json (runtime dir:
-// per session, gone at logout, so a stale answer never outlives the session). "" when neither directory is known.
+// $GRASSFIELD_STATE_HOME/capabilities.json in a dev session, else $XDG_RUNTIME_DIR/grassfield/capabilities.json (runtime dir:
+// per session, gone at logout, so a stale answer never outlives the session; in Grassfield's own runtime folder, as the
+// key-window file, so the apps watch that folder and not all of $XDG_RUNTIME_DIR: apps-misc H1). "" when neither directory
+// is known.
 function path(stateHome, runtimeDir) {
     if (stateHome)
         return String(stateHome) + "/capabilities.json";
     if (runtimeDir)
-        return String(runtimeDir) + "/grassfield-capabilities.json";
+        return String(runtimeDir) + "/grassfield/capabilities.json";
     return "";
+}
+
+// The folder of path() that the shell makes, private (0700), before the first write: "" in a dev session.
+function runtimeFolder(stateHome, runtimeDir) {
+    if (stateHome || !runtimeDir)
+        return "";
+    return String(runtimeDir) + "/grassfield";
 }
 
 // The file's text. `features` are the plugin's feature names (strings only; anything else is dropped).

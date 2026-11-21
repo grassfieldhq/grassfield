@@ -23,6 +23,8 @@
 -- skipped = { "<file>: <error>"... }, layers = { <namespace regex>... } (the shell's sheets, below) }.
 
 local M = { source = "omarchy", matches = {}, skipped = {} }
+-- The most VM instructions one Omarchy rule file may run (read_rules): far above any real rule file, a blink for a loop.
+M.max_instructions = 1000000
 
 local omarchy_path = os.getenv("OMARCHY_PATH")
 if not omarchy_path or omarchy_path == "" then
@@ -139,7 +141,17 @@ local function read_rules(path)
     M.skipped[#M.skipped + 1] = path .. ": " .. tostring(err)
     return
   end
+  -- Bounded: the chunk runs on Hyprland's main thread at every parse, and a file that loops would freeze the session.
+  -- A rule file is a few dozen calls; the hook stops one that is still running after M.max_instructions.
+  local hooks = type(debug) == "table" and debug.sethook and debug.gethook and debug
+  local before = hooks and table.pack(hooks.gethook())
+  -- A hook set from C (the host's own; gethook names it "external hook") cannot be put back from Lua: it is left alone.
+  if before and before[1] ~= nil and type(before[1]) ~= "function" then hooks = nil end
+  if hooks then
+    hooks.sethook(function() error("stopped: it runs too long for a rule file", 0) end, "", M.max_instructions)
+  end
   local ok, run_err = pcall(chunk)
+  if hooks then hooks.sethook(table.unpack(before, 1, before.n)) end
   if not ok then
     M.skipped[#M.skipped + 1] = path .. ": " .. tostring(run_err)
   end
@@ -148,6 +160,19 @@ end
 -- File names in sorted order (same listing as Omarchy's require_all.lua); plain names only.
 local function rule_files(dir)
   local files = {}
+  -- From the second parse of a login on the compositor plugin lists them in-process (CIO-10): no `find | sort` fork.
+  local probe_ok, probe = pcall(require, "grassfield.probe")
+  if probe_ok and dir:sub(1, 1) == "/" then
+    local names, unavailable = probe.list_files(dir, ".lua")
+    if not unavailable then
+      for _, name in ipairs(names) do
+        if type(name) == "string" and name:match("^[%w._-]+%.lua$") then
+          files[#files + 1] = dir .. "/" .. name
+        end
+      end
+      return files
+    end
+  end
   local quoted = "'" .. dir:gsub("'", "'\\''") .. "'"
   local handle = io.popen("find " .. quoted .. " -maxdepth 1 -type f -name '*.lua' -printf '%f\\n' 2>/dev/null | sort")
   if handle then

@@ -3,6 +3,7 @@
 // (the state JSON) and exactly which calls an action makes, with which arguments, and which it must never make.
 #include <gtest/gtest.h>
 
+#include <QDateTime>
 #include <QDBusObjectPath>
 #include <QDBusVariant>
 #include <QJsonArray>
@@ -135,6 +136,9 @@ struct NmFixture {
                     return ok({variant(radio)});
                 if (name == QLatin1String("ActiveAccessPoint"))
                     return ok({variant(path(activeAp))});
+                // A join's active connection: activated (awaitActivation follows it).
+                if (name == QLatin1String("State") && c.path.startsWith(QLatin1String("/active/")))
+                    return ok({variant(u32(2))});
             }
             if (m == QLatin1String("GetAll") && target == QLatin1String("org.freedesktop.NetworkManager.Device")) {
                 if (c.path == QLatin1String("/dev/eth0"))
@@ -176,6 +180,16 @@ struct NmFixture {
 QJsonObject stateOf(const StateResult &r)
 {
     return r.json;
+}
+
+// The last call of that member (a join reads its state after the call that starts it).
+Call lastOf(const FakeBus &bus, const QString &member)
+{
+    for (auto it = bus.calls.crbegin(); it != bus.calls.crend(); ++it) {
+        if (it->member == member)
+            return *it;
+    }
+    return {};
 }
 } // namespace
 
@@ -275,7 +289,7 @@ TEST(SystemBusWifi, ActionsMakeExactlyTheirCalls)
     {
         NmFixture f;
         EXPECT_EQ(runAction(f.bus, {{"op", "wifi.connectOpen"}, {"hex", "43616665"}}), QString());
-        const Call c = f.bus.calls.last();
+        const Call c = lastOf(f.bus, QStringLiteral("AddAndActivateConnection"));
         ASSERT_EQ(c.member, QStringLiteral("AddAndActivateConnection"));
         ASSERT_GE(c.args.size(), 3);
         const ConnectionSettings s = qvariant_cast<ConnectionSettings>(c.args[0]);
@@ -305,7 +319,7 @@ TEST(SystemBusWifi, AnOpenAndASecuredNetworkOfTheSameNameAreToldApartBySecurity)
     f.apProps[QStringLiteral("/ap/gone")] = {{"Ssid", QByteArray("Home")}, {"Strength", u8(20)}, {"Flags", u32(0)}, {"WpaFlags", u32(0)}, {"RsnFlags", u32(0)}};
     f.apProps[QStringLiteral("/ap/2")] = {{"Ssid", QByteArray("Home")}, {"Strength", u8(60)}, {"Flags", u32(0)}, {"WpaFlags", u32(0)}, {"RsnFlags", u32(0)}};
     EXPECT_EQ(runAction(f.bus, {{"op", "wifi.connectOpen"}, {"hex", "486F6D65"}}), QString());
-    const Call c = f.bus.calls.last();
+    const Call c = lastOf(f.bus, QStringLiteral("AddAndActivateConnection"));
     ASSERT_EQ(c.member, QStringLiteral("AddAndActivateConnection"));
     ASSERT_GE(c.args.size(), 3);
     EXPECT_EQ(qvariant_cast<QDBusObjectPath>(c.args[2]).path(), QStringLiteral("/ap/2"));
@@ -432,6 +446,145 @@ TEST(SystemBusWifi, AJoinWhoseStateCannotBeReadIsNoFailure)
     EXPECT_EQ(refused->calls.last().timeoutMs, 120000);
 }
 
+// SP-04: in the Grassfield session a wrong password makes NetworkManager ask the session's secret agent (grassfield-prompter)
+// for another one: the device goes to need-auth (60) while its sheet is open. The join waits for the user then, past the
+// activation deadline, and is kept when the right password comes; nothing is deleted under the sheet.
+TEST(SystemBusWifi, AJoinWaitsWhileTheSessionAsksForThePassword)
+{
+    NmFixture f;
+    int asking = 300; // State reads while the sheet is open: far longer than the 30 ms deadline at 1 ms a poll
+    f.bus.handler = [&f, &asking](const Call &c) {
+        if (c.member == QLatin1String("Get") && c.args.value(1).toString() == QLatin1String("State")) {
+            if (c.path == QLatin1String("/active/1"))
+                return ok({variant(u32(asking > 0 ? 1 : 2))});
+            if (c.path == QLatin1String("/dev/wlan0")) {
+                --asking;
+                return ok({variant(u32(60))});
+            }
+        }
+        return f.answer(c);
+    };
+    const Activation join{QStringLiteral("/active/1"), QStringLiteral("/dev/wlan0"), QStringLiteral("/conn/new"), false};
+    EXPECT_EQ(awaitActivation(f.bus, join, 30, 1), QString());
+    EXPECT_LE(asking, 0);
+    EXPECT_FALSE(f.bus.members().contains(QStringLiteral("Connection.Delete")));
+
+    // The same through runAction: the secured join reads the device it joins on.
+    NmFixture r;
+    int left = 3;
+    r.bus.handler = [&r, &left](const Call &c) {
+        if (c.member == QLatin1String("Get") && c.args.value(1).toString() == QLatin1String("State")) {
+            if (c.path == QLatin1String("/active/1"))
+                return ok({variant(u32(left > 0 ? 1 : 2))});
+            if (c.path == QLatin1String("/dev/wlan0")) {
+                --left;
+                return ok({variant(u32(60))});
+            }
+        }
+        return r.answer(c);
+    };
+    EXPECT_EQ(runAction(r.bus, {{"op", "wifi.connectSecure"}, {"hex", "486F6D65"}, {"psk", "wrong horse"}}), QString());
+    EXPECT_TRUE(r.bus.members().contains(QStringLiteral("Properties.Get")));
+    EXPECT_FALSE(r.bus.members().contains(QStringLiteral("Connection.Delete")));
+
+    // A sheet left open past the secrets wait ends the join (its new profile goes); the deadline itself counts again from the
+    // answer: activating after need-auth for longer than the deadline fails as before.
+    NmFixture g;
+    g.bus.handler = [&g](const Call &c) {
+        if (c.member == QLatin1String("Get") && c.args.value(1).toString() == QLatin1String("State")) {
+            if (c.path == QLatin1String("/active/1"))
+                return ok({variant(u32(1))});
+            if (c.path == QLatin1String("/dev/wlan0"))
+                return ok({variant(u32(60))});
+        }
+        if (c.member == QLatin1String("Delete"))
+            return ok();
+        return g.answer(c);
+    };
+    EXPECT_EQ(awaitActivation(g.bus, join, 30, 1, 60), QStringLiteral("the network could not be joined"));
+    EXPECT_EQ(g.bus.calls.last().member, QStringLiteral("Delete"));
+}
+
+// SP-06: a known or open network and a VPN are followed until they are up or failed, with NetworkManager's reason; a failed
+// open join leaves no profile behind, a failed known one keeps its saved profile.
+TEST(SystemBusWifi, KnownOpenAndVpnJoinsAreFollowedAndSayWhyTheyFailed)
+{
+    const auto failing = [](NmFixture &f, uint reason) {
+        f.bus.handler = [&f, reason](const Call &c) {
+            if (c.member == QLatin1String("ActivateConnection"))
+                return ok({path(QStringLiteral("/active/9"))});
+            if (c.member == QLatin1String("Get") && c.args.value(1).toString() == QLatin1String("State") && c.path.startsWith(QLatin1String("/active/")))
+                return ok({variant(u32(4))});
+            if (c.member == QLatin1String("Get") && c.args.value(1).toString() == QLatin1String("StateReason"))
+                return ok({variant(QVariantList{u32(30), u32(reason)})});
+            if (c.member == QLatin1String("Delete"))
+                return ok();
+            return f.answer(c);
+        };
+    };
+    {
+        NmFixture f;
+        failing(f, 7);
+        EXPECT_EQ(runAction(f.bus, {{"op", "wifi.connectKnown"}, {"uuid", "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"}}), QStringLiteral("the password was not accepted"));
+        EXPECT_FALSE(f.bus.members().contains(QStringLiteral("Connection.Delete"))) << "a saved network stays saved";
+    }
+    {
+        NmFixture f;
+        failing(f, 17);
+        EXPECT_EQ(runAction(f.bus, {{"op", "wifi.connectOpen"}, {"hex", "43616665"}}), QStringLiteral("the network gave this computer no address"));
+        EXPECT_EQ(f.bus.calls.last().member, QStringLiteral("Delete"));
+        EXPECT_EQ(f.bus.calls.last().path, QStringLiteral("/conn/new"));
+    }
+    {
+        NmFixture f;
+        failing(f, 53);
+        EXPECT_EQ(runAction(f.bus, {{"op", "wifi.connectKnown"}, {"uuid", "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"}}), QStringLiteral("that network is no longer in range"));
+    }
+    {
+        NmFixture f;
+        failing(f, 999);
+        EXPECT_EQ(runAction(f.bus, {{"op", "wifi.connectKnown"}, {"uuid", "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"}}), QStringLiteral("the network could not be joined"));
+    }
+    // A known network that comes up: "" once its state says so.
+    {
+        NmFixture f;
+        QList<uint> states{1, 1, 2};
+        f.bus.handler = [&f, &states](const Call &c) {
+            if (c.member == QLatin1String("ActivateConnection"))
+                return ok({path(QStringLiteral("/active/9"))});
+            if (c.member == QLatin1String("Get") && c.path == QLatin1String("/active/9") && c.args.value(1).toString() == QLatin1String("State"))
+                return ok({variant(u32(states.isEmpty() ? 2 : states.takeFirst()))});
+            return f.answer(c);
+        };
+        EXPECT_EQ(runAction(f.bus, {{"op", "wifi.connectKnown"}, {"uuid", "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"}}), QString());
+        EXPECT_TRUE(states.isEmpty());
+    }
+    // A VPN that fails says so; one asking for its secrets (VpnState NEED_AUTH, 3) waits for the user.
+    {
+        FakeBus vpn;
+        int asking = 200;
+        vpn.handler = [&asking](const Call &c) {
+            if (c.member == QLatin1String("Get") && c.args.value(1).toString() == QLatin1String("State"))
+                return ok({variant(u32(asking > 0 ? 1 : 4))});
+            if (c.member == QLatin1String("Get") && c.args.value(1).toString() == QLatin1String("VpnState")) {
+                --asking;
+                return ok({variant(u32(3))});
+            }
+            return err(QStringLiteral("org.freedesktop.DBus.Error.UnknownMethod: ") + c.member);
+        };
+        EXPECT_EQ(awaitActivation(vpn, Activation{QStringLiteral("/active/7"), QString(), QString(), true}, 30, 1), QStringLiteral("the VPN could not be connected"));
+        EXPECT_LE(asking, 0) << "the deadline did not run while the VPN asked for its password";
+        EXPECT_FALSE(vpn.members().contains(QStringLiteral("Connection.Delete")));
+    }
+    EXPECT_TRUE(followsActivation({{"op", "wifi.connectKnown"}}));
+    EXPECT_TRUE(followsActivation({{"op", "wifi.connectOpen"}}));
+    EXPECT_TRUE(followsActivation({{"op", "wifi.connectSecure"}}));
+    EXPECT_TRUE(followsActivation({{"op", "vpn.connect"}, {"on", true}}));
+    EXPECT_FALSE(followsActivation({{"op", "vpn.connect"}, {"on", false}}));
+    EXPECT_FALSE(followsActivation({{"op", "wifi.radio"}, {"on", true}}));
+    EXPECT_FALSE(followsActivation({{"op", "wifi.disconnect"}}));
+}
+
 TEST(SystemBusWifi, APassphraseIsEightToSixtyThreePrintableCharactersOrSixtyFourHexDigits)
 {
     NmFixture f;
@@ -459,7 +612,7 @@ TEST(SystemBusWifi, EnhancedOpenIsJoinedWithoutAPasswordAndWithKeyMgmtOwe)
     NmFixture f;
     f.apProps[QStringLiteral("/ap/gone")] = {{"Ssid", QByteArray("Owe")}, {"Strength", u8(50)}, {"Flags", u32(1)}, {"WpaFlags", u32(0)}, {"RsnFlags", u32(0x888)}};
     EXPECT_EQ(runAction(f.bus, {{"op", "wifi.connectOpen"}, {"hex", "4F7765"}}), QString());
-    const Call c = f.bus.calls.last();
+    const Call c = lastOf(f.bus, QStringLiteral("AddAndActivateConnection"));
     ASSERT_EQ(c.member, QStringLiteral("AddAndActivateConnection"));
     ASSERT_GE(c.args.size(), 3);
     const ConnectionSettings settings = qvariant_cast<ConnectionSettings>(c.args[0]);
@@ -477,7 +630,7 @@ TEST(SystemBusWifi, EnhancedOpenIsJoinedWithoutAPasswordAndWithKeyMgmtOwe)
         NmFixture t;
         t.apProps[QStringLiteral("/ap/gone")] = {{"Ssid", QByteArray("Owe")}, {"Strength", u8(50)}, {"Flags", u32(flags)}, {"WpaFlags", u32(0)}, {"RsnFlags", u32(0x1000)}};
         EXPECT_EQ(runAction(t.bus, {{"op", "wifi.connectOpen"}, {"hex", "4F7765"}}), QString()) << flags;
-        const Call tc = t.bus.calls.last();
+        const Call tc = lastOf(t.bus, QStringLiteral("AddAndActivateConnection"));
         ASSERT_EQ(tc.member, QStringLiteral("AddAndActivateConnection"));
         ASSERT_GE(tc.args.size(), 3);
         EXPECT_FALSE(qvariant_cast<ConnectionSettings>(tc.args[0]).contains(QStringLiteral("802-11-wireless-security")));
@@ -490,7 +643,7 @@ TEST(SystemBusWifi, EnhancedOpenIsJoinedWithoutAPasswordAndWithKeyMgmtOwe)
     // A plain open network has no security section.
     NmFixture h;
     EXPECT_EQ(runAction(h.bus, {{"op", "wifi.connectOpen"}, {"hex", "43616665"}}), QString());
-    EXPECT_FALSE(qvariant_cast<ConnectionSettings>(h.bus.calls.last().args[0]).contains(QStringLiteral("802-11-wireless-security")));
+    EXPECT_FALSE(qvariant_cast<ConnectionSettings>(lastOf(h.bus, QStringLiteral("AddAndActivateConnection")).args[0]).contains(QStringLiteral("802-11-wireless-security")));
 }
 
 TEST(SystemBusWifi, AFailedCallGivesTheServicesOwnShortReason)
@@ -918,14 +1071,25 @@ TEST(SystemBusGeneral, TimeActionsAreInteractiveTimedate1Calls)
     GeneralFixture f;
     EXPECT_EQ(runAction(f.bus, {{"op", "time.ntp"}, {"on", false}}), QString());
     EXPECT_EQ(runAction(f.bus, {{"op", "time.zone"}, {"zone", "America/New_York"}}), QString());
-    EXPECT_EQ(runAction(f.bus, {{"op", "time.set"}, {"usec", "1792832460000000"}}), QString());
+    const qint64 target = (QDateTime::currentMSecsSinceEpoch() + 3600000) * 1000; // one hour ahead of the clock
+    const qint64 before = QDateTime::currentMSecsSinceEpoch() * 1000;
+    EXPECT_EQ(runAction(f.bus, {{"op", "time.set"}, {"usec", QString::number(target)}}), QString());
+    const qint64 after = QDateTime::currentMSecsSinceEpoch() * 1000;
     ASSERT_EQ(f.bus.calls.size(), 3);
     EXPECT_EQ(f.bus.calls[0].member, QStringLiteral("SetNTP"));
     EXPECT_EQ(f.bus.calls[0].args, (QVariantList{false, true}));
     EXPECT_EQ(f.bus.calls[1].member, QStringLiteral("SetTimezone"));
     EXPECT_EQ(f.bus.calls[1].args, (QVariantList{QStringLiteral("America/New_York"), true}));
     EXPECT_EQ(f.bus.calls[2].member, QStringLiteral("SetTime"));
-    EXPECT_EQ(f.bus.calls[2].args, (QVariantList{QVariant::fromValue<qint64>(1792832460000000LL), false, true}));
+    // SP-13: the step from the clock as it read when the call left (relative): timedated adds it after the polkit dialog, so
+    // the time spent in the dialog is not lost.
+    ASSERT_EQ(f.bus.calls[2].args.size(), 3);
+    const qint64 step = f.bus.calls[2].args[0].value<qint64>();
+    EXPECT_EQ(f.bus.calls[2].args[0].metaType(), QMetaType::fromType<qint64>());
+    EXPECT_LE(step, target - before);
+    EXPECT_GE(step, target - after);
+    EXPECT_EQ(f.bus.calls[2].args[1], QVariant(true));
+    EXPECT_EQ(f.bus.calls[2].args[2], QVariant(true));
     for (const Call &c : f.bus.calls)
         EXPECT_EQ(c.service, kTime);
     EXPECT_TRUE(privilegedAction({{"op", "time.zone"}}));

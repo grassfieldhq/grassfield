@@ -104,7 +104,10 @@ function parseDu(text) {
 var UNITS = {"B": 1, "KiB": 1024, "MiB": 1048576, "GiB": 1073741824, "TiB": 1099511627776};
 
 // The sum of the "Installed Size" lines of `pacman -Qi` (C locale): the size of the installed packages, in bytes.
+// Backend.installedSize answers the sum already (its digits only).
 function packagesBytes(text) {
+    if (/^[0-9]+$/.test(String(text)))
+        return Number(text);
     let sum = 0;
     for (const line of String(text).split("\n")) {
         const m = /^Installed Size\s*:\s*([0-9.]+)\s*(B|KiB|MiB|GiB|TiB)\s*$/.exec(line);
@@ -252,6 +255,16 @@ function wallClock(ms, offsetSec) {
 // The inverse, for a time the user set as that zone's wall clock.
 function fromWallClock(wall, offsetSec) {
     return wall.getTime() - offsetSec * 1000 - wall.getTimezoneOffset() * 60000;
+}
+
+// The same when the zone's offset is not the same all year: `offsetAt(ms)` gives the zone's offset at an instant, so a date
+// set across a daylight-saving change uses the offset of that date and not today's (January set in July was an hour off).
+// Today's offset finds the instant near enough to ask for its own; asked twice for a time next to the change itself.
+function fromWallClockAt(wall, offsetSec, offsetAt) {
+    let ms = fromWallClock(wall, offsetSec);
+    for (let i = 0; i < 2; i++)
+        ms = fromWallClock(wall, offsetAt(ms));
+    return ms;
 }
 
 // Whether the clock reads 24-hour: menubar.clockHours "24", or "auto" in a region whose short time has no AM/PM.

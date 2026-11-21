@@ -268,8 +268,7 @@ namespace gf::menubridge::ongoing {
             }
             if (!arg.atEnd())
                 ++in.entries; // more than kMaxFields + 1: refused, the rest is not read
-            else
-                arg.endMap();
+            arg.endMap(); // always closed, as readLayout does after its break: the container is not left open
             return in;
         }
         if (argument.typeId() != QMetaType::QVariantMap)

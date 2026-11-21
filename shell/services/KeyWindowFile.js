@@ -15,14 +15,23 @@ var VERSION = 1;
 
 var none = Object.freeze({pid: 0, appId: ""});
 
-// $GRASSFIELD_STATE_HOME/keywindow.json in a dev session, else $XDG_RUNTIME_DIR/grassfield-keywindow.json (per session, gone at
-// logout, as the capabilities file). "" when neither directory is known.
+// $GRASSFIELD_STATE_HOME/keywindow.json in a dev session, else $XDG_RUNTIME_DIR/grassfield/keywindow.json (per session, gone
+// at logout; in Grassfield's own runtime folder, so the apps watch that folder and not all of $XDG_RUNTIME_DIR: apps-misc H1).
+// "" when neither directory is known.
 function path(stateHome, runtimeDir) {
     if (stateHome)
         return String(stateHome) + "/keywindow.json";
     if (runtimeDir)
-        return String(runtimeDir) + "/grassfield-keywindow.json";
+        return String(runtimeDir) + "/grassfield/keywindow.json";
     return "";
+}
+
+// The folder of path() that the shell makes, private (0700, as the menu bridge, the prompter, the security process and the
+// capture make it), before the first write: "" in a dev session (the state folder is the dev session's own).
+function runtimeFolder(stateHome, runtimeDir) {
+    if (stateHome || !runtimeDir)
+        return "";
+    return String(runtimeDir) + "/grassfield";
 }
 
 // A client: a positive integer pid (else 0) and a string app id (else "").

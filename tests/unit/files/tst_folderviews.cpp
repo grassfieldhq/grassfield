@@ -134,6 +134,26 @@ TEST(FolderViews, RoundTripAndMostRecentLast)
     EXPECT_EQ(folders.at(1).toObject().value(QStringLiteral("url")).toString(), QStringLiteral("file:///a"));
 }
 
+// A view or sort click is kept at once and written later, once for a burst (the write and its fsync off the click's frame).
+TEST(FolderViews, AKeptChangeIsReadAtOnceAndWrittenByFlush)
+{
+    auto dir = sandbox();
+    if (!dir)
+        GTEST_SKIP() << "GRASSFIELD_TEST_TMP (a directory under .dev/) is not set";
+    const QString file = dir->filePath(QStringLiteral("state/files-views.json"));
+    FolderViews views(file);
+    views.load();
+    views.keep(QStringLiteral("file:///a"), entry(QStringLiteral("list")));
+    views.keep(QStringLiteral("file:///a"), entry(QString(), 2));
+    EXPECT_EQ(views.entry(QStringLiteral("file:///a")), entry(QStringLiteral("list"), 2));
+    EXPECT_FALSE(QFileInfo::exists(file)) << "nothing written by the clicks themselves";
+    EXPECT_TRUE(views.hasPending());
+    ASSERT_EQ(views.flush(), kWritten);
+    FolderViews again(file);
+    again.load();
+    EXPECT_EQ(again.entry(QStringLiteral("file:///a")), entry(QStringLiteral("list"), 2));
+}
+
 TEST(FolderViews, TheOldestFolderGoesWhenFull)
 {
     auto dir = sandbox();

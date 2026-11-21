@@ -119,6 +119,9 @@ Variants {
             // The CenterContent that owns the blur regions.
             required property var surfaceHost
             property string text: ""
+            // The area its glass is judged over (the column at rest): the pill moves with the column's slide, which its
+            // Material does not see, so a measured rect would be the one of the column's first, off-screen frame (audit B-13).
+            property alias backdropRect: pillSurface.backdropRect
 
             signal clicked
 
@@ -242,6 +245,13 @@ Variants {
                 }
             }
 
+            // Where the list's viewport is in the window, read once per tick for every clipped surface (each region mapped
+            // it again, every frame of a motion: audit note on the Center's regions).
+            readonly property point viewport: {
+                hostItem.tick;
+                return list.mapToItem(null, 0, 0);
+            }
+
             function addSurface(item: Item, clip: bool, radius: real, fader: Item): void {
                 surfaceSeq++;
                 surfaces = surfaces.filter(r => r.item).concat([{id: surfaceSeq, item: item, clip: clip, radius: radius, fader: fader}]);
@@ -264,7 +274,7 @@ Variants {
                 let top = p.y;
                 let bottom = p.y + it.height;
                 if (rec.clip) {
-                    const v = list.mapToItem(null, 0, 0);
+                    const v = hostItem.viewport;
                     left = Math.max(left, v.x);
                     right = Math.min(right, v.x + list.width);
                     top = Math.max(top, v.y);
@@ -479,6 +489,8 @@ Variants {
                         radius: height / 2
                         shadowEnabled: false
                         visible: width > 0
+                        // Over the title row at rest, not where the sliding column was when the plate was made (audit B-13).
+                        backdropRect: titleRow.area
                         Component.onCompleted: hostItem.addSurface(titlePlate, false, Math.floor(height / 2), null)
                     }
 
@@ -601,6 +613,8 @@ Variants {
 
                                     entry: modelData
                                     cell: (list.width - panelItem.gutter - Tokens.widgetGap) / 2
+                                    // The column at rest, wherever the list scrolls the tile (audit B-13, as the cards).
+                                    backdropRect: panelItem.restRect
                                     onMenuRequested: (x, y) => panelItem.openWidgetMenu(tile, x, y, modelData)
                                     onRemoveRequested: {
                                         Widgets.remove(modelData.uid);
@@ -646,6 +660,7 @@ Variants {
                     Pill {
                         id: editPill
                         surfaceHost: hostItem
+                        backdropRect: panelItem.restRect
                         anchors.verticalCenter: parent.verticalCenter
                         text: qsTr("Edit Widgets")
                         onClicked: panelItem.galleryOpen = true
@@ -673,6 +688,8 @@ Variants {
                             anchors.fill: parent
                             radius: width / 2
                             shadowEnabled: false
+                            // The column at rest (audit B-13, as the footer pill).
+                            backdropRect: panelItem.restRect
                             Component.onCompleted: hostItem.addSurface(closeSurface, false, Math.floor(width / 2), null)
                         }
 

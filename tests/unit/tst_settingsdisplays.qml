@@ -23,6 +23,7 @@ TestCase {
     Component {
         id: fakeBackend
         QtObject {
+            id: fake
             property bool devSession: false
             property string displaysStateFile: "/run/user/1000/grassfield-displays.json"
             property string stateText: ""
@@ -53,6 +54,39 @@ TestCase {
             function markDisplayTrial(state: string, id: string): string {
                 calls.push({call: "mark", state: state, id: id});
                 return "";
+            }
+            // Backend.keepDisplayTrial as the Backend does it: the mark now, displays.conf once the state says kept
+            // (answerKeep, called as the shell publishes), "silent" after answerMs.
+            signal displayKeepSettled(string id, string state, string error)
+            property string keepId: ""
+            property var keepLines: []
+            function keepDisplayTrial(id: string, lines: var, answerMs: int): string {
+                if (keepId !== "")
+                    return "another change is still being kept";
+                markDisplayTrial("kept", id);
+                keepId = id;
+                keepLines = lines;
+                keepTimer.interval = answerMs;
+                keepTimer.restart();
+                return "";
+            }
+            function answerKeep(trial: var): void {
+                if (keepId === "" || !trial || trial.id !== keepId || (trial.state !== "kept" && trial.state !== "reverted"))
+                    return;
+                const id = keepId;
+                keepId = "";
+                keepTimer.stop();
+                if (trial.state === "kept")
+                    writeDisplaysConf(keepLines);
+                displayKeepSettled(id, trial.state, "");
+            }
+            property Timer keepTimer: Timer {
+                onTriggered: fake.keepSilent()
+            }
+            function keepSilent(): void {
+                const id = keepId;
+                keepId = "";
+                displayKeepSettled(id, "silent", "");
             }
             function act(what: string, argv: var, tag: string): bool {
                 actions.push(argv);
@@ -103,6 +137,7 @@ TestCase {
         j.trial = trial;
         t.backend.stateText = JSON.stringify(j);
         t.page.refresh();
+        t.backend.answerKeep(trial);
     }
 
     readonly property var panelIpc: ({name: "eDP-1", description: "BOE 0x0BCA", width: 2880, height: 1800, physicalWidth: 300, physicalHeight: 190,
@@ -137,7 +172,8 @@ TestCase {
         verify(/^[a-z0-9]{8}$/.test(trial.id));
         const now = Math.floor(Date.now() / 1000);
         verify(trial.until >= now + 14 && trial.until <= now + 15, String(trial.until));
-        compare(trial.lines, [other, "v1\tdesc:BOE 0x0BCA\t2880x1800@120.00\t0x0\t2.5\t0"]);
+        // The panel gets narrower (1152 wide): the display on its right follows its edge in the same trial, in place of its kept line.
+        compare(trial.lines, ["v1\tdesc:BOE 0x0BCA\t2880x1800@120.00\t0x0\t2.5\t0", "v1\tdesc:GF Display 27 0001\t2560x1440@60.00\t1152x0\t1\t0"]);
         compare(keepSpy.count, 1);
         compare(keepSpy.signalArguments[0][0], trial.until);
         // One trial at a time.
@@ -197,6 +233,32 @@ TestCase {
         tryCompare(t.page, "trialId", "", 6000);
         compare(t.backend.calls.filter(c => c.call === "conf"), []);
         verify(t.page.notice.indexOf("did not answer") >= 0, t.page.notice);
+    }
+
+    // SP-14: Keep belongs to the Backend once taken: the page going (another pane, the window closing) before the shell's answer
+    // still gets displays.conf written; and a page shown meanwhile does not take the answer for a trial of its own.
+    function test_page_aKeepOutlivesThePage() {
+        const t = makePage(false, [panelIpc]);
+        t.page.tryChange({scale: 2.5});
+        const trial = t.backend.calls[0];
+        publish(t, {id: trial.id, state: "applied"});
+        verify(t.page.keep());
+        t.page.destroy();
+        wait(0);
+        const j = JSON.parse(t.backend.stateText);
+        j.trial = {id: trial.id, state: "kept"};
+        t.backend.stateText = JSON.stringify(j);
+        t.backend.answerKeep(j.trial);
+        compare(t.backend.calls.filter(c => c.call === "conf"), [{call: "conf", lines: trial.lines}]);
+        // A Keep refused by the Backend (another one still waits) is said, and the trial goes on.
+        const u = makePage(false, [panelIpc]);
+        u.page.tryChange({scale: 2.5});
+        const id = u.backend.calls[0].id;
+        publish(u, {id: id, state: "applied"});
+        u.backend.keepId = "other";
+        verify(!u.page.keep());
+        verify(u.page.notice.indexOf("another change") >= 0, u.page.notice);
+        compare(u.page.trialId, id);
     }
 
     function test_page_revertAndTheShellsAnswers() {
@@ -685,6 +747,32 @@ TestCase {
         const id = Displays.trialId(() => (n++ % 10) / 10);
         verify(/^[a-z0-9]{8}$/.test(id), id);
         verify(/^[a-z0-9]{8}$/.test(Displays.trialId(Math.random)));
+    }
+
+    // A layout never overlaps and never leaves a display apart (audit SP-03, SP-08).
+    function test_settleAndResized() {
+        const d = (name, x, y, more) => Object.assign({name: name, width: 1920, height: 1080, x: x, y: y, scale: 1, transform: 0}, more || {});
+        const a = d("A", 0, 0), b = d("B", 1920, 0), c = d("C", 3840, 0);
+        // A layout that works is left alone, whichever display is named.
+        compare(Displays.settle([a, b, c], "B"), {A: {x: 0, y: 0}, B: {x: 1920, y: 0}, C: {x: 3840, y: 0}});
+        // C dropped on B's place stays there; B moves to the nearest free place beside the others.
+        compare(Displays.settle([a, b, d("C", 1920, 0)], "C"), {C: {x: 1920, y: 0}, A: {x: 0, y: 0}, B: {x: 1920, y: -1080}});
+        // B moved above A: C, left apart, comes back beside A.
+        compare(Displays.settle([a, d("B", 0, -1080), c], "B"), {B: {x: 0, y: -1080}, A: {x: 0, y: 0}, C: {x: 1920, y: 0}});
+        // A corner is not a shared edge.
+        compare(Displays.settle([a, d("B", 1920, 1080)], "A"), {A: {x: 0, y: 0}, B: {x: 1920, y: 1079}});
+        // A 4K display at scale 2 with a display on its right: a new scale or a rotation moves that display with the edge.
+        const big = d("L", 0, 0, {width: 3840, height: 2160, scale: 2}), right = d("R", 1920, 0);
+        compare(Displays.resized([big, right], "L", {scale: 1.5}), {L: {x: 0, y: 0}, R: {x: 2560, y: 0}});
+        compare(Displays.resized([big, right], "L", {scale: 3}), {L: {x: 0, y: 0}, R: {x: 1280, y: 0}});
+        compare(Displays.resized([big, right], "L", {scale: 1.25}), {L: {x: 0, y: 0}, R: {x: 3072, y: 0}});
+        compare(Displays.resized([big, right], "L", {scale: 1}), {L: {x: 0, y: 0}, R: {x: 3840, y: 0}});
+        compare(Displays.resized([big, right], "L", {transform: 1}), {L: {x: 0, y: 0}, R: {x: 1080, y: 0}});
+        // A display on its left or above it does not move; one below follows the bottom edge.
+        compare(Displays.resized([d("L", 1920, 0, {width: 3840, height: 2160, scale: 2}), d("R", 0, 0)], "L", {scale: 3}), {L: {x: 1920, y: 0}, R: {x: 0, y: 0}});
+        compare(Displays.resized([big, d("R", 0, 1080)], "L", {scale: 1.5}), {L: {x: 0, y: 0}, R: {x: 0, y: 1440}});
+        // The two-decimal scale Hyprland reports stands for the listed one.
+        compare(Displays.logicalSize({width: 2880, height: 1800, scale: 1.67, transform: 0}), {w: 1728, h: 1080});
     }
 
     function test_snapBeside() {

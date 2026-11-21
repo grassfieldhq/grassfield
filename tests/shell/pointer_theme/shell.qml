@@ -239,10 +239,12 @@ ShellRoot {
         },
         function () {
             root.check("stubborn: superseded build was cancelled", theme.cancelled >= 1);
-            root.run(["sh", "-c", "kill -0 \"$1\" 2>/dev/null; echo $?", "sh", root.child], () => root.advance());
+            // Gone = no such process, or a zombie: it has exited, and reaping it is its new parent's job (PID 1 of a container
+            // or a chroot may never reap, and kill -0 still succeeds on a zombie).
+            root.run(["sh", "-c", "kill -0 \"$1\" 2>/dev/null || { echo 1; exit; }; s=$(sed 's/.*) //' /proc/\"$1\"/stat 2>/dev/null | cut -d' ' -f1); [ \"$s\" = Z ] && echo 1 || echo 0", "sh", root.child], () => root.advance());
         },
         function () {
-            root.check("stubborn: its child (SIGTERM ignored) is gone after the group kill (kill -0 -> " + root.out.trim() + ")", root.out.trim() === "1");
+            root.check("stubborn: its child (SIGTERM ignored) is gone after the group kill (gone -> " + root.out.trim() + ")", root.out.trim() === "1");
             root.check("stubborn: the newest colours were built next", theme.ready);
             // Startup in a real session: the icons directory holds the custom theme of an earlier session (stamp for
             // key K) and a work directory of a build that was killed. Colours are K: nothing is built, the stale
@@ -258,7 +260,8 @@ ShellRoot {
             root.check("startup: a theme whose stamp matches the colours is used as it is, nothing built", theme2.started === 0 && theme2.ready);
             root.check("startup: clean-up ran once", theme2.cleanups === 1);
             root.run(["sh", "-c", "ls -A \"$1\"/icons2 | grep -v clean.log", "sh", root.tmp], () => {
-                root.check("startup: the theme stays (" + root.out.trim() + ")", root.out.indexOf("grassfield-cursors-custom\n") === 0 || root.out.trim().split("\n")[0] === "grassfield-cursors-custom");
+                // Membership, not the first line: ls sorts by the locale (C puts the dot directories first, en_US ignores the dot).
+                root.check("startup: the theme stays (" + root.out.trim() + ")", root.out.split("\n").indexOf("grassfield-cursors-custom") >= 0);
                 // Colours differ from the stamp: a rebuild, then ready.
                 theme2.fill = "#445566";
                 root.waitFor(() => theme2.ready && theme2.started === 1, 5000);

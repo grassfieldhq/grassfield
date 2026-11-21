@@ -36,6 +36,12 @@ namespace gf::menubridge {
 
         // Subscribes to the menu's signals and fetches the layout.
         void start();
+        // The re-read budget (Penalties.h RefetchBudget, per identity): asked before every re-read a signal or AboutToShow
+        // asks for (not the first read or its retries). 0: read now; > 0: ask again in that many ms (the layout keeps its
+        // last state meanwhile); < 0: a sustained flood, the menu is given up with the code "flood". Unset: no limit.
+        void setRefetchGate(std::function<qint64()> gate) {
+            m_gate = std::move(gate);
+        }
 
         // AboutToShow on a submenu of the latest layout (false: unknown id, nothing sent).
         bool aboutToShow(int id);
@@ -70,7 +76,7 @@ namespace gf::menubridge {
         // bridge records the calls in flight to blame the application if it dies meanwhile.
         void callBegun();
         void callEnded();
-        // code: "gone", "layout-failed" or "oversized". After it the client sends nothing more.
+        // code: "gone", "layout-failed", "oversized" or "flood". After it the client sends nothing more.
         void failed(const QString& window, const QString& code, const QString& message);
 
       private slots:
@@ -79,6 +85,8 @@ namespace gf::menubridge {
       private:
         void fetch();
         void scheduleRefetch();
+        // m_refetch fired: a re-read if the gate allows it.
+        void refetchDue();
         // `retry`: the first read may be tried again (the application did not answer; a malformed answer is final).
         void fail(const QString& code, const QString& why, bool retry);
         void giveUp(const QString& code, const QString& why);
@@ -92,7 +100,7 @@ namespace gf::menubridge {
         QString             m_path;
         QDBusServiceWatcher m_watcher;
         QTimer              m_refetch;
-        QTimer              m_retry; // the next first read after a failed one
+        QTimer              m_retry; // the next read after a failed one (a first read, or a re-read a signal arrived during)
         QJsonArray          m_items;
         ItemIndex           m_index;
         bool                m_ready    = false;
@@ -102,6 +110,7 @@ namespace gf::menubridge {
         bool                m_stopped  = false; // gave up (failure or oversized layout): no further GetLayout
         int                 m_failures = 0;     // consecutive failed reads (first reads, or re-reads once shown)
         int                 m_outstanding = 0;
+        std::function<qint64()> m_gate;
     };
 
 } // namespace gf::menubridge

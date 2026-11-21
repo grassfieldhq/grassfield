@@ -67,6 +67,33 @@ function key(col, row) {
     return col + "," + row;
 }
 
+// Maps keyed by file name: a file may be called "__proto__" (a plain assignment would set the map's prototype instead of a
+// key) or "toString" (a plain read finds the prototype's member). put() always makes an own key, placed() and own() only see
+// own keys, merged() is Object.assign({}, a, b) through put().
+function put(map, name, value) {
+    if (name === "__proto__")
+        Object.defineProperty(map, name, {value: value, enumerable: true, writable: true, configurable: true});
+    else
+        map[name] = value;
+}
+
+function placed(map, name) {
+    return !!map && Object.prototype.hasOwnProperty.call(map, name);
+}
+
+function own(map, name) {
+    return placed(map, name) ? map[name] : undefined;
+}
+
+function merged(a, b) {
+    const out = {};
+    for (const src of [a, b]) {
+        for (const n of Object.keys(src || {}))
+            put(out, n, src[n]);
+    }
+    return out;
+}
+
 function validSlot(p, cols, rows) {
     return p !== null && typeof p === "object" && Number.isInteger(p.col) && Number.isInteger(p.row)
         && p.col >= 0 && p.row >= 0 && p.col < cols && p.row < rows;
@@ -142,7 +169,7 @@ function layout(names, saved, cols, rows, blocked) {
     for (const n of sorted) {
         const p = saved && Object.prototype.hasOwnProperty.call(saved, n) ? saved[n] : null;
         if (validSlot(p, cols, rows) && !taken[key(p.col, p.row)]) {
-            out[n] = {col: p.col, row: p.row};
+            put(out, n, {col: p.col, row: p.row});
             taken[key(p.col, p.row)] = true;
         } else {
             pending.push(n);
@@ -152,8 +179,33 @@ function layout(names, saved, cols, rows, blocked) {
         const p = firstFree(taken, cols, rows);
         if (!p)
             break;
-        out[n] = p;
+        put(out, n, p);
         taken[key(p.col, p.row)] = true;
+    }
+    return out;
+}
+
+// The slots of `lay` that are to be stored (audit A-19): those of names that have no slot stored yet (a new file, a name whose
+// stored slot is not a slot at all). A name whose stored slot is outside the grid right now (a smaller display, the Dock or a
+// widget taking room, a transient size during a mode or scale change) or taken keeps its stored slot: it shows elsewhere for
+// now and goes back there when the grid allows. User moves store their slots themselves.
+function newSlots(lay, saved) {
+    const out = {};
+    for (const n of Object.keys(lay || {})) {
+        const p = own(saved, n);
+        const stored = p !== undefined && p !== null && typeof p === "object" && Number.isInteger(p.col) && Number.isInteger(p.row) && p.col >= 0 && p.row >= 0;
+        if (!stored)
+            put(out, n, lay[n]);
+    }
+    return out;
+}
+
+// The entries of `map` for `names` only (a move stores the slots of the icons the user moved, not the layout of the others).
+function pick(map, names) {
+    const out = {};
+    for (const n of names) {
+        if (placed(map, n))
+            put(out, n, map[n]);
     }
     return out;
 }
@@ -166,20 +218,20 @@ function moveGroup(lay, moving, anchor, want, cols, rows) {
     const taken = {};
     for (const n of Object.keys(lay)) {
         if (moving.indexOf(n) < 0) {
-            next[n] = lay[n];
+            put(next, n, lay[n]);
             taken[key(lay[n].col, lay[n].row)] = true;
         }
     }
-    if (!lay[anchor])
+    if (!placed(lay, anchor))
         return lay;
     const dc = want.col - lay[anchor].col;
     const dr = want.row - lay[anchor].row;
-    for (const n of sortNames(moving.filter(m => lay[m]))) {
+    for (const n of sortNames(moving.filter(m => placed(lay, m)))) {
         const target = {col: lay[n].col + dc, row: lay[n].row + dr};
         const clamped = {col: Math.max(0, Math.min(cols - 1, target.col)), row: Math.max(0, Math.min(rows - 1, target.row))};
         const spot = taken[key(clamped.col, clamped.row)] ? nearestFree(taken, clamped, cols, rows) : clamped;
         const final = spot ? spot : lay[n];
-        next[n] = final;
+        put(next, n, final);
         taken[key(final.col, final.row)] = true;
     }
     return next;
@@ -192,7 +244,7 @@ function navigate(lay, current, dir) {
     const names = Object.keys(lay);
     if (names.length === 0)
         return "";
-    if (!current || !lay[current]) {
+    if (!current || !placed(lay, current)) {
         const ordered = names.sort((a, b) => lay[a].col - lay[b].col || lay[a].row - lay[b].row);
         return ordered[0];
     }
@@ -327,7 +379,7 @@ function archiveName(names, existing) {
 function orderBy(names, key, meta) {
     const byName = sortNames(names);
     const rank = new Map(byName.map((n, i) => [n, i]));
-    const m = n => meta[n] || {};
+    const m = n => own(meta, n) || {};
     const cmp = {
         name: () => 0,
         kind: (a, b) => (m(b).isDir === true) - (m(a).isDir === true) || extension(a).localeCompare(extension(b)),
@@ -365,7 +417,7 @@ function arrange(ordered, cols, rows, blocked) {
         const p = firstFree(taken, cols, rows);
         if (!p)
             break;
-        out[n] = p;
+        put(out, n, p);
         taken[key(p.col, p.row)] = true;
     }
     return out;
@@ -384,12 +436,12 @@ function parseStat(text) {
             continue;
         const modified = parseInt(f[2], 10) || 0;
         const created = parseInt(f[3], 10);
-        out[name] = {
+        put(out, name, {
             isDir: f[0] === "directory",
             size: parseInt(f[1], 10) || 0,
             modified: modified,
             created: created > 0 ? created : modified
-        };
+        });
     }
     return out;
 }
@@ -411,7 +463,7 @@ function parse(text) {
     for (const n of Object.keys(doc.positions)) {
         const p = doc.positions[n];
         if (p !== null && typeof p === "object" && Number.isInteger(p.col) && Number.isInteger(p.row) && p.col >= 0 && p.row >= 0)
-            positions[n] = {col: p.col, row: p.row};
+            put(positions, n, {col: p.col, row: p.row});
     }
     return {ok: true, positions: positions};
 }
@@ -421,7 +473,7 @@ function prune(positions, names) {
     const out = {};
     for (const n of names) {
         if (Object.prototype.hasOwnProperty.call(positions, n))
-            out[n] = positions[n];
+            put(out, n, positions[n]);
     }
     return out;
 }
@@ -429,15 +481,15 @@ function prune(positions, names) {
 function serialize(positions) {
     const sorted = {};
     for (const n of Object.keys(positions).sort())
-        sorted[n] = {col: positions[n].col, row: positions[n].row};
+        put(sorted, n, {col: positions[n].col, row: positions[n].row});
     return JSON.stringify({version: VERSION, positions: sorted}, null, 2) + "\n";
 }
 
 // A rename keeps the position.
 function renamed(positions, from, to) {
-    const out = Object.assign({}, positions);
+    const out = merged(positions, null);
     if (Object.prototype.hasOwnProperty.call(out, from)) {
-        out[to] = out[from];
+        put(out, to, out[from]);
         delete out[from];
     }
     return out;

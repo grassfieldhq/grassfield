@@ -7,6 +7,7 @@
 #include "applicationslogic.h"
 #include "filelogic.h"
 #include "foldermodel.h"
+#include "fskind.h"
 #include "placesmodel.h"
 
 #include <QCoreApplication>
@@ -31,6 +32,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <sys/xattr.h>
 #include <functional>
 #include <tuple>
 
@@ -811,4 +814,66 @@ TEST(SidebarFavorites, AnEdgeDropWithNoFolderGoesIntoThePlace)
     // A search location is never a sidebar folder (File > Add to Sidebar is dimmed there); a removed standard place is one.
     EXPECT_FALSE(app.sidebarCandidate(QUrl(QStringLiteral("grassfield-search:/?q=x"))));
     EXPECT_TRUE(app.sidebarCandidate(folder));
+}
+
+// Audit F2: nothing of a folder's items is read on the GUI thread until its file system is known to be a local disk, found
+// off the GUI thread; a folder on a network or FUSE mount (FsKind Other) never has its items' attributes or contents read.
+TEST(FolderModelSlowMounts, AttributesAreReadOnlyOnALocalDisk)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString file = dir.filePath(QStringLiteral("tagged.txt"));
+    {
+        QFile f(file);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    }
+    const QByteArray tags = "Red";
+    if (::setxattr(QFile::encodeName(file).constData(), "user.xdg.tags", tags.constData(), size_t(tags.size()), 0) != 0)
+        GTEST_SKIP() << "no user extended attributes here";
+    const auto wait = [](const std::function<bool()> &done) {
+        QDeadlineTimer deadline(10000);
+        while (!done() && !deadline.hasExpired())
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        return done();
+    };
+    const auto tagsOf = [](FolderModel &m) { return m.data(m.index(0, 0), FolderModel::TagsRole).toStringList(); };
+    // A mount that is not a local disk: the probe answers Other.
+    std::atomic_int probes{0};
+    FsKindCache::instance()->forgetForTest();
+    FsKindCache::setProbeForTest([&probes](const QString &) {
+        ++probes;
+        return FsKind::Probe{FsKind::Kind::Other, QString()};
+    });
+    {
+        FolderModel model;
+        model.setUrl(QUrl::fromLocalFile(dir.path()));
+        ASSERT_TRUE(wait([&] { return !model.loading() && model.count() == 1; }));
+        ASSERT_TRUE(wait([&] { return probes.load() > 0 && FsKindCache::instance()->pending() == 0; }));
+        EXPECT_TRUE(tagsOf(model).isEmpty()) << "no extended attribute read on a mount that is not a local disk";
+    }
+    // A local disk whose probe answers late (a slow statfs): nothing read before, the row told and read after.
+    FsKindCache::instance()->forgetForTest();
+    std::atomic_bool release{false};
+    FsKindCache::setProbeForTest([&release](const QString &) {
+        while (!release.load())
+            QThread::msleep(5);
+        return FsKind::Probe{FsKind::Kind::Disk, QString()};
+    });
+    {
+        FolderModel model;
+        int told = 0;
+        QObject::connect(&model, &QAbstractItemModel::dataChanged, &model, [&told](const QModelIndex &, const QModelIndex &, const QList<int> &roles) {
+            if (roles.contains(FolderModel::TagsRole))
+                ++told;
+        });
+        model.setUrl(QUrl::fromLocalFile(dir.path()));
+        ASSERT_TRUE(wait([&] { return !model.loading() && model.count() == 1; }));
+        EXPECT_TRUE(tagsOf(model).isEmpty()) << "the probe has not answered: nothing read on the GUI thread";
+        release.store(true);
+        ASSERT_TRUE(wait([&] { return told > 0; })) << "the row is told once the probe answered";
+        EXPECT_EQ(tagsOf(model), QStringList{QStringLiteral("Red")});
+    }
+    FsKindCache::setProbeForTest({});
+    FsKindCache::instance()->forgetForTest();
 }

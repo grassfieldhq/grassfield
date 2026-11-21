@@ -214,10 +214,20 @@ def shell_sources(shell):
     return [p for p in listing(shell.parent, shell.name) if p.suffix in (".qml", ".js")]
 
 
+def family(module):
+    """The top-level module a module belongs to: `platform` for qs.platform.shortcuts (a nested module, shell/platform/shortcuts)."""
+    return module.split(".")[0]
+
+
 def layer_of(module):
+    """A nested module of a layered module has its layer (qs.platform.shortcuts is platform, layer 1); one of a feature is a feature."""
     if module == "shell":
         return ROOT_LAYER
-    return LAYER.get(module, FEATURE)
+    return LAYER.get(family(module), FEATURE)
+
+
+def in_platform(module):
+    return family(module) == "platform"
 
 
 def is_security(module):
@@ -436,6 +446,8 @@ def analyze(shell):
         if is_security(src) and not is_security(tgt):
             return tgt not in SECURITY_ALLOWED
         a, b = layer_of(src), layer_of(tgt)
+        if tgt.startswith(src + ".") and a == b:
+            return False  # a layered module imports its own nested module (qs.platform -> qs.platform.shortcuts); not the reverse
         return b >= a and not (a == b == FEATURE)
 
     # Feature edges that lie on a cycle of the feature graph with every layer violation removed.
@@ -460,13 +472,13 @@ def analyze(shell):
         found.append((path, message, None, 0))
     mods = modules_of(shell)
     need_tree = sorted({p for p, _, k, _ in found if k is not None and p.suffix == ".qml"}
-                       | {p for p in shell_sources(shell) if module_of_path(shell, mods, p) != "platform" and needs_tree(p)})
+                       | {p for p in shell_sources(shell) if not in_platform(module_of_path(shell, mods, p)) and needs_tree(p)})
     prefetch_asts(need_tree)
     for p in need_tree:
         if ast_of(p) is None:
             found.append((p, f"{p.name}: qmldom could not read the file although the scanner did (did its dump change?)", None, 0))
     for path in shell_sources(shell):
-        if module_of_path(shell, mods, path) == "platform":
+        if in_platform(module_of_path(shell, mods, path)):
             continue
         n = raw_event_line(path)
         if n is not None:
@@ -618,6 +630,22 @@ def selftest():
     run("JS .import counts", {**clean, "platform/X.js": '.import "../services/Y.js" as Y\n', "services/Y.js": ".pragma library\n"}, "imports go to a lower layer only")
     run("lib imports no module", {**clean, "lib/Mode.qml": "import qs.platform\nItem {}\n"}, "imports go to a lower layer only")
     run("platform imports lib only", {**clean, "platform/Compositor.qml": "import Quickshell.Hyprland\nimport qs.store\nItem {}\n"}, "imports go to a lower layer only")
+    # Nested modules (shell/platform/shortcuts is qs.platform.shortcuts): the layer of their top-level module.
+    nested = {**clean, **modules("platform.shortcuts"),
+              "platform/shortcuts/Shortcuts.qml": "import Quickshell.Hyprland\nimport qs.lib\nItem { function onRawEvent() {} }\n",
+              "platform/Zoom.qml": "import qs.platform.shortcuts\nItem {}\n",
+              "services/Emoji.qml": "import qs.platform.shortcuts\nItem {}\n",
+              "dock/Dock.qml": "import qs.platform\nimport qs.platform.shortcuts\nItem {}\n"}
+    run("a nested module is a module, with its family's layer (platform, services and a feature import it)", nested, None)
+    run("a nested platform module may use raw Hyprland events", nested, None)
+    run("a nested module may not import its parent (one layer, no way back up)",
+        {**nested, "platform/shortcuts/Shortcuts.qml": "import qs.platform\nItem {}\n"}, "imports go to a lower layer only")
+    run("a nested module of a lower layer may not import upward",
+        {**nested, "platform/shortcuts/Shortcuts.qml": "import qs.services\nItem {}\n"}, "imports go to a lower layer only")
+    run("lib may not import a nested platform module", {**nested, "lib/Mode.qml": "import qs.platform.shortcuts\nItem {}\n"}, "imports go to a lower layer only")
+    run("a nested feature module may not use raw Hyprland events",
+        {**nested, **modules("dock.stacks"), "dock/stacks/S.qml": "import Quickshell.Hyprland\nItem {}\n"}, "raw Hyprland events go through qs.platform")
+    run("a nested module without a qmldir is unknown", {**clean, "services/Apps.qml": "import qs.platform.nothing\nItem {}\n"}, "is not a module")
     run("a commented import is not an import", {**clean, "services/Apps.qml": "// import qs.dock\nItem {}\n"}, None)
     run("a hidden file is refused", {**clean, "dock/.Evil.qml": "Item {}\n"}, "a hidden path under shell/")
     run("a file in a hidden directory is refused", {**clean, "dock/.x/Evil.qml": "Item {}\n"}, "a hidden path under shell/")

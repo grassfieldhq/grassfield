@@ -25,7 +25,7 @@
 #include <hyprland/src/desktop/state/ViewHitTester.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/target/Target.hpp>
@@ -161,6 +161,22 @@ namespace {
         return *r;
     }
 
+    // The global an unload with live client objects removed (wl_global_remove: clients are told it is gone, but libwayland
+    // frees a removed global only with the display; CIO-16). Kept here, in the pinned library, and destroyed at the next load
+    // (by then every client has seen the removal), so load/unload cycles do not pile up removed globals, nor leave their bind
+    // callback reachable.
+    wl_global*& removedGlobal() {
+        static auto* g = new wl_global*(nullptr);
+        return *g;
+    }
+
+    void destroyRemovedGlobal() {
+        if (auto*& g = removedGlobal(); g) {
+            wl_global_destroy(g);
+            g = nullptr;
+        }
+    }
+
     uint64_t idOf(const void* p) {
         return reinterpret_cast<uintptr_t>(p);
     }
@@ -184,8 +200,15 @@ namespace {
 
     // The pointer as the motion event gives it (CInputManager::mouseMoveUnified emits the floored position): one coordinate
     // source for every step, so a window placed at its map or attach does not move by a fraction of a pixel at the next motion.
+    // Where the drag's input is: the finger of a touch drag (CIO-06: Hyprland 0.56.2 runs drag and drop from a touch too, and
+    // keeps the finger's layout position in m_touchData.lastTouchPos, updated before the touch motion reaches the bus), else
+    // the pointer.
     Vector2D pointerNow() {
-        return g_pInputManager ? g_pInputManager->getMouseCoordsInternal().floor() : Vector2D{};
+        if (!g_pInputManager)
+            return Vector2D{};
+        if (g_pInputManager->m_lastInputTouch)
+            return g_pInputManager->m_touchData.lastTouchPos.floor();
+        return g_pInputManager->getMouseCoordsInternal().floor();
     }
 
     // Hyprland runs a drag and drop now (CWLDataDeviceProtocol's current source is alive).
@@ -204,7 +227,7 @@ namespace {
             if (!o->drag.excludes()) {
                 const auto top = o->toplevel.lock();
                 const auto w   = top ? top->m_window.lock() : nullptr;
-                if (w && w->m_isMapped)
+                if (w && gf::compat::mapped(w))
                     o->drag.mapped(idOf(top.get()));
             }
             if (o->drag.excludes())
@@ -514,7 +537,7 @@ namespace {
         if (!o || !o->drag.follows() || !hyprlandDragRunning())
             return;
         const auto w      = windowOf(*o);
-        const auto target = w && w->m_isMapped ? w->layoutTarget() : nullptr;
+        const auto target = w && gf::compat::mapped(w) ? w->layoutTarget() : nullptr;
         if (!target)
             return;
         const auto now = target->position();
@@ -629,7 +652,7 @@ namespace {
             return;
         }
         const auto w = windowOf(*o);
-        if (!w || !w->m_isMapped)
+        if (!w || !gf::compat::mapped(w))
             return;
         if (o->drag.follows()) {
             o->corrections = 0;
@@ -645,9 +668,9 @@ namespace {
     // drop nobody accepted is cancelled at once. So the window's drag ends at the release, as a drop (core release()): it follows
     // no more, the drag's target is Hyprland's own again, and the place shown tiles once Hyprland handled the release. Kept per
     // drag until it ends (a target that cancels later does not undo the drop).
-    void onPointerButton(const IPointer::SButtonEvent& e) {
+    void onDragRelease() {
         auto& s = st();
-        if (!s.ready || e.state != WL_POINTER_BUTTON_STATE_RELEASED || !anyDragging())
+        if (!s.ready || !anyDragging())
             return;
         for (const auto& o : s.live.objects) {
             if (!o->live)
@@ -663,11 +686,16 @@ namespace {
         }
     }
 
+    void onPointerButton(const IPointer::SButtonEvent& e) {
+        if (e.state == WL_POINTER_BUTTON_STATE_RELEASED)
+            onDragRelease();
+    }
+
     // ---- windows -------------------------------------------------------------------------------------------------------
 
     void onWindowOpen(const PHLWINDOW& w) {
         auto& s = st();
-        if (!s.ready || !w || !w->m_isMapped || s.live.objects.empty())
+        if (!s.ready || !w || !gf::compat::mapped(w) || s.live.objects.empty())
             return;
         for (const auto& o : s.live.objects) {
             const auto top = o->toplevel.lock();
@@ -741,7 +769,7 @@ namespace {
             if (!top)
                 return; // its role is gone: nothing to attach (protocol-safe no-op)
             const auto w      = top->m_window.lock();
-            const bool mapped = w && w->m_isMapped;
+            const bool mapped = w && gf::compat::mapped(w);
             if (o->drag.attach(idOf(top.get()), mapped, x, y) == td::Error::ToplevelAttached) {
                 gf::logRequest(Log::WARN, "toplevel drag: attach while a toplevel is attached: protocol error toplevel_attached (pid {})", clientPid(o->resource->client()));
                 o->resource->error(XDG_TOPLEVEL_DRAG_V1_ERROR_TOPLEVEL_ATTACHED, "valid toplevel already attached");
@@ -899,9 +927,19 @@ namespace gf::toplevelDrag {
         auto& l  = s.listeners;
         l.push_back(ev.input.mouse.move.listen([](Vector2D pos, Event::SCallbackInfo& info) { gf::guarded("toplevel drag motion", [&] { onPointerMotion(pos, info); }); }));
         l.push_back(ev.input.mouse.button.listen([](IPointer::SButtonEvent e, Event::SCallbackInfo& /*info*/) { gf::guarded("toplevel drag button", [&] { onPointerButton(e); }); }));
+        // A tab torn off by touch follows the finger too (CIO-06): Hyprland's data device takes its drop from the touch's up
+        // (DataDevice.cpp m_dnd.touchUp), registered after these listeners as for the pointer's button.
+        l.push_back(ev.input.touch.motion.listen([](ITouch::SMotionEvent /*e*/, Event::SCallbackInfo& info) {
+            gf::guarded("toplevel drag touch motion", [&] {
+                if (g_pInputManager)
+                    onPointerMotion(g_pInputManager->m_touchData.lastTouchPos, info);
+            });
+        }));
+        l.push_back(ev.input.touch.up.listen([](ITouch::SUpEvent /*e*/, Event::SCallbackInfo& /*info*/) { gf::guarded("toplevel drag touch up", [] { onDragRelease(); }); }));
         l.push_back(ev.window.open.listen([](const PHLWINDOW& w) { gf::guarded("toplevel drag window.open", [&] { onWindowOpen(w); }); }));
         l.push_back(ev.window.close.listen([](const PHLWINDOW& w) { gf::guarded("toplevel drag window.close", [&] { onWindowClose(w); }); }));
 
+        destroyRemovedGlobal();
         s.global = wl_global_create(g_pCompositor->m_wlDisplay, &xdg_toplevel_drag_manager_v1_interface, kGlobalVersion, nullptr, bindManager);
         if (!s.global) {
             gf::log(Log::ERR, "toplevel drag: wl_global_create(xdg_toplevel_drag_manager_v1) failed");
@@ -957,7 +995,11 @@ namespace gf::toplevelDrag {
             s.live.managers.clear();
             s.live.objects.clear();
             if (s.global)
-                wl_global_remove(s.global); // clients are told it is gone; libwayland frees it with the display
+                wl_global_remove(s.global); // clients are told it is gone; destroyed at the next load (destroyRemovedGlobal)
+            if (s.global) {
+                destroyRemovedGlobal(); // one removed earlier and never reloaded since
+                removedGlobal() = s.global;
+            }
             s.global = nullptr;
             gf::log(Log::WARN, "toplevel drag: unloaded with {} client object(s) alive: they stay inert and this library stays in memory", clientObjs);
             return;

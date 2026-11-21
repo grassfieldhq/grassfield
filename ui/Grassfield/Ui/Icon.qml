@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Effects
 
@@ -31,17 +32,45 @@ Item {
         visible: false
     }
 
-    MultiEffect {
-        anchors.fill: parent
-        source: glyph
-        autoPaddingEnabled: false
-        // Black source: lift to white first, then tint with the token colour at full alpha: the effect reads a colour's alpha
-        // as the tint's strength over the white glyph, which would lighten it, so the alpha is the item's opacity instead.
-        brightness: 1.0
-        colorization: 1.0
-        colorizationColor: Qt.rgba(root.color.r, root.color.g, root.color.b, 1)
-        // Dev-only glyph mask (Appearance.devGlyphMode, tests/visual): a hidden marker colour hides the icon (a
-        // fully transparent colorization would otherwise leave the lifted white glyph). Never true in production.
+    // The glyph in its colour: one ShaderEffect sampling the Image's own texture (shaders/glyph.frag), no offscreen pass. A
+    // MultiEffect did this before; with the Image's PreserveAspectFit it took a ShaderEffectSource, so one FBO and one more
+    // pass per icon (audit B-07). The effect covers the painted image only, so the texture is not stretched.
+    ShaderEffect {
+        id: tinted
+        x: (root.width - width) / 2
+        y: (root.height - height) / 2
+        width: glyph.paintedWidth
+        height: glyph.paintedHeight
+        visible: glyph.status === Image.Ready && !tinted.failed
+        // Dev-only glyph mask (Appearance.devGlyphMode, tests/visual): a hidden marker colour hides the icon. Never true in
+        // production. Otherwise the colour's alpha is the item's opacity (the ink itself is opaque).
         opacity: Appearance.devGlyphMode === "hidden" && Appearance.isGlyphMarker(root.color) ? 0 : root.color.a
+        // Uniforms (names match shaders/glyph.frag).
+        readonly property var source: glyph
+        readonly property color ink: Qt.rgba(root.color.r, root.color.g, root.color.b, 1)
+        fragmentShader: root.shaderUrl
+        readonly property bool failed: tinted.status === ShaderEffect.Error
+        onFailedChanged: {
+            if (tinted.failed)
+                console.warn("Icon: the glyph shader failed to load, glyphs are drawn by MultiEffect: " + tinted.log);
+        }
+    }
+
+    // The compiled shader; overridable for tests of the failure path.
+    property url shaderUrl: Qt.resolvedUrl("shaders/glyph.frag.qsb")
+
+    // Only when the shader cannot run: the former MultiEffect (brightness lifts the black glyph to white, colorization tints it).
+    Loader {
+        anchors.fill: parent
+        active: tinted.failed
+
+        sourceComponent: MultiEffect {
+            source: glyph
+            autoPaddingEnabled: false
+            brightness: 1.0
+            colorization: 1.0
+            colorizationColor: tinted.ink
+            opacity: tinted.opacity
+        }
     }
 }

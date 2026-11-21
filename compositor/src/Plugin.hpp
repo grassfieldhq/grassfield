@@ -2,6 +2,7 @@
 
 // Shared plugin state and safety helpers (R13: no exception may escape into Hyprland).
 
+#include "HyprCompat.hpp"
 #include "core/EventThrottle.hpp"
 #include "core/Protocol.hpp"
 #include "core/Quiet.hpp"
@@ -19,6 +20,7 @@
 #include <utility>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 class CGrassfieldRim;
@@ -40,11 +42,11 @@ namespace gf {
         bool                               active = false; // true once hooks are registered (not on a hash mismatch)
 
         std::vector<CHyprSignalListener>   listeners;
-        SP<SHyprCtlCommand>                hyprctlCommand;
-        SP<SHyprCtlCommand>                hyprctlFramesCommand; // `hyprctl grassfield-frames` (FrameProbe, feature frame-times)
-        SP<SHyprCtlCommand>                hyprctlFramesStartCommand; // `hyprctl grassfield-frames-start` (records for 60 s)
-        SP<SHyprCtlCommand>                hyprctlStagesCommand; // `hyprctl grassfield-stages` (the Stages state; stages-available needs it)
-        SP<SHyprCtlCommand>                hyprctlTilingCommand; // `hyprctl grassfield-tiling` (the tiling state; tiling-arrange needs it)
+        SP<compat::CtlCommand>             hyprctlCommand;
+        SP<compat::CtlCommand>             hyprctlFramesCommand; // `hyprctl grassfield-frames` (FrameProbe, feature frame-times)
+        SP<compat::CtlCommand>             hyprctlFramesStartCommand; // `hyprctl grassfield-frames-start` (records for 60 s)
+        SP<compat::CtlCommand>             hyprctlStagesCommand; // `hyprctl grassfield-stages` (the Stages state; stages-available needs it)
+        SP<compat::CtlCommand>             hyprctlTilingCommand; // `hyprctl grassfield-tiling` (the tiling state; tiling-arrange needs it)
         bool                               luaHelloRegistered    = false;
         bool                               luaMinimizeRegistered = false;
         bool                               luaRestoreRegistered  = false;
@@ -62,6 +64,11 @@ namespace gf {
         bool                               luaSplitRegistered         = false;
         bool                               luaUnsplitRegistered       = false;
         bool                               luaWindowSizeRegistered    = false;
+        bool                               luaKeyboardHolderRegistered = false;
+        bool                               luaFileIdentityRegistered   = false;
+        bool                               luaReadFileRegistered       = false;
+        bool                               luaListFilesRegistered      = false;
+        bool                               luaSettleRegistered         = false;
 
         // Settings pushed by the shell (hl.plugin.grassfield.config).
         gfc::DoubleClickAction doubleClickAction = gfc::DoubleClickAction::Zoom;
@@ -80,6 +87,10 @@ namespace gf {
 
         // Live titlebars. Owned by their windows; each removes itself in its destructor.
         std::vector<CGrassfieldTitlebar*> titlebars;
+        // The same titlebars by their window (CIO-07, the WindowRim note): one lookup per window instead of a walk of the list
+        // on every pointer motion and every rim drawn. Keyed by the window's address at the titlebar's construction (one
+        // titlebar per window); CGrassfieldTitlebar::of checks that the entry's window is still that window.
+        std::unordered_map<const void*, CGrassfieldTitlebar*> titlebarByWindow;
         // Live window rims (WindowRim.hpp, the dark appearance's inner rim), one per window next to its titlebar. Owned by
         // their windows; each removes itself in its destructor.
         std::vector<CGrassfieldRim*> rims;

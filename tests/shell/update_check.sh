@@ -66,11 +66,13 @@ PATH=/usr/bin:/bin
 [ "$1" = "$2" ] && { echo 0; exit 0; }
 [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ] && echo -1 || echo 1
 SH
-# gpgv: exit state/gpgv-rc (default 0) and one VALIDSIG whose argument 10 is state/signer (argument 1 a subkey).
+# gpgv: exit state/gpgv-rc (default 0) and one VALIDSIG whose argument 10 is state/signer (argument 1 a subkey); the
+# status lines of state/gpgv-status first, when that file is there.
 cat >"$tmp/bin/gpgv" <<'SH'
 #!/bin/sh
 PATH=/usr/bin:/bin
 rc=$(cat "$FAKE/gpgv-rc" 2>/dev/null || echo 0)
+[ -f "$FAKE/gpgv-status" ] && cat "$FAKE/gpgv-status"
 [ "$rc" = 0 ] && echo "[GNUPG:] VALIDSIG 1111111111111111111111111111111111111111 2026-10-27 1793000000 0 4 0 22 10 00 $(cat "$FAKE/signer")"
 exit "$rc"
 SH
@@ -262,6 +264,11 @@ def notes_refused(desc, prepare, **where):
 notes_refused("a rogue signer (VALIDSIG argument 10 not in grassfield-trusted)", lambda: put("signer", ROGUE))
 notes_refused("a revoked signer", lambda: put("signer", OLD))
 notes_refused("gpgv fails (bad or changed signature)", lambda: put("gpgv-rc", "1"))
+# gpgv exits 0 and prints VALIDSIG for an expired or revoked key's signature: its own status line refuses it.
+for bad in ("EXPKEYSIG 1 X", "EXPSIG 1 X", "REVKEYSIG 1 X", "KEYREVOKED", "BADSIG 1 X", "ERRSIG 1 22 10 00 1 9"):
+    notes_refused("gpgv exits 0 with " + bad.split()[0], lambda: put("gpgv-status", "[GNUPG:] " + bad + "\n"))
+setup(); put("updates", "grassfield-desktop 1.0.0-1 -> 1.0.1-1\n"); notes([R101]); put("gpgv-status", "[GNUPG:] KEYEXPIRED 1700000000\n"); r = run()
+check("KEYEXPIRED alone (an old subkey of the keyring) refuses nothing", r["grassfield"].get("notesError") is None and len(r["grassfield"]["notes"]) == 1, r)
 notes_refused("larger than 64 KiB", lambda: notes(None, raw=b" " * 65537))
 notes_refused("not JSON", lambda: notes(None, raw=b"{"))
 notes_refused("not UTF-8", lambda: notes(None, raw=b'{"version":1,"channel":"stable","releases":[],"x":"\xff"}'))
@@ -523,6 +530,8 @@ rollout_setup(); publish(None, raw=b"{"); r = run(now=NOW)
 check("a malformed descriptor: invalid, the check still succeeds", r["rollout"]["descriptor"] == "invalid" and r["state"] == "up-to-date", r)
 rollout_setup(); publish(desc([R2])); put("gpgv-rc", "1"); r = run(now=NOW)
 check("a bad signature: invalid, nothing staged", r["rollout"]["descriptor"] == "invalid" and r["rollout"]["staged"] is None, r["rollout"])
+rollout_setup(); publish(desc([R2])); put("gpgv-status", "[GNUPG:] EXPKEYSIG 1 X\n"); r = run(now=NOW)
+check("a signature by an expired key (gpgv exits 0): invalid, nothing staged", r["rollout"]["descriptor"] == "invalid" and r["rollout"]["staged"] is None, r["rollout"])
 rollout_setup(); publish(desc([R2])); put("signer", ROGUE); r = run(now=NOW)
 check("a signature by an untrusted key: invalid", r["rollout"]["descriptor"] == "invalid", r["rollout"])
 rollout_setup(); publish(desc([R2], channel="beta")); r = run(now=NOW)

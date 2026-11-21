@@ -57,6 +57,21 @@ namespace gf::gfc {
     // hl.plugin.grassfield.window_size(mode): the Full Screen and Zoom keys ("fullscreen" | "maximized", bindings.lua): returns
     // Hyprland's own fullscreen dispatcher, or a no-op for a window of fixed size (ADR-0040 step 1b's review)
     inline constexpr std::string_view kLuaWindowSize = "window_size";
+    // hl.plugin.grassfield.keyboard_holder(): who holds the keyboard, for forwarding.lua (CIO-08): "window:<class>" (the
+    // window's class, at most kMaxHolderClass bytes), "layer" (a layer surface or one of its popups: a shell panel such as
+    // Search), "none" (nothing, the lock screen, a surface of no window or layer)
+    inline constexpr std::string_view kLuaKeyboardHolder = "keyboard_holder";
+    inline constexpr size_t           kMaxHolderClass    = 128;
+    // File probes for the session's Lua configuration, without a fork on Hyprland's main thread (CIO-03, CIO-10;
+    // core/FileProbe.hpp): file_identity(path) -> string|nil (lstat), read_file(path, max) -> string|nil (a regular file only,
+    // never blocking, bounded), list_files(dir, suffix) -> {names} (plain regular files, sorted).
+    inline constexpr std::string_view kLuaFileIdentity = "file_identity";
+    inline constexpr std::string_view kLuaReadFile     = "read_file";
+    inline constexpr std::string_view kLuaListFiles    = "list_files";
+    // hl.plugin.grassfield.settle(address) (CIO-17): a window placement.lua just resized or moved in its window.open hook takes
+    // its new box at once, not through the 300 ms windowsMove animation over its opening (the window is not seen growing or
+    // sliding out from under the menu bar)
+    inline constexpr std::string_view kLuaSettle = "settle";
     // `hyprctl grassfield-tiling`: the tiling state (the `tiling` event is only a change notice, ADR-0036).
     inline constexpr std::string_view kHyprctlTilingCommand = "grassfield-tiling";
 

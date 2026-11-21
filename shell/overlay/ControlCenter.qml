@@ -157,8 +157,11 @@ FocusScope {
     // Night Shift has no event source: read its state each time Quick Settings opens.
     Component.onCompleted: NightShift.refresh()
 
+    // Only an instance that asked for scanning stops it: the instance built in the background after start (Overlay's prewarm)
+    // must not stop the scan of the Quick Settings the user has open (review of this series).
     Component.onDestruction: {
-        Connectivity.setScanning(false);
+        if (scanWanted)
+            Connectivity.setScanning(false);
     }
 
     Timer {
@@ -715,20 +718,38 @@ FocusScope {
                 }
             }
 
-            WifiList {
-                visible: root.expanded === "wifi"
+            // Each section is made when it is opened and let go when it closes: Quick Settings opened with all four built and
+            // hidden (lists, rows, sliders, a dozen glass surfaces) on every click of the menu bar item (audit note).
+            Loader {
+                width: parent.width
+                active: root.expanded === "wifi"
+                visible: active
+
+                sourceComponent: WifiList {}
             }
 
-            BluetoothList {
-                visible: root.expanded === "bluetooth"
+            Loader {
+                width: parent.width
+                active: root.expanded === "bluetooth"
+                visible: active
+
+                sourceComponent: BluetoothList {}
             }
 
-            SoundList {
-                visible: root.expanded === "sound"
+            Loader {
+                width: parent.width
+                active: root.expanded === "sound"
+                visible: active
+
+                sourceComponent: SoundList {}
             }
 
-            AppearanceSection {
-                visible: root.expanded === "appearance"
+            Loader {
+                width: parent.width
+                active: root.expanded === "appearance"
+                visible: active
+
+                sourceComponent: AppearanceSection {}
             }
         }
     }

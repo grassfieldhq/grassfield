@@ -51,7 +51,7 @@ for u in crash-watch battery-watch migrate-notify; do
   desc="grassfield-$u.service is recognised as a session bus user"
   check bash -c 'prog=$(sed -n "s/^ExecStart=//p" "$1/packaging/systemd/grassfield-$2.service" | head -n1); grep -qE "notify-send|busctl|gdbus" "$1/packaging/bin/${prog##*/}"' _ "$root" "$u"
 done
-desc="the crash and battery watchers use ProtectHome=read-only (as menu-bridge, migrate-notify and automount do)"
+desc="the crash and battery watchers use ProtectHome=read-only (as migrate-notify and automount do)"
 check bash -c 'grep -qx "ProtectHome=read-only" "$1/packaging/systemd/grassfield-crash-watch.service" && grep -qx "ProtectHome=read-only" "$1/packaging/systemd/grassfield-battery-watch.service"' _ "$root"
 
 # ---- mutation: the detector catches every way of hiding /run/user, and none of the safe settings ----
@@ -74,7 +74,7 @@ for line in 'ProtectHome=read-only' 'ProtectHome=no' 'ProtectHome=0' 'Inaccessib
 done
 # The menu bridge (a compiled client) is covered: the same mutation on it is caught through the scan's own list.
 cp "$root/packaging/systemd/grassfield-menu-bridge.service" "$tmp/b.service"
-sed -i 's/^ProtectHome=read-only/ProtectHome=yes/' "$tmp/b.service"
+printf '%s\n' 'ProtectHome=yes' >>"$tmp/b.service" # the unit has no ProtectHome= line of its own (no user namespace)
 desc="mutation: ProtectHome=yes on grassfield-menu-bridge.service is caught, and the bridge is in the bus list"
 if hides_bus "$tmp/b.service" && [[ " $BINARY_BUS_UNITS " == *" grassfield-menu-bridge.service "* ]]; then echo "PASS: $desc"; else echo "FAIL: $desc"; fail=1; fi
 # FINDINGS 3 (first real session): a unit with ProtectSystem=strict cannot create $XDG_RUNTIME_DIR/dconf, so a GSettings client in

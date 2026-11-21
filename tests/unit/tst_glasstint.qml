@@ -42,6 +42,19 @@ TestCase {
         compare(floorOf(true, 0, 1, 4.5), 0.82);
     }
 
+    // The floor is kept per set of inputs (audit B-01): a kept answer is the searched one, and another palette, range or
+    // contrast never reads it.
+    function test_floorIsKeptPerInput() {
+        const first = floorOf(true, 0.6, 0.9, 4.7);
+        compare(floorOf(true, 0.6, 0.9, 4.7), first);
+        compare(floorOf(false, 0, 1, 4.5), 0.79);
+        compare(floorOf(true, 0, 1, 4.5), 0.82);
+        compare(floorOf(false, 0, 1, 4.5), 0.79);
+        verify(floorOf(true, 0.01, 0.05, 4.7) < first);
+        verify(floorOf(true, 0.6, 0.9, 3) < first);
+        compare(floorOf(true, 0.6, 0.9, 4.7), first);
+    }
+
     function test_targetAlpha() {
         const d = Tokens.materialDefaultTransparency;
         compare(GlassTint.targetAlpha(0.65, 0, d), 1);

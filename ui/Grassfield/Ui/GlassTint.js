@@ -69,10 +69,32 @@ function backdropsOf(lum) {
 // lumMin and lumMax, with and without the fill overlay of a tile or field (fill at fillAlpha over the tint). Contrast moves
 // monotonically with the backdrop's luminance between the two, so the two ends (each with its bounding colours) cover the
 // range.
+// The search is costly (thousands of Math.pow) and every surface of a class asks for the same floor, so the answers are kept:
+// the key holds every input as exact numbers, so a kept answer is the searched one. The table is emptied when full.
+var floorCache = Object.create(null);
+var floorCached = 0;
+const FLOOR_CACHE_MAX = 512;
+
 function floorAlpha(tint, texts, fill, fillAlpha, lumMin, lumMax, need) {
     const t = channels(tint);
     const f = channels(fill);
     const ink = texts.map(channels);
+    const key = t.concat(f, ink.length, [].concat.apply([], ink), fillAlpha, lumMin, lumMax, need).map(String).join(",");
+    const kept = floorCache[key];
+    if (kept !== undefined)
+        return kept;
+    const found = floorSearch(t, f, ink, fillAlpha, lumMin, lumMax, need);
+    if (floorCached >= FLOOR_CACHE_MAX) {
+        floorCache = Object.create(null);
+        floorCached = 0;
+    }
+    floorCache[key] = found;
+    floorCached++;
+    return found;
+}
+
+// The search itself, on channels (t: tint, f: fill, ink: the text colours).
+function floorSearch(t, f, ink, fillAlpha, lumMin, lumMax, need) {
     const backs = backdropsOf(lumMin).concat(backdropsOf(lumMax));
     for (let i = 0; i <= 100; i++) {
         const a = i / 100;

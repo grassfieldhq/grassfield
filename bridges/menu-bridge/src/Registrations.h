@@ -22,6 +22,7 @@
 
 #include <QHash>
 #include <QList>
+#include <QSet>
 #include <QString>
 #include <QVariantList>
 
@@ -29,8 +30,12 @@
 
 namespace gf::menubridge::registrar {
 
-    inline constexpr int kMaxPerSender = 16;  // registrations one connection may hold
-    inline constexpr int kMaxTotal     = 128; // registrations in all (no eviction: past it, LimitsExceeded)
+    inline constexpr int kMaxPerSender  = 16;  // registrations one connection may hold
+    inline constexpr int kMaxPerProcess = 16;  // registrations the connections of one process may hold together
+    // Registrations in all. Past it a new one pushes out the oldest registration of a sender that was never served to a
+    // window (idle connections cannot keep every Electron application out, B-16); LimitsExceeded only when every sender
+    // but the caller has been served.
+    inline constexpr int kMaxTotal      = 128;
     inline constexpr int kSettleMs     = 300; // estimate: a registration is served this long after it arrived
 
     struct Registration {
@@ -52,8 +57,14 @@ namespace gf::menubridge::registrar {
         bool                        remove(const QString& sender, quint32 windowId);
         // Removes every registration of `sender` (it left the bus) and its pid; true when it held any.
         bool                        senderGone(const QString& sender);
-        // The sender's process, once the bus daemon told it (> 0).
+        // The sender's process, once the bus daemon told it (> 0). The process's registrations (all its senders) are then
+        // capped at kMaxPerProcess: the oldest go first.
         void                        setPid(const QString& sender, qint64 pid);
+        // A registration of `sender` was served to a window: its registrations are no longer pushed out by newcomers.
+        void                        markServed(const QString& sender);
+        bool                        served(const QString& sender) const {
+            return m_served.contains(sender);
+        }
         qint64                      pidOf(const QString& sender) const; // 0 when not known
         bool                        holds(const QString& sender) const;
         // The newest settled registration of a sender whose process is `pid` (> 0), if any.
@@ -64,8 +75,11 @@ namespace gf::menubridge::registrar {
         void clear();
 
       private:
+        // Removes the oldest registration of a never-served sender other than `except`; false when there is none.
+        bool                   evictUnserved(const QString& except);
         QList<Registration>    m_entries;
         QHash<QString, qint64> m_pids;
+        QSet<QString>          m_served;
         quint64                m_seq = 0;
     };
 

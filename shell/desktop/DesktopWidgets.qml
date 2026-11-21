@@ -215,19 +215,44 @@ Variants {
                 readonly property point origin: scope.originOf(entry)
                 readonly property size tileSize: scope.sizeOf(entry)
                 readonly property real pad: Tokens.widgetSurfacePad
+                // After a drop the tile glides from where it was let go to its snapped cell (audit A-10): the surface stays full
+                // screen until it is there. settleT runs from 1 (at the drop point) to 0 (at the cell).
+                property point dropAt: Qt.point(0, 0)
+                property real settleT: 0
+                readonly property bool expanded: dragging || settleAnim.running
+
+                NumberAnimation {
+                    id: settleAnim
+                    target: win
+                    property: "settleT"
+                    to: 0
+                    duration: Appearance.duration(Tokens.motionFast)
+                    easing.type: Easing.BezierSpline
+                    easing.bezierCurve: Appearance.curve
+                }
+
+                // Lets go of a drag: the tile starts its glide at the drop point, whatever cell the move then stores.
+                function settleFrom(at: point): void {
+                    win.dropAt = at;
+                    win.settleT = 1;
+                    settleAnim.restart();
+                }
+
+                // Where the tile is drawn, in screen px: under the pointer while dragged, on its way to the cell after the drop.
+                readonly property point tileAt: dragging ? Qt.point(origin.x + scope.dragOffset.x, origin.y + scope.dragOffset.y) : Qt.point(origin.x + (dropAt.x - origin.x) * settleT, origin.y + (dropAt.y - origin.y) * settleT)
 
                 screen: scope.modelData
                 visible: !isCovered
-                // Small surface at the tile; the whole screen while dragging.
+                // Small surface at the tile; the whole screen while dragging (and while the dropped tile settles).
                 anchors {
                     top: true
                     left: true
-                    right: win.dragging
-                    bottom: win.dragging
+                    right: win.expanded
+                    bottom: win.expanded
                 }
                 // qmllint disable unqualified unresolved-type
-                margins.left: win.dragging ? 0 : win.origin.x - win.pad
-                margins.top: win.dragging ? 0 : win.origin.y - win.pad
+                margins.left: win.expanded ? 0 : win.origin.x - win.pad
+                margins.top: win.expanded ? 0 : win.origin.y - win.pad
                 // qmllint enable unqualified unresolved-type
                 implicitWidth: tileSize.width + 2 * pad
                 implicitHeight: tileSize.height + 2 * pad
@@ -239,10 +264,10 @@ Variants {
                 WlrLayershell.namespace: "grassfield-widgets"
                 // qmllint disable missing-type
                 mask: Region {
-                    x: win.dragging ? 0 : win.pad
-                    y: win.dragging ? 0 : win.pad
-                    width: win.dragging ? win.width : win.tileSize.width
-                    height: win.dragging ? win.height : win.tileSize.height
+                    x: win.expanded ? 0 : win.pad
+                    y: win.expanded ? 0 : win.pad
+                    width: win.expanded ? win.width : win.tileSize.width
+                    height: win.expanded ? win.height : win.tileSize.height
                 }
                 // Real blur behind the frosted tile (master-prompt 5.5, never faked): the tile's own shape is the region, and
                 // the namespace is in the layer rule list (config/hypr/grassfield/windows.lua) as the fallback. Reduce
@@ -261,8 +286,12 @@ Variants {
                 }
                 // qmllint enable missing-type
 
-                // Window origin in screen px, as the pointer sees it (the surface moves and grows).
-                readonly property point windowOrigin: win.dragging && win.width > win.tileSize.width + 2 * win.pad ? Qt.point(0, 0) : Qt.point(win.origin.x - win.pad, win.origin.y - win.pad)
+                // Window origin in screen px, as the pointer and the tile see it. From the size the surface really has, not from the
+                // state asked for: the compositor answers a switch between the tile-sized and the full-screen surface a frame or two
+                // later, and until then the tile is drawn where it is in the surface that is still shown (audit A-10: it was drawn
+                // at screen coordinates in the small surface at a drag's start, at (pad, pad) of the full screen at its end).
+                readonly property bool fullSurface: win.width > win.tileSize.width + 2 * win.pad
+                readonly property point windowOrigin: fullSurface ? Qt.point(0, 0) : Qt.point(win.origin.x - win.pad, win.origin.y - win.pad)
 
                 Item {
                     anchors.fill: parent
@@ -279,8 +308,8 @@ Variants {
                         cell: scope.grid.cell
                         gap: scope.grid.gap
                         active: !win.isCovered
-                        x: win.dragging ? win.origin.x + scope.dragOffset.x : win.pad
-                        y: win.dragging ? win.origin.y + scope.dragOffset.y : win.pad
+                        x: win.tileAt.x - win.windowOrigin.x
+                        y: win.tileAt.y - win.windowOrigin.y
                         // A lifted widget grows a little; under Reduce Motion it does not (ADR-0039 D2, step 25: a scale is
                         // motion; the drag itself follows the pointer).
                         scale: win.dragging && !Appearance.reduceMotion ? Tokens.widgetLiftScale : 1
@@ -318,7 +347,9 @@ Variants {
                                     pressAt = Qt.point(win.windowOrigin.x + centroid.scenePressPosition.x, win.windowOrigin.y + centroid.scenePressPosition.y);
                                     scope.dragUid = win.modelData;
                                 } else if (scope.dragUid === win.modelData) {
-                                    scope.commitDrag(win.entry, Qt.point(win.origin.x + scope.dragOffset.x, win.origin.y + scope.dragOffset.y));
+                                    const at = Qt.point(win.origin.x + scope.dragOffset.x, win.origin.y + scope.dragOffset.y);
+                                    win.settleFrom(at);
+                                    scope.commitDrag(win.entry, at);
                                 }
                             }
                             onCentroidChanged: {

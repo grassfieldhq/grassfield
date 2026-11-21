@@ -313,6 +313,65 @@ TestCase {
         compare(written.dock.pinned, ["foot"]);
     }
 
+    // A value the file already holds is not written again (a slider reports every pointer position), and a change to
+    // another watched file does not read grassfield.json again.
+    function test_storeSkipsUnchangedWritesAndOtherFiles() {
+        const t = makeStore('{"version":1}');
+        verify(t.store.set("dock.size", 61));
+        compare(t.backend.writes, 1);
+        verify(t.store.set("dock.size", 61));
+        compare(t.backend.writes, 1);
+        verify(t.store.setMany({"dock.size": 61}));
+        compare(t.backend.writes, 1);
+        compare(t.store.writeError, "");
+        verify(t.store.set("dock.size", 62));
+        compare(t.backend.writes, 2);
+        const revision = t.store.revision;
+        t.backend.fileChanged("/run/user/1000/grassfield-displays.json");
+        compare(t.store.revision, revision);
+        t.backend.fileChanged("/fake/grassfield.json");
+        compare(t.store.revision, revision + 1);
+    }
+
+    // A slider's drag (setSoon): the first position is written at once, the positions that follow within the throttle
+    // interval are held and only the last is written when it is up; the final position is written without a release.
+    function test_storeThrottlesASliderAndWritesItsLastPosition() {
+        const t = makeStore('{"version":1}');
+        for (let size = 40; size <= 70; size++)
+            t.store.setSoon("dock.size", size);
+        compare(t.backend.writes, 1);
+        compare(JSON.parse(t.backend.text).dock.size, 40);
+        tryVerify(() => t.backend.writes === 2, 3000);
+        compare(JSON.parse(t.backend.text).dock.size, 70);
+        compare(t.store.value("dock.size"), 70);
+        // Nothing more waits: no write follows.
+        wait(500);
+        compare(t.backend.writes, 2);
+        // Keys of a drag wait together; flush (a release, the window closing) writes them at once.
+        t.store.setManySoon({"dock.magnificationEnabled": true, "dock.magnification": 2});
+        t.store.setManySoon({"dock.magnificationEnabled": true, "dock.magnification": 2.2});
+        t.store.setManySoon({"dock.magnificationEnabled": false});
+        compare(t.backend.writes, 3);
+        t.store.flush();
+        compare(t.backend.writes, 4);
+        const written = JSON.parse(t.backend.text).dock;
+        compare(written.magnificationEnabled, false);
+        compare(written.magnification, 2.2);
+    }
+
+    // The window closing while a position waits: it is written as the store goes.
+    function test_storeWritesWhatWaitsWhenItGoes() {
+        const backend = createTemporaryObject(fakeBackend, testCase, {text: '{"version":1}', exists: true});
+        const comp = Qt.createComponent(Qt.resolvedUrl("../../apps/settings/qml/ConfigStore.qml"));
+        const store = comp.createObject(testCase, {backend: backend});
+        store.setSoon("material.transparency", 0.3);
+        store.setSoon("material.transparency", 0.7);
+        compare(backend.writes, 1);
+        store.destroy();
+        tryVerify(() => backend.writes === 2);
+        compare(JSON.parse(backend.text).material.transparency, 0.7);
+    }
+
     function test_storePicksUpExternalChange() {
         const t = makeStore('{"version":1}');
         compare(t.store.value("dock.autohide"), false);

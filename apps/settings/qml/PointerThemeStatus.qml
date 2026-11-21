@@ -46,8 +46,10 @@ Item {
     Connections {
         target: root.backend
 
-        function onFileChanged(): void {
-            root.reload();
+        function onFileChanged(path: string): void {
+            // The backend watches other files too: only this one is read again.
+            if (path === root.path)
+                root.reload();
         }
     }
 }

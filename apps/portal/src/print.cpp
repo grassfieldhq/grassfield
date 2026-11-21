@@ -702,6 +702,9 @@ void Print::handlePrint(const QDBusObjectPath &handle, const QString &appId, con
 
 void Print::printWithTicket(int id, const Ticket &ticket, const QString &title, int fd)
 {
+    // What this job does stops when its request ends first (ended()): the writer removes its temporary file, the CUPS job is
+    // cancelled.
+    m_jobs.insert(id, JobStop{});
     if (ticket.choices.preview) {
         openInPreview(id, ticket, fd);
         return;
@@ -716,8 +719,9 @@ void Print::printWithTicket(int id, const Ticket &ticket, const QString &title, 
         const int idle = m_options.fileIdleMs;
         const QString folder = ticket.pdfFolder, file = ticket.pdfName;
         const auto stop = m_stopWriting;
-        QThread *writer = QThread::create([fd, folder, file, idle, error, stop] {
-            *error = writePdf(fd, folder, file, idle, print::kMaxDocumentBytes, [stop] { return stop->load(); });
+        const auto closed = m_jobs.value(id).flag;
+        QThread *writer = QThread::create([fd, folder, file, idle, error, stop, closed] {
+            *error = writePdf(fd, folder, file, idle, print::kMaxDocumentBytes, [stop, closed] { return stop->load() || closed->load(); });
         });
         writer->setParent(this);
         connect(writer, &QThread::finished, this, [this, id, writer, error] {
@@ -739,11 +743,14 @@ void Print::printWithTicket(int id, const Ticket &ticket, const QString &title, 
     const QString name = !app.isEmpty() ? app : !title.isEmpty() ? title : QStringLiteral("Document");
     const PrintSystem::Options options = ticket.document ? print::documentOptions(ticket.choices, ticket.capabilities)
                                                          : print::cupsOptions(ticket.choices, ticket.capabilities);
-    m_system->submit(ticket.printer, name, options, fd, this, [this, id](const QString &error) {
+    PrintSystem::Stop stop = m_system->submit(ticket.printer, name, options, fd, this, [this, id](const QString &error) {
         if (!error.isEmpty())
             qWarning("grassfield-portal: the print job did not go: %s", qPrintable(error));
         finish(id, error.isEmpty() ? 0 : 2, {});
     });
+    // The fake print systems of the tests may answer at once: the request may have ended already.
+    if (const auto it = m_jobs.find(id); it != m_jobs.end())
+        it->cups = std::move(stop);
 }
 
 void Print::openInPreview(int id, const Ticket &ticket, int fd)
@@ -758,7 +765,9 @@ void Print::openInPreview(int id, const Ticket &ticket, int fd)
     auto command = std::make_shared<QStringList>(m_options.previewCommand);
     const QString base = m_options.previewFolder, name = ticket.documentName;
     const int idle = m_options.fileIdleMs;
-    const auto stop = m_stopWriting;
+    const auto stopAll = m_stopWriting;
+    const auto closed = m_jobs.value(id).flag;
+    const auto stop = std::make_shared<std::function<bool()>>([stopAll, closed] { return stopAll->load() || closed->load(); });
     // The old copies go, a folder of its own is made in the private folder, the copy is written there as Save as PDF writes (only
     // a PDF, never through a link) and the way Preview opens it is found: off this thread.
     QThread *writer = QThread::create([fd, base, name, idle, error, path, command, stop] {
@@ -773,13 +782,16 @@ void Print::openInPreview(int id, const Ticket &ticket, int fd)
             ::close(fd);
             return;
         }
-        *error = writePdf(fd, folder, file, idle, print::kMaxDocumentBytes, [stop] { return stop->load(); });
+        *error = writePdf(fd, folder, file, idle, print::kMaxDocumentBytes, *stop);
         if (error->isEmpty())
             *path = QDir(folder).filePath(file);
     });
     writer->setParent(this);
     connect(writer, &QThread::finished, this, [this, id, writer, error, path, command] {
         writer->deleteLater();
+        // The request closed meanwhile: Preview does not open (the copy goes with the old ones).
+        if (!m_jobs.contains(id))
+            return;
         if (!error->isEmpty()) {
             qWarning("grassfield-portal: Open in Preview: %s", qPrintable(*error));
             finish(id, 2, {});
@@ -996,6 +1008,14 @@ void Print::forwarded(int id)
 
 void Print::ended(int id)
 {
+    // A job printing with a ticket stops with its request: a Close during the write or the send means "do not" (SP-16). A job
+    // whose own answer ends the request finds nothing left to stop.
+    if (const auto job = m_jobs.find(id); job != m_jobs.end()) {
+        job->flag->store(true);
+        if (job->cups)
+            job->cups();
+        m_jobs.erase(job);
+    }
     const auto it = m_pending.find(id);
     if (it != m_pending.end()) {
         // What reads or draws its document stops; the pages drawn go; its room in the budget comes back now (a child that was

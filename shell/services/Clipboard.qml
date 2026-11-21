@@ -31,6 +31,8 @@ Singleton {
 
     signal searched(int seq, var ids)
     signal pinFull(string id)
+    // The helper could not write the pin (a full disk, a read-only store): the item stays unpinned (B-09).
+    signal pinFailed(string id)
     signal previewReady(string id, string path, string text)
 
     // Dev: the helper built by apps/clipboard-helper/build-direct.sh (GRASSFIELD_CLIPBOARD_HELPER names another, for tests); the
@@ -100,6 +102,9 @@ Singleton {
         root.init();
     }
 
+    // Whether an app (a window class) has a window open: what `K` asks (a test replaces it).
+    property var hasWindow: app => Compositor.toplevelsFor(app).length > 0
+
     function send(fields: var): void {
         if (root.helper.running)
             root.helper.write(Logic.line(fields) + "\n");
@@ -151,7 +156,40 @@ Singleton {
         root.send(yes ? ["Y", seq, Compositor.focusedAppId] : ["N", seq]);
     }
 
+    // The helper's "I" and "X" lines of one event-loop turn, applied together (Logic.applyOps: one sort, one change of `items`;
+    // the history it lists at its start is hundreds of lines); any other line applies them first, so it sees the items the lines
+    // before it gave. handle() itself stays synchronous (a caller reads `items` right after it).
+    readonly property var itemOps: ({list: []})
+
+    function flushItems(): void {
+        const ops = root.itemOps.list;
+        if (ops.length === 0)
+            return;
+        root.itemOps.list = [];
+        root.items = Logic.applyOps(root.items, ops);
+    }
+
+    // A line from the helper's output: "I"/"X" are batched for the turn, anything else is handled at once.
+    function receive(text: string): void {
+        const f = Logic.parseLine(text);
+        if (f[0] === "I") {
+            const item = Logic.parseItem(f);
+            if (item) {
+                root.itemOps.list.push(["I", item]);
+                Qt.callLater(root.flushItems);
+            }
+            return;
+        }
+        if (f[0] === "X") {
+            root.itemOps.list.push(["X", f[1]]);
+            Qt.callLater(root.flushItems);
+            return;
+        }
+        root.handle(text);
+    }
+
     function handle(text: string): void {
+        root.flushItems();
         const f = Logic.parseLine(text);
         switch (f[0]) {
         case "S":
@@ -185,6 +223,15 @@ Singleton {
         case "N":
             if (f[1] === "pin-full")
                 root.pinFull(f[2] || "");
+            else if (f[1] === "pin-failed")
+                root.pinFailed(f[2] || "");
+            break;
+        case "K":
+            // Cleared soon after it was copied (B-10): a password manager that still has a window forgot it; so does the history.
+            if (Logic.forgetOnClear(root.items, f[1] || "", root.hasWindow)) {
+                root.remove(f[1]);
+                root.items = Logic.removeId(root.items, f[1]);
+            }
             break;
         case "V":
             root.previewReady(f[1] || "", f[2] || "", f[3] || "");
@@ -217,6 +264,7 @@ Singleton {
             return;
         }
         // Off: the unpinned items go (the helper deletes its history store, then ends; memory ends with it). Pins stay on disk.
+        root.itemOps.list = [];
         root.items = [];
         root.ownedId = "";
         root.state = "off";
@@ -292,18 +340,48 @@ Singleton {
     readonly property bool sessionLocked: SessionState.locked
     onSessionLockedChanged: root.send([root.sessionLocked ? "P" : "R"])
 
+    // The helper is asked to run.
+    readonly property bool helperAsked: (root.wanted || root.stopping) && !root.waiting && !root.historyClear.running && !root.clearsApply.running
+        && !root.historyAgain && !root.clearsAgain
+
     readonly property Process helper: Process {
+        // Set by started: a run that ends without it never started (see onRunningChanged).
+        property bool didStart: false
         // Never while a store is being cleared without it (it would load what is being deleted).
-        running: (root.wanted || root.stopping) && !root.waiting && !root.historyClear.running && !root.clearsApply.running
-            && !root.historyAgain && !root.clearsAgain
+        running: root.helperAsked
         command: [root.tool, "--display", root.display, "--state", root.storeDir, "--runtime", root.runtimeDir,
             "--retention", String(root.retention), "--history-store", root.keepOnDisk ? "1" : "0",
             "--cleared-at", Logic.clearTimeArg(root.clearedAt), "--pinned-cleared-at", Logic.clearTimeArg(root.pinnedClearedAt)]
         stdinEnabled: true
         stdout: SplitParser {
-            onRead: line => root.handle(line)
+            onRead: line => root.receive(line)
         }
-        onStarted: root.send([SessionState.locked ? "P" : "R"])
+        onStarted: {
+            didStart = true;
+            root.send([SessionState.locked ? "P" : "R"]);
+        }
+        // The helper could not start (Quickshell sends no `exited` then, only running going back to false without a
+        // `started`): an error, and a new try after the same pause as a helper that ended. Not when it was stopped on
+        // purpose before it had started (helperAsked false), nor when an exit already set the pause.
+        onRunningChanged: {
+            if (running)
+                return;
+            if (didStart) {
+                didStart = false;
+                return;
+            }
+            if (!root.helperAsked)
+                return;
+            root.stopping = false;
+            if (!root.wanted || !root.enabled)
+                return;
+            root.state = "error";
+            console.warn("grassfield: the clipboard helper could not start; tried again in " + root.retryMs + " ms");
+            root.waiting = true;
+            root.retry.interval = root.retryMs;
+            root.retry.restart();
+            root.retryMs = Math.min(root.retryMs * 2, 300000);
+        }
         // Quickshell's qmltypes name QProcess::ExitStatus without exporting it (metadata quirk).
         // qmllint disable signal-handler-parameters
         onExited: code => {
@@ -311,6 +389,7 @@ Singleton {
             root.stopping = false;
             root.helperLocked = false;
             root.ownedId = "";
+            root.itemOps.list = [];
             root.items = [];
             if (!root.wanted || !root.enabled)
                 return;

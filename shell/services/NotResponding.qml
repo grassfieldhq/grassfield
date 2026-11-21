@@ -41,12 +41,108 @@ Singleton {
         return Logic.selectionAfterChange(userMoved, kept, preferred, preferredMarked);
     }
 
-    // The stand-ins that ended: their marks go (Hyprland killed them when the app answered or closed, or Force Quit
-    // killed the app and Hyprland its dialog). Checked every 250 ms while there is a mark.
+    // The stand-ins that ended: their marks go (Hyprland killed them when the app answered or closed, or Force Quit killed the
+    // app and Hyprland its dialog), within a second (NR3). Waited for, never polled (audit SC-20: a `kill -0` child every 250 ms
+    // while an app stayed marked, for hours): one util-linux `waitpid` on every stand-in (a pidfd each, no wake while they live)
+    // reports the one that ended ("PID n finished", "could not open PID n" for one already gone) and is started again on the
+    // others; a new mark starts it again with the new list. Where waitpid is missing (exit 127) the earlier check stands in: a
+    // `kill -0` of the stand-ins every 250 ms while there is a mark.
+    property bool waiterMissing: false
+    // The waiter's starts (tests: one per change of the marks, none while nothing changes).
+    property int waiterRuns: 0
+
+    onMarksChanged: root.watchStandins()
+
+    function standinList(): string {
+        const out = [];
+        for (const m of root.marks) {
+            if (out.indexOf(String(m.standin)) < 0)
+                out.push(String(m.standin));
+        }
+        return out.sort().join(" ");
+    }
+
+    function watchStandins(): void {
+        if (root.waiterMissing)
+            return;
+        const want = root.standinList();
+        if (waiter.running) {
+            // A mark came or went: the waiter is started again on the new list once this one has ended.
+            if (waiter.watching !== want && !waiter.stopping) {
+                waiter.stopping = true;
+                waiter.running = false;
+            }
+            return;
+        }
+        if (want === "" || waiterRetry.running)
+            return;
+        waiter.watching = want;
+        waiter.reported = false;
+        waiter.stopping = false;
+        waiter.command = ["sh", "-c", "command -v waitpid >/dev/null 2>&1 || exit 127; exec waitpid -v -c 1 \"$@\"", "sh"].concat(want.split(" "));
+        root.waiterRuns++;
+        waiter.running = true;
+    }
+
+    function standinEnded(line: string): void {
+        const m = /PID ([0-9]+)/.exec(line);
+        if (!m)
+            return;
+        const pid = parseInt(m[1], 10);
+        waiter.reported = true;
+        root.marks = Logic.withoutStandin(root.marks, pid);
+    }
+
+    Process {
+        id: waiter
+        property string watching: ""
+        property bool reported: false
+        property bool stopping: false
+        stdout: SplitParser {
+            onRead: line => root.standinEnded(line)
+        }
+        stderr: SplitParser {
+            onRead: line => {
+                if (line.indexOf("could not open PID") >= 0)
+                    root.standinEnded(line);
+            }
+        }
+        // qmllint disable signal-handler-parameters
+        onExited: code => {
+            // qmllint enable signal-handler-parameters
+            if (code === 127 && !waiter.stopping) {
+                root.waiterMissing = true;
+                console.info("grassfield: waitpid (util-linux) is missing: the not-responding marks are checked every 250 ms instead");
+                return;
+            }
+            // Ended without naming a stand-in and not by us (an error of its own): after a pause, so a waiter that fails at once
+            // never spins; the pause is NR3's bound.
+            if (!waiter.reported && !waiter.stopping) {
+                waiterRetry.start();
+                return;
+            }
+            Qt.callLater(root.watchStandins);
+        }
+    }
+
+    Timer {
+        id: waiterRetry
+        interval: 250
+        onTriggered: {
+            // One look at the stand-ins (the waiter could not tell), then wait again.
+            if (!alive.running && root.marks.length > 0) {
+                alive.command = ["sh", "-c", "for p; do kill -0 \"$p\" 2>/dev/null || echo \"$p\"; done", "sh"].concat(root.marks.map(m => String(m.standin)));
+                alive.running = true;
+            }
+            root.watchStandins();
+        }
+    }
+
+    // The check without waitpid.
     Timer {
         interval: 250
         repeat: true
-        running: root.marks.length > 0 && !alive.running
+        running: root.waiterMissing && root.marks.length > 0 && !alive.running
         onTriggered: {
             alive.command = ["sh", "-c", "for p; do kill -0 \"$p\" 2>/dev/null || echo \"$p\"; done", "sh"].concat(root.marks.map(m => String(m.standin)));
             alive.running = true;

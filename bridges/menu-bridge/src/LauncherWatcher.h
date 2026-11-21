@@ -4,7 +4,8 @@
 // com.canonical.Unity.LauncherEntry.Update on the bus the bridge runs on, feeds each signal to launcher::Book (pure
 // validation, rate limit, coalescing), turns what the Book forwards into menu/1 "launcher" lines, and clears the
 // apps of a sender that leaves the bus. A sender is identified like a menu client (pid of its bus name ->
-// appIdentity): malformed input is a penalty against that identity, and a refused identity's signals are dropped.
+// appIdentity): malformed input is a penalty against that identity, and a refused identity's signals are dropped. Its
+// updates wait in the Book until the identity is known (B-17: an application may only set its own badge, Launcher.h).
 
 #include "Launcher.h"
 #include "Penalties.h"
@@ -51,10 +52,13 @@ namespace gf::menubridge {
         struct Peer {
             QString identity;
             bool    resolved = false;
-            int     strikes  = 0; // malformed updates seen before the identity was known
+            bool    toldForeign = false; // one log line for updates of another application's badge
         };
 
         void forward(const std::vector<launcher::Update>& updates);
+        // What the Book said about one of `sender`'s updates (forwarded lines, penalties, the log).
+        void handled(const QString& sender, const launcher::Book::Result& r);
+        void dropPeer(const QString& sender);
         void resolve(const QString& sender);
         void gone(const QString& sender);
         void flush();

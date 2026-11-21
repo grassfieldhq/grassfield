@@ -36,6 +36,8 @@ TestCase {
         id: fakeManager
         QtObject {
             property var lastActive: null
+            property var quitAlertWindow: null
+            property int quitRequests: 0
             property var deleted: []
             property var closed: []
             property int newMemos: 0
@@ -49,6 +51,14 @@ TestCase {
             }
             function newMemo() {
                 newMemos++;
+            }
+            function requestQuit() {
+                quitRequests++;
+            }
+            function cancelQuit() {
+                quitAlertWindow = null;
+            }
+            function quitAnyway() {
             }
         }
     }
@@ -285,11 +295,11 @@ TestCase {
         const t = makeMemo({}, true);
         t.win.editor.forceActiveFocus();
         keyClick(Qt.Key_Q);
-        const saves = t.backend.saves;
+        const saves = t.backend.asyncSaves;
         const other = otherWindow.createObject(null);
         other.requestActivate();
         tryVerify(() => other.active && !t.win.active, 2000, "another window takes the focus");
-        verify(t.backend.saves > saves, "a memo that loses the focus is written");
+        verify(t.backend.asyncSaves > saves, "a memo that loses the focus is written (on the backend's worker: save(), not saveNow())");
         const html = t.backend.lastUpdate("a", "html");
         verify(html !== undefined && html.indexOf("q") >= 0);
         other.destroy();
@@ -396,5 +406,125 @@ TestCase {
         compare(testCase.refusingBackend.created, 0);
         verify(main.newMemo() === null);
         main.refusalWindow.destroy();
+    }
+
+    // ---- 2026-11 audit, round 2 ----
+
+    // M3: the first line comes from the live document's plain text (no HTML written and parsed again for it).
+    function test_logicFirstLine() {
+        compare(MemoLogic.firstLine(""), "");
+        compare(MemoLogic.firstLine("     Groceries  milk"), "Groceries");
+        compare(MemoLogic.firstLine("a b"), "a");
+        compare(MemoLogic.firstLine("\n\r\n x \n"), "x");
+        compare(MemoLogic.firstLine("￼ Second"), "Second", "an object placeholder alone is not a line");
+        compare(MemoLogic.firstLine(undefined), "");
+    }
+
+    function test_firstLineFromTheLiveDocument() {
+        const t = makeMemo({initialHtml: "<p></p><p>  <b>Shopping</b> list</p><p>eggs</p>"});
+        compare(t.win.firstLine, "Shopping list");
+        // The fake backend has no firstLine(html) any more: a window that asked it would throw.
+        t.win.editor.insert(0, "nb");
+        tryVerify(() => t.win.firstLine === "nbShopping list", 2000, "first line: " + t.win.firstLine);
+        verify(String(t.backend.lastUpdate("a", "html")).indexOf("nb") >= 0);
+        compare(t.win.title, "nbShopping list");
+    }
+
+    // M3: a collapse waits for the frames the backend reads on its worker, then sends the corner it read.
+    function test_collapseWaitsForTheFrames() {
+        const t = makeMemo({height: 260, expandedHeight: 260, width: 250});
+        t.backend.deferFrames = true;
+        t.win.toggleCollapsed();
+        compare(t.backend.frameReads, 1);
+        verify(!t.win.collapsed, "not before the frames are in");
+        t.win.toggleCollapsed(); // changed its mind before they came: nothing to do once they are in
+        t.win.toggleCollapsed(); // and back: a collapse is waiting again
+        t.backend.memos[0].id = "a";
+        t.backend.emitFrames();
+        verify(t.win.collapsed);
+        compare(t.win.height, Tokens.memosStripHeight);
+        tryVerify(() => t.backend.retags.length === 1, 2000);
+        compare(t.backend.retags[0], "memo:a!250x" + Tokens.memosStripHeight);
+    }
+
+    // M1: a write that fails is said in every memo, until one passes.
+    function test_unsavedBandWhileTheWriteFails() {
+        const t = makeMemo();
+        const band = find(t.win.contentItem, "memoUnsavedBand");
+        verify(band);
+        verify(!band.visible);
+        t.backend.saveError = "The disk is full.";
+        verify(band.visible);
+        compare(find(t.win.contentItem, "memoUnsavedText").text, "Not saved: The disk is full.");
+        t.win.toggleCollapsed();
+        verify(t.win.collapsed);
+        verify(!band.visible, "collapsed, the strip says it");
+        compare(find(t.win.contentItem, "memoCollapsedLine").text, "Not saved");
+        t.win.toggleCollapsed();
+        t.backend.saveError = "";
+        verify(!band.visible);
+    }
+
+    // M1: Quit waits while the memos cannot be written; the front memo asks; a write that passes lets it go on.
+    function test_quitWaitsForAWriteThatPasses() {
+        const m = makeMain([{id: "a", color: "yellow", html: "<p>x</p>", width: 240, height: 200, collapsed: false, translucent: false},
+                            {id: "b", color: "blue", html: "<p>y</p>", width: 240, height: 200, collapsed: false, translucent: false}]);
+        m.backend.saveResult = false;
+        m.backend.saveError = "The disk is full.";
+        m.main.requestQuit();
+        compare(m.backend.quits, 0, "no quit while the write fails");
+        const front = m.main.windows[1];
+        compare(m.main.quitAlertWindow, front);
+        verify(front.confirmingQuit);
+        const alert = find(front.contentItem, "memoQuitAlert");
+        verify(alert && alert.visible);
+        compare(find(front.contentItem, "memoQuitReason").text, "The disk is full.");
+        // Cancel: the app stays.
+        mouseClick(find(front.contentItem, "memoCancelQuit"));
+        compare(m.main.quitAlertWindow, null);
+        verify(!alert.visible);
+        compare(m.backend.quits, 0);
+        // Again; then the backend's retry passes: Quit goes on by itself.
+        m.main.requestQuit();
+        verify(front.confirmingQuit);
+        m.backend.saveResult = true;
+        m.backend.saveError = "";
+        m.backend.saved(true);
+        compare(m.backend.quits, 1);
+        cleanupMain(m);
+    }
+
+    function test_quitAnywayLeavesAndTheCompositorsCloseComesBack() {
+        const m = makeMain([{id: "a", color: "yellow", html: "<p>x</p>", width: 240, height: 200, collapsed: false, translucent: false}]);
+        m.backend.saveResult = false;
+        // The Dock's Quit closes every window: they come back, with the alert, while the write fails.
+        m.main.windowClosed(m.main.windows[0]);
+        compare(m.backend.quits, 0);
+        compare(m.main.windows.length, 1, "the memo is shown again");
+        verify(m.main.windows[0].confirmingQuit);
+        mouseClick(find(m.main.windows[0].contentItem, "memoQuitAnyway"));
+        compare(m.backend.quits, 1);
+        cleanupMain(m);
+    }
+
+    function test_deletingTheLastMemoQuitsEvenUnsaved() {
+        // Only the deletion itself would be lost: no alert.
+        const m = makeMain([{id: "a", color: "yellow", html: "", width: 240, height: 200, collapsed: false, translucent: false}]);
+        m.backend.saveResult = false;
+        m.main.deleteMemo(m.main.windows[0]);
+        compare(m.backend.quits, 1);
+    }
+
+    // M3: New Memo near a memo waits for the frames (where the front memo is now); with none it opens at once.
+    function test_newMemoWaitsForTheFrames() {
+        const m = makeMain([{id: "a", color: "yellow", html: "", width: 240, height: 200, collapsed: false, translucent: false}]);
+        m.backend.deferFrames = true;
+        verify(m.main.newMemo() === null);
+        m.main.newMemo();
+        compare(m.main.windows.length, 1, "not before the frames are in");
+        m.backend.emitFrames();
+        compare(m.main.windows.length, 3, "both wait and open");
+        compare(m.backend.created, 2);
+        cleanupMain(m);
     }
 }

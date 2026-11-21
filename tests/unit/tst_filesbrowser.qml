@@ -961,6 +961,27 @@ TestCase {
         tryCompare(files.windows, "length", 0, 2000, "the browser's Ctrl+W closes the browser");
     }
 
+    // A sheet of the browser is up: none of its keys is live, and they are again once it closed. A text field with the
+    // keyboard holds the keys of the selection and of text editing only (Ctrl+Backspace deletes a word there, it does not
+    // trash the selection); the window's own keys stay live.
+    function test_browserKeysWaitForSheetsAndTextFields() {
+        const files = test.openFiles(false);
+        const browser = files.windows[0];
+        const trash = test.browserShortcuts(browser).filter(s => s.sequence === "Ctrl+Backspace");
+        compare(trash.length, 1, "the browser's Ctrl+Backspace");
+        verify(trash[0].enabled, "Move to Trash is live in the view");
+        browser.confirm("Title", "Message", "OK", () => {});
+        tryVerify(() => browser.sheetUp, 2000, "the confirmation is up");
+        test.verifyBrowserKeys(browser, false, false, "a sheet is up");
+        test.type(Qt.Key_Escape, Qt.NoModifier);
+        tryVerify(() => !browser.sheetUp, 2000, "the confirmation closed");
+        test.verifyBrowserKeys(browser, false, true, "the sheet closed");
+        browser.focusSearch();
+        tryVerify(() => browser.typing, 2000, "the search field has the keyboard");
+        verify(!trash[0].enabled, "Ctrl+Backspace is the field's");
+        test.verifyBrowserKeys(browser, false, true, "typing in the search field");
+    }
+
     function test_browserKeysWhileGetInfoIsOpen_data() {
         return [
             {tag: "without the global menu", globalMenu: false},

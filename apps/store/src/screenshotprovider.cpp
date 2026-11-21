@@ -21,10 +21,11 @@ constexpr int kMaxSide = 8192;
 class ScreenshotResponse : public QQuickImageResponse, public QRunnable
 {
 public:
-    ScreenshotResponse(const QString &url, const QSize &requested, std::shared_ptr<const std::atomic_bool> allowed)
+    ScreenshotResponse(const QString &url, const QSize &requested, std::shared_ptr<const std::atomic_bool> allowed, QThreadPool *pool)
         : m_url(url)
         , m_requested(requested)
         , m_allowed(std::move(allowed))
+        , m_pool(pool)
     {
         setAutoDelete(false); // the engine deletes the response once it has `finished`
     }
@@ -32,9 +33,27 @@ public:
     QQuickTextureFactory *textureFactory() const override { return QQuickTextureFactory::textureFactoryForImage(m_image); }
     QString errorString() const override { return m_error; }
 
+    // The image is no longer wanted (its page went, or the source changed): one still waiting for a thread leaves the queue at
+    // once, so the pages shown next never wait behind it; one being fetched aborts its transfer (FetchCancelScope). Either way
+    // `finished` follows, as the engine needs to delete it.
+    void cancel() override
+    {
+        *m_cancel = true;
+        if (m_pool && m_pool->tryTake(this)) {
+            m_error = QStringLiteral("cancelled");
+            emit finished();
+        }
+    }
+
     void run() override
     {
-        load();
+        {
+            const FetchCancelScope scope(m_cancel);
+            if (m_cancel->load())
+                m_error = QStringLiteral("cancelled");
+            else
+                load();
+        }
         emit finished(); // from this thread: QQuickImageResponse allows it
     }
 
@@ -50,6 +69,10 @@ private:
             return;
         }
         FetchResult r = fetch(QUrl(m_url), FetchLimits{kScreenshotMax, kScreenshotMs});
+        if (m_cancel->load()) {
+            m_error = QStringLiteral("cancelled");
+            return;
+        }
         if (r.status != FetchResult::Status::Ok) {
             m_error = r.error.isEmpty() ? QStringLiteral("not fetched") : r.error;
             return;
@@ -74,6 +97,8 @@ private:
     QString m_url;
     QSize m_requested;
     std::shared_ptr<const std::atomic_bool> m_allowed;
+    QThreadPool *m_pool = nullptr;
+    std::shared_ptr<std::atomic_bool> m_cancel = std::make_shared<std::atomic_bool>(false);
     QImage m_image;
     QString m_error;
 };
@@ -88,7 +113,7 @@ ScreenshotProvider::ScreenshotProvider(std::shared_ptr<const std::atomic_bool> a
 
 QQuickImageResponse *ScreenshotProvider::requestImageResponse(const QString &id, const QSize &requestedSize)
 {
-    auto *response = new ScreenshotResponse(QUrl::fromPercentEncoding(id.toLatin1()), requestedSize, m_allowed);
+    auto *response = new ScreenshotResponse(QUrl::fromPercentEncoding(id.toLatin1()), requestedSize, m_allowed, &m_pool);
     m_pool.start(response);
     return response;
 }

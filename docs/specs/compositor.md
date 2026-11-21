@@ -871,6 +871,7 @@ not bound for the virtual keyboard in nested: foot received `ESC TAB`). Fixed bu
 | FR57 | unit `WindowRim.*` (15: the tokens, the dark appearance only and after the shell's push, none in full screen, the width in whole device pixels and macOS 27's light per point at 1, 1.25, 1.5 and 2, the frame with the titlebar, the snapping, the ring's box and radii, and through Hyprland 0.56.2's border and rounding shader arithmetic: the straight sides' first device pixels, never outside the window's shape, continuous round the arcs); nested `tests/compositor/window_edge.sh` (checks 4 to 6, with and without the plugin), `window_edge.sh c2`, `window_edge.sh cost` | L0 / L1 | 2026-11-03, Hyprland 0.56.2 (efb50993), GF-REF 1920x1080 at 1.25: unit 524/524; `window_edge.sh` PASS with the plugin (200 checks: Settings 66 over 39 on its sides and 65-66 on its arcs, inactive 61 and 60-61; foot's bar top 67 over 40, its sides 63 over 36, no second line under the hairline; Evince, dark theme, 78 over 53; none in light) and without it (no rim, no titlebar); `c2` PASS (unload with two windows open: Hyprland alive, rim and titlebar gone; reload: the shell's push, the rim back at 27 levels; 0 plugin exceptions); `cost 6`: render CPU median 2.17 ms with the rim, 2.13 ms without (p95 2.98 / 2.80 ms), 60 Hz either way; C1 `soak.sh 480` PASS (481 s, 166 rounds, every action type effective, minimize 15/20 and restore 15/15, 0 plugin exceptions, no core dump, the shell kept its PID; RSS slopes not judged at that length) |
 | FR58 | unit `ToplevelDrag*` (31: the drag target picked in Hyprland's order with its own window properties, floating windows admitted and the dragged one ignored; the release ending the window's drag when the target finishes late or never and kept until the end, the client's offset for a window mapped while attached, no jump for one mapped already (the grab held at the attach), the regrab, the protocol errors, unmap and role destruction detaching, attach again after a remap, drop, release-then-cancel as a drop, Escape and a destroyed source as a cancel, one live object per source); `Protocol.*` (the feature); nested `tests/compositor/toplevel_drag.sh` (T0-T16, C1/C2; also at scale 1.25) with the fixture client `tests/compositor/toplevel-drag-fixture/tdrag.c` | L0 / L1 | unit PASS (2026-11-08, branch feat/toplevel-drag, Hyprland 0.56.2 efb50993); nested NOT RUN (the agent sandbox cannot start a nested session): pending the integrator's run |
 | FR59 | unit `CapturePrivacy.*` (17: capture state from Hyprland's counts, a protected window drawn only while not captured and only with the listeners, whole redraws when a capture begins and ends and at a load during one, the end of a share redrawing only a display whose capture ended and never for a window share, a capture dying before its first copy, the frame-by-frame grim scenario of 2026-11-09, the miniature's plate on whole pixels at 1, 1.25, 1.5 and 2 and over the subsurfaces, start() registering once even after a call that failed midway, the source scanner itself, every plugin function that draws a window's pixels or title asking in its own body with the functions and their uses pinned, and a new draw site of each of the 8 kinds the scan knows (texture, surface state, its texture or buffer, the title, `renderWindow`, `CSurfacePassElement`, the mirror texture) caught, guarded or not); nested `tests/security/lock_privacy.sh` step screenshare (no green px of the Bitwarden fixture's box, plugin loaded) and `tests/compositor/capture_privacy.sh` (still: no cyan px and a flat bar; overview, Stages strip and slow-motion minimize captured: no cyan px, the green twin's controls) | L0 / L1 | 2026-11-09, integrator's bare nested run of e21c2071 (Hyprland 0.56.2-4): `lock_privacy.sh` 38/38 with the plugin (the 98 px gone) and 38/38 without, `chrome.sh` 19/19, `genie.sh` 42/42. After the review of e21c2071 (end redraw filtered, end check, title, subsurfaces, per-function scan): unit PASS; `capture_privacy.sh` NOT RUN (the agent sandbox cannot start a nested session): pending the integrator's run |
+| HV1-HV5 (Hyprland 0.56 and 0.57) | build against 0.56.2 (installed) and 0.57.2 (`compositor/hypr-sysroot.sh`, CI job); unit suite on both builds; clang-tidy on the 0.56 build | L0 | 2026-11-19: both builds clean (0 errors, 0 warnings), unit 634/634 on each; tidy see docs/compat.md; runtime on 0.57 NOT VERIFIED |
 
 ## Interfaces / contracts (versions)
 
@@ -1178,6 +1179,46 @@ plugin observes `input.mouse.button` and never cancels it, for presses and relea
   (keybinds such as SUPER+drag on the bar, decoration routing, focus hold during the drag, refocus after the
   release), and the plugin would have to re-implement it; nothing is gained because the default path
   already keeps both events from clients.
+
+## Hyprland versions: 0.56 and 0.57 (one source, `src/HyprCompat.hpp`)
+
+The packages never pin Hyprland and the plugin is rebuilt against the installed one (`grassfield-compositor-rebuild`,
+ADR-0009 amendment), so the same sources compile against Hyprland 0.56.x (the project's target) and 0.57.x (current Arch,
+Omarchy). Every difference between the two is in `compositor/src/HyprCompat.hpp`, nowhere else (`GF_HYPRLAND_057`, decided by
+`__has_include(<hyprland/src/workspace/HLWorkspace.hpp>)`: Hyprland has no numeric version macro). Each 0.57 branch is what
+Hyprland 0.57.2 itself does where it replaced the 0.56 call (read from its sources, commit `11cbc6c5`). The ABI stamp is
+unchanged: 0.57's `__hyprland_api_get_client_hash` builds the same string with `std::format`
+(`<commit>_aq_<x.y>_hu_<x.y>_hg_<x.y>_hc_<x.y>_hlg_<x.y>`), so `abi-stamp.cmake`, the rebuild's `abi_of` and `compositor.lua`
+`M.abi` stay as they are.
+
+- **HV1** The plugin, its stamp and the unit tests build against 0.56.2 (installed headers) and against 0.57.2
+  (`compositor/hypr-sysroot.sh <dir>`: Arch's hyprland 0.57.2-1, aquamarine 0.16.0, hyprutils 0.14.3, hyprgraphics 0.6.0,
+  pinned by sha256, in a sysroot where no 0.56 header can be reached), with no warning; clang-tidy (Q1) is clean on the 0.56
+  build. CI builds both (`.github/workflows`, the 0.57 job).
+- **HV2** Same behaviour on both. The mappings: window fields became accessors (`mapped()`, `metadata()`, `backend()`,
+  `presentation()`, `fullscreenPolicy()`, `effects()`); workspaces became `Workspace::CHLWorkspace` whose id is a number only
+  for numbered workspaces (the plugin keeps 64-bit ids: a numbered Desktop's number, a negative id from the address of a named
+  or special one, as 0.56's negative ids); hyprctl commands are `IPC::Socket1::SCommand`, socket2 events
+  `IPC::Socket2::sock()`; the renderer's state moved into an explicit `Render::CRenderContext` given to decorations, pass
+  elements, transformers and render stages (`RENDER_PRE` and `RENDER_POST` have none); decorations are shared pointers and
+  0.57 removes a queued decoration at once (the 0.56 work-around for hidden windows is 0.56 only); focus reasons are bits and
+  a click is `CLICK_DOWN` / `CLICK_UP` (both read as 0.56's `CLICK`); modifiers are `Input::ModifierMask`; the exclusive
+  layer list is `m_exclusiveKeyboardLSes`; `aliveAndVisible()` is `mapped()`, `focusAvailable()` and a non-zero alpha, as
+  0.57 tests it.
+- **HV3** Window transforms (Overview, Stages): 0.56 hands a transformer a monitor-sized buffer with the window at its real
+  place; 0.57 a canvas around the window (its monitor pixels in `in.box`) and clips and damages the output with the
+  transformer's `transformedExtents()`. The plugin's transformers declare the fitted box (`gf::transform::fittedExtents`),
+  map the input texture through `in.box` and still return one of their monitor-sized buffers (its box: the monitor's
+  pixels), drawn with the monitor's pixel space set (`RPT_EXPORT`, `CCanvasScope`) and the context's state put back; 0.57
+  removes a detached transformer through its `active()` flag. A transform that has no buffer draws nothing in 0.57 (0.56
+  cleared the window's buffer). The scratch buffers' "still fits" test compares the frame size (0.57 shrinks the blur
+  buffer to 1x1 while blur is off).
+- **HV4** Known differences on 0.57 (the data is gone, not a choice): an X11 window's resize increments are no longer
+  readable (only min and max sizes are exposed), so X11 tiles are not snapped to them; an X11 window of fixed size counts as
+  floated by Hyprland (0.57's `suggestsFloat` trait includes the size test) and is never tiled, where 0.56 refused it by
+  its size. A layer's "mapped" is 0.57's `mapped()` (0.56's `m_mapped` plus its surface checks).
+- **HV5** Runtime on 0.57 is NOT VERIFIED (docs/compat.md): no 0.57 session has run the plugin. What only a session can show
+  is listed in docs/compat.md "Hyprland 0.57".
 
 ## Dependencies (verified versions)
 
@@ -1840,6 +1881,39 @@ window still on `special:minimized` (`scripts/nestctl -j clients`), keys typed w
 - Hyprland itself never releases the buttons of a removed pointer device: after an abandoned drag (device
   destroyed with the button down) it keeps that button as held until that button's next release, with or
   without the plugin. The plugin only ends its own gesture (FR7).
+
+## Keys, gestures and the config's own work (audit round 2: CIO-01, CIO-03, CIO-06, CIO-08, CIO-10, CIO-17)
+
+- Keys reach the shell in-process (ADR "keys reach the shell in-process"): every shell binding of `bindings.lua` is Hyprland's
+  `event` dispatcher, `custom>>gfkey/1 <target> <function> [argument...]` on socket2, read by `shell/platform/shortcuts`
+  (it accepts exactly the requests the bindings send and calls the IpcHandler of the target). No process per key; socket2
+  keeps the order of the keys. The lock key alone stays `qs ipc` to the security process with Grassfield's stand-in (it
+  must lock with the UI process dead). A Hyprland without the dispatcher gets the `qs ipc` path of before.
+- Overview (3 fingers up/down) and Apps (4-finger pinch in/out) send their progress: `custom>>gfgesture/1 <kind> <phase>
+  <progress>` from Hyprland's Lua gesture callbacks (begin, updates per 1 %, end with commit or back, cancel). Until the
+  Overview and Apps surfaces follow it, the shell opens or closes at a committed end.
+- Forwarded chords (`forwarding.lua`) decide terminal / Files by the keyboard's holder, `hl.plugin.grassfield.keyboard_holder()`
+  ("window:<class>", "layer", "none"); without the plugin a mapped exclusive layer holds the keys. Search open over a terminal
+  gets Ctrl+Left for Alt+Left.
+- The config forks nothing on a reload: the plugin's `file_identity`, `read_file` and `list_files` (core/FileProbe: lstat, a
+  non-blocking regular-file read, a plain sorted listing) replace `stat`, `[ -f ] && timeout head` and `find | sort`;
+  `voxtype` is looked up on PATH by Lua. The loader's `--vetted` check of a user build runs once per build and instance: its
+  verdict is kept next to the runtime note (`<note>.vetted`) under the identity of the plugin, its stamp and every directory
+  up to / (and the installed version); any change asks again. The first parse of a login (no plugin yet) forks as before.
+- Touch on titlebars (CIO-06): a finger's down on a shown titlebar is the titlebar's (cancelled on the bus: Hyprland offers
+  touches to no decoration); a tap on a light acts on its up over that light, a drag on the bar moves the window as the
+  pointer's drag does (snap, tiling preview, drop on another output or the Stages strip), a double tap does the
+  double-click action; the lock or the window's end drops the gesture. A tab torn off by touch follows the finger
+  (xdg_toplevel_drag over Hyprland's touch drag and drop). Not by touch: revealing a full-screen titlebar (it needs the
+  pointer at the top edge) and the zoom light's hover popover.
+- A window `placement.lua` resizes or moves at its opening takes that box at once (`hl.plugin.grassfield.settle`): no 300 ms
+  growth or slide over its opening. Such a window loses its pop-in scale (its fade stays); a window the hook leaves alone
+  keeps its opening animation.
+- VRR and scanout (decision recorded in `looknfeel.lua`): `misc.vrr = 2` (full-screen windows only), `render.direct_scanout =
+  2` (full-screen surfaces with content-type game), tearing off. Owner check on a VRR display.
+- The Genie minimize draws untransformed pixels: on an output whose colour path is not plain sRGB (HDR, wide gamut, an
+  SDR-brightness transform; `needsCM`) the Scale effect is used (`gf::genie::usableOn`). Its GL error checks run on the first
+  32 draws of a load and one in 60 after them, and the mesh is normalised once per element (CIO-13).
 
 ## Session window behaviour (Lua config, not the plugin)
 

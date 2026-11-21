@@ -54,8 +54,21 @@ FocusScope {
         id: doc
         source: root.info.url ?? ""
         onStatusChanged: () => {
+            // Each load starts at Loading: what the load before it asked for is forgotten.
+            if (doc.status !== PdfDocument.Error)
+                root.passwordAsked = false;
             if (doc.status === PdfDocument.Ready)
                 Qt.callLater(root.fit);
+        }
+    }
+
+    // The document asked for a password while loading (its passwordRequired signal; a Qt without it is not an error here).
+    property bool passwordAsked: false
+    Connections {
+        target: doc
+        ignoreUnknownSignals: true
+        function onPasswordRequired(): void {
+            root.passwordAsked = true;
         }
     }
 
@@ -115,11 +128,24 @@ FocusScope {
         }
     }
 
+    // passwordRequired is a signal of PdfDocument, not a property (always truthy when read): the document having asked for
+    // a password says that it is the password that stops it. PdfDocument.error is a translated text in QtQuick.Pdf (nothing
+    // to compare with an enum value); where it is the error's number it is compared with the names that are numbers there,
+    // so that a name this Qt does not have never matches.
+    readonly property bool locked: {
+        if (doc.status !== PdfDocument.Error)
+            return false;
+        if (root.passwordAsked)
+            return true;
+        const e = doc.error;
+        return typeof e === "number" && [PdfDocument.IncorrectPassword, PdfDocument.UnsupportedSecurityScheme].some(v => typeof v === "number" && v === e);
+    }
+
     Message {
         anchors.fill: parent
         visible: doc.status === PdfDocument.Error
-        title: doc.status === PdfDocument.Error && doc.passwordRequired ? qsTr("Password protected") : qsTr("This PDF cannot be opened")
-        text: doc.status === PdfDocument.Error && doc.passwordRequired ? qsTr("Encrypted documents are not supported yet.") : qsTr("The file is damaged or not a PDF document.")
+        title: root.locked ? qsTr("Password protected") : qsTr("This PDF cannot be opened")
+        text: root.locked ? qsTr("Encrypted documents are not supported yet.") : qsTr("The file is damaged or not a PDF document.")
     }
 
     Message {

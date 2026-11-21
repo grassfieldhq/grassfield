@@ -49,10 +49,62 @@ check test "$(login get)" = grassfield
 desc="set refuses an unknown session"
 status=0; login set windows >/dev/null 2>&1 || status=$?
 check test "$status" = 2
+desc="SS-11: Omarchy's session file has no Exec= line: the stock Hyprland uwsm session is used, not an empty line"
+login set omarchy >/dev/null; sed -i '/^Exec=/d' "$fx/usr/local/share/wayland-sessions/omarchy.desktop"
+printf '[Desktop Entry]\nName=Hyprland (uwsm)\nExec=uwsm start -e -D Hyprland hyprland.desktop\n' >"$fx/usr/share/wayland-sessions/hyprland-uwsm.desktop"
+out=$(login)
+check test "$out" = "uwsm start -e -D Hyprland hyprland.desktop"
+rm "$fx/usr/share/wayland-sessions/hyprland-uwsm.desktop"
 desc="Omarchy chosen but not installed: Grassfield starts (never a dead login)"
 login set omarchy >/dev/null; rm "$fx/usr/local/share/wayland-sessions/omarchy.desktop"
 out=$(login)
 check test "$out" = "$(sed -n 's/^Exec=//p' "$pk/wayland-sessions/grassfield.desktop")"
+
+# SS-11: a session that dies at once. Fake sessions (each logs its name, then lives as long as $tmp/live-<name> says), the
+# threshold at 2 s, the real script run (no dry run): its child is the session.
+fx2=$tmp/root2
+mkdir -p "$fx2/usr/share/wayland-sessions" "$fx2/usr/local/share/wayland-sessions" "$tmp/home2"
+cat >"$tmp/fake-session" <<'SH'
+#!/bin/sh
+echo "$1" >>"$FAKE_DIR/sessions.log"
+trap 'echo "$1 TERM" >>"$FAKE_DIR/sessions.log"; kill "$s" 2>/dev/null; exit 0' TERM
+sleep "$(cat "$FAKE_DIR/live-$1" 2>/dev/null || echo 0)" &
+s=$!
+wait "$s"
+exit 7
+SH
+chmod +x "$tmp/fake-session"
+printf '[Desktop Entry]\nName=Grassfield\nExec=%s grassfield\n' "$tmp/fake-session" >"$fx2/usr/share/wayland-sessions/grassfield.desktop"
+printf '[Desktop Entry]\nName=Omarchy\nExec=%s omarchy\n' "$tmp/fake-session" >"$fx2/usr/local/share/wayland-sessions/omarchy.desktop"
+start() { status=0; FAKE_DIR=$tmp HOME=$tmp/home2 XDG_CONFIG_HOME=$tmp/home2/.config XDG_STATE_HOME=$tmp/home2/.state GRASSFIELD_LOGIN_ROOT=$fx2 \
+  GRASSFIELD_LOGIN_QUICK_SECONDS=2 sh "$pk/bin/grassfield-login" "$@" 2>>"$tmp/login.err" || status=$?; }
+last_session() { tail -n 1 "$tmp/sessions.log"; }
+echo 0 >"$tmp/live-grassfield"; echo 0 >"$tmp/live-omarchy"
+desc="SS-11: the session runs as the login's child: its exit status is the login's"
+start; check bash -c '[[ $1 == 7 ]] && [[ $(tail -n 1 "$2/sessions.log") == grassfield ]]' _ "$status" "$tmp"
+desc="SS-11: a second quick exit in a row of the chosen session: the next login starts the other one, once, and says so"
+start; start
+check bash -c '[[ $(tail -n 3 "$1/sessions.log" | tr "\n" " ") == "grassfield grassfield omarchy " ]] && grep -q "the grassfield session ended within 2 s of its start 2 times in a row: starting omarchy this time" "$1/login.err"' _ "$tmp"
+desc="SS-11: the login after the fallback tries the chosen session again; one more quick exit falls back again (bounded: it alternates)"
+start; start
+check bash -c '[[ $(tail -n 2 "$1/sessions.log" | tr "\n" " ") == "grassfield omarchy " ]] && [[ $(cat "$1/home2/.config/grassfield/login-session" 2>/dev/null || echo grassfield) == grassfield ]]' _ "$tmp"
+desc="SS-11: a chosen session that lives past the threshold clears its count: the next logins start it"
+echo 3 >"$tmp/live-grassfield"
+start; echo 0 >"$tmp/live-grassfield"; start
+check bash -c '[[ $(tail -n 2 "$1/sessions.log" | tr "\n" " ") == "grassfield grassfield " ]] && grep -qx "grassfield 1" "$1/home2/.state/grassfield/login-quick-exits"' _ "$tmp"
+desc="SS-11: grassfield-login set clears the record (the user's choice starts afresh)"
+start; FAKE_DIR=$tmp HOME=$tmp/home2 XDG_CONFIG_HOME=$tmp/home2/.config XDG_STATE_HOME=$tmp/home2/.state sh "$pk/bin/grassfield-login" set grassfield >/dev/null
+start
+check bash -c '[[ $(tail -n 1 "$1/sessions.log") == grassfield ]] && grep -qx "grassfield 1" "$1/home2/.state/grassfield/login-quick-exits"' _ "$tmp"
+desc="SS-11: a TERM to the login reaches the session (no session left running), and a garbage record reads as no quick exit"
+printf 'grassfield 99999\nrm -rf /\n' >"$tmp/home2/.state/grassfield/login-quick-exits"
+echo 30 >"$tmp/live-grassfield"
+( FAKE_DIR=$tmp HOME=$tmp/home2 XDG_CONFIG_HOME=$tmp/home2/.config XDG_STATE_HOME=$tmp/home2/.state GRASSFIELD_LOGIN_ROOT=$fx2 GRASSFIELD_LOGIN_QUICK_SECONDS=2 \
+  exec sh "$pk/bin/grassfield-login" 2>>"$tmp/login.err" ) &
+lp=$!
+sleep 1; kill -TERM "$lp"; t=0; while kill -0 "$lp" 2>/dev/null && [ $t -lt 50 ]; do sleep 0.1; t=$((t + 1)); done
+check bash -c '! kill -0 "$1" 2>/dev/null && [[ $(tail -n 2 "$2/sessions.log" | tr "\n" " ") == "grassfield grassfield TERM " ]]' _ "$lp" "$tmp"
+wait "$lp" 2>/dev/null || true
 
 desc="the SDDM drop-in sorts after Omarchy's autologin.conf and 99-omarchy-login.conf (later files win)"
 check bash -c 'first=$(printf "%s\n" autologin.conf 99-omarchy-login.conf 10-theme.conf 10-wayland.conf grassfield.conf | LC_ALL=C sort | tail -n 1); [[ $first == grassfield.conf ]]'

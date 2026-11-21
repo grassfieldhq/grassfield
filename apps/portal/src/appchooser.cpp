@@ -110,7 +110,8 @@ void AppChooser::handle(const QDBusObjectPath &handle, const QString &appId, con
     m_callers.insert(id, message.service());
     if (!startUi(id))
         return;
-    emit opened(id, toQml(appId, parentWindow, choices, options));
+    const QVariantMap chooser = toQml(appId, parentWindow, choices, options);
+    whenAppKnown(id, [this, id, chooser] { emit opened(id, chooser); });
 }
 
 void AppChooser::updateChoices(const QDBusObjectPath &handle, const QStringList &choices, const QString &sender)

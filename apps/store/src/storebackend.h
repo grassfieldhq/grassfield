@@ -31,6 +31,7 @@
 #include <QVariantMap>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -54,6 +55,7 @@ struct Snapshot {
     AppStreamData appstream;
     QString appstreamProblem; // "" or download, unverified, unavailable
     QList<SyncPackage> sync;
+    QSet<QString> syncNames; // the names of `sync`, for the buttons' look-ups (SU-12: no scan of ~15k packages per button)
     QSet<QString> explicitPackages;
     QSet<QString> foreign;          // packages no repository has (pacman -Qm)
     QSet<QString> foreignWithEntry; // those of them that own an application entry
@@ -93,8 +95,9 @@ class StoreBackend : public QObject
     Q_PROPERTY(QString shortcutStyle READ shortcutStyle NOTIFY appearanceChanged)
     Q_PROPERTY(QString titlebarDoubleClick READ titlebarDoubleClick NOTIFY appearanceChanged)
     Q_PROPERTY(bool canMinimize READ canMinimize NOTIFY appearanceChanged)
-    // Bumped each time a new snapshot is in place: the pages read their data again.
-    Q_PROPERTY(int revision READ revision NOTIFY dataChanged)
+    // Bumped each time a new snapshot is in place (dataChanged: the pages read their data again, in place), and when only the
+    // buttons' state moved (an update checked or planned: revisionChanged alone, SU-06).
+    Q_PROPERTY(int revision READ revision NOTIFY revisionChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(bool refreshing READ refreshing NOTIFY loadingChanged)
     Q_PROPERTY(bool online READ online NOTIFY networkChanged)
@@ -163,6 +166,9 @@ public:
     // A category's apps, by name; kind "" for all, else only that source.
     Q_INVOKABLE QVariantList categoryApps(const QString &id, const QString &kind = QString()) const;
     Q_INVOKABLE QVariantList search(const QString &query) const;
+    // The search off the GUI thread (SR6, SU-06 note): the snapshot's model searched on a worker, answered by searchResults
+    // with the same query; an answer to a query asked before the latest one is dropped (never shown over a newer one).
+    Q_INVOKABLE void searchAsync(const QString &query);
     // The product page, {} when the app is not offered.
     Q_INVOKABLE QVariantMap app(const QString &id) const;
     // pacman -Si for the Information list, answered by packageInfo().
@@ -260,17 +266,29 @@ public:
     void start();
     // Only the read of what is on this computer (no fetch, no recovery of an earlier operation, no lock check): `--removable`
     // runs beside a Store that may be running an operation (ADR-0046 D1). loadingChanged says when it is done.
-    void loadOnly() { run(Job{}); }
+    void loadOnly()
+    {
+        m_loadOnly = true;
+        run(Job{});
+    }
 
     // Screenshots on and the Store online: screenshotSource's answer, and the provider's gate (kept current for it, since
     // it fetches off the GUI thread and a page may still ask after the Store went offline).
     bool screenshotsAllowed() const { return m_screenshots && m_online; }
     std::shared_ptr<const std::atomic_bool> screenshotGate() const { return m_screenshotGate; }
 
+    // SU-07: the quit. Every job is told to stop (their fetches abort, their children are ended) and the pools are waited
+    // for, `ms` at most; false when a job still runs then (the caller leaves without waiting for it: _exit).
+    bool drain(int ms);
+    // `--removable` (SU-02): removalByEntry(true) with each repository app's -Rs plan run on the workers, several at once,
+    // the GUI thread free meanwhile; `done` runs here with the map once every plan answered.
+    void removalByEntryAsync(std::function<void(const QVariantMap &)> done);
+
 signals:
     void appearanceChanged();
     void sourcesChanged();
     void dataChanged();
+    void revisionChanged();
     void loadingChanged();
     void networkChanged();
     void focusWindowChanged();
@@ -282,6 +300,7 @@ signals:
     void buildScript(const QString &id, const QString &text, bool ok);
     void flatpakInfo(const QString &id, const QVariantMap &facts);
     void updatesChanged();
+    void searchResults(const QString &query, const QVariantList &apps);
 
 protected:
     // The snapshot in use from now on. Protected for the unit tests (tst_storebackend), which hand it states a load
@@ -359,7 +378,21 @@ private:
     QString flatpakUpdateBlock() const;
     void planFlatpakUpdate(const QString &id);
     PlanTools planTools() const;
+    // pacman's lock read on a worker (its /proc walk, SU-12); staleLock follows when the answer comes.
     void checkStaleLock();
+    // SU-12: what the buttons ask at each revision, cached until the next snapshot: whether a tool is executable, and the
+    // parsed software-update.json until the file changes (its size and time).
+    bool executable(const QString &path) const;
+    mutable QHash<QString, bool> m_executable;
+    struct UpdatesFileCache {
+        qint64 size = -1;
+        QDateTime modified;
+        int revision = -1; // the snapshot's (m_revision)
+        QVariantMap parsed;
+    };
+    mutable UpdatesFileCache m_updatesFile_;
+    bool m_staleChecking = false;
+    std::atomic_int m_searchGeneration{0}; // read by the search's worker
 
     QString m_language = QStringLiteral("en");
     QLocale m_formats;
@@ -388,6 +421,8 @@ private:
     QVariantMap m_user;
     std::shared_ptr<const Snapshot> m_snapshot;
     bool m_jobRunning = false;
+    // loadOnly(): the first load is the only job (no follow-up fetch, no AUR or Flatpak question after it).
+    bool m_loadOnly = false;
     std::optional<Job> m_pendingJob;
     std::shared_ptr<std::atomic_bool> m_cancel;
     std::shared_ptr<std::atomic_bool> m_screenshotGate = std::make_shared<std::atomic_bool>(true);
@@ -430,6 +465,11 @@ private:
     QHash<QString, UpdatePlan> m_updatePlans;              // app id or kFlatpakUpdatesApp -> its last plan
     QHash<QString, std::pair<int, int>> m_updatePlanning; // a plan running: the apps checked, of how many
     bool m_quitWhenIdle = false;
+    // SU-14: what every worker posts its answer to. Declared before the pools, so it outlives them: a job that ends while the
+    // backend is destroyed posts to a live object, and the answer is dropped with it (never delivered to a dead backend). A
+    // worker never reads a QPointer of the backend's (only safe on the backend's own thread).
+    QObject m_context;
+    QThreadPool m_searchPool; // the search's one thread (searchAsync): never behind a load's fetch
     QThreadPool m_updatePool; // Updates' jobs (step 4); with m_pool, after every other member: they wait for their jobs,
     QThreadPool m_pool;       // last member: waits for the jobs while the rest is still there; m_cancel stops their children
 };

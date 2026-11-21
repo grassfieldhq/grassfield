@@ -155,3 +155,37 @@ One state file: `audio-routing.json` (state, 0600 in the 0700 folder, written by
 and reads it; `version` 1 from the start): the output devices that stopped taking the sound by themselves (ADR-0047 A-6).
 `grassfield.json` gains `sound.alert`, `sound.alertVolume`, `sound.effectsOutput` (a new pattern rule, `nodeName`),
 `sound.uiEffects` and `sound.volumeFeedback`, generated from the schema like every other key (decision 1).
+
+## Amendment to ADR-0020 (settings contract and persisted files), decision 2 — the shell follows grassfield.json through events
+
+Date: 2026-11-19 · Status: accepted (2026-11 audit, findings SC-01 and SC-08)
+
+## Change
+Replaces "the path is looked at again every 10 s and after each read, so replacing the link with a regular file is noticed"
+and "a file that could not be used is read again at every poll" in decision 2:
+
+- A usable `grassfield.json` is followed through events only, never a timer: the watch on the file (its content), a watch on
+  the configuration folder (an entry replaced: a link swapped for a regular file, a rename over it) and a watch on the folder
+  of every symbolic link on the way to the file (the bounded read reports them; a link retargeted there). A folder event costs
+  one `stat` of the path, then a full read only when the file's signature (device, inode, size, mtime) changed. The events of
+  one settle window (50 ms) are one read or one stat.
+- Only a file found unusable is looked at on a timer: a stat every 10 s, a full read at once when the signature changed, else
+  after a back-off (1, 2, 4 ... polls, at most 5 minutes), as before.
+- The shell's own write is read back exactly once (its request and the rename's watch events fall in the same window).
+- Inside the shell, a change re-evaluates only the readers of its top-level section (one revision per section of the schema,
+  moved only when that section's value changed: a reload of the same document, or a setter given the value it has, moves
+  none), and the readers of an array or object view are told of a change only when its value changed (the view keeps its
+  object otherwise).
+
+## Why
+The 10 s stat was a forked `sh` + `stat` every 10 s for the whole session (8640 a day) in the UI process, in every process that
+holds the store, to catch a case (a replaced link) that a folder watch reports at once. Every change and every reload moved
+one revision that all ~150 views read, and every array view returned a new array: a Transparency slider step rebuilt every
+Dock three times, and each write was read back twice.
+
+## Consequences
+- A link chain longer than 8 hops, or a folder whose name holds a newline, is not watched past that point (the file's own
+  watch still reports content changes; a retarget there is noticed at the next event of the configuration folder).
+- `tests/shell/settings_churn` checks the costs (views re-evaluated per change, objects kept, one read back, no stat while
+  idle, a link retargeted two links away followed within a second); `tests/shell/settings_backoff` keeps checking the
+  unusable file's back-off.

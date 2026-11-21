@@ -42,6 +42,13 @@ Window {
     property string tagBeforeResize: ""
     // Set once the window is made: the sizes given at creation are the stored ones, not changes.
     property bool ready: false
+    // A collapse (1) or an expand (0) waiting for the frames the backend reads on its worker (-1: none): the corner the memo
+    // has now goes on the tag before the window changes size.
+    property int pendingCollapse: -1
+    // Main.qml asks this memo to hold the Quit alert (the memos could not be written).
+    readonly property bool confirmingQuit: memo.manager.quitAlertWindow === memo
+    // Why the memos are not written ("" while they are): the band at the bottom of every memo (M1 of the 2026-11 audit).
+    readonly property string saveError: memo.backend.saveError
 
     title: MemoLogic.title(memo.firstLine, qsTr("Memo"))
     color: "transparent"
@@ -74,11 +81,20 @@ Window {
         memo.push({color: c});
     }
 
+    // The frames are read first (on the backend's worker, never on this thread); applyCollapse() follows when they are in.
     function setCollapsed(on: bool): void {
+        if (on === memo.collapsed && memo.pendingCollapse < 0)
+            return;
+        memo.pendingCollapse = on ? 1 : 0;
+        memo.backend.refreshFrames();
+    }
+
+    function applyCollapse(on: bool): void {
+        memo.pendingCollapse = -1;
         if (on === memo.collapsed)
             return;
         // The corner the memo has now, read before the change: Hyprland moves a window whose surface changes size.
-        memo.tagBeforeResize = memo.backend.freshTagFor(memo.memoId);
+        memo.tagBeforeResize = memo.backend.tagFor(memo.memoId);
         memo.applyingHeight = true;
         memo.collapsed = on;
         memo.height = MemoLogic.windowHeight(on, memo.expandedHeight, Tokens.memosStripHeight, Tokens.memosWindowMinHeight);
@@ -91,7 +107,7 @@ Window {
     }
 
     function toggleCollapsed(): void {
-        memo.setCollapsed(!memo.collapsed);
+        memo.setCollapsed(memo.pendingCollapse >= 0 ? memo.pendingCollapse === 0 : !memo.collapsed);
     }
 
     function toggleTranslucent(): void {
@@ -101,9 +117,14 @@ Window {
 
     // Close box, File > Close, Ctrl+W, the compositor's close: an empty memo goes at once, one with text asks first.
     function pushText(): void {
-        const html = textEdit.text;
-        memo.firstLine = memo.backend.firstLine(html);
-        memo.push({html: html});
+        memo.firstLine = memo.liveFirstLine();
+        memo.push({html: textEdit.text});
+    }
+
+    // The first line from the live document's plain text (its first 4 KiB first: a long memo is not read whole for it).
+    function liveFirstLine(): string {
+        const head = MemoLogic.firstLine(textEdit.getText(0, Math.min(textEdit.length, 4096)));
+        return head !== "" || textEdit.length <= 4096 ? head : MemoLogic.firstLine(memo.plainText());
     }
 
     // The text still in the short pause goes to the backend now (a close, a save, the memo left; review of the memos slice:
@@ -188,7 +209,7 @@ Window {
             return;
         }
         memo.flush();
-        memo.backend.saveNow();
+        memo.backend.save();
     }
 
     onWidthChanged: {
@@ -204,13 +225,21 @@ Window {
 
     Component.onCompleted: {
         textEdit.text = memo.initialHtml;
-        memo.firstLine = memo.backend.firstLine(memo.initialHtml);
+        memo.firstLine = memo.liveFirstLine();
         memo.ready = true;
         textEdit.forceActiveFocus();
     }
 
     Theme {
         backend: memo.backend
+    }
+
+    Connections {
+        target: memo.backend
+        function onFramesRead(): void {
+            if (memo.pendingCollapse >= 0)
+                memo.applyCollapse(memo.pendingCollapse === 1);
+        }
     }
 
     // Global menu (T1): its keys repeat the Shortcuts below; each Shortcut acts on activatedAmbiguously too (Preview's rule).
@@ -240,8 +269,8 @@ Window {
     }
     Shortcut {
         sequence: "Ctrl+Q"
-        onActivated: Qt.quit()
-        onActivatedAmbiguously: Qt.quit()
+        onActivated: memo.manager.requestQuit()
+        onActivatedAmbiguously: memo.manager.requestQuit()
     }
     Shortcut {
         sequence: "Ctrl+B"
@@ -371,7 +400,7 @@ Window {
                     verticalCenter: parent.verticalCenter
                 }
                 visible: memo.collapsed
-                text: memo.firstLine
+                text: memo.saveError !== "" ? qsTr("Not saved") : memo.firstLine
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 horizontalAlignment: Text.AlignHCenter
@@ -402,7 +431,7 @@ Window {
                 left: parent.left
                 right: parent.right
                 top: strip.bottom
-                bottom: parent.bottom
+                bottom: unsavedBand.visible ? unsavedBand.top : parent.bottom
                 leftMargin: Tokens.memosTextMargin
                 rightMargin: Tokens.memosTextMargin
                 topMargin: Tokens.memosTextMargin
@@ -470,6 +499,41 @@ Window {
                 const p = textEdit.positionAt(mouse.x + flick.contentX, mouse.y + flick.contentY);
                 textEdit.select(p, p);
                 memo.pastePlain(memo.backend.clipboardText(true));
+            }
+        }
+
+        // The memos are not written (disk full, read only, too much text): said in every memo until a write passes, so no one
+        // types on believing it is kept. The backend tries again by itself; Quit waits for it (Main.qml requestQuit).
+        Rectangle {
+            id: unsavedBand
+            objectName: "memoUnsavedBand"
+            anchors {
+                left: parent.left
+                right: parent.right
+                bottom: parent.bottom
+            }
+            visible: memo.saveError !== "" && !memo.collapsed
+            height: visible ? unsavedText.implicitHeight + 2 * Tokens.spacingXs : 0
+            color: memo.stripColor
+
+            Text {
+                id: unsavedText
+                objectName: "memoUnsavedText"
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    verticalCenter: parent.verticalCenter
+                    leftMargin: Tokens.memosTextMargin
+                    rightMargin: Tokens.memosGripSize
+                }
+                text: qsTr("Not saved: %1").arg(memo.saveError)
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                color: Tokens.memosInk
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyCaptionSize
+                font.weight: Tokens.typographyTitleWeight
+                Accessible.role: Accessible.AlertMessage
             }
         }
 
@@ -587,6 +651,85 @@ Window {
                     primary: true
                     text: qsTr("Delete")
                     onClicked: memo.manager.deleteMemo(memo)
+                }
+            }
+        }
+    }
+
+    // The Quit alert (Main.qml requestQuit): the memos could not be written. Quit waits: it goes on by itself as soon as a
+    // write passes; Quit Anyway leaves without the latest changes.
+    Rectangle {
+        id: quitAlert
+        objectName: "memoQuitAlert"
+        anchors {
+            left: parent.left
+            right: parent.right
+            top: parent.top
+            bottom: parent.bottom
+            topMargin: Tokens.memosStripHeight
+        }
+        visible: memo.confirmingQuit
+        color: Appearance.withAlpha(memo.paperColor, Tokens.memosAlertFillOpacity)
+        focus: memo.confirmingQuit
+        Keys.onEscapePressed: memo.manager.cancelQuit()
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+        }
+
+        Column {
+            anchors {
+                left: parent.left
+                right: parent.right
+                verticalCenter: parent.verticalCenter
+                margins: Tokens.memosTextMargin
+            }
+            spacing: Tokens.spacingSm
+
+            Text {
+                width: parent.width
+                text: qsTr("Quit without saving?")
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
+                color: Tokens.memosInk
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyBodySize
+                font.weight: Tokens.typographyTitleWeight
+            }
+
+            Text {
+                objectName: "memoQuitReason"
+                width: parent.width
+                text: memo.saveError !== "" ? memo.saveError : qsTr("Your latest changes couldn't be saved.")
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
+                color: Tokens.memosInk
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyCaptionSize
+            }
+
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: Tokens.spacingSm
+
+                Button {
+                    objectName: "memoCancelQuit"
+                    push: true
+                    labelColor: Tokens.memosInk
+                    fillColor: Appearance.withAlpha(Tokens.memosInk, Tokens.memosAlertButtonFillOpacity)
+                    text: qsTr("Cancel")
+                    onClicked: memo.manager.cancelQuit()
+                }
+
+                Button {
+                    objectName: "memoQuitAnyway"
+                    push: true
+                    primary: true
+                    text: qsTr("Quit Anyway")
+                    onClicked: memo.manager.quitAnyway()
                 }
             }
         }

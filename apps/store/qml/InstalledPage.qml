@@ -12,16 +12,32 @@ ScrollPage {
 
     signal opened(string id)
 
+    // The groups by name, their list kept in step in place (SU-06): a new snapshot changes each group's apps, never the
+    // groups' items.
+    readonly property var byGroup: {
+        const map = {};
+        for (const g of root.groups || [])
+            map[g.group] = g;
+        return map;
+    }
+    onGroupsChanged: groupKeys.sync((root.groups || []).map(g => g.group))
+    Component.onCompleted: groupKeys.sync((root.groups || []).map(g => g.group))
+
+    KeyedModel {
+        id: groupKeys
+    }
+
     title: qsTr("Installed")
     Accessible.role: Accessible.Pane
     Accessible.name: root.title
 
     Repeater {
-        model: root.groups
+        model: groupKeys
 
         delegate: Column {
             id: group
-            required property var modelData
+            required property string key
+            readonly property var modelData: root.byGroup[group.key] || ({group: group.key, apps: []})
             width: root.contentWidth
             spacing: Tokens.storeShelfTitleGap
 

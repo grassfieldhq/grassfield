@@ -13,13 +13,20 @@ Sheet {
     confirmText: qsTr("Done")
     showCancel: false
 
-    SettingsGroup {
-        SettingsRow {
-            title: qsTr("Show Percentage")
-            Toggle {
-                accessibleName: qsTr("Show the battery percentage in the menu bar")
-                checked: root.store.value("menubar.showBatteryPercentage")
-                onToggled: c => root.store.set("menubar.showBatteryPercentage", c)
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
+
+            SettingsGroup {
+                SettingsRow {
+                    title: qsTr("Show Percentage")
+                    Toggle {
+                        accessibleName: qsTr("Show the battery percentage in the menu bar")
+                        checked: root.store.value("menubar.showBatteryPercentage")
+                        onToggled: c => root.store.set("menubar.showBatteryPercentage", c)
+                    }
+                }
             }
         }
     }

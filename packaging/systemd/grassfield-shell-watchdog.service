@@ -16,6 +16,14 @@ Slice=session.slice
 ExecStart=/usr/lib/grassfield/grassfield-shell-watchdog
 # The question's bound (5 s, 20 s on a loaded machine), its KILL a second later, a few short systemctl calls: under this.
 TimeoutStartSec=45
+# Quiet in the journal (the owner's diagnostic report of 2026-11-21: 2,496 of its 3,000 lines were this unit's "Starting" and
+# "Finished" pairs, two lines every 30 s). LogLevelMax= also applies to what the user manager logs about this unit
+# (systemd.exec(5)): its routine "Starting"/"Finished"/"Deactivated successfully" lines are info and are dropped, while a
+# failure ("Failed with result", "Failed to start", a non-zero exit) is notice or above and stays. The probe's own lines
+# (`say`, on stderr, no level prefix) would be info as well: SyslogLevel=notice makes them notice, so a miss and a kill are
+# still logged.
+SyslogLevel=notice
+LogLevelMax=notice
 # Quickshell's option variables cleared, as for every caller of the shell's IPC in the session (a stray QS_MANIFEST made the
 # path selection exit 108: the re-review of bf9e280), and the helper's test variable: the kernel's pressure files are read.
 UnsetEnvironment=QS_CONFIG_PATH QS_CONFIG_NAME QS_MANIFEST GRASSFIELD_SHELL_WATCHDOG_PRESSURE

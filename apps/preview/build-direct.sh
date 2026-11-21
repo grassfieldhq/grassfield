@@ -14,11 +14,16 @@ mkdir -p "$out"
 cxxflags=(-std=c++17 -O2 -Wall -Wextra -Wno-sfinae-incomplete -fPIC "-DGRASSFIELD_VERSION=\"$(tr -d "[:space:]" <"$root/VERSION")\"") # VERSION: the one version source
 
 if [[ ${1:-} == "--tests" ]]; then
+  # tst_previewapp needs the backend (previewapp.cpp, its moc, Qt Quick for the image provider).
+  moc=/usr/lib/qt6/moc
+  [[ -x $moc ]] || moc=$(command -v moc-qt6 || command -v moc)
+  "$moc" "$here/src/previewapp.h" -o "$out/moc_previewapp_tests.cpp"
   # shellcheck disable=SC2046
-  g++ "${cxxflags[@]}" -I"$here/src" -I"$here/../files/src" -I"$here/.." $(pkg-config --cflags Qt6Core Qt6Gui) \
-    "$root/tests/unit/preview/tst_previewlogic.cpp" "$root/tests/unit/preview/tst_shortcutstyle.cpp" "$here/src/previewlogic.cpp" \
+  g++ "${cxxflags[@]}" -I"$here/src" -I"$here/../files/src" -I"$here/.." $(pkg-config --cflags Qt6Core Qt6Gui Qt6Qml Qt6Quick) \
+    "$root/tests/unit/preview/tst_previewlogic.cpp" "$root/tests/unit/preview/tst_shortcutstyle.cpp" "$root/tests/unit/preview/tst_previewapp.cpp" \
+    "$here/src/previewlogic.cpp" "$here/src/previewapp.cpp" "$out/moc_previewapp_tests.cpp" \
     "$here/../files/src/filelogic.cpp" \
-    $(pkg-config --libs Qt6Core Qt6Gui) -lgtest -lgtest_main -pthread \
+    $(pkg-config --libs Qt6Core Qt6Gui Qt6Qml Qt6Quick) -lgtest -lgtest_main -pthread \
     -o "$out/preview-unit-tests"
   echo "built $out/preview-unit-tests"
   exit 0

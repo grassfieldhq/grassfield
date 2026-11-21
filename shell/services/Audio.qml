@@ -75,8 +75,9 @@ Singleton {
     // Returns true when the backend was written (false: refused by the dev guard).
     function setVolume(value: real): bool {
         return backendWrite("volume", () => {
+            // Never above 100 percent nor below 0 (a scroll past either end, like the volume keys' `-l 1`).
             if (ready && !VisualFixtures.active)
-                sink.audio.volume = value;
+                sink.audio.volume = Math.max(0, Math.min(1, value));
         });
     }
 
@@ -115,6 +116,13 @@ Singleton {
             return false;
         }
         return backendWrite("key " + direction, () => {
+            // Starting a process that still runs does nothing: a key pressed meanwhile waits its turn (a held key repeats
+            // faster than wpctl ends). Bounded: past 16 waiting steps the oldest ones are enough.
+            if (keyProcess.running) {
+                if (keyProcess.waiting.length < 16)
+                    keyProcess.waiting = keyProcess.waiting.concat([args]);
+                return;
+            }
             keyProcess.command = ["wpctl"].concat(args);
             keyProcess.running = true;
         });
@@ -124,9 +132,18 @@ Singleton {
 
     Process {
         id: keyProcess
+        // wpctl argument lists asked while a run was going, the first one started when that one is gone.
+        property var waiting: []
         onRunningChanged: {
-            if (!running)
-                root.keyFinished();
+            if (running)
+                return;
+            root.keyFinished();
+            if (waiting.length > 0) {
+                const args = waiting[0];
+                waiting = waiting.slice(1);
+                command = ["wpctl"].concat(args);
+                running = true;
+            }
         }
     }
 
@@ -201,9 +218,12 @@ Singleton {
         }
         if (root.routing.dirty) {
             root.routing.dirty = false;
+            // A write still running is left to end (starting it again would do nothing): the memory is written once more after.
             if (!root.routingReadOnly) {
-                routingWriter.command = ["sh", Quickshell.shellPath("services/write-private.sh"), Mode.stateDir, root.routingFile, Routing.serializeMemory(root.routing.memory)];
-                routingWriter.running = true;
+                if (routingWriter.running)
+                    routingWriter.again = true;
+                else
+                    routingWriter.store();
             }
         }
         const due = Routing.nextDeadline(root.routing);
@@ -227,6 +247,7 @@ Singleton {
         if (deviceDump.running || root.routingAsk.length === 0)
             return;
         deviceDump.deviceId = root.routingAsk[0];
+        deviceDump.settled = false;
         deviceDump.command = ["pw-dump", "--no-colors", String(deviceDump.deviceId)];
         deviceDump.running = true;
         dumpTimeout.restart();
@@ -235,13 +256,16 @@ Singleton {
     function routingDeviceAnswer(id: int, props: var): void {
         if (root.routingAsk.indexOf(id) < 0)
             return;
-        const devices = Object.assign({}, root.routingDevices);
-        devices[id] = props ?? {};
-        root.routingDevices = devices;
+        const live = root.routingLive();
+        // Kept only while a live sink belongs to the device: one that left meanwhile is not remembered (syncRouting).
+        if (Object.keys(live).some(name => root.routingDeviceId(live[name]) === id)) {
+            const devices = Object.assign({}, root.routingDevices);
+            devices[id] = props ?? {};
+            root.routingDevices = devices;
+        }
         root.routingAsk = root.routingAsk.filter(x => x !== id);
         if (root.routingStarted) {
             const now = Date.now();
-            const live = root.routingLive();
             let actions = [];
             for (const name of Object.keys(root.routingFed)) {
                 if (live[name] && root.routingDeviceId(live[name]) === id)
@@ -257,6 +281,18 @@ Singleton {
             return;
         const now = Date.now();
         const live = root.routingLive();
+        // Forget the properties of the devices no live sink belongs to: PipeWire gives a freed id to another device, which
+        // must be asked again and not described as the one that left.
+        const used = {};
+        for (const name of Object.keys(live))
+            used[root.routingDeviceId(live[name])] = true;
+        const stale = Object.keys(root.routingDevices).filter(id => used[id] !== true);
+        if (stale.length > 0) {
+            const devices = Object.assign({}, root.routingDevices);
+            for (const id of stale)
+                delete devices[id];
+            root.routingDevices = devices;
+        }
         const fed = Object.assign({}, root.routingFed);
         let actions = [];
         if (!root.routingStarted) {
@@ -351,6 +387,20 @@ Singleton {
 
     Process {
         id: routingWriter
+        // Set when the memory changed while a write was running: write it once more, as it is then.
+        property bool again: false
+
+        function store(): void {
+            routingWriter.command = ["sh", Quickshell.shellPath("services/write-private.sh"), Mode.stateDir, root.routingFile, Routing.serializeMemory(root.routing.memory)];
+            routingWriter.running = true;
+        }
+
+        onRunningChanged: {
+            if (!running && again) {
+                again = false;
+                routingWriter.store();
+            }
+        }
         onExited: code => {
             if (code !== 0)
                 console.warn("audio routing: could not write", root.routingFile);
@@ -360,17 +410,30 @@ Singleton {
     Process {
         id: deviceDump
         property int deviceId: -1
+        // The run for deviceId gave its answer (its output, a failure or the timeout): what it still reports is not the
+        // next device's, and the next device is asked once the process is really gone.
+        property bool settled: true
         stdout: StdioCollector {
             onStreamFinished: {
+                if (deviceDump.settled)
+                    return;
+                deviceDump.settled = true;
                 dumpTimeout.stop();
                 root.routingDeviceAnswer(deviceDump.deviceId, Routing.deviceProps(text, deviceDump.deviceId));
             }
         }
         onExited: code => {
-            if (code !== 0) {
+            if (code !== 0 && !deviceDump.settled) {
+                deviceDump.settled = true;
                 dumpTimeout.stop();
                 root.routingDeviceAnswer(deviceDump.deviceId, null);
             }
+        }
+        // The answer came while the process was still ending (routingNextAsk waited for it): ask the next device now.
+        // Only after an answer: a pw-dump that could not start is left to the timeout, never started in a loop.
+        onRunningChanged: {
+            if (!running && settled)
+                root.routingNextAsk();
         }
     }
 
@@ -380,6 +443,9 @@ Singleton {
         interval: 2000
         onTriggered: {
             deviceDump.running = false;
+            if (deviceDump.settled)
+                return;
+            deviceDump.settled = true;
             root.routingDeviceAnswer(deviceDump.deviceId, null);
         }
     }

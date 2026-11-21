@@ -27,6 +27,13 @@ FocusScope {
         return root.activeColumn >= 0 ? columns.itemAt(root.activeColumn) : null;
     }
     readonly property var activeModel: root.activeItem ? (root.activeItem as FileColumn).model : null
+    // The listing of the folder the title shows (the last column): where Paste, Move Item Here and New Folder put items, as in
+    // the Finder (audit F11), whichever column has the keyboard.
+    readonly property var titleModel: {
+        root.columnsMade;
+        const c = columnsModel.count > 0 ? columns.itemAt(columnsModel.count - 1) as FileColumn : null;
+        return c ? c.model : null;
+    }
     readonly property var previewInfo: {
         const m = root.activeModel;
         if (!m || root.activeColumn !== columnsModel.count - 1 || m.selectedCount !== 1)
@@ -264,6 +271,8 @@ FocusScope {
         property point bandOrigin
         property point bandEnd
         property var bandBase: []
+        // The rows the band covered at the last move: the same rows are not selected again (IconView's bandCells).
+        property string bandRows: ""
 
         function rowPosition(row: int): point {
             return lv.mapToItem(null, Tokens.spacingLg, (Math.max(0, row) + 1) * Tokens.filesColumnRowHeight - lv.contentY + lv.originY);
@@ -327,6 +336,7 @@ FocusScope {
                 col.bandEnd = col.bandOrigin;
                 col.bandBase = (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) ? col.model.selectedUrls() : [];
                 col.banding = false;
+                col.bandRows = "";
             }
             onPositionChanged: mouse => {
                 if (!pressed || mouse.buttons !== Qt.LeftButton)
@@ -337,10 +347,14 @@ FocusScope {
                 col.banding = true;
                 col.bandEnd = p;
                 const rows = Nav.cellsInRect(0, col.bandOrigin.y, 0, p.y, 1, Tokens.filesColumnRowHeight, 1, lv.count);
-                const urls = col.bandBase.slice();
-                for (let i = 0; i < rows.length; i++)
-                    urls.push(col.model.urlAt(rows[i]));
-                col.model.selectUrls(urls);
+                const covered = rows.join(",");
+                if (covered !== col.bandRows) {
+                    col.bandRows = covered;
+                    const urls = col.bandBase.slice();
+                    for (let i = 0; i < rows.length; i++)
+                        urls.push(col.model.urlAt(rows[i]));
+                    col.model.selectUrls(urls);
+                }
                 if (mouse.y > lv.y + lv.height)
                     lv.contentY = Math.min(lv.contentY + Tokens.spacingSm, Math.max(lv.originY, lv.contentHeight - lv.height + lv.originY));
                 else if (mouse.y < lv.y)
@@ -367,6 +381,8 @@ FocusScope {
             keyNavigationEnabled: false
             acceptedButtons: Qt.NoButton
             boundsBehavior: Flickable.StopAtBounds
+            // Rows scrolled out are kept in a pool and given the rows scrolled in (the entry's pooled protocol below).
+            reuseItems: true
             onActiveFocusChanged: if (activeFocus) root.activeColumn = col.index
             Accessible.role: Accessible.List
             Accessible.name: col.model ? col.model.title : ""
@@ -409,6 +425,15 @@ FocusScope {
 
                 readonly property bool renaming: root.tab.isRenaming(col.model, entry.url)
                 readonly property bool emphasized: entry.selected && col.active && lv.activeFocus
+
+                // Reused (reuseItems): in the pool a row is hidden but kept; a rename it showed is canceled (a field taken out
+                // of the view cancels, RenameField) and a click's pending collapse is dropped. Taken again, its required
+                // properties are the new row's.
+                ListView.onPooled: {
+                    if (entry.renaming)
+                        root.tab.cancelRename();
+                    entryMouse.collapseOnRelease = false;
+                }
 
                 width: lv.width
                 height: Tokens.filesColumnRowHeight
@@ -537,9 +562,15 @@ FocusScope {
                             col.model.select(entry.index, 0, true);
                             root.userSelected(col.index);
                             // After the columns' own focus call (sync), so that the menu keeps the keyboard.
+                            // The item is kept by its URL: rows listed above it meanwhile shift its row, and the menu
+                            // would select and act on another file.
                             const model = col.model;
-                            const row = entry.index;
-                            Qt.callLater(() => root.tab.contextMenu(model, row, p.x, p.y, false));
+                            const url = model.urlAt(entry.index);
+                            Qt.callLater(() => {
+                                const row = model.rowForUrl(url);
+                                if (row >= 0)
+                                    root.tab.contextMenu(model, row, p.x, p.y, false);
+                            });
                             return;
                         }
                         const mods = event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier);

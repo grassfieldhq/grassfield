@@ -41,7 +41,8 @@
 # or an operation id used before; 3 busy (another run, or a process holding pacman's db.lck); 4 less than 10 GiB free on /;
 # 5 on battery below 50 %; 6 needs a newer Grassfield (the compatibility check, or pacman's own refusal naming grassfield-hold, ADR-0041 step 2a); 7 needs a person (Omarchy's terminal; also a
 # db.lck no process holds: `needs stalelock`); 8 failed before installing anything (`synced` when the checked sync databases
-# had already become the system's). pkexec itself exits 126 (the dialog dismissed) and 127 (not authorized). A run that ran
+# had already become the system's); 9 the sync databases changed after the check (another `pacman -Sy` replaced them between
+# the swap and the transaction): nothing was installed, `synced` (SU-10). pkexec itself exits 126 (the dialog dismissed) and 127 (not authorized). A run that ran
 # the migrations (SU-M2) says `migrations ran`.
 #
 # Its only input is its argument vector. -p keeps bash from reading BASH_ENV or importing a function; then, while its
@@ -179,7 +180,11 @@ if [[ -d /run/systemd/system ]] && ! in_unit; then
   if (set -C && : >"$GU_DIR/$op.log") 2>/dev/null; then
     echo "grassfield-update-helper: another update is running" >>"$GU_DIR/$op.log"
     printf '3\n' >|"$GU_DIR/.$op.exit" && mv -f -- "$GU_DIR/.$op.exit" "$GU_DIR/$op.exit"
+    exit 3
   fi
+  # The log and the start record are there: the unit ran this operation and ended without its exit file (killed, or
+  # /run full). Not "another update is running": the system can be partly updated, which is 1.
+  [[ -f $GU_DIR/$op.started ]] && exit 1
   exit 3
 fi
 
@@ -817,10 +822,35 @@ for repo in "${repos[@]}"; do
   done
 done
 rm -f -- "$own_db_lock" && own_db_lock=""
+# The system's sync databases are still the checked ones, re-hashed against the checked copies (SU-10): pacman's own lock is free between the swap
+# and each transaction below, and another root `pacman -Sy` (a terminal, omarchy-refresh-pacman) could replace them there;
+# `-Su --noconfirm` would then install a plan that was never checked. Each pacman run below is preceded by this, right
+# before it takes its lock; a difference is exit 9 and nothing is installed.
+checked_dbs() {
+  local repo ext src dst a b
+  for repo in "${repos[@]}"; do
+    for ext in db db.sig; do
+      src=$tmpdb/sync/$repo.$ext
+      dst=$dbpath/sync/$repo.$ext
+      if [[ -f $src && ! -L $src ]]; then
+        [[ -f $dst && ! -L $dst ]] || return 1
+        a=$(sha_of "$src") b=$(sha_of "$dst")
+        [[ -n $a && $a == "$b" ]] || return 1
+      elif [[ -e $dst || -L $dst ]]; then
+        return 1
+      fi
+    done
+  done
+}
 
 # pacman, its output appended to the log up to the log's cap and, when `report` is 1, read for the progress; its exit
 # code. `downloads`: how many files the plan still has to download. `started`: pacman began changing packages.
+# `saw_conflict`, `saw_initcpio`, `saw_initcpio_ok`: the lines the checks below look for, seen here even when the log is
+# full and no longer takes them.
 started=0
+saw_conflict=0
+saw_initcpio=0
+saw_initcpio_ok=0
 pacman_run() { # report downloads pacman-argument...
   local report=$1 downloads=$2 got=0 done=0 total=0 used line
   shift 2
@@ -830,6 +860,11 @@ pacman_run() { # report downloads pacman-argument...
       printf '%s\n' "$line"
       used=$((used + ${#line} + 1))
     fi
+    case $line in
+      *'unresolvable package conflicts detected'* | *'exists in filesystem'*) saw_conflict=1 ;;
+      *'Updating linux initcpios'*) saw_initcpio=1 ;;
+      *'Initcpio image generation successful'*) saw_initcpio_ok=1 ;;
+    esac
     case $line in
       ' '*' downloading...')
         got=$((got + 1))
@@ -868,6 +903,7 @@ done
 if ((${#keyrings[@]})); then
   progress keyring
   no_db_lock
+  checked_dbs || finish 9 "the sync databases changed after they were checked (another pacman -Sy): nothing was installed"
   pacman_run 0 0 -S --needed --noconfirm --noprogressbar "${keyrings[@]}" || finish 8 "the signing keyrings (${keyrings[*]}) could not be updated"
   started=0
 fi
@@ -884,13 +920,14 @@ else
   progress installing 0 0
 fi
 no_db_lock
+checked_dbs || finish 9 "the sync databases changed after they were checked (another pacman -Sy): nothing was installed"
 say "pacman -Su --noconfirm --noprogressbar --overwrite /usr/share/omarchy/*"
 pacman_run 1 "$downloads" -Su --noconfirm --noprogressbar --overwrite '/usr/share/omarchy/*'
 code=$?
 if ((code != 0)); then
   # omarchy-update-system-pkgs-when-conflicted's two cases (a package conflict, files no package owns) are a person's
   # call there: here pacman stopped before changing a package, and Omarchy's terminal update takes it from there.
-  if grep -q 'unresolvable package conflicts detected\|exists in filesystem' -- "$log"; then
+  if ((saw_conflict)) || grep -q 'unresolvable package conflicts detected\|exists in filesystem' -- "$log"; then
     ((started)) || { outcome+=("needs conflict"); finish 7 "pacman needs an answer: nothing was installed"; }
   fi
   ((started)) || finish 8 "pacman stopped before installing anything ($code)"
@@ -961,7 +998,8 @@ fi
 # omarchy-update-analyze-logs, on this run's log and the migrations' output.
 logs=("$log")
 ((migrate_here)) && logs+=("$migrations")
-if grep -q 'Updating linux initcpios' -- "${logs[@]}" && ! grep -q 'Initcpio image generation successful' -- "${logs[@]}"; then
+if { ((saw_initcpio)) || grep -q 'Updating linux initcpios' -- "${logs[@]}"; } &&
+  ! { ((saw_initcpio_ok)) || grep -q 'Initcpio image generation successful' -- "${logs[@]}"; }; then
   outcome+=("bootimage failed")
 fi
 # omarchy-update-restart's kernel rule: no package's kernel under /usr/lib/modules is the running one. Omarchy 4.0.6 looks at

@@ -237,14 +237,18 @@ namespace gf::overview {
                });
     }
 
-    std::vector<Box> damageStep(const Box& previous, const Box& current) {
-        const auto hasArea = [](const Box& b) { return gf::minimize::isFinite(b) && b.w > 0 && b.h > 0; };
-        std::vector<Box> out;
+    DamageBoxes damageStep(const Box& previous, const Box& current) {
+        const auto  hasArea = [](const Box& b) { return gf::minimize::isFinite(b) && b.w > 0 && b.h > 0; };
+        DamageBoxes out;
         if (hasArea(previous) && !(previous == current))
-            out.push_back(previous);
+            out.boxes.at(out.count++) = previous;
         if (hasArea(current))
-            out.push_back(current);
+            out.boxes.at(out.count++) = current;
         return out;
+    }
+
+    bool needsRepaint(const Box& previous, const Box& current, bool contentDamaged) {
+        return contentDamaged || !(previous == current);
     }
 
     std::string eventJson(Phase phase, size_t windows, Reason reason) {

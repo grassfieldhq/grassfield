@@ -5,12 +5,14 @@ import qs.lib
 import Quickshell.Io
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "../platform/ScreenChoice.js" as ScreenChoice
 import "Calc.js" as Calc
 import "ClipboardView.js" as ClipView
 import "Files.js" as Files
 import "Filters.js" as Filters
+import "KeyedRows.js" as KeyedRows
 import "Ranking.js" as Ranking
 import "SettingsPages.js" as SettingsPages
 import "Units.js" as Units
@@ -45,6 +47,20 @@ Scope {
     property var groups: []
     property var rows: []
     property var items: []
+    // The list's model (KeyedRows.js, audit B-05): one row {key, itemIndex} per result, updated in place by key, so a result
+    // that stays keeps its delegate from one keystroke to the next. The row shows items[itemIndex].
+    readonly property ListModel rowModel: rowStore
+
+    ListModel {
+        id: rowStore
+    }
+
+    // Sets the results: the items, the keyed rows of the list (in place), then the flat rows.
+    function setResults(flat: var, rowList: var): void {
+        items = flat;
+        KeyedRows.sync(rowStore, flat.map(it => it.key));
+        rows = rowList;
+    }
     property int selected: -1
     property var fileHits: []
     // Filter chips under the field: the chip ids the unfiltered results offer, and the selected one ("" = all).
@@ -193,7 +209,6 @@ Scope {
         const target = DesktopState.holdsKeyboard ? null : Compositor.activeWindow();
         Clipboard.watchTarget(target ? target.address : "");
         screenName = focusedScreenName();
-        recentFile.reload();
         // Opened again during the fade-out of a Clipboard view: it opens on the results, as after the release.
         released();
         setQuery(text);
@@ -407,8 +422,7 @@ Scope {
             }
         }
         groups = g;
-        items = flat;
-        rows = rowList;
+        setResults(flat, rowList);
         selected = flat.length === 0 ? -1 : (sel >= 0 ? sel : 0);
         if (keyStartMs > 0)
             console.info("grassfield-shell: search keystroke->results", Date.now() - keyStartMs, "ms,", flat.length, "results");
@@ -675,8 +689,7 @@ Scope {
         clipSelectAfter = -1;
         chips = [];
         groups = flat.length > 0 ? [{id: "clip", title: qsTr("Clipboard"), items: flat}] : [];
-        items = flat;
-        rows = flat.map((it, i) => ({item: it, itemIndex: i, groupId: "clip"}));
+        setResults(flat, flat.map((it, i) => ({item: it, itemIndex: i, groupId: "clip"})));
         selected = flat.length === 0 ? -1 : (sel >= 0 ? sel : 0);
     }
 
@@ -832,6 +845,11 @@ Scope {
             noticeTimer.restart();
         }
 
+        function onPinFailed(id: string): void {
+            root.clipNotice = qsTr("Couldn't pin the item");
+            noticeTimer.restart();
+        }
+
         function onPreviewReady(id: string, path: string, text: string): void {
             if (!root.clipPreview || root.clipPreview.id !== id)
                 return;
@@ -899,16 +917,26 @@ Scope {
         onFileChanged: userDirsFile.reload()
     }
 
-    // Recent documents, read only.
+    // Recent documents, read only. Read again when the file changes (a moment after the last write: apps rewrite it on each
+    // file they open), not on every opening of Search: the whole file was parsed on the GUI thread during the fade-in (audit
+    // B-20).
     FileView {
         id: recentFile
         path: root.dataHome + "/recently-used.xbel"
         printErrors: false
+        watchChanges: true
+        onFileChanged: recentReload.restart()
         onLoaded: {
             root.recentList = Files.parseXbel(recentFile.text(), root.filesRoot);
             if (root.open)
                 root.compute();
         }
+    }
+
+    Timer {
+        id: recentReload
+        interval: 1000
+        onTriggered: recentFile.reload()
     }
 
     Connections {
@@ -949,6 +977,8 @@ Scope {
 
     IpcHandler {
         target: "search"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: root.ipcEnabled
 
         function toggle(): void {

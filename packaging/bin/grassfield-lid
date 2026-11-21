@@ -49,7 +49,9 @@ fi
 # Ask the security process to lock (it decides about clamshell mode). Its answers: ok, already-locked, docked, refused: <why>.
 lock_on_close() {
   local answer
-  if answer=$($LOCK_CMD 2>/dev/null); then
+  # Bounded like every other caller (SS-03): a security process that is alive but does not answer must not hold this script
+  # for ever; the stand-in below and the panel handling would never run.
+  if answer=$(timeout -k 1 5 $LOCK_CMD 2>/dev/null); then
     case $answer in
       ok | already-locked | docked | refused:*) return 0 ;;
     esac
@@ -57,8 +59,9 @@ lock_on_close() {
   # No answer (or "Not ready to accept queries yet"): the security process is down or starting. Clamshell decides here
   # instead.
   external_connected && return 0
-  # In the background: the panel handling must not wait for a restart (the stand-in waits up to ~10 s).
-  [[ -x $FALLBACK ]] && setsid -f "$FALLBACK" lock lock >/dev/null 2>&1 </dev/null
+  # In the background: the panel handling must not wait for a restart (the stand-in waits up to ~10 s). Without
+  # reconcile's lock file (fd 9, when called from there): the stand-in would hold it and later calls would give up.
+  [[ -x $FALLBACK ]] && setsid -f "$FALLBACK" lock lock >/dev/null 2>&1 </dev/null 9>&-
   return 0
 }
 
@@ -97,13 +100,19 @@ external_connected() {
 reconcile() {
   local internal
   (
-    flock -n 9 || exit 0
+    # Wait for the call that holds the lock instead of leaving (SS-04): it decided on the earlier lid and display state, so
+    # the last caller must look again (a lid closed then opened quickly left the panel off). Bounded: a stuck hyprctl.
+    flock -w 10 9 || exit 0
     if lid_closed && external_connected && internal=$(internal_connector); then
       if [[ ! -e $MARKER ]]; then
         : >"$MARKER"
         hyprctl eval "hl.monitor({ output = \"$internal\", disabled = true })" >/dev/null 2>&1 || rm -f "$MARKER"
       fi
     elif [[ -e $MARKER ]]; then
+      # Clamshell mode ended with the lid still closed (the external display was unplugged): the computer is no longer in
+      # use, so it is locked as on a lid close (SS-02). logind may not suspend here (HandleLidSwitch=ignore or lock), and
+      # nothing else would lock then. Asked first, as in `closed`; it only ever locks.
+      lid_closed && ! external_connected && lock_on_close
       # Back to the user's own monitors.lua (scale, position): a reload applies it again.
       rm -f "$MARKER"
       hyprctl reload >/dev/null 2>&1 || true

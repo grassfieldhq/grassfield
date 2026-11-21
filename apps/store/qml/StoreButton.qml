@@ -104,7 +104,7 @@ Item {
     }
 
     // The operation's ring: its count from pacman's log (flatpak's lines) once there is one, else turning; a square while it
-    // waits in the queue, which takes it out (SR18), or while a Flatpak install runs, which stops it (SD26). Read once a
+    // waits in the queue, which takes it out (SR18), or while a Flatpak install or update runs, which stops it (SD26, SU-09). Read once a
     // second at most by assistive technologies (the text changes with it).
     ProgressRing {
         id: ring
@@ -119,7 +119,8 @@ Item {
         activeFocusOnTab: visible && stop
         Accessible.role: stop ? Accessible.Button : Accessible.ProgressBar
         Accessible.name: ring.waiting ? qsTr("Remove %1 from the queue").arg(root.appName)
-                       : ring.stop ? qsTr("Stop installing %1").arg(root.appName) : root.appName
+                       : ring.stop ? (ring.op && ring.op.kind === "update" ? qsTr("Stop updating %1").arg(root.appName) : qsTr("Stop installing %1").arg(root.appName))
+                       : root.appName
         Accessible.description: Store.operationText(op)
         Accessible.onPressAction: ring.remove()
 

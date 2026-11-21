@@ -4,16 +4,16 @@
 #include "ClientChrome.hpp"
 #include "GenieDraw.hpp"
 #include "Ipc.hpp"
+#include "Outputs.hpp"
 #include "Plugin.hpp"
 #include "core/Genie.hpp"
 #include "core/Protocol.hpp"
 #include "core/Theme.hpp"
 
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/helpers/MiscFunctions.hpp>
@@ -152,7 +152,7 @@ namespace {
     }
 
     bool onMinimizedWorkspace(const PHLWINDOW& w) {
-        return w->m_workspace && w->m_workspace->m_isSpecialWorkspace && w->m_workspace->m_name == MINIMIZED_WORKSPACE;
+        return w->m_workspace && gf::compat::isSpecial(w->m_workspace) && gf::compat::workspaceName(w->m_workspace) == MINIMIZED_WORKSPACE;
     }
 
     // Surface box plus the reserved decoration extents (titlebar, border): what the user sees as the window.
@@ -243,7 +243,7 @@ namespace {
 
     // The window, transparent while its restore animation runs, becomes visible again.
     void showWindow(const PHLWINDOW& w) {
-        auto& fadeIn = w->alpha(Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE);
+        auto& fadeIn = gf::compat::alpha(w, Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE);
         if (fadeIn)
             fadeIn->setValueAndWarp(1.F);
         if (g_pHyprRenderer)
@@ -296,11 +296,55 @@ namespace {
             if (!aw || aw == w) {
                 if (g_pHyprRenderer && it->damaged.w > 0)
                     g_pHyprRenderer->damageBox(toCBox(it->damaged));
+                // A restore left it transparent (complete() never runs): the same window mapped again later (an app hidden
+                // to the tray) must not come back invisible.
+                if (it->kind == mz::Kind::Restore && aw)
+                    showWindow(aw);
                 releaseSnapshot(it->snapshot);
                 it = all.erase(it);
             } else
                 ++it;
         }
+    }
+
+    // What an animation interrupted by the opposite one (WM-06) hands over: its state on screen, for the new animation to
+    // continue from (core continueFrom, fadeElapsedFor, genieElapsedFor) instead of starting over from the Dock tile or the
+    // window, transparent again, for a whole duration.
+    struct STakeover {
+        mz::Effect effect   = mz::Effect::Scale;
+        double     progress = 0; // Genie: its progress (0 window .. 1 tile); Scale: its eased progress toward its end
+        mz::Box    box;          // Scale: the box on screen
+        float      alpha = 1.F;  // Fade: the alpha on screen
+    };
+
+    STakeover takeoverOf(const SAnimation& a) {
+        const double elapsed = std::chrono::duration<double, std::milli>(Time::steadyNow() - a.start).count() / a.timeScale;
+        return STakeover{.effect   = a.effect,
+                         .progress = a.effect == mz::Effect::Genie ? a.progress : mz::easedProgress(a.kind, elapsed),
+                         .box      = a.frame.box,
+                         .alpha    = a.frame.alpha};
+    }
+
+    // The new animation `a` (the opposite kind) continues from `from`; returns where it starts in its own timing.
+    double continueAfter(SAnimation& a, const STakeover& from) {
+        switch (a.effect) {
+            case mz::Effect::Genie:
+                // From the shape on screen (a shrink one in flight: its share of the way, as toShrink does the other way).
+                // Genie progress runs window -> tile both ways; a shrink restore's eased progress runs tile -> window.
+                return mz::genieElapsedFor(a.kind, a.kind == mz::Kind::Minimize && from.effect != mz::Effect::Genie ? 1.0 - from.progress : from.progress);
+            case mz::Effect::Scale: {
+                if (from.effect == mz::Effect::Genie) // the funnel's progress as a share of the shrink's way (toShrink)
+                    return mz::elapsedForEased(a.kind, a.kind == mz::Kind::Minimize ? from.progress : 1.0 - from.progress);
+                if (from.effect == mz::Effect::Fade)
+                    return 0.0;
+                // From the box on screen, the share of the way the interrupted one had not covered being behind it now.
+                const auto c = mz::continueFrom(a.kind, from.box, a.to, 1.0 - from.progress);
+                a.from       = c.from;
+                return c.elapsedMs;
+            }
+            case mz::Effect::Fade: return from.effect == mz::Effect::Fade ? mz::fadeElapsedFor(a.kind, from.alpha) : 0.0;
+        }
+        return 0.0;
     }
 
     // Genie mesh of this frame (layout coordinates).
@@ -392,20 +436,41 @@ namespace {
         }
     }
 
-    // One step of every animation; called before each monitor frame (render.preChecks, like Hyprland's
-    // Animation::mgr()->frameTick()) and by the watchdog. Damages the old and new boxes, which also schedules
-    // the next frame on the monitors they touch.
-    void tick() {
+    mz::Box boxOf(const PHLMONITOR& m) {
+        return mz::Box{m->m_position.x, m->m_position.y, m->m_size.x, m->m_size.y};
+    }
+
+    // Whether the frame of `mon` steps `a`: one shared ticker per monitor (the design note on per-frame cost): an animation
+    // is stepped by the frames of the monitors it is drawn on (its last damaged box touches them), not by every monitor's
+    // frame (with two outputs every animation was stepped and damaged twice per frame cycle, and a monitor was made to
+    // render at the other's cadence). One drawn on no enabled monitor is stepped by any. No allocation.
+    bool stepsOn(const SAnimation& a, const PHLMONITOR& mon) {
+        if (!mon || mz::intersects(a.damaged, boxOf(mon)))
+            return true;
+        // Another monitor draws it: its frames step it.
+        return !gf::outputs::find([&a](const PHLMONITOR& m) { return mz::intersects(a.damaged, boxOf(m)); });
+    }
+
+    // One step of the animations drawn on `mon` (render.preChecks of that monitor, like Hyprland's
+    // Animation::mgr()->frameTick()) or of every one (`mon` null: the watchdog, unload). Damages the old and new boxes,
+    // which also schedules the next frame on the monitors they touch.
+    void tick(const PHLMONITOR& mon) {
         auto& all = st().animations;
         if (all.empty())
             return;
         checkFunnelUsable();
         const auto now = Time::steadyNow();
         for (auto it = all.begin(); it != all.end();) {
+            if (!stepsOn(*it, mon)) {
+                ++it;
+                continue;
+            }
             const auto w = it->window.lock();
-            if (!w || !w->m_isMapped) {
+            if (!w || !gf::compat::mapped(w)) {
                 if (g_pHyprRenderer && it->damaged.w > 0)
                     g_pHyprRenderer->damageBox(toCBox(it->damaged));
+                if (it->kind == mz::Kind::Restore && w)
+                    showWindow(w); // as cancelFor(): not left transparent for its next map
                 releaseSnapshot(it->snapshot);
                 it = all.erase(it);
                 continue;
@@ -429,7 +494,7 @@ namespace {
                 std::nullopt,
                 [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) {
                     gf::guarded("minimize watchdog", [] {
-                        tick();
+                        tick(nullptr);
                         if (!st().animations.empty() && st().watchdog)
                             st().watchdog->updateTimeout(WATCHDOG_DELAY);
                     });
@@ -442,7 +507,7 @@ namespace {
 
     // Shift held on any keyboard (macOS: Shift-click plays the minimize in slow motion).
     bool shiftHeld() {
-        return g_pInputManager && (g_pInputManager->getModsFromAllKBs() & HL_MODIFIER_SHIFT) != 0;
+        return (gf::compat::heldModifiers() & gf::compat::kModShift) != 0;
     }
 
     // `elapsedMs`: where the animation starts, in animation time (an interrupted Genie continues from the shape on
@@ -485,7 +550,7 @@ namespace {
         if (data.pixelBounds.w < 1 || data.pixelBounds.h < 1)
             return;
         ++st().genieAdded;
-        g_pHyprRenderer->addPassElement(makeUnique<gf::genie::CGenieElement>(std::move(data)));
+        gf::compat::addPassElement(makeUnique<gf::genie::CGenieElement>(std::move(data)));
     }
 
     // Draws every animation that touches the monitor being rendered. RENDER_POST_WINDOWS: after the windows,
@@ -495,7 +560,7 @@ namespace {
         auto& all = st().animations;
         if (all.empty() || !g_pHyprRenderer)
             return;
-        const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        const auto mon = gf::compat::renderMonitor();
         if (!mon)
             return;
         const mz::Box monBox{mon->m_position.x, mon->m_position.y, mon->m_size.x, mon->m_size.y};
@@ -523,23 +588,15 @@ namespace {
             data.tex          = tex;
             data.box          = toCBox(texBox);
             data.a            = a.frame.alpha;
-            data.flipEndFrame = true; // framebuffer texture, as Hyprland draws its fadeouts
+            gf::compat::markFramebufferTexture(data); // framebuffer texture, as Hyprland draws its fadeouts
             data.clipBox      = toCBox(visual).translate(-mon->m_position).scale(mon->m_scale).round();
-            g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(data)));
+            gf::compat::addPassElement(makeUnique<CTexPassElement>(std::move(data)));
         }
     }
 
     PHLWORKSPACE minimizedWorkspace() {
-        const auto [id, name, isAutoID] = getWorkspaceIDNameFromString(std::string{MINIMIZED_WORKSPACE});
-        if (id == WORKSPACE_INVALID)
-            return nullptr;
-        auto ws = State::workspaceState()->query().id(id).run();
-        if (!ws) {
-            const auto mon = Desktop::focusState()->monitor();
-            if (mon)
-                ws = State::workspaceState()->create(id, mon->m_id, name, false);
-        }
-        return ws;
+        // Created (not empty) on the focused monitor when it does not exist.
+        return gf::compat::findOrCreateWorkspace(std::string{MINIMIZED_WORKSPACE}, Desktop::focusState()->monitor());
     }
 
     // Moves the window to special:minimized without following it. Hyprland fades a window out in place when it
@@ -554,19 +611,14 @@ namespace {
             gf::log(Log::WARN, "minimize: move to {} failed: {}", MINIMIZED_WORKSPACE, result.error().message);
             return false;
         }
-        if (auto& fadeOut = w->alpha(Desktop::View::WINDOW_ALPHA_MOVE_TO_WORKSPACE); fadeOut && fadeOut->isBeingAnimated())
+        if (auto& fadeOut = gf::compat::alpha(w, Desktop::View::WINDOW_ALPHA_MOVE_TO_WORKSPACE); fadeOut && fadeOut->isBeingAnimated())
             fadeOut->warp();
         return onMinimizedWorkspace(w);
     }
 
     std::vector<mz::Box> monitorBoxes() {
-        std::vector<mz::Box> out;
-        if (!State::monitorState())
-            return out;
-        for (const auto& m : State::monitorState()->monitors()) {
-            if (m)
-                out.push_back(mz::Box{m->m_position.x, m->m_position.y, m->m_size.x, m->m_size.y});
-        }
+        std::vector<mz::Box> out; // not a disconnected monitor Hyprland still lists: no Dock tile there (Outputs.hpp)
+        gf::outputs::forEach([&out](const PHLMONITOR& m) { out.push_back(mz::Box{m->m_position.x, m->m_position.y, m->m_size.x, m->m_size.y}); });
         return out;
     }
 
@@ -595,16 +647,20 @@ namespace {
         return x1 > x0 && y1 > y0 ? mz::Box{x0, y0, x1 - x0, y1 - y0} : mz::Box{};
     }
 
-    // The effect an animation runs: the configured one, except that Genie needs the GL drawing, an untransformed
-    // snapshot monitor and a Dock tile toward the Dock edge from the window (core isGenieGeometry); Scale otherwise.
+    // The effect an animation runs: the configured one, except that Genie needs the GL drawing on plain sRGB outputs (the
+    // funnel writes the snapshot's pixels untransformed: on an HDR or wide-gamut output the window would change colour,
+    // gf::genie::usableOn, CIO-14) for both the snapshot monitor (also untransformed) and the output under the Dock tile
+    // (where the funnel ends), and a Dock tile toward the Dock edge from the window (core isGenieGeometry); Scale otherwise.
     mz::Effect effectFor(const mz::SSnapshotGeometry& geometry, const mz::Box& tile, const mz::Box& tileFit, const PHLMONITOR& mon, mz::Edge& edge) {
         const auto wanted = st().effect;
         if (wanted != mz::Effect::Genie)
             return wanted;
-        if (!gf::genie::available() || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL)
+        if (!gf::genie::usableOn(mon) || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL)
             return mz::Effect::Scale;
         const auto tileMonitor = monitorBoxAt(tile);
         if (!tileMonitor)
+            return mz::Effect::Scale;
+        if (const auto tileOutput = gf::outputs::at(Vector2D{tile.x + (tile.w / 2.0), tile.y + (tile.h / 2.0)}); !tileOutput || !gf::genie::usableOn(tileOutput))
             return mz::Effect::Scale;
         edge = mz::dockEdge(tile, *tileMonitor);
         return mz::isGenieGeometry(geometry.visible, tileFit, edge) ? mz::Effect::Genie : mz::Effect::Scale;
@@ -615,19 +671,12 @@ namespace {
     // The display under the middle of `box` (layout). The plugin's own titlebar drags do not update a window's m_monitor
     // (Tiling.cpp): where the user sees the window is what counts.
     PHLMONITOR monitorUnder(const mz::Box& box) {
-        if (!State::monitorState())
-            return nullptr;
-        const Vector2D middle{box.x + (box.w / 2.0), box.y + (box.h / 2.0)};
-        for (const auto& m : State::monitorState()->monitors()) {
-            if (m && m->m_enabled && m->logicalBox().containsPoint(middle))
-                return m;
-        }
-        return nullptr;
+        return gf::outputs::at(Vector2D{box.x + (box.w / 2.0), box.y + (box.h / 2.0)});
     }
 
     // A floating window that is not full screen or zoomed: its frame is its own (what tiler::placeable checks too).
     bool keepsFrame(const PHLWINDOW& w) {
-        if (!w->m_isFloating || w->m_pinned || !w->layoutTarget())
+        if (!gf::compat::isFloating(w) || gf::compat::pinned(w) || !w->layoutTarget())
             return false;
         const auto& fs = Fullscreen::controller();
         return !fs || fs->getFullscreenModes(w).internal == Fullscreen::FSMODE_NONE;
@@ -736,11 +785,11 @@ namespace gf::minimizer {
             gf::guarded("minimize tick", [&] {
                 if (monitor)
                     frameStarted(monitor, Time::steadyNow());
-                tick();
+                tick(monitor);
             });
         }));
-        l.push_back(ev.render.stage.listen([](eRenderStage stage) {
-            if (stage == RENDER_POST_WINDOWS)
+        l.push_back(gf::compat::onRenderStage([](eRenderStage stage, gf::compat::RenderContext* ctx) {
+            if (stage == RENDER_POST_WINDOWS && ctx)
                 gf::guarded("minimize draw", [] { draw(); });
             else if (stage == RENDER_POST)
                 gf::guarded("minimize frame timing", [] { frameEnded(); });
@@ -755,7 +804,7 @@ namespace gf::minimizer {
         // drops its recorded place: a later restore must not use a stale one.
         l.push_back(ev.window.moveToWorkspace.listen([](const PHLWINDOW& w, const PHLWORKSPACE& ws) {
             gf::guarded("minimize window.moveToWorkspace", [&] {
-                if (w && !(ws && ws->m_isSpecialWorkspace && ws->m_name == MINIMIZED_WORKSPACE))
+                if (w && !(ws && gf::compat::isSpecial(ws) && gf::compat::workspaceName(ws) == MINIMIZED_WORKSPACE))
                     forgetPlace(w);
             });
         }));
@@ -782,11 +831,7 @@ namespace gf::minimizer {
         // Funnel elements still queued in a render pass would be destroyed (and drawn) after dlclose with their vtable gone:
         // remove them (CRenderPass::removeAllOfType compares IPassElement::passName). Unload never runs inside a frame, so
         // the pass is normally empty; this covers a frame that queued them and did not render them.
-        if (g_pHyprRenderer) {
-            g_pHyprRenderer->m_renderPass.removeAllOfType(gf::genie::kPassName);
-            if (auto& current = g_pHyprRenderer->currentPass(); &current != &g_pHyprRenderer->m_renderPass)
-                current.removeAllOfType(gf::genie::kPassName);
-        }
+        gf::compat::removeQueuedPassElements(gf::genie::kPassName);
         completeAll(false); // the recorded places stay (plain data and Hyprland's weak references): see start()
         if (s.watchdog) {
             if (g_pEventLoopManager)
@@ -817,7 +862,7 @@ namespace gf::minimizer {
 
     void minimize(uint64_t address, std::optional<mz::Box> target) {
         const auto w = windowByAddress(address);
-        if (!w || !w->m_isMapped) {
+        if (!w || !gf::compat::mapped(w)) {
             gf::logRequest(Log::WARN, "minimize: no mapped window {:x}", address);
             return;
         }
@@ -833,14 +878,11 @@ namespace gf::minimizer {
                         *held > 0 ? std::format(" ({} similar line(s) held back)", *held) : std::string{});
         }
 
-        // A restore still animating: the new animation starts where that one is (Scale: its box; Genie: its shape).
-        std::optional<mz::Box> from;
-        std::optional<double>  genieProgress;
+        // A restore still animating: the new animation continues from where that one is (its shape, box or alpha).
+        std::optional<STakeover> takeover;
         if (auto running = takeAnimation(w)) {
-            if (running->kind == mz::Kind::Restore && running->effect == mz::Effect::Genie)
-                genieProgress = running->progress;
-            else if (running->kind == mz::Kind::Restore)
-                from = running->frame.box;
+            if (running->kind == mz::Kind::Restore)
+                takeover = takeoverOf(*running);
             complete(*running, true);
         }
 
@@ -866,12 +908,8 @@ namespace gf::minimizer {
             postState(mz::Kind::Minimize, address);
             return;
         }
-        auto   a       = makeAnimation(mz::Kind::Minimize, w, address, std::move(snapshot), geometry, full, *target, mon);
-        double elapsed = 0.0;
-        if (a.effect == mz::Effect::Genie && genieProgress)
-            elapsed = mz::genieElapsedFor(mz::Kind::Minimize, *genieProgress);
-        else if (a.effect == mz::Effect::Scale && from)
-            a.from = *from;
+        auto         a       = makeAnimation(mz::Kind::Minimize, w, address, std::move(snapshot), geometry, full, *target, mon);
+        const double elapsed = takeover ? continueAfter(a, *takeover) : 0.0;
         startAnimation(std::move(a), elapsed);
     }
 
@@ -880,7 +918,7 @@ namespace gf::minimizer {
         const auto&           all = st().places;
         for (auto it = all.rbegin(); it != all.rend(); ++it) {
             const auto w = it->window.lock();
-            if (w && w->m_isMapped && onMinimizedWorkspace(w) && it->place.monitor == monitor)
+            if (w && gf::compat::mapped(w) && onMinimizedWorkspace(w) && it->place.monitor == monitor)
                 out.push_back(reinterpret_cast<uintptr_t>(w.get()));
         }
         return out;
@@ -888,15 +926,17 @@ namespace gf::minimizer {
 
     void restore(uint64_t address, std::optional<mz::Box> target) {
         const auto w = windowByAddress(address);
-        if (!w || !w->m_isMapped) {
+        if (!w || !gf::compat::mapped(w)) {
             gf::logRequest(Log::WARN, "restore: no mapped window {:x}", address);
             return;
         }
-        // A Genie minimize still animating: the restore plays it backwards from the shape on screen.
-        std::optional<double> genieProgress;
+        // A minimize still animating: the restore continues from the state on screen (WM-06): a funnel plays backwards from
+        // its shape, a shrink from its box, already opaque past its fade, with the rest of its duration; a fade from its
+        // alpha. Never from the Dock tile, transparent again.
+        std::optional<STakeover> takeover;
         if (auto running = takeAnimation(w)) {
-            if (running->kind == mz::Kind::Minimize && running->effect == mz::Effect::Genie)
-                genieProgress = running->progress;
+            if (running->kind == mz::Kind::Minimize)
+                takeover = takeoverOf(*running);
             complete(*running, true);
         }
         if (!onMinimizedWorkspace(w)) {
@@ -914,19 +954,19 @@ namespace gf::minimizer {
             return;
         }
         if (const auto result = Config::Actions::moveToWorkspace(ws, true, w); !result || onMinimizedWorkspace(w)) {
-            gf::log(Log::WARN, "restore: move of {:x} to workspace {} failed", address, ws->m_name);
+            gf::log(Log::WARN, "restore: move of {:x} to workspace {} failed", address, gf::compat::workspaceName(ws));
             return;
         }
         if (place.frame && keepsFrame(w) && g_layoutManager)
             g_layoutManager->setTargetGeom(toCBox(*place.frame), w->layoutTarget());
-        gf::logRequest(Log::INFO, "restore {:x}: on {} (Desktop {}){}", address, place.monitor->m_name, ws->m_name,
+        gf::logRequest(Log::INFO, "restore {:x}: on {} (Desktop {}){}", address, place.monitor->m_name, gf::compat::workspaceName(ws),
                        !saved ? ", no recorded place: the focused display" : place.moved ? ", its display is gone: the focused display" : "");
 
         // Hyprland fades a window in when it arrives on a visible workspace and may move it there with an
         // animation: settle both so the snapshot shows the window at its place, fully opaque.
         w->positionAnimation()->warp();
         w->sizeAnimation()->warp();
-        auto& fadeIn = w->alpha(Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE);
+        auto& fadeIn = gf::compat::alpha(w, Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE);
         if (fadeIn && fadeIn->isBeingAnimated())
             fadeIn->warp();
 
@@ -949,10 +989,8 @@ namespace gf::minimizer {
         if (g_pHyprRenderer)
             g_pHyprRenderer->damageWindow(w);
 
-        auto   a       = makeAnimation(mz::Kind::Restore, w, address, std::move(snapshot), snapshotGeometry(w, mon), fullBox(w), *target, mon);
-        double elapsed = 0.0;
-        if (a.effect == mz::Effect::Genie && genieProgress)
-            elapsed = mz::genieElapsedFor(mz::Kind::Restore, *genieProgress);
+        auto         a       = makeAnimation(mz::Kind::Restore, w, address, std::move(snapshot), snapshotGeometry(w, mon), fullBox(w), *target, mon);
+        const double elapsed = takeover ? continueAfter(a, *takeover) : 0.0;
         startAnimation(std::move(a), elapsed);
     }
 

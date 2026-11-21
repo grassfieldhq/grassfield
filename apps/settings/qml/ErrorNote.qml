@@ -18,7 +18,8 @@ Text {
     leftPadding: Tokens.spacingMd
     rightPadding: Tokens.spacingMd
     wrapMode: Text.Wrap
-    text: root.reason === "-" ? qsTr("The action failed.") : qsTr("The action failed: %1").arg(root.reason)
+    text: root.reason === "-" ? qsTr("The action failed.") : root.system && root.reason === root.system.busyMark ? qsTr("Another change is still in progress. Try again when it is done.")
+        : qsTr("The action failed: %1").arg(root.reason)
     color: Appearance.windowSecondary
     font.family: Appearance.fontFamily
     font.pixelSize: Tokens.typographyCaptionSize

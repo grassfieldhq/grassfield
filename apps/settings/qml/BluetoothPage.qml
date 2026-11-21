@@ -21,6 +21,13 @@ SettingsPage {
     title: qsTr("Bluetooth")
 
     property bool answered: false
+    // A reading is on its way (the timer does not ask again meanwhile: a slow service would stack readings until the
+    // Backend's queue refuses those of every other pane), and how many readings in a row brought no answer: the first keeps
+    // what was read (one timeout must not empty the pane), the second says the service is not there.
+    property bool asking: false
+    // The system bus said something changed while a reading was on its way: read once more after it.
+    property bool stale: false
+    property int misses: 0
     property var controller: ({present: false, powered: false, discovering: false, alias: ""})
     property var devices: []
     property var nearby: []
@@ -44,6 +51,7 @@ SettingsPage {
     onOnChanged: root.discover(root.on)
 
     function refresh(): void {
+        root.asking = true;
         root.system.queryBus("bt.state", "bt.state");
     }
 
@@ -60,17 +68,20 @@ SettingsPage {
     }
 
     // A paired device: connect it, or disconnect it.
+    // Refused while a pairing still runs (one change at a time): that device keeps its "Connecting…".
     function connectDevice(dev: var): void {
+        const running = root.pending;
         root.pending = dev.mac;
         if (!root.system.act("bluetooth " + (dev.connected ? "disconnect" : "connect"), System.btConnect(dev.mac, !dev.connected), "bt.act"))
-            root.pending = "";
+            root.pending = running;
     }
 
     // A nearby device: pair, trust and connect it.
     function pair(mac: string): void {
+        const running = root.pending;
         root.pending = mac;
         if (!root.system.act("bluetooth pair", System.btPair(mac), "bt.act"))
-            root.pending = "";
+            root.pending = running;
     }
 
     // ForgetDeviceSheet's answer.
@@ -86,35 +97,73 @@ SettingsPage {
 
     Connections {
         target: root.backend
+        ignoreUnknownSignals: true
+
+        // A change on the system bus (Backend.busChanged, coalesced there): read again; a reading on its way reads once more after.
+        function onBusChanged(what: string): void {
+            if (what === "bt") {
+                if (!root.asking)
+                    root.refresh();
+                else
+                    root.stale = true;
+            }
+        }
 
         function onFinished(tag: string, ok: bool, output: string): void {
             switch (tag) {
             case "bt.state":
                 {
+                    root.asking = false;
+                    if (root.stale) {
+                        root.stale = false;
+                        root.refresh();
+                    }
+                    if (!ok && root.answered && root.misses < 1) {
+                        root.misses++;
+                        break;
+                    }
+                    root.misses = ok ? 0 : root.misses;
                     const state = ok ? System.parseBtState(output) : null;
                     root.controller = state ? {present: state.present, powered: state.powered, discovering: state.discovering, alias: state.alias}
                                             : {present: false, powered: false, discovering: false, alias: ""};
                     root.devices = state ? state.devices : [];
                     root.nearby = state ? state.nearby : [];
                     root.answered = true;
+                    // A search that did not start is asked for again, unless the adapter is searching already.
+                    if (root.on && !root.searching && !root.controller.discovering)
+                        root.discover(true);
                 }
                 break;
+            case "bt.discover":
+                // The search did not start: the pane is not searching, and the next reading asks again.
+                if (!ok)
+                    root.searching = false;
+                break;
             case "bt.act":
-                root.pending = "";
+                if (!root.system.busy("bt.act"))
+                    root.pending = "";
                 root.refresh();
                 break;
             }
         }
     }
 
+    // A poll only while the system bus's change signals are not followed (Backend.followBus: no bus, a test's backend).
     Timer {
         interval: Tokens.settingsSystemRefreshMs
-        running: true
+        running: root.backend.busSignals !== true
         repeat: true
-        onTriggered: root.refresh()
+        onTriggered: {
+            if (!root.asking)
+                root.refresh();
+        }
     }
 
-    Component.onCompleted: root.refresh()
+    Component.onCompleted: {
+        if (typeof root.backend.followBus === "function")
+            root.backend.followBus("bt");
+        root.refresh();
+    }
     Component.onDestruction: root.discover(false)
 
     SettingsGroup {

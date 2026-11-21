@@ -184,7 +184,7 @@ public:
 
     // The rows of a snapshot as the table shows them (the tests feed snapshots through it).
     std::vector<TableRow> tableRows(const Snapshot &snapshot);
-    void takeSnapshot(const SnapshotPtr &snapshot, unsigned reads);
+    void takeSnapshot(const SnapshotPtr &snapshot, unsigned reads, const AppNamesPtr &names);
 
 signals:
     void appearanceChanged();
@@ -219,7 +219,8 @@ private:
     void nameGpus(const Snapshot &snapshot);
     QString userName(uint32_t uid);
     // AM67: the live app units of the last sample, their cgroup's CPU time and memory peak now.
-    std::vector<LiveUnit> liveUnits();
+    // App History's live units: the candidates taken now, the reader that reads their cgroups (on the worker).
+    AppHistory::LiveReader liveUnits() const;
 
     Options m_options;
     QString m_statePath;
@@ -254,7 +255,8 @@ private:
     int m_processSamples = 0;
     QString m_search;
     bool m_swapped = false;
-    DesktopApps m_apps;
+    // Every app id's desktop entry resolved so far (by the sampler's thread, with each sample).
+    AppNames m_names;
     InhibitorWatch m_inhibitors;
     QHash<uint32_t, QString> m_users;
     QHash<QString, QString> m_gpuNames; // AM47: every GPU seen since the app started, by drm-pdev

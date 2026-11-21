@@ -9,6 +9,8 @@ ScrollPage {
 
     property string query: ""
     property var results: []
+    // Its query asked of the backend's worker, not answered yet (Main.qml requestSearch): "No Results" waits for the answer.
+    property bool searching: false
     property bool aurOn: false
     // "" (not asked for this query), asking, done, or why there is none: offline, short, tooMany, unavailable.
     property string aurState: ""
@@ -19,7 +21,7 @@ ScrollPage {
     readonly property bool anyResult: root.results.length > 0 || root.aurResults.length > 0
     title: root.anyResult ? qsTr("Results for “%1”").arg(root.query) : ""
     Accessible.role: Accessible.Pane
-    Accessible.name: root.anyResult ? root.title : empty.text
+    Accessible.name: root.anyResult || root.searching ? root.title : empty.text
 
     function focusFirst(): void {
         if (root.results.length > 0)
@@ -57,7 +59,7 @@ ScrollPage {
 
     Text {
         id: empty
-        visible: !root.anyResult
+        visible: !root.anyResult && !root.searching
         width: root.contentWidth
         topPadding: Tokens.storeEmptyTop
         horizontalAlignment: Text.AlignHCenter

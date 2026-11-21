@@ -7,7 +7,10 @@
 #include <QStringList>
 #include <QTimer>
 
+#include "archivelogic.h"
+
 #include <atomic>
+#include <functional>
 #include <memory>
 
 class QThread;
@@ -16,7 +19,13 @@ class QThread;
 // name next to the items, then renamed to the Finder's name. A cancel, a failure or a disk that fills up kills the child
 // and removes the temporary file or folder; nothing half-written is ever left under a real name. Expand first lists the
 // archive and refuses one larger than the free space less kFreeMargin, then stops the child if the free space falls
-// under the margin while it writes (a listing can lie). Messages are translated (FilesApp shows them).
+// under the margin while it writes (a listing can lie). The listing is counted as it comes (ArchiveLogic::ListingTally:
+// any number of members, for as long as it takes; Stop ends it), never kept (audit F4). Messages are translated (FilesApp
+// shows them).
+//
+// Nothing of a cancel or a failure waits on the GUI thread (audit F3): the child is killed and not waited for, the marking
+// worker is told to stop, and once both have ended the staging item is removed on a worker (a tree of 100,000 files takes
+// seconds); its registry line goes when it is gone, and stays when something could not be removed (the next start sweeps it).
 class ArchiveJob : public QObject
 {
     Q_OBJECT
@@ -25,9 +34,6 @@ public:
     // Free space always kept on the destination's disk.
     static constexpr qint64 kFreeMargin = qint64(64) * 1024 * 1024;
     static constexpr int kPollMs = 500;
-    // The listing (Expand's first step) is short: an archive that takes longer to list is refused.
-    static constexpr int kListMs = 30000;
-    static constexpr qint64 kMaxListing = qint64(16) * 1024 * 1024;
 
     enum class Kind { Compress, Expand };
 
@@ -68,10 +74,10 @@ private:
     void listed();
     void extracted();
     void finishExpand(const QStringList &top);
-    void stopMarking();
     void compressed();
     void fail(const QString &error);
-    void cleanUp();
+    // Kills the child, stops the marking worker and hands the staging item to a worker that removes it once both have ended.
+    void discard();
     bool setTemp(const QString &path);
     void forgetTemp();
     QString failureText(const QString &fallback) const;
@@ -86,7 +92,7 @@ private:
     QTimer m_poll;
     bool m_listing = false;
     bool m_done = false;
-    QByteArray m_output;
+    ArchiveLogic::ListingTally m_tally;
     QByteArray m_errors;
     // Expand of a downloaded archive: the worker that copies its marks onto the staging tree, and its stop flag.
     QThread *m_marking = nullptr;
@@ -95,4 +101,7 @@ private:
     // Entries the marking may walk (0: no cap); only a test changes it (ArchiveJobTestAccess, tst_fileslaunch.cpp).
     static inline qint64 s_markCap = 0;
     friend class ArchiveJobTestAccess;
+    // Called on the removal worker right before a staging item is removed; only a test sets it (tst_archive.cpp).
+    static inline std::function<void()> s_beforeRemoval;
+    friend class ArchiveRemovalTestAccess;
 };

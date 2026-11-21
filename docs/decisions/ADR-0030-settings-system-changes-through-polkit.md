@@ -393,3 +393,11 @@ entry, OpenSSH's first setup, voxtype) is never a Settings action: it is Omarchy
 vector of `systemguard.cpp` `isLaunch` (`omarchy-launch-floating-terminal-with-presentation <command>`, the path of Software
 Update's Update in Terminal…) behind a sheet that says why, and Omarchy's terminal asks for the password itself. Grassfield
 ships no polkit rule or policy for any of this.
+
+## Amendment 2026-11-19: Date & Time is set by a step, after the dialog (audit SP-13)
+
+`time.set {usec}` still carries the time the clock is to read (validated as before), but the call to timedate1 is
+`SetTime(step, relative = true, interactive = true)`, the step being that time minus the clock when the call leaves. timedated
+evaluates a relative time when it acts, after the polkit dialog (its method runs again once authorised), so the seconds spent
+typing the password are no longer lost (an absolute time sent before the dialog left the clock behind by that long). Test:
+tests/unit/settings/tst_systembus.cpp (the General actions' calls).

@@ -10,7 +10,27 @@
 #include <QString>
 #include <QUrl>
 
+#include <atomic>
+#include <memory>
+
 namespace grassfield::store {
+
+// A worker's cancel flag for every fetch it runs (SU-07): while a FetchCancelScope lives on a thread, fetch, headStatuses and
+// downloadTo on that thread abort their transfer within a tenth of a second once the flag is set (Failed, "cancelled"), so a
+// Store that quits never waits for a 120 s download to end.
+class FetchCancelScope
+{
+public:
+    explicit FetchCancelScope(std::shared_ptr<const std::atomic_bool> cancel);
+    ~FetchCancelScope();
+    FetchCancelScope(const FetchCancelScope &) = delete;
+    FetchCancelScope &operator=(const FetchCancelScope &) = delete;
+
+private:
+    std::shared_ptr<const std::atomic_bool> m_previous;
+};
+// The flag of the scope this thread is in, set: its fetches stop.
+bool fetchCancelled();
 
 struct FetchLimits {
     qint64 maxBytes = 1024 * 1024;

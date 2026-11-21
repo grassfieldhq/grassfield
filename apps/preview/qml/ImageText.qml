@@ -77,10 +77,11 @@ Item {
             root.textRequest = root.backend.recognize("text", root.fileIndex, root.languages);
     }
 
-    // A debounce (logic, ADR-0039 D7), not a visible timing.
+    // A debounce (logic, ADR-0039 D7), not a visible timing. On battery the viewer must rest longer on an image before it
+    // is read (P5 of the 2026-11 audit: tesseract keeps a core busy for seconds per photo while a folder is browsed).
     Timer {
         id: delay
-        interval: 300
+        interval: root.backend && root.backend.onBattery === true ? 1500 : 300
         onTriggered: root.start()
     }
 

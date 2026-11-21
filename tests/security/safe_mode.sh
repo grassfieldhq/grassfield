@@ -179,15 +179,19 @@ SH
 chmod +x "$stubs/shell-failed" "$stubs/session-end"
 sed -e "s#/usr/bin/systemctl#$stubs/systemctl#g" -e "s#/usr/lib/grassfield/grassfield-shell-failed#$stubs/shell-failed#g" \
   -e "s#/usr/lib/grassfield/grassfield-session-end#$stubs/session-end#g" "$root/shell/security/safemode/SafeMode.qml" >"$real/cfg/security/safemode/SafeMode.qml"
-sed -e "s#^var ACTION_GUARD_MS = 340000;#var ACTION_GUARD_MS = 1500;#" -e "s#^var LOOK_IDLE_MS = 5000;#var LOOK_IDLE_MS = 300;#" \
-  -e "s#^var LOOK_WATCH_MS = 2000;#var LOOK_WATCH_MS = 300;#" "$root/shell/security/safemode/SafeModeModel.js" >"$real/cfg/security/safemode/SafeModeModel.js"
+# The backstop look (LOOK_IDLE_MS, a minute) is NOT shortened: the second loop below is seen within its 8 s only through the
+# watch of the flag (fluidity note of the security-session audit: the 5 s poll became a watch).
+sed -e "s#^var ACTION_GUARD_MS = 340000;#var ACTION_GUARD_MS = 1500;#" \
+  -e "s#^var LOOK_WATCH_MS = 2000;#var LOOK_WATCH_MS = 300;#" -e "s#^var LOOK_BURST_MS = 30000;#var LOOK_BURST_MS = 1000;#" "$root/shell/security/safemode/SafeModeModel.js" >"$real/cfg/security/safemode/SafeModeModel.js"
 cp "$root/shell/security/safemode/qmldir" "$real/cfg/security/safemode/"
 cp tests/security/safe_mode.d/SafeModeNotice.qml "$real/cfg/security/safemode/SafeModeNotice.qml"
 printf 'import QtQuick\nItem {}\n' >"$real/cfg/security/safemode/SafeModeCard.qml"
 ln -s "$root/shell/lib" "$real/cfg/lib"
 cp tests/security/safe_mode.d/probe_real.qml "$real/cfg/shell.qml"
 if grep -qE "/usr/bin/systemctl|/usr/lib/grassfield" "$real/cfg/security/safemode/SafeMode.qml" ||
-  ! grep -q "ACTION_GUARD_MS = 1500;" "$real/cfg/security/safemode/SafeModeModel.js"; then
+  ! grep -q "ACTION_GUARD_MS = 1500;" "$real/cfg/security/safemode/SafeModeModel.js" ||
+  ! grep -q "LOOK_BURST_MS = 1000;" "$real/cfg/security/safemode/SafeModeModel.js" ||
+  ! grep -q "^var LOOK_IDLE_MS = 60000;" "$real/cfg/security/safemode/SafeModeModel.js"; then
   echo "FAIL: safe mode real paths: the copy still names a real command, or its guard is not shortened"
   exit 1
 fi

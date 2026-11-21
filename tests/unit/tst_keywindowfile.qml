@@ -24,14 +24,16 @@ TestCase {
 
     function test_thePathAndThePayload() {
         compare(KeyWindowFile.path("/tmp/state", "/run/user/1000"), "/tmp/state/keywindow.json", "a dev session");
-        compare(KeyWindowFile.path("", "/run/user/1000"), "/run/user/1000/grassfield-keywindow.json");
+        compare(KeyWindowFile.path("", "/run/user/1000"), "/run/user/1000/grassfield/keywindow.json");
+        compare(KeyWindowFile.runtimeFolder("", "/run/user/1000"), "/run/user/1000/grassfield");
+        compare(KeyWindowFile.runtimeFolder("/tmp/state", "/run/user/1000"), "", "a dev session makes no runtime folder");
         compare(KeyWindowFile.path("", ""), "");
         compare(KeyWindowFile.payload(settings), '{"v":1,"pid":4242,"appId":"org.grassfield.Settings"}\n');
         compare(KeyWindowFile.payload(KeyWindowFile.none), '{"v":1,"pid":0,"appId":""}\n');
         compare(KeyWindowFile.payload(null), '{"v":1,"pid":0,"appId":""}\n');
         // The apps read the same places (apps/keywindow.h).
         const header = source("apps/keywindow.h");
-        verify(header.indexOf('dev + QStringLiteral("/keywindow.json")') > 0 && header.indexOf('runtime + QStringLiteral("/grassfield-keywindow.json")') > 0);
+        verify(header.indexOf('dev + QStringLiteral("/keywindow.json")') > 0 && header.indexOf('runtime + QStringLiteral("/grassfield/keywindow.json")') > 0);
     }
 
     function test_aClient() {

@@ -42,6 +42,10 @@ Item {
     property bool holdInput: false
     // Content between the text and the buttons.
     default property alias body: bodySlot.data
+    // A body made the first time the sheet opens, and kept (instead of inline children): a window that declares many sheets
+    // does not build every sheet's content at start (Settings declares 34; audit note).
+    property Component bodyComponent: null
+    readonly property Item bodyItem: bodyLoader.item as Item
     readonly property alias fieldText: field.text
     readonly property bool shown: root.visible
 
@@ -70,9 +74,11 @@ Item {
             root.leaving.destroy();
             root.leaving = null;
         }
-        if (!root.visible && !replacing)
-            enter.restart();
+        const wasVisible = root.visible;
+        // Visible first: a bodyComponent is built now, so the drop-in's travel counts its height.
         root.visible = true;
+        if (!wasVisible && !replacing)
+            enter.restart();
         if (root.withField) {
             field.forceActiveFocus();
             field.selectAll();
@@ -278,6 +284,15 @@ Item {
                             id: bodySlot
                             width: parent.width
                             spacing: Tokens.spacingMd
+
+                            // Active from the first show on (it stays loaded once made).
+                            Loader {
+                                id: bodyLoader
+                                width: parent.width
+                                active: root.bodyComponent !== null && (root.visible || bodyLoader.status !== Loader.Null)
+                                visible: active
+                                sourceComponent: root.bodyComponent
+                            }
                         }
                     }
                 }

@@ -167,7 +167,9 @@ QString enrollFinger(BusCaller &bus, const QString &finger, const std::function<
 
 // One action as the pages ask for it: {"op": "...", ...}; returns "" on success, else the reason. Invalid values are refused
 // here (mac, uuid and SSID shapes, booleans), whatever the QML sent. Ops:
-//   wifi.radio {on}, wifi.connectKnown {uuid}, wifi.connectOpen {hex}, wifi.disconnect {}, wifi.scan {},
+//   wifi.radio {on}, wifi.disconnect {}, wifi.scan {},
+//   wifi.connectKnown {uuid}       a saved network, followed until it is up or failed (awaitActivation; the profile stays);
+//   wifi.connectOpen {hex}         an open network: a new profile, kept only once the connection is up (awaitActivation);
 //   wifi.connectSecure {hex, psk}  a WPA/WPA3 personal network with its passphrase (8 to 63 printable ASCII characters or 64
 //                                  hex digits): a new profile, kept only once the connection is up (awaitJoin);
 //   bt.power {on}, bt.connect {mac, connect},
@@ -176,7 +178,8 @@ QString enrollFinger(BusCaller &bus, const QString &finger, const std::function<
 //   bt.forget {mac}             Adapter1 RemoveDevice
 //   power.chargeLimit {on}      UPower EnableChargeThreshold on the battery (its polkit action, kPrivilegedMs)
 //   wifi.forget {uuid}          the saved Wi-Fi profile's Delete (NetworkManager may ask polkit: kPrivilegedMs, ADR-0030)
-//   vpn.connect {uuid, on}      a VPN or WireGuard profile: ActivateConnection on no device, or its DeactivateConnection
+//   vpn.connect {uuid, on}      a VPN or WireGuard profile: ActivateConnection on no device, followed until it is up or failed
+//                               (awaitActivation), or its DeactivateConnection
 //   printer.add {name, uri, info}   cups-pk-helper PrinterAdd (model "everywhere": cupsd builds the queue from the printer's IPP
 //                               attributes), then PrinterSetEnabled and PrinterSetAcceptJobs (polkit, kPrivilegedMs each, ADR-0030)
 //   printer.delete {name}       cups-pk-helper PrinterDelete (polkit, kPrivilegedMs)
@@ -187,7 +190,8 @@ QString enrollFinger(BusCaller &bus, const QString &finger, const std::function<
 //   host.setName {name}         hostname1 SetPrettyHostname, then SetStaticHostname with the name made a valid host name
 //   time.ntp {on}               timedate1 SetNTP
 //   time.zone {zone}            timedate1 SetTimezone
-//   time.set {usec}             timedate1 SetTime (absolute, microseconds since the epoch as a string)
+//   time.set {usec}             timedate1 SetTime: the time the clock is to read (microseconds since the epoch as a string), sent
+//                               as the step from the clock now (relative), which timedated adds after the polkit dialog
 //   user.enable {unit, on}      systemd (session bus) EnableUnitFiles / DisableUnitFiles, then Reload: no privilege
 // and Privacy & Security's, on the session bus, no privilege:
 //   privacy.allow {category, app, on}   the permission store's SetPermission for one application: location ["EXACT","0"] or
@@ -211,12 +215,30 @@ QString enrollFinger(BusCaller &bus, const QString &finger, const std::function<
 QString runAction(BusCaller &bus, const QVariantMap &op, const QStringList &ownDirs = {},
                   const QString &sshSetUpFile = QStringLiteral("/etc/ssh/sshd_config.d/10-omarchy-hardening.conf"));
 
-// wifi.connectSecure's wait for the connection NetworkManager activates (`active`, from AddAndActivateConnection, with its new
-// profile `profile`), its State read every `pollMs` for `deadlineMs` at most: "" once it is up (2). One that went down (3, 4) or
-// went away (NetworkManager removes it then: an unknown object, method or interface answers) failed: the new profile is deleted
-// (kPrivilegedMs: NetworkManager may ask polkit) and a Delete that fails is said too. Any other read failure leaves the state
-// unknown, never a failure: still unknown at the deadline, the profile stays and the answer says the state could not be read;
-// still activating at the deadline, the join failed. runAction waits 30 s, polling every 250 ms.
+// The wait of a join (wifi.connectKnown, wifi.connectOpen, wifi.connectSecure) or a VPN switched on for the connection
+// NetworkManager activates: `active` (the active connection it answered with), on `device` (the Wi-Fi device; "" for a VPN), with
+// `newProfile` made for this join ("" for a saved profile, which always stays). Its State is read every `pollMs`: "" once it is
+// up (2). One that went down (3, 4) or went away failed: the reason NetworkManager's device gives is said ("the password was not
+// accepted", "the network gave this computer no address", ...), and a new profile is deleted (kPrivilegedMs: NetworkManager may
+// ask polkit; a Delete that fails is said too). While NetworkManager asks for secrets (the device in need-auth, a VPN in
+// NEED_AUTH: the session's secret agent shows its password sheet, SP-04) the user is answering: `deadlineMs` does not run then and
+// counts again from the answer, and only `secretsWaitMs` in a row ends the wait. Still activating at the deadline: failed. A
+// State that cannot be read leaves the state unknown, never a failure: still unknown at the deadline, nothing is deleted and the
+// answer says the state could not be read. runAction waits 30 s, polling every 250 ms.
+struct Activation {
+    QString active;
+    QString device;
+    QString newProfile;
+    bool vpn = false;
+};
+QString awaitActivation(BusCaller &bus, const Activation &activation, int deadlineMs, int pollMs, int secretsWaitMs = 150000);
+
+// Whether an op follows the activation it starts (awaitActivation): it may wait for the user's password, and it is one change
+// at a time on its page (the Backend runs it under its tag's latch, with room for that wait).
+bool followsActivation(const QVariantMap &op);
+
+// awaitActivation for a new profile `profile` and its active connection `active`, without a device to read (the tests' door to
+// the plain wait).
 QString awaitJoin(BusCaller &bus, const QString &profile, const QString &active, int deadlineMs, int pollMs);
 
 // Whether an op goes to the session bus (user.*, privacy.*) rather than the system bus.

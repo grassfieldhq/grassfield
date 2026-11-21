@@ -384,8 +384,14 @@ Variants {
                 if (!surface.pressed) {
                     if (win.framing)
                         win.hoverPart = Model.hitTest(win.frame, mouse.x, mouse.y, Tokens.captureHandleHitSize);
-                    else if (win.windowMode)
-                        win.hovered = win.windowUnder(mouse.x, mouse.y);
+                    else if (win.windowMode) {
+                        // Assigned only when the rectangle changed: a new object on every move over the same window rebuilt
+                        // the highlight's outline each time.
+                        const under = win.windowUnder(mouse.x, mouse.y);
+                        const was = win.hovered;
+                        if (!under || !was || under.x !== was.x || under.y !== was.y || under.w !== was.w || under.h !== was.h)
+                            win.hovered = under;
+                    }
                     return;
                 }
                 if (!win.framing || win.part === "" || win.part === "click")
@@ -484,14 +490,17 @@ Variants {
                 border.color: Model.qtColor(Tokens.captureBorder)
             }
 
+            // Eight handles made once, each bound to its place on the frame: a model of fresh points destroyed and made the eight
+            // items again on every pointer move of a frame move (audit B-15).
             Repeater {
-                model: Model.handleCentres(win.frame)
+                model: 8
 
                 delegate: Rectangle {
-                    required property var modelData
+                    required property int index
+                    readonly property var centre: Model.handleCentres(win.frame)[index]
 
-                    x: Math.round(modelData.x - width / 2)
-                    y: Math.round(modelData.y - height / 2)
+                    x: Math.round(centre.x - width / 2)
+                    y: Math.round(centre.y - height / 2)
                     width: Tokens.captureHandleSize
                     height: Tokens.captureHandleSize
                     radius: width / 2
@@ -518,6 +527,9 @@ Variants {
                     anchors.fill: parent
                     radius: Tokens.captureReadoutRadius
                     shadowEnabled: false
+                    // Judged over the whole output (the window covers it), once: the readout follows the pointer, and its rect
+                    // measured on each move judged the glass again on each move (audit B-15).
+                    backdropRect: Qt.rect(0, 0, readout.parent.width, readout.parent.height)
                 }
 
                 Text {

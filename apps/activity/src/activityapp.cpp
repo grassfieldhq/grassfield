@@ -67,19 +67,18 @@ ActivityApp::ActivityApp(Options options, QString statePath, QObject *parent)
     , m_appHistory(
           [this](const QString &app) {
               // AM65's naming, as the Apps sub-groups: the entry of that id, else the one whose Exec runs it, else the name.
-              const DesktopApp *entry = &m_apps.app(app);
-              if (entry->name.isEmpty())
-                  entry = &m_apps.byExec(app);
-              return AppHistory::App{entry->name.isEmpty() ? app : entry->name, entry->icon};
+              // Called on the sampler's thread (AppHistory::setWorker), with the worker's own entries.
+              const DesktopApp entry = m_worker->resolveApp(app);
+              return AppHistory::App{entry.name.isEmpty() ? app : entry.name, entry.icon};
           },
           [this] { return liveUnits(); })
     , m_performance(m_options.procRoot, m_options.sysRoot)
     , m_inspectors(m_options.procRoot, m_options.uid, m_options.clockTicks)
     , m_runtimeFolder(runtimeFolder())
     , m_projection(m_runtimeFolder, m_options.procRoot)
-    , m_apps(DesktopApps::fromEnvironment())
 {
     qRegisterMetaType<SnapshotPtr>();
+    qRegisterMetaType<AppNamesPtr>();
     m_worker = new SamplerWorker(m_options);
     m_worker->moveToThread(&m_thread);
     connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
@@ -87,6 +86,8 @@ ActivityApp::ActivityApp(Options options, QString statePath, QObject *parent)
     connect(m_worker, &SamplerWorker::sampled, this, &ActivityApp::takeSnapshot, Qt::QueuedConnection);
     m_thread.setObjectName(QStringLiteral("activity-sampler"));
     m_thread.start(QThread::LowPriority);
+    // A2: App History's journal is parsed, its live units read and its apps resolved there too.
+    m_appHistory.setWorker(m_worker);
 
     // AM57: Inspect's reads run on the sampler's thread too (AD35), between its samples.
     m_inspectors.setWorker(m_worker);
@@ -153,10 +154,13 @@ ActivityApp::ActivityApp(Options options, QString statePath, QObject *parent)
         m_watcher.addPath(dir);
     if (QFileInfo::exists(file))
         m_watcher.addPath(file);
+    // The shell's capabilities file (chromecaps.h: the minimize light) in Grassfield's runtime folder.
+    grassfield::apps::watchCapabilities(m_watcher);
     const auto reread = [this] {
         const QString f = configFile();
         if (QFileInfo::exists(f) && !m_watcher.files().contains(f))
             m_watcher.addPath(f);
+        grassfield::apps::watchCapabilities(m_watcher);
         readAppearance();
     };
     connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, reread);
@@ -420,8 +424,15 @@ void ActivityApp::applyProjection()
     }
     m_actions.setProjection(projection.valid, windowPids);
     m_inspectors.setProjection(projection.valid, windowPids);
+    QStringList apps;
+    for (const QString &id : projection.apps)
+        if (!apps.contains(id))
+            apps << id;
     if (m_worker)
-        QMetaObject::invokeMethod(m_worker, [worker = m_worker, owners] { worker->setWindowOwners(owners); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(m_worker, [worker = m_worker, owners, apps] {
+            worker->setWindowOwners(owners);
+            worker->setWindowApps(apps);
+        }, Qt::QueuedConnection);
     // AM57: Recent hangs counts each time the shell marks a process again.
     for (int pid : projection.notResponding) {
         if (m_hung.contains(pid))
@@ -654,6 +665,8 @@ void ActivityApp::requestSample()
         if (gpuWindow)
             reads |= ReadProcesses | ReadDescriptors | ReadGpu;
     }
+    if (m_performance.wantsSpeed())
+        reads |= ReadSystemSpeed;
     emit sampleRequested(reads, m_state.interval, m_forget);
     m_forget = false;
 }
@@ -679,9 +692,13 @@ void ActivityApp::nameGpus(const Snapshot &snapshot)
     }
 }
 
-void ActivityApp::takeSnapshot(const SnapshotPtr &snapshot, unsigned reads)
+void ActivityApp::takeSnapshot(const SnapshotPtr &snapshot, unsigned reads, const AppNamesPtr &names)
 {
     m_busy = false;
+    if (names) {
+        for (auto it = names->cbegin(); it != names->cend(); ++it)
+            m_names.insert(it.key(), it.value());
+    }
     nameGpus(*snapshot);
     // Off screen, for the Dock graph and the Performance and CPU windows: their histories alone. The table, the actions and
     // the inspections wait for the main window (a sample comes at once when it shows, AM8).
@@ -723,31 +740,48 @@ void ActivityApp::takeSnapshot(const SnapshotPtr &snapshot, unsigned reads)
     }
 }
 
-std::vector<LiveUnit> ActivityApp::liveUnits()
+AppHistory::LiveReader ActivityApp::liveUnits() const
 {
-    std::vector<LiveUnit> out;
+    // The candidates are taken from the table here (the window's thread); their cgroups are read by the reader, on the
+    // worker (A2 of the 2026-11 audit: /proc and cgroup files per app unit on the window's thread).
+    struct Candidate {
+        int pid;
+        quint64 start;
+        quint64 unitKey;
+    };
+    std::vector<Candidate> candidates;
     QSet<quint64> seen;
     for (const TableRow &r : m_table.allRows()) {
         if (!r.process.own || r.process.unitKey == 0 || seen.contains(r.process.unitKey))
             continue;
-        // The unit now, through the process's descriptor (AD25: a row keeps no cgroup path).
-        const ProcessHandle handle = ProcessHandle::open(m_options.procRoot, r.process.pid, r.process.start);
-        const std::string cgroup = handle.valid() ? handle.cgroup() : std::string();
-        if (cgroup.empty() || !parseAppUnit(unitOf(cgroup)))
-            continue;
         seen.insert(r.process.unitKey);
-        const QString dir = QString::fromStdString(m_options.sysRoot + "/fs/cgroup" + cgroup + "/");
-        LiveUnit live;
-        live.unit = QString::fromStdString(std::string(unitOf(cgroup)));
-        QFile stat(dir + QStringLiteral("cpu.stat"));
-        if (stat.open(QIODevice::ReadOnly))
-            parseCpuStatUsage(stat.read(64 * 1024), live.cpuNs);
-        QFile peak(dir + QStringLiteral("memory.peak"));
-        if (peak.open(QIODevice::ReadOnly))
-            live.memoryPeak = peak.read(64).trimmed().toULongLong();
-        out.push_back(live);
+        candidates.push_back({r.process.pid, r.process.start, r.process.unitKey});
     }
-    return out;
+    return [candidates, procRoot = m_options.procRoot, sysRoot = m_options.sysRoot] {
+        std::vector<LiveUnit> out;
+        QSet<quint64> done;
+        for (const Candidate &c : candidates) {
+            if (done.contains(c.unitKey))
+                continue;
+            // The unit now, through the process's descriptor (AD25: a row keeps no cgroup path).
+            const ProcessHandle handle = ProcessHandle::open(procRoot, c.pid, c.start);
+            const std::string cgroup = handle.valid() ? handle.cgroup() : std::string();
+            if (cgroup.empty() || !parseAppUnit(unitOf(cgroup)))
+                continue;
+            done.insert(c.unitKey);
+            const QString dir = QString::fromStdString(sysRoot + "/fs/cgroup" + cgroup + "/");
+            LiveUnit live;
+            live.unit = QString::fromStdString(std::string(unitOf(cgroup)));
+            QFile stat(dir + QStringLiteral("cpu.stat"));
+            if (stat.open(QIODevice::ReadOnly))
+                parseCpuStatUsage(stat.read(64 * 1024), live.cpuNs);
+            QFile peak(dir + QStringLiteral("memory.peak"));
+            if (peak.open(QIODevice::ReadOnly))
+                live.memoryPeak = peak.read(64).trimmed().toULongLong();
+            out.push_back(live);
+        }
+        return out;
+    };
 }
 
 std::vector<TableRow> ActivityApp::tableRows(const Snapshot &snapshot)
@@ -774,12 +808,9 @@ std::vector<TableRow> ActivityApp::tableRows(const Snapshot &snapshot)
         r.user = userName(p.uid);
         if (p.own && !p.appId.empty()) {
             // AM65: the desktop entry whose id is the unit's name (a launch by entry), else the one whose Exec runs it.
-            const QString id = QString::fromStdString(p.appId);
-            const DesktopApp *app = &m_apps.app(id);
-            if (app->name.isEmpty())
-                app = &m_apps.byExec(id);
-            r.appName = app->name;
-            r.icon = app->icon;
+            const DesktopApp app = m_names.value(QString::fromStdString(p.appId));
+            r.appName = app.name;
+            r.icon = app.icon;
         }
         // AM60: the shell's projection names the processes that own a window (their app's desktop entry name and icon,
         // AM17), those that inhibit idle (AM38) and those it marks as not responding (AM27).
@@ -788,7 +819,7 @@ std::vector<TableRow> ActivityApp::tableRows(const Snapshot &snapshot)
             const auto app = projection.apps.constFind(p.pid);
             r.windowed = app != projection.apps.constEnd();
             if (r.windowed) {
-                const DesktopApp &entry = m_apps.app(*app);
+                const DesktopApp entry = m_names.value(*app); // resolved on the worker (setWindowApps)
                 if (!entry.name.isEmpty()) {
                     r.name = entry.name;
                     r.appName = entry.name;

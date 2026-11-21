@@ -5,6 +5,7 @@
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDBusArgument>
+#include <QDateTime>
 #include <QDBusMetaType>
 #include <QDBusObjectPath>
 #include <QDBusVariant>
@@ -1400,41 +1401,143 @@ bool objectGone(const QString &error)
         || error.startsWith(QLatin1String("org.freedesktop.DBus.Error.UnknownInterface"));
 }
 
-// A join that failed (a wrong password: no agent gives NetworkManager another one) leaves no saved network behind, as nmcli
-// does: its new profile, one of the whole system, is deleted (NetworkManager may ask polkit first), and a Delete that fails is said.
-QString dropFailedJoin(BusCaller &bus, const QString &profile)
+// NetworkManager's device states and reasons (NMDeviceState, NMDeviceStateReason) and the VPN's (NMVpnConnectionState) that
+// awaitActivation reads.
+constexpr uint kDeviceNeedAuth = 60;
+constexpr uint kVpnNeedAuth = 3;
+const QString kNmVpn = QStringLiteral("org.freedesktop.NetworkManager.VPN.Connection");
+
+// The device's StateReason (a (uu) structure: state, reason) as the bus gives it or as a canned reply has it ([state, reason]).
+uint reasonCode(const QVariant &v)
 {
-    const BusReply r = bus.call(kNmService, profile, kNmConnection, QStringLiteral("Delete"), {}, kPrivilegedMs);
+    if (v.metaType() == QMetaType::fromType<QDBusArgument>()) {
+        const QDBusArgument arg = qvariant_cast<QDBusArgument>(v);
+        uint state = 0;
+        uint reason = 0;
+        arg.beginStructure();
+        arg >> state >> reason;
+        arg.endStructure();
+        return reason;
+    }
+    return v.toList().value(1).toUInt();
+}
+
+// Why an activation on `device` failed, in words: what NetworkManager's device says (its StateReason), "" when it says nothing
+// this page can name.
+QString failureOf(BusCaller &bus, const QString &device)
+{
+    if (device.isEmpty())
+        return QString();
+    const Result r = property(bus, kNmService, device, kNmDevice, QStringLiteral("StateReason"));
     if (!r.ok)
+        return QString();
+    switch (reasonCode(r.value)) {
+    case 7: // NO_SECRETS: the password was refused, and no new one was given (the sheet was cancelled, or no agent asked)
+        return QCoreApplication::translate("SystemBus", "the password was not accepted");
+    case 8: // SUPPLICANT_DISCONNECT
+    case 9: // SUPPLICANT_CONFIG_FAILED
+    case 10: // SUPPLICANT_FAILED
+    case 11: // SUPPLICANT_TIMEOUT
+        return QCoreApplication::translate("SystemBus", "the network did not accept the connection");
+    case 5: // IP_CONFIG_UNAVAILABLE
+    case 6: // IP_CONFIG_EXPIRED
+    case 15: // DHCP_START_FAILED
+    case 16: // DHCP_ERROR
+    case 17: // DHCP_FAILED
+        return QCoreApplication::translate("SystemBus", "the network gave this computer no address");
+    case 53: // SSID_NOT_FOUND
+        return QCoreApplication::translate("SystemBus", "that network is no longer in range");
+    }
+    return QString();
+}
+
+// A join that failed leaves no saved network behind, as nmcli does: a profile made for it, one of the whole system, is deleted
+// (NetworkManager may ask polkit first), and a Delete that fails is said. A saved profile (`profile` "") stays.
+QString failedActivation(BusCaller &bus, const Activation &a)
+{
+    const QString why = failureOf(bus, a.device);
+    const QString failure = !why.isEmpty() ? why
+        : a.vpn ? QCoreApplication::translate("SystemBus", "the VPN could not be connected")
+                : QCoreApplication::translate("SystemBus", "the network could not be joined");
+    if (a.newProfile.isEmpty())
+        return failure;
+    const BusReply r = bus.call(kNmService, a.newProfile, kNmConnection, QStringLiteral("Delete"), {}, kPrivilegedMs);
+    if (r.ok)
+        return failure;
+    if (why.isEmpty() && !a.vpn)
         return QCoreApplication::translate("SystemBus", "the network could not be joined, and its new settings could not be removed: %1").arg(fail(r.error));
-    return QCoreApplication::translate("SystemBus", "the network could not be joined");
+    return QCoreApplication::translate("SystemBus", "%1, and its new settings could not be removed: %2").arg(failure, fail(r.error));
+}
+
+// NetworkManager is asking for the connection's secrets (the device in need-auth, a VPN in NEED_AUTH): in the Grassfield session
+// the session's secret agent (grassfield-prompter) shows its password sheet then, and the user is typing.
+bool waitsForSecrets(BusCaller &bus, const Activation &a)
+{
+    if (!a.device.isEmpty()) {
+        const Result d = property(bus, kNmService, a.device, kNmDevice, QStringLiteral("State"));
+        if (d.ok && d.value.toUInt() == kDeviceNeedAuth)
+            return true;
+    }
+    if (a.vpn) {
+        const Result v = property(bus, kNmService, a.active, kNmVpn, QStringLiteral("VpnState"));
+        if (v.ok && v.value.toUInt() == kVpnNeedAuth)
+            return true;
+    }
+    return false;
 }
 } // namespace
 
-QString awaitJoin(BusCaller &bus, const QString &profile, const QString &active, int deadlineMs, int pollMs)
+QString awaitActivation(BusCaller &bus, const Activation &a, int deadlineMs, int pollMs, int secretsWaitMs)
 {
+    // `clock` runs only while NetworkManager works on its own: while it waits for the user's secrets it is held, and the deadline
+    // counts again from the user's answer (a password sheet open for a minute is no failed join). `asking` bounds that wait.
     QElapsedTimer clock;
     clock.start();
+    QElapsedTimer asking;
     bool known = false;
     while (true) {
-        const Result state = property(bus, kNmService, active, kNmActive, QStringLiteral("State"));
+        const Result state = property(bus, kNmService, a.active, kNmActive, QStringLiteral("State"));
+        bool secrets = false;
         if (state.ok) {
             known = true;
             const uint value = state.value.toUInt();
             if (value == 2)
                 return QString();
             if (value >= 3)
-                return dropFailedJoin(bus, profile);
+                return failedActivation(bus, a);
+            secrets = waitsForSecrets(bus, a);
         } else if (objectGone(state.error)) {
-            return dropFailedJoin(bus, profile);
+            return failedActivation(bus, a);
         }
-        if (clock.elapsed() + pollMs > deadlineMs)
-            break;
+        if (secrets) {
+            if (!asking.isValid())
+                asking.start();
+            if (asking.elapsed() + pollMs > secretsWaitMs)
+                return failedActivation(bus, a);
+            clock.restart();
+        } else {
+            asking.invalidate();
+            if (clock.elapsed() + pollMs > deadlineMs)
+                break;
+        }
         QThread::msleep(static_cast<unsigned long>(pollMs));
     }
     if (known)
-        return dropFailedJoin(bus, profile);
-    return QCoreApplication::translate("SystemBus", "the network's state could not be read: it may still be joining");
+        return failedActivation(bus, a);
+    return a.vpn ? QCoreApplication::translate("SystemBus", "the VPN's state could not be read: it may still be connecting")
+                 : QCoreApplication::translate("SystemBus", "the network's state could not be read: it may still be joining");
+}
+
+QString awaitJoin(BusCaller &bus, const QString &profile, const QString &active, int deadlineMs, int pollMs)
+{
+    return awaitActivation(bus, Activation{active, QString(), profile, false}, deadlineMs, pollMs);
+}
+
+bool followsActivation(const QVariantMap &op)
+{
+    const QString name = op.value(QStringLiteral("op")).toString();
+    return name == QLatin1String("wifi.connectKnown") || name == QLatin1String("wifi.connectOpen") || name == QLatin1String("wifi.connectSecure")
+        || (name == QLatin1String("vpn.connect") && op.value(QStringLiteral("on")).toBool());
 }
 
 namespace {
@@ -1471,7 +1574,10 @@ QString joinWithPassphrase(BusCaller &bus, const QString &devicePath, const QByt
         return fail(r.error);
     if (r.args.size() < 2)
         return QString();
-    return awaitJoin(bus, cast<QDBusObjectPath>(r.args.value(0)).path(), cast<QDBusObjectPath>(r.args.value(1)).path(), kActMs, kJoinPollMs);
+    // A wrong password: NetworkManager asks the session's secret agent for another one (device in need-auth) and the join waits
+    // for the user's answer.
+    return awaitActivation(bus, Activation{cast<QDBusObjectPath>(r.args.value(1)).path(), devicePath, cast<QDBusObjectPath>(r.args.value(0)).path(), false}, kActMs,
+                           kJoinPollMs);
 }
 } // namespace
 
@@ -1494,10 +1600,14 @@ QString runAction(BusCaller &bus, const QVariantMap &op, const QStringList &ownD
         return privileged(bus, kTimeService, kTimePath, QStringLiteral("SetNTP"), {op.value(QStringLiteral("on")).toBool(), true});
     if (name == QLatin1String("time.zone"))
         return privileged(bus, kTimeService, kTimePath, QStringLiteral("SetTimezone"), {op.value(QStringLiteral("zone")).toString(), true});
+    // The time the clock is to read now, sent as the step from the clock as it reads now (SetTime relative): timedated adds it
+    // to its own clock when it acts, after the polkit dialog, so the time spent typing the password is not lost (an absolute
+    // time sent before the dialog left the clock behind by that long). A step of 0 changes nothing, and timedated says so.
     if (name == QLatin1String("time.set")) {
         qint64 usec = 0;
         isUsec(op.value(QStringLiteral("usec")), &usec);
-        return privileged(bus, kTimeService, kTimePath, QStringLiteral("SetTime"), {QVariant::fromValue(usec), false, true});
+        const qint64 step = usec - QDateTime::currentMSecsSinceEpoch() * 1000;
+        return privileged(bus, kTimeService, kTimePath, QStringLiteral("SetTime"), {QVariant::fromValue(step), true, true});
     }
     if (name == QLatin1String("user.enable")) {
         // Only one of the user's own services (userUnits): never a unit a package or the system ships.
@@ -1644,12 +1754,19 @@ QString runAction(BusCaller &bus, const QVariantMap &op, const QStringList &ownD
         for (const AnyProfile &p : allProfiles(bus)) {
             if ((p.type != QLatin1String("vpn") && p.type != QLatin1String("wireguard")) || p.uuid.compare(uuid, Qt::CaseInsensitive) != 0)
                 continue;
+            // NetworkManager accepting the activation is not the VPN being up: its state is followed until it is up or failed
+            // (a VPN plug-in may ask the session's secret agent for a password meanwhile).
             if (op.value(QStringLiteral("on")).toBool()) {
                 const BusReply r = bus.call(kNmService, kNmPath, kNmIface, QStringLiteral("ActivateConnection"),
                                             {QVariant::fromValue(QDBusObjectPath(p.path)), QVariant::fromValue(QDBusObjectPath(QStringLiteral("/"))),
                                              QVariant::fromValue(QDBusObjectPath(QStringLiteral("/")))},
                                             kActMs);
-                return r.ok ? QString() : fail(r.error);
+                if (!r.ok)
+                    return fail(r.error);
+                if (r.args.isEmpty())
+                    return QString();
+                return awaitActivation(bus, Activation{cast<QDBusObjectPath>(r.args.value(0)).path(), QString(), QString(), p.type == QLatin1String("vpn")},
+                                       kActMs, kJoinPollMs);
             }
             const QString activePath = activeConnections(bus).value(p.uuid.toLower()).first;
             if (activePath.isEmpty())
@@ -1683,7 +1800,12 @@ QString runAction(BusCaller &bus, const QVariantMap &op, const QStringList &ownD
                                             {QVariant::fromValue(QDBusObjectPath(p.path)), QVariant::fromValue(QDBusObjectPath(dev.path)),
                                              QVariant::fromValue(QDBusObjectPath(QStringLiteral("/")))},
                                             kActMs);
-                return r.ok ? QString() : fail(r.error);
+                if (!r.ok)
+                    return fail(r.error);
+                // Followed until it is up or failed (out of range, a changed password, no address); the saved profile stays.
+                if (r.args.isEmpty())
+                    return QString();
+                return awaitActivation(bus, Activation{cast<QDBusObjectPath>(r.args.value(0)).path(), dev.path, QString(), false}, kActMs, kJoinPollMs);
             }
             return QCoreApplication::translate("SystemBus", "that network is no longer saved");
         }
@@ -1718,7 +1840,13 @@ QString runAction(BusCaller &bus, const QVariantMap &op, const QStringList &ownD
             // A new profile of the whole system: NetworkManager may ask polkit (settings.modify.system, ADR-0030).
             const BusReply r = bus.call(kNmService, kNmPath, kNmIface, QStringLiteral("AddAndActivateConnection"),
                                         {QVariant::fromValue(settings), QVariant::fromValue(QDBusObjectPath(dev.path)), QVariant::fromValue(QDBusObjectPath(ap.path))}, kPrivilegedMs);
-            return r.ok ? QString() : fail(r.error);
+            if (!r.ok)
+                return fail(r.error);
+            // Kept only once it is up, as a secured join: a join that fails (no address) leaves no saved network behind.
+            if (r.args.size() < 2)
+                return QString();
+            return awaitActivation(bus, Activation{cast<QDBusObjectPath>(r.args.value(1)).path(), dev.path, cast<QDBusObjectPath>(r.args.value(0)).path(), false},
+                                   kActMs, kJoinPollMs);
         }
         return QCoreApplication::translate("SystemBus", "that network is no longer in range");
     }

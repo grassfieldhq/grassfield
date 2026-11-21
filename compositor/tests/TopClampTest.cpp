@@ -89,6 +89,20 @@ TEST(TopClamp, TheOutputUnderTheTopEdgeHoldsTheWindow) {
     EXPECT_FALSE(gf::topclamp::outputFor(Rect{-900, -900, 100, 100}, Point{-500, -500}, kOutputs).has_value()) << "nowhere: no clamp";
 }
 
+TEST(TopClamp, ASliverOnAHigherOutputDoesNotLeaveTheTitlebarAboveTheLowerOne) {
+    // Two outputs side by side, the right one set 300 px lower: a window of the right one dragged up with 20 px of its top
+    // edge on the left one stayed there, its titlebar in the dead space above the right output.
+    constexpr std::array<Output, 2> kOffset{Output{Rect{0, 0, 1920, 1080}, 32}, Output{Rect{1920, 300, 1280, 720}, 324}};
+    EXPECT_EQ(gf::topclamp::outputFor(Rect{1900, 200, 800, 632}, Point{1910, 210}, kOffset).value_or(kNone), 1U) << "20 px on the left output";
+    EXPECT_DOUBLE_EQ(gf::topclamp::heldMove(Rect{1900, 232, 800, 600}, kBand, Point{1910, 210}, kOffset).y, 324 + kBand);
+    EXPECT_EQ(gf::topclamp::outputFor(Rect{1919, 200, 800, 632}, Point{-500, -500}, kOffset).value_or(kNone), 1U) << "1 px";
+    // Enough of the titlebar on the higher output to grab it: that output holds the window, as before.
+    EXPECT_EQ(gf::topclamp::outputFor(Rect{1820, 200, 800, 632}, Point{-500, -500}, kOffset).value_or(kNone), 0U) << "100 px on the left output";
+    // A sliver on an output with nothing more below it: still that output (a window may hang off a side).
+    EXPECT_EQ(gf::topclamp::outputFor(Rect{-780, 200, 800, 632}, Point{-500, -500}, kOffset).value_or(kNone), 0U);
+    EXPECT_EQ(gf::topclamp::outputFor(Rect{-780, 200, 800, 632}, Point{-500, -500}, kOutputs).value_or(kNone), 0U) << "the output below shares no more";
+}
+
 // Review of e0a3734: the output under the POINTER decided, and a window sitting correctly on an upper output was moved
 // or cut at the release of a SUPER+drag or a resize that ended with the pointer on another output.
 namespace {

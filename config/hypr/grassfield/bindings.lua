@@ -1,5 +1,7 @@
 -- Grassfield keyboard and pointer bindings (ADR-0002). SUPER plays the role of Command.
--- Shell actions go through `qs ipc` into the running grassfield-shell instance.
+-- Shell actions reach the running grassfield-shell in-process: Hyprland's `event` dispatcher writes them on socket2, which
+-- the shell reads (shell/platform/shortcuts/Shortcuts.qml; CIO-01). Only the lock key starts a process (`qs ipc` to the
+-- security process, with its stand-in): it must lock with the UI process dead.
 
 -- The dev session runs the shell from the repository (-p $GRASSFIELD_SHELL_DIR); the installed session always from the
 -- system location, never by name (`-c` would also search the user-writable ~/.config/quickshell, GF-115).
@@ -15,7 +17,24 @@ local shell_selector = (shell_dir and shell_dir ~= "") and ("-p '" .. shell_dir 
 -- the list is the one grassfield-shell.service clears; tests/security/lock_request_env.sh).
 local qs_ipc = "env -u QS_CONFIG_PATH -u QS_CONFIG_NAME -u QS_MANIFEST qs ipc " .. shell_selector
 
+-- In-process delivery (CIO-01): `custom>>gfkey/1 <target> <function> [argument...]` on socket2, read by the shell's own
+-- Hyprland connection (shell/platform/shortcuts/Shortcuts.qml, which accepts exactly the requests of this file). Before, every key
+-- forked `sh`, `env` and a whole Quickshell client: a held volume key started 40 of them a second, in no guaranteed order.
+-- socket2 keeps the order of the keys. With a Hyprland that lacks the dispatcher, keys go through `qs ipc` as before. An empty
+-- argument ('') is left out of the event (the shell reads a missing output name as "").
+local in_process = (function()
+  local ok, event = pcall(function() return hl.dsp.event end)
+  return ok and event ~= nil
+end)()
+
+local function shell_event(target, fn)
+  return "gfkey/1 " .. target .. " " .. (fn:gsub(" ''", ""))
+end
+
 local function shell(target, fn)
+  if in_process then
+    return hl.dsp.event(shell_event(target, fn))
+  end
   return hl.dsp.exec_cmd(qs_ipc .. " call " .. target .. " " .. fn)
 end
 
@@ -53,8 +72,9 @@ end
 -- (KeybindManager.cpp, efb5099), so a release bind inside a map entered after SUPER went down never fires; the release
 -- bind below lives in the default map, where SUPER went down.
 --
--- Every request carries a hold id (one per physical hold of SUPER): `next` and `release` are separate `qs ipc`
--- processes that can arrive in either order after a quick tap, and the shell orders them by id.
+-- Every request carries a hold id (one per physical hold of SUPER): socket2 delivers `next` and `release` in order, but
+-- the `qs ipc` fallback (a Hyprland without the event dispatcher) runs them as separate processes that can arrive in
+-- either order after a quick tap, and the shell orders them by id.
 -- Ids start from the clock, so that a config reload (a new Lua state) never reuses ids the shell has already seen.
 local switcher_id = os.time()
 local switcher_held = false
@@ -200,13 +220,10 @@ end
 -- compositor's thread): a regular file only, through `timeout` (a FIFO in its place never blocks it), matched on the key
 -- `"dictation": true` (the contract names no other key dictation, and a JSON string cannot hold that text unescaped). While
 -- voxtype is installed the key is Grassfield's even with the switch off; it then does nothing.
+-- Looked up on PATH by Lua alone (grassfield.probe.on_path, CIO-10): no `command -v` shell on Hyprland's main thread at each parse.
 local function command_present(name)
-  if type(io.popen) ~= "function" then return false end
-  local ok, p = pcall(io.popen, "command -v " .. name .. " 2>/dev/null", "r")
-  if not ok or not p then return false end
-  local found = p:read("a") or ""
-  p:close()
-  return found ~= ""
+  local ok, probe = pcall(require, "grassfield.probe")
+  return ok and probe.on_path(name) or false
 end
 
 local function settings_file()
@@ -273,7 +290,10 @@ bind("SUPER + ALT + S", "Move the window to a stage of its own", shell("stages",
 
 -- Keyboard launch keys: each opens the user's default app, resolved at press time by grassfield-launch-key (desktop entries
 -- and xdg-mime, no package names). Search is Spotlight. Keys with no target here stay unbound.
-local launch_key = os.getenv("GRASSFIELD_LAUNCH_KEY") or "/usr/lib/grassfield/grassfield-launch-key"
+-- GRASSFIELD_LAUNCH_KEY (another launcher, quoted as is below) is dev plumbing like GRASSFIELD_SHELL_DIR: the real
+-- session ignores it, so a stray value cannot make these keys run another program.
+local launch_key = dev_session and os.getenv("GRASSFIELD_LAUNCH_KEY") or "/usr/lib/grassfield/grassfield-launch-key"
+if launch_key == "" or launch_key:find("'", 1, true) then launch_key = "/usr/lib/grassfield/grassfield-launch-key" end
 local function launch(kind)
   return hl.dsp.exec_cmd("'" .. launch_key .. "' " .. kind)
 end
@@ -305,12 +325,98 @@ local gestures = (type(input) == "table" and input.settings) and input.settings(
 if gestures.gesture_spaces then
   hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
 end
+-- Overview and Apps follow the fingers (macOS; CIO-01's gesture part): each update of the swipe or pinch sends its progress
+-- (0..1) to the shell, `custom>>gfgesture/1 <kind> <phase> <progress>` on socket2, and the end says whether the gesture
+-- completes (past half way, or flicked toward its goal) or goes back. A shell surface that follows the progress animates
+-- with it; otherwise the shell opens or closes at a completed end, as the discrete gesture did (shell/platform/shortcuts/Shortcuts.qml).
+-- A Hyprland without the event dispatcher: the discrete gesture through `qs ipc`, as before.
+local tracked = {}
+tracked.swipe_distance = (function()
+  local ok, v = pcall(hl.get_config, "gestures.workspace_swipe_distance")
+  v = ok and tonumber(v) or nil
+  return (v and v >= 50 and v <= 5000) and v or 300
+end)()
+
+-- progress(e, state) -> 0..1 from the accumulated motion of this gesture (state.dy: swipe distance, state.scale: pinch).
+function tracked.gesture(kind, progress_of)
+  local state = {}
+  local function send(phase, p, tail)
+    hl.dispatch(hl.dsp.event(string.format("gfgesture/1 %s %s %s%s", kind, phase, tracked.format(p), tail or "")))
+  end
+  local function step(e)
+    if e.delta and type(e.delta.y) == "number" then state.dy = state.dy + e.delta.y end
+    if type(e.scale) == "number" then state.scale = e.scale end
+    local p = math.max(0, math.min(1, progress_of(state)))
+    local t = tonumber(e.time_ms) or 0
+    if state.t and t > state.t then state.speed = (p - state.p) * 1000 / (t - state.t) end
+    state.t, state.p = t, p
+    return p
+  end
+  return {
+    start = function(e)
+      state = { dy = 0, scale = 1, p = 0, sent = 0, speed = 0 }
+      send("begin", step(e))
+    end,
+    update = function(e)
+      local p = step(e)
+      -- At most one event per 1 % of progress (and every return to 0 or 1): the shell follows the fingers, socket2 is not flooded.
+      if math.abs(p - state.sent) >= 0.01 or ((p == 0 or p == 1) and p ~= state.sent) then
+        state.sent = p
+        send("update", p)
+      end
+    end,
+    -- Hyprland reads the end callback as `finish` (LuaBindingsConfigRules.cpp, 0.56 and 0.57): an `end` key is never called.
+    finish = function(e)
+      if e.cancelled then
+        send("cancel", state.p or 0)
+        return
+      end
+      send("end", state.p or 0, tracked.completes(state.p or 0, state.speed or 0) and " commit" or " back")
+    end,
+  }
+end
+
+-- "0", "1" or "0.xxxx": the shell's parser takes nothing else.
+function tracked.format(p)
+  if p <= 0 then return "0" end
+  if p >= 1 then return "1" end
+  local s = string.format("%.4f", p):gsub("0+$", "")
+  -- 0.99996 rounds to "1.0000": "1." would be refused by the parser and the gesture's end lost (review of this series).
+  if s == "1." then return "1" end
+  return s == "0." and "0" or s
+end
+
+-- The gesture completes past half way, or when the fingers leave moving toward its goal (2 lengths a second), not from the
+-- very start.
+function tracked.completes(p, speed)
+  return p >= 0.5 or (p >= 0.1 and speed >= 2)
+end
+
+local function swipe_up(s) return -s.dy / tracked.swipe_distance end
+local function swipe_down(s) return s.dy / tracked.swipe_distance end
+-- A pinch from the whole hand to half its span (scale 1 to 0.5) is the whole way, and the spread back likewise (1 to 2).
+local function pinch_in(s) return (1 - s.scale) * 2 end
+local function pinch_out(s) return (s.scale - 1) end
+
 if gestures.gesture_overview then
-  hl.gesture({ fingers = 3, direction = "up", action = function() hl.exec_cmd(qs_ipc .. " call overview open") end })
-  hl.gesture({ fingers = 3, direction = "down", action = function() hl.exec_cmd(qs_ipc .. " call overview close") end })
+  if in_process then
+    hl.gesture({ fingers = 3, direction = "up", action = tracked.gesture("overview-open", swipe_up) })
+    hl.gesture({ fingers = 3, direction = "down", action = tracked.gesture("overview-close", swipe_down) })
+  else
+    hl.gesture({ fingers = 3, direction = "up", action = function() hl.exec_cmd(qs_ipc .. " call overview open") end })
+    hl.gesture({ fingers = 3, direction = "down", action = function() hl.exec_cmd(qs_ipc .. " call overview close") end })
+  end
 end
 -- Apps: pinch with the thumb and three fingers opens it, spreading them closes it (macOS 26, docs/specs/apps.md A11).
 if gestures.gesture_apps then
-  hl.gesture({ fingers = 4, direction = "pinchin", action = function() hl.exec_cmd(qs_ipc .. " call apps open") end })
-  hl.gesture({ fingers = 4, direction = "pinchout", action = function() hl.exec_cmd(qs_ipc .. " call apps close") end })
+  if in_process then
+    hl.gesture({ fingers = 4, direction = "pinchin", action = tracked.gesture("apps-open", pinch_in) })
+    hl.gesture({ fingers = 4, direction = "pinchout", action = tracked.gesture("apps-close", pinch_out) })
+  else
+    hl.gesture({ fingers = 4, direction = "pinchin", action = function() hl.exec_cmd(qs_ipc .. " call apps open") end })
+    hl.gesture({ fingers = 4, direction = "pinchout", action = function() hl.exec_cmd(qs_ipc .. " call apps close") end })
+  end
 end
+
+-- The module's value (require("grassfield.bindings")): what tests/shell/bindings_inprocess.sh checks.
+return { tracked = tracked, shell_event = shell_event, in_process = in_process }

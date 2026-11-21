@@ -30,62 +30,69 @@ Sheet {
         onPicked: id => root.store.set("hotCorners." + key, id)
     }
 
-    Item {
-        width: parent.width
-        height: topLeft.height + Tokens.spacingSm + picture.height + Tokens.spacingSm + bottomLeft.height
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        Corner {
-            id: topLeft
-            key: "topLeft"
-            accessibleName: qsTr("Top left corner")
-        }
+            Item {
+                width: parent.width
+                height: topLeft.height + Tokens.spacingSm + picture.height + Tokens.spacingSm + bottomLeft.height
 
-        Corner {
-            anchors.right: parent.right
-            key: "topRight"
-            accessibleName: qsTr("Top right corner")
-        }
+                Corner {
+                    id: topLeft
+                    key: "topLeft"
+                    accessibleName: qsTr("Top left corner")
+                }
 
-        // The screen: the Grassfield artwork in a rounded frame.
-        Item {
-            id: picture
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: topLeft.height + Tokens.spacingSm
-            width: Tokens.settingsScreenCornersPictureWidth
-            height: Tokens.settingsScreenCornersPictureHeight
-            Accessible.ignored: true
-            layer.enabled: true
-            layer.effect: MultiEffect {
-                maskEnabled: true
-                maskSource: pictureMask
+                Corner {
+                    anchors.right: parent.right
+                    key: "topRight"
+                    accessibleName: qsTr("Top right corner")
+                }
+
+                // The screen: the Grassfield artwork in a rounded frame.
+                Item {
+                    id: picture
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: topLeft.height + Tokens.spacingSm
+                    width: Tokens.settingsScreenCornersPictureWidth
+                    height: Tokens.settingsScreenCornersPictureHeight
+                    Accessible.ignored: true
+                    layer.enabled: true
+                    layer.effect: MultiEffect {
+                        maskEnabled: true
+                        maskSource: pictureMask
+                    }
+
+                    GrassfieldArtwork {
+                        anchors.fill: parent
+                    }
+                }
+
+                Rectangle {
+                    id: pictureMask
+                    visible: false
+                    layer.enabled: true
+                    width: picture.width
+                    height: picture.height
+                    radius: Tokens.settingsScreenCornersPictureRadius
+                }
+
+                Corner {
+                    id: bottomLeft
+                    y: picture.y + picture.height + Tokens.spacingSm
+                    key: "bottomLeft"
+                    accessibleName: qsTr("Bottom left corner")
+                }
+
+                Corner {
+                    anchors.right: parent.right
+                    y: bottomLeft.y
+                    key: "bottomRight"
+                    accessibleName: qsTr("Bottom right corner")
+                }
             }
-
-            GrassfieldArtwork {
-                anchors.fill: parent
-            }
-        }
-
-        Rectangle {
-            id: pictureMask
-            visible: false
-            layer.enabled: true
-            width: picture.width
-            height: picture.height
-            radius: Tokens.settingsScreenCornersPictureRadius
-        }
-
-        Corner {
-            id: bottomLeft
-            y: picture.y + picture.height + Tokens.spacingSm
-            key: "bottomLeft"
-            accessibleName: qsTr("Bottom left corner")
-        }
-
-        Corner {
-            anchors.right: parent.right
-            y: bottomLeft.y
-            key: "bottomRight"
-            accessibleName: qsTr("Bottom right corner")
         }
     }
 }

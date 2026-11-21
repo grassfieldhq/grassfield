@@ -308,6 +308,17 @@ function probeInterval(suspected) {
     return suspected === false ? PROBE_INTERVAL_MS : PROBE_SUSPECTED_MS;
 }
 
+// The suspicion the probe's rate follows (fluidity note of the security-session audit: a lock restored after a crash kept 10
+// Hyprland queries a second all night). A lock surface that lost the keyboard is a sign of a real takeover and always
+// counts. A lock inherited at start, with a lock surface holding the keyboard, counts only while the displays are on: while
+// they are off for lack of input (Idle's displayOff, Lock.displaysOff) the probe runs at the rate of any held lock, and the
+// first input lights them, which brings the fast rate back. Anything but exact booleans counts as suspected (fail closed).
+function probeSuspected(surfaceFocused, inheritedLock, displaysOff) {
+    if (!takeoverSuspected(surfaceFocused, inheritedLock))
+        return false;
+    return !(surfaceFocused === true && inheritedLock === true && displaysOff === true);
+}
+
 // File name of the marker; the instance id is reduced to safe file-name characters.
 function markerName(instance, display) {
     var id = String(instance || display || "default").replace(/[^A-Za-z0-9_.-]/g, "_");

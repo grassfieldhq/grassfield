@@ -88,6 +88,16 @@ items (Settings does it); a background collector; any network access.
   graph | Data received, Data sent and their rates. A figure that the graph draws has a square of its colour
   (`activity.swatchSize`) before its label (ADR-0038 AD38). Every graph keeps `activity.historySamples` samples, each tab's
   at every sample whichever tab is shown (AD37); a rate the sampler could not give is a gap, never a zero.
+  Drawing (audit apps-misc, round 2): every graph is a `GraphItem` (`src/graphitem.h`, registered as
+  `Grassfield.Activity`; `qml/Graph.qml` makes it and resolves the colour names): filled bands without a line, their edge
+  antialiased by a coverage strip half a device pixel wide, as the Qt Quick Shapes graph it replaces looked. Its triangles
+  live in a ring of one block per sample (`src/graphgeometry.h`), in coordinates that slide with one transform: a new sample
+  writes its own block, the one before it and the two at the left edge, and clears the one that left; a new scale, size or
+  style, or an edited value, rebuilds the graph. One exception to "as before": two Memory Pressure bars of one level no
+  longer show the white seam the Shapes' odd-even fill left where they overlap. The software scene graph paints the same
+  shapes with QPainter. Checked by `tests/unit/activity/qml/tst_graph.cpp`: the vertex data, the ring against a full
+  rebuild at every one of 400 samples per style, and the pixels against the former graph (offscreen, and on a GPU scene graph
+  under Xvfb with Mesa: mean difference 0.3 to 1.8 of 255, under 0.4 % of pixels off by more than a third).
 - **AM6** Menus: the app menu (About, Hide, Quit), File (Close Window), Edit (Copy, Select All, Find), View, Window, Help,
   exported to the menu bar (T1, `apps/globalmenu.h`). There is no settings window: the View menu holds the options (macOS).
 - **AM7** Light and dark appearance and the accent follow the session; table rows alternate with the token fill
@@ -456,6 +466,22 @@ items (Settings does it); a background collector; any network access.
 - **AM79** Fixture tree (tests only): in a dev session, `GRASSFIELD_PROC_ROOT` and `GRASSFIELD_SYS_ROOT` (dev plumbing,
   `runmode.h` `devValue`) point the sampler at a fixture tree; outside a dev session they are ignored.
 
+- **AM77** (2026-11 audit, round 2) Off the window's thread and kept honest:
+  - App History's journal answer is parsed, its live units' cgroups read and its apps resolved on the sampler's thread
+    (`AppHistory::setWorker`); the window's thread only swaps the rows in, and a newer read makes an older answer unused.
+  - The desktop entries of the app ids (each own row's unit, each window's app) are resolved on the sampler's thread with
+    each sample (`SamplerWorker` `AppNames`): the scan of every `.desktop` file for a command-launched app never runs on
+    the window's thread.
+  - The processors' current speed and the uptime are read by the sampler (`ReadSystemSpeed`), only while Performance shows
+    CPU; each logical processor's series are boxed only while a window draws them (CPU Usage, CPU History, Performance's
+    logical processors).
+  - "Data read/written", "Packets in/out" and the network and disk byte totals keep the last counters of a disk or an
+    interface that went away (or restarted from zero): they never go back.
+  - A TCP socket counts for one process: the one that holds it and held it first; one handed to another process counts
+    for that one from the hand-over on, the first keeping its share; one inherited across a fork counts once.
+  - The table sorts on each row's text made once per rebuild, and announces (`dataChanged`) only the rows whose shown
+    values changed, in runs.
+
 ## Keyboard
 | Keys | Action |
 |---|---|
@@ -521,6 +547,7 @@ utilisé »; « (ne répond pas) » as the Force Quit panel. Sizes and times in 
 | A-S11 | AM57's and AM58's reads: the parsers (stat's policy after a name with parentheses, `smaps_rollup`, `btime`, the socket tables, the unit), every tab of an own process on a fixture tree, another owner's (no io, unit, command line, links or descriptors), % CPU between two reads, `smaps_rollup` at most every 5 s, a younger parent, a process ended or replaced; a real child's pipe, TCP listener and local socket through its descriptor | `tests/unit/activity/tst_inspect.cpp` (step 2d) | L0 |
 | A-S12 | AM65's groups (kinds in order with their counts, an app unit's header with its name and icon, a window owner outside a unit, the Kernel row with the System Processes, collapsed headers kept, the search); a unit's number for its processes; AM70's Status column in its order | `tests/unit/activity/window/tst_processtable.cpp`, `tst_sampler.cpp` (step 4) | L0 |
 | A-S13 | AM68: available for an own app unit only, the reasons, nothing without the user manager (AM76); the unit read again when chosen; idle on, 1 on an older systemd, unset off; a failure said; the sampler's `cpu.idle` and `cpu.weight` reads, once per unit, a change made elsewhere followed | `tests/unit/activity/window/tst_efficiency.cpp`, `tst_sampler.cpp`, `tests/unit/tst_activitymain.qml` (step 4) | L0 |
+| A-S20 | AM77: `tests/unit/activity/tst_sampler.cpp` (TotalsKeepTheCountersOfDevicesThatWent, ASocketCountsForTheProcessThatHoldsIt, TheSpeedIsReadOnlyWhenAsked), `window/tst_apphistory.cpp` (TheJournalIsReadOnTheWorker), `window/tst_performance.cpp`, `window/tst_processtable.cpp` (OnlyTheRowsThatChangedAreAnnounced) | L0 |
 | A-S14 | AM67: the journal's records of the launches only, summed per app with the live units, the period, the caption, the sort, "not available" when journalctl fails | `tests/unit/activity/window/tst_apphistory.cpp`, `tests/unit/tst_activitymain.qml` (step 4) | L0 |
 | A-S15 | AM66, AM71, AM72: the machine's facts on fixture trees (processors, caches once, speeds, uptime, a disk, an interface's kind, a Wi-Fi signal); the sidebar and details built only while shown, Memory's bar whole, a selection that went away, each processor's split and history, Clear CPU History, a GPU without clients idling; the windows on a fake backend | `tests/unit/activity/tst_machine.cpp`, `window/tst_performance.cpp`, `tests/unit/tst_activitymain.qml` (steps 4 and 5) | L0 |
 | A-W3 | the Info button's window on the real /proc: its reads, a second request raising it, its Quit sending SIGTERM, the window closing with its process; another owner's process (pid 1) with "—" and Quit off; the windows closed with the main window. The backend: one inspection per process, the tabs' texts, the reads on the worker's thread and only on screen. The window on a fake backend: the Info button, Ctrl+I, the menus, a double-click, the tabs, the parent link, the disabled Quit's tooltip, the keys of the key window | `tests/apps/activity_actions.sh` (`ActivityInspect.*`), `tests/unit/activity/window/tst_inspection.cpp`, `tests/unit/tst_activitymain.qml` (step 2d) | L1 |

@@ -991,3 +991,27 @@ keep the plugin's bar, D4c: a frameless xdg client with its own frame is tagged,
 `tests/compositor/frameless_chrome.sh` (F1-F6: a real QtWayland frameless window that draws nothing and one with its own bar
 and custom margins, maximized and back, Firefox's two modes as GTK 3 stand-ins, a capture);
 `tests/shell/client_chrome_rules.sh` (Firefox out of S1b, in both maximize negations).
+
+## Amendment to ADR-0015 (unified toolbar), Q4(b) channel, and ADR-0031 — where the capabilities file lives
+
+Date: 2026-11-19 · Status: accepted (2026-11 audit, apps-misc H1 / settings-portal (b), round 2)
+
+## Change
+The capabilities file the shell writes for the apps moves from `$XDG_RUNTIME_DIR/grassfield-capabilities.json` to
+`$XDG_RUNTIME_DIR/grassfield/capabilities.json` (a dev session keeps `$GRASSFIELD_STATE_HOME/capabilities.json`). Format
+and rule are unchanged (`shell/platform/CapabilitiesFile.js`, `apps/chromecaps.h`, `ui/Grassfield/Ui/WindowActions.js`).
+
+## Why
+The same reason as the key-window file (amendment to ADR-0039 step 17): a reader watches the file's directory because the
+shell replaces the file atomically. With the file directly in `$XDG_RUNTIME_DIR`, every socket, lock or pid file any program
+made or removed there woke Files, Activity Monitor and Settings, and Settings' backend watched the whole runtime directory.
+
+## Consequences
+- The shell makes `$XDG_RUNTIME_DIR/grassfield` private (`mkdir -m 0700 -p`) before its first write (Capabilities.qml, as
+  KeyWindow.qml). Settings' backend, when it starts first, makes the folder with the same mode.
+- `apps/chromecaps.h` `watchCapabilities()` watches that folder and the file; while the folder does not exist it watches the
+  runtime directory and lets it go as soon as the folder appears (Files, Activity Monitor). Activity Monitor now follows the
+  file live (it read it only when grassfield.json changed).
+- ADR-0015 line 744 and ADR-0031 line 25 read `$XDG_RUNTIME_DIR/grassfield/capabilities.json`.
+- Upgrade: a shell and apps of different versions disagree on the path for one session at most; a missing file means
+  "not known" (the minimize light stays enabled), so nothing breaks.

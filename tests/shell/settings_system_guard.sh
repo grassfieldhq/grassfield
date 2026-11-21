@@ -50,9 +50,10 @@ QtObject {
     property int okCount: 0
     property int refusedCount: 0
     property var reasons: []
-    // The real-session D-Bus actions go out three at a time: BusJobs lets 4 jobs run at once and answers any other "timed out" at
-    // once (busjobs.h), which is its job but not what this test is about. A job counts until its worker is done, so 3 in flight
-    // plus the one being started stays under the cap whatever the machine's load.
+    // The real-session D-Bus actions go out one at a time, each when the previous one finished: BusJobs lets 4 jobs run at once
+    // and answers any other "timed out" at once (busjobs.h), and a join (wifi.connectKnown, wifi.connectOpen) is followed until it
+    // is up and runs one at a time per tag (Backend::busAct latches it: a second one while the first runs is refused, systembus.h
+    // followsActivation, audit fix 7c9abeb). Neither is what this test is about.
     property var pendingOps: []
     property var busReturns: [] // what busAct returned for the real-session ops, kept in order, listed before the other returns
 
@@ -135,9 +136,8 @@ QtObject {
             // Real session: every wpctl action runs; a D-Bus action is attempted and, with no bus, fails with a reason; a program
             // outside wpctl and xdg-open (nmcli and bluetoothctl are not programs of the pages any more) is refused.
             root.expected = root.busOps.length + root.commands.length + 1;
-            root.pendingOps = root.busOps.slice(3);
-            for (const o of root.busOps.slice(0, 3))
-                root.busReturns.push(root.backend.busAct("test", o, "b.act"));
+            root.pendingOps = root.busOps.slice(1);
+            root.busReturns.push(root.backend.busAct("test", root.busOps[0], "b.act"));
             for (const a of root.commands)
                 root.actReturns.push(root.backend.act("test", a, "a"));
             // A failing tool reports its reason (stderr) before finished(false).

@@ -191,8 +191,26 @@ WebP, link previews or any network access, the primary selection, Share (no Linu
   item on its clipboard only.
 - Formatted text is pasted as the source app produced it; HTML may reference remote images that the target app chooses to
   load (as with any paste). Grassfield itself never renders it.
-- When the helper exits (shell restart, history turned off) while it owns the clipboard, the clipboard becomes empty, as with
-  any Wayland app that owns it.
+- When the helper exits (history turned off, logout) while it owns the clipboard, the clipboard becomes empty, as with any
+  Wayland app that owns it. When the shell goes (a crash, a restart: the helper's stdin or stdout closes, or the shell's
+  process ends), a helper that serves the clipboard keeps serving that one item (audit round 2; it forgets the history,
+  records nothing, says nothing) until another client takes the clipboard, the compositor connection ends, or 8 h. To
+  outlive a restart of the shell's unit it leaves that unit at start for a scope of its own
+  (`grassfield-clipboard-helper-<pid>.scope`, StartTransientUnit through `busctl --user`); without a user manager or
+  `busctl` it stays in the shell's unit and a unit restart still empties the clipboard. Not verified in a real session.
+- Helper protocol additions (audit round 2): `N pin-failed <id>`: the pinned item's file could not be written (full disk, a
+  read-only store): the item stays in the history, unpinned (B-09). `K <id>`: the clipboard was cleared, or replaced by
+  blank text, less than 60 s after that copy was recorded (and it is the last copy, not pinned, not served by the helper):
+  the source may be a password manager that clears what it copied; the shell removes the item (`X <id>`) when the copying
+  application still runs and keeps it when it has gone (the compositor clears the clipboard of a client that closes), B-10.
+  `pass -c` restores the previous clipboard instead of clearing it: not detected.
+- Reading a copy (B-13): the source may take 10 s before its first byte (an image encoded when asked), then 2 s without
+  progress and 60 s in all. A data-control device the compositor ends is made again after 0.5 s, its first selection
+  skipped; five such ends within a minute stop the helper (`S error`), B-15. The helper's output never blocks it: lines
+  wait in a queue while the shell does not read (B-14). With the history store on, the index is written once per change
+  (a copy and the items it pushed out, or the switch turned on with 100 items), 200 ms after it. A text copied again
+  takes the new copy's formats (HTML, RTF) in the history (B-11); a pinned item keeps its own. Titles and excerpts keep a
+  zero-width joiner or non-joiner between two letters, marks or symbols (emoji sequences, Persian, Indic), B-19.
 - The view is not hidden from screen capture or sharing, as on macOS.
 - A password manager that neither sets the hint nor is in the screen-share list is recorded like any app (macOS and Windows
   have the same limit); such a copy is deleted with the history unless the user pins it.

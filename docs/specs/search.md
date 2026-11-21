@@ -10,7 +10,7 @@
 ## Purpose and non-goals
 Providers: apps (DesktopEntries), Grassfield settings pages, calculator, unit conversion, commands
 (lock, sleep, restart… as real actions), files (localsearch/TinySPARQL via `localsearch` CLI or D-Bus;
-`plocate` fallback), recent documents (`~/.local/share/recently-used.xbel`). Non-goals: own indexer, web search.
+`plocate` fallback), recent documents (`~/.local/share/recently-used.xbel`, read when it changes, a second after the last write, not on each opening; the newest `Files.MAX_RECENT` (400) kept; audit B-20). Non-goals: own indexer, web search.
 The clipboard history (⌘4, the Clipboard view) has its own spec: `docs/specs/clipboard.md` (ADR-0034).
 
 ## Functional requirements
@@ -78,6 +78,7 @@ command); in French the Settings page reads "Écran verrouillé" and the command
 - Apps: entries with NoDisplay, or hidden by OnlyShowIn/NotShowIn for `$XDG_CURRENT_DESKTOP`, are not listed. Search uses the same list as the Apps window (`Apps.isListed()` in `shell/services/Apps.qml`, fed by `launchpad/hidden-entries.sh`); the list is rebuilt, debounced, when desktop entries change and Search re-ranks on `Apps.listChanged`.
 - Commands: Sleep, Restart, Shut Down, Log Out reuse `Power` and the confirmation dialogs. Lock Screen (REQ-SRCH-PRV-d2) locks through the lock module (`Lock.lock("search")`, the singleton behind the `lock` IPC target of shell/security/lock; the System menu calls the same function); `Search.lockAvailable` is true.
 - Settings pages provider (REQ-SRCH-PRV-d1, macOS model: Spotlight lists System Settings panes): typing a page name or one of its keywords (title scores like a command, keywords at 0.8 of that) lists the page in a "Settings" group (also as Top Hit when it beats the best app and command) and Return opens Grassfield Settings on it (`SettingsApp.openSection(id)`, `grassfield-settings --section=<id>`). Pure matching in `shell/search/SettingsPages.js` (page ids = the Settings sections); a fourth filter chip "Settings" joins Applications, Commands and Documents. Test: `tests/unit/tst_searchsettings.qml`.
+- The results list is keyed (`Search.rowModel`, `KeyedRows.js`): a result that stays from one keystroke to the next keeps its row delegate, only new results make one (audit B-05). The panel's height glides, its glass judged over its height at rest.
 - Rows (ADR-0024 lot 2, macOS 27 Spotlight; measured in `docs/audits/visual-tahoe-2026-10-25.md` § Search — partly close, 6/10
   and `docs/audits/ui-finesse-2026-10-25.md` § 7.1 macOS 27 changed the target): one row per result, no header rows (the groups
   still order the list, Tab moves between them and `status()` reports them); 17 / 15 type (Inter sizes with the cap height of

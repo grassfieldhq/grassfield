@@ -1,5 +1,7 @@
 #include "sampler.h"
 
+#include "machine.h"
+
 #include "textclean.h"
 
 #include <algorithm>
@@ -47,6 +49,36 @@ bool isNumeric(const char *s)
             return false;
     }
     return true;
+}
+
+// The command line kept for the table: cut to kCommandMax (at a character's first byte) before it is cleaned. A 1 MiB argv
+// (a build, xargs) was copied into every row and laid out whole by the Command column at each sample; Inspect reads its own.
+std::string tableCommand(std::string joined)
+{
+    if (joined.size() > kCommandMax) {
+        size_t n = kCommandMax;
+        while (n > 0 && (static_cast<unsigned char>(joined[n]) & 0xC0) == 0x80)
+            --n;
+        joined.resize(n);
+    }
+    return sanitizeDisplay(joined);
+}
+
+// A device's last counters, kept in the totals once it is gone.
+void retire(DiskStat &gone, const DiskStat &d)
+{
+    gone.reads += d.reads;
+    gone.writes += d.writes;
+    gone.sectorsRead += d.sectorsRead;
+    gone.sectorsWritten += d.sectorsWritten;
+}
+
+void retire(NetDev &gone, const NetDev &n)
+{
+    gone.rxPackets += n.rxPackets;
+    gone.txPackets += n.txPackets;
+    gone.rxBytes += n.rxBytes;
+    gone.txBytes += n.txBytes;
 }
 
 double rate(uint64_t now, uint64_t before, double seconds)
@@ -338,7 +370,7 @@ void Sampler::identify(int pid, Proc &p, bool own, unsigned reads, const std::st
     if (readFile(procPath(pid, "cmdline"), buf_, true)) {
         argv0 = cmdlineFirstWord(buf_);
         if (reads & ReadCommand) {
-            p.command = sanitizeDisplay(cmdlineJoined(buf_));
+            p.command = tableCommand(cmdlineJoined(buf_));
             p.haveCommand = true;
         }
     }
@@ -778,7 +810,7 @@ const Snapshot &Sampler::sample(unsigned reads, double now)
             } else if (own && (reads & ReadCommand) && !p.haveCommand) {
                 ++c.cmdlineReads;
                 if (readFile(procPath(pid, "cmdline"), buf_, true))
-                    p.command = sanitizeDisplay(cmdlineJoined(buf_));
+                    p.command = tableCommand(cmdlineJoined(buf_));
                 p.haveCommand = true;
             }
 
@@ -969,41 +1001,85 @@ const Snapshot &Sampler::sample(unsigned reads, double now)
                                           [](const TcpCounters &t, uint64_t i) { return t.inode < i; });
                 return f != tcp_.end() && f->inode == inode ? &*f : nullptr;
             };
+            // A socket counts for one process: the one that holds it and held it first. A socket that left a process's own
+            // descriptors (handed to another process, or closed by it while another keeps it) stops counting for it there:
+            // its share so far stays with it, and the next holder counts from that point (A7 of the 2026-11 audit: it kept
+            // counting for the first process, and an inherited socket counted in both).
+            const auto share = [](const Proc::LiveSocket &l, SocketTotals &into) {
+                into.sent += l.now.bytesAcked - std::min(l.now.bytesAcked, l.base.bytesAcked);
+                into.received += l.now.bytesReceived - std::min(l.now.bytesReceived, l.base.bytesReceived);
+                into.segsOut += l.now.segsOut - std::min(l.now.segsOut, l.base.segsOut);
+                into.segsIn += l.now.segsIn - std::min(l.now.segsIn, l.base.segsIn);
+            };
+            const auto holds = [](const Proc &p, uint64_t inode) {
+                return std::find(p.sockets.begin(), p.sockets.end(), inode) != p.sockets.end();
+            };
+            std::unordered_map<uint64_t, TcpCounters> handedOver; // the counters a socket had when its holder let it go
+            if (dumped) {
+                for (ProcessRow &row : s.rows) {
+                    if (!row.own)
+                        continue;
+                    Proc &p = procs_.find(row.pid)->second;
+                    if (!p.scanned)
+                        continue;
+                    for (auto it = p.live.begin(); it != p.live.end();) {
+                        const TcpCounters *t = inDump(it->first);
+                        if (t && holds(p, it->first)) {
+                            it->second.now = *t;
+                            ++it;
+                            continue;
+                        }
+                        // Closed (gone from the dump), or no longer this process's: its share so far stays with it.
+                        share(it->second, p.closed);
+                        if (t) {
+                            handedOver[it->first] = it->second.now;
+                            const auto owner = socketOwner_.find(it->first);
+                            if (owner != socketOwner_.end() && owner->second == row.pid)
+                                socketOwner_.erase(owner);
+                        }
+                        it = p.live.erase(it);
+                    }
+                }
+                // Owners that are gone, or hold the socket no more, give it up.
+                for (auto it = socketOwner_.begin(); it != socketOwner_.end();) {
+                    const auto owner = procs_.find(it->second);
+                    if (!inDump(it->first) || owner == procs_.end() || !holds(owner->second, it->first))
+                        it = socketOwner_.erase(it);
+                    else
+                        ++it;
+                }
+                for (ProcessRow &row : s.rows) {
+                    if (!row.own)
+                        continue;
+                    Proc &p = procs_.find(row.pid)->second;
+                    if (!p.scanned)
+                        continue;
+                    for (uint64_t inode : p.sockets) {
+                        const TcpCounters *t = inDump(inode);
+                        if (!t || p.live.count(inode))
+                            continue;
+                        auto [owner, fresh] = socketOwner_.try_emplace(inode, row.pid);
+                        if (!fresh && owner->second != row.pid)
+                            continue; // another process holds it too and counts it
+                        const auto before = handedOver.find(inode);
+                        p.live[inode] = Proc::LiveSocket{*t, before != handedOver.end() ? before->second : TcpCounters{}};
+                    }
+                }
+            }
             for (ProcessRow &row : s.rows) {
                 if (!row.own)
                     continue;
                 Proc &p = procs_.find(row.pid)->second;
                 if (!p.scanned)
                     continue;
-                if (dumped) {
-                    // A socket seen before and gone from the dump closed: its last counters stay with the process.
-                    for (auto it = p.live.begin(); it != p.live.end();) {
-                        if (inDump(it->first)) {
-                            ++it;
-                            continue;
-                        }
-                        p.closed.sent += it->second.bytesAcked;
-                        p.closed.received += it->second.bytesReceived;
-                        p.closed.segsOut += it->second.segsOut;
-                        p.closed.segsIn += it->second.segsIn;
-                        it = p.live.erase(it);
-                    }
-                    for (uint64_t inode : p.sockets) {
-                        if (const TcpCounters *t = inDump(inode))
-                            p.live[inode] = *t;
-                    }
-                }
                 row.hasNet = true;
-                row.tcpSent = p.closed.sent;
-                row.tcpReceived = p.closed.received;
-                row.tcpSegsOut = p.closed.segsOut;
-                row.tcpSegsIn = p.closed.segsIn;
-                for (const auto &[inode, t] : p.live) {
-                    row.tcpSent += t.bytesAcked;
-                    row.tcpReceived += t.bytesReceived;
-                    row.tcpSegsOut += t.segsOut;
-                    row.tcpSegsIn += t.segsIn;
-                }
+                SocketTotals total = p.closed;
+                for (const auto &[inode, l] : p.live)
+                    share(l, total);
+                row.tcpSent = total.sent;
+                row.tcpReceived = total.received;
+                row.tcpSegsOut = total.segsOut;
+                row.tcpSegsIn = total.segsIn;
             }
         }
 
@@ -1101,6 +1177,13 @@ void Sampler::nameGpu(GpuDevice &dev, Counters &c)
 
 void Sampler::readSystem(unsigned reads, double now, SystemSnapshot &out, Counters &c)
 {
+    // A3 of the 2026-11 audit: read here, on the sampler's thread, not by the window at each sample (a cpufreq driver may
+    // wake each core to answer).
+    if (reads & ReadSystemSpeed) {
+        ++c.systemReads;
+        out.speedGhz = meanCurrentGhz(opt_.sysRoot);
+        out.uptime = readUptime(opt_.procRoot);
+    }
     if (now - devicesListedAt_ >= 10.0 && (reads & (ReadSystemMemory | ReadSystemDisk))) {
         physicalDisks_.clear();
         zramDevices_.clear();
@@ -1231,6 +1314,10 @@ void Sampler::readSystem(unsigned reads, double now, SystemSnapshot &out, Counte
                     const uint64_t ms = (d.readTicksMs + d.writeTicksMs) - std::min(d.readTicksMs + d.writeTicksMs, l.readTicksMs + l.writeTicksMs);
                     ds.responseMs = ops ? static_cast<double>(ms) / static_cast<double>(ops) : 0;
                 }
+                // Counters that went back: the disk restarted from zero (removed and added again between two samples).
+                if (last != lastDisks_.end() && (d.reads < last->second.reads || d.writes < last->second.writes
+                                                 || d.sectorsRead < last->second.sectorsRead || d.sectorsWritten < last->second.sectorsWritten))
+                    retire(goneDisks_, last->second);
                 out.diskTotal.reads += ds.reads;
                 out.diskTotal.writes += ds.writes;
                 out.diskTotal.bytesRead += ds.bytesRead;
@@ -1238,10 +1325,18 @@ void Sampler::readSystem(unsigned reads, double now, SystemSnapshot &out, Counte
                 nowDisks[d.name] = d;
                 out.disks.push_back(std::move(ds));
             }
+            for (const auto &[name, l] : lastDisks_) {
+                if (!nowDisks.count(name))
+                    retire(goneDisks_, l);
+            }
+            out.diskTotal.reads += goneDisks_.reads;
+            out.diskTotal.writes += goneDisks_.writes;
+            out.diskTotal.bytesRead += goneDisks_.sectorsRead * 512;
+            out.diskTotal.bytesWritten += goneDisks_.sectorsWritten * 512;
             if (dt > 0 && !out.disks.empty()) {
                 out.diskTotal.readsPerSec = out.diskTotal.writesPerSec = out.diskTotal.readBytesPerSec = out.diskTotal.writeBytesPerSec = 0;
                 for (const DiskSnapshot &ds : out.disks) {
-                    if (ds.readsPerSec < 0) // a disk new since the last sample: no total rate this time
+                    if (ds.readsPerSec < 0) // a disk new since the last sample has no rate yet: the others still count
                         continue;
                     out.diskTotal.readsPerSec += ds.readsPerSec;
                     out.diskTotal.writesPerSec += ds.writesPerSec;
@@ -1260,7 +1355,9 @@ void Sampler::readSystem(unsigned reads, double now, SystemSnapshot &out, Counte
         if (readFile(opt_.procRoot + "/net/dev", buf_)) {
             const double dt = lastNetTime_ >= 0 ? now - lastNetTime_ : 0;
             std::map<std::string, NetDev> nowNet;
-            bool rates = dt > 0;
+            // A total rate as soon as one interface has one, as for the disks: an interface new since the last sample (a
+            // container's veth, a VPN) has none yet, and left the whole total without a value for one sample (a gap in the graph).
+            bool rates = false;
             for (NetDev &n : parseNetDev(buf_)) {
                 if (n.name == "lo")
                     continue;
@@ -1276,9 +1373,11 @@ void Sampler::readSystem(unsigned reads, double now, SystemSnapshot &out, Counte
                     ns.packetsOutPerSec = rate(n.txPackets, last->second.txPackets, dt);
                     ns.bytesInPerSec = rate(n.rxBytes, last->second.rxBytes, dt);
                     ns.bytesOutPerSec = rate(n.txBytes, last->second.txBytes, dt);
-                } else {
-                    rates = false;
+                    rates = true;
                 }
+                if (last != lastNet_.end() && (n.rxPackets < last->second.rxPackets || n.txPackets < last->second.txPackets
+                                               || n.rxBytes < last->second.rxBytes || n.txBytes < last->second.txBytes))
+                    retire(goneNet_, last->second);
                 out.netTotal.packetsIn += ns.packetsIn;
                 out.netTotal.packetsOut += ns.packetsOut;
                 out.netTotal.bytesIn += ns.bytesIn;
@@ -1286,6 +1385,14 @@ void Sampler::readSystem(unsigned reads, double now, SystemSnapshot &out, Counte
                 nowNet[n.name] = n;
                 out.interfaces.push_back(std::move(ns));
             }
+            for (const auto &[name, l] : lastNet_) {
+                if (!nowNet.count(name))
+                    retire(goneNet_, l);
+            }
+            out.netTotal.packetsIn += goneNet_.rxPackets;
+            out.netTotal.packetsOut += goneNet_.txPackets;
+            out.netTotal.bytesIn += goneNet_.rxBytes;
+            out.netTotal.bytesOut += goneNet_.txBytes;
             if (rates) {
                 out.netTotal.packetsInPerSec = out.netTotal.packetsOutPerSec = out.netTotal.bytesInPerSec = out.netTotal.bytesOutPerSec = 0;
                 for (const NetSnapshot &ns : out.interfaces) {

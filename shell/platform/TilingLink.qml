@@ -1,12 +1,13 @@
 pragma Singleton
 import QtQuick
 import Quickshell
-import Quickshell.Io
+import Quickshell.Hyprland
 import "WindowTiling.js" as WindowTiling
 
 // The tiling suggestions' link to the compositor plugin (docs/specs/tiling.md TL28): after the `placed` notice of an
 // arrangement the shell asked (Compositor.suggestionAsked: a layout or an arrangement from the popover, the Window menu or the
-// keys, or a pick of the suggestions), the suggestion of the `hyprctl grassfield-tiling` reply when it fills that window's
+// keys, or a pick of the suggestions), the suggestion of the `grassfield-tiling` reply (asked on Hyprland's request socket in
+// process, HyprQuery: what `hyprctl grassfield-tiling` asks, without a process per notice) when it fills that window's
 // layout and belongs to that notice; any other change of the tile records ends it (a refusal changes nothing). One fetch at
 // a time; services/TilingSuggest shows the suggestion. The same reply gives the tile groups (TL29) and the Split View
 // Desktops (TL33): read again after every change of the tile records while the plugin offers tiling-groups or tiling-split.
@@ -40,8 +41,11 @@ Singleton {
     // A suggestion asked for is on its way (from the notice of its arrangement until its reply is read or the deadline passes):
     // a Split View's picker is pending meanwhile (services/TilingSuggest).
     property bool awaiting: false
-    // A fetch was asked while the previous process was still running: start it when that one ends.
+    // A fetch was asked while the previous request was still out: start it when that one ends.
     property bool startPending: false
+    // The request out (a HyprQuery) or null; the fetches started (tests).
+    property var query: null
+    property int queries: 0
     // The Split View picker the user dismissed ({address, gen} of its suggestion): a later reply does not show it again (its
     // window fills instead).
     property var declined: null
@@ -68,10 +72,38 @@ Singleton {
 
     function fetch(): void {
         fetchDeadline.restart();
-        if (stateFetch.running)
+        if (root.query !== null)
             root.startPending = true;
         else
-            stateFetch.running = true;
+            root.startQuery();
+    }
+
+    function startQuery(): void {
+        root.queries++;
+        const path = Hyprland.requestSocketPath || "";
+        if (path === "") {
+            // No Hyprland to ask: a reply that does not read (as a hyprctl that could not reach one).
+            Qt.callLater(() => root.takeReply(""));
+            return;
+        }
+        const q = hyprQuery.createObject(root, {path: path, line: "grassfield-tiling", answerMs: WindowTiling.suggestionWaitMs});
+        root.query = q;
+        q.answered.connect((text, ok) => {
+            if (root.query !== q)
+                return; // given up meanwhile
+            root.query = null;
+            if (root.startPending) {
+                root.startPending = false; // a newer notice asks again
+                root.startQuery();
+                return;
+            }
+            root.takeReply(text);
+        });
+    }
+
+    Component {
+        id: hyprQuery
+        HyprQuery {}
     }
 
     Connections {
@@ -137,66 +169,52 @@ Singleton {
             root.fetch();
     }
 
-    Process {
-        id: stateFetch
-
-        command: ["hyprctl", "grassfield-tiling"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                if (root.startPending)
-                    return; // a newer notice asks again
-                fetchDeadline.stop();
-                if (Compositor.canGroups)
-                    root.groups = WindowTiling.parseGroups(text);
-                // A reply that does not read (a fetch killed at its deadline, hyprctl missing) keeps the last Split View
-                // Desktops; a reply read lets a later deadline retry again.
-                const splits = WindowTiling.parseSplits(text);
-                const sg = WindowTiling.parseSuggestion(text);
-                // A Split View the shell did not start still shows its picker (D48): its suggestion is taken as if asked, also
-                // while an earlier ask is still open (WindowTiling.replyPicker; re-review of 29db357, MAJOR 1). Its member counts
-                // as waiting for it from now (awaiting) so that it is not filled meanwhile (TilingSuggest).
-                let adopted = Compositor.canLayouts && Compositor.canSplit ? WindowTiling.replyPicker(root.wantedGen, Compositor.suggestionAsked, splits, sg, root.declined) : null;
-                if (adopted !== null && root.suggestion !== null && root.suggestion.address === adopted.address && root.suggestion.gen === adopted.gen)
-                    adopted = null; // already the one shown: kept as it is
-                if (adopted !== null) {
-                    Compositor.suggestionAsked = {address: adopted.address, until: Date.now() + WindowTiling.suggestionWaitMs};
-                    root.awaiting = true;
-                }
-                if (Compositor.canSplit && splits !== null)
-                    root.splits = splits;
-                const unfit = Compositor.canSplit ? WindowTiling.parseUnfit(text) : null;
-                if (unfit !== null)
-                    root.unfit = unfit;
-                const fixed = Compositor.canTile ? WindowTiling.parseFixed(text) : null;
-                if (fixed !== null)
-                    root.fixed = fixed;
-                const filled = Compositor.canTile ? WindowTiling.parseFilled(text) : null;
-                if (filled !== null)
-                    root.filled = filled;
-                const unfitZones = Compositor.canTile ? WindowTiling.parseUnfitZones(text) : null;
-                if (unfitZones !== null)
-                    root.unfitZones = unfitZones;
-                if (splits !== null)
-                    root.retried = false;
-                if (adopted !== null) {
-                    root.suggestion = adopted;
-                    root.wantedGen = -1; // an earlier ask's notice is answered by this picker: a later read keeps it shown
-                    root.awaiting = false;
-                    return;
-                }
-                if (root.wantedGen < 0)
-                    return; // no suggestion wanted, or it ended meanwhile
-                const asked = Compositor.suggestionAsked;
-                root.suggestion = sg !== null && sg.gen === root.wantedGen && asked !== null && sg.address === asked.address ? sg : null;
-                root.awaiting = false; // after the suggestion was shown (or refused): a Split View's picker is that one now
-            }
+    // A reply read (or one that does not read: an empty or malformed text).
+    function takeReply(text: string): void {
+        fetchDeadline.stop();
+        if (Compositor.canGroups)
+            root.groups = WindowTiling.parseGroups(text);
+        // A reply that does not read (an empty or cut answer, no Hyprland to ask) keeps the last Split View
+        // Desktops; a reply read lets a later deadline retry again.
+        const splits = WindowTiling.parseSplits(text);
+        const sg = WindowTiling.parseSuggestion(text);
+        // A Split View the shell did not start still shows its picker (D48): its suggestion is taken as if asked, also
+        // while an earlier ask is still open (WindowTiling.replyPicker; re-review of 29db357, MAJOR 1). Its member counts
+        // as waiting for it from now (awaiting) so that it is not filled meanwhile (TilingSuggest).
+        let adopted = Compositor.canLayouts && Compositor.canSplit ? WindowTiling.replyPicker(root.wantedGen, Compositor.suggestionAsked, splits, sg, root.declined) : null;
+        if (adopted !== null && root.suggestion !== null && root.suggestion.address === adopted.address && root.suggestion.gen === adopted.gen)
+            adopted = null; // already the one shown: kept as it is
+        if (adopted !== null) {
+            Compositor.suggestionAsked = {address: adopted.address, until: Date.now() + WindowTiling.suggestionWaitMs};
+            root.awaiting = true;
         }
-        onRunningChanged: {
-            if (!running && root.startPending) {
-                root.startPending = false;
-                running = true;
-            }
+        if (Compositor.canSplit && splits !== null)
+            root.splits = splits;
+        const unfit = Compositor.canSplit ? WindowTiling.parseUnfit(text) : null;
+        if (unfit !== null)
+            root.unfit = unfit;
+        const fixed = Compositor.canTile ? WindowTiling.parseFixed(text) : null;
+        if (fixed !== null)
+            root.fixed = fixed;
+        const filled = Compositor.canTile ? WindowTiling.parseFilled(text) : null;
+        if (filled !== null)
+            root.filled = filled;
+        const unfitZones = Compositor.canTile ? WindowTiling.parseUnfitZones(text) : null;
+        if (unfitZones !== null)
+            root.unfitZones = unfitZones;
+        if (splits !== null)
+            root.retried = false;
+        if (adopted !== null) {
+            root.suggestion = adopted;
+            root.wantedGen = -1; // an earlier ask's notice is answered by this picker: a later read keeps it shown
+            root.awaiting = false;
+            return;
         }
+        if (root.wantedGen < 0)
+            return; // no suggestion wanted, or it ended meanwhile
+        const asked = Compositor.suggestionAsked;
+        root.suggestion = sg !== null && sg.gen === root.wantedGen && asked !== null && sg.address === asked.address ? sg : null;
+        root.awaiting = false; // after the suggestion was shown (or refused): a Split View's picker is that one now
     }
 
     // A reply that does not come in this time: nothing is shown (a stale suggestion would offer zones that changed); the
@@ -204,7 +222,7 @@ Singleton {
     // reads them again shortly. Called by the deadline (and by tests/shell/split_view).
     function giveUp(): void {
         root.startPending = false;
-        stateFetch.running = false;
+        root.query = null;
         root.wantedGen = -1;
         root.awaiting = false; // a Split View's picker is not on its way any more: its member fills (TilingSuggest)
         root.suggestion = null;

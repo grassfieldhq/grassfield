@@ -483,6 +483,24 @@ function forApp(list, appId) {
     return list.filter(r => String(r.appId).toLowerCase() === wanted);
 }
 
+// A minimize the shell recorded and asked for, checked once the request had time to land (audit SC-16): the plugin and the
+// fallback move the window to special:minimized at once, and that move is seen (`lastWorkspace`: the latest movewindowv2
+// workspace name per address) or read again (`placeOf(address)`: the workspace name of the window data read again, "" when
+// unknown). A window seen or read on special:minimized was minimized; any other place, or none known, means the request was
+// refused or dropped (a locked session, a window the plugin does not know): its record goes, so the Dock never keeps a tile for a
+// window still on screen. The addresses whose record goes.
+function unconfirmedDrops(addresses, lastWorkspace, placeOf, minimizedWorkspace) {
+    const out = [];
+    for (const address of addresses || []) {
+        if (lastWorkspace && lastWorkspace.get(address) === minimizedWorkspace)
+            continue;
+        if (placeOf(address) === minimizedWorkspace)
+            continue;
+        out.push(address);
+    }
+    return out;
+}
+
 // Parses Hyprland's `movewindowv2` event data "<address>,<workspace id>,<workspace name>" (the
 // name may itself contain commas): {address (validated hex), workspace (name)} or null.
 function parseMoveWindowV2(data) {

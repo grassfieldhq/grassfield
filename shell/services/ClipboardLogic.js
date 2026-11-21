@@ -173,8 +173,35 @@ function upsert(items, item) {
     return order(items.filter(i => i.id !== item.id).concat([item]));
 }
 
+// B-10: the helper's `K <id>` (the clipboard was cleared, or replaced by blank text, less than 60 s after that copy was
+// recorded). A password manager clears what it copied: when the app the copy came from (the class recorded at `Y`) still has
+// an open window, the copy is forgotten (true); otherwise it is kept (the compositor clears the clipboard of a client that
+// closes, which is no request to forget). `hasWindow(app)` says whether that app has a window open.
+function forgetOnClear(items, id, hasWindow) {
+    const item = (items ?? []).find(i => i.id === id);
+    return !!item && typeof item.app === "string" && item.app !== "" && !item.pinned && hasWindow(item.app) === true;
+}
+
 function removeId(items, id) {
     return items.filter(i => i.id !== id);
+}
+
+// The items after a run of the helper's lines, in order: ["I", item] (upsert) and ["X", id] (removeId); the same list as
+// applying them one by one, with one sort (audit fluidity note: the history the helper lists at its start is hundreds of
+// "I" lines, one sort and one reassignment of the list each).
+function applyOps(items, ops) {
+    const byId = new Map();
+    for (const i of items)
+        byId.set(i.id, i);
+    for (const op of ops) {
+        if (op[0] === "I") {
+            byId.delete(op[1].id);
+            byId.set(op[1].id, op[1]);
+        } else if (op[0] === "X") {
+            byId.delete(op[1]);
+        }
+    }
+    return order(Array.from(byId.values()));
 }
 
 // Whether the paste may be sent now (ADR-0034 §4). s: {locked, helperLocked, rememberedAddress, activeAddress, closedSinceOpen,

@@ -133,6 +133,23 @@ TEST(Build, HtmlOnlyMakesThePlainText)
     EXPECT_EQ(b.item.parts.size(), 1);
 }
 
+// An entity is looked for only within its longest length: a '&' with a far ';' (or none) stays as it is, and a text of
+// many '&' without ';' is not searched whole for each of them.
+TEST(Build, HtmlEntitiesAreSearchedOnlyNearTheirAmpersand)
+{
+    const Plan p = plan({"text/html"}, false);
+    QHash<QByteArray, ReadResult> r;
+    r.insert("text/html", ok("<p>R&D &lt;x&gt; &amp far away; &amp</p>"));
+    const Built b = build(p, r);
+    ASSERT_TRUE(b.ok) << b.error.constData();
+    EXPECT_EQ(b.item.plain, QStringLiteral("R&D <x> &amp far away; &amp"));
+    QHash<QByteArray, ReadResult> many;
+    many.insert("text/html", ok(QByteArray(200 * 1024, '&') + "x"));
+    const Built m = build(p, many);
+    ASSERT_TRUE(m.ok) << m.error.constData();
+    EXPECT_EQ(m.item.plain.size(), 200 * 1024 + 1);
+}
+
 TEST(Build, FilesOrTheirPlainText)
 {
     const Plan p = plan({"text/uri-list", "text/plain"}, false);
@@ -191,6 +208,20 @@ TEST(Text, TitleAndExcerptHideControls)
     EXPECT_LE(excerptOf(QString(5000, QLatin1Char('x'))).size(), kExcerptChars);
 }
 
+// B-19: the joiners stay inside emoji ZWJ sequences and between letters (Persian, Indic), and only there; a tag (a format
+// character beyond the BMP) goes like the others.
+TEST(Text, JoinersStayBetweenLettersAndInsideEmojiSequences)
+{
+    const QString family = QString::fromUcs4(U"\U0001F468\u200D\U0001F469\u200D\U0001F467");
+    EXPECT_EQ(titleOf(QStringLiteral("we ") + family), QStringLiteral("we ") + family);
+    const QString persian = QString::fromUcs4(U"\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645");
+    EXPECT_EQ(titleOf(persian), persian);
+    EXPECT_EQ(excerptOf(persian + QStringLiteral("\n") + family), persian + QStringLiteral("\n") + family);
+    EXPECT_EQ(titleOf(QString::fromUcs4(U"\u200Dab\u200D \u200Cc")), QStringLiteral("ab c"));
+    EXPECT_EQ(titleOf(QString::fromUcs4(U"a\u200D\u202Eb")), QStringLiteral("ab")) << "not next to a removed character";
+    EXPECT_EQ(titleOf(QString::fromUcs4(U"x\U000E0041y")), QStringLiteral("xy"));
+}
+
 TEST(Text, SearchKeyIgnoresCaseAndAccents)
 {
     EXPECT_TRUE(searchKey(QString::fromUtf8("Élève À Paris")).contains(searchKey(QStringLiteral("eleve a"))));
@@ -208,6 +239,24 @@ TEST(Store, DedupeMovesToTheTop)
     EXPECT_EQ(s.history().first().id, idOf(1));
     EXPECT_EQ(s.history().first().copiedAtMs, 300);
     EXPECT_EQ(s.history().size(), 2);
+}
+
+// B-11: the same text copied again from somewhere that offers other formats: the history item takes the newer copy's
+// formats (a paste gives what was copied last), in both directions.
+TEST(Store, ARecopyReplacesTheFormats)
+{
+    Store s;
+    s.add(textItem(idOf(1), QStringLiteral("same"), 100)); // from a terminal: plain only
+    Item html = textItem(idOf(2), QStringLiteral("same"), 200);
+    html.parts = {Part{"text/html", "<b>same</b>"}};
+    Store::AddResult r = s.add(html);
+    EXPECT_FALSE(r.added);
+    ASSERT_EQ(s.history().size(), 1);
+    ASSERT_EQ(s.history().first().parts.size(), 1);
+    EXPECT_EQ(s.history().first().parts.first().data, QByteArray("<b>same</b>"));
+    EXPECT_TRUE(s.history().first().formatted());
+    r = s.add(textItem(idOf(3), QStringLiteral("same"), 300)); // and plain again
+    EXPECT_TRUE(s.history().first().parts.isEmpty()) << "no stale HTML";
 }
 
 TEST(Store, EqualToAPinAddsNothing)
@@ -246,6 +295,14 @@ TEST(Store, HistoryLimits)
         }
     }
     EXPECT_LE(b.historyBytes(), kHistoryBytes);
+
+    // The caps count what a text holds in memory: its UTF-16 units and its search key, which NFKD makes longer than the
+    // text (U+FDFA: one character, eighteen in the key). size(), what the shell is told, stays the text's length.
+    Store t;
+    t.add(textItem(idOf(1), QString(1000, QChar(0xFDFA)), 1));
+    ASSERT_TRUE(t.find(idOf(1)));
+    EXPECT_EQ(t.find(idOf(1))->size(), 1000);
+    EXPECT_GE(t.historyBytes(), 2 * (1000 + 18 * 1000));
 }
 
 TEST(Store, PinLimitsAndUnpin)
@@ -356,6 +413,17 @@ TEST(Serve, PlainAndFiles)
     EXPECT_EQ(servePlain(QString::fromUtf8("é"), "STRING"), QByteArray("\xe9"));
     EXPECT_EQ(gnomeCopiedFiles({QStringLiteral("/a b")}), QByteArray("copy\nfile:///a%20b")) << "never a cut";
     EXPECT_EQ(uriList({QStringLiteral("/a")}), QByteArray("file:///a\r\n"));
+}
+
+// B-13: a source may take kReadFirstByteMs before its first byte (a large image encoded when asked), then the idle limit,
+// never past the overall one.
+TEST(ClipLogic, ReadWaitLetsTheFirstByteTakeLonger)
+{
+    EXPECT_EQ(readWaitMs(0, false), kReadFirstByteMs);
+    EXPECT_GT(readWaitMs(0, false), kWriterIdleMs);
+    EXPECT_EQ(readWaitMs(5000, true), kWriterIdleMs);
+    EXPECT_EQ(readWaitMs(kWriterMaxMs - 300, false), 300);
+    EXPECT_EQ(readWaitMs(kWriterMaxMs, true), 0);
 }
 
 TEST(ClipLogic, WriterWaitIsTheIdleLimitUntilTheOverallLimit)

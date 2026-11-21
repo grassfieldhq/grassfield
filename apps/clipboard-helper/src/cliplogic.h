@@ -39,6 +39,11 @@ constexpr qint64 kMaxRetentionMs = 7LL * 24 * 3600 * 1000;
 constexpr qint64 kWriterIdleMs = 2000;
 constexpr qint64 kWriterMaxMs = 60 * 1000;
 constexpr qint64 kDefaultRetentionMs = 8LL * 3600 * 1000;
+// Reading a copy: the source may take this long before its first byte (an application that encodes a large image only when
+// asked, B-13); then the answers' limits (kWriterIdleMs without progress, kWriterMaxMs in all).
+constexpr qint64 kReadFirstByteMs = 10 * 1000;
+// A copy whose source clears the clipboard within this long may have been a password (B-10): the shell is told (K line).
+constexpr qint64 kClearedSoonMs = 60 * 1000;
 
 // The type the helper adds to what it serves, holding the item id: its own selection is known by it.
 extern const char kMarkerType[];
@@ -97,6 +102,8 @@ struct Item {
     QString searchText;
 
     qint64 size() const;
+    // The bytes it holds in memory, for the stores' caps (size() is what the shell is told).
+    qint64 memory() const;
     bool formatted() const;
     bool pinned() const { return pinnedAtMs > 0; }
 };
@@ -140,6 +147,9 @@ qint64 clampRetention(qint64 ms);
 // How long a paste answer that has run `elapsedMs` may wait for its next progress: the idle limit, never past the overall
 // limit; 0 means close it now.
 qint64 writerWaitMs(qint64 elapsedMs);
+// How long a read of a copy may wait for its next bytes: kReadFirstByteMs before the first one (`started` false), then as an
+// answer; never past kWriterMaxMs in all; 0 means give up now.
+qint64 readWaitMs(qint64 elapsedMs, bool started);
 
 // The clears asked in the settings (search.clipboard.clearedAt and .pinnedClearedAt, ms; 0 never) against the ones this helper
 // last carried out, which it keeps beside its stores (ADR-0034 §6): Settings writes the keys whether a helper runs or not, so a
@@ -159,7 +169,7 @@ class Store
 public:
     struct AddResult {
         QByteArray id;           // the item now holding this content
-        bool added = false;      // false: an equal item was moved (unpinned) or kept (pinned)
+        bool added = false;      // false: an equal item was moved (unpinned: its formats replaced by the new copy's) or kept (pinned)
         QList<QByteArray> evicted;
     };
     AddResult add(Item item);

@@ -113,10 +113,13 @@ SettingsPage {
                 to: PointerSize.MAX
                 stepSize: PointerSize.STEP / (PointerSize.MAX - PointerSize.MIN)
                 value: root.store.value("pointer.size")
+                // The knob shows the snapped size at once; the store is written a few times a second while it is dragged.
                 onMoved: v => {
-                    root.store.set("pointer.size", PointerSize.snap(v));
-                    size.reset();
+                    const snapped = PointerSize.snap(v);
+                    root.store.setSoon("pointer.size", snapped);
+                    size.local = snapped;
                 }
+                onReleased: root.store.flush()
             }
             Text {
                 textFormat: Text.PlainText

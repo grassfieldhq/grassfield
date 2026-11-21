@@ -96,6 +96,15 @@ TestCase {
         verify(CenterLogic.isHovered(c, "mail"));
         c = CenterLogic.hoverStep(c, "mail", false);  // x left
         verify(!CenterLogic.isHovered(c, "mail"));
+        // An app named like a member of Object.prototype counts like any other.
+        ["constructor", "__proto__"].forEach(app => {
+            let d = {};
+            verify(!CenterLogic.isHovered(d, app));
+            d = CenterLogic.hoverStep(d, app, true);
+            verify(CenterLogic.isHovered(d, app));
+            d = CenterLogic.hoverStep(d, app, false);
+            verify(!CenterLogic.isHovered(d, app));
+        });
     }
 
     function test_hoverCountsAreNeverNegativeAndIndependentPerApp() {

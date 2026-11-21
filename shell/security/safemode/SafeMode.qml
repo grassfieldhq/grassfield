@@ -9,9 +9,11 @@ import "../../lib/RunMode.js" as RunMode
 // Safe mode (ADR-0041 step 1, S4; the owner's SQ-1 B: "the UI unit failed, the security process is up", with a way out,
 // never a lock-out). Instantiated once, by the security process's host (../host/SecurityHost.qml), never by the UI.
 //
-// What it does. It looks at the UI's unit every few seconds (`probe`: one short process, a fixed command: whether the loop
-// detector's flag $XDG_RUNTIME_DIR/grassfield/shell-safe-mode exists, and systemd's ActiveState, SubState and Result of
-// grassfield-shell.service). When the unit is down for good after a loop (SafeModeModel.wanted, two looks in a row), it
+// What it does. It looks at the UI's unit (`probe`: one short process, a fixed command: whether the loop detector's flag
+// $XDG_RUNTIME_DIR/grassfield/shell-safe-mode exists, and systemd's ActiveState, SubState and Result of
+// grassfield-shell.service) when the loop detector's files change (watched, never read: the flag and the failure ledger the
+// unit's OnFailure= counter writes at every failure), every few seconds for a while after, and once a minute as a backstop
+// (SafeModeModel.lookInterval). When the unit is down for good after a loop (SafeModeModel.wanted, two looks in a row), it
 // shows one small alert (SafeModeNotice.qml, created only then) saying that the desktop stopped after repeated problems,
 // with Try Again and Log Out. Nothing else of the desktop is drawn here: no Dock, menu bar, notification server or request
 // socket (the crash of 2026-10-29 lived in those sockets, which this process never opens).
@@ -127,11 +129,39 @@ Scope {
 
     Timer {
         id: lookTimer
-        interval: Model.lookInterval(root.looks, root.shown)
+        interval: Model.lookInterval(root.looks, root.shown, burst.running)
         repeat: true
         running: true
         triggeredOnStart: true
         onTriggered: root.look()
+    }
+
+    // ---- The watch: the loop detector's files in $XDG_RUNTIME_DIR/grassfield (FileView's watch: the file and its
+    // directory, so a file created, replaced or removed counts). Never read (preload off, no text()): only their change starts
+    // a look and a burst of fast looks. A dev session watches nothing (the files would be the owner's). ----
+    readonly property string ledgerPath: root.runtimeDir !== "" && !root.devHooks ? root.runtimeDir + "/grassfield/" + Model.LEDGER : ""
+    // A look now (lookTimer triggers on its start) and fast ones for SafeModeModel.LOOK_BURST_MS.
+    function changed(): void {
+        burst.restart();
+        lookTimer.restart();
+    }
+    Timer {
+        id: burst
+        interval: Model.LOOK_BURST_MS
+    }
+    FileView {
+        path: root.devHooks ? "" : root.markerPath
+        preload: false
+        watchChanges: true
+        printErrors: false
+        onFileChanged: root.changed()
+    }
+    FileView {
+        path: root.ledgerPath
+        preload: false
+        watchChanges: true
+        printErrors: false
+        onFileChanged: root.changed()
     }
 
     // ---- The actions (the notice's buttons, Return, and a dev session's `safemode devPress`) ----

@@ -103,7 +103,7 @@ Window {
     property string selectedId: root.startSection !== "" ? root.pointerPane(root.paneOf(root.startSection)) : "appearance"
     property string query: ""
     // The state a pane shows under its title in the toolbar (Battery), "" for none.
-    readonly property string pageSubtitle: (page.item as BatteryPage)?.subtitle ?? ""
+    readonly property string pageSubtitle: (root.pageItem as BatteryPage)?.subtitle ?? ""
     // Battery is there only on a computer with a laptop battery (macOS shows it on a laptop only); Energy on the others (UPower
     // reports no battery, or does not answer).
     property bool hasBattery: false
@@ -189,6 +189,8 @@ Window {
         root.backend.watch(root.backend.capabilitiesFile);
         root.readCapabilities();
         root.backend.busQuery("power.state", "main.power");
+        pageA.sourceComponent = root.wantedPage;
+        root.pagesStarted = true;
     }
 
     Connections {
@@ -203,6 +205,116 @@ Window {
                 root.hasBattery = power !== null && power.present;
             }
         }
+    }
+
+    // The page the selection asks for, the loader in front (pageA or pageB), and whether the first page was built (later ones
+    // are built across frames). pageItem: the page shown, which the sheets act on.
+    readonly property Component wantedPage: {
+                if (root.notificationApp !== "")
+                    return notificationAppPage;
+                switch (root.selectedId) {
+                case "wifi":
+                    return wifiPage;
+                case "bluetooth":
+                    return bluetoothPage;
+                case "network":
+                    return networkPage;
+                case "vpn":
+                    return vpnPage;
+                case "battery":
+                case "energy":
+                    return root.hasBattery ? batteryPage : energyPage;
+                case "sound":
+                    return soundPage;
+                case "displays":
+                    return displaysPage;
+                case "wallpaper":
+                    return wallpaperPage;
+                case "accessibility":
+                    return accessibilityPage;
+                case "accessibility-zoom":
+                    return accessibilityZoomPage;
+                case "accessibility-display":
+                    return accessibilityDisplayPage;
+                case "accessibility-motion":
+                    return accessibilityMotionPage;
+                case "accessibility-keyboard":
+                    return accessibilityKeyboardPage;
+                case "desktop":
+                    return desktopPage;
+                case "menubar":
+                    return menuBarPage;
+                case "search":
+                    return searchPage;
+                case "notifications":
+                    return notificationsPage;
+                case "focus":
+                    return focusPage;
+                case "dnd":
+                    return dndPage;
+                case "lock":
+                    return lockPage;
+                case "privacy":
+                    return privacyPage;
+                case "fingerprint":
+                    return fingerprintPage;
+                case "privacy-location":
+                case "privacy-background":
+                case "privacy-camera":
+                case "privacy-remote-desktop":
+                case "privacy-screen-sharing":
+                    return privacyCategoryPage;
+                case "mouse":
+                    return mousePage;
+                case "trackpad":
+                    return trackpadPage;
+                case "printers":
+                    return printersPage;
+                case "keyboard":
+                    return keyboardPage;
+                case "general":
+                    return generalPage;
+                case "about":
+                    return aboutPage;
+                case "software-update":
+                    return softwareUpdatePage;
+                case "storage":
+                    return storagePage;
+                case "datetime":
+                    return dateTimePage;
+                case "language":
+                    return languagePage;
+                case "login":
+                    return loginItemsPage;
+                case "sharing":
+                    return sharingPage;
+                }
+        return appearancePage;
+    }
+    property bool frontIsA: true
+    property bool pagesStarted: false
+    readonly property Item pageItem: root.frontIsA ? pageA.item : pageB.item
+    // A new page is being built behind the one shown.
+    readonly property bool pageLoading: (root.frontIsA ? pageB : pageA).status === Loader.Loading
+
+    function loadPage(): void {
+        const front = root.frontIsA ? pageA : pageB;
+        const back = root.frontIsA ? pageB : pageA;
+        // Back to the page shown while another was being built: that one is dropped.
+        back.sourceComponent = front.sourceComponent === root.wantedPage ? null : root.wantedPage;
+    }
+
+    function pageLoaded(loader: Loader): void {
+        const front = root.frontIsA ? pageA : pageB;
+        if (loader === front || loader.sourceComponent !== root.wantedPage)
+            return;
+        root.frontIsA = loader === pageA;
+        front.sourceComponent = null;
+    }
+
+    onWantedPageChanged: {
+        if (root.pagesStarted)
+            root.loadPage();
     }
 
     ConfigStore {
@@ -245,7 +357,20 @@ Window {
     // The output Wallpaper is asked to show; set again, to the same name too, at each request.
     property string wallpaperDisplay: root.displayOf(root.startSection)
 
+    // A sheet is over the window. Its answer goes to the page under it, so the pane does not change meanwhile (the global
+    // menu's View items and a request from another process still reach select: the Wi-Fi password typed, or a display trial
+    // to keep, would be dropped with the page).
+    function sheetShown(): bool {
+        for (let i = 0; i < root.sheets.length; i++) {
+            if ((root.sheets[i] as Sheet)?.shown === true)
+                return true;
+        }
+        return false;
+    }
+
     function select(id: string): void {
+        if (root.sheetShown())
+            return;
         const shown = root.pointerPane(root.paneOf(id));
         root.wallpaperDisplay = "";
         root.wallpaperDisplay = root.paneOf(id) === "wallpaper" ? root.displayOf(id) : "";
@@ -275,11 +400,15 @@ Window {
     }
 
     function navBack(): void {
+        if (root.sheetShown())
+            return;
         root.navState = NavHistory.back(root.navState);
         root.selectedId = root.pointerPane(root.navState.current);
     }
 
     function navForward(): void {
+        if (root.sheetShown())
+            return;
         root.navState = NavHistory.forward(root.navState);
         root.selectedId = root.pointerPane(root.navState.current);
     }
@@ -751,7 +880,7 @@ Window {
         Rectangle {
             id: toolbarRule
             objectName: "toolbarRule"
-            readonly property Flickable flick: page.item as Flickable
+            readonly property Flickable flick: root.pageItem as Flickable
             anchors.top: detailToolbar.bottom
             width: parent.width
             height: Tokens.appsBorderWidth
@@ -760,8 +889,31 @@ Window {
             color: Appearance.withAlpha(Appearance.colors.separator, Appearance.separatorOpacity)
         }
 
+        // The pane is built across frames (Loader.asynchronous: the 2026 audit's notes, a page's construction and its reads no
+        // longer stall the window), in the loader at the back while the page shown stays, then swapped in: never a blank pane.
+        // The first page is built at once, for the window's first frame.
         Loader {
-            id: page
+            id: pageA
+            anchors.fill: pageArea
+            enabled: pageArea.enabled
+            opacity: pageArea.opacity
+            visible: root.frontIsA
+            asynchronous: root.pagesStarted
+            onLoaded: root.pageLoaded(pageA)
+        }
+
+        Loader {
+            id: pageB
+            anchors.fill: pageArea
+            enabled: pageArea.enabled
+            opacity: pageArea.opacity
+            visible: !root.frontIsA
+            asynchronous: root.pagesStarted
+            onLoaded: root.pageLoaded(pageB)
+        }
+
+        Item {
+            id: pageArea
             anchors {
                 top: banner.visible ? banner.bottom : detailToolbar.bottom
                 left: parent.left
@@ -771,88 +923,6 @@ Window {
             // A malformed file makes every control inert (nothing is written).
             enabled: !cfg.blocked
             opacity: cfg.blocked ? Tokens.materialDisabledOpacity : 1
-            sourceComponent: {
-                if (root.notificationApp !== "")
-                    return notificationAppPage;
-                switch (root.selectedId) {
-                case "wifi":
-                    return wifiPage;
-                case "bluetooth":
-                    return bluetoothPage;
-                case "network":
-                    return networkPage;
-                case "vpn":
-                    return vpnPage;
-                case "battery":
-                case "energy":
-                    return root.hasBattery ? batteryPage : energyPage;
-                case "sound":
-                    return soundPage;
-                case "displays":
-                    return displaysPage;
-                case "wallpaper":
-                    return wallpaperPage;
-                case "accessibility":
-                    return accessibilityPage;
-                case "accessibility-zoom":
-                    return accessibilityZoomPage;
-                case "accessibility-display":
-                    return accessibilityDisplayPage;
-                case "accessibility-motion":
-                    return accessibilityMotionPage;
-                case "accessibility-keyboard":
-                    return accessibilityKeyboardPage;
-                case "desktop":
-                    return desktopPage;
-                case "menubar":
-                    return menuBarPage;
-                case "search":
-                    return searchPage;
-                case "notifications":
-                    return notificationsPage;
-                case "focus":
-                    return focusPage;
-                case "dnd":
-                    return dndPage;
-                case "lock":
-                    return lockPage;
-                case "privacy":
-                    return privacyPage;
-                case "fingerprint":
-                    return fingerprintPage;
-                case "privacy-location":
-                case "privacy-background":
-                case "privacy-camera":
-                case "privacy-remote-desktop":
-                case "privacy-screen-sharing":
-                    return privacyCategoryPage;
-                case "mouse":
-                    return mousePage;
-                case "trackpad":
-                    return trackpadPage;
-                case "printers":
-                    return printersPage;
-                case "keyboard":
-                    return keyboardPage;
-                case "general":
-                    return generalPage;
-                case "about":
-                    return aboutPage;
-                case "software-update":
-                    return softwareUpdatePage;
-                case "storage":
-                    return storagePage;
-                case "datetime":
-                    return dateTimePage;
-                case "language":
-                    return languagePage;
-                case "login":
-                    return loginItemsPage;
-                case "sharing":
-                    return sharingPage;
-                }
-                return appearancePage;
-            }
         }
     }
 
@@ -917,7 +987,7 @@ Window {
     BatteryInfoSheet {
         id: batteryInfo
         onLimitRequested: on => {
-            (page.item as BatteryPage)?.setLimit(on);
+            (root.pageItem as BatteryPage)?.setLimit(on);
             batteryInfo.close();
         }
     }
@@ -926,7 +996,7 @@ Window {
     // answers. Network shows an Ethernet service's addresses in the same details sheet.
     WifiPasswordSheet {
         id: wifiPassword
-        onJoin: (net, psk) => (page.item as WifiPage)?.join(net, psk)
+        onJoin: (net, psk) => (root.pageItem as WifiPage)?.join(net, psk)
     }
 
     NetworkDetailsSheet {
@@ -950,7 +1020,7 @@ Window {
 
     ForgetNetworkSheet {
         id: forgetNetwork
-        onForget: net => (page.item as WifiPage)?.forget(net)
+        onForget: net => (root.pageItem as WifiPage)?.forget(net)
     }
 
     Component {
@@ -966,13 +1036,13 @@ Window {
     // Bluetooth: a device's sheet and Forget This Device…; the page acts on the answers.
     BluetoothDeviceSheet {
         id: bluetoothDevice
-        onConnectRequested: device => (page.item as BluetoothPage)?.connectDevice(device)
+        onConnectRequested: device => (root.pageItem as BluetoothPage)?.connectDevice(device)
         onForgetRequested: device => forgetDevice.openFor(device)
     }
 
     ForgetDeviceSheet {
         id: forgetDevice
-        onForget: device => (page.item as BluetoothPage)?.forget(device)
+        onForget: device => (root.pageItem as BluetoothPage)?.forget(device)
     }
 
     Component {
@@ -1002,16 +1072,16 @@ Window {
     // Displays (ADR-0031): keep or revert a change while the shell counts down; Arrange… for several displays.
     DisplayKeepSheet {
         id: displayKeep
-        canKeep: (page.item as DisplaysPage)?.trialApplied ?? false
-        onKeep: (page.item as DisplaysPage)?.keep()
-        onRevert: (page.item as DisplaysPage)?.revert()
+        canKeep: (root.pageItem as DisplaysPage)?.trialApplied ?? false
+        onKeep: (root.pageItem as DisplaysPage)?.keep()
+        onRevert: (root.pageItem as DisplaysPage)?.revert()
     }
 
     ArrangeSheet {
         id: displayArrange
-        onArranged: positions => (page.item as DisplaysPage)?.arrange(positions)
+        onArranged: positions => (root.pageItem as DisplaysPage)?.arrange(positions)
         // The menu bar dragged to another display (ADR-0044): that display becomes the main one, at once.
-        onMainChosen: name => (page.item as DisplaysPage)?.makeMain(name)
+        onMainChosen: name => (root.pageItem as DisplaysPage)?.makeMain(name)
     }
 
     Component {
@@ -1101,7 +1171,7 @@ Window {
             store: cfg
             onHistoryDeleteRequested: deleteSearchHistory.open()
             onClipboardClearRequested: {
-                alsoPinned.checked = false;
+                clearClipboardHistory.alsoPinned = false;
                 clearClipboardHistory.open();
             }
         }
@@ -1173,7 +1243,7 @@ Window {
         id: fingerprintEnroll
         backend: root.backend
         system: sys
-        onEnded: (page.item as FingerprintPage)?.refresh()
+        onEnded: (root.pageItem as FingerprintPage)?.refresh()
     }
 
     // Delete…: asked first, as macOS asks before it deletes a fingerprint.
@@ -1236,7 +1306,7 @@ Window {
             system: sys
             onDetailsRequested: printer => printerSheet.openFor(printer)
             onAddRequested: {
-                (page.item as PrintersPage)?.startSearching();
+                (root.pageItem as PrintersPage)?.startSearching();
                 addPrinter.openWith();
             }
         }
@@ -1246,22 +1316,22 @@ Window {
     PrinterSheet {
         id: printerSheet
         onRemoveRequested: printer => removePrinter.openFor(printer)
-        onResumeRequested: name => (page.item as PrintersPage)?.resume(name)
+        onResumeRequested: name => (root.pageItem as PrintersPage)?.resume(name)
     }
 
     RemovePrinterSheet {
         id: removePrinter
-        onRemove: name => (page.item as PrintersPage)?.remove(name)
+        onRemove: name => (root.pageItem as PrintersPage)?.remove(name)
     }
 
     AddPrinterSheet {
         id: addPrinter
-        found: (page.item as PrintersPage)?.found ?? []
-        answered: (page.item as PrintersPage)?.foundAnswered ?? false
-        onPicked: printer => (page.item as PrintersPage)?.add(printer)
+        found: (root.pageItem as PrintersPage)?.found ?? []
+        answered: (root.pageItem as PrintersPage)?.foundAnswered ?? false
+        onPicked: printer => (root.pageItem as PrintersPage)?.add(printer)
         onShownChanged: {
             if (!addPrinter.shown)
-                (page.item as PrintersPage)?.stopSearching();
+                (root.pageItem as PrintersPage)?.stopSearching();
         }
     }
 
@@ -1283,7 +1353,7 @@ Window {
 
     InputSourcesSheet {
         id: inputSources
-        onChanged: list => (page.item as KeyboardPage)?.setSources(list)
+        onChanged: list => (root.pageItem as KeyboardPage)?.setSources(list)
         onAddRequested: (layouts, used) => layoutPicker.openWith(layouts, used)
     }
 
@@ -1413,7 +1483,7 @@ Window {
     // Login Items > +: a sheet over the whole window; the page writes the choice.
     AppPickerSheet {
         id: appPicker
-        onChosen: app => (page.item as LoginItemsPage)?.add(app)
+        onChosen: app => (root.pageItem as LoginItemsPage)?.add(app)
     }
 
     Component {
@@ -1428,7 +1498,7 @@ Window {
     // Date & Time > Set…: a sheet over the whole window; the page sends the answer to timedate1.
     SetDateTimeSheet {
         id: timeSheet
-        onChosen: wall => (page.item as DateTimePage)?.setWallClock(wall)
+        onChosen: wall => (root.pageItem as DateTimePage)?.setWallClock(wall)
     }
 
     // Menu Bar > Clock Options…: a sheet over the whole window.
@@ -1456,11 +1526,22 @@ Window {
         message: qsTr("The items you copied are deleted from Search. Pinned items stay unless you delete them too.")
         confirmText: qsTr("Clear")
         destructive: true
-        onAccepted: (page.item as SearchPage)?.clearClipboard(alsoPinned.checked)
+        // "Also delete pinned items" (the check box of the body, built at the first opening).
+        property bool alsoPinned: false
+        onAccepted: (root.pageItem as SearchPage)?.clearClipboard(clearClipboardHistory.alsoPinned)
 
-        CheckBox {
-            id: alsoPinned
-            text: qsTr("Also delete pinned items")
+        bodyComponent: Component {
+            CheckBox {
+                id: alsoPinned
+                text: qsTr("Also delete pinned items")
+                onToggled: clearClipboardHistory.alsoPinned = alsoPinned.checked
+
+                Binding {
+                    target: alsoPinned
+                    property: "checked"
+                    value: clearClipboardHistory.alsoPinned
+                }
+            }
         }
     }
 

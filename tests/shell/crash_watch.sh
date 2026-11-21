@@ -256,10 +256,17 @@ def wait_ends(owner_after, owner_before=":1.7"):
     open(ownerfile, "w").write(owner_after) if owner_after else (os.path.exists(ownerfile) and os.remove(ownerfile))
     drive(w, 4.0)
     return len(w.waiting), any(x.startswith("gdbus call") and "CloseNotification 42" in x for x in logged())
-print("owner", wait_ends(":1.7"), wait_ends(":1.9"), wait_ends(None), wait_ends(":1.7", None))
+print("owner", wait_ends(":1.7"), wait_ends(":1.9"), wait_ends(None), wait_ends(":1.7", ":1.5"))
 m.WAIT_SECONDS = 600.0
 if mode == "owner":
     sys.exit(0)
+# SS-05: no server owns org.freedesktop.Notifications: nothing is sent (notify-send would start another daemon by D-Bus
+# activation); the notice is retried and shown once the shell's server is there.
+os.path.exists(ownerfile) and os.remove(ownerfile)
+reset(""); w = m.Watcher(uid, env_en); w.ledger.reserve("Spotify", 1.0); w.send(jobinfo("Spotify", None), time.monotonic())
+before = sum(x.startswith("notify-send") for x in logged()); pending = len(w.sending)
+open(ownerfile, "w").write(":1.7"); drive(w, 4.0)
+print("no-server", before, pending, sum(x.startswith("notify-send") for x in logged()))
 reset("reopen"); w = m.Watcher(uid, env_fr); w.send(jobinfo("Spotify", "spotify.desktop"), time.monotonic()); drive(w); l = logged()
 print("reopen", len(l), "-p -w -A reopen=Rouvrir" in l[0], "« Spotify » a quitt" in l[0], "(SIGSEGV)" in l[0], l[1].startswith("systemd-run --user --collect --quiet -- ") and l[1].endswith("uwsm-app -- spotify.desktop"))
 reset(""); w = m.Watcher(uid, env_en); w.send(jobinfo("Spotify", "spotify.desktop"), time.monotonic()); drive(w); l = logged()
@@ -289,6 +296,9 @@ fresh()
 b = mod(gpu, COREDUMP_CGROUP=CG + "app-Hyprland-foot-77.scope", COREDUMP_USER_UNIT="app-Hyprland-foot-77.scope", COREDUMP_EXE="/usr/bin/foot")
 open(tmp + "/journal", "w").write(json.dumps(gpu) + "\nnot json\n" + json.dumps(b) + "\n[]\n")
 os.environ["FAKE_JOURNAL"] = tmp + "/journal"; reset("", "3")
+# main() reads the process's environment: the fixture's applications directories, never this machine's (foot and Spotify need
+# not be installed here).
+os.environ.update(env_en)
 t0 = time.monotonic(); rc = m.main(); elapsed = time.monotonic() - t0
 time.sleep(1.0)
 print("loop", rc, elapsed < 2.0, sum(x.startswith("notify-send") for x in logged()))
@@ -377,6 +387,8 @@ check has "max-waiting 2 3 2"
 check has "wait-ends 0 True"
 desc="the notice is closed by id only while the server that showed it still owns the name (not after a restart, not when unknown)"
 check has "owner (0, True) (0, False) (0, False) (0, False)"
+desc="SS-05: with no notification server on the bus nothing is sent (no D-Bus activation of another daemon); the notice is retried and shown once the server is there"
+check has "no-server 0 1 1"
 desc="a notify-send that cannot start is retried a bounded number of times, then the dedupe slot is freed"
 check has "send-fails 0 False"
 desc="the loop is not blocked by notices that wait for a click (3 s notify-send, two apps, junk lines: done in under 2 s, both shown)"

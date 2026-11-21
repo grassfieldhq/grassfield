@@ -105,6 +105,41 @@ namespace gf::minimize {
         return frame;
     }
 
+    double easedProgress(Kind kind, double elapsedMs) {
+        const double duration = durationMs(kind);
+        const double t        = duration > 0 && std::isfinite(elapsedMs) ? std::clamp(elapsedMs / duration, 0.0, 1.0) : 1.0;
+        return curve(kind)(t);
+    }
+
+    double elapsedForEased(Kind kind, double eased) {
+        const double target = std::isfinite(eased) ? std::clamp(eased, 0.0, 1.0) : 1.0;
+        const auto   c      = curve(kind);
+        double       lo = 0.0, hi = 1.0; // the curve is monotonic in t (y1, y2 in [0, 1] for both timings)
+        for (int i = 0; i < 48; ++i) {
+            const double mid = (lo + hi) / 2.0;
+            if (c(mid) < target)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        return ((lo + hi) / 2.0) * durationMs(kind);
+    }
+
+    Continuation continueFrom(Kind kind, const Box& current, const Box& to, double share) {
+        const double s       = std::isfinite(share) ? std::clamp(share, 0.0, 0.95) : 0.0;
+        const double elapsed = elapsedForEased(kind, s);
+        const double e       = curve(kind)(elapsed / durationMs(kind)); // what frameAt will use at `elapsed`
+        if (e >= 1.0 || !isFinite(current) || !isFinite(to))
+            return Continuation{.from = current, .elapsedMs = 0};
+        const auto back = [e](double c, double t) { return (c - (t * e)) / (1.0 - e); }; // lerp(from, to, e) == current
+        return Continuation{.from = Box{back(current.x, to.x), back(current.y, to.y), back(current.w, to.w), back(current.h, to.h)}, .elapsedMs = elapsed};
+    }
+
+    double fadeElapsedFor(Kind kind, float alpha) {
+        const double a = std::isfinite(alpha) ? std::clamp(static_cast<double>(alpha), 0.0, 1.0) : 1.0;
+        return (kind == Kind::Minimize ? 1.0 - a : a) * kFadeDurationMs;
+    }
+
     std::optional<Effect> parseEffect(std::string_view key, std::string_view value) {
         if (key != kConfigMinimizeEffect)
             return std::nullopt;

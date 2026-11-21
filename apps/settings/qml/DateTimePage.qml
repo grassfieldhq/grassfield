@@ -58,7 +58,10 @@ SettingsPage {
     }
 
     function setWallClock(wall: var): void {
-        root.apply("set", "date and time", General.timeSet(General.fromWallClock(wall, root.offsetSec)));
+        // The zone's offset at the chosen date (Backend.zoneOffsetAt), which is not today's across a daylight-saving change.
+        const zoned = root.time && root.backend && typeof root.backend.zoneOffsetAt === "function" && root.zone.offsetSeconds !== undefined;
+        const ms = zoned ? General.fromWallClockAt(wall, root.offsetSec, at => root.backend.zoneOffsetAt(root.time.zone, at)) : General.fromWallClock(wall, root.offsetSec);
+        root.apply("set", "date and time", General.timeSet(ms));
     }
 
     Component.onCompleted: {

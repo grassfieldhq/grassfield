@@ -41,9 +41,16 @@ Singleton {
         }
         if (!available)
             return false;
-        const pct = Math.round(Math.abs(delta) * 100);
-        setter.command = ["brightnessctl", "-q", "-d", root.device, "set", pct + "%" + (delta > 0 ? "+" : "-")];
-        setter.running = true;
+        const pct = Math.round(Math.abs(delta) * 100) * (delta > 0 ? 1 : -1);
+        // Starting a process that still runs does nothing: the step waits for the running one to end (setter.next).
+        if (setter.running) {
+            if (setter.pendingSet >= 0)
+                setter.pendingSet = Math.max(0, Math.min(100, setter.pendingSet + pct));
+            else
+                setter.pendingStep += pct;
+            return true;
+        }
+        setter.step(pct);
         return true;
     }
 
@@ -55,8 +62,14 @@ Singleton {
         }
         if (!available)
             return false;
-        setter.command = ["brightnessctl", "-q", "-d", root.device, "set", Math.round(Math.max(0, Math.min(1, fraction)) * 100) + "%"];
-        setter.running = true;
+        const pct = Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+        // The same wait as adjust(); the last level asked wins over what waited.
+        if (setter.running) {
+            setter.pendingSet = pct;
+            setter.pendingStep = 0;
+            return true;
+        }
+        setter.set(pct);
         return true;
     }
 
@@ -74,8 +87,13 @@ Singleton {
         }
         if (!kbdAvailable)
             return false;
-        kbdSetter.command = ["brightnessctl", "-q", "-d", root.kbdDevice, "set", Math.round(Math.max(0, Math.min(1, fraction)) * root.kbdMax).toString()];
-        kbdSetter.running = true;
+        const raw = Math.round(Math.max(0, Math.min(1, fraction)) * root.kbdMax);
+        // Starting a process that still runs does nothing: the level waits for the running one to end, the last one winning.
+        if (kbdSetter.running) {
+            kbdSetter.pending = raw;
+            return true;
+        }
+        kbdSetter.set(raw);
         return true;
     }
 
@@ -100,6 +118,60 @@ Singleton {
     property var ddcJobs: ({})
     property int ddcSerial: 0
     readonly property var outputNames: Quickshell.screens.map(s => s.name)
+    // Displays that did not answer, remembered for the session by identity (BrightnessLogic.identity: model and serial number),
+    // in the runtime directory so that a restart of the shell does not ask them again: identity -> wall ms of the last failure.
+    readonly property string ddcSilentPath: Logic.silentPath(Quickshell.env("XDG_RUNTIME_DIR"), Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE"), Quickshell.env("WAYLAND_DISPLAY"))
+    property var ddcSilent: ({})
+    // Output name -> wall ms of its last query (a brightness key asks a silent display again at most every KEY_REPROBE_MS).
+    property var ddcProbedAt: ({})
+
+    // Output name -> identity of the display on it now.
+    function ddcIdentities(): var {
+        const ids = {};
+        for (const sc of Quickshell.screens)
+            ids[sc.name] = Logic.identity(sc.model, sc.serialNumber, sc.name);
+        return ids;
+    }
+
+    function ddcRemember(name: string, answered: bool): bool {
+        const id = root.ddcIdentities()[name] || "";
+        if (id === "")
+            return true;
+        const known = Object.prototype.hasOwnProperty.call(root.ddcSilent, id);
+        if (answered) {
+            if (!known)
+                return false;
+            root.ddcSilent = Logic.forgetSilent(root.ddcSilent, id);
+        } else {
+            root.ddcSilent = Logic.rememberSilent(root.ddcSilent, id, Date.now());
+        }
+        if (root.ddcSilentPath !== "")
+            silentFile.setText(Logic.formatSilent(root.ddcSilent) + "\n");
+        return !known;
+    }
+
+    // A brightness key while `name` is the active display (Osd.brightnessStep, before it picks its target): a display that did
+    // not answer is asked again, the person asking for it (at most every BrightnessLogic.KEY_REPROBE_MS). This key goes where
+    // it went before (the built-in panel, as for a display that cannot be changed); the next ones drive the display once it
+    // answers.
+    function keyOn(name: string): void {
+        if (!root.ddcAllowed || !root.ddcCommand || !Object.prototype.hasOwnProperty.call(root.ddc, name))
+            return;
+        const now = Date.now();
+        if (!Logic.keyReprobe(root.ddc[name], name, now, root.ddcProbedAt[name]))
+            return;
+        root.ddcQuery(name, now);
+    }
+
+    function ddcQuery(name: string, now: real): void {
+        const at = Object.assign({}, root.ddcProbedAt);
+        at[name] = now;
+        root.ddcProbedAt = at;
+        const r = Logic.request(root.ddc[name], name, {kind: "query"});
+        root.ddcStore(name, r.entry);
+        if (r.start !== null)
+            root.ddcRun(name, r.entry.serial, r.start);
+    }
 
     // The known level of external output `name` changed (a key, the slider, or the command's answer).
     signal outputLevelChanged(string name)
@@ -175,7 +247,13 @@ Singleton {
         const entry = root.ddc[name];
         const r = entry.serial === serial ? Logic.finished(entry, name, text) : Logic.released(entry, name);
         root.ddcStore(name, r.entry);
+        // Remembered (or forgotten once it answers); the explanatory line once per display and session.
+        let first = false;
         if (r.failed === true)
+            first = root.ddcRemember(name, false);
+        else if (entry.serial === serial && r.entry.status === "ok")
+            root.ddcRemember(name, true);
+        if (first)
             console.info("brightness: " + name + " does not answer DDC/CI (" + Logic.COMMAND + "); its brightness is left to the display."
                 + " It needs the i2c-dev module, access to /dev/i2c-* and DDC/CI on in the display's own menu");
         if (r.start !== null)
@@ -188,8 +266,12 @@ Singleton {
         if (!root.ddcAllowed)
             return;
         root.ddc = Logic.forget(root.ddc, root.outputNames);
-        ddcCheck.running = false;
-        ddcCheck.running = true;
+        // A check still running is left to end (stopping it would start nothing and its empty answer would read as "no
+        // command", forgetting every display): it runs once more after, and only that last answer is used.
+        if (ddcCheck.running)
+            ddcCheck.again = true;
+        else
+            ddcCheck.running = true;
     }
 
     function ddcProbe(): void {
@@ -203,13 +285,12 @@ Singleton {
             root.ddc = ({});
             return;
         }
-        root.ddc = s.ddc;
-        for (const name of s.ask) {
-            const r = Logic.request(root.ddc[name], name, {kind: "query"});
-            root.ddcStore(name, r.entry);
-            if (r.start !== null)
-                root.ddcRun(name, r.entry.serial, r.start);
-        }
+        // A display remembered as silent is not asked on a new connection before BrightnessLogic.REPROBE_AFTER_MS.
+        const now = Date.now();
+        const kept = Logic.skipSilent(s, root.ddcIdentities(), root.ddcSilent, now);
+        root.ddc = kept.ddc;
+        for (const name of kept.ask)
+            root.ddcQuery(name, now);
     }
 
     onOutputNamesChanged: root.ddcSync()
@@ -221,7 +302,11 @@ Singleton {
 
     Component.onCompleted: {
         finder.running = true;
-        kbdFinder.running = true;
+        if (root.ddcAllowed && root.ddcSilentPath !== "") {
+            silentFile.reload();
+            silentFile.waitForJob();
+            root.ddcSilent = Logic.parseSilent(silentFile.text());
+        }
         if (root.ddcAllowed)
             root.ddcSync();
         else if (root.devSession)
@@ -231,11 +316,22 @@ Singleton {
     // A fixed command line, no data in it: the command's path, printed only when coreutils' timeout (its bound) is there too.
     Process {
         id: ddcCheck
+        // Set when the outputs changed while the check was running: run it once more.
+        property bool again: false
         command: ["sh", "-c", "command -v " + Logic.BOUND[0] + " >/dev/null && command -v " + Logic.COMMAND]
         stdout: StdioCollector {
             onStreamFinished: {
+                // Another run follows: its answer is the one that counts.
+                if (ddcCheck.again)
+                    return;
                 root.ddcCommand = text.trim() !== "";
                 root.ddcProbe();
+            }
+        }
+        onRunningChanged: {
+            if (!running && again) {
+                again = false;
+                running = true;
             }
         }
     }
@@ -341,18 +437,24 @@ Singleton {
     }
 
     Process {
-        id: kbdFinder
-        command: ["sh", "-c", "ls -1 /sys/class/leds 2>/dev/null | grep kbd_backlight | head -n 1"]
-        stdout: StdioCollector {
-            onStreamFinished: root.kbdDevice = text.trim()
-        }
-    }
-
-    Process {
         id: kbdSetter
+        // Raw level asked while a run was going (-1: none); started when that one is gone.
+        property int pending: -1
+
+        function set(raw: int): void {
+            kbdSetter.command = ["brightnessctl", "-q", "-d", root.kbdDevice, "set", raw.toString()];
+            kbdSetter.running = true;
+        }
+
         onRunningChanged: {
-            if (!running)
-                root.refresh();
+            if (running)
+                return;
+            root.refresh();
+            if (pending >= 0) {
+                const raw = pending;
+                pending = -1;
+                kbdSetter.set(raw);
+            }
         }
     }
 
@@ -372,20 +474,56 @@ Singleton {
         onLoaded: root.kbdValue = parseInt(kbdCurrent.text().trim(), 10) || 0
     }
 
+    // The backlight and the keyboard backlight, both found by one shell with its own globbing (no ls, grep or head child: one
+    // process at start instead of two pipelines of three): line 1 the first /sys/class/backlight device, line 2 the first
+    // /sys/class/leds/*kbd_backlight* (either empty when there is none).
     Process {
         id: finder
-        command: ["sh", "-c", "ls -1 /sys/class/backlight 2>/dev/null | head -n 1"]
+        command: ["sh", "-c", "b=; for d in /sys/class/backlight/*; do [ -e \"$d\" ] && { b=${d##*/}; break; }; done; k=; for d in /sys/class/leds/*kbd_backlight*; do [ -e \"$d\" ] && { k=${d##*/}; break; }; done; printf '%s\\n%s\\n' \"$b\" \"$k\""]
         stdout: StdioCollector {
-            onStreamFinished: root.device = text.trim()
+            onStreamFinished: {
+                const lines = text.split("\n");
+                root.device = (lines[0] || "").trim();
+                root.kbdDevice = (lines[1] || "").trim();
+            }
         }
     }
 
     Process {
         id: setter
+        // What was asked while a run was going, started when that one is gone: an absolute percent (-1: none, the last one
+        // wins) or else the sum of the steps, in percent.
+        property int pendingSet: -1
+        property int pendingStep: 0
+
+        function set(pct: int): void {
+            setter.command = ["brightnessctl", "-q", "-d", root.device, "set", pct + "%"];
+            setter.running = true;
+        }
+
+        function step(pct: int): void {
+            setter.command = ["brightnessctl", "-q", "-d", root.device, "set", Math.abs(pct) + "%" + (pct > 0 ? "+" : "-")];
+            setter.running = true;
+        }
+
+        function next(): void {
+            if (setter.pendingSet >= 0) {
+                const pct = setter.pendingSet;
+                setter.pendingSet = -1;
+                setter.pendingStep = 0;
+                setter.set(pct);
+            } else if (setter.pendingStep !== 0) {
+                const pct = setter.pendingStep;
+                setter.pendingStep = 0;
+                setter.step(pct);
+            }
+        }
+
         onRunningChanged: {
             if (!running) {
                 root.refresh();
                 root.commandFinished();
+                setter.next();
             }
         }
     }
@@ -397,6 +535,11 @@ Singleton {
         onLoaded: root.max = parseInt(maximum.text().trim(), 10) || 0
     }
 
+    // The level is followed through events, never a timer (audit SC-08: a read every 1.5 s for the whole session). Two
+    // sources: the backlight class notifies `actual_brightness` (sysfs_notify, which reaches inotify through kernfs) on every
+    // change it makes, a hotkey handled by the firmware included; and any program that writes the level (brightnessctl,
+    // logind's SetBrightness, a script) writes `brightness`, which raises a modify event on that file. Either one reads
+    // `actual_brightness` again. The shell's own changes read it when brightnessctl ends (refresh()).
     FileView {
         id: current
         path: root.device !== "" ? "/sys/class/backlight/" + root.device + "/actual_brightness" : ""
@@ -409,11 +552,21 @@ Singleton {
         }
     }
 
-    // sysfs does not always raise inotify events; poll slowly as a fallback.
-    Timer {
-        interval: 1500
-        running: root.available
-        repeat: true
-        onTriggered: current.reload()
+    // The displays remembered as silent (ddcSilent), read once at start, before the first probe (Component.onCompleted).
+    FileView {
+        id: silentFile
+        path: root.ddcSilentPath
+        blockLoading: true
+        atomicWrites: true
+        printErrors: false
+    }
+
+    FileView {
+        id: written
+        path: root.device !== "" ? "/sys/class/backlight/" + root.device + "/brightness" : ""
+        preload: false
+        printErrors: false
+        watchChanges: true
+        onFileChanged: current.reload()
     }
 }

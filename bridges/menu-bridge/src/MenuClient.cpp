@@ -7,6 +7,7 @@
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
 
+#include <algorithm>
 #include <utility>
 
 namespace gf::menubridge {
@@ -22,8 +23,8 @@ namespace gf::menubridge {
         constexpr int kFirstReadTries = 4;
         constexpr int kRetryDelayMs   = 500;
         // A menu shown before keeps its last layout when a re-read fails (macOS keeps a busy application's menus): the bridge
-        // does not read it again by itself, the application's next signal does, and it is given up only after this many
-        // failed re-reads in a row.
+        // does not read it again by itself, the application's next signal does (or one that arrived during the failed read,
+        // after kRetryDelayMs), and it is given up only after this many failed re-reads in a row.
         constexpr int kMaxRereadFailures = 3;
     } // namespace
 
@@ -31,7 +32,7 @@ namespace gf::menubridge {
         QObject(parent), m_bus(bus), m_window(std::move(window)), m_service(std::move(service)), m_path(std::move(path)) {
         m_refetch.setSingleShot(true);
         m_refetch.setInterval(kRefetchDelayMs);
-        connect(&m_refetch, &QTimer::timeout, this, &MenuClient::fetch);
+        connect(&m_refetch, &QTimer::timeout, this, &MenuClient::refetchDue);
         m_retry.setSingleShot(true);
         connect(&m_retry, &QTimer::timeout, this, &MenuClient::fetch);
 
@@ -69,7 +70,24 @@ namespace gf::menubridge {
         // Not restarted while pending: a burst of signals less than kRefetchDelayMs apart would otherwise push the
         // refetch back for as long as it lasts. During a burst the layout is read at most every kRefetchDelayMs.
         if (!m_gone && !m_stopped && !m_refetch.isActive())
-            m_refetch.start();
+            m_refetch.start(kRefetchDelayMs);
+    }
+
+    void MenuClient::refetchDue() {
+        if (m_gone || m_stopped)
+            return;
+        // The application's re-reads are budgeted per identity (all its windows): a flood of LayoutUpdated costs at most
+        // one GetLayout a second once the burst is spent, and a flood that lasts drops the menu (Bridge records it).
+        const qint64 wait = m_gate ? m_gate() : 0;
+        if (wait < 0) {
+            giveUp(QStringLiteral("flood"), QStringLiteral("the application changes its menu continuously"));
+            return;
+        }
+        if (wait > 0) {
+            m_refetch.start(static_cast<int>(std::min<qint64>(wait, 60 * 1000)));
+            return;
+        }
+        fetch();
     }
 
     void MenuClient::fetch() {
@@ -116,10 +134,15 @@ namespace gf::menubridge {
         m_failures = 0;
         m_retry.stop();
         LayoutBudget mapBudget;
-        m_items = mapChildren(root, mapBudget);
+        const QJsonArray items = mapChildren(root, mapBudget);
+        // A re-read that changed nothing the shell is given (an application signalling without a change, or a property the
+        // mapping does not keep) is not sent again: the shell would parse the whole menu and build its bar anew.
+        const bool same = m_ready && items == m_items;
+        m_items = items;
         m_index = indexItems(m_items);
         m_ready = true;
-        emit menuChanged(m_window);
+        if (!same)
+            emit menuChanged(m_window);
         if (std::exchange(m_again, false))
             fetch();
     }
@@ -128,8 +151,14 @@ namespace gf::menubridge {
         ++m_failures;
         if (m_ready) {
             // A re-read: the last good layout stays shown; the application's next signal reads it again.
-            if (m_failures >= kMaxRereadFailures)
+            if (m_failures >= kMaxRereadFailures) {
                 giveUp(code, why);
+                return;
+            }
+            // A signal that arrived during the failed read would otherwise be lost with it (the menu changed while the
+            // application was busy): that one is read again, later; its failure counts toward the limit above.
+            if (std::exchange(m_again, false))
+                m_retry.start(kRetryDelayMs);
             return;
         }
         // The first read: tried again later when the application did not answer (it used to fail at once, and a window whose

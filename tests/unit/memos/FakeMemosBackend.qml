@@ -22,6 +22,16 @@ QtObject {
     property int saves: 0
     property int created: 0
     property string clipboard: "pasted"
+    // As MemosApp.saveError and dirty: "" while the memos are written.
+    property string saveError: ""
+    property bool dirty: false
+    // What saveNow() answers (false: the write failed, saveError says why).
+    property bool saveResult: true
+    property int asyncSaves: 0
+    property int quits: 0
+    // refreshFrames() answers at once unless set; then emitFrames() answers.
+    property bool deferFrames: false
+    property int frameReads: 0
     property string selection: "primary"
 
     property QtObject formatter: QtObject {
@@ -97,28 +107,41 @@ QtObject {
         root.retags = root.retags.concat([tag]);
     }
 
-    function freshTagFor(id) {
-        return root.tagFor(id);
+    signal framesRead
+    signal saved(bool ok)
+
+    function refreshFrames() {
+        root.frameReads++;
+        if (!root.deferFrames)
+            root.framesRead();
     }
 
-    // As MemosApp: saveNow() asks the windows to push what they hold first.
+    function emitFrames() {
+        root.framesRead();
+    }
+
+    // As MemosApp: saveNow() and save() ask the windows to push what they hold first.
     signal aboutToSave
 
     function saveNow() {
         root.aboutToSave();
         root.saves++;
-        return true;
+        // As MemosApp::finishWrite: saved() is reported before saveNow() returns.
+        root.saved(root.saveResult);
+        return root.saveResult;
+    }
+
+    function save() {
+        root.aboutToSave();
+        root.asyncSaves++;
+    }
+
+    function quit() {
+        root.quits++;
     }
 
     function clipboardText(selection) {
         return selection ? root.selection : root.clipboard;
-    }
-
-    // The first non-empty line of the text, as the backend's (no markup in the tests' texts but a paragraph).
-    function firstLine(html) {
-        const plain = String(html).replace(/<[^>]*>/g, "\n");
-        const lines = plain.split("\n").map(l => l.trim()).filter(l => l !== "" && l.indexOf("{") < 0);
-        return lines.length > 0 ? lines[0] : "";
     }
 
     function count() {

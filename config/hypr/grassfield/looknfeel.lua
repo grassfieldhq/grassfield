@@ -83,7 +83,19 @@ hl.config({
     workspace_wraparound = false,
   },
 
+  -- VRR, direct scanout and tearing (CIO audit note, decision 2026-11-19, the macOS model): a full-screen game or video gets
+  -- variable refresh (ProMotion / Adaptive-Sync on macOS apply to the frontmost full-screen content, never as a desktop-wide
+  -- flicker risk on panels whose brightness wobbles at low refresh), and its surface goes straight to the display when it
+  -- declares itself a game (content-type), which the plugin's decorations never defeat (none is drawn in full screen).
+  -- Tearing stays off: macOS never tears, and an app that asks for it gets vsync. The desktop itself keeps a fixed refresh.
+  -- The owner checks it on a VRR display (docs/specs/compositor.md, owner checks).
+  render = {
+    direct_scanout = 2, -- auto: full-screen surfaces with content-type game
+  },
+
   misc = {
+    -- 2: VRR on full-screen windows only (see above).
+    vrr = 2,
     disable_hyprland_logo = true,
     disable_splash_rendering = true,
     disable_scale_notification = true,
@@ -144,18 +156,25 @@ do
     home = base .. "/grassfield"
   end
   local path = home .. "/wallpaper.json"
-  if type(io.popen) == "function" and not path:find("%c") then
+  -- From the second parse of a login on, the compositor plugin reads it in-process (a regular file only, never blocking,
+  -- bounded: grassfield.probe, CIO-10); the first parse forks the guarded `head` below.
+  local text, unavailable = nil, true
+  if not path:find("%c") and path:sub(1, 1) == "/" then
+    local probe_ok, probe = pcall(require, "grassfield.probe")
+    if probe_ok then text, unavailable = probe.read_file(path, 65536) end
+  end
+  if unavailable and type(io.popen) == "function" and not path:find("%c") then
     local q = "'" .. path:gsub("'", "'\\''") .. "'"
     local cmd = "[ -f " .. q .. " ] && [ ! -L " .. q .. " ] && timeout 2 head -c 65536 -- " .. q .. " 2>/dev/null"
     local ok, p = pcall(io.popen, cmd, "r")
     if ok and p then
-      local text = p:read("a") or ""
+      text = p:read("a") or ""
       p:close()
-      local ground = text:match('"ground"%s*:%s*"#(%x%x%x%x%x%x)"')
-      if ground then
-        hl.config({ misc = { background_color = "rgba(" .. ground:lower() .. "ff)" } })
-      end
     end
+  end
+  local ground = type(text) == "string" and text:match('"ground"%s*:%s*"#(%x%x%x%x%x%x)"')
+  if ground then
+    hl.config({ misc = { background_color = "rgba(" .. ground:lower() .. "ff)" } })
   end
 end
 

@@ -74,23 +74,29 @@ Item {
         mipmap: true
         visible: status === Image.Ready
 
-        // Thin frame so light thumbnails stay distinct from the window background.
-        Rectangle {
+        // Thin frame so light thumbnails stay distinct from the window background (made once a thumbnail shows).
+        Loader {
+            active: thumb.status === Image.Ready
             anchors.centerIn: parent
-            width: thumb.paintedWidth + 2 * root.hairline
-            height: thumb.paintedHeight + 2 * root.hairline
-            color: "transparent"
-            border.width: root.hairline
-            border.color: Appearance.withAlpha(Appearance.colors.separator, Appearance.separatorOpacity)
+            sourceComponent: Rectangle {
+                width: thumb.paintedWidth + 2 * root.hairline
+                height: thumb.paintedHeight + 2 * root.hairline
+                color: "transparent"
+                border.width: root.hairline
+                border.color: Appearance.withAlpha(Appearance.colors.separator, Appearance.separatorOpacity)
+            }
         }
     }
 
-    ThemeIcon {
-        visible: root.emblem !== ""
-        name: root.emblem
-        size: Math.max(Tokens.filesListIconSize / 2, Math.min(Tokens.filesEmblemSize, root.size / 2))
+    // Only on a link (most rows have no emblem: nothing is made for them).
+    Loader {
+        active: root.emblem !== ""
         anchors.left: parent.left
         anchors.bottom: parent.bottom
-        tint: false
+        sourceComponent: ThemeIcon {
+            name: root.emblem
+            size: Math.max(Tokens.filesListIconSize / 2, Math.min(Tokens.filesEmblemSize, root.size / 2))
+            tint: false
+        }
     }
 }

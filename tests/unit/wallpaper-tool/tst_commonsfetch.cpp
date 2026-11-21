@@ -238,8 +238,9 @@ TEST(CommonsCurl, ArgumentVectorCarriesTheAdrFlags)
     EXPECT_EQ(l[p + 1], QStringLiteral("=http"));
     EXPECT_TRUE(l.contains(QStringLiteral("--noproxy")));
     // The User-Agent is the product and its contact, nothing of this machine.
-    EXPECT_TRUE(userAgent().startsWith(QStringLiteral("Grassfield/0 (")));
-    EXPECT_TRUE(userAgent().contains(QStringLiteral("chapdel.kamga2@gmail.com")));
+    // (Audit W1: the build's version, and the project's repository as the contact, not a person's address.)
+    EXPECT_EQ(userAgent(), QStringLiteral("Grassfield/" GRASSFIELD_VERSION " (https://github.com/grassfieldhq/grassfield)"));
+    EXPECT_FALSE(userAgent().contains(QLatin1Char('@')));
     EXPECT_FALSE(userAgent().contains(QDir::homePath()));
 }
 

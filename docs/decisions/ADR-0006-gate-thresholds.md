@@ -79,3 +79,41 @@ P3 is therefore measured per request over the animation's own window:
   never fails the gate.
 Threshold unchanged: at least 95 % of the animation's frames within 1.2 refresh periods. Tools:
 `tests/visual/presented-frames.sh`, `tests/visual/animation-windows.py`, `tests/visual/frame-stats.py`.
+
+## Amendment 2026-11-19, integrator under owner delegation D-5 (P3: refresh-relative threshold, the presentation-time probe)
+Owner rule: work as macOS does. A Mac with a 120 Hz ProMotion panel is judged against 120 Hz, not 60: an animation that
+holds 60 fps there drops every second frame. The P3 line of the Decision table ("≥ 95 % frames < 16.7 ms") fixed the budget
+of a 60 Hz output; on a 120, 144 or 240 Hz output a frame of 16 ms is one, two or three missed refreshes, and the old
+threshold called it on time. Since 2026-10-23 the method was meant to be "`wp_presentation` timestamps from a probe client",
+but the gate tool (`scripts/gates/frame-pacing.sh`) only had the shell's render-thread time, a proxy that could never pass.
+
+Decision (replaces the P3 row of the table; the 2026-10-24 measurement-window amendment stands):
+- **Threshold.** At least **95 %** of the frames presented during the animation's window arrive **within 1.2 refresh
+  periods** of the previous one, the period being the output's own (the `refresh` of the presentation feedback, else the
+  output's current mode): 20.0 ms at 60 Hz, 10.0 ms at 120 Hz, 8.3 ms at 144 Hz, 5.0 ms at 240 Hz. A missed frame shows as
+  two periods. Balanced power profile, on the owner's real session (L2, †), the reference machine first and then each
+  refresh rate of the hardware matrix. At least 100 frame intervals per surface, or the run is INCONCLUSIVE.
+- **Reported with the verdict, not judged:** p50, p95 and p99 of the frame interval, the worst stall (ms and periods),
+  the missed-frame count (the vblank counter's delta − 1 when the compositor reports it, else round(interval / period) − 1)
+  and the discarded updates.
+- **Method.** `tests/tools/presentprobe`: a Wayland client with a 1×1, almost transparent overlay layer surface (alpha
+  1/255, empty input region, top-left corner of the output) that commits on every frame callback and records the
+  `wp_presentation` feedback of every commit. A client only receives the feedback of its own surfaces; the compositor
+  presents every surface of an output in the same frame, so a frame the shell's animation makes it miss is missed by the
+  probe too. Because the probe damages its surface every frame, the compositor owes a frame at every refresh during the
+  measurement: the window judged is the one of the 2026-10-24 amendment, approximated from the request (request + 250 ms for
+  the `qs ipc` process and the shell's reaction + the animation's token duration + 100 ms of settle; the Dock: the sweep +
+  `motion.fast`). The plugin's own presentation log (`tests/visual/presented-frames.sh`, feature `frame-times`) stays the
+  attribution tool for the nested session.
+- **The probe's own lateness is not the compositor's.** The probe records how late it handled each frame callback (against
+  the callback's timestamp, the record's median lag as the compositor's convention). A late frame whose callback the probe
+  handled more than max(2 ms, half a period) later than usual is left out and counted apart; when that is more than 5 % of
+  the frames, the run is INCONCLUSIVE (a loaded machine: run again idle).
+- **Verdicts.** Only the owner's real session can PASS (`just gate-frames --real`). The nested session gives "NESTED, NOT
+  VERIFIED" or "NESTED FAIL (indicative)": its output is paced by the host compositor. The render-thread proxy
+  (`--proxy`) stays as the fallback where the probe cannot run (no `wp_presentation` or layer-shell), never a PASS.
+
+Consequences: the P3 row of docs/testing/gates.md and the gate tool say the same; `scripts/gates/frame_pacing.py` holds the
+judge, tested offline on recorded probe runs at 60, 120, 144 and 240 Hz (tests/shell/frame_pacing_probe.sh,
+tests/fixtures/frame-pacing/). Open: the owner's first real-session run on the reference machine (and on a high-refresh
+display of the hardware matrix) gives the baseline the next milestone gate revisits.

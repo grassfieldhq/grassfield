@@ -109,8 +109,9 @@ check bash -c '[[ $(env -i PATH="$PATH" sh -c ". \"\$1\"; echo \"\${GRASSFIELD_A
   ! grep -q GRASSFIELD_APPS_GTK_USE_PORTAL "$2" &&
   grep -qF "AppLaunch.portalEnvironment(Mode.appsGtkPortal)" "$3" &&
   grep -qF "readonly property bool appsGtkPortal: RunMode.appsGtkPortal(Quickshell.env(\"GRASSFIELD_APPS_GTK_USE_PORTAL\"))" "$5" &&
-  grep -qF "AppLaunch.mergeEnvironment(devSession ? AppLaunch.isolatedEnvironment(appsHome) : ({}), portalEnvironment)" "$3" &&
-  grep -qF "AppLaunch.mergeEnvironment(portalEnvironment, Pointer.launchEnvironment())" "$3" &&
+  grep -qF "const session = AppLaunch.mergeEnvironment(portalEnvironment, themeEnvironment);" "$3" &&
+  grep -qF "AppLaunch.mergeEnvironment(devSession ? AppLaunch.isolatedEnvironment(appsHome) : ({}), session)" "$3" &&
+  grep -qF "AppLaunch.mergeEnvironment(AppLaunch.mergeEnvironment(portalEnvironment, themeEnvironment), Pointer.launchEnvironment())" "$3" &&
   grep -qF "launcher.environment = Apps.ownAppEnvironment();" "$4/SettingsApp.qml" &&
   grep -qF "launcher.environment = Apps.ownAppEnvironment();" "$4/GlanceApp.qml" &&
   ! grep -rn "environment = Pointer.launchEnvironment()" "$4/.."' _ \
@@ -165,6 +166,11 @@ scenario() { # scenario <name> <yes|no|broken> [variant]: broken = the backend's
     omarchy45-dangling) ln -s "$tmp/gone/hyprland-portals.conf" "$d/cfg/xdg-desktop-portal/grassfield-portals.conf" ;;
   esac
   cp -r "$pk/xdg/." "$d/xdg/"
+  # xdg-desktop-portal-hyprland's .portal file (as Omarchy installs it) for the interfaces the routing leaves to the stock rules
+  # (default=hyprland;gtk: Screenshot, ScreenCast): the routing checked in 1 and 4c then does not depend on what this machine has
+  # installed. Its name is never owned on the private bus (the real one is not either); only the frontend's choice is read.
+  printf '[portal]\nDBusName=org.freedesktop.impl.portal.desktop.hyprland\nInterfaces=org.freedesktop.impl.portal.Screenshot;org.freedesktop.impl.portal.ScreenCast;org.freedesktop.impl.portal.GlobalShortcuts;\nUseIn=wlroots;Hyprland;sway;Wayfire;river\n' \
+    >"$d/xdg/xdg-desktop-portal/portals/hyprland.portal"
   printf '#!/bin/sh\necho $$ >%s/gtk.pid\nexport GF_TEST_BUS=1 GF_TEST_BUS_DIR=%s DBUS_SESSION_BUS_ADDRESS="$(head -n 1 %s/bus.address)"\nexec python3 -I %s gtk --log %s/gtk.log\n' \
     "$d" "$d" "$d" "$fakes" "$d" >"$d/gtk.sh"
   printf '[D-BUS Service]\nName=org.freedesktop.impl.portal.desktop.gtk\nExec=%s/gtk.sh\n' "$d" >"$d/services/gtk.service"

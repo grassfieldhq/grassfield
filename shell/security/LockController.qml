@@ -25,6 +25,14 @@ QtObject {
     // (faillock). The field is cleared and the session stays LOCKED (fail closed). Always false in a
     // real session, so authentication is unchanged there.
     property bool pamSuppressed: false
+    // Set by Lock.qml while the computer is being put to sleep (SS-01, SleepInhibitor): no attempt starts and a fingerprint
+    // match unlocks nothing, so the lock taken for the sleep cannot be opened before the computer sleeps. Only ever refuses.
+    // A password submitted meanwhile is dropped (the field is emptied) and the message says why; it goes when the flag ends.
+    property bool sleepPending: false
+    onSleepPendingChanged: {
+        if (!root.sleepPending && priv.message === root.sleepMessage())
+            priv.message = "";
+    }
     // ADR-0040 step 4b (IQ-T2 A): after a PAM success the lock's content fades out over this many ms while the session is
     // still locked (state "releasing"); only then is unlockRequested emitted. 0: at once. A lock request, a lost lock or
     // an abort during it brings the lock back, and the PAM success is spent (a new one is needed).
@@ -141,6 +149,13 @@ QtObject {
     function submit(password: string): bool {
         if (!canSubmit || password.length === 0)
             return false;
+        if (sleepPending) {
+            // Refused (SS-01), and said so: the password typed is not kept.
+            priv.pending = "";
+            priv.message = sleepMessage();
+            clearRequested();
+            return false;
+        }
         if (pamSuppressed) {
             // Dev/test only: swallow the attempt without touching PAM; stay locked (fail closed).
             console.warn("grassfield-lock: dev: PAM submit suppressed (set GRASSFIELD_DEV_ALLOW_PAM=1 to allow the L2 failure-path test)");
@@ -221,6 +236,9 @@ QtObject {
     function fingerprintSucceeded(): void {
         if (priv.state !== Machine.LOCKED && priv.state !== Machine.AUTHENTICATING)
             return;
+        // The computer is going to sleep (SS-01): a finger on the reader after the lock before sleep opens nothing.
+        if (sleepPending)
+            return;
         if (priv.state === Machine.AUTHENTICATING)
             abortPam();
         timer.stop();
@@ -275,6 +293,11 @@ QtObject {
         priv.pamError = "";
         clearRequested();
         unlockRequested();
+    }
+
+    // The refusal while the computer goes to sleep (submit).
+    function sleepMessage(): string {
+        return qsTr("The computer is going to sleep. Try again after it wakes.");
     }
 
     function messageFor(detail: string): string {

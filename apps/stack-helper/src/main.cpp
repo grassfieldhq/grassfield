@@ -1,10 +1,11 @@
 // grassfield-stack-helper (ADR-0025): ONE process per folder kept in the Dock as a stack. It lists the folder, keeps the window of
 // its first K entries in the stack's order, watches the folder with inotify, and writes the window to stdout when it changed.
 //
-//   grassfield-stack-helper <absolute folder> <sort> <K> [<low>]
+//   grassfield-stack-helper <absolute folder | file: URI> <sort> <K> [<low>]
+//   (a file: URI's escapes are bytes: a folder whose name is not UTF-8, as a window's \xHH names it)
 //   sort: name | dateAdded | dateModified | dateCreated | kind
 //
-// stdout, one line each (fields separated by US, 0x1f; names escaped, see StackLogic::escapeName):
+// stdout, one line each (fields separated by US, 0x1f; names escaped byte for byte, see StackLogic::escapeName):
 //   A                                    the watch is armed (at the start, and again when the folder came back)
 //   G                                    the folder is gone, moved, unmounted or cannot be watched (retried: 2 s up to 15 s)
 //   W US seq US total US n { US name US isDir US modified US added US created }
@@ -81,8 +82,9 @@ private:
 
 int main(int argc, char **argv)
 {
-    if ((argc != 4 && argc != 5) || argv[1][0] != '/') {
-        std::fprintf(stderr, "usage: grassfield-stack-helper <absolute folder> <name|dateAdded|dateModified|dateCreated|kind> <K> [<low>]\n");
+    const QByteArray folder = argc == 4 || argc == 5 ? StackLogic::folderArgument(QByteArray(argv[1])) : QByteArray();
+    if (folder.isEmpty()) {
+        std::fprintf(stderr, "usage: grassfield-stack-helper <absolute folder | file: URI> <name|dateAdded|dateModified|dateCreated|kind> <K> [<low>]\n");
         return 2;
     }
     // dies with the shell, and runs behind it
@@ -99,7 +101,7 @@ int main(int argc, char **argv)
     }
     const int limit = qBound(1, QByteArray(argv[3]).toInt(), Helper::kMaxLimit);
     const int low = argc == 5 ? qMax(0, QByteArray(argv[4]).toInt()) : 0;
-    Helper helper{QByteArray(argv[1]), sort, limit, low, [](const QByteArray &bytes) {
+    Helper helper{folder, sort, limit, low, [](const QByteArray &bytes) {
                       if (std::fwrite(bytes.constData(), 1, size_t(bytes.size()), stdout) != size_t(bytes.size()) || std::fflush(stdout) != 0)
                           _exit(0); // the reader is gone
                   }};

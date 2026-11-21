@@ -38,8 +38,10 @@ selection").
 ## Functional requirements
 1. F1 Launcher `apps/files/src/main.cpp`: `QApplication` (KIO's widgets library expects one; its dialogs are Grassfield sheets, ADR-0035 D-12 a),
    `setDesktopFileName("org.grassfield.Files")`, `grassfield-files [locations...]` opens one window per location
-   (default: home). QML from `GRASSFIELD_FILES_QML` or the baked-in directory (installed
-   `/usr/share/grassfield/files/qml`). Image providers `image://icon/<theme name>` and `image://thumbnail/<id>`. Everything
+   (default: home). QML from the baked-in directory (installed `/usr/share/grassfield/files/qml`); a dev session only may
+   name another with `GRASSFIELD_FILES_QML` (`runmode::devValue`: an installed Files never loads its interface from a
+   directory the environment names). Image providers `image://icon/<theme name>` (asynchronous for QML, rendered through
+   QIcon on the GUI thread only, a few milliseconds per event loop turn) and `image://thumbnail/<id>`. Everything
    but `main.cpp` is the Files library (`apps/files/files-core.cmake`, a static library) that `grassfield-portal` links too:
    its Open and Save panels (`FilePanels.qml`, `FilePanel.qml`; ADR-0035 D-4, `docs/specs/system-dialogs.md` section 1) are
    Files' browser, with a tab that browses for a panel (`BrowserTab.chooser`: no file operation, items the panel cannot take
@@ -72,11 +74,12 @@ selection").
    `FileLogic::hiddenNetworkEntry`),
    Trash (`trash:/`, full/empty icon from a KIO listing). Items accept drops.
    **Applications** (`grassfield-apps:/`, macOS: Finder's Applications): a virtual, read-only location listing the desktop
-   applications the shell's Apps grid lists, by the grid's own behaviour (`ApplicationsLogic`: Quickshell 0.3.1's
+   applications the shell's Apps grid lists, by the grid's own behaviour (`ApplicationsLogic`: Quickshell 0.3.2's
    DesktopEntries as measured, `shell/launchpad/hidden-entries.sh`, `Model.disambiguate`; the header of
    `applicationslogic.h` lists the rules). Not the desktop entry specification: Quickshell does not read TryExec, so an entry
-   whose program is missing is listed here as in the grid, and it reads the file as written (a CRLF file, `Name = x` and a
-   `Categories` list that ends without `;` behave as in the grid). Two apps of one name are told apart as in the grid
+   whose program is missing is listed here as in the grid, and it trims each line but not the blanks around `=` (a CRLF file
+   is listed as GLib and KConfig read it, `Name = x` is not understood, and a `Categories` list that ends without `;` behaves
+   as in the grid). Quickshell 0.3.1 read lines untrimmed (it dropped a CRLF file and ignored `  NoDisplay=true`); Files follows 0.3.2, the version CI pins. Two apps of one name are told apart as in the grid
    ("Files" and "Files (GNOME)"). `tests/shell/apps_grid_vs_files.sh` runs the real Quickshell DesktopEntries, the script
    and Model.js and the Files logic on ~130 fixture entries and requires equal lists, in English and French; localized names,
    theme icons through the same provider as the rest of Files, sorted by name. Search filters it by name. Double-click, Ctrl+O (File > Open) and
@@ -305,7 +308,7 @@ selection").
   (`~/.local/share` without it) and never writes it (decision F-5; KIO's open jobs add the files Files opens).
 - Desktop entry `org.grassfield.Files.desktop`: `Exec=grassfield-files %U`, `Icon=org.grassfield.Files` (own icon, branding/icons/apps, hicolor),
   `MimeType=inode/directory;`.
-- Environment: `GRASSFIELD_FILES_QML` (dev QML dir), `GRASSFIELD_FILES_NO_LAUNCH=1` (scripted tests: opening
+- Environment: `GRASSFIELD_FILES_QML` (dev QML dir, read in a dev session only), `GRASSFIELD_FILES_NO_LAUNCH=1` (scripted tests: opening
   reports an error instead of starting apps, logged), `QT_LOGGING_RULES="grassfield.files.debug=true"` (listing
   times, selection and expectation traces).
 - Glance: `FilesApp.glance(QList<QUrl>)` runs `grassfield-preview --glance -- <paths>`; the program is
@@ -374,6 +377,33 @@ installed (not built here).
 - Grassfield Files follows the file system: Linux is case-sensitive, so `Report.txt` and `report.txt` are two items and renaming `a` to `A` is a real rename (macOS's default volume is case-insensitive; the Sort and the folder filter ignore case, collisions do not).
 - Names that differ only by Unicode normalization (NFC "e acute" and NFD "e" + combining accent) are the same name to a person, like on macOS: the folder filter folds case and accents in both forms (`FileLogic::nameMatchesFilter`), and rename, new folder, duplicate, copy, move and drop refuse to create a second entry that is an NFC/NFD twin of an existing one (`FileLogic::sameName`, `equivalentName`; an exact match is left to the conflict handling of the file operation). The file system keeps both forms apart; Files never renames an existing file to normalise it.
 - Every file name shown (views, titles, Info, menus, messages, Preview, desktop icons, Dock stacks) goes through `DisplayName.text` (QML) or `FileLogic::displayName` (C++): line breaks become the return symbol and the bidi override, embedding and isolate controls (U+202A-U+202E, U+2066-U+2069) are written out as `<U+202E>`, as Finder shows them; the marks LRM and RLM stay. `tests/shell/display_names.sh` fails when a view shows a raw name (`raw-name-ok` marks one that is never shown).
+
+## Responsiveness and shared state (audit round 2, 2026-11)
+- File system kind (FsKind, `src/fskind.h`): a `file:` URL is not a local disk. The kind of each shown folder's file system is
+  found once per folder off the GUI thread (statfs and realpath on a worker, at most 8 at once, an answer kept 15 s). Only a
+  local disk file system (ext4, btrfs, xfs, tmpfs, vfat, exfat, ntfs3, zfs…) is read from the GUI thread: a row's content
+  type when its name leaves it open, its tags and its folder look (lgetxattr), the inotify watch of the shown folder, the
+  link-into-a-staging-folder check. On NFS, SMB, sshfs and other FUSE mounts, pseudo file systems, and until the probe
+  answered, rows show what the listing (KIO, out of process) knows: the type from the name, no tags, no folder look. A
+  hung mount freezes neither Files nor the portal's panels.
+- Compress and Expand: a cancel or a failure kills bsdtar without waiting and removes the staging item on a worker once the
+  child has ended; Expand's listing is counted as it comes (any number of members, no time limit: Stop ends it).
+- Copy, move, drop, Duplicate, Rename N Items and Put Back list a destination folder once (names indexed by composed form)
+  and look up each item's volume once per folder; a copy, move or drop of 64 items or more does it on a worker first.
+  Rename N Items treats a case-only change on a file system that ignores case (FAT, exFAT) as a rename in place, through
+  a hidden name, only when the new name resolves to the item itself and no other entry is spelt that way.
+- Apply to enclosed items is applied by Files itself on a worker, by descriptor, deepest items first and each folder's own
+  mode last: an owner who keeps Write only (or nothing) still changes everything inside.
+- The sidebar's favourites and hidden places, and the known and hidden tags, are shared by every Files process and the
+  portal's panels: each change reads the settings file again first, and every process follows the file's changes.
+- Paste, Move Item Here and New Folder put items in the folder the title shows (the Finder's rule): in the column view
+  the last column, whichever column has the keyboard; a column's own context menu targets that column.
+- The inline rename field commits on Return, Tab or a click elsewhere in the window only; the window losing its
+  activation keeps it open; a field taken out of the view (its row scrolled away) cancels.
+- The sidebar's model applies each change as the rows that came, went, moved or changed (no reset); the Trash's full or
+  empty state comes from KIO's record (`trashrc` [Status] Empty) and the home trash folder, never from a listing of the Trash.
+- View and sort clicks are written to `files-views.json` 300 ms later, once per burst. A sort by any key but Name reads
+  each item's facts once per key. Threads Files starts are joined at quit, bounded (3 s), after their walks were told to stop.
 
 ## Known limitations (honest, user-visible gaps vs macOS)
 - Thumbnails come from KIO's thumbnail plugins (kio-extras, installed 2026-10-17: images, PDF, video); a type without
@@ -757,7 +787,10 @@ PR 1 of the Finder parity brief (matrix rows FP-1 to FP-16, FP-25; ADR-0026).
   F-2): it brings back the location, the history (Back/Forward) and the view. Ctrl+W closes the key window only: typed
   in Get Info or Customize Folder (the browser window's own windows, its transient children) it closes that window, and
   the browser stays. While one of them is the key window none of the browser's keys is live, neither its Shortcuts nor
-  its global menu's keyed items (`BrowserWindow.childIsKey`); while the browser is the key window, Get Info and Customize
+  its global menu's keyed items (`BrowserWindow.childIsKey`); nor while a sheet of the browser is up
+  (`BrowserWindow.sheetUp`), and the keys of the selection and of text editing (Delete, Ctrl+Backspace, Ctrl+D, Ctrl+C…)
+  wait while a text field has the keyboard (`BrowserWindow.typing`: the rename field, the search field, a sheet's field),
+  so a key typed there edits the text and never acts on the selection behind it; while the browser is the key window, Get Info and Customize
   Folder take none of its keys (Escape and Ctrl+W there are live only while that window is the key window). Qt reports a
   window and its transient children active together, and the shortcut matcher of QtQuick.Templates (loaded with
   Grassfield.Ui's controls) matches all their keys on that ground, so the key window is read from
@@ -881,7 +914,14 @@ Finder-Home and Finder-Search (toolbar), the macOS
   graph, 5,000 items, `tests/unit/tst_filesgrouped.qml` checks the behaviour): 2,500 groups made in 7.5 s and 4.7 ms per
   changed row before, 1.1 s and 0.3 ms now; 27 groups of 185 made 1,908 cells (4.6 s) when the view was made before it
   had its size, 168 cells (0.4 s) now; the flat grid of the same folder 0.5 s. Not measured nested or on the reference
-  hardware (L2). An
+  hardware (L2). Every view reuses its cells (`reuseItems`: the icon grid and its sections' lines and grids, the list,
+  the columns, the gallery's pages and strip): a cell scrolled out goes to the view's pool and comes back for a row
+  scrolled in, so a fast scroll through a large folder makes no new cell once the pool holds a page. A cell put in the
+  pool drops its row's thumbnail request, ends a rename it showed (canceled, as any field taken out of the view), a band
+  started on it and a click's pending collapse; taken again, it asks its new row's thumbnail once (a cell asks nothing
+  before it is complete: each cell used to ask row 0's thumbnail too while its roles were set). `tests/unit/
+  tst_filesreuse.qml` scrolls 3,000 items a page at a time and checks the reuse, the names, thumbnails and requests,
+  and the rename. An
   icon cell takes drops on its icon and name, like clicks; elsewhere a drop goes to the shown folder. Groups are cached
   per item and dropped item by item when an item changes, goes or is renamed (KDirModel reports each type it finds); at
   midnight (or the first grouping after it) the date groups are made again.
