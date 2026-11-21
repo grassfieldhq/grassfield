@@ -41,6 +41,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # No token left in .git/config: setup copies the checkout into the build user's home, where the suites run.
+          persist-credentials: false
 
       - name: Scope (just check when compositor/ changed, else just check-quick)
         id: scope

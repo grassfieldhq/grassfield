@@ -94,6 +94,8 @@ done
 # The transient unit (systemd only). This instance makes no file of the operation: the unit's does. When the unit never
 # ran this operation (its name is taken by another run), this one says busy.
 if [[ -d $GS_SYSTEMD ]] && ! in_unit; then
+  # An operation id used before: refused here as the unit's run would, before an old exit file could answer for it.
+  [[ -e $GS_DIR/$op.log || -L $GS_DIR/$op.log ]] && { echo "grassfield-store-helper: operation $op was used before" >&2; exit 2; }
   systemd-run --unit="$GS_UNIT" --description="Grassfield Store" --collect --quiet --wait \
     --service-type=exec -p KillMode=mixed -p TimeoutStopSec=30min -- \
     "$GS_SELF" unit "$verb" "$op" "$@"
