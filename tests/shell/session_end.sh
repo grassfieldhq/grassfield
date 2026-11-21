@@ -173,9 +173,9 @@ FAKE_REFUSE="0x2" run "$two" logout
 check bash -c '[[ $2 == 0 ]] && [[ ! -s "$1/calls.log" ]] && [[ ! -s "$1/hyprctl.log" ]]' _ "$tmp" "$status"
 wait "$holder" || true
 
-desc="SS-05: with no notification server on the bus the blocked logout shows nothing (no D-Bus activation by notify-send or gdbus) and ends nothing"
+desc="safe mode (no notification server): the blocked logout still asks (the session is ending, so a daemon D-Bus activation starts is harmless) and ends nothing unanswered"
 FAKE_NO_SERVER=1 FAKE_REFUSE="0x2" run "$two" logout
-check bash -c '! grep -q "^notify-send" "$1/calls.log" && ! grep -q "dest org.freedesktop.Notifications" "$1/calls.log" && ! grep -q "uwsm stop" "$1/calls.log" && [[ $2 == 3 ]]' _ "$tmp" "$status"
+check bash -c 'grep -q "^notify-send .*kate" "$1/calls.log" && ! grep -q "uwsm stop" "$1/calls.log" && [[ $2 == 3 ]]' _ "$tmp" "$status"
 
 desc="without notify-send the blocked logout still shows a notice through the shell's notification service (gdbus), ends nothing"
 FAKE_NOTIFY_FAIL=1 FAKE_REFUSE="0x2" run "$two" logout

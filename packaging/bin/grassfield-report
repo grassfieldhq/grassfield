@@ -900,12 +900,18 @@ def epoch(stamp):
     return int(dt.timestamp())
 
 
+KILL_SOURCES = re.compile(r"^\S+ \S+ (systemd|kernel|systemd-oomd|earlyoom|grassfield-[\w.-]+|qs|quickshell|Hyprland|uwsm)(\[\d+\])?: ")
+
+
 def window(argv_head, t):
     ok, text = run(argv_head + ["--no-pager", "-q", "-o", "short-iso", "--since", "@%d" % (t - KILL_WINDOW),
                                 "--until", "@%d" % (t + KILL_WINDOW + 1), "-n", str(KILL_LINES)], timeout=JOURNAL_TIMEOUT)
     if not ok:
         return [text]
-    return fold([l for l in text.splitlines() if l.strip()])[0] or ["(no line)"]
+    # Only the lines that can name a killer (the managers, the kernel, the OOM daemons, Grassfield's own units and its shell):
+    # the rest of the journal around a kill is other programs' free text, which the redaction cannot all catch (review).
+    lines = [l for l in text.splitlines() if l.strip() and KILL_SOURCES.match(l)]
+    return fold(lines)[0] or ["(no line from the managers, the kernel or Grassfield)"]
 
 
 def kills(read, kernel_read_):
