@@ -76,9 +76,10 @@ echo "coredumpctl $*" >>"@LOG@/coredumpctl-args"
 [ -n "${FAKE_SLOW:-}" ] && sleep 5
 [ -n "${FAKE_EMPTY:-}" ] && { echo "No coredumps found." >&2; exit 1; }
 case "$*" in
-  *" list "*|*" list") echo "Thu 2026-11-05 10:00:00 UTC 4242 1000 1000 SIGSEGV present @HOME@/bin/tool 1.2M"
-    echo "Thu 2026-11-05 10:05:00 UTC 5100 1000 1000 SIGSEGV none /usr/bin/quickshell -"
-    echo "Thu 2026-11-05 10:06:00 UTC 6100 1000 1000 SIGABRT present /usr/bin/Hyprland 30.1M" ;;
+  *" list "*|*" list") echo "Thu 2026-11-05 10:00:00 UTC 4242 @UID@ @UID@ SIGSEGV present @HOME@/bin/tool 1.2M"
+    echo "Thu 2026-11-05 10:05:00 UTC 5100 @UID@ @UID@ SIGSEGV none /usr/bin/quickshell -"
+    echo "Thu 2026-11-05 10:06:00 UTC 6100 @UID@ @UID@ SIGABRT present /usr/bin/Hyprland 30.1M"
+    echo "Thu 2026-11-05 10:07:00 UTC 7300 @OTHER_UID@ @OTHER_UID@ SIGSEGV present /usr/bin/other-users-secret-tool 2.0M" ;;
   *" info "*)
     for a in "$@"; do pid=$a; done
     exe=/usr/bin/quickshell; [ "$pid" = 6100 ] && exe=/usr/bin/Hyprland
@@ -188,7 +189,8 @@ echo "2026-11-05 10:05:02.000  INFO: Launching config: \"/usr/share/grassfield/s
 echo "2026-11-05 10:05:03.000  WARN qml: grassfield: wallpaper @HOME@/Pictures/beach.jpg for alice ($id)"
 echo "2026-11-05 10:05:04.000  INFO qml: wifi: joined ssid=\"HomeNet-QsLog-5G\" ($id)"
 SH
-sed -i "s|@HOME@|$home|g; s|@LOG@|$tmp/log|g" "$tmp/bin"/*
+own_uid=$(id -u); other_uid=$((own_uid + 1))
+sed -i "s|@HOME@|$home|g; s|@LOG@|$tmp/log|g; s|@OTHER_UID@|$other_uid|g; s|@UID@|$own_uid|g" "$tmp/bin"/*
 chmod 755 "$tmp/bin"/*
 
 # As root (a container), the script runs as nobody: it refuses root by design.
@@ -260,6 +262,8 @@ desc="displays: make, model and mode kept, the serial replaced by whether there 
 check bash -c 'grep -q "U2723QE" "$1" && grep -q "\"serial\": \"present\"" "$1" && grep -q "\"serial\": \"none\"" "$1" && ! grep -q "SERIAL-XYZ" "$1" && ! grep -q description "$1"' _ "$out"
 desc="audio devices from wpctl status, crashes from coredumpctl"
 check bash -c 'grep -q "Built-in Audio Analog Stereo" "$1" && grep -q "SIGSEGV" "$1"' _ "$out"
+desc="crashes: only this user's (a member of wheel or adm may list other users' programs)"
+check bash -c '! grep -q "other-users-secret-tool\|pid 7300" "$1" && grep -q "/usr/bin/Hyprland" "$1"' _ "$out"
 desc="the journal is this boot's, of every Grassfield user unit (grassfield-*: the security process, the menu bridge, the prompter, the portals...), a time window bounded by a memory cap in lines, not 3,000 lines"
 check bash -c 'grep -qx -- "journalctl --user -b 0 -u grassfield-\* --no-pager -q -o short-iso -n 100000" "$1" && ! grep -q -- "-n 3000" "$1"' _ "$tmp/log/journal-args"
 j=$(sed -n '/^== Journal of the Grassfield units/,/^== /p' "$out")

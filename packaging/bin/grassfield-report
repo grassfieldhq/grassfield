@@ -554,7 +554,14 @@ def crash_rows():
         return True, []
     if not ok:
         return False, text
-    return True, [l for l in text.splitlines() if l.strip()]
+    # Only this user's crashes: a member of wheel or adm may list every user's, whose programs are not this report's business.
+    uid = str(os.getuid())
+    own = []
+    for l in text.splitlines():
+        m = CRASH_UID.match(l)
+        if m and m.group(1) == uid:
+            own.append(l)
+    return True, own
 
 
 def crashes(rows):
@@ -568,6 +575,7 @@ def crashes(rows):
 
 
 # A row of `coredumpctl list`: TIME (day, date, time, zone) PID UID GID SIG COREFILE EXE SIZE.
+CRASH_UID = re.compile(r"^\S+ \S+ \S+ \S+\s+\d+\s+(\d+)\s")
 CRASH_ROW = re.compile(r"^\S+ \S+ \S+ \S+\s+(\d+)\s+\d+\s+\d+\s+\S+\s+\S+\s+(\S.*?)\s+\S+\s*$")
 # The programs of the desktop itself: Quickshell (the UI and the security process), Hyprland and Grassfield's own.
 RELATED_EXE = re.compile(r"(?:^|/)(?:qs|quickshell|\.quickshell-wrapped|Hyprland|hyprland|grassfield-[\w.+-]+)$")
