@@ -558,7 +558,10 @@ def crash_rows():
     # Only this user's crashes: a member of wheel or adm may list every user's, whose programs are not this report's business.
     uid = str(os.getuid())
     own = []
-    for l in text.splitlines():
+    lines = text.splitlines()
+    if lines and lines[0].startswith("[... ") and lines[0].endswith(" left out ...]"):
+        lines = lines[:1] + lines[2:]  # the row right after the cut may be partial (its columns shifted): left out
+    for l in lines:
         m = CRASH_UID.match(l)
         if m and m.group(1) == uid:
             own.append(l)
