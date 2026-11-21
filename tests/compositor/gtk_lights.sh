@@ -147,16 +147,24 @@ if command -v evince >/dev/null; then
   states evince '^org\.gnome\.Evince$' 1 evince
 fi
 if command -v chromium >/dev/null; then
-  # Chromium, a throwaway profile each, nothing from the owner's: "classic" is a fresh profile (what a new user gets with
-  # Omarchy's seed: no theme set), "chromium" has its Preferences seeded with the GTK appearance (extensions.theme.system_theme 1).
+  # Chromium, a throwaway profile each, nothing from the owner's. "classic" is a fresh profile started through this tree's
+  # session stand-in (packaging/session-bin/chromium, what the Grassfield session runs for `chromium`): it seeds the new
+  # profile with the GTK appearance, so the lights show (R7-FUN-04, ADR-0015 amended 2026-11-08). "gtk" is /usr/bin/chromium
+  # with its Preferences seeded by hand (extensions.theme.system_theme 1).
   dead_proxy=127.0.0.1:9
   for mode in classic gtk; do
     prof=$work/chromium-$mode
-    mkdir -p "$prof/Default"
-    [[ $mode == gtk ]] && printf '{"extensions":{"theme":{"system_theme":1}}}\n' >"$prof/Default/Preferences"
+    browser=chromium
+    if [[ $mode == gtk ]]; then
+      mkdir -p "$prof/Default"
+      printf '{"extensions":{"theme":{"system_theme":1}}}\n' >"$prof/Default/Preferences"
+    else
+      mkdir -p "$prof"
+      browser=$root/packaging/session-bin/chromium
+    fi
     label=chromium-$mode
     # isolation-ok: states() starts it through client_run, which runs scripts/dev/isolated.sh
-    states "$label" '^chromium$' $([[ $mode == gtk ]] && echo 1 || echo 0) chromium --user-data-dir="$prof" --no-first-run --no-default-browser-check \
+    states "$label" '^chromium$' $([[ $mode == gtk ]] && echo 1 || echo 0) "$browser" --user-data-dir="$prof" --no-first-run --no-default-browser-check \
       --password-store=basic --disable-background-networking --disable-component-update --disable-sync --proxy-server="$dead_proxy" \
       --ozone-platform=wayland --window-size=900,520 about:blank
     pkill -f -- "--user-data-dir=$prof" 2>/dev/null

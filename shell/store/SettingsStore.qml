@@ -24,6 +24,16 @@ import "CaptureLocation.js" as CaptureLocation
 // script (readScript): the file is never opened unless it is a regular file, at most maxFileBytes
 // are read, and a read that hangs ends after a few seconds. The JSON adapter of Quickshell's
 // FileView is not used: it reads without a limit and keeps old values.
+//
+// What a change costs (audit SC-01, SC-08). Every view reads its key through rawValue(), which depends on the revision of the
+// key's top-level section only (`revs`): a change of material.transparency re-evaluates the material readers, not the ~150
+// others, and a section whose value did not change (a reload of the same document, a setter given the value it has) moves
+// no revision at all. The views that hold arrays or objects (dockPinned, wallpaper, ...) keep the very object they had while
+// its value is the same (stable()), so their readers are not told of a change that is none. The file is followed through
+// events, never a timer: the watch on the file (its content), a watch on the folder and on the folder of every symbolic link
+// on the way to the file (a link replaced or retargeted: a stat, then a read when the file's signature changed). Only a file
+// found unusable is looked at again on a timer (its back-off below). A burst of events is one read, and the shell's own
+// write is read back exactly once.
 Scope {
     id: root
 
@@ -34,8 +44,8 @@ Scope {
     // The most a grassfield.json may hold (a real one is a few KiB). A larger file, or one that is not a regular file, is
     // read as malformed without reading it: lock.* fails closed to its default and nothing is written back.
     readonly property int maxFileBytes: 1048576
-    // The file is looked at again this often (ms) whatever the watch says: replacing a symlinked grassfield.json with a regular
-    // file leaves a file watch on the old target. A stat of the path, nothing more unless it changed.
+    // A file found unusable is looked at again this often (ms): a stat of the path, then a read when its signature changed or
+    // its back-off ran out (below). A usable file is followed through the watches only (no timer).
     property int pollInterval: 10000
     // A file found unusable is re-read at once when its signature changes (or the watch reports it); while the signature stays the
     // same the full re-read backs off: pollInterval, then twice, four times, ... up to this (ms). What can still change without the
@@ -44,8 +54,11 @@ Scope {
     // one per 10 s). Trade-off: a repair that changes no signature and raises no watch event (a recovered reader) is noticed
     // within 5 minutes, not 10 s; lock.* stays at its closed default until then.
     property int badRetryCap: 300000
-    // The full reads started (tests count them).
+    // The full reads started and the stats of the path (probes) started (tests count them).
     property int fullReads: 0
+    property int probes: 0
+    // The coalescing window of the watches (ms): every event inside it is one read (or one stat).
+    property int watchSettleMs: 50
     // A directory searched before PATH for the tools the bounded read runs (head, stat, ...): tests put a stalled or a failing
     // `head` there. Empty in the shell (never taken from the environment); a relative path is ignored.
     property string toolDir: ""
@@ -66,17 +79,91 @@ Scope {
     property bool unsafeFile: false
 
     // The last document read from the file (JSON.parse of its text, the same path a fresh start takes) with the shell's own
-    // pending changes on top. Every view reads from it. (Quickshell's JsonAdapter is not used: it does not replace a property
-    // whose new value loosely equals the old one (0 and false, 10 and "10", 1 and true), so on a running shell an edit of
+    // pending changes on top: `memo.doc`. Every view reads from it. (Quickshell's JsonAdapter is not used: it does not replace a
+    // property whose new value loosely equals the old one (0 and false, 10 and "10", 1 and true), so on a running shell an edit of
     // lock.idleMinutes from 0 to false left the auto-lock off while Settings and a restarted shell read 5; and it reads without
-    // a bound.)
-    property var parsedFile: ({})
+    // a bound.) `memo` is one constant object, never reassigned: reading it makes no binding depend on the document as a whole;
+    // the views depend on the revision of their section (`revs`), moved only when that section's value changed.
+    //   memo.doc    the document
+    //   memo.views  the last value of each object view and its JSON (stable())
+    //   memo.reads  rawValue() calls (tests count the views re-evaluated by a change)
+    readonly property var memo: ({doc: {}, views: {}, reads: 0})
+    // Moves on every change of the document, whatever the section (document() reads the whole of it).
     property int parsedFileRevision: 0
+    // The text the document was parsed from, while nothing changed the document since (null otherwise: a local change, a part
+    // dropped, a missing file). A load that reads the very same text then leaves the document and its revisions alone.
+    property var parsedText: null
 
-    // The stored (raw) value of a dotted key in parsedFile, undefined when the file has none.
+    // One revision per top-level section of the schema (config/schema/grassfield.schema.json), and one for any other key.
+    // tests/unit/tst_settingsstore.qml checks that every section of the contract has its own.
+    QtObject {
+        id: revs
+        property int version: 0
+        property int appearance: 0
+        property int material: 0
+        property int accessibility: 0
+        property int dock: 0
+        property int windows: 0
+        property int notifications: 0
+        property int lock: 0
+        property int energy: 0
+        property int hotCorners: 0
+        property int desktop: 0
+        property int displays: 0
+        property int menubar: 0
+        property int accent: 0
+        property int terminal: 0
+        property int keyboard: 0
+        property int region: 0
+        property int preview: 0
+        property int icons: 0
+        property int pointer: 0
+        property int capture: 0
+        property int search: 0
+        property int screensaver: 0
+        property int sound: 0
+        property int store: 0
+        property int updates: 0
+        property int wallpaper: 0
+        property int other: 0
+    }
+    readonly property var sectionNames: ["version", "appearance", "material", "accessibility", "dock", "windows", "notifications", "lock",
+        "energy", "hotCorners", "desktop", "displays", "menubar", "accent", "terminal", "keyboard", "region", "preview", "icons", "pointer",
+        "capture", "search", "screensaver", "sound", "store", "updates", "wallpaper"]
+
+    // The revision a dotted key's readers depend on: its top-level section's, or `other`.
+    function sectionOf(path: string): string {
+        const dot = path.indexOf(".");
+        const top = dot < 0 ? path : path.slice(0, dot);
+        return root.sectionNames.indexOf(top) >= 0 ? top : "other";
+    }
+
+    function touch(section: string): void {
+        revs[section] = revs[section] + 1;
+        root.parsedFileRevision++;
+    }
+
+    // The readers re-evaluated since the store started (rawValue calls; tests).
+    function readCount(): int {
+        return root.memo.reads;
+    }
+
+    // The value of `view` as last returned while its JSON is the same: the readers of an object view are told of a change only
+    // when its value changed (a binding that gives back the very object it gave signals nothing).
+    function stable(view: string, value: var): var {
+        const json = JSON.stringify(value);
+        const last = root.memo.views[view];
+        if (last !== undefined && last.json === json)
+            return last.value;
+        root.memo.views[view] = {json: json, value: value};
+        return value;
+    }
+
+    // The stored (raw) value of a dotted key in the document, undefined when the file has none.
     function rawValue(path: string): var {
-        void root.parsedFileRevision;
-        let node = root.parsedFile;
+        void revs[root.sectionOf(path)];
+        root.memo.reads++;
+        let node = root.memo.doc;
         for (const part of path.split(".")) {
             if (node === null || node === undefined || typeof node !== "object" || Array.isArray(node))
                 return undefined;
@@ -94,23 +181,75 @@ Scope {
         // A file the Settings app refuses to edit (an integer beyond 2^53, a duplicate key: JsonSafety) shows its defaults
         // there under a banner: the shell reads the same, never the values of a file it could not rewrite safely either.
         if (root.unsafeFile && SettingsContract.DEFAULTS[path] !== undefined) {
-            void root.parsedFileRevision;
+            void revs[root.sectionOf(path)];
             return JSON.parse(JSON.stringify(SettingsContract.DEFAULTS[path]));
         }
         return SettingsContract.normalize(path, rawValue(path));
     }
 
-    // Sets a dotted key of parsedFile (a local change, or one put back on top of a fresh load).
-    function setParsed(path: string, value: var): void {
+    // The value at a dotted key of `doc` (undefined when absent).
+    function valueIn(doc: var, path: string): var {
+        let node = doc;
+        for (const part of path.split(".")) {
+            if (node === null || node === undefined || typeof node !== "object" || Array.isArray(node))
+                return undefined;
+            node = node[part];
+        }
+        return node;
+    }
+
+    // Sets a dotted key of `doc` in place; true when its value changed.
+    function setIn(doc: var, path: string, value: var): bool {
+        if (JSON.stringify(root.valueIn(doc, path)) === JSON.stringify(value) && root.valueIn(doc, path) !== undefined)
+            return false;
         const parts = path.split(".");
-        let node = root.parsedFile;
+        let node = doc;
         for (let i = 0; i < parts.length - 1; i++) {
             if (node[parts[i]] === null || typeof node[parts[i]] !== "object" || Array.isArray(node[parts[i]]))
                 node[parts[i]] = ({});
             node = node[parts[i]];
         }
         node[parts[parts.length - 1]] = value;
-        root.parsedFileRevision++;
+        return true;
+    }
+
+    // Sets a dotted key of the document (a local change, or one put back on top of a fresh load). A key given the value it has
+    // moves nothing.
+    function setParsed(path: string, value: var): void {
+        if (!root.setIn(root.memo.doc, path, value))
+            return;
+        root.parsedText = null;
+        root.touch(root.sectionOf(path));
+    }
+
+    // The changes being written and the changes not written yet, put on `doc` (a document just read does not hold them yet).
+    // A newer value of the same key (dirty) wins.
+    function overlayPending(doc: var): void {
+        for (const path in root.inFlight) {
+            if (!(path in root.dirty))
+                root.setIn(doc, path, root.inFlight[path]);
+        }
+        for (const path in root.dirty)
+            root.setIn(doc, path, root.dirty[path]);
+    }
+
+    // `doc` becomes the document, with the pending changes on top; only the sections whose value changed move their revision.
+    function adopt(doc: var, text: var): void {
+        root.overlayPending(doc);
+        const old = root.memo.doc;
+        const changed = {};
+        for (const key in old) {
+            if (!(key in doc) || JSON.stringify(old[key]) !== JSON.stringify(doc[key]))
+                changed[root.sectionOf(key)] = true;
+        }
+        for (const key in doc) {
+            if (!(key in old))
+                changed[root.sectionOf(key)] = true;
+        }
+        root.memo.doc = doc;
+        root.parsedText = text;
+        for (const section in changed)
+            root.touch(section);
     }
 
     // After each load: the file's own text is the document. An empty file is an empty document (every key its default). A file
@@ -118,6 +257,8 @@ Scope {
     // but NOT for lock.*: the idle lock fails closed there, it reads what a fresh start reads (the default 5), never the last
     // good value, which may be 0 = never.
     function takeDocument(text: string): void {
+        if (root.parsedText !== null && text === root.parsedText)
+            return;
         let parsed = null;
         try {
             parsed = text.trim() === "" ? {} : JSON.parse(text);
@@ -125,27 +266,33 @@ Scope {
             parsed = null;
         }
         if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-            if ("lock" in root.parsedFile) {
-                delete root.parsedFile.lock;
-                root.parsedFileRevision++;
-            }
+            root.dropLock();
             return;
         }
-        root.parsedFile = parsed;
-        root.parsedFileRevision++;
+        // The text is kept only while nothing pending was put on top (the same text read again is then the same document).
+        const pending = Object.keys(root.dirty).length + Object.keys(root.inFlight).length > 0;
+        root.adopt(parsed, pending ? null : text);
+    }
+
+    // lock.* leaves the document (fails closed to its defaults); a pending change of a lock key stays on top.
+    function dropLock(): void {
+        if (!("lock" in root.memo.doc))
+            return;
+        delete root.memo.doc.lock;
+        root.parsedText = null;
+        root.touch("lock");
+        root.reapplyDirty();
     }
 
     // The file is gone: exactly a fresh start without a file. The document is empty (every key its default, lock.idleMinutes 5),
     // writes are allowed again (the next change creates the file from the defaults), and the shell's own pending changes stay
     // on top.
     function takeMissingFile(): void {
-        root.parsedFile = ({});
         root.unsafeFile = false;
         root.writeBlocked = false;
         root.validRead = false;
         root.emptyFile = false;
-        root.parsedFileRevision++;
-        root.reapplyDirty();
+        root.adopt({}, null);
         // A change made while the file could not be used waits no longer: the next write creates the file.
         if (Object.keys(root.dirty).length > 0)
             root.save();
@@ -170,10 +317,7 @@ Scope {
         root.badTicks = 0;
         saveTimer.stop();
         retryTimer.stop();
-        if ("lock" in root.parsedFile) {
-            delete root.parsedFile.lock;
-            root.parsedFileRevision++;
-        }
+        root.dropLock();
         root.reapplyDirty();
     }
 
@@ -221,18 +365,20 @@ Scope {
     // The default list of the first releases (a file written by them holds it) reads as the current default: Files is the
     // fixed first tile now and Nautilus is no default any more (same rule as DockModel.migratePinned). Any other list, a
     // user's own, is returned as it is. Nothing is written back. The Dock owns this key and its recent list and stack options.
+    // The object views below keep their identity while their value is the same (stable()): a change of dock.size does not tell
+    // the Dock's pinned, recent and folder readers (each rebuilds every Dock) of a change.
     readonly property var dockPinned: {
         const stored = rawValue("dock.pinned");
         const list = stringList(stored === undefined ? SettingsContract.ALL_DEFAULTS["dock.pinned"] : stored);
         const old = list.join("\n");
-        return old === "foot\nchromium\norg.gnome.Nautilus" || old === "chromium\nfoot\norg.grassfield.Settings"
-            ? ["sanaga", "grassfield-notes", "foot", "org.grassfield.Settings"] : list;
+        return stable("dockPinned", old === "foot\nchromium\norg.gnome.Nautilus" || old === "chromium\nfoot\norg.grassfield.Settings"
+            ? ["sanaga", "grassfield-notes", "foot", "org.grassfield.Settings"] : list);
     }
-    readonly property var dockRecent: stringList(rawValue("dock.recent"))
-    readonly property var dockFolders: read("dock.folders")
+    readonly property var dockRecent: stable("dockRecent", stringList(rawValue("dock.recent")))
+    readonly property var dockFolders: stable("dockFolders", read("dock.folders"))
     readonly property var dockStackOptions: {
         const stored = rawValue("dock.stackOptions");
-        return stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored : ({});
+        return stable("dockStackOptions", stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored : ({}));
     }
     readonly property string titlebarDoubleClick: read("windows.titlebarDoubleClick")
     readonly property bool windowsTilingEdges: read("windows.tilingEdges")
@@ -246,13 +392,13 @@ Scope {
     readonly property bool windowsRebuildExtension: read("windows.rebuildExtension")
     readonly property string dockMinimizeEffect: read("dock.minimizeEffect")
     readonly property bool notificationsDnd: read("notifications.dnd")
-    readonly property var notificationsAppPreviews: read("notifications.appPreviews")
-    readonly property var notificationsAppStyles: read("notifications.appStyles")
+    readonly property var notificationsAppPreviews: stable("notificationsAppPreviews", read("notifications.appPreviews"))
+    readonly property var notificationsAppStyles: stable("notificationsAppStyles", read("notifications.appStyles"))
     readonly property string notificationsHistory: read("notifications.history")
     readonly property string notificationsPreviews: read("notifications.previews")
     readonly property bool desktopShowIcons: read("desktop.showIcons")
     // The remembered choices of the main display, one per set of connected displays (DisplayRole.js, ADR-0044).
-    readonly property var displaysMain: read("displays.main")
+    readonly property var displaysMain: stable("displaysMain", read("displays.main"))
     readonly property bool menubarShowBackground: read("menubar.showBackground")
     readonly property string menubarAutoHide: read("menubar.autoHide")
     readonly property bool menubarShowNowPlaying: read("menubar.showNowPlaying")
@@ -297,7 +443,7 @@ Scope {
     readonly property string pointerFillColor: read("pointer.fillColor")
     // The wallpaper settings, complete and valid (WallpaperConfig.normalize: an invalid field reads as its default).
     // The shell only reads them; the Settings app writes them.
-    readonly property var wallpaper: root.unsafeFile ? WallpaperConfig.normalize({}) : WallpaperConfig.normalize({
+    readonly property var wallpaper: stable("wallpaper", root.unsafeFile ? WallpaperConfig.normalize({}) : WallpaperConfig.normalize({
         source: rawValue("wallpaper.source"),
         path: rawValue("wallpaper.path"),
         color: rawValue("wallpaper.color"),
@@ -310,7 +456,7 @@ Scope {
         artworkVariant: rawValue("wallpaper.artworkVariant"),
         moving: rawValue("wallpaper.moving"),
         outputs: rawValue("wallpaper.outputs")
-    })
+    }))
     // Minutes of inactivity before the session locks, 0 = never. An invalid value is the default 5, never 0 (fail closed:
     // false or "0" in a hand-edited file must not switch the auto-lock off).
     readonly property int lockIdleMinutes: read("lock.idleMinutes")
@@ -542,8 +688,13 @@ Scope {
         save();
     }
 
-    // A reload from disk replaces the document; put pending local changes back on top.
+    // A reload from disk replaces the document; put pending local changes back on top (the changes being written too: a read
+    // that began before their write landed does not hold them yet). A newer value of the same key (dirty) wins.
     function reapplyDirty(): void {
+        for (const path in inFlight) {
+            if (!(path in dirty))
+                setParsed(path, inFlight[path]);
+        }
         for (const path in dirty)
             setParsed(path, dirty[path]);
     }
@@ -552,7 +703,8 @@ Scope {
     // result atomically. Keys the shell does not know are kept as they are. A file that is
     // missing or empty is created from the schema defaults. A malformed, oversized or non-regular file is never written.
     function writeMerged(): void {
-        if (writeBlocked)
+        // Nothing to merge (a flush or a timer after the change was written already): the file is not written again.
+        if (writeBlocked || Object.keys(dirty).length === 0)
             return;
         // A read or a write of the previous change is still running: this one follows when it ends (saveTimer).
         if (diskRead.running || writer.running) {
@@ -576,7 +728,7 @@ Scope {
             }
         };
         void root.parsedFileRevision;
-        overlay(merged, root.parsedFile);
+        overlay(merged, JSON.parse(JSON.stringify(root.memo.doc)));
         return merged;
     }
 
@@ -647,8 +799,10 @@ Scope {
     }
 
     // The two bounded reads. Output: the status (ok, missing, bad, unreadable, incomplete), the signature of the file (device, inode,
-    // size, mtime of what the path leads to), then the text. A file that is not a regular file is not opened (a FIFO would
-    // block, a device such as /dev/zero would never end); `stat -L` and `-f` follow a symlink to its target. At most $2 bytes
+    // size, mtime of what the path leads to), the folders of the symbolic links on the way to the file (each ended by \037; empty
+    // for a plain file; they are watched: a link retargeted there changes what the path leads to), then the text. A file that is
+    // not a regular file is not opened (a FIFO would block, a device such as /dev/zero would never end); `stat -L` and `-f`
+    // follow a symlink to its target. At most $2 bytes
     // are read, a read that does not end in 5 s is cut, and the status is "ok" ONLY when the read ended without error and
     // returned exactly the size the file had: a read that was cut, failed, or met a file that changed under it is
     // "incomplete" (it would otherwise look like an empty file, whose defaults a write would put over the user's settings).
@@ -667,7 +821,17 @@ Scope {
         + '  if [ "$rc" -ne 0 ]; then echo incomplete; exit 0; fi\n'
         + '  n=$(printf "%s" "$data" | wc -c)\n'
         + '  if [ "$n" -eq "$size" ]; then\n'
-        + '    echo ok; echo "$sig"; printf "%s" "$data"; exit 0\n'
+        + '    hops=\n'
+        + '    if [ -L "$f" ]; then\n'
+        + '      us=$(printf "\\037"); nl=$(printf "\\nx"); nl=${nl%x}; p=$f; k=0\n'
+        + '      while [ -L "$p" ] && [ $k -lt 8 ]; do\n'
+        + '        t=$(readlink -- "$p") || break\n'
+        + '        case $t in /*) ;; *) t=${p%/*}/$t ;; esac\n'
+        + '        hops=$hops${t%/*}$us; p=$t; k=$((k+1))\n'
+        + '      done\n'
+        + '      case $hops in *"$nl"*) hops= ;; esac\n'
+        + '    fi\n'
+        + '    echo ok; echo "$sig"; printf "%s\\n" "$hops"; printf "%s" "$data"; exit 0\n'
         + '  fi\n'
         + 'done\n'
         + 'echo incomplete\n'
@@ -686,15 +850,20 @@ Scope {
         + 'rm -f -- "$t"\n'
         + 'exit 1\n'
 
-    // The status, the signature and the text of a bounded read's output.
+    // The status, the signature, the folders of the links on the way and the text of a bounded read's output.
     function splitRead(output: string): var {
         const first = output.indexOf("\n");
         const status = first < 0 ? output.trim() : output.slice(0, first);
         if (status !== "ok")
-            return {status: status, signature: "", text: ""};
+            return {status: status, signature: "", hops: [], text: ""};
         const rest = output.slice(first + 1);
         const second = rest.indexOf("\n");
-        return {status: status, signature: second < 0 ? rest : rest.slice(0, second), text: second < 0 ? "" : rest.slice(second + 1)};
+        if (second < 0)
+            return {status: status, signature: rest, hops: [], text: ""};
+        const after = rest.slice(second + 1);
+        const third = after.indexOf("\n");
+        const hops = (third < 0 ? after : after.slice(0, third)).split("\x1f").filter(d => d !== "");
+        return {status: status, signature: rest.slice(0, second), hops: hops, text: third < 0 ? "" : after.slice(third + 1)};
     }
 
     readonly property string filePath: root.configDir === "" ? "" : root.configDir + "/grassfield.json"
@@ -706,6 +875,64 @@ Scope {
     // Reads the file again now (a test, or a watch that is known to have missed something).
     function reload(): void {
         root.readFile();
+    }
+
+    // A watch reported something: one read (the file's own watch, the shell's own write) or one stat (a folder's watch) per
+    // settle window, whatever the number of events in it (a write alone is several: the temporary file, its mode, the rename).
+    property bool wantRead: false
+    property bool wantProbe: false
+    function requestRead(): void {
+        root.wantRead = true;
+        if (!settle.running)
+            settle.start();
+    }
+    function requestProbe(): void {
+        root.wantProbe = true;
+        if (!settle.running)
+            settle.start();
+    }
+
+    Timer {
+        id: settle
+        interval: root.watchSettleMs
+        onTriggered: {
+            const read = root.wantRead;
+            const look = root.wantProbe;
+            root.wantRead = false;
+            root.wantProbe = false;
+            if (read)
+                root.readFile();
+            else if (look)
+                root.probeNow(false);
+        }
+    }
+
+    // A stat of the path (signatureScript); a signature that changed is read (pollWantsRead). `ticked`: started by the timer of
+    // an unusable file (its back-off counts those only).
+    function probeNow(ticked: bool): void {
+        if (root.filePath === "")
+            return;
+        if (probe.running) {
+            probe.again = true;
+            return;
+        }
+        probe.ticked = ticked;
+        probe.command = ["sh", "-c", root.signatureScript, "sh", root.filePath];
+        root.probes++;
+        probe.running = true;
+    }
+
+    // The folders of the links on the way to the file (the last read's), watched beside the configuration folder.
+    property var hopDirs: []
+    readonly property var watchDirs: watchedDir.ready && root.configDir !== "" ? [root.configDir].concat(root.hopDirs.filter(d => d !== root.configDir)) : []
+    function watchHops(hops: var): void {
+        const list = [];
+        for (const d of hops) {
+            if (d !== "" && list.indexOf(d) < 0)
+                list.push(d);
+        }
+        if (list.join("\n") !== root.hopDirs.join("\n"))
+            root.hopDirs = list;
     }
 
     // Reads the file now (bounded) and takes it as the document. One read at a time; a request while one runs follows it.
@@ -742,11 +969,13 @@ Scope {
 
     // A poll's signature of the path: true when the file is to be read in full now. A usable file: when its signature changed. An
     // unusable one: also then (or when it was never known), else only once the backoff has run out.
-    function pollWantsRead(now: string): bool {
+    function pollWantsRead(now: string, ticked: bool): bool {
         if (root.lastSignature !== "!")
             return now !== root.lastSignature;
         if (root.badSignature === "" || now !== root.badSignature)
             return true;
+        if (!ticked)
+            return false;
         return ++root.badTicks >= root.badWaitTicks();
     }
 
@@ -770,6 +999,7 @@ Scope {
             root.loaded = true;
         } else if (read.status === "ok") {
             root.lastSignature = read.signature;
+            root.watchHops(read.hops);
             root.checkText(read.text);
             root.takeDocument(read.text);
             root.reapplyDirty();
@@ -894,8 +1124,9 @@ Scope {
                 root.writeFailures = 0;
                 root.inFlight = ({});
                 root.saved();
-                // The watch also reports it; the file is read again so the document is what is on disk.
-                root.readFile();
+                // Read back once, so the document is what is on disk: the events of the rename (the watch) fall in the same
+                // settle window as this request, and the three make one read.
+                root.requestRead();
                 return;
             }
             // Keep every change that was in flight (unless a newer value of the same key was set meanwhile) and try again.
@@ -939,30 +1170,52 @@ Scope {
         }
     }
 
-    // The signature of the path now; a change since the last read is read again (see pollInterval).
+    // The signature of the path now; a change since the last read is read again.
     Process {
         id: probe
+        property bool again: false
+        property bool ticked: false
         stdout: StdioCollector {
             onStreamFinished: {
                 const now = text.trim();
                 // "-" is a path that leads to nothing (read as missing); "!" is the sentinel of a file that could not be used.
-                if (root.pollWantsRead(now)) {
+                if (root.pollWantsRead(now, probe.ticked)) {
                     root.probedSignature = now;
                     root.readFile();
                 }
             }
         }
+        onRunningChanged: {
+            if (!running && probe.again) {
+                probe.again = false;
+                root.probeNow(false);
+            }
+        }
     }
 
+    // Only a file found unusable is looked at on a timer (see pollInterval and badRetryCap); a usable one is followed by the watches.
     Timer {
         interval: root.pollInterval
         repeat: true
-        running: watchedDir.ready && root.filePath !== ""
+        running: watchedDir.ready && root.filePath !== "" && root.lastSignature === "!"
         onTriggered: {
-            if (!probe.running && !loader.running && !diskRead.running && !writer.running) {
-                probe.command = ["sh", "-c", root.signatureScript, "sh", root.filePath];
-                probe.running = true;
-            }
+            if (!probe.running && !loader.running && !diskRead.running && !writer.running)
+                root.probeNow(true);
+        }
+    }
+
+    // The configuration folder and the folders of the links on the way to the file: a link replaced or retargeted there, or the
+    // file replaced by another kind of file, which the file's own watch (on what it was set on) does not report. A folder's
+    // watch reports its entries only ("<folder>/." keeps Quickshell from watching the folder above it too).
+    Instantiator {
+        model: root.watchDirs
+        delegate: FileView {
+            required property string modelData
+            path: modelData + "/."
+            preload: false
+            watchChanges: true
+            printErrors: false
+            onFileChanged: root.requestProbe()
         }
     }
 
@@ -987,6 +1240,6 @@ Scope {
         preload: false
         watchChanges: true
         printErrors: false
-        onFileChanged: root.readFile()
+        onFileChanged: root.requestRead()
     }
 }

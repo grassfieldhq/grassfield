@@ -65,6 +65,18 @@ QtObject {
         return true;
     }
 
+    // The search on the backend's worker (SU-06 note): answered after the call returns, as the real one is.
+    signal searchResults(string query, var apps)
+    property string pendingSearch: ""
+    function searchAsync(query) {
+        calls.push("searchAsync:" + query);
+        pendingSearch = query;
+        Qt.callLater(root.answerSearch);
+    }
+    function answerSearch() {
+        searchResults(pendingSearch, search(pendingSearch));
+    }
+
     function searchAur(term) {
         calls.push("searchAur:" + term);
     }
@@ -187,6 +199,9 @@ QtObject {
         return root.sectionList;
     }
 
+    // A large category (SU-06): the tests fill it.
+    property var manyApps: []
+
     function categories() {
         return [{id: "graphics", title: "Graphics", symbol: "category-graphics", count: 2},
                 {id: "games", title: "Games", symbol: "category-games", count: 1}];
@@ -194,7 +209,8 @@ QtObject {
 
     function categoryApps(id, kind) {
         calls.push("categoryApps:" + id);
-        const list = id === "graphics" ? [find("org.example.Paint"), find("org.example.Photo")] : id === "games" ? [find("org.example.Games")] : [];
+        const list = id === "graphics" ? [find("org.example.Paint"), find("org.example.Photo")] : id === "games" ? [find("org.example.Games")]
+            : id === "many" ? root.manyApps : [];
         return kind ? list.filter(a => a.kind === kind) : list;
     }
 

@@ -3,7 +3,8 @@
 // GUI thread with Qt's decoders under the app's allocation limit, and scaled to the size asked for. Never cached on disk.
 // The window asks for one only through StoreBackend::screenshotSource, which is "" while screenshots are off or offline;
 // the provider checks the backend's gate again right before each fetch, so a page opened earlier fetches nothing once the
-// Store is offline.
+// Store is offline. A screenshot the page no longer wants (cancel: the page went, SU-06 note) leaves the queue, or aborts
+// its transfer: flipping through product pages never queues their downloads ahead of the page shown.
 #pragma once
 
 #include <QQuickAsyncImageProvider>

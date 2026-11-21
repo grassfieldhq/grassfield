@@ -154,11 +154,26 @@ Singleton {
     readonly property string capabilitiesPath: CapabilitiesFile.path(Mode.stateHome, Quickshell.env("XDG_RUNTIME_DIR"))
 
     function writeCapabilitiesFile(): void {
-        if (!root.settled || root.capabilitiesPath === "")
+        if (!root.settled || root.capabilitiesPath === "" || !root.capabilitiesFolderReady)
             return;
         if (capabilitiesFile.path !== root.capabilitiesPath)
             capabilitiesFile.path = root.capabilitiesPath;
         capabilitiesFile.setText(CapabilitiesFile.payload(root.pluginPresent, root.features));
+    }
+
+    // $XDG_RUNTIME_DIR/grassfield is made private (0700) before the first write, as KeyWindow does: FileView would make it
+    // with the umask's mode. Nothing to make in a dev session.
+    readonly property string capabilitiesFolder: CapabilitiesFile.runtimeFolder(Mode.stateHome, Quickshell.env("XDG_RUNTIME_DIR"))
+    property bool capabilitiesFolderReady: root.capabilitiesFolder === ""
+    onCapabilitiesFolderReadyChanged: root.writeCapabilitiesFile()
+
+    Process {
+        id: makeCapabilitiesFolder
+        command: ["mkdir", "-m", "0700", "-p", root.capabilitiesFolder]
+        onRunningChanged: {
+            if (!running)
+                root.capabilitiesFolderReady = true;
+        }
     }
 
     onSettledChanged: root.writeCapabilitiesFile()
@@ -172,6 +187,8 @@ Singleton {
     }
 
     Component.onCompleted: {
+        if (root.capabilitiesFolder !== "")
+            makeCapabilitiesFolder.running = true;
         timeout.start();
         absentDelay.start();
         retry.start();

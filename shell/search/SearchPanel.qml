@@ -38,6 +38,8 @@ Variants {
         property var menuItem: null
         property point menuAt: Qt.point(0, 0)
         readonly property var menuModel: menuKind === "row" ? rowMenuModel(menuItem) : menuKind === "more" ? moreMenuModel() : []
+        // What a row shows in the moment its result is gone and the row not yet removed (Search.setResults).
+        readonly property var noResult: ({kind: "", key: "", title: "", subtitle: ""})
 
         screen: modelData
         // Mapped a moment longer than it holds the keyboard (the fade-out): a layer destroyed while Exclusive leaves the
@@ -621,7 +623,10 @@ Variants {
             x: (win.width - width) / 2
             y: capsule.y + capsule.height + Tokens.searchCapsuleGap
             width: Math.min(Tokens.searchWidth, win.width - 2 * Tokens.searchEdgeMargin)
-            height: chipBlock + (hasResults ? Math.min(list.contentHeight + 2 * Tokens.spacingSm, win.maxResults - chipBlock) : 0) + (notice ? Tokens.searchEmptyHeight : 0) + (prompt ? promptBlock.implicitHeight : 0) + (footer ? footerText.height : 0)
+            // The height the panel glides to (the Behavior below): its glass is judged over the panel at rest, so a keystroke
+            // that changes the row count does not measure the backdrop again on every frame of the glide (audit B-03).
+            readonly property real restHeight: chipBlock + (hasResults ? Math.min(list.contentHeight + 2 * Tokens.spacingSm, win.maxResults - chipBlock) : 0) + (notice ? Tokens.searchEmptyHeight : 0) + (prompt ? promptBlock.implicitHeight : 0) + (footer ? footerText.height : 0)
+            height: restHeight
             visible: used
             opacity: win.shown ? 1 : 0
             Accessible.role: Accessible.Pane
@@ -654,6 +659,8 @@ Variants {
                 glassClass: "menu"
                 anchors.fill: parent
                 radius: Tokens.radiusSearch
+                // The window covers the output, so the panel's own coordinates are the output's.
+                backdropRect: Qt.rect(panel.x, panel.y, panel.width, panel.restHeight)
             }
 
             // Filter chips. The field keeps the text focus; Tab past the last result group (Shift+Tab before the first) moves
@@ -790,8 +797,9 @@ Variants {
                 clip: true
                 interactive: contentHeight > height
                 boundsBehavior: Flickable.StopAtBounds
-                model: root.controller.rows
-                // One row per result (no group headers): the row index is the result index.
+                // Keyed rows updated in place (Search.rowModel, audit B-05): a result that stays keeps its delegate while the
+                // query changes. One row per result (no group headers): the row index is the result index.
+                model: root.controller.rowModel
                 currentIndex: root.controller.selected
                 onCurrentIndexChanged: {
                     if (currentIndex >= 0)
@@ -803,11 +811,13 @@ Variants {
                 delegate: Item {
                     id: row
 
-                    required property var modelData
+                    required property string key
+                    required property int itemIndex
                     required property int index
 
-                    readonly property bool selected: modelData.itemIndex === root.controller.selected
-                    readonly property var info: modelData.item
+                    readonly property bool selected: itemIndex === root.controller.selected
+                    // The result this row shows; a placeholder in the moment the results and the rows are not yet in step.
+                    readonly property var info: root.controller.items[itemIndex] ?? win.noResult
                     readonly property var entry: info.kind === "clip" ? info.clip : null
                     // The pin and copy buttons show on the selected or hovered row; a pinned row always shows its filled pin.
                     readonly property bool buttons: entry !== null && (selected || rowMouse.containsMouse)
@@ -968,10 +978,10 @@ Variants {
                         hoverEnabled: true
                         // A secondary click opens a clipboard row's menu; Search's other rows take the primary button only.
                         acceptedButtons: row.entry !== null ? Qt.LeftButton | Qt.RightButton : Qt.LeftButton
-                        onPositionChanged: root.controller.selected = row.modelData.itemIndex
+                        onPositionChanged: root.controller.selected = row.itemIndex
                         onClicked: mouse => {
                             if (mouse.button === Qt.RightButton) {
-                                root.controller.selected = row.modelData.itemIndex;
+                                root.controller.selected = row.itemIndex;
                                 const at = row.mapToItem(win.contentItem, mouse.x, mouse.y);
                                 win.openRowMenu(row.info, at.x, at.y);
                                 return;

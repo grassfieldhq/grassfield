@@ -5,6 +5,7 @@ import Quickshell
 import Quickshell.Io
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "../services/BrightnessLogic.js" as BrightnessLogic
 
@@ -141,6 +142,8 @@ Singleton {
             console.warn("osd: unknown brightness command", direction);
             return;
         }
+        // An active display that did not answer DDC/CI is asked again (the person asks for it); this key still goes where it went.
+        Brightness.keyOn(Compositor.activeScreenName);
         const target = BrightnessLogic.keyTarget(Compositor.activeScreenName, Quickshell.screens.map(s => s.name), Brightness.available, Brightness.ddc);
         if (target.kind === "ddc") {
             const level = Brightness.stepOutput(target.output, direction);
@@ -269,6 +272,8 @@ Singleton {
 
     IpcHandler {
         target: "volume"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function up(): void {
             root.volumeStep("up");
@@ -285,6 +290,8 @@ Singleton {
 
     IpcHandler {
         target: "brightness"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function up(): void {
             root.brightnessStep("up");
@@ -297,6 +304,8 @@ Singleton {
 
     IpcHandler {
         target: "keyboard"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function up(): void {
             root.keyboardStep("up");

@@ -180,11 +180,37 @@ Item {
         }
 
         function test_lookInterval() {
-            compare(Model.lookInterval(0, false), Model.LOOK_IDLE_MS);
-            compare(Model.lookInterval(1, false), Model.LOOK_WATCH_MS);
-            compare(Model.lookInterval(0, true), Model.LOOK_WATCH_MS);
+            compare(Model.lookInterval(0, false, false), Model.LOOK_IDLE_MS);
+            compare(Model.lookInterval(1, false, false), Model.LOOK_WATCH_MS);
+            compare(Model.lookInterval(0, true, false), Model.LOOK_WATCH_MS);
+            compare(Model.lookInterval(0, false, true), Model.LOOK_WATCH_MS, "a change of the loop detector's files");
+            compare(Model.lookInterval(0, false, "yes"), Model.LOOK_IDLE_MS);
             verify(Model.LOOK_WATCH_MS < Model.LOOK_IDLE_MS);
-            verify(Model.LOOK_IDLE_MS <= 5000, "the notice comes within seconds of the stop");
+            verify(Model.LOOK_WATCH_MS <= 5000, "the notice comes within seconds of the stop (after a change of the files)");
+            // The watch replaces the 5 s poll (fluidity note of the security-session audit); the backstop stays bounded.
+            verify(Model.LOOK_IDLE_MS >= 30000 && Model.LOOK_IDLE_MS <= 120000);
+            // A burst outlasts the start limit of the shell's unit (10 starts, 100 ms apart) and the counter's own run.
+            verify(Model.LOOK_BURST_MS >= 10 * Model.LOOK_WATCH_MS);
+        }
+
+        // The controller watches the loop detector's two files and never reads them (static: a watch needs a real directory,
+        // tests/security/safe_mode.sh runs it).
+        function test_watchWiring() {
+            const xhr = new XMLHttpRequest();
+            xhr.open("GET", Qt.resolvedUrl("../../shell/security/safemode/SafeMode.qml"), false);
+            xhr.send();
+            const src = xhr.responseText;
+            verify(src.length > 1000, "SafeMode.qml read (QML_XHR_ALLOW_FILE_READ=1)");
+            verify(/interval: Model\.lookInterval\(root\.looks, root\.shown, burst\.running\)/.test(src));
+            const views = src.match(/FileView \{[^}]*\}/g) || [];
+            compare(views.length, 2);
+            for (const v of views) {
+                verify(/preload: false/.test(v) && /watchChanges: true/.test(v) && /onFileChanged: root\.changed\(\)/.test(v), v);
+                verify(!/text\(\)|blockLoading/.test(v), "never read");
+            }
+            verify(/path: root\.devHooks \? "" : root\.markerPath/.test(src), "a dev session watches nothing");
+            verify(/root\.runtimeDir \+ "\/grassfield\/" \+ Model\.LEDGER/.test(src));
+            compare(Model.LEDGER, "shell-failures", "the counter's ledger (packaging/bin/grassfield-shell-failed)");
         }
 
         // A dev session's fake looks read as the real ones.

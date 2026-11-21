@@ -83,6 +83,13 @@ TEST(Signature, Judge)
     EXPECT_EQ(judge(0, validsig(kGood), {}, revoked).verdict, SignatureVerdict::NoTrustedKey);
     // A signed message given as the .sig (not a detached signature): refused whatever else gpgv says.
     EXPECT_EQ(judge(0, "[GNUPG:] PLAINTEXT 62 0 \n" + validsig(kGood), trusted, revoked).verdict, SignatureVerdict::Bad);
+    // gpgv exits 0 and prints VALIDSIG for an expired or revoked key's signature: its own status line refuses it.
+    for (const char *bad : {"EXPKEYSIG 1 X", "EXPSIG 1 X", "REVKEYSIG 1 X", "KEYREVOKED", "BADSIG 1 X", "ERRSIG 1 22 10 00 1 9"}) {
+        EXPECT_EQ(judge(0, QByteArray("[GNUPG:] ") + bad + "\n" + validsig(kGood), trusted, revoked).verdict, SignatureVerdict::Bad) << bad;
+        EXPECT_EQ(judge(0, validsig(kGood) + "[GNUPG:] " + bad + "\n", trusted, revoked).verdict, SignatureVerdict::Bad) << bad;
+    }
+    // KEYEXPIRED alone (an old subkey of the keyring) refuses nothing.
+    EXPECT_EQ(judge(0, "[GNUPG:] KEYEXPIRED 1700000000\n" + validsig(kGood), trusted, revoked).verdict, SignatureVerdict::Good);
 }
 
 TEST(Signature, PacmansRule)

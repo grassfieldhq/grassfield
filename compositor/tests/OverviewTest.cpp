@@ -1,4 +1,5 @@
 #include "core/Minimize.hpp"
+#include "core/Motion.hpp"
 #include "core/Overview.hpp"
 
 #include <gtest/gtest.h>
@@ -336,4 +337,126 @@ TEST(OverviewDamage, UnchangedOrEmptyBoxes) {
     ASSERT_EQ(steps.size(), 1U) << "the last drawn box is damaged when the window is no longer drawn";
     expectBox(steps[0], b);
     EXPECT_TRUE(damageStep({0, 0, std::nan(""), 10}, {}).empty());
+}
+
+// ---- damage only what changed (WM-01, WM-02) ----
+
+TEST(OverviewDamage, RepaintOnlyWhenTheBoxOrTheContentChanged) {
+    const Box b{10, 10, 100, 100};
+    EXPECT_FALSE(needsRepaint(b, b, false)) << "unrelated damage elsewhere: the thumbnail stays as it is";
+    EXPECT_TRUE(needsRepaint(b, b, true)) << "its real place was damaged: its content changed";
+    EXPECT_TRUE(needsRepaint(b, Box{12, 10, 100, 100}, false)) << "an animation step or a resize moved it";
+    EXPECT_TRUE(needsRepaint(Box{}, b, false)) << "drawn for the first time";
+}
+
+TEST(OverviewDamage, StepHoldsAtMostTwoBoxesWithoutAllocating) {
+    const auto steps = damageStep(Box{0, 0, 10, 10}, Box{5, 5, 10, 10});
+    static_assert(sizeof(steps.boxes) == 2 * sizeof(Box));
+    ASSERT_EQ(steps.size(), 2U);
+    size_t n = 0;
+    for (const auto& b : steps) {
+        EXPECT_GT(b.w, 0);
+        ++n;
+    }
+    EXPECT_EQ(n, 2U);
+}
+
+// ---- retargeting with velocity, one clock per window (core/Motion.hpp; WM-03, WM-17, the design note) ----
+
+namespace {
+    namespace mo = gf::motion;
+
+    constexpr Curve kStandard{0.2, 0.0, 0.0, 1.0}; // Tokens.motionCurveStandard
+
+    double speed(const Box& v) {
+        return std::sqrt((v.x * v.x) + (v.y * v.y) + (v.w * v.w) + (v.h * v.h));
+    }
+} // namespace
+
+TEST(Motion, FromRestItIsTheCurveItself) {
+    const Box  a{0, 0, 100, 100}, b{400, 0, 100, 100};
+    const auto t = mo::start(a, b, 1000, 300, kStandard);
+    for (const double ms : {0.0, 30.0, 150.0, 290.0}) {
+        const double e = eased(kStandard, ms / 300);
+        expectBox(mo::positionAt(t, {}, 1000 + ms), Box{400 * e, 0, 100, 100}, 1e-9);
+    }
+    expectBox(mo::positionAt(t, {}, 1300), b);
+    EXPECT_TRUE(mo::settled(t, 1300));
+    EXPECT_FALSE(mo::settled(t, 1299));
+    expectBox(mo::velocityAt(t, {}, 1400), Box{});
+}
+
+TEST(Motion, NulloptEndsFollowTheLiveBox) {
+    const Box  live{50, 60, 200, 100};
+    const auto t = mo::start(std::nullopt, Box{0, 0, 20, 10}, 0, 100, kStandard);
+    expectBox(mo::positionAt(t, live, 0), live);
+    expectBox(mo::positionAt(t, live, 100), Box{0, 0, 20, 10});
+}
+
+// WM-03 scenario A: a window opening elsewhere 100 ms into a swap: the windows whose target held keep their clock.
+TEST(Motion, AnUnchangedTargetKeepsItsClock) {
+    auto       t      = mo::start(Box{0, 0, 100, 100}, Box{300, 0, 100, 100}, 0, 300, kStandard);
+    const auto before = t;
+    EXPECT_FALSE(mo::retarget(t, Box{300, 0, 100, 100}, {}, 100, 300, kStandard));
+    EXPECT_EQ(t.startMs, before.startMs);
+    EXPECT_EQ(t.from, before.from);
+    expectBox(mo::positionAt(t, {}, 200), mo::positionAt(before, {}, 200));
+    EXPECT_TRUE(mo::settled(t, 300)) << "it ends when it would have";
+}
+
+// The design note: an interrupted animation goes on from where it is with the velocity it has there (no stop, no jump).
+TEST(Motion, ARetargetKeepsPositionAndVelocity) {
+    auto         t   = mo::start(Box{0, 0, 100, 100}, Box{600, 0, 100, 100}, 0, 300, kStandard);
+    const double now = 90;
+    const Box    p0  = mo::positionAt(t, {}, now);
+    const Box    v0  = mo::velocityAt(t, {}, now);
+    ASSERT_GT(speed(v0), 1.0) << "mid-flight: moving fast";
+    ASSERT_TRUE(mo::retarget(t, Box{600, 300, 100, 100}, {}, now, 300, kStandard));
+    expectBox(mo::positionAt(t, {}, now), p0, 1e-9);
+    const Box v1 = mo::velocityAt(t, {}, now + 1e-3);
+    EXPECT_NEAR(v1.x, v0.x, 1e-2) << "no stop: the horizontal speed carries on";
+    EXPECT_NEAR(v1.y, v0.y, 1e-2);
+    // The old way (the ease restarted from zero velocity) stopped dead: a visible hitch.
+    const auto restart = mo::start(p0, Box{600, 300, 100, 100}, now, 300, kStandard);
+    EXPECT_LT(speed(mo::velocityAt(restart, {}, now + 1e-3)), 0.05);
+    // And it still ends at its new target, at rest.
+    expectBox(mo::positionAt(t, {}, mo::endMs(t)), Box{600, 300, 100, 100});
+    expectBox(mo::velocityAt(t, {}, mo::endMs(t)), Box{});
+}
+
+// WM-17 (b): a close 50 ms into the opening reverses at once and takes about as long as the way travelled, not a whole
+// duration for a short distance.
+TEST(Motion, AReversalRightAfterTheStartIsShort) {
+    const Box live{100, 100, 800, 600}, rect{500, 400, 200, 150};
+    auto      t = mo::start(std::nullopt, rect, 0, 300, kStandard);
+    ASSERT_TRUE(mo::retarget(t, std::nullopt, live, 50, 300, kStandard));
+    EXPECT_LT(t.durationMs, 300 * 0.5);
+    EXPECT_GE(t.durationMs, 300 * mo::kMinRetargetShare - 1e-9);
+    EXPECT_TRUE(mo::settled(t, 50 + t.durationMs));
+    expectBox(mo::positionAt(t, live, 50 + t.durationMs), live);
+    // Far into the opening, the way back is long: (almost) the whole duration.
+    auto late = mo::start(std::nullopt, rect, 0, 300, kStandard);
+    ASSERT_TRUE(mo::retarget(late, std::nullopt, live, 290, 300, kStandard));
+    EXPECT_GT(late.durationMs, 300 * 0.9);
+}
+
+TEST(Motion, ZeroDurationIsAtItsTargetAtOnce) {
+    auto t = mo::start(Box{0, 0, 10, 10}, Box{100, 0, 10, 10}, 0, 300, kStandard);
+    ASSERT_TRUE(mo::retarget(t, Box{0, 50, 10, 10}, {}, 100, 0, kStandard));
+    EXPECT_TRUE(mo::settled(t, 100));
+    expectBox(mo::positionAt(t, {}, 100), Box{0, 50, 10, 10});
+}
+
+TEST(Motion, ARetargetFromRestHasNoCarry) {
+    auto t = mo::start(Box{0, 0, 10, 10}, Box{100, 0, 10, 10}, 0, 300, kStandard);
+    ASSERT_TRUE(mo::retarget(t, Box{0, 0, 10, 10}, {}, 1000, 300, kStandard));
+    expectBox(t.carry, Box{});
+    EXPECT_DOUBLE_EQ(t.durationMs, 300) << "from rest: the whole duration";
+}
+
+TEST(Motion, NonFiniteInputDoesNotPoisonTheTrack) {
+    auto t = mo::start(Box{0, 0, 10, 10}, Box{100, 0, 10, 10}, 0, 300, kStandard);
+    ASSERT_TRUE(mo::retarget(t, Box{0, 50, 10, 10}, {}, 100, std::nan(""), kStandard));
+    EXPECT_TRUE(mo::settled(t, 100));
+    EXPECT_TRUE(gf::minimize::isFinite(mo::positionAt(t, {}, 100)));
 }

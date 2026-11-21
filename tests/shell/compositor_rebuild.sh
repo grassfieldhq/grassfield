@@ -82,7 +82,8 @@ cat >"$tmp/choose.lua" <<'EOF'
 -- arg: <version.h> <packaged stamp | - (no packaged build) | EMPTY> <ABIs --vetted vouches for, comma-separated | ->
 --      <instance signature | -> <runtime note content | -> [packaged file missing: gone]
 -- env: GF_PKG_SOURCE the packaged stamp's source line (default 1.0.0-1; "none": no second line), GF_SRC_VERSION the
--- installed sources' VERSION (default 1.0.0-1; "none": no file), GF_SHOW_CALLS=1 prints the --vetted calls too.
+-- installed sources' VERSION (default 1.0.0-1; "none": no file), GF_SHOW_CALLS=1 prints the --vetted calls too,
+-- GF_VETTED_TIMEOUT=1 a check that vouches for nothing was cut off (not a refusal).
 package.path = os.getenv("GF_ROOT") .. "/config/hypr/?.lua;" .. package.path
 local c = require("grassfield.compositor")
 local f = io.open(arg[1]); local vh = f:read("a"); f:close()
@@ -116,6 +117,7 @@ local env = {
     calls[#calls + 1] = (abi or "installed") .. (loaded and "+loaded" or "")
     local a = abi or c.abi(vh)
     if vouched[a] then return c.user_build(a, getenv) end
+    if os.getenv("GF_VETTED_TIMEOUT") == "1" then return nil, "timeout" end
     return nil
   end,
 }
@@ -153,6 +155,10 @@ expect "reload: the kept user build is vetted as the loaded one (--loaded: its s
   "$(GF_SHOW_CALLS=1 choose "$want" "$other" "$old_sig" "$olduser")" "kept $olduser [$other+loaded]"
 expect "reload: a user build --vetted no longer vouches for is dropped (nothing until the next login)" \
   "$(choose "$want" - "$old_sig" "$olduser")" "updated nil"
+# CIO-04: a check that could not finish must not unload the build the session runs; a first parse still loads nothing.
+expect "reload: a loaded user build stays when its check was cut off (not refused)" \
+  "$(GF_VETTED_TIMEOUT=1 choose "$want" - "$old_sig" "$olduser")" "kept $olduser"
+expect "choice: a check that was cut off loads nothing at a first parse" "$(GF_VETTED_TIMEOUT=1 choose "$other" - "$sig" -)" "no-match nil"
 expect "reload: a user build of another commit is not kept" "$(choose "$other" "$other,$want" "$sig" "$olduser")" "user $userpath"
 expect "reload: a note naming any other path is ignored" "$(choose "$want" - "$sig" /tmp/evil/grassfield-compositor.so)" "packaged $packaged"
 expect "reload: a note with a path that climbs out is ignored" \
@@ -179,7 +185,7 @@ printf '#!/bin/sh\necho "/ok/$*"\n' >"$tmp/ok-vetted"
 chmod +x "$tmp/slow-vetted" "$tmp/failing-vetted" "$tmp/ok-vetted"
 started=$SECONDS
 expect "lua: a --vetted check that hangs is cut off and vouches for nothing" \
-  "$(luamod "c.rebuild = '$tmp/slow-vetted'; c.vetted_seconds = 1; print(c.vetted())")" "nil"
+  "$(luamod "c.rebuild = '$tmp/slow-vetted'; c.vetted_seconds = 1; print(c.vetted())")" "nil	timeout"
 ((SECONDS - started <= 4)) && pass "lua: the hanging check was cut off within its bound" || bad "lua: the hanging check took $((SECONDS - started)) s"
 expect "lua: a --vetted check that fails vouches for nothing" "$(luamod "c.rebuild = '$tmp/failing-vetted'; print(c.vetted())")" "nil"
 expect "lua: a --vetted check that succeeds is read" "$(luamod "c.rebuild = '$tmp/ok-vetted'; print(c.vetted(), c.vetted('A_1'))")" "/ok/--vetted	/ok/--vetted A_1"

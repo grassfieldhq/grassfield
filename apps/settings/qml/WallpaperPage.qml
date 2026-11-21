@@ -429,7 +429,14 @@ SettingsPage {
 
     function urlToPath(u: url): string {
         const s = u.toString();
-        return s.indexOf("file://") === 0 ? decodeURIComponent(s.substring(7)) : "";
+        if (s.indexOf("file://") !== 0)
+            return "";
+        // A dropped URL is another program's text: a broken percent sequence is no path, not an exception in the handler.
+        try {
+            return decodeURIComponent(s.substring(7));
+        } catch (e) {
+            return "";
+        }
     }
 
     // ---- recents (wallpaper-recent.json, written by this page) ----

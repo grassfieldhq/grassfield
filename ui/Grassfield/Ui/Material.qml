@@ -1,6 +1,5 @@
 pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Effects
 
 // Glass surface (master-prompt 5.5, ADR-0024): the tint, a diffused shadow drawn outside the shape, and the macOS glass
 // edge: one device pixel of darker edge outside, one of brighter specular rim inside (stronger along the top).
@@ -40,7 +39,11 @@ Item {
     property rect measuredRect: Qt.rect(0, 0, 0, 0)
     readonly property rect glassRect: backdropRect.width > 0 ? backdropRect : measuredRect
 
+    // Not while the host gives the area (backdropRect): a surface whose size animates (the Search panel) then costs nothing per
+    // frame here. A host that moves a Material by moving an ancestor calls this when the motion ends, or gives backdropRect.
     function measureRect(): void {
+        if (root.backdropRect.width > 0)
+            return;
         const w = root.Window.window;
         if (!w || !root.visible || w.width < Screen.width || w.height < Screen.height || root.width <= 0) {
             root.measuredRect = Qt.rect(0, 0, 0, 0);
@@ -73,59 +76,29 @@ Item {
 
     default property alias content: contentItem.data
 
-    // Diffused gaussian shadow (RectangularShadow, Qt 6.9+), masked so that it never shows
-    // under the glass: the shape is cut out of the shadow layer.
-    Item {
-        id: shadowSource
-        visible: false
-        layer.enabled: root.shadowEnabled
+    // Diffused shadow outside the shape, never under the glass: one ShaderEffect over the margin box (shaders/shadow.frag:
+    // RectangularShadow's falloff with the shape cut out). No layer: two FBOs and a MultiEffect pass per surface did this
+    // before, reallocated on every frame of a size animation (the Search panel's height, audit B-03).
+    ShaderEffect {
+        id: shadow
+        visible: root.shadowEnabled && root.width > 0 && root.height > 0
         x: -root.shadowMargin
         y: -root.shadowMargin
         width: root.width + 2 * root.shadowMargin
         height: root.height + 2 * root.shadowMargin
-
-        RectangularShadow {
-            x: root.shadowMargin
-            y: root.shadowMargin
-            width: root.width
-            height: root.height
-            radius: root.radius
-            blur: Tokens.shadowBlur
-            offset: Qt.vector2d(0, Tokens.shadowOffsetY)
-            color: Appearance.withAlpha(Appearance.colors.shadow, Tokens.shadowOpacity * (0.35 + 0.65 * root.tintAlpha))
-        }
-    }
-
-    Item {
-        id: shadowCutout
-        visible: false
-        layer.enabled: root.shadowEnabled
-        x: shadowSource.x
-        y: shadowSource.y
-        width: shadowSource.width
-        height: shadowSource.height
-
-        Rectangle {
-            x: root.shadowMargin
-            y: root.shadowMargin
-            width: root.width
-            height: root.height
-            radius: root.radius
-            color: "black"
-        }
-    }
-
-    MultiEffect {
-        visible: root.shadowEnabled
-        x: shadowSource.x
-        y: shadowSource.y
-        width: shadowSource.width
-        height: shadowSource.height
-        source: shadowSource
-        autoPaddingEnabled: false
-        maskEnabled: true
-        maskSource: shadowCutout
-        maskInverted: true
+        // Uniforms (names match shaders/shadow.frag). The shadow's box, radius and falloff are RectangularShadow's for this
+        // blur (qquickrectangularshadow.cpp, antialiased, no spread), so the look is the one of the layers it replaces.
+        readonly property real b: Tokens.shadowBlur
+        readonly property color color: Appearance.withAlpha(Appearance.colors.shadow, Tokens.shadowOpacity * (0.35 + 0.65 * root.tintAlpha))
+        readonly property size boxSize: Qt.size(shadow.width, shadow.height)
+        readonly property rect shapeRect: Qt.rect(root.shadowMargin, root.shadowMargin, root.width, root.height)
+        readonly property real shapeRadius: Math.max(0, Math.min(root.radius, root.width / 2, root.height / 2))
+        readonly property point shadowCentre: Qt.point(root.shadowMargin + root.width / 2, root.shadowMargin + Tokens.shadowOffsetY + root.height / 2)
+        readonly property size shadowHalf: Qt.size(root.width / 2 - 0.8 * shadow.b - 1, root.height / 2 - 0.8 * shadow.b - 1)
+        readonly property real shadowRadius: Math.min(Math.max(0, root.radius - 0.75 * shadow.b), Math.min(root.width, root.height) / 2 - 0.75 * shadow.b)
+        readonly property real shadowBlur: 2.1 * shadow.b + 1
+        readonly property rect clipRect: Qt.rect(root.shadowMargin - shadow.b, root.shadowMargin + Tokens.shadowOffsetY - shadow.b, root.width + 2 * shadow.b, root.height + 2 * shadow.b)
+        fragmentShader: Qt.resolvedUrl("shaders/shadow.frag.qsb")
     }
 
     Rectangle {

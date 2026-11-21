@@ -82,8 +82,12 @@ if [[ -z $hypr ]]; then
   echo "SKIP verify-config: no Hyprland binary"
   exit $fails
 fi
+# Hyprland refuses to start without XDG_RUNTIME_DIR (a CI job, a cron run): it gets one of its own, and a scratch HOME so the
+# user's own ~/.config/hypr files are not part of what is verified.
+mkdir -p "$tmp/home" "$tmp/run" && chmod 700 "$tmp/run"
 verify() { # <config dir> -> exit 0 when "config ok"
-  GRASSFIELD_CONFIG_DIR=$1 "$hypr" --verify-config --config "$1/session.lua" 2>&1 | sed -n '/Config parsing result/,$p' | grep -qx 'config ok'
+  HOME="$tmp/home" XDG_RUNTIME_DIR="$tmp/run" GRASSFIELD_CONFIG_DIR=$1 "$hypr" --verify-config --config "$1/session.lua" 2>&1 |
+    sed -n '/Config parsing result/,$p' | grep -qx 'config ok'
 }
 verify "$root/config/hypr"
 check "Hyprland --verify-config accepts the rules (S1-S3)" $?

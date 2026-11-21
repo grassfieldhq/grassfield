@@ -54,6 +54,13 @@ TestCase {
             function urlAt(row: int): url {
                 return listing.get(row).url;
             }
+            function rowForUrl(target: url): int {
+                for (let i = 0; i < listing.count; i++) {
+                    if (String(listing.get(i).url) === String(target))
+                        return i;
+                }
+                return -1;
+            }
             function selectedUrls(): var {
                 return listing.currentRow >= 0 ? [listing.get(listing.currentRow).url] : [];
             }
@@ -405,6 +412,22 @@ TestCase {
         columns.activeModel.select(-1, 0);
         fakeTab.navigated = [];
         fakeTab.menus = [];
+    }
+
+    // Audit F11, the Finder's rule: with folder F selected in the first column the title reads F, and Paste, Move Item Here and
+    // New Folder put items into F (the last column, titleModel), not into the focused column's folder (activeModel).
+    function test_theTitlesFolderIsTheTarget() {
+        tryVerify(() => rowNamed("note.txt") !== null, 2000, "the column is listed");
+        fakeTab.follows = true;
+        const folder = rowIn(0, "Folder");
+        mouseClick(folder, 40, folder.height / 2, Qt.LeftButton);
+        waitForColumns(2);
+        compare(columns.activeColumn, 0, "the clicked column keeps the keyboard");
+        verify(columns.titleModel !== null);
+        verify(columns.titleModel !== columns.activeModel, "the target is not the focused column");
+        compare(String(columns.titleModel.url), String(fakeTab.segments[fakeTab.segments.length - 1].url), "the folder the title shows");
+        backToTheSandbox();
+        compare(columns.titleModel, columns.activeModel, "one column: the same listing");
     }
 
     // A click that leaves the location as it is (a file of the last column, the second press of a double click on a folder)

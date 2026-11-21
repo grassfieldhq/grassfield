@@ -121,18 +121,30 @@ function unescapeName(text) {
     // Linear, and without a call per escape (300 names of 255 backslashes were 160 to 266 ms with one callback per match): the
     // doubled backslashes become NUL (which no file name holds) by a native regex replace, then the three one-letter escapes
     // are plain replacements, then NUL becomes one backslash (each step one native call on the whole name). Scanning left to right, a doubled backslash is always a pair.
-    return text.replace(/\\\\/g, "\0").replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\u/g, "\x1f").replace(/\0/g, "\\");
+    // A byte that is not part of valid UTF-8 comes as \xHH (F22): it shows as U+FFFD (nameUriSegment keeps the byte).
+    return text.replace(/\\\\/g, "\0").replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\u/g, "\x1f")
+        .replace(/\\x[0-9a-f]{2}/g, "\ufffd").replace(/\0/g, "\\");
+}
+
+// The same name as the last segment of a file: URI, byte for byte (\xHH becomes %HH): what opens a file whose name is not
+// UTF-8 (F22; gio decodes the URI to the name's bytes).
+function nameUriSegment(text) {
+    const parts = String(text).replace(/\\\\/g, "\0").split(/(\\x[0-9a-f]{2})/);
+    return parts.map(p => /^\\x[0-9a-f]{2}$/.test(p) ? "%" + p.substring(2).toUpperCase()
+        : encodeURIComponent(p.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\u/g, "\x1f").replace(/\0/g, "\\"))).join("");
 }
 
 // One "W" line of the helper: the window, the first entries of the folder in the stack's order, fields separated by US:
 // W, sequence, total, n, then n times name, isDir (0 or 1), modified, added, created (seconds).
 // A parser that works in slices: `valid` says whether the line is one; step(budgetMs) reads entries until the budget is used and says
 // whether it is done (a name made of hundreds of escapes costs a third of a millisecond, 300 of them 100 ms: never one long call on
-// the GUI thread); `result` is {sequence, total, entries: [{name, path, isDir, modified, added, created}]}.
+// the GUI thread); `result` is {sequence, total, entries: [{name, path, uri, isDir, modified, added, created}]}.
 function windowParser(line, dir) {
     const f = String(line).split("\x1f");
     const n = f[0] === "W" && f.length >= 4 ? parseInt(f[3]) : -1;
     const base = String(dir).replace(/\/+$/, "");
+    // A stack whose folder is itself a URI (a folder opened in place by its URI, F22) keeps it as it is.
+    const baseUri = base.startsWith("file://") ? base : fileUrl(base);
     const p = {
         valid: n >= 0 && f.length >= 4 + 5 * n,
         index: 0,
@@ -145,6 +157,8 @@ function windowParser(line, dir) {
                 p.result.entries.push({
                     name: name,
                     path: base + "/" + name,
+                    // The entry's file: URI, byte for byte (a name that is not UTF-8 opens through it, F22).
+                    uri: baseUri + "/" + nameUriSegment(f[at]),
                     isDir: f[at + 1] === "1",
                     modified: parseFloat(f[at + 2]) || 0,
                     added: parseFloat(f[at + 3]) || 0,

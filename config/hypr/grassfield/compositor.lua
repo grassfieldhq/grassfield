@@ -136,7 +136,7 @@ M.timeout = "/usr/bin/timeout"
 M.vetted_seconds = 5
 
 -- What grassfield-compositor-rebuild --vetted vouches for (the user's build for `abi`, default the installed Hyprland's),
--- or nil. `abi` comes from M.user_build_abi (letters, digits, dots, dashes, underscores): nothing for the shell to expand.
+-- or nil (and "timeout" when the check was cut off rather than refused). `abi` comes from M.user_build_abi (letters, digits, dots, dashes, underscores): nothing for the shell to expand.
 -- `loaded` (with an ABI): the build this Hyprland instance loaded at its first parse, kept on a reload until the next
 -- login: every check but the source version (a package update in the session may have moved it on).
 function M.vetted(abi, loaded)
@@ -147,9 +147,96 @@ function M.vetted(abi, loaded)
   local ok, p = pcall(io.popen, command)
   if not ok or not p then return nil end
   local line = p:read("l")
-  -- Lua 5.4+: true only for exit status 0 (a timeout exits 124, a kill reports the signal).
-  if not p:close() then return nil end
+  -- Lua 5.4+: true only for exit status 0 (a timeout exits 124, 137 after the kill). A check that was cut off says so
+  -- (second value "timeout"): it vouches for nothing, and it refused nothing either (M.choose, on a reload).
+  local done, _, code = p:close()
+  if not done then
+    if code == 124 or code == 137 then return nil, "timeout" end
+    return nil
+  end
   return line
+end
+
+-- Once per build and instance (CIO-03): the check above forks a bash script of some 40 processes on Hyprland's main thread,
+-- and a config reload (the shell's input and display settings, Omarchy's pacman hook) came back to it every time. Its verdict
+-- is kept in the instance's runtime directory next to the runtime note, under the identity of what it looked at: the plugin
+-- and its stamp (lstat: device, inode, mode, owner, size, times) and every directory from the build's up to / (device,
+-- inode, mode, owner). Any change there (a rebuild renames a new file in, a chmod moves the ctime, a directory made writable
+-- by others) asks the script again, as does another installed Grassfield version (part of the key). The identities come from
+-- the compositor plugin (grassfield.probe: no fork); without it (the first parse of a login, a session without the plugin)
+-- the script is asked as before. With it, the cheap refusals need no script either: no build file, a stamp for another ABI or
+-- (unless `loaded`) another source version. A check that was cut off is never kept, nor one during which the files changed.
+-- `env` (tests): { probe = grassfield.probe-like table, vetted = fn, getenv = fn, read = fn, verifying = bool }.
+M.cache_suffix = ".vetted"
+
+-- The identity of `path`'s build as the check sees it, or nil when the plugin or its stamp is missing.
+function M.fingerprint(path, identity)
+  local so, stamp = identity(path), identity((path:gsub("%.so$", ".abi")))
+  if not so or not stamp then return nil end
+  local parts = { so, stamp }
+  local dir = path:match("^(.*)/[^/]*$")
+  while dir and dir ~= "" do
+    local id = identity(dir)
+    -- A directory's times move with every entry made in it ($HOME): its kind, device, inode, mode and owner decide.
+    parts[#parts + 1] = id and (id:match("^(d:[^:]*:[^:]*:[^:]*:[^:]*)") or id) or "-"
+    dir = dir:match("^(.*)/[^/]*$")
+  end
+  local root = identity("/")
+  parts[#parts + 1] = root and (root:match("^(d:[^:]*:[^:]*:[^:]*:[^:]*)") or root) or "-"
+  return table.concat(parts, "|")
+end
+
+function M.vetted_once(abi, loaded, env)
+  env = env or {}
+  local raw = env.vetted or M.vetted
+  local getenv = env.getenv or os.getenv
+  local probe = env.probe
+  if probe == nil then
+    local ok, mod = pcall(require, "grassfield.probe")
+    probe = ok and mod or false
+  end
+  if not probe or not probe.available(env.api) then return raw(abi, loaded) end
+  local read_text = function(path)
+    local text = probe.read_file(path, 4096, env.api)
+    return text
+  end
+  local target = abi or M.abi((env.read or read_text)(M.version_h))
+  if not target or not target:match("^%w[%w%._%-]*$") then return raw(abi, loaded) end
+  local path = M.user_build(target, getenv)
+  if not path then return nil end
+  local identity = function(p) return (probe.identity(p, env.api)) end
+  -- The refusals Lua can see by itself (the script would refuse the same).
+  local stamp_text = read_text((path:gsub("%.so$", ".abi")))
+  if not identity(path) or type(stamp_text) ~= "string" or stamp_text:match("^([^\n]*)") ~= target then return nil end
+  local source = M.installed_source(env.read or read_text) or ""
+  if not loaded and stamp_text:match("^[^\n]*\nsource ([^\n]+)") ~= source then return nil end
+  local before = M.fingerprint(path, identity)
+  local note = M.note_path(getenv)
+  local cache = note and (note .. M.cache_suffix)
+  local key = target .. "\t" .. (loaded and "loaded" or "installed") .. "\t" .. source .. "\t" .. tostring(before)
+  local lines = {}
+  local kept = cache and read_text(cache)
+  if before and type(kept) == "string" then
+    for line in kept:gmatch("[^\n]+") do
+      local k, verdict = line:match("^(.*)\t([^\t]*)$")
+      -- A kept verdict names this build or nothing; any other path (a line written by someone else) is asked again.
+      if k == key and (verdict == "-" or verdict == path) then return verdict ~= "-" and verdict or nil end
+      if k == key then break end
+      if k and #lines < 3 then lines[#lines + 1] = line end
+    end
+  end
+  local verdict, why = raw(abi, loaded)
+  local verifying = env.verifying
+  if verifying == nil then verifying = M.verifying() end
+  if why ~= "timeout" and before and cache and not verifying and M.fingerprint(path, identity) == before then
+    table.insert(lines, 1, key .. "\t" .. (verdict or "-"))
+    local f = io.open(cache, "w")
+    if f then
+      f:write(table.concat(lines, "\n"), "\n")
+      f:close()
+    end
+  end
+  return verdict, why
 end
 
 -- Hyprland --verify-config runs this config too, with the caller's environment (a running instance's signature
@@ -168,13 +255,14 @@ end
 -- "updated" (the running Hyprland is not the installed one: nothing until the next login), "none" (no extension
 -- installed).
 -- `env` (tests): { read = fn(path) -> text|nil, line = fn(path) -> first line|nil, exists = fn(path) -> bool,
--- getenv = fn(name) -> string|nil, vetted = fn(abi|nil, loaded|nil) -> path|nil }.
+-- getenv = fn(name) -> string|nil, vetted = fn(abi|nil, loaded|nil) -> path|nil[, "timeout"] }.
 function M.choose(env)
   env = env or {}
   local present = env.exists or exists
   local getenv = env.getenv or os.getenv
   local line = env.line or first_line
-  local vetted = env.vetted or M.vetted
+  -- Asked once per build and instance (M.vetted_once); tests give their own check.
+  local vetted = env.vetted or function(abi, loaded) return M.vetted_once(abi, loaded) end
   -- A reload in the same Hyprland instance keeps the build of its first parse: Hyprland keeps a plugin that is loaded
   -- from a path the list still names and unloads the others, and a package update in the same transaction may have
   -- replaced the files since (the stamps then name the new Hyprland). The note is a hint, never trusted more: the packaged
@@ -184,7 +272,12 @@ function M.choose(env)
   local kept = note and line(note)
   if kept and kept == M.packaged and present(kept) then return kept, "kept" end
   local kept_abi = kept and running and M.user_build_abi(kept, getenv)
-  if kept_abi and kept_abi:sub(1, #running + 1) == running .. "_" and vetted(kept_abi, true) == kept then return kept, "kept" end
+  if kept_abi and kept_abi:sub(1, #running + 1) == running .. "_" then
+    -- A check that was cut off (a heavy package transaction is exactly when the reload comes) is not a refusal: the
+    -- build is already loaded, and naming no plugin would make Hyprland unload it mid-session.
+    local path, why = vetted(kept_abi, true)
+    if path == kept or (path == nil and why == "timeout") then return kept, "kept" end
+  end
   local read_text = env.read or read
   local installed = M.abi(read_text(M.version_h))
   if not installed then return nil, present(M.packaged) and "no-match" or "none" end

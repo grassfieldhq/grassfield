@@ -6,6 +6,7 @@
 #include <QCollator>
 #include <QCoreApplication>
 #include <QHash>
+#include <QMetaObject>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
@@ -259,22 +260,58 @@ void AppHistory::setAnswer(const QByteArray &output, bool ok, qint64 nowUs)
 
 void AppHistory::finish(const QByteArray &output, bool ok, qint64 nowUs)
 {
+    const quint64 generation = ++m_generation;
+    // The journal's text is not kept once handed over (up to 16 MiB).
+    m_output.clear();
+    m_output.squeeze();
+    const LiveReader live = ok && m_live ? m_live() : LiveReader{};
+    const Resolve resolve = m_resolve;
+    const qint64 sinceUs = m_sinceUs;
+    const auto compute = [output, ok, nowUs, live, resolve, sinceUs] {
+        std::vector<Row> rows;
+        if (!ok)
+            return rows;
+        const std::vector<AppUsage> usage = aggregateUsage(parseUnitRecords(output), live ? live() : std::vector<LiveUnit>{}, sinceUs, nowUs);
+        rows.reserve(usage.size());
+        for (const AppUsage &u : usage)
+            rows.push_back(Row{u, resolve ? resolve(u.app) : App{u.app, QString()}});
+        return rows;
+    };
+    if (!m_worker) {
+        install(compute(), ok);
+        return;
+    }
+    m_computing = true;
+    QMetaObject::invokeMethod(
+        m_worker,
+        [this, compute, generation, ok] {
+            std::vector<Row> rows = compute();
+            QMetaObject::invokeMethod(
+                this,
+                [this, rows = std::move(rows), generation, ok]() mutable {
+                    if (generation != m_generation)
+                        return; // read again meanwhile
+                    m_computing = false;
+                    install(std::move(rows), ok);
+                },
+                Qt::QueuedConnection);
+        },
+        Qt::QueuedConnection);
+    emit loaded(); // loading
+}
+
+void AppHistory::install(std::vector<Row> rows, bool ok)
+{
+    // Only the rows' exchange happens inside the reset: they were made before (on the worker).
     beginResetModel();
-    m_rows.clear();
+    m_rows = std::move(rows);
     m_unavailable = !ok;
     m_caption.clear();
     if (ok) {
-        const std::vector<AppUsage> usage = aggregateUsage(parseUnitRecords(output), m_live ? m_live() : std::vector<LiveUnit>{},
-                                                           m_sinceUs, nowUs);
-        for (const AppUsage &u : usage)
-            m_rows.push_back(Row{u, m_resolve ? m_resolve(u.app) : App{u.app, QString()}});
         m_caption = tr("Resource use since %1 for %2")
                         .arg(m_locale.toString(QDateTime::fromMSecsSinceEpoch(m_sinceUs / 1000), QLocale::ShortFormat), m_user);
         sortRows();
     }
-    // The journal's text is not kept once read (up to 16 MiB).
-    m_output.clear();
-    m_output.squeeze();
     endResetModel();
     emit loaded();
 }

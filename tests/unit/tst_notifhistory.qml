@@ -135,6 +135,29 @@ TestCase {
         compare(groups[1].latest, now - 2000);
     }
 
+    // An app may carry the name of a member of Object.prototype (audit B-04): it groups like any other.
+    function test_groupByAppNamedLikeAnObjectMember() {
+        const names = ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"];
+        const list = [];
+        names.forEach((name, i) => {
+            list.push(entry("a" + i, name, now - 1000 * i));
+            list.push(entry("b" + i, name, now - 1000 * i - 500));
+        });
+        const groups = History.group(list);
+        compare(groups.map(g => g.appName).join(","), names.join(","));
+        groups.forEach((g, i) => compare(g.items.map(e => e.key).join(","), "a" + i + ",b" + i));
+    }
+
+    // Texts are bounded at intake (audit B-10); a cut never splits a surrogate pair.
+    function test_bounded() {
+        compare(History.bounded("abc", 3), "abc");
+        compare(History.bounded("abcd", 3), "abc");
+        compare(History.bounded("ab\ud83d\ude00", 3), "ab");
+        compare(History.bounded("a\ud83d\ude00b", 3), "a\ud83d\ude00");
+        compare(History.bounded("x".repeat(100000), History.MAX_LINE).length, History.MAX_LINE);
+        compare(History.bounded(undefined, 3), undefined);
+    }
+
     function test_removeKeyAndApp() {
         const list = [entry("1", "mail", now), entry("2", "chat", now), entry("3", "mail", now)];
         compare(History.removeKey(list, "2").length, 2);
@@ -188,6 +211,9 @@ TestCase {
         compare(History.bannerTimeout(2, 3000, 5000), 0);
         compare(History.bannerTimeout(1, 0, 5000), 0);
         compare(History.bannerTimeout(1, 2000, 5000), 2000);
+        // A positive timeout shorter than the entrance is raised to the minimum (audit B-18).
+        compare(History.bannerTimeout(1, 1, 5000), History.MIN_BANNER_MS);
+        compare(History.bannerTimeout(0, 0.2, 5000), History.MIN_BANNER_MS);
         compare(History.bannerTimeout(1, -1, 5000), 5000);
         compare(History.bannerTimeout(0, -1, 5000), 5000);
     }

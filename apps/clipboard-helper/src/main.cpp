@@ -20,10 +20,16 @@
 //   A <id> | A                              the clipboard now holds that item | the request failed or another client took it
 //   R <seq> <id>...                         the items matching a search, pinned first, newest first
 //   N pin-full <id>                         the pinned items are full
+//   N pin-failed <id>                       the pinned item could not be written: it stays in the history (B-09)
+//   K <id>                                  the clipboard was cleared (or replaced by blank text) within a minute of that copy:
+//                                           the shell removes it (X) when its application still runs (a password manager), B-10
 //   V <id> <png path> <text>                a preview (an image's PNG, or the text, at most 64 KiB); both empty when none
 // stdin, one line each, same fields: R | P (resume or pause capture), Y <seq> <app> | N <seq>, T <retention ms>, D 0|1 (the
 // history store), E (expire now), CH (clear the history), CP (clear the pinned items), X <id>, PIN <id>, UNPIN <id>,
-// C <id> 0|1 (copy; 1: plain text only), Q <seq> <query>, V <id>, VD <id>, QUIT. End of stdin ends the helper.
+// C <id> 0|1 (copy; 1: plain text only), Q <seq> <query>, V <id>, VD <id>, QUIT. End of stdin ends the helper, as does the
+// shell's end (PR_SET_PDEATHSIG) and a closed stdout, except while the helper serves the clipboard: it then keeps serving it
+// until another client takes it (Helper::keepSelection), so the clipboard survives a shell restart.
+// stdout is non-blocking: lines wait in a queue while the shell is busy (B-14), the helper never stops for it.
 #include "helper.h"
 #include "thumbnail.h"
 
@@ -31,9 +37,12 @@
 #include <QFile>
 #include <QSocketNotifier>
 
+#include <functional>
+
 #include <algorithm>
 #include <csignal>
 #include <cstdio>
+#include <cerrno>
 #include <cstring>
 
 #include <fcntl.h>
@@ -45,6 +54,85 @@
 namespace
 {
 int g_signalPipe[2] = {-1, -1};
+pid_t g_parent = 0;
+
+// The shell is gone: the helper ends, unless it keeps the clipboard it serves.
+void shellGone(Helper *helper)
+{
+    if (!helper->keepSelection())
+        QCoreApplication::exit(0);
+}
+
+// The lines for the shell: written without ever blocking the helper (a start replay of 150 items or a 64 KiB preview fill the
+// pipe while the shell's thread is busy); what the pipe does not take waits, in order, for a write notifier.
+class Output : public QObject
+{
+public:
+    static constexpr qsizetype kMaxQueued = 64 * 1024 * 1024; // a shell that reads nothing for that long is gone
+
+    explicit Output(std::function<void()> gone)
+        : m_gone(std::move(gone))
+    {
+        ::fcntl(1, F_SETFL, ::fcntl(1, F_GETFL) | O_NONBLOCK);
+        m_notifier = new QSocketNotifier(1, QSocketNotifier::Write, this);
+        m_notifier->setEnabled(false);
+        connect(m_notifier, &QSocketNotifier::activated, this, [this] { drain(); });
+    }
+
+    void write(const QByteArray &line)
+    {
+        if (m_closed)
+            return;
+        m_queue += line;
+        if (m_queue.size() > kMaxQueued) {
+            close();
+            return;
+        }
+        drain();
+    }
+
+private:
+    void drain()
+    {
+        while (m_written < m_queue.size()) {
+            const ssize_t n = ::write(1, m_queue.constData() + m_written, size_t(m_queue.size() - m_written));
+            if (n > 0) {
+                m_written += n;
+                continue;
+            }
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n < 0 && errno == EAGAIN) {
+                m_notifier->setEnabled(true);
+                if (m_written > 1024 * 1024) { // compacted now and then, not on every partial write
+                    m_queue.remove(0, m_written);
+                    m_written = 0;
+                }
+                return;
+            }
+            close(); // the reader is gone (EPIPE)
+            return;
+        }
+        m_queue.clear();
+        m_written = 0;
+        m_notifier->setEnabled(false);
+    }
+
+    void close()
+    {
+        m_closed = true;
+        m_queue.clear();
+        m_written = 0;
+        m_notifier->setEnabled(false);
+        QMetaObject::invokeMethod(this, [this] { m_gone(); }, Qt::QueuedConnection);
+    }
+
+    std::function<void()> m_gone;
+    QSocketNotifier *m_notifier = nullptr;
+    QByteArray m_queue;
+    qsizetype m_written = 0;
+    bool m_closed = false;
+};
 
 void onSignal(int)
 {
@@ -71,7 +159,7 @@ private:
             const ssize_t n = ::read(0, chunk, sizeof chunk);
             if (n == 0) {
                 m_notifier->setEnabled(false);
-                QCoreApplication::exit(0); // the shell closed our stdin
+                shellGone(m_helper); // the shell closed our stdin
                 return;
             }
             if (n < 0)
@@ -175,9 +263,10 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    // dies with the shell, and runs behind it
+    // told when the shell dies, and runs behind it
+    g_parent = ::getppid();
     ::prctl(PR_SET_PDEATHSIG, SIGTERM);
-    if (::getppid() == 1)
+    if (::getppid() != g_parent || g_parent == 1)
         return 0;
     ::setpriority(PRIO_PROCESS, 0, 10);
 
@@ -188,19 +277,36 @@ int main(int argc, char **argv)
         return 1;
     ::signal(SIGTERM, onSignal);
     ::signal(SIGINT, onSignal);
+    Helper *current = nullptr;
     QSocketNotifier signalNotifier(g_signalPipe[0], QSocketNotifier::Read);
-    QObject::connect(&signalNotifier, &QSocketNotifier::activated, &app, [] { QCoreApplication::exit(0); });
+    bool parentDeathSeen = false;
+    QObject::connect(&signalNotifier, &QSocketNotifier::activated, &app, [&current, &parentDeathSeen] {
+        char drained[16];
+        while (::read(g_signalPipe[0], drained, sizeof drained) > 0) {
+        }
+        // PR_SET_PDEATHSIG's SIGTERM: the shell died (the helper was reparented). It is the first SIGTERM seen once reparented,
+        // also when the closed stdin or stdout was handled first and the helper already keeps the clipboard (it must not end
+        // it then). Any other SIGTERM or SIGINT (a logout, a stop) ends the helper.
+        if (current && ::getppid() != g_parent && !parentDeathSeen) {
+            parentDeathSeen = true;
+            if (!current->keeping())
+                shellGone(current);
+            return;
+        }
+        QCoreApplication::exit(0);
+    });
 
-    Helper helper{options,
-                  [](const QByteArray &line) {
-                      if (std::fwrite(line.constData(), 1, size_t(line.size()), stdout) != size_t(line.size()) || std::fflush(stdout) != 0)
-                          _exit(0); // the reader is gone
-                  },
-                  [](int code) { QCoreApplication::exit(code); }};
+    Output output([&current] {
+        if (current)
+            shellGone(current);
+    });
+    Helper helper{options, [&output](const QByteArray &line) { output.write(line); }, [](int code) { QCoreApplication::exit(code); }};
+    current = &helper;
     if (const int failed = helper.start()) {
         helper.cleanup();
         return failed;
     }
+    helper.leaveShellUnit();
     Commands commands(&helper);
     const int code = app.exec();
     helper.cleanup();

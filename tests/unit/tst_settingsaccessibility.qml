@@ -37,6 +37,15 @@ TestCase {
                 values = Object.assign({}, values, entries);
                 return true;
             }
+            // ConfigStore's throttled writes (a slider's drag): written at once here.
+            function flush(): void {
+            }
+            function setSoon(key: string, v: var): void {
+                set(key, v);
+            }
+            function setManySoon(entries: var): void {
+                setMany(entries);
+            }
             function set(key: string, v: var): bool {
                 const e = {};
                 e[key] = v;

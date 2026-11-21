@@ -118,3 +118,25 @@ function totalWidth(widths, spacing) {
         w += widths[i];
     return w + Math.max(0, widths.length - 1) * spacing;
 }
+
+// Magnification by transforms (audit, Dock fluidity): the tiles keep their unmagnified layout and each one is moved along the Dock
+// by the growth of the tiles before it plus half its own (shifts[i], px), its icon scaled about the middle of its edge. The first
+// tile's left edge stays where the unmagnified one is: the shelf, which grows by the total growth (growth()), is drawn from there.
+function shifts(widths, scalesList) {
+    const out = [];
+    let before = 0;
+    for (let i = 0; i < widths.length; i++) {
+        const grow = widths[i] * ((scalesList[i] !== undefined ? scalesList[i] : 1) - 1);
+        out.push(before + grow / 2);
+        before += grow;
+    }
+    return out;
+}
+
+// How much longer the tiles are magnified than at rest (px).
+function growth(widths, scalesList) {
+    let g = 0;
+    for (let i = 0; i < widths.length; i++)
+        g += widths[i] * ((scalesList[i] !== undefined ? scalesList[i] : 1) - 1);
+    return g;
+}

@@ -7,6 +7,7 @@ import Quickshell.Io
 import Quickshell.Services.Notifications
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "History.js" as History
 import "../platform/ScreenChoice.js" as ScreenChoice
@@ -89,7 +90,8 @@ Singleton {
     readonly property string appsFile: Settings.configDir + "/notification-apps.json"
     readonly property var seenApps: {
         const names = [];
-        const seen = {};
+        // No prototype, here and in every table keyed by an app's name: an app may be named "constructor" or "__proto__".
+        const seen = Object.create(null);
         for (const e of history) {
             const k = NotificationPrefs.keyOf(e.appName);
             if (k !== "" && !seen[k]) {
@@ -328,7 +330,7 @@ Singleton {
         centerOpen = false;
         freshKeys = ({});
         if (Object.keys(expandedApps).length > 0) {
-            expandedApps = ({});
+            expandedApps = Object.create(null);
             syncShown();
         }
     }
@@ -419,13 +421,13 @@ Singleton {
     function clearKeys(keys: var): void {
         const doomed = {};
         keys.forEach(k => doomed[k] = true);
-        history.forEach(e => {
-            if (doomed[e.key]) {
-                expireBanner(e.key);
-                finishLive(e.key);
-            }
-        });
+        const gone = history.filter(e => doomed[e.key]).map(e => e.key);
+        gone.forEach(k => expireBanner(k));
         setHistory(history.filter(e => !doomed[e.key]));
+        // The entries leave first, the live notifications are dismissed after (as addEntry does for evictions, ~5 ms each
+        // in the server): closed() then finds no entry to update, where it copied the whole history once per notification.
+        if (gone.length > 0)
+            Qt.callLater(() => gone.forEach(k => finishLive(k)));
     }
 
     function clearApp(appName: string): void {
@@ -433,10 +435,13 @@ Singleton {
     }
 
     function clearAll(): void {
-        history.forEach(e => finishLive(e.key));
+        const gone = history.map(e => e.key);
         while (bannerStore.count > 0)
             expireBanner(bannerStore.get(0).key);
         setHistory([]);
+        // Dismissed after the entries left (see clearKeys).
+        if (gone.length > 0)
+            Qt.callLater(() => gone.forEach(k => finishLive(k)));
     }
 
     // ---- models ----
@@ -478,7 +483,7 @@ Singleton {
     property var shownKeys: []
     property var shownSig: []
     // App names whose group is expanded ("Show All"); reset when the Center closes.
-    property var expandedApps: ({})
+    property var expandedApps: Object.create(null)
     // Rows a collapsed group shows: 1, a stack (macOS 27). The focus tests set it to 3 to drive their scenes with several
     // cards of one collapsed group (the focus invariant does not depend on the count).
     property int groupCollapsed: Tokens.notificationCenterGroupCollapsed
@@ -487,7 +492,7 @@ Singleton {
     property var bannerKeys: []
 
     function setExpanded(app: string, on: bool): void {
-        const next = Object.assign({}, expandedApps);
+        const next = Object.assign(Object.create(null), expandedApps);
         next[app] = on;
         expandedApps = next;
         syncShown();
@@ -499,13 +504,13 @@ Singleton {
     // Show All / Show Less). A role is only written when its value changed.
     function syncShown(): void {
         const collapsed = root.groupCollapsed;
-        const sizes = {};
+        const sizes = Object.create(null);
         for (const a of centerApps)
             sizes[a] = (sizes[a] || 0) + 1;
         // A group that emptied forgets its "Show All": the next notification of that app arrives collapsed.
         const stale = Object.keys(expandedApps).filter(a => !sizes[a]);
         if (stale.length > 0) {
-            const kept = Object.assign({}, expandedApps);
+            const kept = Object.assign(Object.create(null), expandedApps);
             stale.forEach(a => delete kept[a]);
             expandedApps = kept;
         }
@@ -513,7 +518,7 @@ Singleton {
         const wantMeta = [];
         const wantSig = [];
         const wantApps = [];
-        const seen = {};
+        const seen = Object.create(null);
         for (let i = 0; i < centerKeys.length; i++) {
             const app = centerApps[i];
             const rank = seen[app] || 0;
@@ -611,7 +616,7 @@ Singleton {
         centerApps = [];
         shownKeys = [];
         shownSig = [];
-        expandedApps = ({});
+        expandedApps = Object.create(null);
     }
 
     function rebuildCenter(): void {
@@ -666,6 +671,11 @@ Singleton {
     }
 
     function updateEntry(key: string, entry: var): void {
+        replaceEntry(key, entry, undefined);
+    }
+
+    // `timeout`: the banner timeout the update asks for (bannerTimeoutOf: null for no banner), undefined to keep the banner's.
+    function replaceEntry(key: string, entry: var, timeout: var): void {
         let found = false;
         history = history.map(e => {
             if (e.key !== key)
@@ -681,11 +691,18 @@ Singleton {
         if (ci >= 0)
             centerStore.set(ci, row);
         const bi = indexOfKey(bannerStore, key);
-        if (bi >= 0) {
-            bannerStore.set(bi, row);
-            dropTimer(key);
-            syncBannerTimers();
+        if (bi < 0)
+            return;
+        // A replacement that now gets no banner (lowered from critical under Do Not Disturb) takes its banner away.
+        if (timeout === null) {
+            expireBanner(key);
+            return;
         }
+        // The banner's timer starts again, with the replacement's own timeout (its urgency or expire_timeout may have changed:
+        // audit B-12), not the first notification's.
+        bannerStore.set(bi, timeout === undefined ? row : Object.assign(row, {timeout: timeout}));
+        dropTimer(key);
+        syncBannerTimers();
     }
 
     function setHistory(list: var): void {
@@ -709,7 +726,29 @@ Singleton {
         dropTimer(entry.key);
         bannerStore.insert(0, Object.assign(rowOf(entry), {timeout: timeoutMs}));
         bannerKeys.unshift(entry.key);
+        trimBannerQueue();
         syncBannerTimers();
+    }
+
+    // At most bannerQueueMax banners wait (a flood of notifications: each one cost the banner stack a pass over every queued
+    // row). The oldest that is not critical leaves the queue first, then the oldest; the entries stay in the Center.
+    readonly property int bannerQueueMax: 20
+
+    function trimBannerQueue(): void {
+        while (bannerStore.count > bannerQueueMax) {
+            let at = bannerStore.count - 1;
+            for (let i = bannerStore.count - 1; i >= Tokens.notificationBannerMaxVisible; i--) {
+                if (bannerStore.get(i).urgency !== 2) {
+                    at = i;
+                    break;
+                }
+            }
+            const key = bannerKeys[at];
+            bannerStore.remove(at);
+            bannerKeys.splice(at, 1);
+            delete heldKeys[key];
+            dropTimer(key);
+        }
     }
 
     function dropTimer(key: string): void {
@@ -759,7 +798,7 @@ Singleton {
     }
 
     function actionsOf(n: var): var {
-        return (n.actions || []).map(a => ({id: a.identifier, text: a.text}));
+        return (n.actions || []).map(a => ({id: a.identifier, text: History.bounded(a.text, History.MAX_LINE)}));
     }
 
     // Local image files (an image hint or an app icon path) are never loaded from where the app named them (reviews of
@@ -799,7 +838,7 @@ Singleton {
     // maxSenderIds names are kept (review of eee45cc: the map grew without bound): past that, only the senders whose copies
     // are on disk or queued stay. Numbers are never reused (senderCount only grows), so a dropped sender's leftover files
     // never count for another one.
-    property var senderIds: ({})
+    property var senderIds: Object.create(null)
     property int senderCount: 0
     readonly property int maxSenderIds: 256
     // POSIX sh; the directory, the size cap, the copy window, the byte budget, one sender's share, the numbers of the copies
@@ -862,7 +901,7 @@ Singleton {
         }
         for (const q of copyQueue.concat(copyBatch))
             used[q.sid] = true;
-        const next = {};
+        const next = Object.create(null);
         for (const key in senderIds) {
             if (used[senderIds[key]])
                 next[key] = senderIds[key];
@@ -1032,15 +1071,21 @@ Singleton {
         return kept;
     }
 
-    function makeEntry(n: var, key: string): var {
+    // `old`: the entry this one replaces when the sender changed the text of a shown notification, else null. The texts are
+    // bounded here, at intake (History.bounded). Pictures the old entry already names are not copied again: each fresh copy
+    // runs the copy helper and reloads the picture in every row, several times a second for a progress notification.
+    function makeEntry(n: var, key: string, old: var): var {
+        const appName = History.bounded(n.appName, History.MAX_LINE);
+        const sameIcon = old && old.appIcon !== "" && History.keptAppIcon(n.appIcon) === old.appIcon;
+        const sameImage = old && old.image === n.image;
         return {
             key: key,
             nid: n.id,
-            appName: n.appName,
-            appIcon: checkedAppIcon(n.appIcon, n.appName),
-            image: keptImage(n.image, n.appName),
-            summary: n.summary,
-            body: n.body,
+            appName: appName,
+            appIcon: sameIcon ? old.appIcon : checkedAppIcon(n.appIcon, appName),
+            image: sameImage ? old.image : keptImage(n.image, appName),
+            summary: History.bounded(n.summary, History.MAX_LINE),
+            body: History.bounded(n.body, History.MAX_BODY),
             bodyHtml: Sanitizer.sanitize(n.body),
             time: Date.now(),
             urgency: n.urgency === NotificationUrgency.Critical ? 2 : (n.urgency === NotificationUrgency.Low ? 0 : 1),
@@ -1066,19 +1111,24 @@ Singleton {
             liveByKey[key] = n;
             tracker.createObject(root, {notif: n, key: key});
         }
-        const entry = makeEntry(n, key);
+        const entry = makeEntry(n, key, null);
+        const timeout = bannerTimeoutOf(entry, n.expireTimeout);
         if (isNew)
             addEntry(entry);
         else
-            updateEntry(key, entry);
-        if (!dnd || entry.urgency === 2) {
-            // Notification.expireTimeout is in milliseconds (see History.bannerTimeout).
-            // Alert style of the sender (GF-107): None shows no banner, Alerts stay until dismissed.
-            const timeout = NotificationPrefs.bannerTimeoutFor(NotificationPrefs.styleFor(Settings.notificationsAppStyles, entry.appName),
-                History.bannerTimeout(entry.urgency, n.expireTimeout, Tokens.notificationBannerTimeout));
-            if (timeout !== null)
-                showBanner(entry, timeout);
-        }
+            replaceEntry(key, entry, timeout);
+        if (timeout !== null)
+            showBanner(entry, timeout);
+    }
+
+    // The banner of an entry: null for none (Do Not Disturb, unless critical; the sender's alert style None), else its
+    // timeout in ms (0: it stays). Notification.expireTimeout is in milliseconds (see History.bannerTimeout). Alert style of
+    // the sender (GF-107): None shows no banner, Alerts stay until dismissed.
+    function bannerTimeoutOf(entry: var, expireTimeout: real): var {
+        if (dnd && entry.urgency !== 2)
+            return null;
+        return NotificationPrefs.bannerTimeoutFor(NotificationPrefs.styleFor(Settings.notificationsAppStyles, entry.appName),
+            History.bannerTimeout(entry.urgency, expireTimeout, Tokens.notificationBannerTimeout));
     }
 
     // Live notifications whose entry was pruned must not leak.
@@ -1115,9 +1165,20 @@ Singleton {
         }
     }
 
+    // The sender replaced a notification (replaces_id): Quickshell updates the same object in place and emits one change
+    // signal per property that changed; the tracker gathers them into one call per event-loop turn (audit B-09). Any field
+    // counts (audit B-12): urgency, timeout, icon and picture as well as the texts. A replacement raised to critical shows
+    // through Do Not Disturb and stays, also when its banner had already gone. (A replacement that changes nothing at all
+    // emits no signal: Quickshell gives no other sign of it.)
     function updated(key: string, n: var): void {
-        if (entryFor(key))
-            updateEntry(key, makeEntry(n, key));
+        const old = entryFor(key);
+        if (!old)
+            return;
+        const entry = makeEntry(n, key, old);
+        const timeout = bannerTimeoutOf(entry, n.expireTimeout);
+        replaceEntry(key, entry, timeout);
+        if (entry.urgency === 2 && old.urgency !== 2 && timeout !== null && indexOfKey(bannerStore, key) < 0)
+            showBanner(entry, timeout);
     }
 
     // ---- persistence ----
@@ -1143,7 +1204,12 @@ Singleton {
         found.entries.forEach(e => e.bodyHtml = Sanitizer.sanitize(e.body));
         history = History.prune(history.concat(found.entries), Date.now(), keepMs);
         count = history.length;
-        rebuildCenter();
+        // A failure while the Center is rebuilt must not leave historyReady false: nothing would be saved for the whole run.
+        try {
+            rebuildCenter();
+        } catch (e) {
+            console.warn("notifications: the Notification Center could not be rebuilt from the history: " + e);
+        }
         if (found.status !== "corrupt")
             historyReady = true;
         // Entries saved by an earlier version (bodies of an app whose previews are Never, entries past the retention) leave the
@@ -1273,25 +1339,62 @@ Singleton {
 
             required property var notif
             required property string key
+            // A change signal arrived this turn: one update follows (a replacement emits one signal per changed property).
+            property bool pending: false
+
+            function changed(): void {
+                if (t.pending)
+                    return;
+                t.pending = true;
+                Qt.callLater(t.flush);
+            }
+
+            function flush(): void {
+                if (!t.pending)
+                    return;
+                t.pending = false;
+                root.updated(t.key, t.notif);
+            }
 
             property Connections watch: Connections {
                 target: t.notif
 
                 function onClosed(reason: int): void {
+                    t.pending = false;
                     root.closed(t.key, reason);
                     t.destroy();
                 }
 
                 function onSummaryChanged(): void {
-                    root.updated(t.key, t.notif);
+                    t.changed();
                 }
 
                 function onBodyChanged(): void {
-                    root.updated(t.key, t.notif);
+                    t.changed();
                 }
 
                 function onActionsChanged(): void {
-                    root.updated(t.key, t.notif);
+                    t.changed();
+                }
+
+                function onUrgencyChanged(): void {
+                    t.changed();
+                }
+
+                function onExpireTimeoutChanged(): void {
+                    t.changed();
+                }
+
+                function onImageChanged(): void {
+                    t.changed();
+                }
+
+                function onAppIconChanged(): void {
+                    t.changed();
+                }
+
+                function onAppNameChanged(): void {
+                    t.changed();
                 }
             }
         }
@@ -1370,6 +1473,8 @@ Singleton {
 
     IpcHandler {
         target: "notifications"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function toggleCenter(): void {
             root.toggleCenter("");

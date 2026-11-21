@@ -26,12 +26,14 @@ RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
 UMask=0077
 
-# Hardening: the session bus and its own Unix socket are all it needs.
+# Hardening without namespaces: the session bus and its own Unix socket are all it needs. In a user unit, ProtectSystem=,
+# ProtectHome=, PrivateTmp=, PrivateNetwork= and the other mount, network or kernel protections make systemd add
+# PrivateUsers=self, and from that user namespace /proc/<pid>/exe, /proc/<pid>/ns/pid and /proc/<pid>/root of the
+# applications cannot be read (as for grassfield-prompter.service, ADR-0035 decision 2c-6): every application would share
+# one penalty bucket, every open-registered would be answered foreign-namespace (MB17) and every Ongoing1 Publish refused
+# (MB18). tests/shell/session_services.sh keeps those options out of this unit; the seccomp-based ones below need no
+# namespace.
 NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-PrivateTmp=yes
-PrivateNetwork=yes
 RestrictAddressFamilies=AF_UNIX
 RestrictNamespaces=yes
 RestrictRealtime=yes
@@ -41,7 +43,9 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
-CapabilityBoundingSet=
+# No CapabilityBoundingSet= here: a user manager has no CAP_SETPCAP, so it can drop the bounding set only inside a user
+# namespace, which this unit must not have (above); the line would make every start fail at step CAPABILITIES (status 218).
+# NoNewPrivileges=yes already keeps the process from gaining any capability.
 # Resource budget (ADR-0008: <= 20 MB RSS expected, idle CPU 0 %).
 # Measured: idle ~15 MB; one 30 MB GetLayout reply peaked at 115 MB (the message is held several times while read).
 # MemoryHigh throttles at 64 MB, MemoryMax = 256 MB leaves room for a reply of ~60 MB; the bridge refuses larger

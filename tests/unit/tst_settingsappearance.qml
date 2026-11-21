@@ -38,6 +38,12 @@ TestCase {
             function value(key: string): var {
                 return values[key];
             }
+            // ConfigStore's throttled writes (a slider's drag): written at once here.
+            function flush(): void {
+            }
+            function setSoon(key: string, v: var): void {
+                set(key, v);
+            }
             function set(key: string, v: var): void {
                 writes.push([key, v]);
                 const next = Object.assign({}, values);

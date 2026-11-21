@@ -7,12 +7,11 @@
 #include "Titlebar.hpp"
 #include "core/DesktopFocus.hpp"
 
-#include <hyprland/src/desktop/Workspace.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/LayerState.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
@@ -98,7 +97,7 @@ namespace {
         seat.keyboard     = keyboard.kind;
         seat.keyboardGrab = g_pSeatManager && g_pSeatManager->m_seatGrab && g_pSeatManager->m_seatGrab->m_keyboard;
         seat.exclusiveLayer =
-            g_pInputManager && std::ranges::any_of(g_pInputManager->m_exclusiveLSes, [](const PHLLSREF& ls) { return ls && ls->m_mapped; });
+            g_pInputManager && std::ranges::any_of(gf::compat::exclusiveLayers(), [](const PHLLSREF& ls) { return ls && gf::compat::layerMapped(ls); });
         seat.locked = !g_pSessionLockManager || g_pSessionLockManager->isSessionLocked(); // undecidable: locked
         return seat;
     }
@@ -108,7 +107,7 @@ namespace {
     }
 
     bool windowFocusable(const PHLWINDOW& w) {
-        return w && w->m_isMapped && !w->isHidden() && !w->m_X11ShouldntFocus;
+        return w && gf::compat::mapped(w) && !w->isHidden() && !gf::compat::shouldntFocus(w);
     }
 
     // A window whose input is blocked (a Stages strip window, or one of Hyprland's own reasons) is never live: Hyprland's
@@ -219,7 +218,7 @@ namespace {
     void focusDesktop(const PHLLS& ls, const char* when) {
         const auto focus   = Desktop::focusState();
         const auto surface = ls ? ls->resource() : nullptr;
-        if (!focus || !surface || !ls->m_mapped)
+        if (!focus || !surface || !gf::compat::layerMapped(ls))
             return;
         focus->rawSurfaceFocus(surface, nullptr);
         gf::logRequest(Log::DEBUG, "desktop-focus: desktop {:x} ({}): keyboard to the desktop {} ({})", idOf(ls), monitorName(ls),
@@ -276,7 +275,7 @@ namespace {
         seat.locked             = gf::deferredFocus::sessionLocked();
         seat.windowFocusRefused = gf::deferredFocus::exclusiveLayerMapped();
         seat.holder             = holderKind(keyboardSurface());
-        seat.windowFocusable    = w && windowFocusable(w) && w->m_workspace && w->m_workspace->isVisible();
+        seat.windowFocusable    = w && windowFocusable(w) && w->m_workspace && gf::compat::workspaceVisible(w->m_workspace);
         const auto step         = df::unlockStep(seat);
         if (step == df::UnlockStep::Wait) {
             retryUnlockRefocus(true); // the lock surface still holds it: again shortly (its destruction sends no event)
@@ -359,7 +358,7 @@ namespace {
         if (!s.pending.onCommit(idOf(ls), interactivityOf(ls), df::Clock::now()))
             return;
         const auto keyboard = resolve(keyboardSurface());
-        if (!ls->m_mapped || !df::mayGrantDesktop(seatNow(keyboard), keyboardOnLayer(ls)))
+        if (!gf::compat::layerMapped(ls) || !df::mayGrantDesktop(seatNow(keyboard), keyboardOnLayer(ls)))
             return;
         focusDesktop(ls, "after its on_demand commit");
     }
@@ -454,7 +453,7 @@ namespace gf::desktopFocus {
             gf::guarded("desktop-focus workspace.active", [] { onFocusEvent(df::FocusEvent::WorkspaceChanged, std::nullopt); });
         }));
         for (const auto& ls : Desktop::layerState()->layers()) {
-            if (ls && ls->m_mapped)
+            if (ls && gf::compat::layerMapped(ls))
                 attach(ls);
         }
         st().unlockAttempt.clear(); // a start after a previous stop (which cancelled it)

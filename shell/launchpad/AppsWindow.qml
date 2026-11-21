@@ -7,16 +7,17 @@ import qs.platform
 import qs.services
 import "Model.js" as Model
 
-// Apps overlay, one per screen, mapped on the controller's screen only: a transparent full-screen
-// layer-shell window (a click outside the panel closes it) holding the search capsule and, under it, the floating panel
-// (macOS 27): category chips and the scrolling grid. Keyboard exclusive while open. The panel is a frosted
-// Material; the compositor blurs the region of `frame` (never faked).
-Variants {
+// Apps overlay: ONE transparent full-screen layer-shell window (a click outside the panel closes it), on the controller's screen,
+// holding the search capsule and, under it, the floating panel (macOS 27): category chips and the scrolling grid. Keyboard
+// exclusive while open. The panel is a frosted Material; the compositor blurs the region of `frame` (never faked).
+//
+// One window for every display (it was one per display, each with its own grid, its own warmed cell pool and its own copy of
+// every change of the list at each keystroke): the window moves to the display Apps opens on. It is unmapped whenever Apps is
+// closed, so the move costs nothing more than the mapping every opening does.
+Scope {
     id: root
 
     required property var controller
-
-    model: Quickshell.screens
 
     // Quickshell qmltypes mark PanelWindow uncreatable (metadata quirk); suppress just this warning.
     // qmllint disable uncreatable-type
@@ -24,11 +25,13 @@ Variants {
         // qmllint enable uncreatable-type
         id: win
 
-        required property ShellScreen modelData
+        // The display Apps is on (the controller's), else the first one until it has chosen.
+        readonly property ShellScreen modelData: Quickshell.screens.find(s => s.name === root.controller.screenName) ?? (Quickshell.screens.length > 0 ? Quickshell.screens[0] : null)
 
         readonly property bool shown: root.controller.open && root.controller.screenName === (modelData ? modelData.name : "")
-        // 0 = hidden, 1 = fully shown (fade and slight scale; Reduce Motion: fade only).
-        property real progress: shown ? 1 : 0
+        // 0 = hidden, 1 = fully shown (fade and slight scale; Reduce Motion: fade only). While a pinch drives Apps, the
+        // fingers' progress (AppsController.gesture, CIO-01).
+        property real progress: shown && root.controller.gesture.progress >= 0 ? root.controller.gesture.progress : (shown ? 1 : 0)
 
         screen: modelData
         // Never unmapped in the same turn that drops the keyboard (also with Reduce Motion, where the fade is instant):
@@ -83,7 +86,8 @@ Variants {
 
         Behavior on progress {
             NumberAnimation {
-                duration: Appearance.duration(Tokens.motionNormal)
+                // Each step of a pinch is drawn as it comes; the rest of the way animates from there.
+                duration: root.controller.gesture.active ? 0 : Appearance.duration(Tokens.motionNormal)
                 easing.type: Easing.BezierSpline
                 easing.bezierCurve: Appearance.curve
             }

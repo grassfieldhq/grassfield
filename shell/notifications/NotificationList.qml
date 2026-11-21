@@ -680,8 +680,8 @@ ListView {
         // Slide of the leave animation (list.remove) and whether this delegate is already out of the model.
         property real slide: 0
         property bool removing: false
-        // Visual offset of a card whose layout position changed (see above): animated back to 0.
-        property real shift: 0
+        // Visual offset of a card whose layout position changed (see above): glides back to 0 (glide.value).
+        readonly property real shift: glide.value
         property real lastY: NaN
         // The Show Less and Show All controls of this card (set by the card body).
         property Item showLessCtl: null
@@ -744,10 +744,8 @@ ListView {
             // The layout moved this card (a card above arrived, left or changed height): keep it where it
             // was on screen and glide it to its place. Never during Reduce Motion, nor for the first
             // placement of a new card.
-            if (!list.still && !item.removing && !isNaN(item.lastY) && item.lastY !== item.y) {
-                item.shift += item.lastY - item.y;
-                glide.restart();
-            }
+            if (!list.still && !item.removing && !isNaN(item.lastY) && item.lastY !== item.y)
+                glide.displace(item.lastY - item.y);
             item.lastY = item.y;
             list.bumpTick();
         }
@@ -762,14 +760,11 @@ ListView {
             }
         ]
 
-        NumberAnimation {
+        // A card moved again before it settled keeps its speed (Glide: a spring, audit B-17); a bezier restarted on each
+        // layout change made the cards below stall and set off again when notifications came faster than the motion.
+        Glide {
             id: glide
-            target: item
-            property: "shift"
-            to: 0
             duration: list.moveDuration
-            easing.type: Easing.BezierSpline
-            easing.bezierCurve: Appearance.curve
         }
 
         // A new notification arriving while the column is open: slides in from the right and fades in.

@@ -242,9 +242,10 @@ void Performance::take(const Snapshot &snapshot)
     std::sort(m_gpuDevices.begin(), m_gpuDevices.end(), [](const GpuDevice &a, const GpuDevice &b) { return a.pdev < b.pdev; });
     m_haveSample = true;
     if (!m_shown.isEmpty()) {
-        if (m_shown.contains(QStringLiteral("performance")) && m_selected == QLatin1String("cpu")) {
-            m_speedGhz = meanCurrentGhz(m_sysRoot);
-            m_uptime = readUptime(m_procRoot);
+        // Read by the sampler (ReadSystemSpeed, asked while Performance shows CPU: wantsSpeed()), never here.
+        if (s.speedGhz > 0 || s.uptime >= 0) {
+            m_speedGhz = s.speedGhz;
+            m_uptime = s.uptime;
         }
         rebuild();
     }
@@ -351,8 +352,12 @@ void Performance::rebuild()
     m_resources = resources;
     m_gpuList = gpuList;
 
+    // Each logical processor's two series (about 15 000 values on a 64-thread machine) are boxed only while a window draws
+    // them: CPU Usage, CPU History, Performance's "Logical processors" (A3 of the 2026-11 audit).
+    const bool perCpu = m_shown.contains(QStringLiteral("cpuUsage")) || m_shown.contains(QStringLiteral("cpuHistory"))
+        || (m_shown.contains(QStringLiteral("performance")) && m_cpuMode == QLatin1String("logical"));
     QVariantList processors;
-    for (size_t i = 0; i < m_perCpuSystem.size(); ++i) {
+    for (size_t i = 0; perCpu && i < m_perCpuSystem.size(); ++i) {
         const double b = i < s.perCpuBusy.size() ? s.perCpuBusy[i] : -1;
         const double u = i < s.perCpuUser.size() ? s.perCpuUser[i] : -1;
         processors << QVariantMap{{QStringLiteral("busy"), b},

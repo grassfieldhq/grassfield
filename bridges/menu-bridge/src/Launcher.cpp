@@ -1,9 +1,12 @@
 #include "Launcher.h"
 
 #include <QMetaType>
+#include <QSet>
+#include <QStringList>
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace gf::menubridge::launcher {
 
@@ -129,18 +132,186 @@ namespace gf::menubridge::launcher {
         return true;
     }
 
+    namespace {
+        // systemd's unit-name escapes ("\x2d" for '-').
+        QString unescapeUnit(const QString& text) {
+            QString out;
+            out.reserve(text.size());
+            for (qsizetype i = 0; i < text.size(); ++i) {
+                if (text.at(i) == u'\\' && i + 3 < text.size() && text.at(i + 1) == u'x') {
+                    bool       ok = false;
+                    const uint v  = text.mid(i + 2, 2).toUInt(&ok, 16);
+                    if (ok && v > 0x20 && v < 0x7F) {
+                        out += QChar(v);
+                        i += 3;
+                        continue;
+                    }
+                }
+                out += text.at(i);
+            }
+            return out;
+        }
+
+        QString normalized(QString id) {
+            id = id.toLower();
+            if (id.endsWith(QLatin1String(".desktop")))
+                id.chop(8);
+            return id;
+        }
+
+        QString lastPart(const QString& id) {
+            return id.section(u'.', -1);
+        }
+
+        bool sameApp(const QString& candidate, const QString& app) {
+            const QString a = normalized(candidate);
+            const QString b = normalized(app);
+            return !a.isEmpty() && (a == b || lastPart(a) == lastPart(b));
+        }
+    } // namespace
+
+    bool mayUpdate(const QString& identity, const QString& app) {
+        if (!identity.startsWith(QLatin1String("id:")))
+            return true; // the shared unknown bucket, or no identity: nothing tells which application it is
+        QString scope, exe;
+        for (const QString& part : identity.mid(3).split(u'|')) {
+            if (part.startsWith(QLatin1String("scope=")))
+                scope = part.mid(6);
+            else if (part.startsWith(QLatin1String("exe=")))
+                exe = part.mid(4);
+        }
+        if (!scope.startsWith(QLatin1String("app-")))
+            return true; // not in an application's scope (a session service, a script of the session)
+        // app-<launcher>-<application id> or app-<application id>: the separators are plain '-', the id's own are escaped
+        // (\x2d) by systemd-conforming launchers; both readings are tried.
+        const QString rest = scope.mid(4);
+        QStringList   candidates{unescapeUnit(rest)};
+        if (const qsizetype dash = rest.indexOf(u'-'); dash > 0)
+            candidates << unescapeUnit(rest.mid(dash + 1));
+        if (!exe.isEmpty())
+            candidates << exe.section(u'/', -1);
+        return std::any_of(candidates.cbegin(), candidates.cend(), [&](const QString& c) { return sameApp(c, app); });
+    }
+
+    int Book::appsOf(const QString& identity) const {
+        int n = 0;
+        for (const Entry& e : m_apps) {
+            const auto sit = m_senders.constFind(e.owner);
+            if (sit != m_senders.cend() && sit->identity == identity)
+                ++n;
+        }
+        return n;
+    }
+
+    QString Book::evictOne() {
+        QString victim;
+        int     victimRank = 3;
+        qint64  victimMs   = 0;
+        QSet<QString> owners;
+        for (const Entry& e : std::as_const(m_apps))
+            owners.insert(e.owner);
+        for (auto it = m_senders.cbegin(); it != m_senders.cend(); ++it) {
+            // Refused senders first, then senders holding no app; never one that holds an app's state.
+            const int rank = it->refused ? 0 : !owners.contains(it.key()) ? 1 : 2;
+            if (rank == 2)
+                continue;
+            if (rank < victimRank || (rank == victimRank && it->lastMs < victimMs)) {
+                victim     = it.key();
+                victimRank = rank;
+                victimMs   = it->lastMs;
+            }
+        }
+        if (!victim.isEmpty())
+            m_senders.remove(victim);
+        return victim;
+    }
+
+    bool Book::awaitIdentity(const QString& sender, QString* evicted) {
+        evicted->clear();
+        auto it = m_senders.find(sender);
+        if (it == m_senders.end()) {
+            if (static_cast<int>(m_senders.size()) >= kMaxSenders) {
+                *evicted = evictOne();
+                if (evicted->isEmpty())
+                    return false;
+            }
+            it = m_senders.insert(sender, Sender{});
+        }
+        if (it->identity.isEmpty())
+            it->awaiting = true;
+        return true;
+    }
+
+    Book::Result Book::setIdentity(const QString& sender, const QString& identity, qint64 nowMs, bool applyEarly) {
+        Result r;
+        auto   it = m_senders.find(sender);
+        if (it == m_senders.end())
+            return r;
+        it->awaiting = false;
+        it->identity = identity;
+        int same     = 0;
+        for (auto o = m_senders.cbegin(); o != m_senders.cend(); ++o)
+            same += o.key() != sender && !o->refused && o->identity == identity ? 1 : 0;
+        if (same >= kMaxSendersPerIdentity) {
+            it->refused = true;
+            it->early.clear();
+            r.dropped = true;
+            return r;
+        }
+        const QList<Early> early = std::exchange(it->early, {});
+        if (!applyEarly)
+            return r;
+        for (const Early& e : early) {
+            const Result one = handle(sender, it.value(), e.uri, e.properties, nowMs);
+            r.forward.insert(r.forward.end(), one.forward.begin(), one.forward.end());
+            r.malformed = r.malformed || one.malformed;
+            r.throttled = r.throttled || one.throttled;
+            r.dropped   = r.dropped || one.dropped;
+            r.foreign   = r.foreign || one.foreign;
+        }
+        return r;
+    }
+
     Book::Result Book::submit(const QString& sender, const QString& uri, const QVariantMap& properties, qint64 nowMs) {
         Result r;
         auto   sit = m_senders.find(sender);
         if (sit == m_senders.end()) {
             if (static_cast<int>(m_senders.size()) >= kMaxSenders) {
-                r.dropped = true;
-                return r;
+                r.evicted = evictOne();
+                if (r.evicted.isEmpty()) {
+                    r.dropped = true;
+                    return r;
+                }
             }
             sit = m_senders.insert(sender, Sender{});
         }
+        Sender& s = sit.value();
+        s.lastMs  = nowMs;
+        if (s.refused) {
+            r.dropped = true;
+            return r;
+        }
+        if (s.awaiting) {
+            // Kept until the identity is known: the last update per uri, at most kMaxEarly of them.
+            s.early.removeIf([&](const Early& e) { return e.uri == uri; });
+            if (s.early.size() >= kMaxEarly) {
+                r.dropped = true;
+                return r;
+            }
+            s.early.append(Early{uri, properties});
+            r.waiting = true;
+            return r;
+        }
+        const QString evicted = r.evicted;
+        r                     = handle(sender, s, uri, properties, nowMs);
+        r.evicted             = evicted;
+        return r;
+    }
+
+    Book::Result Book::handle(const QString& sender, Sender& s, const QString& uri, const QVariantMap& properties, qint64 nowMs) {
+        Result       r;
         const Parsed p      = parse(uri, properties);
-        const bool   budget = take(sit.value(), nowMs);
+        const bool   budget = take(s, nowMs);
         if (!budget) {
             r.throttled = true;
             if (!p.valid || p.properties.empty())
@@ -151,10 +322,15 @@ namespace gf::menubridge::launcher {
         } else {
             r.malformed = p.dropped;
         }
+        if (!s.identity.isEmpty() && !mayUpdate(s.identity, p.app)) {
+            r.dropped = true;
+            r.foreign = true;
+            return r;
+        }
 
         auto it = m_apps.find(p.app);
         if (it == m_apps.end()) {
-            if (static_cast<int>(m_apps.size()) >= kMaxApps) {
+            if (static_cast<int>(m_apps.size()) >= kMaxApps || (!s.identity.isEmpty() && appsOf(s.identity) >= kMaxAppsPerIdentity)) {
                 r.dropped = true;
                 return r;
             }

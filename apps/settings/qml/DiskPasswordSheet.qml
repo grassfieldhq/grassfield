@@ -32,21 +32,29 @@ Sheet {
     title: qsTr("Change the start-up disk's password")
     message: qsTr("This password unlocks the start-up disk when the computer starts. Other passwords of the disk keep working.")
     confirmText: qsTr("Change Password")
-    confirmEnabled: !root.busy && Setups.passwordsReady(current.text, next.text, verify.text)
+    confirmEnabled: !root.busy && root.form !== null && Setups.passwordsReady(root.form.currentField.text, root.form.newField.text, root.form.verifyField.text)
     holdInput: root.busy
     // The request goes when the button is pressed; the answer closes the sheet or shows why (below).
     confirmHandler: () => {
-        const started = root.system.act("disk password", {op: "disk.passphrase", old: current.text, new: next.text}, root.tag);
+        const form = root.form;
+        if (form === null)
+            return false;
+        const started = root.system.act("disk password", {op: "disk.passphrase", old: form.currentField.text, new: form.newField.text}, root.tag);
         root.clearFields();
         if (!started)
             return root.system.dev ? qsTr("Not applied in a dev session.") : qsTr("The password cannot be changed now.");
         return false;
     }
 
+    // The three fields, once the sheet was first opened (null before: nothing to clear).
+    readonly property Form form: root.bodyItem as Form
+
     function clearFields(): void {
-        current.text = "";
-        next.text = "";
-        verify.text = "";
+        if (root.form === null)
+            return;
+        root.form.currentField.text = "";
+        root.form.newField.text = "";
+        root.form.verifyField.text = "";
     }
 
     function openSheet(): void {
@@ -57,7 +65,7 @@ Sheet {
         root.inUse = (chosen.sources ?? Keyboard.sessionSources(vconsole))[0] ?? null;
         root.layoutNames = Keyboard.parseLayouts(root.backend.readText("/usr/share/X11/xkb/rules/base.lst").text).names;
         root.open();
-        current.forceActiveFocus();
+        root.form?.currentField.forceActiveFocus();
     }
 
     // "French", or "French (fr-latin9)" with the console's own keymap name.
@@ -74,6 +82,8 @@ Sheet {
 
     Connections {
         target: root.backend
+        // Only while it waits for an answer: a Backend answer is not handed to every row and sheet of the window (the audit's notes).
+        enabled: root.shown
 
         function onFailed(tag: string, reason: string): void {
             if (tag !== root.tag || !root.shown)
@@ -91,54 +101,67 @@ Sheet {
         }
     }
 
-    TextField {
-        id: current
-        width: parent.width
-        placeholderText: qsTr("Current password")
-        echoMode: TextInput.Password
-        inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
-        accessibleName: qsTr("Current password")
-        onTextChanged: root.errorText = ""
+    // The body: the three fields and the notes, built the first time the sheet opens and kept (Sheet.bodyComponent).
+    component Form: Column {
+        readonly property alias currentField: current
+        readonly property alias newField: next
+        readonly property alias verifyField: verify
+
+        spacing: Tokens.spacingMd
+
+        TextField {
+            id: current
+            width: parent.width
+            placeholderText: qsTr("Current password")
+            echoMode: TextInput.Password
+            inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
+            accessibleName: qsTr("Current password")
+            onTextChanged: root.errorText = ""
+        }
+
+        TextField {
+            id: next
+            width: parent.width
+            placeholderText: qsTr("New password")
+            echoMode: TextInput.Password
+            inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
+            accessibleName: qsTr("New password")
+        }
+
+        TextField {
+            id: verify
+            width: parent.width
+            placeholderText: qsTr("Verify")
+            echoMode: TextInput.Password
+            inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
+            accessibleName: qsTr("Verify the new password")
+        }
+
+        Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: root.layoutDiffers && root.inUse !== null
+                ? qsTr("When the computer starts, this password is typed with the start-up keyboard layout, %1, not with %2, the one in use now: choose a password that types the same with both.").arg(root.startupName()).arg(Keyboard.sourceName(root.inUse, root.layoutNames))
+                : qsTr("When the computer starts, this password is typed with the start-up keyboard layout, %1.").arg(root.startupName())
+            color: Appearance.colors.textSecondary
+            font.family: Appearance.fontFamily
+            font.pixelSize: Tokens.typographyCaptionSize
+        }
+
+        Text {
+            textFormat: Text.PlainText
+            visible: verify.text !== "" && next.text !== verify.text
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: qsTr("The new passwords do not match.")
+            color: Appearance.colors.textSecondary
+            font.family: Appearance.fontFamily
+            font.pixelSize: Tokens.typographyCaptionSize
+        }
     }
 
-    TextField {
-        id: next
-        width: parent.width
-        placeholderText: qsTr("New password")
-        echoMode: TextInput.Password
-        inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
-        accessibleName: qsTr("New password")
-    }
-
-    TextField {
-        id: verify
-        width: parent.width
-        placeholderText: qsTr("Verify")
-        echoMode: TextInput.Password
-        inputMethodHints: Qt.ImhSensitiveData | Qt.ImhNoPredictiveText
-        accessibleName: qsTr("Verify the new password")
-    }
-
-    Text {
-        textFormat: Text.PlainText
-        width: parent.width
-        wrapMode: Text.Wrap
-        text: root.layoutDiffers && root.inUse !== null
-            ? qsTr("When the computer starts, this password is typed with the start-up keyboard layout, %1, not with %2, the one in use now: choose a password that types the same with both.").arg(root.startupName()).arg(Keyboard.sourceName(root.inUse, root.layoutNames))
-            : qsTr("When the computer starts, this password is typed with the start-up keyboard layout, %1.").arg(root.startupName())
-        color: Appearance.colors.textSecondary
-        font.family: Appearance.fontFamily
-        font.pixelSize: Tokens.typographyCaptionSize
-    }
-
-    Text {
-        textFormat: Text.PlainText
-        visible: verify.text !== "" && next.text !== verify.text
-        width: parent.width
-        wrapMode: Text.Wrap
-        text: qsTr("The new passwords do not match.")
-        color: Appearance.colors.textSecondary
-        font.family: Appearance.fontFamily
-        font.pixelSize: Tokens.typographyCaptionSize
+    bodyComponent: Component {
+        Form {}
     }
 }

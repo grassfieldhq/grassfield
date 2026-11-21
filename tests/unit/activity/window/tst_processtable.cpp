@@ -3,7 +3,10 @@
 #include "processtable.h"
 
 #include <QAbstractItemModelTester>
+#include <QCollator>
 #include <QSignalSpy>
+
+#include <algorithm>
 
 #include <gtest/gtest.h>
 
@@ -451,4 +454,54 @@ TEST(ProcessTable, TheGpuViewsReadTheGpus)
     EXPECT_EQ(viewTitle(View::ByType), QStringLiteral("Processes, by Type"));
     EXPECT_EQ(viewFromKey(QStringLiteral("byType")), View::ByType);
     EXPECT_EQ(readsForView(View::ByType), 0u);
+}
+
+TEST(ProcessTable, NamesSortByTheCollatorWithTextsMadeOncePerRow)
+{
+    // The 2026-11 audit's sort-key note: the text sorts compare each row's text made once per rebuild (not two cellText,
+    // the Kind and Status ones translated, per comparison). The order stays the collator's, case ignored.
+    Fixture f;
+    f.table.setSort(Column::Name, false);
+    f.table.setRows({proc(1, "worker10", 1), proc(2, "worker2", 1), proc(3, "Alpha", 1), proc(4, "beta", 1), kernelRow(1)});
+    QCollator collator;
+    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    collator.setNumericMode(true);
+    QStringList expected{QStringLiteral("worker10"), QStringLiteral("worker2"), QStringLiteral("Alpha"), QStringLiteral("beta"),
+                         QStringLiteral("Kernel")};
+    std::stable_sort(expected.begin(), expected.end(), [&](const QString &a, const QString &b) { return collator.compare(a, b) < 0; });
+    EXPECT_EQ(names(f.table), expected);
+    EXPECT_EQ(names(f.table).mid(0, 3), (QStringList{"Alpha", "beta", "Kernel"}));
+    f.table.setSort(Column::Name, true);
+    std::reverse(expected.begin(), expected.end());
+    EXPECT_EQ(names(f.table), expected);
+}
+
+TEST(ProcessTable, OnlyTheRowsThatChangedAreAnnounced)
+{
+    // The 2026-11 audit's note: every sample announced every row and every role, so each delegate read all its cells again.
+    Fixture f;
+    f.table.setRows({proc(10, "a", 50), proc(20, "b", 30), proc(30, "c", 10), proc(40, "d", 5)});
+    QSignalSpy changed(&f.table, &QAbstractItemModel::dataChanged);
+    // The same values again (a new sample): nothing announced.
+    f.table.setRows({proc(10, "a", 50), proc(20, "b", 30), proc(30, "c", 10), proc(40, "d", 5)});
+    EXPECT_EQ(changed.count(), 0);
+    // b's CPU changes (its place stays): b alone.
+    f.table.setRows({proc(10, "a", 50), proc(20, "b", 31), proc(30, "c", 10), proc(40, "d", 5)});
+    ASSERT_EQ(changed.count(), 1);
+    EXPECT_EQ(changed.at(0).at(0).value<QModelIndex>().row(), 1);
+    EXPECT_EQ(changed.at(0).at(1).value<QModelIndex>().row(), 1);
+    // c and d change, next to each other: one run.
+    changed.clear();
+    f.table.setRows({proc(10, "a", 50), proc(20, "b", 31), proc(30, "c", 11), proc(40, "d", 6)});
+    ASSERT_EQ(changed.count(), 1);
+    EXPECT_EQ(changed.at(0).at(0).value<QModelIndex>().row(), 2);
+    EXPECT_EQ(changed.at(0).at(1).value<QModelIndex>().row(), 3);
+    // A value in a column not shown changes nothing on screen: not announced.
+    changed.clear();
+    TableRow d = proc(40, "d", 6);
+    d.process.threads = 9;
+    f.table.setRows({proc(10, "a", 50), proc(20, "b", 31), proc(30, "c", 11), d});
+    EXPECT_EQ(changed.count(), 0);
+    f.table.setColumns({Column::Name, Column::Threads});
+    EXPECT_EQ(changed.count(), 1) << "a new column announces every row";
 }

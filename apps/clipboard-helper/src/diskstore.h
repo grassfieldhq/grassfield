@@ -29,6 +29,11 @@ public:
     bool save(const ClipLogic::Item &item, const QList<ClipLogic::Item> &items);
     bool saveIndex(const QList<ClipLogic::Item> &items);
     bool removeItem(const QByteArray &id, const QList<ClipLogic::Item> &items);
+    // The item's file alone (written again when `rewrite`, else only if absent) / removed alone: the caller writes the index once
+    // for a whole change (the history's: a copy and the items it pushes out, the switch turned on with 100 items), not once per
+    // file. A file the index does not name yet is an orphan if the helper ends before: deleted at the next load.
+    bool saveItemFile(const ClipLogic::Item &item, bool rewrite = false);
+    bool removeItemFile(const QByteArray &id);
     // Deletes the store's own files (index.json, *.item and their temporary files) and the directory; never follows a link.
     void deleteAll();
     bool readOnly() const { return m_readOnly; }
@@ -56,5 +61,5 @@ private:
     bool ensureDir();
     bool writeFile(const QString &name, const QByteArray &bytes);
     QString m_dir;
-    bool m_readOnly = false; // an index of a newer version: left as it is, never written
+    bool m_readOnly = false; // an index of a newer version, or a store that could not be opened: left as it is, never written
 };

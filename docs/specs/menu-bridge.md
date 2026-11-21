@@ -23,7 +23,9 @@ top-level menus (Left/Right).
 - **MB2 Registrar methods** (`src/Registrations.h`; ADR-0008 amendment 2026-10-25: Qt and Chromium on Wayland never
   call them, spike S5; Electron does, MB17): `RegisterWindow(u windowId, o path)` from a unique bus name is kept per
   (sender, windowId) (registering the pair again replaces it and makes it the newest); at most 16 per sender and 128 in
-  all, `org.freedesktop.DBus.Error.LimitsExceeded` past it, nothing evicted; a well-known sender, another signature or an
+  all (audit round 2, B-16: past 128 a new registration pushes out the oldest registration of a sender never served to a
+  window; `org.freedesktop.DBus.Error.LimitsExceeded` only when every other sender has been served), and the connections of
+  one process together hold at most 16 (checked once its pid is known, the oldest go); a well-known sender, another signature or an
   invalid path → `InvalidArgs`. `UnregisterWindow(u)` forgets it. A new sender is watched (`QDBusServiceWatcher`), then
   its process asked (`GetConnectionUnixProcessID`; an error answer drops it); every registration of a sender goes when it
   leaves the bus, and all of them when the registrar name is released. A registration is served only once settled, 300 ms
@@ -48,7 +50,12 @@ top-level menus (Left/Right).
   A registrar menu (MB17) goes through the same check with its sender and the window's pid, at every open.
 - **MB6 DBusMenu client.** Explicit signatures (Chromium has no introspection data): `GetLayout(int32 0, int32 -1,
   as [])`, `AboutToShow(int32)`, `Event(int32 id, "clicked", variant<int32 0>, uint32 0)`. `LayoutUpdated` and
-  `ItemsPropertiesUpdated` trigger one coalesced `GetLayout` (40 ms); `AboutToShow` returning `needUpdate` too. The
+  `ItemsPropertiesUpdated` trigger one coalesced `GetLayout` (40 ms); `AboutToShow` returning `needUpdate` too. Those
+  re-reads are budgeted per application identity, all its windows together (audit round 2, B-02, `RefetchBudget`): 4 at once,
+  then one a second; a re-read over the budget waits for it (the bar keeps the last layout). Demand over the budget without a
+  2 s pause for 30 s is a flood: the menu is dropped (`backoff` to the shell, T0 menus) and the identity refused 60 s,
+  doubling per flood up to 15 min (not ended by a delivered menu, not written to the state file; the shared `unknown`
+  bucket never doubles). A re-read that maps to the same items is not sent to the shell. The
   menu is dropped (`gone`) when the unique name leaves the bus (NameOwnerChanged) and on `close`. Calls time out after
   3 s; at most 16 windows have an open menu (least recently opened dropped). A failed first `GetLayout` is read again
   after 0.5, 1 and 2 s, and the fourth failure is `layout-failed`: an application busy past the timeout (Files drawing the
@@ -202,8 +209,13 @@ top-level menus (Left/Right).
       coalesced (the last properties per app win) and sent as soon as the sender's budget allows (a 50 ms timer runs only
       while something is pending). A sender that leaves the bus (`NameOwnerChanged`, or no process for its name) clears its
       apps: a `launcher` line with `count`, `progress` and `urgent` all `null` ("forget"), and its pending state is dropped.
-      The sender that updated an app last owns it (spoofing between applications on one bus is possible as in KDE and
-      cosmetic: a number or a bar on a tile; accepted risk, no pid matching).
+      The sender that updated an app last owns it. Audit round 2: a sender's updates wait until its identity is known (at
+      most 8, the last per uri); a sender whose identity is in a systemd app scope may only set its own application's badge
+      (the scope's application id, launcher part and `\x2d` escapes undone, or its executable's name, equals the desktop id
+      or the last part of a reverse-DNS id, case ignored; B-17); another application's update is dropped without a penalty
+      (an application started from a terminal runs in the terminal's scope: its badge is then not shown). An identity
+      without a scope may set any (nothing tells which application it is). Per identity at most 8 senders and 8 apps; past
+      64 senders a newcomer takes the place of a refused sender, else of the least recently heard one holding no app (B-16).
     - Malformed input is a penalty for the sender, through `Penalties`: its application identity (pid of its unique
       name, `appIdentity`) gets a `LayoutFailed` strike (refused 2 s, doubling to 64 s), logged as `malformed
       LauncherEntry update from "<identity>"`. A refused identity's signals are dropped. The strike is shared with that
@@ -334,6 +346,9 @@ grassfield-compositor (feature `appmenu`). Verified clients: Qt 6.11.2 (`tests/f
   is owned, Qt apps keep their in-window menu bars, the bar shows T0 (verified, phase B of the exit test).
 - Bridge gave up (MB14: five crashes in an hour, blamed or not): state `degraded`, no registrar, every `open` answered
   `backoff`, T0 menus; one log line, no notification; it serves menus again when started after the hour has passed.
+- Session bus connection closed (a bus daemon restarted; audit round 2, B-21): the bridge notices within 1 s (QtDBus
+  reports nothing, `isConnected()` is polled without a call), stops cleanly ("run 0", not a crash) and exits 1; the unit's
+  `Restart=on-failure` starts it on the new bus (`tests/shell/menu_bridge_run_mode.sh` case F).
 - Bridge absent, crashed or restarting: the shell retries every 2 s, the bar shows T0; the registrar disappears with
   the bridge, so apps started meanwhile keep in-window menus. Apps that hid their menu bar earlier export it again as
   soon as the bridge is back (the shell re-sends `open`).
@@ -378,6 +393,9 @@ application localized them; Grassfield strings use `qsTr()`.
   in-window menus until restarted (by design: nothing hidden).
 - The T0 File menu is replaced by the app's menus; desktop entry actions stay reachable in the Dock menu only.
 - `RuntimeDirectory=grassfield` and the hardening of the systemd unit are not runtime-verified (owner L2 session).
+  The unit has no option that implies a user namespace (`ProtectSystem=`, `ProtectHome=`, `PrivateTmp=`, `PrivateNetwork=`,
+  nor `CapabilityBoundingSet=`): from one, `/proc/<pid>/exe`, `/proc/<pid>/ns/pid` and `/proc/<pid>/root` of the
+  applications cannot be read (penalty identity, MB17, MB18). `tests/shell/session_services.sh` keeps them out.
 - A reply or any message over ~60-100 MB can still take the bridge over `MemoryMax` (the D-Bus daemon's
   `max_message_size` is 1 GB and libdbus buffers the message, ~2.2x its size at the peak, before the bridge sees it).
   That cannot be prevented from the bridge's side, and the sender cannot be known: MB14 blames an application only for
@@ -388,7 +406,9 @@ application localized them; Grassfield strings use `qsTr()`.
   An innocent whose single fresh call coincides with someone else's huge message is refused for 15 min (T0 menus); the
   wrongful blame can repeat, doubling each time. See the residual risks in MB14.
 - Peers whose executable cannot be read share one `unknown` identity (refused 2 min at most).
-- LauncherEntry (MB15): an application can set another application's badge (spoofing on a shared bus, cosmetic);
+- LauncherEntry (MB15): a process outside any app scope (a script of the session), or one that puts itself in another
+  application's scope (`systemd-run --scope --unit=app-…`), can still set that application's badge (cosmetic); an
+  application started from a terminal has no badge (its updates name another application than the terminal's scope);
   `count` must be an int64 (`x`) and `progress` a double (`d`) as in the Unity specification, an application sending
   `int32` counts is dropped as malformed; the `quicklist` property is not supported; the urgent hint bounces only an
   app that already has a window; an application sending a huge a{sv} is read in full by QtDBus before the 32-entry cap

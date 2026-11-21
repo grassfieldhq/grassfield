@@ -10,13 +10,16 @@
 // Hyprland's cache-aware calls. GL objects (program, buffers, vertex array) are created on the first draw (the EGL
 // context is current then) and deleted by release() with the context made current (plugin unload).
 // Only with the GL renderer (IHyprRenderer::RT_GL). available() is false otherwise, after a shader compile or link
-// failure, after a GL error raised by a funnel draw (glGetError, at most 8 calls before and 8 after each draw: the
+// failure, after a GL error raised by a funnel draw (glGetError, at most 8 calls before and 8 after a draw, on the first 32
+// draws of a load and one draw in 60 after them, CIO-13: the
 // flags left by earlier GL work are drained first) or when Hyprland never draws the elements; the minimizer then uses
 // the Scale (shrink) effect, for running animations too. A plugin load (minimizer::start) resets it.
 
+#include "HyprCompat.hpp"
 #include "core/Genie.hpp"
 
 #include <hyprland/src/helpers/math/Math.hpp>
+#include <hyprland/src/desktop/DesktopTypes.hpp>
 #include <hyprland/src/helpers/memory/Memory.hpp>
 #include <hyprland/src/render/Texture.hpp>
 #include <hyprland/src/render/pass/PassElement.hpp>
@@ -33,6 +36,10 @@ namespace gf::genie {
 
     // The renderer is GL and nothing failed so far (shader compile / link, GL errors, a custom element never drawn).
     bool available();
+
+    // available(), and `mon`'s colour path is plain sRGB (no colour-management transform, CIO-14): the funnel draws the
+    // snapshot's pixels untransformed, so an HDR or wide-gamut output takes the Scale effect (Hyprland's texture path).
+    bool usableOn(const PHLMONITOR& mon);
 
     // Marks the Genie drawing unusable (logged once with `why`): the minimizer falls back to the Scale effect.
     void disable(std::string_view why);
@@ -65,7 +72,7 @@ namespace gf::genie {
         float              alpha = 1.F;
     };
 
-    class CGenieElement : public IPassElement {
+    class CGenieElement : public gf::compat::CPassElementBase {
       public:
         explicit CGenieElement(SDrawData&& data);
         ~CGenieElement() override = default;
@@ -75,16 +82,14 @@ namespace gf::genie {
         CGenieElement(CGenieElement&&)                 = delete;
         CGenieElement& operator=(CGenieElement&&)      = delete;
 
-        std::vector<UP<IPassElement>> draw() override;
-        bool                          needsLiveBlur() override;
-        bool                          needsPrecomputeBlur() override;
-        const char*                   passName() override;
-        ePassElementType              type() override;
-        std::optional<CBox>           boundingBox() override;
-        CRegion                       opaqueRegion() override;
+        void                drawGf() override;
+        const char*         passName() override;
+        ePassElementType    type() override;
+        std::optional<CBox> boundingBoxGf() override;
 
       private:
         SDrawData m_data;
+        bool      m_normalized = false; // the vertices are fractions of pixelBounds (made once, at the first draw)
     };
 
 } // namespace gf::genie

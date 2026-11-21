@@ -22,7 +22,7 @@ Singleton {
     property bool empty: true
 
     function refresh(): void {
-        check.running = true;
+        check.ask();
         if (!monitor.running)
             monitor.running = true;
     }
@@ -59,10 +59,26 @@ Singleton {
 
     Process {
         id: check
+        // Set when the trash changed while the check was running (starting it then does nothing): run it once more.
+        property bool again: false
+
+        function ask(): void {
+            if (check.running)
+                check.again = true;
+            else
+                check.running = true;
+        }
+
         command: ["find", root.filesPath, "-mindepth", "1", "-maxdepth", "1", "-print", "-quit"]
         stdout: StdioCollector {
             // A missing directory prints nothing on stdout: that is an empty trash.
             onStreamFinished: root.empty = text.trim() === ""
+        }
+        onRunningChanged: {
+            if (!running && again) {
+                again = false;
+                running = true;
+            }
         }
     }
 
@@ -71,7 +87,7 @@ Singleton {
         // pdeathsig: the monitor dies with the shell even on SIGKILL.
         command: ["setpriv", "--pdeathsig", "KILL", "--", "gio", "monitor", root.filesPath]
         stdout: SplitParser {
-            onRead: check.running = true
+            onRead: check.ask()
         }
     }
 }

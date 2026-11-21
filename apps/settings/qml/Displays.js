@@ -205,7 +205,10 @@ function trialId(random) {
 
 // The logical size of a monitor in the layout (its pixels over its scale, turned with its rotation).
 function logicalSize(m) {
-    const w = Math.round(m.width / m.scale), h = Math.round(m.height / m.scale);
+    // Hyprland reports a scale to two decimals (1.67 for 1.666667): the listed scale it stands for gives the true size, or a
+    // neighbour placed by it would sit a few pixels under the display.
+    const scale = SCALES.find(s => Math.abs(s - m.scale) < 0.006) ?? m.scale;
+    const w = Math.round(m.width / scale), h = Math.round(m.height / scale);
     return rotated(m) ? {w: h, h: w} : {w: w, h: h};
 }
 
@@ -221,4 +224,112 @@ function snapBeside(moved, x, y, other) {
     }
     const ny = cy < oy ? other.y - a.h : other.y + b.h;
     return {x: Math.round(clamp(x, other.x - a.w + 1, other.x + b.w - 1)), y: Math.round(ny)};
+}
+
+// Whether two placed rectangles ({x, y, w, h}) cover a common area, and whether they touch along an edge (at least one pixel
+// of it shared; a corner is not enough: the pointer cannot cross there).
+function overlaps(a, b) {
+    return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+function touches(a, b) {
+    const shareY = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y), shareX = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    return ((a.x + a.w === b.x || b.x + b.w === a.x) && shareY > 0) || ((a.y + a.h === b.y || b.y + b.h === a.y) && shareX > 0);
+}
+
+// The place nearest to where `r` is at which it touches one of `placed` along an edge and covers none of them. Tried: each
+// side of each placed rectangle, the free coordinate where `r` is (kept on the shared edge) or lined up with an edge of a
+// placed one. One always fits (beside the outermost rectangle, lined up with it).
+function nearestFree(r, placed) {
+    let best = null, d = Infinity;
+    const consider = (x, y) => {
+        const c = {x: x, y: y, w: r.w, h: r.h};
+        const di = Math.hypot(x - r.x, y - r.y);
+        if (di < d && !placed.some(q => overlaps(c, q))) {
+            d = di;
+            best = {x: x, y: y};
+        }
+    };
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    for (const p of placed) {
+        const ys = [clamp(r.y, p.y - r.h + 1, p.y + p.h - 1)], xs = [clamp(r.x, p.x - r.w + 1, p.x + p.w - 1)];
+        for (const q of placed) {
+            for (const y of [q.y, q.y + q.h, q.y - r.h, q.y + q.h - r.h]) {
+                if (y >= p.y - r.h + 1 && y <= p.y + p.h - 1)
+                    ys.push(y);
+            }
+            for (const x of [q.x, q.x + q.w, q.x - r.w, q.x + q.w - r.w]) {
+                if (x >= p.x - r.w + 1 && x <= p.x + p.w - 1)
+                    xs.push(x);
+            }
+        }
+        for (const y of ys) {
+            consider(p.x - r.w, y);
+            consider(p.x + p.w, y);
+        }
+        for (const x of xs) {
+            consider(x, p.y - r.h);
+            consider(x, p.y + p.h);
+        }
+    }
+    return best ?? {x: r.x, y: r.y};
+}
+
+// A layout that works: no display covers another and every display is reached from every other across shared edges (a
+// display left apart cannot be reached by the pointer, and Hyprland refuses overlapping ones). `monitors` are placed monitors
+// (x, y, and the mode, scale and rotation they will have); `anchor` names the display the user just placed or resized, which
+// stays where it is. The others stay too when they can; one that is covered or cut off goes to the nearest place that
+// touches the displays already settled, the nearest one first. Returns name -> {x, y} for every monitor.
+function settle(monitors, anchor) {
+    const rects = monitors.map(m => {
+        const s = logicalSize(m);
+        return {name: m.name, x: Math.round(m.x), y: Math.round(m.y), w: s.w, h: s.h};
+    });
+    const out = {};
+    const placed = [];
+    let rest = rects.slice();
+    const take = (r, at) => {
+        r.x = at.x;
+        r.y = at.y;
+        placed.push(r);
+        out[r.name] = {x: r.x, y: r.y};
+        rest = rest.filter(o => o !== r);
+    };
+    const first = rects.find(r => r.name === anchor) ?? rects[0];
+    if (first)
+        take(first, first);
+    while (rest.length > 0) {
+        // One that already fits where it is, or else the one nearest to a settled display, moved.
+        const fits = rest.find(r => placed.some(q => touches(r, q)) && !placed.some(q => overlaps(r, q)));
+        if (fits) {
+            take(fits, fits);
+            continue;
+        }
+        let next = null, at = null, d = Infinity;
+        for (const r of rest) {
+            const c = nearestFree(r, placed);
+            const di = Math.hypot(c.x - r.x, c.y - r.y);
+            if (di < d) {
+                d = di;
+                next = r;
+                at = c;
+            }
+        }
+        take(next, at);
+    }
+    return out;
+}
+
+// The layout after the display `name` takes `change` ({scale} or {transform}): its logical size changes, so the displays
+// past its right or bottom edge follow that edge (they stay on the side they were), and settle() mends what is left. Without
+// this a display with a kept position ends up under the resized one, or apart from it. Returns name -> {x, y}.
+function resized(monitors, name, change) {
+    const m = monitors.find(o => o.name === name);
+    if (!m)
+        return settle(monitors, name);
+    const next = Object.assign({}, m, change);
+    const before = logicalSize(m), after = logicalSize(next);
+    return settle(monitors.map(o => o === m ? next : Object.assign({}, o, {
+        x: o.x >= m.x + before.w ? o.x + after.w - before.w : o.x,
+        y: o.y >= m.y + before.h ? o.y + after.h - before.h : o.y})), name);
 }

@@ -47,31 +47,69 @@ function fitSize(requested, tiles, separators, separatorWidth, spacing, padding,
 }
 
 // The widest the shelf gets while magnified (px, padding included): tiles of `size` px (`isSeparator[i]`: a separator, which is
-// never magnified) laid out unmagnified, the pointer anywhere along them (every half tile, and past both ends), each tile taking
+// never magnified) laid out unmagnified, the pointer anywhere along them (every quarter tile, and past both ends), each tile taking
 // its slot scale (Magnify.slotScales, as the Dock does). `o` = {separatorWidth, spacing, padding, maxScale, radius}. Without
 // magnification (maxScale <= 1) the shelf at rest.
+//
+// Cost (audit A-05): the growth for one pointer position is not a sum over the tiles. Every icon tile is `size` px wide and its slot
+// is one pitch long, so its growth is size / pitch times the integral of (scale - 1) over its slot; the slots of a run of icons
+// (between two separators) tile the line, so the run's growth is one closed-form integral over the whole run (Magnify.extraIntegral
+// at both ends). A Dock has a handful of runs: one position costs O(runs), not O(tiles).
 function magnifiedShelf(size, isSeparator, o) {
     const widths = isSeparator.map(s => s ? o.separatorWidth : size);
     const total = Magnify.totalWidth(widths, o.spacing);
     const rest = total + 2 * o.padding;
     if (!(o.maxScale > 1) || widths.length === 0)
         return rest;
-    // A pointer left of the first tile counts as no pointer in Magnify (negative): the line is shifted so that p stays >= 0.
+    return rest + magnifiedGrowth(size, isSeparator, o, widths, total);
+}
+
+// The runs of icon tiles: [{a, b}] slot extents along a line whose first tile starts at `left`.
+function iconRuns(widths, isSeparator, spacing, left) {
+    const runs = [];
+    let x = left;
+    let run = null;
+    for (let i = 0; i < widths.length; i++) {
+        const a = x - spacing / 2;
+        const b = x + widths[i] + spacing / 2;
+        if (isSeparator[i]) {
+            run = null;
+        } else if (run) {
+            run.b = b;
+        } else {
+            run = {a: a, b: b};
+            runs.push(run);
+        }
+        x += widths[i] + spacing;
+    }
+    return runs;
+}
+
+// The largest growth of the shelf over every pointer position (see magnifiedShelf).
+function magnifiedGrowth(size, isSeparator, o, widths, total) {
     const pitch = size + o.spacing;
     const reach = o.radius * pitch;
-    const centers = Magnify.centersFor(widths, o.spacing, reach);
-    // How much wider than at rest the shelf is with the pointer at p. Only the tiles whose slot touches the reach of the pointer are
-    // magnified (Magnify.meanScale, the one Magnify.slotScales takes); the sum is smooth in p.
+    // A pointer left of the first tile counts as no pointer in Magnify (negative): the line is shifted so that p stays >= 0.
+    const runs = iconRuns(widths, isSeparator, o.spacing, reach);
+    if (runs.length === 0)
+        return 0;
+    const k = size / pitch;
     const growth = p => {
-        let grown = 0;
-        for (let i = 0; i < widths.length; i++) {
-            const half = (widths[i] + o.spacing) / 2;
-            if (isSeparator[i] || Math.abs(centers[i] - p) >= reach + half)
+        let g = 0;
+        for (let r = 0; r < runs.length; r++) {
+            if (runs[r].b <= p - reach || runs[r].a >= p + reach)
                 continue;
-            grown += widths[i] * (Magnify.meanScale(centers[i] - half - p, centers[i] + half - p, pitch, o.maxScale, o.radius) - 1);
+            g += Magnify.extraIntegral(runs[r].b - p, pitch, o.maxScale, o.radius) - Magnify.extraIntegral(runs[r].a - p, pitch, o.maxScale, o.radius);
         }
-        return grown;
+        return k * g;
     };
+    // Analytic shortcut: the integral of (scale - 1) over the whole line is (maxScale - 1) * reach, so no position grows the shelf by
+    // more than k times that; a run at least two reaches long reaches it with the pointer at its middle (the curve is symmetric).
+    const bound = k * (o.maxScale - 1) * reach;
+    for (let r = 0; r < runs.length; r++) {
+        if (runs[r].b - runs[r].a >= 2 * reach)
+            return growth((runs[r].a + runs[r].b) / 2);
+    }
     // The worst case is the maximum of that smooth curve: a sample every quarter tile finds the hill, a search inside the two
     // steps around the best sample finds its top (no safety margin needed beyond rounding).
     const step = Math.max(0.5, size / 4);
@@ -94,9 +132,13 @@ function magnifiedShelf(size, isSeparator, o) {
         else
             hi = m2;
     }
-    best = Math.max(best, growth((lo + hi) / 2));
-    return rest + best;
+    return Math.min(bound, Math.max(best, growth((lo + hi) / 2)));
 }
+
+// The results of fitSizeMagnified, by their inputs (audit A-05: every Dock window, one per output, asks for the same tiles at
+// every rebuild and at every pointer move of a separator resize). Shared by every importer (.pragma library), bounded.
+var fitCache = new Map();
+var fitCacheMax = 64;
 
 // Shrink to fit with magnification (macOS: the Dock never leaves the screen, magnified or not): the largest whole tile size
 // not above `requested` whose shelf, at its widest while magnified (magnifiedShelf), fits in `available` px, never below
@@ -104,6 +146,18 @@ function magnifiedShelf(size, isSeparator, o) {
 function fitSizeMagnified(requested, isSeparator, available, floor, o) {
     if (!(available > 0) || isSeparator.length === 0)
         return requested;
+    const key = [requested, available, floor, o.separatorWidth, o.spacing, o.padding, o.maxScale, o.radius, o.slack, isSeparator.map(s => s ? 1 : 0).join("")].join("|");
+    const known = fitCache.get(key);
+    if (known !== undefined)
+        return known;
+    const size = fitSizeMagnifiedNow(requested, isSeparator, available, floor, o);
+    if (fitCache.size >= fitCacheMax)
+        fitCache.clear();
+    fitCache.set(key, size);
+    return size;
+}
+
+function fitSizeMagnifiedNow(requested, isSeparator, available, floor, o) {
     // `o.slack` px stay free beyond the computed worst case (the rounding of the search for the top of the curve), and only while
     // magnification is on: a Dock that does not grow has an exact width, and a shelf that fits exactly is kept as it is.
     const slack = o.maxScale > 1 && o.slack > 0 ? o.slack : 0;
@@ -246,6 +300,56 @@ function hitBox(edge, iconSize, iconPx, indicatorArea, tileW, tileH) {
 // The tile that owns the point (x, y): of the hit boxes holding it, the one drawn on top (highest `z`, equal z: the later
 // tile, as Qt stacks siblings). `boxes`: one {x, y, w, h, z} per tile in a common space, null for a tile that cannot be
 // pressed. -1 when no box holds the point. Boxes are half-open (x <= px < x + w), so two that touch share no point.
+// Magnification by transforms (audit, Dock fluidity): a tile keeps its unmagnified box (iconSize along the Dock) and its icon is
+// drawn scaled about the middle of its screen-side edge, so the grown icon (iconPx) is centred on the tile along the Dock and grows
+// away from the screen edge. The grown icon's top-left in the tile, the point the scale is taken about (in the unscaled icon, which
+// sits at iconOrigin(edge, iconSize, iconSize, indicatorArea)), and the box that takes the pointer: the tile and the grown icon.
+function grownIconOrigin(edge, iconSize, iconPx, indicatorArea) {
+    const o = iconOrigin(edge, iconSize, iconPx, indicatorArea);
+    const along = (iconSize - iconPx) / 2;
+    return isVertical(edge) ? {x: o.x, y: along} : {x: along, y: o.y};
+}
+function scaleOrigin(edge, iconSize) {
+    if (edge === "left")
+        return {x: 0, y: iconSize / 2};
+    if (edge === "right")
+        return {x: iconSize, y: iconSize / 2};
+    return {x: iconSize / 2, y: iconSize};
+}
+function grownHitBox(edge, iconSize, iconPx, indicatorArea, tileW, tileH) {
+    const o = grownIconOrigin(edge, iconSize, iconPx, indicatorArea);
+    const x0 = Math.min(0, o.x);
+    const y0 = Math.min(0, o.y);
+    return {x: x0, y: y0, w: Math.max(tileW, o.x + iconPx) - x0, h: Math.max(tileH, o.y + iconPx) - y0};
+}
+
+// A length rounded up to whole steps of `step` px (the blur region follows a moving shelf by steps, exact at rest).
+function quantiseUp(length, step) {
+    if (!(step > 0))
+        return length;
+    return Math.ceil(length / step - 1e-9) * step;
+}
+
+// The step of that blur region: an eighth of a tile pitch, never under one px.
+function regionStep(pitch) {
+    return Math.max(1, Math.round(pitch / 8));
+}
+
+// The widest the shelf gets under the pointer (magnifiedShelf), by its inputs: the input region takes it at once when the pointer
+// arrives, instead of following the shelf frame by frame (audit, Dock fluidity).
+var widestCache = new Map();
+function widestShelf(size, isSeparator, o) {
+    const key = [size, o.separatorWidth, o.spacing, o.padding, o.maxScale, o.radius, isSeparator.map(s => s ? 1 : 0).join("")].join("|");
+    const known = widestCache.get(key);
+    if (known !== undefined)
+        return known;
+    const w = magnifiedShelf(size, isSeparator, o);
+    if (widestCache.size >= fitCacheMax)
+        widestCache.clear();
+    widestCache.set(key, w);
+    return w;
+}
+
 function hitOwner(boxes, x, y) {
     let best = -1;
     for (let i = 0; i < boxes.length; i++) {

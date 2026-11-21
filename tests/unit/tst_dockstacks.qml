@@ -109,6 +109,22 @@ TestCase {
         verify(longest < 50, "the longest slice took " + longest + " ms in " + calls + " calls (limit 50; LOAD-SENSITIVE: wall clock)");
     }
 
+    // F22: a byte that is not UTF-8 comes as \xHH: shown as U+FFFD, opened byte for byte through the entry's file: URI.
+    function test_aNameThatIsNotUtf8OpensByItsUri() {
+        const w = Stacks.parseWindow(["W", "1", "3", "3", "old\\xe9.txt", "0", "0", "0", "0", "a\\\\xe9", "0", "0", "0", "0",
+                                      "My File #1.txt", "0", "0", "0", "0"].join(us), "/home/u/Stack");
+        compare(w.entries[0].name, "old�.txt");
+        compare(w.entries[0].uri, "file:///home/u/Stack/old%E9.txt");
+        compare(w.entries[1].name, "a\\xe9", "a real backslash then xe9");
+        compare(w.entries[1].uri, "file:///home/u/Stack/a%5Cxe9");
+        compare(w.entries[2].uri, "file:///home/u/Stack/My%20File%20%231.txt");
+        compare(Stacks.unescapeName("\\xff\\xfe"), "��");
+        compare(Stacks.nameUriSegment("a\\nb\\xC3"), "a%0Ab\\xC3".replace("\\xC3", "%5CxC3"), "upper-case hex is no escape of the helper");
+        // A stack folder that is itself a URI (a folder entered by its URI) keeps it as it is.
+        const nested = Stacks.parseWindow(["W", "1", "1", "1", "x\\xe9", "0", "0", "0", "0"].join(us), "file:///home/u/%E9dir");
+        compare(nested.entries[0].uri, "file:///home/u/%E9dir/x%E9");
+    }
+
     function test_aNameWithEscapesKeepsItsBytes() {
         const w = Stacks.parseWindow(["W", "1", "1", "1", "a\\nW\\u1", "0", "0", "0", "0"].join(us), "/d");
         compare(w.entries[0].name, "a\nW\x1f1");

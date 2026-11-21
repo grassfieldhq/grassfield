@@ -45,10 +45,16 @@ Window {
             })).concat([{key: "categories", page: "categories", id: "", title: qsTr("Categories"), icon: "grid"},
                 {key: "updates", page: "updates", id: "", title: qsTr("Updates"), icon: "arrow-down-circle", count: root.backend.updates.count || 0}])
 
+    // A new snapshot (SU-06): the page shown is not made again; its data bindings read the backend again (dataRevision),
+    // and its lists change in place (AppGrid's keyed model), so nothing under the pointer is re-created and the scroll stays.
+    property int dataRevision: 0
+
     function reload(): void {
         root.sections = root.backend.sections();
         root.categories = root.backend.categories();
-        root.showPage(true);
+        root.dataRevision++;
+        if (pageLoader.page === "search" && pageLoader.item)
+            root.requestSearch((pageLoader.item as SearchPage).query, true);
         // --page waits for the first data: a section's row exists only then.
         if (root.waitingPage !== "" && root.backend.revision > 0) {
             const page = root.waitingPage;
@@ -183,6 +189,28 @@ Window {
             root.transientNotice = qsTr("“%1” could not be opened.").arg(app.name || "");
     }
 
+    // The search runs on the backend's worker (SU-06 note): typing waits for a pause of a few keys before it asks; the answer
+    // fills the results page when its query is still the one shown (searchResults). `now`: asked at once (a page opened on
+    // a query, a new snapshot).
+    property string pendingQuery: ""
+    function requestSearch(query: string, now: bool): void {
+        if (pageLoader.page === "search" && pageLoader.item)
+            (pageLoader.item as SearchPage).searching = true;
+        root.pendingQuery = query;
+        if (now) {
+            searchDelay.stop();
+            root.backend.searchAsync(query);
+        } else {
+            searchDelay.restart();
+        }
+    }
+
+    Timer {
+        id: searchDelay
+        interval: 120 // a pause between keys (logic, not a design value: ADR-0039 D7)
+        onTriggered: root.backend.searchAsync(root.pendingQuery)
+    }
+
     // pacman's message and what to do, for the last operation of an app (SR19).
     // The AUR (SR7): Return on the search field asks it for the query on the page; its answer fills that page's section
     // when the query has not changed meanwhile.
@@ -205,6 +233,15 @@ Window {
                 return;
             results.aurResults = apps;
             results.aurState = problem === "" ? "done" : problem;
+        }
+        function onSearchResults(query: string, apps: var): void {
+            if (pageLoader.page !== "search" || !pageLoader.item)
+                return;
+            const results = pageLoader.item as SearchPage;
+            if (results.query !== query)
+                return;
+            results.results = apps;
+            results.searching = false;
         }
         function onBuildScript(id: string, text: string, ok: bool): void {
             if (id === root.buildScriptFor && textSheet.visible)
@@ -257,23 +294,24 @@ Window {
     // How an operation ended, while it says something (the latest one first), and a lock pacman left (SR19, SR20).
     readonly property var resultIds: Object.keys(root.backend.results || {}).filter(id => Store.resultText(root.backend.results[id]) !== "")
 
-    onNavChanged: root.showPage(false)
+    onNavChanged: root.showPage()
 
-    // The page of `current`: a search page that only changes its query keeps its item; anything else is made again, and gets
-    // back the scroll it was left at. `again`: the same page with new data (a new snapshot), its scroll kept.
-    function showPage(again: bool): void {
+    // The page of `current`: a search page that only changes its query keeps its item (its results come from the worker
+    // once typing pauses); anything else is made again, and gets back the scroll it was left at. A new snapshot never comes
+    // here (reload: the page is updated in place).
+    function showPage(): void {
         const c = root.nav.current;
-        if (!again && c.page === "search" && pageLoader.item && pageLoader.page === "search") {
+        if (c.page === "search" && pageLoader.item && pageLoader.page === "search") {
             const results = pageLoader.item as SearchPage;
             if (results.query !== c.query) {
                 results.aurState = "";
                 results.aurResults = [];
             }
             results.query = c.query;
-            results.results = root.backend.search(c.query);
+            root.requestSearch(c.query, false);
             return;
         }
-        const scroll = again ? root.currentScroll() : (c.scroll || 0);
+        const scroll = c.scroll || 0;
         pageLoader.page = c.page;
         // The page reads this copy, not `current`: a page being replaced never sees the next page's entry.
         pageLoader.entry = c;
@@ -283,6 +321,8 @@ Window {
             : c.page === "installed" ? installedPage : c.page === "updates" ? updatesPage : c.page === "type" ? typePage : null;
         if (pageLoader.item && scroll > 0)
             (pageLoader.item as ScrollPage).restoreScroll(scroll);
+        if (c.page === "search")
+            root.requestSearch(c.query || "", true);
     }
 
     function openPage(page: string): void {
@@ -672,7 +712,8 @@ Window {
                             if (op.state === "waiting")
                                 items.push({id: op.id, text: op.kind === "remove" ? qsTr("Don't Uninstall “%1”").arg(op.name) : qsTr("Don't Install “%1”").arg(op.name)});
                             else if (op.stoppable)
-                                items.push({id: "stop:" + op.id, text: qsTr("Stop Installing “%1”").arg(op.name)});
+                                items.push({id: "stop:" + op.id, text: op.kind === "update" ? qsTr("Stop Updating “%1”").arg(op.name)
+                                                                                         : qsTr("Stop Installing “%1”").arg(op.name)});
                         }
                         queueMenu.items = items;
                         queueMenu.focusBack = queueButton;
@@ -720,7 +761,7 @@ Window {
         id: categoryPage
         CategoryPage {
             categoryTitle: (root.categories.find(c => c.id === pageLoader.entry.id) || {title: ""}).title
-            apps: root.backend.categoryApps(pageLoader.entry.id)
+            apps: root.dataRevision >= 0 ? root.backend.categoryApps(pageLoader.entry.id) : []
             kind: pageLoader.entry.kind || ""
             onOpened: id => root.openApp(id)
             onKindPicked: kind => root.nav = StoreNav.replace(root.nav, Object.assign({}, root.current, {kind: kind}))
@@ -731,7 +772,8 @@ Window {
         id: productPage
         ProductPage {
             backend: root.backend
-            app: root.backend.app(pageLoader.entry.id)
+            app: root.dataRevision >= 0 ? root.backend.app(pageLoader.entry.id) : ({})
+            onAppStale: root.dataRevision++
             onLinkRequested: url => root.backend.openLink(url)
             onBuildScriptRequested: app => root.showBuildScript(app)
             onUninstallRequested: app => root.requestUninstall(app)
@@ -754,7 +796,7 @@ Window {
         id: searchPage
         SearchPage {
             query: pageLoader.entry.query || ""
-            results: root.backend.search(pageLoader.entry.query || "")
+            searching: true
             aurOn: root.backend.sources.aur === true
             onOpened: id => root.openApp(id)
         }
@@ -763,7 +805,7 @@ Window {
     Component {
         id: installedPage
         InstalledPage {
-            groups: root.backend.installed()
+            groups: root.dataRevision >= 0 ? root.backend.installed() : []
             onOpened: id => root.openApp(id)
         }
     }
@@ -784,7 +826,7 @@ Window {
     Component {
         id: typePage
         TypePage {
-            search: root.backend.typeSearch(pageLoader.entry ? pageLoader.entry.id : "")
+            search: root.dataRevision >= 0 ? root.backend.typeSearch(pageLoader.entry ? pageLoader.entry.id : "") : ({})
             onOpened: id => root.openApp(id)
         }
     }

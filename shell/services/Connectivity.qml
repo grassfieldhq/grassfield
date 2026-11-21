@@ -95,8 +95,16 @@ Singleton {
         return true;
     }
 
-    // Scan results as rows for the Control Center (sorted, deduplicated; see Model.sortNetworks).
+    // The Control Center's Wi-Fi list is on screen (setScanning): the rows below are built only then. A binding is evaluated
+    // whether or not anything reads it, and the rows read every scanned network's signal strength: without this, every
+    // strength change of any network around rebuilt and sorted them all day for no reader (audit fluidity note).
+    property bool listing: false
+    readonly property var noNetworks: []
+
+    // Scan results as rows for the Control Center (sorted, deduplicated; see Model.sortNetworks); [] while no list is shown.
     readonly property var networks: {
+        if (!root.listing)
+            return root.noNetworks;
         if (fixture)
             return [{name: fixtureNet.name, strength: fixtureNet.signalStrength, secured: true, enterprise: false, connected: true, known: true, connecting: false, net: null}];
         const nets = wifiDevice && wifiDevice.networks ? wifiDevice.networks.values : [];
@@ -120,6 +128,7 @@ Singleton {
 
     // scannerEnabled lives on the shared WifiDevice: the Control Center sets it while Wi-Fi is expanded.
     function setScanning(on: bool): void {
+        root.listing = on;
         if (wifiDevice)
             wifiDevice.scannerEnabled = on;
     }
@@ -162,7 +171,13 @@ Singleton {
     // Written 0600 in a 0700 directory (the repo convention for state files).
     function saveAirplane(state: var): void {
         airplaneState = state;
-        airplaneWriter.command = ["sh", Quickshell.shellPath("services/write-private.sh"), stateDir, airplaneFile, Airplane.serialize(state)];
+        const argv = ["sh", Quickshell.shellPath("services/write-private.sh"), stateDir, airplaneFile, Airplane.serialize(state)];
+        // A write still running is left to end (starting it again would do nothing): this one follows it, the last state winning.
+        if (airplaneWriter.running) {
+            airplaneWriter.next = argv;
+            return;
+        }
+        airplaneWriter.command = argv;
         airplaneWriter.running = true;
     }
 
@@ -198,6 +213,15 @@ Singleton {
 
     Process {
         id: airplaneWriter
+        // The write asked while one was running (null: none), started when that one is gone.
+        property var next: null
+        onRunningChanged: {
+            if (!running && next !== null) {
+                command = next;
+                next = null;
+                running = true;
+            }
+        }
     }
     // Why the soft block is not used, "" while it is (or while the probe has not finished).
     readonly property string airplaneNote: Rfkill.probed && !Rfkill.usable ? qsTr("Airplane Mode: %1; using the Wi-Fi and Bluetooth switches").arg(Rfkill.reasonText) : ""

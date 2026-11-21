@@ -497,6 +497,25 @@ Variants {
             ControlCenter {}
         }
 
+        // Quick Settings is made once in the background a few seconds after start, never shown, and let go: its types (the
+        // modules, the controls, the glass) are compiled then, so the first click on the menu bar item only makes the instance
+        // (it was built on the click, compilation included; audit note). On the first output only.
+        Timer {
+            id: prewarmDelay
+            interval: 4000
+            running: Quickshell.screens.length > 0 && win.modelData === Quickshell.screens[0]
+            onTriggered: prewarm.active = true
+        }
+
+        Loader {
+            id: prewarm
+            active: false
+            asynchronous: true
+            visible: false
+            sourceComponent: controlCenter
+            onLoaded: Qt.callLater(() => prewarm.active = false)
+        }
+
         Component {
             id: dockMenu
             DockMenu {}

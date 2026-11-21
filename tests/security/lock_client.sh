@@ -103,7 +103,7 @@ while IFS='#' read -r name find replace; do
     echo "PASS: lock client mutant $name caught (${out#lock-client: })"
   fi
 done <<'EOF'
-stale-never#        interval: LockState.STALE_MS#        interval: 600000
+stale-never#        root.stale = true;\n    }\n\n    // A short wake-up#        root.stale = false;\n    }\n\n    // A short wake-up
 compositor-ignored#LockState.uiLocked(root.known, root.stale, root.state, root.compositorLocked)#LockState.uiLocked(root.known, root.stale, root.state, false)
 garbage-keeps-last#            root.known = false;\n            return;\n        }\n        const fresh#            return;\n        }\n        const fresh
 displaysoff-open#    readonly property bool displaysOff: !root.known || root.stale || (root.last !== null && root.last.displaysOff === true)#    readonly property bool displaysOff: root.known && !root.stale && (root.last !== null && root.last.displaysOff === true)

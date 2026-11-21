@@ -12,7 +12,7 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
 
@@ -81,6 +81,22 @@ namespace {
         return *r;
     }
 
+    // The global an unload with live client objects removed (wl_global_remove: clients are told it is gone, but libwayland
+    // frees a removed global only with the display; CIO-16). Kept here, in the pinned library, and destroyed at the next load
+    // (by then every client has seen the removal), so load/unload cycles do not pile up removed globals, nor leave their bind
+    // callback reachable.
+    wl_global*& removedGlobal() {
+        static auto* g = new wl_global*(nullptr);
+        return *g;
+    }
+
+    void destroyRemovedGlobal() {
+        if (auto*& g = removedGlobal(); g) {
+            wl_global_destroy(g);
+            g = nullptr;
+        }
+    }
+
     uint64_t idOf(const void* p) {
         return reinterpret_cast<uintptr_t>(p);
     }
@@ -112,7 +128,7 @@ namespace {
         if (!surface || !Desktop::windowState())
             return nullptr;
         for (const auto& w : Desktop::windowState()->windows()) {
-            if (w && w->m_isMapped && w->resource() == surface)
+            if (w && gf::compat::mapped(w) && w->resource() == surface)
                 return w;
         }
         return nullptr;
@@ -122,7 +138,7 @@ namespace {
         if (!Desktop::windowState())
             return nullptr;
         for (const auto& w : Desktop::windowState()->windows()) {
-            if (w && w->m_isMapped && idOf(w.get()) == address)
+            if (w && gf::compat::mapped(w) && idOf(w.get()) == address)
                 return w;
         }
         return nullptr;
@@ -141,7 +157,7 @@ namespace {
     // Wayland client is Xwayland, never served) and for a window that is not mapped (a clear).
     int unregisteredPid(uint64_t window) {
         const auto w = mappedWindowByAddress(window);
-        if (!w || w->m_isX11)
+        if (!w || gf::compat::isX11(w))
             return 0;
         const auto surface = w->resource();
         wl_client* client  = surface ? surface->client() : nullptr;
@@ -287,7 +303,7 @@ namespace {
     // ---- windows ---------------------------------------------------------------------------------------
 
     void onWindowMapped(const PHLWINDOW& w) {
-        if (!w || !w->m_isMapped)
+        if (!w || !gf::compat::mapped(w))
             return;
         const auto surface = w->resource();
         if (surface)
@@ -313,7 +329,7 @@ namespace {
     // until the keyboard went elsewhere (a layer surface, nothing), as when a shell popup that held it closes.
     void onKeyboardFocus(const SP<CWLSurfaceResource>& surface) {
         const auto owner  = gf::surfaces::ownerOf(surface);
-        const auto window = owner.window && owner.window->m_isMapped && !owner.popup ? idOf(owner.window.get()) : 0;
+        const auto window = owner.window && gf::compat::mapped(owner.window) && !owner.popup ? idOf(owner.window.get()) : 0;
         auto&      s      = st();
         if (window == s.keyboardWindow)
             return;
@@ -323,7 +339,7 @@ namespace {
     }
 
     void onWindowFocused(const PHLWINDOW& w) {
-        if (w && w->m_isMapped)
+        if (w && gf::compat::mapped(w))
             post(st().registry.query(idOf(w.get())));
     }
 
@@ -361,6 +377,7 @@ namespace gf::appmenuServer {
         l.push_back(ev.window.active.listen([](const PHLWINDOW& w, Desktop::eFocusReason /*reason*/) { gf::guarded("appmenu window.active", [&] { onWindowFocused(w); }); }));
         l.push_back(ev.input.keyboard.focus.listen([](const SP<CWLSurfaceResource>& surface) { gf::guarded("appmenu keyboard.focus", [&] { onKeyboardFocus(surface); }); }));
 
+        destroyRemovedGlobal();
         s.global = wl_global_create(g_pCompositor->m_wlDisplay, &org_kde_kwin_appmenu_manager_interface, kGlobalVersion, nullptr, bindManager);
         if (!s.global) {
             gf::log(Log::ERR, "appmenu: wl_global_create(org_kde_kwin_appmenu_manager) failed");
@@ -402,7 +419,11 @@ namespace gf::appmenuServer {
             s.live.managers.clear();
             s.live.objects.clear();
             if (s.global)
-                wl_global_remove(s.global); // clients are told it is gone; libwayland frees it with the display
+                wl_global_remove(s.global); // clients are told it is gone; destroyed at the next load (destroyRemovedGlobal)
+            if (s.global) {
+                destroyRemovedGlobal(); // one removed earlier and never reloaded since
+                removedGlobal() = s.global;
+            }
             s.global = nullptr;
             gf::log(Log::WARN, "appmenu: unloaded with {} client object(s) alive: they stay inert and this library stays in memory; a rebuilt plugin at the same path loads after Hyprland restarts",
                     clientObjs);

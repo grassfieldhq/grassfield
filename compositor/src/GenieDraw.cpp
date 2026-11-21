@@ -1,5 +1,7 @@
 #include "GenieDraw.hpp"
 
+#include <hyprland/src/output/Monitor.hpp>
+
 #include "Plugin.hpp"
 
 #include <hyprland/src/render/OpenGL.hpp>
@@ -52,6 +54,10 @@ void main() {
 
         // glGetError calls per check: enough to drain the usual one or two flags, never a loop on a lost context.
         constexpr int GL_ERROR_CHECK_LIMIT = 8;
+        // CIO-13: glGetError is a synchronous driver query; a draw checks it on the first draws of a load (a driver that
+        // refuses the funnel does so at once) and then on one draw in kErrorCheckEvery, not on every frame of every genie.
+        constexpr uint64_t kErrorCheckFirst = 32;
+        constexpr uint64_t kErrorCheckEvery = 60;
 
         struct SGl {
             bool   failed      = false; // disable() ran: no more funnel draws until the plugin is loaded again
@@ -222,6 +228,13 @@ void main() {
         return !gl().failed && rendererIsGl();
     }
 
+    bool usableOn(const PHLMONITOR& mon) {
+        // CIO-14: the funnel's shader writes the snapshot's pixels as they are; on an output whose colour path is not plain
+        // sRGB (HDR, wide gamut, an ICC or SDR-brightness transform) Hyprland's own texture shader converts them, so the
+        // window would change colour for the animation and snap back. The Scale effect goes through Hyprland's path there.
+        return available() && mon && !mon->needsCM();
+    }
+
     void disable(std::string_view why) {
         auto& s = gl();
         if (!s.failed)
@@ -269,12 +282,13 @@ void main() {
 
     CGenieElement::CGenieElement(SDrawData&& data) : m_data(std::move(data)) {}
 
-    std::vector<UP<IPassElement>> CGenieElement::draw() {
+    void CGenieElement::drawGf() {
         gf::guarded("genie draw", [this] {
             const auto t0 = std::chrono::steady_clock::now();
             auto&      s  = gl();
             ++s.drawn;
-            const auto& d = m_data;
+            auto&      d       = m_data;
+            const bool checked = s.drawn <= kErrorCheckFirst || s.drawn % kErrorCheckEvery == 0;
             if (!rendererIsGl() || s.failed || !d.tex || d.tex->m_texID == 0 || d.alpha <= 0.F || d.pixelBounds.w < 1 || d.pixelBounds.h < 1)
                 return;
             const size_t vertexCount = static_cast<size_t>(gf::minimize::meshVertexCount(d.across, d.along));
@@ -283,13 +297,15 @@ void main() {
 
             // Damage of this frame (pixels of the monitor, before its transform) inside the mesh's box: nothing is drawn
             // outside it (those pixels are not repainted this frame; anything drawn there would stay on screen).
-            CRegion damage = g_pHyprRenderer->m_renderData.damage.copy();
+            auto&   ctx    = gf::compat::currentContext();
+            CRegion damage = gf::compat::renderData(ctx).damage.copy();
             damage.intersect(CBox{d.pixelBounds}.expand(1.0));
             if (damage.empty())
                 return;
 
             // Error flags left by earlier GL work (not ours) are cleared first, so that the check after the draw sees ours.
-            (void)firstGlError();
+            if (checked)
+                (void)firstGlError();
             const CSavedBindings saved;
             if (!ensureObjects())
                 return;
@@ -297,18 +313,22 @@ void main() {
             if (!ensureIndices(d.across, d.along))
                 return;
 
-            // Positions as fractions of the pixel box, for Hyprland's box projection.
-            std::vector<float> verts(d.vertices);
-            const auto         bx = static_cast<float>(d.pixelBounds.x), by = static_cast<float>(d.pixelBounds.y);
-            const auto         bw = static_cast<float>(d.pixelBounds.w), bh = static_cast<float>(d.pixelBounds.h);
-            for (size_t i = 0; i < verts.size(); i += FLOATS_PER_VERTEX) {
-                verts[i]     = (verts[i] - bx) / bw;
-                verts[i + 1] = (verts[i + 1] - by) / bh;
+            // Positions as fractions of the pixel box, for Hyprland's box projection: made once, in place (the element is this
+            // frame's; no copy of the mesh per draw, CIO-13).
+            auto& verts = d.vertices;
+            if (!m_normalized) {
+                const auto bx = static_cast<float>(d.pixelBounds.x), by = static_cast<float>(d.pixelBounds.y);
+                const auto bw = static_cast<float>(d.pixelBounds.w), bh = static_cast<float>(d.pixelBounds.h);
+                for (size_t i = 0; i < verts.size(); i += FLOATS_PER_VERTEX) {
+                    verts[i]     = (verts[i] - bx) / bw;
+                    verts[i + 1] = (verts[i + 1] - by) / bh;
+                }
+                m_normalized = true;
             }
             glBindBuffer(GL_ARRAY_BUFFER, s.vbo);
             glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(float)), verts.data(), GL_STREAM_DRAW);
 
-            const auto proj = g_pHyprRenderer->projectBoxToTarget(d.pixelBounds, HYPRUTILS_TRANSFORM_NORMAL).getMatrix();
+            const auto proj = gf::compat::projectBoxToTarget(ctx, d.pixelBounds, HYPRUTILS_TRANSFORM_NORMAL).getMatrix();
             glUseProgram(s.program);
             glUniformMatrix3fv(s.locProj, 1, GL_TRUE, proj.data());
             glUniform1i(s.locTex, 0);
@@ -322,30 +342,21 @@ void main() {
             d.tex->setTexParameter(GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
             Render::GL::g_pHyprOpenGL->blend(true);
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); // premultiplied, Hyprland's blend function
-            damage.forEachRect([&s](const pixman_box32_t& rect) {
-                Render::GL::g_pHyprOpenGL->scissor(&rect);
+            gf::compat::blendPremultiplied(); // premultiplied, Hyprland's blend function
+            damage.forEachRect([&s, &ctx](const pixman_box32_t& rect) {
+                gf::compat::scissor(ctx, &rect);
                 glDrawElements(GL_TRIANGLES, s.indexCount, GL_UNSIGNED_SHORT, nullptr);
             });
             g_pHyprRenderer->disableScissor();
             d.tex->unbind();
             // Any GL error raised by this draw disables the funnel for the plugin's life (one line); running funnel
             // animations continue as shrink ones (Minimize.cpp checkFunnelUsable).
-            if (const GLenum err = firstGlError(); err != GL_NO_ERROR)
+            if (const GLenum err = checked ? firstGlError() : GL_NO_ERROR; err != GL_NO_ERROR)
                 disable(std::format("GL error 0x{:x} after a funnel draw", err));
 
             const double micros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
             s.maxDrawMicro      = std::max(s.maxDrawMicro, micros);
         });
-        return {};
-    }
-
-    bool CGenieElement::needsLiveBlur() {
-        return false;
-    }
-
-    bool CGenieElement::needsPrecomputeBlur() {
-        return false;
     }
 
     const char* CGenieElement::passName() {
@@ -356,12 +367,8 @@ void main() {
         return EK_CUSTOM;
     }
 
-    std::optional<CBox> CGenieElement::boundingBox() {
+    std::optional<CBox> CGenieElement::boundingBoxGf() {
         return m_data.logicalBounds;
-    }
-
-    CRegion CGenieElement::opaqueRegion() {
-        return {};
     }
 
 } // namespace gf::genie

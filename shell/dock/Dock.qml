@@ -9,6 +9,7 @@ import Quickshell.Wayland
 import Grassfield.Ui
 import qs.notifications
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "DockModel.js" as DockModel
 import "Launch.js" as Launch
@@ -60,7 +61,8 @@ Scope {
     function setItems(next: var): void {
         const ops = DockModel.diffKeys(tileKeys, next.map(DockModel.tileKey));
         applyOps(ops.filter(o => o.op === "remove"));
-        const map = {};
+        // No prototype: a tile key is an app id, a client's string ("constructor").
+        const map = Object.create(null);
         next.forEach(it => {
             map[DockModel.tileKey(it)] = it;
         });
@@ -134,11 +136,12 @@ Scope {
             const all = windows.instances;
             let bar = null;
             for (let i = 0; i < all.length; i++) {
-                if (all[i].screen.name === root.keyboardScreen)
+                if (all[i].screenName === root.keyboardScreen)
                     bar = all[i];
             }
-            if (bar)
-                bar.focusFirstTile();
+            // No Dock there any more, or no tile to take the focus: the mode ends at once rather than hold the keyboard (audit A-15).
+            if (!bar || !bar.focusFirstTile())
+                root.keyboardMode = false;
         });
     }
 
@@ -253,7 +256,8 @@ Scope {
     property bool rebuildPending: false
 
     function dragInProgress(): bool {
-        return windows.instances.some(w => w.dragFrom >= 0);
+        // A window being destroyed (its output went) still lists itself here: its drag is over.
+        return windows.instances.some(w => w.dragFrom >= 0 && w.screenName !== "" && Quickshell.screens.some(s => s.name === w.screenName));
     }
 
     function rebuild(): void {
@@ -627,6 +631,10 @@ Scope {
 
         function onScreensChanged(): void {
             root.interruptDrag();
+            // The output whose Dock had the keyboard is gone: the mode ends with it (else it would hold the auto-hide of the
+            // Dock's next output).
+            if (root.keyboardMode && !Quickshell.screens.some(s => s.name === root.keyboardScreen))
+                root.keyboardMode = false;
         }
     }
 
@@ -700,6 +708,8 @@ Scope {
     // is no test hook: apps call it.
     IpcHandler {
         target: "dock"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         // A running app launched again asks for its windows (macOS: launching a running app brings it forward, a minimized
         // window back): what a click on its tile does (bringForward). Called by the app itself, `qs ipc -p <shell> call dock
@@ -1065,7 +1075,8 @@ Scope {
                 releasedOutside = false;
                 dragInterrupted = false;
                 // mapToItem already includes the tile's drag translation (its Translate transform): adding dragDx/dragDy put the puff off the window.
-                const centre = tileItem.mapToItem(area, tileItem.iconPos.x + tileItem.iconPx / 2, tileItem.iconPos.y + tileItem.iconPx / 2);
+                const at = tileItem.iconPos();
+                const centre = tileItem.mapToItem(area, at.x + tileItem.iconPx / 2, at.y + tileItem.iconPx / 2);
                 const cx = centre.x;
                 const cy = centre.y;
                 const dx = dragDx;
@@ -1101,7 +1112,7 @@ Scope {
                     tileItem.glideFrom(dx, dy);
                     return;
                 }
-                const r = DockModel.reorder(all, fromApp, slot);
+                const r = DockModel.reorder(all, fromApp, slot, Settings.dockPinned, Apps.lookup);
                 if (r.changed) {
                     holdLayout = true;
                     holdTimer.restart();
@@ -1301,7 +1312,29 @@ Scope {
                     win.refreshIconDark();
                 }
             }
-            readonly property real shelfWidth: Magnify.totalWidth(widths.map((w, i) => w * scaleList[i]), Tokens.dockSpacing) + 2 * Tokens.dockPadding - dragCollapse * pitch + gapGrow * pitch
+            // Magnification by transforms (audit, Dock fluidity): the tiles keep their unmagnified layout; each one moves along the Dock by
+            // magShifts[i] and the shelf grows by the total growth. A magnified frame changes transforms and the shelf's length only.
+            readonly property var magShifts: Magnify.shifts(widths, scaleList)
+            readonly property real shelfWidth: baseTotal + Magnify.growth(widths, scaleList) + 2 * Tokens.dockPadding - dragCollapse * pitch + gapGrow * pitch
+            // The displayed scales are still moving toward their targets (the magnification's frame clock runs).
+            readonly property bool magnifyMoving: !Magnify.settled(smoothScales, targetScales, 0.0005)
+            // The shelf's length is changing (magnification, a dragged tile closing its gap, a folder opening one).
+            readonly property bool shelfMoving: magnifyMoving || collapseAnim.running || gapAnim.running
+            // The widest the shelf gets under the pointer (Geometry.widestShelf, the bound shrink to fit uses). While the pointer is on
+            // the Dock, a tile is dragged or the scales settle, the input region is that whole length at once (one region for the
+            // hover, not one per frame); at rest it is the shelf.
+            readonly property real widestLength: Geometry.widestShelf(iconSize, separatorFlags, {
+                    separatorWidth: separatorWidth,
+                    spacing: Tokens.dockSpacing,
+                    padding: Tokens.dockPadding,
+                    maxScale: maxScale,
+                    radius: Tokens.dockMagnificationRadius
+                }) + gapGrow * pitch
+            readonly property bool hitWide: pointerActive || dragFrom >= 0 || resizing || magnifyMoving
+            readonly property real hitLength: hitWide ? Math.max(widestLength, restWidth + gapGrow * pitch) : shelfWidth
+            // The blur region follows the shelf by whole steps while its length moves, and exactly at rest (one region update per
+            // step, not one per frame).
+            readonly property real blurLength: shelfMoving ? Geometry.quantiseUp(shelfWidth, Geometry.regionStep(pitch)) : shelfWidth
 
             // Autohide state machine (AutoHide.js, table in docs/specs/dock.md): inhibitors keep the shelf shown.
             property int pressedTile: -1
@@ -1331,14 +1364,29 @@ Scope {
             // Tooltips: after one was shown, the next icon labels at once for a while.
             property bool tipsWarm: false
 
-            function focusFirstTile(): void {
+            // True when a tile took the focus.
+            function focusFirstTile(): bool {
                 for (let i = 0; i < tileRepeater.count; i++) {
                     const t = tileRepeater.itemAt(i) as Item;
                     if (t && t.activeFocusOnTab) {
                         t.forceActiveFocus();
-                        return;
+                        return true;
                     }
                 }
+                return false;
+            }
+
+            // After a tile went (its app quit, a recent left): when it was the focused one nothing is left to take Esc, so
+            // keyboard mode ends rather than keep the exclusive keyboard.
+            function checkKeyboardFocus(): void {
+                if (!root.keyboardMode || win.screenName !== root.keyboardScreen)
+                    return;
+                for (let i = 0; i < tileRepeater.count; i++) {
+                    const t = tileRepeater.itemAt(i) as Item;
+                    if (t && t.focus)
+                        return;
+                }
+                root.keyboardMode = false;
             }
 
             // Test hook (IPC dock holdmenu): the pressed tile `index` counts as having opened the hold menu.
@@ -1375,7 +1423,8 @@ Scope {
                     return "";
                 // The separator is narrower than an icon: its middle along the Dock, the icons' middle across it.
                 const along = t.isSeparator;
-                const p = t.mapToItem(null, along && !win.vertical ? t.width / 2 : t.iconPos.x + t.iconPx / 2, along && win.vertical ? t.height / 2 : t.iconPos.y + t.iconPx / 2);
+                const at = t.iconPos();
+                const p = t.mapToItem(null, along && !win.vertical ? t.width / 2 : at.x + t.iconPx / 2, along && win.vertical ? t.height / 2 : at.y + t.iconPx / 2);
                 return Math.round(origin.x + p.x) + " " + Math.round(origin.y + p.y);
             }
 
@@ -1384,7 +1433,8 @@ Scope {
                 const t = tileRepeater.itemAt(index);
                 if (!t || t.isSeparator)
                     return "";
-                const p = t.mapToItem(null, t.iconPos.x, t.iconPos.y);
+                const at = t.iconPos();
+                const p = t.mapToItem(null, at.x, at.y);
                 return Math.round(origin.x + p.x) + " " + Math.round(origin.y + p.y) + " " + Math.round(t.iconPx) + " " + Math.round(t.iconPx);
             }
 
@@ -1507,7 +1557,7 @@ Scope {
 
             Region {
                 id: blurRegion
-                item: shelf
+                item: blurItem
                 radius: shelf.radius
             }
 
@@ -1575,6 +1625,14 @@ Scope {
                 hideMachine = AutoHide.initial(autohide);
             }
             Component.onDestruction: {
+                // A separator resize that ends with this window (its output went): the live size is shared by every Dock
+                // window and would hide the stored size until the next resize.
+                if (win.resizing)
+                    root.liveSize = -1;
+                // A tile dragged in this window held the rebuilds back (rebuildPending): its release will never come, so the rebuild
+                // runs once this window is gone (audit A-22), else the Dock kept its old tiles until the next change.
+                if (win.dragFrom >= 0 && root.rebuildPending)
+                    Qt.callLater(root.rebuild);
                 Compositor.unregisterDock(screenName, win);
                 if (win.reveal && win.isDockScreen)
                     Journal.hidden("dock", screenName);
@@ -1591,7 +1649,7 @@ Scope {
 
             // Frame clock of the magnification: runs only until the displayed scales reach their targets.
             FrameAnimation {
-                running: !Magnify.settled(win.smoothScales, win.targetScales, 0.0005)
+                running: win.magnifyMoving
                 onTriggered: {
                     let next = Magnify.step(win.smoothScales, win.targetScales, frameTime * 1000, Appearance.reduceMotion ? 0 : Tokens.dockMagnificationTau, Tokens.dockMagnificationMaxDt);
                     if (Magnify.settled(next, win.targetScales, 0.0005))
@@ -1620,9 +1678,13 @@ Scope {
                 onTriggered: win.tipsWarm = false
             }
 
-            Item {
+            // A focus scope (audit A-15): when the focused tile goes (its app quit, a recent left) the scope keeps the keyboard focus,
+            // so Esc still ends keyboard mode and gives the exclusive keyboard back, whichever tile had it.
+            FocusScope {
                 id: area
                 anchors.fill: parent
+                focus: true
+                Keys.onEscapePressed: root.keyboardMode = false
                 // Nothing is drawn before the reveal; at it the Dock appears whole, in the entrance's one fade (session.revealMs,
                 // ADR-0040 ID-20; Reduce Motion caps it), with the menu bar and the desktop icons.
                 opacity: win.reveal ? 1 : 0
@@ -1651,8 +1713,8 @@ Scope {
                         revealed: win.revealed,
                         dragging: win.dragFrom >= 0 || win.resizing,
                         pointerActive: win.pointerActive,
-                        shelfMain0: Geometry.mainOf(win.edge, shelf.x, shelf.y),
-                        shelfLength: win.shelfWidth,
+                        shelfMain0: (win.mainTotal - win.hitLength) / 2,
+                        shelfLength: win.hitLength,
                         thickness: win.shelfHeight,
                         margin: Tokens.dockBottomMargin,
                         overhang: win.overhang,
@@ -1688,6 +1750,17 @@ Scope {
                             color: Appearance.withAlpha(Appearance.colors.materialHighlight, Tokens.dockPoofOpacity * (1 - win.poofProgress))
                         }
                     }
+                }
+
+                // Where the blur goes: the shelf, its length by whole steps while it moves (win.blurLength).
+                Item {
+                    id: blurItem
+                    readonly property var r: Geometry.shelfRect(win.edge, win.width, win.height, win.blurLength, win.shelfHeight, Tokens.dockBottomMargin, shelf.hidden * (win.shelfHeight + Tokens.dockBottomMargin + shelf.shadowMargin))
+                    visible: false
+                    x: r.x
+                    y: r.y
+                    width: r.w
+                    height: r.h
                 }
 
                 Material {
@@ -1777,6 +1850,7 @@ Scope {
                         Repeater {
                             id: tileRepeater
                             model: tileModel
+                            onItemRemoved: Qt.callLater(() => win.checkKeyboardFocus())
 
                             delegate: Item {
                                 id: tile
@@ -1798,8 +1872,15 @@ Scope {
                                 // An app's name in the shell's language (Apps.displayName), whatever DockModel copied.
                                 readonly property string label: isTrash ? qsTr("Trash") : isAppsTile ? qsTr("Apps") : isApp && modelData.entry ? DisplayName.text(Apps.displayName(modelData.entry)) : (isApp || isMinimized || isFolder ? DisplayName.text(modelData.name) : "")
                                 readonly property real iconPx: win.iconSize * tileScale
-                                // The icon's place in the tile (it grows away from the screen edge) and the way out (bounce, hover rise).
-                                readonly property var iconPos: Geometry.iconOrigin(win.edge, win.iconSize, iconPx, win.indicatorArea)
+                                // Magnification by transforms (audit, Dock fluidity): the tile keeps its unmagnified box in the Grid, so a magnified frame
+                                // lays nothing out; it moves along the Dock by magShift (the growth of the tiles before it and half its own) and its icon is
+                                // drawn scaled (iconBox), centred on the tile along the Dock and growing away from the screen edge.
+                                readonly property real magShift: win.magShifts[index] !== undefined ? win.magShifts[index] : 0
+                                // The grown icon's top-left in the tile (a function: only the drag's release and the test hooks read it).
+                                function iconPos(): point {
+                                    const o = Geometry.grownIconOrigin(win.edge, win.iconSize, iconPx, win.indicatorArea);
+                                    return Qt.point(o.x, o.y);
+                                }
                                 readonly property bool dragging: win.dragFrom === index
                                 readonly property Item pressBox: hit
                                 // The button is held on an app tile: the icon darkens slightly (macOS).
@@ -1820,7 +1901,7 @@ Scope {
                                 property bool ownsPress: true
                                 // root.dragInterruptions when the button went down (a drag of this press is refused when it changed).
                                 property int dragMark: 0
-                                readonly property bool bouncing: isApp && !running && root.launching[modelData.key] !== undefined && !Appearance.reduceMotion && Settings.dockAnimateOpening
+                                readonly property bool bouncing: isApp && !running && typeof root.launching[modelData.key] === "number" && !Appearance.reduceMotion && Settings.dockAnimateOpening
                                 // An app asking for attention: its icon hops again and again until the app is activated. With Reduce Motion
                                 // it does not move: a static accent plate shows it instead.
                                 readonly property bool attentive: isApp && running && root.attentionKeys.indexOf(modelData.key) >= 0
@@ -1908,15 +1989,15 @@ Scope {
                                     easing.bezierCurve: Appearance.curveEnter
                                 }
 
-                                width: win.vertical ? win.tileCross : (isSeparator ? win.separatorWidth : iconPx)
-                                height: win.vertical ? (isSeparator ? win.separatorWidth : iconPx) : win.tileCross
+                                width: win.vertical ? win.tileCross : (isSeparator ? win.separatorWidth : win.iconSize)
+                                height: win.vertical ? (isSeparator ? win.separatorWidth : win.iconSize) : win.tileCross
                                 z: dragging ? 100 : 0
                                 // The shelf closes a gap around its centre: the dragged tile compensates to stay under the pointer. A hovered
                                 // icon rises away from the screen edge by hoverLift.
                                 readonly property real collapseShift: -win.dragCollapse * win.pitch / 2
                                 transform: Translate {
-                                    x: tile.dragging ? win.dragDx + (win.vertical ? 0 : tile.collapseShift) : tile.glide + (win.vertical ? 0 : tile.shiftAnim) + win.outDir.x * tile.hoverLift
-                                    y: tile.dragging ? win.dragDy + (win.vertical ? tile.collapseShift : 0) : tile.glideY + (win.vertical ? tile.shiftAnim : 0) + win.outDir.y * tile.hoverLift
+                                    x: (win.vertical ? 0 : tile.magShift) + (tile.dragging ? win.dragDx + (win.vertical ? 0 : tile.collapseShift) : tile.glide + (win.vertical ? 0 : tile.shiftAnim) + win.outDir.x * tile.hoverLift)
+                                    y: (win.vertical ? tile.magShift : 0) + (tile.dragging ? win.dragDy + (win.vertical ? tile.collapseShift : 0) : tile.glideY + (win.vertical ? tile.shiftAnim : 0) + win.outDir.y * tile.hoverLift)
                                 }
                                 activeFocusOnTab: !isSeparator
                                 Accessible.role: isSeparator ? Accessible.Separator : Accessible.Button
@@ -1935,415 +2016,480 @@ Scope {
                                 Keys.onMenuPressed: win.openMenu(index)
 
                                 // What a pointer can press, hover, drag, drop on and open the menu from: the drawn icon, not only the tile's own box. The icon
-                                // grows outside the tile (the tile keeps iconSize + indicator across so the Grid does not move) and a handler is
+                                // grows outside the tile (the tile keeps its unmagnified box so the Grid does not move) and a handler is
                                 // scoped to its parent: left on the tile, the part of a magnified icon beyond it was dead (owner report
                                 // 2026-10-25, "I click an open app in the Dock and nothing happens"). Along the Dock the box is the tile's own
                                 // extent, so neighbours share no point at rest; the tile drawn on top (win.tileOwningPress) owns one they share.
                                 Item {
                                     id: hit
-                                    readonly property var box: Geometry.hitBox(win.edge, win.iconSize, tile.iconPx, win.indicatorArea, tile.width, tile.height)
+                                    readonly property var box: Geometry.grownHitBox(win.edge, win.iconSize, tile.iconPx, win.indicatorArea, tile.width, tile.height)
                                     visible: !tile.isSeparator
                                     x: box.x
                                     y: box.y
                                     width: box.w
                                     height: box.h
-                                }
 
-                                // Separator hairline.
-                                Rectangle {
-                                    visible: tile.isSeparator
-                                    // Across a bottom Dock the hairline is vertical, along a side Dock horizontal; centred on the icons.
-                                    width: win.vertical ? win.dockMetrics.separatorHeight : Tokens.dockSeparatorWidth
-                                    height: win.vertical ? Tokens.dockSeparatorWidth : win.dockMetrics.separatorHeight
-                                    x: win.vertical ? (win.edge === "left" ? win.indicatorArea : 0) + (win.iconSize - width) / 2 : (tile.width - width) / 2
-                                    y: win.vertical ? (tile.height - height) / 2 : (win.iconSize - height) / 2
-                                    color: Appearance.withAlpha(Appearance.colors.separator, Tokens.dockSeparatorOpacity)
-                                }
-
-                                // Resize (macOS): the separator is a handle. The pointer shows the resize cursor over it (across the Dock, along
-                                // the direction it moves) and dragging away from the screen edge makes the Dock larger, live; the setting is
-                                // written on release. The shelf grows by the change of the tile, so its middle (the separator) follows the
-                                // pointer when the size changes by twice the pointer's distance.
-                                HoverHandler {
-                                    enabled: tile.isSeparator
-                                    cursorShape: win.vertical ? Qt.SizeHorCursor : Qt.SizeVerCursor
-                                }
-
-                                DragHandler {
-                                    id: resizeDrag
-                                    enabled: tile.isSeparator
-                                    target: null
-                                    cursorShape: win.vertical ? Qt.SizeHorCursor : Qt.SizeVerCursor
-                                    property real startSize: 0
-                                    onActiveChanged: {
-                                        if (VisualFixtures.active)
-                                            console.info("dock-resize: active", active, win.iconSize, Date.now());
-                                        if (active) {
-                                            startSize = win.iconSize;
-                                            win.resizing = true;
-                                            root.liveSize = win.iconSize;
-                                        } else if (win.resizing) {
-                                            win.resizing = false;
-                                            if (root.liveSize >= 0)
-                                                Settings.setDockSize(root.liveSize);
-                                            root.liveSize = -1;
-                                        }
-                                    }
-                                    onTranslationChanged: {
-                                        if (active)
-                                            root.liveSize = Geometry.resizeSize(startSize, win.edge, translation.x, translation.y, Tokens.dockSizeMin, Tokens.dockSizeMax);
-                                    }
-                                }
-
-                                // Attention with Reduce Motion: a static accent plate behind the icon (no hop).
-                                Rectangle {
-                                    visible: tile.attentive && Appearance.reduceMotion
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    radius: win.dockMetrics.iconRadius * tile.tileScale
-                                    color: Appearance.withAlpha(Appearance.colors.accent, Tokens.dockAttentionHighlightOpacity)
-                                }
-
-                                // Application icon, growing upward from the shelf.
-                                TintedIcon {
-                                    id: appIcon
-                                    darkAppearance: win.iconDark
-                                    surfaceLuma: win.heldSurface
-                                    visible: tile.isApp
-                                    size: win.iconSize
-                                    // Default mode is decoded as before; an effect mode decodes at the largest magnification so the
-                                    // fixed-size texture is never upscaled.
-                                    oversample: appIcon.modeActive ? Tokens.dockIconOversample : appIcon.defaultOversample
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    source: tile.isApp ? ThemeIcons.appIcon(tile.modelData.icon, "application-x-executable") : ""
-                                    asynchronous: true
-
-                                    // Held button: darker by Tokens.dockPressDim (an offscreen layer only while pressed).
-                                    layer.enabled: tile.pressedDown
-                                    layer.effect: MultiEffect {
-                                        brightness: -Tokens.dockPressDim
-                                    }
-
-                                    // Launch bounce: hops until the app has a window (or the launch timeout).
-                                    property real lift: 0
-                                    onLiftChanged: {
-                                        if (VisualFixtures.active && root.launchClickedAt > 0 && tile.bouncing)
-                                            console.info("dock-launch: lift", Date.now() - root.launchClickedAt, Math.round(lift * 10) / 10);
-                                        if (VisualFixtures.active && root.attentionAt > 0 && tile.attentionHops)
-                                            console.info("dock-attention: lift", Date.now() - root.attentionAt, Math.round(lift * 10) / 10);
-                                    }
-                                    transform: Translate {
-                                        x: win.outDir.x * appIcon.lift
-                                        y: win.outDir.y * appIcon.lift
-                                    }
-
-                                    // Attention: the launch hop repeated, one every Tokens.dockAttentionPeriod, until the app is activated.
-                                    SequentialAnimation {
-                                        running: tile.attentionHops
-                                        loops: Animation.Infinite
-                                        onRunningChanged: {
-                                            if (running)
-                                                landAnim.stop();
-                                            else if (appIcon.lift > 0)
-                                                landAnim.restart();
-                                        }
-
-                                        NumberAnimation {
-                                            target: appIcon
-                                            property: "lift"
-                                            to: tile.iconPx * Tokens.dockAttentionHeightScale
-                                            duration: Tokens.dockBounceDuration / 2
-                                            easing.type: Easing.OutQuad
-                                        }
-                                        NumberAnimation {
-                                            target: appIcon
-                                            property: "lift"
-                                            to: 0
-                                            duration: Tokens.dockBounceDuration / 2
-                                            easing.type: Easing.InQuad
-                                        }
-                                        PauseAnimation {
-                                            duration: Math.max(0, Tokens.dockAttentionPeriod - Tokens.dockBounceDuration)
-                                        }
-                                    }
-
-                                    SequentialAnimation {
-                                        running: tile.bouncing
-                                        loops: Animation.Infinite
-                                        // The hop ends by landing (a few small rebounds), not by snapping back.
-                                        onRunningChanged: {
-                                            if (running)
-                                                landAnim.stop();
-                                            else if (appIcon.lift > 0)
-                                                landAnim.restart();
-                                        }
-
-                                        NumberAnimation {
-                                            target: appIcon
-                                            property: "lift"
-                                            to: tile.iconPx * Tokens.dockBounceHeightScale
-                                            duration: Tokens.dockBounceDuration / 2
-                                            easing.type: Easing.OutQuad
-                                        }
-                                        NumberAnimation {
-                                            target: appIcon
-                                            property: "lift"
-                                            to: 0
-                                            duration: Tokens.dockBounceDuration / 2
-                                            easing.type: Easing.InQuad
-                                        }
-                                    }
-
-                                    NumberAnimation {
-                                        id: landAnim
-                                        target: appIcon
-                                        property: "lift"
-                                        to: 0
-                                        duration: Appearance.duration(Tokens.motionNormal)
-                                        easing.type: Easing.OutBounce
-                                    }
-                                }
-
-                                // Progress an application set on its tile (LauncherEntry): a thin bar near the bottom of the icon, like
-                                // macOS' progress on a Dock tile. It hops with the icon, the way the icon hops (away from the screen
-                                // edge: sideways on a side Dock; it rose on every edge, UI audit 2026-11-05 LOW).
-                                Rectangle {
-                                    id: progressTrack
-                                    objectName: "dockProgress"
-                                    visible: tile.progress >= 0
-                                    transform: Translate {
-                                        x: win.outDir.x * appIcon.lift
-                                        y: win.outDir.y * appIcon.lift
-                                    }
-                                    height: Tokens.dockProgressHeight
-                                    radius: height / 2
-                                    anchors.left: appIcon.left
-                                    anchors.right: appIcon.right
-                                    anchors.bottom: appIcon.bottom
-                                    anchors.leftMargin: Tokens.dockProgressInset
-                                    anchors.rightMargin: Tokens.dockProgressInset
-                                    anchors.bottomMargin: Tokens.dockProgressBottomOffset
-                                    color: Appearance.withAlpha(Appearance.colors.fill, Tokens.dockProgressTrackOpacity)
-
-                                    Rectangle {
-                                        width: Math.max(0, tile.progress) * parent.width
-                                        height: parent.height
-                                        radius: parent.radius
-                                        color: Appearance.colors.accent
-                                    }
-                                }
-
-                                // Notification badge (counts from the notification history). Not a child of the icon: the press-dim layer
-                                // would clip the part that overhangs the icon. It hops with the icon, and grows with it under
-                                // magnification (macOS; it kept its size on a magnified icon, UI audit 2026-11-05 LOW).
-                                Rectangle {
-                                    visible: tile.badge > 0
-                                    transform: Translate {
-                                        x: win.outDir.x * appIcon.lift
-                                        y: win.outDir.y * appIcon.lift
-                                    }
-                                    height: win.dockMetrics.badgeSize * tile.tileScale
-                                    width: Math.max(height, badgeLabel.implicitWidth + Tokens.spacingSm * tile.tileScale)
-                                    radius: height / 2
-                                    color: Appearance.colors.destructive
-                                    anchors.right: appIcon.right
-                                    anchors.top: appIcon.top
-                                    anchors.rightMargin: -Tokens.dockBadgeOverhang * tile.tileScale
-                                    anchors.topMargin: -Tokens.dockBadgeOverhang * tile.tileScale
-
-                                    Text {
-                                        id: badgeLabel
-                                        textFormat: Text.PlainText
-                                        anchors.centerIn: parent
-                                        text: DockModel.badgeText(tile.badge)
-                                        color: Appearance.colors.destructiveText
-                                        font.family: Appearance.fontFamily
-                                        font.pixelSize: Tokens.typographyCaptionSize * win.dockMetrics.badgeScale * tile.tileScale
-                                        font.weight: Tokens.typographyMenuBoldWeight
-                                    }
-                                }
-
-                                // Minimized window: live thumbnail with the app icon badge in the
-                                // `full` material profile, the app icon alone otherwise.
-                                Item {
-                                    id: minimizedTile
-                                    visible: tile.isMinimized
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-
-                                    readonly property bool live: Settings.materialProfile === "full"
-                                    readonly property string iconSource: tile.isMinimized ? ThemeIcons.appIcon(tile.modelData.icon, "application-x-executable") : ""
-
-                                    Rectangle {
-                                        visible: minimizedTile.live
+                                    // Files dropped on the tile: the Trash moves them to the trash, an app opens them (one drop area, for the kinds that take one).
+                                    Loader {
+                                        id: dropLoader
                                         anchors.fill: parent
-                                        radius: win.dockMetrics.iconRadius * tile.tileScale
-                                        color: Appearance.withAlpha(Appearance.colors.fill, Tokens.materialFillOpacity)
-                                        clip: true
+                                        active: tile.isTrash || (tile.isApp && !!tile.modelData.entry)
+                                        sourceComponent: tile.isTrash ? trashDropComponent : appDropComponent
+                                    }
+                                }
+                                // The drop area of the tile (null for the kinds that take none); its `highlight` lights the icon.
+                                readonly property var drop: dropLoader.item
 
-                                        ScreencopyView {
-                                            id: thumb
-                                            // Fit inside the tile keeping the aspect ratio.
-                                            readonly property real ratio: implicitWidth > 0 && implicitHeight > 0 ? implicitWidth / implicitHeight : 1
-                                            width: ratio >= 1 ? parent.width : parent.height * ratio
-                                            height: ratio >= 1 ? parent.width / ratio : parent.height
-                                            anchors.centerIn: parent
-                                            captureSource: minimizedTile.live && tile.isMinimized ? tile.modelData.toplevel : null
-                                            live: true
-                                            paintCursor: false
+                                // The separator: a hairline, and the handle that resizes the Dock.
+                                Loader {
+                                    anchors.fill: parent
+                                    active: tile.isSeparator
+                                    sourceComponent: separatorComponent
+                                }
+
+                                Component {
+                                    id: separatorComponent
+
+                                    Item {
+                                        // Separator hairline.
+                                        Rectangle {
+                                            // Across a bottom Dock the hairline is vertical, along a side Dock horizontal; centred on the icons.
+                                            width: win.vertical ? win.dockMetrics.separatorHeight : Tokens.dockSeparatorWidth
+                                            height: win.vertical ? Tokens.dockSeparatorWidth : win.dockMetrics.separatorHeight
+                                            x: win.vertical ? (win.edge === "left" ? win.indicatorArea : 0) + (win.iconSize - width) / 2 : (parent.width - width) / 2
+                                            y: win.vertical ? (parent.height - height) / 2 : (win.iconSize - height) / 2
+                                            color: Appearance.withAlpha(Appearance.colors.separator, Tokens.dockSeparatorOpacity)
+                                        }
+
+                                        // Resize (macOS): the separator is a handle. The pointer shows the resize cursor over it (across the Dock, along
+                                        // the direction it moves) and dragging away from the screen edge makes the Dock larger, live; the setting is
+                                        // written on release. The shelf grows by the change of the tile, so its middle (the separator) follows the
+                                        // pointer when the size changes by twice the pointer's distance.
+                                        HoverHandler {
+                                            cursorShape: win.vertical ? Qt.SizeHorCursor : Qt.SizeVerCursor
+                                        }
+
+                                        DragHandler {
+                                            id: resizeDrag
+                                            target: null
+                                            cursorShape: win.vertical ? Qt.SizeHorCursor : Qt.SizeVerCursor
+                                            property real startSize: 0
+                                            onActiveChanged: {
+                                                if (VisualFixtures.active)
+                                                    console.info("dock-resize: active", active, win.iconSize, Date.now());
+                                                if (active) {
+                                                    startSize = win.iconSize;
+                                                    win.resizing = true;
+                                                    root.liveSize = win.iconSize;
+                                                } else if (win.resizing) {
+                                                    win.resizing = false;
+                                                    if (root.liveSize >= 0)
+                                                        Settings.setDockSize(root.liveSize);
+                                                    root.liveSize = -1;
+                                                }
+                                            }
+                                            onTranslationChanged: {
+                                                if (active)
+                                                    root.liveSize = Geometry.resizeSize(startSize, win.edge, translation.x, translation.y, Tokens.dockSizeMin, Tokens.dockSizeMax);
+                                            }
                                         }
                                     }
+                                }
 
-                                    TintedIcon {
-                                        id: minimizedIcon
-                                    darkAppearance: win.iconDark
-                                    surfaceLuma: win.heldSurface
-                                        // The drawn nominal size (the badge is a fraction of the tile when the thumbnail shows), so that
-                                        // the minimum size of the icon modes applies to what is on screen.
-                                        size: minimizedTile.live ? Math.round(win.iconSize * Tokens.dockMinimizedBadgeScale) : win.iconSize
-                                        // The same decode as the tile's icon: an effect mode decodes at the largest magnification.
-                                        oversample: minimizedIcon.modeActive ? Tokens.dockIconOversample : minimizedIcon.defaultOversample
-                                        width: minimizedTile.live ? Math.round(parent.width * Tokens.dockMinimizedBadgeScale) : parent.width
-                                        height: width
-                                        anchors.right: parent.right
-                                        anchors.bottom: parent.bottom
-                                        source: minimizedTile.iconSource
-                                        asynchronous: true
+                                // The icon, drawn at the unmagnified size and scaled about the middle of its screen-side edge: one transform per frame of
+                                // magnification, nothing re-laid out or re-decoded. What it shows depends on the kind of tile (one Loader per tile, so a tile
+                                // carries only its own kind's items and bindings).
+                                Item {
+                                    id: iconBox
+                                    readonly property var at: Geometry.iconOrigin(win.edge, win.iconSize, win.iconSize, win.indicatorArea)
+                                    readonly property var pivot: Geometry.scaleOrigin(win.edge, win.iconSize)
+                                    visible: !tile.isSeparator
+                                    x: at.x
+                                    y: at.y
+                                    width: win.iconSize
+                                    height: win.iconSize
+                                    transform: Scale {
+                                        origin.x: iconBox.pivot.x
+                                        origin.y: iconBox.pivot.y
+                                        xScale: tile.tileScale
+                                        yScale: tile.tileScale
+                                    }
+
+                                    Loader {
+                                        anchors.fill: parent
+                                        sourceComponent: tile.isApp ? appComponent : tile.isMinimized ? minimizedComponent : tile.isFolder ? folderComponent : tile.isTrash ? trashComponent : tile.isAppsTile ? appsComponent : null
+                                    }
+
+                                    // Keyboard focus ring.
+                                    Rectangle {
+                                        visible: tile.activeFocus && root.keyboardMode && !tile.isSeparator
+                                        anchors.fill: parent
+                                        radius: win.dockMetrics.iconRadius
+                                        color: "transparent"
+                                        border.width: Tokens.controlFocusOutline
+                                        border.color: Appearance.focusRingColor
                                     }
                                 }
 
-                                // Folder stack (macOS: Downloads and other folders right of the divider): the newest items piled up
-                                // ("Display as: Stack", live), or the folder icon of the icon theme ("Folder", and an empty folder).
-                                StackPile {
-                                    id: pile
-                                    visible: tile.isFolder && tile.folderOptions.display === "stack" && !empty
-                                    items: tile.isFolder && tile.folderOptions.display === "stack" ? (root.pileItems[tile.modelData.path] ?? []) : []
-                                    size: win.iconSize
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                }
+                                Component {
+                                    id: appComponent
 
-                                TintedIcon {
-                                    id: folderThemed
-                                    darkAppearance: win.iconDark
-                                    surfaceLuma: win.heldSurface
-                                    visible: tile.isFolder && !(tile.folderOptions.display === "stack" && !pile.empty)
-                                    size: win.iconSize
-                                    oversample: folderThemed.modeActive ? Tokens.dockIconOversample : folderThemed.defaultOversample
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    source: tile.isFolder ? Quickshell.iconPath(Stacks.folderIconName(tile.modelData.path, Quickshell.env("HOME")), "folder") : ""
-                                    asynchronous: true
-                                }
+                                    Item {
+                                        // Attention with Reduce Motion: a static accent plate behind the icon (no hop).
+                                        Rectangle {
+                                            visible: tile.attentive && Appearance.reduceMotion
+                                            anchors.fill: parent
+                                            radius: win.dockMetrics.iconRadius
+                                            color: Appearance.withAlpha(Appearance.colors.accent, Tokens.dockAttentionHighlightOpacity)
+                                        }
 
-                                // Trash: the icon theme's user-trash / user-trash-full (never hand-drawn), in the user's icon
-                                // mode; a symbolic glyph on a rounded tile when the theme has neither.
-                                TintedIcon {
-                                    id: trashThemed
-                                    darkAppearance: win.iconDark
-                                    surfaceLuma: win.heldSurface
-                                    readonly property string themed: Quickshell.iconPath(Trash.empty ? "user-trash" : "user-trash-full", true)
-                                    visible: tile.isTrash && themed !== ""
-                                    size: win.iconSize
-                                    oversample: trashThemed.modeActive ? Tokens.dockIconOversample : trashThemed.defaultOversample
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    source: tile.isTrash ? themed : ""
-                                    asynchronous: true
-                                }
+                                        // Application icon, growing upward from the shelf.
+                                        TintedIcon {
+                                            id: appIcon
+                                            darkAppearance: win.iconDark
+                                            surfaceLuma: win.heldSurface
+                                            size: win.iconSize
+                                            // Default mode is decoded as before; an effect mode decodes at the largest magnification so the
+                                            // fixed-size texture is never upscaled.
+                                            oversample: appIcon.modeActive ? Tokens.dockIconOversample : appIcon.defaultOversample
+                                            anchors.fill: parent
+                                            source: tile.isApp ? ThemeIcons.appIcon(tile.modelData.icon, "application-x-executable") : ""
+                                            asynchronous: true
 
-                                Rectangle {
-                                    id: trashIcon
-                                    visible: tile.isTrash && trashThemed.themed === ""
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    radius: win.dockMetrics.iconRadius * tile.tileScale
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    color: Appearance.withAlpha(Appearance.colors.fill, Tokens.materialFillOpacity)
+                                            // Held button: darker by Tokens.dockPressDim (an offscreen layer only while pressed).
+                                            layer.enabled: tile.pressedDown
+                                            // Drawn at the magnified size: the box is scaled after the layer.
+                                            layer.textureSize: Qt.size(Math.ceil(width * win.maxScale), Math.ceil(height * win.maxScale))
+                                            layer.effect: MultiEffect {
+                                                brightness: -Tokens.dockPressDim
+                                            }
 
-                                    Icon {
-                                        anchors.centerIn: parent
-                                        size: Math.round(tile.iconPx * Tokens.dockTrashIconScale)
-                                        name: Trash.empty ? "trash" : "trash-full"
+                                            // Launch bounce: hops until the app has a window (or the launch timeout).
+                                            property real lift: 0
+                                            onLiftChanged: {
+                                                if (VisualFixtures.active && root.launchClickedAt > 0 && tile.bouncing)
+                                                    console.info("dock-launch: lift", Date.now() - root.launchClickedAt, Math.round(lift * 10) / 10);
+                                                if (VisualFixtures.active && root.attentionAt > 0 && tile.attentionHops)
+                                                    console.info("dock-attention: lift", Date.now() - root.attentionAt, Math.round(lift * 10) / 10);
+                                            }
+                                            transform: Translate {
+                                                x: win.outDir.x * appIcon.lift
+                                                y: win.outDir.y * appIcon.lift
+                                            }
+
+                                            // Attention: the launch hop repeated, one every Tokens.dockAttentionPeriod, until the app is activated.
+                                            SequentialAnimation {
+                                                running: tile.attentionHops
+                                                loops: Animation.Infinite
+                                                onRunningChanged: {
+                                                    if (running)
+                                                        landAnim.stop();
+                                                    else if (appIcon.lift > 0)
+                                                        landAnim.restart();
+                                                }
+
+                                                NumberAnimation {
+                                                    target: appIcon
+                                                    property: "lift"
+                                                    to: win.iconSize * Tokens.dockAttentionHeightScale
+                                                    duration: Tokens.dockBounceDuration / 2
+                                                    easing.type: Easing.OutQuad
+                                                }
+                                                NumberAnimation {
+                                                    target: appIcon
+                                                    property: "lift"
+                                                    to: 0
+                                                    duration: Tokens.dockBounceDuration / 2
+                                                    easing.type: Easing.InQuad
+                                                }
+                                                PauseAnimation {
+                                                    duration: Math.max(0, Tokens.dockAttentionPeriod - Tokens.dockBounceDuration)
+                                                }
+                                            }
+
+                                            SequentialAnimation {
+                                                running: tile.bouncing
+                                                loops: Animation.Infinite
+                                                // The hop ends by landing (a few small rebounds), not by snapping back.
+                                                onRunningChanged: {
+                                                    if (running)
+                                                        landAnim.stop();
+                                                    else if (appIcon.lift > 0)
+                                                        landAnim.restart();
+                                                }
+
+                                                NumberAnimation {
+                                                    target: appIcon
+                                                    property: "lift"
+                                                    to: win.iconSize * Tokens.dockBounceHeightScale
+                                                    duration: Tokens.dockBounceDuration / 2
+                                                    easing.type: Easing.OutQuad
+                                                }
+                                                NumberAnimation {
+                                                    target: appIcon
+                                                    property: "lift"
+                                                    to: 0
+                                                    duration: Tokens.dockBounceDuration / 2
+                                                    easing.type: Easing.InQuad
+                                                }
+                                            }
+
+                                            NumberAnimation {
+                                                id: landAnim
+                                                target: appIcon
+                                                property: "lift"
+                                                to: 0
+                                                duration: Appearance.duration(Tokens.motionNormal)
+                                                easing.type: Easing.OutBounce
+                                            }
+                                        }
+
+                                        // Progress an application set on its tile (LauncherEntry): a thin bar near the bottom of the icon, like
+                                        // macOS' progress on a Dock tile. It hops with the icon, the way the icon hops (away from the screen
+                                        // edge: sideways on a side Dock; it rose on every edge, UI audit 2026-11-05 LOW).
+                                        Rectangle {
+                                            id: progressTrack
+                                            objectName: "dockProgress"
+                                            visible: tile.progress >= 0
+                                            transform: Translate {
+                                                x: win.outDir.x * appIcon.lift
+                                                y: win.outDir.y * appIcon.lift
+                                            }
+                                            height: Tokens.dockProgressHeight
+                                            radius: height / 2
+                                            anchors.left: appIcon.left
+                                            anchors.right: appIcon.right
+                                            anchors.bottom: appIcon.bottom
+                                            anchors.leftMargin: Tokens.dockProgressInset
+                                            anchors.rightMargin: Tokens.dockProgressInset
+                                            anchors.bottomMargin: Tokens.dockProgressBottomOffset
+                                            color: Appearance.withAlpha(Appearance.colors.fill, Tokens.dockProgressTrackOpacity)
+
+                                            Rectangle {
+                                                width: Math.max(0, tile.progress) * parent.width
+                                                height: parent.height
+                                                radius: parent.radius
+                                                color: Appearance.colors.accent
+                                            }
+                                        }
+
+                                        // Notification badge (counts from the notification history). Not a child of the icon: the press-dim layer
+                                        // would clip the part that overhangs the icon. It hops with the icon, and grows with it under
+                                        // magnification (macOS; it kept its size on a magnified icon, UI audit 2026-11-05 LOW).
+                                        Rectangle {
+                                            visible: tile.badge > 0
+                                            transform: Translate {
+                                                x: win.outDir.x * appIcon.lift
+                                                y: win.outDir.y * appIcon.lift
+                                            }
+                                            height: win.dockMetrics.badgeSize
+                                            width: Math.max(height, badgeLabel.implicitWidth + Tokens.spacingSm)
+                                            radius: height / 2
+                                            color: Appearance.colors.destructive
+                                            anchors.right: appIcon.right
+                                            anchors.top: appIcon.top
+                                            anchors.rightMargin: -Tokens.dockBadgeOverhang
+                                            anchors.topMargin: -Tokens.dockBadgeOverhang
+
+                                            Text {
+                                                id: badgeLabel
+                                                textFormat: Text.PlainText
+                                                anchors.centerIn: parent
+                                                text: DockModel.badgeText(tile.badge)
+                                                color: Appearance.colors.destructiveText
+                                                font.family: Appearance.fontFamily
+                                                font.pixelSize: Tokens.typographyCaptionSize * win.dockMetrics.badgeScale
+                                                font.weight: Tokens.typographyMenuBoldWeight
+                                            }
+                                        }
+
+                                        // Activity Monitor's live graph over its tile (ADR-0038 AM62), moving with the icon's hops.
+                                        TileGraphView {
+                                            graph: tile.isApp && tile.running && String(tile.modelData.key).toLowerCase() === "org.grassfield.activity" ? TileGraph.parse(ActivityLink.tileText, ActivityLink.tilePids) : null
+                                            anchors.fill: parent
+                                            radius: win.dockMetrics.iconRadius
+                                            transform: Translate {
+                                                x: win.outDir.x * appIcon.lift
+                                                y: win.outDir.y * appIcon.lift
+                                            }
+                                        }
+
+                                        // Files over the tile that its app can open.
+                                        Rectangle {
+                                            visible: !!tile.drop && tile.drop.highlight
+                                            anchors.fill: parent
+                                            radius: win.dockMetrics.iconRadius
+                                            color: Appearance.withAlpha(Appearance.colors.accent, Tokens.dockDropHighlightOpacity)
+                                        }
                                     }
                                 }
 
-                                // Apps: org.grassfield.Apps, Grassfield's own drawing (ADR-0040 IQ-B5 C; grassfield-desktop installs it
-                                // in hicolor, which every icon theme falls back to), in the user's icon mode; a rounded tile with our
-                                // own grid glyph when no theme has it (a dev session without the package).
-                                TintedIcon {
-                                    id: appsThemed
-                                    darkAppearance: win.iconDark
-                                    surfaceLuma: win.heldSurface
-                                    readonly property string themed: Quickshell.iconPath("org.grassfield.Apps", true)
-                                    visible: tile.isAppsTile && themed !== ""
-                                    size: win.iconSize
-                                    oversample: appsThemed.modeActive ? Tokens.dockIconOversample : appsThemed.defaultOversample
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    source: tile.isAppsTile ? themed : ""
-                                    asynchronous: true
-                                }
+                                // Minimized window: a thumbnail with the app icon badge in the `full` material profile, the app icon alone otherwise. A
+                                // minimized window does not change: ONE frame is captured (audit A-08, as Overview's strip), and only by the Dock that is shown
+                                // (the Dock's output, revealed), again each time it comes into view; a live capture per frame of every parked window, in every
+                                // output's Dock, was the cost.
+                                Component {
+                                    id: minimizedComponent
 
-                                Rectangle {
-                                    id: appsTileIcon
-                                    visible: tile.isAppsTile && appsThemed.themed === ""
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    radius: win.dockMetrics.iconRadius * tile.tileScale
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    color: Appearance.colors.selection
+                                    Item {
+                                        id: minimizedTile
+                                        readonly property bool live: Settings.materialProfile === "full"
+                                        readonly property string iconSource: ThemeIcons.appIcon(tile.modelData.icon, "application-x-executable")
 
-                                    Icon {
-                                        anchors.centerIn: parent
-                                        size: Math.round(tile.iconPx * Tokens.dockTrashIconScale)
-                                        name: "apps"
-                                        color: Appearance.colors.selectionText
+                                        Rectangle {
+                                            visible: minimizedTile.live
+                                            anchors.fill: parent
+                                            radius: win.dockMetrics.iconRadius
+                                            color: Appearance.withAlpha(Appearance.colors.fill, Tokens.materialFillOpacity)
+                                            clip: true
+
+                                            ScreencopyView {
+                                                id: thumb
+                                                // Fit inside the tile keeping the aspect ratio.
+                                                readonly property real ratio: implicitWidth > 0 && implicitHeight > 0 ? implicitWidth / implicitHeight : 1
+                                                width: ratio >= 1 ? parent.width : parent.height * ratio
+                                                height: ratio >= 1 ? parent.width / ratio : parent.height
+                                                anchors.centerIn: parent
+                                                // The largest it is drawn: the tile at full magnification.
+                                                constraintSize: Qt.size(Math.ceil(parent.width * win.maxScale), Math.ceil(parent.height * win.maxScale))
+                                                captureSource: minimizedTile.live && win.isDockScreen && win.reveal ? tile.modelData.toplevel : null
+                                                live: false
+                                                paintCursor: false
+                                                // A frame can be asked for once the capture knows the buffer size; and while the Dock is in view.
+                                                readonly property bool ready: captureSource !== null && sourceSize.width > 0 && sourceSize.height > 0
+                                                readonly property bool inView: win.hideMachine.visible > 0
+                                                onReadyChanged: if (ready && inView)
+                                                    captureFrame()
+                                                onInViewChanged: if (ready && inView)
+                                                    captureFrame()
+                                            }
+                                        }
+
+                                        TintedIcon {
+                                            id: minimizedIcon
+                                            darkAppearance: win.iconDark
+                                            surfaceLuma: win.heldSurface
+                                            // The drawn nominal size (the badge is a fraction of the tile when the thumbnail shows), so that
+                                            // the minimum size of the icon modes applies to what is on screen.
+                                            size: minimizedTile.live ? Math.round(win.iconSize * Tokens.dockMinimizedBadgeScale) : win.iconSize
+                                            // The same decode as the tile's icon: an effect mode decodes at the largest magnification.
+                                            oversample: minimizedIcon.modeActive ? Tokens.dockIconOversample : minimizedIcon.defaultOversample
+                                            width: minimizedTile.live ? Math.round(parent.width * Tokens.dockMinimizedBadgeScale) : parent.width
+                                            height: width
+                                            anchors.right: parent.right
+                                            anchors.bottom: parent.bottom
+                                            source: minimizedTile.iconSource
+                                            asynchronous: true
+                                        }
                                     }
                                 }
 
-                                // Activity Monitor's live graph over its tile (ADR-0038 AM62), moving with the icon's hops.
-                                TileGraphView {
-                                    graph: tile.isApp && tile.running && String(tile.modelData.key).toLowerCase() === "org.grassfield.activity" ? TileGraph.parse(ActivityLink.tileText, ActivityLink.tilePids) : null
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    radius: win.dockMetrics.iconRadius * tile.tileScale
-                                    transform: Translate {
-                                        x: win.outDir.x * appIcon.lift
-                                        y: win.outDir.y * appIcon.lift
+                                Component {
+                                    id: folderComponent
+
+                                    Item {
+                                        // Folder stack (macOS: Downloads and other folders right of the divider): the newest items piled up
+                                        // ("Display as: Stack", live), or the folder icon of the icon theme ("Folder", and an empty folder).
+                                        StackPile {
+                                            id: pile
+                                            visible: tile.folderOptions.display === "stack" && !empty
+                                            items: tile.folderOptions.display === "stack" ? (root.pileItems[tile.modelData.path] ?? []) : []
+                                            size: win.iconSize
+                                            anchors.fill: parent
+                                        }
+
+                                        TintedIcon {
+                                            id: folderThemed
+                                            darkAppearance: win.iconDark
+                                            surfaceLuma: win.heldSurface
+                                            visible: !(tile.folderOptions.display === "stack" && !pile.empty)
+                                            size: win.iconSize
+                                            oversample: folderThemed.modeActive ? Tokens.dockIconOversample : folderThemed.defaultOversample
+                                            anchors.fill: parent
+                                            source: Quickshell.iconPath(Stacks.folderIconName(tile.modelData.path, Quickshell.env("HOME")), "folder")
+                                            asynchronous: true
+                                        }
                                     }
                                 }
 
-                                // Keyboard focus ring.
-                                Rectangle {
-                                    visible: tile.activeFocus && root.keyboardMode && !tile.isSeparator
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    radius: win.dockMetrics.iconRadius * tile.tileScale
-                                    color: "transparent"
-                                    border.width: Tokens.controlFocusOutline
-                                    border.color: Appearance.focusRingColor
+                                Component {
+                                    id: trashComponent
+
+                                    Item {
+                                        // Trash: the icon theme's user-trash / user-trash-full (never hand-drawn), in the user's icon
+                                        // mode; a symbolic glyph on a rounded tile when the theme has neither.
+                                        TintedIcon {
+                                            id: trashThemed
+                                            darkAppearance: win.iconDark
+                                            surfaceLuma: win.heldSurface
+                                            readonly property string themed: Quickshell.iconPath(Trash.empty ? "user-trash" : "user-trash-full", true)
+                                            visible: themed !== ""
+                                            size: win.iconSize
+                                            oversample: trashThemed.modeActive ? Tokens.dockIconOversample : trashThemed.defaultOversample
+                                            anchors.fill: parent
+                                            source: themed
+                                            asynchronous: true
+                                        }
+
+                                        Rectangle {
+                                            id: trashIcon
+                                            visible: trashThemed.themed === ""
+                                            anchors.fill: parent
+                                            radius: win.dockMetrics.iconRadius
+                                            color: Appearance.withAlpha(Appearance.colors.fill, Tokens.materialFillOpacity)
+
+                                            Icon {
+                                                anchors.centerIn: parent
+                                                size: Math.round(win.iconSize * Tokens.dockTrashIconScale)
+                                                name: Trash.empty ? "trash" : "trash-full"
+                                            }
+                                        }
+
+                                        // Drop highlight on the Trash tile.
+                                        Rectangle {
+                                            visible: !!tile.drop && tile.drop.highlight
+                                            anchors.fill: parent
+                                            radius: win.dockMetrics.iconRadius
+                                            color: Appearance.withAlpha(Appearance.colors.accent, Tokens.desktopIconSelectionOpacity)
+                                        }
+                                    }
+                                }
+
+                                Component {
+                                    id: appsComponent
+
+                                    Item {
+                                        // Apps: org.grassfield.Apps, Grassfield's own drawing (ADR-0040 IQ-B5 C; grassfield-desktop installs it
+                                        // in hicolor, which every icon theme falls back to), in the user's icon mode; a rounded tile with our
+                                        // own grid glyph when no theme has it (a dev session without the package).
+                                        TintedIcon {
+                                            id: appsThemed
+                                            darkAppearance: win.iconDark
+                                            surfaceLuma: win.heldSurface
+                                            readonly property string themed: Quickshell.iconPath("org.grassfield.Apps", true)
+                                            visible: themed !== ""
+                                            size: win.iconSize
+                                            oversample: appsThemed.modeActive ? Tokens.dockIconOversample : appsThemed.defaultOversample
+                                            anchors.fill: parent
+                                            source: themed
+                                            asynchronous: true
+                                        }
+
+                                        Rectangle {
+                                            id: appsTileIcon
+                                            visible: appsThemed.themed === ""
+                                            anchors.fill: parent
+                                            radius: win.dockMetrics.iconRadius
+                                            color: Appearance.colors.selection
+
+                                            Icon {
+                                                anchors.centerIn: parent
+                                                size: Math.round(win.iconSize * Tokens.dockTrashIconScale)
+                                                name: "apps"
+                                                color: Appearance.colors.selectionText
+                                            }
+                                        }
+                                    }
                                 }
 
                                 // Running indicator, ringed by a halo of the opposite colour: it reads over any backdrop on the clear
@@ -2414,92 +2560,71 @@ Scope {
                                     onTriggered: tile.hoverHeld = false
                                 }
 
-                                // Files dropped on the Trash tile (from the desktop icons or any
-                                // application offering text/uri-list) are moved to the trash.
-                                DropArea {
-                                    id: trashDrop
-                                    x: hit.x
-                                    y: hit.y
-                                    width: hit.width
-                                    height: hit.height
-                                    enabled: tile.isTrash
-                                    keys: ["text/uri-list"]
-                                    onDropped: drop => {
-                                        drop.accept(Qt.MoveAction);
-                                        const paths = Icons.parseUriList(drop.getDataAsString("text/uri-list"));
-                                        if (paths.length > 0)
-                                            Apps.runHelper(["gio", "trash", "--"].concat(paths)); // isolated trash in dev (ADR-0011)
+                                Component {
+                                    id: trashDropComponent
+
+                                    // Files dropped on the Trash tile (from the desktop icons or any
+                                    // application offering text/uri-list) are moved to the trash.
+                                    DropArea {
+                                        keys: ["text/uri-list"]
+                                        // The Trash lights while files are over it.
+                                        readonly property bool highlight: containsDrag
+                                        onDropped: drop => {
+                                            drop.accept(Qt.MoveAction);
+                                            const paths = Icons.parseUriList(drop.getDataAsString("text/uri-list"));
+                                            if (paths.length > 0)
+                                                Apps.runHelper(["gio", "trash", "--"].concat(paths)); // isolated trash in dev (ADR-0011)
+                                        }
                                     }
                                 }
 
-                                // Drop highlight on the Trash tile.
-                                Rectangle {
-                                    visible: tile.isTrash && trashDrop.containsDrag
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    radius: win.dockMetrics.iconRadius * tile.tileScale
-                                    color: Appearance.withAlpha(Appearance.colors.accent, Tokens.desktopIconSelectionOpacity)
-                                }
+                                Component {
+                                    id: appDropComponent
 
-                                // Files dropped on an app tile are opened with that app.
-                                DropArea {
-                                    id: appDrop
-                                    x: hit.x
-                                    y: hit.y
-                                    width: hit.width
-                                    height: hit.height
-                                    enabled: tile.isApp && !!tile.modelData.entry
-                                    keys: ["text/uri-list"]
-                                    // The tile highlights and accepts only a document its app can open (file field code
-                                    // in Exec and a matching MimeType). The real type of every path (a folder may carry an extension)
-                                    // is looked up while hovering (Apps.hoverEnter, cached for the drag): until it is known the tile
-                                    // accepts without highlighting, once known a refused file is refused at the DnD level too (the source
-                                    // gets a cancel). A source that hands its URI list over only at the drop leaves the verdict unknown.
-                                    property var paths: []
-                                    readonly property string verdict: paths.length === 0 ? "unknown" : Apps.hoverVerdict(tile.modelData.entry, paths)
-                                    readonly property bool acceptable: verdict === "yes" || verdict === "unknown"
-                                    function read(drag: var): void {
-                                        if (paths.length > 0)
-                                            return;
-                                        const found = Icons.parseUriList(drag.getDataAsString("text/uri-list"));
-                                        if (found.length === 0)
-                                            return;
-                                        paths = found;
-                                        Apps.hoverEnter(tile.modelData.entry, found);
+                                    // Files dropped on an app tile are opened with that app.
+                                    DropArea {
+                                        keys: ["text/uri-list"]
+                                        // The tile highlights and accepts only a document its app can open (file field code
+                                        // in Exec and a matching MimeType). The real type of every path (a folder may carry an extension)
+                                        // is looked up while hovering (Apps.hoverEnter, cached for the drag): until it is known the tile
+                                        // accepts without highlighting, once known a refused file is refused at the DnD level too (the source
+                                        // gets a cancel). A source that hands its URI list over only at the drop leaves the verdict unknown.
+                                        property var paths: []
+                                        readonly property string verdict: paths.length === 0 ? "unknown" : Apps.hoverVerdict(tile.modelData.entry, paths)
+                                        readonly property bool acceptable: verdict === "yes" || verdict === "unknown"
+                                        // An app lights only for files it can open, once that is known.
+                                        readonly property bool highlight: containsDrag && acceptable && verdict !== "pending"
+                                        function read(drag: var): void {
+                                            if (paths.length > 0)
+                                                return;
+                                            const found = Icons.parseUriList(drag.getDataAsString("text/uri-list"));
+                                            if (found.length === 0)
+                                                return;
+                                            paths = found;
+                                            Apps.hoverEnter(tile.modelData.entry, found);
+                                        }
+                                        onEntered: drag => {
+                                            paths = [];
+                                            read(drag);
+                                            drag.accepted = verdict !== "no";
+                                        }
+                                        onPositionChanged: drag => {
+                                            read(drag);
+                                            drag.accepted = verdict !== "no";
+                                        }
+                                        onExited: {
+                                            paths = [];
+                                            Apps.hoverLeave();
+                                        }
+                                        onDropped: drop => {
+                                            const found = Icons.parseUriList(drop.getDataAsString("text/uri-list"));
+                                            paths = [];
+                                            if (found.length > 0 && Apps.dropOnApp(tile.modelData.entry, found))
+                                                drop.accept(Qt.CopyAction);
+                                            else
+                                                drop.accepted = false;
+                                        }
                                     }
-                                    onEntered: drag => {
-                                        paths = [];
-                                        read(drag);
-                                        drag.accepted = verdict !== "no";
-                                    }
-                                    onPositionChanged: drag => {
-                                        read(drag);
-                                        drag.accepted = verdict !== "no";
-                                    }
-                                    onExited: {
-                                        paths = [];
-                                        Apps.hoverLeave();
-                                    }
-                                    onDropped: drop => {
-                                        const found = Icons.parseUriList(drop.getDataAsString("text/uri-list"));
-                                        paths = [];
-                                        if (found.length > 0 && Apps.dropOnApp(tile.modelData.entry, found))
-                                            drop.accept(Qt.CopyAction);
-                                        else
-                                            drop.accepted = false;
-                                    }
-                                }
-
-                                Rectangle {
-                                    visible: tile.isApp && appDrop.containsDrag && appDrop.acceptable && appDrop.verdict !== "pending"
-                                    width: tile.iconPx
-                                    height: tile.iconPx
-                                    x: tile.iconPos.x
-                                    y: tile.iconPos.y
-                                    radius: win.dockMetrics.iconRadius * tile.tileScale
-                                    color: Appearance.withAlpha(Appearance.colors.accent, Tokens.dockDropHighlightOpacity)
                                 }
 
                                 // Drag to reorder; dragged far above the shelf it leaves the Dock (poof).
@@ -2650,6 +2775,7 @@ Scope {
                                     }
                                 }
                             }
+
                         }
                     }
                 }

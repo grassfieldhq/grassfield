@@ -22,8 +22,9 @@
 #  6 pinentry-gnome3 (GnuPG's prompt) is shown as "gnupg", on someone's behalf, and gets its PIN (SKIP when absent)
 #  7 a caller that stops prompting (StopPrompting) or leaves the bus: "cancel <id>" reaches the shell, the caller gets no
 #    password
-#  8 nine requests at once (from two connections: one connection holds at most eight prompts, 11b): the shell gets
-#    eight, the ninth is answered "cancelled" at once; the eight are answered
+#  8 nine requests at once from three connections (B-05: the applications hold four of the 8 places, NetworkManager and
+#    BlueZ keep two each, one connection holds two): the shell gets four, the other five are answered "cancelled" at
+#    once; the four are answered
 #  9 protocol errors: an answer to an id that is not outstanding is ignored (the request still waits for its real answer);
 #    "ok" without a password cancels that request; an over-long line closes the connection, cancels the outstanding
 #    request and releases the name; an answer before hello closes the connection
@@ -324,16 +325,21 @@ desc="an answer to the withdrawn request is ignored"
 check wait_until 5 grep -q "answer to $id5 ignored: not outstanding" "$d/main.log"
 
 # --- 8 nine at once ------------------------------------------------------------------------------------------------------
+# B-05 (bridges/prompter/src/Requests.h): NetworkManager and BlueZ keep two of the 8 places each, so the applications' gcr
+# prompts hold at most four, and one connection at most two.
 before=$(lines s '"type":"prompt"')
-client c6 many 5
-client c6b many 4
-desc="nine requests at once from two callers: the ninth is answered \"cancelled\" at once"
-check wait_until 15 bash -c '[[ $(cat "$1" "$2" | grep -c "cancelled") == 1 ]]' _ "$d/c6.out" "$d/c6b.out"
-desc="...and the shell got eight of them"
-check wait_until 5 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 8 ]]' _ "$d/s.shell" "$before"
-for id in $(prompt_ids s | tail -n 8); do say s "answer $id ok batch-$id"; done
-desc="...and the eight answers reach their eight callers"
-check wait_until 15 bash -c '[[ $(cat "$1" "$2" | grep -c "password=batch-p") == 8 ]]' _ "$d/c6.out" "$d/c6b.out"
+client c6 many 3
+client c6b many 3
+client c6c many 3
+desc="nine requests at once from three callers: the shell gets four (the applications' share), the other five are answered \"cancelled\" at once"
+check wait_until 15 bash -c '[[ $(cat "$1" "$2" "$3" | grep -c "cancelled") == 5 ]]' _ "$d/c6.out" "$d/c6b.out" "$d/c6c.out"
+desc="...and the shell got four of them, no caller more than two"
+check wait_until 5 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 4 ]] && for f in "$3" "$4" "$5"; do [[ $(grep -c cancelled "$f") -ge 1 ]] || exit 1; done' _ "$d/s.shell" "$before" "$d/c6.out" "$d/c6b.out" "$d/c6c.out"
+desc="...the bridge says why (the places kept for Wi-Fi and Bluetooth, or the connection's two)"
+check grep -q "the slots left are kept for Wi-Fi and Bluetooth, or its connection holds 2" "$d/main.log"
+for id in $(prompt_ids s | tail -n 4); do say s "answer $id ok batch-$id"; done
+desc="...and the four answers reach their four callers"
+check wait_until 15 bash -c '[[ $(cat "$1" "$2" "$3" | grep -c "password=batch-p") == 4 ]]' _ "$d/c6.out" "$d/c6b.out" "$d/c6c.out"
 
 # --- 9 protocol errors ----------------------------------------------------------------------------------------------------
 client c7 password --title "Errors"

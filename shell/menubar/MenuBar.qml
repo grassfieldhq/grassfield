@@ -8,6 +8,7 @@ import Quickshell.Services.UPower
 import Grassfield.Ui
 import qs.notifications
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "BarHide.js" as BarHide
 import "../dock/AutoHide.js" as AutoHide
@@ -33,6 +34,8 @@ Scope {
     // Test and keyboard hook: qs ipc call menubar open <system|app|volume|network|battery|controlcenter> <output|"">.
     IpcHandler {
         target: "menubar"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         // screen: output name, empty for the first one.
         function open(kind: string, screen: string): void {
@@ -771,7 +774,10 @@ Scope {
 
             // The entrance's key for this output, taken once (the screen is gone when a removed output destroys the window).
             property string entranceKey: ""
+            // The output's name, taken once for the same reason.
+            property string barScreenName: ""
             Component.onCompleted: {
+                win.barScreenName = win.screen.name;
                 Popups.registerBar(win.screen.name, win);
                 win.entranceKey = "menubar:" + win.screen.name;
                 Entrance.expect(win.entranceKey);
@@ -781,9 +787,13 @@ Scope {
                     Journal.shown("menubar", win.screen.name);
             }
             Component.onDestruction: {
-                Popups.unregisterBar(win.screen.name, win);
+                Popups.unregisterBar(win.barScreenName, win);
+                // A button of this bar still down (the output went mid-press): no release will come to clear the flag, and
+                // the next popups would map without the keyboard.
+                if (menuDrag.active)
+                    Popups.pointerHeld = false;
                 if (win.entered)
-                    Journal.hidden("menubar", win.screen ? win.screen.name : "");
+                    Journal.hidden("menubar", win.barScreenName);
                 else
                     Entrance.forget(win.entranceKey);
             }
@@ -1032,16 +1042,18 @@ Scope {
                 seconds: (Settings.menubarClockShowSeconds || Settings.menubarClockFlashSeparators) && !win.away
             }
 
+            // The clock's widths for the crowding, from its text with every digit a 0 (ClockFormat.layoutText, tabular figures): the
+            // text, and so the widths and the whole status layout, stay the same from one tick to the next (audit A-21).
             TextMetrics {
                 id: clockFullMetrics
                 font: clockText.font
-                text: win.clockString(true, false)
+                text: ClockFormat.layoutText(win.clockString(true, false))
             }
 
             TextMetrics {
                 id: clockShortMetrics
                 font: clockText.font
-                text: win.clockString(false, false)
+                text: ClockFormat.layoutText(win.clockString(false, false))
             }
 
             // macOS: with several displays the menu bar of the one that is not active is dimmed (band and content). A single
@@ -1622,14 +1634,19 @@ Scope {
                                     }
                                 }
 
+                                // One Text per character place, bound by index: with the seconds shown the string changes every
+                                // second, and a model made of its characters would rebuild every Text each time.
                                 Repeater {
-                                    model: String(win.clockShownParts.time).split("")
+                                    id: clockChars
+                                    readonly property string time: String(win.clockShownParts.time)
+                                    model: time.length
 
                                     Text {
-                                        required property string modelData
+                                        required property int index
+                                        readonly property string character: clockChars.time.charAt(index)
                                         textFormat: Text.PlainText
-                                        text: modelData
-                                        color: modelData === ":" && win.clockFlashOff ? "transparent" : win.barText
+                                        text: character
+                                        color: character === ":" && win.clockFlashOff ? "transparent" : win.barText
                                         font: clockText.font
                                     }
                                 }

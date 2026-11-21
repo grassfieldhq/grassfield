@@ -525,8 +525,9 @@ Dock menu shows "Application Not Responding" and Force Quit in place of Quit; Fo
   Quit" in place of "Quit", for the marked processes only (Option + Force Quit: all of the app's); the app menu keeps "Quit"
   (owner decision Q16). At the confirmation a pid that no longer owns a window of the chosen class (pid reuse) is not
   killed, and a notice says "The application had already quit."; the others are.
-- NR3 the mark clears within 1 s of the stand-in's end (the app answered, closed, or was killed): the shell checks the
-  stand-ins every 250 ms while there is a mark.
+- NR3 the mark clears within 1 s of the stand-in's end (the app answered, closed, or was killed): the shell waits for the
+  stand-ins with one util-linux `waitpid` (pidfds, no polling; `kill -0` every 250 ms only where waitpid is missing)
+  (adr/shell-core-ADR-0035-waitpid.md, `tests/shell/not_responding_wait`).
 - NR4 no alert, no sound, no focus change. `misc.anr_missed_pings = 3` (about 4.5 s).
 
 ### Acceptance criteria
@@ -838,7 +839,11 @@ an empty password only for a new one. It holds at most 8 secret requests (shown 
 at once. After a lost connection it tries again after 1 s, doubling to 30 s, reset by the bridge's next hello.
 
 Rules (fail closed: no answer is ever invented):
-- At most 8 requests outstanding; a 9th caller is answered "cancelled" at once and the shell never sees it. At most 64
+- At most 8 requests outstanding, in lanes (audit B-05, `src/Requests.h`): NetworkManager and BlueZ keep two places each,
+  so the applications' gcr prompts and KIO sheets hold at most four together, and one bus connection at most two. A
+  request past its lane's share is answered "cancelled" at once (KIO: nothing) and the shell never sees it. Known limit:
+  gnome-keyring asks over one connection for every application, so a third keyring prompt at the same moment is
+  answered "cancelled" (fail closed; the stock prompter queues it). At most 64
   gcr prompts open, at most 8 for one bus connection: a connection's ninth `BeginPrompting` is answered
   `org.freedesktop.DBus.Error.LimitsExceeded` and never reaches gcr; a `PerformPrompt` of the wrong shape is answered
   `org.freedesktop.DBus.Error.InvalidArgs`. A connection's count follows what gcr holds (opus counter-review of step 9a,
@@ -1036,8 +1041,9 @@ and its queue of unlock prompts stalls after a dismissal (the bridge never dismi
 gives its place up after 120 s, 9-50); a KIO request is held until a click, even right after the user's own click on a
 network location (9-38); the sheet
 has no domain field (a domain the caller sent goes back unchanged) and no anonymous option, and an account with an empty
-password cannot be entered (9-47); an entry of the session cache tied to a window id lives for the bridge's life, as in
-kiod6 (9-39); KIO's workers other than ftp, a real Files window and a real keyring prompt on screen are not verified; GDBus
+password cannot be entered (9-47); an entry of the session cache tied to a window id lives while a bus connection that tied it
+is on the bus, and at most 15 min after its last use (9-39 as amended, B-04): a password not remembered is asked again after
+KIO's worker exits; KIO's workers other than ftp, a real Files window and a real keyring prompt on screen are not verified; GDBus
 marshals copies of a KIO password into the messages it reads and writes and frees them unwiped (9-49); VPN
 secrets are not asked (SC8); the shell's sheets (step 9b): copies of a typed password stay in the shell's heap until reused
 (the field's text, the JavaScript string handed to the model, the answer's JSON line and the socket's write buffer; none can
@@ -1718,3 +1724,15 @@ The capture toolbar and recording (ADR-0045 OC-1) differ from macOS 27 here:
 - The glyphs, the bar's height and padding and the countdown plate are estimates (`capture.*`
   tokens), not measurements of macOS 27; NOT VERIFIED on screen (no nested capture was taken by the cloud session that built
   them).
+
+## Request lifetime additions (2026-11 audit, SP-16, SP-18)
+
+- A request whose frontend leaves the bus (xdg-desktop-portal stopped or crashed) ends: `RequestHost` watches the unique name
+  of every caller (`QDBusServiceWatcher`); its open panels go, a forwarded one is closed at x-d-p-gtk.
+- Print with a ticket: a request closed (or its frontend gone) while Save as PDF writes, Open in Preview copies or the CUPS
+  job is sent stops that work: the writer removes its temporary file, Preview does not open, the CUPS job stops at its next
+  step and a job already created is cancelled in the queue (`PrintSystem::submit` returns its stop). The CUPS cancel flag is
+  an atomic int (`printsystem.cpp`).
+- The application's desktop entry (its name and icon) is read on a worker thread at the request's start (ksycoca is per
+  thread; a stale one is rebuilt there, never on the GUI thread inside the 3-s first-frame deadline); Access, AppChooser and
+  FileChooser make their window once it is known (`RequestHost::whenAppKnown`); `appName` answers only from what was read.

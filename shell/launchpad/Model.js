@@ -29,7 +29,8 @@ const CATEGORY_MAP = {
 const CATEGORY_ORDER = ["games", "creativity", "productivity", "utilities"];
 
 const CATEGORY_LOOKUP = (function () {
-    const out = {};
+    // No prototype: looked up with the Categories= values of any desktop file.
+    const out = Object.create(null);
     for (const id of CATEGORY_ORDER) {
         for (const c of CATEGORY_MAP[id])
             out[c] = id;
@@ -188,7 +189,9 @@ function vendorOf(id) {
     if (!m)
         return null;
     const v = m[1];
-    return VENDOR_NAMES[v.toLowerCase()] ?? (v.charAt(0).toUpperCase() + v.slice(1));
+    // Own names only: the vendor part of an id may be "constructor".
+    const known = Object.prototype.hasOwnProperty.call(VENDOR_NAMES, v.toLowerCase()) ? VENDOR_NAMES[v.toLowerCase()] : undefined;
+    return known ?? (v.charAt(0).toUpperCase() + v.slice(1));
 }
 
 // Two installed apps can carry one Name (Grassfield Files and GNOME Files are both "Files"; macOS has one Finder, UX-11):
@@ -198,7 +201,8 @@ function vendorOf(id) {
 // copies, `name` replaced where it collided (`baseName` keeps the entry's own).
 function disambiguate(records) {
     const out = records.map(r => Object.assign({}, r, {baseName: r.name}));
-    const groups = {};
+    // No prototype: the keys are app names, and an app may be called "Constructor".
+    const groups = Object.create(null);
     for (const r of out) {
         const k = String(r.name ?? "").trim().toLowerCase();
         (groups[k] = groups[k] ?? []).push(r);
@@ -215,7 +219,7 @@ function disambiguate(records) {
             const qualifier = vendor ?? (generic !== "" && generic.toLowerCase() !== k ? generic : String(r.id).replace(/\.desktop$/, ""));
             r.name = r.baseName + " (" + qualifier + ")";
         }
-        const seen = {};
+        const seen = Object.create(null);
         for (const r of group)
             seen[r.name] = (seen[r.name] ?? 0) + 1;
         for (const r of group) {

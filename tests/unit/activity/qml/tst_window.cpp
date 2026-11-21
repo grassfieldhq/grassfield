@@ -8,6 +8,7 @@
 // closed with their process and with the main window.
 #include "../fixture.h"
 #include "activityapp.h"
+#include "graphitem.h"
 #include "format.h"
 #include "iconprovider.h"
 #include "shownwatch.h"
@@ -437,10 +438,15 @@ int main(int argc, char **argv)
     QTemporaryDir runtime;
     qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
     qunsetenv("WAYLAND_DISPLAY");
-    // Always offscreen, whatever the session says: a test never opens a window on the owner's compositor.
-    qputenv("QT_QPA_PLATFORM", "offscreen");
+    // Always offscreen, whatever the session says: a test never opens a window on the owner's compositor. The one exception
+    // is tst_graph.cpp's GPU run, which starts this binary again under its own Xvfb (GRASSFIELD_TEST_XCB, a display xvfb-run
+    // made for it).
+    const bool xvfbRun = qEnvironmentVariableIntValue("GRASSFIELD_TEST_XCB") == 1 && qEnvironmentVariableIsSet("DISPLAY");
+    qputenv("QT_QPA_PLATFORM", xvfbRun ? "xcb" : "offscreen");
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QGuiApplication app(argc, argv);
+    // The app's own QML type (Graph.qml makes it), as main.cpp registers it.
+    activity::registerGraphItem();
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

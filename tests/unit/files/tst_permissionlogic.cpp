@@ -44,3 +44,21 @@ TEST(Permissions, ModeText)
     EXPECT_EQ(modeText(02640), QStringLiteral("rw-r-S---"));
     EXPECT_EQ(modeText(01777), QStringLiteral("rwxrwxrwt"));
 }
+
+// Audit F20: Files applies "Apply to enclosed items" itself, with chmod's rules for the operators above.
+TEST(Permissions, TheRecursiveModeIsWhatTheOperatorsMake)
+{
+    // u+rwX,g+rX,g-w,o-rwx on a plain file and on a folder.
+    EXPECT_EQ(recursiveMode(0666, false, Access::ReadWrite, Access::ReadOnly, Access::NoAccess), 0640u);
+    EXPECT_EQ(recursiveMode(0700, true, Access::ReadWrite, Access::ReadOnly, Access::NoAccess), 0750u);
+    // X: execute for a file only when some class could already execute it, judged as the classes before left the mode.
+    EXPECT_EQ(recursiveMode(0744, false, Access::ReadWrite, Access::ReadOnly, Access::ReadOnly), 0755u);
+    EXPECT_EQ(recursiveMode(0100, false, Access::NoAccess, Access::ReadOnly, Access::NoAccess), 0040u) << "the owner's x went first";
+    // The owner's No Access and Write Only (the cases chmod -R could not finish).
+    EXPECT_EQ(recursiveMode(0755, true, Access::NoAccess, Access::ReadOnly, Access::ReadOnly), 0055u);
+    EXPECT_EQ(recursiveMode(0755, true, Access::WriteOnly, Access::ReadOnly, Access::NoAccess), 0350u);
+    EXPECT_EQ(recursiveMode(0644, false, Access::WriteOnly, Access::ReadOnly, Access::NoAccess), 0240u);
+    // Special bits are kept, never added.
+    EXPECT_EQ(recursiveMode(04755, false, Access::ReadWrite, Access::NoAccess, Access::NoAccess), 04700u);
+    EXPECT_EQ(recursiveMode(02770, true, Access::ReadWrite, Access::ReadWrite, Access::ReadWrite), 02777u);
+}

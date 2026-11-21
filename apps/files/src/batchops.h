@@ -11,7 +11,8 @@
 // them against KIO's by serial number, FilesApp::undo). Qt Core and system calls only; unit tested.
 //
 // Nothing is ever replaced: a rename uses RENAME_NOREPLACE, a link and a folder fail when the name exists, a folder is only
-// removed empty and a link only when it still points where it did.
+// removed empty and a link only when it still points where it did. A case-only rename on a file system that ignores case is a
+// rename in place, through a hidden name, only when the new name is the very item and no other entry (audit F19).
 namespace BatchOps
 {
 
@@ -52,6 +53,9 @@ bool apply(const Steps &steps, Failure *failure = nullptr);
 // path). setStepHook(f): f(i) is called after step i of apply() succeeded (a test breaks the disk there to make a revert
 // fail); an empty function removes it.
 void forceNoReplaceFallback(bool on);
+// actCaseInsensitive(true): a rename's new name is "taken" by any entry spelt like it but for ASCII case, as on FAT or exFAT
+// (the case-only rename in place, audit F19).
+void actCaseInsensitive(bool on);
 void setStepHook(const std::function<void(int)> &hook);
 
 } // namespace BatchOps

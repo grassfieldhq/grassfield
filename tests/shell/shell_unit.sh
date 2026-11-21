@@ -53,7 +53,10 @@ check bash -c '[ -z "$(named_qs "$1")" ]' _ "$mut/n4"
 # template (D-6), or grassfield-security-status's path, the security unit's own system path (ADR-0041 S1); since S2 the
 # security root's system path itself (-p /usr/share/grassfield/shell/security.qml: grassfield-lid, the stand-in),
 # bindings.lua's security_selector, and the UI's argv builder shell/services/LockClient.js (its root is the security root
-# next to the UI's own, Client.securityRoot(Quickshell.shellDir)); all checked below too.
+# next to the UI's own, Client.securityRoot(Quickshell.shellDir)); all checked below too. The key router's fallback in
+# shell/platform/shortcuts/Shortcuts.qml (a key target with no attached handler, ADR-0058) calls the shell's
+# own instance by its own root, -p Quickshell.shellDir (the system path in a real session), as LockClient.js does.
+# grassfield-report's `qs log` reads one log file by its path (an instance's runtime directory), selecting no instance.
 # Comment lines are skipped. A -p with any other path, a -c name, or no selector is reported.
 bare_qs() {
   grep -rnIHE "([\"']?(/usr/bin/)?(qs|quickshell)[\"']?([[:space:]]*,[[:space:]]*|[[:space:]]+)[\"']?(ipc|kill|log)[\"']?([^[:alnum:]_]|$))" "$@" 2>/dev/null |
@@ -63,7 +66,9 @@ bare_qs() {
     grep -vE '/packaging/session-bin/hyprland-dialog:[0-9]+:answer=\$\(timeout -k 1 10 qs ipc -p "\$shell_dir" call anr report ' |
     grep -vE '/packaging/bin/grassfield-security-status:[0-9]+:(state|beat)=\$\(timeout -k 0\.2 2 qs ipc \$display -p "\$path" call security (state|heartbeat) ' |
     grep -vE '/packaging/bin/grassfield-security-status:[0-9]+:lock=\$\(timeout -k 0\.2 2 qs ipc \$display -p "\$path" call lock state ' |
-    grep -vE '/packaging/session-bin/hyprland-share-picker:[0-9]+:    command = "qs ipc -p SHELL_DIR call picker request"\.split\(\)$'
+    grep -vE '/packaging/bin/grassfield-report:[0-9]+:    ok, text = run\(\["qs", "log", "--no-color", "--log-times", "--tail", str\(QS_LOG_LINES\), os\.path\.join\(instance, "log\.qslog"\)\],$' |
+    grep -vE '/packaging/session-bin/hyprland-share-picker:[0-9]+:    command = "qs ipc -p SHELL_DIR call picker request"\.split\(\)$' |
+    grep -vE '/shell/platform/shortcuts/Shortcuts\.qml:[0-9]+:        Quickshell\.execDetached\(\["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "qs", "ipc", "-p", Quickshell\.shellDir, "call", request\.target, request\.fn\]\.concat\(request\.args\.map\(a => String\(a\)\)\)\);$'
 }
 export -f bare_qs
 desc="every shipped qs ipc/kill/log caller (the whole of apps, bridges, packaging, config, shell and ui) selects an instance by the system path (-p) or by pid (--pid), never by name or bare"
@@ -93,6 +98,9 @@ check bash -c '[ -n "$(bare_qs "$1")" ]' _ "$mut/packaging/bin/sec"
 printf 'var argv = ["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "timeout", "-k", "1", "5", "qs", "ipc", "-p", root, "call", target[0], target[1]];\n' >"$mut/shell/services/L.js"
 desc="mutation: the UI's argv builder anywhere but shell/services/LockClient.js is caught"
 check bash -c '[ -n "$(bare_qs "$1")" ]' _ "$mut/shell/services/L.js"
+printf '        Quickshell.execDetached(["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "qs", "ipc", "-p", Quickshell.shellDir, "call", request.target, request.fn].concat(request.args.map(a => String(a))));\n' >"$mut/shell/services/K.qml"
+desc="mutation: the key router's own-instance fallback anywhere but shell/platform/shortcuts/Shortcuts.qml is caught"
+check bash -c '[ -n "$(bare_qs "$1")" ]' _ "$mut/shell/services/K.qml"
 desc="LockClient's root is the security root next to the UI's own root (Quickshell.shellDir: the system path in a real session), never a name or another path (ADR-0041 S2)"
 check bash -c 'grep -qx "    readonly property string securityRoot: Client.securityRoot(Quickshell.shellDir)" "$1/shell/services/LockClient.qml" && grep -q "return dir === \"\" ? \"\" : dir + \"/security.qml\";" "$1/shell/services/LockClient.js"' _ "$root"
 desc="bindings.lua's security_selector is the security root's system path, the dev tree's only through the dev-gated shell_dir"

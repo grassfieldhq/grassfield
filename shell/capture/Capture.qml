@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import Grassfield.Ui
 import qs.platform
+import qs.platform.shortcuts
 import qs.services
 import "../platform/ScreenChoice.js" as ScreenChoice
 import "CaptureModel.js" as Model
@@ -169,6 +170,8 @@ Scope {
 
     IpcHandler {
         target: "capture"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         // Shift-Super-5 (bindings.lua): opens the toolbar, or closes it.
         function toggle(): void {

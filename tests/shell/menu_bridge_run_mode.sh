@@ -11,6 +11,7 @@
 #   D  neither a session nor a development run: refused (exit 3)
 #   E  a GRASSFIELD_MENU_BRIDGE_SOCKET that leaked into a session (ADR-0019 dev plumbing): ignored and noted, the bridge
 #      listens on the session socket
+#   F  the session bus daemon goes away: the bridge exits 1 (B-21), after a clean stop
 # SAFETY (D-Bus, R3): every bridge runs under `env -i` on a PRIVATE bus (dbus-daemon listening in this test's scratch
 # directory; a guard refuses any other address) with a scratch HOME and XDG_RUNTIME_DIR; it never sees the owner's bus.
 # SKIP where Unix sockets cannot be created. The bridge is built with bridges/menu-bridge/build-direct.sh when missing or
@@ -126,5 +127,27 @@ check "E: a leaked GRASSFIELD_MENU_BRIDGE_SOCKET in a session is ignored (noted)
   "$([[ $state == listening && -S $tmp/run/grassfield/menu-bridge.sock && ! -e $tmp/run/leaked.sock ]] && grep -q "GRASSFIELD_MENU_BRIDGE_SOCKET ignored" "$tmp/e.log" && echo 1)" \
   "$state: $(tr '\n' ' ' <"$tmp/e.log" | cut -c1-300)"
 stop_bridge
+
+# F (B-21): the session bus goes away (a bus daemon restarted): the bridge does not stay up deaf, it exits 1 within a few
+# seconds (the unit's Restart=on-failure brings it back on the new bus) after a clean stop ("run 0": not a crash).
+start_bridge "$tmp/f.log" GRASSFIELD_SESSION=1
+settle "$tmp/f.log"
+if [[ $state == listening ]]; then
+  kill "$(cat "$tmp/bus.pid")" 2>/dev/null
+  rm -f "$tmp/bus.pid"
+  for _ in $(seq 1 50); do kill -0 "$bridge_pid" 2>/dev/null || break; sleep 0.1; done
+  if kill -0 "$bridge_pid" 2>/dev/null; then
+    check "F: the bridge exits when its session bus closes" "" "still running 5 s after the bus daemon was killed"
+    stop_bridge
+  else
+    wait "$bridge_pid"
+    rc=$?
+    bridge_pid=""
+    check "F: the bridge exits 1 when its session bus closes (restarted by its unit)" "$([[ $rc == 1 ]] && grep -q "session bus connection closed" "$tmp/f.log" && echo 1)" "exit $rc: $(tail -n 2 "$tmp/f.log" | tr '\n' ' ')"
+    check "F: after a clean stop (run 0 in its state file)" "$(grep -qx 'run 0' "$tmp/run/grassfield/menu-bridge.sock.state" 2>/dev/null && echo 1)"
+  fi
+else
+  check "F: the bridge starts for the bus-loss case" "" "$state"
+fi
 
 exit "$fail"

@@ -29,7 +29,8 @@
 #    sheet, in the queue) while the bridge keeps answering other calls; once unlocked, the password is stored
 # 11 the keyring's protection: a keyring without a password (Omarchy's plain-text Default_keyring) is "unprotected"; a
 #    Secret Service that is not gnome-keyring is "unknown"
-# 12 bounds: one caller's ninth and tenth open requests answered at once; the shell's bound of 8 shared with gcr's prompts
+# 12 bounds: one caller's ninth and tenth open requests answered at once; the applications' four places of the shell's 8
+#    (B-05: NetworkManager and BlueZ keep two each, one connection holds two) shared by gcr's prompts and KIO's sheets
 # 13 wrong answers from the shell (a name where none is asked, ok without a password, a choice not offered, an empty
 #    password, a refusal carrying a password) each end their query with nothing; the shell's refusal (result "refused",
 #    its bound) ends its query with nothing and, unlike the user's Cancel, keeps no cancelled entry: the server's next
@@ -424,17 +425,26 @@ print(items[0].retrieve_secret_sync(None).get_text() if items and not items[0].g
   say s "answer last cancel"
   desc="...the user's Cancel answers the other seven without a sheet (kept as a cancelled entry, as kpasswdserver does)"
   check wait_until 10 bash -c '[[ $(( $(grep -c "^result query" "$1") - $2 )) == 10 ]]' _ "$d/st.log" "$before"
+  # The applications' share of the shell's 8 places (B-05, bridges/prompter/src/Requests.h): NetworkManager and BlueZ keep
+  # two each, so gcr prompts and KIO sheets together hold at most four, and one connection at most two.
   n=$(prompts s)
   "${env_base[@]}" python3 -I "$gcr_py" many 7 >"$d/gcr.out" 2>&1 &
   pids+=("$!")
-  wait_prompt s $((n + 6))
+  wait_prompt s $((n + 1))
+  desc="one gcr connection with seven prompts: the shell gets two, the other five are answered \"cancelled\" at once (B-05)"
+  check wait_until 10 bash -c '[[ $(grep -c "cancelled" "$1") == 5 && $(( $(grep -c "\"type\":\"prompt\"" "$2") - $3 )) == 2 ]]' _ "$d/gcr.out" "$d/s.shell" "$n"
+  "${env_base[@]}" python3 -I "$gcr_py" many 1 >"$d/gcr2.out" 2>&1 &
+  pids+=("$!")
+  wait_prompt s $((n + 2))
   say c "query sftp://bound.example/ - - keep"
-  wait_prompt s $((n + 7))
+  wait_prompt s $((n + 3))
   before=$(grep -c '^result query' "$d/st.log")
   say st "many 1 sftp://bound2.example/"
-  desc="the shell's bound of 8 is shared with gcr: seven gcr prompts and a KIO sheet, the next KIO query gets nothing at once"
-  check wait_until 10 bash -c '[[ $(( $(grep -c "^result query [0-9]* modified=0" "$1") )) -gt 0 && $(grep -c "^result query" "$1") -gt $2 ]] && grep -q "kio request answered with nothing: 8 requests are outstanding" "$3"' _ "$d/st.log" "$before" "$d/bridge.log"
-  for gid in $(grep '"type":"prompt"' "$d/s.shell" | tail -n 8 | python3 -I -c 'import json,sys; [print(json.loads(l)["id"]) for l in sys.stdin]'); do
+  desc="the applications' four places are shared by gcr and KIO: three gcr prompts and a KIO sheet, the next KIO query gets nothing at once"
+  check wait_until 10 bash -c '[[ $(( $(grep -c "^result query [0-9]* modified=0" "$1") )) -gt 0 && $(grep -c "^result query" "$1") -gt $2 ]] && grep -q "kio request answered with nothing: 4 requests are outstanding" "$3"' _ "$d/st.log" "$before" "$d/bridge.log"
+  desc="...and the shell was shown four sheets, no more"
+  check bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 4 ]]' _ "$d/s.shell" "$n"
+  for gid in $(grep '"type":"prompt"' "$d/s.shell" | tail -n 4 | python3 -I -c 'import json,sys; [print(json.loads(l)["id"]) for l in sys.stdin]'); do
     say s "answer $gid cancel"
   done
   wait_until 10 bash -c 'tail -n 1 "$1" | grep -q "^query rc=1"' _ "$d/c.out"

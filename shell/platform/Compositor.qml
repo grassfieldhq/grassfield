@@ -7,6 +7,7 @@ import Quickshell.Io
 import Quickshell.Wayland
 import Grassfield.Ui
 import qs.lib
+import qs.platform.shortcuts
 import qs.services // layering-exception: GF-087
 import "Minimized.js" as Minimized
 import "QuickLook.js" as QuickLook
@@ -354,7 +355,50 @@ Singleton {
             dispatchRequest(pluginWindowCall("minimize", address, tile));
         else
             dispatchRequest(moveRequest(address, minimizedWorkspace));
+        // Checked once the request had time to land: a refused or dropped one leaves no stale tile (unconfirmedDrops).
+        root.unconfirmed[address] = true;
+        minimizeConfirm.restart();
         return true;
+    }
+
+    // The minimizes asked and not seen landing yet (address -> true; audit SC-16). Any move of the window clears its entry.
+    property var unconfirmed: ({})
+    // The records dropped because their minimize never landed (tests, diagnostics).
+    property int minimizesDropped: 0
+
+    // After `minimizeConfirmMs` the window data is read again, then the records of windows that are not on special:minimized go.
+    readonly property int minimizeConfirmMs: 1000
+    Timer {
+        id: minimizeConfirm
+        interval: root.minimizeConfirmMs
+        onTriggered: {
+            if (Object.keys(root.unconfirmed).length === 0)
+                return;
+            Hyprland.refreshToplevels();
+            minimizeVerify.restart();
+        }
+    }
+
+    Timer {
+        id: minimizeVerify
+        interval: 200
+        onTriggered: root.verifyMinimizes()
+    }
+
+    function verifyMinimizes(): void {
+        const asked = Object.keys(root.unconfirmed);
+        root.unconfirmed = ({});
+        const all = Hyprland.toplevels ? Hyprland.toplevels.values : [];
+        const placeOf = address => {
+            const top = all.find(t => Minimized.normalizeAddress(t.address) === address);
+            return top && top.workspace ? top.workspace.name : "";
+        };
+        const drops = Minimized.unconfirmedDrops(asked, root.lastWorkspace, placeOf, minimizedWorkspace);
+        if (drops.length === 0)
+            return;
+        console.warn("grassfield: minimize did not land for " + drops.length + " window(s) (refused or dropped by the compositor): the Dock forgets them");
+        root.minimizesDropped += drops.length;
+        root.minimized = root.minimized.filter(r => drops.indexOf(r.address) < 0);
     }
 
     // Restore a minimized window and focus it: back on the display it was minimized from, on the Desktop that display shows
@@ -1065,6 +1109,7 @@ Singleton {
         if (!move)
             return;
         root.lastWorkspace.set(move.address, move.workspace);
+        delete root.unconfirmed[move.address];
         let list = root.minimized;
         if (move.workspace === minimizedWorkspace) {
             const top = (Hyprland.toplevels ? Hyprland.toplevels.values : []).find(t => Minimized.normalizeAddress(t.address) === move.address);
@@ -1314,6 +1359,8 @@ Singleton {
     // (GF-116: windows behind the lock are neither moved nor focused).
     IpcHandler {
         target: "windows"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
 
         function minimize(): void {
             if (!SessionState.refuses("windows minimize"))
@@ -1568,8 +1615,21 @@ Singleton {
     // True when a window of the output's shown workspace is full screen (Hyprland fullscreen mode 2, not Zoom), or the output
     // shows a Split View Desktop (TL33). The menu bar sits above it on the overlay layer and auto-hides. Reactive on `revision`
     // (topologyRevision) and on TilingLink.splits.
+    // Only the shown workspace's windows are looked at, and no window record is built (audit fluidity note: every menu bar
+    // and Dock evaluates it on every window event; it built the records of every window of the output each time).
     function fullscreenOn(screenName: string, revision: int): bool {
-        return windowsOn(screenName, revision).some(w => w.fullscreen) || root.splitShown(screenName);
+        const mon = monitorByName(screenName);
+        const ws = mon ? mon.activeWorkspace : null;
+        if (ws && ws.id > 0) {
+            const tops = ws.toplevels ? ws.toplevels.values : [];
+            for (let i = 0; i < tops.length; i++) {
+                const data = tops[i].lastIpcObject;
+                if (data && data.fullscreen === 2 && data.at && data.size && data.workspace && data.workspace.id === ws.id && data.mapped !== false
+                    && data.hidden !== true && data.monitor === mon.id)
+                    return true;
+            }
+        }
+        return root.splitShown(screenName);
     }
 
     // Windows on the output's currently shown workspace.
@@ -1623,7 +1683,7 @@ Singleton {
         const name = top.workspace ? top.workspace.name : "";
         return {
             workspaceId: top.workspace ? top.workspace.id : 0,
-            parked: name === hiddenWorkspace || name === minimizedWorkspace || minimizedAddresses().indexOf(address) >= 0 || !!(data && (data.mapped === false || data.hidden === true))
+            parked: name === hiddenWorkspace || name === minimizedWorkspace || minimizedAddresses().some(a => Minimized.normalizeAddress(a) === hex) || !!(data && (data.mapped === false || data.hidden === true))
         };
     }
 
@@ -1637,7 +1697,9 @@ Singleton {
     // False when the window does not exist (or has no protocol handle yet): nothing changes.
     function focusWindow(address: string): bool {
         const all = Hyprland.toplevels ? Hyprland.toplevels.values : [];
-        const top = all.find(t => t.address === address);
+        // Either form of the address (with or without 0x, any case), as everywhere else here.
+        const hex = Minimized.normalizeAddress(address);
+        const top = hex !== "" ? all.find(t => Minimized.normalizeAddress(t.address) === hex) : undefined;
         if (!top || !top.wayland)
             return false;
         if (top.workspace && top.workspace.id > 0 && !top.workspace.active)
@@ -1662,13 +1724,13 @@ Singleton {
     // never count.
     function frontWindowOn(id: int): string {
         const all = Hyprland.toplevels ? Hyprland.toplevels.values : [];
-        const parked = minimizedAddresses();
+        const parked = minimizedAddresses().map(a => Minimized.normalizeAddress(a));
         let best = "";
         let bestStamp = -1;
         for (let i = 0; i < all.length; i++) {
             const top = all[i];
             const data = top.lastIpcObject;
-            if (!top.workspace || top.workspace.id !== id || !top.wayland || parked.indexOf(top.address) >= 0 || (data && (data.mapped === false || data.hidden === true)))
+            if (!top.workspace || top.workspace.id !== id || !top.wayland || parked.indexOf(Minimized.normalizeAddress(top.address)) >= 0 || (data && (data.mapped === false || data.hidden === true)))
                 continue;
             const stamp = recency.has(top.wayland) ? recency.get(top.wayland) : 0;
             if (stamp > bestStamp) {
@@ -1709,8 +1771,18 @@ Singleton {
     property var recency: new Map()
 
     onFocusedToplevelChanged: {
-        if (focusedToplevel)
+        if (focusedToplevel) {
             recency.set(focusedToplevel, Date.now());
+            // The windows that closed are forgotten once they outnumber the ones there are (their handles would be kept
+            // for the whole session).
+            const live = root.toplevels ? root.toplevels.values : [];
+            if (recency.size > 2 * live.length + 8) {
+                for (const handle of Array.from(recency.keys())) {
+                    if (live.indexOf(handle) < 0)
+                        recency.delete(handle);
+                }
+            }
+        }
         noteRegularFocus();
     }
 

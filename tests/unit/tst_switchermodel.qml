@@ -52,6 +52,16 @@ TestCase {
         compare(Model.refresh([a, b, c], [c, d, a]).map(x => x.key).join(""), "acd");
     }
 
+    // Audit A-02: an app id named like a member of Object.prototype is an app like any other.
+    function test_prototypeNamesAreOrdinaryApps() {
+        for (const id of ["constructor", "__proto__", "toString"]) {
+            const list = Model.apps(DockModel.merge, [{appId: id, ref: "w1"}, {appId: "foot", ref: "f1"}], lookup, stamps({w1: 20, f1: 10}), []);
+            compare(list.map(a => a.key).join(","), id + ",foot", id);
+            const fresh = [{key: id}, {key: "foot"}, {key: "new"}];
+            compare(Model.refresh([{key: "foot"}, {key: id}, {key: "gone"}], fresh).map(a => a.key).join(","), "foot," + id + ",new", id);
+        }
+    }
+
     function test_quickSwitchGoesToPreviousApp() {
         let r = Model.reduce(Model.idle(), {type: "step", dir: 1, count: 3});
         compare(r.state.phase, "pending");

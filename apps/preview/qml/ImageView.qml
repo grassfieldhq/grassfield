@@ -73,11 +73,21 @@ Item {
     }
 
     function setZoom(value: real): void {
+        root.zoomAt(value, flick.width / 2, flick.height / 2);
+    }
+    // Zooms around a point of the view (the pointer, the pinch's centre; the middle for the menu and the buttons): the part
+    // of the picture under it stays under it, where the picture used to grow from its top left corner.
+    function zoomAt(value: real, px: real, py: real): void {
         const current = root.viewScale;
+        const fx = holder.width > 0 ? (flick.contentX + px - holder.x) / holder.width : 0.5;
+        const fy = holder.height > 0 ? (flick.contentY + py - holder.y) / holder.height : 0.5;
         root.fitMode = false;
         root.zoom = Math.max(Tokens.previewZoomMin, Math.min(Tokens.previewZoomMax, value));
-        if (current !== root.zoom)
+        if (current !== root.zoom) {
+            flick.contentX = Math.max(0, Math.min(flick.contentWidth - flick.width, holder.x + fx * holder.width - px));
+            flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, holder.y + fy * holder.height - py));
             flick.returnToBounds();
+        }
     }
     function zoomIn(): void {
         root.setZoom(root.viewScale * Tokens.previewZoomStep);
@@ -126,7 +136,9 @@ Item {
                 height: root.natH * root.viewScale
                 rotation: root.turns * 90
                 visible: !(root.info.animated ?? false)
-                source: root.info.url && !root.info.animated ? "image://preview/" + root.currentPage + "/" + root.fileIndex : ""
+                // Keyed by the file's token, not its index: the folder listing moves the opened file to another index, and
+                // the same URL keeps the picture already decoded.
+                source: root.info.url && !root.info.animated && root.info.token !== undefined ? "image://preview/" + root.currentPage + "/" + root.info.token : ""
                 asynchronous: true
                 retainWhileLoading: true
                 cache: false
@@ -167,12 +179,15 @@ Item {
         }
 
         WheelHandler {
+            id: wheelZoom
             acceptedModifiers: Qt.ControlModifier
+            // Around the pointer, and by the wheel's own amount (a notch is 120): a high-resolution wheel or a touchpad
+            // sends many small events, which were a full step each.
             onWheel: event => {
-                if (event.angleDelta.y > 0)
-                    root.zoomIn();
-                else if (event.angleDelta.y < 0)
-                    root.zoomOut();
+                if (event.angleDelta.y === 0)
+                    return;
+                const at = flick.mapFromItem(null, wheelZoom.point.scenePosition.x, wheelZoom.point.scenePosition.y);
+                root.zoomAt(root.viewScale * Math.pow(Tokens.previewZoomStep, event.angleDelta.y / 120), at.x, at.y);
             }
         }
 
@@ -183,8 +198,13 @@ Item {
         }
 
         PinchHandler {
+            id: pinchZoom
             target: null
-            onScaleChanged: delta => root.setZoom(root.viewScale * delta)
+            // Around the fingers' centre.
+            onScaleChanged: delta => {
+                const at = flick.mapFromItem(null, pinchZoom.centroid.scenePosition.x, pinchZoom.centroid.scenePosition.y);
+                root.zoomAt(root.viewScale * delta, at.x, at.y);
+            }
         }
     }
 

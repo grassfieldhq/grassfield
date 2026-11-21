@@ -15,6 +15,7 @@ import qs.osd
 import qs.overview
 import qs.overlay
 import qs.platform
+import qs.platform.shortcuts
 import qs.saver
 import qs.search
 import qs.services
@@ -234,6 +235,12 @@ ShellRoot {
         target: Displays
         property: "backlight"
         value: Brightness.deviceAvailable ? {device: Brightness.device, level: Brightness.deviceLevel} : null
+    }
+    // A display without a mode is read again on a timer only where no one sees the reload's flash (audit SC-05).
+    Binding {
+        target: Displays
+        property: "quiet"
+        value: LockClient.locked || LockClient.displaysOff
     }
 
     // Pointer size (Settings > Accessibility > Pointer): the compositor is asked for the new size live.
@@ -824,6 +831,8 @@ ShellRoot {
     // gates as the surface's own handler, which takes over the moment its item exists).
     IpcHandler {
         target: "search"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: !early.live.search
 
         function toggle(): void {
@@ -863,6 +872,8 @@ ShellRoot {
     }
     IpcHandler {
         target: "apps"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: !early.live.apps
 
         function toggle(): void {
@@ -904,6 +915,8 @@ ShellRoot {
     }
     IpcHandler {
         target: "overview"
+        // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
+        Component.onCompleted: Shortcuts.attach(this)
         enabled: !early.live.overview
 
         function toggle(): void {
@@ -963,5 +976,5 @@ ShellRoot {
     // "emoji" for Ctrl+Super+Space and reads Recently Used (ADR-0045 OC-3; Omarchy's list waits for the first opening);
     // referencing Sounds makes it listen to the compositor's bell and the power adapter from the start, and Audio starts its
     // output routing (ADR-0047).
-    Component.onCompleted: console.info("grassfield-shell: started, version", SystemInfo.grassfieldVersion, "plugin protocol", Capabilities.protocol, "lock", LockClient.state || "no state yet", "recent items", RecentItems.max, "clipboard history", Clipboard.state, "not responding", NotResponding.marks.length, "share picker", SharePicker.current === null ? "idle" : "open", "tiling popover", TilingHover.address === "" ? "closed" : "open", "tiling suggestions", TilingSuggest.shown ? "shown" : "none", "software update", SoftwareUpdate.count, "activity link", ActivityLink.folder !== "" ? "ready" : "no runtime folder", "key window", KeyWindow.path !== "" ? "written" : "no runtime folder", "terminal theme", TerminalTheme.state, "emoji", Emoji.state, "sounds", Sounds.devSession ? "dev: silent" : "on", "audio routing", Audio.routingFile)
+    Component.onCompleted: console.info("grassfield-shell: started, version", SystemInfo.grassfieldVersion, "plugin protocol", Capabilities.protocol, "lock", LockClient.state || "no state yet", "recent items", RecentItems.max, "clipboard history", Clipboard.state, "not responding", NotResponding.marks.length, "share picker", SharePicker.current === null ? "idle" : "open", "tiling popover", TilingHover.address === "" ? "closed" : "open", "tiling suggestions", TilingSuggest.shown ? "shown" : "none", "software update", SoftwareUpdate.count, "activity link", ActivityLink.folder !== "" ? "ready" : "no runtime folder", "key window", KeyWindow.path !== "" ? "written" : "no runtime folder", "terminal theme", TerminalTheme.state, "emoji", Emoji.state, "sounds", Sounds.devSession ? "dev: silent" : "on", "audio routing", Audio.routingFile, "health", ShellHealth.recordPath !== "" ? "recorded" : "no runtime folder")
 }

@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import Grassfield.Ui
 
@@ -21,46 +22,53 @@ Sheet {
         root.open();
     }
 
-    SettingsGroup {
-        SettingsRow {
-            title: qsTr("Status")
-            valueText: root.printer ? (root.printer.message !== "" ? qsTr("%1 — %2", "a printer's state — CUPS's message").arg(root.printer.status).arg(root.printer.message)
-                : root.printer.status) : ""
-        }
-        SettingsRow {
-            visible: root.printer !== null && root.printer.location !== ""
-            title: qsTr("Location")
-            valueText: root.printer ? root.printer.location : ""
-        }
-        SettingsRow {
-            title: qsTr("Kind")
-            valueText: root.printer ? root.printer.kind : ""
-        }
-        SettingsRow {
-            title: qsTr("Queue")
-            valueText: root.printer ? root.printer.name : ""
-        }
-    }
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-    Row {
-        spacing: Tokens.spacingSm
-
-        Button {
-            push: true
-            visible: root.printer !== null && root.printer.needsResume === true
-            text: qsTr("Resume")
-            onClicked: {
-                root.close();
-                root.resumeRequested(root.printer.name);
+            SettingsGroup {
+                SettingsRow {
+                    title: qsTr("Status")
+                    valueText: root.printer ? (root.printer.message !== "" ? qsTr("%1 — %2", "a printer's state — CUPS's message").arg(root.printer.status).arg(root.printer.message)
+                        : root.printer.status) : ""
+                }
+                SettingsRow {
+                    visible: root.printer !== null && root.printer.location !== ""
+                    title: qsTr("Location")
+                    valueText: root.printer ? root.printer.location : ""
+                }
+                SettingsRow {
+                    title: qsTr("Kind")
+                    valueText: root.printer ? root.printer.kind : ""
+                }
+                SettingsRow {
+                    title: qsTr("Queue")
+                    valueText: root.printer ? root.printer.name : ""
+                }
             }
-        }
 
-        Button {
-            push: true
-            text: qsTr("Remove Printer…")
-            onClicked: {
-                root.close();
-                root.removeRequested(root.printer);
+            Row {
+                spacing: Tokens.spacingSm
+
+                Button {
+                    push: true
+                    visible: root.printer !== null && root.printer.needsResume === true
+                    text: qsTr("Resume")
+                    onClicked: {
+                        root.close();
+                        root.resumeRequested(root.printer.name);
+                    }
+                }
+
+                Button {
+                    push: true
+                    text: qsTr("Remove Printer…")
+                    onClicked: {
+                        root.close();
+                        root.removeRequested(root.printer);
+                    }
+                }
             }
         }
     }

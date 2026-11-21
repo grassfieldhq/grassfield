@@ -32,10 +32,10 @@ if [[ ${1:-} == "--tests" ]]; then
   "$moc" "$here/../ongoing.h" -o "$out/moc_store_ongoing$suffix.cpp"
   # shellcheck disable=SC2046
   g++ "${cxxflags[@]}" "${extra[@]}" -I"$here/src" -I"$here/.." -I"$root/ui/i18n" \
-    "-DSTORE_FIXTURES=\"$root/tests/fixtures/store\"" $(pkg-config --cflags Qt6Core Qt6Gui Qt6Network Qt6DBus zlib) \
-    "${backend[@]}" "$out/moc_storebackend$suffix.cpp" "$out/moc_operations$suffix.cpp" "$out/moc_storeinstance$suffix.cpp" "$out/moc_store_ongoing$suffix.cpp" \
+    "-DSTORE_FIXTURES=\"$root/tests/fixtures/store\"" $(pkg-config --cflags Qt6Core Qt6Gui Qt6Network Qt6DBus Qt6Qml Qt6Quick zlib) \
+    "${backend[@]}" "$here/src/screenshotprovider.cpp" "$out/moc_storebackend$suffix.cpp" "$out/moc_operations$suffix.cpp" "$out/moc_storeinstance$suffix.cpp" "$out/moc_store_ongoing$suffix.cpp" \
     "$root"/tests/unit/store/tst_*.cpp \
-    $(pkg-config --libs Qt6Core Qt6Gui Qt6Network Qt6DBus zlib) -lgtest -lgtest_main -pthread -o "$out/store-unit-tests$suffix"
+    $(pkg-config --libs Qt6Core Qt6Gui Qt6Network Qt6DBus Qt6Qml Qt6Quick zlib) -lgtest -lgtest_main -pthread -o "$out/store-unit-tests$suffix"
   echo "built $out/store-unit-tests$suffix"
   exit 0
 fi

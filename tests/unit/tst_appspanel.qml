@@ -42,6 +42,10 @@ TestCase {
         compare(Model.vendorOf("org.kde.dolphin"), "KDE");
         compare(Model.vendorOf("firefox"), null);
         compare(Model.disambiguate([]).length, 0);
+        // Audit A-03: an app may be called like a member of Object.prototype ("Constructor" is a real title).
+        const odd = Model.disambiguate([{id: "steam_1", name: "Constructor"}, {id: "x", name: "__proto__"}, {id: "y", name: "toString"}, {id: "z", name: "tostring"}]);
+        compare(odd.map(r => r.name).join("|"), "Constructor|__proto__|toString (y)|tostring (z)");
+        compare(Model.categoryOf("constructor;toString"), "other");
     }
 
     function test_categoryMapping() {

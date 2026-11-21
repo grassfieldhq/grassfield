@@ -45,8 +45,18 @@ public:
     // when the helper runs, else the exit code (1: the display or the runtime directory failed, 3: an unsupported compositor).
     int start();
     void command(const QByteArray &line);
-    // Removes the runtime directory's files (thumbnails, previews) and the directory.
+    // Removes the runtime directory's files (thumbnails, previews) and the directory; writes a history index still owed.
     void cleanup();
+    // The shell is gone (its process ended, or it closed our stdin or stdout). When the helper serves the clipboard (an item
+    // the user copied from the history), it keeps serving it: the clipboard survives a shell restart. It then forgets the
+    // history, records nothing, says nothing, and ends when another client takes the clipboard, the compositor connection
+    // ends, or after kKeepMs. False (and nothing changes) when it serves nothing: the caller ends the helper.
+    bool keepSelection();
+    bool keeping() const { return m_keeping; }
+    static constexpr int kKeepMs = 8 * 3600 * 1000;
+    // Leaves the shell's systemd unit for a scope of its own (StartTransientUnit through busctl, on the user's bus), so that a
+    // restart of the shell's unit does not end a helper that keeps the clipboard. Nothing happens without a user manager.
+    void leaveShellUnit();
 
     static int clearPinned(const QString &stateDir);
     static int clearHistoryStore(const QString &stateDir);
@@ -91,6 +101,13 @@ private:
     void clearHistory();
     void clearPinnedItems();
     void setHistoryStore(bool on);
+    // The history store's index is written once per change, however many item files it touched (historyChanged schedules
+    // it, flushHistoryIndex writes it now).
+    void historyChanged();
+    void flushHistoryIndex();
+    // B-10: the clipboard was cleared (or replaced by blank text) by its source: a copy recorded less than kClearedSoonMs
+    // before may have been a password; the shell is told (`K <id>`) and decides.
+    void clearedSoon();
     void copy(const QByteArray &id, bool plainOnly);
     void ownSelectionConfirmed();
     void send(const QByteArray &mime, int fd);
@@ -131,4 +148,10 @@ private:
     bool m_ownedPlainOnly = false;
     QByteArray m_requestedId;
     QList<Writer *> m_writers;
+    QTimer m_indexTimer;
+    bool m_historyIndexDirty = false;
+    // The last copy recorded and when (boot clock), while a clear of the clipboard could still be its source's (B-10).
+    QByteArray m_recentId;
+    qint64 m_recentBootMs = 0;
+    bool m_keeping = false;
 };

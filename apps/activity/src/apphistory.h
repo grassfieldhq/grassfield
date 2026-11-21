@@ -83,9 +83,11 @@ public:
         QString name;
         QString icon;
     };
-    // `resolve`: an app's name and icon from AM65's name; `live`: the live units.
+    // `resolve`: an app's name and icon from AM65's name; `live`: called on the window's thread, it gives the reader of
+    // the live units (what it needs copied in), which runs with `resolve` on the worker (setWorker).
     using Resolve = std::function<App(const QString &app)>;
-    using Live = std::function<std::vector<LiveUnit>()>;
+    using LiveReader = std::function<std::vector<LiveUnit>()>;
+    using Live = std::function<LiveReader()>;
     AppHistory(Resolve resolve, Live live, QObject *parent = nullptr);
     ~AppHistory() override;
 
@@ -96,7 +98,7 @@ public:
     QVariantList periods() const;
     QString caption() const { return m_caption; }
     bool unavailable() const { return m_unavailable; }
-    bool loading() const { return m_process != nullptr; }
+    bool loading() const { return m_process != nullptr || m_computing; }
     QString sortKey() const { return m_sortKey; }
     bool sortDescending() const { return m_descending; }
     int count() const { return static_cast<int>(m_rows.size()); }
@@ -115,6 +117,10 @@ public:
 
     // Tests: the journal's answer instead of journalctl's (`ok` false: it failed), and the clock.
     void setAnswer(const QByteArray &output, bool ok, qint64 nowUs);
+    // The thread the journal's answer is parsed on, with the live units read and the apps resolved (A2 of the 2026-11
+    // audit: up to 16 MiB of JSON lines were parsed on the window's thread inside a model reset). Without one (the tests),
+    // on the caller's thread.
+    void setWorker(QObject *worker) { m_worker = worker; }
 
 signals:
     void periodChanged();
@@ -127,6 +133,7 @@ private:
         App app;
     };
     void finish(const QByteArray &output, bool ok, qint64 nowUs);
+    void install(std::vector<Row> rows, bool ok);
     void sortRows();
     qint64 periodSeconds() const;
 
@@ -141,6 +148,9 @@ private:
     QLocale m_locale;
     std::vector<Row> m_rows;
     QPointer<QProcess> m_process;
+    QObject *m_worker = nullptr;
+    quint64 m_generation = 0; // the read whose answer counts (a newer reload makes an older answer go unused)
+    bool m_computing = false;
     QByteArray m_output;
     qint64 m_sinceUs = 0;
 };

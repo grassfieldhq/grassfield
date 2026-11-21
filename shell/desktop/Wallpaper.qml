@@ -187,6 +187,9 @@ Scope {
         }
     }
 
+    // The window of each output (read by tests/shell/wallpaper_retarget.d, which drives one's crossfades).
+    readonly property var windows: variants.instances
+
     Variants {
         id: variants
         model: Quickshell.screens
@@ -217,7 +220,7 @@ Scope {
 
             HoverHandler {
                 onPointChanged: if (hovered)
-                    PointerTracker.report(win.modelData.name, point.position.x, point.position.y)
+                    PointerTracker.report(win.outputKey, point.position.x, point.position.y)
             }
 
             // The strip under this output's menu bar decides the bar's foreground (BarTone, per output): reported when a
@@ -249,9 +252,13 @@ Scope {
             onHeightChanged: Qt.callLater(measure)
             // The entrance's key for this output, taken once (modelData is already null when a removed screen destroys the window).
             property string entranceKey: ""
+            // The output's name, taken once for the same reason: a report deferred to the next turn (Qt.callLater) or a pointer event
+            // may come after the output went (audit A-16).
+            property string outputKey: ""
             Component.onCompleted: {
+                win.outputKey = win.modelData ? win.modelData.name : "";
                 // The entrance waits for this output's first frame (ADR-0040 step 6: the wallpaper first).
-                win.entranceKey = "wallpaper:" + (win.modelData ? win.modelData.name : "");
+                win.entranceKey = "wallpaper:" + win.outputKey;
                 Entrance.expect(win.entranceKey);
                 Qt.callLater(measure);
                 Qt.callLater(win.begin);
@@ -289,8 +296,10 @@ Scope {
                     unloadImage(url);
                     // Not inside the paint: the bar's bindings must change outside the render sync.
                     Qt.callLater(() => {
-                        BarTone.report(win.modelData.name, lum);
-                        Backdrop.reportWallpaper(win.modelData.name, range);
+                        if (!win.modelData)
+                            return;
+                        BarTone.report(win.outputKey, lum);
+                        Backdrop.reportWallpaper(win.outputKey, range);
                     });
                 }
             }
@@ -337,7 +346,10 @@ Scope {
                     unloadImage(grab.url);
                     win.gridGrab = null;
                     // Not inside the paint: the glass bindings must change outside the render sync.
-                    Qt.callLater(() => Backdrop.reportGrid(win.modelData.name, grid));
+                    Qt.callLater(() => {
+                        if (win.modelData)
+                            Backdrop.reportGrid(win.outputKey, grid);
+                    });
                 }
             }
 
@@ -394,13 +406,18 @@ Scope {
                     return;
                 }
                 loadTimer.stop();
-                fadeIn.stop();
+                inFade.stop();
+                underFade.stop();
+                backFade.stop();
                 incoming = null;
+                under = null;
+                underDesc = null;
                 pendingDesc = null;
                 fadePending = false;
                 shown = slotA;
                 slotA.z = 2;
                 slotB.opacity = 0;
+                slotC.opacity = 0;
                 shownDesc = desc;
                 slotA.kind = desc.kind;
                 if (desc.kind === "color")
@@ -550,10 +567,16 @@ Scope {
             //   - the incoming slot becomes visible only when it is ready: the artwork and a colour at once, a picture once
             //     its Image is Ready (decoded off the GUI thread); a request replaces a pending one in the same slot;
             //   - it crossfades over the outgoing slot (one fixed length; a plain switch with Reduce Motion);
+            //   - a change that arrives during a fade retargets it without a jump: the fade in flight goes on underneath (`under`, a
+            //     third slot) and the new content fades in over both; a change back to what is under the fade reverses it from
+            //     where it is (it was completed at once before: a visible jump, most of all in the 20 s phase fade);
             //   - a failure (a picture that cannot be decoded, a file the helper refused) keeps whatever is on screen;
             //   - nothing else sets the opacity of a layer from the REQUESTED state: only the fade does.
             property WallpaperSlot shown: slotA
             property WallpaperSlot incoming: null
+            // A fade that was in flight when a newer change arrived: it completes underneath the new one (z between them).
+            property WallpaperSlot under: null
+            property var underDesc: null
             property var shownDesc: ({kind: "art", artwork: "grassfield", variant: "evening.dark", color: "", url: "", strip: null, video: ""})
 
             // ---- the pause policy of a video wallpaper (ADR-0016 section 5), re-evaluated by every event ----
@@ -608,6 +631,30 @@ Scope {
                 onVideoFailed: message => console.warn("wallpaper: " + feed.outputName + ": the video stopped: " + message)
             }
 
+            // The third slot: a change that arrives during a fade (see `under`).
+            WallpaperSlot {
+                id: slotC
+                z: 1
+                moving: feed.cfg.moving === true
+                motionMs: WallpaperState.motionOf(win.modelData ? win.modelData.name : "")
+                pictureSize: Qt.size(feed.pixelWidth, feed.pixelHeight)
+                onScreen: win.shown === slotC
+                playPolicy: win.videoPolicy
+                markerOwner: feed.outputName
+                onPictureLoaded: win.slotLoaded(slotC)
+                onPictureFailed: win.slotFailed(slotC)
+                onVideoFailed: message => console.warn("wallpaper: " + feed.outputName + ": the video stopped: " + message)
+            }
+
+            // The slot neither on screen nor under a fade.
+            function freeSlot(): WallpaperSlot {
+                for (const s of [slotA, slotB, slotC]) {
+                    if (s !== shown && s !== under)
+                        return s;
+                }
+                return null;
+            }
+
             function sameContent(a: var, b: var): bool {
                 return a.kind === b.kind && (a.kind !== "color" || a.color === b.color) && (a.kind !== "art" || ((a.artwork || "") === (b.artwork || "") && (a.variant || "") === (b.variant || ""))) && (a.kind !== "picture" || (a.url === b.url && (a.video || "") === (b.video || "")));
             }
@@ -622,10 +669,30 @@ Scope {
                     win.begin();
                     return;
                 }
-                // A fade in flight is complete at once: its content is ready (a fade only starts then).
-                if (fadeIn.running)
-                    finishFade();
-                if (sameContent(desc, shownDesc)) {
+                // A change during a fade retargets it without a jump (see `under`).
+                if (incoming !== null && inFade.running) {
+                    if (sameContent(desc, pendingDesc)) {
+                        if (desc.kind === "picture" && desc !== pendingDesc)
+                            pendingDesc = desc;
+                        return;
+                    }
+                    if (under === null && sameContent(desc, shownDesc)) {
+                        reverseFade();
+                        return;
+                    }
+                    pushUnder();
+                } else if (backFade.running) {
+                    // Reversing toward what is on screen: a newer change starts from there, the reversal goes on underneath.
+                    if (sameContent(desc, shownDesc))
+                        return;
+                    pushUnder();
+                }
+                // Back to the wallpaper under a fade still in flight while a newer one loads: the newer one goes, that fade goes on.
+                if (under !== null && incoming !== null && sameContent(desc, underDesc)) {
+                    cancelPending();
+                    return;
+                }
+                if (under === null && sameContent(desc, shownDesc)) {
                     cancelPending();
                     // The output's first wallpaper is already on screen: later changes fade.
                     shownOnce = true;
@@ -638,9 +705,11 @@ Scope {
                     return;
                 }
                 if (incoming === null) {
-                    incoming = shown === slotA ? slotB : slotA;
+                    incoming = freeSlot();
                     shown.z = 1;
-                    incoming.z = 2;
+                    if (under !== null)
+                        under.z = 2;
+                    incoming.z = 3;
                     incoming.opacity = 0;
                 }
                 // A newer request replaces the pending one in the same slot; what is on screen is not touched.
@@ -691,8 +760,12 @@ Scope {
             // The pending request goes away (the screen already shows what is wanted): what is on screen stays as it is.
             function cancelPending(): void {
                 loadTimer.stop();
+                backFade.stop();
                 fadePending = false;
                 pendingDesc = null;
+                // The bar had switched to the change that went away: back to what is on screen.
+                if (toneDone)
+                    reportTone(under !== null ? underDesc : shownDesc);
                 toneDone = false;
                 if (incoming !== null) {
                     incoming.url = "";
@@ -743,41 +816,137 @@ Scope {
                     completeFade();
                     return;
                 }
-                // Two artworks blend for the whole fade: the band covers the moments neither tone reads (gate A2).
-                if (shownDesc.kind === "art" && pendingDesc.kind === "art" && win.modelData && win.fullHeight > 0)
-                    BarTone.reportArtFade(win.modelData.name, Qt.color(shown.art.skyTop), Qt.color(shown.art.skyMid), Tokens.menubarHeight / (shown.artPalette.tone.at * win.fullHeight), Qt.color(incoming.art.skyTop), Qt.color(incoming.art.skyMid), Tokens.menubarHeight / (incoming.artPalette.tone.at * win.fullHeight), win.toneSwitchAt);
+                // Two artworks blend for the whole fade: the band covers the moments neither tone reads (gate A2). Over a fade still in
+                // flight the wallpaper the new one covers is the one under it.
+                const base = under !== null ? under : shown;
+                const baseDesc = under !== null ? underDesc : shownDesc;
+                if (baseDesc.kind === "art" && pendingDesc.kind === "art" && win.modelData && win.fullHeight > 0)
+                    BarTone.reportArtFade(win.modelData.name, Qt.color(base.art.skyTop), Qt.color(base.art.skyMid), Tokens.menubarHeight / (base.artPalette.tone.at * win.fullHeight), Qt.color(incoming.art.skyTop), Qt.color(incoming.art.skyMid), Tokens.menubarHeight / (incoming.artPalette.tone.at * win.fullHeight), win.toneSwitchAt);
                 // The bar's tone follows the new wallpaper once it dominates: from the fade's own progress (the incoming
                 // slot's opacity reaching 60 %), not from a timer (a fade is frame-driven, a timer is not).
                 toneDone = false;
-                fadeIn.duration = ms;
-                fadeIn.target = incoming;
-                fadeIn.restart();
+                inFade.target = incoming;
+                inFade.from = 0;
+                inFade.to = 1;
+                inFade.duration = ms;
+                // The slow phase fade (wallpaper.phaseFadeMs, 20 s, twice two full-screen artworks while the user works) moves in
+                // steps of Fader.stepMs, a few per second, not at every frame: a step is a fraction of a percent of opacity.
+                inFade.stepped = fadeMode === "phase";
+                inFade.start();
             }
 
-            // A fade in flight is completed at once when the next change arrives.
-            function finishFade(): void {
-                fadeIn.stop();
-                if (incoming !== null) {
-                    incoming.opacity = 1;
-                    completeFade();
+            // A newer change during a fade: the fade in flight goes on underneath it, over what remains of its time. Only one fade
+            // goes on underneath: an older one is completed first (only what shows through the newer fades changes).
+            function pushUnder(): void {
+                if (under !== null)
+                    completeUnder();
+                loadTimer.stop();
+                if (backFade.running) {
+                    // A reversal toward what is on screen: it simply goes on, from where it is, under the new change.
+                    backFade.stop();
+                    under = incoming;
+                    underDesc = shownDesc;
+                    underFade.target = under;
+                    underFade.from = under.opacity;
+                    underFade.to = 0;
+                    underFade.duration = Math.max(1, backFade.remaining());
+                    underFade.stepped = backFade.stepped;
+                    underFade.start();
+                } else {
+                    under = incoming;
+                    underDesc = pendingDesc;
+                    underFade.target = under;
+                    underFade.from = under.opacity;
+                    underFade.to = 1;
+                    underFade.duration = Math.max(1, inFade.remaining());
+                    underFade.stepped = inFade.stepped;
+                    inFade.stop();
+                    underFade.start();
                 }
+                if (win.modelData)
+                    BarTone.endArtFade(win.modelData.name);
+                // The tone the bar shows is the one under the new change until that change dominates.
+                if (toneDone)
+                    reportTone(underDesc);
+                toneDone = false;
+                under.z = 2;
+                incoming = null;
+                pendingDesc = null;
+                fadePending = false;
+            }
+
+            // The fade underneath ends: it is what the new change covers from now on (no visible change: it is fully drawn).
+            function completeUnder(): void {
+                underFade.stop();
+                if (under === null)
+                    return;
+                const old = shown;
+                if (under.opacity > 0) {
+                    under.opacity = 1;
+                    shown = under;
+                    shownDesc = underDesc;
+                    if (old !== shown) {
+                        old.opacity = 0;
+                        old.url = "";
+                        old.video = "";
+                    }
+                } else {
+                    // A reversal underneath ended: what was on screen stays.
+                    under.url = "";
+                    under.video = "";
+                }
+                shown.z = 1;
+                under = null;
+                underDesc = null;
+                if (incoming !== null)
+                    incoming.z = 2;
+                if (!toneDone)
+                    reportTone(shownDesc);
+                win.settled(shownDesc, shown);
+            }
+
+            // A change back to what is under the fade: the fade runs back from where it is, as long as it ran (no jump).
+            function reverseFade(): void {
+                const full = inFade.duration;
+                inFade.stop();
+                if (win.modelData)
+                    BarTone.endArtFade(win.modelData.name);
+                if (toneDone)
+                    reportTone(shownDesc);
+                toneDone = false;
+                pendingDesc = null;
+                fadePending = false;
+                backFade.target = incoming;
+                backFade.from = incoming.opacity;
+                backFade.to = 0;
+                backFade.duration = Math.max(1, Math.round(full * incoming.opacity));
+                backFade.stepped = inFade.stepped;
+                backFade.start();
             }
 
             function completeFade(): void {
                 if (win.modelData)
                     BarTone.endArtFade(win.modelData.name);
                 shownOnce = true;
+                // The new wallpaper covers everything: the fade that went on underneath, and the old one, go.
+                underFade.stop();
                 const old = shown;
+                const below = under;
                 shown = incoming;
                 shownDesc = pendingDesc;
                 incoming = null;
                 pendingDesc = null;
+                under = null;
+                underDesc = null;
+                shown.z = 1;
                 // The next pending picture has not dominated anything yet (toneDesc must not report it while it loads).
                 toneDone = false;
-                if (old !== shown) {
-                    old.opacity = 0;
-                    old.url = "";
-                    old.video = "";
+                for (const gone of [old, below]) {
+                    if (gone !== null && gone !== shown) {
+                        gone.opacity = 0;
+                        gone.url = "";
+                        gone.video = "";
+                    }
                 }
                 // The tone of the wallpaper that is on screen now.
                 reportTone(shownDesc);
@@ -788,7 +957,7 @@ Scope {
                 if (!win.modelData)
                     return;
                 // The backdrop of the adaptive glass (ADR-0024 G-3): the luminance range of what is on screen, when known.
-                const slot = desc === win.pendingDesc && win.incoming !== null ? win.incoming : win.shown;
+                const slot = desc === win.pendingDesc && win.incoming !== null ? win.incoming : (desc === win.underDesc && win.under !== null ? win.under : win.shown);
                 // (Under the dev image override the probe canvas reports the range once it has read the image.)
                 if (VisualFixtures.wallpaperFile === "")
                     Backdrop.reportWallpaper(win.modelData.name, Backdrop.rangeOf(desc, slot.art));
@@ -808,12 +977,20 @@ Scope {
                     BarTone.reportGradient(win.modelData.name, Qt.color(slot.art.skyTop), Qt.color(slot.art.skyMid), Tokens.menubarHeight / (slot.artPalette.tone.at * win.fullHeight));
             }
 
-            NumberAnimation {
-                id: fadeIn
-                property: "opacity"
-                from: 0
-                to: 1
-                onFinished: win.completeFade()
+            WallpaperFader {
+                id: inFade
+                onDone: win.completeFade()
+            }
+
+            WallpaperFader {
+                id: underFade
+                onDone: win.completeUnder()
+            }
+
+            // The incoming slot runs back to transparent (a change back to what is on screen).
+            WallpaperFader {
+                id: backFade
+                onDone: win.cancelPending()
             }
 
             // The bar's tone switches when the incoming wallpaper dominates: 60 % of the crossfade's own progress; at the midpoint
@@ -825,7 +1002,7 @@ Scope {
                 ignoreUnknownSignals: true
 
                 function onOpacityChanged(): void {
-                    if (!win.toneDone && win.incoming !== null && fadeIn.running && win.incoming.opacity >= win.toneSwitchAt && win.pendingDesc !== null) {
+                    if (!win.toneDone && win.incoming !== null && inFade.running && win.incoming.opacity >= win.toneSwitchAt && win.pendingDesc !== null) {
                         win.toneDone = true;
                         win.reportTone(win.pendingDesc);
                     }

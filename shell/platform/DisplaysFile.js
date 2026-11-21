@@ -138,11 +138,30 @@ function eventOutput(data) {
 
 var RECOVERY_FIRST_MS = 3000;
 var RECOVERY_MAX_MS = 60000;
+// The reloads on the back-off (3, 6, 12, 24, 48, 60, 60, 60 s: about 4.5 minutes, longer than a display takes to wake and
+// answer its modes); after them the reloads stop while someone may be looking (audit SC-05: each reload puts the
+// configuration's blur, window edges, ground, zoom and pointer back until the shell's pushes land, a visible flash every
+// minute for as long as a display stays switched off at its button, all night).
+var RECOVERY_ATTEMPTS = 8;
+// After the back-off, while nobody can see a reload (the session locked or the displays off): one reload this often.
+var RECOVERY_QUIET_MS = 600000;
+// The wait before the reload a nudge asks for (the session unlocked, the displays back on, a display added or removed).
+var RECOVERY_NUDGE_MS = 3000;
 
 // The wait before the next look at a display without a mode, after `attempts` reloads: 3 s (Hyprland's own three retries are
-// over), doubled after each reload, at most a minute (Omarchy's back-off: a display switched off at its own button can stay
-// without a mode all night).
-function recoveryDelayMs(attempts) {
+// over), doubled after each reload, at most a minute, for RECOVERY_ATTEMPTS reloads. After those: RECOVERY_QUIET_MS while
+// `quiet` (locked or displays off: no one sees the flash), else 0 = no reload on a timer; a nudge (nudgeDelayMs) asks for one.
+function recoveryDelayMs(attempts, quiet) {
     const n = typeof attempts === "number" && isFinite(attempts) && attempts > 0 ? Math.floor(attempts) : 0;
+    if (n >= RECOVERY_ATTEMPTS)
+        return quiet === true ? RECOVERY_QUIET_MS : 0;
     return n >= 5 ? RECOVERY_MAX_MS : Math.min(RECOVERY_MAX_MS, RECOVERY_FIRST_MS * Math.pow(2, n));
+}
+
+// A nudge: the moment a display switched on at its button is most likely to be noticed (the session unlocked, the displays
+// back on from idle, a display added or removed). Past the back-off, one reload RECOVERY_NUDGE_MS later; during it, nothing
+// more (its timer already runs): -1.
+function nudgeDelayMs(attempts) {
+    const n = typeof attempts === "number" && isFinite(attempts) && attempts > 0 ? Math.floor(attempts) : 0;
+    return n >= RECOVERY_ATTEMPTS ? RECOVERY_NUDGE_MS : -1;
 }

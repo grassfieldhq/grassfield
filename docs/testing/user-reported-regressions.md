@@ -444,7 +444,7 @@ None of these reports came with a diagnostic report.
   release; Escape only removes the preview. Without the plugin Chromium behaves as before.
 - Verification: unit `ToplevelDrag.*` PASS (2026-11-08); nested `tests/compositor/toplevel_drag.sh` (fixture client and a
   Chromium case) pending the integrator's run on Hyprland 0.56.2
-- First shipped version:
+- First shipped version: 1.0.0-rc8
 
 ### URR-031: Telegram and the ArtCraft suite showed two title bars
 - Status: fixed in source
@@ -460,7 +460,7 @@ None of these reports came with a diagnostic report.
 - First shipped version: 1.0.0-rc7
 
 ### URR-032: A Qt frameless window that draws nothing has no title bar
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): medium
 - Reported: 2026-11-07, owner, Grassfield 1.0.0-rc6 (diagnostic report: no); this case follows from the fix of URR-031
   and was found in the review of PR #15
@@ -468,9 +468,16 @@ None of these reports came with a diagnostic report.
   traffic lights.
 - Cause: P9 reads a client that bound a decoration manager and holds no decoration object (Qt's frameless window) as one
   that draws its own bar, so the plugin draws none.
-- Fix: none yet; to fix before 1.0 (owner, 2026-11-08); workaround: Super+drag moves the window
-- Verification: none
-- First shipped version:
+- Fix: PR #33 (merge 3ce031e1; c36220a3, 74e35ae6, 364b812d, c495bd85): the plugin reads a window as drawing its own
+  bar only when it has a frame of its own (a window geometry inside its surface), decided at the first buffer and kept
+  for the window's life (ADR-0015 amendment 2026-11-08); a frameless window that draws nothing keeps the plugin's title
+  bar. Regression tests: unit `ClientChromeDecoration.AFramelessWindowThatDrawsNothingKeepsThePluginsTitlebar`
+  (compositor/tests/ClientChromeTest.cpp), nested `tests/compositor/frameless_chrome.sh` (F1, F6).
+- Verification: on the v1.0.0-rc8 tree (987c6b4e), 2026-11-14, nested with the plugin built from that tree:
+  `tests/compositor/frameless_chrome.sh` PASS, F1 to F6 (output GF-REF at scale 1; scale 1.25 not re-run that day); the
+  capture shows the plugin's bar and lights on the bare frameless window. The owner's check on a real Qt app with
+  1.0.0-rc8 is still to come.
+- First shipped version: 1.0.0-rc8
 
 ### URR-033: The translucent menu bar was nearly opaque on some displays
 - Status: fixed in source
@@ -642,7 +649,7 @@ None of these reports came with a diagnostic report.
 - First shipped version:
 
 ### URR-046: Some Open and Save windows showed the GTK file chooser instead of Grassfield's panel
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): medium
 - Reported: 2026-11-07, owner, Grassfield 1.0.0-rc6 (diagnostic report: no)
 - Reproduction: open or save a file from a Qt app; GTK 3's file chooser shows instead of the Files panel.
@@ -651,12 +658,17 @@ None of these reports came with a diagnostic report.
   - LibreOffice's GTK plugin does the same.
   - Chromium and Electron apps whose first portal call came while the portal frontend was starting never retry
     (URR-047).
-- Fix: none yet; a Grassfield Qt platform-theme module behind an ADR that amends Q3, before 1.0 (owner, 2026-11-08)
-- Verification: GTK 3 and GTK 4 apps, Chromium, Electron, Firefox and Flatpaks reach the panel (audit b6446747)
-- First shipped version:
+- Fix: PR #25 (merge 8b04383c, ADR-0054): a grassfield Qt platform-theme plugin sends Qt apps' Open and Save to the
+  portal, and LibreOffice runs its Qt 6 plugin; the late portal start is URR-047 (PR #20). Regression tests:
+  `tests/shell/qt_platform_theme.sh`, `tests/integration/qt_platform_theme.sh`.
+- Verification: GTK 3 and GTK 4 apps, Chromium, Electron, Firefox and Flatpaks reach the panel (audit b6446747). On the
+  v1.0.0-rc8 tree (987c6b4e), 2026-11-14: `tests/integration/qt_platform_theme.sh` exit 0, no failure; its section C
+  (the Wayland integration, nested) was skipped in that run. The owner's check with a Qt app and LibreOffice on
+  1.0.0-rc8 is still to come.
+- First shipped version: 1.0.0-rc8
 
 ### URR-047: The portal frontend took about 26 s to start at login
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): medium
 - Reported: 2026-11-07, owner, Grassfield 1.0.0-rc6 (diagnostic report: no), as one cause of URR-046; the integrator
   first measured the slow start on 2026-10-28 with 1.0.0rc1-4
@@ -664,9 +676,13 @@ None of these reports came with a diagnostic report.
   back to its own dialog; every login.
 - Cause (found 2026-11-08): the menu bridge's `org.freedesktop.ScreenSaver` object drops D-Bus calls without a reply; a
   call left without a reply waits for D-Bus's 25 s default timeout.
-- Fix: in progress (ADR-0041 I-4)
-- Verification: none yet
-- First shipped version:
+- Fix: PR #20 (merge d908ae7c, ADR-0041 I-4): the menu bridge answers every D-Bus call on its objects (GetAll with an
+  empty dictionary, UnknownProperty, UnknownInterface, UnknownMethod). Regression test:
+  `tests/integration/portal_screensaver.sh` (the real xdg-desktop-portal and xdg-desktop-portal-gtk on a private bus).
+- Verification: on the v1.0.0-rc8 tree (987c6b4e), 2026-11-14: `tests/integration/portal_screensaver.sh` exit 0, 12
+  checks PASS; with an owner that drops the call the frontend takes 20 s or more to own its name, with the bridge built
+  from that tree it owns it in 0.4 s. The owner's check at a real login with 1.0.0-rc8 is still to come.
+- First shipped version: 1.0.0-rc8
 
 ## Summary
 
@@ -703,7 +719,7 @@ None of these reports came with a diagnostic report.
 | URR-029 | Chrome with "Use system title bar" lacks window buttons | medium | accepted limitation (owner, 2026-11-08) |
 | URR-030 | Tiling did not react to dragging a tab of Chrome's title bar | medium | fixed in source |
 | URR-031 | Telegram and the ArtCraft suite showed two title bars | medium | fixed in source |
-| URR-032 | A Qt frameless window that draws nothing has no title bar | medium | open |
+| URR-032 | A Qt frameless window that draws nothing has no title bar | medium | fixed in source |
 | URR-033 | The translucent menu bar was nearly opaque on some displays | low | fixed in source |
 | URR-034 | Settings > Wallpaper did not show which display a choice changes | medium | fixed in source |
 | URR-035 | Quit apps stayed in the Dock, and no setting seemed to control it | low | fixed in source |
@@ -717,5 +733,5 @@ None of these reports came with a diagnostic report.
 | URR-043 | No default app choice per file type, and Grassfield's apps came second | medium | fixed in source |
 | URR-044 | The screen-share picker showed several times per share | medium | accepted limitation (owner, 2026-11-08) |
 | URR-045 | Google Meet's screen-sharing preview was white | high | open |
-| URR-046 | Some Open and Save windows showed the GTK file chooser instead of Grassfield's panel | medium | open |
-| URR-047 | The portal frontend took about 26 s to start at login | medium | open |
+| URR-046 | Some Open and Save windows showed the GTK file chooser instead of Grassfield's panel | medium | fixed in source |
+| URR-047 | The portal frontend took about 26 s to start at login | medium | fixed in source |

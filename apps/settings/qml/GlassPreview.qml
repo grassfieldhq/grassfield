@@ -15,6 +15,8 @@ Item {
     property real transparency: Tokens.materialDefaultTransparency
 
     signal moved(real transparency)
+    // The knob was let go: the host writes the last position now.
+    signal released
 
     // The tint of the glass controls' class (glass.controls), as the shell draws them at this transparency over a backdrop it has
     // not measured (the worst case), where it was the single tint every class shared before the classes; opaque under Reduce
@@ -211,6 +213,7 @@ Item {
             ticks: 2
             value: 1 - root.transparency
             onMoved: v => root.moved(Math.round((1 - v) * 100) / 100)
+            onReleased: root.released()
         }
 
         Icon {

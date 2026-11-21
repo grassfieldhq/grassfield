@@ -33,10 +33,8 @@ Sheet {
             return;
         const i = root.matches.findIndex(a => a.file === root.chosenFile);
         const next = Math.max(0, Math.min(root.matches.length - 1, i < 0 ? 0 : i + (event.key === Qt.Key_Down ? 1 : -1)));
-        if (root.matches.length > 0) {
+        if (root.matches.length > 0)
             root.chosenFile = root.matches[next].file;
-            list.positionViewAtIndex(next, ListView.Contain);
-        }
         event.accepted = true;
     }
 
@@ -48,72 +46,89 @@ Sheet {
         return "";
     }
 
-    Rectangle {
-        width: parent.width
-        height: Tokens.settingsPickerListHeight
-        radius: Tokens.radiusGroup
-        color: Appearance.colors.groupFill
-        clip: true
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        ListView {
-            id: list
-            anchors.fill: parent
-            anchors.margins: Tokens.spacingXs
-            model: root.matches
-            boundsBehavior: Flickable.StopAtBounds
-            Accessible.role: Accessible.List
-            Accessible.name: qsTr("Applications")
+            Rectangle {
+                width: parent.width
+                height: Tokens.settingsPickerListHeight
+                radius: Tokens.radiusGroup
+                color: Appearance.colors.groupFill
+                clip: true
 
-            delegate: Item {
-                id: entry
-                required property var modelData
-                width: ListView.view.width
-                height: Tokens.settingsRowHeight
-                readonly property bool selected: entry.modelData.file === root.chosenFile
-                Accessible.role: Accessible.ListItem
-                Accessible.name: entry.modelData.name
-                Accessible.selected: entry.selected
-
-                Rectangle {
+                ListView {
+                    id: list
                     anchors.fill: parent
-                    visible: entry.selected
-                    radius: Tokens.settingsNavTileRadius
-                    color: Appearance.colors.selection
-                }
-                AppIcon {
-                    x: Tokens.settingsNavTileInset - Tokens.spacingXs
-                    anchors.verticalCenter: parent.verticalCenter
-                    icon: entry.modelData.icon
-                }
-                Text {
-                    textFormat: Text.PlainText
-                    x: Tokens.settingsNavLabelInset - Tokens.spacingXs
-                    width: parent.width - x - Tokens.settingsRowInset
-                    anchors.verticalCenter: parent.verticalCenter
-                    elide: Text.ElideRight
-                    text: entry.modelData.name
-                    color: entry.selected ? Appearance.colors.selectionText : Appearance.colors.text
-                    font.family: Appearance.fontFamily
-                    font.pixelSize: Tokens.typographyBodySize
-                }
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: root.chosenFile = entry.modelData.file
-                    onDoubleClicked: {
-                        root.chosenFile = entry.modelData.file;
-                        root.confirm();
+                    anchors.margins: Tokens.spacingXs
+                    model: root.matches
+                    boundsBehavior: Flickable.StopAtBounds
+                    Accessible.role: Accessible.List
+                    Accessible.name: qsTr("Applications")
+
+                    // The choice stays in view (the arrows move it while the field keeps the keyboard).
+                    Connections {
+                        target: root
+                        function onChosenFileChanged(): void {
+                            const i = root.matches.findIndex(a => a.file === root.chosenFile);
+                            if (i >= 0)
+                                list.positionViewAtIndex(i, ListView.Contain);
+                        }
+                    }
+
+                    delegate: Item {
+                        id: entry
+                        required property var modelData
+                        width: ListView.view.width
+                        height: Tokens.settingsRowHeight
+                        readonly property bool selected: entry.modelData.file === root.chosenFile
+                        Accessible.role: Accessible.ListItem
+                        Accessible.name: entry.modelData.name
+                        Accessible.selected: entry.selected
+
+                        Rectangle {
+                            anchors.fill: parent
+                            visible: entry.selected
+                            radius: Tokens.settingsNavTileRadius
+                            color: Appearance.colors.selection
+                        }
+                        AppIcon {
+                            x: Tokens.settingsNavTileInset - Tokens.spacingXs
+                            anchors.verticalCenter: parent.verticalCenter
+                            icon: entry.modelData.icon
+                        }
+                        Text {
+                            textFormat: Text.PlainText
+                            x: Tokens.settingsNavLabelInset - Tokens.spacingXs
+                            width: parent.width - x - Tokens.settingsRowInset
+                            anchors.verticalCenter: parent.verticalCenter
+                            elide: Text.ElideRight
+                            text: entry.modelData.name
+                            color: entry.selected ? Appearance.colors.selectionText : Appearance.colors.text
+                            font.family: Appearance.fontFamily
+                            font.pixelSize: Tokens.typographyBodySize
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root.chosenFile = entry.modelData.file
+                            onDoubleClicked: {
+                                root.chosenFile = entry.modelData.file;
+                                root.confirm();
+                            }
+                        }
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        anchors.centerIn: parent
+                        visible: list.count === 0
+                        text: qsTr("No applications")
+                        color: Appearance.windowSecondary
+                        font.family: Appearance.fontFamily
+                        font.pixelSize: Tokens.typographyBodySize
                     }
                 }
-            }
-
-            Text {
-                textFormat: Text.PlainText
-                anchors.centerIn: parent
-                visible: list.count === 0
-                text: qsTr("No applications")
-                color: Appearance.windowSecondary
-                font.family: Appearance.fontFamily
-                font.pixelSize: Tokens.typographyBodySize
             }
         }
     }

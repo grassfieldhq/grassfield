@@ -4,6 +4,7 @@
 
 #include <cerrno>
 #include <cstdio>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -13,7 +14,95 @@ namespace BatchOps
 namespace
 {
 bool g_forceFallback = false;
+bool g_caseInsensitiveForTest = false;
 std::function<void(int)> g_stepHook;
+
+int plainRename(const QByteArray &from, const QByteArray &to)
+{
+    if (!g_forceFallback) {
+        if (::renameat2(AT_FDCWD, from.constData(), AT_FDCWD, to.constData(), RENAME_NOREPLACE) == 0)
+            return 0;
+        if (errno != EINVAL && errno != ENOSYS)
+            return errno;
+    }
+    // A filesystem without RENAME_NOREPLACE: look first, then rename. The window between the two is a few
+    // microseconds in the user's own folder, and it is what gnulib's renameatu does too; the look is what keeps a name
+    // that exists from being replaced in every other case.
+    struct stat st;
+    if (::lstat(to.constData(), &st) == 0)
+        return EEXIST;
+    return ::rename(from.constData(), to.constData()) == 0 ? 0 : errno;
+}
+
+QByteArray folderOf(const QByteArray &path)
+{
+    const qsizetype slash = path.lastIndexOf('/');
+    return slash <= 0 ? QByteArray("/") : path.left(slash);
+}
+
+QByteArray nameOf(const QByteArray &path)
+{
+    return path.mid(path.lastIndexOf('/') + 1);
+}
+
+// Whether the folder has an entry named exactly `name` (bytes), and an entry matching it ignoring ASCII case (the test's
+// stand-in for a file system that ignores case).
+void lookFor(const QByteArray &folder, const QByteArray &name, bool *exact, QByteArray *folded)
+{
+    *exact = false;
+    DIR *dir = ::opendir(folder.constData());
+    if (!dir)
+        return;
+    while (struct dirent *entry = ::readdir(dir)) {
+        const QByteArray n(entry->d_name);
+        if (n == name)
+            *exact = true;
+        else if (folded && folded->isEmpty() && n.compare(name, Qt::CaseInsensitive) == 0)
+            *folded = n;
+    }
+    ::closedir(dir);
+}
+
+// The new name "is taken" by the item itself (audit F19): on a file system that ignores case (FAT, exFAT, a casefolded
+// folder) "Photo.JPG" is found when "photo.jpg" is asked for, and a case-only change met EEXIST. It is a rename in place
+// only when all of this holds: both names are in the same folder, the new name resolves to the very item being renamed (same
+// device and inode), and the folder has no entry spelt exactly as the new name (a hard link of the item under that name is
+// another entry: refused, as any taken name is). The item then goes through a free hidden name of the same folder (Linux's
+// FAT and exFAT ignore a rename between two spellings of one entry), each step without replacing anything; a second step
+// that fails puts the first back.
+int caseOnlyRename(const QByteArray &from, const QByteArray &to)
+{
+    const QByteArray folder = folderOf(from);
+    if (folderOf(to) != folder)
+        return EEXIST;
+    bool exact = false;
+    QByteArray folded;
+    lookFor(folder, nameOf(to), &exact, g_caseInsensitiveForTest ? &folded : nullptr);
+    if (exact)
+        return EEXIST;
+    struct stat a;
+    struct stat b;
+    if (::lstat(from.constData(), &a) != 0)
+        return errno;
+    // The test's stand-in resolves the new name as a case-insensitive lookup would.
+    const QByteArray resolved = g_caseInsensitiveForTest ? (folded.isEmpty() ? to : folder + '/' + folded) : to;
+    if (::lstat(resolved.constData(), &b) != 0)
+        return EEXIST;
+    if (a.st_dev != b.st_dev || a.st_ino != b.st_ino)
+        return EEXIST;
+    QByteArray hidden;
+    int error = EEXIST;
+    for (int attempt = 0; attempt < 16 && error == EEXIST; ++attempt) {
+        hidden = folder + "/.grassfield-rename-" + QByteArray::number(qint64(::getpid())) + '-' + QByteArray::number(attempt);
+        error = plainRename(from, hidden);
+    }
+    if (error != 0)
+        return error;
+    error = plainRename(hidden, to);
+    if (error != 0)
+        plainRename(hidden, from);
+    return error;
+}
 
 // 0 or errno.
 int run(const Step &step)
@@ -22,19 +111,16 @@ int run(const Step &step)
     const QByteArray to = QFile::encodeName(step.to);
     switch (step.kind) {
     case Step::Kind::Rename: {
-        if (!g_forceFallback) {
-            if (::renameat2(AT_FDCWD, from.constData(), AT_FDCWD, to.constData(), RENAME_NOREPLACE) == 0)
-                return 0;
-            if (errno != EINVAL && errno != ENOSYS)
-                return errno;
+        int error = 0;
+        if (g_caseInsensitiveForTest) {
+            bool exact = false;
+            QByteArray folded;
+            lookFor(folderOf(to), nameOf(to), &exact, &folded);
+            error = exact || !folded.isEmpty() ? EEXIST : plainRename(from, to);
+        } else {
+            error = plainRename(from, to);
         }
-        // A filesystem without RENAME_NOREPLACE: look first, then rename. The window between the two is a few
-        // microseconds in the user's own folder, and it is what gnulib's renameatu does too; the look is what keeps a name
-        // that exists from being replaced in every other case.
-        struct stat st;
-        if (::lstat(to.constData(), &st) == 0)
-            return EEXIST;
-        return ::rename(from.constData(), to.constData()) == 0 ? 0 : errno;
+        return error == EEXIST ? caseOnlyRename(from, to) : error;
     }
     case Step::Kind::Link:
         return ::symlink(from.constData(), to.constData()) == 0 ? 0 : errno;
@@ -91,6 +177,11 @@ Steps inverse(const Steps &steps)
 void forceNoReplaceFallback(bool on)
 {
     g_forceFallback = on;
+}
+
+void actCaseInsensitive(bool on)
+{
+    g_caseInsensitiveForTest = on;
 }
 
 void setStepHook(const std::function<void(int)> &hook)

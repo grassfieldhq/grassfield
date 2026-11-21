@@ -129,13 +129,16 @@ int main(int argc, char *argv[])
         auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().constFirst());
         if (window) {
             auto started = std::make_shared<bool>(false);
-            QObject::connect(window, &QQuickWindow::frameSwapped, &backend, [&backend, browseKinds, started, &t0] {
+            // Once: the connection goes with the first frame, or every later frame would post a call that returns at once.
+            auto connection = std::make_shared<QMetaObject::Connection>();
+            *connection = QObject::connect(window, &QQuickWindow::frameSwapped, &backend, [&backend, browseKinds, started, connection, &t0] {
                 if (*started)
                     return;
                 *started = true;
                 if (qEnvironmentVariableIsSet("GRASSFIELD_PREVIEW_TIMING"))
                     fprintf(stderr, "TIMING first-frame %lld ms\n", static_cast<long long>(t0.elapsed()));
                 backend.startBrowse(browseKinds);
+                QObject::disconnect(*connection);
             });
         } else {
             backend.startBrowse(browseKinds);

@@ -107,6 +107,8 @@ Sheet {
 
     Connections {
         target: root.backend
+        // Only while it waits for an answer: a Backend answer is not handed to every row and sheet of the window (the audit's notes).
+        enabled: root.shown || root.lastReason !== ""
         // A backend without the enrolment's progress (a test's) leaves the sheet waiting for its end.
         ignoreUnknownSignals: true
 
@@ -130,83 +132,90 @@ Sheet {
     // failed(tag, reason) comes just before finished(tag, false, …).
     property string lastReason: ""
 
-    Item {
-        width: parent.width
-        height: Tokens.settingsEnrollRingSize
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-        Shape {
-            id: ring
-            width: Tokens.settingsEnrollRingSize
-            height: Tokens.settingsEnrollRingSize
-            anchors.horizontalCenter: parent.horizontalCenter
-            preferredRendererType: Shape.CurveRenderer
-            readonly property real stroke: Tokens.settingsEnrollRingStroke
+            Item {
+                width: parent.width
+                height: Tokens.settingsEnrollRingSize
 
-            ShapePath {
-                fillColor: "transparent"
-                strokeColor: Appearance.withAlpha(Appearance.colors.fill, Tokens.materialFillOpacity)
-                strokeWidth: ring.stroke
-                capStyle: ShapePath.RoundCap
+                Shape {
+                    id: ring
+                    width: Tokens.settingsEnrollRingSize
+                    height: Tokens.settingsEnrollRingSize
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    preferredRendererType: Shape.CurveRenderer
+                    readonly property real stroke: Tokens.settingsEnrollRingStroke
 
-                PathAngleArc {
-                    centerX: ring.width / 2
-                    centerY: ring.height / 2
-                    radiusX: (ring.width - ring.stroke) / 2
-                    radiusY: radiusX
-                    startAngle: 0
-                    sweepAngle: 360
-                }
-            }
+                    ShapePath {
+                        fillColor: "transparent"
+                        strokeColor: Appearance.withAlpha(Appearance.colors.fill, Tokens.materialFillOpacity)
+                        strokeWidth: ring.stroke
+                        capStyle: ShapePath.RoundCap
 
-            ShapePath {
-                fillColor: "transparent"
-                strokeColor: root.failed ? Appearance.colors.danger : Appearance.colors.accent
-                strokeWidth: ring.stroke
-                capStyle: ShapePath.RoundCap
+                        PathAngleArc {
+                            centerX: ring.width / 2
+                            centerY: ring.height / 2
+                            radiusX: (ring.width - ring.stroke) / 2
+                            radiusY: radiusX
+                            startAngle: 0
+                            sweepAngle: 360
+                        }
+                    }
 
-                PathAngleArc {
-                    centerX: ring.width / 2
-                    centerY: ring.height / 2
-                    radiusX: (ring.width - ring.stroke) / 2
-                    radiusY: radiusX
-                    startAngle: -90
-                    sweepAngle: 360 * Fingerprint.progress(root.enrolment)
+                    ShapePath {
+                        fillColor: "transparent"
+                        strokeColor: root.failed ? Appearance.colors.danger : Appearance.colors.accent
+                        strokeWidth: ring.stroke
+                        capStyle: ShapePath.RoundCap
 
-                    Behavior on sweepAngle {
-                        NumberAnimation {
-                            duration: Appearance.duration(Tokens.motionNormal)
-                            easing.type: Easing.OutCubic
+                        PathAngleArc {
+                            centerX: ring.width / 2
+                            centerY: ring.height / 2
+                            radiusX: (ring.width - ring.stroke) / 2
+                            radiusY: radiusX
+                            startAngle: -90
+                            sweepAngle: 360 * Fingerprint.progress(root.enrolment)
+
+                            Behavior on sweepAngle {
+                                NumberAnimation {
+                                    duration: Appearance.duration(Tokens.motionNormal)
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
                         }
                     }
                 }
+
+                Icon {
+                    anchors.centerIn: ring
+                    name: "fingerprint"
+                    size: Tokens.settingsEnrollGlyphSize
+                    color: root.done ? Appearance.colors.accentInk : Appearance.colors.textSecondary
+                }
+
+                Spinner {
+                    visible: root.enrolment !== null && root.enrolment.phase === "starting"
+                    anchors.right: ring.left
+                    anchors.rightMargin: Tokens.spacingMd
+                    anchors.verticalCenter: ring.verticalCenter
+                }
+            }
+
+            Text {
+                textFormat: Text.PlainText
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                text: root.messageText(root.enrolment)
+                color: root.failed ? Appearance.colors.danger : Appearance.colors.text
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyBodySize
+                Accessible.role: Accessible.StaticText
+                Accessible.name: text
             }
         }
-
-        Icon {
-            anchors.centerIn: ring
-            name: "fingerprint"
-            size: Tokens.settingsEnrollGlyphSize
-            color: root.done ? Appearance.colors.accentInk : Appearance.colors.textSecondary
-        }
-
-        Spinner {
-            visible: root.enrolment !== null && root.enrolment.phase === "starting"
-            anchors.right: ring.left
-            anchors.rightMargin: Tokens.spacingMd
-            anchors.verticalCenter: ring.verticalCenter
-        }
-    }
-
-    Text {
-        textFormat: Text.PlainText
-        width: parent.width
-        horizontalAlignment: Text.AlignHCenter
-        wrapMode: Text.Wrap
-        text: root.messageText(root.enrolment)
-        color: root.failed ? Appearance.colors.danger : Appearance.colors.text
-        font.family: Appearance.fontFamily
-        font.pixelSize: Tokens.typographyBodySize
-        Accessible.role: Accessible.StaticText
-        Accessible.name: text
     }
 }

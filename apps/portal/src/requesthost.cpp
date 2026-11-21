@@ -13,6 +13,8 @@
 #include <QWindow>
 
 #include <limits>
+#include <mutex>
+#include <thread>
 #include <utility>
 
 namespace grassfield::portal {
@@ -25,12 +27,20 @@ constexpr int kCloseRetryMs = 100;
 constexpr int kCloseTries = 50;
 } // namespace
 
+// The worker posts here; ~RequestHost closes it under its lock (no answer reaches a host that went).
+struct RequestHost::AppLookups {
+    std::mutex lock;
+    RequestHost *target = nullptr;
+};
+
 struct RequestHost::Request {
     enum class State { Making, Shown, Forwarded };
     int id = 0;
     QString handle;
     QString appId;
     QString parentWindow;
+    // The frontend's unique name on the bus (the message's sender).
+    QString caller;
     QDBusMessage message;
     State state = State::Making;
     // Closed while forwarded: x-d-p-gtk's answer to a closed dialog is not the user's.
@@ -52,11 +62,44 @@ RequestHost::RequestHost(const QDBusConnection &bus, const QString &interface, c
     m_idle.setTimerType(Qt::PreciseTimer);
     m_idle.setInterval(m_limits.idleQuitMs);
     connect(&m_idle, &QTimer::timeout, this, &RequestHost::idle);
+    m_lookups = std::make_shared<AppLookups>();
+    m_lookups->target = this;
+    m_callers.setConnection(m_bus);
+    m_callers.setWatchMode(QDBusServiceWatcher::WatchForUnregistration);
+    connect(&m_callers, &QDBusServiceWatcher::serviceUnregistered, this, &RequestHost::callerGone);
     armIdle();
+}
+
+void RequestHost::callerGone(const QString &service)
+{
+    m_callers.removeWatchedService(service);
+    QList<int> ids;
+    for (const auto &r : std::as_const(m_requests)) {
+        if (r->caller == service)
+            ids << r->id;
+    }
+    if (!ids.isEmpty())
+        qWarning("grassfield-portal: the frontend left the bus; its %lld open request(s) end", static_cast<long long>(ids.size()));
+    for (int id : std::as_const(ids)) {
+        const auto r = m_requests.value(id);
+        if (!r)
+            continue;
+        if (r->state == Request::State::Forwarded) {
+            // x-d-p-gtk's dialog goes too; its answer then ends the request (to nobody).
+            r->closed = true;
+            closeForwarded(id, kCloseTries);
+        } else {
+            endWithoutAnswer(id);
+        }
+    }
 }
 
 RequestHost::~RequestHost()
 {
+    {
+        std::lock_guard<std::mutex> hold(m_lookups->lock);
+        m_lookups->target = nullptr;
+    }
     // A process that goes with requests in flight answers them: the frontend never waits on a backend that left.
     const QList<int> ids = m_requests.keys();
     for (int id : ids)
@@ -87,11 +130,54 @@ QString RequestHost::windowAppId(const QString &appId)
 
 QString RequestHost::appName(const QString &appId) const
 {
-    const QString id = windowAppId(appId);
-    if (appId.isEmpty() || id == QLatin1String("org.grassfield.Files"))
-        return {};
-    const KService::Ptr service = KService::serviceByDesktopName(id);
-    return service ? service->name() : QString();
+    return m_apps.value(windowAppId(appId)).name;
+}
+
+QString RequestHost::appIcon(const QString &appId) const
+{
+    return m_apps.value(windowAppId(appId)).icon;
+}
+
+void RequestHost::lookUpApp(const QString &desktopId)
+{
+    if (m_apps.contains(desktopId) || m_waitingForApp.contains(desktopId))
+        return;
+    m_waitingForApp.insert(desktopId, {});
+    // KSycoca is per thread: this one maps the database (and rebuilds it when it is stale) on its own, off the GUI thread.
+    std::thread([lookups = m_lookups, desktopId] {
+        AppInfo info;
+        if (const KService::Ptr service = KService::serviceByDesktopName(desktopId)) {
+            info.name = service->name();
+            info.icon = service->icon();
+        }
+        std::lock_guard<std::mutex> hold(lookups->lock);
+        if (RequestHost *target = lookups->target)
+            QMetaObject::invokeMethod(target, [target, desktopId, info] { target->appKnown(desktopId, info); }, Qt::QueuedConnection);
+    }).detach();
+}
+
+void RequestHost::appKnown(const QString &desktopId, const AppInfo &info)
+{
+    m_apps.insert(desktopId, info);
+    const auto waiting = m_waitingForApp.take(desktopId);
+    for (const auto &[id, fn] : waiting) {
+        if (isOpen(id))
+            fn();
+    }
+}
+
+void RequestHost::whenAppKnown(int id, std::function<void()> fn)
+{
+    const auto r = m_requests.value(id);
+    if (!r)
+        return;
+    const QString desktopId = windowAppId(r->appId);
+    if (r->appId.isEmpty() || desktopId == QLatin1String("org.grassfield.Files") || m_apps.contains(desktopId)) {
+        fn();
+        return;
+    }
+    lookUpApp(desktopId);
+    m_waitingForApp[desktopId].append({id, std::move(fn)});
 }
 
 void RequestHost::refuse(const QDBusMessage &message, const char *why)
@@ -140,6 +226,7 @@ int RequestHost::begin(const QDBusObjectPath &handle, const QDBusMessage &messag
     r->handle = path;
     r->appId = appId;
     r->parentWindow = parentWindow;
+    r->caller = message.service();
     r->message = message;
     r->since.start();
     r->object = std::make_unique<RequestObject>(this, path);
@@ -148,6 +235,11 @@ int RequestHost::begin(const QDBusObjectPath &handle, const QDBusMessage &messag
         return 0;
     }
     m_requests.insert(r->id, r);
+    // The application's entry is read now, off this thread (appName, whenAppKnown).
+    if (!appId.isEmpty() && windowAppId(appId) != QLatin1String("org.grassfield.Files"))
+        lookUpApp(windowAppId(appId));
+    if (!r->caller.isEmpty() && !m_callers.watchedServices().contains(r->caller))
+        m_callers.addWatchedService(r->caller);
     m_idle.stop();
     emit pendingChanged();
     return r->id;

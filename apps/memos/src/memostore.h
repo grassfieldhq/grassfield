@@ -17,11 +17,13 @@
 #include <QDateTime>
 #include <QJsonObject>
 #include <QList>
+#include <QLockFile>
 #include <QString>
 #include <QStringList>
 
 #include <functional>
 #include <map>
+#include <memory>
 
 namespace memos {
 
@@ -73,6 +75,22 @@ enum class OpenState {
     Unreadable, // an I/O error or a file above kMaxFileBytes: read only, the file untouched
 };
 
+// Why the last write failed (MemoStore::writeFailure): the app turns it into the sentence the memos show (MemosApp::saveError).
+enum class WriteFailure {
+    None,
+    TooLarge, // the memos would pass kMaxFileBytes (the file open() would refuse): nothing written
+    NoSpace,  // the disk (or the user's quota) is full
+    ReadOnly, // the file system is mounted read only
+    Denied,   // the directory or the file cannot be written (permissions)
+    Other,    // any other I/O error
+};
+
+// The store's lock (M4 of the 2026-11 audit): `memos.lock` in the store directory, held for the process's life, so two
+// Memos processes never both rewrite the file (the D-Bus single-instance name is not there without a session bus). A lock
+// left by a process that is gone (a crash, a SIGKILL) is stale and taken over. Returns null when another live process
+// holds it; `holder` then names that process's pid.
+std::unique_ptr<QLockFile> lockStore(const QString &dir, qint64 *holder = nullptr);
+
 // One forward step: the document of schema n (the key) made into schema n + 1. A step returns false when it cannot.
 using Migrations = std::map<int, std::function<bool(QJsonObject &)>>;
 // The steps of the real schemas (none yet: schema 1 is the first).
@@ -99,6 +117,7 @@ public:
     // Writes these memos (atomically, 0600); false when read only or on an error (errorString(), no memo text).
     bool save(const QList<Memo> &memos);
     QString errorString() const { return m_error; }
+    WriteFailure writeFailure() const { return m_failure; }
 
     QString filePath() const;
     QString dir() const { return m_dir; }
@@ -120,6 +139,7 @@ public:
 
 private:
     bool writeDocument(const QJsonObject &doc);
+    WriteFailure classify(qint64 bytes) const;
     bool keepCopy(const QString &suffix, const QByteArray &bytes);
 
     QString m_dir;
@@ -129,6 +149,7 @@ private:
     int m_foundSchema = 0;
     QList<Memo> m_memos;
     QString m_error;
+    WriteFailure m_failure = WriteFailure::None;
     std::function<bool()> m_beforeCommit;
 };
 

@@ -4,6 +4,7 @@
 // focus away as the compositor does when a shell layer takes the keyboard. The shell's side: tests/unit/tst_keywindowfile.qml.
 #include "keywindow.h"
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
@@ -134,6 +135,54 @@ TEST(KeyWindow, TheWindowStaysKeyWhileTheShellHoldsTheKeyboardForIt)
     }
     QGuiApplication::setDesktopFileName(oldName);
     qunsetenv("GRASSFIELD_STATE_HOME");
+}
+
+// H1 of the 2026-11 audit: outside a dev session the file was in $XDG_RUNTIME_DIR itself, whose every entry (any program's
+// socket, lock or pid file) made each running app read and parse it again. It lives in $XDG_RUNTIME_DIR/grassfield now; the
+// runtime directory is watched only until that folder exists.
+TEST(KeyWindow, OnlyGrassfieldsRuntimeFolderIsWatched)
+{
+    ASSERT_NE(qGuiApp, nullptr);
+    QTemporaryDir runtime;
+    ASSERT_TRUE(runtime.isValid());
+    const QByteArray oldRuntime = qgetenv("XDG_RUNTIME_DIR");
+    qunsetenv("GRASSFIELD_STATE_HOME");
+    qputenv("XDG_RUNTIME_DIR", runtime.path().toUtf8());
+    const QString folder = runtime.path() + QStringLiteral("/grassfield");
+    const QString path = folder + QStringLiteral("/keywindow.json");
+    EXPECT_EQ(grassfield::apps::keyWindowFile(), path);
+    const auto touch = [](const QString &file) {
+        QFile f(file);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("x");
+    };
+    {
+        QQmlApplicationEngine engine;
+        auto *watch = new grassfield::apps::KeyWindow(&engine);
+        // No folder yet (the shell has not written): the runtime directory, until it appears.
+        EXPECT_EQ(watch->watchedDirectories(), QStringList{runtime.path()});
+        ASSERT_TRUE(QDir().mkpath(folder));
+        spin(200);
+        EXPECT_EQ(watch->watchedDirectories(), QStringList{folder}) << "the folder there: the runtime directory let go";
+
+        // Other programs' files in the runtime directory: not one read.
+        const int reads = watch->reads();
+        for (int i = 0; i < 20; ++i) {
+            touch(runtime.path() + QStringLiteral("/other-%1.sock").arg(i));
+            QFile::remove(runtime.path() + QStringLiteral("/other-%1.sock").arg(i));
+        }
+        spin(200);
+        EXPECT_EQ(watch->reads(), reads);
+
+        // The shell's file in the folder: read.
+        replace(path, naming(QCoreApplication::applicationPid(), ""));
+        spin(200);
+        EXPECT_GT(watch->reads(), reads);
+    }
+    if (oldRuntime.isEmpty())
+        qunsetenv("XDG_RUNTIME_DIR");
+    else
+        qputenv("XDG_RUNTIME_DIR", oldRuntime);
 }
 
 } // namespace

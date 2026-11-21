@@ -6,13 +6,13 @@
 // titlebar above it while that is shown. One per window, next to its titlebar (main.cpp decorate()); nothing reserved,
 // no input. Without the plugin there is no rim (gate C2); the unload removes every rim and damages where it was.
 
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/render/decorations/IHyprWindowDecoration.hpp>
 
 #include <optional>
 #include <string>
 
-class CGrassfieldRim : public IHyprWindowDecoration {
+class CGrassfieldRim : public gf::compat::CDecorationBase {
   public:
     explicit CGrassfieldRim(const PHLWINDOW& window);
     ~CGrassfieldRim() override;
@@ -22,7 +22,7 @@ class CGrassfieldRim : public IHyprWindowDecoration {
 
     SDecorationPositioningInfo getPositioningInfo() override;
     void                       onPositioningReply(const SDecorationPositioningReply& reply) override;
-    void                       draw(PHLMONITOR monitor, float const& alpha) override;
+    void                       drawGf(PHLMONITOR monitor, float alpha) override;
     eDecorationType            getDecorationType() override;
     void                       updateWindow(PHLWINDOW window) override;
     void                       damageEntire() override;

@@ -52,9 +52,13 @@ TestCase {
 
     function test_capabilitiesFileLocation() {
         compare(CapabilitiesFile.path("/dev/state", "/run/user/1000"), "/dev/state/capabilities.json");
-        compare(CapabilitiesFile.path("", "/run/user/1000"), "/run/user/1000/grassfield-capabilities.json");
-        compare(CapabilitiesFile.path(undefined, "/run/user/1000"), "/run/user/1000/grassfield-capabilities.json");
+        compare(CapabilitiesFile.path("", "/run/user/1000"), "/run/user/1000/grassfield/capabilities.json");
+        compare(CapabilitiesFile.path(undefined, "/run/user/1000"), "/run/user/1000/grassfield/capabilities.json");
         compare(CapabilitiesFile.path("", ""), "");
+        // Grassfield's own runtime folder, made private by the shell before its first write; none in a dev session.
+        compare(CapabilitiesFile.runtimeFolder("", "/run/user/1000"), "/run/user/1000/grassfield");
+        compare(CapabilitiesFile.runtimeFolder("/dev/state", "/run/user/1000"), "");
+        compare(CapabilitiesFile.runtimeFolder("", ""), "");
     }
 
     function test_capabilitiesPayload() {

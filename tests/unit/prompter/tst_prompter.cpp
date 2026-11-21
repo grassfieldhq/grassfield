@@ -122,6 +122,25 @@ TEST(PrompterText, InvisibleAndDirectionalCharactersAreRemoved) {
     EXPECT_EQ(flatten(ucs({'a', 0xFFFE, 0xFDD0, 0x1FFFF, 'b'}), 100), QStringLiteral("ab"));
 }
 
+// B-19: the joiners stay where text needs them (emoji ZWJ sequences, Persian and Indic names), and only there.
+TEST(PrompterText, JoinersStayBetweenLettersAndInsideEmojiSequences) {
+    const QString family = QString::fromUcs4(U"\U0001F468\u200D\U0001F469\u200D\U0001F467");
+    EXPECT_EQ(flatten(QStringLiteral("Home ") + family, 100), QStringLiteral("Home ") + family);
+    const QString coder = QString::fromUcs4(U"\U0001F469\U0001F3FD\u200D\U0001F4BB"); // skin tone, then ZWJ
+    EXPECT_EQ(flatten(coder, 100), coder);
+    const QString rainbow = QString::fromUcs4(U"\U0001F3F3\uFE0F\u200D\U0001F308"); // after U+FE0F
+    EXPECT_EQ(flatten(rainbow, 100), rainbow);
+    const QString persian = QString::fromUcs4(U"\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645"); // ZWNJ in a word
+    EXPECT_EQ(flatten(persian, 100), persian);
+    const QString hindi = QString::fromUcs4(U"\u0915\u094D\u200D\u0937"); // ZWJ after a virama (a mark)
+    EXPECT_EQ(flatten(hindi, 100), hindi);
+    // At a word's edge, doubled, next to a space or a digit: removed.
+    EXPECT_EQ(flatten(ucs({0x200D, 'a', 'b', 0x200D}), 100), QStringLiteral("ab"));
+    EXPECT_EQ(flatten(ucs({'a', 0x200D, 0x200D, 'b'}), 100), ucs({'a', 0x200D, 'b'}));
+    EXPECT_EQ(flatten(ucs({'a', 0x200C, ' ', 'b'}), 100), QStringLiteral("a b"));
+    EXPECT_EQ(flatten(ucs({'1', 0x200D, '2'}), 100), QStringLiteral("12"));
+}
+
 TEST(PrompterText, LoneSurrogatesBecomeReplacementCharacters) {
     QString lone = QStringLiteral("a");
     lone.append(QChar(0xD800)).append(u'b').append(QChar(0xDC00));
@@ -625,24 +644,56 @@ TEST(PrompterRequests, AtMostEightAndIdsNeverReused) {
     RequestBook book(limits::kRequests);
     int         owners[10];
     QStringList ids;
+    const Lane  lanes[8] = {Lane::Keyring, Lane::Kio, Lane::Keyring, Lane::Kio, Lane::Nm, Lane::Nm, Lane::Bluetooth, Lane::Bluetooth};
     for (int i = 0; i < 8; ++i) {
-        const QString id = book.reserve(&owners[i]);
-        ASSERT_FALSE(id.isEmpty());
+        const QString id = book.reserve(&owners[i], lanes[i], lanes[i] == Lane::Nm || lanes[i] == Lane::Bluetooth ? QString() : QStringLiteral(":1.%1").arg(i));
+        ASSERT_FALSE(id.isEmpty()) << i;
         ids.append(id);
     }
     EXPECT_EQ(book.count(), 8);
-    EXPECT_TRUE(book.reserve(&owners[8]).isEmpty()); // the 9th is refused
-    EXPECT_TRUE(book.reserve(&owners[0]).isEmpty()); // one request per owner
+    EXPECT_TRUE(book.reserve(&owners[8], Lane::Nm).isEmpty()); // the 9th is refused
+    EXPECT_TRUE(book.reserve(&owners[0], Lane::Nm).isEmpty()); // one request per owner
     EXPECT_EQ(book.ids(), ids);
     EXPECT_EQ(book.owner(ids.at(3)), &owners[3]);
     EXPECT_EQ(book.idOf(&owners[3]), ids.at(3));
     EXPECT_TRUE(book.release(ids.at(3)));
     EXPECT_FALSE(book.release(ids.at(3)));
     EXPECT_EQ(book.owner(ids.at(3)), nullptr);
-    const QString next = book.reserve(&owners[8]);
+    const QString next = book.reserve(&owners[8], Lane::Kio, QStringLiteral(":1.50"));
     EXPECT_EQ(next, QStringLiteral("p9")); // a new number, never the released one
     EXPECT_FALSE(ids.contains(next));
-    EXPECT_TRUE(book.reserve(nullptr).isEmpty());
+    EXPECT_TRUE(book.reserve(nullptr, Lane::Nm).isEmpty());
+}
+
+// B-05: one application that opens prompts and leaves them cannot starve Wi-Fi passwords or pairings: NetworkManager and
+// BlueZ keep their slots, and one connection holds at most kPerCaller requests.
+TEST(PrompterRequests, WiFiAndBluetoothKeepTheirSlots) {
+    RequestBook book(limits::kRequests);
+    int         owners[16];
+    int         n = 0;
+    // One connection: kPerCaller, then no more.
+    EXPECT_FALSE(book.reserve(&owners[n++], Lane::Keyring, QStringLiteral(":1.66")).isEmpty());
+    EXPECT_FALSE(book.reserve(&owners[n++], Lane::Keyring, QStringLiteral(":1.66")).isEmpty());
+    EXPECT_TRUE(book.reserve(&owners[n++], Lane::Kio, QStringLiteral(":1.66")).isEmpty()) << "its connection holds kPerCaller";
+    // Applications in all: the slots not kept for nm and bluetooth (8 - 2 - 2).
+    EXPECT_FALSE(book.reserve(&owners[n++], Lane::Kio, QStringLiteral(":1.67")).isEmpty());
+    EXPECT_FALSE(book.reserve(&owners[n++], Lane::Keyring, QStringLiteral(":1.68")).isEmpty());
+    EXPECT_TRUE(book.reserve(&owners[n++], Lane::Keyring, QStringLiteral(":1.69")).isEmpty()) << "the rest is kept for Wi-Fi and Bluetooth";
+    EXPECT_EQ(book.count(), 4);
+    // Wi-Fi gets its two and may take Bluetooth's? No: Bluetooth's two stay free.
+    EXPECT_FALSE(book.reserve(&owners[n++], Lane::Nm).isEmpty());
+    EXPECT_FALSE(book.reserve(&owners[n++], Lane::Nm).isEmpty());
+    EXPECT_TRUE(book.reserve(&owners[n++], Lane::Nm).isEmpty()) << "Bluetooth's slots are not Wi-Fi's";
+    EXPECT_FALSE(book.reserve(&owners[n++], Lane::Bluetooth).isEmpty());
+    EXPECT_FALSE(book.reserve(&owners[n++], Lane::Bluetooth).isEmpty());
+    EXPECT_EQ(book.count(), limits::kRequests);
+    // With no application waiting, Wi-Fi may use the shared slots too.
+    RequestBook quiet(limits::kRequests);
+    int         more[8];
+    int         nm = 0;
+    for (int i = 0; i < 8; ++i)
+        nm += quiet.reserve(&more[i], Lane::Nm).isEmpty() ? 0 : 1;
+    EXPECT_EQ(nm, limits::kRequests - kReservedBluetooth);
 }
 
 // --- the shell's cgroup and the socket peer ------------------------------------------------------------------------------
@@ -1093,6 +1144,27 @@ TEST_F(PrompterTrust, TheOneEntryThatRunsTheExecutable) {
     // A second entry for the same file: neither is shown.
     entry(QStringLiteral("org.example.Editor2.desktop"), editor.path.toUtf8());
     EXPECT_EQ(requesterFor(facts(bin(QStringLiteral("editor"))), where()).role, QStringLiteral("unidentified"));
+}
+
+// Fluidity note: entries are parsed once and read again only when their file changes; the trust of the path is checked at
+// every use. A rename, a new content, a new mode are all seen at the next prompt.
+TEST_F(PrompterTrust, TheEntriesAreReadAgainWhenTheyChange) {
+    entry(QStringLiteral("org.example.Editor.desktop"), "editor %U");
+    EXPECT_EQ(requesterFor(facts(bin(QStringLiteral("editor"))), where()).name, QStringLiteral("org.example.Editor"));
+    writeFile(apps() + QStringLiteral("/org.example.Editor.desktop"), "[Desktop Entry]\nType=Application\nName=Renamed Editor\nExec=editor\n", 0644);
+    EXPECT_EQ(requesterFor(facts(bin(QStringLiteral("editor"))), where()).name, QStringLiteral("Renamed Editor")) << "a new content is read again";
+    ASSERT_EQ(::chmod(QFile::encodeName(apps() + QStringLiteral("/org.example.Editor.desktop")).constData(), 0666), 0);
+    EXPECT_EQ(requesterFor(facts(bin(QStringLiteral("editor"))), where()).role, QStringLiteral("unidentified")) << "the trust is checked at every use";
+    ASSERT_EQ(::chmod(QFile::encodeName(apps() + QStringLiteral("/org.example.Editor.desktop")).constData(), 0644), 0);
+    ASSERT_EQ(::rename(QFile::encodeName(apps() + QStringLiteral("/org.example.Editor.desktop")).constData(),
+                       QFile::encodeName(apps() + QStringLiteral("/org.example.Moved.desktop")).constData()),
+              0);
+    EXPECT_EQ(requesterFor(facts(bin(QStringLiteral("editor"))), where()).desktopId, QStringLiteral("org.example.Moved.desktop"));
+    // The mount table is cached too, and gives what a fresh read gives.
+    QFile mountinfo(QStringLiteral("/proc/self/mountinfo"));
+    ASSERT_TRUE(mountinfo.open(QIODevice::ReadOnly));
+    EXPECT_EQ(selfMountDevices(), mountDevices(mountinfo.readAll()));
+    EXPECT_EQ(selfMountDevices(), selfMountDevices());
 }
 
 TEST_F(PrompterTrust, EntriesThatDoNotCount) {
@@ -2441,8 +2513,9 @@ TEST(PrompterKio, HowLongAnEntryLives) {
     cache.add(key, infoFor("ftp://h/", "a", "plain"), 0, 1, false);
     // Kept (keepPassword) without a window: for the session.
     cache.add(key, infoFor("ftp://h/", "b", "kept", true), 0, 1, false);
-    // Tied to a window: until the window closes, which nothing reports in a Grassfield session.
-    cache.add(key, infoFor("ftp://h/", "c", "window"), 42, 1, false);
+    // Tied to a window: kiod6 keeps it until the window closes, which nothing reports in a Grassfield session; the bridge
+    // until its connection leaves the bus, at most kWindowExpireSeconds after its last use (B-04, PrompterKio.AWindowsEntry...).
+    cache.add(key, infoFor("ftp://h/", "c", "window"), 42, 1, false, QStringLiteral(":1.7"));
     g_now = 1009;
     kio::CacheEntry* plain = cache.find(key, infoFor("ftp://h/", "", "plain"));
     ASSERT_NE(plain, nullptr);
@@ -2451,12 +2524,13 @@ TEST(PrompterKio, HowLongAnEntryLives) {
     EXPECT_NE(cache.find(key, infoFor("ftp://h/", "", "plain")), nullptr);
     g_now = 1020;
     EXPECT_EQ(cache.find(key, infoFor("ftp://h/", "", "plain")), nullptr) << "expired";
-    g_now = 1000000;
-    EXPECT_NE(cache.find(key, infoFor("ftp://h/", "", "kept")), nullptr);
     kio::CacheEntry* window = cache.find(key, infoFor("ftp://h/", "", "window"));
     ASSERT_NE(window, nullptr);
     EXPECT_EQ(window->expire, kio::CacheEntry::Expire::WindowClose);
-    EXPECT_EQ(window->windows, QList<qint64>{42});
+    EXPECT_EQ(window->windows, (QList<kio::CacheEntry::Window>{{42, QStringLiteral(":1.7")}}));
+    g_now = 1000000;
+    EXPECT_NE(cache.find(key, infoFor("ftp://h/", "", "kept")), nullptr);
+    EXPECT_EQ(cache.find(key, infoFor("ftp://h/", "", "window")), nullptr) << "a window's entry is time-limited";
     // A cancelled entry is never kept, whatever keepPassword says.
     cache.add(key, infoFor("ftp://h/", "d", "cancelled", true), 0, 9, true);
     kio::CacheEntry* cancelled = cache.find(key, infoFor("ftp://h/", "", "cancelled"));
@@ -2465,6 +2539,44 @@ TEST(PrompterKio, HowLongAnEntryLives) {
     EXPECT_EQ(cancelled->expire, kio::CacheEntry::Expire::Time);
     g_now += 11;
     EXPECT_EQ(cache.find(key, infoFor("ftp://h/", "", "cancelled")), nullptr);
+}
+
+// B-04: an entry tied to a window goes when every connection that tied it left the bus, and at the latest
+// kWindowExpireSeconds after its last use; a use extends it; the windows are bounded.
+TEST(PrompterKio, AWindowsEntryEndsWithItsCallersAndAfterATimeLimit) {
+    g_now = 1000;
+    kio::Cache    cache(fakeClock);
+    const QString key = QStringLiteral("smb-h:-1");
+    cache.add(key, infoFor("smb://h/", "a", "one"), 7, 1, false, QStringLiteral(":1.20"));
+    cache.add(key, infoFor("smb://h/", "b", "two"), 8, 1, false, QStringLiteral(":1.20"));
+    kio::CacheEntry* two = cache.find(key, infoFor("smb://h/", "", "two"));
+    ASSERT_NE(two, nullptr);
+    cache.touch(two, 9, false, QStringLiteral(":1.21")); // another connection's window uses it too
+    EXPECT_EQ(cache.callerGone(QStringLiteral(":1.99")), 0) << "an unrelated connection";
+    EXPECT_EQ(cache.callerGone(QStringLiteral(":1.20")), 1) << "\"one\" was tied to :1.20 only";
+    EXPECT_EQ(cache.find(key, infoFor("smb://h/", "", "one")), nullptr);
+    ASSERT_NE(cache.find(key, infoFor("smb://h/", "", "two")), nullptr) << "\"two\" is still tied to :1.21";
+    // A use keeps it; past the limit without one it goes, though its connection is still there.
+    g_now += kio::kWindowExpireSeconds - 1;
+    two = cache.find(key, infoFor("smb://h/", "", "two"));
+    ASSERT_NE(two, nullptr);
+    cache.touch(two, 9, false, QStringLiteral(":1.21"));
+    g_now += kio::kWindowExpireSeconds;
+    EXPECT_NE(cache.find(key, infoFor("smb://h/", "", "two")), nullptr);
+    g_now += 1;
+    EXPECT_EQ(cache.find(key, infoFor("smb://h/", "", "two")), nullptr);
+    EXPECT_EQ(cache.size(), 0);
+    // Kept entries (keepPassword, no window) are not a window's: a connection leaving does not touch them.
+    cache.add(key, infoFor("smb://h/", "c", "kept", true), 0, 2, false, QStringLiteral(":1.30"));
+    EXPECT_EQ(cache.callerGone(QStringLiteral(":1.30")), 0);
+    EXPECT_EQ(cache.size(), 1);
+    // The windows of one entry are bounded, whatever ids the callers invent.
+    cache.add(key, infoFor("smb://h/", "d", "many"), 1, 3, false, QStringLiteral(":1.40"));
+    kio::CacheEntry* many = cache.find(key, infoFor("smb://h/", "", "many"));
+    ASSERT_NE(many, nullptr);
+    for (qint64 id = 2; id < 1000; ++id)
+        cache.touch(many, id, false, QStringLiteral(":1.40"));
+    EXPECT_EQ(many->windows.size(), kio::kMaxWindows);
 }
 
 TEST(PrompterKio, RemoveAuthInfoAndTheBound) {

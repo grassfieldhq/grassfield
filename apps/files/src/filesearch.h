@@ -1,5 +1,7 @@
 #pragma once
 
+#include "workers.h"
+
 #include "searchlogic.h"
 
 #include <QByteArray>
@@ -51,7 +53,8 @@ public:
     FileSearch(quint64 generation, const Settings &settings);
 
     void cancel() { m_cancel.store(true); }
-    bool cancelled() const { return m_cancel.load(); }
+    // Also when the app quits (Workers::waitAll): the walk ends before Qt's shutdown.
+    bool cancelled() const { return m_cancel.load() || Workers::stopping(); }
 
 signals:
     void found(quint64 generation, const QStringList &paths);

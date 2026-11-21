@@ -47,56 +47,63 @@ Sheet {
         return withPrefix.split("/")[0];
     }
 
-    SettingsGroup {
-        Repeater {
-            model: [
-                {title: qsTr("Wi-Fi band"), value: root.net && root.device ? System.wifiBand(root.device.frequency) : ""},
-                {title: qsTr("Link rate"), value: root.net && root.device && root.device.bitrate > 0 ? qsTr("%1 Mbit/s").arg(Math.round(root.device.bitrate / 1000)) : ""},
-                {title: qsTr("Speed"), value: !root.net && root.device && root.device.speed > 0 ? qsTr("%1 Mbit/s").arg(root.device.speed) : ""},
-                {title: qsTr("Security"), value: root.net ? (root.net.security !== "" ? root.net.security : qsTr("None")) : ""},
-                {title: qsTr("IP address"), value: root.address(root.ip4)},
-                {title: qsTr("Subnet mask"), value: root.ip4 !== "" ? System.subnetMask(root.ip4.split("/")[1]) : ""},
-                {title: qsTr("Router"), value: root.device ? root.device.router : ""},
-                {title: qsTr("DNS servers"), value: root.device ? root.device.dns.join(", ") : ""},
-                {title: qsTr("IPv6 address"), value: root.address(root.ip6)},
-                {title: qsTr("MAC address"), value: root.device ? root.device.mac : ""}
-            ].filter(r => r.value !== "")
+    // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
+    bodyComponent: Component {
+        Column {
+            spacing: Tokens.spacingMd
 
-            SettingsRow {
-                required property var modelData
-                title: modelData.title
-                valueText: modelData.value
+            SettingsGroup {
+                Repeater {
+                    model: [
+                        {title: qsTr("Wi-Fi band"), value: root.net && root.device ? System.wifiBand(root.device.frequency) : ""},
+                        {title: qsTr("Link rate"), value: root.net && root.device && root.device.bitrate > 0 ? qsTr("%1 Mbit/s").arg(Math.round(root.device.bitrate / 1000)) : ""},
+                        {title: qsTr("Speed"), value: !root.net && root.device && root.device.speed > 0 ? qsTr("%1 Mbit/s").arg(root.device.speed) : ""},
+                        {title: qsTr("Security"), value: root.net ? (root.net.security !== "" ? root.net.security : qsTr("None")) : ""},
+                        {title: qsTr("IP address"), value: root.address(root.ip4)},
+                        {title: qsTr("Subnet mask"), value: root.ip4 !== "" ? System.subnetMask(root.ip4.split("/")[1]) : ""},
+                        {title: qsTr("Router"), value: root.device ? root.device.router : ""},
+                        {title: qsTr("DNS servers"), value: root.device ? root.device.dns.join(", ") : ""},
+                        {title: qsTr("IPv6 address"), value: root.address(root.ip6)},
+                        {title: qsTr("MAC address"), value: root.device ? root.device.mac : ""}
+                    ].filter(r => r.value !== "")
+
+                    SettingsRow {
+                        required property var modelData
+                        title: modelData.title
+                        valueText: modelData.value
+                    }
+                }
+
+                SettingsRow {
+                    visible: root.ip4 === "" && root.ip6 === ""
+                    title: qsTr("No address: not connected")
+                }
             }
-        }
 
-        SettingsRow {
-            visible: root.ip4 === "" && root.ip6 === ""
-            title: qsTr("No address: not connected")
-        }
-    }
+            Row {
+                spacing: Tokens.settingsAccessoryGap
 
-    Row {
-        spacing: Tokens.settingsAccessoryGap
+                Button {
+                    visible: root.net !== null
+                    push: true
+                    text: qsTr("Forget This Network…")
+                    onClicked: {
+                        root.close();
+                        root.forgetRequested(root.net);
+                    }
+                }
 
-        Button {
-            visible: root.net !== null
-            push: true
-            text: qsTr("Forget This Network…")
-            onClicked: {
-                root.close();
-                root.forgetRequested(root.net);
-            }
-        }
-
-        // ADR-0045 OC-10: the network this computer is on, shared by a QR code (Omarchy's omarchy-network-qr); never for an
-        // enterprise (802.1X) network, whose account a code cannot hold (Omarchy refuses them too).
-        Button {
-            visible: root.net !== null && root.net.active === true && root.net.enterprise !== true && root.canShare
-            push: true
-            text: qsTr("Share Network…")
-            onClicked: {
-                root.close();
-                root.shareRequested(root.net);
+                // ADR-0045 OC-10: the network this computer is on, shared by a QR code (Omarchy's omarchy-network-qr); never for an
+                // enterprise (802.1X) network, whose account a code cannot hold (Omarchy refuses them too).
+                Button {
+                    visible: root.net !== null && root.net.active === true && root.net.enterprise !== true && root.canShare
+                    push: true
+                    text: qsTr("Share Network…")
+                    onClicked: {
+                        root.close();
+                        root.shareRequested(root.net);
+                    }
+                }
             }
         }
     }

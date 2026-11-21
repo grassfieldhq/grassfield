@@ -5,6 +5,8 @@
 #include "archivelogic.h"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QThread>
 #include <QDir>
 #include <QEventLoop>
 #include <QFile>
@@ -13,11 +15,19 @@
 #include <QTemporaryDir>
 #include <QTimer>
 
+#include <atomic>
 #include <memory>
 
 #include <gtest/gtest.h>
 
 using namespace ArchiveLogic;
+
+// ArchiveJob's test hook (a friend): what runs on the removal worker before it removes a staging item.
+class ArchiveRemovalTestAccess
+{
+public:
+    static void beforeRemoval(std::function<void()> f) { ArchiveJob::s_beforeRemoval = std::move(f); }
+};
 
 namespace
 {
@@ -88,8 +98,13 @@ Result runJob(ArchiveJob *job)
     return r;
 }
 
+// The staging items still there once a failed job's removal (on a worker, after the child has ended) had its time.
 QStringList hiddenLeftovers(const QString &folder)
 {
+    QElapsedTimer clock;
+    clock.start();
+    while (!QDir(folder).entryList({QStringLiteral(".grassfield-*")}, QDir::AllEntries | QDir::Hidden | QDir::System).isEmpty() && clock.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     return QDir(folder).entryList({QStringLiteral(".grassfield-*")}, QDir::AllEntries | QDir::Hidden | QDir::System);
 }
 } // namespace
@@ -264,11 +279,58 @@ TEST(ArchiveJobs, CancelRemovesTheTemporaryName)
         done = !ok;
         error = e;
     });
+    // The removal runs on a worker, never on the thread that cancels (audit F3: a large staging tree froze every window).
+    std::atomic<Qt::HANDLE> removedOn{nullptr};
+    ArchiveRemovalTestAccess::beforeRemoval([&removedOn] { removedOn.store(QThread::currentThreadId()); });
     job->start();
     job->cancel();
     EXPECT_TRUE(done);
     EXPECT_TRUE(error.isEmpty()) << "a cancel is no error";
     delete job;
+    // Removed once the killed child has been reaped: the event loop runs meanwhile.
+    QElapsedTimer clock;
+    clock.start();
+    while ((!hiddenLeftovers(dir->path()).isEmpty() || removedOn.load() == nullptr) && clock.elapsed() < 10000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    ArchiveRemovalTestAccess::beforeRemoval({});
     EXPECT_TRUE(hiddenLeftovers(dir->path()).isEmpty());
     EXPECT_FALSE(QFileInfo::exists(dir->path() + QStringLiteral("/a.zip")));
+    ASSERT_NE(removedOn.load(), nullptr) << "the staging item was removed by the removal worker";
+    EXPECT_NE(removedOn.load(), QThread::currentThreadId()) << "never on the GUI thread";
+}
+
+// Expand's listing is counted as it comes (audit F4): no size or line-count cap, constant memory, any chunking.
+TEST(ArchiveCommands, ListingIsCountedAsItComes)
+{
+    ListingTally tally;
+    const QByteArray line = "-rw-r--r--  0 u g    1200 Oct 26 12:00 a\n";
+    // 300,000 members (the old 16 MiB buffer refused about 150,000), fed in odd-sized chunks that cut lines anywhere.
+    QByteArray block;
+    for (int i = 0; i < 1000; ++i)
+        block += line;
+    for (int i = 0; i < 300; ++i) {
+        for (qsizetype from = 0; from < block.size(); from += 7777)
+            tally.feed(block.mid(from, 7777));
+    }
+    tally.finish();
+    EXPECT_EQ(tally.entries(), 300000);
+    ASSERT_TRUE(tally.total().has_value());
+    EXPECT_EQ(*tally.total(), qint64(1200) * 300000);
+
+    ListingTally last;
+    last.feed("-rw-r--r--  0 u g    5 Oct 26 12:00 a\n-rw-r--r--  0 u g    7 Oct 26 12:00 b");
+    last.finish();
+    EXPECT_EQ(last.total(), std::optional<qint64>(12)) << "a last line without a newline counts";
+
+    ListingTally odd;
+    odd.feed("-rw-r--r--  0 a user g 12 Oct 26 12:00 a\n");
+    odd.finish();
+    EXPECT_FALSE(odd.total().has_value()) << "an owner with a space";
+
+    ListingTally huge;
+    huge.feed("-rw-r--r--  0 u g    5 Oct 26 12:00 " + QByteArray(ListingTally::kMaxLine + 10, 'n'));
+    huge.feed("\n-rw-r--r--  0 u g    5 Oct 26 12:00 b\n");
+    huge.finish();
+    EXPECT_FALSE(huge.total().has_value()) << "a line past the bound makes the size unknown";
+    EXPECT_EQ(huge.entries(), 2) << "and the next line is read as a line of its own";
 }

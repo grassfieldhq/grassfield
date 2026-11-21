@@ -670,6 +670,8 @@ TEST_F(FileChooserTest, RequestsAreBounded)
         replies << call(QStringLiteral("OpenFile"), QStringLiteral("/r/b%1").arg(i), {});
     ASSERT_TRUE(waitFor([&] { return replies.last()->done; }));
     EXPECT_EQ(replies.last()->response, 2u);
+    // A panel opens once its application's entry is read on a worker (whenAppKnown): the 16 may come after the refusal.
+    waitFor([&] { return opened.size() >= 16; });
     EXPECT_EQ(opened.size(), 16);
     // The same handle twice: the second is refused, the first goes on.
     auto again = call(QStringLiteral("OpenFile"), QStringLiteral("/r/b0"), {});

@@ -465,6 +465,44 @@ QString equivalentName(const QStringList &names, const QString &name)
     return {};
 }
 
+NameIndex::NameIndex(const QStringList &names)
+{
+    m_composed.reserve(names.size());
+    m_exact.reserve(names.size());
+    for (const QString &n : names)
+        add(n);
+}
+
+void NameIndex::add(const QString &name)
+{
+    if (m_exact.contains(name))
+        return;
+    m_exact.insert(name);
+    m_composed[name.normalized(QString::NormalizationForm_C)].append(name);
+}
+
+bool NameIndex::taken(const QString &name, const QString &except) const
+{
+    if (name != except && m_exact.contains(name))
+        return true;
+    const auto it = m_composed.constFind(name.normalized(QString::NormalizationForm_C));
+    if (it == m_composed.cend())
+        return false;
+    for (const QString &entry : *it) {
+        if (entry != except)
+            return true;
+    }
+    return false;
+}
+
+QString NameIndex::twin(const QString &name) const
+{
+    if (m_exact.contains(name))
+        return {};
+    const auto it = m_composed.constFind(name.normalized(QString::NormalizationForm_C));
+    return it == m_composed.cend() || it->isEmpty() ? QString() : it->first();
+}
+
 bool gnomeCopiedFilesCut(const QByteArray &list)
 {
     const int end = list.indexOf('\n');

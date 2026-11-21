@@ -4,12 +4,15 @@
 // keyboard, so an app cannot tell a menu from another window by itself. The shell writes the client of the window that looks
 // key to one small file:
 //
-//   $GRASSFIELD_STATE_HOME/keywindow.json (a dev session) or $XDG_RUNTIME_DIR/grassfield-keywindow.json
+//   $GRASSFIELD_STATE_HOME/keywindow.json (a dev session) or $XDG_RUNTIME_DIR/grassfield/keywindow.json
 //   {"v":1,"pid":1234,"appId":"org.grassfield.Settings"}   (pid 0 while Hyprland's window data does not have it: the app id)
 //
 // (shell/services/KeyWindow.qml; the format and the rule in shell/services/KeyWindowFile.js). KeyWindow holds the app's last
 // focused window key (Appearance.heldKeyWindow, read by Appearance.looksKey) while the app has no focused window and the file
 // names this process. A missing, unreadable or malformed file names nobody: Window.active alone, as before.
+// The file lives in Grassfield's own runtime folder (H1 of the 2026-11 audit): its directory is watched, and any entry any
+// program made or removed in all of $XDG_RUNTIME_DIR made every running app open and parse the file again. The parent is
+// watched only while the folder does not exist yet (the shell makes it at its first write).
 #pragma once
 
 #include <QByteArray>
@@ -24,6 +27,7 @@
 #include <QPointer>
 #include <QQmlApplicationEngine>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 #include <QWindow>
 
@@ -37,7 +41,7 @@ inline QString keyWindowFile()
     if (!dev.isEmpty())
         return dev + QStringLiteral("/keywindow.json");
     const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
-    return runtime.isEmpty() ? QString() : runtime + QStringLiteral("/grassfield-keywindow.json");
+    return runtime.isEmpty() ? QString() : runtime + QStringLiteral("/grassfield/keywindow.json");
 }
 
 // Whether the file's content names this client: its pid when the shell knows one, else its app id.
@@ -83,19 +87,42 @@ public:
         // The shell replaces the file (an atomic write): the watch on the file goes with the old one, so the directory is
         // watched too, and the file is watched again whenever it exists.
         connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, [this] { reread(); });
-        connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { reread(); });
-        if (!m_path.isEmpty()) {
-            const QString dir = QFileInfo(m_path).absolutePath();
-            if (QFileInfo(dir).isDir())
-                m_watcher.addPath(dir);
-        }
+        connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] {
+            watchFolder();
+            reread();
+        });
+        watchFolder();
         m_last = QGuiApplication::focusWindow();
         reread();
     }
 
+    // How often the file was read (tests: the churn of other programs' files must not read it).
+    int reads() const { return m_reads; }
+    // The directories watched now (tests).
+    QStringList watchedDirectories() const { return m_watcher.directories(); }
+
 private:
+    // The file's folder when it exists; else its parent, until the folder appears (then the parent is let go).
+    void watchFolder()
+    {
+        if (m_path.isEmpty())
+            return;
+        const QString dir = QFileInfo(m_path).absolutePath();
+        const QString parent = QFileInfo(dir).absolutePath();
+        const QStringList watched = m_watcher.directories();
+        if (QFileInfo(dir).isDir()) {
+            if (!watched.contains(dir))
+                m_watcher.addPath(dir);
+            if (watched.contains(parent))
+                m_watcher.removePath(parent);
+        } else if (!watched.contains(parent) && QFileInfo(parent).isDir()) {
+            m_watcher.addPath(parent);
+        }
+    }
+
     void reread()
     {
+        ++m_reads;
         bool named = false;
         if (!m_path.isEmpty()) {
             QFile f(m_path);
@@ -131,6 +158,7 @@ private:
     QPointer<QObject> m_appearance;
     QPointer<QWindow> m_pushed;
     bool m_named = false;
+    int m_reads = 0;
 };
 
 } // namespace grassfield::apps

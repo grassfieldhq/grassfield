@@ -20,6 +20,8 @@ FocusScope {
     readonly property var info: Popups.data
     // Folders opened in place (Grid and List: macOS opens a sub-folder inside the stack with a back control): the path of each.
     property var trail: []
+    // The name shown for each folder of the trail (a folder whose name is not UTF-8 is entered by its file: URI, F22).
+    property var trailNames: []
     readonly property bool nested: trail.length > 0
     readonly property string folderPath: nested ? trail[trail.length - 1] : (info.path ? info.path : "")
     property var entries: []
@@ -80,8 +82,9 @@ FocusScope {
         currentIndex = -1;
     }
 
-    function enter(path: string): void {
+    function enter(path: string, name: string): void {
         trail = trail.concat([path]);
+        trailNames = trailNames.concat([name !== "" ? name : Stacks.baseName(path)]);
         reload();
     }
 
@@ -89,17 +92,22 @@ FocusScope {
         if (!nested)
             return;
         trail = trail.slice(0, -1);
+        trailNames = trailNames.slice(0, -1);
         reload();
     }
 
     function open(index: int): void {
         const e = index >= 0 && index < entries.length ? entries[index] : null;
         // A folder in a Grid or a List opens in place; in a Fan (and "Open in Files") it opens in Files.
+        // A name that is not UTF-8 (shown with U+FFFD) is entered and opened by its file: URI, which keeps its bytes (the stack
+        // helper and gio decode it, F22).
         if (e && e.isDir && (view === "grid" || view === "list")) {
-            enter(e.path);
+            // (inside a folder entered by its URI, every entry goes on by its URI)
+            const byUri = e.uri && (e.path.indexOf("\ufffd") >= 0 || e.path.startsWith("file://"));
+            enter(byUri ? e.uri : e.path, e.name ?? "");
             return;
         }
-        const target = e ? e.path : folderPath;
+        const target = e ? (e.uri || e.path) : folderPath;
         Popups.close();
         if (target !== "")
             Apps.openDetached(["gio", "open", target]);
@@ -331,7 +339,7 @@ FocusScope {
             width: parent.width - 2 * x
             height: Tokens.menuItemHeight
             Accessible.role: Accessible.Button
-            Accessible.name: qsTr("Back to %1").arg(root.nested && root.trail.length > 1 ? DisplayName.text(Stacks.baseName(root.trail[root.trail.length - 2])) : DisplayName.text(root.info.name))
+            Accessible.name: qsTr("Back to %1").arg(root.nested && root.trail.length > 1 ? DisplayName.text(root.trailNames[root.trailNames.length - 2]) : DisplayName.text(root.info.name))
             Accessible.onPressAction: root.back()
 
             // A control: the control fill, the control hover over it (ADR-0039 step 12, G6); concentric with the panel's corner,
@@ -363,7 +371,7 @@ FocusScope {
                 x: backGlyph.x + Tokens.menuIconSize + Tokens.spacingSm
                 width: parent.width - x - Tokens.menuItemPadding
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.nested ? DisplayName.text(Stacks.baseName(root.folderPath)) : ""
+                text: root.nested ? DisplayName.text(root.trailNames[root.trailNames.length - 1] ?? "") : ""
                 elide: Text.ElideMiddle
                 color: Appearance.colors.text
                 font.family: Appearance.fontFamily

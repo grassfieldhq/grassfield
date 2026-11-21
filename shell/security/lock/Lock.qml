@@ -147,6 +147,23 @@ Singleton {
         else
             root.startFingerprint();
     }
+    // Set by SleepInhibitor from PrepareForSleep(true) until the resume (SS-01): the lock taken for the sleep must not be
+    // opened in the second or two logind takes to suspend, or the computer would sleep and wake unlocked. Meanwhile no
+    // password is checked and a fingerprint match is ignored (controller.sleepPending), the open fingerprint attempt is
+    // dropped (abort: never a success) and no new one starts. Only ever refuses an unlock; never unlocks or locks.
+    property bool sleepPending: false
+    onSleepPendingChanged: {
+        if (root.sleepPending) {
+            if (fingerprintPam.active)
+                fingerprintPam.abort();
+            // Settled like any attempt that ended without a match; the retry it arms is dropped.
+            root.fingerprintEnded();
+            fingerprintRetry.stop();
+        } else {
+            // The reader is offered again after the usual gap (startFingerprint checks everything else).
+            fingerprintRetry.restart();
+        }
+    }
     function motionOf(output: string): real {
         return WallpaperConfig.motionIn(root.motion, output);
     }
@@ -268,7 +285,7 @@ Singleton {
         return controller.currentState();
     }
 
-    // Engage the lock. reason: "ipc" | "menu" | "idle" | "display-off" | "sleep" | "lid" | "restore". Returns "ok",
+    // Engage the lock. reason: "ipc" | "menu" | "idle" | "display-off" | "sleep" | "lid" | "logind" | "restore". Returns "ok",
     // "already-locked" or "refused: missing-pam". When this shell already holds a lock, the
     // compositor is asked again (verify()): a session found unlocked under it gets a fresh lock once
     // a fresh answer confirms it (checkOwnership), never here on an earlier answer alone: relock()
@@ -323,11 +340,16 @@ Singleton {
         return lock("lid");
     }
 
-    // Ask the compositor for the lock; retried by retryTimer until it is confirmed.
+    // Ask the compositor for the lock; retried by retryTimer until it is confirmed. Asked whether or not a screen exists
+    // (SS-08): ext-session-lock allows a lock with no surface, the compositor then confirms it once every output it has shows
+    // a lock surface, and Quickshell adds a surface to the held lock for each screen that appears (WlSessionLock
+    // onScreensChanged). A request kept back until a screen appears left an output that came up meanwhile (an undock with the
+    // lid closed, a resume reconfiguring the outputs) showing the desktop until the retry; the first lock of a process, made
+    // by the declarative `locked:` binding, never waited for one either.
     function engage(): void {
         if (controller.lockState !== Machine.LOCKING)
             return;
-        if (Quickshell.screens.length > 0 && !sessionLock.locked)
+        if (!sessionLock.locked)
             sessionLock.locked = true;
         if (sessionLock.locked && sessionLock.secure)
             controller.lockAcquired();
@@ -446,8 +468,10 @@ Singleton {
         console.info("grassfield-lock: unlocked");
     }
 
-    // Atomic, blocking write, then read back. Returns false (and sets markerFailed, logged and
-    // shown on the lock surface) when the marker cannot hold the value.
+    // Atomic, blocking write. Returns false (and sets markerFailed, logged and shown on the lock surface) when the marker
+    // cannot hold the value. Written before the lock request (a crash while the lock surfaces are created must still find
+    // "locked" at the restart); on that latency path it costs one write, plus one read only when the cached text already
+    // equals the line (fluidity note of the security-session audit: it was two reads and a write).
     function writeMarker(value: string): bool {
         if (markerPath === "") {
             console.warn("grassfield-lock: XDG_RUNTIME_DIR unset: no crash recovery marker (" + value + "); a restart will lock");
@@ -456,14 +480,18 @@ Singleton {
         // The line also records the count of completed suspends, so that a restarted shell can tell that the
         // machine slept while no shell could lock for it (Machine.sleptSince).
         const line = Machine.markerLine(value, sleepCount());
-        // FileView skips a write equal to its cached text, which is stale if the file was changed
-        // or removed behind its back: re-read first.
-        marker.reload();
-        marker.waitForJob();
-        marker.setText(line + "\n");
-        marker.reload();
-        marker.waitForJob();
-        const ok = String(marker.text()).trim() === line;
+        // FileView skips a write equal to its cached text, which is stale if the file was changed or removed behind its back:
+        // only then is it re-read first (an equal text after the read is the file's own: nothing to write).
+        if (String(marker.text()) === line + "\n") {
+            marker.reload();
+            marker.waitForJob();
+        }
+        let ok = String(marker.text()) === line + "\n" && marker.loadError === FileViewError.Success;
+        if (!ok) {
+            marker.saveOk = false;
+            marker.setText(line + "\n");
+            ok = marker.saveOk;
+        }
         if (!ok)
             console.warn("grassfield-lock: crash recovery marker could not be written:", root.markerPath, "(wanted " + value + ")");
         markerFailed = !ok;
@@ -576,6 +604,9 @@ Singleton {
         // The displays are off (Idle): no new attempt; the wake starts one (onDisplaysOffChanged), a resume allows one.
         if (root.displaysOff && !root.fingerprintResumePass)
             return;
+        // The computer is going to sleep (SS-01, sleepPending): the reader is not armed until the resume.
+        if (root.sleepPending)
+            return;
         root.fingerprintResumePass = false;
         fingerprintRetry.stop();
         fingerprintFastEnd.stop();
@@ -639,6 +670,7 @@ Singleton {
         pam: passwordPam
         // ADR-0040 step 4b (IQ-T2 A): the content fades out before the release; Reduce Motion caps it.
         releaseMs: Appearance.duration(Tokens.lockFadeOutMs)
+        sleepPending: root.sleepPending
         onUnlockRequested: root.release()
         onLockStateChanged: {
             // Carried over a soft reload; cleared only by release() (PAM success).
@@ -872,6 +904,22 @@ Singleton {
         onTriggered: root.fingerprintReachTimedOut()
     }
 
+    // A lock restored while /etc/pam.d/omarchy-lock-password could not be read (a package transaction under way) would
+    // refuse every password for the life of this process (SS-06): the file is looked at again while the session is locked
+    // without it. It only lets a password reach PAM again; PAM alone still decides, and nothing here unlocks.
+    Timer {
+        id: pamRecheck
+        interval: 5000
+        repeat: true
+        running: controller.locked && !controller.pamAvailable
+        onTriggered: {
+            if (root.pamServiceInstalled()) {
+                console.info("grassfield-lock: /etc/pam.d/omarchy-lock-password is readable again; passwords are accepted");
+                controller.pamAvailable = true;
+            }
+        }
+    }
+
     Timer {
         id: retryTimer
         interval: 500
@@ -901,7 +949,8 @@ Singleton {
 
     // Lock ownership check, only while holding a lock on Hyprland: one monitor query
     // (Quickshell.Hyprland IPC request, no hyprctl process) per second, every 100 ms while a takeover
-    // is suspected (takeoverSuspected). Hyprland 0.56.2 emits no event when a session lock is taken
+    // is suspected (takeoverSuspected; a lock inherited at start whose surface holds the keyboard counts only while the
+    // displays are on: Machine.probeSuspected). Hyprland 0.56.2 emits no event when a session lock is taken
     // over or released (verified on its event socket), so a query is the only way to notice that the
     // session was unlocked under this lock. The answer is handled by checkOwnership() (monitorAnswers),
     // as are answers to anyone's query. A changed interval restarts the timer. A tick while Quickshell's
@@ -912,7 +961,7 @@ Singleton {
         // Answers this soon after the compositor confirmed the lock are not trusted (see checkOwnership).
         readonly property int verifyGraceMs: 500
 
-        interval: Machine.probeInterval(root.takeoverSuspected)
+        interval: Machine.probeInterval(root.holding && root.hyprland && Machine.probeSuspected(root.focusedSurface !== null, root.inheritedLock, root.displaysOff))
         repeat: true
         running: root.holding && root.hyprland && !devPause.running
         onTriggered: root.requestMonitors()
@@ -985,9 +1034,19 @@ Singleton {
         blockWrites: true
         atomicWrites: true
         printErrors: false
+        // The last write (blockWrites: saved or saveFailed comes before setText returns).
+        property bool saveOk: false
+
         onLoaded: loadError = FileViewError.Success
         onLoadFailed: error => loadError = error
-        onSaveFailed: error => console.warn("grassfield-lock: crash recovery marker write failed:", FileViewError.toString(error))
+        onSaved: {
+            saveOk = true;
+            loadError = FileViewError.Success;
+        }
+        onSaveFailed: error => {
+            saveOk = false;
+            console.warn("grassfield-lock: crash recovery marker write failed:", FileViewError.toString(error));
+        }
     }
 
     // Completed suspends of the machine (kernel counter, world-readable): see sleepCount().

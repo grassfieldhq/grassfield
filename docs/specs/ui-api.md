@@ -84,6 +84,7 @@ add ProgressRing
 add MenuPopup
 add TimeOfDay
 add SoundEffects
+add Glide
 ```
 
 ## Property changes of public types

@@ -5,6 +5,9 @@
 
 #include <QAtomicInt>
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QList>
+#include <QMutex>
 #include <QIcon>
 #include <QMutexLocker>
 #include <QPixmap>
@@ -59,23 +62,6 @@ QImage ThumbnailProvider::requestImage(const QString &id, QSize *size, const QSi
     return image;
 }
 
-IconProvider::IconProvider()
-    : QQuickImageProvider(QQuickImageProvider::Pixmap)
-{
-}
-
-QPixmap IconProvider::requestPixmap(const QString &id, QSize *size, const QSize &requestedSize)
-{
-    const QSize want = requestedSize.isValid() && !requestedSize.isEmpty() ? requestedSize : QSize(64, 64);
-    QIcon icon = QIcon::fromTheme(id);
-    if (icon.isNull())
-        icon = QIcon::fromTheme(id.endsWith(QLatin1String("-symbolic")) ? QStringLiteral("folder-symbolic") : QStringLiteral("text-x-generic"));
-    const QPixmap pixmap = icon.pixmap(want);
-    if (size)
-        *size = pixmap.size();
-    return pixmap;
-}
-
 namespace
 {
 // Finished from the GUI thread. Qt requires finished() after cancel() too, so a cancelled response is still finished (empty).
@@ -110,6 +96,95 @@ QThreadPool *decodePool()
     return pool;
 }
 } // namespace
+
+namespace
+{
+// The theme icons asked for, rendered on the GUI thread a few at a time (IconProvider).
+struct IconRequest {
+    QPointer<IconResponse> response;
+    std::shared_ptr<QAtomicInt> cancelled;
+    QString id;
+    QSize size;
+};
+
+class IconRenderQueue : public QObject
+{
+public:
+    static IconRenderQueue *instance()
+    {
+        // Made on the GUI thread (the first IconProvider request comes from Qt's loader thread: moved there at once).
+        static IconRenderQueue *queue = [] {
+            auto *q = new IconRenderQueue;
+            q->moveToThread(QCoreApplication::instance()->thread());
+            return q;
+        }();
+        return queue;
+    }
+
+    void push(IconRequest request)
+    {
+        bool schedule = false;
+        {
+            QMutexLocker lock(&m_mutex);
+            m_requests.append(std::move(request));
+            schedule = !m_scheduled;
+            m_scheduled = true;
+        }
+        if (schedule)
+            QMetaObject::invokeMethod(this, &IconRenderQueue::run, Qt::QueuedConnection);
+    }
+
+private:
+    void run()
+    {
+        QElapsedTimer clock;
+        clock.start();
+        for (;;) {
+            IconRequest request;
+            {
+                QMutexLocker lock(&m_mutex);
+                if (m_requests.isEmpty()) {
+                    m_scheduled = false;
+                    return;
+                }
+                if (clock.elapsed() >= IconProvider::kBudgetMs) {
+                    // The rest on a later turn: the frame goes first.
+                    QMetaObject::invokeMethod(this, &IconRenderQueue::run, Qt::QueuedConnection);
+                    return;
+                }
+                request = m_requests.takeFirst();
+            }
+            if (!request.response)
+                continue;
+            if (request.cancelled->loadRelaxed() != 0) {
+                request.response->done(QImage());
+                continue;
+            }
+            request.response->done(IconProvider::render(request.id, request.size));
+        }
+    }
+
+    QMutex m_mutex;
+    QList<IconRequest> m_requests;
+    bool m_scheduled = false;
+};
+} // namespace
+
+QImage IconProvider::render(const QString &id, const QSize &requestedSize)
+{
+    const QSize want = requestedSize.isValid() && !requestedSize.isEmpty() ? requestedSize : QSize(64, 64);
+    QIcon icon = QIcon::fromTheme(id);
+    if (icon.isNull())
+        icon = QIcon::fromTheme(id.endsWith(QLatin1String("-symbolic")) ? QStringLiteral("folder-symbolic") : QStringLiteral("text-x-generic"));
+    return icon.pixmap(want).toImage();
+}
+
+QQuickImageResponse *IconProvider::requestImageResponse(const QString &id, const QSize &requestedSize)
+{
+    auto *response = new IconResponse;
+    IconRenderQueue::instance()->push({QPointer<IconResponse>(response), response->cancelFlag(), id, requestedSize});
+    return response;
+}
 
 void AppIconProvider::shutdown()
 {

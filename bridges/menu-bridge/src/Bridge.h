@@ -127,6 +127,7 @@ namespace gf::menubridge {
         bool                        m_stateOwned = false; // loadState ran: this instance is the one bridge that may write the state file
 
         PenaltyBook                 m_penalties;
+        RefetchBudget               m_refetchBudget; // B-02: re-reads per identity, floods (Penalties.h)
         LauncherWatcher             m_launcher; // ADR-0018: applications' own Dock badges (needs m_penalties and m_bus)
         screensaver::ScreenSaverObject m_screensaver; // GF-016: idle inhibitors
         bool                        m_screensaverOwned = false;

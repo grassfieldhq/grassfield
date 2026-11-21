@@ -13,7 +13,7 @@ out=$root/.dev/build
 mkdir -p "$out"
 
 # GCC 16 warns inside Qt headers (-Wsfinae-incomplete); keep our own warnings visible.
-cxxflags=(-std=c++17 -O2 -Wall -Wextra -Wno-sfinae-incomplete -fPIC)
+cxxflags=(-std=c++17 -O2 -Wall -Wextra -Wno-sfinae-incomplete -fPIC "-DGRASSFIELD_VERSION=\"$(tr -d "[:space:]" <"$root/VERSION")\"") # VERSION: the one version source
 suffix=""
 if [[ " $* " == *" --asan "* ]]; then
   cxxflags+=(-g -fsanitize=address,undefined -fno-omit-frame-pointer)

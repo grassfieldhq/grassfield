@@ -60,10 +60,11 @@ lock_lock() {
       systemctl --user start --no-block grassfield-security.service >/dev/null 2>&1
       ;;
   esac
-  # The caller bounds this with its own timeout (omarchy-system-sleep-lock: what is left of logind's window).
+  # The caller bounds this with its own timeout (omarchy-system-sleep-lock: what is left of logind's window). Each call is
+  # bounded too (SS-03): the lid and the UI call this without one, and a process that does not answer would hold it for ever.
   tries=0
   while [ "$tries" -lt 100 ]; do
-    out=$(qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock 2>/dev/null) && case $out in
+    out=$(timeout -k 0.2 2 qs ipc -p /usr/share/grassfield/shell/security.qml call lock lock 2>/dev/null) && case $out in
       ok | already-locked | refused:*)
         echo "$out"
         exit 0

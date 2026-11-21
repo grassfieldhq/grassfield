@@ -281,13 +281,17 @@ namespace gf::menubridge {
             return false;
         const qint64 now = m_clock();
         // Decay: no strike for kForgiveSec after the last refusal ended.
-        if (now >= it->denyUntil && now >= it->layoutUntil && now - it->lastStrike >= penalty::kForgiveSec) {
+        if (now >= it->denyUntil && now >= it->layoutUntil && now >= it->floodUntil && now - it->lastStrike >= penalty::kForgiveSec) {
             m_entries.erase(it);
             return false;
         }
         it->touch = ++m_touch;
         if (now < it->denyUntil) {
             *why = QStringLiteral("this application's menu was refused (it crashed the bridge or sent an oversized menu), retrying in %1 min").arg((it->denyUntil - now + 59) / 60);
+            return true;
+        }
+        if (now < it->floodUntil) {
+            *why = QStringLiteral("this application changed its menu continuously, retrying in %1 s").arg(it->floodUntil - now);
             return true;
         }
         if (now < it->layoutUntil) {
@@ -309,6 +313,17 @@ namespace gf::menubridge {
                 e.lastStrike = m_clock(); // starts the decay clock of an entry without a strike
             return;
         }
+        if (what == Offence::Flood) {
+            // Doubling per flood, not ended by a delivered menu (it delivers all the time); forgotten with the entry's decay.
+            qint64 span = penalty::kFloodBaseSec;
+            // The shared "unknown" bucket never doubles (innocents behind it recover, as for its other refusals).
+            for (int i = 0; id != kUnknownIdentity && i < e.floods && span < penalty::kFloodMaxSec; ++i)
+                span *= 2;
+            ++e.floods;
+            e.floodUntil = m_clock() + std::min(span, penalty::kFloodMaxSec);
+            e.lastStrike = m_clock();
+            return;
+        }
         strike(id, e);
         capRefused(id);
     }
@@ -319,7 +334,7 @@ namespace gf::menubridge {
             return;
         it->layoutFailures = 0;
         it->layoutUntil    = 0;
-        if (it->strikes == 0)
+        if (it->strikes == 0 && it->floods == 0)
             m_entries.erase(it);
     }
 
@@ -334,10 +349,62 @@ namespace gf::menubridge {
         // kills the bridge, leaves and comes back). Only the short layout back-off is cleared.
         it->layoutFailures = 0;
         it->layoutUntil    = 0;
+        if (now < it->floodUntil)
+            return; // a flood's refusal is not ended by leaving either
         if (it->strikes > 0 && now - it->lastStrike >= penalty::kForgiveSec)
             --it->strikes;
-        if (it->strikes == 0)
+        if (it->floods > 0 && now - it->lastStrike >= penalty::kForgiveSec)
+            it->floods = 0;
+        if (it->strikes == 0 && it->floods == 0)
             m_entries.erase(it);
+    }
+
+    RefetchBudget::RefetchBudget(std::function<qint64()> clockMs) : m_clock(std::move(clockMs)) {}
+
+    qint64 RefetchBudget::ask(const QString& id) {
+        const qint64 now = m_clock();
+        auto         it  = m_entries.find(id);
+        if (it == m_entries.end()) {
+            if (m_entries.size() >= penalty::kRefetchTracked) {
+                // The least recently asked identity goes (it starts again with a full budget if it comes back).
+                auto oldest = m_entries.begin();
+                for (auto e = m_entries.begin(); e != m_entries.end(); ++e) {
+                    if (e->touch < oldest->touch)
+                        oldest = e;
+                }
+                m_entries.erase(oldest);
+            }
+            Entry fresh;
+            fresh.refilledAt = now;
+            it               = m_entries.insert(id, fresh);
+        }
+        Entry& e = it.value();
+        e.touch  = ++m_touch;
+        if (now > e.refilledAt) {
+            e.tokens     = std::min<double>(penalty::kRefetchBurst, e.tokens + double(now - e.refilledAt) / double(penalty::kRefetchRefillMs));
+            e.refilledAt = now;
+        }
+        // A pause in the demand ends a flood: an application that re-reads in bursts (a selection that changes the
+        // enabled actions) is throttled, never punished.
+        if (e.floodStart >= 0 && now - e.lastRefusal >= penalty::kFloodQuietMs)
+            e.floodStart = -1;
+        if (e.tokens >= 1.0) {
+            e.tokens -= 1.0;
+            return 0;
+        }
+        if (e.floodStart < 0)
+            e.floodStart = now;
+        e.lastRefusal = now;
+        if (now - e.floodStart >= penalty::kFloodMs) {
+            e.floodStart = -1;
+            return -1;
+        }
+        const qint64 wait = qint64((1.0 - e.tokens) * double(penalty::kRefetchRefillMs)) + 1;
+        return std::clamp<qint64>(wait, 1, penalty::kRefetchRefillMs);
+    }
+
+    void RefetchBudget::forget(const QString& id) {
+        m_entries.remove(id);
     }
 
     QByteArray PenaltyBook::serialize(const QList<InflightCall>& inflight, const QString& boot, bool running) const {

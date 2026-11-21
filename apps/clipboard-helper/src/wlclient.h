@@ -52,8 +52,13 @@ public:
     bool start(int fd, QString *error);
     bool supported() const { return m_manager && m_lockNotifier && m_seat; }
     bool compositorLocked() const { return m_locked; }
-    // The device exists exactly while capture is on.
+    // The device exists exactly while capture is on. A device the compositor ends (`finished`) is made again after
+    // kRecreateMs (its first selection is never recorded, as after any new device); more than kMaxRecreations within
+    // kRecreateWindowMs is fatal (B-15: capture never stays off silently).
     void setCapturing(bool on);
+    static constexpr int kRecreateMs = 500;
+    static constexpr int kMaxRecreations = 5;
+    static constexpr qint64 kRecreateWindowMs = 60 * 1000;
     bool capturing() const { return m_device != nullptr; }
     // Requests `mime` of `offer`; returns the read end (non-blocking, close-on-exec) or -1.
     int receive(Offer *offer, const QByteArray &mime);
@@ -93,6 +98,8 @@ private:
     QHash<ext_data_control_offer_v1 *, Offer *> m_offers;
     QSocketNotifier *m_notifier = nullptr;
     bool m_locked = false;
+    bool m_wantCapture = false;
+    QList<qint64> m_recreations; // monotonic ms of the recent re-creations after `finished`
     bool m_firstSelection = false;
     bool m_failed = false;
 };

@@ -17,7 +17,7 @@ v2 (M3): live transforms of real windows by `grassfield-compositor` (`hl.plugin.
 "v2 shell side"). Non-goal: capturing protected surfaces.
 
 ## Functional requirements
-1. O1 Toggle via IPC `overview toggle` (CTRL+UP) and gesture (owner config, L2).
+1. O1 Toggle via IPC `overview toggle` (CTRL+UP) and gesture (owner config, L2). The three-finger swipe up follows the fingers (bindings.lua `tracked.gesture("overview-open", swipe_up)`, shell/platform/shortcuts GestureFollower): the chrome, the backdrop and the thumbnails draw the swipe's progress and complete or go back from where the fingers left it; with live windows (v2) the layout is sent when the swipe completes (the plugin has no request for a given progress, so the real windows animate over its own duration then). The swipe down closes the same way. Reduce Motion: the swipe opens or closes at its end.
 2. O2 Layout: non-overlapping grid preserving relative positions, max scale 0.8, min gap 24 px; unit-tested.
 3. O3 Thumbnails live-update (Full profile) or snapshot once (Reduced profile).
 4. O4 Desktops bar: one tile per workspace on the monitor + "+" creates the next workspace.
@@ -49,6 +49,12 @@ Shell side only, no plugin change: the plugin does not transform windows parked 
 | S4 spike | ScreencopyView cost of 9 toplevels recorded in ADR-0006 notes: `tests/visual/overview-cost.sh` prints the table | L1 |
 | O7 | minimized strip: `tests/visual/overview-minimized.sh`, layout in `tst_overviewlayout.qml` | L0 + L1 |
 | v2 spike | live transforms: mechanism, layering, input, CPU, cleanup (`tests/compositor/overview.sh check`, `perf`) | L1 |
+
+## Window items (audit 2026-11-18, A-06, A-11)
+- The window items are keyed by address (`ScriptModel`, `objectProp: "address"`): a window opening or closing while Overview is open adds or removes its own item only; the others keep their item, capture and drag in progress and glide to the new layout (the `tx/ty/tw/th` Behaviors); a new window fades in at its place. A drag ends only when the dragged window itself goes.
+- Thumbnail mode: the live content of a window is drawn at a fixed size (the larger of the real window and its place in the layout) and scaled to the item, so the zoom changes a scale and the two offscreen layers (mask, clipper) are allocated once; the corner radius is the token as drawn at every scale.
+- The window label waits for its rectangle's index in the placement (no TypeError for a binding read between two updates).
+Tests: `tests/shell/overview_keyed.sh` (the real Overview offscreen, windows given by the harness).
 
 ## Known limitations
 - Contrast: the Desktops bar is a Material band (full width, 164 pt with the menu bar, hairline under it) and its names use the
@@ -171,6 +177,16 @@ it for its own motion blur and only ever touches its `CMotionBlurTransformer` en
   `beginRender` reads the damage ring) adds the layout boxes of that output to its damage ring whenever the output has
   damage (`m_damage.hasChanged()`), because Hyprland damages a window's real place when its content changes. An idle
   open overview renders no frame at all.
+- Since the audit fixes of 2026-11 (WM-02, WM-17 and the design notes): only the layout box of a window whose real place
+  the frame's damage touches (or whose drawn box changed) is added; the transform draws into output buffers the plugin
+  keeps while windows are transformed and clears only the box it drew there last and the new one, never a whole
+  monitor-sized buffer per window (stages.md "Swap animation" has the details, shared in `WindowTransform.cpp`); each
+  window has its own track (core `gf::motion`): an `on:true` again while shown moves each window from where it is drawn
+  with its velocity and leaves a window whose rect did not change on its clock; a close (`on:false`, or one the plugin
+  starts) reverses from the box on screen with its velocity, its duration scaled by the share of the way left (a close
+  50 ms into the opening takes about as long as the way travelled, not the whole duration); a Desktop switch while the
+  overview is shown closes it with this animation (the windows of the Desktop sliding out go back while it slides)
+  instead of ending it in one frame; a window is stepped by the frames of its own monitor (one ticker per monitor).
 
 Rejected:
 - **Renderer hints** (`CRendererHintsPassElement` with a translate + scale `SRenderModifData` around a window's elements,
@@ -237,8 +253,8 @@ Answers:
   output before (0.35 px differ, menu bar masked). A plugin unload during an open overview detaches every transformer
   in `PLUGIN_EXIT` (normal rendering on the next frame, windows at their place, Hyprland alive) and posts
   `closed`/`unavailable`; loading the plugin again brings the feature back. Failsafes: the chrome surface (namespace
-  `grassfield-overview`) going away, or a window getting the keyboard, closes the overview; a workspace switch or a
-  monitor change puts every window back at once. Refused requests change nothing and report the reason, so the shell
+  `grassfield-overview`) going away, or a window getting the keyboard, closes the overview; a workspace switch closes it with the closing animation (`closing`/`interrupted`,
+  then `closed`; since 2026-11, WM-17), a monitor change puts every window back at once. Refused requests change nothing and report the reason, so the shell
   falls back to thumbnails; without the plugin (or with an ABI mismatch) there is no `overview` feature at all.
 
 Result: positive; implemented as below.
@@ -288,8 +304,8 @@ Code: `compositor/src/core/Overview.*` (payload parser and validation, interpola
    - Use the same `durationMs` and curve for the shell's own label and chrome animation.
 4. **Close.** `{"on":false,"durationMs":350}` (curve optional), before or together with the focus action. The plugin
    also closes on its own when a window chosen by the user takes the keyboard from the chrome (v1 releases the grab,
-   then activates the clicked window), when the keyboard leaves the chrome, when the chrome goes away (at once), and at
-   once on a workspace switch or a monitor change. A window closing or opening while open does **not** end the
+   then activates the clicked window), when the keyboard leaves the chrome, when the chrome goes away (at once), on a workspace
+   switch (animated back, `closing`/`interrupted`; WM-17) and at once on a monitor change. A window closing or opening while open does **not** end the
    overview, also when it was the active window (Hyprland then moves focus; the chrome keeps the keyboard): the window
    leaves the layout, the plugin posts the state with the new count, and the shell retargets with a new `on:true`.
 5. **Events** `grassfield>>{"v":"gfc/1","type":"overview","state":"opening|open|closing|closed","windows":N}`, plus

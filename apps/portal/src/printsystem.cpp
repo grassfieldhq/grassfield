@@ -26,10 +26,11 @@ using print::Destination;
 using print::Media;
 
 struct CupsPrintSystem::Call {
-    // Set by the deadline or the destructor; libcups reads it (cupsEnumDests, cupsConnectDest) and the workers between steps.
-    // A plain int, as libcups' API takes it: written once (0 to 1) on the GUI thread and only read elsewhere; a worker that
-    // reads it late does one more step, bounded by its own limits.
-    int cancel = 0;
+    // Set by the deadline, the destructor or a stop (submit's Stop); libcups reads it (cupsEnumDests, cupsConnectDest) and the
+    // workers between steps. An atomic int (SP-17: written on the GUI thread, read on the worker): libcups takes an int *, which
+    // cancelFlag() gives it, the atomic having exactly an int's representation (checked below); a worker that reads it late
+    // does one more step, bounded by its own limits.
+    std::atomic<int> cancel{0};
     std::atomic<bool> answered{false};
     QThread *thread = nullptr;
     QList<Destination> destinations;
@@ -39,6 +40,15 @@ struct CupsPrintSystem::Call {
 };
 
 namespace {
+
+static_assert(sizeof(std::atomic<int>) == sizeof(int) && alignof(std::atomic<int>) == alignof(int) && std::atomic<int>::is_always_lock_free,
+              "libcups reads the cancel flag through an int *");
+
+// The cancel flag as libcups' API takes it.
+int *cancelFlag(std::atomic<int> &cancel)
+{
+    return reinterpret_cast<int *>(&cancel);
+}
 
 QString fromUtf8(const char *s)
 {
@@ -107,11 +117,11 @@ QString optionValue(ipp_attribute_t *attribute, int index)
 // shown first (the user's own, lpoptions, else the queue's, else the first), and the queue's own default apart (<name>-default,
 // or for the paper's source and type media-col-default's): only a value that differs from it goes with a job (the
 // counter-review of step 6b, MINOR 1: the user's lpoptions value must go, libcups does not add it).
-QList<print::PrinterOption> printerOptions(http_t *http, cups_dest_t *dest, cups_dinfo_t *info, const int &cancel)
+QList<print::PrinterOption> printerOptions(http_t *http, cups_dest_t *dest, cups_dinfo_t *info, const std::atomic<int> &cancel)
 {
     QList<print::PrinterOption> out;
     for (const QString &name : print::printerOptionNames()) {
-        if (cancel)
+        if (cancel.load())
             break;
         const QByteArray n = name.toLatin1();
         ipp_attribute_t *supported = cupsFindDestSupported(http, dest, info, n.constData());
@@ -277,7 +287,7 @@ CupsPrintSystem::CupsPrintSystem(const Limits &limits, QObject *parent)
 CupsPrintSystem::~CupsPrintSystem()
 {
     for (const auto &call : std::as_const(m_calls))
-        call->cancel = 1;
+        call->cancel.store(1);
     QDeadlineTimer deadline(3500);
     for (const auto &call : std::as_const(m_calls)) {
         if (call->thread && !call->thread->wait(deadline)) {
@@ -288,8 +298,8 @@ CupsPrintSystem::~CupsPrintSystem()
     }
 }
 
-void CupsPrintSystem::run(int deadlineMs, std::function<void(Call &)> work, std::function<void(Call &)> deliver,
-                          std::function<void()> timeout)
+std::shared_ptr<CupsPrintSystem::Call> CupsPrintSystem::run(int deadlineMs, std::function<void(Call &)> work, std::function<void(Call &)> deliver,
+                                                            std::function<void()> timeout)
 {
     auto call = std::make_shared<Call>();
     // The worker holds the call (its result and cancel flag) as long as it runs, whatever happens to this object.
@@ -307,12 +317,13 @@ void CupsPrintSystem::run(int deadlineMs, std::function<void(Call &)> work, std:
     });
     if (deadlineMs > 0) {
         QTimer::singleShot(deadlineMs, this, [call, timeout] {
-            call->cancel = 1;
+            call->cancel.store(1);
             if (!call->answered.exchange(true))
                 timeout();
         });
     }
     call->thread->start();
+    return call;
 }
 
 void CupsPrintSystem::destinations(QObject *context, DestinationsDone done)
@@ -327,7 +338,7 @@ void CupsPrintSystem::destinations(QObject *context, DestinationsDone done)
             } list;
             // Local queues come at once; a printer CUPS finds on the network within msec.
             const int ok = cupsEnumDests(
-                CUPS_DEST_FLAGS_NONE, msec, &call.cancel, 0, 0,
+                CUPS_DEST_FLAGS_NONE, msec, cancelFlag(call.cancel), 0, 0,
                 [](void *data, unsigned flags, cups_dest_t *dest) -> int {
                     auto *l = static_cast<List *>(data);
                     if (dest->instance)
@@ -373,20 +384,20 @@ void CupsPrintSystem::capabilities(const QString &printer, QObject *context, Cap
     run(
         msec + 2000,
         [printer, msec](Call &call) {
-            cups_dest_t *dest = findDestination(printer, msec / 2, &call.cancel);
-            if (!dest || call.cancel)
+            cups_dest_t *dest = findDestination(printer, msec / 2, cancelFlag(call.cancel));
+            if (!dest || call.cancel.load())
                 return cupsFreeDests(dest ? 1 : 0, dest);
             char resource[1024] = {};
-            http_t *http = cupsConnectDest(dest, CUPS_DEST_FLAGS_NONE, msec / 2, &call.cancel, resource, sizeof resource, nullptr, nullptr);
+            http_t *http = cupsConnectDest(dest, CUPS_DEST_FLAGS_NONE, msec / 2, cancelFlag(call.cancel), resource, sizeof resource, nullptr, nullptr);
             if (!http) {
                 cupsFreeDests(1, dest);
                 return;
             }
             httpSetTimeout(http, msec / 1000.0, stopWaiting, nullptr);
-            if (cups_dinfo_t *info = call.cancel ? nullptr : cupsCopyDestInfo(http, dest)) {
+            if (cups_dinfo_t *info = call.cancel.load() ? nullptr : cupsCopyDestInfo(http, dest)) {
                 Capabilities caps;
                 const int count = cupsGetDestMediaCount(http, dest, info, CUPS_MEDIA_FLAGS_DEFAULT);
-                for (int i = 0; i < count && i < 200 && !call.cancel; ++i) {
+                for (int i = 0; i < count && i < 200 && !call.cancel.load(); ++i) {
                     cups_size_t size;
                     if (cupsGetDestMediaByIndex(http, dest, info, i, CUPS_MEDIA_FLAGS_DEFAULT, &size) && size.width > 0 && size.length > 0) {
                         const Media m = mediaOf(http, dest, info, size);
@@ -417,7 +428,7 @@ void CupsPrintSystem::capabilities(const QString &printer, QObject *context, Cap
                     caps.maxCopies = 1;
                 }
                 caps.options = printerOptions(http, dest, info, call.cancel);
-                caps.known = !call.cancel;
+                caps.known = !call.cancel.load();
                 call.capabilities = caps;
                 cupsFreeDestInfo(info);
             }
@@ -434,19 +445,19 @@ void CupsPrintSystem::capabilities(const QString &printer, QObject *context, Cap
         });
 }
 
-void CupsPrintSystem::submit(const QString &printer, const QString &title, const Options &options, int fd, QObject *context, JobDone done)
+PrintSystem::Stop CupsPrintSystem::submit(const QString &printer, const QString &title, const Options &options, int fd, QObject *context, JobDone done)
 {
     const QPointer<QObject> guard(context);
     const Limits limits = m_limits;
     // No deadline over the whole job (a long document takes the time it takes): its steps have theirs (connectMs, idleMs).
-    run(
+    const std::shared_ptr<Call> call = run(
         0,
         [printer, title, options, fd, limits](Call &call) {
             const auto fail = [&call](const QString &why) { call.error = why; };
             // Only a PDF reaches the printer, sent as one (never CUPS_FORMAT_AUTO, which takes raw printer languages too;
             // integrator security review of step 6a, MINOR 2, and its counter-review: PostScript can program a PostScript
             // printer, and GTK always sends a PDF here).
-            const auto stopped = [&call] { return call.cancel != 0; };
+            const auto stopped = [&call] { return call.cancel.load() != 0; };
             QString headError;
             const QByteArray head = readHead(fd, limits.idleMs, stopped, &headError);
             const QByteArray format = print::documentFormat(head).toLatin1();
@@ -458,13 +469,13 @@ void CupsPrintSystem::submit(const QString &printer, const QString &title, const
                 ::close(fd);
                 return fail(QStringLiteral("the document is too large"));
             }
-            cups_dest_t *dest = findDestination(printer, limits.connectMs / 2, &call.cancel);
+            cups_dest_t *dest = findDestination(printer, limits.connectMs / 2, cancelFlag(call.cancel));
             if (!dest) {
                 ::close(fd);
                 return fail(QStringLiteral("the printer “%1” is not known to CUPS").arg(printer));
             }
             char resource[1024] = {};
-            http_t *http = cupsConnectDest(dest, CUPS_DEST_FLAGS_NONE, limits.connectMs, &call.cancel, resource, sizeof resource, nullptr, nullptr);
+            http_t *http = cupsConnectDest(dest, CUPS_DEST_FLAGS_NONE, limits.connectMs, cancelFlag(call.cancel), resource, sizeof resource, nullptr, nullptr);
             // The limit before the first request on the connection (a printer that takes the connection and never answers;
             // review of step 6a, MINOR 3).
             if (http)
@@ -476,6 +487,14 @@ void CupsPrintSystem::submit(const QString &printer, const QString &title, const
                     httpClose(http);
                 cupsFreeDests(1, dest);
                 return fail(QStringLiteral("cannot reach the printer: %1").arg(fromUtf8(cupsLastErrorString())));
+            }
+            // Stopped meanwhile (the request closed): no job is created.
+            if (stopped()) {
+                ::close(fd);
+                cupsFreeDestInfo(info);
+                httpClose(http);
+                cupsFreeDests(1, dest);
+                return fail(QStringLiteral("cancelled"));
             }
             int numOptions = 0;
             cups_option_t *cupsOptions = nullptr;
@@ -530,6 +549,12 @@ void CupsPrintSystem::submit(const QString &printer, const QString &title, const
                 done(call.error);
         },
         [] {});
+    // The request closed: the worker stops at its next read or write, and a job it created is cancelled in the queue.
+    const std::weak_ptr<Call> weak = call;
+    return [weak] {
+        if (const auto c = weak.lock())
+            c->cancel.store(1);
+    };
 }
 
 QString writePdf(int fd, const QString &folder, const QString &name, int idleMs, qint64 maxBytes, const std::function<bool()> &stopped)

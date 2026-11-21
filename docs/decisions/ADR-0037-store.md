@@ -1347,3 +1347,32 @@ After PR #97's merge (2ac0ff8f, opus delta PASS), its note's follow-ups, answere
   pinned command runs only while that commit is still installed (SD33's amendment).
 - NIT: « %1 apps sur %2 » had no plural form: one app has its own text ("Checking what the update changes…"), more say
   "%1 of %2 apps" (« %1 sur %2 apps »), the noun plural whatever %1.
+
+## Amendment to ADR-0037 (Grassfield Store), b.1 and f: the Store's root helper runs pacman in a transient system unit
+
+Status: proposed (store-update fix round 2, audit finding SU-03)
+
+## Context
+b.1 had `pkexec grassfield-store-helper` run pacman in place, a direct child of the Store in a session of its own. setsid()
+and ignoring SIGHUP/SIGPIPE cover a terminal and the Store quitting, not a log out, a shutdown or `systemctl --user stop`:
+those SIGKILL the whole user cgroup, pacman with it, mid `-S`/`-Rns` (a stale db.lck, a half-written package). Software
+Update's helper already solved this (ADR-0033 step 3): it re-executes itself in a transient system service.
+
+## Decision
+- `grassfield-store-helper`, on a system run by systemd, starts itself again as `grassfield-store-helper.service`
+  (`systemd-run --wait --collect --service-type=exec -p KillMode=mixed -p TimeoutStopSec=30min`, argument form
+  `unit <verb> <op-id> <package>...`, accepted only when /proc/self/cgroup says it is that unit) and returns the unit's exit
+  code from `<op-id>.exit`. The unit's name gives one run at a time: when it is taken, the outer instance writes exit 3
+  (busy); when the unit ran but left no exit file, 1. Everything else (validation, env -i, the deny list, the status files)
+  is unchanged and runs again inside the unit.
+- From the plan check on, `systemd-inhibit --what=sleep:idle:shutdown --mode=block` is held for the helper's life.
+- A SIGTERM from the unit's stop ends the run with exit 1 while pacman has not started changing packages; afterwards it is
+  logged and the run goes on to its end (pacman is never signalled).
+- The Store follows the operation by the status files when pkexec ends before the exit file exists (the unit's process is the
+  one `<op-id>.started` names), exactly as `recover()` does after a restart.
+- Without systemd as the system's manager (a container) the helper runs in place, as before.
+
+## Consequences
+The helper stays minimal and validated on the root side; no new polkit action. A log out during an install no longer leaves a
+broken pacman state. Tests: tests/shell/store_helper_e2e.sh (systemd-run and systemd-inhibit stand-ins), tst_operations.cpp
+HelperFollowedInItsUnit. Owner check (L2): an install with a real log out in the middle.

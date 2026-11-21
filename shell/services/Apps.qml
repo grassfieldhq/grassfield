@@ -48,17 +48,26 @@ Singleton {
                 list.push({name: root.displayName(e).toLowerCase(), src: ThemeIcons.appIcon(e.icon, "application-x-executable")});
         }
         list.sort((a, b) => a.name.localeCompare(b.name));
-        root.listedIconSources = list.map(x => x.src);
+        const sources = list.map(x => x.src);
+        // The same sources: the prewarm is not run again.
+        if (sources.join("\n") !== root.listedIconSources.join("\n"))
+            root.listedIconSources = sources;
     }
 
     onListChanged: root.refreshIconSources()
+
+    readonly property Timer iconSourcesSettle: Timer {
+        interval: 250
+        onTriggered: root.refreshIconSources()
+    }
 
     // A user icon copied (ThemeIcons): the prewarmed sources follow what the Apps panel now shows.
     readonly property Connections iconChecks: Connections {
         target: ThemeIcons
 
         function onCopiesChanged(): void {
-            root.refreshIconSources();
+            // A burst of copies (one helper batch after another at start) walks the entries once.
+            iconSourcesSettle.restart();
         }
     }
 

@@ -3,6 +3,7 @@ singleton Tokens 1.0 Tokens.qml
 singleton Appearance 1.0 Appearance.qml
 Material 1.0 Material.qml
 Icon 1.0 Icon.qml
+Glide 1.0 Glide.qml
 NavChevron 1.0 NavChevron.qml
 MenuItem 1.0 MenuItem.qml
 MenuHeader 1.0 MenuHeader.qml

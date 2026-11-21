@@ -84,3 +84,10 @@ function dateFits(mode, fullHidden, total, available) {
         return false;
     return Object.keys(fullHidden || {}).length === 0 && total <= available;
 }
+
+// The clock as the status area's crowding measures it (audit A-21): every digit a 0. The clock draws tabular figures, so this is
+// the width of the clock as drawn, and it changes only when the date or the format does, never at the tick of a second or a
+// minute: the crowding (statusList, the date's room, the hidden items) is not re-evaluated every second with the seconds shown.
+function layoutText(text) {
+    return String(text).replace(/[0-9]/g, "0");
+}

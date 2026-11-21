@@ -8,6 +8,7 @@
 #include <QDBusPendingReply>
 
 #include <algorithm>
+#include <utility>
 
 namespace gf::menubridge {
 
@@ -16,7 +17,6 @@ namespace gf::menubridge {
         constexpr char kMember[]          = "Update";
         constexpr int  kFlushMs           = 50;
         constexpr int  kDBusTimeoutMs     = 2000;
-        constexpr int  kMaxEarlyStrikes   = 8;
     } // namespace
 
     LauncherWatcher::LauncherWatcher(const QDBusConnection& bus, Hooks hooks, QObject* parent)
@@ -61,13 +61,22 @@ namespace gf::menubridge {
     }
 
     void LauncherWatcher::malformed(const QString& sender) {
-        Peer& peer = m_peers[sender];
-        if (peer.resolved) {
-            if (m_hooks.strike)
-                m_hooks.strike(peer.identity);
-        } else if (peer.strikes < kMaxEarlyStrikes) {
-            ++peer.strikes;
+        const Peer peer = m_peers.value(sender);
+        if (peer.resolved && m_hooks.strike)
+            m_hooks.strike(peer.identity);
+    }
+
+    void LauncherWatcher::handled(const QString& sender, const launcher::Book::Result& r) {
+        if (r.malformed)
+            malformed(sender); // also a signal of the wrong signature: its uri is empty, so the Book calls it malformed
+        if (r.foreign) {
+            auto it = m_peers.find(sender);
+            if (it != m_peers.end() && !std::exchange(it->toldForeign, true))
+                log(QStringLiteral("LauncherEntry: \"%1\" may only set its own application's badge: an update for another one was dropped").arg(displayIdentity(it->identity)));
         }
+        forward(r.forward);
+        if (m_book.hasPending() && !m_flush.isActive())
+            m_flush.start();
     }
 
     void LauncherWatcher::resolve(const QString& sender) {
@@ -86,22 +95,22 @@ namespace gf::menubridge {
                 gone(sender);
                 return;
             }
-            Peer& peer     = it.value();
-            peer.identity  = appIdentity(msg.arguments().at(0).toLongLong());
-            peer.resolved  = true;
-            if (m_hooks.strike) {
-                for (int i = 0; i < peer.strikes; ++i)
-                    m_hooks.strike(peer.identity);
-            }
-            peer.strikes = 0;
+            it->identity      = appIdentity(msg.arguments().at(0).toLongLong());
+            it->resolved      = true;
+            const bool refused = m_hooks.refused && m_hooks.refused(it->identity);
+            handled(sender, m_book.setIdentity(sender, it->identity, m_clock.elapsed(), !refused));
         });
+    }
+
+    void LauncherWatcher::dropPeer(const QString& sender) {
+        m_peers.remove(sender);
+        m_watcher.removeWatchedService(sender);
     }
 
     void LauncherWatcher::gone(const QString& sender) {
         if (!m_peers.contains(sender))
             return;
-        m_peers.remove(sender);
-        m_watcher.removeWatchedService(sender);
+        dropPeer(sender);
         forward(m_book.senderGone(sender));
         if (!m_book.hasPending())
             m_flush.stop();
@@ -119,10 +128,14 @@ namespace gf::menubridge {
         const QString sender = message.service();
         if (sender.isEmpty() || !sender.startsWith(u':'))
             return;
-        // Unknown sender: watch it (its apps are cleared when it leaves) and look up who it is. Bounded.
+        // Unknown sender: it takes a place in the Book (a refused or idle sender may give up its own, B-16), is watched (its
+        // apps are cleared when it leaves) and identified; its updates wait in the Book until then (B-17).
         if (!m_peers.contains(sender)) {
-            if (static_cast<int>(m_peers.size()) >= launcher::kMaxSenders)
+            QString evicted;
+            if (!m_book.awaitIdentity(sender, &evicted))
                 return;
+            if (!evicted.isEmpty())
+                dropPeer(evicted);
             m_peers.insert(sender, Peer{});
             m_watcher.addWatchedService(sender);
             resolve(sender);
@@ -139,11 +152,9 @@ namespace gf::menubridge {
             props = qdbus_cast<QVariantMap>(message.arguments().at(1));
         }
         const launcher::Book::Result r = m_book.submit(sender, wellFormed ? uri : QString(), props, m_clock.elapsed());
-        if (r.malformed)
-            malformed(sender); // also a signal of the wrong signature: its uri is empty, so the Book calls it malformed
-        forward(r.forward);
-        if (m_book.hasPending() && !m_flush.isActive())
-            m_flush.start();
+        if (!r.evicted.isEmpty())
+            dropPeer(r.evicted);
+        handled(sender, r);
     }
 
 } // namespace gf::menubridge

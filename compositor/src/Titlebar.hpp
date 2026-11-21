@@ -5,8 +5,9 @@
 
 #include "core/TitlebarLayout.hpp"
 
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/devices/IPointer.hpp>
+#include <hyprland/src/devices/ITouch.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/render/decorations/IHyprWindowDecoration.hpp>
 
@@ -18,7 +19,7 @@ namespace Render {
     class ITexture;
 }
 
-class CGrassfieldTitlebar : public IHyprWindowDecoration {
+class CGrassfieldTitlebar : public gf::compat::CDecorationBase {
   public:
     explicit CGrassfieldTitlebar(const PHLWINDOW& window);
     ~CGrassfieldTitlebar() override;
@@ -28,7 +29,7 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
 
     SDecorationPositioningInfo getPositioningInfo() override;
     void                       onPositioningReply(const SDecorationPositioningReply& reply) override;
-    void                       draw(PHLMONITOR monitor, float const& alpha) override;
+    void                       drawGf(PHLMONITOR monitor, float alpha) override;
     eDecorationType            getDecorationType() override;
     void                       updateWindow(PHLWINDOW window) override;
     void                       damageEntire() override;
@@ -38,6 +39,9 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
     std::string                getDisplayName() override;
 
     PHLWINDOW                  window() const;
+
+    // The titlebar of `w`, nullptr when it has none (CIO-07: a map lookup, state().titlebarByWindow).
+    static CGrassfieldTitlebar* of(const PHLWINDOW& w);
 
     // Floating, not full screen, decorations allowed by window rules, and not a window that draws its own chrome (the
     // Hyprland tag grassfield-client-chrome, ADR-0015 P1: re-evaluated on window.updateRules, never decorate = false). Not a
@@ -75,6 +79,17 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
     // and forgets the light under the pointer; the unlock then looks at that light again from the event loop (after Hyprland's
     // own handling: its lock gone), so a pointer resting on a light through the lock gives a hover after the delay, unmoved.
     static void onSessionLock(bool locked);
+
+    // A light's press released at `at` (global layout coordinates): it acts when released over the same light (`deco` live).
+    static void releaseLight(CGrassfieldTitlebar* deco, gf::titlebar::Button button, const Vector2D& at);
+
+    // A finger on a titlebar (CIO-06; Hyprland offers touches to no decoration): the bus's touch events, before Hyprland
+    // handles them. A down on a shown bar is the titlebar's (true: the caller cancels it, no client sees it), and so are that
+    // finger's motions and its up or cancel: a light tapped acts, the bar dragged moves the window as the pointer's drag does.
+    static bool onTouchDown(const ITouch::SDownEvent& e);
+    static bool onTouchMotion(const ITouch::SMotionEvent& e);
+    static bool onTouchUp(const ITouch::SUpEvent& e);
+    static bool onTouchCancel(const ITouch::SCancelEvent& e);
 
     // Drops any gesture and press ownership (plugin unload).
     static void cancelPointerGrab();
@@ -151,7 +166,8 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
     // drawn; `fullscreen`: a revealed bar. No title for a window hidden from captures while that display is captured (SEC-01).
     void drawBar(const PHLMONITOR& monitor, const PHLWINDOW& w, const CBox& bar, float scale, double rounding, float power, float alpha, bool hovered,
                  bool fullscreen);
-    bool onButtonPress(const Vector2D& coords, const IPointer::SButtonEvent& e);
+    // `touch`: a finger's press (CIO-06): the gesture goes to the touch record and no pointer button is claimed.
+    bool onButtonPress(const Vector2D& coords, const IPointer::SButtonEvent& e, bool touch = false);
     void activate(gf::titlebar::Button button);
     void drawTitlebar(const PHLMONITOR& monitor, float alpha);
     // The tiling preview of a drag of this window (gf::tiler::previewOf), under the window and over the windows behind it;
@@ -166,6 +182,7 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
     void drawContentCorners(const PHLMONITOR& monitor, const PHLWINDOW& w, const CBox& bar, double rounding, float scale, float alpha);
 
     PHLWINDOWREF                m_owner;
+    const void*                 m_ownerKey = nullptr; // the window's address at construction: its key in titlebarByWindow
     bool                        m_lastShown = false;
     bool                        m_revealed  = false; // P6: the full-screen window's titlebar is revealed
     gf::titlebar::CClickTracker m_clicks;
@@ -175,6 +192,7 @@ class CGrassfieldTitlebar : public IHyprWindowDecoration {
         std::string          text;
         float                scale      = 0.F;
         int                  maxWidthPx = 0;
+        int                  fullWidthPx = -1; // the whole title's width in device pixels; -1: not known
         gf::theme::Appearance appearance = gf::theme::kDefaultAppearance; // the title colour is in the texture
     } m_title;
 

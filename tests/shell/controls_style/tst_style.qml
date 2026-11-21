@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtTest
+import Grassfield.Ui as Ui
 
 // Run by tests/shell/controls_style.sh with QT_QUICK_CONTROLS_STYLE=Grassfield: the stock Controls resolve to the Grassfield
 // style (ui/Grassfield), i.e. to Grassfield.Ui controls, which carry properties the stock ones do not have.
@@ -49,7 +50,7 @@ TestCase {
         verify(dyn(combo).accessibleName !== undefined, "ComboBox is Ui.ComboBox");
         verify(dyn(check).accessibleName !== undefined, "CheckBox is Ui.CheckBox");
         verify(dyn(field).accessibleName !== undefined, "TextField is Ui.TextField");
-        compare(button.height, 32, "Ui.Button default height (menuItemHeight + spacing.sm)");
+        compare(button.height, Ui.Tokens.controlButtonHeight, "Ui.Button default height (the push button token, 24 since the UI audit of 2026-11-05)");
     }
 
     function test_uncoveredControlsFallBack() {

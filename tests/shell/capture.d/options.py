@@ -524,8 +524,46 @@ for p in (grand,):
 os.kill(grandchild, signal.SIGKILL)
 fcntl.flock(lock, fcntl.LOCK_UN)
 os.close(lock)
+# The helper died and left its recorder running (audit B-14): nobody holds the lock, the recorder recognised by pid, start
+# time and its own name is still told to end; a process of another name, or another start time, is left alone.
+orphan = subprocess.Popen(["bash", "-c", "exec -a gpu-screen-recorder sleep 30"])
+bystander = subprocess.Popen(["sleep", "30"])
+time.sleep(0.2)
+for desc, fields in [("is not a recorder", {"recorder": bystander.pid, "recorderStart": ticks(bystander.pid)}),
+                     ("started at another time", {"recorder": orphan.pid, "recorderStart": ticks(orphan.pid) + 1})]:
+    with open(state_file, "w") as f:
+        json.dump(dict({"v": 1, "phase": "recording", "pid": 999999, "start": 1}, **fields), f)
+    r = stop()
+    check(r.returncode == 1 and state().get("phase") == "idle" and orphan.poll() is None and bystander.poll() is None,
+          "a left-over state whose recorder %s: idle, nothing signalled" % desc)
+with open(state_file, "w") as f:
+    json.dump({"v": 1, "phase": "recording", "pid": 999999, "start": 1, "recorder": orphan.pid,
+               "recorderStart": ticks(orphan.pid)}, f)
+r = stop()
+orphan.wait(timeout=10)
+check(r.returncode == 0 and orphan.returncode == -signal.SIGINT and state().get("phase") == "idle" and bystander.poll() is None,
+      "a recorder its dead helper left running is ended by stop (SIGINT), the state idle")
+bystander.kill()
+bystander.wait()
 with open(state_file, "w") as f:
     json.dump({"v": 1, "phase": "idle"}, f)
+# The helper is killed outright (SIGKILL: no handler runs) during a recording (audit B-14): its recorder gets SIGINT from the
+# kernel (the parent-death signal set before it started), so it saves and ends instead of recording on.
+for f in files(desktop):
+    os.unlink(os.path.join(desktop, f))
+proc, ok = recording(["screen"])
+rec = calls("gpu-screen-recorder")
+proc.kill()
+proc.wait(timeout=10)
+ended = wait_for(lambda: any(c.get("signal") for c in calls("gpu-screen-recorder")), 10)
+sig = [c for c in calls("gpu-screen-recorder") if c.get("signal")]
+gone = wait_for(lambda: not rec or not os.path.exists("/proc/%d" % rec[0]["pid"]), 10)
+check(ok and ended and sig and sig[0]["signal"] == "SIGINT" and gone,
+      "the helper killed with SIGKILL: its recorder gets SIGINT and ends [%r]" % sig)
+with open(state_file, "w") as f:
+    json.dump({"v": 1, "phase": "idle"}, f)
+for f in files(desktop):
+    os.unlink(os.path.join(desktop, f))
 
 # ---- recording the toolbar's frame ----
 proc, ok = recording(["selection", "--geometry", "2600,40 300x200"])

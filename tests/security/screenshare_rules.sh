@@ -112,7 +112,11 @@ cat >"$tmp/om/default/hypr/apps/e-require.lua" <<'LUA'
 require("os")
 o.window("^(AfterRequire)$", { no_screen_share = true })
 LUA
+# CIO-12: a file that never returns is stopped by the instruction bound, not left to freeze the compositor's parse.
+printf 'while true do end\no.window("^(AfterLoop)$", { no_screen_share = true })\n' >"$tmp/om/default/hypr/apps/f-loop.lua"
 out=$(run "$tmp/om")
+grep -q 'f-loop.lua.*runs too long' <<<"$out" && ! grep -q 'AfterLoop' <<<"$(grep '^gf-no-screen-share' <<<"$out")" \
+  && pass "fixture: a rule file that loops is stopped and reported" || bad "fixture: the looping file was not stopped: $out"
 [[ $out == *"source omarchy"* ]] && pass "fixture: rules read from the fixture" || bad "fixture: source: $out"
 grep -qF '|true|class=^(NewVault)$' <<<"$out" && pass "fixture: a new protected app is picked up" || bad "fixture: NewVault missing"
 grep -qF '|true|class=^Keep$;title=^Secret$' <<<"$out" && pass "fixture: a table match is kept whole" || bad "fixture: table match missing"

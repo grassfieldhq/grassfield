@@ -35,7 +35,7 @@ pkg_check_modules(LUA REQUIRED lua) # headers only: symbols resolve from Hyprlan
 add_library(gfcore STATIC src/core/Protocol.cpp src/core/TitlebarLayout.cpp src/core/PointerGesture.cpp src/core/Minimize.cpp src/core/Appmenu.cpp
   src/core/EventThrottle.cpp src/core/Overview.cpp src/core/DesktopFocus.cpp src/core/Json.cpp src/core/Stages.cpp src/core/CursorRefresh.cpp
   src/core/DeferredFocus.cpp src/core/OverviewFocus.cpp src/core/Genie.cpp src/core/Tiling.cpp src/core/LayerPointer.cpp src/core/ClientChrome.cpp src/core/FrameLog.cpp src/core/Quiet.cpp
-  src/core/Notices.cpp src/core/RunMode.cpp src/core/TopClamp.cpp src/core/WindowRim.cpp src/core/ToplevelDrag.cpp src/core/CapturePrivacy.cpp)
+  src/core/Notices.cpp src/core/RunMode.cpp src/core/TopClamp.cpp src/core/WindowRim.cpp src/core/ToplevelDrag.cpp src/core/CapturePrivacy.cpp src/core/FileProbe.cpp)
 target_include_directories(gfcore PUBLIC src)
 set_target_properties(gfcore PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(gfcore PRIVATE -Wall -Wextra)
@@ -100,7 +100,7 @@ if(GRASSFIELD_BUILD_TESTS)
   add_executable(grassfield-compositor-tests tests/ProtocolTest.cpp tests/TitlebarLayoutTest.cpp tests/PointerGestureTest.cpp tests/MinimizeTest.cpp tests/AppmenuTest.cpp
     tests/EventThrottleTest.cpp tests/OverviewTest.cpp tests/DesktopFocusTest.cpp tests/StagesTest.cpp tests/CursorRefreshTest.cpp
     tests/DeferredFocusTest.cpp tests/OverviewFocusTest.cpp tests/GenieTest.cpp tests/TilingTest.cpp tests/LayerPointerTest.cpp tests/ClientChromeTest.cpp tests/FrameLogTest.cpp tests/QuietTest.cpp
-    tests/NoticesTest.cpp tests/RunModeTest.cpp tests/TopClampTest.cpp tests/WindowRimTest.cpp tests/ToplevelDragTest.cpp tests/CapturePrivacyTest.cpp tests/ParserFuzzTest.cpp)
+    tests/NoticesTest.cpp tests/RunModeTest.cpp tests/TopClampTest.cpp tests/WindowRimTest.cpp tests/ToplevelDragTest.cpp tests/CapturePrivacyTest.cpp tests/ParserFuzzTest.cpp tests/FileProbeTest.cpp)
   target_link_libraries(grassfield-compositor-tests PRIVATE gfcore GTest::gtest_main)
   # QuietTest reads the plugin's sources (every key listener opens the quiet scope).
   # RunModeTest reads the run-mode vectors shared with the shell and the apps (ADR-0019).

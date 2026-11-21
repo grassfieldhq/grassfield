@@ -3,7 +3,7 @@
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/view/Popup.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
@@ -34,7 +34,7 @@ namespace gf::surfaces {
         const auto view = hl ? hl->view() : nullptr;
         if (!view)
             return out;
-        out.visible = view->aliveAndVisible();
+        out.visible = gf::compat::aliveAndVisible(view);
         switch (view->type()) {
             case Desktop::View::VIEW_TYPE_WINDOW: out.window = Desktop::View::CWindow::fromView(view); break;
             case Desktop::View::VIEW_TYPE_LAYER_SURFACE: out.layer = Desktop::View::CLayerSurface::fromView(view); break;
@@ -65,7 +65,7 @@ namespace gf::surfaces {
 
     uint32_t interactivity(const PHLLS& layer) {
         const auto resource = layer ? layer->m_layerSurface.lock() : nullptr;
-        return resource ? static_cast<uint32_t>(resource->m_current.interactivity) : 0;
+        return resource ? gf::compat::keyboardInteractivity(resource) : 0;
     }
 
 } // namespace gf::surfaces

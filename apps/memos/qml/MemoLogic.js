@@ -52,6 +52,19 @@ function closeNeedsConfirm(plainText) {
     return String(plainText ?? "").trim() !== "";
 }
 
+// The first non-empty line of a memo's plain text, trimmed (the collapsed strip and the title show it). `plain` is the live
+// document's text (TextEdit.getText: paragraphs end with U+2029, line breaks are U+2028), read without its markup, so no
+// HTML is written and parsed again for it (M3 of the 2026-11 audit).
+function firstLine(plain) {
+    const lines = String(plain ?? "").split(/[\n\r\u2028\u2029]/);
+    for (let i = 0; i < lines.length; i++) {
+        const t = lines[i].replace(/\ufffc/g, "").trim();
+        if (t !== "")
+            return t;
+    }
+    return "";
+}
+
 // The window's title (Dock, Window menu, Overview): the memo's first line, or "Memo" (`fallback`) when it has none.
 function title(firstLine, fallback) {
     const t = String(firstLine ?? "").trim();

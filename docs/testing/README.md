@@ -118,6 +118,33 @@ run, the console binding before and after, and the PASS and FAIL counts. A clean
 
 Anything else that needs a real device or a real console is run in the VM too, never on the host.
 
+## CI
+
+`.github/workflows/ci.yml` runs on every pull request and every push to main, in a throwaway `archlinux:latest` container
+with the runner's defaults only (no container option, device or host mount: the rules above, checked by
+`tests/shell/ci_workflow.sh`). The steps are `scripts/gates/ci.sh` commands, so a run can be replayed:
+
+1. `ci.sh setup [--tidy] builder` (root): pacman set up, the PKGBUILD's makedepends and `package_grassfield-desktop()`'s
+   depends from current Arch (`ci.sh deps` lists them with the tools the suites need: node, foot, Omarchy's font set), clang
+   when the scope is full, the packages whole (the image's `NoExtract` lines removed), the locales en_US.UTF-8 and
+   fr_FR.UTF-8, a real `/etc/machine-id`, the user `builder`, and a copy of the checkout in its home
+   (`/home/builder/grassfield`): the suites' scratch directories are below the checkout, and the shell reads images only
+   below the home and the data directories (`shell/services/image-copy.py`), as on a machine.
+2. `ci.sh toolkit` (root): the audit's toolchain, pinned by sha256 (`ci.sh pins`): the Hyprland 0.56.2 stack from the Arch
+   archive of 2026-10-20 (hyprland 0.56.2-4, aquamarine 0.15.1-1, hyprgraphics 0.5.1-4, hyprutils 0.14.2-1, `pacman -Udd`)
+   and Omarchy's own Quickshell 0.3.2.r7 (`pkgs.omarchy.org/stable`), then held with `IgnorePkg`. Qt and KF6 are current Arch.
+3. As `builder`, in that copy, with `LANG=en_US.UTF-8` (the owner's locale: the suites' sorted expectations are in its
+   collation) and a runtime directory of its own: `ci.sh check BASE` runs `just check` when `compositor/` changed since BASE
+   (the pull request's base, or the previous tip of main; an unknown base counts as changed), otherwise `just check-quick`;
+   `ci.sh test` runs `just test`. Their logs go to the workspace's `.dev/ci`.
+4. The test summary (`.dev/ci/test-summary.txt`: the failures, the skips, the per-layer table) and the logs are uploaded as the
+   artifact `ci-summary-<run id>` and shown on the run's page.
+
+The installing steps (1, 2) refuse unless they run as root in a container on a CI runner: `CI=true`, `GITHUB_ACTIONS=true` and
+`RUNNER_TEMP`, all three (the rule `update_migrate.sh` uses; `CI=true` alone is not enough). There is no override. Locally,
+`just ci check [BASE]` and `just ci test` replay steps 3 and 4 on this machine's toolkit (`just ci deps` and `just ci pins`
+say what the job installs). The nested and visual layers need a compositor session and stay owner runs.
+
 ## The gate
 
 `python3 -I tests/ci/inventory.py` (Python standard library only; part of `just check` as `check-inventory`, and the first
@@ -188,8 +215,13 @@ for a lower bound (a part of the path), `NOT VERIFIED` when nothing could be mea
 - `scripts/gates/r1-restart.sh` (gate R1): `--journal` reads the real unit's journal (read-only) and times every restart the
   unit made itself (a logout is not one) and checks that the lock state came back; `--nested` times a nested shell restart
   (`PROXY`: the dev launcher, not the unit). Without a crash in the journal it says `NOT VERIFIED`.
+- `scripts/gates/frame-pacing.sh` (gate P3): `--real` measures the owner's session with the presentation-time probe
+  (`PASS`/`FAIL` against the output's own refresh rate), `--nested` the nested session (`NESTED, NOT VERIFIED` or
+  `NESTED FAIL`: its output is paced by the host), `--proxy` the shell's render-thread time (`PROXY`, never a pass; the
+  fallback where the probe cannot run). A run in which the probe itself was late on more than 5 % of the frames is
+  `INCONCLUSIVE`.
 
-Test: `tests/shell/gate_tools.sh` (fixtures only).
+Test: `tests/shell/gate_tools.sh` (fixtures only); P3: `tests/shell/frame_pacing_probe.sh` (recorded probe runs).
 
 ## Gate run reports (GF-036)
 
@@ -229,10 +261,17 @@ and it SKIPs without a session, so `scripts/dev/test.sh` (nested layer) carries 
 
 ## Test-only tools and their build dependencies
 
-Two small C tools drive the NESTED compositor from tests, built on first use into `.dev/` (never installed, never in the package):
+Small C tools drive or measure the NESTED compositor from tests, built on first use into `.dev/` (never installed, never in the package):
 
 - `tests/tools/vkbd` (scripted keyboard): `wayland-scanner`, libwayland-client, libxkbcommon.
 - `tests/tools/xdgact` (a window that activates itself through `xdg_activation_v1`, for the real activation order of Show Desktop): `wayland-scanner`, libwayland-client and `wayland-protocols` (the `xdg-shell` and `xdg-activation` XML files).
+
+- `tests/tools/presentprobe` (gate P3, ADR-0006 as amended on 2026-11-19): a 1x1, almost transparent overlay layer surface
+  (an xdg-toplevel where the compositor has no layer-shell) that commits on every frame callback and prints the
+  `wp_presentation` feedback of every commit; `tests/tools/presentprobe/build.sh [OUTDIR]` builds it (`wayland-scanner`,
+  libwayland-client, `wayland-protocols`' presentation-time and xdg-shell; the wlr-layer-shell file is in its directory). It
+  refuses the owner's socket unless `--real` is given (`just gate-frames --real`, run by the owner).
+  `tests/shell/frame_pacing_probe.sh` builds it and, when `weston` is installed, runs it against a private headless weston.
 
 All of them are installed as dependencies of Hyprland and Quickshell, so they are build-time requirements of the tests only: they do not belong in the PKGBUILD `depends` (runtime) array. A machine without a C toolchain runs the offline layers; the nested scripts that need a tool say so and stop with exit 2. `tests/tools/hypr-events.py` (python3 standard library) reads Hyprland's event socket for `tests/shell/show_desktop_record.sh`.
 

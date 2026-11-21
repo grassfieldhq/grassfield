@@ -99,7 +99,13 @@ TEST(Performance, TheSidebarAndTheDetailsWhileShown)
     EXPECT_TRUE(p.detail().isEmpty());
     p.setSelected(QStringLiteral("cpu"));
     p.setShown(QStringLiteral("performance"), true);
-    p.take(sample(0.3, 0.1, {0.6}, {0.2}));
+    // Audit A3: the speed and the uptime come with the sample, read on the sampler's thread (ReadSystemSpeed, asked while
+    // Performance shows CPU), never by the window.
+    EXPECT_TRUE(p.wantsSpeed());
+    Snapshot withSpeed = sample(0.3, 0.1, {0.6}, {0.2});
+    withSpeed.system.speedGhz = meanCurrentGhz(f.sys());
+    withSpeed.system.uptime = readUptime(f.proc());
+    p.take(withSpeed);
     EXPECT_EQ(keys(p.resources()), (QStringList{"cpu", "memory", "disk:nvme0n1", "net:wlan0"}));
     const QVariantMap cpu = p.resources().at(0).toMap();
     EXPECT_EQ(cpu.value(QStringLiteral("value")).toString(), QStringLiteral("40%"));
@@ -199,4 +205,21 @@ TEST(Performance, ProcessorsClearAndGpus)
     EXPECT_EQ(figureOf(d, QStringLiteral("Driver:")), QStringLiteral("i915"));
     EXPECT_EQ(figureOf(d, QStringLiteral("Memory (system):")).isEmpty(), false);
     EXPECT_EQ(d.value(QStringLiteral("graphs")).toList().size(), 2); // one per engine
+}
+
+TEST(Performance, EachProcessorsGraphsOnlyWhileAWindowDrawsThem)
+{
+    // Audit A3: two series per logical processor were boxed into QVariantLists at each sample whatever the window showed.
+    Fixture f;
+    Performance p(f.proc(), f.sys());
+    p.setShown(QStringLiteral("performance"), true);
+    p.take(sample(0.3, 0.1, {0.6, 0.2}, {0.5, 0.05}));
+    EXPECT_TRUE(p.processors().isEmpty()) << "Performance on its overall graph";
+    p.setCpuMode(QStringLiteral("logical"));
+    EXPECT_EQ(p.processors().size(), 2);
+    p.setCpuMode(QStringLiteral("overall"));
+    EXPECT_TRUE(p.processors().isEmpty());
+    p.setShown(QStringLiteral("cpuHistory"), true);
+    p.take(sample(0.3, 0.1, {0.6, 0.2}, {0.5, 0.05}));
+    EXPECT_EQ(p.processors().size(), 2);
 }

@@ -4,6 +4,7 @@
 #include "DeferredFocus.hpp"
 #include "FrameProbe.hpp"
 #include "Ipc.hpp"
+#include "Outputs.hpp"
 #include "Plugin.hpp"
 #include "Stages.hpp"
 #include "Minimize.hpp"
@@ -13,12 +14,11 @@
 #include "core/TitlebarLayout.hpp"
 
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include "HyprCompat.hpp"
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
@@ -116,6 +116,7 @@ namespace gf::tiler {
             uint64_t                                    appliedMs = 0;
             uint32_t                                    steps     = 0; // applications that changed a frame
             uint32_t                                    held      = 0; // motions that waited for the next refresh
+            tiling::CFramePacer                         pacer;         // the latest delta, applied at the output's next frame (WM-04)
             std::vector<uint64_t>                       left;          // windows that left it (gate C1): no longer set, still bounds
             std::vector<uint64_t>                       moved;         // windows set at another size than at the press (the probe's mark)
             uint64_t                                    workUs    = 0; // the plugin's own time in the drag's motions and frames
@@ -145,20 +146,15 @@ namespace gf::tiler {
         };
 
         struct SState {
-            bool                             ready = false;
             tiling::CTileBook                book;
             uint64_t                         posted = 0; // generation of the latest notice
             PHLWINDOWREF                     resizing;   // a tiled window one of Hyprland's resizes holds
-            bool                             relayoutPending = false;
-            bool                             gatherPending   = false; // an output went away: windows left off every output come back (D67)
             std::vector<SResume>             resuming;
             gf::deferredFocus::CLater        later; // after Hyprland's own handling (its callback is code of this library)
             std::vector<CHyprSignalListener> listeners;
             SDrag                            drag;
             SP<CEventLoopTimer>              previewTimer; // draws the preview once the delay passed (code of this library: removed in stop())
-            bool                             recheck = false;  // a key may have changed Alt: the drag's place is read again
             std::optional<Vector2D>          press;            // the pointer at the left button's press (the grip of Hyprland's move)
-            uint32_t                         pressMs = 0;
             std::optional<SMoveRelease>      moveRelease;
             SBorderClicks                    border;
             SSeparatorClicks                 separator;
@@ -166,10 +162,10 @@ namespace gf::tiler {
             std::optional<SExtend>           extend;
             std::optional<tiling::Suggestion> suggestion; // TL28: valid while the book is at its generation
             std::optional<SEdgeDrag>          edge;            // TL30: a shared edge being dragged
-            bool                              edgeReleaseOwed = false; // the release of the handle's cancelled press is cancelled too
-            bool                              edgeCursor      = false; // the handle's cursor is set (Hyprland's special-action override)
-            bool                              holdPending     = false; // the shell's menu bar mapped: windows left under it go below it
             SP<CEventLoopTimer>               edgeTimer;       // the frames that waited for the next refresh (code of this library: removed in stop())
+            std::vector<tiling::Rect>         neighbourScratch; // snapFor's neighbour frames, kept between motions (WM-13)
+            uint64_t                          previewDueMs = 0; // when the armed preview timer fires (0: not armed): re-armed only when it moves
+            uint64_t                          groupedAt    = 0; // book generation + 1 that `grouped` was read at (0: never)
             SEdgeScene                        edgeHoverScene;  // the edges hover looks up, kept while what they derive from holds
             std::vector<tiling::SplitDesk>    splits;          // TL33: the Split View Desktops the plugin made
             std::unordered_map<uint64_t, tiling::TileRecord> splitHomes; // TL33: a member's tile on its home Desktop before its split
@@ -178,6 +174,16 @@ namespace gf::tiler {
             std::vector<PHLWINDOWREF>         fitting;         // Free windows moved to another output's Desktop: fitted once Hyprland placed them
             std::unordered_map<uint64_t, tiling::DeskPlace> lastDesk; // the Desktop each window was last on (core fitsOnMove)
             SMoveFrom                         moveFrom;        // the output one of Hyprland's moves began on (fitted at its release; no window: none)
+
+            bool                             ready = false;
+            bool                             relayoutPending = false;
+            bool                             gatherPending   = false; // an output went away: windows left off every output come back (D67)
+            bool                             recheck = false;  // a key may have changed Alt: the drag's place is read again
+            uint32_t                         pressMs = 0;
+            bool                              edgeReleaseOwed = false; // the release of the handle's cancelled press is cancelled too
+            bool                              edgeCursor      = false; // the handle's cursor is set (Hyprland's special-action override)
+            bool                              holdPending     = false; // the shell's menu bar mapped: windows left under it go below it
+            bool                              grouped      = false; // some record is a Tiled group member (edgeHover)
         };
 
         // Constructed on first use inside a guarded call (R13).
@@ -211,33 +217,21 @@ namespace gf::tiler {
             return nullptr;
         }
 
-        // Enabled outputs only: Hyprland keeps a disconnected monitor (m_enabled false) in its list for a while.
+        // Enabled outputs only (Outputs.hpp): Hyprland keeps a disconnected monitor (m_enabled false) in its list for a while.
+        // A copy, for the rare paths that keep the list (a request, a reply, an output gone); the per-motion ones read
+        // Hyprland's list in place (WM-13).
         std::vector<PHLMONITOR> monitors() {
             std::vector<PHLMONITOR> out;
-            const auto&             state = State::monitorState();
-            if (!state)
-                return out;
-            for (const auto& m : state->monitors()) {
-                if (m && m->m_enabled)
-                    out.push_back(m);
-            }
+            gf::outputs::forEach([&out](const PHLMONITOR& m) { out.push_back(m); });
             return out;
         }
 
         PHLMONITOR monitorAt(const Vector2D& p) {
-            for (const auto& m : monitors()) {
-                if (m->logicalBox().containsPoint(p))
-                    return m;
-            }
-            return nullptr;
+            return gf::outputs::at(p);
         }
 
         PHLMONITOR monitorByName(std::string_view name) {
-            for (const auto& m : monitors()) {
-                if (m->m_name == name)
-                    return m;
-            }
-            return nullptr;
+            return gf::outputs::byName(name);
         }
 
         // The output a window is on now: the one under its middle. Hyprland's m_monitor is not updated by the plugin's own
@@ -256,32 +250,28 @@ namespace gf::tiler {
         // next output (dragging there moves the window over), it never tiles.
         bool edgeFree(const PHLMONITOR& m, bool left) {
             const CBox box = m->logicalBox();
-            for (const auto& o : monitors()) {
+            return !gf::outputs::find([&](const PHLMONITOR& o) {
                 if (o == m)
-                    continue;
+                    return false;
                 const CBox   other    = o->logicalBox();
                 const bool   overlaps = other.y < box.y + box.h && other.y + other.h > box.y;
                 const double edge     = left ? box.x : box.x + box.w;
                 const double touch    = left ? other.x + other.w : other.x;
-                if (overlaps && std::abs(edge - touch) < 1.0)
-                    return false;
-            }
-            return true;
+                return overlaps && std::abs(edge - touch) < 1.0;
+            });
         }
 
         // The top edge of `m` is free when no other monitor's bottom edge touches it along an overlapping span: the menu bar
         // strip is then the top of the screen, never crossed on the way to another output (core showsAtOnce).
         bool topFree(const PHLMONITOR& m) {
             const CBox box = m->logicalBox();
-            for (const auto& o : monitors()) {
+            return !gf::outputs::find([&](const PHLMONITOR& o) {
                 if (o == m)
-                    continue;
+                    return false;
                 const CBox other    = o->logicalBox();
                 const bool overlaps = other.x < box.x + box.w && other.x + other.w > box.x;
-                if (overlaps && std::abs(box.y - (other.y + other.h)) < 1.0)
-                    return false;
-            }
-            return true;
+                return overlaps && std::abs(box.y - (other.y + other.h)) < 1.0;
+            });
         }
 
         bool sameBox(const CBox& a, const CBox& b) {
@@ -296,25 +286,11 @@ namespace gf::tiler {
         // TL9: an X11 window Hyprland floats by type or role: CHyprXWaylandManager::shouldBeFloated's X11 branch
         // (XWaylandManager.cpp:110-131), read here without its side effects (that function also sets focus flags).
         bool x11FloatedByHyprland(const PHLWINDOW& w) {
-            if (!w->m_isX11)
+            if (!gf::compat::isX11(w))
                 return false;
-            if (w->isX11OverrideRedirect() || w->isModal())
+            if (gf::compat::x11OverrideRedirect(w) || gf::compat::isModal(w))
                 return true;
-            const auto xs = w->m_xwaylandSurface.lock();
-            if (!xs)
-                return true; // nothing to read: never tiled
-            if (xs->m_transient || static_cast<bool>(xs->m_parent) || xs->m_role.contains("task_dialog") || xs->m_role.contains("pop-up"))
-                return true;
-            static constexpr std::array<std::string_view, 10> kTypes{
-                "_NET_WM_WINDOW_TYPE_DIALOG",  "_NET_WM_WINDOW_TYPE_SPLASH",        "_NET_WM_WINDOW_TYPE_TOOLBAR", "_NET_WM_WINDOW_TYPE_UTILITY",
-                "_NET_WM_WINDOW_TYPE_TOOLTIP", "_NET_WM_WINDOW_TYPE_POPUP_MENU",    "_NET_WM_WINDOW_TYPE_DOCK",    "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
-                "_NET_WM_WINDOW_TYPE_MENU",    "_KDE_NET_WM_WINDOW_TYPE_OVERRIDE"};
-            for (const auto name : kTypes) {
-                const auto it = HYPRATOMS.find(std::string{name}); // find, never operator[]: Hyprland's table is only read
-                if (it != HYPRATOMS.end() && it->second != 0 && std::ranges::find(xs->m_atoms, it->second) != xs->m_atoms.end())
-                    return true;
-            }
-            return false;
+            return gf::compat::x11FloatsByKind(w); // transient, a parent, a dialog role or window type (HyprCompat.hpp)
         }
 
         // ICCCM WM_NORMAL_HINTS flags (4.1.2.3).
@@ -334,8 +310,8 @@ namespace gf::tiler {
             c.band       = gf::chrome::bandOf(w); // none above a window that draws its own chrome (ADR-0015)
             Vector2D min = w->minSize().value_or(Vector2D{1, 1});
             Vector2D max = w->maxSize().value_or(Vector2D{0, 0});
-            if (!w->m_isX11) {
-                const auto xdg = w->m_xdgSurface.lock();
+            if (!gf::compat::isX11(w)) {
+                const auto xdg = gf::compat::xdgSurface(w);
                 const auto top = xdg ? xdg->m_toplevel.lock() : nullptr;
                 if (top) {
                     const auto pmin = top->layoutMinSize();
@@ -352,10 +328,9 @@ namespace gf::tiler {
             c.minH = std::max(MIN_WINDOW_SIZE, min.y);
             c.maxW = max.x > 0 && max.x < kNoMaximum ? max.x : 0;
             c.maxH = max.y > 0 && max.y < kNoMaximum ? max.y : 0;
-            if (w->m_isX11) {
-                const auto xs = w->m_xwaylandSurface.lock();
-                if (xs && xs->m_sizeHints) {
-                    const auto& hints = *xs->m_sizeHints;
+            if (gf::compat::isX11(w)) {
+                if (const auto* sizeHints = gf::compat::x11SizeHints(w)) {
+                    const auto& hints = *sizeHints;
                     if (hints.flags & kHintResizeInc) {
                         c.incW = std::max(0, hints.width_inc);
                         c.incH = std::max(0, hints.height_inc);
@@ -374,7 +349,7 @@ namespace gf::tiler {
 
         tiling::WindowFacts factsOf(const PHLWINDOW& w) {
             const auto target = w ? w->layoutTarget() : nullptr;
-            return tiling::WindowFacts{.mapped    = w && w->m_isMapped,
+            return tiling::WindowFacts{.mapped    = w && gf::compat::mapped(w),
                                        .onDesktop = w && w->m_workspace,
                                        .inSpace   = target && target->space(),
                                        .floating  = target && target->floating()};
@@ -386,18 +361,19 @@ namespace gf::tiler {
         }
 
         // TL9 apart from where the window is now: what a window minimized from an output passes to be suggested there (TL28).
-        bool tileableKind(const PHLWINDOW& w) {
-            if (!w || !tiling::movable(factsOf(w)) || !w->m_isFloating || w->m_pinned || fullscreenNow(w))
+        // `limits`: constraintsOf(w) when the caller has it already (computed here otherwise, after the cheap checks).
+        bool tileableKind(const PHLWINDOW& w, const tiling::Constraints* limits = nullptr) {
+            if (!w || !tiling::movable(factsOf(w)) || !gf::compat::isFloating(w) || gf::compat::pinned(w) || fullscreenNow(w))
                 return false;
-            if (w->parent() || x11FloatedByHyprland(w) || w->m_class == kGlanceClass)
+            if (gf::compat::parentOf(w) || x11FloatedByHyprland(w) || gf::compat::appClass(w) == kGlanceClass)
                 return false;
-            const auto c = constraintsOf(w);
+            const auto c = limits ? *limits : constraintsOf(w);
             return !((c.maxW > 0 && c.minW >= c.maxW) || (c.maxH > 0 && c.minH >= c.maxH)); // fixed size on an axis
         }
 
         // TL9 (no drag preview, refused by tile and arrange).
-        bool placeable(const PHLWINDOW& w) {
-            if (!tileableKind(w) || w->isHidden() || !w->m_workspace || w->m_workspace->m_isSpecialWorkspace)
+        bool placeable(const PHLWINDOW& w, const tiling::Constraints* limits = nullptr) {
+            if (!tileableKind(w, limits) || w->isHidden() || !w->m_workspace || gf::compat::isSpecial(w->m_workspace))
                 return false; // minimized and hidden windows live on special workspaces
             return !gf::stager::inStripStage(w);
         }
@@ -405,7 +381,7 @@ namespace gf::tiler {
         // TL1, TL2, TL3: the output minus its reserved area now, minus the Stages strip column; the margin; the grid. On a
         // Split View Desktop (TL33, D42: `workspace`, else the one `m` shows) the whole output with its separator.
         tiling::Area areaFor(const PHLMONITOR& m, std::optional<int64_t> workspace = std::nullopt) {
-            const int64_t shown = workspace ? *workspace : (m->m_activeWorkspace ? m->m_activeWorkspace->m_id : 0);
+            const int64_t shown = workspace ? *workspace : (m->m_activeWorkspace ? gf::compat::workspaceId(m->m_activeWorkspace) : 0);
             if (tiling::splitOf(st().splits, shown)) { // on whichever output it is now (an output unplugged moves it)
                 const CBox whole = m->logicalBox();
                 return tiling::splitArea(toRect(whole), tiling::Grid{.originX = whole.x, .originY = whole.y, .step = tiling::gridStep(m->m_scale)});
@@ -426,7 +402,7 @@ namespace gf::tiler {
         std::vector<uint64_t> stripWindows() {
             std::vector<uint64_t> out;
             for (const auto& r : st().book.records()) {
-                if (const auto w = windowById(r.id); w && gf::stager::inStripStage(w))
+                if (gf::stager::inStripStage(r.id)) // by address: no walk over Hyprland's window list per record (WM-13)
                     out.push_back(r.id);
             }
             return out;
@@ -453,15 +429,20 @@ namespace gf::tiler {
         // same output and Desktop, the rest of the work area beside it. Not for Center (it keeps the window's size).
         // TL7: the frames of the other Tiled or Resizing windows of `output`'s Desktop `workspace` (not those of an inactive stage,
         // drawn in the strip): what a half beside them leaves.
-        std::vector<tiling::Rect> neighbourFramesOf(const PHLWINDOW& w, std::string_view output, int64_t workspace) {
-            const auto                strip = stripWindows();
-            std::vector<tiling::Rect> neighbours;
+        // Written into `out` (cleared first): a drag reuses one buffer for every motion (WM-13).
+        void neighbourFramesInto(uint64_t self, std::string_view output, int64_t workspace, std::vector<tiling::Rect>& out) {
+            out.clear();
             for (const auto& r : st().book.records()) {
-                if (r.id == idOf(w) || r.output != output || r.workspace != workspace || std::ranges::find(strip, r.id) != strip.end())
+                if (r.id == self || r.output != output || r.workspace != workspace)
                     continue;
-                if (r.state == tiling::TileState::Tiled || r.state == tiling::TileState::Resizing)
-                    neighbours.push_back(tiling::frameOf(r.box, r.band));
+                if ((r.state == tiling::TileState::Tiled || r.state == tiling::TileState::Resizing) && !gf::stager::inStripStage(r.id))
+                    out.push_back(tiling::frameOf(r.box, r.band));
             }
+        }
+
+        std::vector<tiling::Rect> neighbourFramesOf(const PHLWINDOW& w, std::string_view output, int64_t workspace) {
+            std::vector<tiling::Rect> neighbours;
+            neighbourFramesInto(idOf(w), output, workspace, neighbours);
             return neighbours;
         }
 
@@ -511,12 +492,12 @@ namespace gf::tiler {
         // button is still down (nested: a fit then had its width kept and its place taken back by the drag); the release fits
         // it (finishMove, fitAfterDrop).
         bool fitCandidate(const PHLWINDOW& w) {
-            if (!w || !tiling::movable(factsOf(w)) || !w->m_isFloating || fullscreenNow(w) || !w->m_workspace || w->m_workspace->m_isSpecialWorkspace)
+            if (!w || !tiling::movable(factsOf(w)) || !gf::compat::isFloating(w) || fullscreenNow(w) || !w->m_workspace || gf::compat::isSpecial(w->m_workspace))
                 return false;
             const auto& s = st();
             if (heldByHyprlandDrag(w) || s.drag.window.lock() == w)
                 return false;
-            if (gf::stager::inStripStage(w) || tiling::splitOfWindow(s.splits, idOf(w)) || tiling::splitOf(s.splits, w->m_workspace->m_id))
+            if (gf::stager::inStripStage(w) || tiling::splitOfWindow(s.splits, idOf(w)) || tiling::splitOf(s.splits, gf::compat::workspaceId(w->m_workspace)))
                 return false;
             const auto* r = s.book.find(idOf(w));
             return !r || (r->state != tiling::TileState::Tiled && r->state != tiling::TileState::Resizing);
@@ -537,7 +518,7 @@ namespace gf::tiler {
             const double band   = gf::chrome::bandOf(w);
             const CBox   now    = target->position();
             CBox         surface = now;
-            const auto   frame   = resize ? tiling::fitIntoArea(tiling::frameOf(toRect(now), band), areaFor(m, w->m_workspace->m_id).box, constraintsOf(w))
+            const auto   frame   = resize ? tiling::fitIntoArea(tiling::frameOf(toRect(now), band), areaFor(m, gf::compat::workspaceId(w->m_workspace)).box, constraintsOf(w))
                                           : std::nullopt;
             if (frame)
                 surface = toCBox(tiling::surfaceOf(*frame, band));
@@ -574,7 +555,7 @@ namespace gf::tiler {
             std::vector<uint64_t> gone;
             for (const auto& r : s.book.records()) {
                 const auto w      = windowById(r.id);
-                const auto target = w && w->m_isMapped ? w->layoutTarget() : nullptr;
+                const auto target = w && gf::compat::mapped(w) ? w->layoutTarget() : nullptr;
                 if (tiling::staleRecord(r, target != nullptr, target && sameBox(target->position(), toCBox(r.box)), dragged ? idOf(dragged) : 0))
                     gone.push_back(r.id);
             }
@@ -641,7 +622,7 @@ namespace gf::tiler {
                         waiting.push_back(r.id);
                     continue;
                 }
-                items.push_back(SItem{.id = r.id, .w = w, .m = m, .where = r.where, .group = r.group, .workspace = w->m_workspace->m_id});
+                items.push_back(SItem{.id = r.id, .w = w, .m = m, .where = r.where, .group = r.group, .workspace = gf::compat::workspaceId(w->m_workspace)});
             }
             for (const auto id : suspended)
                 s.book.markRelayout(id, true);
@@ -724,8 +705,8 @@ namespace gf::tiler {
                 return r && (r->id == asker->id || (asker->group != 0 && r->group == asker->group && r->where.layout == asker->where.layout));
             };
             // On a Split View Desktop the windows of the Desktop it came from (TL33), else those of the Desktop shown.
-            const auto*   split = tiling::splitOf(s.splits, m->m_activeWorkspace->m_id);
-            const int64_t from  = split ? split->home : m->m_activeWorkspace->m_id;
+            const auto*   split = tiling::splitOf(s.splits, gf::compat::workspaceId(m->m_activeWorkspace));
+            const int64_t from  = split ? split->home : gf::compat::workspaceId(m->m_activeWorkspace);
             const auto&   all   = Desktop::windowState()->windows(); // bottom to top
             // A zone takes only a window that fits it (TL8: a Split View's other half since the nested pass of 1ee992e, MAJOR C;
             // every zone since D69, so that a pick never shifts the layout's rows or columns).
@@ -733,7 +714,7 @@ namespace gf::tiler {
             std::vector<uint64_t> candidates;
             for (auto it = all.rbegin(); it != all.rend(); ++it) {
                 const auto& w = *it;
-                if (w && w->m_workspace && w->m_workspace->m_id == from && placeable(w) && monitorOf(w) == m && !inLayout(idOf(w)) && fits(w))
+                if (w && w->m_workspace && gf::compat::workspaceId(w->m_workspace) == from && placeable(w) && monitorOf(w) == m && !inLayout(idOf(w)) && fits(w))
                     candidates.push_back(idOf(w));
             }
             for (const auto id : gf::minimizer::minimizedFrom(m->m_name)) {
@@ -781,7 +762,7 @@ namespace gf::tiler {
             const auto now  = monitorOf(w);
             const auto then = monitorAt(box.middle());
             if (now && then && now != then) {
-                const auto frame = tiling::moveToArea(tiling::frameOf(*before, band), areaFor(then).box, areaFor(now, w->m_workspace ? std::optional<int64_t>{w->m_workspace->m_id} : std::nullopt).box);
+                const auto frame = tiling::moveToArea(tiling::frameOf(*before, band), areaFor(then).box, areaFor(now, w->m_workspace ? std::optional<int64_t>{gf::compat::workspaceId(w->m_workspace)} : std::nullopt).box);
                 box              = toCBox(tiling::surfaceOf(frame, band));
             }
             g_layoutManager->setTargetGeom(box, w->layoutTarget());
@@ -798,7 +779,7 @@ namespace gf::tiler {
             const auto m = monitorOf(w);
             if (!m)
                 return false;
-            const int64_t      workspace = w->m_workspace->m_id;
+            const int64_t      workspace = gf::compat::workspaceId(w->m_workspace);
             const double       band      = gf::chrome::bandOf(w);
             const tiling::Rect frame     = tiling::frameOf(toRect(w->layoutTarget()->position()), band);
             const tiling::Rect fill      = placeFrame(w, tiling::Place::Fill, areaFor(m, workspace), m->m_name, workspace);
@@ -812,7 +793,7 @@ namespace gf::tiler {
             const auto m = monitorOf(w);
             if (!m || !g_layoutManager)
                 return false;
-            const int64_t      workspace = w->m_workspace->m_id;
+            const int64_t      workspace = gf::compat::workspaceId(w->m_workspace);
             const tiling::Rect frame     = placeFrame(w, tiling::Place::Center, areaFor(m, workspace), m->m_name, workspace);
             g_layoutManager->setTargetGeom(toCBox(tiling::surfaceOf(frame, gf::chrome::bandOf(w))), w->layoutTarget());
             return true;
@@ -860,7 +841,7 @@ namespace gf::tiler {
                 notify(tiling::Reason::Forgotten);
                 return;
             }
-            if (!g_layoutManager || fullscreenNow(w) || !w->m_workspace || w->m_workspace->m_isSpecialWorkspace)
+            if (!g_layoutManager || fullscreenNow(w) || !w->m_workspace || gf::compat::isSpecial(w->m_workspace))
                 return; // still full screen, zoomed or minimized: stays Suspended (its own event resumes it)
             if (!placeable(w)) {
                 s.book.forget(resume.id); // back, but not tileable any more (pinned, a parent, a strip): Free for good
@@ -878,7 +859,7 @@ namespace gf::tiler {
                 m = Desktop::focusState()->monitor();
             if (!m || !m->m_enabled)
                 return;
-            const int64_t           workspace = w->m_workspace->m_id;
+            const int64_t           workspace = gf::compat::workspaceId(w->m_workspace);
             const auto              band      = gf::chrome::bandOf(w);
             const tiling::Placement where     = r->where;
             const uint64_t          group     = r->group;
@@ -909,6 +890,12 @@ namespace gf::tiler {
             if (!t)
                 return; // closed meanwhile: reconcile() drops the record
             s.book.endResize(idOf(w), toRect(t->position()));
+            // Its output went away during the resize: relayout(OutputGone) skipped it (not Tiled then) and left it marked, never
+            // checked against its box again. Placed on the output that holds it now, as the other tiles were.
+            if (const auto* r = s.book.find(idOf(w)); r && r->relayout) {
+                s.relayoutPending = true;
+                scheduleAfter();
+            }
             notify(tiling::Reason::Resized);
         }
 
@@ -924,7 +911,7 @@ namespace gf::tiler {
 
         // Alt (Option) held on any keyboard.
         bool altHeld() {
-            return g_pInputManager && (g_pInputManager->getModsFromAllKBs() & HL_MODIFIER_ALT) != 0;
+            return (gf::compat::heldModifiers() & gf::compat::kModAlt) != 0;
         }
 
         // A preview frame appears or goes: it is drawn again.
@@ -941,7 +928,8 @@ namespace gf::tiler {
         // still on it. No button held any more: the drag ended without its end seen here. (Not tied to ready(): the titlebar
         // drag tiles without the tiling listeners; stop() removes the timer at the unload.)
         void previewDue() {
-            auto&      s = st();
+            auto& s        = st();
+            s.previewDueMs = 0; // fired
             const auto w = s.drag.window.lock();
             if (!w || !g_pInputManager)
                 return;
@@ -961,6 +949,12 @@ namespace gf::tiler {
                     std::nullopt, [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) { gf::guarded("tiling preview delay", [] { previewDue(); }); }, nullptr);
                 g_pEventLoopManager->addTimer(s.previewTimer);
             }
+            // Every motion of a dwell asks for the same deadline: the timer is set again only when it moves (WM-13: one
+            // timerfd update per pointer motion before).
+            const uint64_t due = nowMs() + ms;
+            if (due == s.previewDueMs)
+                return;
+            s.previewDueMs = due;
             s.previewTimer->updateTimeout(std::chrono::milliseconds(ms));
         }
 
@@ -1045,7 +1039,7 @@ namespace gf::tiler {
             if (const auto* d = tiling::splitOfWindow(s.splits, idOf(w))) {
                 // TL33, D46: a Split View window does not leave its half by one of Hyprland's moves (Super+drag): back in it at
                 // the release, unless the move took it to another output's Desktop (it left the Split View: splitCheck).
-                if (const auto r = s.book.find(idOf(w)); r && w->m_workspace && w->m_workspace->m_id == d->workspace)
+                if (const auto r = s.book.find(idOf(w)); r && w->m_workspace && gf::compat::workspaceId(w->m_workspace) == d->workspace)
                     applySurface(w, toCBox(r->box));
                 return;
             }
@@ -1107,7 +1101,7 @@ namespace gf::tiler {
             applySurface(w, surface);
             tiling::Placement where;
             where.sides = e.sides;
-            s.book.placed(idOf(w), toRect(current), toRect(surface), band, where, m->m_name, w->m_workspace->m_id, 0);
+            s.book.placed(idOf(w), toRect(current), toRect(surface), band, where, m->m_name, gf::compat::workspaceId(w->m_workspace), 0);
             logRequest(Log::DEBUG, "edge double-click {:x}: {} extended on {}", idOf(w), tiling::sidesName(e.sides), m->m_name);
             notify(tiling::Reason::Placed);
         }
@@ -1125,7 +1119,7 @@ namespace gf::tiler {
         bool titlebarBackInReach(const PHLWINDOW& w) {
             if (!w)
                 return true; // closed
-            if (!w->m_isMapped || w->isHidden() || !w->m_workspace || w->m_workspace->m_isSpecialWorkspace)
+            if (!gf::compat::mapped(w) || w->isHidden() || !w->m_workspace || gf::compat::isSpecial(w->m_workspace))
                 return false;
             if (fullscreenNow(w) || !tiling::movable(factsOf(w)) || !g_layoutManager || tiling::splitOfWindow(st().splits, idOf(w)))
                 return true;
@@ -1172,7 +1166,7 @@ namespace gf::tiler {
         // The output a Split View Desktop is on now (Hyprland moves its workspace when its output goes away), else the one it
         // was made on.
         PHLMONITOR splitMonitor(const tiling::SplitDesk& d) {
-            const auto ws = State::workspaceState() ? State::workspaceState()->query().id(d.workspace).run() : nullptr;
+            const auto ws = gf::compat::workspaceById(d.workspace);
             if (ws && ws->m_monitor)
                 return ws->m_monitor.lock();
             return monitorByName(d.output);
@@ -1255,11 +1249,11 @@ namespace gf::tiler {
             bool                           changed = false;
             std::vector<tiling::SplitDesk> ended;
             for (auto& d : s.splits) {
-                const auto            ws = State::workspaceState()->query().id(d.workspace).run();
+                const auto            ws = gf::compat::workspaceById(d.workspace);
                 std::vector<uint64_t> on;
                 if (ws) {
                     for (const auto& w : Desktop::windowState()->windows()) {
-                        if (w && w->m_isMapped && w->m_workspace == ws)
+                        if (w && gf::compat::mapped(w) && w->m_workspace == ws)
                             on.push_back(idOf(w));
                     }
                 }
@@ -1289,19 +1283,19 @@ namespace gf::tiler {
                 changed = true;
                 logRequest(Log::DEBUG, "split: Desktop {} has no window of its own left: it ends", d.workspace);
                 const auto m = splitMonitor(d);
-                if (!m || !m->m_activeWorkspace || m->m_activeWorkspace->m_id != d.workspace)
+                if (!m || !m->m_activeWorkspace || gf::compat::workspaceId(m->m_activeWorkspace) != d.workspace)
                     continue;
                 bool empty = true; // another window there keeps the Desktop shown, an ordinary one now (D52)
                 for (const auto& w : Desktop::windowState()->windows()) {
-                    if (w && w->m_isMapped && w->m_workspace && w->m_workspace->m_id == d.workspace)
+                    if (w && gf::compat::mapped(w) && w->m_workspace && gf::compat::workspaceId(w->m_workspace) == d.workspace)
                         empty = false;
                 }
                 if (!empty)
                     continue;
-                auto home = State::workspaceState()->query().id(d.home).run();
+                auto home = gf::compat::workspaceById(d.home);
                 if (!home)
-                    home = State::workspaceState()->create(d.home, m->m_id);
-                if (!home || home->m_isSpecialWorkspace)
+                    home = gf::compat::createNumberedWorkspace(d.home, m);
+                if (!home || gf::compat::isSpecial(home))
                     continue;
                 if (const auto result = Config::Actions::changeWorkspace(home); !result)
                     logRequest(Log::WARN, "split: going back to Desktop {} failed: {}", d.home, result.error().message);
@@ -1389,7 +1383,7 @@ namespace gf::tiler {
                     notify(tiling::Reason::Suspended);
                 return;
             }
-            if (r->state == tiling::TileState::Suspended && w->m_workspace && !w->m_workspace->m_isSpecialWorkspace) {
+            if (r->state == tiling::TileState::Suspended && w->m_workspace && !gf::compat::isSpecial(w->m_workspace)) {
                 s.resuming.push_back(SResume{.id = idOf(w), .checkFree = false});
                 scheduleAfter();
             }
@@ -1404,7 +1398,7 @@ namespace gf::tiler {
         // The Desktop a workspace is, as core fitsOnMove reads it: its output's name and whether it is special.
         tiling::DeskPlace deskPlaceOf(const PHLWORKSPACE& ws) {
             const auto m = ws ? ws->m_monitor.lock() : nullptr;
-            return tiling::DeskPlace{.output = m ? m->m_name : std::string{}, .special = ws && ws->m_isSpecialWorkspace};
+            return tiling::DeskPlace{.output = m ? m->m_name : std::string{}, .special = ws && gf::compat::isSpecial(ws)};
         }
 
         // Where a window is now, for its next move (at its map, at a load, after the plugin moved it to another output).
@@ -1434,7 +1428,7 @@ namespace gf::tiler {
                 }
                 return;
             }
-            if (ws->m_isSpecialWorkspace) {
+            if (gf::compat::isSpecial(ws)) {
                 if (s.book.suspend(idOf(w)))
                     notify(tiling::Reason::Suspended);
                 return;
@@ -1444,7 +1438,7 @@ namespace gf::tiler {
                 scheduleAfter();
                 return;
             }
-            s.book.setWorkspace(idOf(w), ws->m_id); // the state reply carries no Desktop: no notice
+            s.book.setWorkspace(idOf(w), gf::compat::workspaceId(ws)); // the state reply carries no Desktop: no notice
             if (r->state == tiling::TileState::Tiled && !to.output.empty() && to.output != r->output) {
                 s.book.markRelayout(idOf(w), true); // checked again only once placed there (TL11's machinery)
                 s.relayoutPending = true;
@@ -1472,11 +1466,11 @@ namespace gf::tiler {
             if (outputs.empty())
                 return; // no output enabled: every window would count as stray, and there is nowhere to gather them (review of 7096305)
             for (const auto& w : Desktop::windowState()->windows()) {
-                if (!w || !w->m_isMapped || !w->m_isFloating || w->isHidden() || fullscreenNow(w) || gf::stager::inStripStage(w))
+                if (!w || !gf::compat::mapped(w) || !gf::compat::isFloating(w) || w->isHidden() || fullscreenNow(w) || gf::stager::inStripStage(w))
                     continue;
                 const auto ws     = w->m_workspace;
                 const auto target = w->layoutTarget();
-                if (!ws || ws->m_isSpecialWorkspace || !target || !target->space())
+                if (!ws || gf::compat::isSpecial(ws) || !target || !target->space())
                     continue;
                 const double band  = gf::chrome::bandOf(w);
                 const auto   frame = tiling::frameOf(toRect(target->position()), band);
@@ -1518,11 +1512,11 @@ namespace gf::tiler {
         // A record the shared edge looks at on `m` (a Tiled group member on the Desktop `m` shows), with what it reads of
         // its window `w` now.
         bool edgeCandidate(const tiling::TileRecord& r, const PHLMONITOR& m) {
-            return r.state == tiling::TileState::Tiled && r.group != 0 && r.output == m->m_name && r.workspace == m->m_activeWorkspace->m_id;
+            return r.state == tiling::TileState::Tiled && r.group != 0 && r.output == m->m_name && r.workspace == gf::compat::workspaceId(m->m_activeWorkspace);
         }
         SEdgeMember edgeMember(const tiling::TileRecord& r, const PHLWINDOW& w) {
             SEdgeMember member{.id = r.id, .group = r.group, .window = w, .counts = false, .box = {}, .band = 0};
-            const auto  t = w && w->m_isMapped && !w->isHidden() && !fullscreenNow(w) && !gf::stager::inStripStage(w) ? w->layoutTarget() : nullptr;
+            const auto  t = w && gf::compat::mapped(w) && !w->isHidden() && !fullscreenNow(w) && !gf::stager::inStripStage(w) ? w->layoutTarget() : nullptr;
             if (t) {
                 member.counts = true;
                 member.box    = t->position();
@@ -1539,7 +1533,7 @@ namespace gf::tiler {
                 return scene;
             const auto area = areaFor(m);
             scene.monitor   = m;
-            scene.workspace = m->m_activeWorkspace->m_id;
+            scene.workspace = gf::compat::workspaceId(m->m_activeWorkspace);
             scene.margin    = area.margin;
             scene.grid      = area.grid;
             for (const auto& r : st().book.records()) {
@@ -1553,14 +1547,14 @@ namespace gf::tiler {
                 const auto limits = constraintsOf(w);
                 scene.windows.push_back(tiling::EdgeWindow{.id = r.id, .group = r.group, .frame = tiling::frameOf(toRect(member.box), limits.band), .limits = limits});
             }
-            scene.edges = tiling::sharedEdges(scene.windows, area.margin, tiling::kHandleLength, tiling::kHandleBand);
+            scene.edges = tiling::sharedEdges(scene.windows, tiling::gridMargin(area.margin, area.grid.step), tiling::kHandleLength, tiling::kHandleBand);
             return scene;
         }
 
         // Whether `scene` still holds for `m`: the same output, Desktop and margin, no special workspace over it, and the same
         // records looked at (the book's records alone: no window lookup), each window counting, placed and banded as then.
         bool edgeSceneHolds(const SEdgeScene& scene, const PHLMONITOR& m) {
-            if (!m || scene.monitor.lock() != m || showsSpecial(m) || !m->m_activeWorkspace || scene.workspace != m->m_activeWorkspace->m_id ||
+            if (!m || scene.monitor.lock() != m || showsSpecial(m) || !m->m_activeWorkspace || scene.workspace != gf::compat::workspaceId(m->m_activeWorkspace) ||
                 scene.margin != areaFor(m).margin)
                 return false;
             size_t i = 0;
@@ -1589,8 +1583,8 @@ namespace gf::tiler {
         }
 
         bool modifierHeld() {
-            constexpr uint32_t kMods = gf::flagsOf(HL_MODIFIER_SHIFT, HL_MODIFIER_CTRL, HL_MODIFIER_ALT, HL_MODIFIER_META); // not Caps or Num Lock
-            return g_pInputManager && (g_pInputManager->getModsFromAllKBs() & kMods) != 0;
+            constexpr uint32_t kMods = gf::compat::kModShift | gf::compat::kModCtrl | gf::compat::kModAlt | gf::compat::kModMeta; // not Caps or Num Lock
+            return (gf::compat::heldModifiers() & kMods) != 0;
         }
 
         // A popup holds the point: an xdg popup of any window shown on a visible Desktop, or an X11 override-redirect window
@@ -1602,9 +1596,9 @@ namespace gf::tiler {
             if (!Desktop::windowState())
                 return false;
             for (const auto& w : Desktop::windowState()->windows()) {
-                if (!w || !w->m_isMapped || w->isHidden() || (w->m_workspace && !w->m_workspace->isVisible()))
+                if (!w || !gf::compat::mapped(w) || w->isHidden() || (w->m_workspace && !gf::compat::workspaceVisible(w->m_workspace)))
                     continue;
-                if (w->m_isX11 ? w->isX11OverrideRedirect() && w->getWindowMainSurfaceBox().containsPoint(p) : w->m_workspace && w->hasPopupAt(p))
+                if (gf::compat::isX11(w) ? gf::compat::x11OverrideRedirect(w) && w->getWindowMainSurfaceBox().containsPoint(p) : w->m_workspace && w->hasPopupAt(p))
                     return true;
             }
             return false;
@@ -1657,10 +1651,26 @@ namespace gf::tiler {
             }
         }
 
+        // Some record is a Tiled group member (a shared edge can exist): read again only when the book changed. A plain
+        // pointer motion with no tiled group anywhere does no more than this (WM-13).
+        bool anyGroupedTile() {
+            auto& s = st();
+            if (s.groupedAt != s.book.generation() + 1) {
+                s.grouped   = std::ranges::any_of(s.book.records(), [](const tiling::TileRecord& r) { return r.state == tiling::TileState::Tiled && r.group != 0; });
+                s.groupedAt = s.book.generation() + 1;
+            }
+            return s.grouped;
+        }
+
         void edgeHover() {
             const auto& s = st();
             if (!g_pInputManager || s.edge)
                 return;
+            if (!anyGroupedTile()) {
+                if (s.edgeCursor)
+                    edgeCursor(std::nullopt);
+                return;
+            }
             const auto edge = g_pInputManager->hasHeldButtons() ? std::nullopt : handleAt(g_pInputManager->getMouseCoordsInternal(), nullptr, nullptr);
             edgeCursor(edge ? std::optional<bool>{edge->vertical} : std::nullopt);
         }
@@ -1723,13 +1733,15 @@ namespace gf::tiler {
             }
         }
 
+        void edgeFrame(const PHLMONITOR& m); // below, with edgeMotion
+
         void armEdgeTimer(uint64_t ms) {
             auto& s = st();
             if (!g_pEventLoopManager)
                 return;
             if (!s.edgeTimer) {
                 s.edgeTimer = makeShared<CEventLoopTimer>(
-                    std::nullopt, [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) { gf::guarded("tiling shared edge frame", [] { edgeTimed(edgeApply); }); },
+                    std::nullopt, [](const SP<CEventLoopTimer>& /*self*/, void* /*data*/) { gf::guarded("tiling shared edge frame", [] { edgeTimed([] { edgeFrame(nullptr); }); }); },
                     nullptr);
                 g_pEventLoopManager->addTimer(s.edgeTimer);
             }
@@ -1753,6 +1765,11 @@ namespace gf::tiler {
                 const auto r = s.book.find(e.id);
                 if (t && r && r->state == tiling::TileState::Resizing)
                     s.book.endResize(e.id, toRect(t->position()));
+                // As finishResize(): a window whose output went away during the drag is placed again now.
+                if (const auto* after = s.book.find(e.id); after && after->state == tiling::TileState::Tiled && after->relayout) {
+                    s.relayoutPending = true;
+                    scheduleAfter();
+                }
             }
             notify(tiling::Reason::Resized);
             edgeCursor(std::nullopt);
@@ -1803,14 +1820,26 @@ namespace gf::tiler {
                 s.book.beginResize(w.id); // Tiled by edgeScene
             const auto now = nowMs();
             s.edge         = SEdgeDrag{.edge = *edge, .windows = std::move(windows), .grid = grid, .press = p, .monitor = monitorAt(p), .delta = 0, .applied = {},
-                                       .beganMs = now, .appliedMs = now, .steps = 0, .held = 0, .left = {}, .moved = {}, .workUs = 0, .maxWorkUs = 0};
+                                       .beganMs = now, .appliedMs = now, .steps = 0, .held = 0, .pacer = {}, .left = {}, .moved = {}, .workUs = 0, .maxWorkUs = 0};
             s.edgeReleaseOwed = true;
             edgeCursor(edge->vertical);
             return true;
         }
 
-        // A motion during the drag: the edge follows the pointer along its axis, applied at most once per refresh of the
-        // output (TL30, P3: the neighbours are configured at most once per refresh), the rest when the frame is due.
+        // The output's frame (render.preChecks of the drag's output, before Hyprland's layout and animation step): the latest
+        // delta is applied now, once for this frame (WM-04).
+        void edgeFrame(const PHLMONITOR& m) {
+            auto& s = st();
+            if (!s.edge || !s.edge->pacer.pending() || (m && s.edge->monitor.lock() != m))
+                return;
+            if (s.edge->pacer.frame())
+                edgeApply();
+        }
+
+        // A motion during the drag: the edge follows the pointer along its axis, applied at the next frame of the output (TL30,
+        // P3: the neighbours are configured at most once per refresh, in step with it, core CFramePacer). The frame is asked
+        // for when none is pending; the timer is a fallback for an output that gives no frame (applied after three refresh
+        // periods).
         void edgeMotion() {
             auto& s = st();
             if (!s.edge)
@@ -1822,16 +1851,15 @@ namespace gf::tiler {
             }
             const Vector2D p = g_pInputManager ? g_pInputManager->getMouseCoordsInternal() : d.press;
             d.delta          = d.edge.vertical ? p.x - d.press.x : p.y - d.press.y;
-            const auto   m       = d.monitor.lock();
-            const double hz      = m && m->m_refreshRate > 1 ? m->m_refreshRate : 60.0;
-            const auto   frameMs = static_cast<uint64_t>(std::ceil(1000.0 / hz));
-            const auto   since   = nowMs() - d.appliedMs;
-            if (since < frameMs) {
-                ++d.held;
-                armEdgeTimer(frameMs - since);
+            const auto m = d.monitor.lock();
+            if (!d.pacer.motion(d.delta)) {
+                ++d.held; // waits for the frame already asked for (or nothing changed)
                 return;
             }
-            edgeApply();
+            const double hz = m && m->m_refreshRate > 1 ? m->m_refreshRate : 60.0;
+            armEdgeTimer(static_cast<uint64_t>(std::ceil(3000.0 / hz)));
+            if (m && m->m_enabled)
+                m->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_ANIMATION);
         }
 
         // TL34: the lock ends a drag at once (the frames its motions before the lock asked for, then Tiled, one `resized`),
@@ -1893,6 +1921,13 @@ namespace gf::tiler {
         auto& ev = bus->m_events;
         auto& l  = s.listeners;
         l.push_back(ev.window.open.listen([](const PHLWINDOW& w) { gf::guarded("tiling window.open", [&] { rememberDesk(w); }); }));
+        // TL30 (WM-04): a shared edge's drag is applied at its output's frames.
+        l.push_back(ev.render.preChecks.listen([](const PHLMONITOR& m) {
+            gf::guarded("tiling shared edge frame", [&] {
+                if (st().edge)
+                    edgeTimed([&] { edgeFrame(m); });
+            });
+        }));
         l.push_back(ev.window.close.listen([](const PHLWINDOW& w) { gf::guarded("tiling window.close", [&] { onClose(w); }); }));
         l.push_back(ev.window.fullscreen.listen([](const PHLWINDOW& w) { gf::guarded("tiling window.fullscreen", [&] { onFullscreen(w); }); }));
         l.push_back(ev.window.moveToWorkspace.listen(
@@ -1935,6 +1970,7 @@ namespace gf::tiler {
             if (g_pEventLoopManager)
                 g_pEventLoopManager->removeTimer(s.previewTimer);
             s.previewTimer.reset();
+            s.previewDueMs = 0;
         }
         s.recheck = false;
         s.press.reset();
@@ -1991,10 +2027,16 @@ namespace gf::tiler {
         return st().ready;
     }
 
+    // Per pointer motion of a drag (WM-13): the window's limits are read once, its neighbours (a half only) once into a buffer
+    // kept between motions, the outputs read in place; then core's frames (as fitsPlace and placeFrame, without reading them
+    // again).
     std::optional<Snap> snapFor(const PHLWINDOW& w, const Vector2D& pointer) {
         const auto& options = state().tilingDrag;
         const bool  alt     = options.altDrag && altHeld();
-        if (!placeable(w) || (!options.edges && !options.menuBar && !alt))
+        if (!w || (!options.edges && !options.menuBar && !alt))
+            return std::nullopt;
+        const auto limits = constraintsOf(w);
+        if (!placeable(w, &limits))
             return std::nullopt;
         const auto m = monitorAt(pointer);
         if (!m || showsSpecial(m))
@@ -2003,9 +2045,25 @@ namespace gf::tiler {
         const tiling::Output output{toRect(box), box.y + m->m_reservedArea.top(), edgeFree(m, true), edgeFree(m, false)};
         const auto           area  = areaFor(m);
         const auto           place = tiling::dragPlace(pointer.x, pointer.y, output, area.box, options, alt);
-        if (!place || !fitsPlace(w, *place, area, m->m_name, w->m_workspace->m_id))
+        // TL7: the tiled neighbours are those of the Desktop the drop lands on. Over another output the window is still on
+        // its own Desktop until the release (followOutput): that output's shown Desktop then.
+        const int64_t desk = monitorOf(w) != m && m->m_activeWorkspace ? gf::compat::workspaceId(m->m_activeWorkspace) : gf::compat::workspaceId(w->m_workspace);
+        if (!place)
+            return std::nullopt;
+        if (*place == tiling::Place::Center)
+            return Snap{*place, toCBox(tiling::centerFrame(toRect(w->layoutTarget()->position()), limits.band, area)), m};
+        auto& near = st().neighbourScratch;
+        if (isHalf(*place))
+            neighbourFramesInto(idOf(w), m->m_name, desk, near);
+        else
+            near.clear();
+        const tiling::Rect start = tiling::placeStartFrame(*place, area, near);
+        if (*place != tiling::Place::Fill && !tiling::fitsFrame(limits, start))
             return std::nullopt; // D69: no preview of a place the window does not fit (the release only moves it)
-        return Snap{*place, toCBox(placeFrame(w, *place, area, m->m_name, w->m_workspace->m_id)), m};
+        const std::array<tiling::Zone, 1>        zones{tiling::zoneOf(*place).value_or(tiling::Zone{})};
+        const std::array<tiling::Rect, 1>        frames{start};
+        const std::array<tiling::Constraints, 1> bounds{limits};
+        return Snap{*place, toCBox(tiling::fitFrames(zones, frames, bounds, area).front()), m};
     }
 
     std::optional<Snap> dragMotion(const PHLWINDOW& w, const Vector2D& pointer) {
@@ -2044,6 +2102,7 @@ namespace gf::tiler {
         s.drag = {};
         if (s.previewTimer)
             s.previewTimer->updateTimeout(std::nullopt);
+        s.previewDueMs = 0;
     }
 
     std::optional<Snap> previewOf(const PHLWINDOW& w) {
@@ -2072,19 +2131,21 @@ namespace gf::tiler {
         const auto target  = w->layoutTarget();
         const CBox current = target->position();
         const auto band    = gf::chrome::bandOf(w);
-        const auto onDesktop = monitorOf(w) == m ? std::optional<int64_t>{w->m_workspace->m_id} : std::nullopt; // its own Desktop's area, shown or not
+        const auto onDesktop = monitorOf(w) == m ? std::optional<int64_t>{gf::compat::workspaceId(w->m_workspace)} : std::nullopt; // its own Desktop's area, shown or not
         const auto area      = areaFor(m, onDesktop);
-        if (!fitsPlace(w, place, area, m->m_name, w->m_workspace->m_id)) {
+        // TL7: on another output the neighbours are those of its shown Desktop, where followOutput() takes the window below.
+        const int64_t desk = !onDesktop && m->m_activeWorkspace ? gf::compat::workspaceId(m->m_activeWorkspace) : gf::compat::workspaceId(w->m_workspace);
+        if (!fitsPlace(w, place, area, m->m_name, desk)) {
             // D69: never a tile larger than its place (it would overlap its neighbours and shift their rows or columns); the
             // shell greys that place (unfitZones), so this is a key, a stale menu or a request of another client.
             logRequest(Log::INFO, "tile {:x}: refused: its minimum does not fit {} on {} (TL8, D69)", idOf(w), tiling::nameOf(place), m->m_name);
             notify(tiling::Reason::Invalid);
             return false;
         }
-        const CBox surface = toCBox(tiling::surfaceOf(placeFrame(w, place, area, m->m_name, w->m_workspace->m_id), band));
+        const CBox surface = toCBox(tiling::surfaceOf(placeFrame(w, place, area, m->m_name, desk), band));
         g_layoutManager->setTargetGeom(surface, target);
         followOutput(w); // tiled on another output (a drag's release there, tile() after a drag over): that output's Desktop
-        const int64_t workspace = w->m_workspace ? w->m_workspace->m_id : 0;
+        const int64_t workspace = w->m_workspace ? gf::compat::workspaceId(w->m_workspace) : 0;
         s.book.placed(idOf(w), toRect(current), toRect(surface), band, tiling::Placement{.place = place, .layout = {}, .zone = -1}, m->m_name, workspace, 0);
         settleSplit(workspace); // TL33: Fill after the suggestion was dismissed (D43)
         logRequest(Log::DEBUG, "tile {:x}: {} on {}", idOf(w), tiling::nameOf(place), m->m_name);
@@ -2180,7 +2241,7 @@ namespace gf::tiler {
         const auto m = w && w->m_workspace ? monitorOf(w) : nullptr;
         if (!m)
             return {};
-        return tiling::unfitZones(constraintsOf(w), areaFor(m, w->m_workspace->m_id)); // the area tile() places it in
+        return tiling::unfitZones(constraintsOf(w), areaFor(m, gf::compat::workspaceId(w->m_workspace))); // the area tile() places it in
     }
 
     std::vector<std::string> unfitPlaces(const PHLWINDOW& w) {
@@ -2188,7 +2249,7 @@ namespace gf::tiler {
         if (!m)
             return {};
         // tile() from a key or a menu: its own output's Desktop, the frame startFrame gives (TL7 neighbours included).
-        const int64_t workspace = w->m_workspace->m_id;
+        const int64_t workspace = gf::compat::workspaceId(w->m_workspace);
         return tiling::unfitPlaces(constraintsOf(w), areaFor(m, workspace), neighbourFramesOf(w, m->m_name, workspace));
     }
 
@@ -2218,7 +2279,7 @@ namespace gf::tiler {
             refuse("no other output of that name with a Desktop shown");
             return;
         }
-        if (!movable(w) || !w->m_isFloating || w->m_pinned || fullscreenNow(w) || !w->m_workspace || w->m_workspace->m_isSpecialWorkspace) {
+        if (!movable(w) || !gf::compat::isFloating(w) || gf::compat::pinned(w) || fullscreenNow(w) || !w->m_workspace || gf::compat::isSpecial(w->m_workspace)) {
             refuse("the window cannot move to another output");
             return;
         }
@@ -2237,12 +2298,12 @@ namespace gf::tiler {
             if (where->sides != 0)
                 tiled = tiling::extendFrame(relative, where->sides, constraintsOf(w), toArea);
             else
-                tiled = placementFrame(w, *where, toArea, to->m_name, to->m_activeWorkspace->m_id);
+                tiled = placementFrame(w, *where, toArea, to->m_name, gf::compat::workspaceId(to->m_activeWorkspace));
         }
         const CBox surface = toCBox(tiling::surfaceOf(tiled.value_or(relative), band));
         g_layoutManager->setTargetGeom(surface, w->layoutTarget());
         followOutput(w); // its middle is on `to` now: that output's Desktop, as after Hyprland's own move (TL21, D9)
-        const int64_t workspace = w->m_workspace ? w->m_workspace->m_id : 0;
+        const int64_t workspace = w->m_workspace ? gf::compat::workspaceId(w->m_workspace) : 0;
         if (tiled && where) {
             s.book.placed(idOf(w), toRect(current), toRect(surface), band, *where, to->m_name, workspace, 0); // a group stays on its output
             notify(tiling::Reason::Placed);
@@ -2274,12 +2335,12 @@ namespace gf::tiler {
             return; // off every output: it keeps its Desktop
         const auto& m  = all[*i];
         const auto  ws = m->m_activeSpecialWorkspace ? m->m_activeSpecialWorkspace : m->m_activeWorkspace;
-        if (!ws || !ws->m_space || !tiling::shouldFollow(facts, i, ws->m_space == target->space()))
+        if (!ws || !gf::compat::spaceOf(ws) || !tiling::shouldFollow(facts, i, gf::compat::spaceOf(ws) == target->space()))
             return;
-        target->assignToSpace(ws->m_space);
+        target->assignToSpace(gf::compat::spaceOf(ws));
         g_layoutManager->setTargetGeom(box, target);
-        st().lastDesk[idOf(w)] = tiling::DeskPlace{.output = m->m_name, .special = ws->m_isSpecialWorkspace}; // its next move starts here
-        logRequest(Log::DEBUG, "window {:x} moved by the plugin onto {}: now on its Desktop {}", idOf(w), m->m_name, ws->m_name);
+        st().lastDesk[idOf(w)] = tiling::DeskPlace{.output = m->m_name, .special = gf::compat::isSpecial(ws)}; // its next move starts here
+        logRequest(Log::DEBUG, "window {:x} moved by the plugin onto {}: now on its Desktop {}", idOf(w), m->m_name, gf::compat::workspaceName(ws));
     }
 
     void fitAfterDrop(const PHLWINDOW& w, const CBox& pressBox) {
@@ -2383,7 +2444,7 @@ namespace gf::tiler {
             return;
         std::vector<uint64_t> stack; // the windows on screen, bottom to top: a minimized or hidden one is on a special workspace
         for (const auto& o : Desktop::windowState()->windows()) {
-            if (o && o->m_isMapped && !o->isHidden() && o->m_workspace && !o->m_workspace->m_isSpecialWorkspace)
+            if (o && gf::compat::mapped(o) && !o->isHidden() && o->m_workspace && !gf::compat::isSpecial(o->m_workspace))
                 stack.push_back(idOf(o));
         }
         const auto order = tiling::groupRaiseOrder(s.book.records(), idOf(w), stack);
@@ -2425,7 +2486,7 @@ namespace gf::tiler {
             refuse("the window is not on the Desktop its output shows");
             return;
         }
-        if (tiling::splitOf(s.splits, w->m_workspace->m_id)) {
+        if (tiling::splitOf(s.splits, gf::compat::workspaceId(w->m_workspace))) {
             refuse("the window is on a Split View Desktop already");
             return;
         }
@@ -2442,15 +2503,15 @@ namespace gf::tiler {
         std::vector<int64_t> ids;
         for (const auto& ws : State::workspaceState()->workspacesCopy()) {
             if (ws)
-                ids.push_back(ws->m_id);
+                ids.push_back(gf::compat::workspaceId(ws));
         }
         const int64_t id   = tiling::nextDesktopId(ids);
-        const auto    desk = State::workspaceState()->create(id, m->m_id);
+        const auto    desk = gf::compat::createNumberedWorkspace(id, m);
         if (!desk) {
             refuse("Hyprland made no Desktop");
             return;
         }
-        const int64_t home    = w->m_workspace->m_id;
+        const int64_t home    = gf::compat::workspaceId(w->m_workspace);
         const auto    homeWs  = w->m_workspace;
         const auto    target  = w->layoutTarget();
         const CBox    current = target->position();
@@ -2513,10 +2574,10 @@ namespace gf::tiler {
                 return "Replace Tiled Window needs the other member (D71)";
             const tiling::SplitDesk desk = *split;
             const auto              m    = splitMonitor(desk) ? splitMonitor(desk) : monitorOf(w);
-            auto                    home = State::workspaceState()->query().id(desk.home).run();
+            auto                    home = gf::compat::workspaceById(desk.home);
             if (!home && m)
-                home = State::workspaceState()->create(desk.home, m->m_id); // Hyprland ended it when it emptied
-            if (!home || home->m_isSpecialWorkspace)
+                home = gf::compat::createNumberedWorkspace(desk.home, m); // Hyprland ended it when it emptied
+            if (!home || gf::compat::isSpecial(home))
                 return "its Desktop could not be made again";
             catchUp();
             const auto*        r      = s.book.find(idOf(w));
@@ -2557,7 +2618,7 @@ namespace gf::tiler {
                 // Replace Tiled Window (D71): the other member keeps its half and waits for the window the picker offers, from
                 // the Desktop the Split View came from but the one replaced; nothing to offer: it fills alone (D43).
                 const auto m = replace && d->members.size() == 1 ? splitMonitor(*d) : nullptr;
-                if (m && m->m_activeWorkspace && m->m_activeWorkspace->m_id == d->workspace) {
+                if (m && m->m_activeWorkspace && gf::compat::workspaceId(m->m_activeWorkspace) == d->workspace) {
                     s.suggestion = suggestionFor(d->members.front(), m, idOf(w));
                     d->waiting   = s.suggestion.has_value();
                     waits        = d->waiting;
@@ -2613,7 +2674,7 @@ namespace gf::tiler {
         if (!s.ready || !w || !g_layoutManager)
             return;
         const auto* d = tiling::splitOfWindow(s.splits, idOf(w));
-        if (!d || !w->m_workspace || w->m_workspace->m_id != d->workspace)
+        if (!d || !w->m_workspace || gf::compat::workspaceId(w->m_workspace) != d->workspace)
             return; // it left the Split View meanwhile (splitCheck)
         const auto* r = s.book.find(idOf(w));
         if (!r)
@@ -2740,7 +2801,7 @@ namespace gf::tiler {
                 refuse("with is not a window tiled in that layout any more");
                 return;
             }
-            if (r->output != m->m_name || r->workspace != m->m_activeWorkspace->m_id) {
+            if (r->output != m->m_name || r->workspace != gf::compat::workspaceId(m->m_activeWorkspace)) {
                 refuse("the asking window's tile is not on that output's Desktop");
                 return;
             }
@@ -2784,7 +2845,7 @@ namespace gf::tiler {
         // TL33, D54: a pick into a Split View Desktop keeps the tile the picked window had on its Desktop, for its Exit Full
         // Screen (before followOutput gives the record the Split View Desktop).
         if (request->with) {
-            if (const auto* d = tiling::splitOfWindow(s.splits, *request->with); d && d->workspace == m->m_activeWorkspace->m_id) {
+            if (const auto* d = tiling::splitOfWindow(s.splits, *request->with); d && d->workspace == gf::compat::workspaceId(m->m_activeWorkspace)) {
                 for (const auto& w : windows) {
                     if (const auto* r = s.book.find(idOf(w)); r && r->state == tiling::TileState::Tiled && r->workspace != d->workspace)
                         s.splitHomes[idOf(w)] = *r;
@@ -2796,7 +2857,7 @@ namespace gf::tiler {
         const auto workspace = m->m_activeWorkspace;
         for (const auto& w : windows) {
             if (w->m_workspace != workspace) { // followOutput gives every placeable window that Desktop: never expected
-                refuse(std::format("{} shows Desktop {}, a window stayed on Desktop {}", m->m_name, workspace->m_name, w->m_workspace ? w->m_workspace->m_name : "none"));
+                refuse(std::format("{} shows Desktop {}, a window stayed on Desktop {}", m->m_name, gf::compat::workspaceName(workspace), w->m_workspace ? gf::compat::workspaceName(w->m_workspace) : "none"));
                 return;
             }
         }
@@ -2819,6 +2880,10 @@ namespace gf::tiler {
                         const auto& w = *it;
                         if (!w || std::ranges::find(windows, w) != windows.end() || w->m_workspace != workspace || !placeable(w) || monitorOf(w) != m)
                             continue;
+                        // TL33: a member of a Split View Desktop is placed by its Desktop, as for the given windows above; taking
+                        // it here would put it in a new group while it stays a member (a third app there is no member, D52).
+                        if (tiling::splitOfWindow(s.splits, idOf(w)))
+                            continue;
                         if (!tiling::fitsZone(constraintsOf(w), layout->zones[z], area))
                             continue;
                         windows.push_back(w);
@@ -2835,7 +2900,7 @@ namespace gf::tiler {
         // band above it (step 6e, D73), so its half is filled from the output's top edge.
         if (request->with) {
             const auto d = std::ranges::find_if(s.splits, [&](const tiling::SplitDesk& x) {
-                return x.workspace == workspace->m_id && std::ranges::find(x.members, *request->with) != x.members.end();
+                return x.workspace == gf::compat::workspaceId(workspace) && std::ranges::find(x.members, *request->with) != x.members.end();
             });
             if (d != s.splits.end()) {
                 for (const auto& w : windows) {
@@ -2856,7 +2921,7 @@ namespace gf::tiler {
             const CBox  surface = toCBox(tiling::surfaceOf(frames[i], band));
             g_layoutManager->setTargetGeom(surface, target);
             s.book.placed(idOf(w), toRect(current), toRect(surface), band, tiling::Placement{.place = std::nullopt, .layout = std::string{layout->id}, .zone = zoneIndex[i]},
-                          m->m_name, workspace->m_id, group);
+                          m->m_name, gf::compat::workspaceId(workspace), group);
         }
         titlebarsFollowSplits(); // a window picked into a Split View: its titlebar goes (D73)
         // TL28: the zones left empty in that layout, offered to the shell in the state reply until the next change (none while
@@ -2884,7 +2949,7 @@ namespace gf::tiler {
         for (const auto& m : all) {
             const auto area  = areaFor(m);
             const CBox box   = m->logicalBox();
-            const bool split = m->m_activeWorkspace && tiling::splitOf(s.splits, m->m_activeWorkspace->m_id) != nullptr; // TL33: the whole output
+            const bool split = m->m_activeWorkspace && tiling::splitOf(s.splits, gf::compat::workspaceId(m->m_activeWorkspace)) != nullptr; // TL33: the whole output
             tiling::StateOutput o{.name = m->m_name, .area = split ? toRect(box) : area.box, .outputClass = tiling::classify(box.w, box.h), .grid = area.grid.step, .windows = {}};
             for (const auto& r : s.book.records()) {
                 if (r.output == m->m_name)
@@ -2903,7 +2968,7 @@ namespace gf::tiler {
         // TL33: the Split View Desktops whose workspace still exists (splitCheck ends the others at the next event).
         std::vector<tiling::SplitDesk> splits;
         for (const auto& d : s.splits) {
-            if (State::workspaceState() && State::workspaceState()->query().id(d.workspace).run())
+            if (gf::compat::workspaceById(d.workspace))
                 splits.push_back(d);
         }
         // D57: the windows that do not fit half of their output (the Window menu greys their Full Screen Tile); the windows of
@@ -2912,18 +2977,45 @@ namespace gf::tiler {
         std::vector<uint64_t>          unfit;
         std::vector<uint64_t>          fixed;
         std::vector<tiling::WindowFit> fits;
+        // WM-14: per window its limits once (not five times), its output once, the work area once per output and Desktop,
+        // its neighbours into one buffer (Stages' strip by address, no walk over the window list per record): the reply no
+        // longer grows with windows squared on the compositor thread. Same answers as placeable, splittable, fixedSize,
+        // unfitZones and unfitPlaces.
         if (Desktop::windowState()) {
+            struct SAreaOf {
+                PHLMONITOR   monitor;
+                int64_t      workspace = 0;
+                tiling::Area area;
+            };
+            std::vector<SAreaOf>      areas;
+            std::vector<tiling::Rect> neighbours;
+            const auto                areaOf = [&areas](const PHLMONITOR& m, int64_t workspace) -> const tiling::Area& {
+                const auto it = std::ranges::find_if(areas, [&](const SAreaOf& a) { return a.monitor == m && a.workspace == workspace; });
+                if (it != areas.end())
+                    return it->area;
+                areas.push_back(SAreaOf{.monitor = m, .workspace = workspace, .area = areaFor(m, workspace)});
+                return areas.back().area;
+            };
             for (const auto& w : Desktop::windowState()->windows()) {
-                if (w && placeable(w) && !splittable(w))
-                    unfit.push_back(idOf(w));
-                if (w && w->m_isMapped && fixedSize(w))
+                if (!w || !gf::compat::mapped(w))
+                    continue;
+                const auto limits = constraintsOf(w);
+                if (tiling::fixedSize(limits))
                     fixed.push_back(idOf(w));
-                if (w && placeable(w)) {
-                    auto zones  = unfitZones(w);
-                    auto places = unfitPlaces(w);
-                    if (!zones.empty() || !places.empty())
-                        fits.push_back(tiling::WindowFit{.address = idOf(w), .zones = std::move(zones), .places = std::move(places)});
-                }
+                if (!placeable(w, &limits))
+                    continue;
+                const auto m = monitorOf(w);
+                if (!m)
+                    continue;
+                if (!tiling::fitsFrame(limits, splitHalf(m, 0)) || !tiling::fitsFrame(limits, splitHalf(m, 1)))
+                    unfit.push_back(idOf(w));
+                const int64_t workspace = gf::compat::workspaceId(w->m_workspace);
+                const auto&   area      = areaOf(m, workspace);
+                neighbourFramesInto(idOf(w), m->m_name, workspace, neighbours);
+                auto zones  = tiling::unfitZones(limits, area);
+                auto places = tiling::unfitPlaces(limits, area, neighbours);
+                if (!zones.empty() || !places.empty())
+                    fits.push_back(tiling::WindowFit{.address = idOf(w), .zones = std::move(zones), .places = std::move(places)});
             }
         }
         return tiling::stateJson(s.book.generation(), outputs, suggestion ? &*suggestion : nullptr, splits, unfit, fixed, fits);

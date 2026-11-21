@@ -346,3 +346,39 @@ TEST(PlacesModelDisk, UdisksVolumesAreListedInLocations)
     EXPECT_EQ(rowOf(games.path), -1);
     EXPECT_EQ(rowOf(data.path), -1);
 }
+
+// Audit F18: a change of the sidebar's lists (a tag seen while scrolling, a favourite added) comes as the rows that came,
+// went or changed, never as a reset: the sidebar keeps its delegates, its hover and its drop target meanwhile.
+TEST(PlacesModelDiff, ListsChangeRowByRow)
+{
+    PlacesModel places(nullptr, options());
+    int resets = 0;
+    int inserted = 0;
+    int removed = 0;
+    QObject::connect(&places, &QAbstractItemModel::modelReset, [&resets] { ++resets; });
+    QObject::connect(&places, &QAbstractItemModel::rowsInserted, [&inserted](const QModelIndex &, int first, int last) { inserted += last - first + 1; });
+    QObject::connect(&places, &QAbstractItemModel::rowsRemoved, [&removed](const QModelIndex &, int first, int last) { removed += last - first + 1; });
+    const auto rowOfTag = [&](const QString &tag) {
+        for (int r = 0; r < places.rowCount(); ++r)
+            if (places.data(places.index(r), PlacesModel::TagRole).toString() == tag)
+                return r;
+        return -1;
+    };
+    QPersistentModelIndex recents(places.index(0));
+    ASSERT_TRUE(recents.isValid());
+    const int before = places.rowCount();
+    places.setTags({QStringLiteral("Red"), QStringLiteral("work")});
+    EXPECT_EQ(places.rowCount(), before + 2);
+    EXPECT_EQ(inserted, 2);
+    places.setTags({QStringLiteral("Red"), QStringLiteral("home"), QStringLiteral("work")});
+    EXPECT_EQ(inserted, 3) << "only the new tag came";
+    EXPECT_GE(rowOfTag(QStringLiteral("home")), 0);
+    places.setTags({QStringLiteral("work")});
+    EXPECT_EQ(removed, 2);
+    EXPECT_EQ(rowOfTag(QStringLiteral("Red")), -1);
+    EXPECT_GE(rowOfTag(QStringLiteral("work")), 0);
+    places.setFavorites({QUrl::fromLocalFile(QDir::homePath())}, {});
+    EXPECT_EQ(resets, 0) << "no list change resets the model";
+    EXPECT_TRUE(recents.isValid()) << "a row that stays keeps its index";
+    EXPECT_EQ(recents.row(), 0);
+}

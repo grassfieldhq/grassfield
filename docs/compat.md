@@ -17,6 +17,36 @@ If Hyprland or Quickshell changed: rebuild the plugin and run the C2 degradation
 | Mesa | 26.2.2 | 2026-10-17 | `pacman -Q mesa` |
 | Kernel | 7.2.5-3-omarchy | 2026-10-17 | `uname -r` |
 | grassfield-compositor built for | Hyprland 0.56.2 (ABI efb50993…_aq_0.15_hu_0.14_hg_0.5_hc_0.1_hlg_0.6), via `compositor/build-direct.sh` | 2026-10-17 | plugin log "ABI hash match" in nested |
+| Hyprland 0.57.2 (commit 11cbc6c5, Arch `hyprland 0.57.2-1`; ABI `11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_aq_0.16_hu_0.14_hg_0.6_hc_0.1_hlg_0.6`) | builds, unit tests pass, runtime NOT VERIFIED | 2026-11-19 | `compositor/hypr-sysroot.sh` sysroot (aquamarine 0.16.0, hyprutils 0.14.3, hyprgraphics 0.6.0); see "Hyprland 0.57" below |
+
+## Hyprland 0.57
+
+Current Arch (and so Omarchy) ships Hyprland 0.57.2. The plugin's sources build against 0.56.x and 0.57.x (every difference in
+`compositor/src/HyprCompat.hpp`; docs/specs/compositor.md "Hyprland versions", HV1-HV5), so a user who updated Hyprland gets the
+full plugin from `grassfield-compositor-rebuild` instead of the reduced mode. The ABI stamp format did not change.
+
+Build check without replacing the installed Hyprland: `compositor/hypr-sysroot.sh /tmp/hypr057` (downloads the 0.57.2 packages
+from archive.archlinux.org, pinned by sha256, into a sysroot with no 0.56 header), then
+`PKG_CONFIG_SYSROOT_DIR=/tmp/hypr057/sysroot PKG_CONFIG_LIBDIR=/tmp/hypr057/sysroot/usr/lib/pkgconfig:/tmp/hypr057/sysroot/usr/share/pkgconfig cmake -S compositor -B /tmp/hypr057/build -G Ninja -DCMAKE_SYSROOT=/tmp/hypr057/sysroot -DGRASSFIELD_OUTPUT_DIR=/tmp/hypr057/out`.
+
+Verified 2026-11-19 (Arch chroot, gcc 16): the plugin, its stamp and the unit tests build against 0.56.2 and 0.57.2 with no
+error and no warning; the unit suite passes on both builds (634/634); clang-tidy is clean on the 0.56.2 build. No 0.57 session
+has run the plugin. Owner checks in a real 0.57 session (`hyprctl version` 0.57.x, the plugin rebuilt by
+`grassfield-compositor-rebuild`):
+- the plugin loads (log "ABI hash match"), `hyprctl grassfield` answers JSON with every feature, `hyprctl grassfield-stages`,
+  `grassfield-tiling`, `grassfield-frames` answer, the shell's IPC events arrive (socket2);
+- titlebars and rims draw, with the window and in a workspace switch (decorations now get a render context and a
+  presentation); a titlebar of a hidden or minimized window goes at unload (0.57's own immediate removal);
+- the Overview and the Stages strip: windows fitted at their rects, no copy at their real place, no trail when they move,
+  blurred windows' blur follows the fitted window, a window spanning two displays only on its own (the transformer path is new in
+  0.57: HV3); Hyprland's own motion blur or wobble on the same window;
+- minimize: the Funnel (Genie) and Shrink animations, then restore; Shift slow motion (modifiers);
+- tiling: an X11 window's tile (no resize-increment snapping on 0.57, and a fixed-size X11 window is not tiled: HV4);
+- focus: a click on a window gives it the keyboard (0.57's CLICK_DOWN / CLICK_UP), Stages and Overview close focus, a
+  menu (Exclusive layer) popup under the pointer;
+- client chrome: an app's own maximize request is the plugin's zoom (the suppression is 0.57's fullscreen policy now),
+  `xdg_toplevel.set_minimized` minimizes;
+- named and special workspaces: `special:minimized` is created on the first minimize and a restore leaves it.
 
 ## Known upstream issues (observed, not caused by Grassfield)
 | Component | Issue | Evidence | Impact / mitigation |

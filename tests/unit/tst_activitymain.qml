@@ -172,21 +172,27 @@ TestCase {
         verify(Qt.colorEqual(squares[0].color, Appearance.colors.activityGraphSystem));
     }
 
-    // AM5, AM8: a value below 0 is a gap: the fill stops there and starts again after it, never drawn as zero.
-    function test_graphGaps() {
+    // Graph.qml resolves the block's colour names for its GraphItem (series 0, series 1, the bars' three levels) and draws the
+    // middle line of a mirrored graph; without the app's Grassfield.Activity (this runner) it makes no GraphItem and reports
+    // nothing. The bands, their gaps (AM5, AM8) and their pixels: tests/unit/activity/qml/tst_graph.cpp.
+    function test_graphColoursAndMiddleLine() {
         const comp = Qt.createComponent(Qt.resolvedUrl("../../apps/activity/qml/Graph.qml"));
         compare(comp.status, Component.Ready, comp.errorString());
         const g = createTemporaryObject(comp, testCase, {width: 100, height: 50, capacity: 5,
             graph: {style: "area", max: 1, series: [{values: [0.5, -1, 0.2, 0.4, -1], color: "activityGraphUser"}]}});
         verify(g);
-        compare(g.lower.length, 2); // [0.5] and [0.2, 0.4]
-        const second = g.lower[1];
-        verify(second.every(p => p.y >= 0 && p.y <= 50));
+        compare(g.surface, null, "no Grassfield.Activity here");
+        verify(Qt.colorEqual(g.colors[0], Appearance.colors.activityGraphUser));
+        verify(Qt.colorEqual(g.colors[1], "transparent"));
+        const line = findAll(g, i => i.color !== undefined && i.height === g.hairline)[0];
+        verify(line && !line.visible, "no middle line on an area");
         g.graph = {style: "mirrored", max: 10, series: [{values: [5, 10], color: "activityGraphRead"}, {values: [-1, 5], color: "activityGraphWrite"}]};
-        compare(g.lower.length, 1);
-        compare(g.upper.length, 1);
-        verify(g.lower[0].every(p => p.y <= 25.001), "reads above the middle");
-        verify(g.upper[0].every(p => p.y >= 24.999), "writes below it");
+        verify(Qt.colorEqual(g.colors[0], Appearance.colors.activityGraphRead));
+        verify(Qt.colorEqual(g.colors[1], Appearance.colors.activityGraphWrite));
+        verify(line.visible, "the middle line of a mirrored graph");
+        g.graph = {style: "bars", max: 1, series: [{values: [0.5], color: ""}], levels: [1],
+            levelColors: ["activityPressureGreen", "activityPressureYellow", "activityPressureRed"]};
+        verify(Qt.colorEqual(g.colors[3], Appearance.colors.activityPressureYellow));
     }
 
     // AM42: the pop-up above the Disk graph; a new sample leaves it in place (the delegates are kept, not rebuilt).

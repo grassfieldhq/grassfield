@@ -90,7 +90,7 @@ print("repeat " .. tostring(binds["ALT + LEFT"].opts.repeating) .. " " .. tostri
 -- Keyboard access to the bar (gate A1, rc7 audit R7-A11Y-02): what Ctrl+F2 and Ctrl+F8 run, and their descriptions.
 local function cmd_of(keys)
   local b = binds[keys]
-  if not b or type(b.d) ~= "table" or b.d.dsp ~= "dsp.exec_cmd" then return "unbound" end
+  if not b or type(b.d) ~= "table" or (b.d.dsp ~= "dsp.exec_cmd" and b.d.dsp ~= "dsp.event") then return "unbound" end
   return b.opts.description .. " | " .. tostring(b.d.args[1])
 end
 print("menubar-f2 " .. cmd_of("CTRL + F2"))
@@ -118,8 +118,8 @@ LUA
 
 out=$(env -i PATH="$PATH" lua "$tmp/run.lua" "$root")
 echo "$out" | sed 's/^/    /'
-desc="Spaces and Overview binds are still dispatchers (CTRL+LEFT/RIGHT, CTRL+1..9 focus Spaces, CTRL+UP runs the Overview command): the macOS keys are kept"
-check grep -q "^spaces dsp.focus dsp.focus dsp.focus dsp.focus dsp.exec_cmd$" <<<"$out"
+desc="Spaces and Overview binds are still dispatchers (CTRL+LEFT/RIGHT, CTRL+1..9 focus Spaces, CTRL+UP sends the Overview request in-process, CIO-01): the macOS keys are kept"
+check grep -q "^spaces dsp.focus dsp.focus dsp.focus dsp.focus dsp.event$" <<<"$out"
 desc="every forwarded key sends exactly the expected chord (no BAD line)"
 check bash -c '! grep -q "^BAD" <<<"$1" && [[ $(grep -c "^ok " <<<"$1") == 34 ]]' _ "$out"
 desc="word navigation repeats while the keys are held"
@@ -137,8 +137,8 @@ check bash -c 'grep -q "forwarding.lua" "$1/apps/settings/qml/KeyboardPage.qml" 
 f2=$(sed -n 's/^menubar-f2 //p' <<<"$out")
 f8=$(sed -n 's/^menubar-f8 //p' <<<"$out")
 desc="R7-A11Y-02: Ctrl+F8 (macOS Move focus to status menus) is bound, and runs exactly Ctrl+F2's request with 'open status' for 'open system' (the shell's MenuBar.openFirstStatus)"
-want=$(sed -e 's/^Focus the menu bar | /Focus the status menus | /' -e "s/ call menubar open system ''\$/ call menubar open status ''/" <<<"$f2")
-check bash -c '[[ $1 == *" call menubar open system '"''"'" && $2 == *" call menubar open status '"''"'" && $2 == "$3" ]]' _ "$f2" "$f8" "$want"
+want=$(sed -e 's/^Focus the menu bar | /Focus the status menus | /' -e "s/ menubar open system\$/ menubar open status/" <<<"$f2")
+check bash -c '[[ $1 == *"| gfkey/1 menubar open system" && $2 == *"| gfkey/1 menubar open status" && $2 == "$3" ]]' _ "$f2" "$f8" "$want"
 desc="R7-A11Y-02: Settings > Keyboard lists Ctrl+F8 (a literal bind() line, its description listed for translation, with a French text)"
 check bash -c 'grep -qx "bind(\"CTRL + F8\", \"Focus the status menus\", shell(\"menubar\", \"open status '"''"'\"))" "$1/config/hypr/grassfield/bindings.lua" && grep -qF "QT_TRANSLATE_NOOP(\"Bindings\", \"Focus the status menus\")" "$1/apps/settings/qml/Bindings.js" && grep -A1 -F "<source>Focus the status menus</source>" "$1/translations/grassfield_fr.ts" | grep -qF "<translation>Activer les menus d’état</translation>"' _ "$root"
 
@@ -155,5 +155,40 @@ check grep -q "^us unbound | unbound locked nil nil$" <<<"$(env -i PATH="$PATH" 
 check grep -q "^ unbound | unbound locked nil nil$" <<<"$(env -i PATH="$PATH" lua "$tmp/sources.lua" "$root" "")"
 desc="Input sources: no xkb group option is set anywhere in config/"
 check bash -c '! grep -rq "grp:ctrl_space_toggle" "$1/config"' _ "$root"
+
+# CIO-08: the forwarded chord goes to the keyboard's holder, so the terminal and Files decisions are made on it, not on the
+# active window (Hyprland keeps a terminal active while Search holds the keys). With the plugin: its keyboard_holder();
+# without it: a mapped exclusive layer holds the keys.
+cat >"$tmp/holder.lua" <<'LUA'
+local repo, holder, layer_exclusive = arg[1], arg[2], arg[3] == "1"
+local binds, dispatched = {}, {}
+local function proxy(path)
+  return setmetatable({}, { __index = function(_, k) return proxy(path .. "." .. k) end,
+                            __call = function(_, ...) return { dsp = path, args = { ... } } end })
+end
+local plugin = holder ~= "none-plugin" and { grassfield = { keyboard_holder = function() return holder end } } or {}
+hl = setmetatable({
+  bind = function(keys, d) binds[keys] = d end,
+  dispatch = function(d) dispatched[#dispatched + 1] = d end,
+  timer = function() end,
+  plugin = plugin,
+  get_active_window = function() return { class = "foot" } end,
+  get_layers = function() return { { mapped = true, interactivity = layer_exclusive and 1 or 2, namespace = "grassfield-search" } } end,
+}, { __index = function() return function() end end })
+hl.dsp = proxy("dsp")
+dofile(repo .. "/config/hypr/grassfield/forwarding.lua")
+local function first(keys) dispatched = {}; binds[keys](); local a = dispatched[1].args[1]; return a.mods .. "," .. a.key end
+print(holder .. " " .. tostring(layer_exclusive) .. " alt-left=" .. first("ALT + LEFT") .. " super-up=" .. first("SUPER + UP"))
+LUA
+h1=$(lua "$tmp/holder.lua" "$root" layer 0)
+h2=$(lua "$tmp/holder.lua" "$root" window:foot 0)
+h3=$(lua "$tmp/holder.lua" "$root" window:org.grassfield.Files 0)
+h4=$(lua "$tmp/holder.lua" "$root" none-plugin 1)
+h5=$(lua "$tmp/holder.lua" "$root" none-plugin 0)
+printf '    %s\n' "$h1" "$h2" "$h3" "$h4" "$h5"
+desc="CIO-08: with a terminal active and Search holding the keys, Alt+Left reaches Search as Ctrl+Left and Super+Up as Home (plugin's holder, or an exclusive layer without the plugin); the terminal itself keeps Alt+Left; Files gets Ctrl+Up"
+check bash -c '[[ $1 == "layer false alt-left=CTRL,Left super-up=CTRL,Home" && $2 == "window:foot false alt-left=ALT,Left super-up=CTRL,Home" &&
+  $3 == "window:org.grassfield.Files false alt-left=CTRL,Left super-up=CTRL,Up" && $4 == "none-plugin true alt-left=CTRL,Left super-up=CTRL,Home" &&
+  $5 == "none-plugin false alt-left=ALT,Left super-up=CTRL,Home" ]]' _ "$h1" "$h2" "$h3" "$h4" "$h5"
 
 exit $fail

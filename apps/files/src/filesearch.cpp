@@ -342,6 +342,7 @@ void FileSearchRunner::start(const FileSearch::Settings &settings)
         m_search.clear();
         emit done(backend, limited, contentsUnavailable);
     });
+    Workers::track(search); // joined, bounded, at quit
     search->start(QThread::LowPriority);
 }
 

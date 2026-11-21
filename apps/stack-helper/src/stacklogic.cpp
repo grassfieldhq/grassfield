@@ -236,13 +236,64 @@ ScanResult scanFolder(const QByteArray &dir, Window *window, const BeforeStat &b
     return result; // ok, but not complete: a window that may hold a file that is gone
 }
 
-QByteArray escapeName(const QString &name)
+namespace
 {
+// The length of the valid UTF-8 sequence at `i` (1 to 4), 0 when the byte there starts none (overlong forms, surrogates and
+// code points past U+10FFFF are not valid).
+int utf8Length(const QByteArray &s, qsizetype i)
+{
+    const auto at = [&s](qsizetype k) { return uchar(s.at(k)); };
+    const uchar c = at(i);
+    if (c < 0x80)
+        return 1;
+    int n = 0;
+    uint cp = 0;
+    if (c >= 0xC2 && c <= 0xDF) {
+        n = 2;
+        cp = c & 0x1F;
+    } else if (c >= 0xE0 && c <= 0xEF) {
+        n = 3;
+        cp = c & 0x0F;
+    } else if (c >= 0xF0 && c <= 0xF4) {
+        n = 4;
+        cp = c & 0x07;
+    } else {
+        return 0;
+    }
+    if (i + n > s.size())
+        return 0;
+    for (int k = 1; k < n; ++k) {
+        if ((at(i + k) & 0xC0) != 0x80)
+            return 0;
+        cp = (cp << 6) | (at(i + k) & 0x3F);
+    }
+    if ((n == 3 && (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF))) || (n == 4 && (cp < 0x10000 || cp > 0x10FFFF)))
+        return 0;
+    return n;
+}
+} // namespace
+
+QByteArray escapeName(const QByteArray &raw)
+{
+    static const char hex[] = "0123456789abcdef";
     QByteArray out;
-    const QByteArray utf8 = name.toUtf8();
-    out.reserve(utf8.size());
-    for (const char c : utf8) {
-        switch (c) {
+    out.reserve(raw.size());
+    for (qsizetype i = 0; i < raw.size();) {
+        const int n = utf8Length(raw, i);
+        if (n == 0) {
+            const uchar c = uchar(raw.at(i));
+            out += "\\x";
+            out += hex[c >> 4];
+            out += hex[c & 0xF];
+            ++i;
+            continue;
+        }
+        if (n > 1) {
+            out.append(raw.constData() + i, n);
+            i += n;
+            continue;
+        }
+        switch (const char c = raw.at(i)) {
         case '\\':
             out += "\\\\";
             break;
@@ -258,8 +309,19 @@ QByteArray escapeName(const QString &name)
         default:
             out += c;
         }
+        ++i;
     }
     return out;
+}
+
+QByteArray folderArgument(const QByteArray &argument)
+{
+    if (argument.startsWith('/'))
+        return argument;
+    if (!argument.startsWith("file://"))
+        return {};
+    const QByteArray path = QByteArray::fromPercentEncoding(argument.mid(7));
+    return path.startsWith('/') && !path.contains('\0') ? path : QByteArray();
 }
 
 QByteArray encodeWindow(qint64 sequence, qint64 total, const std::vector<Entry> &entries)
@@ -268,7 +330,7 @@ QByteArray encodeWindow(qint64 sequence, qint64 total, const std::vector<Entry> 
     const char us = '\x1f';
     out += us + QByteArray::number(sequence) + us + QByteArray::number(total) + us + QByteArray::number(qint64(entries.size()));
     for (const Entry &e : entries) {
-        out += us + escapeName(e.se.name);
+        out += us + escapeName(e.raw);
         out += us + QByteArray(e.se.isDir ? "1" : "0");
         out += us + QByteArray::number(e.modified, 'f', 9);
         out += us + QByteArray::number(e.added, 'f', 9);
