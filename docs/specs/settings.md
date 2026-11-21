@@ -187,8 +187,8 @@ user accounts, editing shortcuts. Wallpaper is a v1 section since ADR-0016 (loca
      `pacman -Q`, Qt); Displays (one row per output: "14-inch (1920 × 1080)" from the size the output reports); Storage (the
      start-up volume, "742.81 GB available of 1.00 TB", decimal units as macOS); last, Diagnostic Report (ADR-0053, where
      macOS has System Report…): "Create Diagnostic Report…" runs `/usr/lib/grassfield/grassfield-report` (`Backend.act`, no
-     argument, 90 s), says "Creating the report…", then "Saved as “<file>”." (wherever the Downloads folder is) and, for a
-     file inside the home, Files opens the folder holding it (`Backend.launch` of `/usr/bin/grassfield-files -- <folder in the
+     argument, 90 s; the tool keeps all its commands within a 75 s budget), says "Creating the report…", then "Saved as
+     “<file>”." (wherever the Downloads folder is) and, for a file inside the home, Files opens the folder holding it (`Backend.launch` of `/usr/bin/grassfield-files -- <folder in the
      home>`, `systemguard.h::isRevealInFiles`); a failure
      says "The report could not be created."; shown when the tool is installed or in a dev session (where the dev guard
      suppresses it). Tests: `tests/unit/tst_settingsabout.qml`, `tst_settingsgeneral.qml`, `tests/unit/settings/tst_systemguard.cpp`,
