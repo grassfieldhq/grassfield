@@ -56,6 +56,7 @@ check bash -c '[ -z "$(named_qs "$1")" ]' _ "$mut/n4"
 # next to the UI's own, Client.securityRoot(Quickshell.shellDir)); all checked below too. The key router's fallback in
 # shell/platform/shortcuts/Shortcuts.qml (a key target with no attached handler, ADR-0058) calls the shell's
 # own instance by its own root, -p Quickshell.shellDir (the system path in a real session), as LockClient.js does.
+# grassfield-report's `qs log` reads one log file by its path (an instance's runtime directory), selecting no instance.
 # Comment lines are skipped. A -p with any other path, a -c name, or no selector is reported.
 bare_qs() {
   grep -rnIHE "([\"']?(/usr/bin/)?(qs|quickshell)[\"']?([[:space:]]*,[[:space:]]*|[[:space:]]+)[\"']?(ipc|kill|log)[\"']?([^[:alnum:]_]|$))" "$@" 2>/dev/null |
@@ -65,6 +66,7 @@ bare_qs() {
     grep -vE '/packaging/session-bin/hyprland-dialog:[0-9]+:answer=\$\(timeout -k 1 10 qs ipc -p "\$shell_dir" call anr report ' |
     grep -vE '/packaging/bin/grassfield-security-status:[0-9]+:(state|beat)=\$\(timeout -k 0\.2 2 qs ipc \$display -p "\$path" call security (state|heartbeat) ' |
     grep -vE '/packaging/bin/grassfield-security-status:[0-9]+:lock=\$\(timeout -k 0\.2 2 qs ipc \$display -p "\$path" call lock state ' |
+    grep -vE '/packaging/bin/grassfield-report:[0-9]+:    ok, text = run\(\["qs", "log", "--no-color", "--log-times", "--tail", str\(QS_LOG_LINES\), os\.path\.join\(instance, "log\.qslog"\)\],$' |
     grep -vE '/packaging/session-bin/hyprland-share-picker:[0-9]+:    command = "qs ipc -p SHELL_DIR call picker request"\.split\(\)$' |
     grep -vE '/shell/platform/shortcuts/Shortcuts\.qml:[0-9]+:        Quickshell\.execDetached\(\["env", "-u", "QS_CONFIG_PATH", "-u", "QS_CONFIG_NAME", "-u", "QS_MANIFEST", "qs", "ipc", "-p", Quickshell\.shellDir, "call", request\.target, request\.fn\]\.concat\(request\.args\.map\(a => String\(a\)\)\)\);$'
 }

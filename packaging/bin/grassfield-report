@@ -995,7 +995,7 @@ def tail_file(path, lines, limit):
 
 
 def qs_log(instance):
-    """The last lines of an instance's log: `qs log` decodes its binary log.qslog; the plain log.log when qs cannot."""
+    """The last lines of an instance's log: Quickshell's log reader decodes its binary log.qslog (a file path, never an instance); the plain log.log when qs cannot."""
     ok, text = run(["qs", "log", "--no-color", "--log-times", "--tail", str(QS_LOG_LINES), os.path.join(instance, "log.qslog")],
                    limit=QS_LOG_MAX, tail=True)
     if ok:
