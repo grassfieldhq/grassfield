@@ -219,7 +219,9 @@ function M.vetted_once(abi, loaded, env)
   if before and type(kept) == "string" then
     for line in kept:gmatch("[^\n]+") do
       local k, verdict = line:match("^(.*)\t([^\t]*)$")
-      if k == key then return verdict ~= "-" and verdict or nil end
+      -- A kept verdict names this build or nothing; any other path (a line written by someone else) is asked again.
+      if k == key and (verdict == "-" or verdict == path) then return verdict ~= "-" and verdict or nil end
+      if k == key then break end
       if k and #lines < 3 then lines[#lines + 1] = line end
     end
   end

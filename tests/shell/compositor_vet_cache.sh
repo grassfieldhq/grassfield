@@ -85,6 +85,9 @@ reset
 expect "no build for that ABI: refused without a check" "$(run other,other)" "00"
 expect "a check cut off is not kept" "$(run timeout,ask)" "11"
 reset
+expect "a kept verdict naming another path than the build is not trusted: checked again, then kept" \
+  "$(run "ask,sed -i 's|\t[^\t]*\$|\t/elsewhere/evil.so|' $tmp/runtime/*.vetted,ask,ask")" "1010"
+reset
 expect "verify mode keeps nothing" "$(run verify,ask)" "11"
 reset
 expect "without the plugin's probe the check runs each time (the first parse of a login)" "$(run noprobe,noprobe)" "11"
