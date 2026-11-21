@@ -1204,7 +1204,10 @@ bool FolderModel::lessThan(const QModelIndex &left, const QModelIndex &right) co
         return FileLogic::compareEntries(sortEntry(a, key), sortEntry(b, key), key, m_descending, m_foldersFirst, m_collator) < 0;
     // Any other key reads dates, types or tags: each item's facts once per sort key, not once per comparison (a sort by date
     // of 100,000 items made millions of QDateTimes on the GUI thread).
-    return FileLogic::compareEntries(sortedFacts(a, key), sortedFacts(b, key), key, m_descending, m_foldersFirst, m_collator) < 0;
+    // The first is copied (implicitly shared members, no deep copy): looking up the second may insert into the cache, and a
+    // QHash insertion moves its entries (a reference to the first would dangle).
+    const FileLogic::SortEntry first = sortedFacts(a, key);
+    return FileLogic::compareEntries(first, sortedFacts(b, key), key, m_descending, m_foldersFirst, m_collator) < 0;
 }
 
 const FileLogic::SortEntry &FolderModel::sortedFacts(const KFileItem &item, FileLogic::SortKey key) const

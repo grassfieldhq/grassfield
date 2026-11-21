@@ -279,14 +279,18 @@ int main(int argc, char **argv)
     ::signal(SIGINT, onSignal);
     Helper *current = nullptr;
     QSocketNotifier signalNotifier(g_signalPipe[0], QSocketNotifier::Read);
-    QObject::connect(&signalNotifier, &QSocketNotifier::activated, &app, [&current] {
+    bool parentDeathSeen = false;
+    QObject::connect(&signalNotifier, &QSocketNotifier::activated, &app, [&current, &parentDeathSeen] {
         char drained[16];
         while (::read(g_signalPipe[0], drained, sizeof drained) > 0) {
         }
-        // PR_SET_PDEATHSIG's SIGTERM: the shell died (the helper was reparented). Any other SIGTERM or SIGINT (a logout, a
-        // stop) ends the helper.
-        if (current && ::getppid() != g_parent && !current->keeping()) {
-            shellGone(current);
+        // PR_SET_PDEATHSIG's SIGTERM: the shell died (the helper was reparented). It is the first SIGTERM seen once reparented,
+        // also when the closed stdin or stdout was handled first and the helper already keeps the clipboard (it must not end
+        // it then). Any other SIGTERM or SIGINT (a logout, a stop) ends the helper.
+        if (current && ::getppid() != g_parent && !parentDeathSeen) {
+            parentDeathSeen = true;
+            if (!current->keeping())
+                shellGone(current);
             return;
         }
         QCoreApplication::exit(0);
