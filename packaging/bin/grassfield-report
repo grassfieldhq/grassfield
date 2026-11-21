@@ -8,18 +8,24 @@ Writes ONE private text file (mode 0600, never overwriting) and prints its path 
     or at PATH (a file, or an existing folder to write into);
   - named grassfield-report-<YYYYMMDD-HHMMSS>.txt (-2, -3... when that name exists).
 It holds the versions (Grassfield, its packages, Omarchy, Hyprland, Quickshell, Qt), the compositor plugin's status, the
-displays, the audio devices, the crashes of the last 7 days, this boot's journal of the Grassfield user units (bounded, its
-free text such as window titles, network names and notification bodies replaced by <text>) and
+displays, the audio devices, the Grassfield user units' state and memory (systemctl --user show), the Quickshell processes'
+memory and threads, the system's memory and memory pressure, every Grassfield unit that ended by a signal this boot with the
+journal around it and the known killers that left a trace, the crashes of the last 7 days (with the first lines of
+coredumpctl info for Quickshell, Hyprland and Grassfield programs), the kernel's out-of-memory and crash lines, systemd-oomd's
+and earlyoom's lines, this boot's journal of the Grassfield user units (the liveness probe's routine runs left out, repeated
+lines folded, its last 512 KiB at most), the last lines of the UI's and the security process's own Quickshell logs (the
+free text of every log, such as window titles, network names and notification bodies, replaced by <text>) and
 Grassfield's configuration files with secret-looking values removed. The home path, the user name, the real name and the
 host name are replaced everywhere, and so are hardware serial numbers (the displays', R7-SEC-04; a USB audio device's in
 ALSA and PipeWire names) and Bluetooth or network hardware addresses. The person reads it and decides whether to share it.
 
 Rules: never as root, no sudo, no network, no recording or playback, no configuration change. Every command is read-only,
-run without a shell, with a timeout and LC_ALL=C; a missing tool is one line in the report, never a failure.
+run without a shell, with a timeout and LC_ALL=C, all of them within a time budget of 75 s (Settings waits 90 s); a missing
+tool is one line in the report, never a failure.
 Inspired by Project Luma's support report (MPL-2.0): the rules and the idea; no code copied. Standard library only.
 Exit status: 0 written, 1 not written (the reason on stderr), 2 usage or run as root.
-Test hook (dev sessions only): GRASSFIELD_REPORT_ROOT prefixes the two system files read (VERSION, os-release);
-tests/shell/diagnostic_report.sh.
+Test hooks (dev sessions only): GRASSFIELD_REPORT_ROOT prefixes the system files read (VERSION, os-release, the schema)
+and /proc; GRASSFIELD_REPORT_BUDGET replaces the time budget (seconds); tests/shell/diagnostic_report.sh.
 """
 import datetime
 import json
@@ -27,20 +33,45 @@ import os
 import platform
 import pwd
 import re
+import signal
 import socket
 import subprocess
 import sys
+import time
 
 # A dev-plumbing hook (ADR-0019): honoured only in a dev session (GRASSFIELD_DEV "1", GRASSFIELD_SESSION not "1").
 DEV = os.environ.get("GRASSFIELD_DEV") == "1" and os.environ.get("GRASSFIELD_SESSION") != "1"
 FILE_ROOT = os.environ.get("GRASSFIELD_REPORT_ROOT", "") if DEV else ""
 VERSION_FILE = FILE_ROOT + "/usr/share/grassfield/VERSION"
 OS_RELEASE = FILE_ROOT + "/etc/os-release"
+PROC = FILE_ROOT + "/proc"
 
 TIMEOUT = 10
 JOURNAL_TIMEOUT = 20
-JOURNAL_LINES = 3000
+# All the commands together: Settings' button waits 90 s for the report (Backend.act); a command that would start after the
+# budget is spent is one line in the report instead.
+BUDGET = 75
+try:
+    BUDGET = max(1, int(os.environ.get("GRASSFIELD_REPORT_BUDGET", ""))) if DEV else BUDGET
+except ValueError:
+    pass
+START = time.monotonic()
+# This boot's journal of the Grassfield units: at most this many lines read (a memory bound), its last JOURNAL_MAX bytes kept
+# once the liveness probe's routine runs are left out and repeated lines folded.
+JOURNAL_SCAN = 100000
+JOURNAL_READ = 32 * 1024 * 1024
 JOURNAL_MAX = 512 * 1024
+KERNEL_LINES = 200
+KERNEL_MAX = 32 * 1024
+OOMD_LINES = 200
+KILLS = 5
+KILL_WINDOW = 5
+KILL_LINES = 150
+KILLS_MAX = 96 * 1024
+QS_LOG_LINES = 150
+QS_LOG_MAX = 24 * 1024
+CRASH_DETAILS = 5
+CRASH_FRAMES = 8
 SECTION_MAX = 64 * 1024
 CRASH_LINES = 100
 CONFIG_FILES = 20
@@ -93,13 +124,19 @@ def usage(message=""):
 def run(argv, timeout=TIMEOUT, limit=SECTION_MAX, tail=False):
     """(ok, text) of a read-only command: no shell, C locale, stdin closed, bounded output."""
     env = dict(os.environ, LC_ALL="C", LANG="C")
-    env.pop("LANGUAGE", None)
+    # Quickshell's option variables would change what `qs log` selects (a stray QS_MANIFEST makes qs exit at once).
+    for name in ("LANGUAGE", "QS_CONFIG_PATH", "QS_CONFIG_NAME", "QS_MANIFEST"):
+        env.pop(name, None)
+    left = BUDGET - (time.monotonic() - START)
+    if left < 1:
+        return False, "(left out: the report's time budget of %d s is spent)" % BUDGET
+    timeout = min(timeout, left)
     try:
         p = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout, env=env, check=False)
     except FileNotFoundError:
         return False, "(not available: %s is not installed)" % argv[0]
     except subprocess.TimeoutExpired:
-        return False, "(no answer from %s within %d s)" % (argv[0], timeout)
+        return False, "(no answer from %s within %d s)" % (argv[0], round(timeout))
     except OSError as e:
         return False, "(%s could not run: %s)" % (argv[0], e.strerror or "error")
     out = p.stdout.decode("utf-8", "replace")
@@ -510,21 +547,479 @@ def plugin():
     return "loaded\n" + text.strip()
 
 
-def crashes():
+def crash_rows():
+    """(ok, [line, ...] of `coredumpctl list` for the last 7 days) or (False, the line the section shows instead)."""
     ok, text = run(["coredumpctl", "--no-pager", "--no-legend", "list", "--since=-7d"])
+    if not ok and "No coredumps found" in text:  # coredumpctl exits 1 when there is none
+        return True, []
     if not ok:
-        return text
-    lines = [l for l in text.splitlines() if l.strip()]
+        return False, text
+    return True, [l for l in text.splitlines() if l.strip()]
+
+
+def crashes(rows):
+    ok, lines = rows
+    if not ok:
+        return lines
     if not lines:
         return "(no crash in the last 7 days)"
     more = len(lines) - CRASH_LINES
     return "\n".join(lines[-CRASH_LINES:]) + ("\n[... %d older lines left out ...]" % more if more > 0 else "")
 
 
-def journal():
-    ok, text = run(["journalctl", "--user", "-b", "0", "-u", "grassfield-*", "--no-pager", "-o", "short-iso", "-n", str(JOURNAL_LINES)],
-                   timeout=JOURNAL_TIMEOUT, limit=JOURNAL_MAX, tail=True)
-    return text if text.strip() else "(no entry)"
+# A row of `coredumpctl list`: TIME (day, date, time, zone) PID UID GID SIG COREFILE EXE SIZE.
+CRASH_ROW = re.compile(r"^\S+ \S+ \S+ \S+\s+(\d+)\s+\d+\s+\d+\s+\S+\s+\S+\s+(\S.*?)\s+\S+\s*$")
+# The programs of the desktop itself: Quickshell (the UI and the security process), Hyprland and Grassfield's own.
+RELATED_EXE = re.compile(r"(?:^|/)(?:qs|quickshell|\.quickshell-wrapped|Hyprland|hyprland|grassfield-[\w.+-]+)$")
+# The fields of `coredumpctl info` kept: never the command line, the environment, the boot, machine or host identifiers,
+# or the core file's path.
+INFO_KEYS = ("PID", "Signal", "Timestamp", "Executable", "Unit", "User Unit", "Package")
+INFO_FIELD = re.compile(r"^\s*([A-Za-z][A-Za-z -]*?):\s+(.*)$")
+
+
+def info_digest(text):
+    """The first lines of `coredumpctl info`: INFO_KEYS, the message's first sentence and the first frames of the first
+    stack (the thread that crashed), when there is one."""
+    out, frames, stacks, in_stack = [], 0, 0, False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("Stack trace of thread"):
+            stacks += 1
+            in_stack = stacks == 1
+            if in_stack:
+                out.append("  " + s)
+            continue
+        if in_stack and re.match(r"^#\d+\s", s):
+            if frames < CRASH_FRAMES:
+                out.append("    " + s)
+            frames += 1
+            continue
+        if in_stack and not s:
+            in_stack = False
+        m = INFO_FIELD.match(line)
+        if m and m.group(1) in INFO_KEYS:
+            out.append("%s: %s" % (m.group(1), m.group(2)))
+        elif m and m.group(1) == "Message":
+            out.append("Message: %s" % m.group(2))
+    if frames > CRASH_FRAMES:
+        out.append("    [... %d more frames left out ...]" % (frames - CRASH_FRAMES))
+    if stacks == 0:
+        out.append("  (no stack: no core file was kept, LimitCORE=0 for the UI and the security process)")
+    return "\n".join(out) if out else "(coredumpctl info gave no field)"
+
+
+def crash_details(rows):
+    ok, lines = rows
+    if not ok:
+        return lines
+    pids = []
+    for l in lines:
+        m = CRASH_ROW.match(l)
+        if m and RELATED_EXE.search(m.group(2)):
+            pids.append(m.group(1))
+    if not pids:
+        return "(no crash of Quickshell, Hyprland or a Grassfield program in the last 7 days)"
+    parts = []
+    shown = pids[-CRASH_DETAILS:][::-1]
+    for pid in shown:
+        ok, text = run(["coredumpctl", "--no-pager", "--since=-7d", "-1", "info", pid])
+        parts.append("--- pid %s\n%s" % (pid, info_digest(text) if ok else text))
+    if len(pids) > len(shown):
+        parts.append("[... %d older crashes of these programs left out ...]" % (len(pids) - len(shown)))
+    return "\n".join(parts)
+
+
+# ---- journal ---------------------------------------------------------------------------------------------------------
+
+# The liveness probe's routine runs (grassfield-shell-watchdog.service every 30 s): the user manager's lines that say it ran
+# and ended well. The probe's own lines (a miss, a kill) and any failure of its unit are kept.
+PROBE_ROUTINE = re.compile(r"^\S+ \S+ systemd\[\d+\]: (?:(?:Starting|Started|Finished) Grassfield shell liveness probe\b.*"
+                           r"|grassfield-shell-watchdog\.service: (?:Deactivated successfully|Consumed .*)\.?)$")
+
+
+def fold(lines):
+    """(lines, routine probe runs left out, lines folded): the liveness probe's routine lines left out, and each run of
+    identical consecutive lines (the same text after the time) folded into its first with "(×N, last <time>)"."""
+    out, dropped, folded = [], 0, 0
+    key, first, count, last = None, None, 0, ""
+    for line in lines:
+        if PROBE_ROUTINE.match(line):
+            dropped += " Starting " in line
+            continue
+        stamp, _, rest = line.partition(" ")
+        if first is not None and rest == key:
+            count += 1
+            last = stamp
+            folded += 1
+            continue
+        if first is not None:
+            out.append(first if count == 1 else "%s (×%d, last %s)" % (first, count, last))
+        key, first, count, last = rest, line, 1, stamp
+    if first is not None:
+        out.append(first if count == 1 else "%s (×%d, last %s)" % (first, count, last))
+    return out, dropped, folded
+
+
+def journal_read():
+    """(ok, text): this boot's journal of the Grassfield user units (every grassfield-* unit: the shell, the security
+    process, the menu bridge, the prompter, the portals, the liveness probe...), at most JOURNAL_SCAN lines."""
+    ok, text = run(["journalctl", "--user", "-b", "0", "-u", "grassfield-*", "--no-pager", "-q", "-o", "short-iso",
+                    "-n", str(JOURNAL_SCAN)], timeout=JOURNAL_TIMEOUT, limit=JOURNAL_READ, tail=True)
+    # No unit matched the glob in the journal at all: journalctl exits 1 ("Failed to add filter for units").
+    return (True, "") if not ok and "Failed to add filter for units" in text else (ok, text)
+
+
+def journal(read):
+    ok, text = read
+    if not ok:
+        return text
+    lines = [l for l in text.splitlines() if l.strip() and not l.startswith("[... ")]
+    kept, dropped, folded = fold(lines)
+    if not kept:
+        return "(no entry)"
+    body = bounded("\n".join(kept), JOURNAL_MAX, tail=True)
+    shown = [l for l in body.splitlines() if l and not l.startswith("[... ")]
+    head = "This boot, %s to %s" % (shown[0].split(" ", 1)[0], shown[-1].split(" ", 1)[0])
+    if len(shown) < len(kept) or len(lines) >= JOURNAL_SCAN:
+        head += " (the older lines left out: the section keeps its last %d KiB)" % (JOURNAL_MAX // 1024)
+    head += "; %d routine runs of the liveness probe left out; %d repeated lines folded into the line before them (×N)." % (
+        dropped, folded)
+    return head + "\n" + body
+
+
+# Kernel lines about memory exhaustion and crashes.
+KERNEL_EVENT = re.compile(r"(?i)out of memory|oom[-_ ]?kill|invoked oom-killer|memory cgroup|segfault at|general protection|"
+                          r"\btraps:|killed process|page allocation failure")
+
+
+def kernel_read():
+    """(ok, [line, ...]) of this boot's kernel lines about memory exhaustion or a crash, or (False, the reason)."""
+    ok, text = run(["journalctl", "-k", "-b", "0", "--no-pager", "-q", "-o", "short-iso", "-n", "50000"],
+                   timeout=JOURNAL_TIMEOUT, limit=JOURNAL_READ, tail=True)
+    if not ok:
+        return False, text
+    return True, fold([l for l in text.splitlines() if KERNEL_EVENT.search(l)])[0]
+
+
+def kernel(read):
+    ok, lines = read
+    if not ok:
+        return lines
+    if not lines:
+        return ("(no line about memory exhaustion or a crash; the kernel's lines need a user of the wheel, adm or "
+                "systemd-journal group)")
+    more = len(lines) - KERNEL_LINES
+    return bounded(("[... %d older lines left out ...]\n" % more if more > 0 else "") + "\n".join(lines[-KERNEL_LINES:]),
+                   KERNEL_MAX, tail=True)
+
+
+def oom_daemons():
+    ok, text = run(["journalctl", "-b", "0", "--no-pager", "-q", "-o", "short-iso", "-n", str(OOMD_LINES),
+                    "-u", "systemd-oomd.service", "-u", "earlyoom.service"], timeout=JOURNAL_TIMEOUT)
+    if not ok:
+        return text
+    lines = fold([l for l in text.splitlines() if l.strip()])[0]
+    return "\n".join(lines) if lines else "(no line: neither systemd-oomd nor earlyoom acted this boot, or neither is installed)"
+
+
+# ---- units and processes ---------------------------------------------------------------------------------------------
+
+UNIT_PROPS = ("Id", "ActiveState", "SubState", "Result", "MainPID", "ExecMainCode", "ExecMainStatus", "NRestarts",
+              "MemoryCurrent", "MemoryPeak", "MemorySwapPeak", "MemoryMax", "CPUUsageNSec", "ActiveEnterTimestamp")
+BYTE_PROPS = ("MemoryCurrent", "MemoryPeak", "MemorySwapPeak", "MemoryMax")
+EXEC_CODES = {"0": "none", "1": "exited", "2": "killed", "3": "dumped", "4": "trapped", "5": "stopped", "6": "continued"}
+UNSET = str(2 ** 64 - 1)
+UI_UNIT = "grassfield-shell.service"
+SECURITY_UNIT = "grassfield-security.service"
+QS_UNITS = ((UI_UNIT, "the UI"), (SECURITY_UNIT, "the security process"))
+
+
+def units_read():
+    """(ok, [{property: value}, ...] sorted by Id) of the loaded grassfield-* user units, or (False, the reason)."""
+    ok, text = run(["systemctl", "--user", "show", "--property=" + ",".join(UNIT_PROPS), "grassfield-*"])
+    if not ok:
+        return False, text
+    found, cur = {}, {}
+    for line in text.splitlines() + [""]:
+        if not line.strip():
+            if cur.get("Id"):
+                found[cur["Id"]] = cur
+            cur = {}
+            continue
+        k, _, v = line.partition("=")
+        cur[k.strip()] = v.strip()
+    return True, [found[k] for k in sorted(found)]
+
+
+def human_bytes(value):
+    if not str(value).isdigit() or str(value) == UNSET:
+        return value or "-"
+    n = float(value)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or unit == "TiB":
+            return ("%d %s" % (n, unit)) if unit == "B" else ("%.1f %s" % (n, unit))
+        n /= 1024
+
+
+def human_cpu(value):
+    if not str(value).isdigit() or str(value) == UNSET:
+        return value or "-"
+    s = int(value) / 1e9
+    return "%dmin %.1fs" % (s // 60, s % 60) if s >= 60 else "%.1fs" % s
+
+
+def signal_name(number):
+    try:
+        return signal.Signals(int(number)).name
+    except (ValueError, TypeError):
+        return str(number)
+
+
+def unit_lines(u):
+    code = u.get("ExecMainCode", "")
+    status = u.get("ExecMainStatus", "")
+    status_text = "%s (%s)" % (status, signal_name(status)) if code in ("2", "3", "4") else status
+    since = u.get("ActiveEnterTimestamp", "")
+    pid = u.get("MainPID", "0")
+    head = "%s: %s/%s%s%s" % (u.get("Id"), u.get("ActiveState", "?"), u.get("SubState", "?"),
+                              " since " + since if since and u.get("ActiveState") == "active" else "",
+                              ", main pid " + pid if pid not in ("", "0") else "")
+    return "\n".join([
+        head,
+        "  Result=%s ExecMainCode=%s (%s) ExecMainStatus=%s NRestarts=%s ActiveEnterTimestamp=%s" % (
+            u.get("Result", "-"), code or "-", EXEC_CODES.get(code, "?"), status_text or "-", u.get("NRestarts", "-"),
+            since or "-"),
+        "  " + " ".join("%s=%s" % (k, human_bytes(u.get(k, ""))) for k in BYTE_PROPS)
+        + " CPUUsageNSec=%s" % human_cpu(u.get("CPUUsageNSec", "")),
+    ])
+
+
+def proc_fields(path):
+    """{key: value} of a /proc file in `Key: value` lines, {} when it cannot be read."""
+    text = read_file(path, 64 * 1024)
+    out = {}
+    for line in (text or "").splitlines():
+        k, sep, v = line.partition(":")
+        if sep:
+            out[k.strip()] = v.strip()
+    return out
+
+
+def kib(value):
+    m = re.match(r"^(\d+)\s*kB$", value or "")
+    return human_bytes(int(m.group(1)) * 1024) if m else "?"
+
+
+def qs_processes():
+    """[(pid, unit), ...] of the user's Quickshell processes, by pid."""
+    uid = os.getuid()
+    out = []
+    try:
+        names = os.listdir(PROC)
+    except OSError:
+        return out
+    for pid in sorted((n for n in names if n.isdigit()), key=int):
+        comm = (read_file(os.path.join(PROC, pid, "comm"), 64) or "").strip()
+        if comm not in ("qs", "quickshell", ".quickshell-wra"):
+            continue
+        uids = proc_fields(os.path.join(PROC, pid, "status")).get("Uid", "").split()
+        if not uids or uids[0] != str(uid):
+            continue
+        cgroup = (read_file(os.path.join(PROC, pid, "cgroup"), 4096) or "").strip().splitlines()
+        unit = cgroup[-1].rsplit("/", 1)[-1] if cgroup else "?"
+        out.append((pid, unit))
+    return out
+
+
+def processes(units):
+    ok, items = units
+    parts = ["--- Grassfield user units (systemctl --user show)"]
+    if not ok:
+        parts.append(items)
+    elif not items:
+        parts.append("(no Grassfield unit is loaded)")
+    else:
+        parts += [unit_lines(u) for u in items]
+    parts.append("--- Quickshell processes (/proc/<pid>/smaps_rollup and status)")
+    labels = dict(QS_UNITS)
+    procs = qs_processes()
+    for pid, unit in procs:
+        roll = proc_fields(os.path.join(PROC, pid, "smaps_rollup"))
+        status = proc_fields(os.path.join(PROC, pid, "status"))
+        label = labels.get(unit, "other")
+        if roll:
+            mem = "RSS %s, PSS %s (anonymous %s, file %s, shared memory %s), swap %s" % (
+                kib(roll.get("Rss")), kib(roll.get("Pss")), kib(roll.get("Pss_Anon")), kib(roll.get("Pss_File")),
+                kib(roll.get("Pss_Shmem")), kib(roll.get("Swap")))
+        else:
+            mem = "smaps_rollup cannot be read; RSS %s" % kib(status.get("VmRSS"))
+        parts.append("pid %s, %s (%s): %s; peak RSS %s; %s threads" % (pid, label, unit, mem, kib(status.get("VmHWM")),
+                                                                        status.get("Threads", "?")))
+    if not procs:
+        parts.append("(no Quickshell process of this user)")
+    parts.append("--- System memory (free -m)")
+    parts.append(run(["free", "-m"])[1].rstrip("\n"))
+    parts.append("--- Memory pressure (/proc/pressure/memory)")
+    parts.append((read_file(os.path.join(PROC, "pressure", "memory"), 4096) or "(cannot be read)").rstrip("\n"))
+    return "\n".join(parts)
+
+
+# ---- who stopped a unit by a signal ----------------------------------------------------------------------------------
+
+KILL_LINE = re.compile(r"^(\S+) \S+ systemd\[\d+\]: (grassfield-[\w@.\\:-]+\.service): Main process exited, "
+                       r"code=(killed|dumped), status=(\w+)/(\w+)")
+ISO_STAMP = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:[.,]\d+)?(Z|[+-]\d\d:?\d\d)?$")
+# The known killers, by the trace each leaves in the journal around the signal.
+KILLERS = (
+    (re.compile(r"grassfield-shell-watchdog\S*: .*(?:SIGKILL|the kill failed)"),
+     "the liveness probe (grassfield-shell-watchdog): the shell had not answered its question three times in a row"),
+    (re.compile(r"(?i)killed by the OOM killer|result 'oom-kill'"),
+     "a memory limit: the unit's MemoryMax= reached, or the kernel's OOM killer chose a process of the unit"),
+    (re.compile(r"(?i)out of memory: kill|oom-kill:|invoked oom-killer|memory cgroup out of memory"),
+     "the kernel's OOM killer: the machine or a memory limit ran out of memory"),
+    (re.compile(r"(?i)systemd-oomd\[\d+\]|due to memory pressure"), "systemd-oomd: the memory pressure of a slice"),
+    (re.compile(r"(?i)\bearlyoom\[\d+\]"), "earlyoom: the machine was low on memory"),
+    (re.compile(r"(?i)watchdog timeout"), "systemd's own watchdog of the unit (WatchdogSec=)"),
+    (re.compile(r"(?i)State '[\w-]+' timed out\. Killing"), "systemd: a stop that took longer than TimeoutStopSec="),
+)
+CRASH_SIGNALS = {"SEGV", "ABRT", "BUS", "ILL", "FPE", "TRAP", "SYS"}
+
+
+def epoch(stamp):
+    m = ISO_STAMP.match(stamp)
+    if not m:
+        return None
+    zone = m.group(2) or "Z"
+    if zone == "Z":
+        tz = datetime.timezone.utc
+    else:
+        sign = -1 if zone[0] == "-" else 1
+        digits = zone[1:].replace(":", "")
+        tz = datetime.timezone(sign * datetime.timedelta(hours=int(digits[:2]), minutes=int(digits[2:])))
+    dt = datetime.datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=tz)
+    return int(dt.timestamp())
+
+
+def window(argv_head, t):
+    ok, text = run(argv_head + ["--no-pager", "-q", "-o", "short-iso", "--since", "@%d" % (t - KILL_WINDOW),
+                                "--until", "@%d" % (t + KILL_WINDOW + 1), "-n", str(KILL_LINES)], timeout=JOURNAL_TIMEOUT)
+    if not ok:
+        return [text]
+    return fold([l for l in text.splitlines() if l.strip()])[0] or ["(no line)"]
+
+
+def kills(read, kernel_read_):
+    ok, text = read
+    if not ok:
+        return text
+    found = []
+    for line in text.splitlines():
+        m = KILL_LINE.match(line)
+        if m:
+            found.append(m)
+    if not found:
+        return "(no Grassfield unit ended by a signal this boot)"
+    kernel_lines = kernel_read_[1] if kernel_read_[0] else []
+    parts = ["Which process sends a signal is recorded by neither Linux nor systemd: below, for each Grassfield unit whose main",
+             "process ended by a signal this boot, the journal %d s around it and the known killers whose traces are there." % KILL_WINDOW]
+    if len(found) > KILLS:
+        parts.append("[... %d earlier signals left out ...]" % (len(found) - KILLS))
+    for m in found[-KILLS:]:
+        stamp, unit, code, status, sig = m.groups()
+        t = epoch(stamp)
+        parts.append("")
+        parts.append("*** %s %s: main process %s, status %s/%s" % (stamp, unit, code, status, sig))
+        if t is None:
+            parts.append("(its time cannot be read)")
+            continue
+        user = window(["journalctl", "--user", "-b", "0"], t)
+        system = window(["journalctl", "-b", "0"], t)
+        near = [l for l in kernel_lines if abs((epoch(l.split(" ", 1)[0]) or 0) - t) <= KILL_WINDOW]
+        seen = "\n".join(user + system + near)
+        hints = [why for pattern, why in KILLERS if pattern.search(seen)]
+        if code == "dumped" or sig.upper().replace("SIG", "") in CRASH_SIGNALS:
+            hints.append("the process itself crashed (signal %s): see the crash details and Quickshell's own logs" % sig)
+        if hints:
+            parts.append("Known killers with a trace: " + "; ".join(hints) + ".")
+        else:
+            parts.append("Known killers with a trace: none (not the liveness probe, a memory limit, the kernel's OOM killer, "
+                         "systemd-oomd, earlyoom or a systemd timeout): the signal came from a process that writes no journal "
+                         "line, such as kill, pkill or killall run by hand, by a script or by a keyboard shortcut.")
+        parts.append("--- the user manager and the user's units")
+        parts += user
+        parts.append("--- the system journal (the kernel included)")
+        parts += system
+    return bounded("\n".join(parts), KILLS_MAX)
+
+
+# ---- Quickshell's own logs -------------------------------------------------------------------------------------------
+
+def runtime_dir():
+    xdg = os.environ.get("XDG_RUNTIME_DIR", "")
+    return xdg if xdg.startswith("/") else "/run/user/%d" % os.getuid()
+
+
+def tail_file(path, lines, limit):
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - limit))
+            data = f.read(limit)
+    except OSError:
+        return None
+    text = data.decode("utf-8", "replace").splitlines()
+    if size > limit and text:
+        text = text[1:]
+    return "\n".join(text[-lines:])
+
+
+def qs_log(instance):
+    """The last lines of an instance's log: `qs log` decodes its binary log.qslog; the plain log.log when qs cannot."""
+    ok, text = run(["qs", "log", "--no-color", "--log-times", "--tail", str(QS_LOG_LINES), os.path.join(instance, "log.qslog")],
+                   limit=QS_LOG_MAX, tail=True)
+    if ok:
+        return text.rstrip("\n") or "(empty)"
+    plain = tail_file(os.path.join(instance, "log.log"), QS_LOG_LINES, QS_LOG_MAX)
+    return plain if plain is not None else text
+
+
+def qs_logs(units):
+    base = os.path.join(runtime_dir(), "quickshell")
+    pids = {u.get("Id"): u.get("MainPID", "0") for u in units[1]} if units[0] else {}
+    parts = []
+    for unit, label in QS_UNITS:
+        pid = pids.get(unit, "0")
+        if not pid.isdigit() or pid == "0":
+            parts.append("--- %s (%s): not running" % (label, unit))
+            continue
+        link = os.path.join(base, "by-pid", pid)
+        current = os.path.realpath(link)
+        if not os.path.islink(link) or not os.path.isdir(current):
+            parts.append("--- %s (%s, pid %s): no Quickshell log for this process" % (label, unit, pid))
+            continue
+        # The instances of the same shell (by-shell/<shell id>/<instance id>): the one before the running one is the one that
+        # ended, by a signal or a crash.
+        siblings = set()
+        try:
+            for shell in os.listdir(os.path.join(base, "by-shell")):
+                folder = os.path.join(base, "by-shell", shell)
+                ids = {os.path.realpath(os.path.join(folder, n)) for n in os.listdir(folder)}
+                if current in ids:
+                    siblings = ids - {current}
+        except OSError:
+            pass
+
+        def mtime(path):
+            try:
+                return os.stat(os.path.join(path, "log.qslog")).st_mtime
+            except OSError:
+                return -1
+        before = sorted((p for p in siblings if mtime(p) >= 0), key=mtime, reverse=True)[:1]
+        for path, which in [(current, "the running instance, pid " + pid)] + [(p, "the instance before it") for p in before]:
+            parts.append("--- %s (%s), %s (%s)" % (label, unit, which, os.path.basename(path)))
+            parts.append(qs_log(path))
+    return "\n".join(parts)
 
 
 def config_dir():
@@ -614,7 +1109,7 @@ def report(now):
         "Grassfield diagnostic report",
         "Created: %s UTC by grassfield-report (read-only; nothing was sent anywhere)." % now.strftime("%Y-%m-%d %H:%M:%S"),
         "Removed: the home folder (shown as ~), the user name (<user>), the real name (<name>), the computer's name (<host>),",
-        "values that look like passwords, tokens or keys ([redacted]), hardware serial numbers ([serial]) and, in the journal,",
+        "values that look like passwords, tokens or keys ([redacted]), hardware serial numbers ([serial]) and, in the logs,",
         "free text such as window titles, network names and notification bodies (<text>). Read it before you share it.",
         "",
         "Grassfield version: %s" % version,
@@ -622,6 +1117,12 @@ def report(now):
             os.environ.get("GRASSFIELD_SESSION", ""), os.environ.get("XDG_CURRENT_DESKTOP", ""), os.environ.get("XDG_SESSION_TYPE", "")),
         "Kernel: %s %s" % (platform.release(), platform.machine()),
     ]
+    # Read once, used by several sections. Every log (the journal, the kernel's, Quickshell's) has its free text replaced.
+    units = units_read()
+    read = journal_read()
+    kernel_events = kernel_read()
+    rows = crash_rows()
+    logs = lambda text: redact_device_names(redact_free_text(text))
     sections = [
         ("Packages", packages()),
         ("Omarchy", "\n".join("%s=%s" % (k, rel[k]) for k in ("NAME", "VERSION_ID", "BUILD_ID") if k in rel) or "(no os-release)"),
@@ -629,8 +1130,14 @@ def report(now):
         ("Compositor plugin", plugin()),
         ("Displays", monitors(displays, failed)),
         ("Audio devices", redact_device_names(run(["wpctl", "status"])[1], every_line=True)),
-        ("Crashes (last 7 days)", crashes()),
-        ("Journal of the Grassfield units (this boot)", redact_device_names(redact_free_text(journal()))),
+        ("Processes and units", processes(units)),
+        ("Units stopped by a signal (this boot)", logs(kills(read, kernel_events))),
+        ("Crashes (last 7 days)", crashes(rows)),
+        ("Crash details of Quickshell, Hyprland and Grassfield programs (last 7 days)", logs(crash_details(rows))),
+        ("Kernel: out of memory and crashes (this boot)", logs(kernel(kernel_events))),
+        ("Memory killers: systemd-oomd and earlyoom (this boot)", logs(oom_daemons())),
+        ("Journal of the Grassfield units (this boot)", logs(journal(read))),
+        ("Quickshell's own logs", logs(qs_logs(units))),
         ("Configuration (%s)" % config_dir(), configuration(known, found)),
     ]
     body = "\n".join(head) + "\n"

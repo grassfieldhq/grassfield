@@ -126,3 +126,95 @@ the sources is not a shipped fix: an entry stays open until a released version c
 - NOT VERIFIED here (no session, no pacman database, no journal): the real commands' output on the owner's machine, the
   button and Files opening (visual NOT verified). Owner L2: Settings > General > About > Create Diagnostic Report…, then read
   the file in Downloads; `grassfield-report --output /tmp` from a terminal.
+
+## Amendment to ADR-0053 (the diagnostic report), report audit round 2 · 2026-11-21 · Proposed
+
+Context: the owner ran `grassfield-report` on their machine. The shell had been SIGKILLed twice and nothing in the report
+said who sent the signal. Its memory peak was 1.3 GB (only in a "Consumed" line) and the report had no memory figures.
+2,496 of the journal's 3,000 lines were the liveness probe's "Starting/Finished" pairs, so the journal covered only about
+10 hours. Amended D-2 (what the report holds). The rules of D-1 (read-only, local, never root, no sudo, no network) and
+the redaction of D-3 still apply to every new section.
+
+D-2 is amended as follows (the section titles are given in quotes):
+
+8. Journal ("Journal of the Grassfield units (this boot)"): `journalctl --user -b 0 -u grassfield-* -q -o short-iso -n 100000`.
+   The glob covers every Grassfield user unit: the shell, the security process, the menu bridge, the prompter, the portals,
+   the liveness probe and the rest. The `-n` is a memory bound, not the window. The report then:
+   - leaves out the liveness probe's routine lines: the user manager's "Starting/Started/Finished Grassfield shell liveness
+     probe" lines, and its "Deactivated successfully" and "Consumed" lines. The probe's own lines (a miss, a kill) and any
+     failure of its unit stay;
+   - folds each run of identical consecutive lines (the same text after the time) into its first line, marked
+     "(×N, last <time>)";
+   - keeps the last 512 KiB.
+   A heading line gives the window covered (first and last time), whether older lines were left out, how many routine probe
+   runs were left out and how many lines were folded.
+10. "Processes and units":
+   - `systemctl --user show --property=Id,ActiveState,SubState,Result,MainPID,ExecMainCode,ExecMainStatus,NRestarts,
+     MemoryCurrent,MemoryPeak,MemorySwapPeak,MemoryMax,CPUUsageNSec,ActiveEnterTimestamp grassfield-*` (the loaded units),
+     three lines per unit, sizes in KiB/MiB/GiB;
+   - each Quickshell process of the user (comm `qs`/`quickshell`, the user's uid), labelled by its unit (the UI, the security
+     process, other): RSS, PSS (anonymous, file, shared memory) and swap from `/proc/<pid>/smaps_rollup`, the peak RSS
+     (VmHWM) and the thread count from `/proc/<pid>/status`. The command line is not shown;
+   - `free -m` and `/proc/pressure/memory`.
+11. "Units stopped by a signal (this boot)": for each of the last 5 "Main process exited, code=killed|dumped" lines of a
+   Grassfield unit in this boot's journal, the user journal and the system journal from 5 s before to 5 s after it
+   (`journalctl [--user] -b 0 --since @<t-5> --until @<t+6> -n 150`, every unit, folded as in 8). Neither Linux nor systemd
+   records which process sent a signal, and the processes that could have sent it cannot be listed after the fact. So the
+   section names the known killers whose trace is in those lines or in the kernel's lines of the same 5 s:
+   - the liveness probe (its "SIGKILL" line);
+   - the unit's memory limit ("killed by the OOM killer", result 'oom-kill');
+   - the kernel's OOM killer;
+   - systemd-oomd;
+   - earlyoom;
+   - systemd's watchdog;
+   - a stop timeout;
+   - a crash of the process itself (a dump, or SEGV, ABRT, BUS, ILL, FPE, TRAP or SYS).
+   When none of these left a trace, the section says that the signal came from a process that writes no journal line (kill,
+   pkill or killall by hand, from a script or from a shortcut). Shell history is never read.
+12. "Crash details of Quickshell, Hyprland and Grassfield programs (last 7 days)": for the 5 most recent rows of item 7 whose
+   executable is `qs`, `quickshell`, `Hyprland` or `grassfield-*`, `coredumpctl --no-pager --since=-7d -1 info <pid>`,
+   reduced to PID, Signal, Timestamp, Executable, Unit, User Unit, Package, the message's first line and the first 8 frames
+   of the first stack (the crashing thread). The command line, the boot, machine and host IDs and the core file's path are
+   never copied. The UI and the security process keep no core file (ADR-0041, `LimitCORE=0`), so their entries say "no
+   stack". Nothing reads a core file: ADR-0041's statement stays true.
+13. "Kernel: out of memory and crashes (this boot)": `journalctl -k -b 0 -n 50000`, filtered to the lines about memory
+   exhaustion or a crash (out of memory, oom-kill, memory cgroup, segfault, general protection, traps, killed process, page
+   allocation failure), folded, the last 200 lines and 32 KiB at most. A user outside the wheel, adm and systemd-journal
+   groups cannot read the kernel's lines, and the section says so.
+14. "Memory killers: systemd-oomd and earlyoom (this boot)": `journalctl -b 0 -u systemd-oomd.service -u earlyoom.service -n 200`.
+15. "Quickshell's own logs": for the UI and the security process (their units' MainPID), the running instance's log and the
+   log of the instance of the same shell before it (the one that ended), found under `$XDG_RUNTIME_DIR/quickshell`
+   (`by-pid/<pid>` and `by-shell/<shell>/<instance>`). The binary `log.qslog` is decoded by
+   `qs log --no-color --log-times --tail 150 <file>` (Quickshell 0.3: `qs log [file]`). The plain `log.log` is the fallback
+   when qs cannot decode it. Each log is 24 KiB at most.
+
+Free text (D-3, SU-15) is now replaced in every log section (11 to 15), not only the journal: window titles, network names,
+notification text. Device names after a person are replaced in the lines about audio or Bluetooth. The home, user,
+real-name, host, secret and serial redaction covers the whole file as before. The header says "in the logs" instead of
+"in the journal".
+
+One time budget: every command runs within 75 s in total (Settings' button waits 90 s, `Backend.act`). A command that would
+start after the budget is spent becomes one line, "(left out: the report's time budget of 75 s is spent)", and a running
+command is cut at the budget. Dev hook `GRASSFIELD_REPORT_BUDGET` (dev sessions only, ADR-0019); `GRASSFIELD_REPORT_ROOT`
+now also prefixes `/proc`.
+
+The syntax-tree check of the read-only rule (Consequences) gains guarded tools, with negative controls:
+- `systemctl` only with `show` and no writing verb;
+- `qs`/`quickshell` only with `log` and no `ipc`, `kill`, `msg` or `--follow`;
+- `journalctl` without `--vacuum-*`, `--rotate`, `--flush`, `--sync`, `--setup-keys` or `--follow`;
+- `coredumpctl` only with `list` or `info` and no `debug`, `dump` or `--output`.
+`kill`, `pkill`, `killall` and `loginctl` are banned outright.
+
+## Related: ADR-0041 step 6a, the liveness probe is quiet in the journal
+
+`grassfield-shell-watchdog.service` gains `LogLevelMax=notice` and `SyslogLevel=notice`. systemd.exec(5) (systemd 262,
+checked in the chroot): LogLevelMax= "is applied to any log messages written by any of the processes belonging to this unit,
+as well as any log messages written by the system or user manager processes in reference to this unit". The manager's
+routine job lines ("Starting…", "Finished…", "Deactivated successfully") are info and are dropped. A failure stays:
+"Main process exited" with a failure is notice, "Failed with result" is warning, "Failed to start" is err. The probe's own
+`say` lines go to stderr with no level prefix (SyslogLevelPrefix= is on by default), so they would take the default info and
+be dropped too. SyslogLevel=notice gives them notice, so a miss and a kill are still logged. The report's filter (item 8)
+still drops the routine lines of journals written before this change, and of any system where the setting is not applied.
+
+Owner check (L2): after an update, `journalctl --user -b -u grassfield-shell-watchdog` shows no new Starting/Finished pair
+every 30 s. A `grassfield-report` names the window covered and the killers, and has the new sections.
