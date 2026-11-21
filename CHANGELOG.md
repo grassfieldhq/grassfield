@@ -4,6 +4,41 @@ All notable changes of Grassfield Desktop. The version of every package, library
 file at the repository root (`scripts/dev/check-version.sh`, part of `just check`, keeps the consumers equal to it).
 Format: one section per version, newest first.
 
+## 1.0.0-rc9 (release candidate, 2026-11-21)
+
+The system audit of 1.0.0-rc8, fluidity, Hyprland 0.57 and the owner's diagnostic report (PR #52, ADR-0058 to ADR-0065).
+
+Fluidity: keys and gestures reach the shell inside the plugin, with no process per key, and Overview and Apps follow the
+fingers (ADR-0058). Animations keep their velocity when retargeted, Overview and Stages thumbnails repaint only what
+changed, the Dock magnifies by transforms, shadows and glyphs need no extra layer, and settings changes re-evaluate only
+their readers.
+
+Hyprland 0.57: the plugin builds and passes its tests against Hyprland 0.56.2 and 0.57.2, so an updated system keeps
+the full window controls instead of the reduced mode.
+
+Security: no unlock between the lock for sleep and the sleep, logind's Lock signal is followed for this session, idle
+and display-off locks survive a restart of the shell, and the security deadlines run on monotonic time (ADR-0065). A
+login session that dies at once falls back to the other session, once per streak (ADR-0062).
+System updates and the Store refuse packages signed with an expired or revoked key, the update checks its databases
+again before upgrading, and a Store install survives a logout.
+
+Data and apps: Memos never quits with unsaved text and says when it cannot save, a desktop rename never replaces a file,
+Files no longer blocks on slow drives and its window keys wait for text fields and sheets (ADR-0063), the clipboard
+keeps its selection when the shell restarts (ADR-0064), Dock pins survive a reorder, and Displays in Settings never
+overlap or drift apart.
+
+From the owner's diagnostic report: the menu bridge's unit no longer hides `/proc` (the global menu is back for every
+app), a false "locked" reading no longer follows each shell restart, and display probes are not repeated at every
+change. `grassfield-report` shows memory per unit and process, who stopped a unit, Quickshell's own logs and this user's
+recent crashes, over the whole session.
+
+CI and gates: `.github/workflows/ci.yml` runs `just check` and `just test` in an Arch container, and gate P3 is measured
+from presentation timestamps against the output's refresh rate.
+
+Integrator follow-ups at the merge: the lock client's stale-never mutant runs again, a titlebar touch that never ended
+is dropped when its id comes down again, a kept plugin verdict is trusted only when it names the vetted build, and the
+report's crash list keeps only this user's newest crashes.
+
 ## 1.0.0-rc8 (release candidate, 2026-11-13)
 
 Bundled apps, safe mode, the Qt panels and the rc7 follow-ups.

@@ -1,0 +1,10 @@
+Keyboard shortcuts and trackpad gestures reach the desktop directly: Overview and Apps now follow your fingers, and shortcuts answer faster.
+The Dock, Overview, notifications and Search are smoother, with lighter shadows and animations that keep their momentum.
+Grassfield’s window plugin now works with Hyprland 0.57 as well as 0.56, so an updated system keeps its full window controls.
+The lock screen holds across sleep, idle and display-off, even when the desktop restarts, and follows the system’s lock request.
+System updates and the Store refuse packages signed with an expired or revoked key, and a Store install survives a logout.
+Memos never quits with unsaved text and tells you when it cannot save; renaming on the desktop never replaces another file.
+Files no longer freezes on slow drives, and its window shortcuts wait for text fields and sheets.
+The apps’ global menu is back for every app, and Wi-Fi, Bluetooth and network passwords are handled more reliably.
+Displays in Settings never overlap or drift apart.
+Diagnostic reports now include memory use, stopped services, the desktop’s own logs and your recent crashes.

@@ -1,0 +1,10 @@
+Les raccourcis clavier et les gestes du trackpad arrivent directement au bureau : la Vue d’ensemble et Apps suivent maintenant vos doigts, et les raccourcis répondent plus vite.
+Le Dock, la Vue d’ensemble, les notifications et la Recherche sont plus fluides, avec des ombres plus légères et des animations qui gardent leur élan.
+Le module de fenêtres de Grassfield fonctionne désormais avec Hyprland 0.57 comme avec 0.56 : un système à jour garde toutes ses commandes de fenêtre.
+L’écran de verrouillage tient pendant la veille, l’inactivité et l’extinction des écrans, même quand le bureau redémarre, et suit la demande de verrouillage du système.
+Les mises à jour du système et le Store refusent les paquets signés par une clé expirée ou révoquée, et une installation depuis le Store survit à une fermeture de session.
+Mémos ne quitte jamais avec du texte non enregistré et vous prévient quand il ne peut pas enregistrer ; renommer sur le bureau ne remplace jamais un autre fichier.
+Fichiers ne se fige plus sur les disques lents, et ses raccourcis de fenêtre attendent les champs de texte et les feuilles.
+Le menu global revient pour toutes les apps, et les mots de passe Wi-Fi, Bluetooth et réseau sont gérés de façon plus fiable.
+Les écrans dans Réglages ne se chevauchent plus et ne s’écartent plus.
+Les rapports de diagnostic incluent maintenant la mémoire utilisée, les services arrêtés, les journaux du bureau et vos plantages récents.
