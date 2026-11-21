@@ -254,8 +254,8 @@ def ask(title, body, anyway, timeout):
 
 def notify_blocked(action, names, unknown=False):
     """Show the notice and wait for "<Action> Anyway". Returns True when the user chose it. Without notify-send the notice
-    is still shown (through notify_plain, without the button): nothing is ended then. Without a notification server nothing is
-    shown (nothing is started by D-Bus activation) and nothing is ended."""
+    is still shown (through notify_plain, without the button): nothing is ended then. Without a notification server (safe mode)
+    the question is still asked: D-Bus activation may start a daemon, which lives only until the session ends."""
     anyway, title = ACTIONS[action]
     anyway, title = tr(anyway), tr(title)
     if unknown:
@@ -263,9 +263,10 @@ def notify_blocked(action, names, unknown=False):
     else:
         body = tr(OPEN_BODY) % ", ".join(names[:5])
     if not server_present():
-        # Nothing ended, and said in the journal; the caller's exit 3 tells safe mode's notice that apps are still open.
-        print("grassfield-session-end: no notification server: the applications still open were not announced (%s)" % ", ".join(names[:5] or ["unknown"]), file=sys.stderr)
-        return False
+        # Safe mode (the shell's server is down). Every action here ends the session, so a daemon that D-Bus activation starts
+        # for this one question holds the name only until the session ends: asking is better than leaving the user unable to
+        # log out while an application is open (review of the SS-05 change). battery-watch and crash-watch keep refusing.
+        print("grassfield-session-end: no notification server: the question starts one by D-Bus activation (%s)" % ", ".join(names[:5] or ["unknown"]), file=sys.stderr)
     answer = ask(title, body, anyway, bounded_seconds(os.environ.get("GRASSFIELD_SESSION_END_ASK_TIMEOUT"), float(ASK_TIMEOUT), 1.0, 3600.0))
     if answer is None:
         notify_plain(title, body)
