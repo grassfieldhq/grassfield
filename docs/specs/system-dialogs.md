@@ -839,7 +839,11 @@ an empty password only for a new one. It holds at most 8 secret requests (shown 
 at once. After a lost connection it tries again after 1 s, doubling to 30 s, reset by the bridge's next hello.
 
 Rules (fail closed: no answer is ever invented):
-- At most 8 requests outstanding; a 9th caller is answered "cancelled" at once and the shell never sees it. At most 64
+- At most 8 requests outstanding, in lanes (audit B-05, `src/Requests.h`): NetworkManager and BlueZ keep two places each,
+  so the applications' gcr prompts and KIO sheets hold at most four together, and one bus connection at most two. A
+  request past its lane's share is answered "cancelled" at once (KIO: nothing) and the shell never sees it. Known limit:
+  gnome-keyring asks over one connection for every application, so a third keyring prompt at the same moment is
+  answered "cancelled" (fail closed; the stock prompter queues it). At most 64
   gcr prompts open, at most 8 for one bus connection: a connection's ninth `BeginPrompting` is answered
   `org.freedesktop.DBus.Error.LimitsExceeded` and never reaches gcr; a `PerformPrompt` of the wrong shape is answered
   `org.freedesktop.DBus.Error.InvalidArgs`. A connection's count follows what gcr holds (opus counter-review of step 9a,

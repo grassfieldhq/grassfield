@@ -1693,7 +1693,8 @@ GDBus; no C source of Grassfield's own; `CMakeLists.txt`, `build-direct.sh`), in
   Caller text and desktop-entry text are flattened and capped (`src/Text.{h,cpp}`, 9-13).
 - **The protocol** `prompter/1` (`src/Protocol.{h,cpp}`; spec section 5, "prompter/1 protocol"): hello both ways, name,
   prompt, cancel and error from the bridge, answer from the shell; at most 8 requests outstanding (the 9th is answered
-  "cancelled" without reaching the shell); errors fail closed (9-6). Kinds `password` and `confirm`; `nm`, `kio` and
+  "cancelled" without reaching the shell; since the rc8 audit's B-05, NetworkManager and BlueZ keep two places each and
+  one application connection holds two, spec section 5); errors fail closed (9-6). Kinds `password` and `confirm`; `nm`, `kio` and
   `bluetooth` are reserved for 9d, 9e and step 10 (9-9).
 - **Packaging.** The unit (no namespace option, seccomp, no core file, no swap, non-dumpable, 9-8); the PKGBUILD builds the
   bridge, runs its unit tests in `check()` and installs it with its unit; `grassfield-desktop` and the build declare
