@@ -128,8 +128,9 @@ QtObject {
     // back if the compositor had closed them, and the front one asks: Cancel (the backend keeps trying; each memo says "Not
     // saved") or Quit Anyway. With no memo left only deletions would be lost: it quits.
     function requestQuit(): void {
+        // Cleared before the write: saveNow() reports saved(true) synchronously, and onSaved must not come back here.
+        root.quitAlertWindow = null;
         if (root.backend.saveNow() || root.backend.count() === 0) {
-            root.quitAlertWindow = null;
             root.backend.quit();
             return;
         }

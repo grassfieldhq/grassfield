@@ -126,6 +126,8 @@ QtObject {
     function saveNow() {
         root.aboutToSave();
         root.saves++;
+        // As MemosApp::finishWrite: saved() is reported before saveNow() returns.
+        root.saved(root.saveResult);
         return root.saveResult;
     }
 

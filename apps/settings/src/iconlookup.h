@@ -91,6 +91,7 @@ private:
         int minSize = 0;
         int maxSize = 0;
         int threshold = 2;
+        int scale = 1;
         QString type;
     };
     struct Theme {
@@ -169,13 +170,13 @@ private:
                 d.threshold = value.toInt();
             else if (key == QLatin1String("Type"))
                 d.type = value;
-            else if (key == QLatin1String("Scale") && value.toInt() != 1)
-                d.size = -1; // a @2x directory: its Size is not its pixels
+            else if (key == QLatin1String("Scale"))
+                d.scale = value.toInt(); // a @2x directory: its Size is not its pixels (skipped below, whatever the keys' order)
         }
         for (const QString &n : std::as_const(order)) {
             Dir d = byName.value(n.trimmed());
             d.name = n.trimmed();
-            if (d.size <= 0)
+            if (d.size <= 0 || d.scale != 1)
                 continue;
             if (d.minSize <= 0)
                 d.minSize = d.size;

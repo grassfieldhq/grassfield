@@ -81,8 +81,8 @@ TEST(Applications, AgreesWithTheShellsHiddenEntriesScript)
     put(ha, QStringLiteral("shadow-b"), app(QStringLiteral("NotShowIn=Hyprland;")), false);
     write(sa + QStringLiteral("crlf-kde.desktop"), "[Desktop Entry]\r\nType=Application\r\nName=x\r\nOnlyShowIn=KDE;\r\n");
     write(sa + QStringLiteral("crlf-hypr.desktop"), "[Desktop Entry]\r\nType=Application\r\nName=x\r\nOnlyShowIn=Hyprland;\r\n");
-    // The script reads CRLF files; Quickshell does not (such a file is not an application with a Name), so the grid does not list
-    // them whatever the script says: the script's verdict only counts for entries Quickshell reads.
+    // The script reads CRLF files, and so does Quickshell 0.3.2 (each line trimmed): the script's verdict counts for them too.
+    all << QStringLiteral("crlf-kde") << QStringLiteral("crlf-hypr");
     write(sa + QStringLiteral("spaced-kde.desktop"), "[Desktop Entry]\nType=Application\nName=x\nOnlyShowIn = KDE;\n");
     write(sa + QStringLiteral("spaced-not.desktop"), "[Desktop Entry]\nType=Application\nName=x\nNotShowIn\t=\tHyprland;\n");
     all << QStringLiteral("spaced-kde") << QStringLiteral("spaced-not");
@@ -119,10 +119,10 @@ TEST(Applications, AgreesWithTheShellsHiddenEntriesScript)
     for (const QString &id : std::as_const(all)) {
         EXPECT_EQ(listed.contains(id), !hidden.contains(id)) << id.toStdString() << (hidden.contains(id) ? " (hidden by the script)" : " (shown by the script)");
     }
-    // Nothing is listed that the fixture does not hold, and a CRLF file is not read (Quickshell).
+    // Nothing is listed that the fixture does not hold; a CRLF file is read (Quickshell 0.3.2 trims each line).
     for (const QString &id : listed)
         EXPECT_TRUE(all.contains(id)) << id.toStdString();
-    EXPECT_FALSE(listed.contains(QStringLiteral("crlf-hypr")));
+    EXPECT_TRUE(listed.contains(QStringLiteral("crlf-hypr")));
 }
 
 TEST(Applications, DefaultHelperIdsAreTheScriptsDefaults)
@@ -289,7 +289,8 @@ TEST(Applications, AppsOfOneNameAreToldApartLikeTheGrid)
     EXPECT_EQ(names.value(QStringLiteral("alone")), QStringLiteral("Alone"));
 }
 
-// The grid compares names with String.trim: U+FEFF is white space there (not for QString::trimmed), U+0085 is not.
+// The grid compares names with String.trim: U+FEFF is white space there (not for QString::trimmed). A trailing U+0085 never
+// reaches that comparison: Quickshell 0.3.2 trims the line (QString::trimmed takes it), so "Pair" + U+0085 is "Pair" (measured).
 TEST(Applications, NamesAreComparedWithTheGridsTrim)
 {
     QTemporaryDir tmp;
@@ -304,12 +305,12 @@ TEST(Applications, NamesAreComparedWithTheGridsTrim)
         names.insert(e.id, e.name);
     EXPECT_EQ(names.value(QStringLiteral("bom-a")), QStringLiteral("Twin (bom-a)"));
     EXPECT_TRUE(names.value(QStringLiteral("bom-b")).endsWith(QStringLiteral(" (bom-b)")));
-    EXPECT_EQ(names.value(QStringLiteral("nel-a")), QStringLiteral("Pair"));
-    EXPECT_EQ(names.value(QStringLiteral("nel-b")), QString(QStringLiteral("Pair")) + QChar(0x85));
+    EXPECT_EQ(names.value(QStringLiteral("nel-a")), QStringLiteral("Pair (nel-a)"));
+    EXPECT_EQ(names.value(QStringLiteral("nel-b")), QStringLiteral("Pair (nel-b)"));
 }
 
-// The file is read the way Quickshell reads it (measured): nothing trimmed, the first [Desktop Entry] group, an invalid file
-// masks nothing, a valid one masks the lower directory even when it is not listed.
+// The file is read the way Quickshell 0.3.2 reads it (measured): each line trimmed, nothing around '=', the first [Desktop Entry]
+// group, an invalid file masks nothing, a valid one masks the lower directory even when it is not listed.
 TEST(Applications, TheFileIsReadAsQuickshellReadsIt)
 {
     QTemporaryDir tmp;
@@ -335,14 +336,14 @@ TEST(Applications, TheFileIsReadAsQuickshellReadsIt)
     QHash<QString, QString> names;
     for (const Entry &e : listApplications(envFor(tmp.filePath(QStringLiteral("home")), tmp.filePath(QStringLiteral("sys")))))
         names.insert(e.id, e.name);
-    for (const char *absent : {"spaced-name", "spaced-type", "crlf", ".dot", "UPPER", "hidden-mask"})
+    for (const char *absent : {"spaced-name", "spaced-type", "lead-nodisplay", ".dot", "UPPER", "hidden-mask"})
         EXPECT_FALSE(names.contains(QString::fromLatin1(absent))) << absent;
-    EXPECT_TRUE(names.contains(QStringLiteral("lead-nodisplay"))); // the key with a blank before it is not understood
+    EXPECT_EQ(names.value(QStringLiteral("crlf")), QStringLiteral("x")); // a CRLF file is read (each line trimmed)
     EXPECT_EQ(names.value(QStringLiteral("bom")), QStringLiteral("Bom"));
     EXPECT_EQ(names.value(QStringLiteral("twice")), QStringLiteral("Twice"));
     EXPECT_EQ(names.value(QStringLiteral("last-wins")), QStringLiteral("Second"));
     EXPECT_EQ(names.value(QStringLiteral("only-localized")), QStringLiteral("Un"));
-    EXPECT_EQ(names.value(QStringLiteral("trail")), QStringLiteral("Trail  "));
+    EXPECT_EQ(names.value(QStringLiteral("trail")), QStringLiteral("Trail"));
     EXPECT_EQ(names.value(QStringLiteral("masked")), QStringLiteral("System"));
     EXPECT_EQ(names.value(QStringLiteral("kde-foo")), QStringLiteral("flat"));
 }
