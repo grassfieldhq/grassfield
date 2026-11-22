@@ -17,6 +17,9 @@ SettingsPage {
 
     signal screenCornersRequested
 
+    // How many displays are connected (the "Show the Dock on all displays" row only exists with more than one).
+    property int displayCount: Qt.application.screens.length
+
     title: qsTr("Desktop & Dock")
 
     // Magnification as one slider (macOS 27): Off at its start, then Small (dockMagnificationSmallAt of the knob's travel) to
@@ -130,6 +133,19 @@ SettingsPage {
                 accessibleName: qsTr("Automatically hide and show the Dock")
                 checked: root.store.value("dock.autohide")
                 onToggled: c => root.store.set("dock.autohide", c)
+            }
+        }
+
+        // With several displays: one Dock on each display (default) or one Dock that moves to the display where the pointer last
+        // reached its edge (macOS). Every other Dock setting above applies to each Dock that is shown.
+        SettingsRow {
+            visible: root.displayCount > 1
+            title: qsTr("Show the Dock on all displays")
+            subtitle: qsTr("Off: the Dock is on one display at a time, the one where the pointer last reached its edge.")
+            Toggle {
+                accessibleName: qsTr("Show the Dock on all displays")
+                checked: root.store.value("dock.allDisplays")
+                onToggled: c => root.store.set("dock.allDisplays", c)
             }
         }
 

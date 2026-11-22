@@ -159,6 +159,22 @@ TestCase {
         }
     }
 
+    // The owner's report (2026-11-22): every Dock setting must reach every display. With several displays the page offers the one
+    // scope switch (dock.allDisplays, on by default); with one display there is nothing to choose and no row.
+    function test_dockOnAllDisplaysRowNeedsSeveralDisplays() {
+        const t = make();
+        t.page.displayCount = 1;
+        const row = find(t.page.contentItem, i => i.title === "Show the Dock on all displays" && i.subtitle !== undefined);
+        verify(row, "the row");
+        verify(!row.visible, "no row with one display");
+        t.page.displayCount = 3;
+        verify(row.visible, "a row with three displays");
+        const toggle = named(t.page.contentItem, "Show the Dock on all displays");
+        verify(toggle.checked, "on by default");
+        toggle.toggled(false);
+        compare(last(t.store), {"dock.allDisplays": false});
+    }
+
     // The owner's question (2026-11-07): whether apps stay in the Dock after they quit. The macOS switch answers it; its row says
     // so under the title, and turning it off writes dock.showRecents false (the Dock drops the recent section at once).
     function test_recentAppsRowSaysAppsStayAfterTheyQuit() {
