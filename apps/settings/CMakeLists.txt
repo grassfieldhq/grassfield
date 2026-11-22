@@ -11,7 +11,9 @@ find_package(Qt6 REQUIRED COMPONENTS Gui Qml Quick DBus)
 # Qt 6.10+ defines the private module targets (Qt6::GuiPrivate, linked below for windowchrome.h) only when asked for.
 find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
 
-add_executable(grassfield-settings src/main.cpp src/backend.cpp src/backend.h src/systemguard.cpp src/systemguard.h src/systembus.cpp src/systembus.h src/busjobs.cpp src/busjobs.h src/qtbuscaller.h src/signalqueue.h src/settingsinstance.h src/iconlookup.h src/iconprovider.h)
+add_executable(grassfield-settings src/main.cpp src/backend.cpp src/backend.h src/systemguard.cpp src/systemguard.h src/systembus.cpp src/systembus.h src/busjobs.cpp src/busjobs.h src/qtbuscaller.h src/signalqueue.h src/settingsinstance.h src/iconlookup.h src/iconprovider.h
+    # Default Apps writes the session list through Files' writer (DefaultApps::writeSessionDefaults; Qt Core only).
+    ../files/src/applicationslogic.cpp ../files/src/applicationslogic.h)
 # windowchrome.h (ADR-0015): one Qt private header and the three xdg-toplevel-tag requests on libwayland-client.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)

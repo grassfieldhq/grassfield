@@ -92,9 +92,16 @@ public:
     void setFavorites(const QList<QUrl> &pinned, const QList<QUrl> &hidden);
     // Whether `url` is listed in Favorites now (a standard place not removed, or a folder of the user's).
     bool inFavorites(const QUrl &url) const;
+    // Whether a change the trash watch reported at `path` is one of the trash itself (the home trash's files folder, the Trash
+    // folder that holds it, KIO's record trashrc), which the listings of trash:/ follow; a change elsewhere in the configuration
+    // folder (watched only for trashrc being replaced) is not.
+    static bool trashListingPath(const QString &path, const QString &trashFiles, const QString &trashStatus);
 
 signals:
     void trashEmptyChanged();
+    // The home trash or KIO's record of the trashes changed (a debounced watch; never in a dev session): the listings of
+    // trash:/ list it again (FolderModel::trashChanged).
+    void trashChanged();
     void favoritesChanged();
     void mounted(const QUrl &url);
     void error(const QString &message);
@@ -151,6 +158,8 @@ private:
     // home trash's files folder (a tool that bypasses KIO), read on a worker when either changes.
     QFileSystemWatcher m_trashWatcher;
     QTimer m_trashTimer;
+    // Throttles trashChanged (the listings of trash:/), started only by a change of the trash itself (trashListingPath).
+    QTimer m_trashListTimer;
     QString m_trashStatus;
     QString m_trashFiles;
     void checkTrash();

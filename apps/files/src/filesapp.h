@@ -185,6 +185,10 @@ public:
     Q_INVOKABLE QString mimeTypeOf(const QUrl &url) const;
     Q_INVOKABLE QString defaultApplication(const QString &mimeType) const;
     Q_INVOKABLE bool setDefaultApplication(const QString &mimeType, const QString &storageId);
+    // Get Info > Open with > Other…: the Choose Application panel for the item's type; `callback(storageId, name)` runs with the
+    // application chosen (any installed one, its desktop file need not list the type), not at all for none. Nothing changes
+    // until Change All….
+    Q_INVOKABLE void chooseDefaultApplication(const QUrl &url, const QJSValue &callback);
     // Open With's Option item, Always Open With: `storageId` becomes the default of every type among `urls` it opens (Linux
     // has no per-document choice, decision F-19), then opens them.
     Q_INVOKABLE void alwaysOpenWith(const QString &storageId, const QList<QUrl> &urls);

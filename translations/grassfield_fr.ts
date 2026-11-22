@@ -2981,6 +2981,10 @@
         <translation>Autre…</translation>
     </message>
     <message>
+        <source>Ctrl+Alt+T</source>
+        <translation>Ctrl+Alt+T</translation>
+    </message>
+    <message>
         <source>Add to Sidebar</source>
         <translation>Ajouter à la barre latérale</translation>
     </message>
@@ -3163,10 +3167,6 @@
     <message>
         <source>Ctrl+Alt+C</source>
         <translation>Ctrl+Alt+C</translation>
-    </message>
-    <message>
-        <source>Services</source>
-        <translation>Services</translation>
     </message>
     <message>
         <source>New Terminal at Folder</source>
@@ -4321,6 +4321,10 @@
         <translation>Afficher Fin de tâche dans les menus du Dock</translation>
     </message>
     <message>
+        <source>Choose the app for “%1”.</source>
+        <translation>Choisissez l’app pour « %1 ».</translation>
+    </message>
+    <message>
         <source>Default web browser</source>
         <translation>Navigateur web par défaut</translation>
     </message>
@@ -4431,6 +4435,82 @@
     <message>
         <source>Keep the windows of one app in the centre and the other recent apps as thumbnails on the left edge.</source>
         <translation>Garde les fenêtres d’une app au centre et les autres apps récentes en miniatures sur le bord gauche.</translation>
+    </message>
+    <message>
+        <source>Documents</source>
+        <translation>Documents</translation>
+    </message>
+    <message>
+        <source>Spreadsheets</source>
+        <translation>Feuilles de calcul</translation>
+    </message>
+    <message>
+        <source>Presentations</source>
+        <translation>Présentations</translation>
+    </message>
+    <message>
+        <source>PDF documents</source>
+        <translation>Documents PDF</translation>
+    </message>
+    <message>
+        <source>Pictures</source>
+        <translation>Images</translation>
+    </message>
+    <message>
+        <source>Music</source>
+        <translation>Musique</translation>
+    </message>
+    <message>
+        <source>Videos</source>
+        <translation>Vidéos</translation>
+    </message>
+    <message>
+        <source>Archives</source>
+        <translation>Archives</translation>
+    </message>
+    <message>
+        <source>Text and code</source>
+        <translation>Texte et code</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <translation>Aucune</translation>
+    </message>
+    <message>
+        <source>Other…</source>
+        <translation>Autre…</translation>
+    </message>
+    <message>
+        <source>Default email reader</source>
+        <translation>Lecteur de courriel par défaut</translation>
+    </message>
+    <message>
+        <source>Default terminal</source>
+        <translation>Terminal par défaut</translation>
+    </message>
+    <message>
+        <source>The default app could not be changed.</source>
+        <translation>L’app par défaut n’a pas pu être modifiée.</translation>
+    </message>
+    <message>
+        <source>Choose an App</source>
+        <translation>Choisir une app</translation>
+    </message>
+    <message>
+        <source>Choose</source>
+        <translation>Choisir</translation>
+    </message>
+    <message>
+        <source>Default Apps</source>
+        <translation>Apps par défaut</translation>
+    </message>
+    <message>
+        <source>Open Documents With</source>
+        <translation>Ouvrir les documents avec</translation>
+    </message>
+    <message>
+        <source>You can also choose the app for one kind of document in Files: Get Info &gt; Open with &gt; Change All…</source>
+        <translation>Vous pouvez aussi choisir l’app d’un type de document dans Fichiers : Obtenir des informations &gt; Ouvrir avec &gt; Tout modifier…</translation>
     </message>
     <message>
         <source>Needs the Grassfield compositor extension.</source>
@@ -6949,6 +7029,10 @@
         <translation>Nouveau dossier intelligent</translation>
     </message>
     <message>
+        <source>New Terminal at Folder</source>
+        <translation>Nouveau terminal au dossier</translation>
+    </message>
+    <message>
         <source>%1 (default)</source>
         <translation>%1 (par défaut)</translation>
     </message>
@@ -7750,6 +7834,10 @@
     <message>
         <source>%1 (default)</source>
         <translation>%1 (par défaut)</translation>
+    </message>
+    <message>
+        <source>Other…</source>
+        <translation>Autre…</translation>
     </message>
     <message>
         <source>Use this application to open all documents like this one.</source>

@@ -493,6 +493,19 @@ QStringList launchCommand(const QString &exec, bool runInTerminal)
     return command;
 }
 
+QStringList terminalAtFolder(const QString &folder)
+{
+    QStringList command{QStringLiteral("xdg-terminal-exec")};
+    // xdg-terminal-exec 0.14 reads its --dir value with `IFS='=' read`, which drops a trailing '=' and stops at a line break: a
+    // folder ending in '=' gets a '/' after it (the same folder), and one with a line break gets no --dir (the working
+    // directory, which a terminal that runs as one instance for all its windows does not follow).
+    if (folder.startsWith(QLatin1Char('/')) && !folder.contains(QLatin1Char('\n')) && !folder.contains(QLatin1Char('\r'))) {
+        const QString dir = folder.endsWith(QLatin1Char('=')) ? folder + QLatin1Char('/') : folder;
+        command << QStringLiteral("--dir=") + dir;
+    }
+    return command;
+}
+
 namespace
 {
 // Only touched on the GUI thread.
@@ -1374,5 +1387,44 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
     if (additions && !writeWhole(listPath, list))
         return false;
     return true;
+}
+
+bool writeSessionDefaults(const QString &path, const QStringList &types, const QString &desktopId)
+{
+    if (!QDir::isAbsolutePath(path) || types.isEmpty() || !validId(desktopId))
+        return false;
+    for (const QString &type : types) {
+        if (!validType(type))
+            return false;
+    }
+    // A regular file of a sane size in UTF-8 (one that is not valid UTF-8 is left as it is: rewriting it would re-encode bytes
+    // that are not Grassfield's), never a symbolic link: the save would go through it to whatever file it names (a dotfile
+    // manager's, another program's), and the session's list is Grassfield's own file (review of the Default Apps change).
+    QString text;
+    if (QFileInfo(path).isSymLink() || !readListFile(path, true, &text))
+        return false;
+    QString next = text;
+    for (const QString &type : types)
+        next = withDefault(next, type, desktopId);
+    const QHash<QString, QString> now = defaults(next);
+    for (const QString &type : types) {
+        if (now.value(type) != desktopId)
+            return false;
+    }
+    if (next == text)
+        return true;
+    if (!QDir().mkpath(QFileInfo(path).absolutePath()))
+        return false;
+    QSaveFile out(path);
+    return out.open(QIODevice::WriteOnly) && out.write(next.toUtf8()) >= 0 && out.commit();
+}
+
+QString terminalListText(const QString &desktopId)
+{
+    if (!validId(desktopId))
+        return QString();
+    return QStringLiteral("# The Grassfield session's terminal (Settings > Desktop & Dock > Default Apps), read by xdg-terminal-exec before\n"
+                          "# xdg-terminals.list in this session only; the Omarchy session keeps its own choice.\n")
+        + desktopId + QLatin1Char('\n');
 }
 } // namespace DefaultApps

@@ -765,6 +765,34 @@ FocusScope {
         return rows.map(r => m.urlAt(r)).filter(u => !root.app.inSidebar(u));
     }
 
+    // New Terminal at Folder (decision F-7; first-class since the owner report of 2026-11-22: "opening a terminal from a folder
+    // takes acrobatics through Services"): the one folder selected in `model` (the focused listing when null), else the folder
+    // the title shows; "" when that is no folder on this computer (a server, the Trash, a search, Recents, Applications, several
+    // items or a file selected), and the items that open it are dimmed. Opens the default terminal there (FilesApp.openTerminal).
+    function terminalTarget(model: var): string {
+        const m = model ? model : root.activeFolder;
+        if (!m || root.chooser)
+            return "";
+        if (m.selectedCount > 0) {
+            const rows = m.selectedRows();
+            if (rows.length !== 1 || !m.isDirAt(rows[0]) || m.isTrash || m.isApplications)
+                return "";
+            const u = String(m.urlAt(rows[0]));
+            return u.startsWith("file:") ? u : "";
+        }
+        const shown = model ? model : root.targetFolder;
+        if (!shown || shown.isTrash || shown.isApplications || shown.isSearch)
+            return "";
+        const here = String(shown.url);
+        return here.startsWith("file:") ? here : "";
+    }
+
+    function openTerminal(model: var): void {
+        const target = root.terminalTarget(model);
+        if (target !== "")
+            root.app.openTerminal(target);
+    }
+
     function addToSidebar(): void {
         const urls = root.sidebarCandidates();
         if (urls.length > 0)
@@ -1054,8 +1082,11 @@ FocusScope {
         } else {
             items.push({id: "openWith", text: qsTr("Open With"), enabled: false});
         }
-        if (count === 1 && model.isDirAt(first))
+        if (count === 1 && model.isDirAt(first)) {
             items.push({id: "newTab", text: qsTr("Open in New Tab")});
+            // The Finder's Services item, first-class here (owner report 2026-11-22): dimmed for a folder not on this computer.
+            items.push({id: "terminal", text: qsTr("New Terminal at Folder"), shortcut: qsTr("Ctrl+Alt+T"), enabled: root.terminalTarget(model) !== ""});
+        }
         // Folders: Add to Sidebar (File menu, Ctrl+Super+T), dimmed when they are all there already.
         if (rows.every(r => model.isDirAt(r)))
             items.push({id: "addToSidebar", text: qsTr("Add to Sidebar"), shortcut: qsTr("Ctrl+Super+T"), enabled: root.sidebarCandidates().length > 0});
@@ -1100,11 +1131,6 @@ FocusScope {
             items.push({separator: true});
             items.push({id: "enclosing", text: qsTr("Show in Enclosing Folder")});
         }
-        // Services (the app menu's Services is the shell's, decision F-10): a terminal in a local folder (decision F-7).
-        if (count === 1 && model.isDirAt(first) && local) {
-            items.push({separator: true});
-            items.push({id: "services", text: qsTr("Services"), submenu: [{id: "terminal", text: qsTr("New Terminal at Folder")}]});
-        }
         return items;
     }
 
@@ -1118,6 +1144,8 @@ FocusScope {
             }
         } else {
             items.push({id: "newFolder", text: qsTr("New Folder"), shortcut: qsTr("Ctrl+Shift+N"), enabled: model.writable});
+            // A terminal in the folder shown (owner report 2026-11-22), dimmed where the folder is not on this computer.
+            items.push({id: "terminalHere", text: qsTr("New Terminal at Folder"), shortcut: qsTr("Ctrl+Alt+T"), enabled: root.terminalTarget(model) !== ""});
             items.push({separator: true});
         }
         items.push({id: "info", text: qsTr("Get Info"), shortcut: qsTr("Ctrl+I")});
@@ -1136,10 +1164,6 @@ FocusScope {
         items.push(root.sortSubmenu());
         items.push({id: "hidden", text: qsTr("Show Hidden Files"), shortcut: qsTr("Ctrl+Shift+."), checked: root.app.showHidden});
         items.push({id: "preview", text: root.previewShown ? qsTr("Hide Preview") : qsTr("Show Preview"), shortcut: qsTr("Ctrl+Shift+P")});
-        if (String(model.url).startsWith("file:")) {
-            items.push({separator: true});
-            items.push({id: "services", text: qsTr("Services"), submenu: [{id: "terminalHere", text: qsTr("New Terminal at Folder")}]});
-        }
         return items;
     }
 
@@ -1368,10 +1392,8 @@ FocusScope {
             root.sendWithLocalSend(model);
             break;
         case "terminal":
-            root.app.openTerminal(model.selectedUrls()[0]);
-            break;
         case "terminalHere":
-            root.app.openTerminal(model.url);
+            root.openTerminal(model);
             break;
         case "hidden":
             root.app.showHidden = !root.app.showHidden;

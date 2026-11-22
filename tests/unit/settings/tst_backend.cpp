@@ -678,6 +678,47 @@ TEST_F(BackendTest, TheDefaultBrowserRowWritesItsTwoFilesAndNothingElse)
     EXPECT_EQ(backend.writeDefaultAppsFile(list, QStringLiteral("x")), QStringLiteral("refused")) << "a link is never written through";
 }
 
+// Default Apps (owner report 2026-11-22): the kinds and Mail go to the session list through Files' writer, every other line kept
+// and any application accepted (one whose desktop file lists none of the types: macOS's Other…); the terminal goes to
+// grassfield-xdg-terminals.list; nothing malformed is written, nor anything through a link.
+TEST_F(BackendTest, DefaultAppsWriteTheSessionListAndTheSessionTerminal)
+{
+    EnvGuard env{"XDG_CONFIG_HOME", "GRASSFIELD_STATE_HOME", "GRASSFIELD_DEV", "GRASSFIELD_SESSION"};
+    qunsetenv("GRASSFIELD_DEV");
+    qputenv("XDG_CONFIG_HOME", QFile::encodeName(scratch(QStringLiteral("dacfg"))));
+    qputenv("GRASSFIELD_STATE_HOME", QFile::encodeName(scratch(QStringLiteral("dastate"))));
+    Backend backend;
+    const QString list = backend.xdgConfigDir() + QStringLiteral("/grassfield-mimeapps.list");
+    ASSERT_TRUE(QDir().mkpath(backend.xdgConfigDir()));
+    {
+        QFile f(list);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("# mine\n[Default Applications]\ntext/html=sanaga.desktop;\n\n[Added Associations]\nimage/png=x.desktop;\n");
+    }
+    const QStringList docs{QStringLiteral("application/vnd.openxmlformats-officedocument.wordprocessingml.document"), QStringLiteral("application/msword")};
+    EXPECT_EQ(backend.setDefaultApps(docs, QStringLiteral("webapp-docs.desktop")), QString());
+    QFile f(list);
+    ASSERT_TRUE(f.open(QIODevice::ReadOnly));
+    const QString text = QString::fromUtf8(f.readAll());
+    f.close();
+    EXPECT_TRUE(text.contains(QStringLiteral("application/msword=webapp-docs.desktop;"))) << qPrintable(text);
+    EXPECT_TRUE(text.contains(QStringLiteral("wordprocessingml.document=webapp-docs.desktop;"))) << qPrintable(text);
+    EXPECT_TRUE(text.contains(QStringLiteral("text/html=sanaga.desktop;")) && text.contains(QStringLiteral("# mine"))
+                && text.contains(QStringLiteral("[Added Associations]\nimage/png=x.desktop;"))) << qPrintable(text);
+    for (const auto &bad : {QPair<QStringList, QString>{docs, QStringLiteral("../evil.desktop")}, {docs, QStringLiteral("evil")},
+                            {QStringList{QStringLiteral("not a type")}, QStringLiteral("a.desktop")}, {QStringList{}, QStringLiteral("a.desktop")}})
+        EXPECT_NE(backend.setDefaultApps(bad.first, bad.second), QString()) << qPrintable(bad.second);
+
+    EXPECT_EQ(backend.setDefaultTerminal(QStringLiteral("com.mitchellh.ghostty.desktop")), QString());
+    const QVariantMap term = backend.readText(backend.xdgConfigDir() + QStringLiteral("/grassfield-xdg-terminals.list"));
+    EXPECT_TRUE(term.value(QStringLiteral("text")).toString().endsWith(QStringLiteral("\ncom.mitchellh.ghostty.desktop\n")));
+    EXPECT_EQ(backend.setDefaultTerminal(QStringLiteral("../x.desktop")), QStringLiteral("refused"));
+    EXPECT_FALSE(QFileInfo::exists(backend.xdgConfigDir() + QStringLiteral("/xdg-terminals.list"))) << "Omarchy's own list is never written";
+    QFile::remove(list);
+    ASSERT_TRUE(QFile::link(scratch(QStringLiteral("dotfiles-list")), list));
+    EXPECT_EQ(backend.setDefaultApps(docs, QStringLiteral("a.desktop")), QStringLiteral("refused")) << "a link is never written through";
+}
+
 TEST_F(BackendTest, ADevSessionNeverWritesTheDefaultBrowserFilesOutsideDev)
 {
     EnvGuard env{"GRASSFIELD_DEV", "GRASSFIELD_SESSION", "XDG_CONFIG_HOME", "GRASSFIELD_STATE_HOME"};

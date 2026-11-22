@@ -290,6 +290,27 @@ TestCase {
         fakeWin.canEject = false;
     }
 
+    // File > New Terminal at Folder (owner report 2026-11-22): Ctrl+Alt+T, live where the tab has a folder on this computer to
+    // open (BrowserTab.terminalTarget), and it opens through the tab.
+    function test_fileMenuNewTerminalAtFolder() {
+        const bar = createTemporaryObject(menuComponent, test);
+        verify(bar);
+        const before = fakeWin.tab;
+        let target = "";
+        let opened = 0;
+        fakeWin.tab = Object.assign({}, before, {terminalTarget: m => target, openTerminal: m => opened++});
+        const entry = test.item(bar.menus[0], "New Terminal at Folder");
+        verify(entry !== null, "File has New Terminal at Folder");
+        compare(entry.shortcut.toString(), "Ctrl+Alt+T");
+        compare(entry.enabled, false, "no folder on this computer to open");
+        target = "file:///sandbox";
+        fakeWin.tab = Object.assign({}, fakeWin.tab);
+        compare(entry.enabled, true);
+        entry.triggered();
+        compare(opened, 1);
+        fakeWin.tab = before;
+    }
+
     function item(menu: var, text: string): var {
         for (let i = 0; i < menu.items.length; i++) {
             if (menu.items[i].text === text)

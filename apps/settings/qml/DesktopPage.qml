@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Dialogs
 import Grassfield.Ui
 import "DefaultBrowser.js" as DefaultBrowser
+import "DefaultApps.js" as DefaultApps
 
 // Settings > Desktop & Dock as macOS 27 lays it out (docs/audits/settings-parity-2026-10-26.md § Desktop & Dock): Dock (Size
 // and Magnification side by side; the Dock's position, the minimize animation, the title bar's double click and minimizing
@@ -353,7 +354,132 @@ SettingsPage {
         return true;
     }
 
-    Component.onCompleted: readBrowsers()
+    // ---- Default Apps (owner report 2026-11-22): Mail, Terminal and the kinds of documents under the browser -----------------
+    // Every installed, runnable application (DefaultApps.applications), read off the GUI thread as the browsers are.
+    property var allApps: []
+    // The rows: {id, title, types, choices: [{id, text}], current}. Mail and the kinds write the session list through the backend's
+    // setDefaultApps (Files' Change All… writer); Terminal writes grassfield-xdg-terminals.list (setDefaultTerminal).
+    property var mailRow: null
+    property var terminalRow: null
+    property var kindRows: []
+    // A short sentence under a row whose last choice could not be kept: {rowId: text}.
+    property var rowErrors: ({})
+    // The terminal xdg-terminal-exec opens now ("" until it answered, or when it could not say).
+    property string printedTerminal: ""
+
+    // Other… in a row: Main opens its application picker over the window and calls `chosen(app)` with the one picked
+    // ({file, name, icon}).
+    signal appPickerRequested(var apps, var texts, var chosen)
+
+    readonly property var kindTitles: ({
+        documents: qsTr("Documents"), spreadsheets: qsTr("Spreadsheets"), presentations: qsTr("Presentations"), pdf: qsTr("PDF documents"),
+        pictures: qsTr("Pictures"), music: qsTr("Music"), videos: qsTr("Videos"), archives: qsTr("Archives"), text: qsTr("Text and code")
+    })
+
+    function readApps(): void {
+        if (!root.backend)
+            return;
+        if (typeof root.backend.readDesktopEntries === "function") {
+            root.backend.readDesktopEntries(root.backend.applicationDirs, "desktop.apps");
+        } else if (typeof root.backend.desktopEntries === "function") {
+            let all = [];
+            for (const dir of root.backend.applicationDirs)
+                all = all.concat(root.entriesOf(dir));
+            root.takeApps(all);
+        }
+        if (typeof root.backend.readOnlyQuery === "function")
+            root.backend.readOnlyQuery(["xdg-terminal-exec", "--print-id"], "desktop.terminal");
+    }
+
+    // The lists the rows read, in lookup order: the session's own list first, then the user's and the applications folders'.
+    function lookupTexts(): var {
+        const texts = [root.backend.readText(root.backend.xdgConfigDir + "/" + DefaultBrowser.LIST_NAME).text];
+        for (const path of DefaultApps.lookupPaths(root.backend.xdgConfigDir, root.backend.applicationDirs, root.backend.currentDesktops)) {
+            const file = root.backend.readText(path);
+            if (file.ok)
+                texts.push(file.text);
+        }
+        return texts;
+    }
+
+    // The applications folders' mimeinfo.cache, in their order (DefaultApps.opener: what opens a type no list names).
+    function cacheTexts(): var {
+        const texts = [];
+        for (const dir of root.backend.applicationDirs) {
+            const file = root.backend.readText(dir + "/mimeinfo.cache");
+            if (file.ok)
+                texts.push(file.text);
+        }
+        return texts;
+    }
+
+    function takeApps(entries: var): void {
+        root.allApps = DefaultApps.applications(entries, Qt.locale().name, program => root.backend.programExists(program));
+        root.refreshRows();
+    }
+
+    function refreshRows(): void {
+        if (!root.backend)
+            return;
+        const texts = root.lookupTexts();
+        const caches = root.cacheTexts();
+        const none = qsTr("None");
+        const other = qsTr("Other…");
+        const row = (id, title, types, capableApps, current) => ({id: id, title: title, types: types, current: current,
+                                                                  choices: DefaultApps.choices(capableApps, root.allApps, current, none, other)});
+        root.mailRow = row("mail", qsTr("Default email reader"), DefaultApps.MAIL_TYPES, DefaultApps.capable(root.allApps, DefaultApps.MAIL_TYPES),
+                           DefaultApps.shown(texts, caches, DefaultApps.MAIL_TYPES, root.allApps));
+        const terms = DefaultApps.terminals(root.allApps);
+        const own = DefaultApps.listedTerminal(root.backend.readText(root.backend.xdgConfigDir + "/" + DefaultApps.TERMINAL_LIST).text);
+        const termCurrent = root.printedTerminal !== "" ? root.printedTerminal : own !== "" ? own : terms.length > 0 ? terms[0].id : "";
+        // Terminals only: Other… would let any application be started as a terminal.
+        const terminal = row("terminal", qsTr("Default terminal"), [], terms, termCurrent);
+        terminal.choices = terminal.choices.filter(c => c.id !== DefaultApps.OTHER);
+        root.terminalRow = terminal;
+        root.kindRows = DefaultApps.KINDS.map(k => row(k.id, root.kindTitles[k.id], k.types, DefaultApps.capable(root.allApps, k.types),
+                                                        DefaultApps.shown(texts, caches, k.types, root.allApps)));
+    }
+
+    function failRow(rowId: string): bool {
+        const next = Object.assign({}, root.rowErrors);
+        next[rowId] = qsTr("The default app could not be changed.");
+        root.rowErrors = next;
+        return false;
+    }
+
+    // A choice in a row: Other… asks for any application first; "" (None) and the shown one change nothing.
+    function pick(r: var, id: string): void {
+        if (id === DefaultApps.OTHER) {
+            root.appPickerRequested(root.allApps.map(a => ({file: a.id, name: a.name, icon: a.icon})),
+                                    {title: qsTr("Choose an App"), message: qsTr("Choose the app for “%1”.").arg(r.title), confirm: qsTr("Choose")},
+                                    app => root.choose(r, app.file, true));
+            return;
+        }
+        if (id !== "" && id !== r.current)
+            root.choose(r, id, false);
+    }
+
+    // `other`: picked with Other…, which sets every type of the kind.
+    function choose(r: var, id: string, other: bool): bool {
+        const next = Object.assign({}, root.rowErrors);
+        delete next[r.id];
+        root.rowErrors = next;
+        const app = root.allApps.find(a => a.id === id);
+        if (!root.backend || !app)
+            return root.failRow(r.id);
+        const error = r.id === "terminal" ? root.backend.setDefaultTerminal(id) : root.backend.setDefaultApps(DefaultApps.typesFor(app, r.types, other === true), id);
+        if (error !== "")
+            return root.failRow(r.id);
+        if (r.id === "terminal")
+            root.printedTerminal = id;
+        root.refreshRows();
+        return true;
+    }
+
+    Component.onCompleted: {
+        root.readBrowsers();
+        root.readApps();
+    }
 
     Connections {
         target: root.backend
@@ -362,13 +488,39 @@ SettingsPage {
         function onDesktopEntriesRead(tag: string, entries: var): void {
             if (tag === "desktop.browsers")
                 root.takeBrowsers(entries);
+            else if (tag === "desktop.apps")
+                root.takeApps(entries);
+        }
+
+        function onFinished(tag: string, ok: bool, output: string): void {
+            if (tag !== "desktop.terminal")
+                return;
+            root.printedTerminal = ok ? DefaultApps.printedTerminal(output) : "";
+            root.refreshRows();
+        }
+    }
+
+    component DefaultAppRow: SettingsRow {
+        id: appRow
+        required property var row
+        visible: appRow.row !== null && appRow.row.choices.length > 1
+        title: appRow.row ? appRow.row.title : ""
+        subtitle: appRow.row ? (root.rowErrors[appRow.row.id] ?? "") : ""
+        ComboBox {
+            inline: true
+            accessibleName: appRow.title
+            model: appRow.row ? appRow.row.choices : []
+            value: appRow.row ? appRow.row.current : ""
+            onPicked: id => root.pick(appRow.row, id)
         }
     }
 
     SettingsGroup {
-        visible: root.browserChoices.length > 0
+        visible: root.browserChoices.length > 0 || root.allApps.length > 0
+        caption: qsTr("Default Apps")
 
         SettingsRow {
+            visible: root.browserChoices.length > 0
             title: qsTr("Default web browser")
             subtitle: root.browserError
             ComboBox {
@@ -377,6 +529,29 @@ SettingsPage {
                 model: root.browserChoices.map(b => ({id: b.id, text: b.name}))
                 value: root.browserCurrent
                 onPicked: id => root.setBrowser(id)
+            }
+        }
+
+        DefaultAppRow {
+            row: root.mailRow
+        }
+
+        DefaultAppRow {
+            row: root.terminalRow
+        }
+    }
+
+    SettingsGroup {
+        visible: root.allApps.length > 0
+        caption: qsTr("Open Documents With")
+        footnote: qsTr("You can also choose the app for one kind of document in Files: Get Info > Open with > Change All…")
+
+        Repeater {
+            model: root.kindRows
+
+            delegate: DefaultAppRow {
+                required property var modelData
+                row: modelData
             }
         }
     }

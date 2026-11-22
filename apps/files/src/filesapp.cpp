@@ -41,7 +41,6 @@
 #include <QPair>
 #include <QPointer>
 #include <QRegularExpression>
-#include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
 #include <QStorageInfo>
@@ -885,6 +884,7 @@ QObject *FilesApp::createFolderModel(QObject *parent)
     connect(model, &FolderModel::tagsSeen, this, &FilesApp::noteTags);
     connect(model, &FolderModel::applicationsListed, this, [this](const QVariantMap &paths, const QVariantMap &names) { m_applicationPaths = paths; m_applicationNames = names; });
     connect(this, &FilesApp::tagsChanged, model, &FolderModel::tagsChanged);
+    connect(m_places, &PlacesModel::trashChanged, model, &FolderModel::trashChanged);
     model->setStyleStore(&m_folderStyles);
     model->setCutUrls(m_cutUrls);
     connect(this, &FilesApp::cutUrlsChanged, model, [this, model] { model->setCutUrls(m_cutUrls); });
@@ -2116,6 +2116,9 @@ void FilesApp::emptyTrash()
     KIO::EmptyTrashJob *job = KIO::emptyTrash();
     attachDelegate(job);
     track(job, tr("Emptying the Trash…"));
+    // The listings of the Trash show its end state the moment the job ends, whatever kio_trash tells KIO's listers (only when
+    // every trash folder is empty) and whatever the watch of the home trash has seen yet.
+    connect(job, &KJob::result, m_places, &PlacesModel::trashChanged);
 }
 
 void FilesApp::newFolder(const QUrl &directory, QObject *folder)
@@ -2284,8 +2287,10 @@ void FilesApp::openTerminal(const QUrl &folder)
         emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
         return;
     }
-    // Decision F-7: the session's terminal, never KIO's konsole lookup; the folder is only its working directory.
-    const QStringList argv = grassfield::apps::scopedCommand(QStringLiteral("xdg-terminal-exec"), {}, grassfield::apps::scopedLaunch());
+    // Decision F-7: the session's default terminal, never KIO's konsole lookup; the folder is only its working directory, given
+    // as xdg-terminal-exec's --dir too (a terminal running one instance for all its windows ignores the working directory).
+    const QStringList terminal = ApplicationsLogic::terminalAtFolder(folder.toLocalFile());
+    const QStringList argv = grassfield::apps::scopedCommand(terminal.first(), terminal.mid(1), grassfield::apps::scopedLaunch());
     QProcess process;
     process.setProgram(argv.first());
     process.setArguments(argv.mid(1));
@@ -2908,24 +2913,10 @@ bool FilesApp::setDefaultApplication(const QString &mimeType, const QString &sto
     if (!service || mimeType.isEmpty() || !QMimeDatabase().mimeTypeForName(mimeType).isValid())
         return false;
     if (DefaultApps::grassfieldDesktop(qEnvironmentVariable("XDG_CURRENT_DESKTOP"))) {
-        // The Grassfield session's own list (decision F-19), read and rewritten whole (a link is written through to its file).
+        // The Grassfield session's own list (decision F-19), read and rewritten whole by the session's one writer, shared with
+        // Settings > Desktop & Dock > Default Apps (DefaultApps::writeSessionDefaults), which never writes through a link.
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
-        QString path = dir + QLatin1Char('/') + QLatin1String(DefaultApps::kListName);
-        const QFileInfo info(path);
-        if (info.isSymLink())
-            path = info.canonicalFilePath();
-        // A regular file of a sane size in UTF-8 (one that is not valid UTF-8 is left as it is: rewriting it would re-encode
-        // bytes that are not Files').
-        QString text;
-        if (path.isEmpty() || !DefaultApps::readListFile(path, false, &text))
-            return false;
-        const QString next = DefaultApps::withDefault(text, mimeType, service->storageId());
-        if (next == text && DefaultApps::defaults(text).value(mimeType) != service->storageId())
-            return false;
-        if (!QDir().mkpath(dir))
-            return false;
-        QSaveFile out(path);
-        if (!out.open(QIODevice::WriteOnly) || out.write(next.toUtf8()) < 0 || !out.commit())
+        if (dir.isEmpty() || !DefaultApps::writeSessionDefaults(dir + QLatin1Char('/') + QLatin1String(DefaultApps::kListName), {mimeType}, service->storageId()))
             return false;
     } else {
         // The user's mimeapps.list (XDG): the Finder's Change All… for every document of this type.
@@ -2933,6 +2924,20 @@ bool FilesApp::setDefaultApplication(const QString &mimeType, const QString &sto
     }
     m_chosenDefaults.insert(mimeType, {service->storageId(), QDeadlineTimer(5000)});
     return true;
+}
+
+void FilesApp::chooseDefaultApplication(const QUrl &url, const QJSValue &callback)
+{
+    QJSValue cb = callback;
+    if (url.scheme() == QLatin1String("grassfield-app") || ApplicationsLogic::isLocationUrl(url) || !cb.isCallable())
+        return;
+    // The Choose Application panel (Recommended or All Applications, as Open With > Other…): any application can be the
+    // document type's default, whether its desktop file lists the type or not (macOS: Get Info > Open with > Other…).
+    m_prompts->applications()->ask({url}, mimeTypeOf(url), nullptr, [cb](const QString &id) mutable {
+        const KService::Ptr service = id.isEmpty() ? KService::Ptr() : KService::serviceByStorageId(id + QLatin1String(".desktop"));
+        if (service)
+            cb.call({QJSValue(service->storageId()), QJSValue(service->name())});
+    });
 }
 
 void FilesApp::alwaysOpenWith(const QString &storageId, const QList<QUrl> &urls)

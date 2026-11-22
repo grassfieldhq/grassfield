@@ -60,8 +60,16 @@ TestCase {
         function defaultApplication(mimeType: string): string {
             return "";
         }
+        property var defaultsSet: []
         function setDefaultApplication(mimeType: string, storageId: string): bool {
+            fakeApp.defaultsSet = fakeApp.defaultsSet.concat([{type: mimeType, id: storageId}]);
             return true;
+        }
+        // Get Info > Open with > Other…: the Choose Application panel answers with the app given here.
+        property var otherAnswer: null
+        function chooseDefaultApplication(target: url, done: var): void {
+            if (fakeApp.otherAnswer)
+                done(fakeApp.otherAnswer.id, fakeApp.otherAnswer.name);
         }
         function directorySize(url: url, done: var): void {
         }
@@ -232,5 +240,22 @@ TestCase {
         const win = createTemporaryObject(locationComponent, test);
         verify(win);
         compare(win.isApplication, false);
+    }
+
+    // Owner report 2026-11-22: Get Info's Open with is shown for every document, also one no application lists, and ends with
+    // Other… (macOS): the app picked there (a web app whose desktop file lists no type) is chosen, and Change All… makes it the
+    // type's default.
+    function test_openWithOtherChoosesAnyApplication() {
+        const w = createTemporaryObject(fileComponent, test);
+        verify(w);
+        verify(w.openWithShown, "shown although no application lists text/plain here");
+        fakeApp.otherAnswer = {id: "webapp-docs.desktop", name: "Docs Web App"};
+        fakeApp.defaultsSet = [];
+        w.pickOpenWith(w.otherId);
+        compare(w.chosenApp, "webapp-docs.desktop");
+        verify(w.openWithApps.some(a => a.id === "webapp-docs.desktop" && a.name === "Docs Web App"), "listed in the popup");
+        verify(fakeApp.setDefaultApplication(w.mimeType, w.chosenApp));
+        compare(fakeApp.defaultsSet[0].id, "webapp-docs.desktop");
+        fakeApp.otherAnswer = null;
     }
 }

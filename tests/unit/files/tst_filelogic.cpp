@@ -582,3 +582,19 @@ TEST(FileLogicClipboard, GnomesListSaysWhetherTheItemsWereCut)
     EXPECT_FALSE(FileLogic::gnomeCopiedFilesCut("file:///home/u/cut"));
     EXPECT_FALSE(FileLogic::gnomeCopiedFilesCut(QByteArray()));
 }
+
+// Review of the Trash fix: a Trash listing under way is never restarted by the changes of a long Empty Trash; however many come
+// while it lists, it is updated once more at its end, and not again after that.
+TEST(FileLogicTrash, AListingUnderWayIsNeverRestartedAndIsUpdatedOnceAtItsEnd)
+{
+    RelistGate gate;
+    EXPECT_TRUE(gate.changed(false)) << "idle: update at once";
+    EXPECT_FALSE(gate.listed()) << "nothing came while it listed";
+    for (int i = 0; i < 50; ++i)
+        EXPECT_FALSE(gate.changed(true)) << "listing: never restarted";
+    EXPECT_TRUE(gate.listed()) << "one update at the end";
+    EXPECT_FALSE(gate.listed()) << "only one";
+    EXPECT_FALSE(gate.changed(true));
+    EXPECT_TRUE(gate.changed(false)) << "an update started meanwhile takes the kept one";
+    EXPECT_FALSE(gate.listed());
+}

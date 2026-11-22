@@ -408,6 +408,19 @@ TEST(Applications, ATerminalEntryRunsBehindXdgTerminalExec)
     EXPECT_TRUE(launchCommand(QStringLiteral("%f"), true).isEmpty()) << "no command, nothing to put behind the terminal";
 }
 
+// New Terminal at Folder (owner report 2026-11-22): the default terminal through xdg-terminal-exec with --dir, which it turns into
+// each terminal's own option. Spaces, accents and '=' inside the name pass as they are; a trailing '=' (which xdg-terminal-exec
+// 0.14's `IFS='=' read` would drop) gets a '/' after it; a line break gets no --dir at all (the working directory is used).
+TEST(Applications, NewTerminalAtFolderGivesTheFolderToXdgTerminalExecIntact)
+{
+    const QString xte = QStringLiteral("xdg-terminal-exec");
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("/home/u/My Projects/é ü")), (QStringList{xte, QStringLiteral("--dir=/home/u/My Projects/é ü")}));
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("/home/u/a=b")), (QStringList{xte, QStringLiteral("--dir=/home/u/a=b")}));
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("/home/u/key=")), (QStringList{xte, QStringLiteral("--dir=/home/u/key=/")}));
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("/home/u/two\nlines")), QStringList{xte});
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("relative")), QStringList{xte}) << "only an absolute path is ever a --dir";
+}
+
 // A .desktop that is a FIFO (or a link to one) froze the GUI thread in a blocking open until a timeout: it is no entry, and
 // the others are listed at once.
 TEST(Applications, AFifoNamedDesktopNeverBlocksTheListing)
@@ -1290,4 +1303,39 @@ TEST(BundledApps, TheSeedNeverTargetsAnEntryThatCannotRunOrThatReadsTwoWays)
         qputenv("PATH", oldPath);
         EXPECT_TRUE(sessionDefaults(t).contains(QStringLiteral("x-scheme-handler/http"))) << form;
     }
+}
+
+// Review of the Default Apps change: the session's one writer never writes through a symbolic link (the save would replace
+// whatever file the link names); a plain list is written, every other line kept, also for an application that lists no type.
+TEST(DefaultApps, TheSessionWriterRefusesALinkAndKeepsTheOtherLines)
+{
+    QTemporaryDir tmp;
+    ASSERT_TRUE(tmp.isValid());
+    const QString list = tmp.filePath(QStringLiteral("grassfield-mimeapps.list"));
+    const QString target = tmp.filePath(QStringLiteral("dotfiles-mimeapps.list"));
+    {
+        QFile f(target);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("[Default Applications]\ntext/plain=editor.desktop;\n");
+    }
+    ASSERT_TRUE(QFile::link(target, list));
+    EXPECT_FALSE(DefaultApps::writeSessionDefaults(list, {QStringLiteral("application/msword")}, QStringLiteral("wordcraft.desktop")));
+    QFile t(target);
+    ASSERT_TRUE(t.open(QIODevice::ReadOnly));
+    EXPECT_EQ(t.readAll(), QByteArray("[Default Applications]\ntext/plain=editor.desktop;\n")) << "the linked file is untouched";
+    t.close();
+    EXPECT_TRUE(QFileInfo(list).isSymLink()) << "the link stays a link";
+
+    ASSERT_TRUE(QFile::remove(list));
+    ASSERT_TRUE(QFile::copy(target, list));
+    EXPECT_TRUE(DefaultApps::writeSessionDefaults(list, {QStringLiteral("application/msword"), QStringLiteral("application/vnd.ms-word.document.macroEnabled.12")},
+                                                  QStringLiteral("webapp-docs.desktop")));
+    QString text;
+    ASSERT_TRUE(DefaultApps::readListFile(list, true, &text));
+    const QHash<QString, QString> d = DefaultApps::defaults(text);
+    EXPECT_EQ(d.value(QStringLiteral("text/plain")), QStringLiteral("editor.desktop"));
+    EXPECT_EQ(d.value(QStringLiteral("application/msword")), QStringLiteral("webapp-docs.desktop"));
+    EXPECT_EQ(d.value(QStringLiteral("application/vnd.ms-word.document.macroEnabled.12")), QStringLiteral("webapp-docs.desktop"));
+    EXPECT_FALSE(DefaultApps::writeSessionDefaults(list, {QStringLiteral("not a type")}, QStringLiteral("a.desktop")));
+    EXPECT_FALSE(DefaultApps::writeSessionDefaults(list, {QStringLiteral("text/plain")}, QStringLiteral("../a.desktop")));
 }

@@ -129,9 +129,31 @@ PlacesModel::PlacesModel(QObject *parent, const DiskProbe::Options &disk)
     m_trashTimer.setSingleShot(true);
     m_trashTimer.setInterval(200);
     connect(&m_trashTimer, &QTimer::timeout, this, &PlacesModel::checkTrash);
-    connect(&m_trashWatcher, &QFileSystemWatcher::fileChanged, &m_trashTimer, qOverload<>(&QTimer::start));
-    connect(&m_trashWatcher, &QFileSystemWatcher::directoryChanged, &m_trashTimer, qOverload<>(&QTimer::start));
+    m_trashListTimer.setSingleShot(true);
+    m_trashListTimer.setInterval(200);
+    connect(&m_trashListTimer, &QTimer::timeout, this, &PlacesModel::trashChanged);
+    // At most one check per interval while changes keep coming, never postponed by them: emptying a large Trash removes its items
+    // one by one for a long time, and its listing follows as they go instead of waiting for the end. The listings are told only
+    // of a change of the trash itself (its files folder, the Trash folder that holds it, KIO's record): the configuration folder
+    // is watched for trashrc being replaced, and any other save there must not list the Trash again (review of the Trash fix).
+    const auto soon = [this](const QString &path) {
+        if (!m_trashTimer.isActive())
+            m_trashTimer.start();
+        if (PlacesModel::trashListingPath(path, m_trashFiles, m_trashStatus) && !m_trashListTimer.isActive())
+            m_trashListTimer.start();
+    };
+    connect(&m_trashWatcher, &QFileSystemWatcher::fileChanged, this, soon);
+    connect(&m_trashWatcher, &QFileSystemWatcher::directoryChanged, this, soon);
     checkTrash();
+}
+
+bool PlacesModel::trashListingPath(const QString &path, const QString &trashFiles, const QString &trashStatus)
+{
+    if (path.isEmpty() || trashFiles.isEmpty())
+        return false;
+    const QString clean = QDir::cleanPath(path);
+    return clean == QDir::cleanPath(trashFiles) || clean == QFileInfo(trashFiles).absolutePath()
+        || (!trashStatus.isEmpty() && clean == QDir::cleanPath(trashStatus));
 }
 
 void PlacesModel::checkTrash()

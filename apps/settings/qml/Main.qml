@@ -1142,6 +1142,7 @@ Window {
             store: cfg
             backend: root.backend
             onScreenCornersRequested: screenCornersSheet.open()
+            onAppPickerRequested: (apps, texts, chosen) => appPicker.openWith(apps, texts, chosen)
         }
     }
 

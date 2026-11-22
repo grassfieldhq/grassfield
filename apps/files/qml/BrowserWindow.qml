@@ -640,6 +640,13 @@ Window {
         onActivated: win.app.makeAlias(win.tab.selection(), win.folder)
         onActivatedAmbiguously: activated()
     }
+    // New Terminal at Folder (owner report 2026-11-22): the folder selected, else the folder shown (BrowserTab.terminalTarget).
+    Shortcut {
+        sequence: "Ctrl+Alt+T"
+        enabled: !win.keysHeld && !win.typing
+        onActivated: win.tab.openTerminal(null)
+        onActivatedAmbiguously: activated()
+    }
     // Add to Sidebar (the Finder's ⌃⌘T; FP-27).
     Shortcut {
         sequence: "Ctrl+Meta+T"

@@ -128,6 +128,11 @@ QStringList execArguments(const QString &exec);
 // What the shell's Apps.launchNow starts for an entry: execArguments, with xdg-terminal-exec in front when the entry runs in a
 // terminal (KIO would use KDE's terminal setting: konsole, absent here). Empty when there is no command.
 QStringList launchCommand(const QString &exec, bool runInTerminal);
+// New Terminal at Folder: the session's default terminal (xdg-terminal-exec, which reads the Grassfield session's own
+// grassfield-xdg-terminals.list first, Settings > Desktop & Dock > Default Apps) opened in `folder`, an absolute local path.
+// xdg-terminal-exec turns --dir into each terminal's own option (X-TerminalArgDir: --working-directory, --directory, ...) or
+// changes to it for a terminal without one. The caller also starts it in `folder`.
+QStringList terminalAtFolder(const QString &folder);
 
 // The url of the Applications location and of one application in it: grassfield-apps:/ and grassfield-app:/<id>.
 QUrl locationUrl();
@@ -185,7 +190,8 @@ QStringList lookupLists(const QStringList &configLocations, const QStringList &d
 // Seeds `<configDir>/grassfield-mimeapps.list` with the Grassfield apps found in `applicationDirs` (the first file of each
 // id, as the specification's lookup), for the types seedsAllowed keeps: a default in any of `userLists` (lookupLists, in
 // that order) counts as a choice unless it is Omarchy's shipped one (its lists under `omarchyDir`); the entries the file has
-// are kept, and a linked file is left as it is (only Change All… writes through a link). Returns whether it was written.
+// are kept, and a linked file is left as it is (nothing writes through a link: writeSessionDefaults refuses one too). Returns
+// whether it was written.
 bool seedSessionDefaults(const QString &configDir, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
 
 // Bundled apps (ADR-0055 D-6): Sanaga (the web: http, https, text/html, xhtml) and Notes (Markdown) are the session's defaults
@@ -226,4 +232,20 @@ bool parseState(const QString &text, QHash<QString, QString> *out);
 // our entries behind for a group that is no more ours. An unreadable list, a list or record that is corrupt, a linked session
 // list: nothing is decided and false is returned. True when a file was written.
 bool seedBundledApps(const QString &configDir, const QString &stateFile, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
+
+// The one writer of the Grassfield session's defaults (owner report 2026-11-22): Files' Change All… and Always Open With, and
+// Settings > Desktop & Dock > Default Apps (its file types and mail) all go through it. Sets every type of `types` to `desktopId`
+// in the list at `path` (normally <configDir>/grassfield-mimeapps.list; the caller checks where it may write), every other line
+// kept, written whole and atomically. Whether the app lists the type does not matter (macOS: Other… takes any application):
+// GLib, KService, xdg-mime and xdg-open honour a [Default Applications] entry either way. False when a type or the id is not
+// well formed, `path` is a symbolic link (never written through), the file is no readable UTF-8 regular file of at most 1 MiB,
+// or the write failed.
+bool writeSessionDefaults(const QString &path, const QStringList &types, const QString &desktopId);
+// The Grassfield session's terminal (owner report 2026-11-22): xdg-terminal-exec reads <configDir>/<desktop>-xdg-terminals.list
+// for each name of XDG_CURRENT_DESKTOP ("Grassfield:Hyprland") before xdg-terminals.list, so grassfield-xdg-terminals.list is
+// the session's own choice and the Omarchy session keeps its xdg-terminals.list (`omarchy default terminal`). Every Grassfield
+// path that opens a terminal goes through xdg-terminal-exec: Super+Return, Files, the Apps grid, Omarchy's launchers, $TERMINAL.
+inline constexpr const char *kTerminalListName = "grassfield-xdg-terminals.list";
+// The list's text naming `desktopId` alone; "" for an id that is not a plain desktop file name.
+QString terminalListText(const QString &desktopId);
 } // namespace DefaultApps
