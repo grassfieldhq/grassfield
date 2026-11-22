@@ -338,6 +338,7 @@ Scope {
     readonly property real dockMagnification: read("dock.magnification")
     readonly property bool dockMagnificationEnabled: read("dock.magnificationEnabled")
     readonly property bool dockAutohide: read("dock.autohide")
+    readonly property bool dockAllDisplays: read("dock.allDisplays")
     readonly property bool dockShowRecents: read("dock.showRecents")
     readonly property bool dockMinimizeIntoApp: read("dock.minimizeIntoApp")
     readonly property bool dockClickMinimizes: read("dock.clickMinimizes")

@@ -205,6 +205,11 @@
           "type": "boolean",
           "default": false
         },
+        "allDisplays": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Dock on every display (on) or only on one display at a time, the one where the pointer last reached the Dock's edge (off, macOS). Every other Dock setting applies to each Dock shown."
+        },
         "clickMinimizes": {
           "type": "boolean",
           "default": true

@@ -37,6 +37,7 @@ ShellRoot {
             "dock.showRecents": "dockShowRecents",
             "dock.folders": "dockFolders",
             "dock.minimizeIntoApp": "dockMinimizeIntoApp",
+            "dock.allDisplays": "dockAllDisplays",
             "dock.clickMinimizes": "dockClickMinimizes",
             "dock.animateOpening": "dockAnimateOpening",
             "dock.showIndicators": "dockShowIndicators",

@@ -47,6 +47,7 @@ Singleton {
     readonly property real dockMagnification: store.dockMagnification
     readonly property bool dockMagnificationEnabled: store.dockMagnificationEnabled
     readonly property bool dockAutohide: store.dockAutohide
+    readonly property bool dockAllDisplays: store.dockAllDisplays
     readonly property bool clipboardEnabled: store.clipboardEnabled
     readonly property string clipboardRetention: store.clipboardRetention
     readonly property bool clipboardKeepOnDisk: store.clipboardKeepOnDisk
