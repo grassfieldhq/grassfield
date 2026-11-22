@@ -769,6 +769,7 @@
  {"path": "scripts/gates/rc-toolkit.sh", "layer": "logic", "runner": "bare"},
  {"path": "tests/visual/f1-audit.sh", "layer": "visual", "runner": "bare"},
  {"path": "tests/visual/f2c.sh", "layer": "visual", "runner": "bare"},
+ {"path": "tests/visual/default-apps.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/energy-pane.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/files-capture-fixes.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/flow-files.sh", "layer": "nested", "runner": "bare"},
