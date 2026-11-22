@@ -49,8 +49,8 @@
 // - Bounds: at most 8 requests (checks and queries) open per caller connection and 32 in all, beyond which a request is
 //   answered "nothing" at once; a query shares the shell's bound of 8 with gcr's and NetworkManager's requests, and
 //   waits in the bridge's applications' queue for a place past its share (B-05 amended, owner decision 2026-11-22); at most 8
-//   stores holding a place and 32 alive; the cache's entries (KioAuth.h). No time limit on a sheet (KIO's client has none
-//   either).
+//   stores holding a place and 32 alive; the cache's entries (KioAuth.h). No time limit once a sheet is shown (KIO's client has
+//   none either); a query still waiting for a place ends after 110 s.
 // - Nothing secret is logged: request ids, kinds, servers, roles, refusals and why.
 
 #include "Identity.h"
