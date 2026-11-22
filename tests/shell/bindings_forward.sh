@@ -15,12 +15,20 @@ check() { if "$@"; then echo "PASS: $desc"; else echo "FAIL: $desc"; fail=1; fi;
 cat >"$tmp/run.lua" <<'LUA'
 local repo = arg[1]
 local binds, dispatched, timers, active = {}, {}, {}, nil
+local current = ""
 local function proxy(path)
   return setmetatable({}, { __index = function(_, k) return proxy(path .. "." .. k) end,
                             __call = function(_, ...) return { dsp = path, args = { ... } } end })
 end
 hl = setmetatable({
-  bind = function(keys, d, opts) binds[keys] = { d = d, opts = opts or {} } end,
+  bind = function(keys, d, opts)
+    -- A key bound twice is a clash: across the loaded files always, within a file only for the two intended pairs (the window
+    -- cycling binds run a second action on the same chord).
+    local first = binds[keys]
+    assert(first == nil or (first.file == current and (keys == "ALT + TAB" or keys == "ALT + SHIFT + TAB")),
+           "duplicate bind across the loaded files: " .. keys)
+    binds[keys] = first or { d = d, opts = opts or {}, file = current }
+  end,
   dispatch = function(d) dispatched[#dispatched + 1] = d end,
   timer = function(fn) timers[#timers + 1] = fn end,
   get_active_window = function() return active end,
@@ -28,7 +36,9 @@ hl = setmetatable({
   gesture = function() end,
 }, { __index = function() return function() end end })
 hl.dsp = proxy("dsp")
+current = "bindings"
 dofile(repo .. "/config/hypr/grassfield/bindings.lua")
+current = "forwarding"
 dofile(repo .. "/config/hypr/grassfield/forwarding.lua")
 
 local function press(keys, class)
@@ -71,8 +81,24 @@ sent("SUPER + bracketleft", "firefox", "send_key_state(ALT,Left,down) send_key_s
 sent("SUPER + bracketright", "firefox", "send_key_state(ALT,Right,down) send_key_state(ALT,Right,up)")
 -- Command+number and Command+Up reach the keys the Grassfield apps advertise with Ctrl (by keycode: every layout).
 for n = 1, 9 do sent("SUPER + code:" .. (n + 9), "org.grassfield.Files", "send_key_state(CTRL,code:" .. (n + 9) .. ",down) send_key_state(CTRL,code:" .. (n + 9) .. ",up)") end
--- Command+arrows (macOS text model); Grassfield Files keeps Enclosing Folder / Open on Command+Up / Down.
 local function both(mods, key) return "send_key_state(" .. mods .. "," .. key .. ",down) send_key_state(" .. mods .. "," .. key .. ",up)" end
+-- Command+C/V/X/A/Z: the editing keys; Copy and Paste become Ctrl+Shift in terminals.
+sent("SUPER + C", "firefox", both("CTRL", "C"))
+sent("SUPER + C", "kitty", both("CTRL SHIFT", "C"))
+for _, terminal in ipairs({ "org.gnome.Ptyxis", "org.gnome.Console", "org.kde.konsole", "XTerm", "xterm", "com.gexperts.Tilix" }) do
+  sent("SUPER + C", terminal, both("CTRL SHIFT", "C"))
+  sent("SUPER + Z", terminal, "")
+end
+sent("SUPER + C", "org.omarchy.btop", both("CTRL SHIFT", "C"))
+sent("SUPER + C", nil, both("CTRL", "C"))
+sent("SUPER + V", "org.gnome.TextEditor", both("CTRL", "V"))
+sent("SUPER + V", "Alacritty", both("CTRL SHIFT", "V"))
+sent("SUPER + X", "firefox", both("CTRL", "X"))
+sent("SUPER + A", "org.grassfield.Notes", both("CTRL", "A"))
+sent("SUPER + Z", "firefox", both("CTRL", "Z"))
+for _, k in ipairs({ "SUPER + X", "SUPER + A", "SUPER + Z", "SUPER + SHIFT + Z" }) do sent(k, "kitty", ""); sent(k, "org.omarchy.btop", "") end
+sent("SUPER + SHIFT + Z", "firefox", both("CTRL SHIFT", "Z"))
+-- Command+arrows (macOS text model); Grassfield Files keeps Enclosing Folder / Open on Command+Up / Down.
 sent("SUPER + UP", "org.grassfield.Files", both("CTRL", "Up"))
 sent("SUPER + DOWN", "org.grassfield.Files", both("CTRL", "Down"))
 sent("SUPER + UP", "firefox", both("CTRL", "Home"))
@@ -86,7 +112,7 @@ sent("SUPER + SHIFT + UP", "firefox", both("CTRL SHIFT", "Home"))
 sent("SUPER + SHIFT + DOWN", "org.grassfield.Files", both("CTRL SHIFT", "End"))
 -- Command+Backspace: Shift+Home, then BackSpace from the timer (the stub runs timers in order, including ones they add).
 sent("SUPER + BACKSPACE", "firefox", both("SHIFT", "Home") .. " " .. both("", "BackSpace"))
-print("repeat " .. tostring(binds["ALT + LEFT"].opts.repeating) .. " " .. tostring(binds["ALT + BACKSPACE"].opts.repeating))
+print("repeat " .. tostring(binds["ALT + LEFT"].opts.repeating) .. " " .. tostring(binds["ALT + BACKSPACE"].opts.repeating) .. " undo " .. tostring(binds["SUPER + Z"].opts.repeating) .. " " .. tostring(binds["SUPER + SHIFT + Z"].opts.repeating))
 -- Keyboard access to the bar (gate A1, rc7 audit R7-A11Y-02): what Ctrl+F2 and Ctrl+F8 run, and their descriptions.
 local function cmd_of(keys)
   local b = binds[keys]
@@ -121,9 +147,11 @@ echo "$out" | sed 's/^/    /'
 desc="Spaces and Overview binds are still dispatchers (CTRL+LEFT/RIGHT, CTRL+1..9 focus Spaces, CTRL+UP sends the Overview request in-process, CIO-01): the macOS keys are kept"
 check grep -q "^spaces dsp.focus dsp.focus dsp.focus dsp.focus dsp.event$" <<<"$out"
 desc="every forwarded key sends exactly the expected chord (no BAD line)"
-check bash -c '! grep -q "^BAD" <<<"$1" && [[ $(grep -c "^ok " <<<"$1") == 34 ]]' _ "$out"
+check bash -c '! grep -q "^BAD" <<<"$1" && [[ $(grep -c "^ok " <<<"$1") == 64 ]]' _ "$out"
+desc="the editing keys (Super+C/V/X/A/Z, Super+Shift+Z) are bound once, only in forwarding.lua, with a literal bind() line each (Settings > Keyboard lists them) and clash with no other Grassfield bind"
+check bash -c 'for k in "SUPER + C" "SUPER + V" "SUPER + X" "SUPER + A" "SUPER + Z" "SUPER + SHIFT + Z"; do [ "$(grep -c "^bind(\"$k\"" "$1/config/hypr/grassfield/forwarding.lua")" = 1 ] && ! grep -q "^bind(\"$k\"" "$1/config/hypr/grassfield/bindings.lua" || exit 1; done; grep -q "^bind(\"SUPER + CTRL + V\", \"Clipboard history\"" "$1/config/hypr/grassfield/bindings.lua"' _ "$root"
 desc="word navigation repeats while the keys are held"
-check grep -q "^repeat true true$" <<<"$out"
+check grep -q "^repeat true true undo true true$" <<<"$out"
 
 desc="Files and Preview advertise the keys that Super now delivers (Ctrl+1..4, Ctrl+Up; Ctrl+9)"
 check bash -c 'grep -q "Ctrl+1" "$1/apps/files/qml/BrowserWindow.qml" && grep -q "Ctrl+Up" "$1/apps/files/qml/BrowserWindow.qml" && grep -q "Ctrl+9" "$1/apps/preview/qml/Viewer.qml"' _ "$root"

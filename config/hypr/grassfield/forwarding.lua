@@ -1,7 +1,7 @@
 -- Keys forwarded to the focused window (macOS model, GF-024): word navigation on Alt+arrows, Command+number and Command+Up
 -- on Super. Kept out of bindings.lua on purpose: the Settings Keyboard page parses that file's literal `bind("KEYS", "Description"`
--- lines and every description there needs an entry in apps/settings/qml/Bindings.js and the fr catalog (open item: list
--- these keys there). Loaded by core.lua for the real and the nested session.
+-- lines and every description there needs an entry in apps/settings/qml/Bindings.js and the fr catalog (the page reads this
+-- file's literal bind() and word_key() lines too). Loaded by core.lua for the real and the nested session.
 
 local function bind(keys, description, dispatcher, opts)
   opts = opts or {}
@@ -43,8 +43,12 @@ local function holder_class()
   return window and (window.class or ""):lower() or ""
 end
 
--- Terminals (Omarchy's definition, default/hypr/apps/terminals.lua) keep Alt+arrows: tmux, vim and readline bind them.
-local TERMINAL_CLASSES = { "alacritty", "kitty", "com.mitchellh.ghostty", "foot", "org.codeberg.dnkl.foot", "wezterm", "org.wezfurlong.wezterm" }
+-- Terminals (Omarchy's definition, default/hypr/apps/terminals.lua, plus the common ones) keep Alt+arrows: tmux, vim and readline bind them.
+local TERMINAL_CLASSES = { "alacritty", "kitty", "com.mitchellh.ghostty", "foot", "footclient", "org.codeberg.dnkl.foot", "wezterm", "org.wezfurlong.wezterm",
+  -- Other common terminals (Omarchy's list stays the base): GNOME, KDE, XFCE, X11 and tiling-friendly ones.
+  "org.gnome.ptyxis", "org.gnome.console", "org.gnome.terminal", "gnome-terminal-server", "org.kde.konsole", "konsole", "xterm", "uxterm", "xterm-256color",
+  "st", "st-256color", "urxvt", "rxvt", "terminator", "com.gexperts.tilix", "tilix", "xfce4-terminal", "lxterminal", "qterminal", "terminology",
+  "rio", "contour", "cool-retro-term" }
 local function terminal_focused()
   local class = holder_class()
   if class == "" then
@@ -80,6 +84,31 @@ word_key("ALT + BACKSPACE", "Delete the previous word", "CTRL", "BackSpace")
 word_key("ALT + DELETE", "Delete the next word", "CTRL", "Delete")
 bind("SUPER + bracketleft", "Back", forward("ALT", "Left"))
 bind("SUPER + bracketright", "Forward", forward("ALT", "Right"))
+
+-- Command+C/V/X/A/Z: the macOS editing keys. Omarchy's default/hypr/bindings/clipboard.lua is not loaded here, so without
+-- these binds the chord reaches the application with Super held and the letter is typed. Every toolkit takes the Ctrl
+-- chord; terminals keep Ctrl+C (interrupt) and Ctrl+V, so Copy and Paste are Ctrl+Shift+C / Ctrl+Shift+V there. The other
+-- four do nothing in a terminal (macOS Terminal model): Ctrl+Z suspends the foreground job, Ctrl+A/Ctrl+X belong to readline,
+-- tmux and screen. The chord is sent with explicit modifiers (forward above), so it does not run through these binds again
+-- (Ctrl+C is not bound). Super+Ctrl+V (Clipboard history) and Super+Shift+3/4/5 (capture) are other chords.
+local function terminal_aware(mods, key, terminal_mods)
+  local plain = forward(mods, key)
+  local in_terminal = terminal_mods and forward(terminal_mods, key) or function() end
+  return function()
+    if terminal_focused() then
+      in_terminal()
+    else
+      plain()
+    end
+  end
+end
+bind("SUPER + C", "Copy", terminal_aware("CTRL", "C", "CTRL SHIFT"))
+bind("SUPER + V", "Paste", terminal_aware("CTRL", "V", "CTRL SHIFT"))
+bind("SUPER + X", "Cut", terminal_aware("CTRL", "X"))
+bind("SUPER + A", "Select all", terminal_aware("CTRL", "A"))
+-- Undo and Redo repeat while the keys are held, as on macOS.
+bind("SUPER + Z", "Undo", terminal_aware("CTRL", "Z"), { repeating = true })
+bind("SUPER + SHIFT + Z", "Redo", terminal_aware("CTRL SHIFT", "Z"), { repeating = true })
 
 -- Command+number and Command+Up: Ctrl+1..9 and Ctrl+Up are Spaces and Overview here, so the keys an application
 -- advertises with Ctrl (Files views Ctrl+1..4, Preview Zoom to Fit Ctrl+9, Files Enclosing Folder Ctrl+Up) are sent by
