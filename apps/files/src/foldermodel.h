@@ -368,6 +368,8 @@ private:
     void renameResult(const QUrl &from, const QUrl &to);
 
     KDirLister *m_lister = nullptr;
+    // A Trash listing's updates (trashChanged): none while it is listing, one more at its end.
+    FileLogic::RelistGate m_trashRelist;
     KDirModel *m_dirModel = nullptr;
     QUrl m_url;
     int m_sortKey = 0;

@@ -761,6 +761,24 @@ TEST_F(FileOps, AChangeInTheHomeTrashTellsTheTrashListingsAtOnceAndKeepsTellingD
     EXPECT_TRUE(waitFor([&told] { return told > 0; }, 3000)) << "a removal outside Files reaches the Trash listings";
     EXPECT_TRUE(waitFor([places] { return places->trashEmpty(); }, 3000));
 
+    // A save elsewhere in the configuration folder (watched only for trashrc being replaced) never lists the Trash again.
+    told = 0;
+    const QString config = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    for (int i = 0; i < 5; ++i) {
+        write(config + QStringLiteral("/unrelated-%1.conf").arg(i));
+        QDeadlineTimer pause(80);
+        while (!pause.hasExpired())
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    }
+    waitFor([] { return false; }, 600);
+    EXPECT_EQ(told, 0) << "an unrelated save in the configuration folder told the Trash listings " << told << " times";
+    EXPECT_TRUE(PlacesModel::trashListingPath(QStringLiteral("/h/.local/share/Trash/files"), QStringLiteral("/h/.local/share/Trash/files"), QStringLiteral("/h/.config/trashrc")));
+    EXPECT_TRUE(PlacesModel::trashListingPath(QStringLiteral("/h/.local/share/Trash"), QStringLiteral("/h/.local/share/Trash/files"), QStringLiteral("/h/.config/trashrc")));
+    EXPECT_TRUE(PlacesModel::trashListingPath(QStringLiteral("/h/.config/trashrc"), QStringLiteral("/h/.local/share/Trash/files"), QStringLiteral("/h/.config/trashrc")));
+    EXPECT_FALSE(PlacesModel::trashListingPath(QStringLiteral("/h/.config"), QStringLiteral("/h/.local/share/Trash/files"), QStringLiteral("/h/.config/trashrc")));
+    for (int i = 0; i < 5; ++i)
+        QFile::remove(config + QStringLiteral("/unrelated-%1.conf").arg(i));
+
     // A long stream of changes (an item every 40 ms for 1.2 s): the listings are told during the stream, not only after it.
     told = 0;
     QDeadlineTimer stream(1200);

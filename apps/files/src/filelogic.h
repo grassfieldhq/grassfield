@@ -191,6 +191,34 @@ bool hiddenNetworkEntry(const QUrl &item, const QUrl &target);
 constexpr int kMinKeptWindowSide = 200;
 constexpr int kMaxKeptWindowSide = 16384;
 // A stored side (any QSettings value): the side when it is an integer in bounds, else 0 (none kept).
+// A Trash listing told its contents changed (FolderModel::trashChanged; review of the Trash fix): a listing under way is never
+// restarted (KIO would start a large Trash over and over during a long Empty Trash and might never finish it); it is listed once
+// more when it ends, however many changes came meanwhile.
+class RelistGate
+{
+public:
+    // A change: true when the listing should be updated now; false while it is listing (one update is kept for its end).
+    bool changed(bool listing)
+    {
+        if (listing) {
+            m_pending = true;
+            return false;
+        }
+        m_pending = false;
+        return true;
+    }
+    // The listing ended: true when a change came while it ran (update once more now).
+    bool listed()
+    {
+        const bool again = m_pending;
+        m_pending = false;
+        return again;
+    }
+
+private:
+    bool m_pending = false;
+};
+
 int keptWindowSide(const QVariant &value);
 // Whether a window of this size is kept (both sides in bounds).
 bool keepsWindowSize(int width, int height);

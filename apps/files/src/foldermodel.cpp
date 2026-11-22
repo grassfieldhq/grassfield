@@ -323,6 +323,9 @@ FolderModel::FolderModel(QObject *parent)
         emit loadingChanged();
         emit rootChanged();
         refreshFreeSpace();
+        // The Trash changed while it was being listed: one more update, now that the listing is complete.
+        if (m_trashRelist.listed() && isTrash() && sourceModel() == m_dirModel)
+            QTimer::singleShot(0, this, [this] { trashChanged(); });
     });
     connect(m_lister, qOverload<>(&KCoreDirLister::canceled), this, [this] {
         m_loading = false;
@@ -1760,8 +1763,8 @@ void FolderModel::reload()
 void FolderModel::trashChanged()
 {
     // An update of the listed folder (KCoreDirLister::updateDirectory): the rows that went leave, the ones that came appear,
-    // the others stay as they are (selection, thumbnails).
-    if (isTrash() && sourceModel() == m_dirModel)
+    // the others stay as they are (selection, thumbnails). Never while it is still listing (RelistGate): once more at its end.
+    if (isTrash() && sourceModel() == m_dirModel && m_trashRelist.changed(m_loading))
         m_lister->updateDirectory(m_url);
 }
 
