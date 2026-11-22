@@ -631,6 +631,16 @@ SettingsPage {
     // The connected displays (QScreen: name, model, serial), the same identity the shell uses (WallpaperConfig.displayKey), by the
     // names Settings > Displays gives them (DisplayHeader): the laptop's panel is the Built-in Display, another its model (its
     // connector without one); two of one name add their connectors.
+    // Displays plugged or unplugged while the page is open.
+    Connections {
+        target: Qt.application
+        ignoreUnknownSignals: true
+
+        function onScreensChanged(): void {
+            root.refreshDisplays();
+        }
+    }
+
     function refreshDisplays(): void {
         const list = root.backend.screens();
         const named = list.map(s => {

@@ -125,15 +125,19 @@ Scope {
     // Output whose Dock has the keyboard (the Dock's output when the mode was entered).
     property string keyboardScreen: ""
 
+    // The output a keyboard action (keyboard mode, the auto-hide shortcut) is for: with a Dock on every display the focused one
+    // (Compositor.activeScreenName: the display holding the active window, the pointer's when none), else the Dock's output.
+    readonly property string actionScreen: Settings.dockAllDisplays ? Compositor.activeScreenName : dockScreen
+
     // Enter keyboard mode and focus the first tile.
     function enterKeyboardMode(): void {
         // The Dock never takes the keyboard over the lock screen (GF-116).
         if (SessionState.refuses("dock keyboard"))
             return;
         // Not on a Dock that is not revealed yet (invisible: it would take the keyboard for nothing).
-        if (!windows.instances.some(w => w.screenName === root.dockScreen && w.reveal))
+        if (!windows.instances.some(w => w.screenName === root.actionScreen && w.reveal))
             return;
-        keyboardScreen = dockScreen;
+        keyboardScreen = actionScreen;
         keyboardMode = true;
         Qt.callLater(() => {
             const all = windows.instances;
@@ -850,8 +854,8 @@ Scope {
 
         // Option-Command-D (macOS): turns Dock hiding on or off. The integrator binds a key to it (config/hypr); not fixtures-gated.
         function toggleAutohide(): void {
-            // The Dock of the display the pointer is on; written where that display reads it from (its override, else All Displays).
-            Settings.setDockOn(root.dockScreen, {autohide: !Settings.dockForScreen(root.dockScreen).autohide});
+            // The Dock of the focused display; written where that display reads it from (its override, else All Displays).
+            Settings.setDockOn(root.actionScreen, {autohide: !Settings.dockForScreen(root.actionScreen).autohide});
         }
 
         function autohide(on: bool): void {
