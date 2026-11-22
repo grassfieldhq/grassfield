@@ -1,7 +1,7 @@
 -- Keys forwarded to the focused window (macOS model, GF-024): word navigation on Alt+arrows, Command+number and Command+Up
 -- on Super. Kept out of bindings.lua on purpose: the Settings Keyboard page parses that file's literal `bind("KEYS", "Description"`
--- lines and every description there needs an entry in apps/settings/qml/Bindings.js and the fr catalog (open item: list
--- these keys there; done: the page parses the literal bind() lines of this file too). Loaded by core.lua for the real and the nested session.
+-- lines and every description there needs an entry in apps/settings/qml/Bindings.js and the fr catalog (the page reads this
+-- file's literal bind() and word_key() lines too). Loaded by core.lua for the real and the nested session.
 
 local function bind(keys, description, dispatcher, opts)
   opts = opts or {}
@@ -43,8 +43,12 @@ local function holder_class()
   return window and (window.class or ""):lower() or ""
 end
 
--- Terminals (Omarchy's definition, default/hypr/apps/terminals.lua) keep Alt+arrows: tmux, vim and readline bind them.
-local TERMINAL_CLASSES = { "alacritty", "kitty", "com.mitchellh.ghostty", "foot", "org.codeberg.dnkl.foot", "wezterm", "org.wezfurlong.wezterm" }
+-- Terminals (Omarchy's definition, default/hypr/apps/terminals.lua, plus the common ones) keep Alt+arrows: tmux, vim and readline bind them.
+local TERMINAL_CLASSES = { "alacritty", "kitty", "com.mitchellh.ghostty", "foot", "footclient", "org.codeberg.dnkl.foot", "wezterm", "org.wezfurlong.wezterm",
+  -- Other common terminals (Omarchy's list stays the base): GNOME, KDE, XFCE, X11 and tiling-friendly ones.
+  "org.gnome.ptyxis", "org.gnome.console", "org.gnome.terminal", "gnome-terminal-server", "org.kde.konsole", "konsole", "xterm", "uxterm", "xterm-256color",
+  "st", "st-256color", "urxvt", "rxvt", "terminator", "com.gexperts.tilix", "tilix", "xfce4-terminal", "lxterminal", "qterminal", "terminology",
+  "rio", "contour", "cool-retro-term" }
 local function terminal_focused()
   local class = holder_class()
   if class == "" then
@@ -102,8 +106,9 @@ bind("SUPER + C", "Copy", terminal_aware("CTRL", "C", "CTRL SHIFT"))
 bind("SUPER + V", "Paste", terminal_aware("CTRL", "V", "CTRL SHIFT"))
 bind("SUPER + X", "Cut", terminal_aware("CTRL", "X"))
 bind("SUPER + A", "Select all", terminal_aware("CTRL", "A"))
-bind("SUPER + Z", "Undo", terminal_aware("CTRL", "Z"))
-bind("SUPER + SHIFT + Z", "Redo", terminal_aware("CTRL SHIFT", "Z"))
+-- Undo and Redo repeat while the keys are held, as on macOS.
+bind("SUPER + Z", "Undo", terminal_aware("CTRL", "Z"), { repeating = true })
+bind("SUPER + SHIFT + Z", "Redo", terminal_aware("CTRL SHIFT", "Z"), { repeating = true })
 
 -- Command+number and Command+Up: Ctrl+1..9 and Ctrl+Up are Spaces and Overview here, so the keys an application
 -- advertises with Ctrl (Files views Ctrl+1..4, Preview Zoom to Fit Ctrl+9, Files Enclosing Folder Ctrl+Up) are sent by
