@@ -95,17 +95,18 @@ n=$(lines); keys -M logo -M shift -k Up -m shift -m logo;    check "Super+Shift+
 # Command+Backspace is two chords: Shift+Home, then Backspace (16777219, no modifier).
 n=$(lines); keys -M logo -k BackSpace -m logo;               check "Super+Backspace ends with Backspace (after Shift+Home)" "key=16777219 mods=0 " "$n"
 if [[ $(tail -n +"$((n + 1))" "$fixlog" | grep -c "key=16777232 mods=$SHIFT ") -ge 1 ]]; then echo "PASS: Super+Backspace first selected to the line start (Shift+Home)"; else echo "FAIL: Super+Backspace did not send Shift+Home first (sequencing unreliable: drop that bind)"; fail=1; fi
-# Command+A/C/X/V/Z end to end: the fixture's text field starts with "grass field"; the clipboard is the nested display's.
+# Command+A/C/X/V/Z end to end: the fixture's text field is reset to "grass" first; the clipboard is the nested display's.
 edit() { tail -n +"$(($1 + 1))" "$fixlog" | grep -F "[fk-fixture] edit=" | tail -n 1; }
 clip() { WAYLAND_DISPLAY=$sock timeout 5 wl-paste --no-newline 2>/dev/null; }
+keys -M logo -k a -m logo; for c in g r a s s; do keys -k "$c"; done  # the fixture field now reads "grass"
 n=$(lines); keys -M logo -k a -m logo;                       check "Super+A -> Ctrl+A" "key=65 mods=$CTRL " "$n"
 n=$(lines); keys -M logo -k c -m logo;                       check "Super+C -> Ctrl+C" "key=67 mods=$CTRL " "$n"
-if [[ $(clip) == "grass field" ]]; then echo "PASS: Super+A then Super+C copied the whole text to the clipboard"; else echo "FAIL: clipboard after Super+A, Super+C: '$(clip)'"; fail=1; fi
+if [[ $(clip) == "grass" ]]; then echo "PASS: Super+A then Super+C copied the whole text to the clipboard"; else echo "FAIL: clipboard after Super+A, Super+C: '$(clip)'"; fail=1; fi
 printf pasted | WAYLAND_DISPLAY=$sock wl-copy
 n=$(lines); keys -M logo -k v -m logo;                       check "Super+V -> Ctrl+V" "key=86 mods=$CTRL " "$n"
 if [[ $(edit "$n") == *'edit="pasted"'* ]]; then echo "PASS: Super+V replaced the selection with the clipboard (text is now 'pasted')"; else echo "FAIL: Super+V did not paste (edit: $(edit "$n"))"; fail=1; fi
 n=$(lines); keys -M logo -k z -m logo;                       check "Super+Z -> Ctrl+Z" "key=90 mods=$CTRL " "$n"
-if [[ $(edit "$n") == *'edit="grass field"'* ]]; then echo "PASS: Super+Z undid the paste (text is 'grass field' again)"; else echo "FAIL: Super+Z did not undo (edit: $(edit "$n"))"; fail=1; fi
+if [[ $(edit "$n") == *'edit="grass"'* ]]; then echo "PASS: Super+Z undid the paste (text is 'grass' again)"; else echo "FAIL: Super+Z did not undo (edit: $(edit "$n"))"; fail=1; fi
 n=$(lines); keys -M logo -M shift -k z -m shift -m logo;     check "Super+Shift+Z -> Ctrl+Shift+Z" "key=90 mods=$((CTRL + SHIFT)) " "$n"
 if [[ $(edit "$n") == *'edit="pasted"'* ]]; then echo "PASS: Super+Shift+Z redid the paste"; else echo "FAIL: Super+Shift+Z did not redo (edit: $(edit "$n"))"; fail=1; fi
 keys -M logo -k a -m logo
