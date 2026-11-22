@@ -7881,7 +7881,7 @@
     </message>
     <message>
         <source>Change all similar documents to open with “%1”?</source>
-        <translation>Ouvrir tous les documents de ce type avec « %1 » ?</translation>
+        <translation>Ouvrir tous les documents de ce type avec « %1 » ?</translation>
     </message>
     <message>
         <source>This change applies to all documents of this kind (%1).</source>

@@ -151,6 +151,42 @@ TestCase {
         }
     }
 
+    // A sheet never exceeds its window: in a narrow one it narrows to the window less the side margins, its text wraps and its
+    // buttons stay whole inside the panel; in a wide one it keeps its width (Get Info's Change All... sheet, rc9 feedback).
+    function test_aSheetNeverExceedsItsWindow() {
+        const was = host.width;
+        const wasMessage = sheet.message;
+        try {
+            sheet.message = "Do you want to change all documents like this one to open with this application?";
+            sheet.open();
+            tryCompare(sheet, "visible", true);
+            wait(50);
+            const glass = materialIn(sheet);
+            const panel = glass.parent;
+            compare(panel.width, Tokens.controlSheetWidth, "a normal window keeps the sheet's width");
+            host.width = 300;
+            wait(50);
+            compare(panel.width, 300 - 2 * Tokens.spacingLg, "the window less the side margins");
+            const origin = panel.mapToItem(host, 0, 0);
+            verify(origin.x >= Tokens.spacingLg, "inside the window on the left");
+            verify(origin.x + panel.width <= host.width - Tokens.spacingLg, "inside the window on the right");
+            const buttons = buttonsIn(sheet);
+            for (const b of [byText(buttons, "Cancel"), byText(buttons, "Replace")]) {
+                const tl = b.mapToItem(panel, 0, 0);
+                verify(tl.x >= 0 && tl.x + b.width <= panel.width, b.text + " is whole inside the panel");
+            }
+            host.width = 100;
+            wait(50);
+            const confirm = byText(buttonsIn(sheet), "Replace");
+            const c = confirm.mapToItem(panel, 0, 0);
+            verify(c.x >= 0 && c.x + confirm.width <= panel.width, "even a tiny window keeps the buttons whole");
+        } finally {
+            sheet.close();
+            host.width = was;
+            sheet.message = wasMessage;
+        }
+    }
+
     function test_theShellsDialog_data() {
         return [
             {tag: "sheet", sheet: true, radius: Tokens.radiusSheet},

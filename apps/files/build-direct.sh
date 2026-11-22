@@ -86,6 +86,8 @@ moc=/usr/lib/qt6/moc
 [[ -x $moc ]] || moc=$(command -v moc-qt6 || command -v moc)
 read -r -a qt_cflags <<<"$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Qml Qt6Quick Qt6DBus Qt6Network wayland-client) -I/usr/include/qt6/QtGui/$(pkg-config --modversion Qt6Gui) -I/usr/include/qt6/QtGui/$(pkg-config --modversion Qt6Gui)/QtGui -I/usr/include/qt6/QtCore/$(pkg-config --modversion Qt6Gui)"
 read -r -a qt_libs <<<"$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Qml Qt6Quick Qt6DBus Qt6Network wayland-client)"
+max_jobs=${GRASSFIELD_BUILD_JOBS:-$(($(nproc) / 2))}
+((max_jobs >= 1)) || max_jobs=1
 # Compiles each source into $objdir in parallel; the object paths go to the global `objs`.
 compile() {
   local objdir=$1; shift
@@ -93,13 +95,16 @@ compile() {
   local pids=() status=0 src obj pid
   objs=()
   for src in "$@"; do
+    # At most max_jobs g++ at once (default nproc/2, GRASSFIELD_BUILD_JOBS overrides): about 40 sources at once starve the machine.
+    while (($(jobs -rp | wc -l) >= max_jobs)); do wait -n || status=1; done
     obj=$objdir/$(basename "${src%.cpp}").o
     objs+=("$obj")
     g++ "${cxxflags[@]}" "${kfdefs[@]}" "${defs[@]}" -I"$here/src" -I"$here/.." -I"$root/ui/i18n" -I"$out" "${kf_includes[@]}" "${qt_cflags[@]}" \
       -c "$src" -o "$obj" &
     pids+=($!)
   done
-  for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+  # 127: already reaped by `wait -n` above (a failure there is in status).
+  for pid in "${pids[@]}"; do wait "$pid" || (($? == 127)) || status=1; done
   [[ $status -eq 0 ]] || { echo "build-direct: compilation failed" >&2; exit 1; }
 }
 
