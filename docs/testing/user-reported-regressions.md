@@ -684,6 +684,120 @@ None of these reports came with a diagnostic report.
   from that tree it owns it in 0.4 s. The owner's check at a real login with 1.0.0-rc8 is still to come.
 - First shipped version: 1.0.0-rc8
 
+### URR-048: Text could not be copied or pasted in Grassfield Notes
+- Status: open
+- Severity (1.0 threshold): high
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: Grassfield Notes, select text in a note, copy, paste (in Notes or into another app); nothing is pasted. The owner
+  also asks for an audit of Notes' editing against the best note apps.
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
+### URR-049: Preview did not show Markdown (.md) files
+- Status: open
+- Severity (1.0 threshold): medium
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: open a .md file in Preview (or press Space on it in Files); its content is not shown.
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
+### URR-050: The Preview window could not be moved
+- Status: open
+- Severity (1.0 threshold): medium
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: open a file in Preview and drag its title bar; the window does not move.
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
+### URR-051: Dock settings applied to one display only
+- Status: open
+- Severity (1.0 threshold): medium
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: with three displays, Settings > Desktop & Dock > turn on hiding the Dock; it hides only on the display where the
+  pointer is. Request: choose whether a setting applies to this display or to all displays, for every such setting.
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
+### URR-052: The Dock's translucency was not the same on every display
+- Status: open
+- Severity (1.0 threshold): low
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: three displays at different scales; the Dock's glass looks right on one display and not on the others.
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
+### URR-053: No central place to choose the default app per file type (request)
+- Status: open
+- Severity (1.0 threshold): medium
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: install an Office-type app (WordCraft) and try to make it the default for Word documents; there is no setting for
+  the default app per format (follow-up of URR-043, Get Info > Change All…).
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
+### URR-054: The Trash view refreshed late after Empty Trash
+- Status: open
+- Severity (1.0 threshold): low
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: Files > Trash > Empty Trash; the items stay shown for a while before the view empties; sometimes.
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
+### URR-055: No way to choose the default terminal (request)
+- Status: open
+- Severity (1.0 threshold): low
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: look for a setting to choose which terminal app opens; there is none.
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
+### URR-056: Opening a terminal at a folder in Files went through Services (request)
+- Status: open
+- Severity (1.0 threshold): low
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: Files, a folder: opening a terminal there needs the Services menu; the owner asks for a direct way.
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
+### URR-057: The capture tools lack a full screenshot suite (request)
+- Status: open
+- Severity (1.0 threshold): low
+- Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
+  external displays)
+- Reproduction: the owner asks for capture tools as rich as the best third-party screenshot apps on macOS: capture overlay after
+  each shot, annotation, OCR, scrolling capture, recording, pinning, history.
+- Cause: not yet investigated (agent dispatched 2026-11-22)
+- Fix: none
+- Verification: pending
+- First shipped version:
+
 ## Summary
 
 | ID | Title | Severity | Status |
@@ -735,3 +849,13 @@ None of these reports came with a diagnostic report.
 | URR-045 | Google Meet's screen-sharing preview was white | high | open |
 | URR-046 | Some Open and Save windows showed the GTK file chooser instead of Grassfield's panel | medium | fixed in source |
 | URR-047 | The portal frontend took about 26 s to start at login | medium | fixed in source |
+| URR-048 | Text could not be copied or pasted in Grassfield Notes | high | open |
+| URR-049 | Preview did not show Markdown (.md) files | medium | open |
+| URR-050 | The Preview window could not be moved | medium | open |
+| URR-051 | Dock settings applied to one display only | medium | open |
+| URR-052 | The Dock's translucency was not the same on every display | low | open |
+| URR-053 | No central place to choose the default app per file type (request) | medium | open |
+| URR-054 | The Trash view refreshed late after Empty Trash | low | open |
+| URR-055 | No way to choose the default terminal (request) | low | open |
+| URR-056 | Opening a terminal at a folder in Files went through Services (request) | low | open |
+| URR-057 | The capture tools lack a full screenshot suite (request) | low | open |
