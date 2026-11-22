@@ -3,7 +3,7 @@
 // decision Q1 = S2; docs/specs/system-dialogs.md section 5).
 //
 // Usage: grassfield-prompter [--peer-unit UNIT] [--socket PATH] [--nm-timeout-ms N] [--bt-timeout-ms N]
-//                            [--kio-store-timeout-ms N] [--version]
+//                            [--kio-store-timeout-ms N] [--queue-timeout-ms N] [--version]
 //   --peer-unit UNIT   the systemd unit whose process may connect as the shell (default grassfield-security.service, the
 //                      security process that draws the sheets since ADR-0041 S3); set by
 //                      grassfield-prompter.service. Only an argument: no environment variable changes it.
@@ -14,6 +14,8 @@
 //                      (default 55000, under bluetoothd's own 60 s)
 //   --kio-store-timeout-ms N  development runs only (the tests): how long a KIO password on its way to the keychain holds
 //                      one of the stores' places (default 120000)
+//   --queue-timeout-ms N  development runs only (the tests): how long an application's request waits for a place among the
+//                      shell's 8 (B-05 amended, owner decision 2026-11-22; default 110000)
 // KIO's password server (step 9e) is on the session bus; the Secret Service it remembers passwords in is reached through
 // libsecret's own connection to that bus.
 // The system bus (the NetworkManager secret agent, step 9c; the BlueZ pairing agent, step 10): in the session always
@@ -132,6 +134,7 @@ int main(int argc, char** argv) {
     int               nmTimeoutMs = 0; // 0: the default
     int               btTimeoutMs = 0; // 0: the default
     int               storeTimeoutMs = 0; // 0: the default
+    int               queueTimeoutMs = 0; // 0: the default
     const QStringList args     = QCoreApplication::arguments();
     for (qsizetype i = 1; i < args.size(); ++i) {
         if (args.at(i) == QLatin1String("--version")) {
@@ -173,7 +176,16 @@ int main(int argc, char** argv) {
             }
             continue;
         }
-        std::fprintf(stderr, "usage: grassfield-prompter [--peer-unit UNIT] [--socket PATH] [--nm-timeout-ms N] [--bt-timeout-ms N] [--kio-store-timeout-ms N] [--version]\n");
+        if (args.at(i) == QLatin1String("--queue-timeout-ms") && i + 1 < args.size()) {
+            bool ok        = false;
+            queueTimeoutMs = args.at(++i).toInt(&ok);
+            if (!ok || queueTimeoutMs < 100 || queueTimeoutMs > kWaitMs) {
+                std::fprintf(stderr, "grassfield-prompter: --queue-timeout-ms takes 100 to %d\n", kWaitMs);
+                return 2;
+            }
+            continue;
+        }
+        std::fprintf(stderr, "usage: grassfield-prompter [--peer-unit UNIT] [--socket PATH] [--nm-timeout-ms N] [--bt-timeout-ms N] [--kio-store-timeout-ms N] [--queue-timeout-ms N] [--version]\n");
         return 2;
     }
 
@@ -197,6 +209,8 @@ int main(int argc, char** argv) {
         return refuse(QStringLiteral("--bt-timeout-ms is for development runs only"));
     if (storeTimeoutMs && !dev)
         return refuse(QStringLiteral("--kio-store-timeout-ms is for development runs only"));
+    if (queueTimeoutMs && !dev)
+        return refuse(QStringLiteral("--queue-timeout-ms is for development runs only"));
     // The system bus of the NetworkManager and BlueZ agents: the real one in the session, only a private test bus in a
     // development run.
     QString systemAddress;
@@ -268,6 +282,8 @@ int main(int argc, char** argv) {
     if (btTimeoutMs)
         options.btTimeoutMs = btTimeoutMs;
     options.kioStoreTimeoutMs = storeTimeoutMs;
+    if (queueTimeoutMs)
+        options.queueTimeoutMs = queueTimeoutMs;
     int rc = 0;
     {
         Bridge  bridge(bus, options);

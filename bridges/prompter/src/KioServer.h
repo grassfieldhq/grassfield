@@ -47,7 +47,8 @@
 //   whatever worker plugin it is given) is the role "kio", whose text is another program's; else an app or "Unidentified
 //   program". The server's name is a field of Grassfield's sentence, a host name only (KioAuth.h serverLabel).
 // - Bounds: at most 8 requests (checks and queries) open per caller connection and 32 in all, beyond which a request is
-//   answered "nothing" at once; a query shares the shell's bound of 8 with gcr's and NetworkManager's requests; at most 8
+//   answered "nothing" at once; a query shares the shell's bound of 8 with gcr's and NetworkManager's requests, and
+//   waits in the bridge's applications' queue for a place past its share (B-05 amended, owner decision 2026-11-22); at most 8
 //   stores holding a place and 32 alive; the cache's entries (KioAuth.h). No time limit on a sheet (KIO's client has none
 //   either).
 // - Nothing secret is logged: request ids, kinds, servers, roles, refusals and why.
@@ -107,10 +108,13 @@ namespace gf::prompter {
         class Sink {
           public:
             virtual ~Sink() = default;
-            // Show `request` in the shell: its id when it went, empty when it cannot (no shell, a shell that does not draw
-            // "kio", the bound of 8). The request may end inside this call (the shell lost while sending).
+            // Show `request` in the shell: its id when it went or waits for a place among the shell's 8 (B-05 amended:
+            // the bridge sends it on its turn, or ends it through abandon()), empty when it cannot (no shell, a shell that
+            // does not draw "kio", the applications' queue full). The request may end inside this call (the shell lost
+            // while sending).
             virtual QString submitKio(KioRequest* request) = 0;
-            // The server ended a request the shell holds (its caller left the bus): the shell is told "cancel".
+            // The server ended a request the shell holds or that waits for its turn (its caller left the bus): the shell is
+            // told "cancel" when it was sent.
             virtual void withdrawKio(const QString& id) = 0;
         };
 
