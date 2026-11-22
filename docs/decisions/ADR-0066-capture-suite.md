@@ -152,7 +152,7 @@ evaluates both:
   address `hyprctl clients` prints. The headers do not show how Hyprland maps that handle to a window. The spike finds out
   (expected: the low 32 bits of the address). The client refuses when two live windows share those bits.
 - `capture_toplevel_with_wlr_toplevel_handle` (:129) takes a `zwlr_foreign_toplevel_handle_v1`. The client lists the wlr
-  foreign toplevels and matches the window by app id, title and geometry against `hyprctl clients`. It is preferred when
+  foreign toplevels and matches the window by app id, title and state (the wlr handle carries no geometry) against `hyprctl clients`. It is preferred when
   the match is unique.
 
 The spike also checks whether Hyprland 0.56 returns black for, or refuses, a `no_screen_share` window (the fail-closed rule in
@@ -282,7 +282,7 @@ keystroke display, is blocked until the owner answers. If the owner says yes, th
 and sheets.
 
 **For the opus security reviews** (slices C2, C4, C9, B22, A3, B7, B14, and D2 only if the owner says yes to Q-3):
-- the result-file path checks before `gio trash`, Copy and Show in Files (a regular file, not a link, in the named folder);
+- the result-file path checks before `gio trash`, Copy and Show in Files (a regular file, not a link, inside one of the configured Save-to folders, never the folder a result names);
 - recognised text is sensitive: the result file's `text` field is runtime-only (0600) and the history index holds none;
 - the freeze and scroll channel's validation (D-1);
 - `--grab-window` and hidden windows.
