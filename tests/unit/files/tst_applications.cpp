@@ -1304,3 +1304,38 @@ TEST(BundledApps, TheSeedNeverTargetsAnEntryThatCannotRunOrThatReadsTwoWays)
         EXPECT_TRUE(sessionDefaults(t).contains(QStringLiteral("x-scheme-handler/http"))) << form;
     }
 }
+
+// Review of the Default Apps change: the session's one writer never writes through a symbolic link (the save would replace
+// whatever file the link names); a plain list is written, every other line kept, also for an application that lists no type.
+TEST(DefaultApps, TheSessionWriterRefusesALinkAndKeepsTheOtherLines)
+{
+    QTemporaryDir tmp;
+    ASSERT_TRUE(tmp.isValid());
+    const QString list = tmp.filePath(QStringLiteral("grassfield-mimeapps.list"));
+    const QString target = tmp.filePath(QStringLiteral("dotfiles-mimeapps.list"));
+    {
+        QFile f(target);
+        ASSERT_TRUE(f.open(QIODevice::WriteOnly));
+        f.write("[Default Applications]\ntext/plain=editor.desktop;\n");
+    }
+    ASSERT_TRUE(QFile::link(target, list));
+    EXPECT_FALSE(DefaultApps::writeSessionDefaults(list, {QStringLiteral("application/msword")}, QStringLiteral("wordcraft.desktop")));
+    QFile t(target);
+    ASSERT_TRUE(t.open(QIODevice::ReadOnly));
+    EXPECT_EQ(t.readAll(), QByteArray("[Default Applications]\ntext/plain=editor.desktop;\n")) << "the linked file is untouched";
+    t.close();
+    EXPECT_TRUE(QFileInfo(list).isSymLink()) << "the link stays a link";
+
+    ASSERT_TRUE(QFile::remove(list));
+    ASSERT_TRUE(QFile::copy(target, list));
+    EXPECT_TRUE(DefaultApps::writeSessionDefaults(list, {QStringLiteral("application/msword"), QStringLiteral("application/vnd.ms-word.document.macroEnabled.12")},
+                                                  QStringLiteral("webapp-docs.desktop")));
+    QString text;
+    ASSERT_TRUE(DefaultApps::readListFile(list, true, &text));
+    const QHash<QString, QString> d = DefaultApps::defaults(text);
+    EXPECT_EQ(d.value(QStringLiteral("text/plain")), QStringLiteral("editor.desktop"));
+    EXPECT_EQ(d.value(QStringLiteral("application/msword")), QStringLiteral("webapp-docs.desktop"));
+    EXPECT_EQ(d.value(QStringLiteral("application/vnd.ms-word.document.macroEnabled.12")), QStringLiteral("webapp-docs.desktop"));
+    EXPECT_FALSE(DefaultApps::writeSessionDefaults(list, {QStringLiteral("not a type")}, QStringLiteral("a.desktop")));
+    EXPECT_FALSE(DefaultApps::writeSessionDefaults(list, {QStringLiteral("text/plain")}, QStringLiteral("../a.desktop")));
+}

@@ -1398,9 +1398,10 @@ bool writeSessionDefaults(const QString &path, const QStringList &types, const Q
             return false;
     }
     // A regular file of a sane size in UTF-8 (one that is not valid UTF-8 is left as it is: rewriting it would re-encode bytes
-    // that are not Grassfield's).
+    // that are not Grassfield's), never a symbolic link: the save would go through it to whatever file it names (a dotfile
+    // manager's, another program's), and the session's list is Grassfield's own file (review of the Default Apps change).
     QString text;
-    if (!readListFile(path, false, &text))
+    if (QFileInfo(path).isSymLink() || !readListFile(path, true, &text))
         return false;
     QString next = text;
     for (const QString &type : types)

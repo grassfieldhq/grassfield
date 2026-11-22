@@ -2913,14 +2913,10 @@ bool FilesApp::setDefaultApplication(const QString &mimeType, const QString &sto
     if (!service || mimeType.isEmpty() || !QMimeDatabase().mimeTypeForName(mimeType).isValid())
         return false;
     if (DefaultApps::grassfieldDesktop(qEnvironmentVariable("XDG_CURRENT_DESKTOP"))) {
-        // The Grassfield session's own list (decision F-19), read and rewritten whole (a link is written through to its file).
+        // The Grassfield session's own list (decision F-19), read and rewritten whole by the session's one writer, shared with
+        // Settings > Desktop & Dock > Default Apps (DefaultApps::writeSessionDefaults), which never writes through a link.
         const QString dir = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
-        QString path = dir + QLatin1Char('/') + QLatin1String(DefaultApps::kListName);
-        const QFileInfo info(path);
-        if (info.isSymLink())
-            path = info.canonicalFilePath();
-        // The session's one writer, shared with Settings > Desktop & Dock > Default Apps (DefaultApps::writeSessionDefaults).
-        if (path.isEmpty() || !DefaultApps::writeSessionDefaults(path, {mimeType}, service->storageId()))
+        if (dir.isEmpty() || !DefaultApps::writeSessionDefaults(dir + QLatin1Char('/') + QLatin1String(DefaultApps::kListName), {mimeType}, service->storageId()))
             return false;
     } else {
         // The user's mimeapps.list (XDG): the Finder's Change All… for every document of this type.
