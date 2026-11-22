@@ -18,6 +18,7 @@
 #include <QTextFragment>
 #include <QTextImageFormat>
 #include <QUrl>
+#include <QtMath>
 
 #include <algorithm>
 
@@ -227,6 +228,7 @@ QString markdownHtml(const QString &markdown, const MarkdownImageResolver &image
     };
     QList<Change> changes;
     int asked = 0;
+    qint64 spent = 0; // bytes of served pixels shown so far
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
         for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
             const QTextFragment fragment = it.fragment();
@@ -236,15 +238,21 @@ QString markdownHtml(const QString &markdown, const MarkdownImageResolver &image
             if (format.isImageFormat()) {
                 QTextImageFormat picture = format.toImageFormat();
                 QSize size;
-                const QString url = asked < kMaxMarkdownImages && image ? image(picture.name(), &size) : QString();
+                QString id = asked < kMaxMarkdownImages && image ? image(picture.name(), &size) : QString();
                 ++asked;
+                const QSize served = size.isValid() ? markdownServedSize(size) : QSize();
+                const qint64 cost = qint64(served.width()) * served.height() * 4;
+                if (!id.isEmpty() && served.isValid() && spent + cost <= kMarkdownImageBudgetBytes)
+                    spent += cost;
+                else
+                    id.clear();
                 Change c;
                 c.position = fragment.position();
                 c.length = fragment.length();
-                if (!url.isEmpty() && size.isValid()) {
-                    picture.setName(url);
-                    picture.setWidth(size.width());
-                    picture.setHeight(size.height());
+                if (!id.isEmpty()) {
+                    picture.setName(QStringLiteral("image://preview/fit/%1x%2/%3").arg(served.width()).arg(served.height()).arg(id));
+                    picture.setWidth(served.width());
+                    picture.setHeight(served.height());
                     picture.setProperty(QTextFormat::ImageTitle, QVariant());
                     c.format = picture;
                 } else {
@@ -281,6 +289,58 @@ QString markdownHtml(const QString &markdown, const MarkdownImageResolver &image
     static const QRegularExpression body(QStringLiteral("<body style=\"[^\"]*\">"));
     html.replace(body, QStringLiteral("<body>"));
     return html;
+}
+
+QSize markdownServedSize(const QSize &natural)
+{
+    if (natural.width() <= 0 || natural.height() <= 0)
+        return {};
+    if (natural.width() <= kMarkdownImageMaxSide && natural.height() <= kMarkdownImageMaxSide)
+        return natural;
+    const QSize s = natural.scaled(kMarkdownImageMaxSide, kMarkdownImageMaxSide, Qt::KeepAspectRatio);
+    return QSize(qMax(1, s.width()), qMax(1, s.height()));
+}
+
+int fitMarkdownImages(QTextDocument *document, qreal maxWidth)
+{
+    if (!document || maxWidth <= 0)
+        return 0;
+    static const QRegularExpression served(QStringLiteral("^image://preview/fit/(\\d+)x(\\d+)/"));
+    struct Change {
+        int position;
+        int length;
+        QTextImageFormat format;
+    };
+    QList<Change> changes;
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || !fragment.charFormat().isImageFormat())
+                continue;
+            QTextImageFormat picture = fragment.charFormat().toImageFormat();
+            const QRegularExpressionMatch m = served.match(picture.name());
+            if (!m.hasMatch())
+                continue;
+            const qreal w = m.captured(1).toDouble();
+            const qreal h = m.captured(2).toDouble();
+            if (w <= 0 || h <= 0)
+                continue;
+            const qreal width = qMin(w, qFloor(maxWidth));
+            const qreal height = qMax<qreal>(1, qRound(h * width / w));
+            if (qAbs(picture.width() - width) < 0.5 && qAbs(picture.height() - height) < 0.5)
+                continue;
+            picture.setWidth(width);
+            picture.setHeight(height);
+            changes.append({fragment.position(), fragment.length(), picture});
+        }
+    }
+    for (const Change &c : changes) {
+        QTextCursor cursor(document);
+        cursor.setPosition(c.position);
+        cursor.setPosition(c.position + c.length, QTextCursor::KeepAnchor);
+        cursor.setCharFormat(c.format);
+    }
+    return int(changes.size());
 }
 
 QString kindName(Kind kind)

@@ -162,7 +162,7 @@ TEST(PreviewApp, MarkdownIsRenderedWithItsPicturesFromTheProvider)
     EXPECT_EQ(doc.value(QStringLiteral("text")).toString().left(7), QStringLiteral("# Hello"));
     const QString html = doc.value(QStringLiteral("html")).toString();
     const int token = app.tokenFor(QFileInfo(dir.filePath(QStringLiteral("pic.png"))).canonicalFilePath());
-    EXPECT_TRUE(html.contains(QStringLiteral("<img src=\"image://preview/0/%1\"").arg(token))) << qPrintable(html);
+    EXPECT_TRUE(html.contains(QStringLiteral("<img src=\"image://preview/fit/30x10/%1\"").arg(token))) << qPrintable(html);
     EXPECT_FALSE(html.contains(QStringLiteral("example.com")));
     const QVariantMap large = app.inspect(1);
     EXPECT_TRUE(large.value(QStringLiteral("ok")).toBool());
@@ -172,4 +172,48 @@ TEST(PreviewApp, MarkdownIsRenderedWithItsPicturesFromTheProvider)
     const QVariantMap plain = app.inspect(2);
     EXPECT_FALSE(plain.contains(QStringLiteral("markdown")));
     EXPECT_FALSE(plain.contains(QStringLiteral("html")));
+}
+
+// Review 2026-11-22 (MEDIUM): a document's picture is decoded at its served size ("fit/<w>x<h>/<token>"), never at the
+// file's; a size past kMarkdownImageMaxSide or an unknown token gives nothing.
+TEST(PreviewApp, MarkdownPicturesAreDecodedAtTheirServedSize)
+{
+    ensureApp();
+    QTemporaryDir dir;
+    ASSERT_TRUE(QImage(3000, 1000, QImage::Format_RGB32).save(dir.filePath(QStringLiteral("wide.png"))));
+    PreviewApp app({dir.filePath(QStringLiteral("wide.png"))}, {}, false);
+    const int token = app.tokenFor(dir.filePath(QStringLiteral("wide.png")));
+    PreviewImageProvider provider(&app);
+    QSize size;
+    const QImage image = provider.requestImage(QStringLiteral("fit/600x200/%1").arg(token), &size, QSize());
+    EXPECT_EQ(image.size(), QSize(600, 200));
+    EXPECT_EQ(size, QSize(600, 200));
+    // Whatever the rich text asks for, the served size bounds it.
+    EXPECT_EQ(provider.requestImage(QStringLiteral("fit/600x200/%1").arg(token), &size, QSize(3000, 1000)).size(), QSize(600, 200));
+    EXPECT_TRUE(provider.requestImage(QStringLiteral("fit/%1x10/%2").arg(preview::kMarkdownImageMaxSide + 1).arg(token), &size, QSize()).isNull());
+    EXPECT_TRUE(provider.requestImage(QStringLiteral("fit/600x200/999"), &size, QSize()).isNull());
+    EXPECT_TRUE(provider.requestImage(QStringLiteral("fit/0x200/%1").arg(token), &size, QSize()).isNull());
+    EXPECT_TRUE(provider.requestImage(QStringLiteral("fit/600x200/%1/x").arg(token), &size, QSize()).isNull());
+}
+
+// Review 2026-11-22 (LOW-MEDIUM): the Glance sized its window from inspectFirst(), on the window's thread, which read the
+// whole first text and rendered its Markdown (pictures probed). It now gives the kind (and a picture's size) only.
+TEST(PreviewApp, InspectFirstReadsNoTextAndRendersNoMarkdown)
+{
+    ensureApp();
+    QTemporaryDir dir;
+    write(dir.filePath(QStringLiteral("doc.md")), "# Hello\n\n![p](pic.png)\n");
+    ASSERT_TRUE(QImage(30, 10, QImage::Format_RGB32).save(dir.filePath(QStringLiteral("pic.png"))));
+    PreviewApp md({dir.filePath(QStringLiteral("doc.md"))}, {}, true);
+    const QVariantMap first = md.inspectFirst();
+    EXPECT_TRUE(first.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(first.value(QStringLiteral("kind")).toString(), QStringLiteral("text"));
+    EXPECT_FALSE(first.contains(QStringLiteral("text")));
+    EXPECT_FALSE(first.contains(QStringLiteral("html")));
+    EXPECT_EQ(md.tokenFor(QStringLiteral("/a/new/path")), 1) << "no picture of the document was given a token";
+    PreviewApp picture({dir.filePath(QStringLiteral("pic.png"))}, {}, true);
+    const QVariantMap p = picture.inspectFirst();
+    EXPECT_TRUE(p.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(p.value(QStringLiteral("width")).toInt(), 30);
+    EXPECT_EQ(p.value(QStringLiteral("height")).toInt(), 10);
 }

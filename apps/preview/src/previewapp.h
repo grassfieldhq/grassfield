@@ -5,6 +5,7 @@
 #include <QMutex>
 #include <QObject>
 #include <QQuickImageProvider>
+#include <QQuickTextDocument>
 #include <QSet>
 #include <QStringList>
 #include <QThread>
@@ -107,8 +108,14 @@ public:
     // The snippet of file `index` read on a worker thread, kept by token: "" until it is in (snippetsChanged() then; the
     // sidebar's delegates read it again). Never reads on the window's thread.
     Q_INVOKABLE QString snippetFor(int index);
-    // The same for the file that was opened first (stays that file when the folder list replaces the files).
+    // What the Glance needs to size its window for the file that was opened first (stays that file when the folder list
+    // replaces the files): {ok, kind}, and a picture's width and height (its header only). Synchronous, as the window is sized
+    // before it maps, so it never reads a text, never renders Markdown and never probes a document's pictures: the content's
+    // full inspection runs on the worker (requestInspect, Content.qml; review 2026-11-22).
     Q_INVOKABLE QVariantMap inspectFirst() const;
+    // Fits the pictures of a rendered Markdown document in `document` (TextEdit.textDocument) to `maxWidth`, changing only
+    // their formats (preview::fitMarkdownImages): a resize never parses the text again and keeps the selection.
+    Q_INVOKABLE int fitMarkdownImages(QQuickTextDocument *document, qreal maxWidth) const;
     // Start the full viewer (Glance "Open with Preview"); detached. When the list is the folder of one file (browsing)
     // only file `current` is passed (the viewer browses its folder again); otherwise every file, the viewer starting at
     // `current`.

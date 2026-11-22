@@ -22,6 +22,8 @@
 #include <QMimeDatabase>
 #include <QPainter>
 #include <QProcess>
+#include <QRegularExpression>
+#include <QTextDocument>
 #include <QStandardPaths>
 
 #include <memory>
@@ -353,7 +355,20 @@ QString PreviewApp::textSnippet(int index) const
 
 QVariantMap PreviewApp::inspectFirst() const
 {
-    return inspectPath(m_firstPath);
+    const preview::Kind kind = m_firstPath.isEmpty() ? preview::Kind::Unsupported : preview::classify(m_firstPath);
+    // A picture's size comes from its header (the image branch of inspectPath). Any other kind sizes the window by its kind
+    // alone: its content (a text, a Markdown document and its pictures) is read on the worker by the view.
+    if (kind == preview::Kind::Image)
+        return inspectPath(m_firstPath);
+    const QFileInfo info(m_firstPath);
+    return QVariantMap{{QStringLiteral("ok"), kind != preview::Kind::Unsupported && info.isFile() && info.isReadable()},
+                       {QStringLiteral("kind"), preview::kindName(kind)},
+                       {QStringLiteral("name"), info.fileName()}};
+}
+
+int PreviewApp::fitMarkdownImages(QQuickTextDocument *document, qreal maxWidth) const
+{
+    return document ? preview::fitMarkdownImages(document->textDocument(), maxWidth) : 0;
 }
 
 QVariantMap PreviewApp::inspectPath(const QString &path) const
@@ -454,7 +469,7 @@ QVariantMap PreviewApp::inspectPath(const QString &path) const
                 const QString folder = info.absolutePath();
                 out[QStringLiteral("html")] = preview::markdownHtml(text, [this, &folder](const QString &target, QSize *size) {
                     const QString picture = preview::markdownImagePath(target, folder, size);
-                    return picture.isEmpty() ? QString() : QStringLiteral("image://preview/0/%1").arg(tokenFor(picture));
+                    return picture.isEmpty() ? QString() : QString::number(tokenFor(picture));
                 });
             }
         }
@@ -681,6 +696,42 @@ PreviewImageProvider::PreviewImageProvider(const PreviewApp *app)
 
 QImage PreviewImageProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
 {
+    // A picture of a Markdown document: "fit/<w>x<h>/<token>", decoded at that size (at most kMarkdownImageMaxSide per side;
+    // where the format scales while decoding, never at the file's size), whatever size the rich text asks for.
+    if (id.startsWith(QLatin1String("fit/"))) {
+        static const QRegularExpression fit(QStringLiteral("^fit/(\\d{1,5})x(\\d{1,5})/(\\d{1,9})$"));
+        const QRegularExpressionMatch m = fit.match(id);
+        if (!m.hasMatch())
+            return {};
+        const QSize box(m.captured(1).toInt(), m.captured(2).toInt());
+        if (box.isEmpty() || box.width() > preview::kMarkdownImageMaxSide || box.height() > preview::kMarkdownImageMaxSide)
+            return {};
+        const QString path = m_app->pathForToken(m.captured(3).toInt());
+        if (path.isEmpty() || preview::vectorTooLarge(path, QFileInfo(path).size()))
+            return {};
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        if (!reader.canRead())
+            return {};
+        const QSize native = displaySize(reader);
+        if (!native.isValid() || !preview::imageSizeAllowed(native))
+            return {};
+        const QSize raw = reader.size();
+        if (raw.isValid() && (native.width() > box.width() || native.height() > box.height())) {
+            QSize stored = box;
+            if (reader.transformation() & QImageIOHandler::TransformationRotate90)
+                stored.transpose();
+            reader.setScaledSize(raw.scaled(stored, Qt::KeepAspectRatio));
+        }
+        QImage image = reader.read();
+        if (image.isNull() || !preview::imageSizeAllowed(image.size()))
+            return {};
+        if (image.width() > box.width() || image.height() > box.height())
+            image = image.scaled(box, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        if (size)
+            *size = image.size();
+        return image;
+    }
     const int slash = id.indexOf(QLatin1Char('/'));
     const bool thumbnail = id.startsWith(QLatin1String("thumb/"));
     bool okFrame = false;

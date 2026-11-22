@@ -7,6 +7,10 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QTemporaryDir>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextImageFormat>
 #include <QUrl>
 
 #include <sys/stat.h>
@@ -562,7 +566,7 @@ TEST(Markdown, RendersWithItsOwnTagsAsText)
                                           if (target != QLatin1String("a.png"))
                                               return QString();
                                           *size = QSize(800, 600);
-                                          return QStringLiteral("image://preview/0/3");
+                                          return QStringLiteral("3");
                                       });
     EXPECT_TRUE(html.contains(QStringLiteral("<h1")));
     EXPECT_TRUE(html.contains(QStringLiteral("font-weight:700;\">bold")));
@@ -570,7 +574,7 @@ TEST(Markdown, RendersWithItsOwnTagsAsText)
     EXPECT_TRUE(html.contains(QStringLiteral("<table")));
     EXPECT_TRUE(html.contains(QStringLiteral("<a href=\"https://example.com\">site</a>")));
     // The shown picture comes from the provider, with its size; the other one is its alternative text.
-    EXPECT_TRUE(html.contains(QStringLiteral("<img src=\"image://preview/0/3\"")));
+    EXPECT_TRUE(html.contains(QStringLiteral("<img src=\"image://preview/fit/800x600/3\"")));
     EXPECT_TRUE(html.contains(QStringLiteral("width=\"800\" height=\"600\"")));
     EXPECT_FALSE(html.contains(QStringLiteral("https://x/y.png")));
     EXPECT_TRUE(html.contains(QStringLiteral(" remote")));
@@ -593,8 +597,71 @@ TEST(Markdown, PicturesPerDocumentAreBounded)
     const QString html = markdownHtml(md, [&asked](const QString &, QSize *size) {
         ++asked;
         *size = QSize(10, 10);
-        return QStringLiteral("image://preview/0/1");
+        return QStringLiteral("1");
     });
     EXPECT_EQ(asked, kMaxMarkdownImages);
     EXPECT_EQ(html.count(QStringLiteral("<img ")), kMaxMarkdownImages);
+}
+
+// Review 2026-11-22 (MEDIUM): the pictures of a document had no total memory bound and were decoded at the file's size. Now
+// each one is served at most kMarkdownImageMaxSide per side, and all of them together at most kMarkdownImageBudgetBytes;
+// past it, a picture shows its alternative text.
+TEST(Markdown, PicturesAreServedSmallAndWithinABudget)
+{
+    EXPECT_EQ(markdownServedSize(QSize(800, 600)), QSize(800, 600));
+    EXPECT_EQ(markdownServedSize(QSize(16384, 4096)), QSize(kMarkdownImageMaxSide, kMarkdownImageMaxSide / 4));
+    EXPECT_EQ(markdownServedSize(QSize(100, 16384)), QSize(12, kMarkdownImageMaxSide));
+    EXPECT_FALSE(markdownServedSize(QSize()).isValid());
+    // 64 huge, highly compressible pictures, each served at 2048 x 2048 (16 MiB): only 16 fit the budget (256 MiB) and the
+    // others show their alternative text.
+    QString md;
+    for (int i = 0; i < kMaxMarkdownImages; ++i)
+        md += QStringLiteral("![square %1](p.png)\n\n").arg(i);
+    const QString html = markdownHtml(md, [](const QString &, QSize *size) {
+        *size = QSize(16384, 16384);
+        return QStringLiteral("7");
+    });
+    const qint64 each = qint64(kMarkdownImageMaxSide) * kMarkdownImageMaxSide * 4;
+    const int shown = int(kMarkdownImageBudgetBytes / each);
+    EXPECT_EQ(html.count(QStringLiteral("<img ")), shown);
+    EXPECT_EQ(html.count(QStringLiteral("image://preview/fit/%1x%1/7").arg(kMarkdownImageMaxSide)), shown);
+    EXPECT_TRUE(html.contains(QStringLiteral("square %1").arg(shown))) << "the first picture past the budget is its alternative text";
+    EXPECT_FALSE(html.contains(QStringLiteral("square %1").arg(0))) << "a shown picture is not its alternative text";
+}
+
+// Review 2026-11-22 (LOW): a resize re-parsed the document to resize its pictures. fitMarkdownImages changes the picture
+// formats only: the text, the cursor's selection and the served sizes stay.
+TEST(Markdown, PicturesFitTheColumnWithoutANewParse)
+{
+    const QString html = markdownHtml(QStringLiteral("Before ![a](a.png) between ![b](b.png) after\n"), [](const QString &t, QSize *size) {
+        *size = t == QLatin1String("a.png") ? QSize(1600, 800) : QSize(100, 50);
+        return t == QLatin1String("a.png") ? QStringLiteral("1") : QStringLiteral("2");
+    });
+    QTextDocument doc;
+    doc.setHtml(html);
+    const QString text = doc.toPlainText();
+    QTextCursor selection(&doc);
+    selection.setPosition(0);
+    selection.setPosition(6, QTextCursor::KeepAnchor);
+    const auto sizes = [&doc] {
+        QList<QSizeF> out;
+        for (QTextBlock b = doc.begin(); b.isValid(); b = b.next())
+            for (auto it = b.begin(); !it.atEnd(); ++it)
+                if (it.fragment().charFormat().isImageFormat()) {
+                    const QTextImageFormat f = it.fragment().charFormat().toImageFormat();
+                    out << QSizeF(f.width(), f.height());
+                }
+        return out;
+    };
+    EXPECT_EQ(sizes(), (QList<QSizeF>{QSizeF(1600, 800), QSizeF(100, 50)}));
+    EXPECT_EQ(fitMarkdownImages(&doc, 400.7), 1);
+    EXPECT_EQ(sizes(), (QList<QSizeF>{QSizeF(400, 200), QSizeF(100, 50)})) << "shrunk to the column, a small one never enlarged";
+    EXPECT_EQ(fitMarkdownImages(&doc, 400), 0) << "nothing to change at the same width";
+    EXPECT_EQ(fitMarkdownImages(&doc, 5000), 1);
+    EXPECT_EQ(sizes(), (QList<QSizeF>{QSizeF(1600, 800), QSizeF(100, 50)})) << "never past the served size";
+    EXPECT_EQ(doc.toPlainText(), text);
+    EXPECT_EQ(selection.selectionStart(), 0);
+    EXPECT_EQ(selection.selectionEnd(), 6);
+    EXPECT_EQ(fitMarkdownImages(nullptr, 400), 0);
+    EXPECT_EQ(fitMarkdownImages(&doc, 0), 0);
 }

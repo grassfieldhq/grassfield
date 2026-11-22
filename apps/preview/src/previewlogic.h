@@ -8,6 +8,8 @@
 #include <atomic>
 #include <functional>
 
+class QTextDocument;
+
 // Pure logic of Grassfield Preview (no GUI): argument validation, file-type routing and size caps.
 // Everything the viewer opens is untrusted: only local regular files, bounded sizes.
 namespace preview {
@@ -42,14 +44,28 @@ bool isMarkdown(const QString &path);
 // kMaxVectorBytes) gives its canonical path and its displayed size; anything else (http, data:, a missing file, a FIFO, a
 // text file, a picture too large) gives "": the document never makes Preview fetch anything or open a device.
 QString markdownImagePath(const QString &target, const QString &baseDir, QSize *size = nullptr);
+// A picture of a document is served at most this many pixels per side (shrunk with its aspect ratio, never enlarged): the
+// decode follows the size it is shown at, not the file's (review 2026-11-22: a 16384 x 4096 PNG decoded whole per picture).
+constexpr int kMarkdownImageMaxSide = 2048;
+// The pixels (4 bytes each, at the served size) all the pictures of one document may take; a picture past it shows its
+// alternative text (64 highly compressible 16384 x 4096 PNGs would otherwise have been 16 GiB).
+constexpr qint64 kMarkdownImageBudgetBytes = 256LL * 1024 * 1024;
+// The size a picture of `natural` size is served at (kMarkdownImageMaxSide box, aspect ratio kept, at least 1 x 1).
+QSize markdownServedSize(const QSize &natural);
 // The HTML of a rendered Markdown document for a read-only rich text view: Qt's own reader (QTextDocument::setMarkdown, the
 // GitHub dialect: tables, task lists, strikethrough, autolinks) with raw HTML off, so the document's own tags stay text.
-// Every picture goes through `image(target, &size)`, which answers the URL to show it from (Preview's image provider) or ""
-// to show its alternative text instead; at most kMaxMarkdownImages are asked. Links keep their target (the view decides
-// what a click does) and take the view's link colour (no colour of their own). The body carries no font, so the view's
-// font (family, size, zoom) applies.
+// Every picture goes through `image(target, &size)`, which answers an id of the picture for Preview's image provider (its
+// file token) and its natural size, or "" to show its alternative text instead; at most kMaxMarkdownImages are asked and
+// at most kMarkdownImageBudgetBytes of served pixels are shown. A shown picture points at
+// `image://preview/fit/<w>x<h>/<id>` with its served size (the provider decodes it at that size). Links keep their target
+// (the view decides what a click does) and take the view's link colour (no colour of their own). The body carries no font,
+// so the view's font (family, size, zoom) applies.
 using MarkdownImageResolver = std::function<QString(const QString &target, QSize *size)>;
 QString markdownHtml(const QString &markdown, const MarkdownImageResolver &image);
+// Fits the pictures of a rendered document (those served by `image://preview/fit/<w>x<h>/...`) to `maxWidth`: each one is
+// laid out at its served size or narrower, aspect ratio kept. Only the picture formats change (no new parse of the text,
+// so the view keeps its selection and its scroll). Returns how many pictures changed size.
+int fitMarkdownImages(QTextDocument *document, qreal maxWidth);
 
 // The first lines of a text file for a sidebar thumbnail: at most 12 lines of 40 characters, control characters and tabs
 // replaced by spaces; "" for an empty or unreadable file. Only a regular file is read (a FIFO or a device would block or

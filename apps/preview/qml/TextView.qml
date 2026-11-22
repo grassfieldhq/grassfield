@@ -158,7 +158,9 @@ Item {
         }
 
         // The rendered Markdown: rich text made by the backend from Qt's own Markdown reader (its raw HTML off), pictures
-        // only from Preview's image provider, fitted to the column (Markdown.js). Read only, selectable; Copy gives the text.
+        // only from Preview's image provider at their served size, laid out no wider than the column: the backend's
+        // fitMarkdownImages changes the picture formats only, so a resize never parses the text again and keeps the
+        // selection. Read only, selectable; Copy gives the text.
         TextEdit {
             id: rich
             objectName: "markdownText"
@@ -171,7 +173,8 @@ Item {
             persistentSelection: true
             textFormat: TextEdit.RichText
             wrapMode: TextEdit.Wrap
-            text: root.rendered ? Markdown.styled(root.info.html, rich.width, {link: Appearance.colors.accent, code: Appearance.chipFill}) : ""
+            // Code blocks on the control fill, which shows in both appearances (light: black at 6 %, dark: white at 14 %).
+            text: root.rendered ? Markdown.styled(root.info.html, {link: Appearance.colors.accent, code: Appearance.buttonFill}) : ""
             color: Appearance.colors.text
             selectedTextColor: Appearance.highlightText
             selectionColor: Appearance.highlight
@@ -179,6 +182,13 @@ Item {
             font.pixelSize: Tokens.previewMarkdownFontSize * root.factor
             Accessible.role: Accessible.Document
             Accessible.name: qsTr("Text %1").arg(root.info.name ?? "")
+
+            function fitPictures(): void {
+                if (root.rendered && root.backend && typeof root.backend.fitMarkdownImages === "function")
+                    root.backend.fitMarkdownImages(rich.textDocument, rich.width);
+            }
+            onTextChanged: rich.fitPictures()
+            onWidthChanged: rich.fitPictures()
 
             // A link opens in the browser (http and https only, PreviewApp.openLink checks it again); any other target
             // (another file, an anchor in the page) does nothing.

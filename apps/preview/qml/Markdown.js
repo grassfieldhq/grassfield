@@ -2,8 +2,8 @@
 
 // The rendered Markdown of TextView.qml. The backend gives the HTML of the document (previewlogic markdownHtml: Qt's own
 // Markdown reader with raw HTML off, so every tag in it is Qt's and the document's own text is escaped; pictures already
-// point at Preview's image provider with their size). This file only fits it to the view: the theme's colours for links and
-// code blocks, and pictures no wider than the column (shrunk, never enlarged, aspect ratio kept), as Quick Look shows them.
+// point at Preview's image provider with their served size). This file only adds the theme's colours for links and code
+// blocks; the pictures are fitted to the column by the backend (PreviewApp.fitMarkdownImages), without a new parse.
 // Pure functions, unit-tested in tests/unit/tst_previewmarkdown.qml.
 
 // A QML colour as a CSS colour Qt's rich text reads ("#rrggbb" or "rgba(r, g, b, a)").
@@ -20,23 +20,9 @@ function cssColor(c) {
     return "rgba(" + r + ", " + g + ", " + b + ", " + Math.round(c.a * 1000) / 1000 + ")";
 }
 
-// Every <img> no wider than `maxWidth` (its height scaled with it). Only the width and height attributes the backend wrote
-// are read; the document's text cannot hold a tag (it is escaped).
-function fitImages(html, maxWidth) {
-    if (typeof html !== "string" || !(maxWidth > 0))
-        return typeof html === "string" ? html : "";
-    return html.replace(/<img ([^>]*?)width="(\d+)" height="(\d+)"/g, (whole, before, w, h) => {
-        const width = Number(w);
-        const height = Number(h);
-        if (width <= maxWidth || width <= 0)
-            return whole;
-        const scaled = Math.max(1, Math.round(height * maxWidth / width));
-        return "<img " + before + "width=\"" + Math.floor(maxWidth) + "\" height=\"" + scaled + "\"";
-    });
-}
-
-// The HTML the view shows: the theme's link colour and code block fill, then the pictures fitted to `width`.
-function styled(html, width, colors) {
+// The HTML the view shows: the theme's link colour and code block fill in the document's style sheet. It depends on the
+// document and the theme only (never on the view's width), so a resize keeps the parsed text and its selection.
+function styled(html, colors) {
     if (typeof html !== "string" || html === "")
         return "";
     const link = cssColor(colors ? colors.link : undefined);
@@ -46,8 +32,7 @@ function styled(html, width, colors) {
         css += "a { color: " + link + "; }\n";
     if (code !== "")
         css += "pre { background-color: " + code + "; }\n";
-    const out = css !== "" && html.indexOf("</style>") >= 0 ? html.replace("</style>", css + "</style>") : html;
-    return fitImages(out, width);
+    return css !== "" && html.indexOf("</style>") >= 0 ? html.replace("</style>", css + "</style>") : html;
 }
 
 // A link a click may hand to the browser: http or https only (PreviewApp.openLink checks it again, strictly).
