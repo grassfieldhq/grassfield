@@ -67,7 +67,7 @@ single instance.
    Markdown (owner report on 1.0.0-rc9, "Preview does not preview .md files": they showed their source; macOS Quick Look
    and Preview show a Markdown file formatted). A file of type `text/markdown` (or a type inheriting it: the `.md`,
    `.markdown`, `.mkd` suffixes of shared-mime-info) shows rendered in the viewer and the Glance: headings, emphasis,
-   lists and task lists, block quotes, code (monospace, on `Appearance.chipFill`), links (accent colour), tables, rules
+   lists and task lists, block quotes, code (monospace, on `Appearance.buttonFill`, the control fill that shows in both appearances), links (accent colour), tables, rules
    and pictures. The backend reads it with Qt's own Markdown reader (`QTextDocument::setMarkdown`, GitHub dialect, raw
    HTML off: the document's own tags stay text) on the inspection worker and hands the view rich text
    (`inspect` `markdown`, `html`; `previewlogic` `markdownHtml`), shown by a read-only, selectable `TextEdit` in
@@ -75,7 +75,13 @@ single instance.
    it; Copy gives the text). A picture is shown only when it is a local readable regular file that Preview shows as an
    image (a path relative to the document, an absolute path or a `file:` URL; not under /proc, /sys, /dev; within the P9
    caps), served by the image provider under its token (never by path, never fetched: an `http`, `data:` or missing
-   picture shows its alternative text), at most 64 per document, shrunk to the column (`Markdown.js`). A click on an
+   picture shows its alternative text), at most 64 per document. A picture is served at most 2048 px per side
+   (`kMarkdownImageMaxSide`, `image://preview/fit/<w>x<h>/<token>`: the provider decodes it at that size, scaling while
+   decoding where the format can) and all the pictures of a document within 256 MiB of served pixels
+   (`kMarkdownImageBudgetBytes`); past it a picture shows its alternative text (review 2026-11-22). The provider runs on Qt
+   Quick's image reader thread (`ForceAsynchronousImageLoading`: a TextEdit's rich-text picture would otherwise be decoded
+   on the window's thread). The pictures are laid out no wider than the column by `PreviewApp.fitMarkdownImages`, which
+   changes their formats only: a resize never parses the text again and keeps the selection. A click on an
    http(s) link opens it in the browser through `PreviewApp.openLink` (refused in a dev session, ADR-0019); other targets
    (another file, an anchor) do nothing. View > Show Markdown Source and the toolbar's source button (`icons/source.svg`)
    show the plain text instead (monospace, `PlainText`), View > Show Formatted Text goes back; the choice is the view's,
@@ -87,7 +93,9 @@ single instance.
 7. P7 Glance (`qml/Glance.qml`): same binary with `--glance`. A normal toplevel with app id
    `org.grassfield.Preview.Glance`, sized for the content of the first file on the screen it is shown on (image:
    native size scaled down to fit `preview.glanceScreenFraction` of the screen for the content area; PDF, text, video
-   and audio their token sizes, capped the same way; the header comes on top), header with the file name, "n of N" and
+   and audio their token sizes, capped the same way; the header comes on top; `PreviewApp.inspectFirst` gives the kind
+   and a picture's size only, so no text is read and no Markdown rendered on the window's thread before it maps: the
+   content is inspected on the worker), header with the file name, "n of N" and
    "Open with Preview". Qt only learns the output after mapping: the window is sized for Qt's first screen, then once
    for the screen it entered, requested as a fixed size (minimum = maximum, which Hyprland applies to floating windows,
    centred) and released after `motion.normal` (1200x800 PNG on 1920x1080: 1134x796).

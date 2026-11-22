@@ -688,8 +688,11 @@ bool PreviewApp::openLink(const QString &link) const
     return grassfield::apps::startApplication(QStringLiteral("xdg-open"), {link});
 }
 
+// Always on Qt Quick's image reader thread: a TextEdit's rich-text picture (a Markdown document's) asks a plain provider on
+// the window's thread (measured 2026-11-22, Qt 6.12: "requestImage on GUI thread"; with this flag, on a worker). The Image
+// items that use it already load asynchronously, so for them nothing changes.
 PreviewImageProvider::PreviewImageProvider(const PreviewApp *app)
-    : QQuickImageProvider(QQuickImageProvider::Image)
+    : QQuickImageProvider(QQuickImageProvider::Image, QQmlImageProviderBase::ForceAsynchronousImageLoading)
     , m_app(app)
 {
 }

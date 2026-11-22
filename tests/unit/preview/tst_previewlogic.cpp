@@ -625,8 +625,8 @@ TEST(Markdown, PicturesAreServedSmallAndWithinABudget)
     const int shown = int(kMarkdownImageBudgetBytes / each);
     EXPECT_EQ(html.count(QStringLiteral("<img ")), shown);
     EXPECT_EQ(html.count(QStringLiteral("image://preview/fit/%1x%1/7").arg(kMarkdownImageMaxSide)), shown);
-    EXPECT_TRUE(html.contains(QStringLiteral("square %1").arg(shown))) << "the first picture past the budget is its alternative text";
-    EXPECT_FALSE(html.contains(QStringLiteral("square %1").arg(0))) << "a shown picture is not its alternative text";
+    EXPECT_TRUE(html.contains(QStringLiteral(">square %1<").arg(shown))) << "the first picture past the budget is its alternative text";
+    EXPECT_FALSE(html.contains(QStringLiteral(">square %1<").arg(0))) << "a shown picture is not its alternative text (only its alt attribute)";
 }
 
 // Review 2026-11-22 (LOW): a resize re-parsed the document to resize its pictures. fitMarkdownImages changes the picture

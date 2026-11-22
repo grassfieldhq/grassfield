@@ -184,6 +184,8 @@ TEST(PreviewApp, MarkdownPicturesAreDecodedAtTheirServedSize)
     PreviewApp app({dir.filePath(QStringLiteral("wide.png"))}, {}, false);
     const int token = app.tokenFor(dir.filePath(QStringLiteral("wide.png")));
     PreviewImageProvider provider(&app);
+    // Off the window's thread even for a rich-text picture (a TextEdit asks a plain provider on the GUI thread).
+    EXPECT_TRUE(provider.flags() & QQmlImageProviderBase::ForceAsynchronousImageLoading);
     QSize size;
     const QImage image = provider.requestImage(QStringLiteral("fit/600x200/%1").arg(token), &size, QSize());
     EXPECT_EQ(image.size(), QSize(600, 200));

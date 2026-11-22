@@ -325,7 +325,7 @@ int fitMarkdownImages(QTextDocument *document, qreal maxWidth)
             const qreal h = m.captured(2).toDouble();
             if (w <= 0 || h <= 0)
                 continue;
-            const qreal width = qMin(w, qFloor(maxWidth));
+            const qreal width = qMin<qreal>(w, qFloor(maxWidth));
             const qreal height = qMax<qreal>(1, qRound(h * width / w));
             if (qAbs(picture.width() - width) < 0.5 && qAbs(picture.height() - height) < 0.5)
                 continue;
