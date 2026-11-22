@@ -1,5 +1,5 @@
 # ADR-0066: The capture suite (floating thumbnail, annotation, text, scrolling capture, richer recording)
-Status: Proposed · Date: 2026-11-22 · Decider: owner (scope); the integrator answered Q-1 to Q-6 by delegation (below);
+Status: Proposed · Date: 2026-11-22 · Decider: owner (scope, and Q-3, still open); the integrator answered Q-1, Q-2 and Q-4 to Q-6 by delegation (below);
 integrator (design, merge after review) · Number: 0066 (the next free number on every ref on 2026-11-22)
 
 ## Context
@@ -40,8 +40,12 @@ from :1013. A visible thumbnail would therefore be in an immediate Shift-Super-3
 From slice C1, before **every** grim call, every frozen grab and every recorder start, the helper does three things:
 1. It writes `{"phase": "shooting", "seq": <random 64-bit hex>, pid, start}` to `capture-state.json`.
 2. It waits for the shell's acknowledgement. The shell hides every thumbnail and writes
-   `$XDG_RUNTIME_DIR/grassfield/capture-ack` (0600, by rename) holding that `seq`. The thumbnail layer has `no_anim`, so the
-   shell writes the acknowledgement once its cards are unmapped and one frame has passed.
+   `$XDG_RUNTIME_DIR/grassfield/capture-ack` holding that `seq`. The thumbnail layer has `no_anim`, so the shell writes the
+   acknowledgement once its cards are unmapped and one frame has passed.
+
+   A FileView cannot set modes, and its atomic write keeps only the mode of an existing target. The shell therefore
+   pre-creates the file once with `install -m 600` in the 0700 folder (`umask 077`) before its first write, as
+   `shell/notifications/Notifications.qml:1258-:1261` does for the notification history.
 3. It reads the acknowledgement for at most `ACK_SECONDS` (1 s). Without one (no shell, a crashed shell, no cards shown),
    it goes on: a thumbnail can never block a capture.
 
@@ -83,9 +87,18 @@ the helper has no stdin to read. The choice therefore comes back as a second, sh
   second, each after the C1 handshake on its first frame only) until `stop` or the plate's Done, which goes through
   `choose --token T --done`, using the freeze channel's rules. It stitches in Python stdlib: row hashes, overlap search, a
   fixed header and footer kept once, at most 20 000 px. The PNG is written through zlib.
-- `window --address A`: the window alone. The helper reads the address from `hyprctl clients` (for the toolbar's choice,
-  the address Grassfield's window list already holds) and runs `grassfield-screenshot --grab-window A --out <hidden file>`
-  (D-3, slices B22 and C9).
+- `window --address A`: the window alone. The helper reads the address from `hyprctl clients`; for the toolbar's choice,
+  slice A14 passes the address Grassfield's window list already holds instead of `--geometry`.
+
+  The helper checks the lock itself before the grab, then runs `grassfield-screenshot --grab-window A --out <hidden file>`
+  (D-3, slices B22 and C9). `--grab-window` also refuses to run while the session is locked: it reads the same lock marker
+  through the shared reader rules, so it never relies on the caller alone.
+
+  **Fail closed on hidden windows.** If the B22 spike shows that a `no_screen_share` window is exported with its pixels,
+  `window --address` refuses every window that has `no_screen_share` (Hyprland's effective property, read with
+  `hyprctl -j getprop`, as the share picker does: docs/specs/system-dialogs.md SP6). For such a window it falls back to
+  today's on-screen box through grim, where Hyprland blacks the window out. If the property cannot be read, it also falls
+  back to grim.
 - `record ... [--system-audio] [--mic NAME] [--fps 30|60] [--quality Q]` (D-6, slice C7).
 
 #### The result channel (slice C2)
@@ -103,9 +116,11 @@ New shell surfaces, all in `shell/capture/` (an existing directory), each a laye
 - `CaptureThumbnails.qml`, namespace `grassfield-capture-thumbnail`: the floating thumbnail. It takes no keyboard and is
   hidden while locked and during `shooting` (D-1).
   - A drag out offers `text/uri-list` (the DesktopIcon precedent).
-  - Before any action on a result path (Copy, Show in Files, Move to Trash), the shell checks that the path is a regular file,
-    not a link, inside the folder the result names. Move to Trash then runs `gio trash` through the shell's helper
-    environment.
+  - Before any action on a result path (Copy, Show in Files, Move to Trash), the shell checks that the path is a regular file
+    and not a link. It also checks that the path lies directly inside one of the folders Save to can write to, resolved the
+    way `shell/store/CaptureLocation.js` and the helper's `destination()` resolve them (the Screenshots folder, Videos,
+    Desktop, Documents). The folder the result file names is never trusted, so a forged result cannot point at another
+    file. Move to Trash then runs `gio trash` through the shell's helper environment.
   - The picture is loaded with `Image { source: <file URL>; sourceSize: <card size in device pixels> }`. Qt's file loader
     decodes at the requested size. Notifications instead draw into a Canvas, because B-19 found that Quickshell's image
     provider ignores the requested size, so the image provider is not used here. Peak memory is checked in slice A2.
@@ -128,13 +143,20 @@ toolbar (ADR-0015) and the global menu (ADR-0008).
 | Camera | `--camera` | The camera overlay for recordings. |
 | Compose | `--compose window <in> <out>` | Headless: shadow and transparent corners for a window capture. |
 | GIF, first frame | `--gif <in> <out>`, `--first-frame <in> <out>` | Headless ffmpeg runs (D-6). |
-| Grab window | `--grab-window <address> --out <file>` | Headless, run **only by the helper**: a small Wayland client of `hyprland-toplevel-export-v1` that captures the window with that Hyprland address and writes a PNG. |
+| Grab window | `--grab-window <address> --out <file>` | Headless, run **only by the helper**: a small Wayland client of `hyprland-toplevel-export-v1` that captures the window with that Hyprland address and writes a PNG. It refuses under the lock. |
 
-**Why `--grab-window` uses `hyprland-toplevel-export-v1`.** The protocol's handle is the Hyprland window address that
-`hyprctl clients` prints, so no ext-foreign-toplevel identifier has to be found. Nothing installed lists those identifiers:
-grim cannot, no Quickshell type exposes them, and the helper is stdlib Python. Two things are checked in the spike (slice
-B22): whether Hyprland 0.56 returns black for a `no_screen_share` window or refuses it, and whether rounding and alpha come
-through. The protocol XML is not installed on this machine: `/usr/include/hyprland/protocols/` has only the generated
+**Why `--grab-window` uses `hyprland-toplevel-export-v1`.** Nothing installed lists ext-foreign-toplevel identifiers: grim
+cannot, no Quickshell type exposes them, and the helper is stdlib Python. The export protocol has two requests, and spike B22
+evaluates both:
+- `capture_toplevel` takes a **32-bit** handle (`hyprland-toplevel-export-v1.hpp:127`: `uint32_t`), not the full 64-bit
+  address `hyprctl clients` prints. The headers do not show how Hyprland maps that handle to a window. The spike finds out
+  (expected: the low 32 bits of the address). The client refuses when two live windows share those bits.
+- `capture_toplevel_with_wlr_toplevel_handle` (:129) takes a `zwlr_foreign_toplevel_handle_v1`. The client lists the wlr
+  foreign toplevels and matches the window by app id, title and geometry against `hyprctl clients`. It is preferred when
+  the match is unique.
+
+The spike also checks whether Hyprland 0.56 returns black for, or refuses, a `no_screen_share` window (the fail-closed rule in
+D-1 applies otherwise), and whether rounding and alpha come through. The protocol XML is not installed on this machine: `/usr/include/hyprland/protocols/` has only the generated
 server header, and no package owns `/usr/share/hyprland-protocols`. The build therefore needs one of two things, chosen in
 B22:
 - a new **build-only** makedepend, `hyprland-protocols`;
@@ -206,7 +228,7 @@ Recognised text goes to the clipboard. QR data goes through `wl-copy --sensitive
 The plugin already observes pointer buttons and keys for other features (`compositor/src/main.cpp:138`, `:191`;
 `OverviewFocus.cpp:499`; `ToplevelDrag.cpp:929`). The suite adds observers of the same events, never cancelling them, for:
 - click ripples (slices D1 and A11);
-- keystroke display (slice D2, last);
+- keystroke display (slice D2, blocked on the owner's answer to Q-3);
 - auto-scroll, through synthetic axis events (slice D3).
 
 Each is advertised as a capability, nested first, behind gates C1 to C3. Without the plugin or the capability, the option is
@@ -249,14 +271,17 @@ in 0700 folders, opened with `O_NOFOLLOW` and checked for owner, mode, type and 
   tool's tooltip points to Redact for secrets.
 - **Blur** is offered for looks only and labelled as not hiding text.
 
-**Keystroke display (R8)** can show passwords. It is built last (slice D2), as a per-recording opt-in with a warning. It is
-never shown while the lock, a polkit or secret sheet, or a key sink holds the keyboard, and it is suppressed for
-`no_screen_share` windows. It needs an opus reviewer PASS.
+**Keystroke display (R8)** can show passwords. **It is an open owner decision (Q-3).** Slice D2, and anything that would ship
+keystroke display, is blocked until the owner answers. If the owner says yes, the design to propose is:
+- built last, as a per-recording opt-in with a warning;
+- never shown while the lock, a polkit or secret sheet, or a key sink holds the keyboard;
+- suppressed for `no_screen_share` windows;
+- an opus reviewer PASS.
 
 **Recordings and hidden windows.** The OC-1 MINOR-4 limitation is unchanged for 1.0: KMS recording shows password managers
 and sheets.
 
-**For the opus security reviews** (slices C2, C4, C9, B22, A3, B7, B14, D2):
+**For the opus security reviews** (slices C2, C4, C9, B22, A3, B7, B14, and D2 only if the owner says yes to Q-3):
 - the result-file path checks before `gio trash`, Copy and Show in Files (a regular file, not a link, in the named folder);
 - recognised text is sensitive: the result file's `text` field is runtime-only (0600) and the history index holds none;
 - the freeze and scroll channel's validation (D-1);
@@ -292,10 +317,13 @@ Alternatives).
 - `config/schema/grassfield.schema.json` is edited by lanes A, B and C. It is listed as a shared file in the spec's lane
   table, and one slice at a time changes it.
 
+## Open question (owner)
+- **Q-3** Keystroke display while recording. It can show passwords typed in any app, which makes it a security decision
+  (Context: such questions go to the owner). Slice D2 is blocked until the owner answers. The integrator asks the owner.
+
 ## Delegated answers (integrator, 2026-11-22, under the owner's delegation)
 - **Q-1** A "Screenshot" app in the launcher: **yes** (macOS 27 has one in Utilities).
 - **Q-2** Recording backend: **KMS for 1.0**. The portal comes later, with a security design for the picker.
-- **Q-3** Keystroke display: **built last**, opt-in per recording, with an opus security review.
 - **Q-4** Nothing leaves the machine in 1.0. The owner decides any sharing later.
 - **Q-5** `tesseract-data-fra` is added **as an optdepend**.
 - **Q-6** A capture is **saved at once**; the thumbnail offers Move to Trash.

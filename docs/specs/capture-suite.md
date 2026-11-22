@@ -141,7 +141,7 @@ The "Slices" column names the §4 slices that build the feature. An M or L row l
 | # | Feature [source] | macOS 27 Screenshot [S4] | Grassfield rc9 | How (Hyprland, Wayland, Quickshell, Qt 6.12) | Effort | Privacy and security | Slices |
 |---|---|---|---|---|---|---|---|
 | C1 | Area [S1][S3] | yes | yes: Shift-Super-4, toolbar frame | Unchanged. | — | — | — |
-| C2 | Window [S1][S3] | yes, the window alone with its shadow | partial: the on-screen box, with whatever covers it | `grassfield-screenshot --grab-window <address>`, run by the helper: a client of `hyprland-toplevel-export-v1` keyed by the Hyprland address from `hyprctl clients`. The shadow and corners come from `--compose`. Grassfield's plugin title bar is not in the client buffer. | M | `no_screen_share` windows: the spike checks that the export returns black or refuses (nested test, opus review). | B22, C9, B10 |
+| C2 | Window [S1][S3] | yes, the window alone with its shadow | partial: the on-screen box, with whatever covers it | `grassfield-screenshot --grab-window <address>`, run by the helper: a client of `hyprland-toplevel-export-v1` keyed by the Hyprland address from `hyprctl clients`. The shadow and corners come from `--compose`. The toolbar's window mode passes the address (A14). Grassfield's plugin title bar is not in the client buffer. | L | `no_screen_share` windows: the spike checks that the export returns black or refuses (nested test, opus review). | B22, C9, A14, B10 |
 | C3 | Fullscreen [S1][S3] | yes | yes: every display, one picture each | Unchanged. | — | — | — |
 | C4 | Previous area [S3] | Remember Last Selection option | partial: the toolbar frame remembers per display (`lastSelection`) | Option "Remember Last Selection" (default on, as now). A "Capture Previous Area" action captures the remembered frame without the toolbar: `selection --geometry <remembered>`. | S | — | A8 |
 | C5 | Freeze screen [S1] | no | no | Capture first, then select (ADR-0066 D-1): the helper grabs every output; the shell shows the frames and answers through `grassfield-capture choose --token --geometry`; the helper crops. | M | Token, owner, mode and geometry checks on the choice. Frames removed on finish, cancel, timeout, SIGTERM and lock. | C4, A5 |
@@ -151,7 +151,7 @@ The "Slices" column names the §4 slices that build the feature. An M or L row l
 | C9 | Window with background, shadow or transparent [S1] | shadow on by default | no | The Screenshot app's background tool (E11) applied to a C2 capture. | M | — | B9, B10 |
 | C10 | Scrolling capture, manual [S1][S2] | no | no | The user frames an area; the helper takes region frames while the user scrolls and stitches them in Python stdlib (row hashes, overlap, a fixed header and footer kept once); a shell plate shows a live strip, Done goes through `choose --done`. | M | Frames in the private runtime folder, removed afterwards. | C5, C6, A7 |
 | C10b | Scrolling capture, auto [S2] (from 4.4) | no | no | Synthetic axis events from the plugin (nested, gates C1 to C3). | M | Never while the lock or a secure sheet is up. | D3, A12 |
-| C11 | All-in-one mode [S1] | the toolbar itself | toolbar (Shift-Super-5) | Add the modes Capture Text and Capture Scrolling Area to the toolbar. | S | — | A4 |
+| C11 | All-in-one mode [S1] | the toolbar itself | toolbar (Shift-Super-5) | Add the modes Capture Text and Capture Scrolling Area to the toolbar. | S | — | A4 (Text), A7 (Scrolling Area) |
 | C12 | Capture text (OCR) [S1][S3] | no (text in images happens in the viewer) | in Preview only (OC-2) | `grassfield-capture text [--geometry]`: grim into tesseract with **Preview's contract and a different page mode** (`--psm 6` instead of Preview's `--psm 3`; plain text instead of TSV), then `wl-copy`; QR through zbarimg, QR only. Shift-Super-2. | S | QR data through `wl-copy --sensitive` (never in clipboard history, ADR-0034 PV-1). | C3 |
 | C13 | Hotkeys per mode [S2] | fixed keys | fixed keys | Unchanged; one new key, Shift-Super-2 (Capture Text). | S | — | A4 |
 | C14 | File naming templates [S2] | fixed | fixed, translated | Not planned (macOS model: one name). | — | — | — |
@@ -169,7 +169,7 @@ The "Slices" column names the §4 slices that build the feature. An M or L row l
 | R5 | System audio [S1] | no | no | `-a "default_output\|default_input"`, as Omarchy ([S6] :344-:356); off by default. | S | Records what other apps play: off by default. | C7 |
 | R6 | Show or hide cursor [S1] | Show Mouse Pointer | yes (`-cursor`) | Unchanged. | — | — | — |
 | R7 | Show clicks [S1] | no | no | A plugin observer of pointer buttons (beside main.cpp:138) sends IPC to `CaptureClicks.qml`, which draws ripples on screen, so the KMS recording records them. Active only in the `recording` phase. | M | Click positions only. Nested first. | D1, A11 |
-| R8 | Show keystrokes [S1] | no | no | A plugin observer of keys (beside main.cpp:191) feeds the same overlay. Built last (Q-3). | L | Can show passwords: opt-in per recording, suppressed under the lock, polkit or secret sheets, key sinks and `no_screen_share`; opus review. | D2 (+ gates, review) |
+| R8 | Show keystrokes [S1] | no | no | A plugin observer of keys (beside main.cpp:191) feeds the same overlay. **Open owner decision (Q-3): blocked until the owner answers.** | L | Can show passwords: opt-in per recording, suppressed under the lock, polkit or secret sheets, key sinks and `no_screen_share`; opus review. | D2 (blocked on Q-3) |
 | R9 | Camera overlay [S1] | no | no | `grassfield-screenshot --camera`: a round floating window (Qt Multimedia `Camera`), window rule, corners and sizes, closed with the recording. The shell never opens the camera. | M | Camera only on request. | B23, B24 |
 | R10 | Quality, FPS, resolution [S1][S2] | no | fixed: 60 fps, display size up to 4K | `--fps 30\|60`, `--quality` (`-q`), and the app settings. | S | — | C7 |
 | R11 | Recording time in the menu bar [S1] | yes | yes (MenuBar.qml:1348) | Unchanged. | — | — | — |
@@ -313,25 +313,26 @@ gitleaks.
 | C6 | `scroll`: PNG writer through zlib, the 20 000 px cap, stop, lock and cleanup, the result. | C5 | L0: the PNG decodes; 30 frames of 1600×1000 within a bound measured and recorded in the slice (target ≤ 3 s); the cap; frames removed; refused under the lock. |
 | C7 | Recording options: `--system-audio`, `--mic NAME`, `--fps`, `--quality`. | C1 | L0: recorder argv with `default_output\|default_input`, a source by name (validated pattern), `-f 30`, `-q`; unknown values give usage. |
 | C8 | Capture Previous Area: `selection --previous` reads `capture.lastSelection` for the focused display. | — | L0: geometry from the stored entry; missing entry gives the crosshair; refused under the lock. |
-| C9 | `window --address A`: runs `grassfield-screenshot --grab-window` into a hidden file, with a fallback to today's box. | C1, B22 | L0: argv; address validated (`0x` and hex); fallback when the grab fails; refused under the lock. L1 nested: a covered window captured alone; a `no_screen_share` fixture stays black or is refused (opus review). |
+| C9 | `window --address A`: the helper checks the lock, then runs `grassfield-screenshot --grab-window` into a hidden file. **Fail closed:** if B22 showed that `no_screen_share` windows are exported with their pixels, a window with that property (Hyprland's effective property through `hyprctl -j getprop`, as the share picker reads it), or one whose property cannot be read, is captured through grim's on-screen box instead, where Hyprland blacks it out. Fallback to today's box when the grab fails. | C1, B22 | L0: argv; address validated (`0x` and hex); refused under the lock (both in the helper and in `--grab-window`); a `no_screen_share` fixture, and an unreadable property, take the grim path; fallback when the grab fails. L1 nested: a covered window captured alone (opus review). |
 
 **Lane A: shell** (`shell/capture/`, `shell/services/CaptureState.qml`, `CaptureFile.js`, `shell.qml`, menu bar)
 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
-| A1 | `CaptureFile.parse` and `stopNeeded` learn `shooting` and `frozen`; CaptureState writes the acknowledgement once the cards are hidden. | C1 contract (can be built against it) | Unit `tst_capturefile.qml`: new phases parsed and malformed ones refused; a `shooting` state under the lock is stopped; the acknowledgement written with the right `seq`, 0600, by rename. |
+| A1 | `CaptureFile.parse` and `stopNeeded` learn `shooting` and `frozen`. CaptureState pre-creates `capture-ack` once with `install -m 600` in the 0700 folder (`umask 077`), as `Notifications.qml:1258-:1261` does, because a FileView cannot set modes. It then writes the acknowledgement once the cards are hidden. | C1 contract (can be built against it) | Unit `tst_capturefile.qml`: new phases parsed and malformed ones refused; a `shooting` state under the lock is stopped. Shell test: `capture-ack` is 0600 before and after the first write and holds the right `seq`. |
 | A2 | `CaptureThumbnails.qml`: model, placement per display and side, timer and hover pause, stack of 3, hidden while locked and during `shooting`, click opens Preview (Annotate after B3). | A1, C2 | Unit `tst_capturethumbs.qml`; L1: a card after a fake result at scale 1.25 (screenshot); the card unmapped before a fake `shooting` is acknowledged; peak memory of a 4K result with `sourceSize`. |
-| A3 | Thumbnail actions: drag out, Copy, Show in Files, Move to Trash, Close, edge dismiss, with path checks. | A2 | Unit: each action maps to an argv vector; a result path that is a link, a folder or outside the named folder is refused. L1: trash fixture moved (isolated home). |
-| A4 | Toolbar modes Capture Text and Capture Scrolling Area; Shift-Super-2. | — | Unit `tst_capturemodel.qml`: modes, order, arrows, `helperArgs`; session_services: the key is bound to `grassfield-capture text`. |
+| A3 | Thumbnail actions: drag out, Copy, Show in Files, Move to Trash, Close, edge dismiss, with path checks against the Save-to folders (resolved as `CaptureLocation.js` and the helper's `destination()` resolve them), never the folder the result names. | A2 | Unit: each action maps to an argv vector; a result path that is a link, a folder, or outside every Save-to folder is refused, including a forged result that names its own folder. L1: trash fixture moved (isolated home). |
+| A4 | Toolbar mode Capture Text and Shift-Super-2. It lands with its helper. | C3 | Unit `tst_capturemodel.qml`: modes, order, arrows, `helperArgs` for `text`; session_services: the key is bound to `grassfield-capture text`. |
 | A5 | Freeze surface: the frozen frames shown at device pixels, the choice sent through `choose`. | C4, A1 | Unit: logical-to-device mapping at 1.25; the `choose` argv; Esc sends `--cancel`. L1: frozen surface screenshot. |
 | A6 | Loupe ×8 with pixel grid and readout. | A5 | Unit: loupe geometry and clamping at edges. L1: loupe screenshot. |
-| A7 | Scroll plate: frame, live strip, Done (`choose --done`), Cancel. | C5, A4 | Unit: plate model; L1: plate with a fake helper writing strips. |
+| A7 | Toolbar mode Capture Scrolling Area, landing with its helper, and the scroll plate: frame, live strip, Done (`choose --done`), Cancel. | C5, C6 | Unit `tst_capturemodel.qml` for the mode and `helperArgs`; plate model; L1: plate with a fake helper writing strips. |
 | A8 | Options batch: Remember Last Selection switch, Capture Previous Area, Hide Desktop Icons, Do Not Disturb while recording, 3 s timer, Show Floating Thumbnail. | C8 | Unit: `menuModel` rows and checks per mode, `choice` mapping; DND restored after a recording; desktop icons hidden while the phase is not idle. |
 | A9 | Recording card: first frame (from B20), duration, Play, Trim and Save as GIF buttons. | A3, B20 | Unit: card model for a recording result; L1 screenshot. |
 | A10 | Show Last Thumbnail from the history. | A2, B14 | Unit: reads the newest index entry; a missing file shows nothing. |
 | A11 | `CaptureClicks.qml`: ripples from the plugin capability, only while recording. | D1 | Unit: ripple model; hidden without the capability. L1 nested with the plugin. |
 | A12 | Auto-scroll button on the scroll plate. | D3, A7 | Unit: shown only with the capability; L1 nested. |
 | A13 | Menu bar item listing locked pins. | B12 | Unit: item shown only while a pin is locked; release calls the pin's IPC. |
+| A14 | The toolbar's Capture Selected Window passes `window --address <the window clicked>` (the address from the platform's window list) instead of `--geometry`. Without an address it keeps `--geometry`. | C9 | Unit `tst_capturemodel.qml`: `helperArgs` for the window mode with and without an address; the address validated (`0x` and hex). L1: a click on a covered window. |
 
 **Lane B: Screenshot app** (`apps/screenshot/`, packaging lines)
 
@@ -343,7 +344,7 @@ gitleaks.
 | B4 | Arrow (straight, curved, double), line, rectangle, ellipse. | B3 | gtest: golden per tool. |
 | B5 | Pen with smoothing, highlighter, eyedropper, style controls. | B3 | gtest: golden per tool; eyedropper reads the right pixel at 1.25. |
 | B6 | Text (3 styles) and counters. | B3 | gtest: golden; counters renumber after a deletion. |
-| B7 | Redact, Pixelate (min 12 px blocks, random offset, noise), Blur, Spotlight; the clipboard replaced after a redacted export. | B3 | gtest: Redact area equals the fill colour exactly; Pixelate area holds no source pixel value at its position, blocks are at least 12 px, the grid offset varies between runs; the tooltip strings; clipboard argv after export. |
+| B7 | Redact, Pixelate (min 12 px blocks, random offset, noise), Blur, Spotlight; the clipboard replaced after a redacted export. | B3 | gtest: Redact area equals the fill colour exactly; Pixelate's output inside each block depends on the source only through the block mean (two sources with equal block means give outputs that differ by the noise alone), its correlation with a textured source stays below a bound fixed in the slice, blocks are at least 12 px, and the grid offset varies between runs; the tooltip strings; clipboard argv after export. |
 | B8 | Crop with aspect presets, rotate, flip. | B3 | gtest: crop pixel-exact; layers follow rotate and flip. |
 | B9 | Background tool 1: padding, solid, token gradients, transparent, aspect ratio. | B3 | gtest: golden; transparent keeps alpha. |
 | B10 | Background tool 2: corner radius, shadow, the window preset, `--compose window`. | B9 | gtest: golden composes; `--compose` exits 2 on bad arguments. |
@@ -358,7 +359,7 @@ gitleaks.
 | B19 | Settings window part 2: thumbnail side and time, fps and quality, history retention. | B17, B18 | gtest: each setting written and read back. |
 | B20 | `--gif` and `--first-frame` (ffmpeg). | B1 | gtest: ffmpeg argv (fake ffmpeg); output through a hidden file, never overwriting. |
 | B21 | Packaging lines: `tesseract-data-fra` and the documentation optdepends. | — | `just check-licenses`, packaging lint. |
-| B22 | `--grab-window` spike and client: hyprland-toplevel-export by address; the protocol XML (makedepend or vendored). | B1 | Spike report (nested, read-only `scripts/nestctl` queries); gtest for argument validation; L1 nested: window captured alone; `no_screen_share` behaviour recorded. |
+| B22 | `--grab-window` spike and client: evaluates both export requests. `capture_toplevel` takes a 32-bit handle (`hyprland-toplevel-export-v1.hpp:127`), so the spike finds how Hyprland maps it and refuses colliding low bits. `capture_toplevel_with_wlr_toplevel_handle` (:129) needs a wlr foreign-toplevel handle matched by app id, title and geometry. The client refuses under the lock. The protocol XML comes from a makedepend or is vendored. | B1 | Spike report (nested, read-only `scripts/nestctl` queries): which request is used and why, the handle mapping, `no_screen_share` behaviour, alpha and rounding. gtest: argument validation, refusal under the lock (fake marker), refusal of an ambiguous match. |
 | B23 | Camera overlay window: `--camera`, round mask, three sizes. | B1 | gtest: geometry; L1: NOT VERIFIED without a camera in nested. |
 | B24 | Camera: window rule, corners, closed by the recording's stop. | B23, C7 | Config test for the rule; unit: closed when the phase leaves `recording`. |
 | B25 | Trim 1: playback and trim handles. | B1 | gtest: handle model; L1 screenshot. |
@@ -370,19 +371,25 @@ gitleaks.
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | D1 | Capability and IPC for pointer-button events, observed beside main.cpp:138, only while the shell says it is recording. | — | Plugin gtest for the filter; graceful degradation; gates C1 to C3. |
-| D2 | Key events for keystroke display (opt-in, suppressed under the lock, sheets, key sinks and `no_screen_share`), with an opus security review. Built last. | D1, A11 | Plugin gtest for each suppression case; opus reviewer PASS. |
+| D2 | Key events for keystroke display. **Blocked until the owner answers Q-3.** If the answer is yes: opt-in, suppressed under the lock, sheets, key sinks and `no_screen_share`, with an opus security review. | D1, A11, Q-3 | Plugin gtest for each suppression case; opus reviewer PASS. |
 | D3 | Synthetic axis events for auto-scroll, refused under the lock and while a sheet is up. | — | Plugin gtest; nested L1; gates C1 to C3. |
 
 ### 4.2 Order (owner-visible value first) and parallel lanes
 
 | Wave | Lane C | Lane A | Lane B | Lane D |
 |---|---|---|---|---|
-| 1 | C1, C2 | A1, A4 | B1, B2, B18 | — |
-| 2 (thumbnail) | C3 (text) | A2, A3 | B3, B4 | — |
-| 3 (editor) | C4 | A8 | B5, B6, B7, B8 | — |
-| 4 (scroll, recording) | C5, C6, C7 | A5, A6, A7 | B13, B20, B9, B10 | D1 |
-| 5 | C8, C9 | A9, A10, A11 | B11, B12, B14, B15, B16, B22 | D3 |
-| 6 | — | A12, A13 | B17, B19, B21, B23, B24, B25, B26, B27 | D2 (last) |
+| 1 | C1, C2 | A1 | B1, B2, B18 | — |
+| 2 (thumbnail) | C3 (text), C8 | A2, A3 | B3, B4 | — |
+| 3 (editor, text mode) | C4 | A4, A8 | B5, B6, B7, B8 | — |
+| 4 (scroll, recording) | C5, C6, C7 | A5, A6 | B9, B10, B13, B20, B22 | D1 |
+| 5 | C9 | A7, A9, A11 | B11, B12, B14, B15, B16 | D3 |
+| 6 | — | A10, A12, A13, A14 | B17, B19, B21, B23, B24, B25, B26, B27 | — |
+| blocked | — | — | — | D2 (owner's answer to Q-3) |
+
+Rules for the table:
+- Within a wave, each lane runs its slices in the order listed.
+- A slice depends only on slices of earlier waves in other lanes, or on earlier slices of its own lane.
+- A1 is the one exception: it is built against the documented C1 contract, in the same wave.
 
 Shared files: one slice at a time on each.
 
@@ -407,5 +414,5 @@ owner's priorities first:
 Following the owner's "review every step" rule:
 - an independent reviewer pass after each merged slice;
 - an opus security reviewer for C2 (clipboard), C4 (freeze channel), C9 and B22 (hidden windows), A3 (path checks), B7
-  (redaction), B14 (history of originals) and D2 (keystrokes);
+  (redaction), B14 (history of originals) and D2 (keystrokes, only if the owner says yes to Q-3);
 - D1, D2 and D3 also go through the compositor gates.
