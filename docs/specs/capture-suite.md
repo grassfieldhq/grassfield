@@ -60,7 +60,7 @@ protection", :1090-).
 
 ### 1.2 Limitations documented today, which this plan addresses
 
-These are in `docs/specs/system-dialogs.md` §10 "Known limitations" (:1696-:1724):
+These are in `docs/specs/system-dialogs.md` §10 "Known limitations" (:1688-:1726):
 - There is no floating thumbnail (a notice stands in for it). There are no Remember Last Selection or Show Floating
   Thumbnail options.
 - Capture Selected Window captures the window's on-screen box, with whatever covers it, without a shadow and without
