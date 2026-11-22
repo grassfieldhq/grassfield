@@ -10,6 +10,8 @@
 #   Super+1 .. Super+9                        -> Ctrl+1 .. Ctrl+9            (Command+number)
 #   Super+Up/Down, Left/Right (+Shift), Backspace -> Ctrl+Home/End, Home/End (+Shift), Shift+Home then Backspace
 #   Super+[ / Super+]                         -> Alt+Left / Alt+Right          (Back / Forward)
+#   Super+C/V/X/A/Z, Super+Shift+Z            -> Ctrl+C/V/X/A/Z, Ctrl+Shift+Z  (Copy, Paste, Cut, Select All, Undo, Redo), end to end
+#                                                in the fixture's text field with wl-copy / wl-paste on the nested display
 #   Ctrl+Left, Ctrl+1                         -> consumed (Spaces): the application receives nothing
 #   in a terminal (foot): Alt+Left stays Alt+Left (bytes ESC [ 1 ; 3 D)
 # If a `code:` key (Super+digit) fails here but the Alt+arrow lines pass, Hyprland's send_key_state does not take keycodes.
@@ -93,6 +95,22 @@ n=$(lines); keys -M logo -M shift -k Up -m shift -m logo;    check "Super+Shift+
 # Command+Backspace is two chords: Shift+Home, then Backspace (16777219, no modifier).
 n=$(lines); keys -M logo -k BackSpace -m logo;               check "Super+Backspace ends with Backspace (after Shift+Home)" "key=16777219 mods=0 " "$n"
 if [[ $(tail -n +"$((n + 1))" "$fixlog" | grep -c "key=16777232 mods=$SHIFT ") -ge 1 ]]; then echo "PASS: Super+Backspace first selected to the line start (Shift+Home)"; else echo "FAIL: Super+Backspace did not send Shift+Home first (sequencing unreliable: drop that bind)"; fail=1; fi
+# Command+A/C/X/V/Z end to end: the fixture's text field starts with "grass field"; the clipboard is the nested display's.
+edit() { tail -n +"$(($1 + 1))" "$fixlog" | grep -F "[fk-fixture] edit=" | tail -n 1; }
+clip() { WAYLAND_DISPLAY=$sock timeout 5 wl-paste --no-newline 2>/dev/null; }
+n=$(lines); keys -M logo -k a -m logo;                       check "Super+A -> Ctrl+A" "key=65 mods=$CTRL " "$n"
+n=$(lines); keys -M logo -k c -m logo;                       check "Super+C -> Ctrl+C" "key=67 mods=$CTRL " "$n"
+if [[ $(clip) == "grass field" ]]; then echo "PASS: Super+A then Super+C copied the whole text to the clipboard"; else echo "FAIL: clipboard after Super+A, Super+C: '$(clip)'"; fail=1; fi
+printf pasted | WAYLAND_DISPLAY=$sock wl-copy
+n=$(lines); keys -M logo -k v -m logo;                       check "Super+V -> Ctrl+V" "key=86 mods=$CTRL " "$n"
+if [[ $(edit "$n") == *'edit="pasted"'* ]]; then echo "PASS: Super+V replaced the selection with the clipboard (text is now 'pasted')"; else echo "FAIL: Super+V did not paste (edit: $(edit "$n"))"; fail=1; fi
+n=$(lines); keys -M logo -k z -m logo;                       check "Super+Z -> Ctrl+Z" "key=90 mods=$CTRL " "$n"
+if [[ $(edit "$n") == *'edit="grass field"'* ]]; then echo "PASS: Super+Z undid the paste (text is 'grass field' again)"; else echo "FAIL: Super+Z did not undo (edit: $(edit "$n"))"; fail=1; fi
+n=$(lines); keys -M logo -M shift -k z -m shift -m logo;     check "Super+Shift+Z -> Ctrl+Shift+Z" "key=90 mods=$((CTRL + SHIFT)) " "$n"
+if [[ $(edit "$n") == *'edit="pasted"'* ]]; then echo "PASS: Super+Shift+Z redid the paste"; else echo "FAIL: Super+Shift+Z did not redo (edit: $(edit "$n"))"; fail=1; fi
+keys -M logo -k a -m logo
+n=$(lines); keys -M logo -k x -m logo;                       check "Super+X -> Ctrl+X" "key=88 mods=$CTRL " "$n"
+if [[ $(clip) == "pasted" && $(edit "$n") == *'edit=""'* ]]; then echo "PASS: Super+X moved the text to the clipboard"; else echo "FAIL: Super+X: clipboard '$(clip)', edit $(edit "$n")"; fail=1; fi
 for d in 1 2 3 4 5 6 7 8 9; do
   n=$(lines); keys -M logo -k "$d" -m logo;                  check "Super+$d -> Ctrl+$d" "key=$((48 + d)) mods=$CTRL " "$n"
 done
@@ -110,6 +128,16 @@ pids+=($!)
 sleep 1.5
 keys -M alt -k Left -m alt
 if grep -qF '^[[1;3D' "$cap"; then echo "PASS: in a terminal Alt+Left stays Alt+Left ($(cat "$cap"))"; else echo "FAIL: terminal got: $(cat "$cap")"; fail=1; fi
+
+# Paste in a terminal is Ctrl+Shift+V (foot's own paste): Super+V pastes the clipboard into it, as raw bytes.
+: >"$cap"
+printf 'from-clipboard' | WAYLAND_DISPLAY=$sock wl-copy
+keys -M logo -k v -m logo
+if grep -qF 'from-clipboard' "$cap"; then echo "PASS: in a terminal Super+V pastes the clipboard ($(cat "$cap"))"; else echo "FAIL: terminal Super+V got: $(cat "$cap")"; fail=1; fi
+# Copy in a terminal is Ctrl+Shift+C (foot copies its selection): Ctrl+C must NOT reach it as an interrupt (byte ^C).
+: >"$cap"
+keys -M logo -k c -m logo
+if grep -qF '^C' "$cap"; then echo "FAIL: terminal Super+C sent Ctrl+C ($(cat "$cap"))"; fail=1; else echo "PASS: in a terminal Super+C does not send Ctrl+C (interrupt)"; fi
 
 alive=0; kill -0 "$hypr_pid" 2>/dev/null && alive=1
 if ((alive)) && ! nestctl -j version >/dev/null 2>&1; then alive=0; fi

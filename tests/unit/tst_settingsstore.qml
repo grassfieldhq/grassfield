@@ -453,6 +453,9 @@ TestCase {
         const list = Bindings.parse(text);
         verify(list.some(b => b.keys === "Alt + Left" && b.description === "Previous word"), "word_key lines are parsed");
         verify(list.some(b => b.keys === "Super + [" && b.description === "Back"));
+        for (const [keys, description] of [["Super + C", "Copy"], ["Super + V", "Paste"], ["Super + X", "Cut"], ["Super + A", "Select all"],
+                                           ["Super + Z", "Undo"], ["Super + Shift + Z", "Redo"]])
+            verify(list.some(b => b.keys === keys && b.description === description), "editing key listed: " + keys);
         verify(list.some(b => b.keys === "Super + Backspace" && b.description === "Delete to the beginning of the line"));
         const names = Object.keys(Bindings.NAMES).map(k => Bindings.NAMES[k]);
         for (const b of list) {

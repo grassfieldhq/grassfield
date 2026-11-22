@@ -1,7 +1,7 @@
 -- Keys forwarded to the focused window (macOS model, GF-024): word navigation on Alt+arrows, Command+number and Command+Up
 -- on Super. Kept out of bindings.lua on purpose: the Settings Keyboard page parses that file's literal `bind("KEYS", "Description"`
 -- lines and every description there needs an entry in apps/settings/qml/Bindings.js and the fr catalog (open item: list
--- these keys there). Loaded by core.lua for the real and the nested session.
+-- these keys there; done: the page parses the literal bind() lines of this file too). Loaded by core.lua for the real and the nested session.
 
 local function bind(keys, description, dispatcher, opts)
   opts = opts or {}
@@ -80,6 +80,28 @@ word_key("ALT + BACKSPACE", "Delete the previous word", "CTRL", "BackSpace")
 word_key("ALT + DELETE", "Delete the next word", "CTRL", "Delete")
 bind("SUPER + bracketleft", "Back", forward("ALT", "Left"))
 bind("SUPER + bracketright", "Forward", forward("ALT", "Right"))
+
+-- Command+C/V/X/A/Z: the macOS editing keys. Omarchy's default/hypr/bindings/clipboard.lua is not loaded here, so without
+-- these binds the chord reaches the application with Super held and the letter is typed. Every toolkit takes the Ctrl
+-- chord; terminals keep Ctrl+C (interrupt) and Ctrl+V, so Copy and Paste are Ctrl+Shift+C / Ctrl+Shift+V there. The chord
+-- is sent with explicit modifiers (forward above), so it does not run through these binds again (Ctrl+C is not bound).
+-- Super+Ctrl+V (Clipboard history) and Super+Shift+3/4/5 (capture) are other chords.
+local function terminal_aware(mods, key, terminal_mods)
+  local plain, in_terminal = forward(mods, key), forward(terminal_mods, key)
+  return function()
+    if terminal_focused() then
+      in_terminal()
+    else
+      plain()
+    end
+  end
+end
+bind("SUPER + C", "Copy", terminal_aware("CTRL", "C", "CTRL SHIFT"))
+bind("SUPER + V", "Paste", terminal_aware("CTRL", "V", "CTRL SHIFT"))
+bind("SUPER + X", "Cut", forward("CTRL", "X"))
+bind("SUPER + A", "Select all", forward("CTRL", "A"))
+bind("SUPER + Z", "Undo", forward("CTRL", "Z"))
+bind("SUPER + SHIFT + Z", "Redo", forward("CTRL SHIFT", "Z"))
 
 -- Command+number and Command+Up: Ctrl+1..9 and Ctrl+Up are Spaces and Overview here, so the keys an application
 -- advertises with Ctrl (Files views Ctrl+1..4, Preview Zoom to Fit Ctrl+9, Files Enclosing Folder Ctrl+Up) are sent by
