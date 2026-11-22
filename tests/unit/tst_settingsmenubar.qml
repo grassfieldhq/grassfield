@@ -121,6 +121,29 @@ TestCase {
         return store.writes[store.writes.length - 1];
     }
 
+    // The owner's report (2026-11-22): the choice of "this display or all displays" reaches the menu bar's auto-hide and background.
+    function test_barScopeAllDisplaysThenOneDisplay() {
+        const t = make();
+        const displays = [
+            {key: "n:eDP-1", name: "eDP-1", model: "", serial: "", label: "Built-in Display"},
+            {key: "n:DP-1", name: "DP-1", model: "", serial: "", label: "DP-1"}
+        ];
+        t.page.displays = displays;
+        t.page.displayId = "all";
+        named(t.page.contentItem, "Automatically hide and show the menu bar").picked("always");
+        compare(last(t.store), {"menubar.autoHide": "always"});
+        t.page.displayId = "n:DP-1";
+        named(t.page.contentItem, "Automatically hide and show the menu bar").picked("never");
+        compare(last(t.store), {"menubar.outputs": [{display: {name: "DP-1", model: "", serial: ""}, autoHide: "never"}]});
+        compare(t.store.value("menubar.autoHide"), "always");
+        named(t.page.contentItem, "Show menu bar background").toggled(true);
+        compare(last(t.store)["menubar.outputs"][0].showBackground, true);
+        compare(t.store.value("menubar.showBackground"), false);
+        // The other display reads the All Displays value.
+        t.page.displayId = "n:eDP-1";
+        compare(named(t.page.contentItem, "Show menu bar background").checked, false);
+    }
+
     function test_firstGroup() {
         const t = make();
         const hide = named(t.page.contentItem, "Automatically hide and show the menu bar");

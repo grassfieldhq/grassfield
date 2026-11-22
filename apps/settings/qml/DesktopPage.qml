@@ -3,7 +3,6 @@ import QtQuick
 import QtQuick.Dialogs
 import Grassfield.Ui
 import "DefaultBrowser.js" as DefaultBrowser
-import "Displays.js" as Displays
 
 // Settings > Desktop & Dock as macOS 27 lays it out (docs/audits/settings-parity-2026-10-26.md § Desktop & Dock): Dock (Size
 // and Magnification side by side; the Dock's position, the minimize animation, the title bar's double click and minimizing
@@ -19,73 +18,26 @@ SettingsPage {
     signal screenCornersRequested
 
     // ---- which display the Dock's size, magnification, position and hiding are for (owner 2026-11-22) ----
-    // "all" = All Displays (the top-level dock keys, the default), else a display key (WallpaperConfig.displayKey): its entry of
-    // `dock.outputs` overrides those four settings for that display only (DisplayScope; the wallpaper pane works the same way).
-    // What the Dock holds and how it behaves (apps, folders, clicks, indicators) is the same on every display.
-    property string displayId: "all"
-    // The connected displays: [{key, name, model, serial, label}] (the names Settings > Displays gives them); read from the backend.
-    property var displays: root.readDisplays()
-    // The rows for the scope only exist with more than one display.
-    readonly property int displayCount: root.displays.length
-    readonly property var currentDisplay: root.displayId === "all" ? null : (root.displays.find(d => d.key === root.displayId) || null)
-    readonly property var dockSchema: DisplayScope.DOCK_SCHEMA
-    readonly property var dockOutputs: root.store.value("dock.outputs")
-
-    function readDisplays(): var {
-        const list = root.backend && typeof root.backend.screens === "function" ? root.backend.screens() : [];
-        const named = list.map(s => {
-            const d = {name: s.name, model: s.model || "", serial: s.serial || ""};
-            d.key = WallpaperConfig.displayKey(d);
-            d.label = Displays.isBuiltIn(d) ? qsTr("Built-in Display") : (String(d.model).trim() !== "" ? String(d.model).trim() : d.name);
-            return d;
-        });
-        const twins = named.map(d => named.filter(o => o.label === d.label).length > 1);
-        return named.map((d, i) => {
-            if (twins[i])
-                d.label = qsTr("%1 (%2)").arg(d.label).arg(d.name);
-            return d;
-        });
+    // All Displays (the top-level dock keys, the default) or one display whose entry of `dock.outputs` overrides those settings
+    // (DisplayScopeState, DisplayScope). What the Dock holds and how it behaves (apps, folders, clicks) is the same everywhere.
+    DisplayScopeState {
+        id: dockScope
+        store: root.store
+        backend: root.backend
+        group: "dock"
+        schema: DisplayScope.DOCK_SCHEMA
     }
-
-    // The value of a scoped setting (size, position, magnification, magnificationEnabled, autohide) for the display chosen.
+    property alias displays: dockScope.displays
+    property alias displayId: dockScope.displayId
+    readonly property int displayCount: dockScope.displayCount
     function scoped(field: string): var {
-        const globals = {};
-        globals[field] = root.store.value("dock." + field);
-        return DisplayScope.resolve(root.dockSchema, globals, root.dockOutputs, root.currentDisplay)[field];
+        return dockScope.scoped(field);
     }
-
-    // A scoped setting is written to the chosen display's entry, or to the top-level key under All Displays (`soon`: a slider's
-    // coalesced write). `fields` is {field: value}.
     function setScoped(fields: var, soon: bool): void {
-        if (root.currentDisplay === null) {
-            const keys = {};
-            for (const f of Object.keys(fields))
-                keys["dock." + f] = fields[f];
-            const names = Object.keys(keys);
-            if (soon)
-                root.store.setManySoon(keys);
-            else if (names.length === 1)
-                root.store.set(names[0], keys[names[0]]);
-            else
-                root.store.setMany(keys);
-            return;
-        }
-        const next = DisplayScope.withOverride(root.dockSchema, root.dockOutputs, root.currentDisplay, fields);
-        if (soon)
-            root.store.setSoon("dock.outputs", next);
-        else
-            root.store.set("dock.outputs", next);
+        dockScope.setScoped(fields, soon);
     }
-
-    // The chosen display follows All Displays again (its entry is removed).
     function useAllDisplays(): void {
-        if (root.currentDisplay !== null)
-            root.store.set("dock.outputs", DisplayScope.withoutOverride(root.dockSchema, root.dockOutputs, root.currentDisplay));
-    }
-
-    onDisplaysChanged: {
-        if (root.displayId !== "all" && !root.displays.some(d => d.key === root.displayId))
-            root.displayId = "all";
+        dockScope.useAllDisplays();
     }
 
     title: qsTr("Desktop & Dock")
@@ -113,32 +65,11 @@ SettingsPage {
 
     // With several displays: which display the four rows that can differ per display change (size, magnification, position,
     // auto-hide). Under All Displays they change every display that has no setting of its own.
-    SettingsGroup {
-        visible: root.displayCount > 1
-
-        SettingsRow {
-            title: qsTr("Dock settings for")
-            subtitle: root.currentDisplay !== null
-                ? qsTr("Size, Magnification, Position and Automatically hide apply to %1 only.").arg(root.currentDisplay.label)
-                : qsTr("Size, Magnification, Position and Automatically hide apply to every display that has no setting of its own.")
-            ComboBox {
-                inline: true
-                accessibleName: qsTr("Dock settings for")
-                model: [{id: "all", text: qsTr("All Displays")}].concat(root.displays.map(d => ({id: d.key, text: d.label})))
-                value: root.displayId
-                onPicked: id => root.displayId = id
-            }
-        }
-
-        SettingsRow {
-            visible: root.currentDisplay !== null && DisplayScope.hasOverride(root.dockSchema, root.dockOutputs, root.currentDisplay)
-            title: qsTr("Use the All Displays settings")
-            Button {
-                push: true
-                text: qsTr("Use All Displays")
-                onClicked: root.useAllDisplays()
-            }
-        }
+    ScopeGroup {
+        scope: dockScope
+        title: qsTr("Dock settings for")
+        appliesToOne: qsTr("Size, Magnification, Position and Automatically hide apply to %1 only.")
+        appliesToAll: qsTr("Size, Magnification, Position and Automatically hide apply to every display that has no setting of its own.")
     }
 
     SettingsGroup {

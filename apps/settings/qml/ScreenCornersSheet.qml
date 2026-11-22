@@ -10,6 +10,18 @@ Sheet {
     id: root
 
     required property var store
+    // The Settings backend (the connected displays): null without one, then there is no choice of display.
+    property var backend: null
+
+    // All Displays or one display whose entry of `hotCorners.outputs` has its own corners (DisplayScopeState).
+    DisplayScopeState {
+        id: cornerScope
+        store: root.store
+        backend: root.backend
+        group: "hotCorners"
+        schema: DisplayScope.HOTCORNERS_SCHEMA
+    }
+    property alias scope: cornerScope
 
     title: qsTr("Screen Corners")
     confirmText: qsTr("Done")
@@ -26,14 +38,22 @@ Sheet {
     component Corner: ComboBox {
         property string key: ""
         model: root.actions
-        value: root.store.value("hotCorners." + key)
-        onPicked: id => root.store.set("hotCorners." + key, id)
+        value: cornerScope.scoped(key)
+        onPicked: id => cornerScope.setScoped(({[key]: id}), false)
     }
 
     // Built the first time the sheet opens, and kept (Sheet.bodyComponent).
     bodyComponent: Component {
         Column {
             spacing: Tokens.spacingMd
+
+            ScopeGroup {
+                width: parent.width
+                scope: cornerScope
+                title: qsTr("Screen Corners for")
+                appliesToOne: qsTr("The corners apply to %1 only.")
+                appliesToAll: qsTr("The corners apply to every display that has no setting of its own.")
+            }
 
             Item {
                 width: parent.width

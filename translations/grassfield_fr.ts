@@ -4217,10 +4217,6 @@
 <context>
     <name>DesktopPage</name>
     <message>
-        <source>Desktop &amp; Dock</source>
-        <translation>Bureau et Dock</translation>
-    </message>
-    <message>
         <source>Dock</source>
         <translation>Dock</translation>
     </message>
@@ -4385,16 +4381,12 @@
         <translation>Masquer et afficher automatiquement le Dock</translation>
     </message>
     <message>
-        <source>Built-in Display</source>
-        <translation>Écran intégré</translation>
-    </message>
-    <message>
-        <source>%1 (%2)</source>
-        <translation>%1 (%2)</translation>
-    </message>
-    <message>
         <source>Dock settings for</source>
         <translation>Réglages du Dock pour</translation>
+    </message>
+    <message>
+        <source>Desktop &amp; Dock</source>
+        <translation>Bureau et Dock</translation>
     </message>
     <message>
         <source>Size, Magnification, Position and Automatically hide apply to %1 only.</source>
@@ -4403,18 +4395,6 @@
     <message>
         <source>Size, Magnification, Position and Automatically hide apply to every display that has no setting of its own.</source>
         <translation>La taille, l’agrandissement, la position et le masquage automatique s’appliquent à tous les écrans qui n’ont pas de réglage propre.</translation>
-    </message>
-    <message>
-        <source>Use the All Displays settings</source>
-        <translation>Utiliser les réglages de Tous les écrans</translation>
-    </message>
-    <message>
-        <source>Use All Displays</source>
-        <translation>Utiliser Tous les écrans</translation>
-    </message>
-    <message>
-        <source>All Displays</source>
-        <translation>Tous les écrans</translation>
     </message>
     <message>
         <source>Show the Dock on all displays</source>
@@ -4592,6 +4572,17 @@
     <message>
         <source>The new settings are not on the screen yet.</source>
         <translation>Les nouveaux réglages ne sont pas encore à l’écran.</translation>
+    </message>
+</context>
+<context>
+    <name>DisplayScopeState</name>
+    <message>
+        <source>Built-in Display</source>
+        <translation>Écran intégré</translation>
+    </message>
+    <message>
+        <source>%1 (%2)</source>
+        <translation>%1 (%2)</translation>
     </message>
 </context>
 <context>
@@ -9829,6 +9820,18 @@
         <source>Show status items of applications in the menu bar</source>
         <translation>Afficher les éléments d’état des applications dans la barre des menus</translation>
     </message>
+    <message>
+        <source>Menu Bar settings for</source>
+        <translation>Réglages de la barre des menus pour</translation>
+    </message>
+    <message>
+        <source>Automatically hide and show, and the background, apply to the menu bar of %1 only.</source>
+        <translation>Le masquage automatique et l’arrière-plan ne s’appliquent qu’à la barre des menus de %1.</translation>
+    </message>
+    <message>
+        <source>Automatically hide and show, and the background, apply to the menu bar of every display that has no setting of its own.</source>
+        <translation>Le masquage automatique et l’arrière-plan s’appliquent à la barre des menus de tous les écrans qui n’ont pas de réglage propre.</translation>
+    </message>
 </context>
 <context>
     <name>MenuBridge</name>
@@ -12289,6 +12292,21 @@
     </message>
 </context>
 <context>
+    <name>ScopeGroup</name>
+    <message>
+        <source>All Displays</source>
+        <translation>Tous les écrans</translation>
+    </message>
+    <message>
+        <source>Use the All Displays settings</source>
+        <translation>Utiliser les réglages de Tous les écrans</translation>
+    </message>
+    <message>
+        <source>Use All Displays</source>
+        <translation>Utiliser Tous les écrans</translation>
+    </message>
+</context>
+<context>
     <name>ScreenCornersSheet</name>
     <message>
         <source>Screen Corners</source>
@@ -12333,6 +12351,18 @@
     <message>
         <source>Bottom right corner</source>
         <translation>Coin inférieur droit</translation>
+    </message>
+    <message>
+        <source>Screen Corners for</source>
+        <translation>Coins de l’écran pour</translation>
+    </message>
+    <message>
+        <source>The corners apply to %1 only.</source>
+        <translation>Les coins ne s’appliquent qu’à %1.</translation>
+    </message>
+    <message>
+        <source>The corners apply to every display that has no setting of its own.</source>
+        <translation>Les coins s’appliquent à tous les écrans qui n’ont pas de réglage propre.</translation>
     </message>
 </context>
 <context>

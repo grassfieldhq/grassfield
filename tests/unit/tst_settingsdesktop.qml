@@ -337,6 +337,22 @@ TestCase {
         }
     }
 
+    // The owner's report (2026-11-22): the screen corners can be set for one display.
+    function test_cornersScopeOneDisplay() {
+        const t = make();
+        const sheet = createTemporaryObject(sheetComponent, testCase, {store: t.store});
+        sheet.open();
+        sheet.scope.displays = threeDisplays();
+        sheet.scope.displayId = "n:eDP-1";
+        named(sheet, "Top left corner").picked("overview");
+        compare(last(t.store), {"hotCorners.outputs": [{display: {name: "eDP-1", model: "", serial: ""}, topLeft: "overview"}]});
+        compare(t.store.value("hotCorners.topLeft"), "none");
+        sheet.scope.displayId = "all";
+        named(sheet, "Top left corner").picked("lock");
+        compare(last(t.store), {"hotCorners.topLeft": "lock"});
+        verify(sheet.scope.displayCount > 1);
+    }
+
     Component {
         id: dockSliderComponent
         SettingsQml.DockSlider {
