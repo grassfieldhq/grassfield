@@ -429,6 +429,37 @@ const RULES = {
     "wallpaper.outputs": {"type": "wallpaperOutputs"}
 };
 
+// The fields of each per-display override list and their rules (the keys' own: DisplayScope.js has no copy of a bound).
+const DOCK_SCHEMA = {
+    "size": RULES["dock.size"],
+    "position": RULES["dock.position"],
+    "magnification": RULES["dock.magnification"],
+    "magnificationEnabled": RULES["dock.magnificationEnabled"],
+    "autohide": RULES["dock.autohide"]
+};
+const MENUBAR_SCHEMA = {
+    "autoHide": RULES["menubar.autoHide"],
+    "showBackground": RULES["menubar.showBackground"]
+};
+const HOTCORNERS_SCHEMA = {
+    "topLeft": RULES["hotCorners.topLeft"],
+    "topRight": RULES["hotCorners.topRight"],
+    "bottomLeft": RULES["hotCorners.bottomLeft"],
+    "bottomRight": RULES["hotCorners.bottomRight"]
+};
+
+function scopeSchema(ruleType) {
+    switch (ruleType) {
+    case "dockOutputs":
+        return DOCK_SCHEMA;
+    case "menubarOutputs":
+        return MENUBAR_SCHEMA;
+    case "hotCornersOutputs":
+        return HOTCORNERS_SCHEMA;
+    }
+    return null;
+}
+
 function isObject(v) {
     return v !== null && typeof v === "object" && !Array.isArray(v);
 }
@@ -463,7 +494,7 @@ function validate(path, value) {
     case "dockOutputs":
     case "menubarOutputs":
     case "hotCornersOutputs": {
-        const why = DisplayScope.problem(DisplayScope.schemaOf(rule.type), value);
+        const why = DisplayScope.problem(scopeSchema(rule.type), value);
         return why === "" ? "" : path + ": " + why;
     }
     case "mainDisplays": {
@@ -517,7 +548,7 @@ function normalize(path, value) {
     if (rule.type === "mainDisplays")
         return DisplayRole.normalize(value);
     if (rule.type === "dockOutputs" || rule.type === "menubarOutputs" || rule.type === "hotCornersOutputs")
-        return DisplayScope.normalize(DisplayScope.schemaOf(rule.type), value);
+        return DisplayScope.normalize(scopeSchema(rule.type), value);
     if (rule.type === "notificationApps")
         return NotificationPrefs.normalize(value);
     if (rule.type === "notificationStyles")

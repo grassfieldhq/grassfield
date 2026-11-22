@@ -130,7 +130,7 @@ SettingsPage {
         store: root.store
         backend: root.backend
         group: "menubar"
-        schema: DisplayScope.MENUBAR_SCHEMA
+        schema: SettingsContract.MENUBAR_SCHEMA
     }
     property alias displays: barScope.displays
     property alias displayId: barScope.displayId

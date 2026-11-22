@@ -25,7 +25,7 @@ SettingsPage {
         store: root.store
         backend: root.backend
         group: "dock"
-        schema: DisplayScope.DOCK_SCHEMA
+        schema: SettingsContract.DOCK_SCHEMA
     }
     property alias displays: dockScope.displays
     property alias displayId: dockScope.displayId

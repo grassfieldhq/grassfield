@@ -19,7 +19,11 @@ QtObject {
     // "all" = All Displays, else a display key (WallpaperConfig.displayKey).
     property string displayId: "all"
     // The connected displays: [{key, name, model, serial, label}], named as Settings > Displays names them.
-    property var displays: root.readDisplays()
+    // Follows displays plugged or unplugged while the page is open (the binding reads the application's screens).
+    property var displays: {
+        void Qt.application.screens;
+        return root.readDisplays();
+    }
     readonly property int displayCount: root.displays.length
     readonly property var currentDisplay: root.displayId === "all" ? null : (root.displays.find(d => d.key === root.displayId) || null)
     // The store is bound after the page creates its children: nothing is read before it is there.
@@ -29,7 +33,7 @@ QtObject {
     function readDisplays(): var {
         const list = root.backend && typeof root.backend.screens === "function" ? root.backend.screens() : [];
         const named = list.map(s => {
-            const d = {name: s.name, model: s.model || "", serial: s.serial || ""};
+            const d = DisplayScope.identity(s);
             d.key = WallpaperConfig.displayKey(d);
             d.label = Displays.isBuiltIn(d) ? qsTr("Built-in Display") : (String(d.model).trim() !== "" ? String(d.model).trim() : d.name);
             return d;

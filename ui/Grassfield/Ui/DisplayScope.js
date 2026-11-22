@@ -4,51 +4,23 @@
 // One model for a setting that can differ per display: a global value (the key itself, "All Displays") and an optional
 // per-display override stored next to it. Shared by the Settings app (what it writes), the shell (what each display reads)
 // and the tests; pure functions, no I/O. The wallpaper's `wallpaper.outputs` (URR-015, URR-034) is the same model; this is
-// the generic form used by the Dock (`dock.outputs`).
+// the generic form used by the Dock (`dock.outputs`), the menu bar and the screen corners.
 //
 // Stored: a list of at most MAX_OUTPUTS entries `{display: {name, model, serial}, <field>: value, ...}`. A display is
 // identified like the wallpaper does (WallpaperConfig.displayKey: model and serial, else the connector). A field that an
 // entry does not have follows the global value. An override of a display that is not connected stays stored.
-// `schema` is a map field -> rule; a rule is {type: "integer"|"number", min, max}, {type: "boolean"} or {type: "enum", values}.
+// `schema` is a map field -> rule; a rule is {type: "integer"|"number", min, max}, {type: "boolean"} or {type: "enum", values}:
+// the rules of the keys themselves, taken from the generated SettingsContract (DOCK_SCHEMA, MENUBAR_SCHEMA, HOTCORNERS_SCHEMA).
 
 const MAX_OUTPUTS = 16;
 
-// The Dock's per-display settings (dock.<field>): the geometry and the hiding of one Dock. What the Dock holds (pinned
-// apps, folders, recents) and how it behaves (clicks, indicators, animations) is the same everywhere.
-const DOCK_SCHEMA = {
-    "size": {"type": "integer", "min": 32, "max": 96},
-    "position": {"type": "enum", "values": ["left", "bottom", "right"]},
-    "magnification": {"type": "number", "min": 1, "max": 2.5},
-    "magnificationEnabled": {"type": "boolean"},
-    "autohide": {"type": "boolean"}
-};
-
-// The menu bar's per-display settings (menubar.<field>): how a display's bar hides and whether it has the frosted band.
-const MENUBAR_SCHEMA = {
-    "autoHide": {"type": "enum", "values": ["always", "desktop", "fullscreen", "never"]},
-    "showBackground": {"type": "boolean"}
-};
-
-// The screen corners (hotCorners.<corner>): the action of each corner of a display.
-const CORNER_ACTIONS = ["none", "overview", "notifications", "apps", "lock"];
-const HOTCORNERS_SCHEMA = {
-    "topLeft": {"type": "enum", "values": CORNER_ACTIONS},
-    "topRight": {"type": "enum", "values": CORNER_ACTIONS},
-    "bottomLeft": {"type": "enum", "values": CORNER_ACTIONS},
-    "bottomRight": {"type": "enum", "values": CORNER_ACTIONS}
-};
-
-// The schema of a rule type of the contract (dockOutputs, menubarOutputs, hotCornersOutputs), or null.
-function schemaOf(ruleType) {
-    switch (ruleType) {
-    case "dockOutputs":
-        return DOCK_SCHEMA;
-    case "menubarOutputs":
-        return MENUBAR_SCHEMA;
-    case "hotCornersOutputs":
-        return HOTCORNERS_SCHEMA;
-    }
-    return null;
+// The identity of a display as the stored lists name it ({name, model, serial}, WallpaperConfig.displayKey). One function for
+// the shell (a Quickshell screen, which has `serialNumber`) and the Settings app (the backend's screens, which have `serial`), so
+// both build the same key from the same monitor. A display that reports no serial is identified by its connector, so an
+// override of such a display follows the connector (the port), not the monitor.
+function identity(screen) {
+    const s = screen || {};
+    return {name: s.name || "", model: s.model || "", serial: s.serialNumber || s.serial || ""};
 }
 
 function isPlainObject(v) {
@@ -187,24 +159,4 @@ function withOverride(schema, raw, display, fields) {
 // The stored list without the display's entry: it follows All Displays again for every field.
 function withoutOverride(schema, raw, display) {
     return normalize(schema, raw).filter(e => !WallpaperConfig.sameDisplay(e.display, display));
-}
-
-// Migration of the values stored before overrides existed (a Dock setting was one global value): nothing to convert, a
-// value that is stored under `dock.<field>` stays the "All Displays" value for every display, and no entry exists until the
-// person chooses a display in Settings. A hand-edited entry whose value equals the global one is harmless and is kept.
-function dropEqualToGlobal(schema, globals, raw) {
-    const out = [];
-    for (const e of normalize(schema, raw)) {
-        const kept = {display: e.display};
-        let any = false;
-        for (const key of Object.keys(schema)) {
-            if (key in e && e[key] !== globals[key]) {
-                kept[key] = e[key];
-                any = true;
-            }
-        }
-        if (any)
-            out.push(kept);
-    }
-    return out;
 }

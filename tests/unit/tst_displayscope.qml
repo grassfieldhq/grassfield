@@ -7,7 +7,7 @@ import Grassfield.Ui
 TestCase {
     name: "DisplayScope"
 
-    readonly property var schema: DisplayScope.DOCK_SCHEMA
+    readonly property var schema: SettingsContract.DOCK_SCHEMA
     readonly property var globals: ({size: 48, position: "bottom", magnification: 1.6, magnificationEnabled: false, autohide: false})
     readonly property var a: ({name: "DP-1", model: "U2723QE", serial: "A1"})
     readonly property var b: ({name: "DP-2", model: "U2723QE", serial: "A2"})
@@ -85,11 +85,11 @@ TestCase {
 
     // The menu bar and the screen corners use the same model with their own fields.
     function test_menuBarAndCornersSchemas() {
-        const bar = DisplayScope.MENUBAR_SCHEMA;
-        const corners = DisplayScope.HOTCORNERS_SCHEMA;
-        compare(DisplayScope.schemaOf("menubarOutputs"), bar);
-        compare(DisplayScope.schemaOf("hotCornersOutputs"), corners);
-        compare(DisplayScope.schemaOf("nope"), null);
+        const bar = SettingsContract.MENUBAR_SCHEMA;
+        const corners = SettingsContract.HOTCORNERS_SCHEMA;
+        compare(SettingsContract.scopeSchema("menubarOutputs"), bar);
+        compare(SettingsContract.scopeSchema("hotCornersOutputs"), corners);
+        compare(SettingsContract.scopeSchema("nope"), null);
         const barGlobals = {autoHide: "fullscreen", showBackground: false};
         const list = DisplayScope.withOverride(bar, [], a, {autoHide: "always"});
         compare(DisplayScope.resolve(bar, barGlobals, list, a).autoHide, "always");
@@ -105,16 +105,28 @@ TestCase {
         compare(DisplayScope.problem(bar, [{display: a, size: 40}]) !== "", true);
     }
 
-    // Migration: before overrides a Dock setting was one global value. That value stays the All Displays value for every display
-    // and no entry exists: nothing is converted, so nothing changes for anyone. An entry equal to the global value (a file edited
-    // by hand) carries no information and is dropped by dropEqualToGlobal.
-    function test_migrationKeepsGlobalValuesAndDropsRedundantEntries() {
-        const stored = {size: 64, position: "left", magnification: 1.6, magnificationEnabled: true, autohide: true};
-        compare(DisplayScope.resolve(schema, stored, [], a), stored);
-        compare(DisplayScope.resolve(schema, stored, [], panel), stored);
-        const edited = [{display: a, size: 64, autohide: false}, {display: b, size: 64}];
-        const kept = DisplayScope.dropEqualToGlobal(schema, stored, edited);
-        compare(kept.length, 1);
-        compare(kept[0], {display: a, autohide: false});
+    // The bounds are the keys' own: a field's rule in the schema IS the rule of its key, so the two cannot drift apart.
+    function test_schemasAreTheKeysOwnRules() {
+        compare(schema.size, SettingsContract.RULES["dock.size"]);
+        compare(schema.magnification, SettingsContract.RULES["dock.magnification"]);
+        compare(SettingsContract.MENUBAR_SCHEMA.autoHide, SettingsContract.RULES["menubar.autoHide"]);
+        compare(SettingsContract.HOTCORNERS_SCHEMA.topLeft, SettingsContract.RULES["hotCorners.topLeft"]);
+    }
+
+    // Review 2026-11-22: the shell's screens report `serialNumber`, the Settings app's `serial`. Both must make the same identity,
+    // or an override Settings writes for a monitor with a serial is silently ignored by the shell.
+    function test_oneIdentityForTheShellAndSettings() {
+        const shellScreen = {name: "DP-1", model: "U2723QE", serialNumber: "A1"};
+        const appScreen = {name: "DP-1", model: "U2723QE", serial: "A1"};
+        compare(DisplayScope.identity(shellScreen), {name: "DP-1", model: "U2723QE", serial: "A1"});
+        compare(DisplayScope.identity(shellScreen), DisplayScope.identity(appScreen));
+        compare(WallpaperConfig.displayKey(DisplayScope.identity(shellScreen)), "s:U2723QE|A1");
+        // What Settings writes is found by the shell's screen, also on another connector.
+        const list = DisplayScope.withOverride(schema, [], DisplayScope.identity(appScreen), {autohide: true});
+        compare(DisplayScope.resolve(schema, globals, list, DisplayScope.identity(shellScreen)).autohide, true);
+        compare(DisplayScope.resolve(schema, globals, list, DisplayScope.identity({name: "DP-9", model: "U2723QE", serialNumber: "A1"})).autohide, true);
+        // No serial: the connector identifies the display.
+        compare(WallpaperConfig.displayKey(DisplayScope.identity({name: "eDP-1", model: "", serialNumber: ""})), "n:eDP-1");
+        compare(DisplayScope.identity(null), {name: "", model: "", serial: ""});
     }
 }

@@ -30,11 +30,8 @@ Scope {
     readonly property real scale: screenInfo && screenInfo.devicePixelRatio > 0 ? screenInfo.devicePixelRatio : 1
     readonly property int pixelWidth: Math.max(1, Math.round((screenInfo ? screenInfo.width : 0) * scale))
     readonly property int pixelHeight: Math.max(1, Math.round((screenInfo ? screenInfo.height : 0) * scale))
-    readonly property var outputIdentity: ({
-            name: outputName,
-            model: screenInfo ? screenInfo.model : "",
-            serial: screenInfo ? screenInfo.serialNumber : ""
-        })
+    // The same identity Settings and the Dock overrides use (DisplayScope.identity: serialNumber when the monitor reports one).
+    readonly property var outputIdentity: DisplayScope.identity(screenInfo)
     readonly property string displayKey: WallpaperConfig.displayKey(outputIdentity)
     // Effective settings of this output.
     readonly property var cfg: WallpaperConfig.resolve(Settings.wallpaper, outputIdentity)

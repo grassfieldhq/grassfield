@@ -19,7 +19,7 @@ Sheet {
         store: root.store
         backend: root.backend
         group: "hotCorners"
-        schema: DisplayScope.HOTCORNERS_SCHEMA
+        schema: SettingsContract.HOTCORNERS_SCHEMA
     }
     property alias scope: cornerScope
 
