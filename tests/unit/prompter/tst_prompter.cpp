@@ -836,6 +836,27 @@ TEST(PrompterQueue, AServedCallerDoesNotPassTheOthers) {
     book.release(y1);
     EXPECT_EQ(book.takePromoted(), QStringList{b2});
     EXPECT_TRUE(book.isWaiting(a2));
+
+    // The shell answers a caller's request while another of its own waits: its turn is still remembered, so the place goes
+    // to a caller served before it.
+    RequestBook again(limits::kRequests);
+    int         p[20];
+    int         m = 0;
+    const QString x1b = again.admit(&p[m++], Lane::Keyring, x, 1000).id;
+    const QString x2b = again.admit(&p[m++], Lane::Keyring, x, 1000).id;
+    again.admit(&p[m++], Lane::Keyring, y, 1000);
+    again.admit(&p[m++], Lane::Keyring, y, 1000);
+    const QString b1b = again.admit(&p[m++], Lane::Keyring, b, 1000).id;
+    const QString b2b = again.admit(&p[m++], Lane::Keyring, b, 1000).id;
+    const QString a1b = again.admit(&p[m++], Lane::Keyring, a, 1000).id;
+    const QString a2b = again.admit(&p[m++], Lane::Keyring, a, 1000).id;
+    again.release(x1b);
+    EXPECT_EQ(again.takePromoted(), QStringList{b1b});
+    again.release(x2b);
+    EXPECT_EQ(again.takePromoted(), QStringList{a1b});
+    again.release(a1b); // a's answer: a holds nothing now, a2 waits; b was served before a
+    EXPECT_EQ(again.takePromoted(), QStringList{b2b});
+    EXPECT_TRUE(again.isWaiting(a2b));
 }
 
 // The queue's bounds: kWaitingPerCaller for one caller, kWaiting in all; beyond, refused at once (fail closed).
