@@ -446,6 +446,18 @@ QVariantMap PreviewApp::inspectPath(const QString &path) const
         }
         const QString text = QString::fromUtf8(data);
         out[QStringLiteral("text")] = text;
+        // A Markdown document shows rendered (Quick Look), its pictures checked here and served by the image provider
+        // under a token, like the files of the list; one past kMaxMarkdownChars shows its source.
+        if (preview::isMarkdown(path)) {
+            out[QStringLiteral("markdown")] = true;
+            if (text.size() <= preview::kMaxMarkdownChars) {
+                const QString folder = info.absolutePath();
+                out[QStringLiteral("html")] = preview::markdownHtml(text, [this, &folder](const QString &target, QSize *size) {
+                    const QString picture = preview::markdownImagePath(target, folder, size);
+                    return picture.isEmpty() ? QString() : QStringLiteral("image://preview/0/%1").arg(tokenFor(picture));
+                });
+            }
+        }
         // A long text in pieces of whole lines: the view lays out only those on screen (P7).
         if (text.size() > preview::kTextChunkChars)
             out[QStringLiteral("chunks")] = preview::textChunks(text, preview::kTextChunkChars);

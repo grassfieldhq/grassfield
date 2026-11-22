@@ -2904,6 +2904,10 @@ QtObject {
     readonly property int previewZoomMax: 16
     // estimate: Preview app (docs/specs/preview.md) [ref: docs/testing/f1-reference-gaps.md § Glance and Preview]
     readonly property int previewCodeFontSize: 12
+    // estimate: the body text of a rendered Markdown document (Quick Look shows it formatted in the reading size of a text document, larger than the code size 12); content size, does not follow Text size (ADR-0039 step 3) [ref: docs/specs/preview.md P5]
+    readonly property int previewMarkdownFontSize: 14
+    // estimate: the margin around a rendered Markdown document, a page margin wider than the plain text's spacing.md [ref: docs/specs/preview.md P5]
+    readonly property int previewMarkdownPadding: 24
     // estimate: Preview app (docs/specs/preview.md) [ref: docs/testing/f1-reference-gaps.md § Glance and Preview]
     readonly property int previewControlsHeight: 40
     // refinement batch 6: as control.toolIconSize (was 16); estimate: glyph size inside a 28-pt toolbar button (same as files.toolbarIconSize) [ref: docs/testing/f1-reference-gaps.md § Glance and Preview; docs/specs/preview.md]

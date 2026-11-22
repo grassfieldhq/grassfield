@@ -6,6 +6,7 @@
 #include <QStringList>
 
 #include <atomic>
+#include <functional>
 
 // Pure logic of Grassfield Preview (no GUI): argument validation, file-type routing and size caps.
 // Everything the viewer opens is untrusted: only local regular files, bounded sizes.
@@ -28,6 +29,27 @@ QString localPathFromArgument(const QString &arg, const QString &cwd, QString *e
 
 // Routing by MIME type: images, PDF, text and code, audio, video.
 Kind classify(const QString &path);
+
+// Markdown (the owner's report on 1.0.0-rc9: a .md file showed its source): a file whose type is text/markdown (or a type
+// inheriting it) is shown rendered, as Quick Look does, up to kMaxMarkdownChars characters (a longer one shows its source in
+// pieces, P5). Decided by the type Preview already detects (the .md, .markdown, .mkd suffixes of shared-mime-info).
+constexpr int kMaxMarkdownChars = 512 * 1024;
+constexpr int kMaxMarkdownImages = 64; // pictures of one document shown; the rest show their alternative text
+bool isMarkdown(const QString &path);
+// A picture a Markdown document names, resolved for display: `target` as written in the document (a relative path against
+// `baseDir`, an absolute path or a file: URL; percent-encoding decoded). Only a local, readable regular file (symlinks
+// followed) that Preview shows as an image, outside /proc, /sys and /dev, within the image caps (a vector picture within
+// kMaxVectorBytes) gives its canonical path and its displayed size; anything else (http, data:, a missing file, a FIFO, a
+// text file, a picture too large) gives "": the document never makes Preview fetch anything or open a device.
+QString markdownImagePath(const QString &target, const QString &baseDir, QSize *size = nullptr);
+// The HTML of a rendered Markdown document for a read-only rich text view: Qt's own reader (QTextDocument::setMarkdown, the
+// GitHub dialect: tables, task lists, strikethrough, autolinks) with raw HTML off, so the document's own tags stay text.
+// Every picture goes through `image(target, &size)`, which answers the URL to show it from (Preview's image provider) or ""
+// to show its alternative text instead; at most kMaxMarkdownImages are asked. Links keep their target (the view decides
+// what a click does) and take the view's link colour (no colour of their own). The body carries no font, so the view's
+// font (family, size, zoom) applies.
+using MarkdownImageResolver = std::function<QString(const QString &target, QSize *size)>;
+QString markdownHtml(const QString &markdown, const MarkdownImageResolver &image);
 
 // The first lines of a text file for a sidebar thumbnail: at most 12 lines of 40 characters, control characters and tabs
 // replaced by spaces; "" for an empty or unreadable file. Only a regular file is read (a FIFO or a device would block or

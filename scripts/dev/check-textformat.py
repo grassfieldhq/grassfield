@@ -2,7 +2,8 @@
 """Guard against rich-text injection: every QML `Text {` block in shell/, ui/ and apps/ must set `textFormat`.
 
 Untrusted strings (app ids, titles, desktop entries, SSIDs, notification fields) rendered as rich text can
-spoof UI or fetch remote resources. `Text.StyledText`/`Text.RichText` are allowed only in ALLOW.
+spoof UI or fetch remote resources. `Text.StyledText`/`Text.RichText` are allowed only in ALLOW. A `TextEdit` is plain
+text by default; `TextEdit.RichText`, `TextEdit.MarkdownText` and `TextEdit.AutoText` are allowed only in ALLOW_EDIT.
 Usage: check-textformat.py   (exit 1 on violations)
 """
 import pathlib
@@ -12,6 +13,13 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 # file → reason; only the sanitized notification body may use StyledText.
 ALLOW = {"shell/notifications/NotificationContent.qml": "sanitized body (Sanitizer.js) rendered as StyledText"}
+# file -> reason for a rich TextEdit.
+ALLOW_EDIT = {
+    "apps/memos/qml/MemoWindow.qml": "the memo editor: the user's own formatted text (ADR-0051)",
+    "apps/preview/qml/TextView.qml": "a Markdown document rendered by Qt's reader with raw HTML off, pictures only from "
+                                     "Preview's image provider (previewlogic markdownHtml, docs/specs/preview.md P5)",
+}
+RICH_EDIT = re.compile(r"TextEdit\.(RichText|MarkdownText|AutoText)\b")
 OPEN = re.compile(r"(^|[^\w.])Text\s*\{")
 
 
@@ -40,7 +48,11 @@ def main():
     bad = []
     for path in sorted(list(ROOT.glob("shell/**/*.qml")) + list(ROOT.glob("ui/**/*.qml")) + list(ROOT.glob("apps/**/*.qml"))):
         rel = str(path.relative_to(ROOT))
-        for line, own in blocks(path.read_text()):
+        text = path.read_text()
+        if rel not in ALLOW_EDIT:
+            for m in RICH_EDIT.finditer(text):
+                bad.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1}: {m.group(0)} outside the allowlist")
+        for line, own in blocks(text):
             fmt = re.search(r"textFormat\s*:\s*([\w.]+)", own)
             if not fmt:
                 bad.append(f"{rel}:{line}: Text without textFormat")

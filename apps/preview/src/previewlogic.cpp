@@ -10,7 +10,13 @@
 #include <QLocale>
 #include <QMimeDatabase>
 #include <QRegularExpression>
+#include <QImageReader>
 #include <QSettings>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextFragment>
+#include <QTextImageFormat>
 #include <QUrl>
 
 #include <algorithm>
@@ -151,6 +157,130 @@ Kind classify(const QString &path)
     if (mime.inherits(QStringLiteral("text/plain")) || name.startsWith(QLatin1String("text/")))
         return Kind::Text;
     return Kind::Unsupported;
+}
+
+bool isMarkdown(const QString &path)
+{
+    const QMimeType mime = QMimeDatabase().mimeTypeForFile(path, QMimeDatabase::MatchDefault);
+    return mime.name() == QLatin1String("text/markdown") || mime.inherits(QStringLiteral("text/markdown"));
+}
+
+QString markdownImagePath(const QString &target, const QString &baseDir, QSize *size)
+{
+    const QString t = target.trimmed();
+    if (t.isEmpty() || baseDir.isEmpty())
+        return {};
+    QString local;
+    static const QRegularExpression scheme(QStringLiteral("^[A-Za-z][A-Za-z0-9+.-]*:"));
+    if (scheme.match(t).hasMatch()) {
+        // Only a local file: URL (empty host or localhost); http, https, data:, ftp... are never fetched.
+        const QUrl url(t, QUrl::StrictMode);
+        if (!url.isValid() || url.scheme().toLower() != QLatin1String("file") || url.hasQuery() || url.hasFragment()
+            || !(url.host().isEmpty() || url.host() == QLatin1String("localhost")))
+            return {};
+        local = url.path();
+    } else {
+        // A path as Markdown writes it: relative to the document's folder, a query or fragment after it ("?raw=true") left
+        // out, then percent-decoded ("my%20picture.png"; "%23" is a '#' of the name).
+        static const QRegularExpression tail(QStringLiteral("[?#].*$"));
+        QString raw = t;
+        raw.remove(tail);
+        local = QUrl::fromPercentEncoding(raw.toUtf8());
+        if (local.isEmpty())
+            return {};
+        local = QDir(baseDir).absoluteFilePath(local);
+    }
+    if (local.isEmpty())
+        return {};
+    const QFileInfo info(QDir::cleanPath(local));
+    const QString canonical = info.canonicalFilePath();
+    // isFile() follows symlinks and refuses directories, devices, FIFOs and sockets.
+    if (canonical.isEmpty() || isSystemPath(canonical) || !info.isFile() || !info.isReadable() || classify(canonical) != Kind::Image
+        || vectorTooLarge(canonical, info.size()))
+        return {};
+    QImageReader reader(canonical);
+    reader.setAutoTransform(true);
+    if (!reader.canRead())
+        return {};
+    QSize s = reader.size();
+    if (s.isValid() && (reader.transformation() & QImageIOHandler::TransformationRotate90))
+        s.transpose();
+    if (!imageSizeAllowed(s))
+        return {};
+    if (size)
+        *size = s;
+    return canonical;
+}
+
+QString markdownHtml(const QString &markdown, const MarkdownImageResolver &image)
+{
+    QTextDocument doc;
+    doc.setMarkdown(markdown, QTextDocument::MarkdownFeatures(QTextDocument::MarkdownDialectGitHub | QTextDocument::MarkdownNoHTML));
+    // Collected first, applied after the walk (a change while the fragments are walked would invalidate them): pictures get
+    // their URL and size or become their alternative text, links lose their own colour.
+    struct Change {
+        int position = 0;
+        int length = 0;
+        QTextCharFormat format;
+        QString text; // set: the fragment becomes this text (a picture that is not shown)
+        bool replace = false;
+    };
+    QList<Change> changes;
+    int asked = 0;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid())
+                continue;
+            QTextCharFormat format = fragment.charFormat();
+            if (format.isImageFormat()) {
+                QTextImageFormat picture = format.toImageFormat();
+                QSize size;
+                const QString url = asked < kMaxMarkdownImages && image ? image(picture.name(), &size) : QString();
+                ++asked;
+                Change c;
+                c.position = fragment.position();
+                c.length = fragment.length();
+                if (!url.isEmpty() && size.isValid()) {
+                    picture.setName(url);
+                    picture.setWidth(size.width());
+                    picture.setHeight(size.height());
+                    picture.setProperty(QTextFormat::ImageTitle, QVariant());
+                    c.format = picture;
+                } else {
+                    QTextCharFormat plain = format;
+                    plain.setObjectType(QTextFormat::NoObject);
+                    plain.clearProperty(QTextFormat::ImageName);
+                    plain.clearProperty(QTextFormat::ImageWidth);
+                    plain.clearProperty(QTextFormat::ImageHeight);
+                    plain.clearProperty(QTextFormat::ImageTitle);
+                    plain.clearProperty(QTextFormat::ImageAltText);
+                    c.format = plain;
+                    c.text = format.property(QTextFormat::ImageAltText).toString();
+                    c.replace = true;
+                }
+                changes.append(c);
+            } else if (format.isAnchor() && format.hasProperty(QTextFormat::ForegroundBrush)) {
+                format.clearForeground();
+                changes.append({fragment.position(), fragment.length(), format, {}, false});
+            }
+        }
+    }
+    // From the end: a replaced picture changes the positions after it only.
+    for (auto it = changes.crbegin(); it != changes.crend(); ++it) {
+        QTextCursor cursor(&doc);
+        cursor.setPosition(it->position);
+        cursor.setPosition(it->position + it->length, QTextCursor::KeepAnchor);
+        if (it->replace)
+            cursor.insertText(it->text, it->format);
+        else
+            cursor.setCharFormat(it->format);
+    }
+    QString html = doc.toHtml();
+    // The document's default font is the toolkit's: the view's own font (family, size, zoom) must apply instead.
+    static const QRegularExpression body(QStringLiteral("<body style=\"[^\"]*\">"));
+    html.replace(body, QStringLiteral("<body>"));
+    return html;
 }
 
 QString kindName(Kind kind)

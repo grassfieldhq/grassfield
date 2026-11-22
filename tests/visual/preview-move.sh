@@ -11,6 +11,7 @@ vs_session
 fix=$VS_DEV/preview-move
 mkdir -p "$fix"
 [[ -f $fix/picture.png ]] || magick -size 1200x800 gradient:'#d9453d'-'#2f5fd0' "$fix/picture.png"
+[[ -f $fix/small.png ]] || magick -size 360x120 gradient:'#3fa34d'-'#2f5fd0' "$fix/small.png"
 cat > "$fix/notes.md" <<'MD'
 # Release notes
 
@@ -21,7 +22,7 @@ Grassfield **Preview** shows a Markdown file *rendered*, as Quick Look does.
 - Headings, lists and `inline code`
 - [A link](https://grassfield.site) and a picture next to the file:
 
-![A gradient](picture.png)
+![A gradient](small.png) and a remote one: ![remote picture](https://example.com/x.png)
 
 | Column | Value |
 |--------|-------|

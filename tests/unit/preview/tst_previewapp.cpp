@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
 #include <QTemporaryDir>
@@ -138,4 +139,37 @@ TEST(PreviewApp, RecognitionsShareOneDecodeAndRunInTheBackground)
         EXPECT_EQ(app.recognitionDecodes(), 1);
     }
     qputenv("PATH", oldPath);
+}
+
+// Owner report on 1.0.0-rc9: a Markdown file is inspected as text with its rendered HTML; its picture is served by the image
+// provider under a token (never by its path), and a document past the bound shows its source only.
+TEST(PreviewApp, MarkdownIsRenderedWithItsPicturesFromTheProvider)
+{
+    ensureApp();
+    QTemporaryDir dir;
+    ASSERT_TRUE(QImage(30, 10, QImage::Format_RGB32).save(dir.filePath(QStringLiteral("pic.png"))));
+    write(dir.filePath(QStringLiteral("doc.md")), "# Hello\n\n![a picture](pic.png) ![web](https://example.com/w.png)\n");
+    QByteArray big = "# Big\n\n";
+    for (int i = 0; i < preview::kMaxMarkdownChars / 50 + 10; ++i)
+        big += "a line of a long Markdown document, to be shown as source.\n";
+    write(dir.filePath(QStringLiteral("big.md")), big);
+    write(dir.filePath(QStringLiteral("plain.txt")), "# not markdown\n");
+    PreviewApp app({dir.filePath(QStringLiteral("doc.md")), dir.filePath(QStringLiteral("big.md")), dir.filePath(QStringLiteral("plain.txt"))}, {}, false);
+    const QVariantMap doc = app.inspect(0);
+    EXPECT_TRUE(doc.value(QStringLiteral("ok")).toBool());
+    EXPECT_EQ(doc.value(QStringLiteral("kind")).toString(), QStringLiteral("text"));
+    EXPECT_TRUE(doc.value(QStringLiteral("markdown")).toBool());
+    EXPECT_EQ(doc.value(QStringLiteral("text")).toString().left(7), QStringLiteral("# Hello"));
+    const QString html = doc.value(QStringLiteral("html")).toString();
+    const int token = app.tokenFor(QFileInfo(dir.filePath(QStringLiteral("pic.png"))).canonicalFilePath());
+    EXPECT_TRUE(html.contains(QStringLiteral("<img src=\"image://preview/0/%1\"").arg(token))) << qPrintable(html);
+    EXPECT_FALSE(html.contains(QStringLiteral("example.com")));
+    const QVariantMap large = app.inspect(1);
+    EXPECT_TRUE(large.value(QStringLiteral("ok")).toBool());
+    EXPECT_TRUE(large.value(QStringLiteral("markdown")).toBool());
+    EXPECT_FALSE(large.contains(QStringLiteral("html")));
+    EXPECT_FALSE(large.value(QStringLiteral("chunks")).toStringList().isEmpty());
+    const QVariantMap plain = app.inspect(2);
+    EXPECT_FALSE(plain.contains(QStringLiteral("markdown")));
+    EXPECT_FALSE(plain.contains(QStringLiteral("html")));
 }
