@@ -433,3 +433,20 @@ user accounts, editing shortcuts. Wallpaper is a v1 section since ADR-0016 (loca
 
 ## Toolbar navigation and secondary text (visual audit 2026-10-25, kept under ADR-0024)
 The sidebar is the floating macOS 26 panel (ADR-0024 amendment 2026-11-03; ADR-0024 lot 1 had made it flush). On top of it: the toolbar over the detail pane carries a 72 x 36 back / forward capsule (`toolbar.capsule`, `toolbar.groupButton`) that walks the panes visited (`NavHistory.js`, tests `tst_navhistory.qml`; a new pane forgets the forward list). Secondary text drawn directly on the window or on a group uses `Appearance.windowSecondary` (`color.*.windowTextSecondary`, the lighter macOS grey, 4.7:1 on the window and on `groupFill`); text on a hovered device row uses `textSecondary` (4.5:1 on the hover fill). Tests: `tst_visualaudit.qml`, `WindowSurfacePairs` in `test_contrast_tokens.py`.
+
+## Scope of a setting: All Displays or one display (owner 2026-11-22, "everything that can be")
+
+One model, `ui/Grassfield/Ui/DisplayScope.js`: the key itself is the "All Displays" value; an optional per-display override sits in a sibling `<group>.outputs` list (a display is identified as the wallpaper does: model and serial, else the connector; at most 16 entries; a field an entry lacks follows the global value; an override of a display that is not connected stays stored). The pane shows a "<Pane> settings for" pop-up (All Displays or one display) only with more than one display, and "Use All Displays" clears the display's override. Inventory of every key, by whether it can differ per display:
+
+| Setting | Scope | Decision |
+|---|---|---|
+| `dock.size`, `dock.position`, `dock.magnification`, `dock.magnificationEnabled`, `dock.autohide` | per display (`dock.outputs`) | done (docs/specs/dock.md) |
+| `dock.allDisplays` (a Dock on every display or one that follows the pointer) | global | the scope choice itself |
+| other `dock.*` (apps, folders, recents, behaviour) | global | what the Dock holds is one list (not macOS to split) |
+| `wallpaper.*` source, path, colour, fit, interval, shuffle | per display (`wallpaper.outputs`) | done earlier (URR-015, URR-034), unchanged |
+| `menubar.autoHide`, `menubar.showBackground` | per display (`menubar.outputs`) | each display has its own bar |
+| `menubar.show*`, clock options, `recentItems`, tray | global | the bar's contents are one list; hiding an item on one display only is not a macOS behaviour |
+| `hotCorners.*` | per display (`hotCorners.outputs`) | a corner is a place on one display |
+| `desktop.showIcons` | global | the desktop items live on the main display only (macOS); other displays have none to switch |
+| `displays.main` | per display by nature | already one choice per set of displays |
+| appearance, material, accessibility, accent, icons, pointer, sound, notifications, lock, energy, keyboard, region, search, capture, updates, store, terminal, screensaver, preview | global | system-wide or not tied to a display's surface |
