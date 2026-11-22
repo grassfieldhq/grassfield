@@ -32,6 +32,7 @@
     ],
     "stackOptions": {},
     "minimizeIntoApp": false,
+    "outputs": [],
     "allDisplays": true,
     "clickMinimizes": true,
     "animateOpening": true,

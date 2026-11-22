@@ -205,6 +205,35 @@
           "type": "boolean",
           "default": false
         },
+        "outputs": {
+          "type": "array",
+          "description": "Per-display overrides of the Dock's size, position, magnification and auto-hide (at most 16): an entry names a display (model and serial when the serial is not empty, else the connector) and the fields it changes; the others come from the top-level dock keys (All Displays). An override of a display that is not connected stays stored.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "display": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {"type": "string"},
+                  "model": {"type": "string"},
+                  "serial": {"type": "string"}
+                }
+              },
+              "size": {"type": "integer", "minimum": 32, "maximum": 96},
+              "position": {"type": "string", "enum": ["left", "bottom", "right"]},
+              "magnification": {"type": "number", "minimum": 1, "maximum": 2.5},
+              "magnificationEnabled": {"type": "boolean"},
+              "autohide": {"type": "boolean"}
+            },
+            "required": ["display"]
+          },
+          "default": [],
+          "x-grassfield": {
+            "rule": "dockOutputs"
+          }
+        },
         "allDisplays": {
           "type": "boolean",
           "default": true,

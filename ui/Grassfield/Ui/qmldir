@@ -49,6 +49,7 @@ PointerSize 1.0 PointerSize.js
 PointerColors 1.0 PointerColors.js
 WallpaperConfig 1.0 WallpaperConfig.js
 DisplayRole 1.0 DisplayRole.js
+DisplayScope 1.0 DisplayScope.js
 TimeOfDay 1.0 TimeOfDay.js
 GrassfieldArtwork 1.0 GrassfieldArtwork.qml
 DevicePicture 1.0 DevicePicture.qml

@@ -2,6 +2,7 @@
 .pragma library
 .import "WallpaperConfig.js" as WallpaperConfig
 .import "DisplayRole.js" as DisplayRole
+.import "DisplayScope.js" as DisplayScope
 .import "NotificationPrefs.js" as NotificationPrefs
 
 // The contract version of grassfield.json.
@@ -22,11 +23,12 @@ const DEFAULTS = {
     "dock.position": "bottom",
     "dock.magnification": 1.6,
     "dock.autohide": false,
-    "dock.allDisplays": true,
     "dock.magnificationEnabled": false,
     "dock.showRecents": true,
     "dock.folders": ["~/Downloads"],
     "dock.minimizeIntoApp": false,
+    "dock.outputs": [],
+    "dock.allDisplays": true,
     "dock.clickMinimizes": true,
     "dock.animateOpening": true,
     "dock.showIndicators": true,
@@ -160,13 +162,14 @@ const ALL_DEFAULTS = {
     "dock.position": "bottom",
     "dock.magnification": 1.6,
     "dock.autohide": false,
-    "dock.allDisplays": true,
     "dock.magnificationEnabled": false,
     "dock.recent": [],
     "dock.showRecents": true,
     "dock.folders": ["~/Downloads"],
     "dock.stackOptions": {},
     "dock.minimizeIntoApp": false,
+    "dock.outputs": [],
+    "dock.allDisplays": true,
     "dock.clickMinimizes": true,
     "dock.animateOpening": true,
     "dock.showIndicators": true,
@@ -298,11 +301,12 @@ const RULES = {
     "dock.position": {"type": "enum", "values": ["left", "bottom", "right"]},
     "dock.magnification": {"type": "number", "min": 1, "max": 2.5},
     "dock.autohide": {"type": "boolean"},
-    "dock.allDisplays": {"type": "boolean"},
     "dock.magnificationEnabled": {"type": "boolean"},
     "dock.showRecents": {"type": "boolean"},
     "dock.folders": {"type": "pathList"},
     "dock.minimizeIntoApp": {"type": "boolean"},
+    "dock.outputs": {"type": "dockOutputs"},
+    "dock.allDisplays": {"type": "boolean"},
     "dock.clickMinimizes": {"type": "boolean"},
     "dock.animateOpening": {"type": "boolean"},
     "dock.showIndicators": {"type": "boolean"},
@@ -450,6 +454,10 @@ function validate(path, value) {
         const why = WallpaperConfig.outputsProblem(value);
         return why === "" ? "" : path + ": " + why;
     }
+    case "dockOutputs": {
+        const why = DisplayScope.problem(DisplayScope.DOCK_SCHEMA, value);
+        return why === "" ? "" : path + ": " + why;
+    }
     case "mainDisplays": {
         const why = DisplayRole.problem(value);
         return why === "" ? "" : path + ": " + why;
@@ -500,6 +508,8 @@ function normalize(path, value) {
     // as a whole by validate): the shell and the Settings app read one list.
     if (rule.type === "mainDisplays")
         return DisplayRole.normalize(value);
+    if (rule.type === "dockOutputs")
+        return DisplayScope.normalize(DisplayScope.DOCK_SCHEMA, value);
     if (rule.type === "notificationApps")
         return NotificationPrefs.normalize(value);
     if (rule.type === "notificationStyles")

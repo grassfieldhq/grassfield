@@ -26,7 +26,7 @@ DEFAULTS = ROOT / "config/defaults/grassfield.json"
 CONTRACT = ROOT / "ui/Grassfield/Ui/SettingsContract.js"
 
 PATTERN_RULES = ("tint", "folderColor", "pointerColor", "localeName", "plainText", "nodeName")
-CUSTOM_RULES = ("wallpaperPath", "wallpaperOutputs", "mainDisplays", "notificationApps", "notificationStyles", "pathList")
+CUSTOM_RULES = ("wallpaperPath", "wallpaperOutputs", "dockOutputs", "mainDisplays", "notificationApps", "notificationStyles", "pathList")
 
 
 def is_group(node):
@@ -125,6 +125,10 @@ function validate(path, value) {
         const why = WallpaperConfig.outputsProblem(value);
         return why === "" ? "" : path + ": " + why;
     }
+    case "dockOutputs": {
+        const why = DisplayScope.problem(DisplayScope.DOCK_SCHEMA, value);
+        return why === "" ? "" : path + ": " + why;
+    }
     case "mainDisplays": {
         const why = DisplayRole.problem(value);
         return why === "" ? "" : path + ": " + why;
@@ -175,6 +179,8 @@ function normalize(path, value) {
     // as a whole by validate): the shell and the Settings app read one list.
     if (rule.type === "mainDisplays")
         return DisplayRole.normalize(value);
+    if (rule.type === "dockOutputs")
+        return DisplayScope.normalize(DisplayScope.DOCK_SCHEMA, value);
     if (rule.type === "notificationApps")
         return NotificationPrefs.normalize(value);
     if (rule.type === "notificationStyles")
@@ -216,6 +222,7 @@ def render_contract(schema, errors):
         ".pragma library",
         '.import "WallpaperConfig.js" as WallpaperConfig',
         '.import "DisplayRole.js" as DisplayRole',
+        '.import "DisplayScope.js" as DisplayScope',
         '.import "NotificationPrefs.js" as NotificationPrefs',
         "",
         "// The contract version of grassfield.json.",
