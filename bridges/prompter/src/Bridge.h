@@ -15,9 +15,19 @@
 //   callbacks: final check, MAJOR). A request that reaches the bridge with no shell is answered "cancelled".
 // - The shell connects to a private socket (Peer.h: this user, the expected unit's cgroup) and speaks prompter/1
 //   (Protocol.h). One shell at a time.
-// - Each request is identified (Identity.h) before the shell sees it; at most limits::kRequests are outstanding, the next
-//   ones are answered "cancelled"; a request its caller withdraws is withdrawn from the shell ("cancel"). At most
+// - Each request is identified (Identity.h) before the shell sees it; at most limits::kRequests are outstanding, in the
+//   lanes of B-05 (Requests.h); a request its caller withdraws is withdrawn from the shell ("cancel"). At most
 //   limits::kPrompts gcr prompts are open, at most limits::kPromptsPerCaller of them for one bus connection (Filter.h).
+// - The applications' queue (B-05 amended, owner decision 2026-11-22): a gcr prompt or a KIO query past the applications'
+//   share waits in the bridge for a place (bounded: Requests.h kWaiting, kWaitingPerCaller), unseen: nothing of it reaches
+//   the shell (not its text, not its id) before its turn; the journal gets its id, its kind and the counts (and, for a KIO
+//   query, KioServer's line with the requester's role and path), never its text. When a place frees it goes to the waiting
+//   request of the caller whose turn is the oldest (Requests.h), sent to the shell in a later main loop turn (never from
+//   inside gcr's callbacks). An invalid answer to a waiting id is ignored, never a cancellation (it was never sent). A
+//   waiting request ends unseen when its caller withdraws it (StopPrompting, the caller gone, the KIO client gone) or the
+//   shell goes, and is refused ("cancelled"; KIO: nothing) after Options::queueTimeoutMs or at once beyond the bounds.
+//   The lock changes nothing here: the shell holds whatever it gets while the session is locked (SC4) and answers nothing,
+//   so no place frees through the user then, and a waiting request still ends after its time.
 // - Fail closed: no password is ever invented. An answer to an id that is not outstanding is ignored; a wrong answer to an
 //   outstanding id cancels that request; a line that cannot be attributed (not JSON, over the length limit, no id) closes
 //   the connection, which cancels every request and releases the name.
@@ -71,6 +81,7 @@ namespace gf::prompter {
             // gnome-keyring's keyrings directory, where the KIO server reads whether a keyring has a password (step 9e).
             QString keyringDirectory;
             int     kioStoreTimeoutMs = 0; // how long a keychain store holds its place (0: KioServer::kStoreTimeoutMs)
+            int     queueTimeoutMs    = kWaitMs; // how long an application request waits for a place (B-05 amended)
         };
 
         Bridge(GDBusConnection* bus, Options options);
@@ -106,7 +117,7 @@ namespace gf::prompter {
         struct Pending {
             GfPrompt*  prompt = nullptr; // a reference, held while outstanding
             PromptKind kind   = PromptKind::None;
-            bool       sent   = false;   // the shell has it
+            bool       sent   = false;   // the shell has it (never while it waits for a place)
             bool       choice = false;   // it was shown with a check box
             NmRequest* nm     = nullptr; // a NetworkManager request (kind "nm"; prompt is then nullptr), owned by m_nm
             KioRequest* kio   = nullptr; // a KIO query (kind "kio"; prompt is then nullptr), owned by m_kio
@@ -137,6 +148,16 @@ namespace gf::prompter {
         void identified(const QString& id, GfPrompt* prompt, const RequesterView& requester);
         void cancelRequest(const QString& id, bool tellShell);
         void cancelAll(bool tellShell);
+
+        // The applications' queue (B-05 amended): a request's way to the shell once it holds a place (gcr: who asks, then
+        // the prompt; KIO: the prompt); every release of an id, which may give its place to a waiting request, sent in a
+        // later turn; the waiting requests' time.
+        void startGcr(const QString& id);
+        void sendKio(const QString& id);
+        void releaseId(const QString& id);
+        void startPromoted();
+        void armQueueTimer();
+        void expireWaiting();
 
         // In a later main loop turn (never inside gcr's callbacks): dropClient's closing of gcr's open prompts, and a
         // request's reference to its prompt on the paths that run inside gcr.
@@ -175,6 +196,8 @@ namespace gf::prompter {
         int              m_badLines = 0;
 
         RequestBook             m_book{limits::kRequests};
+        QTimer                  m_promoteTimer; // sends the requests given a place (0 ms, single shot)
+        QTimer                  m_queueTimer;   // at the earliest deadline of a waiting request
         QHash<QString, Pending> m_pending; // id -> request
         QSet<GfPrompt*>         m_prompts; // live prompts reporting here
         PromptsLater            m_later;   // cleared in ~Bridge once no prompt reports here any more

@@ -22,9 +22,14 @@
 #  6 pinentry-gnome3 (GnuPG's prompt) is shown as "gnupg", on someone's behalf, and gets its PIN (SKIP when absent)
 #  7 a caller that stops prompting (StopPrompting) or leaves the bus: "cancel <id>" reaches the shell, the caller gets no
 #    password
-#  8 nine requests at once from three connections (B-05: the applications hold four of the 8 places, NetworkManager and
-#    BlueZ keep two each, one connection holds two): the shell gets four, the other five are answered "cancelled" at
-#    once; the four are answered
+#  8 the applications' queue (B-05: the applications hold four of the 8 places, NetworkManager and BlueZ keep two each, one
+#    connection holds two; amended by the owner decision of 2026-11-22): nine requests at once from three connections, the
+#    shell gets four, the other five wait in the bridge, unseen (no prompt, no id, no cancel), none cancelled; each answer
+#    gives its place to a waiting one, shown on its turn, the nine answers reach their callers, never more than four shown;
+#    an invalid answer line for a waiting id is ignored (never a cancellation);
+#    a waiting request withdrawn by its caller (StopPrompting) or whose caller leaves the bus ends unseen; one that waits
+#    past its time (--queue-timeout-ms here) is answered "cancelled", never shown; one connection's seventh and eighth
+#    waiting requests are answered "cancelled" at once, its six are shown on their turns
 #  9 protocol errors: an answer to an id that is not outstanding is ignored (the request still waits for its real answer);
 #    "ok" without a password cancels that request; an over-long line closes the connection, cancels the outstanding
 #    request and releases the name; an answer before hello closes the connection
@@ -50,7 +55,13 @@
 #   tests/security/prompter_bridge.sh --mutants    also mutants of the bridge's guards (the integrator's review of PR #95: the
 #                                                  name only after the hello, the line wiping, the answer without a shell, the
 #                                                  pidfd's re-check, the known callers' namespaces: every known caller exempt,
-#                                                  or the disk helper not, decision 9-26 amended), each built and run against
+#                                                  or the disk helper not, decision 9-26 amended; the applications' queue:
+#                                                  a waiting request sent at once, turns not fair, a request that waited
+#                                                  too long never answered, an invalid line cancelling a waiting request;
+#                                                  the request book: a caller's turn forgotten when one of its requests
+#                                                  ends, a new request kept out of a free place while others wait, no
+#                                                  place handed over on release, a new connection ranked first), each
+#                                                  built and run against
 #                                                  the unit tests and this scenario; every one must be caught
 # Needs g++ with the Qt 6 Core and gcr-4 headers (or GRASSFIELD_PROMPTER: a built bridge), dbus-daemon, dbus-send, python3
 # with PyGObject and the Gcr 4 introspection data; SKIPs without them, when libdbus cannot reach the bus, and when this
@@ -177,7 +188,8 @@ desc="in a session, --peer-unit must be a service name (exit 3)"
 check test $? -eq 3
 
 # --- 2 the socket, the process, no name without a shell -----------------------------------------------------------------
-start_bridge main --socket "$sock" --peer-unit "$leaf"
+queue_s=10 # how long an application request waits for a place in this run (section 8; 110 s in a session)
+start_bridge main --socket "$sock" --peer-unit "$leaf" --queue-timeout-ms $((queue_s * 1000))
 main_pid=$bridge_pid
 wait_until 5 test -S "$sock"
 desc="the socket's directory is 0700 and the socket 0600, both the user's"
@@ -324,22 +336,103 @@ say s "answer $id5 ok too-late-secret"
 desc="an answer to the withdrawn request is ignored"
 check wait_until 5 grep -q "answer to $id5 ignored: not outstanding" "$d/main.log"
 
-# --- 8 nine at once ------------------------------------------------------------------------------------------------------
+# --- 8 the applications' queue -----------------------------------------------------------------------------------------
 # B-05 (bridges/prompter/src/Requests.h): NetworkManager and BlueZ keep two of the 8 places each, so the applications' gcr
-# prompts hold at most four, and one connection at most two.
+# prompts hold at most four, and one connection at most two. Amended by the owner decision of 2026-11-22: a request past
+# that share waits in the bridge, unseen, and is shown on its turn, instead of being answered "cancelled".
+# answer_shown s <ok|cancel>: answers, once each, every prompt the shell got and this section has not answered yet
+answer_shown() {
+  local id
+  for id in $(prompt_ids s); do
+    grep -qx "$id" "$d/answered" 2>/dev/null && continue
+    echo "$id" >>"$d/answered"
+    case $2 in
+      ok) say s "answer $id ok batch-$id" ;;
+      *) say s "answer $id cancel" ;;
+    esac
+  done
+}
+# The prompts the shell got before this section are answered or withdrawn already.
+prompt_ids s >"$d/answered"
+# max_shown: the most prompts the shell held at once in this section, replaying its log (a prompt line adds one, an answer
+# it sent or a cancel line removes one)
+max_shown() {
+  awk -v from="$1" 'NR > from && /"type":"prompt"/ {n++; if (n > m) m = n} NR > from && (/^#sent answer/ || /"type":"cancel"/) {n--} END {print m + 0}' "$d/s.shell"
+}
+waits_in_log() { grep -c "waits for a place" "$d/main.log"; }
+from_line=$(wc -l <"$d/s.shell")
 before=$(lines s '"type":"prompt"')
+cancels=$(lines s '"type":"cancel"')
+waits=$(waits_in_log)
 client c6 many 3
 client c6b many 3
 client c6c many 3
-desc="nine requests at once from three callers: the shell gets four (the applications' share), the other five are answered \"cancelled\" at once"
-check wait_until 15 bash -c '[[ $(cat "$1" "$2" "$3" | grep -c "cancelled") == 5 ]]' _ "$d/c6.out" "$d/c6b.out" "$d/c6c.out"
-desc="...and the shell got four of them, no caller more than two"
-check wait_until 5 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 4 ]] && for f in "$3" "$4" "$5"; do [[ $(grep -c cancelled "$f") -ge 1 ]] || exit 1; done' _ "$d/s.shell" "$before" "$d/c6.out" "$d/c6b.out" "$d/c6c.out"
-desc="...the bridge says why (the places kept for Wi-Fi and Bluetooth, or the connection's two)"
-check grep -q "the slots left are kept for Wi-Fi and Bluetooth, or its connection holds 2" "$d/main.log"
-for id in $(prompt_ids s | tail -n 4); do say s "answer $id ok batch-$id"; done
-desc="...and the four answers reach their four callers"
-check wait_until 15 bash -c '[[ $(cat "$1" "$2" "$3" | grep -c "password=batch-p") == 4 ]]' _ "$d/c6.out" "$d/c6b.out" "$d/c6c.out"
+desc="nine requests at once from three callers: the shell gets four (the applications' share), the other five wait in the bridge"
+check wait_until 15 bash -c '[[ $(( $(grep -c "waits for a place" "$1") - $2 )) == 5 && $(( $(grep -c "\"type\":\"prompt\"" "$3") - $4 )) == 4 ]]' _ "$d/main.log" "$waits" "$d/s.shell" "$before"
+sleep 1
+desc="...none is answered \"cancelled\", and the shell is told nothing of the five (no prompt, no cancel)"
+check bash -c '! cat "$1" "$2" "$3" | grep -q cancelled && [[ $(( $(grep -c "\"type\":\"prompt\"" "$4") - $5 )) == 4 && $(grep -c "\"type\":\"cancel\"" "$4") == "$6" ]]' _ "$d/c6.out" "$d/c6b.out" "$d/c6c.out" "$d/s.shell" "$before" "$cancels"
+waiting_ids=$(grep -o "request p[0-9]*: password, waits for a place" "$d/main.log" | tail -n 5 | awk '{print $2}' | tr -d :)
+desc="...the waiting requests' ids have not reached the shell [$(echo $waiting_ids)]"
+check bash -c 'for id in $2; do grep -q "\"id\":\"$id\"" "$1" && exit 1; done; [[ -n $2 ]]' _ "$d/s.shell" "$waiting_ids"
+for _ in $(seq 1 20); do
+  answer_shown s ok
+  [[ $(cat "$d/c6.out" "$d/c6b.out" "$d/c6c.out" | grep -c "password=batch-p") -ge 9 ]] && break
+  sleep 0.7
+done
+desc="...each answer gives its place to a waiting request, shown on its turn: the nine answers reach their nine callers"
+check wait_until 15 bash -c '[[ $(cat "$1" "$2" "$3" | grep -c "password=batch-p") == 9 && $(( $(grep -c "\"type\":\"prompt\"" "$4") - $5 )) == 9 ]]' _ "$d/c6.out" "$d/c6b.out" "$d/c6c.out" "$d/s.shell" "$before"
+desc="...the shell never held more than four of them at once [$(max_shown "$from_line")]"
+check test "$(max_shown "$from_line")" -le 4
+desc="...the bridge said each waiting one's turn"
+check bash -c 'for id in $2; do grep -q "request $id: a place is free, its turn" "$1" || exit 1; done' _ "$d/main.log" "$waiting_ids"
+
+# A waiting request that its caller withdraws, or whose caller leaves the bus, ends unseen; one that waits too long is
+# answered "cancelled"; past one connection's bound of waiting requests, "cancelled" at once.
+before=$(lines s '"type":"prompt"')
+client c8a many 2
+client c8b many 2
+wait_until 10 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 4 ]]' _ "$d/s.shell" "$before"
+cancels=$(lines s '"type":"cancel"')
+waits=$(waits_in_log)
+client c8w password --title "Waiting-withdrawn" --close-when "$d/close-c8w"
+wait_until 10 bash -c '[[ $(( $(grep -c "waits for a place" "$1") - $2 )) -ge 1 ]]' _ "$d/main.log" "$waits"
+idw=$(grep -o "request p[0-9]*: password, waits for a place" "$d/main.log" | tail -n 1 | awk '{print $2}' | tr -d :)
+# The shell cannot answer a request it was never sent, not even wrongly (opus review, M1).
+say s "raw {\"type\":\"answer\",\"id\":\"$idw\",\"result\":\"maybe\"}"
+desc="an invalid answer line for a waiting id ($idw) is ignored: the request keeps waiting, its caller gets nothing"
+check wait_until 5 bash -c 'grep -q "invalid answer to $2 ignored: not outstanding" "$1" && sleep 0.5 && ! grep -q "^cancelled" "$3" && [[ $(grep -c "\"type\":\"cancel\"" "$4") == "$5" ]]' _ "$d/main.log" "$idw" "$d/c8w.out" "$d/s.shell" "$cancels"
+touch "$d/close-c8w"
+desc="a waiting request its caller withdraws (StopPrompting, $idw) ends unseen: no prompt and no cancel reach the shell"
+check wait_until 10 bash -c 'grep -q "request $2 withdrawn by its caller while it waited (never shown)" "$1" && ! grep -q Waiting-withdrawn "$3" && [[ $(grep -c "\"type\":\"cancel\"" "$3") == "$4" ]]' _ "$d/main.log" "$idw" "$d/s.shell" "$cancels"
+waits=$(waits_in_log)
+client c8k password --title "Waiting-killed"
+wait_until 10 bash -c '[[ $(( $(grep -c "waits for a place" "$1") - $2 )) -ge 1 ]]' _ "$d/main.log" "$waits"
+idk=$(grep -o "request p[0-9]*: password, waits for a place" "$d/main.log" | tail -n 1 | awk '{print $2}' | tr -d :)
+kill -KILL "$client_pid"
+wait "$client_pid" 2>/dev/null
+desc="a waiting request whose caller leaves the bus ($idk) ends unseen"
+check wait_until 10 bash -c 'grep -q "request $2 withdrawn by its caller while it waited (never shown)" "$1" && ! grep -q Waiting-killed "$3" && [[ $(grep -c "\"type\":\"cancel\"" "$3") == "$4" ]]' _ "$d/main.log" "$idk" "$d/s.shell" "$cancels"
+waits=$(waits_in_log)
+client c8t password --title "Waiting-expires"
+wait_until 10 bash -c '[[ $(( $(grep -c "waits for a place" "$1") - $2 )) -ge 1 ]]' _ "$d/main.log" "$waits"
+idt=$(grep -o "request p[0-9]*: password, waits for a place" "$d/main.log" | tail -n 1 | awk '{print $2}' | tr -d :)
+desc="a request that waits past its time ($queue_s s here, 110 s in a session; $idt) is answered \"cancelled\", never shown"
+check wait_until $((queue_s + 10)) bash -c 'grep -qx cancelled "$1" && grep -q "request $2 answered \"cancelled\": no place freed within $4 s (never shown)" "$3" && ! grep -q Waiting-expires "$5"' _ "$d/c8t.out" "$idt" "$d/main.log" "$queue_s" "$d/s.shell"
+# One connection with eight prompts while the four places are taken: six wait (its bound), its seventh and eighth are
+# answered "cancelled" at once (the filter lets one connection open eight).
+client c8m many 8
+desc="one connection's seventh and eighth waiting requests are answered \"cancelled\" at once (six wait at most for one connection)"
+check wait_until 5 bash -c '[[ $(grep -c cancelled "$1") == 2 ]] && grep -q "the queue is full (6 waiting, at most 16, 6 for its connection)" "$2"' _ "$d/c8m.out" "$d/main.log"
+for _ in $(seq 1 20); do
+  answer_shown s cancel
+  [[ $(grep -c . "$d/c8m.out") -ge 8 ]] && break
+  sleep 0.5
+done
+desc="...the six are shown on their turns once the places free, and answered"
+check wait_until 10 bash -c '[[ $(grep -c . "$1") == 8 && $(grep -c cancelled "$1") == 8 ]] && grep -q Request "$2"' _ "$d/c8m.out" "$d/s.shell"
+desc="...and the shell never held more than four at once [$(max_shown "$from_line")]"
+check test "$(max_shown "$from_line")" -le 4
 
 # --- 9 protocol errors ----------------------------------------------------------------------------------------------------
 client c7 password --title "Errors"
@@ -526,6 +619,14 @@ answered-without-a-shell#Bridge.cpp#            return;\n        if (m_client < 
 pidfd-not-rechecked#Identity.cpp#        facts.alive = pidfdAlive(pidfd);#        facts.alive = true;
 every-known-caller-exempt#Identity.cpp#            if (!facts.sameNamespaces && role != QLatin1String("disk"))\n                return r;\n            // KIO's worker runs a plugin from any path#            // KIO's worker runs a plugin from any path
 disk-not-exempt#Identity.cpp#            if (!facts.sameNamespaces && role != QLatin1String("disk"))#            if (!facts.sameNamespaces)
+queue-sends-early#Bridge.cpp#        m_pending.insert(a.id, pending);\n        if (a.waiting) {\n            // Unseen#        m_pending.insert(a.id, pending);\n        if (false) {\n            // Unseen
+turns-not-fair#Requests.cpp#served < bestServed || (served == bestServed && it->serial < bestSerial)#it->serial < bestSerial
+expiry-not-answered#Bridge.cpp#            cancelRequest(id, false);\n        }\n        armQueueTimer();#            ;\n        }\n        armQueueTimer();
+invalid-cancels-waiting#Bridge.cpp#it != m_pending.constEnd() && it->sent) {\n                    log(#it != m_pending.constEnd()) {\n                    log(
+turn-forgotten#Requests.cpp#        if (!left)\n            m_served.remove(caller);#        m_served.remove(caller);
+free-place-kept#Requests.cpp#        if (fits(lane, caller))\n            return {add(owner, lane, caller, false, 0), false};#        if (fits(lane, caller) && waiting() == 0)\n            return {add(owner, lane, caller, false, 0), false};
+no-hand-over#Requests.cpp#        if (freed)\n            promote();#        (void)freed;
+new-connection-first#Requests.cpp#        if (!m_served.contains(caller))\n            m_served.insert(caller, ++m_turn);#        ;
 EOF_MUTANTS
 fi
 exit $fail

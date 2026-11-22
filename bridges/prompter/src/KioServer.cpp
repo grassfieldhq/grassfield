@@ -872,7 +872,7 @@ namespace gf::prompter {
         if (r->stage == KioRequest::Stage::Ended)
             return; // ended while it was sent (the shell went)
         if (id.isEmpty()) {
-            abandon(r.get(), QStringLiteral("the sheet cannot ask now (no shell, or 8 requests outstanding)"));
+            abandon(r.get(), QStringLiteral("the sheet cannot ask now (no shell, or no place and the applications' queue full)"));
             return;
         }
         r->id = id;

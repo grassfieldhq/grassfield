@@ -30,7 +30,9 @@
 # 11 the keyring's protection: a keyring without a password (Omarchy's plain-text Default_keyring) is "unprotected"; a
 #    Secret Service that is not gnome-keyring is "unknown"
 # 12 bounds: one caller's ninth and tenth open requests answered at once; the applications' four places of the shell's 8
-#    (B-05: NetworkManager and BlueZ keep two each, one connection holds two) shared by gcr's prompts and KIO's sheets
+#    (B-05: NetworkManager and BlueZ keep two each, one connection holds two) shared by gcr's prompts and KIO's sheets; past
+#    them gcr prompts and KIO queries wait in one queue, unseen, and are shown on their turns (B-05 amended, owner decision
+#    2026-11-22), never more than four at once
 # 13 wrong answers from the shell (a name where none is asked, ok without a password, a choice not offered, an empty
 #    password, a refusal carrying a password) each end their query with nothing; the shell's refusal (result "refused",
 #    its bound) ends its query with nothing and, unlike the user's Cancel, keeps no cancelled entry: the server's next
@@ -426,27 +428,47 @@ print(items[0].retrieve_secret_sync(None).get_text() if items and not items[0].g
   desc="...the user's Cancel answers the other seven without a sheet (kept as a cancelled entry, as kpasswdserver does)"
   check wait_until 10 bash -c '[[ $(( $(grep -c "^result query" "$1") - $2 )) == 10 ]]' _ "$d/st.log" "$before"
   # The applications' share of the shell's 8 places (B-05, bridges/prompter/src/Requests.h): NetworkManager and BlueZ keep
-  # two each, so gcr prompts and KIO sheets together hold at most four, and one connection at most two.
+  # two each, so gcr prompts and KIO sheets together hold at most four, and one connection at most two. Past that share a
+  # request waits in the bridge, unseen, for its turn (B-05 amended, owner decision 2026-11-22), instead of being cancelled.
   n=$(prompts s)
+  local from_line waits
+  from_line=$(wc -l <"$d/s.shell")
+  waits=$(grep -c "waits for a place" "$d/bridge.log")
   "${env_base[@]}" python3 -I "$gcr_py" many 7 >"$d/gcr.out" 2>&1 &
   pids+=("$!")
   wait_prompt s $((n + 1))
-  desc="one gcr connection with seven prompts: the shell gets two, the other five are answered \"cancelled\" at once (B-05)"
-  check wait_until 10 bash -c '[[ $(grep -c "cancelled" "$1") == 5 && $(( $(grep -c "\"type\":\"prompt\"" "$2") - $3 )) == 2 ]]' _ "$d/gcr.out" "$d/s.shell" "$n"
+  desc="one gcr connection with seven prompts: the shell gets two, the other five wait in the bridge (none cancelled)"
+  check wait_until 10 bash -c '[[ $(( $(grep -c "waits for a place" "$1") - $2 )) == 5 && $(( $(grep -c "\"type\":\"prompt\"" "$3") - $4 )) == 2 ]] && ! grep -q cancelled "$5"' _ "$d/bridge.log" "$waits" "$d/s.shell" "$n" "$d/gcr.out"
   "${env_base[@]}" python3 -I "$gcr_py" many 1 >"$d/gcr2.out" 2>&1 &
   pids+=("$!")
   wait_prompt s $((n + 2))
   say c "query sftp://bound.example/ - - keep"
   wait_prompt s $((n + 3))
   before=$(grep -c '^result query' "$d/st.log")
+  waits=$(grep -c "waits for a place" "$d/bridge.log")
   say st "many 1 sftp://bound2.example/"
-  desc="the applications' four places are shared by gcr and KIO: three gcr prompts and a KIO sheet, the next KIO query gets nothing at once"
-  check wait_until 10 bash -c '[[ $(( $(grep -c "^result query [0-9]* modified=0" "$1") )) -gt 0 && $(grep -c "^result query" "$1") -gt $2 ]] && grep -q "kio request answered with nothing: 4 requests are outstanding" "$3"' _ "$d/st.log" "$before" "$d/bridge.log"
-  desc="...and the shell was shown four sheets, no more"
-  check bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 4 ]]' _ "$d/s.shell" "$n"
-  for gid in $(grep '"type":"prompt"' "$d/s.shell" | tail -n 4 | python3 -I -c 'import json,sys; [print(json.loads(l)["id"]) for l in sys.stdin]'); do
-    say s "answer $gid cancel"
+  desc="the applications' four places are shared by gcr and KIO: three gcr prompts and a KIO sheet, the next KIO query waits (no result, no sheet)"
+  check wait_until 10 bash -c 'grep "waits for a place" "$1" | tail -n +$(( $2 + 1 )) | grep -q "kio, waits for a place"' _ "$d/bridge.log" "$waits"
+  sleep 1
+  desc="...and the shell was shown four sheets, no more, and KIO's waiting query got no answer yet"
+  check bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 4 && $(grep -c "^result query" "$3") == "$4" ]] && ! grep -q bound2.example "$1"' _ "$d/s.shell" "$n" "$d/st.log" "$before"
+  # Every sheet shown is cancelled, each answer giving its place to a waiting request, until all have had their turn.
+  local answered=" " round
+  for round in $(seq 1 30); do
+    for gid in $(grep '"type":"prompt"' "$d/s.shell" | tail -n +$((n + 1)) | python3 -I -c 'import json,sys; [print(json.loads(l)["id"]) for l in sys.stdin]'); do
+      [[ $answered == *" $gid "* ]] && continue
+      answered+="$gid "
+      say s "answer $gid cancel"
+    done
+    [[ $(grep -c . "$d/gcr.out") -ge 7 && $(grep -c "^result query" "$d/st.log") -gt $before ]] && break
+    sleep 0.5
   done
+  desc="...each place freed goes to a waiting request: the waiting KIO query is shown on its turn (bound2.example) and its result reaches its caller"
+  check wait_until 10 bash -c 'grep -q "\"server\":\"bound2.example\"" "$1" && [[ $(grep -c "^result query" "$2") -gt $3 ]]' _ "$d/s.shell" "$d/st.log" "$before"
+  desc="...the gcr connection's seven prompts were all shown and answered (cancel), none cancelled by the bridge"
+  check wait_until 10 bash -c '[[ $(grep -c cancelled "$1") == 7 ]] && ! grep -q "queue is full" "$2"' _ "$d/gcr.out" "$d/bridge.log"
+  desc="...and the shell never held more than four of them at once"
+  check bash -c '[[ $(awk -v from="$2" '"'"'NR > from && /"type":"prompt"/ {k++; if (k > m) m = k} NR > from && (/^#sent answer/ || /"type":"cancel"/) {k--} END {print m + 0}'"'"' "$1") -le 4 ]]' _ "$d/s.shell" "$from_line"
   wait_until 10 bash -c 'tail -n 1 "$1" | grep -q "^query rc=1"' _ "$d/c.out"
 
   # --- 13 wrong answers from the shell ------------------------------------------------------------------------------------

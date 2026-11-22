@@ -696,6 +696,266 @@ TEST(PrompterRequests, WiFiAndBluetoothKeepTheirSlots) {
     EXPECT_EQ(nm, limits::kRequests - kReservedBluetooth);
 }
 
+// B-05 amended (owner decision 2026-11-22): an application request past its share waits for a place instead of being
+// cancelled; it gets one as soon as one frees, and holds none meanwhile.
+TEST(PrompterQueue, AnApplicationRequestWaitsForAPlace) {
+    RequestBook book(limits::kRequests);
+    int         o[8];
+    const QString keyring = QStringLiteral(":1.5"); // gnome-keyring: one connection for every application
+    const Admission a = book.admit(&o[0], Lane::Keyring, keyring, 1000);
+    const Admission b = book.admit(&o[1], Lane::Keyring, keyring, 1000);
+    const Admission c = book.admit(&o[2], Lane::Keyring, keyring, 1000);
+    EXPECT_FALSE(a.waiting);
+    EXPECT_FALSE(b.waiting);
+    ASSERT_FALSE(c.id.isEmpty()) << "the third keyring prompt waits instead of being cancelled";
+    EXPECT_TRUE(c.waiting);
+    EXPECT_EQ(c.id, QStringLiteral("p3")); // its number when it arrives, never reused
+    EXPECT_TRUE(book.isWaiting(c.id));
+    EXPECT_EQ(book.count(), 2);
+    EXPECT_EQ(book.waiting(), 1);
+    EXPECT_EQ(book.owner(c.id), &o[2]);
+    EXPECT_EQ(book.idOf(&o[2]), c.id);
+    EXPECT_EQ(book.ids(), (QStringList{a.id, b.id, c.id}));
+    EXPECT_EQ(book.waitingIds(), QStringList{c.id});
+    EXPECT_TRUE(book.takePromoted().isEmpty());
+    EXPECT_TRUE(book.admit(&o[2], Lane::Keyring, keyring, 1000).id.isEmpty()) << "one request per owner";
+    // The shell answers the first: the waiting one gets its place at once.
+    EXPECT_TRUE(book.release(a.id));
+    EXPECT_TRUE(book.hasPromoted());
+    EXPECT_EQ(book.takePromoted(), QStringList{c.id});
+    EXPECT_FALSE(book.hasPromoted());
+    EXPECT_FALSE(book.isWaiting(c.id));
+    EXPECT_EQ(book.count(), 2);
+    EXPECT_EQ(book.waiting(), 0);
+    EXPECT_EQ(book.nextDeadline(), -1);
+    // KIO waits the same way; reserve() (NetworkManager's and BlueZ's way, and the old one) never does.
+    const Admission k = book.admit(&o[3], Lane::Kio, keyring, 1000);
+    EXPECT_TRUE(k.waiting);
+    EXPECT_TRUE(book.reserve(&o[4], Lane::Keyring, keyring).isEmpty());
+    EXPECT_EQ(book.waiting(), 1);
+}
+
+// NetworkManager and BlueZ never wait and keep their two places each: the queue holds no place.
+TEST(PrompterQueue, WiFiAndBluetoothNeverWaitAndKeepTheirPlaces) {
+    RequestBook book(limits::kRequests);
+    int         o[20];
+    int         n = 0;
+    for (const char* caller : {":1.10", ":1.10", ":1.11", ":1.11"})
+        ASSERT_FALSE(book.admit(&o[n++], Lane::Keyring, QString::fromLatin1(caller), 1000).waiting);
+    // The applications' four places are taken: the next ones wait, from any caller.
+    const Admission w1 = book.admit(&o[n++], Lane::Keyring, QStringLiteral(":1.12"), 1000);
+    const Admission w2 = book.admit(&o[n++], Lane::Kio, QStringLiteral(":1.13"), 1000);
+    EXPECT_TRUE(w1.waiting);
+    EXPECT_TRUE(w2.waiting);
+    // Wi-Fi and Bluetooth still get their places, past the waiting requests.
+    const Admission nm1 = book.admit(&o[n++], Lane::Nm, QString(), 1000);
+    const Admission nm2 = book.admit(&o[n++], Lane::Nm, QString(), 1000);
+    EXPECT_FALSE(nm1.id.isEmpty());
+    EXPECT_FALSE(nm1.waiting);
+    EXPECT_FALSE(nm2.waiting);
+    EXPECT_TRUE(book.admit(&o[n++], Lane::Nm, QString(), 1000).id.isEmpty()) << "Wi-Fi never waits: refused at once";
+    EXPECT_FALSE(book.reserve(&o[n++], Lane::Bluetooth).isEmpty());
+    const Admission bt2 = book.admit(&o[n++], Lane::Bluetooth, QString(), 1000);
+    EXPECT_FALSE(bt2.waiting);
+    EXPECT_TRUE(book.admit(&o[n++], Lane::Bluetooth, QString(), 1000).id.isEmpty()) << "Bluetooth never waits";
+    EXPECT_EQ(book.count(), limits::kRequests);
+    EXPECT_EQ(book.waiting(), 2);
+    // A Wi-Fi place that frees stays Wi-Fi's: no waiting application request takes it.
+    EXPECT_TRUE(book.release(nm1.id));
+    EXPECT_TRUE(book.takePromoted().isEmpty());
+    EXPECT_EQ(book.waiting(), 2);
+    EXPECT_FALSE(book.admit(&o[n++], Lane::Nm, QString(), 1000).waiting);
+    // An application's place goes to the oldest waiting request.
+    EXPECT_TRUE(book.release(book.idOf(&o[0])));
+    EXPECT_EQ(book.takePromoted(), QStringList{w1.id});
+}
+
+// One caller cannot starve the others: a freed place goes to the caller served least recently, then the oldest request,
+// and never past a caller's own share (kPerCaller).
+TEST(PrompterQueue, TurnsAreFairAcrossCallers) {
+    RequestBook book(limits::kRequests);
+    int         o[20];
+    int         n = 0;
+    const QString x = QStringLiteral(":1.20"), y = QStringLiteral(":1.21"), a = QStringLiteral(":1.22"), b = QStringLiteral(":1.23");
+    const QString x1 = book.admit(&o[n++], Lane::Keyring, x, 1000).id;
+    const QString x2 = book.admit(&o[n++], Lane::Keyring, x, 1000).id;
+    const QString y1 = book.admit(&o[n++], Lane::Kio, y, 1000).id;
+    const QString y2 = book.admit(&o[n++], Lane::Kio, y, 1000).id;
+    const QString a1 = book.admit(&o[n++], Lane::Keyring, a, 1000).id;
+    const QString a2 = book.admit(&o[n++], Lane::Keyring, a, 1000).id;
+    const QString a3 = book.admit(&o[n++], Lane::Keyring, a, 1000).id;
+    const QString b1 = book.admit(&o[n++], Lane::Kio, b, 1000).id;
+    ASSERT_EQ(book.waitingIds(), (QStringList{a1, a2, a3, b1}));
+    // Neither has been served: the oldest request.
+    book.release(x1);
+    EXPECT_EQ(book.takePromoted(), QStringList{a1});
+    // a was served, b not yet: b's request, though a2 is older.
+    book.release(x2);
+    EXPECT_EQ(book.takePromoted(), QStringList{b1});
+    // a now holds its share (2: a1 and a2) and waits for one of its own places.
+    book.release(y1);
+    EXPECT_EQ(book.takePromoted(), QStringList{a2});
+    const QString c1 = book.admit(&o[n++], Lane::Keyring, QStringLiteral(":1.24"), 1000).id;
+    EXPECT_TRUE(book.isWaiting(c1));
+    book.release(y2);
+    EXPECT_EQ(book.takePromoted(), QStringList{c1}) << "a holds kPerCaller: its a3 waits, a newer caller goes";
+    EXPECT_TRUE(book.isWaiting(a3));
+    // A request of a caller at its share waits behind that caller's older one, even with a place free.
+    book.release(b1);
+    EXPECT_TRUE(book.takePromoted().isEmpty()) << "a3's caller holds kPerCaller";
+    const QString a4 = book.admit(&o[n++], Lane::Keyring, a, 1000).id;
+    EXPECT_TRUE(book.isWaiting(a4));
+    const QString d1 = book.admit(&o[n++], Lane::Keyring, QStringLiteral(":1.25"), 1000).id;
+    EXPECT_FALSE(book.isWaiting(d1)) << "a free place no waiting request can take goes to a new caller";
+    book.release(a1);
+    EXPECT_EQ(book.takePromoted(), QStringList{a3}) << "first come, first served within a caller";
+    EXPECT_TRUE(book.isWaiting(a4));
+}
+
+// A caller that waits again right after its turn (it still holds the place it got) does not pass the others as if it had
+// never been served.
+TEST(PrompterQueue, AServedCallerDoesNotPassTheOthers) {
+    RequestBook book(limits::kRequests);
+    int         o[20];
+    int         n = 0;
+    const QString x = QStringLiteral(":1.30"), y = QStringLiteral(":1.31"), a = QStringLiteral(":1.32"), b = QStringLiteral(":1.33");
+    const QString x1 = book.admit(&o[n++], Lane::Keyring, x, 1000).id;
+    const QString x2 = book.admit(&o[n++], Lane::Keyring, x, 1000).id;
+    const QString y1 = book.admit(&o[n++], Lane::Keyring, y, 1000).id;
+    book.admit(&o[n++], Lane::Keyring, y, 1000);
+    const QString b1 = book.admit(&o[n++], Lane::Keyring, b, 1000).id;
+    const QString b2 = book.admit(&o[n++], Lane::Keyring, b, 1000).id;
+    const QString a1 = book.admit(&o[n++], Lane::Keyring, a, 1000).id;
+    book.release(x1);
+    EXPECT_EQ(book.takePromoted(), QStringList{b1});
+    book.release(x2);
+    EXPECT_EQ(book.takePromoted(), QStringList{a1});
+    // a asks again at once; b's second request is older than it, and b was served before a: b goes first.
+    const QString a2 = book.admit(&o[n++], Lane::Keyring, a, 1000).id;
+    EXPECT_TRUE(book.isWaiting(a2));
+    book.release(y1);
+    EXPECT_EQ(book.takePromoted(), QStringList{b2});
+    EXPECT_TRUE(book.isWaiting(a2));
+
+    // The shell answers a caller's request while another of its own waits: its turn is still remembered, so the place goes
+    // to a caller served before it.
+    RequestBook again(limits::kRequests);
+    int         p[20];
+    int         m = 0;
+    const QString x1b = again.admit(&p[m++], Lane::Keyring, x, 1000).id;
+    const QString x2b = again.admit(&p[m++], Lane::Keyring, x, 1000).id;
+    again.admit(&p[m++], Lane::Keyring, y, 1000);
+    again.admit(&p[m++], Lane::Keyring, y, 1000);
+    const QString b1b = again.admit(&p[m++], Lane::Keyring, b, 1000).id;
+    const QString b2b = again.admit(&p[m++], Lane::Keyring, b, 1000).id;
+    const QString a1b = again.admit(&p[m++], Lane::Keyring, a, 1000).id;
+    const QString a2b = again.admit(&p[m++], Lane::Keyring, a, 1000).id;
+    again.release(x1b);
+    EXPECT_EQ(again.takePromoted(), QStringList{b1b});
+    again.release(x2b);
+    EXPECT_EQ(again.takePromoted(), QStringList{a1b});
+    again.release(a1b); // a's answer: a holds nothing now, a2 waits; b was served before a
+    EXPECT_EQ(again.takePromoted(), QStringList{b2b});
+    EXPECT_TRUE(again.isWaiting(a2b));
+}
+
+// A program that keeps opening new connections does not pass a waiting request of an older one: a connection's first turn
+// is taken when it begins to wait, so a new connection ranks after those already waiting (opus review, M2).
+TEST(PrompterQueue, NewConnectionsRankAfterTheWaitingOnes) {
+    RequestBook book(limits::kRequests);
+    int         o[20];
+    int         n = 0;
+    const QString x = QStringLiteral(":1.60"), y = QStringLiteral(":1.61"), keyring = QStringLiteral(":1.62");
+    const QString x1 = book.admit(&o[n++], Lane::Keyring, x, 1000).id;
+    const QString x2 = book.admit(&o[n++], Lane::Keyring, x, 1000).id;
+    const QString y1 = book.admit(&o[n++], Lane::Keyring, y, 1000).id;
+    book.admit(&o[n++], Lane::Keyring, y, 1000);
+    const QString k1 = book.admit(&o[n++], Lane::Keyring, keyring, 1000).id;
+    book.release(y1);
+    EXPECT_EQ(book.takePromoted(), QStringList{k1}); // gnome-keyring served once
+    const QString k2 = book.admit(&o[n++], Lane::Keyring, keyring, 1000).id;
+    EXPECT_TRUE(book.isWaiting(k2));
+    // A flooder's fresh connections begin to wait after it: each ranks behind gnome-keyring's waiting request.
+    const QString f1 = book.admit(&o[n++], Lane::Keyring, QStringLiteral(":1.70"), 1000).id;
+    const QString f2 = book.admit(&o[n++], Lane::Keyring, QStringLiteral(":1.71"), 1000).id;
+    EXPECT_TRUE(book.isWaiting(f1));
+    book.release(x1);
+    EXPECT_EQ(book.takePromoted(), QStringList{k2});
+    book.release(x2);
+    EXPECT_EQ(book.takePromoted(), QStringList{f1}) << "then the new connections, in the order they began to wait";
+    EXPECT_TRUE(book.isWaiting(f2));
+}
+
+// The queue's bounds: kWaitingPerCaller for one caller, kWaiting in all; beyond, refused at once (fail closed).
+TEST(PrompterQueue, TheQueueIsBounded) {
+    RequestBook book(limits::kRequests);
+    std::vector<int> o(64);
+    int              n = 0;
+    const QString    keyring = QStringLiteral(":1.40");
+    for (int i = 0; i < kPerCaller; ++i)
+        ASSERT_FALSE(book.admit(&o[n++], Lane::Keyring, keyring, 1000).waiting);
+    for (int i = 0; i < kWaitingPerCaller; ++i)
+        ASSERT_TRUE(book.admit(&o[n++], Lane::Keyring, keyring, 1000).waiting) << i;
+    EXPECT_EQ(book.waitingOf(keyring), kWaitingPerCaller);
+    EXPECT_TRUE(book.admit(&o[n++], Lane::Kio, keyring, 1000).id.isEmpty()) << "one caller holds kWaitingPerCaller waiting";
+    // gnome-keyring's whole share of open gcr prompts (Filter.h) fits: shown + waiting.
+    EXPECT_EQ(kPerCaller + kWaitingPerCaller, limits::kPromptsPerCaller);
+    // Others fill the rest of the queue (their places: the two left of the applications' four).
+    int caller = 41;
+    while (book.waiting() < kWaiting) {
+        const Admission w = book.admit(&o[n++], Lane::Kio, QStringLiteral(":1.%1").arg(caller), 1000);
+        ASSERT_FALSE(w.id.isEmpty());
+        if (book.waitingOf(QStringLiteral(":1.%1").arg(caller)) == 2)
+            ++caller;
+    }
+    EXPECT_TRUE(book.admit(&o[n++], Lane::Keyring, QStringLiteral(":1.99"), 1000).id.isEmpty()) << "kWaiting in all";
+    EXPECT_EQ(book.waiting(), kWaiting);
+    // Callers not known share one turn and one bound.
+    RequestBook unknown(limits::kRequests);
+    std::vector<int> u(32);
+    int              m = 0;
+    while (unknown.admit(&u[m], Lane::Keyring, QString(), 1000).id.isEmpty() == false && m < 31)
+        ++m;
+    EXPECT_EQ(unknown.waitingOf(QString()), kWaitingPerCaller);
+    EXPECT_EQ(unknown.count(), 4); // no kPerCaller for unknown callers (as before), the applications' four
+}
+
+// A waiting request does not wait for ever: past its deadline it is removed (the bridge refuses it), and its owner may ask
+// again; withdrawn, it frees nothing and gives no place.
+TEST(PrompterQueue, AWaitingRequestEndsAtItsDeadlineOrWhenWithdrawn) {
+    RequestBook book(limits::kRequests);
+    int         o[10];
+    int         n = 0;
+    const QString k = QStringLiteral(":1.50");
+    book.admit(&o[n++], Lane::Keyring, k, 0);
+    book.admit(&o[n++], Lane::Keyring, k, 0);
+    const QString w1 = book.admit(&o[n++], Lane::Keyring, k, 100).id;
+    const QString w2 = book.admit(&o[n++], Lane::Keyring, k, 200).id;
+    const QString w3 = book.admit(&o[n++], Lane::Keyring, k, 300).id;
+    EXPECT_EQ(book.nextDeadline(), 100);
+    EXPECT_TRUE(book.expire(99).isEmpty());
+    EXPECT_EQ(book.expire(150), QStringList{w1});
+    EXPECT_EQ(book.owner(w1), nullptr);
+    EXPECT_TRUE(book.idOf(&o[2]).isEmpty());
+    EXPECT_EQ(book.nextDeadline(), 200);
+    EXPECT_FALSE(book.release(w1)) << "gone";
+    EXPECT_TRUE(book.release(w2)); // withdrawn by its caller
+    EXPECT_TRUE(book.takePromoted().isEmpty());
+    EXPECT_EQ(book.count(), 2);
+    EXPECT_EQ(book.waitingIds(), QStringList{w3});
+    EXPECT_EQ(book.expire(300), QStringList{w3});
+    EXPECT_EQ(book.nextDeadline(), -1);
+    EXPECT_EQ(book.waiting(), 0);
+    const Admission again = book.admit(&o[2], Lane::Keyring, k, 400);
+    EXPECT_TRUE(again.waiting);
+    EXPECT_EQ(again.id, QStringLiteral("p6"));
+    // A promoted request is no longer subject to a deadline.
+    book.release(book.ids().constFirst());
+    EXPECT_EQ(book.takePromoted(), QStringList{again.id});
+    EXPECT_TRUE(book.expire(1000000).isEmpty());
+    EXPECT_EQ(book.count(), 2);
+}
+
 // --- the shell's cgroup and the socket peer ------------------------------------------------------------------------------
 
 TEST(PrompterPeer, CgroupLineAndUnit) {

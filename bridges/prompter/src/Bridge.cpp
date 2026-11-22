@@ -11,6 +11,7 @@
 #include <QSocketNotifier>
 #include <QTimer>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
@@ -112,6 +113,11 @@ namespace gf::prompter {
 
     Bridge::Bridge(GDBusConnection* bus, Options options) : m_bus(G_DBUS_CONNECTION(g_object_ref(bus))), m_options(std::move(options)) {
         m_in = static_cast<char*>(gcr_secure_memory_alloc(kInCapacity));
+        m_promoteTimer.setSingleShot(true);
+        m_promoteTimer.setInterval(0);
+        QObject::connect(&m_promoteTimer, &QTimer::timeout, [this] { startPromoted(); });
+        m_queueTimer.setSingleShot(true);
+        QObject::connect(&m_queueTimer, &QTimer::timeout, [this] { expireWaiting(); });
     }
 
     Bridge::~Bridge() {
@@ -293,19 +299,33 @@ namespace gf::prompter {
             answerCancel(prompt);
             return;
         }
-        const QString caller = promptCaller(prompt);
-        const QString id     = m_book.reserve(prompt, Lane::Keyring, caller);
-        if (id.isEmpty()) {
-            log(QStringLiteral("a %1 request answered \"cancelled\": %2 requests are outstanding (the slots left are kept for Wi-Fi and Bluetooth, or its connection holds %3)")
-                    .arg(kindName(kind)).arg(m_book.count()).arg(kPerCaller));
+        const QString   caller = promptCaller(prompt);
+        const Admission a      = m_book.admit(prompt, Lane::Keyring, caller, monotonicMs() + m_options.queueTimeoutMs);
+        if (a.id.isEmpty()) {
+            log(QStringLiteral("a %1 request answered \"cancelled\": no place free for the applications and the queue is full (%2 waiting, at most %3, %4 for its connection)")
+                    .arg(kindName(kind)).arg(m_book.waiting()).arg(kWaiting).arg(kWaitingPerCaller));
             answerCancel(prompt);
             return;
         }
         Pending pending;
         pending.prompt = GF_PROMPT(g_object_ref(prompt));
         pending.kind   = kind;
-        m_pending.insert(id, pending);
+        m_pending.insert(a.id, pending);
+        if (a.waiting) {
+            // Unseen until its turn: nothing of it (text, id) goes to the shell meanwhile.
+            log(QStringLiteral("request %1: %2, waits for a place (%3 outstanding, %4 waiting)").arg(a.id, kindName(kind)).arg(m_book.count()).arg(m_book.waiting()));
+            armQueueTimer();
+            return;
+        }
+        startGcr(a.id);
+    }
 
+    void Bridge::startGcr(const QString& id) {
+        const auto it = m_pending.constFind(id);
+        if (it == m_pending.constEnd() || !it->prompt)
+            return;
+        GfPrompt*     prompt = it->prompt;
+        const QString caller = promptCaller(prompt);
         if (caller.isEmpty()) {
             identified(id, prompt, RequesterView());
             return;
@@ -383,9 +403,9 @@ namespace gf::prompter {
         const QString id = m_book.idOf(prompt);
         if (id.isEmpty())
             return;
-        log(QStringLiteral("request %1 withdrawn by its caller").arg(id));
+        log(QStringLiteral("request %1 withdrawn by its caller%2").arg(id, m_book.isWaiting(id) ? QStringLiteral(" while it waited (never shown)") : QString()));
         const Pending pending = m_pending.take(id);
-        m_book.release(id);
+        releaseId(id);
         if (pending.sent && m_client >= 0)
             send(cancelMessage(id));
         if (pending.prompt)
@@ -397,7 +417,7 @@ namespace gf::prompter {
         // A prompt with an outstanding request is referenced by it, so it cannot be going away; this is only defensive.
         if (const QString id = m_book.idOf(prompt); !id.isEmpty()) {
             const Pending pending = m_pending.take(id);
-            m_book.release(id);
+            releaseId(id);
             if (pending.sent && m_client >= 0)
                 send(cancelMessage(id));
             if (pending.prompt)
@@ -409,7 +429,7 @@ namespace gf::prompter {
         if (!m_pending.contains(id))
             return;
         const Pending pending = m_pending.take(id);
-        m_book.release(id);
+        releaseId(id);
         if (tellShell && pending.sent && m_client >= 0)
             send(cancelMessage(id));
         if (pending.nm) {
@@ -469,7 +489,7 @@ namespace gf::prompter {
         if (it == m_pending.end() || !it->nm)
             return;
         m_pending.erase(it);
-        m_book.release(id);
+        releaseId(id);
         if (m_client >= 0)
             send(cancelMessage(id));
     }
@@ -493,7 +513,7 @@ namespace gf::prompter {
             return;
         }
         m_pending.remove(answer.id);
-        m_book.release(answer.id);
+        releaseId(answer.id);
         if (answer.refused) {
             // The shell could not take it (its bound): no secrets, NetworkManager may ask another agent (decision 9-31).
             log(QStringLiteral("request %1 refused by the shell").arg(answer.id));
@@ -528,18 +548,32 @@ namespace gf::prompter {
     QString Bridge::submitKio(KioRequest* request) {
         if (m_client < 0 || !m_ready || !m_kinds.contains(QStringLiteral("kio")))
             return {};
-        const QString id = m_book.reserve(request, Lane::Kio, request->sender);
-        if (id.isEmpty()) {
-            log(QStringLiteral("a kio request answered with nothing: %1 requests are outstanding (the slots left are kept for Wi-Fi and Bluetooth, or its connection holds %2)")
-                    .arg(m_book.count()).arg(kPerCaller));
+        const Admission a = m_book.admit(request, Lane::Kio, request->sender, monotonicMs() + m_options.queueTimeoutMs);
+        if (a.id.isEmpty()) {
+            log(QStringLiteral("a kio request answered with nothing: no place free for the applications and the queue is full (%1 waiting, at most %2, %3 for its connection)")
+                    .arg(m_book.waiting()).arg(kWaiting).arg(kWaitingPerCaller));
             return {};
         }
         Pending pending;
         pending.kio    = request;
-        pending.sent   = true;
         pending.choice = request->rememberOffered;
-        m_pending.insert(id, pending);
-        request->id = id;
+        m_pending.insert(a.id, pending);
+        request->id = a.id;
+        if (a.waiting) {
+            log(QStringLiteral("request %1: kio, waits for a place (%2 outstanding, %3 waiting)").arg(a.id).arg(m_book.count()).arg(m_book.waiting()));
+            armQueueTimer();
+            return a.id;
+        }
+        sendKio(a.id); // may drop the shell, which then ends this request too (KioServer checks)
+        return a.id;
+    }
+
+    void Bridge::sendKio(const QString& id) {
+        const auto it = m_pending.find(id);
+        if (it == m_pending.end() || !it->kio || m_client < 0)
+            return;
+        KioRequest* request = it->kio;
+        it->sent            = true;
         KioPromptView view;
         view.id        = id;
         view.requester = request->requester;
@@ -550,17 +584,19 @@ namespace gf::prompter {
         view.retry     = request->retry;
         view.remember  = !request->rememberOffered ? QStringLiteral("none") : request->rememberChosen ? QStringLiteral("on") : QStringLiteral("off");
         view.keyring   = request->rememberOffered ? kio::protectionName(request->keyring) : QStringLiteral("unknown");
-        send(kioPromptMessage(view)); // may drop the shell, which then ends this request too (KioServer checks)
-        return id;
+        send(kioPromptMessage(view)); // may drop the shell, which then ends this request too
     }
 
     void Bridge::withdrawKio(const QString& id) {
         const auto it = m_pending.find(id);
         if (it == m_pending.end() || !it->kio)
             return;
+        const bool sent = it->sent; // a waiting query was never shown: nothing to withdraw from the shell
+        if (!sent)
+            log(QStringLiteral("request %1 withdrawn by its caller while it waited (never shown)").arg(id));
         m_pending.erase(it);
-        m_book.release(id);
-        if (m_client >= 0)
+        releaseId(id);
+        if (sent && m_client >= 0)
             send(cancelMessage(id));
     }
 
@@ -584,7 +620,7 @@ namespace gf::prompter {
             return;
         }
         m_pending.remove(answer.id);
-        m_book.release(answer.id);
+        releaseId(answer.id);
         if (!m_kio)
             return;
         if (answer.refused) {
@@ -661,7 +697,7 @@ namespace gf::prompter {
         if (it == m_pending.end() || !it->bt)
             return;
         m_pending.erase(it);
-        m_book.release(id);
+        releaseId(id);
         if (m_client >= 0)
             send(cancelMessage(id));
     }
@@ -695,7 +731,7 @@ namespace gf::prompter {
             return;
         }
         m_pending.remove(answer.id);
-        m_book.release(answer.id);
+        releaseId(answer.id);
         if (!m_bt)
             return;
         if (answer.refused) {
@@ -748,8 +784,59 @@ namespace gf::prompter {
     }
 
     void Bridge::cancelAll(bool tellShell) {
+        // Outstanding and waiting alike (a waiting one was never sent: the shell is told nothing of it).
         for (const QString& id : m_book.ids())
             cancelRequest(id, tellShell);
+    }
+
+    // --- the applications' queue (B-05 amended, owner decision 2026-11-22) -------------------------------------------------
+
+    void Bridge::releaseId(const QString& id) {
+        m_book.release(id);
+        // A place freed may have gone to a waiting request: it is sent in a later turn, never from here (this runs inside
+        // gcr's callbacks on the withdrawal paths). The book holds its place meanwhile, so no newer request passes it.
+        if (m_book.hasPromoted() && !m_promoteTimer.isActive())
+            m_promoteTimer.start();
+    }
+
+    void Bridge::startPromoted() {
+        for (const QString& id : m_book.takePromoted()) {
+            const auto it = m_pending.constFind(id);
+            if (it == m_pending.constEnd() || it->sent)
+                continue; // withdrawn, cancelled or expired meanwhile
+            if (m_client < 0 || !m_ready) {
+                // Cannot happen (the shell's departure cancels every request first); fail closed all the same.
+                cancelRequest(id, false);
+                continue;
+            }
+            log(QStringLiteral("request %1: a place is free, its turn").arg(id));
+            if (it->prompt)
+                startGcr(id);
+            else if (it->kio)
+                sendKio(id);
+            else
+                cancelRequest(id, false); // only applications' requests wait
+        }
+    }
+
+    void Bridge::armQueueTimer() {
+        const qint64 next = m_book.nextDeadline();
+        if (next < 0) {
+            m_queueTimer.stop();
+            return;
+        }
+        m_queueTimer.start(static_cast<int>(std::clamp<qint64>(next - monotonicMs(), 0, m_options.queueTimeoutMs)));
+    }
+
+    void Bridge::expireWaiting() {
+        for (const QString& id : m_book.expire(monotonicMs())) {
+            if (!m_pending.contains(id))
+                continue;
+            // Fail closed: gcr's caller gets "cancelled", KIO's client nothing (no cancelled entry: not the user's Cancel).
+            log(QStringLiteral("request %1 answered \"cancelled\": no place freed within %2 s (never shown)").arg(id).arg(m_options.queueTimeoutMs / 1000));
+            cancelRequest(id, false);
+        }
+        armQueueTimer();
     }
 
     // --- the shell's side ------------------------------------------------------------------------------------------------
@@ -853,8 +940,14 @@ namespace gf::prompter {
             case ParseStatus::Version: protocolError(QStringLiteral("version"), error, true); return;
             case ParseStatus::Unknown: protocolError(QStringLiteral("unknown-type"), error, false); return;
             case ParseStatus::Invalid:
-                log(QStringLiteral("invalid answer to %1: %2; the request is cancelled").arg(message.id, error));
-                cancelRequest(message.id, true);
+                // Only a request the shell holds is cancelled: one waiting for a place was never sent, so the shell cannot
+                // answer it, rightly or wrongly (opus review of the applications' queue, M1).
+                if (const auto it = m_pending.constFind(message.id); it != m_pending.constEnd() && it->sent) {
+                    log(QStringLiteral("invalid answer to %1: %2; the request is cancelled").arg(message.id, error));
+                    cancelRequest(message.id, true);
+                } else {
+                    log(QStringLiteral("invalid answer to %1 ignored: not outstanding (%2)").arg(message.id, error));
+                }
                 protocolError(QStringLiteral("bad-answer"), error, false);
                 return;
             case ParseStatus::Ok: break;
@@ -920,7 +1013,7 @@ namespace gf::prompter {
             return;
         }
         m_pending.erase(it);
-        m_book.release(answer.id);
+        releaseId(answer.id);
         const int choice = answer.hasChoice ? (answer.choice ? 1 : 0) : -1;
         if (pending.kind == PromptKind::Password) {
             char* secure = nullptr;
@@ -989,7 +1082,8 @@ namespace gf::prompter {
     void Bridge::dropClient(const QString& why) {
         if (m_client < 0)
             return;
-        log(QStringLiteral("shell gone: %1; %2 request(s) cancelled, the name released").arg(why).arg(m_book.count()));
+        log(QStringLiteral("shell gone: %1; %2 request(s) cancelled (%3 of them waiting, never shown), the name released")
+                .arg(why).arg(m_book.count() + m_book.waiting()).arg(m_book.waiting()));
         // QSocketNotifier must not outlive its descriptor: disabled and deleted later, as the signal may be on the stack.
         for (QSocketNotifier* n : {m_readNotifier, m_writeNotifier}) {
             if (n) {

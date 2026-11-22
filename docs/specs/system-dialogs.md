@@ -609,7 +609,8 @@ server “X”." with "Remember this password in my keychain", Cancel / Connect.
   request never takes the keyboard from the sheet on screen (the polkit sheet's `WlrKeyboardFocus.Exclusive` stays where it is,
   `shell/security/polkit/AuthAgent.qml:241`) and is shown only after that sheet is answered or cancelled; a request withdrawn by
   its caller (`StopPrompting`, `CancelGetSecrets`, BlueZ `Cancel`, the KIO client gone) leaves the queue unseen; at most 8
-  secret requests wait, the 9th secret request is answered "cancelled"; a polkit request always queues, whatever the count.
+  secret requests wait, the 9th secret request is answered "cancelled" (the bridge never sends a 9th: an application's
+  request past its share waits in the bridge, section 5 "Rules"); a polkit request always queues, whatever the count.
 - SC3 look and identity: a secret sheet is not the authorization sheet: no lock-and-shield glyph, never the title
   "Authentication required"; a fixed top row with the requester's icon and name that only the bridge fills, from the pidfd of
   `GetConnectionCredentials` (`ProcessFD` → PID → `/proc/<pid>/exe`, the pidfd checked alive after the read; trusted only when
@@ -840,10 +841,28 @@ at once. After a lost connection it tries again after 1 s, doubling to 30 s, res
 
 Rules (fail closed: no answer is ever invented):
 - At most 8 requests outstanding, in lanes (audit B-05, `src/Requests.h`): NetworkManager and BlueZ keep two places each,
-  so the applications' gcr prompts and KIO sheets hold at most four together, and one bus connection at most two. A
-  request past its lane's share is answered "cancelled" at once (KIO: nothing) and the shell never sees it. Known limit:
-  gnome-keyring asks over one connection for every application, so a third keyring prompt at the same moment is
-  answered "cancelled" (fail closed; the stock prompter queues it). At most 64
+  so the applications' gcr prompts and KIO sheets hold at most four together, and one bus connection at most two.
+  NetworkManager's and BlueZ's requests past their share are answered at once (`NoSecrets`, `Rejected`) and never wait.
+- The applications' queue (B-05 amended, owner decision 2026-11-22, "File d'attente": queued, as the stock gcr prompter
+  and macOS do, instead of cancelled). A gcr prompt or a KIO query past the applications' share waits in the bridge for a
+  place: at most 16 waiting in all and 6 for one bus connection (gnome-keyring asks over one connection for every
+  application: its 8 open gcr prompts fit, 2 shown and 6 waiting); beyond either bound it is answered "cancelled" at once
+  (KIO: nothing), fail closed and logged. A waiting request holds no place (NetworkManager's and BlueZ's stay theirs) and
+  nothing of it reaches the shell, neither its text nor its id, before its turn; the bridge's journal gets its id, its
+  kind and the counts (a KIO query's line also names the requester's role and path, as for any KIO query), never its
+  text, and an answer or an invalid line the shell sends for a waiting id is ignored (never a cancellation: it was never
+  sent). When a place frees it goes at once to the waiting request of the connection whose turn is the oldest (its last
+  turn, or when it began to wait: a new connection ranks after every connection already waiting), then the oldest
+  request, never past a connection's two, so one connection, or a program that keeps opening new ones, cannot starve the
+  others; a newer request never passes a waiting one that could take the place. The request is sent in the next main
+  loop turn, then shown as any other (the caller identified then). A waiting request
+  that its caller withdraws (`StopPrompting`, the caller gone, the KIO client gone) or that is still waiting when the
+  shell goes ends unseen; one that waited 110 s (the bridge's longest answer time, NetworkManager's) is answered
+  "cancelled" (KIO: nothing, no cancelled entry kept). The lock changes nothing in the bridge: the shell keeps holding
+  what it gets while the session is locked (SC4), so no place frees through the user then and waiting requests still
+  end after 110 s. Known limits: the applications behind gnome-keyring share its connection's turn and bounds (the bridge
+  sees one caller); a program that fills the queue's 16 places from several connections makes the next application
+  request answer "cancelled" at once until one frees, as every request past the share did before. At most 64
   gcr prompts open, at most 8 for one bus connection: a connection's ninth `BeginPrompting` is answered
   `org.freedesktop.DBus.Error.LimitsExceeded` and never reaches gcr; a `PerformPrompt` of the wrong shape is answered
   `org.freedesktop.DBus.Error.InvalidArgs`. A connection's count follows what gcr holds (opus counter-review of step 9a,

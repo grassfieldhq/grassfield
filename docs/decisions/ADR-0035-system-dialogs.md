@@ -1694,7 +1694,8 @@ GDBus; no C source of Grassfield's own; `CMakeLists.txt`, `build-direct.sh`), in
 - **The protocol** `prompter/1` (`src/Protocol.{h,cpp}`; spec section 5, "prompter/1 protocol"): hello both ways, name,
   prompt, cancel and error from the bridge, answer from the shell; at most 8 requests outstanding (the 9th is answered
   "cancelled" without reaching the shell; since the rc8 audit's B-05, NetworkManager and BlueZ keep two places each and
-  one application connection holds two, spec section 5); errors fail closed (9-6). Kinds `password` and `confirm`; `nm`, `kio` and
+  one application connection holds two, spec section 5; since the owner decision of 2026-11-22, an application's request
+  past its share waits in the bridge instead, see "Amendment to ADR-0035, B-05" at the end); errors fail closed (9-6). Kinds `password` and `confirm`; `nm`, `kio` and
   `bluetooth` are reserved for 9d, 9e and step 10 (9-9).
 - **Packaging.** The unit (no namespace option, seccomp, no core file, no swap, non-dumpable, 9-8); the PKGBUILD builds the
   bridge, runs its unit tests in `check()` and installs it with its unit; `grassfield-desktop` and the build declare
@@ -1870,7 +1871,8 @@ GDBus; no C source of Grassfield's own; `CMakeLists.txt`, `build-direct.sh`), in
   a desktop that cannot show a prompt must be diagnosable without a technical step for the user (the journal says it).
   **Amended after the opus counter-review of step 9a (NIT):** for that line the bridge reads the owner's executable only,
   not its namespaces, tracer and mappings.
-- **9-11. Limits.** **Choice:** 8 requests outstanding (D-9); 64 gcr prompts open at once (beyond, a new one answers
+- **9-11. Limits.** **Choice:** 8 requests outstanding (D-9; past the applications' share of them a gcr prompt or a KIO
+  query waits in a bounded queue since the amendment of B-05 on 2026-11-22, at the end of this ADR); 64 gcr prompts open at once (beyond, a new one answers
   "cancelled"); a password of at most 4096 bytes after decoding, never cut; shell lines of at most 16 KiB; caller strings
   over 16 KiB dropped by the filter; texts capped in UTF-16 code units, the ellipsis included: title 128, message 256,
   description 1024, warning 256, check box 128, buttons 32, requester name 128, icon and desktop id 256, path 512. Rule
@@ -3536,3 +3538,61 @@ An app left marked for hours cost a forked `sh` four times a second for all that
 `tests/shell/not_responding_wait` checks NR3 for two stand-ins and a gone one, and that nothing is started again while nothing
 ends. A pid reused by another process between the report and the wait is waited for instead (the earlier check had the same
 limit).
+
+## Amendment to ADR-0035, B-05 (the applications' share of the shell's 8) · Date: 2026-11-22 · Decider: owner
+
+**Owner decision 2026-11-22** (asked with options, answered « File d'attente »): queue gnome-keyring's prompts instead of
+cancelling them, as the stock gcr prompter and macOS do.
+
+**Before.** B-05 (rc8 audit, PR #52; `bridges/prompter/src/Requests.h`) split the shell's 8 places: NetworkManager and
+BlueZ keep two each, the applications (gcr prompts, with the D-Bus sender as caller, and KIO queries) share the other four,
+one connection at most two. A request past its share was answered "cancelled" at once. gnome-keyring asks over one D-Bus
+connection for every application, so a third keyring prompt at the same moment was cancelled, where the stock gcr
+prompter (mode SINGLE) would have shown it after the others.
+
+**Change.** An application request (lanes Keyring and Kio) past its share waits in the bridge for a place
+(`RequestBook::admit`):
+- bounds: at most `kWaiting` = 16 waiting in all and `kWaitingPerCaller` = 6 for one connection (gnome-keyring's 8 open
+  gcr prompts, Filter.h, fit: 2 shown and 6 waiting); beyond either, "cancelled" at once (KIO: nothing), logged;
+- fairness: a place that frees goes at once (inside `release`) to the waiting request of the connection whose turn is
+  the oldest, then the oldest request, never past a connection's two. A connection's turn is its last promotion, or the
+  moment it began to wait when it has none, so a new connection ranks after every connection already waiting: a program
+  that keeps opening new connections cannot pass gnome-keyring's waiting request (opus review, M2). The turn is
+  remembered while the connection has a request in the book, so one that asks again right after its turn does not pass
+  the others; a newer request never passes a waiting one that could take the place (the book hands every freed place to
+  the queue first);
+- NetworkManager and BlueZ never wait and keep their reserved places (a waiting request holds none);
+- unseen until its turn: the bridge sends nothing of a waiting request (text, id, requester) to the shell; gcr's caller is
+  identified and its text read when it is sent, in the main loop turn after its place was given (never from inside gcr's
+  callbacks); an answer, or an invalid answer line, the shell sends for a waiting id is ignored, never a cancellation (it
+  was never sent; opus review, M1). The journal gets a waiting request's id, kind and the counts, and for a KIO query
+  KioServer's usual line with the requester's role and path; never its text;
+- withdrawn unseen: the caller's `StopPrompting`, its leaving the bus, the KIO client leaving, or the shell's departure
+  end a waiting request without telling the shell;
+- time: a waiting request waits at most `kWaitMs` = 110 s (the bridge's longest answer time, NetworkManager's), then is
+  answered "cancelled" (KIO: nothing, no cancelled entry: not the user's Cancel). gcr prompts and KIO sheets have no time
+  limit once shown, as before;
+- the lock: unchanged. The bridge does not know it; the shell holds every request it gets while the session is locked and
+  shows none over the lock (SC4), so no place frees through the user while locked, and waiting requests end after their
+  110 s.
+
+KIO follows the same rule for the same reason: kpasswdserver queues every query and shows one dialog at a time; a KIO
+query past the share used to fail the job's login at once. KioServer keeps its own rules (one sheet per window and key, 8
+open per caller): a query waiting in the bridge holds its window and key, as one shown does.
+
+**Kept.** The bound of 8 at the shell; the reserved places; one connection's two; fail closed on every error path (the
+shell gone, a bound reached, the time run out). **Known limits.** The applications behind gnome-keyring share its turn and
+bounds (the bridge sees one caller); a program that fills the queue (16, from three connections at least) makes the next
+application request answer "cancelled" at once until a place in the queue frees, as every request did past the share
+before this amendment.
+
+**Opus security review (2026-11-22): PASS**, with minors fixed in a follow-up commit: an invalid answer line for a waiting
+id no longer cancels it (M1); a connection's first turn is taken when it begins to wait, not "never served" (M2); the
+request book's mutants are in `prompter_bridge.sh --mutants` (M4); what the journal gets of a waiting request is stated
+exactly (NIT).
+
+**Tests.** `tests/unit/prompter/tst_prompter.cpp` PrompterQueue.* (the wait, the reserved places, the fair turns, a served
+caller not passing, the bounds, the deadline and the withdrawal); `tests/security/prompter_bridge.sh` section 8 (nine
+prompts from three connections: four shown, five waiting unseen, each shown on its turn, a waiting one withdrawn unseen,
+the queue's time and bounds) and `tests/security/kio_passwd.sh` section 12 (gcr prompts and KIO queries waiting in one
+queue); both fail against the bridge of rc9 (the control).
