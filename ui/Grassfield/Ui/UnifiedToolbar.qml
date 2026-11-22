@@ -77,6 +77,10 @@ Item {
             id: dragHandler
             target: null
             acceptedButtons: Qt.LeftButton
+            // Never from a control: a press on a button, a field or a light is that item's (it holds the grab), and a drag
+            // that starts there must not take it over and move the window (macOS: a toolbar button tracks the pointer, its
+            // click is not lost to a move). Qt's default lets a drag handler take over from items; only empty space moves.
+            grabPermissions: PointerHandler.CanTakeOverFromHandlersOfDifferentType | PointerHandler.ApprovesTakeOverByAnything
             // The threshold is Qt's own drag distance; the compositor then follows the pointer (ADR-0015, step 3). A drag
             // that started on a light is the light's (its press, then its release elsewhere: nothing).
             onActiveChanged: {

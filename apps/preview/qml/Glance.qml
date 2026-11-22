@@ -182,10 +182,22 @@ Window {
     }
 
 
-    Item {
+    // The header is the panel's title bar: its empty space moves the window (owner report on 1.0.0-rc9: the Glance could not
+    // be moved, since the window rule gf-glance draws no compositor titlebar on it and nothing here started a move), as
+    // a macOS Quick Look panel moves by its title bar. The shared toolbar of the apps gives the drag (the compositor's
+    // interactive move) behind every control; the Glance has no lights, so a double-click does nothing (a panel, not a
+    // document window: no zoom, no minimize).
+    UnifiedToolbar {
         id: header
+        objectName: "glanceHeader"
         width: parent.width
         height: Tokens.previewGlanceHeaderHeight
+        window: win
+        style: "titlebar"
+        showControls: false
+        showTitle: false
+        doubleClickAction: "none"
+        accessibleName: qsTr("Glance")
 
         // Close: a glyph circle at the left (macOS Quick Look), the Space and Esc keys do the same.
         Item {
@@ -289,6 +301,7 @@ Window {
 
         Button {
             id: openButton
+            objectName: "glanceOpenButton"
             anchors {
                 right: parent.right
                 rightMargin: Tokens.spacingMd

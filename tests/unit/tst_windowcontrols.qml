@@ -360,6 +360,37 @@ TestCase {
         u.destroy();
     }
 
+    // A drag that starts on a toolbar control is the control's (macOS: the button tracks the pointer), never a window move
+    // that would also cancel its click (Preview's Glance header test, 2026-11-22: Qt's default let the drag area take over).
+    Component {
+        id: toolbarWithButton
+        UnifiedToolbar {
+            width: 600
+            window: win
+            title: "A title"
+            trailing: [
+                ToolButton {
+                    objectName: "trailingButton"
+                    capsule: true
+                    accessibleName: "Info"
+                }
+            ]
+        }
+    }
+
+    function test_dragFromAToolbarButtonNeverMovesTheWindow() {
+        const u = make(toolbarWithButton, {});
+        const b = findChild(u, "trailingButton");
+        verify(b !== null);
+        const p = u.mapFromItem(b, b.width / 2, b.height / 2);
+        mouseDrag(u, p.x, p.y, -200, 100);
+        compare(win.calls.indexOf("move"), -1, "a drag from a button: " + win.calls.join(","));
+        win.calls = [];
+        mouseDrag(u, 300, 26, 200, 100);
+        verify(win.calls.indexOf("move") >= 0, "empty space still moves it: " + win.calls.join(","));
+        u.destroy();
+    }
+
     function test_theLightsGroupCoversTheLightsAndTheirSlop() {
         const c = make(controlsComponent, {style: "unified"});
         const g = c.geometry;
