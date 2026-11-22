@@ -496,7 +496,8 @@ Window {
             return "";
         }
         title: qsTr("Change all similar documents to open with “%1”?").arg(changeAllSheet.appName)
-        message: qsTr("This change applies to all documents of this kind (%1).").arg(root.mimeType)
+        // The kind's name as the Kind row shows it ("Word 2007 document"); the MIME type only when there is none.
+        message: qsTr("This change applies to all documents of this kind (%1).").arg(root.info.kind !== "" ? root.info.kind : root.mimeType)
         confirmText: qsTr("Continue")
         confirmHandler: () => {
             if (!root.app.setDefaultApplication(root.mimeType, root.chosenApp))
