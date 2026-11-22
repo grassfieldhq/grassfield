@@ -159,15 +159,62 @@ TestCase {
         }
     }
 
+    function threeDisplays() {
+        return [
+            {key: "n:eDP-1", name: "eDP-1", model: "", serial: "", label: "Built-in Display"},
+            {key: "s:U2723QE|A1", name: "DP-1", model: "U2723QE", serial: "A1", label: "U2723QE"},
+            {key: "s:U2723QE|A2", name: "DP-2", model: "U2723QE", serial: "A2", label: "U2723QE (DP-2)"}
+        ];
+    }
+
+    // The owner's report (2026-11-22): "for every setting, the current display or all displays". Under All Displays the four
+    // per-display rows write the top-level keys; with a display chosen they write only that display's entry of dock.outputs and
+    // leave the other displays alone; "Use All Displays" removes the entry.
+    function test_dockScopeAllDisplaysThenOneDisplay() {
+        const t = make();
+        t.page.displays = threeDisplays();
+        t.page.displayId = "all";
+        named(t.page.contentItem, "Automatically hide and show the Dock").toggled(true);
+        compare(last(t.store), {"dock.autohide": true});
+        named(t.page.contentItem, "Dock position on screen").picked("left");
+        compare(last(t.store), {"dock.position": "left"});
+        // One display: its own entry, the global key untouched.
+        t.page.displayId = "s:U2723QE|A1";
+        named(t.page.contentItem, "Automatically hide and show the Dock").toggled(false);
+        compare(last(t.store), {"dock.outputs": [{display: {name: "DP-1", model: "U2723QE", serial: "A1"}, autohide: false}]});
+        compare(t.store.value("dock.autohide"), true);
+        // The display reads its own value, the others the global one.
+        verify(!t.page.scoped("autohide"));
+        t.page.displayId = "n:eDP-1";
+        verify(t.page.scoped("autohide"));
+        compare(t.page.scoped("position"), "left");
+        // A second field goes into the same entry; the position of the first display is its own now.
+        t.page.displayId = "s:U2723QE|A1";
+        named(t.page.contentItem, "Dock position on screen").picked("right");
+        compare(last(t.store)["dock.outputs"].length, 1);
+        compare(last(t.store)["dock.outputs"][0].position, "right");
+        compare(last(t.store)["dock.outputs"][0].autohide, false);
+        compare(t.page.scoped("position"), "right");
+        // Size and magnification go through the same entry.
+        t.page.setScoped({"size": 80}, true);
+        compare(t.page.scoped("size"), 80);
+        compare(t.store.value("dock.size"), 48);
+        // Back to All Displays: the entry goes, the display reads the global values again.
+        t.page.useAllDisplays();
+        compare(last(t.store), {"dock.outputs": []});
+        verify(t.page.scoped("autohide"));
+        compare(t.page.scoped("position"), "left");
+    }
+
     // The owner's report (2026-11-22): every Dock setting must reach every display. With several displays the page offers the one
     // scope switch (dock.allDisplays, on by default); with one display there is nothing to choose and no row.
     function test_dockOnAllDisplaysRowNeedsSeveralDisplays() {
         const t = make();
-        t.page.displayCount = 1;
+        t.page.displays = [];
         const row = find(t.page.contentItem, i => i.title === "Show the Dock on all displays" && i.subtitle !== undefined);
         verify(row, "the row");
         verify(!row.visible, "no row with one display");
-        t.page.displayCount = 3;
+        t.page.displays = threeDisplays();
         verify(row.visible, "a row with three displays");
         const toggle = named(t.page.contentItem, "Show the Dock on all displays");
         verify(toggle.checked, "on by default");

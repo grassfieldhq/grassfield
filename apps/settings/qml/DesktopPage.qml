@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Dialogs
 import Grassfield.Ui
 import "DefaultBrowser.js" as DefaultBrowser
+import "Displays.js" as Displays
 
 // Settings > Desktop & Dock as macOS 27 lays it out (docs/audits/settings-parity-2026-10-26.md § Desktop & Dock): Dock (Size
 // and Magnification side by side; the Dock's position, the minimize animation, the title bar's double click and minimizing
@@ -17,8 +18,75 @@ SettingsPage {
 
     signal screenCornersRequested
 
-    // How many displays are connected (the "Show the Dock on all displays" row only exists with more than one).
-    property int displayCount: Qt.application.screens.length
+    // ---- which display the Dock's size, magnification, position and hiding are for (owner 2026-11-22) ----
+    // "all" = All Displays (the top-level dock keys, the default), else a display key (WallpaperConfig.displayKey): its entry of
+    // `dock.outputs` overrides those four settings for that display only (DisplayScope; the wallpaper pane works the same way).
+    // What the Dock holds and how it behaves (apps, folders, clicks, indicators) is the same on every display.
+    property string displayId: "all"
+    // The connected displays: [{key, name, model, serial, label}] (the names Settings > Displays gives them); read from the backend.
+    property var displays: root.readDisplays()
+    // The rows for the scope only exist with more than one display.
+    readonly property int displayCount: root.displays.length
+    readonly property var currentDisplay: root.displayId === "all" ? null : (root.displays.find(d => d.key === root.displayId) || null)
+    readonly property var dockSchema: DisplayScope.DOCK_SCHEMA
+    readonly property var dockOutputs: root.store.value("dock.outputs")
+
+    function readDisplays(): var {
+        const list = root.backend && typeof root.backend.screens === "function" ? root.backend.screens() : [];
+        const named = list.map(s => {
+            const d = {name: s.name, model: s.model || "", serial: s.serial || ""};
+            d.key = WallpaperConfig.displayKey(d);
+            d.label = Displays.isBuiltIn(d) ? qsTr("Built-in Display") : (String(d.model).trim() !== "" ? String(d.model).trim() : d.name);
+            return d;
+        });
+        const twins = named.map(d => named.filter(o => o.label === d.label).length > 1);
+        return named.map((d, i) => {
+            if (twins[i])
+                d.label = qsTr("%1 (%2)").arg(d.label).arg(d.name);
+            return d;
+        });
+    }
+
+    // The value of a scoped setting (size, position, magnification, magnificationEnabled, autohide) for the display chosen.
+    function scoped(field: string): var {
+        const globals = {};
+        globals[field] = root.store.value("dock." + field);
+        return DisplayScope.resolve(root.dockSchema, globals, root.dockOutputs, root.currentDisplay)[field];
+    }
+
+    // A scoped setting is written to the chosen display's entry, or to the top-level key under All Displays (`soon`: a slider's
+    // coalesced write). `fields` is {field: value}.
+    function setScoped(fields: var, soon: bool): void {
+        if (root.currentDisplay === null) {
+            const keys = {};
+            for (const f of Object.keys(fields))
+                keys["dock." + f] = fields[f];
+            const names = Object.keys(keys);
+            if (soon)
+                root.store.setManySoon(keys);
+            else if (names.length === 1)
+                root.store.set(names[0], keys[names[0]]);
+            else
+                root.store.setMany(keys);
+            return;
+        }
+        const next = DisplayScope.withOverride(root.dockSchema, root.dockOutputs, root.currentDisplay, fields);
+        if (soon)
+            root.store.setSoon("dock.outputs", next);
+        else
+            root.store.set("dock.outputs", next);
+    }
+
+    // The chosen display follows All Displays again (its entry is removed).
+    function useAllDisplays(): void {
+        if (root.currentDisplay !== null)
+            root.store.set("dock.outputs", DisplayScope.withoutOverride(root.dockSchema, root.dockOutputs, root.currentDisplay));
+    }
+
+    onDisplaysChanged: {
+        if (root.displayId !== "all" && !root.displays.some(d => d.key === root.displayId))
+            root.displayId = "all";
+    }
 
     title: qsTr("Desktop & Dock")
 
@@ -26,21 +94,51 @@ SettingsPage {
     // Large, the largest magnification the schema allows. A position between Off and Small goes to the nearer of the two.
     readonly property real magnificationLarge: SettingsContract.RULES["dock.magnification"].max
     readonly property real magnificationPosition: {
-        if (!root.store.value("dock.magnificationEnabled"))
+        if (!root.scoped("magnificationEnabled"))
             return 0;
-        const m = Math.max(Tokens.settingsDockMagnificationSmall, root.store.value("dock.magnification"));
+        const m = Math.max(Tokens.settingsDockMagnificationSmall, root.scoped("magnification"));
         return Tokens.settingsDockMagnificationSmallAt + (1 - Tokens.settingsDockMagnificationSmallAt) * (m - Tokens.settingsDockMagnificationSmall) / (root.magnificationLarge - Tokens.settingsDockMagnificationSmall);
     }
 
     function setMagnification(position: real): void {
         const small = Tokens.settingsDockMagnificationSmallAt;
         if (position < small / 2) {
-            root.store.setManySoon({"dock.magnificationEnabled": false});
+            root.setScoped({"magnificationEnabled": false}, true);
             return;
         }
         const t = Math.max(0, (position - small) / (1 - small));
         const m = Math.round((Tokens.settingsDockMagnificationSmall + t * (root.magnificationLarge - Tokens.settingsDockMagnificationSmall)) * 100) / 100;
-        root.store.setManySoon({"dock.magnificationEnabled": true, "dock.magnification": m});
+        root.setScoped({"magnificationEnabled": true, "magnification": m}, true);
+    }
+
+    // With several displays: which display the four rows that can differ per display change (size, magnification, position,
+    // auto-hide). Under All Displays they change every display that has no setting of its own.
+    SettingsGroup {
+        visible: root.displayCount > 1
+
+        SettingsRow {
+            title: qsTr("Dock settings for")
+            subtitle: root.currentDisplay !== null
+                ? qsTr("Size, Magnification, Position and Automatically hide apply to %1 only.").arg(root.currentDisplay.label)
+                : qsTr("Size, Magnification, Position and Automatically hide apply to every display that has no setting of its own.")
+            ComboBox {
+                inline: true
+                accessibleName: qsTr("Dock settings for")
+                model: [{id: "all", text: qsTr("All Displays")}].concat(root.displays.map(d => ({id: d.key, text: d.label})))
+                value: root.displayId
+                onPicked: id => root.displayId = id
+            }
+        }
+
+        SettingsRow {
+            visible: root.currentDisplay !== null && DisplayScope.hasOverride(root.dockSchema, root.dockOutputs, root.currentDisplay)
+            title: qsTr("Use the All Displays settings")
+            Button {
+                push: true
+                text: qsTr("Use All Displays")
+                onClicked: root.useAllDisplays()
+            }
+        }
     }
 
     SettingsGroup {
@@ -59,8 +157,8 @@ SettingsPage {
                 slider.to: Tokens.dockSizeMax
                 slider.stepSize: 1 / (Tokens.dockSizeMax - Tokens.dockSizeMin)
                 slider.ticks: 2
-                slider.value: root.store.value("dock.size")
-                slider.onMoved: v => root.store.setSoon("dock.size", Math.round(v))
+                slider.value: root.scoped("size")
+                slider.onMoved: v => root.setScoped({"size": Math.round(v)}, true)
                 slider.onReleased: root.store.flush()
             }
 
@@ -87,8 +185,8 @@ SettingsPage {
                 inline: true
                 accessibleName: qsTr("Dock position on screen")
                 model: [{id: "left", text: qsTr("Left")}, {id: "bottom", text: qsTr("Bottom")}, {id: "right", text: qsTr("Right")}]
-                value: root.store.value("dock.position")
-                onPicked: id => root.store.set("dock.position", id)
+                value: root.scoped("position")
+                onPicked: id => root.setScoped({"position": id}, false)
             }
         }
 
@@ -131,8 +229,8 @@ SettingsPage {
             title: qsTr("Automatically hide and show the Dock")
             Toggle {
                 accessibleName: qsTr("Automatically hide and show the Dock")
-                checked: root.store.value("dock.autohide")
-                onToggled: c => root.store.set("dock.autohide", c)
+                checked: root.scoped("autohide")
+                onToggled: c => root.setScoped({"autohide": c}, false)
             }
         }
 
