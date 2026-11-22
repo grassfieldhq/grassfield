@@ -885,6 +885,7 @@ QObject *FilesApp::createFolderModel(QObject *parent)
     connect(model, &FolderModel::tagsSeen, this, &FilesApp::noteTags);
     connect(model, &FolderModel::applicationsListed, this, [this](const QVariantMap &paths, const QVariantMap &names) { m_applicationPaths = paths; m_applicationNames = names; });
     connect(this, &FilesApp::tagsChanged, model, &FolderModel::tagsChanged);
+    connect(m_places, &PlacesModel::trashChanged, model, &FolderModel::trashChanged);
     model->setStyleStore(&m_folderStyles);
     model->setCutUrls(m_cutUrls);
     connect(this, &FilesApp::cutUrlsChanged, model, [this, model] { model->setCutUrls(m_cutUrls); });
@@ -2116,6 +2117,9 @@ void FilesApp::emptyTrash()
     KIO::EmptyTrashJob *job = KIO::emptyTrash();
     attachDelegate(job);
     track(job, tr("Emptying the Trash…"));
+    // The listings of the Trash show its end state the moment the job ends, whatever kio_trash tells KIO's listers (only when
+    // every trash folder is empty) and whatever the watch of the home trash has seen yet.
+    connect(job, &KJob::result, m_places, &PlacesModel::trashChanged);
 }
 
 void FilesApp::newFolder(const QUrl &directory, QObject *folder)

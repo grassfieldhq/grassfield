@@ -129,8 +129,15 @@ PlacesModel::PlacesModel(QObject *parent, const DiskProbe::Options &disk)
     m_trashTimer.setSingleShot(true);
     m_trashTimer.setInterval(200);
     connect(&m_trashTimer, &QTimer::timeout, this, &PlacesModel::checkTrash);
-    connect(&m_trashWatcher, &QFileSystemWatcher::fileChanged, &m_trashTimer, qOverload<>(&QTimer::start));
-    connect(&m_trashWatcher, &QFileSystemWatcher::directoryChanged, &m_trashTimer, qOverload<>(&QTimer::start));
+    connect(&m_trashTimer, &QTimer::timeout, this, &PlacesModel::trashChanged);
+    // At most one check per interval while changes keep coming, never postponed by them: emptying a large Trash removes its items
+    // one by one for a long time, and its listing follows as they go instead of waiting for the end.
+    const auto soon = [this] {
+        if (!m_trashTimer.isActive())
+            m_trashTimer.start();
+    };
+    connect(&m_trashWatcher, &QFileSystemWatcher::fileChanged, this, soon);
+    connect(&m_trashWatcher, &QFileSystemWatcher::directoryChanged, this, soon);
     checkTrash();
 }
 

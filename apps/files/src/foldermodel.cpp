@@ -1757,6 +1757,14 @@ void FolderModel::reload()
     m_dirModel->openUrl(m_url, KDirModel::Reload);
 }
 
+void FolderModel::trashChanged()
+{
+    // An update of the listed folder (KCoreDirLister::updateDirectory): the rows that went leave, the ones that came appear,
+    // the others stay as they are (selection, thumbnails).
+    if (isTrash() && sourceModel() == m_dirModel)
+        m_lister->updateDirectory(m_url);
+}
+
 void FolderModel::loadApplications()
 {
     const quint64 generation = ++m_appsGeneration;

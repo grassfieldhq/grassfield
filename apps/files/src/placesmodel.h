@@ -95,6 +95,9 @@ public:
 
 signals:
     void trashEmptyChanged();
+    // The home trash or KIO's record of the trashes changed (a debounced watch; never in a dev session): the listings of
+    // trash:/ list it again (FolderModel::trashChanged).
+    void trashChanged();
     void favoritesChanged();
     void mounted(const QUrl &url);
     void error(const QString &message);

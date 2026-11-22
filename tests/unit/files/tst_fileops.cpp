@@ -6,6 +6,8 @@
 #include "applicationslogic.h"
 #include "filelogic.h"
 #include "permissionlogic.h"
+#include "placesmodel.h"
+#include "runmode.h"
 
 #include <QCoreApplication>
 #include <QDeadlineTimer>
@@ -13,6 +15,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QVariantMap>
@@ -700,4 +703,41 @@ TEST_F(FileOps, SendWithLocalSendRefusesOtherVectorsAndADevSession)
     EXPECT_TRUE(told.messages.first().contains(QStringLiteral("development session"))) << told.messages.first().toStdString();
     hadDev ? qputenv("GRASSFIELD_DEV", devBefore) : qunsetenv("GRASSFIELD_DEV");
     hadSession ? qputenv("GRASSFIELD_SESSION", sessionBefore) : qunsetenv("GRASSFIELD_SESSION");
+}
+
+// Owner report 2026-11-22 (Trash view slow to refresh after Empty Trash): every change in the home trash, made by Files, the
+// Dock's trash command or any other program, tells the listings of trash:/ to list it again (PlacesModel::trashChanged,
+// FolderModel::trashChanged), and while a large Trash is emptied item after item the listing follows as they go: the watch is
+// throttled, never postponed by a steady stream of changes.
+TEST_F(FileOps, AChangeInTheHomeTrashTellsTheTrashListingsAtOnceAndKeepsTellingDuringALongEmpty)
+{
+    if (grassfield::apps::runmode::dev())
+        GTEST_SKIP() << "a dev session never watches the trash (ADR-0011)";
+    const QString files = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/Trash/files");
+    write(files + QStringLiteral("/one"));
+    FilesApp app(QList<QUrl>{});
+    auto *places = qobject_cast<PlacesModel *>(app.places());
+    ASSERT_NE(places, nullptr);
+    ASSERT_TRUE(waitFor([places] { return !places->trashEmpty(); })) << "the trash holds an item";
+    int told = 0;
+    QObject::connect(places, &PlacesModel::trashChanged, places, [&told] { ++told; });
+
+    // Emptied by another program (nothing tells KIO's listers): the listings hear of it, and the Trash place shows empty.
+    ASSERT_TRUE(QFile::remove(files + QStringLiteral("/one")));
+    EXPECT_TRUE(waitFor([&told] { return told > 0; }, 3000)) << "a removal outside Files reaches the Trash listings";
+    EXPECT_TRUE(waitFor([places] { return places->trashEmpty(); }, 3000));
+
+    // A long stream of changes (an item every 40 ms for 1.2 s): the listings are told during the stream, not only after it.
+    told = 0;
+    QDeadlineTimer stream(1200);
+    int n = 0;
+    while (!stream.hasExpired()) {
+        write(files + QStringLiteral("/item-%1").arg(n++));
+        QDeadlineTimer pause(40);
+        while (!pause.hasExpired())
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    }
+    EXPECT_GE(told, 3) << "told " << told << " times during the stream";
+    for (int i = 0; i < n; ++i)
+        QFile::remove(files + QStringLiteral("/item-%1").arg(i));
 }

@@ -186,6 +186,11 @@ public:
 
     // FilesApp changed the tags of `urls`: their rows read them again (and leave a tag search they no longer match).
     void tagsChanged(const QList<QUrl> &urls);
+    // The Trash's contents changed (PlacesModel::trashChanged: a change in the home trash, Empty Trash done, from Files, the
+    // Dock or any other program): a listing of trash:/ lists it again at once. kio_trash tells KIO's listers only when the
+    // last item went, and a trash emptied through GLib (the Dock's `gio trash --empty`) tells them nothing (owner report
+    // 2026-11-22: "the Trash view takes time to refresh after Empty Trash"). Any other listing ignores it.
+    void trashChanged();
 
     QHash<int, QByteArray> roleNames() const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
