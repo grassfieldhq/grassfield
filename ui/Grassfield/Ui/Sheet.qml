@@ -177,7 +177,9 @@ Item {
 
     FocusScope {
         id: panel
-        width: Tokens.controlSheetWidth
+        // A sheet never exceeds its window (macOS): it narrows to the window less the side margins, its text wraps; never
+        // narrower than its Cancel / confirm pair, which stays whole.
+        width: Math.max(Math.min(Tokens.controlSheetWidth, root.width - 2 * Tokens.spacingLg), mainRow.implicitWidth + pane.leftPadding + pane.rightPadding)
         height: pane.implicitHeight
         anchors.horizontalCenter: parent.horizontalCenter
         y: Tokens.spacingLg
