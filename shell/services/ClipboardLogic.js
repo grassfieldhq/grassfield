@@ -23,7 +23,12 @@ const PROTECTED_FILE = "services/protected-classes.txt";
 const PROTECTED_MAX = 64;
 // The terminal test of config/hypr/grassfield/forwarding.lua (terminal_focused), whole: its classes (lower case, exact) and its
 // prefixes. tests/unit/tst_clipboard.qml reads forwarding.lua and checks both lists.
-const TERMINAL_CLASSES = ["alacritty", "kitty", "com.mitchellh.ghostty", "foot", "org.codeberg.dnkl.foot", "wezterm", "org.wezfurlong.wezterm"];
+const TERMINAL_CLASSES = ["alacritty", "kitty", "com.mitchellh.ghostty", "foot", "footclient", "org.codeberg.dnkl.foot",
+                          "wezterm", "org.wezfurlong.wezterm", "org.gnome.ptyxis", "org.gnome.console",
+                          "org.gnome.terminal", "gnome-terminal-server", "org.kde.konsole", "konsole", "xterm", "uxterm",
+                          "xterm-256color", "st", "st-256color", "urxvt", "rxvt", "terminator", "com.gexperts.tilix",
+                          "tilix", "xfce4-terminal", "lxterminal", "qterminal", "terminology", "rio", "contour",
+                          "cool-retro-term"];
 const TERMINAL_PREFIXES = ["org.omarchy.", "tui."];
 
 // A clear's time as the helper takes it (--cleared-at, CH <ms>): whole milliseconds, digits only; 0 for none or a bad value.

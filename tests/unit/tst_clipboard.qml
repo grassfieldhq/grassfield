@@ -111,7 +111,10 @@ TestCase {
 
     function test_terminalTestIsForwardingLuas() {
         const lua = readRepo("config/hypr/grassfield/forwarding.lua");
-        const line = lua.split("\n").find(l => l.startsWith("local TERMINAL_CLASSES = {"));
+        // The whole table, over its lines, without its comment lines.
+        const start = lua.indexOf("local TERMINAL_CLASSES = {");
+        verify(start >= 0, "forwarding.lua has TERMINAL_CLASSES");
+        const line = lua.slice(start, lua.indexOf("}", start)).split("\n").filter(l => !l.trim().startsWith("--")).join("\n");
         const classes = [];
         const re = /"([^"]+)"/g;
         let m;
