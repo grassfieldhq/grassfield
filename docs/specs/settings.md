@@ -444,9 +444,12 @@ One model, `ui/Grassfield/Ui/DisplayScope.js`: the key itself is the "All Displa
 | `dock.allDisplays` (a Dock on every display or one that follows the pointer) | global | the scope choice itself |
 | other `dock.*` (apps, folders, recents, behaviour) | global | what the Dock holds is one list (not macOS to split) |
 | `wallpaper.*` source, path, colour, fit, interval, shuffle | per display (`wallpaper.outputs`) | done earlier (URR-015, URR-034), unchanged |
-| `menubar.autoHide`, `menubar.showBackground` | per display (`menubar.outputs`) | each display has its own bar |
+| `menubar.autoHide`, `menubar.showBackground` | per display (`menubar.outputs`) | done: Menu Bar pane "Menu Bar settings for" (`MenuBarPage.qml`); the shell reads `Settings.menubarForScreen` |
 | `menubar.show*`, clock options, `recentItems`, tray | global | the bar's contents are one list; hiding an item on one display only is not a macOS behaviour |
-| `hotCorners.*` | per display (`hotCorners.outputs`) | a corner is a place on one display |
+| `hotCorners.*` | per display (`hotCorners.outputs`) | done: Screen Corners sheet "Screen Corners for"; `HotCorners.actionFor(corner, screen)` |
 | `desktop.showIcons` | global | the desktop items live on the main display only (macOS); other displays have none to switch |
 | `displays.main` | per display by nature | already one choice per set of displays |
 | appearance, material, accessibility, accent, icons, pointer, sound, notifications, lock, energy, keyboard, region, search, capture, updates, store, terminal, screensaver, preview | global | system-wide or not tied to a display's surface |
+
+Implementation: `apps/settings/qml/DisplayScopeState.qml` (the scope of one group: displays, chosen display, `scoped(field)`, `setScoped(fields, soon)`, `useAllDisplays()`) and `ScopeGroup.qml` (the pop-up, the sentence, "Use All Displays") are shared by Desktop & Dock, Menu Bar and the Screen Corners sheet; the shell resolves with `Settings.dockFor`, `menubarForScreen`, `hotCornersForScreen` over `DisplayScope.resolve`. Rule types of the contract: `dockOutputs`, `menubarOutputs`, `hotCornersOutputs` (`DisplayScope.schemaOf`). Tests: `tst_displayscope.qml`, `tst_settingsdesktop.qml`, `tst_settingsmenubar.qml`, `settings_vectors`.
+
