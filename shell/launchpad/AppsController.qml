@@ -90,14 +90,14 @@ Scope {
     }
     readonly property var panel: Model.panelRect(screenSize.width, screenSize.height, ({
             width: Tokens.launcherPanelWidth,
-            edgeMargin: Math.max(Tokens.launcherEdgeMargin, Settings.dockFootprint.left, Settings.dockFootprint.right),
+            edgeMargin: Math.max(Tokens.launcherEdgeMargin, Settings.dockFootprintFor(screenName, false).left, Settings.dockFootprintFor(screenName, false).right),
             heightFraction: Tokens.launcherHeightFraction,
             minHeight: Tokens.launcherMinHeight,
             topFraction: Tokens.launcherTopFraction,
             // The search capsule sits above the panel (macOS 27).
             topOffset: Tokens.searchCapsuleHeight + Tokens.searchCapsuleGap,
             // Never into the Dock (its size and edge are the user's): the tokens are the floor.
-            bottomClearance: Math.max(Tokens.launcherBottomClearance, Settings.dockFootprint.bottom)
+            bottomClearance: Math.max(Tokens.launcherBottomClearance, Settings.dockFootprintFor(screenName, false).bottom)
         }))
     readonly property var grid: Model.grid(panel.w - 2 * Tokens.launcherPadding, ({
             columns: Tokens.launcherColumns,

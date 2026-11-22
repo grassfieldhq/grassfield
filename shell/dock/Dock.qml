@@ -73,7 +73,8 @@ Scope {
     // Resize by dragging the separator (macOS): the size while the drag runs (-1 when none). The Dock follows it live; the setting is
     // written once, when the button is released.
     property real liveSize: -1
-    readonly property int sizeNow: liveSize >= 0 ? Math.round(liveSize) : Settings.dockSize
+    // The screen whose Dock is being resized (liveSize is that Dock's, not every Dock's, once displays have their own size).
+    property string liveScreen: ""
 
     // One Dock across displays (macOS: the Dock is on the display where the pointer last reached its edge, and moves there). Every
     // output keeps its Dock window, but only the one of `dockScreen` is shown and takes the exclusive zone; the others are, in
@@ -849,7 +850,8 @@ Scope {
 
         // Option-Command-D (macOS): turns Dock hiding on or off. The integrator binds a key to it (config/hypr); not fixtures-gated.
         function toggleAutohide(): void {
-            Settings.setDockAutohide(!Settings.dockAutohide);
+            // The Dock of the display the pointer is on; written where that display reads it from (its override, else All Displays).
+            Settings.setDockOn(root.dockScreen, {autohide: !Settings.dockForScreen(root.dockScreen).autohide});
         }
 
         function autohide(on: bool): void {
@@ -871,7 +873,10 @@ Scope {
 
         // Tile size now, "liveSize" included (fixtures only).
         function sizenow(): string {
-            return VisualFixtures.active ? String(root.sizeNow) : "";
+            if (!VisualFixtures.active)
+                return "";
+            const w = windows.instances.find(x => x.screenName === root.dockScreen);
+            return w ? String(w.sizeNow) : "";
         }
 
         function magnify(factor: real, enabled: bool): void {
@@ -979,9 +984,14 @@ Scope {
                 active: win.reveal
             }
 
+            // The Dock settings of this display: the All Displays values with the display's own override over them
+            // (Settings.dockFor, DisplayScope; Settings > Desktop & Dock). Everything below reads these, never Settings.dock* directly.
+            readonly property var cfg: Settings.dockFor(Settings.displayOf(screenName))
+            readonly property int sizeNow: root.liveSize >= 0 && root.liveScreen === screenName ? Math.round(root.liveSize) : cfg.size
+
             // Tile size (Settings > Size) shrunk to fit the screen along the Dock (Geometry.fitSize, macOS): everything below follows
             // it (Geometry.metrics). The setting itself is never changed.
-            readonly property int iconSize: Geometry.fitSizeMagnified(root.sizeNow, root.items.map(it => it.kind === "separator"), mainTotal - 2 * Tokens.dockFitMargin, Tokens.dockFitMin, {
+            readonly property int iconSize: Geometry.fitSizeMagnified(win.sizeNow, root.items.map(it => it.kind === "separator"), mainTotal - 2 * Tokens.dockFitMargin, Tokens.dockFitMin, {
                     separatorWidth: separatorWidth,
                     spacing: Tokens.dockSpacing,
                     padding: Tokens.dockPadding,
@@ -1004,7 +1014,7 @@ Scope {
             // The separator is being dragged (resize).
             property bool resizing: false
             readonly property int separatorWidth: Tokens.dockSeparatorSpace
-            readonly property real maxScale: Settings.dockMagnificationEnabled ? Settings.dockMagnification : 1
+            readonly property real maxScale: cfg.magnificationEnabled ? cfg.magnification : 1
             readonly property real pitch: iconSize + Tokens.dockSpacing
             readonly property var dockMetrics: Geometry.metrics(iconSize, {
                 iconSize: Tokens.dockIconSize,
@@ -1022,7 +1032,7 @@ Scope {
             readonly property int tooltipArea: Tokens.dockTooltipArea
             // Position on screen (Settings > Position on screen): the window is anchored to this edge. "main" is the direction along
             // the Dock, "cross" the one away from the screen edge (Geometry.js: one formula for the three edges).
-            readonly property string edge: Settings.dockPosition
+            readonly property string edge: cfg.position
             readonly property bool vertical: Geometry.isVertical(edge)
             readonly property var outDir: Geometry.outward(edge)
             // Extent of the window along the Dock (the screen's width or height) and of a tile across it.
@@ -1250,7 +1260,7 @@ Scope {
             // away), a Dock that just moved here, or full screen there (the Dock shows when the pointer reaches its edge).
             // This output shows a Dock: the one of `dockScreen`, or every output with dock.allDisplays (Geometry.hasDock).
             readonly property bool hasDock: Geometry.hasDock(Settings.dockAllDisplays, isDockScreen, screenName)
-            readonly property bool autohide: DockModel.hides(Settings.dockAutohide, hasDock, revealPending, fullscreen)
+            readonly property bool autohide: DockModel.hides(cfg.autohide, hasDock, revealPending, fullscreen)
             // Layout from the unmagnified geometry (stable under the pointer), then scaled.
             readonly property var widths: root.items.map(it => it.kind === "separator" ? separatorWidth : iconSize)
             readonly property real baseTotal: Magnify.totalWidth(widths, Tokens.dockSpacing)
@@ -1537,7 +1547,7 @@ Scope {
             implicitWidth: vertical ? depth : 0
             implicitHeight: vertical ? 0 : depth
             // Only the Dock's output reserves room, and not while auto-hide is on.
-            exclusiveZone: reveal && hasDock ? DockModel.reservedHeight(dockMetrics, Settings.dockAutohide) : 0
+            exclusiveZone: reveal && hasDock ? DockModel.reservedHeight(dockMetrics, cfg.autohide) : 0
             color: "transparent"
             focusable: true
             WlrLayershell.layer: DockModel.overlayLayer(win.fullscreen) ? WlrLayer.Overlay : WlrLayer.Top
@@ -2090,11 +2100,12 @@ Scope {
                                                 if (active) {
                                                     startSize = win.iconSize;
                                                     win.resizing = true;
+                                                    root.liveScreen = win.screenName;
                                                     root.liveSize = win.iconSize;
                                                 } else if (win.resizing) {
                                                     win.resizing = false;
                                                     if (root.liveSize >= 0)
-                                                        Settings.setDockSize(root.liveSize);
+                                                        Settings.setDockOn(win.screenName, {size: root.liveSize});
                                                     root.liveSize = -1;
                                                 }
                                             }

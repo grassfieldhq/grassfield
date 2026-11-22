@@ -762,7 +762,7 @@ Variants {
                 id: gallery
 
                 readonly property string screenName: win.modelData ? win.modelData.name : ""
-                readonly property var dock: Compositor.dockScreenName === "" || Compositor.dockScreenName === screenName ? Settings.dockFootprint : ({
+                readonly property var dock: Compositor.dockScreenName === "" || Compositor.dockScreenName === screenName ? Settings.dockFootprintFor(screenName, false) : ({
                         left: 0,
                         right: 0,
                         bottom: 0

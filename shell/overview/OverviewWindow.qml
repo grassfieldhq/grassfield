@@ -100,7 +100,7 @@ Variants {
         // the layer surface.
         // The Dock's area (when it takes space) is reserved, as is the menu bar's (the surface starts below it).
         // Only the output that has the Dock (it is on one output at a time).
-        readonly property var dockInsets: Compositor.dockScreenName === "" || Compositor.dockScreenName === screenName ? DockGeometry.footprint(Settings.dockPosition, Settings.dockMetrics, Settings.dockAutohide) : ({left: 0, right: 0, bottom: 0})
+        readonly property var dockInsets: Compositor.dockScreenName === "" || Compositor.dockScreenName === screenName ? Settings.dockFootprintFor(screenName, true) : ({left: 0, right: 0, bottom: 0})
         readonly property int dockReserve: dockInsets.bottom
         readonly property var area: Layout.freeArea({
             w: modelData ? modelData.width : 0,

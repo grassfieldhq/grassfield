@@ -339,6 +339,7 @@ Scope {
     readonly property bool dockMagnificationEnabled: read("dock.magnificationEnabled")
     readonly property bool dockAutohide: read("dock.autohide")
     readonly property bool dockAllDisplays: read("dock.allDisplays")
+    readonly property var dockOutputs: read("dock.outputs")
     readonly property bool dockShowRecents: read("dock.showRecents")
     readonly property bool dockMinimizeIntoApp: read("dock.minimizeIntoApp")
     readonly property bool dockClickMinimizes: read("dock.clickMinimizes")
@@ -588,6 +589,10 @@ Scope {
     function setDockMagnification(value: real, enabled: bool): void {
         change("dock.magnification", Math.max(1, Math.min(2.5, value)));
         change("dock.magnificationEnabled", enabled);
+    }
+
+    function setDockOutputs(list: var): void {
+        change("dock.outputs", list);
     }
 
     function setDockPinned(list: var): void {

@@ -37,16 +37,16 @@ Singleton {
         return id !== "battery" || hasBattery;
     }
 
-    // Height the Dock reserves at the bottom of a screen (shelf, indicator row, bottom margin);
-    // reserved even when the Dock autohides, so widgets never sit where it appears.
-    readonly property int dockReserve: Settings.dockFootprint.bottom
+    // The Dock's footprint on the screen (Settings.dockFootprintFor: shelf, indicator row, bottom margin) is reserved even when
+    // the Dock autohides, so widgets never sit where it appears; it follows the display's own Dock size and edge.
 
     // Grid of a screen: {cols, rows, x0, y0, cell, gap} in screen px, below the menu bar and above the Dock.
     function gridFor(screen: var): var {
         // A screen that was just unplugged reads as null while its surfaces go away: an empty grid, never an error.
         if (!screen)
             return {cols: 0, rows: 0, x0: 0, y0: 0, cell: Tokens.widgetCell, gap: Tokens.widgetGap};
-        const g = Placements.gridFor(screen.width, screen.height, Tokens.widgetCell, Tokens.widgetGap, Tokens.widgetDesktopMargin, Tokens.menubarHeight, dockReserve, Settings.dockFootprint.left, Settings.dockFootprint.right);
+        const dock = Settings.dockFootprintFor(screen.name, false);
+        const g = Placements.gridFor(screen.width, screen.height, Tokens.widgetCell, Tokens.widgetGap, Tokens.widgetDesktopMargin, Tokens.menubarHeight, dock.bottom, dock.left, dock.right);
         return {
             cols: g.cols,
             rows: g.rows,
