@@ -15,20 +15,26 @@ var OTHER = "grassfield:other";
 // The kinds of documents, in the order the page shows them, each with the types it sets. The first type is the one the row
 // shows the application of.
 var KINDS = [
+    // Word processing: Word (and its macro-enabled and template forms), OpenDocument text and its template, RTF.
     {id: "documents", types: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword",
-                              "application/vnd.oasis.opendocument.text", "application/rtf", "text/rtf"]},
+                              "application/vnd.ms-word.document.macroEnabled.12", "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+                              "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.text-template", "application/rtf", "text/rtf"]},
     {id: "spreadsheets", types: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel",
-                                 "application/vnd.oasis.opendocument.spreadsheet", "text/csv"]},
+                                 "application/vnd.ms-excel.sheet.macroEnabled.12", "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+                                 "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.spreadsheet-template", "text/csv"]},
     {id: "presentations", types: ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.ms-powerpoint",
-                                  "application/vnd.oasis.opendocument.presentation"]},
+                                  "application/vnd.ms-powerpoint.presentation.macroEnabled.12", "application/vnd.openxmlformats-officedocument.presentationml.template",
+                                  "application/vnd.oasis.opendocument.presentation", "application/vnd.oasis.opendocument.presentation-template"]},
     {id: "pdf", types: ["application/pdf"]},
-    {id: "pictures", types: ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heif", "image/avif", "image/tiff", "image/bmp", "image/svg+xml"]},
-    {id: "music", types: ["audio/mpeg", "audio/flac", "audio/mp4", "audio/x-m4a", "audio/ogg", "audio/x-vorbis+ogg", "audio/opus", "audio/x-wav", "audio/wav", "audio/aac"]},
+    {id: "pictures", types: ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heif", "image/heic", "image/avif", "image/tiff", "image/bmp", "image/svg+xml"]},
+    {id: "music", types: ["audio/mpeg", "audio/flac", "audio/mp4", "audio/x-m4a", "audio/ogg", "audio/x-vorbis+ogg", "audio/opus", "audio/vnd.wave", "audio/x-wav",
+                          "audio/wav", "audio/aac"]},
     {id: "videos", types: ["video/mp4", "video/x-matroska", "video/webm", "video/quicktime", "video/x-msvideo", "video/mpeg", "video/ogg"]},
-    {id: "archives", types: ["application/zip", "application/x-tar", "application/x-compressed-tar", "application/gzip", "application/x-xz-compressed-tar",
-                             "application/x-bzip2-compressed-tar", "application/zstd", "application/x-zstd-compressed-tar", "application/x-7z-compressed",
-                             "application/vnd.rar", "application/x-rar"]},
-    {id: "text", types: ["text/plain", "text/markdown", "application/json", "application/xml", "text/x-python", "application/x-shellscript",
+    {id: "archives", types: ["application/zip", "application/x-tar", "application/x-compressed-tar", "application/gzip", "application/x-xz",
+                             "application/x-xz-compressed-tar", "application/x-bzip2", "application/x-bzip", "application/x-bzip2-compressed-tar",
+                             "application/zstd", "application/x-zstd-compressed-tar", "application/x-7z-compressed", "application/vnd.rar",
+                             "application/x-rar"]},
+    {id: "text", types: ["text/plain", "text/markdown", "application/json", "application/xml", "text/x-python", "text/x-python3", "application/x-shellscript",
                          "text/x-csrc", "text/x-c++src", "text/x-chdr", "text/css", "text/javascript", "application/javascript", "text/x-rust",
                          "text/x-go", "text/x-java", "application/x-yaml", "application/toml"]}
 ];
@@ -85,9 +91,12 @@ function terminals(apps) {
     });
 }
 
-// The types an application chosen for a kind gets: the kind's types it lists, or all of them for an application that lists
-// none (Other…: the person said so, as Change All… after Other… in Get Info).
-function typesFor(app, types) {
+// The types an application chosen for a kind gets: picked with Other… (`other`), every type of the kind (the person said so, as
+// Change All… after Other… in Get Info; review of the Default Apps change); picked in the popup, the kind's types it lists, or all
+// of them for one that lists none.
+function typesFor(app, types, other) {
+    if (other)
+        return types.slice();
     const listed = app && app.mimeTypes ? types.filter(t => app.mimeTypes.indexOf(t) >= 0) : [];
     return listed.length > 0 ? listed : types.slice();
 }
@@ -101,6 +110,38 @@ function current(texts, types) {
             return id;
     }
     return "";
+}
+
+// The application that opens the first of `types` when no list names a default (review of the Default Apps change: the row
+// shows what really opens, macOS-style, never "None" while an app would open it): GLib and xdg-mime then take the first
+// application of the type's line in each applications folder's mimeinfo.cache, in the folders' order (`caches`: their text, the
+// user's first); only an application of `apps` (installed and runnable) counts. "" when none.
+function opener(caches, types, apps) {
+    for (const type of types) {
+        for (const text of caches) {
+            let inGroup = false;
+            for (const raw of String(text).split("\n")) {
+                const line = raw.trim();
+                if (line.startsWith("[")) {
+                    inGroup = line === "[MIME Cache]";
+                    continue;
+                }
+                if (!inGroup || line.indexOf(type + "=") !== 0)
+                    continue;
+                for (const id of line.slice(type.length + 1).split(";")) {
+                    if (id !== "" && apps.some(a => a.id === id))
+                        return id;
+                }
+            }
+        }
+    }
+    return "";
+}
+
+// What a row shows: the default the lists name, else the application that opens the type anyway (opener), else "".
+function shown(texts, caches, types, apps) {
+    const named = current(texts, types);
+    return named !== "" ? named : opener(caches, types, apps);
 }
 
 // A row's popup: the capable applications, the current one when it is not among them (an application chosen with Other…; its

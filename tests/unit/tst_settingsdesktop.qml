@@ -3,6 +3,7 @@ import QtTest
 import Grassfield.Ui
 import "../../apps/settings/qml" as SettingsQml
 import "../../apps/settings/qml/DefaultBrowser.js" as DefaultBrowserJs
+import "../../apps/settings/qml/DefaultApps.js" as DefaultAppsJs
 
 // Settings > Desktop & Dock as macOS 27 lays it out (docs/audits/settings-parity-2026-10-26.md § Desktop & Dock): Size and
 // Magnification side by side at the measured places, Magnification as one slider from Off through Small to Large, the rows of
@@ -656,7 +657,7 @@ TestCase {
         compare(docs.current, "libreoffice-writer.desktop", "the session list's choice for the first type it names");
         compare(row(t.page, "mail").choices.map(c => c.id).join(","), "mailer.desktop,HEY.desktop,grassfield:other");
         compare(row(t.page, "mail").current, "HEY.desktop", "the user's own list");
-        compare(row(t.page, "pdf").choices[0].id, "", "nothing set: None first");
+        compare(row(t.page, "pdf").choices[0].id, "", "nothing set and nothing opens it: None first");
         const term = row(t.page, "terminal");
         compare(term.choices.map(c => c.id).join(","), "foot.desktop,com.mitchellh.ghostty.desktop", "terminals only (Foot, Ghostty), by name");
         verify(t.backend.queries.some(q => q.tag === "desktop.terminal" && q.argv.join(" ") === "xdg-terminal-exec --print-id"));
@@ -684,7 +685,7 @@ TestCase {
         asked.chosen({file: "webapp-docs.desktop", name: "Docs Web App", icon: ""});
         const w = t.backend.appWrites[1];
         compare(w.id, "webapp-docs.desktop");
-        compare(w.types.length, 4, "every spreadsheet type");
+        compare(w.types.join(","), DefaultAppsJs.KINDS.find(k => k.id === "spreadsheets").types.join(","), "every spreadsheet type");
         compare(row(t.page, "spreadsheets").current, "webapp-docs.desktop");
         verify(row(t.page, "spreadsheets").choices.some(c => c.id === "webapp-docs.desktop"), "shown in the popup though it lists no type");
         // The terminal.
@@ -695,11 +696,39 @@ TestCase {
         // Picking None or the shown app writes nothing; an app that is not installed is refused.
         t.page.pick(row(t.page, "pdf"), "");
         t.page.pick(row(t.page, "documents"), "wordcraft.desktop");
-        verify(!t.page.choose(row(t.page, "pdf"), "nothere.desktop"));
+        verify(!t.page.choose(row(t.page, "pdf"), "nothere.desktop", false));
         compare(t.backend.appWrites.length, 2);
         // A failure: a short sentence under the row.
         t.backend.failApps = true;
-        verify(!t.page.choose(row(t.page, "pdf"), "wordcraft.desktop"));
+        verify(!t.page.choose(row(t.page, "pdf"), "wordcraft.desktop", false));
         verify((t.page.rowErrors["pdf"] ?? "") !== "", "the row says it failed");
+    }
+
+    // Review of the Default Apps change: Other… sets every type of the kind, also for an app that lists some of them; a row with no
+    // default named shows the app that opens the type anyway (the first installed one of the applications folders' mimeinfo.cache,
+    // as GLib and xdg-mime resolve it), never None while one would; the kinds cover macro-enabled Office files, the templates,
+    // .xz, .bz2 and Python 3.
+    function test_defaultAppsOtherSetsEveryTypeAndRowsShowWhatOpens() {
+        const f = defaultAppsFiles();
+        f["/apps/mimeinfo.cache"] = "[MIME Cache]\nimage/jpeg=gone.desktop;wordcraft.desktop;mailer.desktop;\nvideo/mp4=gone.desktop;\n";
+        const t = makeWithBackend(f);
+        compare(row(t.page, "pictures").current, "wordcraft.desktop", "the first installed app of the cache line");
+        compare(row(t.page, "videos").current, "", "no installed app opens it: None");
+        let asked = null;
+        t.page.appPickerRequested.connect((apps, texts, chosen) => asked = chosen);
+        t.page.pick(row(t.page, "documents"), "grassfield:other");
+        verify(asked !== null);
+        asked({file: "wordcraft.desktop", name: "WordCraft", icon: ""});
+        const w = t.backend.appWrites[t.backend.appWrites.length - 1];
+        compare(w.id, "wordcraft.desktop");
+        compare(w.types.join(","), DefaultAppsJs.KINDS.find(k => k.id === "documents").types.join(","), "Other…: every document type");
+        const all = [].concat(...DefaultAppsJs.KINDS.map(k => k.types));
+        for (const type of ["application/vnd.ms-word.document.macroEnabled.12", "application/vnd.ms-excel.sheet.macroEnabled.12",
+                            "application/vnd.ms-powerpoint.presentation.macroEnabled.12", "application/vnd.openxmlformats-officedocument.presentationml.template",
+                            "application/vnd.oasis.opendocument.text-template", "application/vnd.oasis.opendocument.spreadsheet-template",
+                            "application/vnd.oasis.opendocument.presentation-template", "application/x-xz", "application/x-bzip2", "text/x-python3"])
+            verify(all.indexOf(type) >= 0, type + " belongs to a kind");
+        compare(DefaultAppsJs.typesFor({mimeTypes: ["application/msword"]}, ["application/msword", "application/rtf"], false).join(","), "application/msword",
+                "picked in the popup: the types it lists");
     }
 }

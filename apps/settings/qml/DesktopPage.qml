@@ -402,6 +402,17 @@ SettingsPage {
         return texts;
     }
 
+    // The applications folders' mimeinfo.cache, in their order (DefaultApps.opener: what opens a type no list names).
+    function cacheTexts(): var {
+        const texts = [];
+        for (const dir of root.backend.applicationDirs) {
+            const file = root.backend.readText(dir + "/mimeinfo.cache");
+            if (file.ok)
+                texts.push(file.text);
+        }
+        return texts;
+    }
+
     function takeApps(entries: var): void {
         root.allApps = DefaultApps.applications(entries, Qt.locale().name, program => root.backend.programExists(program));
         root.refreshRows();
@@ -411,12 +422,13 @@ SettingsPage {
         if (!root.backend)
             return;
         const texts = root.lookupTexts();
+        const caches = root.cacheTexts();
         const none = qsTr("None");
         const other = qsTr("Other…");
         const row = (id, title, types, capableApps, current) => ({id: id, title: title, types: types, current: current,
                                                                   choices: DefaultApps.choices(capableApps, root.allApps, current, none, other)});
         root.mailRow = row("mail", qsTr("Default email reader"), DefaultApps.MAIL_TYPES, DefaultApps.capable(root.allApps, DefaultApps.MAIL_TYPES),
-                           DefaultApps.current(texts, DefaultApps.MAIL_TYPES));
+                           DefaultApps.shown(texts, caches, DefaultApps.MAIL_TYPES, root.allApps));
         const terms = DefaultApps.terminals(root.allApps);
         const own = DefaultApps.listedTerminal(root.backend.readText(root.backend.xdgConfigDir + "/" + DefaultApps.TERMINAL_LIST).text);
         const termCurrent = root.printedTerminal !== "" ? root.printedTerminal : own !== "" ? own : terms.length > 0 ? terms[0].id : "";
@@ -425,7 +437,7 @@ SettingsPage {
         terminal.choices = terminal.choices.filter(c => c.id !== DefaultApps.OTHER);
         root.terminalRow = terminal;
         root.kindRows = DefaultApps.KINDS.map(k => row(k.id, root.kindTitles[k.id], k.types, DefaultApps.capable(root.allApps, k.types),
-                                                        DefaultApps.current(texts, k.types)));
+                                                        DefaultApps.shown(texts, caches, k.types, root.allApps)));
     }
 
     function failRow(rowId: string): bool {
@@ -440,21 +452,22 @@ SettingsPage {
         if (id === DefaultApps.OTHER) {
             root.appPickerRequested(root.allApps.map(a => ({file: a.id, name: a.name, icon: a.icon})),
                                     {title: qsTr("Choose an App"), message: qsTr("Choose the app for “%1”.").arg(r.title), confirm: qsTr("Choose")},
-                                    app => root.choose(r, app.file));
+                                    app => root.choose(r, app.file, true));
             return;
         }
         if (id !== "" && id !== r.current)
-            root.choose(r, id);
+            root.choose(r, id, false);
     }
 
-    function choose(r: var, id: string): bool {
+    // `other`: picked with Other…, which sets every type of the kind.
+    function choose(r: var, id: string, other: bool): bool {
         const next = Object.assign({}, root.rowErrors);
         delete next[r.id];
         root.rowErrors = next;
         const app = root.allApps.find(a => a.id === id);
         if (!root.backend || !app)
             return root.failRow(r.id);
-        const error = r.id === "terminal" ? root.backend.setDefaultTerminal(id) : root.backend.setDefaultApps(DefaultApps.typesFor(app, r.types), id);
+        const error = r.id === "terminal" ? root.backend.setDefaultTerminal(id) : root.backend.setDefaultApps(DefaultApps.typesFor(app, r.types, other === true), id);
         if (error !== "")
             return root.failRow(r.id);
         if (r.id === "terminal")
