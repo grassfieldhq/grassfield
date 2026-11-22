@@ -169,7 +169,7 @@ The "Slices" column names the §4 slices that build the feature. An M or L row l
 | R5 | System audio [S1] | no | no | `-a "default_output\|default_input"`, as Omarchy ([S6] :344-:356); off by default. | S | Records what other apps play: off by default. | C7 |
 | R6 | Show or hide cursor [S1] | Show Mouse Pointer | yes (`-cursor`) | Unchanged. | — | — | — |
 | R7 | Show clicks [S1] | no | no | A plugin observer of pointer buttons (beside main.cpp:138) sends IPC to `CaptureClicks.qml`, which draws ripples on screen, so the KMS recording records them. Active only in the `recording` phase. | M | Click positions only. Nested first. | D1, A11 |
-| R8 | Show keystrokes [S1] | no | no | A plugin observer of keys (beside main.cpp:191) feeds the same overlay. **Open owner decision (Q-3): blocked until the owner answers.** | L | Can show passwords: opt-in per recording, suppressed under the lock, polkit or secret sheets, key sinks and `no_screen_share`; opus review. | D2 (blocked on Q-3) |
+| R8 | Show keystrokes [S1] | no | no | A plugin observer of keys (beside main.cpp:191) feeds the same overlay. **Owner decision Q-3 (2026-11-22): yes, protected.** | L | Can show passwords: opt-in per recording, suppressed under the lock, polkit or secret sheets, key sinks and `no_screen_share`; opus review. | D2 (last; owner said yes) |
 | R9 | Camera overlay [S1] | no | no | `grassfield-screenshot --camera`: a round floating window (Qt Multimedia `Camera`), window rule, corners and sizes, closed with the recording. The shell never opens the camera. | M | Camera only on request. | B23, B24 |
 | R10 | Quality, FPS, resolution [S1][S2] | no | fixed: 60 fps, display size up to 4K | `--fps 30\|60`, `--quality` (`-q`), and the app settings. | S | — | C7 |
 | R11 | Recording time in the menu bar [S1] | yes | yes (MenuBar.qml:1348) | Unchanged. | — | — | — |
@@ -384,7 +384,7 @@ gitleaks.
 | 4 (scroll, recording) | C5, C6, C7 | A5, A6 | B9, B10, B13, B20, B22 | D1 |
 | 5 | C9 | A7, A9, A11 | B11, B12, B14, B15, B16 | D3 |
 | 6 | — | A10, A12, A13, A14 | B17, B19, B21, B23, B24, B25, B26, B27 | — |
-| blocked | — | — | — | D2 (owner's answer to Q-3) |
+| last | — | — | — | D2 (owner's yes to Q-3, 2026-11-22; opus review) |
 
 Rules for the table:
 - Within a wave, each lane runs its slices in the order listed.

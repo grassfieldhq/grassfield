@@ -1,5 +1,5 @@
 # ADR-0066: The capture suite (floating thumbnail, annotation, text, scrolling capture, richer recording)
-Status: Proposed · Date: 2026-11-22 · Decider: owner (scope, and Q-3, still open); the integrator answered Q-1, Q-2 and Q-4 to Q-6 by delegation (below);
+Status: Proposed · Date: 2026-11-22 · Decider: owner (scope; Q-3 answered 2026-11-22); the integrator answered Q-1, Q-2 and Q-4 to Q-6 by delegation (below);
 integrator (design, merge after review) · Number: 0066 (the next free number on every ref on 2026-11-22)
 
 ## Context
@@ -228,7 +228,7 @@ Recognised text goes to the clipboard. QR data goes through `wl-copy --sensitive
 The plugin already observes pointer buttons and keys for other features (`compositor/src/main.cpp:138`, `:191`;
 `OverviewFocus.cpp:499`; `ToplevelDrag.cpp:929`). The suite adds observers of the same events, never cancelling them, for:
 - click ripples (slices D1 and A11);
-- keystroke display (slice D2, blocked on the owner's answer to Q-3);
+- keystroke display (slice D2: the owner said yes, protected, on 2026-11-22; built last, opus review);
 - auto-scroll, through synthetic axis events (slice D3).
 
 Each is advertised as a capability, nested first, behind gates C1 to C3. Without the plugin or the capability, the option is
@@ -271,8 +271,8 @@ in 0700 folders, opened with `O_NOFOLLOW` and checked for owner, mode, type and 
   tool's tooltip points to Redact for secrets.
 - **Blur** is offered for looks only and labelled as not hiding text.
 
-**Keystroke display (R8)** can show passwords. **It is an open owner decision (Q-3).** Slice D2, and anything that would ship
-keystroke display, is blocked until the owner answers. If the owner says yes, the design to propose is:
+**Keystroke display (R8)** can show passwords. **Owner decision Q-3 (2026-11-22): yes, protected** (asked with options; the
+owner chose "Oui, protégée"). Slice D2 is built last with this design:
 - built last, as a per-recording opt-in with a warning;
 - never shown while the lock, a polkit or secret sheet, or a key sink holds the keyboard;
 - suppressed for `no_screen_share` windows;
@@ -281,7 +281,7 @@ keystroke display, is blocked until the owner answers. If the owner says yes, th
 **Recordings and hidden windows.** The OC-1 MINOR-4 limitation is unchanged for 1.0: KMS recording shows password managers
 and sheets.
 
-**For the opus security reviews** (slices C2, C4, C9, B22, A3, B7, B14, and D2 only if the owner says yes to Q-3):
+**For the opus security reviews** (slices C2, C4, C9, B22, A3, B7, B14 and D2):
 - the result-file path checks before `gio trash`, Copy and Show in Files (a regular file, not a link, inside one of the configured Save-to folders, never the folder a result names);
 - recognised text is sensitive: the result file's `text` field is runtime-only (0600) and the history index holds none;
 - the freeze and scroll channel's validation (D-1);
@@ -317,9 +317,11 @@ Alternatives).
 - `config/schema/grassfield.schema.json` is edited by lanes A, B and C. It is listed as a shared file in the spec's lane
   table, and one slice at a time changes it.
 
-## Open question (owner)
-- **Q-3** Keystroke display while recording. It can show passwords typed in any app, which makes it a security decision
-  (Context: such questions go to the owner). Slice D2 is blocked until the owner answers. The integrator asks the owner.
+## Owner decision
+- **Q-3** Keystroke display while recording (a security decision: it can show passwords typed in any app). Asked on
+  2026-11-22 with three options (yes protected / not for 1.0 / never); the owner chose **yes, protected**: off by default,
+  opt-in per recording, suppressed under the lock, polkit and secret sheets, key sinks and `no_screen_share` windows,
+  opus reviewer PASS before it ships. Slice D2 is no longer blocked; it stays last.
 
 ## Delegated answers (integrator, 2026-11-22, under the owner's delegation)
 - **Q-1** A "Screenshot" app in the launcher: **yes** (macOS 27 has one in Utilities).
