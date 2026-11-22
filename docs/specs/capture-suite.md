@@ -140,7 +140,7 @@ Privacy rules for every row:
 | C7 | Self-timer [S1][S3] | 5 and 10 s | 5 and 10 s (`countdown`) | Unchanged. A 3 s choice is possible (one enum value). | S | — | (13) |
 | C8 | Hide desktop icons [S3] (in-app UI UNCONFIRMED) | no | no | Option "Hide Desktop Icons": the shell hides `shell/desktop` icons while `capture-state` is not idle, or always while the toolbar is open. | S | — | 13 |
 | C9 | Window with background, shadow or transparent [S1] | shadow on by default | no | The Screenshot app's background tool (E11) applied to a C2 capture. | M | — | 7, 14 |
-| C10 | Scrolling capture [S1][S2] (auto-scroll from 4.4, horizontal from 4.8 [S2]) | no | no | Manual scroll first: the user frames an area, the helper takes region frames (grim `-t ppm -g`, at most about 8 per second) while the user scrolls, and stitches them in Python stdlib (row hashes, overlap search, a fixed header and footer kept once). The result is written as PNG through zlib, with a live strip preview on a shell plate. Auto-scroll needs injected wheel events: the plugin IPC, or a `zwlr_virtual_pointer` client. That is a later slice (nested, gates C1 to C3). | M (manual), L (auto) | Region frames go to the private runtime folder and are deleted afterwards. Auto-scroll must never inject while the lock or a secure sheet is up. | 11, 11b |
+| C10 | Scrolling capture [S1][S2] (auto-scroll from 4.4, horizontal from 4.8 [S2]) | no | no | Manual scroll first: the user frames an area, the helper takes region frames (grim `-t ppm -g`, at most about 8 per second) while the user scrolls, and stitches them in Python stdlib (row hashes, overlap search, a fixed header and footer kept once). The result is written as PNG through zlib, with a live strip preview on a shell plate. Auto-scroll needs injected wheel events: the plugin IPC, or a `zwlr_virtual_pointer` client. That is a later slice (nested, gates C1 to C3). | M (manual), L (auto) | Region frames go to the private runtime folder and are deleted afterwards. Auto-scroll must never inject while the lock or a secure sheet is up. | 11, 11c |
 | C11 | All-in-one mode [S1] | the toolbar itself | toolbar (Shift-Super-5) | The toolbar is that mode. Add the modes Capture Text and Capture Scrolling Area to it. | S per mode | — | 9, 11 |
 | C12 | Capture text (OCR) [S1][S3] | no (text in images happens in the viewer) | in Preview only (OC-2) | `grassfield-capture text [--geometry]`: grim into tesseract, using **Preview's command contract** (languages: `--list-langs` ∩ {session language, eng}, `--oem 1 --dpi 300`; `--psm 6` for a region, as Omarchy [S6] does), then `wl-copy`. QR codes through zbarimg, QR only. Toolbar mode plus Shift-Super-2 (free in Grassfield's bindings). | S | Text from a QR code is copied with `wl-copy --sensitive`, so clipboard history never records it (ADR-0034 PV-1). OCR text is a normal copy. tesseract runs at low priority. | 9 |
 | C13 | Hotkeys per mode [S2] | fixed keys | fixed keys | Unchanged for 1.0.x: Grassfield binds keys in the session config. New keys: Shift-Super-2 (Capture Text). Scrolling capture is reached from the toolbar. | S | — | 9 |
@@ -213,3 +213,128 @@ from the same model, so it is deterministic and testable.
 | O2 | QR reading [S1] | — | Preview chips | Capture Text also reads QR codes (C12). | S | Copied as sensitive. | 9 |
 | H1 | History, up to a month, filter, delete [S1][S2] | no (Recents in Finder) | no | `$XDG_STATE_HOME/grassfield/capture-history/` (0700): `index.json`, plus per entry the original and `layers.json`. Retention: 1 day, 1 week (default) or 1 month. A "Recent Captures" window in the Screenshot app with a filter by kind, reopen with layers, delete and Clear History. Clipboard-only captures are **not** kept (macOS: no trace). | M | The history keeps originals from **before** redaction: private, pruned, cleared on request. The Clear History wording says so. | 15 |
 | X1 | Cloud links, password, expiry, teams [S1] | — | — | **Not built.** Upload, links or any remote service is an owner decision (legal, privacy, spending, public). Local sharing by LocalSend (ADR-0045 OC-13) can be proposed separately. | — | — | — |
+
+## 3. UX model (macOS 27 structure, with the depth of a CleanShot-class tool)
+
+### 3.1 Entry points
+The existing keys and the toolbar keep their behaviour, and the toolbar grows:
+- **Unchanged:** Shift-Super-3, Shift-Super-4 and Print, the keypad keys (URR-037), and the menu bar item (URR-038).
+- **New:** Shift-Super-2 runs Capture Text (a crosshair; Esc cancels).
+- **Toolbar (Shift-Super-5).** It keeps the macOS 27 order and adds two captures before the recordings. The bar reads:
+  Close | Entire Screen, Selected Window, Selected Portion, Text, Scrolling Area | Record Entire Screen, Record Selected
+  Portion | Options | Capture.
+  - The Text mode is a frame, like Selected Portion.
+  - The Scrolling Area mode is a frame, then the scroll plate.
+- **Options** gains Show Floating Thumbnail, Remember Last Selection, Freeze Screen and Hide Desktop Icons. In a recording
+  mode it also gains the microphone list, Record System Audio and Do Not Disturb.
+- **Freeze Screen** on: the toolbar's frame and window modes, and Shift-Super-4, work on the frozen picture with the loupe.
+  Shift-Super-4 then uses the shell's surface instead of slurp, and slurp stays the fallback without a shell.
+
+### 3.2 Floating thumbnail
+**Placement and lifetime**
+- A glass card (the menus' class, tokens `capture.thumbnail*`) appears at the bottom right of the display the capture came
+  from, inside the Dock's band margin. The side is a setting.
+- It shows the picture, or a recording's first frame with its duration.
+- It closes after 5 s (a setting: 5 s, 10 s or Never). Hovering pauses the timer.
+- A new capture stacks a card above it, up to 3; the oldest leaves.
+
+**Actions**
+- Click: Annotate.
+- Drag out: the file goes to the drop target, and the card stays until the drop ends.
+- Drag toward the screen edge: dismiss. The file is already saved.
+- Buttons on hover (the shared `ToolButton`, glyphs from branding/icons): Copy, Annotate, Pin to Screen, Show in Files, Move
+  to Trash, and Close (the circle with a cross).
+- A recording card adds Play, Trim and Save as GIF.
+- A text card shows the first lines of the recognised text and a Copy button.
+
+**What hides it**
+- A new capture starting (it is put away before the picture is taken), the lock, and the full-attention surfaces.
+
+Accessibility: each card has an accessible name ("Screenshot, 1145 × 630"), and each button has a name and a tooltip.
+Reduce Motion: the card fades instead of sliding in.
+
+### 3.3 The Screenshot app
+**Editor window**
+- A unified toolbar:
+  - left: the tool group (Select, Arrow, Line, Rectangle, Ellipse, Pen, Highlighter, Text, Counter, Pixelate, Spotlight,
+    Crop, Eyedropper);
+  - centre: style (colour swatches from tokens, width, fill, text style);
+  - right: Undo, Redo, Background, Copy Text, then Copy and the primary button Done.
+- An inspector sidebar for the Background tool: padding, background, aspect, corner radius, shadow.
+- Keys:
+  - tool letters (A arrow, R rectangle, T text, and so on);
+  - Ctrl+Z and Ctrl+Shift+Z for undo and redo;
+  - Ctrl+C copies the flattened picture, Ctrl+S is Done, Esc closes and asks to keep or discard changes;
+  - Ctrl+0 shows the picture at its real size, Ctrl+9 fits it to the window.
+- The global menu has File, Edit, Tools and View.
+
+**Pins**
+- A borderless floating picture with a thin rim (the window rim tokens).
+- The wheel resizes it, Ctrl+wheel sets its opacity, and the arrow keys move it by 1 px (10 px with Shift).
+- Its context menu has Copy, Annotate, Lock (click-through), Opacity and Close.
+- While any pin is locked, a menu bar item lists the pins so that one can be released.
+
+**Recent Captures**
+- A grid of cards by day, with a kind filter (All, Screenshots, Recordings, Text) and search by recognised text when present.
+- Open reopens the capture with its layers. Delete, Show in Files and Clear History are available.
+
+**Camera overlay**
+- A round video window with three sizes and four corners. It can be moved by drag and is closed by the recording's stop.
+
+## 4. Slice plan
+
+Each slice is at most one day for one writing agent in its own worktree. Each lists its acceptance tests, using the
+existing levels: L0 for the helper's fakes, unit for QML tests and C++ gtest, L1 for nested runs at scale 1.25 with a fake
+helper (`GRASSFIELD_CAPTURE_HELPER`), L2 for the owner. Every slice runs `just check-quick` and the tests it touches.
+
+### 4.1 Order (owner-visible value first)
+
+| # | Slice | Lane | Depends on | Acceptance tests |
+|---|---|---|---|---|
+| 1 | **Result channel**: the helper writes `capture-result.json` (ADR-0066 D-1). The `capture.showThumbnail` schema key; the notice is skipped when it is on. | C (helper) | — | L0: result fields, file mode 0600, written by rename, never a link; notice sent when the key is off and not when on; French; recording result; the key's default `true` in schema tests. |
+| 2 | **Floating thumbnail**: `CaptureThumbnails.qml` with placement, timer, hover pause, stacking, put-away on phase change, hidden on lock, click opens Preview (until slice 4), drag out as `text/uri-list`. | A (shell) | 1 | Unit `tst_capturethumbs.qml`: stack of 3, timer and pause, put-away when the phase leaves idle, hidden while locked, position per display and side. L1: a card after a fake result, at scale 1.25, screenshot. |
+| 3 | **Thumbnail actions**: Copy, Show in Files, Move to Trash (`gio trash` through the shell's helper environment), Close, dismiss toward the edge; recording card: Play. | A | 2 | Unit: an action is mapped to an argv vector, never a command line. L1: the trash fixture is gone from the folder and present in the trash (isolated home). |
+| 4 | **Screenshot app skeleton**: `apps/screenshot`, CMake target, `.desktop`, opens a PNG, toolbar shell, zoom and fit, Done writes atomically, Revert, a history entry written (original and `layers.json` v1). Packaging lines. | B (app) | — | gtest: argument validation (local paths only, as Preview's), atomic save (no partial file after a forced failure), `layers.json` schema round trip. CMake build at -j4. The package lists the binary. |
+| 5 | **Tools 1**: select, move, resize; arrow (straight, curved, double); line; rectangle and ellipse (outline or filled); pen with smoothing; highlighter; eyedropper; colours and widths from tokens; undo and redo. | B | 4 | gtest: model operations and undo stack; golden export PNGs per tool at scale 1 and 1.25 (pixel compare with tolerance). L1: editor screenshot. |
+| 6 | **Tools 2**: text (3 styles), counters, spotlight, secure pixelate, crop with aspect presets, rotate and flip. | B | 5 | gtest: the pixelated region of the export is constant per block plus bounded noise, and its correlation with the source is below a threshold; crop is pixel-exact; counters number themselves in order after a deletion. |
+| 7 | **Background tool**: padding, token gradients, solid, transparent, aspect, corner radius, shadow; the "window" preset. `--compose window`. | B | 5 | gtest: golden composes; a transparent background keeps alpha; `--compose` exits 2 on bad arguments. |
+| 8 | **Pins**: `--pin`, window rule, wheel resize, opacity, arrows, lock (click-through) and the menu bar release item. | B, with the menu bar item in A | 4 | Config test: the rule matches `org.grassfield.Screenshot.Pin`. gtest: opacity and size clamps. L1: a pin above a window, locked; a click reaches the window below. |
+| 9 | **Capture Text**: `grassfield-capture text`; the toolbar mode; Shift-Super-2; QR copied as sensitive; a text result for the thumbnail. | C, with the toolbar mode in A | 1 (thumbnail optional) | L0: tesseract argv equals Preview's vectors (languages, `--oem 1 --dpi 300`, `--psm 6`); zbarimg QR-only; `wl-copy --sensitive` for QR; no text gives the notice "No text found"; refused under the lock; French. Unit: `helperArgs` for the mode. session_services: the key is bound. |
+| 9b | **Shared recognition**: move `recognitionCommand` and TSV parsing to `apps/recognition.*`; Copy Text in the editor. | B | 4 | Preview's existing recognition tests unchanged and passing; gtest in the app for Copy Text on a fixture. |
+| 10 | **Freeze and loupe**: `selection --freeze` (grab, phase `frozen`, crop on choice); the frozen picture in the toolbar surface at device pixels; ×8 loupe with readout; the Freeze Screen option. Split into 10a (helper) and 10b (shell), each ≤ 1 day. | C, then A | — | L0: the crop is pixel-exact at scale 1.25 (logical-to-device rounding); frozen files are 0600 and removed on finish, cancel, SIGTERM and lock; refused under the lock. Unit: loupe geometry. L1: frozen surface screenshot. |
+| 11 | **Scrolling capture (manual)**: `scroll --geometry`, frames, stitching, PNG through zlib (11a, helper); the scroll plate with live strip, Done and Cancel, and the toolbar mode (11b, shell). | C, then A | 1 | L0 fixtures: a synthetic page scrolled by known offsets, with a fixed header and footer, no movement, a back-scroll, and noise. The stitched output equals the reference. 30 frames of 1600×1000 stitched within a bound measured and recorded in the slice (target ≤ 3 s on the dev machine). The PNG decodes. Cap at 20 000 px. |
+| 12 | **Recording extras 1**: system audio, microphone list, fps and quality, the recording card's first frame, Save as GIF. | C, with the card in A | 1, 3 | L0: recorder argv with `default_output\|default_input`; mic by name; ffmpeg argv for the first frame and the GIF (fake ffmpeg); GIF written through a hidden file, never overwriting. |
+| 13 | **Options batch**: Remember Last Selection switch, Capture Previous Area, Hide Desktop Icons, Do Not Disturb while recording, 3 s timer. | A | — | Unit: `menuModel` rows and checks per mode, `choice` mapping; DND restored after a recording; desktop icons hidden while the phase is not idle. |
+| 14 | **Window alone**: spike mapping a Hyprland window to its ext-foreign-toplevel identifier; `window --toplevel`; shadow through `--compose`; fallback to today's box. | C | 7 | Spike report (nested, read-only `scripts/nestctl` queries). L0: argv `grim -T`; fallback when there is no identifier. L1 nested: a covered window captured alone; a `no_screen_share` fixture stays black or is refused (security check). |
+| 15 | **History**: store, retention, Recent Captures window, reopen with layers, Clear History, Show Last Thumbnail. | B, with the toolbar item in A | 4, 1 | gtest: pruning by retention, 0700 and 0600 modes, missing files dropped, clipboard-only captures absent, Clear History removes everything. Unit: Show Last Thumbnail reads the newest entry. |
+| 16 | **App settings window**: format, Save at Standard Resolution, thumbnail side and time, fps and quality, history retention; schema keys (ADR-0066 D-11). | B, with the schema in A | 4 | Schema tests (defaults, enums); gtest: settings read with the JsonSafety rules (the twin of the helper's `settings_group`). |
+| 16a | **Click ripples**: plugin pointer-button capability and IPC; `CaptureClicks.qml` while recording. | D (compositor), then A | 12 | Plugin gtest for the event filter (recording phase only); gates C1 to C3; the option hidden without the plugin; nested L1. |
+| 16b | **Keystroke display**: built only after the owner answers Q-3 and an opus reviewer passes it. | D, with a security review | 16a, Q-3 | Suppressed under the lock, a polkit or secret sheet, a key sink and `no_screen_share`; opt-in per recording. |
+| 17 | **Camera overlay**: `--camera`, window rule, sizes and corners, closed with the recording. | B | 4, 12 | gtest: size and corner geometry. L1: NOT VERIFIED without a camera in nested (a fake v4l2 source if one is available). |
+| 18 | **Trim**: playback and trim handles in the app; ffmpeg cut. | B | 4, 12 | gtest: the ffmpeg argv for stream copy and for re-encode; output written through a hidden file. |
+| 11c | **Auto-scroll**: plugin axis injection, never while locked or while a sheet is up. | D | 11, 16a | Plugin gtest; nested L1; gates C1 to C3. |
+
+### 4.2 Parallel lanes
+One writing agent per worktree. Where two lanes edit the same file, they serialize on it.
+
+| Lane | Area | Slices | Shared file to watch |
+|---|---|---|---|
+| A | shell (`shell/capture/`, `shell.qml`, menu bar) | 2 → 3 → 13; the shell parts of 8, 9, 10b, 11b, 12, 15 | `CaptureModel.js` and `CaptureToolbar.qml`: one lane-A agent at a time. |
+| B | app (`apps/screenshot/`) | 4 → 5 → 6 → 7; 8, 9b, 15, 16, 17, 18 after 4 | `apps/preview` only in 9b |
+| C | helper (`packaging/bin/grassfield-capture`, `tests/shell/capture.d/`) | 1 → 9, 10a, 11a, 12, 14 | the helper is one file, so the lane is serial |
+| D | compositor (`compositor/`, nested only) | 16a, then 11c and 16b | — |
+
+Lanes A, B and C can start on day one: slice 1 in C, slice 4 in B, and slice 2 in A once 1 has landed. With three agents,
+slices 1 to 9 land in about four to five working days. The owner-visible order is:
+1. thumbnail (1 to 3),
+2. editor (4 to 7),
+3. text (9),
+4. scrolling (11),
+5. recording extras (12),
+6. then pins, history, freeze, window alone and the plugin features.
+
+### 4.3 Review
+Following the owner's "review every step" rule:
+- an independent reviewer pass after each merged slice;
+- an opus security reviewer for 10 (private frames), 14 (hidden windows), 15 (history of originals) and 16b (keystrokes);
+- slices 16a, 16b and 11c also go through the compositor gates.
