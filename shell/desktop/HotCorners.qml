@@ -13,18 +13,9 @@ import "HotCornerActions.js" as Actions
 Scope {
     id: root
 
-    function actionFor(corner: string): string {
-        switch (corner) {
-        case "topLeft":
-            return Settings.hotCornerTopLeft;
-        case "topRight":
-            return Settings.hotCornerTopRight;
-        case "bottomLeft":
-            return Settings.hotCornerBottomLeft;
-        case "bottomRight":
-            return Settings.hotCornerBottomRight;
-        }
-        return "none";
+    // The action of a corner of the display `screenName`: its own override (hotCorners.outputs) over the All Displays value.
+    function actionFor(corner: string, screenName: string): string {
+        return Settings.hotCornersForScreen(screenName)[corner] || "none";
     }
 
     // `screen`: output name of the corner that fired (surfaces that take a screen open there).
@@ -60,7 +51,7 @@ Scope {
 
                     screen: perScreen.modelData
                     corner: modelData
-                    action: root.actionFor(modelData)
+                    action: root.actionFor(modelData, perScreen.modelData ? perScreen.modelData.name : "")
                     blocked: Actions.isBlocked(action, Notifications.centerOpen, FocusReturn.locked, SessionState.lockConfirmed)
                     // Every full-attention shell surface reports to FocusReturn (Apps, Overview, Search, menus, the
                     // switcher, the Notification Center); FocusReturn.locked follows the session lock.

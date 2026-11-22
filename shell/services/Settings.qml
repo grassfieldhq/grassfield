@@ -67,6 +67,17 @@ Singleton {
             autohide: dockAutohide
         }, dockOutputs, display);
     }
+    // Per-display overrides of the menu bar's auto-hide and background, and of the screen corners (DisplayScope).
+    readonly property var menubarOutputs: store.menubarOutputs
+    readonly property var hotCornersOutputs: store.hotCornersOutputs
+    // The menu bar settings that apply to the display `screenName`: autoHide, showBackground.
+    function menubarForScreen(screenName: string): var {
+        return DisplayScope.resolve(DisplayScope.MENUBAR_SCHEMA, {autoHide: menubarAutoHide, showBackground: menubarShowBackground}, menubarOutputs, displayOf(screenName));
+    }
+    // The action of each corner of the display `screenName`: topLeft, topRight, bottomLeft, bottomRight.
+    function hotCornersForScreen(screenName: string): var {
+        return DisplayScope.resolve(DisplayScope.HOTCORNERS_SCHEMA, {topLeft: hotCornerTopLeft, topRight: hotCornerTopRight, bottomLeft: hotCornerBottomLeft, bottomRight: hotCornerBottomRight}, hotCornersOutputs, displayOf(screenName));
+    }
     function dockForScreen(screenName: string): var {
         return dockFor(displayOf(screenName));
     }

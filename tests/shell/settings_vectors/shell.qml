@@ -39,6 +39,8 @@ ShellRoot {
             "dock.minimizeIntoApp": "dockMinimizeIntoApp",
             "dock.allDisplays": "dockAllDisplays",
             "dock.outputs": "dockOutputs",
+            "menubar.outputs": "menubarOutputs",
+            "hotCorners.outputs": "hotCornersOutputs",
             "dock.clickMinimizes": "dockClickMinimizes",
             "dock.animateOpening": "dockAnimateOpening",
             "dock.showIndicators": "dockShowIndicators",

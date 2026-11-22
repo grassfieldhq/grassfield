@@ -62,6 +62,7 @@ const DEFAULTS = {
     "hotCorners.topRight": "none",
     "hotCorners.bottomLeft": "none",
     "hotCorners.bottomRight": "none",
+    "hotCorners.outputs": [],
     "desktop.showIcons": true,
     "displays.main": [],
     "menubar.showBackground": false,
@@ -82,6 +83,7 @@ const DEFAULTS = {
     "menubar.showTrayItems": true,
     "menubar.recentItems": 10,
     "menubar.clockShowSeconds": false,
+    "menubar.outputs": [],
     "accent.color": "multicolor",
     "accent.highlight": "automatic",
     "terminal.matchAppearance": false,
@@ -203,6 +205,7 @@ const ALL_DEFAULTS = {
     "hotCorners.topRight": "none",
     "hotCorners.bottomLeft": "none",
     "hotCorners.bottomRight": "none",
+    "hotCorners.outputs": [],
     "desktop.showIcons": true,
     "displays.main": [],
     "menubar.showBackground": false,
@@ -223,6 +226,7 @@ const ALL_DEFAULTS = {
     "menubar.showTrayItems": true,
     "menubar.recentItems": 10,
     "menubar.clockShowSeconds": false,
+    "menubar.outputs": [],
     "accent.color": "multicolor",
     "accent.highlight": "automatic",
     "terminal.matchAppearance": false,
@@ -340,6 +344,7 @@ const RULES = {
     "hotCorners.topRight": {"type": "enum", "values": ["none", "overview", "notifications", "apps", "lock"]},
     "hotCorners.bottomLeft": {"type": "enum", "values": ["none", "overview", "notifications", "apps", "lock"]},
     "hotCorners.bottomRight": {"type": "enum", "values": ["none", "overview", "notifications", "apps", "lock"]},
+    "hotCorners.outputs": {"type": "hotCornersOutputs"},
     "desktop.showIcons": {"type": "boolean"},
     "displays.main": {"type": "mainDisplays"},
     "menubar.showBackground": {"type": "boolean"},
@@ -360,6 +365,7 @@ const RULES = {
     "menubar.showTrayItems": {"type": "boolean"},
     "menubar.recentItems": {"type": "integer", "min": 0, "max": 50},
     "menubar.clockShowSeconds": {"type": "boolean"},
+    "menubar.outputs": {"type": "menubarOutputs"},
     "accent.color": {"type": "enum", "values": ["multicolor", "blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"]},
     "accent.highlight": {"type": "enum", "values": ["automatic", "blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"]},
     "terminal.matchAppearance": {"type": "boolean"},
@@ -454,8 +460,10 @@ function validate(path, value) {
         const why = WallpaperConfig.outputsProblem(value);
         return why === "" ? "" : path + ": " + why;
     }
-    case "dockOutputs": {
-        const why = DisplayScope.problem(DisplayScope.DOCK_SCHEMA, value);
+    case "dockOutputs":
+    case "menubarOutputs":
+    case "hotCornersOutputs": {
+        const why = DisplayScope.problem(DisplayScope.schemaOf(rule.type), value);
         return why === "" ? "" : path + ": " + why;
     }
     case "mainDisplays": {
@@ -508,8 +516,8 @@ function normalize(path, value) {
     // as a whole by validate): the shell and the Settings app read one list.
     if (rule.type === "mainDisplays")
         return DisplayRole.normalize(value);
-    if (rule.type === "dockOutputs")
-        return DisplayScope.normalize(DisplayScope.DOCK_SCHEMA, value);
+    if (rule.type === "dockOutputs" || rule.type === "menubarOutputs" || rule.type === "hotCornersOutputs")
+        return DisplayScope.normalize(DisplayScope.schemaOf(rule.type), value);
     if (rule.type === "notificationApps")
         return NotificationPrefs.normalize(value);
     if (rule.type === "notificationStyles")

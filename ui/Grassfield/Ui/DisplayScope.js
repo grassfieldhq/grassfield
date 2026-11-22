@@ -23,6 +23,34 @@ const DOCK_SCHEMA = {
     "autohide": {"type": "boolean"}
 };
 
+// The menu bar's per-display settings (menubar.<field>): how a display's bar hides and whether it has the frosted band.
+const MENUBAR_SCHEMA = {
+    "autoHide": {"type": "enum", "values": ["always", "desktop", "fullscreen", "never"]},
+    "showBackground": {"type": "boolean"}
+};
+
+// The screen corners (hotCorners.<corner>): the action of each corner of a display.
+const CORNER_ACTIONS = ["none", "overview", "notifications", "apps", "lock"];
+const HOTCORNERS_SCHEMA = {
+    "topLeft": {"type": "enum", "values": CORNER_ACTIONS},
+    "topRight": {"type": "enum", "values": CORNER_ACTIONS},
+    "bottomLeft": {"type": "enum", "values": CORNER_ACTIONS},
+    "bottomRight": {"type": "enum", "values": CORNER_ACTIONS}
+};
+
+// The schema of a rule type of the contract (dockOutputs, menubarOutputs, hotCornersOutputs), or null.
+function schemaOf(ruleType) {
+    switch (ruleType) {
+    case "dockOutputs":
+        return DOCK_SCHEMA;
+    case "menubarOutputs":
+        return MENUBAR_SCHEMA;
+    case "hotCornersOutputs":
+        return HOTCORNERS_SCHEMA;
+    }
+    return null;
+}
+
 function isPlainObject(v) {
     return v !== null && typeof v === "object" && !Array.isArray(v);
 }

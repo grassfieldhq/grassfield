@@ -216,18 +216,45 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "name": {"type": "string"},
-                  "model": {"type": "string"},
-                  "serial": {"type": "string"}
+                  "name": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "serial": {
+                    "type": "string"
+                  }
                 }
               },
-              "size": {"type": "integer", "minimum": 32, "maximum": 96},
-              "position": {"type": "string", "enum": ["left", "bottom", "right"]},
-              "magnification": {"type": "number", "minimum": 1, "maximum": 2.5},
-              "magnificationEnabled": {"type": "boolean"},
-              "autohide": {"type": "boolean"}
+              "size": {
+                "type": "integer",
+                "minimum": 32,
+                "maximum": 96
+              },
+              "position": {
+                "type": "string",
+                "enum": [
+                  "left",
+                  "bottom",
+                  "right"
+                ]
+              },
+              "magnification": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 2.5
+              },
+              "magnificationEnabled": {
+                "type": "boolean"
+              },
+              "autohide": {
+                "type": "boolean"
+              }
             },
-            "required": ["display"]
+            "required": [
+              "display"
+            ]
           },
           "default": [],
           "x-grassfield": {
@@ -534,6 +561,78 @@
             "lock"
           ],
           "default": "none"
+        },
+        "outputs": {
+          "type": "array",
+          "description": "Per-display overrides of the screen corners' actions (at most 16): an entry names a display and the corners it changes; the others come from the top-level hotCorners keys (All Displays). An override of a display that is not connected stays stored.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "display": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "serial": {
+                    "type": "string"
+                  }
+                }
+              },
+              "topLeft": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "overview",
+                  "notifications",
+                  "apps",
+                  "lock"
+                ]
+              },
+              "topRight": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "overview",
+                  "notifications",
+                  "apps",
+                  "lock"
+                ]
+              },
+              "bottomLeft": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "overview",
+                  "notifications",
+                  "apps",
+                  "lock"
+                ]
+              },
+              "bottomRight": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "overview",
+                  "notifications",
+                  "apps",
+                  "lock"
+                ]
+              }
+            },
+            "required": [
+              "display"
+            ]
+          },
+          "default": [],
+          "x-grassfield": {
+            "rule": "hotCornersOutputs"
+          }
         }
       }
     },
@@ -690,6 +789,50 @@
           "type": "boolean",
           "description": "Show seconds in the menu bar clock (the clock then wakes every second). Default false.",
           "default": false
+        },
+        "outputs": {
+          "type": "array",
+          "description": "Per-display overrides of the menu bar's auto-hide mode and background (at most 16): an entry names a display (model and serial when the serial is not empty, else the connector) and the fields it changes; the others come from the top-level menubar keys (All Displays). An override of a display that is not connected stays stored.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "display": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "serial": {
+                    "type": "string"
+                  }
+                }
+              },
+              "autoHide": {
+                "type": "string",
+                "enum": [
+                  "always",
+                  "desktop",
+                  "fullscreen",
+                  "never"
+                ]
+              },
+              "showBackground": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "display"
+            ]
+          },
+          "default": [],
+          "x-grassfield": {
+            "rule": "menubarOutputs"
+          }
         }
       }
     },
@@ -774,7 +917,7 @@
             "mac",
             "pc"
           ],
-          "description": "How menus show keyboard shortcuts: \"mac\" with the macOS symbols (\u2303 \u2325 \u21e7 \u2318, \u2318 for Super), \"pc\" as text (Ctrl+Shift+Q). \"automatic\" (default) picks mac on Apple hardware (firmware vendor \"Apple Inc.\") or with an Apple keyboard attached, pc otherwise (owner decision 2026-10-26, ADR-0024).",
+          "description": "How menus show keyboard shortcuts: \"mac\" with the macOS symbols (⌃ ⌥ ⇧ ⌘, ⌘ for Super), \"pc\" as text (Ctrl+Shift+Q). \"automatic\" (default) picks mac on Apple hardware (firmware vendor \"Apple Inc.\") or with an Apple keyboard attached, pc otherwise (owner decision 2026-10-26, ADR-0024).",
           "default": "automatic"
         },
         "showInputMenu": {

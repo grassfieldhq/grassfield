@@ -26,7 +26,7 @@ DEFAULTS = ROOT / "config/defaults/grassfield.json"
 CONTRACT = ROOT / "ui/Grassfield/Ui/SettingsContract.js"
 
 PATTERN_RULES = ("tint", "folderColor", "pointerColor", "localeName", "plainText", "nodeName")
-CUSTOM_RULES = ("wallpaperPath", "wallpaperOutputs", "dockOutputs", "mainDisplays", "notificationApps", "notificationStyles", "pathList")
+CUSTOM_RULES = ("wallpaperPath", "wallpaperOutputs", "dockOutputs", "menubarOutputs", "hotCornersOutputs", "mainDisplays", "notificationApps", "notificationStyles", "pathList")
 
 
 def is_group(node):
@@ -125,8 +125,10 @@ function validate(path, value) {
         const why = WallpaperConfig.outputsProblem(value);
         return why === "" ? "" : path + ": " + why;
     }
-    case "dockOutputs": {
-        const why = DisplayScope.problem(DisplayScope.DOCK_SCHEMA, value);
+    case "dockOutputs":
+    case "menubarOutputs":
+    case "hotCornersOutputs": {
+        const why = DisplayScope.problem(DisplayScope.schemaOf(rule.type), value);
         return why === "" ? "" : path + ": " + why;
     }
     case "mainDisplays": {
@@ -179,8 +181,8 @@ function normalize(path, value) {
     // as a whole by validate): the shell and the Settings app read one list.
     if (rule.type === "mainDisplays")
         return DisplayRole.normalize(value);
-    if (rule.type === "dockOutputs")
-        return DisplayScope.normalize(DisplayScope.DOCK_SCHEMA, value);
+    if (rule.type === "dockOutputs" || rule.type === "menubarOutputs" || rule.type === "hotCornersOutputs")
+        return DisplayScope.normalize(DisplayScope.schemaOf(rule.type), value);
     if (rule.type === "notificationApps")
         return NotificationPrefs.normalize(value);
     if (rule.type === "notificationStyles")

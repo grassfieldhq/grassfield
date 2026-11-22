@@ -328,7 +328,7 @@ Scope {
             // Over a full-screen window the bar is drawn on that window's content, not on the wallpaper the tone was measured on: the frosted band then (macOS does the same).
             // Reduce Transparency and Increase Contrast show the band too, as macOS does (ADR-0039 step 25): the opaque band under
             // the first, the frosted one under the second.
-            readonly property bool showBackground: Settings.menubarShowBackground || BarTone.assistOf(win.screen.name) || win.fullscreen
+            readonly property bool showBackground: Settings.menubarForScreen(win.screen.name).showBackground || BarTone.assistOf(win.screen.name) || win.fullscreen
                 || Appearance.reduceTransparency || Appearance.increaseContrast
             // Without a background the bar sits on the wallpaper and its foreground adapts to the wallpaper strip under this
             // output's bar (BarTone, the macOS model): white text over a dark wallpaper, black over a light one, with a faint
@@ -534,7 +534,7 @@ Scope {
             // Auto-hide (macOS "Automatically hide and show the menu bar", BarHide.js): the Dock's state machine (AutoHide.js) per
             // output. The bar window keeps its size; only the content slides, and only the edge strip takes input while it is
             // away. Over a full-screen window it sits on the overlay layer (Hyprland draws full-screen windows above the top layer).
-            readonly property string hideMode: BarHide.normalize(Settings.menubarAutoHide)
+            readonly property string hideMode: BarHide.normalize(Settings.menubarForScreen(win.screen.name).autoHide)
             readonly property bool fullscreen: Compositor.fullscreenOn(win.screen.name, Compositor.topologyRevision)
             readonly property bool autoHides: BarHide.hides(hideMode, fullscreen)
             property var hideMachine: AutoHide.create()

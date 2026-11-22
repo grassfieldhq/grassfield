@@ -83,6 +83,28 @@ TestCase {
         compare(DisplayScope.normalize(schema, 5), []);
     }
 
+    // The menu bar and the screen corners use the same model with their own fields.
+    function test_menuBarAndCornersSchemas() {
+        const bar = DisplayScope.MENUBAR_SCHEMA;
+        const corners = DisplayScope.HOTCORNERS_SCHEMA;
+        compare(DisplayScope.schemaOf("menubarOutputs"), bar);
+        compare(DisplayScope.schemaOf("hotCornersOutputs"), corners);
+        compare(DisplayScope.schemaOf("nope"), null);
+        const barGlobals = {autoHide: "fullscreen", showBackground: false};
+        const list = DisplayScope.withOverride(bar, [], a, {autoHide: "always"});
+        compare(DisplayScope.resolve(bar, barGlobals, list, a).autoHide, "always");
+        compare(DisplayScope.resolve(bar, barGlobals, list, b).autoHide, "fullscreen");
+        compare(DisplayScope.problem(bar, [{display: a, autoHide: "sometimes"}]) !== "", true);
+        const cg = {topLeft: "none", topRight: "none", bottomLeft: "none", bottomRight: "none"};
+        const cl = DisplayScope.withOverride(corners, [], b, {topLeft: "overview", bottomRight: "lock"});
+        compare(DisplayScope.resolve(corners, cg, cl, b).topLeft, "overview");
+        compare(DisplayScope.resolve(corners, cg, cl, b).topRight, "none");
+        compare(DisplayScope.resolve(corners, cg, cl, a), cg);
+        compare(DisplayScope.problem(corners, [{display: a, topLeft: "reboot"}]) !== "", true);
+        // A dock field is not a menu bar field.
+        compare(DisplayScope.problem(bar, [{display: a, size: 40}]) !== "", true);
+    }
+
     // Migration: before overrides a Dock setting was one global value. That value stays the All Displays value for every display
     // and no entry exists: nothing is converted, so nothing changes for anyone. An entry equal to the global value (a file edited
     // by hand) carries no information and is dropped by dropEqualToGlobal.
