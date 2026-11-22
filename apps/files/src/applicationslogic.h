@@ -231,4 +231,19 @@ bool parseState(const QString &text, QHash<QString, QString> *out);
 // our entries behind for a group that is no more ours. An unreadable list, a list or record that is corrupt, a linked session
 // list: nothing is decided and false is returned. True when a file was written.
 bool seedBundledApps(const QString &configDir, const QString &stateFile, const QStringList &applicationDirs, const QString &omarchyDir, const QStringList &userLists);
+
+// The one writer of the Grassfield session's defaults (owner report 2026-11-22): Files' Change All… and Always Open With, and
+// Settings > Desktop & Dock > Default Apps (its file types and mail) all go through it. Sets every type of `types` to `desktopId`
+// in the list at `path` (normally <configDir>/grassfield-mimeapps.list; the caller resolves a link and checks where it may
+// write), every other line kept, written whole and atomically. Whether the app lists the type does not matter (macOS: Other…
+// takes any application): GLib, KService, xdg-mime and xdg-open honour a [Default Applications] entry either way. False when a
+// type or the id is not well formed, the file is no readable UTF-8 regular file of at most 1 MiB, or the write failed.
+bool writeSessionDefaults(const QString &path, const QStringList &types, const QString &desktopId);
+// The Grassfield session's terminal (owner report 2026-11-22): xdg-terminal-exec reads <configDir>/<desktop>-xdg-terminals.list
+// for each name of XDG_CURRENT_DESKTOP ("Grassfield:Hyprland") before xdg-terminals.list, so grassfield-xdg-terminals.list is
+// the session's own choice and the Omarchy session keeps its xdg-terminals.list (`omarchy default terminal`). Every Grassfield
+// path that opens a terminal goes through xdg-terminal-exec: Super+Return, Files, the Apps grid, Omarchy's launchers, $TERMINAL.
+inline constexpr const char *kTerminalListName = "grassfield-xdg-terminals.list";
+// The list's text naming `desktopId` alone; "" for an id that is not a plain desktop file name.
+QString terminalListText(const QString &desktopId);
 } // namespace DefaultApps

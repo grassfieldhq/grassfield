@@ -7,6 +7,8 @@
 #include <numeric>
 
 #include "runmode.h"
+// The session's default applications: Files' one writer (DefaultApps::writeSessionDefaults), shared (owner report 2026-11-22).
+#include "files/src/applicationslogic.h"
 
 #include <QCollator>
 #include <QCoreApplication>
@@ -977,6 +979,23 @@ QString Backend::writeAutostart(const QString &path, const QString &text) const
 QString Backend::writeDefaultAppsFile(const QString &path, const QString &text) const
 {
     if (!grassfield::settings::isDefaultAppsWrite(path, xdgConfigDir(), grassfieldStateDir(), m_devRoot, m_dev))
+        return QStringLiteral("refused"); // i18n-ignore: a reason the page maps to its own sentence
+    return writeText(path, text);
+}
+
+QString Backend::setDefaultApps(const QStringList &types, const QString &desktopId) const
+{
+    const QString path = xdgConfigDir() + QLatin1Char('/') + QLatin1String(DefaultApps::kListName);
+    if (!grassfield::settings::isDefaultAppsWrite(path, xdgConfigDir(), grassfieldStateDir(), m_devRoot, m_dev))
+        return QStringLiteral("refused"); // i18n-ignore: a reason the page maps to its own sentence
+    return DefaultApps::writeSessionDefaults(path, types, desktopId) ? QString() : QStringLiteral("not written"); // i18n-ignore: same
+}
+
+QString Backend::setDefaultTerminal(const QString &desktopId) const
+{
+    const QString path = xdgConfigDir() + QLatin1Char('/') + QLatin1String(DefaultApps::kTerminalListName);
+    const QString text = DefaultApps::terminalListText(desktopId);
+    if (text.isEmpty() || !grassfield::settings::isDefaultAppsWrite(path, xdgConfigDir(), grassfieldStateDir(), m_devRoot, m_dev))
         return QStringLiteral("refused"); // i18n-ignore: a reason the page maps to its own sentence
     return writeText(path, text);
 }

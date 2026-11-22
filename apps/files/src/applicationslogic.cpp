@@ -1388,4 +1388,42 @@ bool seedBundledApps(const QString &configDir, const QString &stateFile, const Q
         return false;
     return true;
 }
+
+bool writeSessionDefaults(const QString &path, const QStringList &types, const QString &desktopId)
+{
+    if (!QDir::isAbsolutePath(path) || types.isEmpty() || !validId(desktopId))
+        return false;
+    for (const QString &type : types) {
+        if (!validType(type))
+            return false;
+    }
+    // A regular file of a sane size in UTF-8 (one that is not valid UTF-8 is left as it is: rewriting it would re-encode bytes
+    // that are not Grassfield's).
+    QString text;
+    if (!readListFile(path, false, &text))
+        return false;
+    QString next = text;
+    for (const QString &type : types)
+        next = withDefault(next, type, desktopId);
+    const QHash<QString, QString> now = defaults(next);
+    for (const QString &type : types) {
+        if (now.value(type) != desktopId)
+            return false;
+    }
+    if (next == text)
+        return true;
+    if (!QDir().mkpath(QFileInfo(path).absolutePath()))
+        return false;
+    QSaveFile out(path);
+    return out.open(QIODevice::WriteOnly) && out.write(next.toUtf8()) >= 0 && out.commit();
+}
+
+QString terminalListText(const QString &desktopId)
+{
+    if (!validId(desktopId))
+        return QString();
+    return QStringLiteral("# The Grassfield session's terminal (Settings > Desktop & Dock > Default Apps), read by xdg-terminal-exec before\n"
+                          "# xdg-terminals.list in this session only; the Omarchy session keeps its own choice.\n")
+        + desktopId + QLatin1Char('\n');
+}
 } // namespace DefaultApps

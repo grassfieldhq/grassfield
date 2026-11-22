@@ -2,6 +2,7 @@ import QtQuick
 import QtTest
 import Grassfield.Ui
 import "../../apps/settings/qml" as SettingsQml
+import "../../apps/settings/qml/DefaultBrowser.js" as DefaultBrowserJs
 
 // Settings > Desktop & Dock as macOS 27 lays it out (docs/audits/settings-parity-2026-10-26.md § Desktop & Dock): Size and
 // Magnification side by side at the measured places, Magnification as one slider from Off through Small to Large, the rows of
@@ -349,7 +350,36 @@ TestCase {
             property var currentDesktops: ["Grassfield", "Hyprland"]
             property var unreadable: []
             // The programs that exist: names of $PATH and absolute paths.
-            property var programs: ["sanaga", "chromium", "firefox", "zen-browser", "nocat", "nohttp", "hidden", "/usr/bin/fine"]
+            property var programs: ["sanaga", "chromium", "firefox", "zen-browser", "nocat", "nohttp", "hidden", "/usr/bin/fine", "wordcraft", "foot",
+                "ghostty", "/usr/bin/webapp", "mailer"]
+            // Default Apps: what the shared writer was asked (setDefaultApps, setDefaultTerminal) and the terminal query.
+            property var appWrites: []
+            property var terminalWrites: []
+            property var queries: []
+            property bool failApps: false
+            function setDefaultApps(types: var, id: string): string {
+                if (failApps)
+                    return "not written";
+                appWrites.push({types: types, id: id});
+                let text = files["/cfg/grassfield-mimeapps.list"] ?? "";
+                for (const t of types)
+                    text = DefaultBrowserJs.withDefault(text, t, id);
+                const next = Object.assign({}, files);
+                next["/cfg/grassfield-mimeapps.list"] = text;
+                files = next;
+                return "";
+            }
+            function setDefaultTerminal(id: string): string {
+                terminalWrites.push(id);
+                const next = Object.assign({}, files);
+                next["/cfg/grassfield-xdg-terminals.list"] = "# the session's terminal\n" + id + "\n";
+                files = next;
+                return "";
+            }
+            function readOnlyQuery(argv: var, tag: string): void {
+                queries.push({argv: argv, tag: tag});
+            }
+            signal finished(string tag, bool ok, string output)
             property var files: ({})
             property bool failState: false
             property var writes: []
@@ -593,5 +623,83 @@ TestCase {
         v.backend.unreadable = ["/cfg/grassfield-mimeapps.list"];
         verify(!v.page.setBrowser("sanaga.desktop"));
         compare(v.backend.writes.length, 0);
+    }
+
+    // ---- Default Apps (owner report 2026-11-22) ------------------------------------------------------------------------------
+    function defaultAppsFiles() {
+        const f = browserFiles();
+        f["/apps/wordcraft.desktop"] = "[Desktop Entry]\nType=Application\nName=WordCraft\nExec=wordcraft %F\n"
+            + "MimeType=application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/msword;\n";
+        // An Omarchy-style web app: no MimeType at all, only Other… offers it.
+        f["/apps/webapp-docs.desktop"] = "[Desktop Entry]\nType=Application\nName=Docs Web App\nExec=/usr/bin/webapp https://docs.example\n";
+        f["/apps/mailer.desktop"] = "[Desktop Entry]\nType=Application\nName=Mailer\nExec=mailer %u\nMimeType=x-scheme-handler/mailto;\n";
+        f["/apps/foot.desktop"] = "[Desktop Entry]\nType=Application\nName=Foot\nExec=foot\nCategories=System;TerminalEmulator;\n";
+        f["/apps/foot-server.desktop"] = "[Desktop Entry]\nType=Application\nName=Foot Server\nExec=foot --server\nCategories=System;TerminalEmulator;\n";
+        f["/apps/footclient.desktop"] = "[Desktop Entry]\nType=Application\nName=Foot Client\nExec=footclient\nCategories=System;TerminalEmulator;\n";
+        f["/apps/com.mitchellh.ghostty.desktop"] = "[Desktop Entry]\nType=Application\nName=Ghostty\nExec=ghostty --gtk-single-instance=true\n"
+            + "Categories=System;TerminalEmulator;\n";
+        f["/cfg/grassfield-mimeapps.list"] = "[Default Applications]\napplication/msword=libreoffice-writer.desktop;\n";
+        return f;
+    }
+
+    function row(page, id) {
+        return id === "mail" ? page.mailRow : id === "terminal" ? page.terminalRow : page.kindRows.find(r => r.id === id);
+    }
+
+    // Each kind offers the apps that list one of its types and Other… (any app); the row shows what the lists name; Terminal offers
+    // the terminal emulators (never a server or client launcher, never Other…) and shows the one xdg-terminal-exec opens.
+    function test_defaultAppsRowsOfferTheCapableAppsAndOther() {
+        const t = makeWithBackend(defaultAppsFiles());
+        const docs = row(t.page, "documents");
+        verify(docs, "a Documents row");
+        compare(docs.choices.map(c => c.id).join(","), "wordcraft.desktop,libreoffice-writer.desktop,grassfield:other");
+        compare(docs.current, "libreoffice-writer.desktop", "the session list's choice for the first type it names");
+        compare(row(t.page, "mail").choices.map(c => c.id).join(","), "mailer.desktop,HEY.desktop,grassfield:other");
+        compare(row(t.page, "mail").current, "HEY.desktop", "the user's own list");
+        compare(row(t.page, "pdf").choices[0].id, "", "nothing set: None first");
+        const term = row(t.page, "terminal");
+        compare(term.choices.map(c => c.id).join(","), "foot.desktop,com.mitchellh.ghostty.desktop", "terminals only (Foot, Ghostty), by name");
+        verify(t.backend.queries.some(q => q.tag === "desktop.terminal" && q.argv.join(" ") === "xdg-terminal-exec --print-id"));
+        t.backend.finished("desktop.terminal", true, "com.mitchellh.ghostty.desktop\n");
+        compare(row(t.page, "terminal").current, "com.mitchellh.ghostty.desktop", "what xdg-terminal-exec opens now");
+        verify(named(t.page.contentItem, "Documents"), "the Documents popup is on the page");
+        verify(named(t.page.contentItem, "Default terminal"), "the Terminal popup is on the page");
+    }
+
+    // A pick goes through the backend's shared writer: a capable app gets the kind's types it lists; an app picked with Other…
+    // (one that lists none, a web app) gets all of them; the terminal goes to the session's terminal list; a failure says so.
+    function test_defaultAppsPicksWriteTheSessionList() {
+        const t = makeWithBackend(defaultAppsFiles());
+        t.page.pick(row(t.page, "documents"), "wordcraft.desktop");
+        compare(t.backend.appWrites.length, 1);
+        compare(t.backend.appWrites[0].types.join(","), "application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword");
+        compare(t.backend.appWrites[0].id, "wordcraft.desktop");
+        compare(row(t.page, "documents").current, "wordcraft.desktop", "the row reads the list again");
+        // Other…: the picker is asked, with every app; the one chosen gets every type of the kind.
+        let asked = null;
+        t.page.appPickerRequested.connect((apps, texts, chosen) => asked = {apps: apps, texts: texts, chosen: chosen});
+        t.page.pick(row(t.page, "spreadsheets"), "grassfield:other");
+        verify(asked !== null, "Other… opens the app picker");
+        verify(asked.apps.some(a => a.file === "webapp-docs.desktop"), "every app, also one that lists no type");
+        asked.chosen({file: "webapp-docs.desktop", name: "Docs Web App", icon: ""});
+        const w = t.backend.appWrites[1];
+        compare(w.id, "webapp-docs.desktop");
+        compare(w.types.length, 4, "every spreadsheet type");
+        compare(row(t.page, "spreadsheets").current, "webapp-docs.desktop");
+        verify(row(t.page, "spreadsheets").choices.some(c => c.id === "webapp-docs.desktop"), "shown in the popup though it lists no type");
+        // The terminal.
+        compare(row(t.page, "terminal").current, "foot.desktop", "nothing printed or listed yet: the first terminal");
+        t.page.pick(row(t.page, "terminal"), "com.mitchellh.ghostty.desktop");
+        compare(t.backend.terminalWrites, ["com.mitchellh.ghostty.desktop"]);
+        compare(row(t.page, "terminal").current, "com.mitchellh.ghostty.desktop");
+        // Picking None or the shown app writes nothing; an app that is not installed is refused.
+        t.page.pick(row(t.page, "pdf"), "");
+        t.page.pick(row(t.page, "documents"), "wordcraft.desktop");
+        verify(!t.page.choose(row(t.page, "pdf"), "nothere.desktop"));
+        compare(t.backend.appWrites.length, 2);
+        // A failure: a short sentence under the row.
+        t.backend.failApps = true;
+        verify(!t.page.choose(row(t.page, "pdf"), "wordcraft.desktop"));
+        verify((t.page.rowErrors["pdf"] ?? "") !== "", "the row says it failed");
     }
 }

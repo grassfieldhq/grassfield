@@ -112,9 +112,26 @@ Window {
 
     // Open with (FP-65): the applications of the item's type, the default first chosen; Change All… makes the chosen one
     // the default for every document of the type (mimeapps.list). Files only, not folders or applications.
-    readonly property bool openWithShown: !root.isApplication && !root.info.isDir && root.openWithApps.length > 0
+    // Shown for every document, also one whose type no application lists: Other… (macOS) then picks any application.
+    readonly property bool openWithShown: !root.isApplication && !root.info.isDir && root.mimeType !== ""
     readonly property string mimeType: root.isApplication || root.info.isDir ? "" : root.app.mimeTypeOf(root.info.url)
-    readonly property var openWithApps: root.mimeType !== "" ? root.app.applicationsFor([root.info.url]) : []
+    // The type's applications, then the ones chosen with Other… (owner report 2026-11-22: an application whose desktop file
+    // does not list the type, a web app, an AppImage's entry, can be the default too).
+    property var otherApps: []
+    readonly property var openWithApps: (root.mimeType !== "" ? root.app.applicationsFor([root.info.url]) : []).concat(root.otherApps)
+    readonly property string otherId: "grassfield:other"
+
+    function pickOpenWith(id: string): void {
+        if (id !== root.otherId) {
+            root.chosenApp = id;
+            return;
+        }
+        root.app.chooseDefaultApplication(root.info.url, (storageId, name) => {
+            if (!root.openWithApps.some(a => a.id === storageId))
+                root.otherApps = root.otherApps.concat([{id: storageId, name: name, isDefault: false}]);
+            root.chosenApp = storageId;
+        });
+    }
     property string defaultApp: root.mimeType !== "" ? root.app.defaultApplication(root.mimeType) : ""
     property string chosenApp: root.defaultApp
 
@@ -330,8 +347,9 @@ Window {
                     width: content.width
                     accessibleName: qsTr("Open with")
                     model: root.openWithApps.map(a => ({id: a.id, text: a.id === root.defaultApp ? qsTr("%1 (default)").arg(a.name) : a.name}))
+                                            .concat([{id: root.otherId, text: qsTr("Other…")}])
                     value: root.chosenApp
-                    onPicked: id => root.chosenApp = id
+                    onPicked: id => root.pickOpenWith(id)
                 }
 
                 Text {

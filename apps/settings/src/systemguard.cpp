@@ -122,6 +122,10 @@ bool isReadOnlyQuery(const QStringList &argv)
                 && (args.at(1) == QLatin1String("hyprland") || args.at(1) == QLatin1String("quickshell") || args.at(1) == QLatin1String("quickshell-git")));
     if (program == QLatin1String("lspci"))
         return args.isEmpty();
+    // Desktop & Dock > Default Apps > Terminal: the terminal the session opens (xdg-terminal-exec prints the desktop id it would
+    // start, and starts nothing).
+    if (program == QLatin1String("xdg-terminal-exec"))
+        return args == QStringList{QStringLiteral("--print-id")};
     // Storage pane: the size of the user's folders.
     if (program == QLatin1String("du"))
         return isFolderSizeQuery(args);
@@ -320,6 +324,8 @@ bool isDefaultAppsWrite(const QString &path, const QString &configDir, const QSt
     QString dir;
     if (!configDir.isEmpty() && path == QDir::cleanPath(configDir) + QStringLiteral("/grassfield-mimeapps.list"))
         dir = configDir;
+    else if (!configDir.isEmpty() && path == QDir::cleanPath(configDir) + QStringLiteral("/grassfield-xdg-terminals.list"))
+        dir = configDir; // Default Apps > Terminal (owner report 2026-11-22)
     else if (!stateDir.isEmpty() && path == QDir::cleanPath(stateDir) + QStringLiteral("/default-apps.state"))
         dir = stateDir;
     else

@@ -149,8 +149,9 @@ bool isLaunch(const QStringList &argv);
 // <devRoot>/.dev (the isolated XDG_CONFIG_HOME), never the owner's ~/.config/autostart.
 bool isAutostartWrite(const QString &path, const QString &autostartDir, const QString &devRoot, bool dev);
 
-// The two files the Default web browser row writes (Backend::writeDefaultAppsFile, ADR-0055 D-6): the session's list,
-// <configDir>/grassfield-mimeapps.list, and the record, <stateDir>/default-apps.state; an absolute clean path, not a symbolic link
+// The files the Default Apps rows write (Backend::writeDefaultAppsFile, setDefaultApps, setDefaultTerminal; ADR-0055 D-6): the
+// session's list, <configDir>/grassfield-mimeapps.list, its terminal, <configDir>/grassfield-xdg-terminals.list, and the record,
+// <stateDir>/default-apps.state; an absolute clean path, not a symbolic link
 // (a write would go through it to a dotfile manager's file), and in a dev session only when the folder's real location lies under
 // <devRoot>/.dev (ADR-0019: the isolated XDG_CONFIG_HOME and state home), never the owner's real ~/.config or ~/.local/state.
 bool isDefaultAppsWrite(const QString &path, const QString &configDir, const QString &stateDir, const QString &devRoot, bool dev);

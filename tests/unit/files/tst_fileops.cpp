@@ -20,7 +20,10 @@
 #include <QThread>
 #include <QVariantMap>
 
+#include <KApplicationTrader>
 #include <KIO/FileUndoManager>
+#include <KService>
+#include <KSycoca>
 
 #include <gtest/gtest.h>
 
@@ -703,6 +706,37 @@ TEST_F(FileOps, SendWithLocalSendRefusesOtherVectorsAndADevSession)
     EXPECT_TRUE(told.messages.first().contains(QStringLiteral("development session"))) << told.messages.first().toStdString();
     hadDev ? qputenv("GRASSFIELD_DEV", devBefore) : qunsetenv("GRASSFIELD_DEV");
     hadSession ? qputenv("GRASSFIELD_SESSION", sessionBefore) : qunsetenv("GRASSFIELD_SESSION");
+}
+
+// Owner report 2026-11-22 ("make WordCraft the default for Word files"): Change All… in the Grassfield session writes the session's
+// own list through the shared writer, also for an application whose desktop file lists no type at all (an Omarchy web app picked
+// with Other…), and KIO's lookup (what Files opens a document with) then answers that application; the user's mimeapps.list is
+// never touched.
+TEST_F(FileOps, ChangeAllMakesAnyApplicationTheSessionDefaultEvenOneThatListsNoType)
+{
+    const QByteArray desktopBefore = qgetenv("XDG_CURRENT_DESKTOP");
+    qputenv("XDG_CURRENT_DESKTOP", "Grassfield:Hyprland");
+    const QString apps = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + QStringLiteral("/applications");
+    write(apps + QStringLiteral("/gf-test-webapp-docs.desktop"),
+          "[Desktop Entry]\nType=Application\nName=Docs Web App\nExec=/usr/bin/env true %u\n");
+    KSycoca::self()->ensureCacheValid();
+    ASSERT_TRUE(KService::serviceByStorageId(QStringLiteral("gf-test-webapp-docs.desktop"))) << "KService sees the scratch entry";
+    FilesApp app(QList<QUrl>{});
+    const QString type = QStringLiteral("application/msword");
+    ASSERT_TRUE(app.setDefaultApplication(type, QStringLiteral("gf-test-webapp-docs.desktop")));
+    const QString config = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    EXPECT_TRUE(read(config + QStringLiteral("/grassfield-mimeapps.list")).contains("application/msword=gf-test-webapp-docs.desktop;"));
+    EXPECT_FALSE(read(config + QStringLiteral("/mimeapps.list")).contains("gf-test-webapp-docs")) << "the user's own list is not written";
+    EXPECT_EQ(app.defaultApplication(type), QStringLiteral("gf-test-webapp-docs.desktop"));
+    // KIO's own lookup once KService read the list again (what OpenUrlJob uses), not only Files' short memory of the choice.
+    EXPECT_TRUE(waitFor([&type] {
+        KSycoca::self()->ensureCacheValid();
+        const KService::Ptr s = KApplicationTrader::preferredService(type);
+        return s && s->storageId() == QLatin1String("gf-test-webapp-docs.desktop");
+    }, 10000)) << "KApplicationTrader honours the session list for an application that lists no type";
+    QFile::remove(apps + QStringLiteral("/gf-test-webapp-docs.desktop"));
+    QFile::remove(config + QStringLiteral("/grassfield-mimeapps.list"));
+    desktopBefore.isNull() ? qunsetenv("XDG_CURRENT_DESKTOP") : qputenv("XDG_CURRENT_DESKTOP", desktopBefore);
 }
 
 // Owner report 2026-11-22 (Trash view slow to refresh after Empty Trash): every change in the home trash, made by Files, the

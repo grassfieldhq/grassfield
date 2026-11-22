@@ -12,15 +12,23 @@ Sheet {
     property string chosenFile: ""
     readonly property var matches: root.apps.filter(a => root.fieldText.trim() === "" || a.name.toLowerCase().indexOf(root.fieldText.trim().toLowerCase()) >= 0)
 
+    // Another use of the sheet (Desktop & Dock > Default Apps > Other…): its words and where the choice goes, for this opening only;
+    // null for Login Items (chosen(app)).
+    property var texts: null
+    property var answer: null
+
     signal chosen(var app)
 
-    title: qsTr("Add a Login Item")
-    message: qsTr("Choose an application to open when you log in.")
-    confirmText: qsTr("Add")
+    title: root.texts ? root.texts.title : qsTr("Add a Login Item")
+    message: root.texts ? root.texts.message : qsTr("Choose an application to open when you log in.")
+    confirmText: root.texts ? root.texts.confirm : qsTr("Add")
     withField: true
     placeholder: qsTr("Search")
 
-    function openWith(apps: var): void {
+    // texts ({title, message, confirm}) and answer (a function of the app chosen): Default Apps' Other…; neither for Login Items.
+    function openWith(apps: var, texts: var, answer: var): void {
+        root.texts = texts ?? null;
+        root.answer = typeof answer === "function" ? answer : null;
         root.apps = apps;
         root.chosenFile = "";
         root.setField("");
@@ -42,7 +50,10 @@ Sheet {
         const app = root.matches.find(a => a.file === root.chosenFile) ?? (root.matches.length === 1 ? root.matches[0] : null);
         if (!app)
             return qsTr("Choose an application.");
-        root.chosen(app);
+        if (root.answer)
+            root.answer(app);
+        else
+            root.chosen(app);
         return "";
     }
 

@@ -247,6 +247,13 @@ public:
     // Default web browser (ADR-0055 D-6): writes the session's list or the record, and nothing else (isDefaultAppsWrite); "" or a
     // reason. A dev session writes only under <worktree>/.dev, never the owner's ~/.config.
     Q_INVOKABLE QString writeDefaultAppsFile(const QString &path, const QString &text) const;
+    // Default Apps (owner report 2026-11-22): `types` (MIME types, mailto's scheme handler) open with `desktopId` in this session,
+    // written to the session's list by Files' Change All… writer (DefaultApps::writeSessionDefaults, apps/files/src), under the
+    // same guard as writeDefaultAppsFile; "" or a reason.
+    Q_INVOKABLE QString setDefaultApps(const QStringList &types, const QString &desktopId) const;
+    // Default Apps > Terminal: <configDir>/grassfield-xdg-terminals.list names `desktopId` alone (xdg-terminal-exec reads it first
+    // in this session); same guard; "" or a reason.
+    Q_INVOKABLE QString setDefaultTerminal(const QString &desktopId) const;
     // Emit fileChanged(path) whenever the file is created, replaced, changed or removed.
     Q_INVOKABLE bool watch(const QString &path);
     // Settings > Displays (ADR-0031). displays.conf holds the kept choices (read at every parse by

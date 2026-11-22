@@ -41,7 +41,6 @@
 #include <QPair>
 #include <QPointer>
 #include <QRegularExpression>
-#include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
 #include <QStorageInfo>
@@ -2920,18 +2919,8 @@ bool FilesApp::setDefaultApplication(const QString &mimeType, const QString &sto
         const QFileInfo info(path);
         if (info.isSymLink())
             path = info.canonicalFilePath();
-        // A regular file of a sane size in UTF-8 (one that is not valid UTF-8 is left as it is: rewriting it would re-encode
-        // bytes that are not Files').
-        QString text;
-        if (path.isEmpty() || !DefaultApps::readListFile(path, false, &text))
-            return false;
-        const QString next = DefaultApps::withDefault(text, mimeType, service->storageId());
-        if (next == text && DefaultApps::defaults(text).value(mimeType) != service->storageId())
-            return false;
-        if (!QDir().mkpath(dir))
-            return false;
-        QSaveFile out(path);
-        if (!out.open(QIODevice::WriteOnly) || out.write(next.toUtf8()) < 0 || !out.commit())
+        // The session's one writer, shared with Settings > Desktop & Dock > Default Apps (DefaultApps::writeSessionDefaults).
+        if (path.isEmpty() || !DefaultApps::writeSessionDefaults(path, {mimeType}, service->storageId()))
             return false;
     } else {
         // The user's mimeapps.list (XDG): the Finder's Change All… for every document of this type.
@@ -2939,6 +2928,20 @@ bool FilesApp::setDefaultApplication(const QString &mimeType, const QString &sto
     }
     m_chosenDefaults.insert(mimeType, {service->storageId(), QDeadlineTimer(5000)});
     return true;
+}
+
+void FilesApp::chooseDefaultApplication(const QUrl &url, const QJSValue &callback)
+{
+    QJSValue cb = callback;
+    if (url.scheme() == QLatin1String("grassfield-app") || ApplicationsLogic::isLocationUrl(url) || !cb.isCallable())
+        return;
+    // The Choose Application panel (Recommended or All Applications, as Open With > Other…): any application can be the
+    // document type's default, whether its desktop file lists the type or not (macOS: Get Info > Open with > Other…).
+    m_prompts->applications()->ask({url}, mimeTypeOf(url), nullptr, [cb](const QString &id) mutable {
+        const KService::Ptr service = id.isEmpty() ? KService::Ptr() : KService::serviceByStorageId(id + QLatin1String(".desktop"));
+        if (service)
+            cb.call({QJSValue(service->storageId()), QJSValue(service->name())});
+    });
 }
 
 void FilesApp::alwaysOpenWith(const QString &storageId, const QList<QUrl> &urls)

@@ -182,6 +182,15 @@ TEST(WallpaperGuard, NamesTheHelperByItsFileName)
     EXPECT_FALSE(namesWallpaperTool(QStringLiteral("/x/grassfield-wallpaper2")));
 }
 
+// Default Apps > Terminal asks xdg-terminal-exec which terminal it would open (it starts nothing); no other form of it is a query.
+TEST(QueryGuard, OnlyXdgTerminalExecPrintIdIsAQuery)
+{
+    EXPECT_TRUE(isReadOnlyQuery({QStringLiteral("xdg-terminal-exec"), QStringLiteral("--print-id")}));
+    EXPECT_FALSE(isReadOnlyQuery({QStringLiteral("xdg-terminal-exec")}));
+    EXPECT_FALSE(isReadOnlyQuery({QStringLiteral("xdg-terminal-exec"), QStringLiteral("--print-id"), QStringLiteral("rm")}));
+    EXPECT_FALSE(isReadOnlyQuery({QStringLiteral("xdg-terminal-exec"), QStringLiteral("-e"), QStringLiteral("sh")}));
+}
+
 // Wi-Fi and Bluetooth are read over D-Bus now: the only queries left are Sound's, the About pane's.
 TEST(QueryGuard, NoNetworkOrBluetoothCommandIsAQuery)
 {
@@ -920,6 +929,8 @@ TEST(DefaultAppsGuard, OnlyTheListAndTheRecordAndInDevOnlyUnderDev)
     QDir().mkpath(cfg);
     EXPECT_TRUE(isDefaultAppsWrite(cfg + QStringLiteral("/grassfield-mimeapps.list"), cfg, state, QString(), false));
     EXPECT_TRUE(isDefaultAppsWrite(state + QStringLiteral("/default-apps.state"), cfg, state, QString(), false)) << "the folder need not exist yet";
+    EXPECT_TRUE(isDefaultAppsWrite(cfg + QStringLiteral("/grassfield-xdg-terminals.list"), cfg, state, QString(), false)) << "the session's terminal";
+    EXPECT_FALSE(isDefaultAppsWrite(cfg + QStringLiteral("/xdg-terminals.list"), cfg, state, QString(), false)) << "Omarchy's own terminal list";
     for (const QString &bad : {cfg + QStringLiteral("/mimeapps.list"), cfg + QStringLiteral("/hyprland-mimeapps.list"), cfg + QStringLiteral("/default-apps.state"),
                                state + QStringLiteral("/grassfield-mimeapps.list"), cfg + QStringLiteral("/../cfg/grassfield-mimeapps.list"),
                                base + QStringLiteral("/other/grassfield-mimeapps.list"), QStringLiteral("grassfield-mimeapps.list"), QString()})
