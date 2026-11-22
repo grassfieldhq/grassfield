@@ -83,11 +83,13 @@ bind("SUPER + bracketright", "Forward", forward("ALT", "Right"))
 
 -- Command+C/V/X/A/Z: the macOS editing keys. Omarchy's default/hypr/bindings/clipboard.lua is not loaded here, so without
 -- these binds the chord reaches the application with Super held and the letter is typed. Every toolkit takes the Ctrl
--- chord; terminals keep Ctrl+C (interrupt) and Ctrl+V, so Copy and Paste are Ctrl+Shift+C / Ctrl+Shift+V there. The chord
--- is sent with explicit modifiers (forward above), so it does not run through these binds again (Ctrl+C is not bound).
--- Super+Ctrl+V (Clipboard history) and Super+Shift+3/4/5 (capture) are other chords.
+-- chord; terminals keep Ctrl+C (interrupt) and Ctrl+V, so Copy and Paste are Ctrl+Shift+C / Ctrl+Shift+V there. The other
+-- four do nothing in a terminal (macOS Terminal model): Ctrl+Z suspends the foreground job, Ctrl+A/Ctrl+X belong to readline,
+-- tmux and screen. The chord is sent with explicit modifiers (forward above), so it does not run through these binds again
+-- (Ctrl+C is not bound). Super+Ctrl+V (Clipboard history) and Super+Shift+3/4/5 (capture) are other chords.
 local function terminal_aware(mods, key, terminal_mods)
-  local plain, in_terminal = forward(mods, key), forward(terminal_mods, key)
+  local plain = forward(mods, key)
+  local in_terminal = terminal_mods and forward(terminal_mods, key) or function() end
   return function()
     if terminal_focused() then
       in_terminal()
@@ -98,10 +100,10 @@ local function terminal_aware(mods, key, terminal_mods)
 end
 bind("SUPER + C", "Copy", terminal_aware("CTRL", "C", "CTRL SHIFT"))
 bind("SUPER + V", "Paste", terminal_aware("CTRL", "V", "CTRL SHIFT"))
-bind("SUPER + X", "Cut", forward("CTRL", "X"))
-bind("SUPER + A", "Select all", forward("CTRL", "A"))
-bind("SUPER + Z", "Undo", forward("CTRL", "Z"))
-bind("SUPER + SHIFT + Z", "Redo", forward("CTRL SHIFT", "Z"))
+bind("SUPER + X", "Cut", terminal_aware("CTRL", "X"))
+bind("SUPER + A", "Select all", terminal_aware("CTRL", "A"))
+bind("SUPER + Z", "Undo", terminal_aware("CTRL", "Z"))
+bind("SUPER + SHIFT + Z", "Redo", terminal_aware("CTRL SHIFT", "Z"))
 
 -- Command+number and Command+Up: Ctrl+1..9 and Ctrl+Up are Spaces and Overview here, so the keys an application
 -- advertises with Ctrl (Files views Ctrl+1..4, Preview Zoom to Fit Ctrl+9, Files Enclosing Folder Ctrl+Up) are sent by

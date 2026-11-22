@@ -139,6 +139,23 @@ if grep -qF 'from-clipboard' "$cap"; then echo "PASS: in a terminal Super+V past
 : >"$cap"
 keys -M logo -k c -m logo
 if grep -qF '^C' "$cap"; then echo "FAIL: terminal Super+C sent Ctrl+C ($(cat "$cap"))"; fail=1; else echo "PASS: in a terminal Super+C does not send Ctrl+C (interrupt)"; fi
+# Cut, Select All, Undo and Redo do nothing in a terminal (macOS Terminal model): no ^X, ^A, ^Z reach it ...
+: >"$cap"
+keys -M logo -k x -m logo
+keys -M logo -k a -m logo
+keys -M logo -k z -m logo
+keys -M logo -M shift -k z -m shift -m logo
+if [[ -z $(tr -d '\0' <"$cap") ]]; then echo "PASS: in a terminal Super+X, A, Z and Super+Shift+Z send nothing"; else echo "FAIL: terminal got: $(tr -d '\0' <"$cap")"; fail=1; fi
+# ... and Super+Z does not suspend the foreground job (Ctrl+Z would stop it: state T).
+WAYLAND_DISPLAY=$sock setsid "$root/scripts/dev/isolated.sh" --name forward-keys-foot-job foot -e sleep 107 >/dev/null 2>&1 </dev/null &
+pids+=($!)
+sleep 1.5
+keys -M logo -k z -m logo
+keys -M logo -M shift -k z -m shift -m logo
+job=$(pgrep -nx -f 'sleep 107' || true)
+state=$([[ -n $job ]] && awk '{print $3}' "/proc/$job/stat" 2>/dev/null)
+if [[ $state == S ]]; then echo "PASS: in a terminal Super+Z does not suspend a running 'sleep 107' (state $state)"; else echo "FAIL: the 'sleep 107' job is '${state:-gone}' after Super+Z (T would mean suspended)"; fail=1; fi
+[[ -n $job ]] && kill "$job" 2>/dev/null
 
 alive=0; kill -0 "$hypr_pid" 2>/dev/null && alive=1
 if ((alive)) && ! nestctl -j version >/dev/null 2>&1; then alive=0; fi

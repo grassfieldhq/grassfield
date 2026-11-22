@@ -82,6 +82,7 @@ sent("SUPER + V", "Alacritty", both("CTRL SHIFT", "V"))
 sent("SUPER + X", "firefox", both("CTRL", "X"))
 sent("SUPER + A", "org.grassfield.Notes", both("CTRL", "A"))
 sent("SUPER + Z", "firefox", both("CTRL", "Z"))
+for _, k in ipairs({ "SUPER + X", "SUPER + A", "SUPER + Z", "SUPER + SHIFT + Z" }) do sent(k, "kitty", ""); sent(k, "org.omarchy.btop", "") end
 sent("SUPER + SHIFT + Z", "firefox", both("CTRL SHIFT", "Z"))
 -- Command+arrows (macOS text model); Grassfield Files keeps Enclosing Folder / Open on Command+Up / Down.
 sent("SUPER + UP", "org.grassfield.Files", both("CTRL", "Up"))
@@ -132,7 +133,7 @@ echo "$out" | sed 's/^/    /'
 desc="Spaces and Overview binds are still dispatchers (CTRL+LEFT/RIGHT, CTRL+1..9 focus Spaces, CTRL+UP sends the Overview request in-process, CIO-01): the macOS keys are kept"
 check grep -q "^spaces dsp.focus dsp.focus dsp.focus dsp.focus dsp.event$" <<<"$out"
 desc="every forwarded key sends exactly the expected chord (no BAD line)"
-check bash -c '! grep -q "^BAD" <<<"$1" && [[ $(grep -c "^ok " <<<"$1") == 44 ]]' _ "$out"
+check bash -c '! grep -q "^BAD" <<<"$1" && [[ $(grep -c "^ok " <<<"$1") == 52 ]]' _ "$out"
 desc="the editing keys (Super+C/V/X/A/Z, Super+Shift+Z) are bound once, only in forwarding.lua, with a literal bind() line each (Settings > Keyboard lists them) and clash with no other Grassfield bind"
 check bash -c 'for k in "SUPER + C" "SUPER + V" "SUPER + X" "SUPER + A" "SUPER + Z" "SUPER + SHIFT + Z"; do [ "$(grep -c "^bind(\"$k\"" "$1/config/hypr/grassfield/forwarding.lua")" = 1 ] && ! grep -q "^bind(\"$k\"" "$1/config/hypr/grassfield/bindings.lua" || exit 1; done; grep -q "^bind(\"SUPER + CTRL + V\", \"Clipboard history\"" "$1/config/hypr/grassfield/bindings.lua"' _ "$root"
 desc="word navigation repeats while the keys are held"
