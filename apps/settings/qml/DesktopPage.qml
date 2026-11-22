@@ -439,7 +439,7 @@ SettingsPage {
     function pick(r: var, id: string): void {
         if (id === DefaultApps.OTHER) {
             root.appPickerRequested(root.allApps.map(a => ({file: a.id, name: a.name, icon: a.icon})),
-                                    {title: qsTr("Choose an App"), message: qsTr("Choose the app that opens %1.").arg(r.title.toLowerCase()), confirm: qsTr("Choose")},
+                                    {title: qsTr("Choose an App"), message: qsTr("Choose the app for “%1”.").arg(r.title), confirm: qsTr("Choose")},
                                     app => root.choose(r, app.file));
             return;
         }
