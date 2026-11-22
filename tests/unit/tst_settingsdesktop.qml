@@ -99,8 +99,8 @@ TestCase {
         const size = named(t.page.contentItem, "Size");
         const magnification = named(t.page.contentItem, "Magnification");
         verify(size && magnification);
-        const group = size.parent.parent.parent;
-        compare(group.height, Tokens.settingsDockSlidersHeight);
+        const strip = size.parent.parent;
+        compare(strip.height, Tokens.settingsDockSlidersHeight);
         compare(size.parent.x, Tokens.settingsRowInset);
         compare(size.width, Tokens.settingsDockSizeSliderWidth);
         compare(magnification.parent.x, Tokens.settingsDockMagnificationX);

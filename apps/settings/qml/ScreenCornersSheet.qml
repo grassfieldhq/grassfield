@@ -49,6 +49,7 @@ Sheet {
 
             ScopeGroup {
                 width: parent.width
+                visible: cornerScope.displayCount > 1
                 scope: cornerScope
                 title: qsTr("Screen Corners for")
                 appliesToOne: qsTr("The corners apply to %1 only.")

@@ -135,14 +135,13 @@ SettingsPage {
     property alias displays: barScope.displays
     property alias displayId: barScope.displayId
 
+    // The auto-hide mode and the background can differ per display (each display has its own bar): they sit in the group the
+    // display pop-up opens; the rest of the pane is the same on every display.
     ScopeGroup {
         scope: barScope
         title: qsTr("Menu Bar settings for")
         appliesToOne: qsTr("Automatically hide and show, and the background, apply to the menu bar of %1 only.")
         appliesToAll: qsTr("Automatically hide and show, and the background, apply to the menu bar of every display that has no setting of its own.")
-    }
-
-    SettingsGroup {
         // Shown while the wallpaper forces the band, whatever the switch says (macOS turns the background on by itself the same way).
         footnote: root.bandForced && !barScope.scoped("showBackground") ? qsTr("The wallpaper is too busy under the menu bar for its text to be read, so a background is shown.") : ""
 
@@ -165,7 +164,9 @@ SettingsPage {
                 onToggled: c => barScope.setScoped({"showBackground": c}, false)
             }
         }
+    }
 
+    SettingsGroup {
         SettingsRow {
             title: qsTr("Recent documents and applications")
             ComboBox {

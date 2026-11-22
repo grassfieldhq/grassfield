@@ -63,17 +63,14 @@ SettingsPage {
         root.setScoped({"magnificationEnabled": true, "magnification": m}, true);
     }
 
-    // With several displays: which display the four rows that can differ per display change (size, magnification, position,
-    // auto-hide). Under All Displays they change every display that has no setting of its own.
+    // The settings that can differ per display (owner 2026-11-22): size, magnification, position and auto-hide follow the display
+    // chosen in the pop-up that opens the group (with several displays); everything below it is the same on every display.
     ScopeGroup {
+        caption: qsTr("Dock")
         scope: dockScope
         title: qsTr("Dock settings for")
         appliesToOne: qsTr("Size, Magnification, Position and Automatically hide apply to %1 only.")
         appliesToAll: qsTr("Size, Magnification, Position and Automatically hide apply to every display that has no setting of its own.")
-    }
-
-    SettingsGroup {
-        caption: qsTr("Dock")
 
         Item {
             width: parent.width
@@ -107,9 +104,7 @@ SettingsPage {
                 slider.onReleased: root.store.flush()
             }
         }
-    }
 
-    SettingsGroup {
         SettingsRow {
             title: qsTr("Dock position on screen")
             ComboBox {
@@ -121,6 +116,17 @@ SettingsPage {
             }
         }
 
+        SettingsRow {
+            title: qsTr("Automatically hide and show the Dock")
+            Toggle {
+                accessibleName: qsTr("Automatically hide and show the Dock")
+                checked: root.scoped("autohide")
+                onToggled: c => root.setScoped({"autohide": c}, false)
+            }
+        }
+    }
+
+    SettingsGroup {
         SettingsRow {
             title: qsTr("Minimized window animation")
             ComboBox {
@@ -156,15 +162,6 @@ SettingsPage {
     }
 
     SettingsGroup {
-        SettingsRow {
-            title: qsTr("Automatically hide and show the Dock")
-            Toggle {
-                accessibleName: qsTr("Automatically hide and show the Dock")
-                checked: root.scoped("autohide")
-                onToggled: c => root.setScoped({"autohide": c}, false)
-            }
-        }
-
         // With several displays: one Dock on each display (default) or one Dock that moves to the display where the pointer last
         // reached its edge (macOS). Every other Dock setting above applies to each Dock that is shown.
         SettingsRow {

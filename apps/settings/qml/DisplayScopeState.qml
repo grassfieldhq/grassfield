@@ -45,7 +45,7 @@ QtObject {
     // The value of a scoped field for the display chosen.
     function scoped(field: string): var {
         const globals = {};
-        globals[field] = root.store ? root.store.value(root.group + "." + field) : undefined;
+        globals[field] = root.store ? root.store.value(root.group + "." + field) : SettingsContract.DEFAULTS[root.group + "." + field];
         return DisplayScope.resolve(root.schema, globals, root.outputs, root.currentDisplay)[field];
     }
 
