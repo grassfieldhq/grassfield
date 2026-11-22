@@ -118,6 +118,11 @@ TestCase {
     // What Main.qml and the windows read of FilesApp.
     QtObject {
         id: fakeApp
+        // New Terminal at Folder: the folders a terminal was opened in.
+        property var terminals: []
+        function openTerminal(target: url): void {
+            fakeApp.terminals = fakeApp.terminals.concat([String(target)]);
+        }
         // Add to Sidebar (FP-27): what was added, and what the sidebar lists.
         property var sidebarAdded: []
         property var inSidebarUrls: []
@@ -560,6 +565,66 @@ TestCase {
         browser.width = Tokens.filesWindowWidth;
         tryVerify(() => browser.toolbarTagsShown, 1000, "wide: Tags and Action back");
         tab.setSearch("");
+    }
+
+    // New Terminal at Folder (owner report 2026-11-22: "opening a terminal from a folder takes acrobatics through Services"): a
+    // first-class item of a folder's menu and of the folder background's menu, with Ctrl+Alt+T, never under Services; it opens the
+    // selected folder, else the folder shown; dimmed in the Trash, a search, Applications or a folder not on this computer.
+    function test_newTerminalAtFolder() {
+        const files = test.openFiles(false);
+        const tab = files.windows[0].tab;
+        const folder = tab.folder;
+        const here = String(folder.url);
+        verify(here.startsWith("file:"), here);
+        fakeApp.terminals = [];
+        // The folder background.
+        folder.selected = [];
+        folder.selectedCount = 0;
+        const background = tab.backgroundMenu(folder);
+        verify(!background.some(i => i.id === "services"), "no Services submenu");
+        const bgItem = background.find(i => i.id === "terminalHere");
+        verify(bgItem !== undefined, "the background menu has New Terminal at Folder");
+        compare(bgItem.text, "New Terminal at Folder");
+        compare(bgItem.shortcut, "Ctrl+Alt+T");
+        verify(bgItem.enabled);
+        tab.runAction("terminalHere", folder);
+        compare(fakeApp.terminals, [here]);
+        // A selected folder.
+        folder.dirRows = [0];
+        folder.selected = [0];
+        folder.selectedCount = 1;
+        const items = tab.itemMenu(folder);
+        verify(!items.some(i => i.id === "services"), "no Services submenu");
+        const item = items.find(i => i.id === "terminal");
+        verify(item !== undefined, "a folder's menu has New Terminal at Folder");
+        verify(item.enabled);
+        compare(items.map(i => i.id ?? "-").indexOf("terminal"), items.map(i => i.id ?? "-").indexOf("newTab") + 1, "right after Open in New Tab");
+        tab.runAction("terminal", folder);
+        compare(fakeApp.terminals.length, 2);
+        // The keyboard: the selected folder.
+        tab.focusView();
+        keyClick(Qt.Key_T, Qt.ControlModifier | Qt.AltModifier);
+        compare(fakeApp.terminals.length, 3, "Ctrl+Alt+T opens a terminal");
+        // A file selected: nothing to open a terminal in.
+        folder.dirRows = [];
+        compare(tab.terminalTarget(folder), "", "a file is no folder");
+        folder.selected = [];
+        folder.selectedCount = 0;
+        // Not a folder on this computer: dimmed, and nothing opens.
+        folder.isTrash = true;
+        compare(tab.terminalTarget(folder), "", "not in the Trash");
+        verify(!tab.backgroundMenu(folder).some(i => i.id === "terminalHere"), "the Trash's menu has no terminal item");
+        folder.isTrash = false;
+        folder.isSearch = true;
+        compare(tab.terminalTarget(folder), "", "not in a search");
+        folder.isSearch = false;
+        const before = folder.url;
+        folder.url = "sftp://host/home/u";
+        const remote = tab.backgroundMenu(folder).find(i => i.id === "terminalHere");
+        verify(remote !== undefined && !remote.enabled, "dimmed on a server");
+        tab.runAction("terminalHere", folder);
+        compare(fakeApp.terminals.length, 3, "nothing opens on a server");
+        folder.url = before;
     }
 
     // Cut (owner request 2026-11-07, decision F-18, over the Finder's F-6): Cut before Copy in the item menu, Ctrl+X, and Esc

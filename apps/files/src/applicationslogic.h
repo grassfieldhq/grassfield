@@ -128,6 +128,11 @@ QStringList execArguments(const QString &exec);
 // What the shell's Apps.launchNow starts for an entry: execArguments, with xdg-terminal-exec in front when the entry runs in a
 // terminal (KIO would use KDE's terminal setting: konsole, absent here). Empty when there is no command.
 QStringList launchCommand(const QString &exec, bool runInTerminal);
+// New Terminal at Folder: the session's default terminal (xdg-terminal-exec, which reads the Grassfield session's own
+// grassfield-xdg-terminals.list first, Settings > Desktop & Dock > Default Apps) opened in `folder`, an absolute local path.
+// xdg-terminal-exec turns --dir into each terminal's own option (X-TerminalArgDir: --working-directory, --directory, ...) or
+// changes to it for a terminal without one. The caller also starts it in `folder`.
+QStringList terminalAtFolder(const QString &folder);
 
 // The url of the Applications location and of one application in it: grassfield-apps:/ and grassfield-app:/<id>.
 QUrl locationUrl();

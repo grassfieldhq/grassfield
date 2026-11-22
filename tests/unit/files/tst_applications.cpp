@@ -408,6 +408,19 @@ TEST(Applications, ATerminalEntryRunsBehindXdgTerminalExec)
     EXPECT_TRUE(launchCommand(QStringLiteral("%f"), true).isEmpty()) << "no command, nothing to put behind the terminal";
 }
 
+// New Terminal at Folder (owner report 2026-11-22): the default terminal through xdg-terminal-exec with --dir, which it turns into
+// each terminal's own option. Spaces, accents and '=' inside the name pass as they are; a trailing '=' (which xdg-terminal-exec
+// 0.14's `IFS='=' read` would drop) gets a '/' after it; a line break gets no --dir at all (the working directory is used).
+TEST(Applications, NewTerminalAtFolderGivesTheFolderToXdgTerminalExecIntact)
+{
+    const QString xte = QStringLiteral("xdg-terminal-exec");
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("/home/u/My Projects/é ü")), (QStringList{xte, QStringLiteral("--dir=/home/u/My Projects/é ü")}));
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("/home/u/a=b")), (QStringList{xte, QStringLiteral("--dir=/home/u/a=b")}));
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("/home/u/key=")), (QStringList{xte, QStringLiteral("--dir=/home/u/key=/")}));
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("/home/u/two\nlines")), QStringList{xte});
+    EXPECT_EQ(terminalAtFolder(QStringLiteral("relative")), QStringList{xte}) << "only an absolute path is ever a --dir";
+}
+
 // A .desktop that is a FIFO (or a link to one) froze the GUI thread in a blocking open until a timeout: it is no entry, and
 // the others are listed at once.
 TEST(Applications, AFifoNamedDesktopNeverBlocksTheListing)

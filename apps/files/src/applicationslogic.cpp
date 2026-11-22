@@ -493,6 +493,19 @@ QStringList launchCommand(const QString &exec, bool runInTerminal)
     return command;
 }
 
+QStringList terminalAtFolder(const QString &folder)
+{
+    QStringList command{QStringLiteral("xdg-terminal-exec")};
+    // xdg-terminal-exec 0.14 reads its --dir value with `IFS='=' read`, which drops a trailing '=' and stops at a line break: a
+    // folder ending in '=' gets a '/' after it (the same folder), and one with a line break gets no --dir (the working
+    // directory, which a terminal that runs as one instance for all its windows does not follow).
+    if (folder.startsWith(QLatin1Char('/')) && !folder.contains(QLatin1Char('\n')) && !folder.contains(QLatin1Char('\r'))) {
+        const QString dir = folder.endsWith(QLatin1Char('=')) ? folder + QLatin1Char('/') : folder;
+        command << QStringLiteral("--dir=") + dir;
+    }
+    return command;
+}
+
 namespace
 {
 // Only touched on the GUI thread.

@@ -151,6 +151,18 @@ Platform.MenuBar {
             enabled: bar.keysHere && bar.win.manager.closedTabs.length > 0
             onTriggered: bar.win.manager.reopenClosedTab(bar.win)
         }
+        // The Finder's Services > New Terminal at Folder, first-class (owner report 2026-11-22): the folder selected, else the
+        // folder shown, in the default terminal; dimmed where that is no folder on this computer (BrowserTab.terminalTarget).
+        Platform.MenuItem {
+            text: qsTr("New Terminal at Folder")
+            shortcut: "Ctrl+Alt+T"
+            enabled: {
+                const f = bar.folder;
+                void (f ? f.selectedCount : 0);
+                return bar.selectionKeysHere && bar.tab !== null && bar.tab.terminalTarget !== undefined && bar.tab.terminalTarget(null) !== "";
+            }
+            onTriggered: bar.tab.openTerminal(null)
+        }
         Platform.MenuSeparator {}
         Platform.MenuItem {
             text: qsTr("Open")

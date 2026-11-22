@@ -2288,8 +2288,10 @@ void FilesApp::openTerminal(const QUrl &folder)
         emit operationFailed(tr("Opening files is disabled in this session (GRASSFIELD_FILES_NO_LAUNCH)."));
         return;
     }
-    // Decision F-7: the session's terminal, never KIO's konsole lookup; the folder is only its working directory.
-    const QStringList argv = grassfield::apps::scopedCommand(QStringLiteral("xdg-terminal-exec"), {}, grassfield::apps::scopedLaunch());
+    // Decision F-7: the session's default terminal, never KIO's konsole lookup; the folder is only its working directory, given
+    // as xdg-terminal-exec's --dir too (a terminal running one instance for all its windows ignores the working directory).
+    const QStringList terminal = ApplicationsLogic::terminalAtFolder(folder.toLocalFile());
+    const QStringList argv = grassfield::apps::scopedCommand(terminal.first(), terminal.mid(1), grassfield::apps::scopedLaunch());
     QProcess process;
     process.setProgram(argv.first());
     process.setArguments(argv.mid(1));
