@@ -26,6 +26,7 @@
 #    connection holds two; amended by the owner decision of 2026-11-22): nine requests at once from three connections, the
 #    shell gets four, the other five wait in the bridge, unseen (no prompt, no id, no cancel), none cancelled; each answer
 #    gives its place to a waiting one, shown on its turn, the nine answers reach their callers, never more than four shown;
+#    an invalid answer line for a waiting id is ignored (never a cancellation);
 #    a waiting request withdrawn by its caller (StopPrompting) or whose caller leaves the bus ends unseen; one that waits
 #    past its time (--queue-timeout-ms here) is answered "cancelled", never shown; one connection's seventh and eighth
 #    waiting requests are answered "cancelled" at once, its six are shown on their turns
@@ -56,7 +57,11 @@
 #                                                  pidfd's re-check, the known callers' namespaces: every known caller exempt,
 #                                                  or the disk helper not, decision 9-26 amended; the applications' queue:
 #                                                  a waiting request sent at once, turns not fair, a request that waited
-#                                                  too long never answered), each built and run against
+#                                                  too long never answered, an invalid line cancelling a waiting request;
+#                                                  the request book: a caller's turn forgotten when one of its requests
+#                                                  ends, a new request kept out of a free place while others wait, no
+#                                                  place handed over on release, a new connection ranked first), each
+#                                                  built and run against
 #                                                  the unit tests and this scenario; every one must be caught
 # Needs g++ with the Qt 6 Core and gcr-4 headers (or GRASSFIELD_PROMPTER: a built bridge), dbus-daemon, dbus-send, python3
 # with PyGObject and the Gcr 4 introspection data; SKIPs without them, when libdbus cannot reach the bus, and when this
@@ -393,6 +398,10 @@ waits=$(waits_in_log)
 client c8w password --title "Waiting-withdrawn" --close-when "$d/close-c8w"
 wait_until 10 bash -c '[[ $(( $(grep -c "waits for a place" "$1") - $2 )) -ge 1 ]]' _ "$d/main.log" "$waits"
 idw=$(grep -o "request p[0-9]*: password, waits for a place" "$d/main.log" | tail -n 1 | awk '{print $2}' | tr -d :)
+# The shell cannot answer a request it was never sent, not even wrongly (opus review, M1).
+say s "raw {\"type\":\"answer\",\"id\":\"$idw\",\"result\":\"maybe\"}"
+desc="an invalid answer line for a waiting id ($idw) is ignored: the request keeps waiting, its caller gets nothing"
+check wait_until 5 bash -c 'grep -q "invalid answer to $2 ignored: not outstanding" "$1" && sleep 0.5 && ! grep -q "^cancelled" "$3" && [[ $(grep -c "\"type\":\"cancel\"" "$4") == "$5" ]]' _ "$d/main.log" "$idw" "$d/c8w.out" "$d/s.shell" "$cancels"
 touch "$d/close-c8w"
 desc="a waiting request its caller withdraws (StopPrompting, $idw) ends unseen: no prompt and no cancel reach the shell"
 check wait_until 10 bash -c 'grep -q "request $2 withdrawn by its caller while it waited (never shown)" "$1" && ! grep -q Waiting-withdrawn "$3" && [[ $(grep -c "\"type\":\"cancel\"" "$3") == "$4" ]]' _ "$d/main.log" "$idw" "$d/s.shell" "$cancels"
@@ -613,6 +622,11 @@ disk-not-exempt#Identity.cpp#            if (!facts.sameNamespaces && role != QL
 queue-sends-early#Bridge.cpp#        m_pending.insert(a.id, pending);\n        if (a.waiting) {\n            // Unseen#        m_pending.insert(a.id, pending);\n        if (false) {\n            // Unseen
 turns-not-fair#Requests.cpp#served < bestServed || (served == bestServed && it->serial < bestSerial)#it->serial < bestSerial
 expiry-not-answered#Bridge.cpp#            cancelRequest(id, false);\n        }\n        armQueueTimer();#            ;\n        }\n        armQueueTimer();
+invalid-cancels-waiting#Bridge.cpp#it != m_pending.constEnd() && it->sent) {\n                    log(#it != m_pending.constEnd()) {\n                    log(
+turn-forgotten#Requests.cpp#        if (!left)\n            m_served.remove(caller);#        m_served.remove(caller);
+free-place-kept#Requests.cpp#        if (fits(lane, caller))\n            return {add(owner, lane, caller, false, 0), false};#        if (fits(lane, caller) && waiting() == 0)\n            return {add(owner, lane, caller, false, 0), false};
+no-hand-over#Requests.cpp#        if (freed)\n            promote();#        (void)freed;
+new-connection-first#Requests.cpp#        if (!m_served.contains(caller))\n            m_served.insert(caller, ++m_turn);#        ;
 EOF_MUTANTS
 fi
 exit $fail

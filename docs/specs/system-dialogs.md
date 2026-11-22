@@ -848,16 +848,21 @@ Rules (fail closed: no answer is ever invented):
   place: at most 16 waiting in all and 6 for one bus connection (gnome-keyring asks over one connection for every
   application: its 8 open gcr prompts fit, 2 shown and 6 waiting); beyond either bound it is answered "cancelled" at once
   (KIO: nothing), fail closed and logged. A waiting request holds no place (NetworkManager's and BlueZ's stay theirs) and
-  nothing of it reaches the shell, neither its text nor its id, before its turn. When a place frees it goes at once to
-  the waiting request of the connection served least recently (then the oldest request), never past a connection's two,
-  so one connection cannot starve the others; a newer request never passes a waiting one that could take the place. The
-  request is sent in the next main loop turn, then shown as any other (the caller identified then). A waiting request
+  nothing of it reaches the shell, neither its text nor its id, before its turn; the bridge's journal gets its id, its
+  kind and the counts (a KIO query's line also names the requester's role and path, as for any KIO query), never its
+  text, and an answer or an invalid line the shell sends for a waiting id is ignored (never a cancellation: it was never
+  sent). When a place frees it goes at once to the waiting request of the connection whose turn is the oldest (its last
+  turn, or when it began to wait: a new connection ranks after every connection already waiting), then the oldest
+  request, never past a connection's two, so one connection, or a program that keeps opening new ones, cannot starve the
+  others; a newer request never passes a waiting one that could take the place. The request is sent in the next main
+  loop turn, then shown as any other (the caller identified then). A waiting request
   that its caller withdraws (`StopPrompting`, the caller gone, the KIO client gone) or that is still waiting when the
   shell goes ends unseen; one that waited 110 s (the bridge's longest answer time, NetworkManager's) is answered
   "cancelled" (KIO: nothing, no cancelled entry kept). The lock changes nothing in the bridge: the shell keeps holding
   what it gets while the session is locked (SC4), so no place frees through the user then and waiting requests still
-  end after 110 s. Known limit: the applications behind gnome-keyring share its connection's turn and bounds (the bridge
-  sees one caller). At most 64
+  end after 110 s. Known limits: the applications behind gnome-keyring share its connection's turn and bounds (the bridge
+  sees one caller); a program that fills the queue's 16 places from several connections makes the next application
+  request answer "cancelled" at once until one frees, as every request past the share did before. At most 64
   gcr prompts open, at most 8 for one bus connection: a connection's ninth `BeginPrompting` is answered
   `org.freedesktop.DBus.Error.LimitsExceeded` and never reaches gcr; a `PerformPrompt` of the wrong shape is answered
   `org.freedesktop.DBus.Error.InvalidArgs`. A connection's count follows what gcr holds (opus counter-review of step 9a,

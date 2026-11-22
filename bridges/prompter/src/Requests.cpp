@@ -56,6 +56,10 @@ namespace gf::prompter {
             return {add(owner, lane, caller, false, 0), false};
         if (!waits(lane) || waiting() >= m_waitingCap || waitingOf(caller) >= m_waitingPerCaller)
             return {};
+        // A caller without a turn yet takes the next one now: it ranks after every caller already waiting or served, so a
+        // program that keeps opening new connections cannot pass the waiting requests of an older one (opus review, M2).
+        if (!m_served.contains(caller))
+            m_served.insert(caller, ++m_turn);
         return {add(owner, lane, caller, true, deadline), true};
     }
 
@@ -112,7 +116,8 @@ namespace gf::prompter {
 
     void RequestBook::promote() {
         while (true) {
-            // Among the waiting requests that fit: the caller served least recently (never: 0), then the oldest request.
+            // Among the waiting requests that fit: the caller whose turn is the oldest (its last promotion, or when it began
+            // to wait), then the oldest request.
             QString best;
             quint64 bestServed = 0, bestSerial = 0;
             for (auto it = m_entries.cbegin(); it != m_entries.cend(); ++it) {

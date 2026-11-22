@@ -859,6 +859,33 @@ TEST(PrompterQueue, AServedCallerDoesNotPassTheOthers) {
     EXPECT_TRUE(again.isWaiting(a2b));
 }
 
+// A program that keeps opening new connections does not pass a waiting request of an older one: a connection's first turn
+// is taken when it begins to wait, so a new connection ranks after those already waiting (opus review, M2).
+TEST(PrompterQueue, NewConnectionsRankAfterTheWaitingOnes) {
+    RequestBook book(limits::kRequests);
+    int         o[20];
+    int         n = 0;
+    const QString x = QStringLiteral(":1.60"), y = QStringLiteral(":1.61"), keyring = QStringLiteral(":1.62");
+    const QString x1 = book.admit(&o[n++], Lane::Keyring, x, 1000).id;
+    const QString x2 = book.admit(&o[n++], Lane::Keyring, x, 1000).id;
+    const QString y1 = book.admit(&o[n++], Lane::Keyring, y, 1000).id;
+    book.admit(&o[n++], Lane::Keyring, y, 1000);
+    const QString k1 = book.admit(&o[n++], Lane::Keyring, keyring, 1000).id;
+    book.release(y1);
+    EXPECT_EQ(book.takePromoted(), QStringList{k1}); // gnome-keyring served once
+    const QString k2 = book.admit(&o[n++], Lane::Keyring, keyring, 1000).id;
+    EXPECT_TRUE(book.isWaiting(k2));
+    // A flooder's fresh connections begin to wait after it: each ranks behind gnome-keyring's waiting request.
+    const QString f1 = book.admit(&o[n++], Lane::Keyring, QStringLiteral(":1.70"), 1000).id;
+    const QString f2 = book.admit(&o[n++], Lane::Keyring, QStringLiteral(":1.71"), 1000).id;
+    EXPECT_TRUE(book.isWaiting(f1));
+    book.release(x1);
+    EXPECT_EQ(book.takePromoted(), QStringList{k2});
+    book.release(x2);
+    EXPECT_EQ(book.takePromoted(), QStringList{f1}) << "then the new connections, in the order they began to wait";
+    EXPECT_TRUE(book.isWaiting(f2));
+}
+
 // The queue's bounds: kWaitingPerCaller for one caller, kWaiting in all; beyond, refused at once (fail closed).
 TEST(PrompterQueue, TheQueueIsBounded) {
     RequestBook book(limits::kRequests);

@@ -58,7 +58,8 @@ namespace gf::prompter {
         // The id of `owner` (outstanding or waiting), empty when it has none.
         QString     idOf(const void* owner) const;
         // False when `id` was not known. A place freed goes at once to the waiting requests that fit (fair order: the
-        // caller served least recently first, then the oldest request), see takePromoted().
+        // caller whose turn is the oldest first, then the oldest request; a caller's turn is its last promotion, or the
+        // moment it began to wait when it has none: a new caller ranks after those already waiting), see takePromoted().
         bool        release(const QString& id);
         // True while `id` waits for a place.
         bool        isWaiting(const QString& id) const;
@@ -114,7 +115,7 @@ namespace gf::prompter {
         quint64                     m_turn        = 0;
         QHash<QString, Entry>       m_entries;  // id -> request
         QHash<const void*, QString> m_byOwner;
-        QHash<QString, quint64>     m_served;   // caller -> the turn of its last promotion, while it has a request here
+        QHash<QString, quint64>     m_served;   // caller -> its turn (last promotion, or when it began to wait), while it has a request here
         QStringList                 m_promoted; // given a place, not yet taken by the bridge
     };
 

@@ -940,8 +940,14 @@ namespace gf::prompter {
             case ParseStatus::Version: protocolError(QStringLiteral("version"), error, true); return;
             case ParseStatus::Unknown: protocolError(QStringLiteral("unknown-type"), error, false); return;
             case ParseStatus::Invalid:
-                log(QStringLiteral("invalid answer to %1: %2; the request is cancelled").arg(message.id, error));
-                cancelRequest(message.id, true);
+                // Only a request the shell holds is cancelled: one waiting for a place was never sent, so the shell cannot
+                // answer it, rightly or wrongly (opus review of the applications' queue, M1).
+                if (const auto it = m_pending.constFind(message.id); it != m_pending.constEnd() && it->sent) {
+                    log(QStringLiteral("invalid answer to %1: %2; the request is cancelled").arg(message.id, error));
+                    cancelRequest(message.id, true);
+                } else {
+                    log(QStringLiteral("invalid answer to %1 ignored: not outstanding (%2)").arg(message.id, error));
+                }
                 protocolError(QStringLiteral("bad-answer"), error, false);
                 return;
             case ParseStatus::Ok: break;

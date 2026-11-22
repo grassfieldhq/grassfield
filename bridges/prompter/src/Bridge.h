@@ -20,8 +20,10 @@
 //   limits::kPrompts gcr prompts are open, at most limits::kPromptsPerCaller of them for one bus connection (Filter.h).
 // - The applications' queue (B-05 amended, owner decision 2026-11-22): a gcr prompt or a KIO query past the applications'
 //   share waits in the bridge for a place (bounded: Requests.h kWaiting, kWaitingPerCaller), unseen: nothing of it reaches
-//   the shell (not its text, not its id) before its turn. When a place frees it goes to the waiting request of the caller
-//   served least recently, which is sent to the shell in a later main loop turn (never from inside gcr's callbacks). A
+//   the shell (not its text, not its id) before its turn; the journal gets its id, its kind and the counts (and, for a KIO
+//   query, KioServer's line with the requester's role and path), never its text. When a place frees it goes to the waiting
+//   request of the caller whose turn is the oldest (Requests.h), sent to the shell in a later main loop turn (never from
+//   inside gcr's callbacks). An invalid answer to a waiting id is ignored, never a cancellation (it was never sent). A
 //   waiting request ends unseen when its caller withdraws it (StopPrompting, the caller gone, the KIO client gone) or the
 //   shell goes, and is refused ("cancelled"; KIO: nothing) after Options::queueTimeoutMs or at once beyond the bounds.
 //   The lock changes nothing here: the shell holds whatever it gets while the session is locked (SC4) and answers nothing,

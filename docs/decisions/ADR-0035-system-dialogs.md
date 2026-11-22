@@ -3554,14 +3554,19 @@ prompter (mode SINGLE) would have shown it after the others.
 (`RequestBook::admit`):
 - bounds: at most `kWaiting` = 16 waiting in all and `kWaitingPerCaller` = 6 for one connection (gnome-keyring's 8 open
   gcr prompts, Filter.h, fit: 2 shown and 6 waiting); beyond either, "cancelled" at once (KIO: nothing), logged;
-- fairness: a place that frees goes at once (inside `release`) to the waiting request of the connection served least
-  recently, then the oldest request, never past a connection's two; a connection's last turn is remembered while it has a
-  request in the book, so one that asks again right after its turn does not pass the others; a newer request never
-  passes a waiting one that could take the place (the book hands every freed place to the queue first);
+- fairness: a place that frees goes at once (inside `release`) to the waiting request of the connection whose turn is
+  the oldest, then the oldest request, never past a connection's two. A connection's turn is its last promotion, or the
+  moment it began to wait when it has none, so a new connection ranks after every connection already waiting: a program
+  that keeps opening new connections cannot pass gnome-keyring's waiting request (opus review, M2). The turn is
+  remembered while the connection has a request in the book, so one that asks again right after its turn does not pass
+  the others; a newer request never passes a waiting one that could take the place (the book hands every freed place to
+  the queue first);
 - NetworkManager and BlueZ never wait and keep their reserved places (a waiting request holds none);
 - unseen until its turn: the bridge sends nothing of a waiting request (text, id, requester) to the shell; gcr's caller is
   identified and its text read when it is sent, in the main loop turn after its place was given (never from inside gcr's
-  callbacks); an answer the shell sends to a waiting id is ignored (it was never sent);
+  callbacks); an answer, or an invalid answer line, the shell sends for a waiting id is ignored, never a cancellation (it
+  was never sent; opus review, M1). The journal gets a waiting request's id, kind and the counts, and for a KIO query
+  KioServer's usual line with the requester's role and path; never its text;
 - withdrawn unseen: the caller's `StopPrompting`, its leaving the bus, the KIO client leaving, or the shell's departure
   end a waiting request without telling the shell;
 - time: a waiting request waits at most `kWaitMs` = 110 s (the bridge's longest answer time, NetworkManager's), then is
@@ -3576,9 +3581,15 @@ query past the share used to fail the job's login at once. KioServer keeps its o
 open per caller): a query waiting in the bridge holds its window and key, as one shown does.
 
 **Kept.** The bound of 8 at the shell; the reserved places; one connection's two; fail closed on every error path (the
-shell gone, a bound reached, the time run out). **Known limit.** The applications behind gnome-keyring share its turn and
-bounds (the bridge sees one caller); a program that fills the queue (16) makes the next application request answer
-"cancelled", as every request did past the share before this amendment.
+shell gone, a bound reached, the time run out). **Known limits.** The applications behind gnome-keyring share its turn and
+bounds (the bridge sees one caller); a program that fills the queue (16, from three connections at least) makes the next
+application request answer "cancelled" at once until a place in the queue frees, as every request did past the share
+before this amendment.
+
+**Opus security review (2026-11-22): PASS**, with minors fixed in a follow-up commit: an invalid answer line for a waiting
+id no longer cancels it (M1); a connection's first turn is taken when it begins to wait, not "never served" (M2); the
+request book's mutants are in `prompter_bridge.sh --mutants` (M4); what the journal gets of a waiting request is stated
+exactly (NIT).
 
 **Tests.** `tests/unit/prompter/tst_prompter.cpp` PrompterQueue.* (the wait, the reserved places, the fair turns, a served
 caller not passing, the bounds, the deadline and the withdrawal); `tests/security/prompter_bridge.sh` section 8 (nine
