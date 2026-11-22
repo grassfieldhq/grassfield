@@ -31,7 +31,7 @@ The helper (`packaging/bin/grassfield-capture`) stays the only process that deci
 (`session_locked`, the 0.5 s poll), the private state and the stop protocol therefore stay in one tested place.
 
 It runs pixel tools as children, the same way it runs grim and gpu-screen-recorder today. The one new child is the
-Screenshot app's `--grab-window` mode (D-3, slice C9). No other process starts a capture.
+Screenshot app's `--grab-window` mode (D-3; built in slice B22, wired into the helper in slice C9). No other process starts a capture.
 
 #### The `shooting` phase and the thumbnail handshake (slice C1)
 Today `shot()` (grassfield-capture:855) writes no state when there is no timer: `write_state` runs only at :735, :894 and
@@ -85,7 +85,7 @@ the helper has no stdin to read. The choice therefore comes back as a second, sh
   fixed header and footer kept once, at most 20 000 px. The PNG is written through zlib.
 - `window --address A`: the window alone. The helper reads the address from `hyprctl clients` (for the toolbar's choice,
   the address Grassfield's window list already holds) and runs `grassfield-screenshot --grab-window A --out <hidden file>`
-  (D-3, slice C9).
+  (D-3, slices B22 and C9).
 - `record ... [--system-audio] [--mic NAME] [--fps 30|60] [--quality Q]` (D-6, slice C7).
 
 #### The result channel (slice C2)
@@ -133,10 +133,10 @@ toolbar (ADR-0015) and the global menu (ADR-0008).
 **Why `--grab-window` uses `hyprland-toplevel-export-v1`.** The protocol's handle is the Hyprland window address that
 `hyprctl clients` prints, so no ext-foreign-toplevel identifier has to be found. Nothing installed lists those identifiers:
 grim cannot, no Quickshell type exposes them, and the helper is stdlib Python. Two things are checked in the spike (slice
-C9): whether Hyprland 0.56 returns black for a `no_screen_share` window or refuses it, and whether rounding and alpha come
+B22): whether Hyprland 0.56 returns black for a `no_screen_share` window or refuses it, and whether rounding and alpha come
 through. The protocol XML is not installed on this machine: `/usr/include/hyprland/protocols/` has only the generated
 server header, and no package owns `/usr/share/hyprland-protocols`. The build therefore needs one of two things, chosen in
-C9:
+B22:
 - a new **build-only** makedepend, `hyprland-protocols`;
 - or the one XML file vendored with its licence (checked by `just check-licenses`).
 
@@ -256,7 +256,7 @@ never shown while the lock, a polkit or secret sheet, or a key sink holds the ke
 **Recordings and hidden windows.** The OC-1 MINOR-4 limitation is unchanged for 1.0: KMS recording shows password managers
 and sheets.
 
-**For the opus security reviews** (slices C2, C4, C9, B14, A3, D2):
+**For the opus security reviews** (slices C2, C4, C9, B22, A3, B7, B14, D2):
 - the result-file path checks before `gio trash`, Copy and Show in Files (a regular file, not a link, in the named folder);
 - recognised text is sensitive: the result file's `text` field is runtime-only (0600) and the history index holds none;
 - the freeze and scroll channel's validation (D-1);
@@ -335,7 +335,7 @@ Per slice, in docs/specs/capture-suite.md §4: L0 helper fakes, QML unit tests, 
 scale 1.25 (each with a screenshot path or "visual NOT verified"), and L2 for the owner.
 
 ## Consequences
-- The capture gains the CleanShot-class features in about 45 slices of a day or less (spec §4), with no new run-time
+- The capture gains the CleanShot-class features in about 50 slices of a day or less (spec §4), with no new run-time
   dependency.
 - The new code locations are `apps/screenshot/` and `apps/recognition.*` (moved code).
 - The helper stays the single place that decides captures, so the lock audit surface stays one file plus one small grab mode.
