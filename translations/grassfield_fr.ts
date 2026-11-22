@@ -4385,6 +4385,14 @@
         <translation>Masquer et afficher automatiquement le Dock</translation>
     </message>
     <message>
+        <source>Show the Dock on all displays</source>
+        <translation>Afficher le Dock sur tous les écrans</translation>
+    </message>
+    <message>
+        <source>Off: the Dock is on one display at a time, the one where the pointer last reached its edge.</source>
+        <translation>Désactivé : le Dock est sur un seul écran à la fois, celui dont le pointeur a touché le bord en dernier.</translation>
+    </message>
+    <message>
         <source>Show recent apps in Dock</source>
         <translation>Afficher les apps récentes dans le Dock</translation>
     </message>
