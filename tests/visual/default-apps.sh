@@ -49,13 +49,51 @@ fclass='^org\.grassfield\.Files$'
 folder=$VS_STATE/default-apps-folder
 case $folder in "$VS_ROOT"/.dev/visual/default-apps-folder) ;; *) echo "FAIL: unsafe folder path"; exit 1 ;; esac
 mkdir -p "$folder/Projects"
-vs_spawn "$files" "$folder"
+: > "$folder/Report.docx"
+vs_spawn env QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 "$files" "$folder"
 fl_check_wait "Files opens" 30 fl_has_window "$fclass"
 fl_focus_class "$fclass"
 vs_sleep 1.5
+fpid=$(fl_clients "$fclass" | head -n 1 | cut -f1)
 read -r fx fy fw fh <<<"$("$VS_ROOT/scripts/nestctl" clients -j | jq -r '[.[] | select(.class == "org.grassfield.Files")][0] | "\(.at[0]) \(.at[1]) \(.size[0]) \(.size[1])"')"
 vs_pointer abs "$((fx - ox + fw * 3 / 4))" "$((fy + fh * 3 / 4))" sleep 200 rclick >/dev/null
 vs_sleep 1
 FL_NOPARK=1 fl_shot files-background-menu >/dev/null
+fl_tap Escape
+
+# 3. The folder's own menu (New Terminal at Folder right after Open in New Tab): a right-click on the Projects folder, the first
+#    icon of the grid (the items sort by name: Projects, then Report.docx).
+item_x=$((fx - ox + 315))
+item_y=$((fy + 130))
+vs_pointer abs "$item_x" "$item_y" sleep 200 rclick >/dev/null
+vs_sleep 1
+FL_NOPARK=1 fl_shot files-folder-menu >/dev/null
+fl_tap Escape
+
+# 3b. The File menu in the menu bar (with the menu bridge built: bridges/menu-bridge/build-direct.sh), the Projects folder
+#     selected: New Terminal at Folder with Ctrl+Alt+T. The menu bar's File title follows the app's name ("Files").
+if [[ -x $VS_DEV/build/grassfield-menu-bridge ]]; then
+  vs_pointer abs "$item_x" "$item_y" sleep 200 click >/dev/null
+  vs_sleep 1
+  vs_pointer abs "${DEFAULT_APPS_FILE_MENU_X:-150}" 14 sleep 200 click >/dev/null
+  vs_sleep 1.2
+  FL_NOPARK=1 fl_shot files-file-menu >/dev/null
+  vs_ipc menubar close >/dev/null 2>&1 || true
+  fl_tap Escape
+else
+  fl_note "no menu bridge: the File menu is not captured"
+fi
+
+# 4. Get Info > Open with > Other… on a Word document: the popup ends with Other…, which opens the Choose Application panel.
+vs_pointer abs "$((item_x + 120))" "$item_y" sleep 200 click >/dev/null
+vs_sleep 0.5
+fl_appkey ctrl i
+fl_check_wait "Get Info opens" 15 fl_title_has "$fclass" 'Report'
+fl_check "Get Info has the Open with popup" a11y_find "$fpid" 'combo box' '^Open with$' --press --wait 10
+vs_sleep 1
+FL_NOPARK=1 fl_shot get-info-open-with >/dev/null
+fl_check "the popup ends with Other…" a11y_find "$fpid" '.*' '^Other…$' --press --wait 5
+vs_sleep 1.5
+FL_NOPARK=1 fl_shot choose-application >/dev/null
 fl_tap Escape
 fl_done
