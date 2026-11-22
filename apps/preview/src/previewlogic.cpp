@@ -305,6 +305,8 @@ int fitMarkdownImages(QTextDocument *document, qreal maxWidth)
 {
     if (!document || maxWidth <= 0)
         return 0;
+    // The view is read only: nothing to undo, and every resize would otherwise add an undo step (re-review 2026-11-22).
+    document->setUndoRedoEnabled(false);
     static const QRegularExpression served(QStringLiteral("^image://preview/fit/(\\d+)x(\\d+)/"));
     struct Change {
         int position;

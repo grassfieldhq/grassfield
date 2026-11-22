@@ -664,4 +664,8 @@ TEST(Markdown, PicturesFitTheColumnWithoutANewParse)
     EXPECT_EQ(selection.selectionEnd(), 6);
     EXPECT_EQ(fitMarkdownImages(nullptr, 400), 0);
     EXPECT_EQ(fitMarkdownImages(&doc, 0), 0);
+    // Read only: the resizes left nothing to undo (each one used to add an undo step).
+    EXPECT_FALSE(doc.isUndoRedoEnabled());
+    EXPECT_FALSE(doc.isUndoAvailable());
+    EXPECT_EQ(doc.availableUndoSteps(), 0);
 }

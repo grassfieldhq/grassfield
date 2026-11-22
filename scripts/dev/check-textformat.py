@@ -4,8 +4,8 @@
 Untrusted strings (app ids, titles, desktop entries, SSIDs, notification fields) rendered as rich text can
 spoof UI or fetch remote resources. `Text.StyledText`/`Text.RichText` are allowed only in ALLOW. A `TextEdit` is plain
 text by default; `TextEdit.RichText`, `TextEdit.MarkdownText` and `TextEdit.AutoText`, and a `textFormat` set to the same
-values through the `Text.` enum (`TextEdit { textFormat: Text.RichText }`, `edit.textFormat = Text.MarkdownText`), are
-allowed only in ALLOW_EDIT.
+values through the `Text.` enum (`TextEdit { textFormat: Text.RichText }`, `edit.textFormat = Text.MarkdownText`) or as a
+number other than 0 (`textFormat: 1`), are allowed only in ALLOW_EDIT.
 Usage: check-textformat.py   (exit 1 on violations)
 """
 import pathlib
@@ -23,8 +23,11 @@ ALLOW_EDIT = {
 }
 # Either spelling of a rich format: the TextEdit enum anywhere, or a textFormat binding or assignment through the Text enum
 # (both enums share the values; review 2026-11-22: `TextEdit { textFormat: Text.RichText }` passed). Text.StyledText stays
-# the `Text {` block check's (a TextEdit has no styled text).
-RICH_EDIT = re.compile(r"TextEdit\.(?:RichText|MarkdownText|AutoText)\b|textFormat\s*[:=]\s*Text\.(?:RichText|MarkdownText|AutoText)\b")
+# the `Text {` block check's (a TextEdit has no styled text). A number other than 0 (PlainText) is a format too: 1 RichText,
+# 2 AutoText, 3 MarkdownText, 4 StyledText (re-review 2026-11-22: `textFormat: 1` passed), in decimal or hexadecimal.
+RICH_EDIT = re.compile(r"TextEdit\.(?:RichText|MarkdownText|AutoText)\b"
+                       r"|textFormat\s*[:=]\s*Text\.(?:RichText|MarkdownText|AutoText)\b"
+                       r"|textFormat\s*[:=]\s*\(?\s*(?:0[xX]0*[1-9a-fA-F][0-9a-fA-F]*|0*[1-9]\d*)\b")
 OPEN = re.compile(r"(^|[^\w.])Text\s*\{")
 
 
