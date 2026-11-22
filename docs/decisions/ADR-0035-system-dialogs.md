@@ -1871,7 +1871,8 @@ GDBus; no C source of Grassfield's own; `CMakeLists.txt`, `build-direct.sh`), in
   a desktop that cannot show a prompt must be diagnosable without a technical step for the user (the journal says it).
   **Amended after the opus counter-review of step 9a (NIT):** for that line the bridge reads the owner's executable only,
   not its namespaces, tracer and mappings.
-- **9-11. Limits.** **Choice:** 8 requests outstanding (D-9); 64 gcr prompts open at once (beyond, a new one answers
+- **9-11. Limits.** **Choice:** 8 requests outstanding (D-9; past the applications' share of them a gcr prompt or a KIO
+  query waits in a bounded queue since the amendment of B-05 on 2026-11-22, at the end of this ADR); 64 gcr prompts open at once (beyond, a new one answers
   "cancelled"); a password of at most 4096 bytes after decoding, never cut; shell lines of at most 16 KiB; caller strings
   over 16 KiB dropped by the filter; texts capped in UTF-16 code units, the ellipsis included: title 128, message 256,
   description 1024, warning 256, check box 128, buttons 32, requester name 128, icon and desktop id 256, path 512. Rule
