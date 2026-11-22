@@ -527,6 +527,15 @@ function settleScreen(chosen, names, focused, preferred) {
     return latched !== "" ? latched : dockScreen("", names, focused, preferred);
 }
 
+// Whether the Dock window of an output shows a Dock: every output does with "Show the Dock on all displays"
+// (dock.allDisplays, the default), else only the one that has the Dock (`isDockScreen`) and the others stay away.
+// An output with no name (a window being destroyed) never does.
+function hasDock(allDisplays, isDockScreen, screenName) {
+    if (!screenName)
+        return false;
+    return allDisplays === true || isDockScreen === true;
+}
+
 // Whether the output of a Dock window takes the Dock from the one that has it: an output without the Dock acts as an
 // auto-hidden Dock that stays away, and its machine starting to reveal (AutoHide.js: the pointer rested on the edge
 // strip for the reveal dwell) is the pointer having reached the Dock's edge there.

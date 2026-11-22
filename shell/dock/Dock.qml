@@ -110,7 +110,9 @@ Scope {
     Binding {
         target: Compositor
         property: "dockScreenName"
-        value: root.dockScreen
+        // "" = no single Dock output: every display has its own Dock, so the minimize target, Overview and the notification
+        // center look at the display they are on (Settings > Desktop & Dock > "Show the Dock on").
+        value: Settings.dockAllDisplays ? "" : root.dockScreen
     }
 
     // Test hooks (IPC): a pointer position along the Dock (x at the bottom, y on a side edge, in the Dock window) forcing magnification, and a forced reveal.
@@ -1246,7 +1248,9 @@ Scope {
             readonly property bool fullscreen: Compositor.fullscreenOn(screenName, Compositor.topologyRevision)
             // Auto-hide as the machine sees it (DockModel.hides): the setting, any output that does not have the Dock (it stays
             // away), a Dock that just moved here, or full screen there (the Dock shows when the pointer reaches its edge).
-            readonly property bool autohide: DockModel.hides(Settings.dockAutohide, isDockScreen, revealPending, fullscreen)
+            // This output shows a Dock: the one of `dockScreen`, or every output with dock.allDisplays (Geometry.hasDock).
+            readonly property bool hasDock: Geometry.hasDock(Settings.dockAllDisplays, isDockScreen, screenName)
+            readonly property bool autohide: DockModel.hides(Settings.dockAutohide, hasDock, revealPending, fullscreen)
             // Layout from the unmagnified geometry (stable under the pointer), then scaled.
             readonly property var widths: root.items.map(it => it.kind === "separator" ? separatorWidth : iconSize)
             readonly property real baseTotal: Magnify.totalWidth(widths, Tokens.dockSpacing)
@@ -1533,7 +1537,7 @@ Scope {
             implicitWidth: vertical ? depth : 0
             implicitHeight: vertical ? 0 : depth
             // Only the Dock's output reserves room, and not while auto-hide is on.
-            exclusiveZone: reveal && isDockScreen ? DockModel.reservedHeight(dockMetrics, Settings.dockAutohide) : 0
+            exclusiveZone: reveal && hasDock ? DockModel.reservedHeight(dockMetrics, Settings.dockAutohide) : 0
             color: "transparent"
             focusable: true
             WlrLayershell.layer: DockModel.overlayLayer(win.fullscreen) ? WlrLayer.Overlay : WlrLayer.Top
@@ -1616,7 +1620,7 @@ Scope {
                     reveal = true;
                 Compositor.registerDock(screenName, win);
                 // An output that does not have the Dock starts with it slid out of sight.
-                if (!isDockScreen)
+                if (!hasDock)
                     hideMachine = AutoHide.initial(true);
             }
 
@@ -1664,7 +1668,7 @@ Scope {
                 onTriggered: {
                     const next = AutoHide.step(win.hideMachine, win.hideInhibitors, win.autohide, win.hideTiming, Math.min(frameTime * 1000, 100));
                     // The pointer stayed on the edge strip of an output without the Dock for the dwell: the Dock comes here.
-                    if (Geometry.movesDock(win.isDockScreen, win.hideMachine.state, next.state)) {
+                    if (Geometry.movesDock(win.hasDock, win.hideMachine.state, next.state)) {
                         win.revealPending = true;
                         root.moveDockTo(win.screenName);
                     }
@@ -1696,6 +1700,12 @@ Scope {
 
                 HoverHandler {
                     id: areaHover
+                    // With a Dock on every display, the one the pointer is on is the one menus, stacks, the keyboard and the drag
+                    // state belong to (the Dock output of the single-Dock model).
+                    onHoveredChanged: {
+                        if (hovered && Settings.dockAllDisplays)
+                            root.moveDockTo(win.screenName);
+                    }
                     // Using the pointer leaves keyboard mode (focus returns to the app).
                     onPointChanged: {
                         if (hovered)
@@ -2352,7 +2362,7 @@ Scope {
                                                 anchors.centerIn: parent
                                                 // The largest it is drawn: the tile at full magnification.
                                                 constraintSize: Qt.size(Math.ceil(parent.width * win.maxScale), Math.ceil(parent.height * win.maxScale))
-                                                captureSource: minimizedTile.live && win.isDockScreen && win.reveal ? tile.modelData.toplevel : null
+                                                captureSource: minimizedTile.live && win.hasDock && win.reveal ? tile.modelData.toplevel : null
                                                 live: false
                                                 paintCursor: false
                                                 // A frame can be asked for once the capture knows the buffer size; and while the Dock is in view.
