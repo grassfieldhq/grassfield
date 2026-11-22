@@ -7245,6 +7245,14 @@
         <translation>Afficher les informations</translation>
     </message>
     <message>
+        <source>Show Formatted Text</source>
+        <translation>Afficher le texte mis en forme</translation>
+    </message>
+    <message>
+        <source>Show Markdown Source</source>
+        <translation>Afficher la source Markdown</translation>
+    </message>
+    <message>
         <source>Stop Slideshow</source>
         <translation>Arrêter le diaporama</translation>
     </message>
@@ -16951,6 +16959,14 @@
     <message>
         <source>Rotate Left</source>
         <translation>Pivoter à gauche</translation>
+    </message>
+    <message>
+        <source>Show Markdown Source</source>
+        <translation>Afficher la source Markdown</translation>
+    </message>
+    <message>
+        <source>Show Formatted Text</source>
+        <translation>Afficher le texte mis en forme</translation>
     </message>
     <message>
         <source>Info</source>

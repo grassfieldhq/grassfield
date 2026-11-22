@@ -21,6 +21,7 @@ Window {
     // scaled down to fit Tokens.previewGlanceScreenFraction of its screen; PDF, text, video and audio at their token
     // sizes (capped the same way). The header comes on top of the content. Later files of a multi-file Glance are
     // fitted into that window.
+    // The kind and a picture's size only (PreviewApp.inspectFirst): the content itself is inspected on the worker.
     readonly property var firstInfo: win.backend.inspectFirst()
     // The screen the size was computed for, and whether the window may still be refitted (see fitToScreen).
     property string sizedFor: ""
@@ -182,10 +183,22 @@ Window {
     }
 
 
-    Item {
+    // The header is the panel's title bar: its empty space moves the window (owner report on 1.0.0-rc9: the Glance could not
+    // be moved, since the window rule gf-glance draws no compositor titlebar on it and nothing here started a move), as
+    // a macOS Quick Look panel moves by its title bar. The shared toolbar of the apps gives the drag (the compositor's
+    // interactive move) behind every control; the Glance has no lights, so a double-click does nothing (a panel, not a
+    // document window: no zoom, no minimize).
+    UnifiedToolbar {
         id: header
+        objectName: "glanceHeader"
         width: parent.width
         height: Tokens.previewGlanceHeaderHeight
+        window: win
+        style: "titlebar"
+        showControls: false
+        showTitle: false
+        doubleClickAction: "none"
+        accessibleName: qsTr("Glance")
 
         // Close: a glyph circle at the left (macOS Quick Look), the Space and Esc keys do the same.
         Item {
@@ -289,6 +302,7 @@ Window {
 
         Button {
             id: openButton
+            objectName: "glanceOpenButton"
             anchors {
                 right: parent.right
                 rightMargin: Tokens.spacingMd

@@ -64,20 +64,49 @@ single instance.
    show "This file is not text". Decoded as UTF-8. Playlists (M3U, PLS, XSPF, WPL, every ASX suffix: asx, wax, wvx,
    wmx) are text, never handed to the player and never followed or fetched: decided by the canonical MIME type,
    its aliases and ancestors, the suffix, and the first 512 bytes (extensionless files).
+   Markdown (owner report on 1.0.0-rc9, "Preview does not preview .md files": they showed their source; macOS Quick Look
+   and Preview show a Markdown file formatted). A file of type `text/markdown` (or a type inheriting it: the `.md`,
+   `.markdown`, `.mkd` suffixes of shared-mime-info) shows rendered in the viewer and the Glance: headings, emphasis,
+   lists and task lists, block quotes, code (monospace, on `Appearance.buttonFill`, the control fill that shows in both appearances), links (accent colour), tables, rules
+   and pictures. The backend reads it with Qt's own Markdown reader (`QTextDocument::setMarkdown`, GitHub dialect, raw
+   HTML off: the document's own tags stay text) on the inspection worker and hands the view rich text
+   (`inspect` `markdown`, `html`; `previewlogic` `markdownHtml`), shown by a read-only, selectable `TextEdit` in
+   `RichText` (body `preview.markdownFontSize` 14 in the system font, margin `preview.markdownPadding` 24; zoom scales
+   it; Copy gives the text). A picture is shown only when it is a local readable regular file that Preview shows as an
+   image (a path relative to the document, an absolute path or a `file:` URL; not under /proc, /sys, /dev; within the P9
+   caps), served by the image provider under its token (never by path, never fetched: an `http`, `data:` or missing
+   picture shows its alternative text), at most 64 per document. A picture is served at most 2048 px per side
+   (`kMarkdownImageMaxSide`, `image://preview/fit/<w>x<h>/<token>`: the provider decodes it at that size, scaling while
+   decoding where the format can) and all the pictures of a document within 256 MiB of served pixels
+   (`kMarkdownImageBudgetBytes`); past it a picture shows its alternative text (review 2026-11-22). The provider runs on Qt
+   Quick's image reader thread (`ForceAsynchronousImageLoading`: a TextEdit's rich-text picture would otherwise be decoded
+   on the window's thread). The pictures are laid out no wider than the column by `PreviewApp.fitMarkdownImages`, which
+   changes their formats only: a resize never parses the text again and keeps the selection. A click on an
+   http(s) link opens it in the browser through `PreviewApp.openLink` (refused in a dev session, ADR-0019); other targets
+   (another file, an anchor) do nothing. View > Show Markdown Source and the toolbar's source button (`icons/source.svg`)
+   show the plain text instead (monospace, `PlainText`), View > Show Formatted Text goes back; the choice is the view's,
+   per file. A Markdown file over 512 K characters (`kMaxMarkdownChars`) shows its source only. Other text kinds (plain
+   text, logs, source code, JSON, YAML, TOML, XML, HTML, CSV, shell scripts, subtitles, diffs) show their plain text.
 6. P6 Audio and video (`MediaView.qml`): QtMultimedia `MediaPlayer`, only the local `file:` URL of a validated file;
    play/pause (button, Space in the viewer), a position slider, elapsed and total time. Glance and the Preview window start playing at
    once (Quick Look; the sound goes to the default output, so the system mute applies). A decode failure shows the player's message.
 7. P7 Glance (`qml/Glance.qml`): same binary with `--glance`. A normal toplevel with app id
    `org.grassfield.Preview.Glance`, sized for the content of the first file on the screen it is shown on (image:
    native size scaled down to fit `preview.glanceScreenFraction` of the screen for the content area; PDF, text, video
-   and audio their token sizes, capped the same way; the header comes on top), header with the file name, "n of N" and
+   and audio their token sizes, capped the same way; the header comes on top; `PreviewApp.inspectFirst` gives the kind
+   and a picture's size only, so no text is read and no Markdown rendered on the window's thread before it maps: the
+   content is inspected on the worker), header with the file name, "n of N" and
    "Open with Preview". Qt only learns the output after mapping: the window is sized for Qt's first screen, then once
    for the screen it entered, requested as a fixed size (minimum = maximum, which Hyprland applies to floating windows,
    centred) and released after `motion.normal` (1200x800 PNG on 1920x1080: 1134x796).
    Space, Esc and Ctrl+W close it; Left/Right move through the files (wrapping, fitted into the same window);
    + / - / 0 zoom; Ctrl+O or the button opens the full viewer (`grassfield-preview -- <files>`, detached) and quits.
    The Hyprland rule `gf-glance` (`config/hypr/grassfield/windows.lua`) floats and centers it and sets
-   `decorate = false` so the compositor plugin draws no titlebar.
+   `decorate = false` so the compositor plugin draws no titlebar. The header is therefore the panel's title bar (owner
+   report on 1.0.0-rc9, "the Preview window cannot be moved": it started no move): it is the apps' `UnifiedToolbar`
+   (no lights, no title of its own), so a drag on its empty space moves the window (the compositor's interactive move),
+   as a Quick Look panel moves by its title bar; a drag from its controls does not; a double-click does nothing (a panel:
+   no zoom, no minimize).
 8. P8 Triggers: Files (Space, item menu "Glance at …", `docs/specs/files.md` F12) and desktop icons (Space toggles
    it, `docs/specs/desktop.md`; OFF in desktop keyboard safe mode, back with the macOS-model redesign). There is no single-instance logic in the app: a second launch is a second window.
    (Off in safe mode.) The desktop toggles through `shell/services/GlanceApp.qml`, which owns the process and closes it when Space is
@@ -86,7 +115,8 @@ single instance.
 9. P9 Untrusted input: only local regular files; `QImageReader::setAllocationLimit(256)` for every decoder (also QML
    `Image`/`AnimatedImage`); images over 16384 px per side or 256 MiB at 4 bytes per pixel are refused before decoding
    with a notice; PNG headers are sniffed so that a huge image gets the right message; the file is never opened for
-   writing and never executed; no network access; text is `PlainText`.
+   writing and never executed; no network access; text is `PlainText`, except a Markdown document's rendered view (P5:
+   Qt's reader with raw HTML off, pictures only from the image provider).
 10. P10 Global menu (T1, master-prompt 5.7, ADR-0008): the viewer (not a Glance) exports File (Close Window), Edit
     (Copy and Select All of a text file or of the text of an image (P13), Find…, Find Next Ctrl+G, Find Previous Ctrl+Shift+G), View (Show/Hide
     Sidebar, Actual Size, Zoom to Fit, Zoom In, Zoom Out), Go (pages, previous/next file) and Tools (Rotate Left/Right)
@@ -170,6 +200,10 @@ single instance.
 | P11-P12 viewer state, list arriving after the opened file | `tests/unit/tst_previewviewer.qml`, `tests/unit/tst_previewlisting.qml` | L0 |
 | Off the window's thread: inspection on a worker (newest answer kept), the SVG bound, the text pieces, sidebar snippets on a worker, one decode for both recognitions at nice 19 with one OpenMP thread, the battery rule | `tests/unit/preview/tst_previewapp.cpp`, `tst_previewlogic.cpp` (gtest), `tests/unit/tst_previewasync.qml` | L0 |
 | P11 browsing with the arrows, rotate/zoom, sidebar, info, Glance arrows | `tests/visual/preview-browse.sh` (nested, standalone) | L1 |
+| P5 Markdown: type, pictures (local images only, never fetched, never a device or FIFO, bounded), raw HTML as text, rendered HTML from the backend, long documents as source | `tests/unit/preview/tst_previewlogic.cpp` (Markdown.*), `tst_previewapp.cpp` (MarkdownIsRendered...) (gtest) | L0 |
+| P5 Markdown view: rendered then source, selection and copy of the text, pictures fitted, theme colours, web links only | `tests/unit/tst_previewmarkdown.qml` | L0 |
+| P7 the Glance header moves the window, not from a control, no double-click action; a drag from any app toolbar control never moves its window | `tests/unit/tst_previewglance.qml`, `tests/unit/tst_windowcontrols.qml` | L0 |
+| Moving the viewer (image, Markdown) by its toolbar and the Glance (Markdown, image) by its header; Markdown rendered, light and dark | `tests/visual/preview-move.sh` (nested at 1.25, standalone) | L1 |
 | lint | `scripts/dev/qmllint.sh` (covers `apps/**`) and `check-textformat.py` | L0 |
 | config | `Hyprland --verify-config` for `dev.lua` and `session.lua` with `GRASSFIELD_CONFIG_DIR` | L0 |
 | P2-P7 | nested screenshots: image + zoom, multi-page TIFF, GIF, PDF with thumbnails, text, binary and 3 MB text notices, video, audio, Glance from Files and from a desktop icon, multi-file Glance, light and dark | L1 |
@@ -198,6 +232,10 @@ of v4.0.6), at run time only and only when installed (no package dependency of G
 is not installed).
 
 ## Known limitations
+- Markdown: Qt's reader (CommonMark with GitHub tables, task lists, strikethrough and autolinks), not every extension
+  (no footnotes, math, diagrams, emoji shortcodes, heading anchors); raw HTML in a document shows as text; a remote
+  picture shows its alternative text (never fetched); a link to another file or an anchor does nothing; no syntax
+  highlighting in code blocks; the source view's choice is not remembered between files.
 - Read only: no Export, annotations, page editing or printing.
 - Toolbar buttons are text (no zoom/rotate icons in the design system yet).
 - The PDF page view does not scroll by arrow keys (it is a TableView): arrows turn pages, wheel scrolls.

@@ -4,7 +4,14 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
+#include <QImage>
 #include <QTemporaryDir>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextImageFormat>
+#include <QUrl>
 
 #include <sys/stat.h>
 
@@ -199,7 +206,9 @@ TEST(PreviewLogic, TextCaps)
 
 int main(int argc, char **argv)
 {
-    QCoreApplication app(argc, argv);
+    // A QGuiApplication (offscreen): the Markdown tests build a QTextDocument, whose fonts need one.
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(argc, argv);
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
@@ -499,4 +508,164 @@ TEST(PreviewLogic, OnBatteryOnlyWithoutAnAdapterOnline)
     QDir(root.filePath(QStringLiteral("BAT0"))).removeRecursively();
     supply("hidpp_battery_0", "Battery\n", nullptr, "Device\n");
     EXPECT_FALSE(preview::onBatteryIn(root.path())) << "a mouse's battery is not the computer's";
+}
+
+// Owner report on 1.0.0-rc9: "Preview does not preview .md files" (they showed their source). A Markdown document is
+// recognised by its type and rendered; its pictures are local image files only, never fetched, never a device.
+TEST(Markdown, RecognisedByItsType)
+{
+    QTemporaryDir dir;
+    EXPECT_TRUE(isMarkdown(touch(dir, QStringLiteral("README.md"), "# Title\n")));
+    EXPECT_TRUE(isMarkdown(touch(dir, QStringLiteral("notes.markdown"), "# Title\n")));
+    EXPECT_FALSE(isMarkdown(touch(dir, QStringLiteral("notes.txt"), "# Title\n")));
+    EXPECT_FALSE(isMarkdown(touch(dir, QStringLiteral("data.json"), "{}\n")));
+    // Still text for the routing: the same viewer, the same caps.
+    EXPECT_EQ(classify(dir.filePath(QStringLiteral("README.md"))), Kind::Text);
+}
+
+TEST(Markdown, PicturesAreLocalImageFilesOnly)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(QDir(dir.path()).mkpath(QStringLiteral("img")));
+    ASSERT_TRUE(QImage(40, 20, QImage::Format_RGB32).save(dir.filePath(QStringLiteral("img/shot one.png"))));
+    touch(dir, QStringLiteral("fake.png"), "not a picture");
+    touch(dir, QStringLiteral("text.txt"), "hello");
+    QSize size;
+    const QString canonical = QFileInfo(dir.filePath(QStringLiteral("img/shot one.png"))).canonicalFilePath();
+    EXPECT_EQ(markdownImagePath(QStringLiteral("img/shot%20one.png"), dir.path(), &size), canonical);
+    EXPECT_EQ(size, QSize(40, 20));
+    EXPECT_EQ(markdownImagePath(QStringLiteral("img/shot one.png"), dir.path()), canonical);
+    EXPECT_EQ(markdownImagePath(QStringLiteral("./img/shot%20one.png?raw=true"), dir.path()), canonical);
+    EXPECT_EQ(markdownImagePath(QString::fromUtf8(QUrl::fromLocalFile(canonical).toEncoded()), QStringLiteral("/")), canonical);
+    // A '#' of the name is written %23; a raw one starts a fragment.
+    ASSERT_TRUE(QImage(8, 8, QImage::Format_RGB32).save(dir.filePath(QStringLiteral("a#b.png")), "PNG"));
+    EXPECT_EQ(markdownImagePath(QStringLiteral("a%23b.png"), dir.path()),
+              QFileInfo(dir.filePath(QStringLiteral("a#b.png"))).canonicalFilePath());
+    EXPECT_TRUE(markdownImagePath(QStringLiteral("#top"), dir.path()).isEmpty());
+    // Never fetched, never a device, a folder, a text file or a broken picture.
+    for (const QString &t : {QStringLiteral("https://example.com/a.png"), QStringLiteral("http://localhost/a.png"),
+                             QStringLiteral("data:image/png;base64,iVBORw0KGgo="), QStringLiteral("ftp://host/a.png"),
+                             QStringLiteral("file://remote.host/tmp/a.png"), QStringLiteral("/dev/zero"), QStringLiteral("/proc/self/fd/0"),
+                             QStringLiteral("img"), QStringLiteral("text.txt"), QStringLiteral("fake.png"), QStringLiteral("missing.png"),
+                             QString()})
+        EXPECT_TRUE(markdownImagePath(t, dir.path()).isEmpty()) << qPrintable(t);
+    // A FIFO named like a picture: refused without opening it (it would block).
+    const QString fifo = dir.filePath(QStringLiteral("pipe.png"));
+    ASSERT_EQ(::mkfifo(QFile::encodeName(fifo).constData(), 0600), 0);
+    EXPECT_TRUE(markdownImagePath(QStringLiteral("pipe.png"), dir.path()).isEmpty());
+}
+
+TEST(Markdown, RendersWithItsOwnTagsAsText)
+{
+    QStringList asked;
+    const QString html = markdownHtml(QStringLiteral("# Title\n\nSome **bold** and `code`.\n\n- one\n- two\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n"
+                                                     "[site](https://example.com) ![pic](a.png) ![remote](https://x/y.png)\n\n"
+                                                     "<img src=\"http://evil/x.png\"> <script>alert(1)</script>\n"),
+                                      [&asked](const QString &target, QSize *size) {
+                                          asked << target;
+                                          if (target != QLatin1String("a.png"))
+                                              return QString();
+                                          *size = QSize(800, 600);
+                                          return QStringLiteral("3");
+                                      });
+    EXPECT_TRUE(html.contains(QStringLiteral("<h1")));
+    EXPECT_TRUE(html.contains(QStringLiteral("font-weight:700;\">bold")));
+    EXPECT_TRUE(html.contains(QStringLiteral("<li")));
+    EXPECT_TRUE(html.contains(QStringLiteral("<table")));
+    EXPECT_TRUE(html.contains(QStringLiteral("<a href=\"https://example.com\">site</a>")));
+    // The shown picture comes from the provider, with its size; the other one is its alternative text.
+    EXPECT_TRUE(html.contains(QStringLiteral("<img src=\"image://preview/fit/800x600/3\"")));
+    EXPECT_TRUE(html.contains(QStringLiteral("width=\"800\" height=\"600\"")));
+    EXPECT_FALSE(html.contains(QStringLiteral("https://x/y.png")));
+    EXPECT_TRUE(html.contains(QStringLiteral(" remote")));
+    EXPECT_EQ(asked, (QStringList{QStringLiteral("a.png"), QStringLiteral("https://x/y.png")}));
+    // Raw HTML stays text: no second <img>, no script element.
+    EXPECT_EQ(html.count(QStringLiteral("<img ")), 1);
+    EXPECT_FALSE(html.contains(QStringLiteral("<script")));
+    EXPECT_TRUE(html.contains(QStringLiteral("&lt;script&gt;")));
+    EXPECT_TRUE(html.contains(QStringLiteral("&lt;img src=")));
+    // No font of the toolkit on the body: the view's font applies.
+    EXPECT_TRUE(html.contains(QStringLiteral("<body>")));
+}
+
+TEST(Markdown, PicturesPerDocumentAreBounded)
+{
+    QString md;
+    for (int i = 0; i < kMaxMarkdownImages + 10; ++i)
+        md += QStringLiteral("![p%1](p.png)\n\n").arg(i);
+    int asked = 0;
+    const QString html = markdownHtml(md, [&asked](const QString &, QSize *size) {
+        ++asked;
+        *size = QSize(10, 10);
+        return QStringLiteral("1");
+    });
+    EXPECT_EQ(asked, kMaxMarkdownImages);
+    EXPECT_EQ(html.count(QStringLiteral("<img ")), kMaxMarkdownImages);
+}
+
+// Review 2026-11-22 (MEDIUM): the pictures of a document had no total memory bound and were decoded at the file's size. Now
+// each one is served at most kMarkdownImageMaxSide per side, and all of them together at most kMarkdownImageBudgetBytes;
+// past it, a picture shows its alternative text.
+TEST(Markdown, PicturesAreServedSmallAndWithinABudget)
+{
+    EXPECT_EQ(markdownServedSize(QSize(800, 600)), QSize(800, 600));
+    EXPECT_EQ(markdownServedSize(QSize(16384, 4096)), QSize(kMarkdownImageMaxSide, kMarkdownImageMaxSide / 4));
+    EXPECT_EQ(markdownServedSize(QSize(100, 16384)), QSize(12, kMarkdownImageMaxSide));
+    EXPECT_FALSE(markdownServedSize(QSize()).isValid());
+    // 64 huge, highly compressible pictures, each served at 2048 x 2048 (16 MiB): only 16 fit the budget (256 MiB) and the
+    // others show their alternative text.
+    QString md;
+    for (int i = 0; i < kMaxMarkdownImages; ++i)
+        md += QStringLiteral("![square %1](p.png)\n\n").arg(i);
+    const QString html = markdownHtml(md, [](const QString &, QSize *size) {
+        *size = QSize(16384, 16384);
+        return QStringLiteral("7");
+    });
+    const qint64 each = qint64(kMarkdownImageMaxSide) * kMarkdownImageMaxSide * 4;
+    const int shown = int(kMarkdownImageBudgetBytes / each);
+    EXPECT_EQ(html.count(QStringLiteral("<img ")), shown);
+    EXPECT_EQ(html.count(QStringLiteral("image://preview/fit/%1x%1/7").arg(kMarkdownImageMaxSide)), shown);
+    EXPECT_TRUE(html.contains(QStringLiteral(">square %1<").arg(shown))) << "the first picture past the budget is its alternative text";
+    EXPECT_FALSE(html.contains(QStringLiteral(">square %1<").arg(0))) << "a shown picture is not its alternative text (only its alt attribute)";
+}
+
+// Review 2026-11-22 (LOW): a resize re-parsed the document to resize its pictures. fitMarkdownImages changes the picture
+// formats only: the text, the cursor's selection and the served sizes stay.
+TEST(Markdown, PicturesFitTheColumnWithoutANewParse)
+{
+    const QString html = markdownHtml(QStringLiteral("Before ![a](a.png) between ![b](b.png) after\n"), [](const QString &t, QSize *size) {
+        *size = t == QLatin1String("a.png") ? QSize(1600, 800) : QSize(100, 50);
+        return t == QLatin1String("a.png") ? QStringLiteral("1") : QStringLiteral("2");
+    });
+    QTextDocument doc;
+    doc.setHtml(html);
+    const QString text = doc.toPlainText();
+    QTextCursor selection(&doc);
+    selection.setPosition(0);
+    selection.setPosition(6, QTextCursor::KeepAnchor);
+    const auto sizes = [&doc] {
+        QList<QSizeF> out;
+        for (QTextBlock b = doc.begin(); b.isValid(); b = b.next())
+            for (auto it = b.begin(); !it.atEnd(); ++it)
+                if (it.fragment().charFormat().isImageFormat()) {
+                    const QTextImageFormat f = it.fragment().charFormat().toImageFormat();
+                    out << QSizeF(f.width(), f.height());
+                }
+        return out;
+    };
+    EXPECT_EQ(sizes(), (QList<QSizeF>{QSizeF(1600, 800), QSizeF(100, 50)}));
+    EXPECT_EQ(fitMarkdownImages(&doc, 400.7), 1);
+    EXPECT_EQ(sizes(), (QList<QSizeF>{QSizeF(400, 200), QSizeF(100, 50)})) << "shrunk to the column, a small one never enlarged";
+    EXPECT_EQ(fitMarkdownImages(&doc, 400), 0) << "nothing to change at the same width";
+    EXPECT_EQ(fitMarkdownImages(&doc, 5000), 1);
+    EXPECT_EQ(sizes(), (QList<QSizeF>{QSizeF(1600, 800), QSizeF(100, 50)})) << "never past the served size";
+    EXPECT_EQ(doc.toPlainText(), text);
+    EXPECT_EQ(selection.selectionStart(), 0);
+    EXPECT_EQ(selection.selectionEnd(), 6);
+    EXPECT_EQ(fitMarkdownImages(nullptr, 400), 0);
+    EXPECT_EQ(fitMarkdownImages(&doc, 0), 0);
+    // Read only: the resizes left nothing to undo (each one used to add an undo step).
+    EXPECT_FALSE(doc.isUndoRedoEnabled());
+    EXPECT_FALSE(doc.isUndoAvailable());
+    EXPECT_EQ(doc.availableUndoSteps(), 0);
 }

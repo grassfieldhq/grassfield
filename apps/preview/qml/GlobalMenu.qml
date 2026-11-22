@@ -79,6 +79,11 @@ Platform.MenuBar {
             shortcut: "Ctrl+I"
             onTriggered: bar.win.infoOpen = !bar.win.infoOpen
         }
+        Platform.MenuItem {
+            text: bar.view?.showSource === true ? qsTr("Show Formatted Text") : qsTr("Show Markdown Source")
+            enabled: bar.view?.canShowSource === true
+            onTriggered: bar.view.showSource = !bar.view.showSource
+        }
         Platform.MenuSeparator {}
         Platform.MenuItem {
             text: qsTr("Actual Size")

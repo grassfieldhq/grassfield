@@ -1,8 +1,12 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import Grassfield.Ui
+import "Markdown.js" as Markdown
 
-// Plain text and code, read only. The text is always PlainText (never interpreted as markup).
+// Plain text and code, read only. The text is always PlainText (never interpreted as markup), except a Markdown document,
+// which shows rendered (the owner's report on 1.0.0-rc9; macOS Quick Look shows a Markdown file formatted): the backend
+// turns it into rich text with its pictures checked and served by Preview itself (PreviewApp.inspect `markdown`, `html`;
+// previewlogic markdownHtml). `showSource` (View > Show Markdown Source, the toolbar's source button) shows its plain text.
 Item {
     id: root
 
@@ -14,8 +18,14 @@ Item {
     // A long text comes in pieces of whole lines (PreviewApp.inspect `chunks`, P7 of the 2026-11 audit): a list lays out only
     // the pieces on screen, so a zoom step or a new window width re-lays out a screenful, not 2 MiB. Select All and Copy
     // still take the whole text; a drag selects within one piece.
-    readonly property var chunks: root.info.chunks ?? []
+    // A Markdown document shown rendered (one rich text, never in pieces), or its source.
+    property bool showSource: false
+    readonly property bool canShowSource: root.info.markdown === true
+    readonly property bool rendered: root.canShowSource && !root.showSource && typeof root.info.html === "string"
+    readonly property var chunks: root.rendered ? [] : (root.info.chunks ?? [])
     readonly property bool chunked: root.chunks.length > 0
+    // The text item shown when the text is not in pieces.
+    readonly property var edit: root.rendered ? rich : plain
     // Select All in pieces: every piece shows selected and Copy takes the whole text.
     property bool allSelected: false
     // The piece holding the selection made with the pointer, and its text.
@@ -32,15 +42,15 @@ Item {
     property int currentPage: 0
     property real factor: 1
     // Edit menu (GlobalMenu.qml): the selection of the text.
-    readonly property bool canCopy: root.chunked ? (root.allSelected || root.chunkSelection !== "") : edit.selectedText !== ""
-    readonly property bool canSelectAll: root.chunked || edit.length > 0
+    readonly property bool canCopy: root.chunked ? (root.allSelected || root.chunkSelection !== "") : root.edit.selectedText !== ""
+    readonly property bool canSelectAll: root.chunked || root.edit.length > 0
 
     Accessible.role: Accessible.Document
     Accessible.name: qsTr("Text %1").arg(root.info.name ?? "")
 
     function copy(): void {
         if (!root.chunked) {
-            edit.copy();
+            root.edit.copy();
             return;
         }
         const text = root.allSelected ? String(root.info.text ?? "") : root.chunkSelection;
@@ -49,7 +59,7 @@ Item {
     }
     function selectAll(): void {
         if (!root.chunked) {
-            edit.selectAll();
+            root.edit.selectAll();
             return;
         }
         root.selectedChunk = -1;
@@ -117,7 +127,7 @@ Item {
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         contentWidth: width
-        contentHeight: edit.height + 2 * Tokens.spacingMd
+        contentHeight: root.edit.height + 2 * root.edit.y
         flickableDirection: Flickable.VerticalFlick
         focus: !root.chunked
 
@@ -127,7 +137,8 @@ Item {
         Keys.onPressed: event => root.keyScroll(flick, event)
 
         TextEdit {
-            id: edit
+            id: plain
+            visible: !root.rendered
             TextCursor {}
             x: Tokens.spacingMd
             y: Tokens.spacingMd
@@ -138,12 +149,57 @@ Item {
             persistentSelection: true
             textFormat: TextEdit.PlainText
             wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
-            text: root.chunked ? "" : (root.info.text ?? "")
+            text: root.chunked || root.rendered ? "" : (root.info.text ?? "")
             color: Appearance.colors.text
             selectedTextColor: Appearance.highlightText
             selectionColor: Appearance.highlight
             font.family: Tokens.typographyMonoFamily
             font.pixelSize: Tokens.previewCodeFontSize * root.factor
+        }
+
+        // The rendered Markdown: rich text made by the backend from Qt's own Markdown reader (its raw HTML off), pictures
+        // only from Preview's image provider at their served size, laid out no wider than the column: the backend's
+        // fitMarkdownImages changes the picture formats only, so a resize never parses the text again and keeps the
+        // selection. Read only, selectable; Copy gives the text.
+        TextEdit {
+            id: rich
+            objectName: "markdownText"
+            visible: root.rendered
+            x: Tokens.previewMarkdownPadding
+            y: Tokens.previewMarkdownPadding
+            width: Math.max(0, root.wrapWidth - 2 * Tokens.previewMarkdownPadding)
+            readOnly: true
+            selectByMouse: true
+            persistentSelection: true
+            textFormat: TextEdit.RichText
+            wrapMode: TextEdit.Wrap
+            // Code blocks on the control fill, which shows in both appearances (light: black at 6 %, dark: white at 14 %).
+            text: root.rendered ? Markdown.styled(root.info.html, {link: Appearance.colors.accent, code: Appearance.buttonFill}) : ""
+            color: Appearance.colors.text
+            selectedTextColor: Appearance.highlightText
+            selectionColor: Appearance.highlight
+            font.family: Appearance.fontFamily
+            font.pixelSize: Tokens.previewMarkdownFontSize * root.factor
+            Accessible.role: Accessible.Document
+            Accessible.name: qsTr("Text %1").arg(root.info.name ?? "")
+
+            function fitPictures(): void {
+                if (root.rendered && root.backend && typeof root.backend.fitMarkdownImages === "function")
+                    root.backend.fitMarkdownImages(rich.textDocument, rich.width);
+            }
+            onTextChanged: rich.fitPictures()
+            onWidthChanged: rich.fitPictures()
+
+            // A link opens in the browser (http and https only, PreviewApp.openLink checks it again); any other target
+            // (another file, an anchor in the page) does nothing.
+            onLinkActivated: link => {
+                if (Markdown.isWebLink(link) && root.backend && typeof root.backend.openLink === "function")
+                    root.backend.openLink(link);
+            }
+
+            HoverHandler {
+                cursorShape: rich.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.IBeamCursor
+            }
         }
     }
 

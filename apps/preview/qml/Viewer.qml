@@ -489,6 +489,26 @@ Window {
                 }
             }
 
+            // A Markdown document: its rendered text or its source (View > Show Markdown Source).
+            ToolbarGroup {
+                visible: viewerWin.view?.canShowSource ?? false
+
+                ToolButton {
+                    objectName: "markdownSourceButton"
+                    capsule: true
+                    accessibleName: qsTr("Show Markdown Source")
+                    tooltip: checked ? qsTr("Show Formatted Text") : qsTr("Show Markdown Source")
+                    checkable: true
+                    checked: viewerWin.view?.showSource ?? false
+                    onClicked: viewerWin.view.showSource = !viewerWin.view.showSource
+
+                    Glyph {
+                        anchors.centerIn: parent
+                        kind: "source"
+                    }
+                }
+            }
+
             ToolbarGroup {
                 ToolButton {
                     capsule: true
