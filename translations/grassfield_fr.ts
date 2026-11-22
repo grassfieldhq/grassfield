@@ -4385,6 +4385,38 @@
         <translation>Masquer et afficher automatiquement le Dock</translation>
     </message>
     <message>
+        <source>Built-in Display</source>
+        <translation>Écran intégré</translation>
+    </message>
+    <message>
+        <source>%1 (%2)</source>
+        <translation>%1 (%2)</translation>
+    </message>
+    <message>
+        <source>Dock settings for</source>
+        <translation>Réglages du Dock pour</translation>
+    </message>
+    <message>
+        <source>Size, Magnification, Position and Automatically hide apply to %1 only.</source>
+        <translation>La taille, l’agrandissement, la position et le masquage automatique ne s’appliquent qu’à %1.</translation>
+    </message>
+    <message>
+        <source>Size, Magnification, Position and Automatically hide apply to every display that has no setting of its own.</source>
+        <translation>La taille, l’agrandissement, la position et le masquage automatique s’appliquent à tous les écrans qui n’ont pas de réglage propre.</translation>
+    </message>
+    <message>
+        <source>Use the All Displays settings</source>
+        <translation>Utiliser les réglages de Tous les écrans</translation>
+    </message>
+    <message>
+        <source>Use All Displays</source>
+        <translation>Utiliser Tous les écrans</translation>
+    </message>
+    <message>
+        <source>All Displays</source>
+        <translation>Tous les écrans</translation>
+    </message>
+    <message>
         <source>Show the Dock on all displays</source>
         <translation>Afficher le Dock sur tous les écrans</translation>
     </message>
