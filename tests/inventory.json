@@ -217,6 +217,7 @@
  {"path": "tests/unit/tst_screenchoice.qml", "layer": "headless"},
  {"path": "tests/unit/tst_sanitizer.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchcalc.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_searchcommands.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchfilters.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchranking.qml", "layer": "headless"},
  {"path": "tests/unit/tst_savermodel.qml", "layer": "headless"},
