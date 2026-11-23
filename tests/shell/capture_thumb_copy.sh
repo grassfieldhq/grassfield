@@ -14,6 +14,55 @@ helper=$root/shell/services/image-copy.py
 export HOME=$tmp/home
 mkdir -p "$HOME/Pictures/Screenshots"
 shots=$HOME/Pictures/Screenshots
+dirscript=$root/shell/services/capture-thumb-dir.sh
+
+# The pictures' private folder (docs/specs/security-images.md, "Store"): 0700, in the 0700 folder of the helper's private files,
+# emptied at start and when the last card leaves; a link is refused at either level and nothing outside is touched.
+umask 022
+runtime=$tmp/run
+mkdir -p "$runtime"
+folder=$runtime/grassfield/capture-thumbs
+sh "$dirscript" "$folder"
+rc=$?
+desc="the folder is made 0700 inside a 0700 parent, empty"
+check test "$rc" = 0 -a "$(stat -c %a "$folder")" = 700 -a "$(stat -c %a "$runtime/grassfield")" = 700 -a -z "$(ls -A "$folder")"
+printf x >"$folder/1-1.png"
+printf x >"$folder/.hidden"
+ln -s "$tmp/secret-target" "$folder/link.png"
+printf KEEP >"$tmp/secret-target"
+mkdir "$folder/sub"
+printf deep >"$folder/sub/x.png"
+chmod 755 "$folder"
+sh "$dirscript" "$folder"
+rc=$?
+desc="emptied again: files, hidden files and links go, a link's target and anything below a folder stay, the mode is 0700 again"
+check test "$rc" = 0 -a ! -e "$folder/1-1.png" -a ! -e "$folder/.hidden" -a ! -L "$folder/link.png" -a "$(cat "$tmp/secret-target")" = KEEP -a -f "$folder/sub/x.png" -a "$(stat -c %a "$folder")" = 700
+rm -rf "$folder"
+mkdir "$tmp/elsewhere"
+printf KEEP >"$tmp/elsewhere/file"
+ln -s "$tmp/elsewhere" "$folder"
+sh "$dirscript" "$folder"
+rc=$?
+desc="a link at the folder is refused and what it points to is untouched"
+check test "$rc" != 0 -a -f "$tmp/elsewhere/file"
+rm -f "$folder"
+rm -rf "$runtime/grassfield"
+ln -s "$tmp/elsewhere" "$runtime/grassfield"
+sh "$dirscript" "$folder"
+rc=$?
+desc="a link at the parent is refused too"
+check test "$rc" != 0 -a -f "$tmp/elsewhere/file" -a ! -e "$tmp/elsewhere/capture-thumbs"
+rm -f "$runtime/grassfield"
+sh "$dirscript" "$runtime/grassfield/other"
+rc=$?
+desc="a folder not named capture-thumbs is refused"
+check test "$rc" != 0
+sh "$dirscript" "relative/capture-thumbs"
+rc=$?
+desc="a relative folder is refused"
+check test "$rc" != 0
+sh "$dirscript" "$folder"
+rc=$?
 
 copy() { # path out: runs as the shell does (timeout, setpriv, python3 -I), 64 MiB cap
     timeout -k 2 20 python3 -I "$helper" file "$1" 67108864 "$2" >/dev/null 2>&1
