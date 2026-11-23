@@ -331,7 +331,7 @@ Variants {
         // The row's right side, level with its top (the Actions list hangs there, spec §3.3).
         function placeActions(): void {
             const rowItem = list.itemAtIndex(root.controller.selected);
-            win.actionsAt = rowItem ? rowItem.mapToItem(win.contentItem, rowItem.width + Tokens.searchClipPreviewGap, 0) : Qt.point(panel.x + panel.width + Tokens.searchClipPreviewGap, panel.y);
+            win.actionsAt = rowItem ? rowItem.mapToItem(win.contentItem, rowItem.width + Tokens.searchActionsGap, 0) : Qt.point(panel.x + panel.width + Tokens.searchActionsGap, panel.y);
             win.actionsPlaced = true;
         }
 
@@ -1292,13 +1292,13 @@ Variants {
                             break;
                         }
                     }
-                    // Esc clears the typed words first, a second one closes.
+                    // Esc clears the typed words first, a second one closes: SearchField's own handler runs before this one and
+                    // accepts the key when it cleared, so only an Esc it left alone closes (tst_searchactionsfield).
                     Keys.onEscapePressed: event => {
-                        if (text !== "")
-                            clear();
-                        else
+                        if (!event.accepted && text === "") {
                             root.controller.closeActions();
-                        event.accepted = true;
+                            event.accepted = true;
+                        }
                     }
                 }
 

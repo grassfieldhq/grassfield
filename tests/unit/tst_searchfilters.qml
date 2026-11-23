@@ -57,13 +57,6 @@ TestCase {
         verify(!Filters.chipKey("field", -1, 3, "right").handled);
     }
 
-    function test_tabLeavesForTheChipsAtTheEdges() {
-        verify(Filters.leavesForChips(2, 3, 1));
-        verify(!Filters.leavesForChips(1, 3, 1));
-        verify(Filters.leavesForChips(0, 3, -1));
-        verify(!Filters.leavesForChips(1, 3, -1));
-    }
-
     function test_noFilterIsIdentity() {
         verify(Filters.apply(groups, "", "x") === groups);
         verify(Filters.apply(groups, "nonsense", "x") === groups);

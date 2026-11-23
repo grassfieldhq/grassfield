@@ -7,10 +7,10 @@ import qs.search
 // "search-chips: PASS" or the failures). search, services and platform are symlinks to shell/.
 // - filesPending is true while a live file search runs (the array is reassigned, a push never notified): the
 //   "No Results" notice must not show while the plocate fallback is still running;
-// - the filter chips are reachable by keyboard: Tab past the last group moves the ring to the first chip,
+// - the filter chips are reachable by keyboard: Shift+Tab moves the ring to the last chip (reverse order),
 //   Left/Right move, Space toggles, Esc and Tab past the end leave, typing leaves and is handed back to the field;
-// - the keys of the results view (palette P3c): Page Down/Up move between the groups and wrap, Shift+Tab enters the chips,
-//   Tab opens the Actions of the selected row (none for a row without actions) and Esc-equivalent closing, a chosen action runs;
+// - the keys of the results view (palette P3c): Page Down/Up move between the groups and wrap, Shift+Tab enters the last chip,
+//   Tab opens the Actions of the selected row (none for a row without actions), a chosen action runs through the registry;
 ShellRoot {
     id: root
 
@@ -44,10 +44,11 @@ ShellRoot {
         check("Page Down to the next group first", search.zone === "field" && search.selected === 1);
         search.moveGroup(1);
         check("Page Down past the last group wraps to the first", search.zone === "field" && search.selected === 0);
-        check("Shift+Tab enters the first chip", search.enterChips() && search.zone === "chips" && search.chipIndex === 0);
-        check("Right moves", search.chipKey("right") && search.chipIndex === 1);
-        check("Right stops at the end", search.chipKey("end") && search.chipKey("right") && search.chipIndex === 2);
+        check("Shift+Tab enters the last chip", search.enterChips() && search.zone === "chips" && search.chipIndex === 2);
+        check("Right stops at the end", search.chipKey("right") && search.chipIndex === 2);
         check("Left moves", search.chipKey("left") && search.chipIndex === 1);
+        check("Home goes to the first", search.chipKey("home") && search.chipIndex === 0);
+        check("Tab (next) moves along", search.chipKey("next") && search.chipIndex === 1);
         check("a typed letter leaves and is handed back", !search.chipKey("other") && search.zone === "field");
 
         // Space asks to toggle (the filter itself is Filters.js + toggleFilter, covered by tst_searchfilters).
@@ -100,13 +101,11 @@ ShellRoot {
         search.selected = 2;
         search.openActions();
         search.runAction("x:more");
-        check("a chosen entry action runs once and closes Search and the panel", ran.join() === "more" && !search.actionsOpen && !search.open);
-        search.runAction("x:more");
-        check("nothing runs with the panel closed", ran.length === 1);
+        check("an action of an entry the registry does not hold runs nothing (the gate is Commands.runAction) and the panel closes", ran.length === 0 && !search.actionsOpen);
         search.selected = 2;
         search.openActions();
         search.runAction("x:nope");
-        check("an unknown action runs nothing and closes", ran.length === 1 && !search.actionsOpen);
+        check("an unknown action runs nothing and closes", ran.length === 0 && !search.actionsOpen);
         search.openActions();
         search.setQuery("zzz-new");
         check("a new query closes the Actions", !search.actionsOpen);

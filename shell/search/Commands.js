@@ -131,3 +131,16 @@ function run(registry, id, args, origin) {
     e.run(args || [], origin || "row");
     return true;
 }
+
+// An action of an entry (its `actions`, shown in the Actions panel), through the same gate as `run`: an unknown or unavailable
+// entry, an unknown or disabled action does nothing. Returns whether it ran.
+function runAction(registry, id, actionId, origin) {
+    const e = find(registry, id);
+    if (!e || !isAvailable(e) || !Array.isArray(e.actions))
+        return false;
+    const a = e.actions.find(x => x && x.id === actionId);
+    if (!a || a.enabled === false || typeof a.run !== "function")
+        return false;
+    a.run([], origin || "row");
+    return true;
+}

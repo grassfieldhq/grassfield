@@ -67,9 +67,3 @@ function chipKey(zone, index, count, action) {
         return {zone: "field", index: -1, toggle: false, handled: false};
     }
 }
-
-// Whether Tab (delta 1) or Shift+Tab (delta -1) on group `current` of `groupCount` leaves the results for the chips
-// (the group cycle would wrap): the chips are the stop between the last and the first group.
-function leavesForChips(current, groupCount, delta) {
-    return delta > 0 ? current === groupCount - 1 : current === 0;
-}

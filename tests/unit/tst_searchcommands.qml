@@ -158,4 +158,28 @@ TestCase {
         verify(Commands.run(r, "a.args"));
         compare(seen, [[], "row"]);
     }
+
+    // The entry's own actions (the Actions panel) go through the same gate as Run.
+    function test_runActionGate() {
+        const seen = [];
+        let on = true;
+        const e = entry("a.acts");
+        e.available = () => on;
+        e.actions = [
+            {id: "edit", title: "Edit", run: (args, origin) => seen.push("edit:" + origin)},
+            {id: "off", title: "Off", enabled: false, run: () => seen.push("off")},
+            {id: "norun", title: "No run"}
+        ];
+        const r = Commands.build([[e, entry("a.plain")]]);
+        verify(Commands.runAction(r, "a.acts", "edit", "row"));
+        compare(seen, ["edit:row"]);
+        verify(!Commands.runAction(r, "a.acts", "off"), "a disabled action");
+        verify(!Commands.runAction(r, "a.acts", "norun"), "no run function");
+        verify(!Commands.runAction(r, "a.acts", "nope"), "unknown action");
+        verify(!Commands.runAction(r, "a.nope", "edit"), "unknown entry");
+        verify(!Commands.runAction(r, "a.plain", "edit"), "an entry without actions");
+        on = false;
+        verify(!Commands.runAction(r, "a.acts", "edit", "row"), "the entry became unavailable");
+        compare(seen, ["edit:row"], "nothing ran");
+    }
 }

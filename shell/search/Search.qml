@@ -593,12 +593,12 @@ Scope {
         selected = items.findIndex(it => it.groupId === target);
     }
 
-    // Shift+Tab: the focus ring goes to the first filter chip (search.md F2c). Returns whether there are chips to reach.
+    // Shift+Tab: the focus ring goes to the last filter chip (reverse order) (search.md F2c). Returns whether there are chips to reach.
     function enterChips(): bool {
         if (!chipsShown)
             return false;
         zone = "chips";
-        chipIndex = 0;
+        chipIndex = chips.length - 1;
         return true;
     }
 
@@ -634,9 +634,10 @@ Scope {
         closeActions();
         if (!a || a.enabled === false || !item)
             return;
-        if (typeof a.run === "function") {
+        if (id.startsWith("x:")) {
+            // An entry's own action goes through the registry's gate (availability), like Run.
             hide();
-            a.run([], "row");
+            Commands.runAction(commandRegistry, item.command, id.slice(2), "row");
         } else if (id === "reveal") {
             activate(item, true);
         } else {
