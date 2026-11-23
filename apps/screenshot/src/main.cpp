@@ -4,6 +4,8 @@
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QLibraryInfo>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QQmlApplicationEngine>
 #include <QTextStream>
 #include <QUrl>
@@ -12,6 +14,7 @@
 #include "globalmenu.h"
 #include "keywindow.h"
 #include "windowchrome.h"
+#include "runmode.h"
 #include "screenshotapp.h"
 #include "screenshotlogic.h"
 #include "textrender.h"
@@ -70,6 +73,36 @@ int main(int argc, char *argv[])
         parser.showHelp(0);
     if (parser.isSet(QStringLiteral("version")))
         parser.showVersion();
+
+    // No file (a click on the Apps entry): open the capture toolbar, as macOS's Screenshot app does. The call is bounded; with no
+    // shell to call (a dev session that names none) or a failed call it is an error, exit 2.
+    if (parser.positionalArguments().isEmpty()) {
+        QString why;
+        const int code = screenshot::openToolbar(
+            grassfield::apps::runmode::shellIpcArgs(),
+            [](const QStringList &qsArgs) {
+                QProcess process;
+                QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+                for (const QString &key : env.keys()) {
+                    if (key.startsWith(QLatin1String("QS_")))
+                        env.remove(key);
+                }
+                process.setProcessEnvironment(env);
+                process.setStandardErrorFile(QProcess::nullDevice());
+                process.setStandardOutputFile(QProcess::nullDevice());
+                process.start(QStringLiteral("qs"), qsArgs);
+                if (!process.waitForFinished(grassfield::apps::runmode::kShellIpcMs)) {
+                    process.kill();
+                    process.waitForFinished(1000);
+                    return false;
+                }
+                return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+            },
+            &why);
+        if (code != 0)
+            err << "grassfield-screenshot: " << why << Qt::endl;
+        return code;
+    }
 
     const screenshot::Arguments args = screenshot::resolveArguments(parser.positionalArguments(), QDir::currentPath());
     if (args.path.isEmpty()) {
