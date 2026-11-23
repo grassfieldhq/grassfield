@@ -28,6 +28,8 @@ Scope {
     }
     // True while the session lock (or its transition) owns the screen: the toolbar neither opens nor stays (shell.qml binds it).
     property bool locked: false
+    // True while Overview, Apps, Search or the app switcher is open (shell.qml binds it): the floating thumbnail steps aside.
+    property bool attention: false
     onLockedChanged: {
         if (locked)
             hide();
@@ -210,4 +212,9 @@ Scope {
     }
 
     CaptureCountdown {}
+
+    // The floating thumbnail (A2, A3): it steps aside for the toolbar and for the other full-attention surfaces (`attention`).
+    CaptureThumbnails {
+        held: root.open || root.attention
+    }
 }
