@@ -3469,6 +3469,413 @@
     </message>
 </context>
 <context>
+    <name>BuiltinCommands</name>
+    <message>
+        <source>System command</source>
+        <translation>Commande système</translation>
+    </message>
+    <message>
+        <source>Window</source>
+        <translation>Fenêtre</translation>
+    </message>
+    <message>
+        <source>Toggle Appearance</source>
+        <translation>Changer d’apparence</translation>
+    </message>
+    <message>
+        <source>appearance</source>
+        <translation>apparence</translation>
+    </message>
+    <message>
+        <source>dark mode</source>
+        <translation>mode sombre</translation>
+    </message>
+    <message>
+        <source>light mode</source>
+        <translation>mode clair</translation>
+    </message>
+    <message>
+        <source>theme</source>
+        <translation>thème</translation>
+    </message>
+    <message>
+        <source>Dark</source>
+        <translation>Sombre</translation>
+    </message>
+    <message>
+        <source>Light</source>
+        <translation>Clair</translation>
+    </message>
+    <message>
+        <source>Empty Trash</source>
+        <translation>Vider la corbeille</translation>
+    </message>
+    <message>
+        <source>empty the trash</source>
+        <translation>vider la corbeille</translation>
+    </message>
+    <message>
+        <source>delete everything</source>
+        <translation>tout supprimer</translation>
+    </message>
+    <message>
+        <source>Open Trash</source>
+        <translation>Ouvrir la corbeille</translation>
+    </message>
+    <message>
+        <source>trash</source>
+        <translation>corbeille</translation>
+    </message>
+    <message>
+        <source>bin</source>
+        <translation>poubelle</translation>
+    </message>
+    <message>
+        <source>Show Desktop</source>
+        <translation>Afficher le bureau</translation>
+    </message>
+    <message>
+        <source>desktop</source>
+        <translation>bureau</translation>
+    </message>
+    <message>
+        <source>hide all windows</source>
+        <translation>masquer toutes les fenêtres</translation>
+    </message>
+    <message>
+        <source>Volume Up</source>
+        <translation>Augmenter le volume</translation>
+    </message>
+    <message>
+        <source>louder</source>
+        <translation>plus fort</translation>
+    </message>
+    <message>
+        <source>sound</source>
+        <translation>son</translation>
+    </message>
+    <message>
+        <source>Volume Down</source>
+        <translation>Baisser le volume</translation>
+    </message>
+    <message>
+        <source>quieter</source>
+        <translation>moins fort</translation>
+    </message>
+    <message>
+        <source>Mute</source>
+        <translation>Couper le son</translation>
+    </message>
+    <message>
+        <source>Unmute</source>
+        <translation>Réactiver le son</translation>
+    </message>
+    <message>
+        <source>silence</source>
+        <translation>silence</translation>
+    </message>
+    <message>
+        <source>Muted</source>
+        <translation>Son coupé</translation>
+    </message>
+    <message>
+        <source>Sound on</source>
+        <translation>Son activé</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>Lecture</translation>
+    </message>
+    <message>
+        <source>Pause</source>
+        <translation>Pause</translation>
+    </message>
+    <message>
+        <source>music</source>
+        <translation>musique</translation>
+    </message>
+    <message>
+        <source>media</source>
+        <translation>média</translation>
+    </message>
+    <message>
+        <source>Playing</source>
+        <translation>En lecture</translation>
+    </message>
+    <message>
+        <source>Paused</source>
+        <translation>En pause</translation>
+    </message>
+    <message>
+        <source>Next Track</source>
+        <translation>Piste suivante</translation>
+    </message>
+    <message>
+        <source>skip</source>
+        <translation>passer</translation>
+    </message>
+    <message>
+        <source>next song</source>
+        <translation>chanson suivante</translation>
+    </message>
+    <message>
+        <source>Previous Track</source>
+        <translation>Piste précédente</translation>
+    </message>
+    <message>
+        <source>previous song</source>
+        <translation>chanson précédente</translation>
+    </message>
+    <message>
+        <source>back</source>
+        <translation>retour</translation>
+    </message>
+    <message>
+        <source>window</source>
+        <translation>fenêtre</translation>
+    </message>
+    <message>
+        <source>Move Window: %1</source>
+        <translation>Déplacer la fenêtre&#xa0;: %1</translation>
+    </message>
+    <message>
+        <source>Arrange Windows: %1</source>
+        <translation>Organiser les fenêtres&#xa0;: %1</translation>
+    </message>
+    <message>
+        <source>Left</source>
+        <translation>Gauche</translation>
+    </message>
+    <message>
+        <source>Right</source>
+        <translation>Droite</translation>
+    </message>
+    <message>
+        <source>Top</source>
+        <translation>Haut</translation>
+    </message>
+    <message>
+        <source>Bottom</source>
+        <translation>Bas</translation>
+    </message>
+    <message>
+        <source>Top Left</source>
+        <translation>En haut à gauche</translation>
+    </message>
+    <message>
+        <source>Top Right</source>
+        <translation>En haut à droite</translation>
+    </message>
+    <message>
+        <source>Bottom Left</source>
+        <translation>En bas à gauche</translation>
+    </message>
+    <message>
+        <source>Bottom Right</source>
+        <translation>En bas à droite</translation>
+    </message>
+    <message>
+        <source>Fill</source>
+        <translation>Remplir</translation>
+    </message>
+    <message>
+        <source>Center</source>
+        <translation>Centrer</translation>
+    </message>
+    <message>
+        <source>Return to Previous Size</source>
+        <translation>Revenir à la taille précédente</translation>
+    </message>
+    <message>
+        <source>Left &amp; Right</source>
+        <translation>Gauche et droite</translation>
+    </message>
+    <message>
+        <source>Right &amp; Left</source>
+        <translation>Droite et gauche</translation>
+    </message>
+    <message>
+        <source>Top &amp; Bottom</source>
+        <translation>Haut et bas</translation>
+    </message>
+    <message>
+        <source>Bottom &amp; Top</source>
+        <translation>Bas et haut</translation>
+    </message>
+    <message>
+        <source>Quarters</source>
+        <translation>Quarts</translation>
+    </message>
+    <message>
+        <source>Left &amp; Quarters</source>
+        <translation>Gauche et quarts</translation>
+    </message>
+    <message>
+        <source>Right &amp; Quarters</source>
+        <translation>Droite et quarts</translation>
+    </message>
+    <message>
+        <source>Top &amp; Quarters</source>
+        <translation>Haut et quarts</translation>
+    </message>
+    <message>
+        <source>Bottom &amp; Quarters</source>
+        <translation>Bas et quarts</translation>
+    </message>
+    <message>
+        <source>Move Window to Next Display</source>
+        <translation>Déplacer la fenêtre vers l’écran suivant</translation>
+    </message>
+    <message>
+        <source>Move Window to Previous Display</source>
+        <translation>Déplacer la fenêtre vers l’écran précédent</translation>
+    </message>
+    <message>
+        <source>monitor</source>
+        <translation>moniteur</translation>
+    </message>
+    <message>
+        <source>screen</source>
+        <translation>écran</translation>
+    </message>
+    <message>
+        <source>Minimize Window</source>
+        <translation>Réduire la fenêtre</translation>
+    </message>
+    <message>
+        <source>minimize</source>
+        <translation>réduire</translation>
+    </message>
+    <message>
+        <source>hide</source>
+        <translation>masquer</translation>
+    </message>
+    <message>
+        <source>Enter Full Screen</source>
+        <translation>Passer en plein écran</translation>
+    </message>
+    <message>
+        <source>Exit Full Screen</source>
+        <translation>Quitter le plein écran</translation>
+    </message>
+    <message>
+        <source>full screen</source>
+        <translation>plein écran</translation>
+    </message>
+    <message>
+        <source>fullscreen</source>
+        <translation>plein écran</translation>
+    </message>
+    <message>
+        <source>On</source>
+        <translation>Activé</translation>
+    </message>
+    <message>
+        <source>Off</source>
+        <translation>Désactivé</translation>
+    </message>
+    <message>
+        <source>On until %1</source>
+        <translation>Activé jusqu’à %1</translation>
+    </message>
+    <message>
+        <source>Turn Wi-Fi On</source>
+        <translation>Activer le Wi-Fi</translation>
+    </message>
+    <message>
+        <source>Turn Wi-Fi Off</source>
+        <translation>Désactiver le Wi-Fi</translation>
+    </message>
+    <message>
+        <source>wifi</source>
+        <translation>wifi</translation>
+    </message>
+    <message>
+        <source>wireless</source>
+        <translation>sans fil</translation>
+    </message>
+    <message>
+        <source>network</source>
+        <translation>réseau</translation>
+    </message>
+    <message>
+        <source>Turn Bluetooth On</source>
+        <translation>Activer le Bluetooth</translation>
+    </message>
+    <message>
+        <source>Turn Bluetooth Off</source>
+        <translation>Désactiver le Bluetooth</translation>
+    </message>
+    <message>
+        <source>bluetooth</source>
+        <translation>bluetooth</translation>
+    </message>
+    <message>
+        <source>Turn Airplane Mode On</source>
+        <translation>Activer le mode Avion</translation>
+    </message>
+    <message>
+        <source>Turn Airplane Mode Off</source>
+        <translation>Désactiver le mode Avion</translation>
+    </message>
+    <message>
+        <source>flight mode</source>
+        <translation>mode vol</translation>
+    </message>
+    <message>
+        <source>radios</source>
+        <translation>radios</translation>
+    </message>
+    <message>
+        <source>Turn Do Not Disturb On</source>
+        <translation>Activer Ne pas déranger</translation>
+    </message>
+    <message>
+        <source>Turn Do Not Disturb Off</source>
+        <translation>Désactiver Ne pas déranger</translation>
+    </message>
+    <message>
+        <source>Do Not Disturb for 1 Hour</source>
+        <translation>Ne pas déranger pendant 1&#xa0;heure</translation>
+    </message>
+    <message>
+        <source>Do Not Disturb Until Tomorrow</source>
+        <translation>Ne pas déranger jusqu’à demain</translation>
+    </message>
+    <message>
+        <source>focus</source>
+        <translation>concentration</translation>
+    </message>
+    <message>
+        <source>notifications</source>
+        <translation>notifications</translation>
+    </message>
+    <message>
+        <source>Turn Night Light On</source>
+        <translation>Activer l’éclairage nocturne</translation>
+    </message>
+    <message>
+        <source>Turn Night Light Off</source>
+        <translation>Désactiver l’éclairage nocturne</translation>
+    </message>
+    <message>
+        <source>warm colors</source>
+        <translation>couleurs chaudes</translation>
+    </message>
+    <message>
+        <source>blue light</source>
+        <translation>lumière bleue</translation>
+    </message>
+    <message>
+        <source>Are you sure you want to permanently erase the items in the Trash?</source>
+        <translation>Voulez-vous vraiment effacer définitivement les éléments de la corbeille&#xa0;?</translation>
+    </message>
+    <message>
+        <source>You can’t undo this action.</source>
+        <translation>Vous ne pouvez pas annuler cette action.</translation>
+    </message>
+</context>
+<context>
     <name>Calendar</name>
     <message>
         <source>Calendar, %1</source>
