@@ -154,6 +154,10 @@
     "showConversions": true,
     "showSettings": true,
     "showCommands": true,
+    "showMenuItems": true,
+    "showSystemState": true,
+    "showScripts": true,
+    "scriptFolders": [],
     "historyResetAt": 0,
     "clipboard": {
       "enabled": false,
@@ -161,6 +165,11 @@
       "keepOnDisk": false,
       "clearedAt": 0,
       "pinnedClearedAt": 0
+    },
+    "localModel": {
+      "enabled": true,
+      "model": "",
+      "keepConversations": false
     }
   },
   "screensaver": {

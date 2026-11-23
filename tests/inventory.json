@@ -216,6 +216,8 @@
  {"path": "tests/shell/menubridge_socket.sh", "layer": "headless"},
  {"path": "tests/unit/tst_screenchoice.qml", "layer": "headless"},
  {"path": "tests/unit/tst_sanitizer.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_commandsfile.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_scriptmeta.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchcalc.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchcommands.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchfilters.qml", "layer": "headless"},
