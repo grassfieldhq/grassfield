@@ -14,4 +14,5 @@ done
 rc=0
 python3 -I "$root/tests/shell/capture.d/check.py" "$root" "$tmp" || rc=1
 python3 -I "$root/tests/shell/capture.d/options.py" "$root" "$tmp" || rc=1
+python3 -I "$root/tests/shell/capture.d/shooting.py" "$root" "$tmp" || rc=1
 exit "$rc"
