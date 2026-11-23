@@ -479,7 +479,6 @@ Window {
         AnnotationLayer {
             parent: view.holder
             backend: editorWin.backend
-            flick: view.flickable
             viewScale: view.viewScale
         }
     }

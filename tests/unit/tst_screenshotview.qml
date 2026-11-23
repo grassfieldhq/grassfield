@@ -44,7 +44,7 @@ TestCase {
         property bool canRedo: false
         property int selectedId: 0
         property var handles: []
-        property string overlaySource: ""
+        property var layerModel: shapes
         property var pressArgs: []
         property int undoCalls: 0
         property int redoCalls: 0
@@ -87,6 +87,22 @@ TestCase {
         }
     }
 
+    // The shapes of the document as the app's LayerModel gives them (src/layermodel.cpp): one rectangle at (100, 50), 300 x 200.
+    ListModel {
+        id: shapes
+        ListElement {
+            gKind: "rect"
+            gId: 1
+            gColor: "#de3651"
+            gStroke: 3
+            gFill: false
+            boxX: 100
+            boxY: 50
+            boxW: 300
+            boxH: 200
+        }
+    }
+
     Editor {
         id: editor
         backend: backendItem
@@ -105,7 +121,6 @@ TestCase {
         backendItem.canRedo = false;
         backendItem.selectedId = 0;
         backendItem.captureScale = 0;
-        backendItem.overlaySource = "";
         backendItem.undoCalls = 0;
         backendItem.redoCalls = 0;
         backendItem.deleteCalls = 0;
@@ -351,27 +366,52 @@ TestCase {
         view.fit();
     }
 
-    function test_theOverlayIsTheViewportNotTheZoomedPicture() {
+    function test_theShapesAreSceneItemsThatFollowTheZoomAndTheScroll() {
         const view = editor.zoomView;
         const flick = view.flickable;
-        const overlay = findChild(editor.contentItem, "annotationOverlay");
-        verify(overlay);
-        backendItem.overlaySource = "image://screenshot/overlay/1"; // no provider here: Qt warns, the url is what is checked
-        const dpr = Screen.devicePixelRatio;
-        const w = Math.round(flick.width * dpr);
-        const h = Math.round(flick.height * dpr);
-        for (let i = 0; i < 60; i++)
-            view.zoomIn();
-        compare(view.viewScale, Tokens.screenshotZoomMax, "the largest zoom");
-        compare(overlay.sourceSize.width, w, "the view's pixels, not the picture's at 16 times");
-        compare(overlay.sourceSize.height, h);
-        const parts = String(overlay.source).split("/");
-        compare(parts[parts.length - 2], String(w), "the url asks for that size");
-        compare(parts[parts.length - 1], String(h));
-        // The part of the picture asked for is the viewport's: its width in picture pixels is the view's over the zoom.
-        fuzzyCompare(Number(parts[parts.length - 4]), flick.width / 16, 0.01);
-        backendItem.overlaySource = "";
+        const scene = findChild(editor.contentItem, "shapeScene");
+        const content = findChild(editor.contentItem, "shapeContent");
+        verify(scene);
+        verify(content);
+        verify(content.children.length >= 1);
+        const shape = content.children[0];
+        verify(shape.visible);
+        compare(scene.clip, true, "clipped to the picture, as the export is");
+        compare(scene.width, view.holder.width, "the scene is the picture's size on screen");
+        for (const zoom of [1, 1.25, 2.5, 16]) {
+            view.setZoom(zoom);
+            compare(content.scale, view.viewScale, "scaled by the zoom: nothing is drawn again");
+            // The rectangle's corner (100, 50) is at the zoom times it from the picture's own corner, scroll or not.
+            const corner = shape.mapToItem(view.holder, 100, 50);
+            fuzzyCompare(corner.x, 100 * view.viewScale, 1e-6, "at zoom " + zoom);
+            fuzzyCompare(corner.y, 50 * view.viewScale, 1e-6);
+            // And in the view: the holder's place in the content, less the scroll.
+            const inView = shape.mapToItem(flick, 100, 50);
+            fuzzyCompare(inView.x, view.holder.x - flick.contentX + 100 * view.viewScale, 1e-6);
+            fuzzyCompare(inView.y, view.holder.y - flick.contentY + 50 * view.viewScale, 1e-6);
+            flick.contentX = Math.min(37, Math.max(0, flick.contentWidth - flick.width));
+            flick.contentY = Math.min(21, Math.max(0, flick.contentHeight - flick.height));
+            const scrolled = shape.mapToItem(flick, 100, 50);
+            fuzzyCompare(scrolled.x, view.holder.x - flick.contentX + 100 * view.viewScale, 1e-6, "scrolled, at zoom " + zoom);
+            flick.contentX = 0;
+            flick.contentY = 0;
+        }
         view.fit();
+    }
+
+    function test_theHandlesAreAboveTheShapes() {
+        backendItem.handles = [{x: 100, y: 50}, {x: 400, y: 250}];
+        const scene = findChild(editor.contentItem, "shapeScene");
+        const layer = scene.parent;
+        let handles = 0;
+        for (const child of layer.children) {
+            if (child !== scene && child.width === Tokens.screenshotHandleSize) {
+                handles++;
+                verify(child.z > scene.z, "above the shapes");
+            }
+        }
+        compare(handles, 2);
+        backendItem.handles = [];
     }
 
     function test_strokeWidthUsesTheCapturesScaleWhenTheFileHasOne() {
