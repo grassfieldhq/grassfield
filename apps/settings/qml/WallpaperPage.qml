@@ -644,7 +644,7 @@ SettingsPage {
     function refreshDisplays(): void {
         const list = root.backend.screens();
         const named = list.map(s => {
-            const d = {name: s.name, model: s.model || "", serial: s.serial || ""};
+            const d = DisplayScope.identity(s);
             d.key = WallpaperConfig.displayKey(d);
             d.label = Displays.isBuiltIn(d) ? qsTr("Built-in Display") : (String(d.model).trim() !== "" ? String(d.model).trim() : d.name);
             return d;
