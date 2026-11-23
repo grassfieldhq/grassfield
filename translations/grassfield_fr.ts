@@ -5130,16 +5130,24 @@
         <translation>Annuler</translation>
     </message>
     <message>
-        <source>Undo (Ctrl+Z)</source>
-        <translation>Annuler (Ctrl+Z)</translation>
+        <source>Undo (%1)</source>
+        <translation>Annuler (%1)</translation>
+    </message>
+    <message>
+        <source>Ctrl+Z</source>
+        <translation>Ctrl+Z</translation>
+    </message>
+    <message>
+        <source>Redo (%1)</source>
+        <translation>Refaire (%1)</translation>
+    </message>
+    <message>
+        <source>Ctrl+Shift+Z</source>
+        <translation>Ctrl+Maj+Z</translation>
     </message>
     <message>
         <source>Redo</source>
         <translation>Refaire</translation>
-    </message>
-    <message>
-        <source>Redo (Ctrl+Shift+Z)</source>
-        <translation>Refaire (Ctrl+Maj+Z)</translation>
     </message>
     <message>
         <source>Revert</source>
