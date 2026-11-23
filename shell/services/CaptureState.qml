@@ -21,7 +21,16 @@ Singleton {
     readonly property string path: CaptureFile.statePath(Mode.stateHome, Quickshell.env("XDG_RUNTIME_DIR"))
     readonly property string folder: root.path !== "" ? root.path.substring(0, root.path.lastIndexOf("/")) : ""
 
-    // The state as read (CaptureFile.parse): phase idle | selecting | countdown | recording, and its fields.
+    // The helper's acknowledgement file (ADR-0066 D-1), next to the state: pre-created 0600 in the 0700 folder at start
+    // (capture-ack.sh), because a FileView cannot set modes.
+    readonly property string ackPath: root.folder !== "" ? root.folder + "/capture-ack" : ""
+    // True while no thumbnail card is mapped and one frame has passed since the last one went. The thumbnail layer (slice A2)
+    // binds it; until then there are no cards, so it stays true. The acknowledgement waits for it.
+    property bool thumbnailsHidden: true
+    // The last `seq` acknowledged, so that one `shooting` state is acknowledged once.
+    property string ackedSeq: ""
+
+    // The state as read (CaptureFile.parse): phase idle | starting | selecting | countdown | recording | shooting | frozen, and its fields.
     property var state: CaptureFile.parse("")
     readonly property string phase: root.state.phase
     readonly property bool recording: root.phase === "recording"
@@ -69,6 +78,21 @@ Singleton {
 
     onPhaseChanged: root.enforceLock()
 
+    // Writes the acknowledgement of a `shooting` state once the cards are hidden: the `seq` alone, in place (capture-ack.sh keeps
+    // the 0600 mode). Only after the preparation ran: the folder and the file exist by then. Asked on every change of what it reads.
+    function acknowledge(): void {
+        if (prepare.running || root.ackPath === "")
+            return;
+        const seq = CaptureFile.ackNeeded(root.state, root.thumbnailsHidden, root.ackedSeq);
+        if (seq === "")
+            return;
+        root.ackedSeq = seq;
+        Quickshell.execDetached(["sh", Quickshell.shellPath("services/capture-ack.sh"), root.folder, root.ackPath, seq]);
+    }
+
+    onStateChanged: root.acknowledge()
+    onThumbnailsHiddenChanged: root.acknowledge()
+
     // Still not idle under the lock (the stop could not reach the helper yet: its state was written before its recorder): asked
     // again until the helper's state says idle.
     Timer {
@@ -105,10 +129,12 @@ Singleton {
     Process {
         id: prepare
         running: root.folder !== ""
-        command: ["sh", "-c", "umask 077; mkdir -p -m 700 -- \"$1\"", "sh", root.folder]
+        command: ["sh", Quickshell.shellPath("services/capture-ack.sh"), root.folder, root.ackPath]
         onRunningChanged: {
-            if (!running)
+            if (!running) {
                 stateFile.path = root.path;
+                root.acknowledge();
+            }
         }
     }
 

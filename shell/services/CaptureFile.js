@@ -7,8 +7,16 @@
 // The file is the user's own (0600 in a 0700 folder, written by rename) and still data: every field is checked, a field that
 // does not read is dropped, and a file that does not read at all is "idle".
 
-// "starting": a recording's helper has begun (written at once, before anything slow), "selecting": its crosshair shows.
-var PHASES = ["idle", "starting", "selecting", "countdown", "recording"];
+// "starting": a recording's helper has begun (written at once, before anything slow), "selecting": its crosshair shows,
+// "shooting": the helper is about to take pixels and waits (1 s at most) for the shell's acknowledgement, "frozen": it holds
+// grabbed frames and waits for the choice (ADR-0066 D-1, D-2).
+var PHASES = ["idle", "starting", "selecting", "countdown", "recording", "shooting", "frozen"];
+
+// The helper's `seq` (a random 64-bit hex, 16 digits today) and the frozen state's `token` (128 bits, 32 digits): hex only, so
+// that nothing but hex ever reaches the acknowledgement file or a helper argument. The `seq` limit keeps the file far under the
+// 64 bytes the helper accepts.
+var SEQ = /^[0-9A-Fa-f]{1,32}$/;
+var TOKEN = /^[0-9A-Fa-f]{1,64}$/;
 
 // Whether the shell must stop the helper now: the session is locked (or locking) and a capture is anything but idle. Asked on
 // every change of either, so that a recording that becomes active after the lock (its helper was slow to start, or the shell
@@ -42,10 +50,10 @@ function rect(r) {
     return {x: r.x, y: r.y, w: r.w, h: r.h};
 }
 
-// The state read from the file's text: {phase, kind, until, started, rect, output}. `until` and `started` are ms since the
+// The state read from the file's text: {phase, kind, until, started, rect, output, seq, token}. `until` and `started` are ms since the
 // epoch (0 when absent); a countdown without its end and a recording without its start read as idle (nothing to show).
 function parse(text) {
-    const idle = {phase: "idle", kind: "", until: 0, started: 0, rect: null, output: ""};
+    const idle = {phase: "idle", kind: "", until: 0, started: 0, rect: null, output: "", seq: "", token: ""};
     let doc = null;
     try {
         doc = JSON.parse(String(text || ""));
@@ -60,11 +68,23 @@ function parse(text) {
         until: finite(doc.until) && doc.until > 0 ? doc.until : 0,
         started: finite(doc.started) && doc.started > 0 ? doc.started : 0,
         rect: rect(doc.rect),
-        output: typeof doc.output === "string" && OUTPUT_NAME.test(doc.output) ? doc.output : ""
+        output: typeof doc.output === "string" && OUTPUT_NAME.test(doc.output) ? doc.output : "",
+        // Only the phase that owns each field carries it. A `shooting` or `frozen` state whose field does not read keeps its
+        // phase (the lock must still stop it) and an empty field (it is never acknowledged).
+        seq: doc.phase === "shooting" && typeof doc.seq === "string" && SEQ.test(doc.seq) ? doc.seq : "",
+        token: doc.phase === "frozen" && typeof doc.token === "string" && TOKEN.test(doc.token) ? doc.token : ""
     };
     if ((out.phase === "countdown" && out.until === 0) || (out.phase === "recording" && out.started === 0))
         return idle;
     return out;
+}
+
+// Whether the shell must acknowledge the helper's `shooting` state now: it has a valid `seq`, the thumbnails are hidden (unmapped
+// and one frame passed), and this `seq` was not acknowledged yet. Returns the `seq` to write, or "".
+function ackNeeded(state, hidden, acked) {
+    if (hidden !== true || !state || state.phase !== "shooting" || state.seq === "" || state.seq === acked)
+        return "";
+    return state.seq;
 }
 
 // Whole seconds left of a countdown ending at `until` (5, 4, ... 1), 0 once it is over.

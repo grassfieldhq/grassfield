@@ -54,7 +54,7 @@ TestCase {
     function test_stopUnderTheLock() {
         verify(!CaptureFile.stopNeeded(false, "recording"), "unlocked: nothing to stop");
         verify(!CaptureFile.stopNeeded(true, "idle"), "locked and idle: nothing to stop");
-        for (const phase of ["starting", "selecting", "countdown", "recording"])
+        for (const phase of ["starting", "selecting", "countdown", "recording", "shooting", "frozen"])
             verify(CaptureFile.stopNeeded(true, phase), phase);
         verify(!CaptureFile.stopNeeded("yes", "recording"), "only a real lock state");
         // Replays of the two orders as CaptureState sees them: each change of either value asks stopNeeded again.
@@ -79,6 +79,56 @@ TestCase {
         verify(replay([{locked: true}, {text: recording}]) > 0, "a shell restarted under the lock reads a recording late: stopped");
         compare(replay([{locked: true}, {text: '{"v": 1, "phase": "idle"}'}]), 0, "locked with nothing running: no stop");
         compare(replay([{text: recording}, {text: '{"v": 1, "phase": "idle"}'}, {locked: true}]), 0, "ended before the lock: no stop");
+    }
+
+    // ADR-0066 D-1: the helper's `shooting` (with its `seq`) and `frozen` (with its `token`) states.
+    function test_shootingAndFrozen() {
+        const s = CaptureFile.parse('{"v": 1, "phase": "shooting", "seq": "0123456789abcdef", "pid": 12, "start": 3}');
+        compare(s.phase, "shooting");
+        compare(s.seq, "0123456789abcdef");
+        compare(s.token, "");
+        const f = CaptureFile.parse('{"v": 1, "phase": "frozen", "token": "abababababababababababababababab", "frames": [], "pid": 12, "start": 3}');
+        compare(f.phase, "frozen");
+        compare(f.token, "abababababababababababababababab");
+        compare(f.seq, "");
+        compare(CaptureFile.parse('{"v": 1, "phase": "idle", "seq": "abc"}').seq, "", "only a shooting state carries a seq");
+        compare(CaptureFile.parse('{"v": 1, "phase": "shooting", "seq": "abc", "token": "abc"}').token, "", "nor a token");
+    }
+
+    function test_shootingMalformed() {
+        for (const text of ['{"phase": "shooting", "seq": "abc"}', '{"v": 2, "phase": "shooting", "seq": "abc"}',
+                 '{"v": 1, "phase": "shoot", "seq": "abc"}', '{"v": 1, "phase": "Frozen"}', '{"v": 1, "phase": ["shooting"]}'])
+            compare(CaptureFile.parse(text).phase, "idle", text);
+        // A field that does not read is dropped, never acknowledged; the phase stays so the lock still stops it.
+        for (const seq of ["", "xyz", "../x", "a b", "abc\n", 12, null, ["a"], "0".repeat(33)]) {
+            const s = CaptureFile.parse(JSON.stringify({v: 1, phase: "shooting", seq: seq}));
+            compare(s.phase, "shooting", JSON.stringify(seq));
+            compare(s.seq, "", JSON.stringify(seq));
+        }
+        compare(CaptureFile.parse('{"v": 1, "phase": "frozen", "token": "../../x"}').token, "");
+        compare(CaptureFile.parse('{"v": 1, "phase": "frozen", "token": 5}').phase, "frozen");
+    }
+
+    function test_stopShootingUnderTheLock() {
+        verify(CaptureFile.stopNeeded(true, "shooting"), "a shooting state under the lock is stopped");
+        verify(CaptureFile.stopNeeded(true, "frozen"), "a frozen state under the lock is stopped");
+        verify(!CaptureFile.stopNeeded(false, "shooting"));
+        verify(CaptureFile.stopNeeded(true, CaptureFile.parse('{"v": 1, "phase": "shooting", "seq": "zz"}').phase),
+            "a shooting state with a bad seq is still stopped");
+    }
+
+    // The acknowledgement is asked for once per seq, only when the cards are hidden.
+    function test_ackNeeded() {
+        const shooting = CaptureFile.parse('{"v": 1, "phase": "shooting", "seq": "0123456789abcdef"}');
+        compare(CaptureFile.ackNeeded(shooting, true, ""), "0123456789abcdef");
+        compare(CaptureFile.ackNeeded(shooting, false, ""), "", "a card is still mapped: wait");
+        compare(CaptureFile.ackNeeded(shooting, true, "0123456789abcdef"), "", "already acknowledged");
+        compare(CaptureFile.ackNeeded(shooting, true, "ffff"), "0123456789abcdef", "a new seq");
+        compare(CaptureFile.ackNeeded(CaptureFile.parse('{"v": 1, "phase": "shooting", "seq": "nope!"}'), true, ""), "");
+        compare(CaptureFile.ackNeeded(CaptureFile.parse('{"v": 1, "phase": "frozen", "token": "ab"}'), true, ""), "");
+        compare(CaptureFile.ackNeeded(CaptureFile.parse(""), true, ""), "");
+        compare(CaptureFile.ackNeeded(shooting, 1, ""), "", "only a real true");
+        compare(CaptureFile.ackNeeded(null, true, ""), "");
     }
 
     function test_secondsLeft() {
