@@ -100,7 +100,9 @@ fi
 desc="screenshots: slurp's crosshair layer (namespace selection) is never faded out, so no picture shows it (ADR-0035 D-10)"
 check grep -q 'hl.layer_rule({ name = "gf-capture-selection-no-anim", match = { namespace = "^selection\$" }, no_anim = true })' "$root/config/hypr/grassfield/windows.lua"
 desc="capture toolbar: the countdown plate's layer goes without a fade, and both capture layers are blurred (ADR-0045 OC-1)"
-check bash -c 'grep -q "hl.layer_rule({ name = \"gf-capture-countdown-no-anim\", match = { namespace = \"^grassfield-capture-countdown\$\" }, no_anim = true })" "$1" && grep -q "|stages|capture|capture-countdown)\\$\" }, blur = true" "$1"' _ "$root/config/hypr/grassfield/windows.lua"
+check bash -c 'grep -q "hl.layer_rule({ name = \"gf-capture-countdown-no-anim\", match = { namespace = \"^grassfield-capture-countdown\$\" }, no_anim = true })" "$1" && grep -q "|stages|capture|capture-countdown|capture-thumbnail)\\$\" }, blur = true" "$1"' _ "$root/config/hypr/grassfield/windows.lua"
+desc="floating thumbnail: its cards map and unmap without a fade, so none is left in the next picture (ADR-0066 A2)"
+check grep -q 'hl.layer_rule({ name = "gf-capture-thumbnail-no-anim", match = { namespace = "^grassfield-capture-thumbnail\$" }, no_anim = true })' "$root/config/hypr/grassfield/windows.lua"
 desc="capture toolbar: its own layer maps without a fade, so the keyboard hand-over between displays does not blink the bar (ADR-0045 OC-1)"
 check grep -q 'hl.layer_rule({ name = "gf-capture-toolbar-no-anim", match = { namespace = "^grassfield-capture\$" }, no_anim = true })' "$root/config/hypr/grassfield/windows.lua"
 
