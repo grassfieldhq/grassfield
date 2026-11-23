@@ -36,6 +36,11 @@ for d in (fake, norec, home, log):
 os.makedirs(runtime, mode=0o700)
 helper = os.path.join(root, "packaging/bin/grassfield-capture")
 source = open(helper).read()
+# The same helper, waiting 0.05 s instead of ACK_SECONDS for the shell's acknowledgement (no shell runs here; shooting.py holds
+# the handshake against the real wait).
+source = re.sub(r"^ACK_SECONDS = [0-9.]+$", "ACK_SECONDS = 0.05", source, flags=re.M)
+helper = os.path.join(tmp, "grassfield-capture-fast")
+write(helper, source)
 # The same helper, killing a recorder that ignores SIGINT after 1 s instead of STOP_SECONDS.
 quick = os.path.join(tmp, "grassfield-capture-quick")
 write(quick, re.sub(r"^STOP_SECONDS = [0-9]+$", "STOP_SECONDS = 1", source, flags=re.M))
@@ -152,7 +157,7 @@ state_file = os.path.join(runtime, "grassfield", "capture-state.json")
 # Screenshots folder in Pictures, the Videos folder) are checked where --save asks for them.
 os.makedirs(os.path.join(home, ".config", "grassfield"), exist_ok=True)
 with open(os.path.join(home, ".config", "grassfield", "grassfield.json"), "w") as f:
-    json.dump({"version": 1, "capture": {"location": "desktop"}}, f)
+    json.dump({"version": 1, "capture": {"location": "desktop", "showThumbnail": False}}, f)  # the notice, as before C2
 screenshots, videos = os.path.join(home, "Pictures", "Screenshots"), os.path.join(home, "Videos")
 
 

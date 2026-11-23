@@ -36,9 +36,16 @@
 # (Preview plays it) follows. A recording with --save clipboard is not offered (a movie is not copied): it goes to the Videos
 # folder. While a recording or a countdown runs this helper holds a lock and keeps its state in a private file,
 # $XDG_RUNTIME_DIR/grassfield/capture-state.json (0600, by rename, in the 0700 folder of the capture notice), which the shell watches (its countdown and the menu bar's stop item):
-#   {"v": 1, "phase": "idle" | "starting" | "selecting" | "countdown" | "recording", "kind": "shot" | "recording",
+#   {"v": 1, "phase": "idle" | "starting" | "selecting" | "countdown" | "shooting" | "recording", "kind": "shot" | "recording",
 #    "pid", "start", "until" (ms since the epoch, countdown), "rect" {x, y, w, h} and "output" (where the capture is),
-#    "recorder", "recorderStart" and "started" (ms, recording)}
+#    "recorder", "recorderStart" and "started" (ms, recording), "seq" (shooting)}
+# Before every grim call and every recorder start (ADR-0066 D-1) the phase is "shooting", with "seq", 16 random hex digits: the
+# shell unmaps its floating thumbnails and writes that seq to $XDG_RUNTIME_DIR/grassfield/capture-ack (0600, one name, at most 64
+# bytes: the 16 digits and at most a newline; anything else is ignored); this helper goes on at that, or after ACK_SECONDS with
+# none. Afterwards a saved picture or recording is described in $XDG_RUNTIME_DIR/grassfield/capture-result.json (0600, by
+# rename) when capture.showThumbnail is on (the default). The notice is skipped only when the shell acknowledged this very
+# capture and the result was written; otherwise (no acknowledgement, the setting off, no result file, no handshake because
+# another capture owns the state) the notice shows it. The automatic copy to the clipboard is `wl-copy --type image/png --sensitive`.
 #   grassfield-capture stop
 # ends what that state names (the menu bar's stop item, Ctrl-Cmd-Esc, the session locking): SIGINT to the recorder this helper
 # started (gpu-screen-recorder saves its file on SIGINT), recognised by its pid, its start time and its parent (this helper's
@@ -112,6 +119,15 @@ OUTPUT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 GEOMETRY_ARG = re.compile(r"(-?[0-9]{1,6}),(-?[0-9]{1,6}) ([0-9]{1,6})x([0-9]{1,6})")
 # While recording, the shell's lock marker is read this often (seconds): the session locking ends the recording.
 LOCK_POLL_SECONDS = 0.5
+# The shooting handshake (ADR-0066 D-1): before every grim call and recorder start the state says "shooting" with a random seq,
+# and the shell, once its floating thumbnails are unmapped, writes that seq to ACK_NAME in the runtime folder. This helper waits
+# at most ACK_SECONDS for it and then goes on: a thumbnail can never block a capture. The file is at most ACK_MAX bytes.
+ACK_SECONDS = 1.0
+ACK_POLL_SECONDS = 0.02
+ACK_NAME = "capture-ack"
+ACK_MAX = 64
+# The result file (ADR-0066 D-1): what the shell shows as the floating thumbnail after a capture.
+RESULT_NAME = "capture-result.json"
 
 TITLE = "Screenshot"
 NAME = "Screenshot %(date)s at %(time)s"
@@ -727,6 +743,117 @@ def me():
     return {"pid": pid, "start": started(pid)}
 
 
+def ack_read(path, seq):
+    # The shell's acknowledgement is trusted only as a private file of this user's: a regular file (never a link: opened with
+    # O_NOFOLLOW, one name), mode 0600, at most ACK_MAX bytes, holding this capture's seq (16 lowercase hex digits, then at most
+    # one newline). Anything else is ignored.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return False
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600
+                or st.st_nlink != 1 or st.st_size > ACK_MAX):
+            return False
+        data = os.read(fd, ACK_MAX + 1)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    return len(data) <= ACK_MAX and data in (seq.encode(), seq.encode() + b"\n")
+
+
+def handshake(kind):
+    # The state says "shooting" with a fresh random seq; the shell hides its thumbnails and writes the seq to capture-ack; this
+    # helper waits at most ACK_SECONDS for it. True when this run got the acknowledgement; False without one, and without a
+    # private runtime folder (nothing to say or hear).
+    folder = runtime_folder()
+    if folder is None:
+        return False
+    seq = os.urandom(8).hex()
+    write_state(dict(me(), phase="shooting", kind=kind, seq=seq))
+    path = os.path.join(folder, ACK_NAME)
+    until = time.monotonic() + ACK_SECONDS
+    while not ack_read(path, seq):
+        if time.monotonic() >= until:
+            return False
+        time.sleep(ACK_POLL_SECONDS)
+    return True
+
+
+@contextlib.contextmanager
+def shooting(kind):
+    # The shooting phase of a screenshot: holds the capture lock (so that `stop` and the shell's lock stop reach this helper)
+    # while the handshake and the picture run, and leaves the state idle. When a recording or a countdown holds the lock, the
+    # state is theirs: no handshake, and nothing written.
+    lock = take_lock()
+    try:
+        yield handshake(kind) if lock is not None else False  # whether the shell acknowledged this run
+    finally:
+        if lock is not None:
+            write_state({"phase": "idle"})
+            os.close(lock)
+
+
+def show_thumbnail():
+    # capture.showThumbnail of grassfield.json, true when absent or not a boolean (ADR-0066 D-11): the shell shows a floating
+    # thumbnail instead of this helper's notice.
+    value = settings_group("capture").get("showThumbnail")
+    return value if isinstance(value, bool) else True
+
+
+def place_of(rect, monitors, output):
+    # The display a capture is on (the one named, else the one under the rectangle's centre) and its scale: ("", 1.0) when
+    # Hyprland's answer does not say.
+    cx, cy = rect["x"] + rect["w"] // 2, rect["y"] + rect["h"] // 2
+    for m in monitors or []:
+        if isinstance(m, dict) and not m.get("disabled") and isinstance(m.get("name"), str):
+            r = logical(m)
+            if r and (m["name"] == output if output else contains(r, cx, cy)):
+                try:
+                    return m["name"], float(m["scale"])
+                except (KeyError, TypeError, ValueError):
+                    return m["name"], 1.0
+    return "", 1.0
+
+
+def picture_size(path, rect, scale):
+    # A PNG's pixel size from its header, else the rectangle at the display's scale.
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+        if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+            w, h = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+            if w > 0 and h > 0:
+                return {"w": w, "h": h}
+    except OSError:
+        pass
+    return {"w": max(1, round(rect["w"] * scale)), "h": max(1, round(rect["h"] * scale))}
+
+
+def write_result(kind, paths, rect, output, scale, pixels, text=""):
+    # $XDG_RUNTIME_DIR/grassfield/capture-result.json (ADR-0066 D-1): 0600, written to a file of its own (O_EXCL, never a link)
+    # and renamed over the last one, so the shell reads a whole file or the one before. False when it could not be written.
+    folder = runtime_folder()
+    if folder is None or not paths:
+        return False
+    result = {"v": 1, "id": os.urandom(8).hex(), "kind": kind, "paths": paths, "primary": paths[0], "output": output,
+              "rect": rect, "scale": scale, "pixels": pixels, "time": int(time.time() * 1000), "text": text[:512]}
+    path = os.path.join(folder, RESULT_NAME)
+    tmp = "%s.%s.tmp" % (path, os.urandom(6).hex())
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(result) + "\n")
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        return False
+    return True
+
+
 def countdown(seconds, rect, output, kind, lock):
     # The timer: the shell shows the seconds left over `rect` while the state says so (only with the lock: without it another
     # capture owns the state, and this countdown runs unseen). Interrupted by SIGINT or SIGTERM (Cancelled).
@@ -843,10 +970,11 @@ def open_with(desktop_id, paths):
     run(["systemd-run", "--user", "--collect", "--quiet", "--"] + app, timeout=30)
 
 
-def copy_png(data):
-    # wl-copy stays behind to serve the clipboard: none of its output is waited for.
+def copy_png(data, sensitive=False):
+    # wl-copy stays behind to serve the clipboard: none of its output is waited for. The automatic copy of a saved picture is
+    # --sensitive (clipboard history never records it, ADR-0034 PV-1, ADR-0066 D-9); the copy a user chose as Save to is not.
     try:
-        subprocess.run(["wl-copy", "--type", "image/png"], input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        subprocess.run(["wl-copy", "--type", "image/png"] + (["--sensitive"] if sensitive else []), input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=10)
     except (OSError, subprocess.SubprocessError):
         pass
@@ -897,34 +1025,47 @@ def shot(opts):
             if lock is not None:
                 os.close(lock)
     time.sleep(max(0.0, ready - time.monotonic()))
-    if session_locked():
+    if lock_requested():
         return 1  # the session locked meanwhile: no picture of what the lock covers
-    if save == "clipboard":
-        # The clipboard only (macOS: no file, no thumbnail): the focused display's picture, or the choice.
-        r = run(shots[0] + ["-"], timeout=30)
-        if r is None or r.returncode != 0 or not r.stdout:
-            return 1
-        shutter()
-        copy_png(r.stdout)
-        return 0
-    folder = destination(save)
-    if folder is None:
+    folder = None if save == "clipboard" else destination(save)
+    if save != "clipboard" and folder is None:
         return 1
     now = datetime.datetime.now()
     stem = tr(NAME) % {"date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H.%M.%S")}
-    paths = [p for p in (save_picture(folder, stem, grim) for grim in shots) if p]
-    if not paths:
-        return 1
+    data, paths = b"", []
+    # The shooting phase: from the handshake to the last grim call, so that no floating thumbnail is in a picture; it ends
+    # before the notice, which waits for a click.
+    with shooting("shot") as acknowledged:
+        if session_locked():
+            return 1
+        if save == "clipboard":
+            # The clipboard only (macOS: no file, no thumbnail): the focused display's picture, or the choice.
+            r = run(shots[0] + ["-"], timeout=30)
+            if r is None or r.returncode != 0 or not r.stdout:
+                return 1
+            data = r.stdout
+        else:
+            paths = [p for p in (save_picture(folder, stem, grim) for grim in shots) if p]
+            if not paths:
+                return 1
     shutter()
+    if save == "clipboard":
+        copy_png(data)
+        return 0
     if save == "preview":
         open_with(PREVIEW, paths)
         return 0
     try:
         with open(paths[0], "rb") as f:
-            copy_png(f.read())
+            copy_png(f.read(), sensitive=True)
     except OSError:
         pass
-    notify(paths, TITLE, saved_note(save, folder), OPEN)
+    place, scale = place_of(area, monitors, output)
+    # The shell's thumbnail replaces the notice only when it acknowledged this very shot, the setting is on and the result is
+    # written; otherwise (no shell, no acknowledgement, the setting off, no result file) the notice shows the picture.
+    written = show_thumbnail() and write_result("shot", paths, area, place, scale, picture_size(paths[0], area, scale))
+    if not (acknowledged and written):
+        notify(paths, TITLE, saved_note(save, folder), OPEN)
     return 0
 
 
@@ -1004,6 +1145,7 @@ def record(opts):
         sys.stderr.write("grassfield-capture: a recording or a countdown is already running\n")
         return 1
     tmp = None
+    acknowledged = False
     signal.signal(signal.SIGINT, on_record_signal)
     signal.signal(signal.SIGTERM, on_record_signal)
     try:
@@ -1041,6 +1183,8 @@ def record(opts):
         time.sleep(max(0.0, ready - time.monotonic()))
         folder = destination(opts["save"], record=True)
         tmp = reserve(folder, "grassfield-recording", ".mp4") if folder else None
+        if tmp is not None:
+            acknowledged = handshake("recording")  # the thumbnails are away before the recorder starts
         if tmp is None or session_locked():
             return 1  # (the session locked during the choice or the countdown: nothing is recorded)
         argv = recorder_argv(target, monitors, opts, tmp)
@@ -1101,7 +1245,11 @@ def record(opts):
     if opts["save"] == "preview":
         open_with(PREVIEW, [path])
         return 0
-    notify([path], REC_TITLE, saved_note(opts["save"], os.path.dirname(path), record=True), REC_OPEN, picture=False)
+    place, scale = place_of(rect, monitors, output)
+    pixels = {"w": max(1, round(rect["w"] * scale)), "h": max(1, round(rect["h"] * scale))}
+    written = show_thumbnail() and write_result("recording", [path], rect, place, scale, pixels)
+    if not (acknowledged and written):
+        notify([path], REC_TITLE, saved_note(opts["save"], os.path.dirname(path), record=True), REC_OPEN, picture=False)
     return 0
 
 
@@ -1140,7 +1288,7 @@ def stop():
     # Exit 0 when something was told to end, 1 otherwise.
     state = read_state()
     phase = state.get("phase")
-    if phase not in ("starting", "selecting", "countdown", "recording"):
+    if phase not in ("starting", "selecting", "countdown", "shooting", "recording"):
         return 1
     lock = take_lock()
     if lock is not None:
