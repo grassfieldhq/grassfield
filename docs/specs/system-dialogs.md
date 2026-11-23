@@ -888,8 +888,15 @@ Rules (fail closed: no answer is ever invented):
   (pairing, with its `progress` message) in step 10; each adds its own prompt and answer fields within `prompter/1`. A change to the fields of
   an existing kind is `prompter/2`; a new value of a field (the role `disk`, step 9c) is not: bridge and shell ship together,
   and a shell that does not know it closes the connection (9-26).
-- NetworkManager's, KIO's and bluetoothd's requests share the ids and the bound of 8 with gcr's; the 9th, from any side, is
-  refused (gcr: cancelled; NetworkManager: `NoSecrets`; KIO: its AuthInfo unmodified; bluetoothd: `Rejected`).
+- NetworkManager's, KIO's and bluetoothd's requests share the ids and the bound of 8 with gcr's, in the lanes of the
+  Rules above: the 8 count the requests the shell holds (a waiting one holds none). A NetworkManager or bluetoothd request
+  that finds no place left to it (the 8 held, or only the other daemon's two kept) is refused at once and never waits
+  (NetworkManager: `NoSecrets`; bluetoothd: `Rejected`); an application's (gcr, KIO) past the applications' four waits
+  in the bridge and is refused (gcr: cancelled; KIO: its AuthInfo unmodified) only past the queue's bounds or its 110 s.
+  So the applications, their queue included, never take NetworkManager's or bluetoothd's two places: with four gcr prompts
+  shown and others waiting, two Wi-Fi requests (or two pairing steps) are still shown, a third is refused at once, and a
+  place either frees while it holds fewer than two stays free for it, never given to a waiting application's
+  (`nm_agent.sh` section 10, `bluez_agent.sh` section 9).
 
 ### Acceptance criteria
 - A-SC1 (L0) a fake gcr client on a private bus gets the password through the exchange; a fake process queued on the name never
@@ -948,8 +955,8 @@ Rules (fail closed: no answer is ever invented):
   connection get `NoSecrets` without a sheet; a caller that does not own `org.freedesktop.NetworkManager` gets
   `PermissionDenied` and nothing is shown, its `CancelGetSecrets` cancels nothing; `CancelGetSecrets` withdraws the sheet;
   the shell's departure unregisters, its return registers, a restarted NetworkManager is registered with again; the bound of
-  8 shared with gcr; the 110-s withdrawal; `--mutants`: the sender check, the unregistering, the VPN and interaction
-  refusals, the cancellation, the kinds gate, the user's cancel, the name check, the timeout, `SaveSecrets`, the
+  8 shared with gcr (lanes and the applications' queue, section 5); the 110-s withdrawal; `--mutants`: the sender check,
+  the unregistering, the VPN and interaction refusals, the cancellation, the kinds gate, the user's cancel, the name check, the timeout, `SaveSecrets`, the
   re-registration), the Wi-Fi sheet (`tests/security/secret_sheets.sh`: held, Join's length rule, Show password,
   enterprise, NetworkManager's cancel while typed into, the queue with polkit and gcr, the lock hiding the shown password;
   mutants), the shell's real client end to end (`tests/security/secret_bridge.sh` e2e with the fake NetworkManager) and SC7
@@ -1378,7 +1385,8 @@ nothing is accepted silently.
   arrives; other callers get `org.bluez.Error.Rejected` and no sheet; a stranger's `Cancel` cancels nothing. Every argument is
   checked before anything is shown (a device path of bluetoothd's form, a passkey of at most 999999, a PIN to show of 1 to 16
   letters and digits, a canonical UUID): anything else is Rejected without a sheet. Its sheets go through the same queue and
-  bound of 8 as the other secret sheets (section 5, SC2).
+  bound of 8 as the other secret sheets (section 5, SC2, and its lanes: bluetoothd keeps two places, which waiting
+  application requests never take; a pairing step that finds no place left to it is Rejected at once, never queued).
 - BT5 (10-12) Settings' Bluetooth pane (PR #8) owns discovery and the adapter's state and is unchanged: its `Pair()`, made
   without an agent of its own, asks the default agent, the bridge, so a pairing that needs a code or a comparison shows the
   sheet; a device that needs neither pairs without one.
@@ -1387,7 +1395,7 @@ nothing is accepted silently.
 - A-BT1 (L0) a fake BlueZ on a private system-style bus drives every method; mutants removing the "no automatic yes" rule or
   the caller check fail. Step 10: `tests/security/bluez_agent.sh` (a fake bluetoothd, `tests/fixtures/fake-bluez.py`, serving
   AgentManager1 and Device1 objects as BlueZ 5.87 does; a fake shell; an attacker; Settings' Pair() through `dbus-send`; the
-  shared bound with libgcr's client; a bridge with a short answer time; `--mutants`), `tests/unit/prompter/tst_prompter.cpp`
+  shared bound with libgcr's clients, the applications' queue included; a bridge with a short answer time; `--mutants`), `tests/unit/prompter/tst_prompter.cpp`
   (the argument checks, the device's name, the passkey's form, the prompt and progress lines; plain and ASan/UBSan),
   `tests/security/tst_prompter.qml` and `tst_secretsheetmodel.qml` (the kind read strictly, the answers, the sheet's words and
   rules), `tests/security/secret_sheets.sh` (the real agent and sheet: held, no key answers, Decline, the code rules, a code
