@@ -21,54 +21,8 @@ Scope {
     // The screen Search is on (the confirmation of Empty Trash opens there, as the Log Out one does).
     property string screenName: ""
 
-    // ---- Do Not Disturb for a while: the deadline (ms since the epoch, 0 none) ----------------------------------------
-    // Held by the shell only (not saved): after a shell restart Do Not Disturb stays as set until it is turned off.
-    property double dndUntil: 0
-
-    function armDnd(kind: string): void {
-        const until = Builtin.dndDeadline(kind, Date.now());
-        if (until <= 0)
-            return;
-        Notifications.setDnd(true);
-        dndUntil = until;
-        dndTimer.restart();
-    }
-
-    // Turning it on or off by hand forgets a deadline (the Control Center switch, the menu bar's Focus item, these commands).
-    function dndByHand(on: bool): void {
-        dndUntil = 0;
-        Notifications.setDnd(on);
-    }
-
-    // Checked every minute while armed, and at the deadline: a timer does not count the time asleep, so a long interval could
-    // end Do Not Disturb late after a resume.
-    Timer {
-        id: dndTimer
-        interval: Math.max(1000, Math.min(60000, root.dndUntil - Date.now()))
-        repeat: true
-        running: root.dndUntil > 0
-        onTriggered: root.dndTick()
-    }
-
-    function dndTick(): void {
-        switch (Builtin.dndStep(dndUntil, Notifications.dnd, Date.now())) {
-        case "expire":
-            dndUntil = 0;
-            Notifications.setDnd(false);
-            return;
-        case "clear":
-            dndUntil = 0;
-            return;
-        }
-    }
-
-    Connections {
-        target: Notifications
-
-        function onDndChanged(): void {
-            root.dndTick();
-        }
-    }
+    // Start Screen Saver was chosen (Search forwards it to shell.qml, which owns the Saver).
+    signal startSaver
 
     function untilText(until: double): string {
         if (until <= 0)
@@ -98,6 +52,7 @@ Scope {
             appearance: qsTr("Toggle Appearance"), appearanceWords: [qsTr("appearance"), qsTr("dark mode"), qsTr("light mode"), qsTr("theme")],
             appearanceDark: qsTr("Dark"), appearanceLight: qsTr("Light"),
             trashEmpty: qsTr("Empty Trash"), trashEmptyWords: [qsTr("empty the trash"), qsTr("delete everything")],
+            saver: qsTr("Start Screen Saver"), saverWords: [qsTr("screensaver")],
             trashOpen: qsTr("Open Trash"), trashOpenWords: [qsTr("trash"), qsTr("bin")],
             showDesktop: qsTr("Show Desktop"), showDesktopWords: [qsTr("desktop"), qsTr("hide all windows")],
             volumeUp: qsTr("Volume Up"), volumeUpWords: [qsTr("louder"), qsTr("sound")],
@@ -151,6 +106,7 @@ Scope {
             // The Dock menu's question; Power.run("emptytrash") deletes only after it is confirmed.
             emptyTrash: () => Popups.confirm(qsTr("Are you sure you want to permanently erase the items in the Trash?"), qsTr("You can’t undo this action."), qsTr("Empty Trash"), "emptytrash", {}, true, root.screenName),
             openTrash: () => Trash.open(),
+            startSaver: () => root.startSaver(),
             // The keys' own request, answered in process (platform/shortcuts): the volume keys, with their on-screen feedback, and Show Desktop.
             showDesktop: () => Shortcuts.deliver({target: "windows", fn: "showDesktop", args: []}),
             volume: direction => Shortcuts.deliver({target: "volume", fn: direction, args: []}),
@@ -175,15 +131,16 @@ Scope {
             wifi: {available: Connectivity.available && Connectivity.wifiDevice !== null, on: Connectivity.wifiEnabled && Connectivity.wifiDevice !== null},
             bluetooth: {available: BluetoothState.available, on: BluetoothState.enabled},
             airplane: {available: Connectivity.airplaneAvailable, on: Connectivity.airplane},
-            dnd: {available: true, on: Notifications.dnd, until: root.dndUntil, untilText: root.untilText(root.dndUntil)},
+            dnd: {available: true, on: Notifications.dnd, until: Notifications.dndUntil, untilText: root.untilText(Notifications.dndUntil)},
             nightLight: {available: NightShift.available, on: NightShift.on}
         };
         const actToggles = {
             wifi: on => Connectivity.toggleWifi(on),
             bluetooth: on => BluetoothState.setEnabled(on),
             airplane: on => Connectivity.setAirplane(on),
-            dnd: on => root.dndByHand(on),
-            dndFor: kind => root.armDnd(kind),
+            // Notifications keeps the deadline (saved, so a restart keeps it) and ends Do Not Disturb on time.
+            dnd: on => Notifications.setDnd(on),
+            dndFor: kind => Notifications.setDndFor(kind),
             nightLight: on => NightShift.setOn(on)
         };
         return Builtin.systemCommands(t, stateSystem, actSystem, refuses)

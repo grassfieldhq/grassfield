@@ -23,7 +23,7 @@ TestCase {
 
     function words(extra) {
         const t = {subtitleSystem: "System command", subtitleWindow: "Window", appearance: "Toggle Appearance", appearanceWords: ["theme"],
-            appearanceDark: "Dark", appearanceLight: "Light", trashEmpty: "Empty Trash", trashEmptyWords: [], trashOpen: "Open Trash", trashOpenWords: [],
+            appearanceDark: "Dark", appearanceLight: "Light", saver: "Start Screen Saver", saverWords: ["screensaver"], trashEmpty: "Empty Trash", trashEmptyWords: [], trashOpen: "Open Trash", trashOpenWords: [],
             showDesktop: "Show Desktop", showDesktopWords: [], volumeUp: "Volume Up", volumeUpWords: [], volumeDown: "Volume Down", volumeDownWords: [],
             mute: "Mute", unmute: "Unmute", muteWords: [], stateMuted: "Muted", stateNotMuted: "Sound on", play: "Play", pause: "Pause", playWords: [],
             statePlaying: "Playing", statePaused: "Paused", nextTrack: "Next Track", nextTrackWords: [], previousTrack: "Previous Track", previousTrackWords: [],
@@ -44,7 +44,7 @@ TestCase {
     }
 
     function sysAct() {
-        return {appearance: rec("appearance"), emptyTrash: rec("ask-empty-trash"), openTrash: rec("openTrash"), showDesktop: rec("showDesktop"),
+        return {appearance: rec("appearance"), startSaver: rec("startSaver"), emptyTrash: rec("ask-empty-trash"), openTrash: rec("openTrash"), showDesktop: rec("showDesktop"),
             volume: rec("volume"), media: rec("media")};
     }
 
@@ -89,7 +89,7 @@ TestCase {
 
     function test_systemEachIdCallsItsFunction() {
         const r = reg(Builtin.systemCommands(words(), sysState(), sysAct(), refuses));
-        const want = {"sys.appearance": "appearance:false", "sys.trash.empty": "ask-empty-trash", "sys.trash.open": "openTrash", "sys.desktop": "showDesktop",
+        const want = {"sys.saver": "startSaver", "sys.appearance": "appearance:false", "sys.trash.empty": "ask-empty-trash", "sys.trash.open": "openTrash", "sys.desktop": "showDesktop",
             "sys.volume.up": "volume:up", "sys.volume.down": "volume:down", "sys.volume.mute": "volume:mute", "sys.media.toggle": "media:toggle",
             "sys.media.next": "media:next", "sys.media.previous": "media:previous"};
         for (const id of Object.keys(want)) {
@@ -232,22 +232,6 @@ TestCase {
         verify(!runId(r, "set.dnd.tomorrow"));
         compare(Commands.find(r, "set.dnd").title, "Turn Do Not Disturb Off");
         compare(Commands.find(r, "set.dnd").subtitle, "On until 3:00 PM");
-    }
-
-    function test_dndDeadlineAndExpiry() {
-        const now = new Date(2026, 10, 23, 22, 30, 0).getTime();
-        compare(Builtin.dndDeadline("hour", now), now + 3600000);
-        compare(Builtin.dndDeadline("tomorrow", now), new Date(2026, 10, 24, 8, 0, 0).getTime());
-        // Past midnight "tomorrow" is the next day's morning, still after now.
-        const late = new Date(2026, 10, 24, 0, 5, 0).getTime();
-        compare(Builtin.dndDeadline("tomorrow", late), new Date(2026, 10, 25, 8, 0, 0).getTime());
-        compare(Builtin.dndDeadline("never", now), 0);
-        const until = now + 3600000;
-        compare(Builtin.dndStep(0, true, now), "none");
-        compare(Builtin.dndStep(until, true, now), "wait");
-        compare(Builtin.dndStep(until, true, until), "expire");
-        compare(Builtin.dndStep(until, true, until + 5 * 3600000), "expire");   // a resume long after the deadline
-        compare(Builtin.dndStep(until, false, now), "clear");                  // turned off by hand: the deadline is forgotten
     }
 
     function test_allIdsAreValidAndDistinct() {

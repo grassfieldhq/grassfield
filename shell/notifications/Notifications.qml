@@ -9,6 +9,7 @@ import Grassfield.Ui
 import qs.platform
 import qs.platform.shortcuts
 import qs.services
+import "DndFor.js" as DndFor
 import "History.js" as History
 import "../platform/ScreenChoice.js" as ScreenChoice
 import "Sanitizer.js" as Sanitizer
@@ -335,8 +336,104 @@ Singleton {
         }
     }
 
+    // Turned on or off by hand: a deadline set by setDndFor is forgotten.
     function setDnd(on: bool): void {
+        if (dndUntil > 0)
+            forgetDndUntil();
         Settings.setNotificationsDnd(on);
+    }
+
+    // ---- Do Not Disturb for a while (DndFor.js) ----
+    // The deadline (ms since the epoch, 0 none), saved in $stateDir/dnd-until.json (0600): a shell restart keeps it and still ends
+    // Do Not Disturb on time; one that passed while the shell was down turns it off at start (once the settings are read).
+    property double dndUntil: 0
+    property bool dndUntilRead: false
+    readonly property string dndUntilPath: stateDir + "/dnd-until.json"
+
+    // `kind`: "hour" or "tomorrow" (the durations are the notification.dnd* tokens). Turns Do Not Disturb on until then.
+    function setDndFor(kind: string): void {
+        const until = DndFor.deadline(kind, Date.now(), Tokens.notificationDndForMs, Tokens.notificationDndTomorrowHour);
+        if (until <= 0)
+            return;
+        Settings.setNotificationsDnd(true);
+        saveDndUntil(until);
+        dndTimer.interval = DndFor.nextCheckMs(until, Date.now(), Tokens.notificationDndCheckMs);
+        dndTimer.restart();
+    }
+
+    function forgetDndUntil(): void {
+        saveDndUntil(0);
+        dndTimer.stop();
+    }
+
+    function saveDndUntil(until: double): void {
+        dndUntil = until;
+        const argv = ["sh", Quickshell.shellPath("services/write-private.sh"), stateDir, dndUntilPath, DndFor.serialize(until)];
+        // A write still running is left to end: this one follows it, the last deadline winning.
+        if (dndWriter.running) {
+            dndWriter.next = argv;
+            return;
+        }
+        dndWriter.command = argv;
+        dndWriter.running = true;
+    }
+
+    // Applies the deadline to the switch now; false while the settings or the file are not read yet (nothing is decided on defaults).
+    function checkDndUntil(): void {
+        if (!dndUntilRead || !Settings.loaded || dndUntil <= 0)
+            return;
+        switch (DndFor.step(dndUntil, dnd, Date.now())) {
+        case "expire":
+            Settings.setNotificationsDnd(false);
+            forgetDndUntil();
+            return;
+        case "clear":
+            forgetDndUntil();
+            return;
+        }
+        dndTimer.interval = DndFor.nextCheckMs(dndUntil, Date.now(), Tokens.notificationDndCheckMs);
+        if (!dndTimer.running)
+            dndTimer.start();
+    }
+
+    onDndChanged: checkDndUntil()
+
+    Connections {
+        target: Settings
+
+        function onLoadedChanged(): void {
+            root.checkDndUntil();
+        }
+    }
+
+    Timer {
+        id: dndTimer
+        repeat: true
+        onTriggered: root.checkDndUntil()
+    }
+
+    FileView {
+        id: dndReader
+        path: root.dndUntilPath
+        printErrors: false
+        onLoaded: {
+            root.dndUntil = DndFor.parse(text());
+            root.dndUntilRead = true;
+            root.checkDndUntil();
+        }
+        onLoadFailed: root.dndUntilRead = true
+    }
+
+    Process {
+        id: dndWriter
+        property var next: null
+        onRunningChanged: {
+            if (!running && next !== null) {
+                command = next;
+                next = null;
+                running = true;
+            }
+        }
     }
 
     // Banner timed out: hide it only.

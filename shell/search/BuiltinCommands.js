@@ -10,11 +10,6 @@ const KIND_SYSTEM = "system";
 const KIND_WINDOW = "window";
 const KIND_SETTING = "setting";
 
-// Do Not Disturb "for 1 hour" and "until tomorrow" (macOS Focus: the duration choices of the Focus switch): the hour in
-// milliseconds, and the local hour tomorrow morning ends it.
-const DND_HOUR_MS = 3600000;
-const DND_TOMORROW_HOUR = 8;
-
 // A command that does nothing while `refuses()` is true (SessionState.refuses: the lock). `refuses` is called at each run.
 function guarded(refuses, run) {
     return (args, origin) => {
@@ -44,7 +39,7 @@ function _entry(spec, refuses) {
 // Toggle Appearance, Empty and Open Trash, Show Desktop, volume and media. `st`: {dark, trashEmpty, audioReady, muted,
 // mediaAvailable, playing}; `act`: {appearance(dark), emptyTrash, openTrash, showDesktop, volume(direction), media(verb)}.
 // Empty Trash is the Dock menu's confirmation (act.emptyTrash asks, then Power.run("emptytrash")): never a silent delete.
-// Sleep Displays and Screen Saver have no production function to call yet (spec B1): not offered.
+// Sleep Displays is not offered: it needs the security side (idle module), a slice of its own (spec B1).
 function systemCommands(t, st, act, refuses) {
     const sys = (id, title, words, wordsEn, glyph, run, available, subtitle) =>
         _entry({id: id, title: title, subtitle: subtitle !== undefined ? subtitle : t.subtitleSystem, words: words, wordsEn: wordsEn,
@@ -52,6 +47,8 @@ function systemCommands(t, st, act, refuses) {
     return [
         sys("sys.appearance", t.appearance, t.appearanceWords, ["appearance", "dark mode", "light mode", "theme"], "paintbrush",
             () => act.appearance(!st.dark), true, st.dark ? t.appearanceDark : t.appearanceLight),
+        sys("sys.saver", t.saver, t.saverWords, ["screen saver", "screensaver"], "display",
+            () => act.startSaver(), true),
         sys("sys.trash.empty", t.trashEmpty, t.trashEmptyWords, ["empty trash", "bin"], "trash-full",
             () => act.emptyTrash(), !st.trashEmpty),
         sys("sys.trash.open", t.trashOpen, t.trashOpenWords, ["open trash", "bin"], "trash",
@@ -138,26 +135,4 @@ function toggleCommands(t, st, act, refuses) {
         tog("set.nightlight", st.nightLight.on, t.nightLightTurnOff, t.nightLightTurnOn, t.nightLightWords, ["night light", "warm", "blue light"],
             "sun", () => act.nightLight(!st.nightLight.on), st.nightLight.available)
     ];
-}
-
-// The moment (ms since the epoch) a Do Not Disturb asked now ends: "hour" one hour on, "tomorrow" tomorrow at
-// DND_TOMORROW_HOUR local time. 0 for any other kind.
-function dndDeadline(kind, nowMs) {
-    if (kind === "hour")
-        return nowMs + DND_HOUR_MS;
-    if (kind === "tomorrow") {
-        const d = new Date(nowMs);
-        return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, DND_TOMORROW_HOUR, 0, 0, 0).getTime();
-    }
-    return 0;
-}
-
-// What the expiry timer does at `nowMs` given the deadline `until` (0 none) and whether Do Not Disturb is on:
-// "none" (nothing armed), "clear" (it was turned off by hand: forget the deadline), "expire" (turn it off now), "wait".
-function dndStep(until, dndOn, nowMs) {
-    if (!(until > 0))
-        return "none";
-    if (!dndOn)
-        return "clear";
-    return nowMs >= until ? "expire" : "wait";
 }
