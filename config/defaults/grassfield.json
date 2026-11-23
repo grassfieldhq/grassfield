@@ -144,7 +144,18 @@
     "timer": "none",
     "microphone": "none",
     "showPointer": false,
-    "lastSelection": ""
+    "lastSelection": "",
+    "showThumbnail": true,
+    "thumbnailSeconds": 5,
+    "thumbnailSide": "right",
+    "freeze": false,
+    "hideDesktopIcons": false,
+    "systemAudio": false,
+    "recordDnd": false,
+    "historyRetention": "week",
+    "format": "png",
+    "standardResolution": false,
+    "fps": 60
   },
   "search": {
     "showApps": true,

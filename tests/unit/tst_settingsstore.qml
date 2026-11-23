@@ -78,7 +78,7 @@ TestCase {
                 compare(r.min, s.minimum, path);
             if (s.maximum !== undefined)
                 compare(r.max, s.maximum, path);
-            compare(r.type === "integer" ? "integer" : r.type === "enum" || r.type === "tint" || r.type === "folderColor" || r.type === "pointerColor" || r.type === "localeName" || r.type === "plainText" || r.type === "nodeName" || r.type === "wallpaperPath" ? "string" : r.type === "wallpaperOutputs" || r.type === "dockOutputs" || r.type === "menubarOutputs" || r.type === "hotCornersOutputs" || r.type === "mainDisplays" || r.type === "notificationApps" || r.type === "notificationStyles" || r.type === "pathList" ? "array" : r.type, s.type, path);
+            compare(r.type === "integer" || (r.type === "enum" && typeof r.values[0] === "number") ? "integer" : r.type === "enum" || r.type === "tint" || r.type === "folderColor" || r.type === "pointerColor" || r.type === "localeName" || r.type === "plainText" || r.type === "nodeName" || r.type === "wallpaperPath" ? "string" : r.type === "wallpaperOutputs" || r.type === "dockOutputs" || r.type === "menubarOutputs" || r.type === "hotCornersOutputs" || r.type === "mainDisplays" || r.type === "notificationApps" || r.type === "notificationStyles" || r.type === "pathList" ? "array" : r.type, s.type, path);
             // Defaults satisfy their own rule.
             compare(Store.validate(path, Store.DEFAULTS[path]), "", path);
         }

@@ -5021,6 +5021,49 @@
     </message>
 </context>
 <context>
+    <name>Editor</name>
+    <message>
+        <source>Screenshot</source>
+        <translation>Capture d’écran</translation>
+    </message>
+    <message>
+        <source>Zoom Out</source>
+        <translation>Zoom arrière</translation>
+    </message>
+    <message>
+        <source>Zoom to Fit</source>
+        <translation>Ajuster à la fenêtre</translation>
+    </message>
+    <message>
+        <source>Zoom In</source>
+        <translation>Zoom avant</translation>
+    </message>
+    <message>
+        <source>%1 × %2 pixels, %3</source>
+        <translation>%1 × %2 pixels, %3</translation>
+    </message>
+    <message>
+        <source>Revert</source>
+        <translation>Rétablir</translation>
+    </message>
+    <message>
+        <source>Revert to the original</source>
+        <translation>Revenir à l’original</translation>
+    </message>
+    <message>
+        <source>Put the picture back as it was captured</source>
+        <translation>Remettre l’image telle qu’elle a été capturée</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Terminé</translation>
+    </message>
+    <message>
+        <source>Could not finish: %1</source>
+        <translation>Impossible de terminer : %1</translation>
+    </message>
+</context>
+<context>
     <name>Emoji</name>
     <message>
         <source>Recently Used</source>
@@ -7434,6 +7477,14 @@
     <message>
         <source>Refresh</source>
         <translation>Actualiser</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Terminé</translation>
+    </message>
+    <message>
+        <source>Revert to Original</source>
+        <translation>Revenir à l’original</translation>
     </message>
 </context>
 <context>
@@ -12144,6 +12195,14 @@
     <message>
         <source>Keep short notes on the desktop.</source>
         <translation>Garder de courtes notes sur le bureau.</translation>
+    </message>
+    <message>
+        <source>Edit and annotate a screenshot</source>
+        <translation>Modifier et annoter une capture d’écran</translation>
+    </message>
+    <message>
+        <source>A local PNG file or a file: URL.</source>
+        <translation>Un fichier PNG local ou une URL file:.</translation>
     </message>
 </context>
 <context>
@@ -18075,6 +18134,13 @@
     <message>
         <source>Fills the screen below the menu bar, or restores the window. Alt-click for full screen</source>
         <translation>Remplit l’écran sous la barre des menus, ou restaure la fenêtre. Alt-clic pour le plein écran</translation>
+    </message>
+</context>
+<context>
+    <name>ZoomView</name>
+    <message>
+        <source>Picture %1, %2</source>
+        <translation>Image %1, %2</translation>
     </message>
 </context>
 <context>
