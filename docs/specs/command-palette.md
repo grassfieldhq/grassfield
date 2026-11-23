@@ -387,6 +387,15 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | E4 | Settings > Search > Local Model (on/off, model, keep conversations, Clear). | E1a, A1 | Unit; L1. |
 | E5 | Export Commands… / Import… (and Raycast snippet and quicklink JSON import). | E1b, T2, T4 | Unit: round trip; Raycast fixtures map; approvals and history never exported. |
 
+**The `commands.json` v1 format (E1a; `shell/search/CommandsFile.js`, tests `tst_commandsfile.qml`).** `{"v": 1}` plus six optional lists, each at most 2 000 items, the file at most 1 MiB, read with the JsonSafety rules; any unknown key, wrong type, out-of-bounds value or duplicate refuses the whole file (the result carries the path and a reason, never a partly accepted file):
+- `quickKeys` `{key, command}`: key `^[a-z0-9][a-z0-9 ]{0,15}$` without a trailing space, unique.
+- `shortcuts` `{slot, chord, command}`: slot `k1`..`k99`, unique; chord = one to four distinct modifiers of `Super Ctrl Alt Shift` then a key `^[A-Za-z0-9_]{1,32}$` or `code:<n>`, unique ignoring case.
+- `favorites`: command ids, unique. Command ids match `^[a-z][a-z0-9.-]{0,63}$`.
+- `links` `{id: "link.…", name ≤ 80, target, openWith?, args[≤3]: {placeholder ≤ 64, optional?}}`: the target is the ADR-0067 D-7 allowlist (http and https with an ASCII host and no user information, `mailto:`, a local absolute or `~/` path without a parent step or placeholder, a `file:` URL with an empty or `localhost` host turned into its path, or empty with `openWith` for an application alone), at most 2 048 characters; braces only as whole placeholders; everything else refused. Whether a path exists, whether `openWith` is listed, and the carrying-data rule are checks of creation and of opening, not of this validator.
+- `replacements` `{id: "text.…", replace ≤ 32 without whitespace, with ≤ 16 384}` (tab and line feed allowed in `with`).
+- `aiCommands` `{id: "ai.…", name ≤ 80, prompt ≤ 16 384}`.
+Ids of links, replacements and AI commands are unique across the file. `ScriptMeta.js` (X1) is strict in the same way: a known header key with a malformed value, a repeated key, a fourth argument, an argument field it does not know or a header line over 4 096 characters refuses the script; unknown header keys are ignored and never returned; an icon that is not an emoji or a plain relative image path (a URL, an absolute path, a parent step, a hidden file) does not refuse the script, it gives the generic glyph.
+
 ### 4.2 Waves (owner-visible value first) and parallel lanes
 
 | Wave | Lane P | Lane S | Lane M | Lane T | Lane C | Lane X | Lane A | Lane E |
