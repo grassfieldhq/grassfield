@@ -32,7 +32,7 @@ browser keeps it.
 - **D-3 Pinned commit and checksum.** grassfieldhq/grassfield-packages builds each package from one pinned commit of the sibling
   repository, the source archive of that commit verified by a SHA-256 recorded in the PKGBUILD; a build with a different
   checksum fails. Both go into the same signed channel as grassfield-desktop (ADR-0033). Today's pins: sanaga `67b0296` (0.6.0, 2026-11-23),
-  grassfield-notes `2daf1c8`.
+  grassfield-notes `0fcc1fd` (the system clipboard and the editing audit, 2026-11-23).
 - **D-4 Updates are Software Update's.** The apps update with the OS: a new pin is a new package version in the channel, shown
   and installed by Settings > Software Update like every other package (ADR-0033), with the same staged rollout (ADR-0050). The
   apps have no updater of their own in this session.
