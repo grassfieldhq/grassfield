@@ -563,6 +563,7 @@
  {"path": "tests/shell/capture.sh", "layer": "logic"},
  {"path": "tests/shell/capture_ack.sh", "layer": "logic"},
  {"path": "tests/shell/capture_thumb.sh", "layer": "logic"},
+ {"path": "tests/shell/capture_thumb_copy.sh", "layer": "logic"},
  {"path": "tests/shell/crash_watch.sh", "layer": "logic"},
  {"path": "tests/shell/diagnostic_report.sh", "layer": "logic"},
  {"path": "tests/shell/app_energy.sh", "layer": "logic"},
