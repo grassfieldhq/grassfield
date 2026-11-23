@@ -1,4 +1,7 @@
 .pragma library
+.import Grassfield.Ui as Ui
+.import "PlainText.js" as PlainText
+.import "CommandsFile.js" as CommandsFile
 
 // The header of a script command (ADR-0067 D-3, command-palette.md slice X1). Pure: it takes the text a caller already read
 // (the first 8 KiB of the file) and returns what the header says, or why it is refused. It reads no file, runs nothing and
@@ -57,14 +60,14 @@ function plainText(value, max) {
     if (typeof value !== "string")
         return null;
     const t = value.replace(/^[ \t]+|[ \t]+$/g, "");
-    if (t.length < 1 || t.length > max || UNSAFE_TEXT.test(t))
+    if (!PlainText.isLabel(t, 1, max))
         return null;
     return t;
 }
 
 // A text that may be empty (a placeholder, a description).
 function plainTextOrEmpty(value, max) {
-    if (typeof value === "string" && value.replace(/^[ \t]+|[ \t]+$/g, "") === "")
+    if (typeof value === "string" && /^\s*$/.test(value))
         return "";
     return plainText(value, max);
 }
@@ -150,6 +153,9 @@ function argumentOf(raw) {
     }
     if (o === null || typeof o !== "object" || Array.isArray(o))
         return {ok: false, reason: "shape"};
+    // A key given twice ({"secure": true, "secure": false}) is refused: JSON.parse would keep the last one silently.
+    if (Ui.JsonSafety.unsafeReason(raw) !== "")
+        return {ok: false, reason: "duplicate-field"};
     const keys = Object.keys(o);
     for (const k of keys) {
         if (ARGUMENT_FIELDS.indexOf(k) < 0)
@@ -282,8 +288,10 @@ function parse(text) {
         meta[k] = v;
     }
     if (get("authorURL") !== undefined) {
+        // The same checker as a link's target (D-7): an ASCII host, no user information, no placeholder.
         const u = plainText(get("authorURL"), 256);
-        if (u === null || !/^https?:\/\/[^\s]+$/.test(u))
+        const c = u === null ? null : CommandsFile.checkTarget(u);
+        if (c === null || !c.ok || c.kind !== "web" || u.indexOf("{") >= 0)
             return fail("authorURL", "invalid");
         meta.authorURL = u;             // shown as text; opening it is a link's business (D-7), not this parser's
     }

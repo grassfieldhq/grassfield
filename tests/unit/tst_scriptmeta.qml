@@ -1,6 +1,8 @@
 import QtQuick
 import QtTest
 import "../../shell/search/ScriptMeta.js" as ScriptMeta
+import "../../shell/search/PlainText.js" as PlainText
+import "../../shell/security/secret/Prompter.js" as Prompter
 
 TestCase {
     name: "ScriptMeta"
@@ -194,6 +196,47 @@ TestCase {
         refused(head("# @raycast.description " + "d".repeat(257) + "\n"), "description", "invalid");
         // a carriage return in the middle of a line is no line end and the dot of the pattern skips it: the line is ignored
         refused("# @raycast.schemaVersion 1\r# @raycast.title T\n# @raycast.mode silent\n", "schemaVersion", "missing");
+    }
+
+    function test_invisibleCharacters() {
+        // zero-width, tag characters, interlinear marks, Hangul and braille fillers, soft hyphen, whitespace only
+        const hidden = ["a\u200bb", "a\u2060b", "a" + String.fromCodePoint(0xe0041) + "b", "a\ufff9b", "a\u3164b", "a\uffa0b", "a\u2800b",
+            "a\u00adb", "a\u115fb", "a\u034fb", "a\ufe0fb", "\u3164", "\u200b", "\u00a0", "\u3000", " \u00a0 "];
+        for (const h of hidden) {
+            refused("# @raycast.schemaVersion 1\n# @raycast.title " + h + "\n# @raycast.mode silent\n", "title");
+            if (h.indexOf("a") === 0)
+                refused(head("# @raycast.packageName " + h + "\n"));
+        }
+        refused(head("# @raycast.argument1 { \"type\": \"text\", \"placeholder\": \"a\u200bb\" }\n"), "argument1", "placeholder");
+        refused(head("# @raycast.argument1 { \"type\": \"dropdown\", \"placeholder\": \"P\", \"data\": [{\"title\": \"a\u200bb\", \"value\": \"v\"}] }\n"), "argument1", "data");
+        // an emoji with a joiner or a variation selector stays an icon
+        compare(icon("\ud83d\udc68\u200d\ud83d\udc69").kind, "emoji");
+        compare(icon("\u2764\ufe0f").kind, "emoji");
+    }
+
+    // The set of the security prompts and this one agree: whatever Prompter.removedCodePoint removes is hidden here too.
+    function test_hiddenSetCoversThePrompterSet() {
+        for (let c = 0; c <= 0xffff; c++) {
+            if (c >= 0xd800 && c <= 0xdfff)
+                continue;
+            if (Prompter.removedCodePoint(c))
+                verify(PlainText.hasHidden(String.fromCharCode(c)), "U+" + c.toString(16));
+        }
+        for (let c = 0xe0000; c <= 0xe007f; c++)
+            verify(PlainText.hasHidden(String.fromCodePoint(c)), "U+" + c.toString(16));
+        verify(!PlainText.hasHidden("Caf\u00e9 \u65e5\u672c \u00e0 la carte"));
+    }
+
+    function test_authorUrl() {
+        verify(ScriptMeta.parse(head("# @raycast.authorURL https://example.com/jane\n")).ok);
+        for (const u of ["https://good.com@evil.com/", "https://user:pw@example.org/", "https://example.org/{clipboard}", "mailto:a@b.org", "http://exa mple.org",
+                         "https://ex\u00e4mple.org/", "ftp://example.org/", "/etc/passwd", "https://", "https://example.org\\@evil.org/"])
+            refused(head("# @raycast.authorURL " + u + "\n"), "authorURL", "invalid");
+    }
+
+    function test_duplicateKeyInArgument() {
+        refused(head("# @raycast.argument1 { \"type\": \"text\", \"placeholder\": \"P\", \"secure\": true, \"secure\": false }\n"), "argument1", "duplicate-field");
+        refused(head("# @raycast.argument1 { \"type\": \"text\", \"type\": \"password\", \"placeholder\": \"P\" }\n"), "argument1", "duplicate-field");
     }
 
     function test_hugeValues() {

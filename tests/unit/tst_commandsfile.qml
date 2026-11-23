@@ -197,6 +197,47 @@ TestCase {
         verify(!target(["https://example.org/"]).ok);
     }
 
+    function test_mailtoQuery() {
+        const ok = ["mailto:a@b.org", "mailto:a@b.org?subject=Hi", "mailto:a@b.org?to=c@d.org&cc=e@f.org&bcc=g@h.org&subject=S&body=B", "mailto:a@b.org?SUBJECT=Hi&Body=x",
+                    "mailto:a@b.org?%73ubject=Hi", "mailto:a@b.org?to=x@y.org&to=z@y.org", "mailto:a@b.org,c@d.org?subject={argument}"];
+        for (const t of ok)
+            verify(target(t).ok, t);
+        const bad = ["mailto:a@b.org?attach=/home/u/.ssh/id_rsa", "mailto:a@b.org?attachment=/home/u/.ssh/id_rsa", "mailto:a@b.org?Attach=/x", "mailto:a@b.org?%61ttach=/x",
+                     "mailto:a@b.org?%41TTACH=/x", "mailto:a@b.org?attach%3D/x", "mailto:a@b.org?subject=S&attach=/x", "mailto:a@b.org?subject=S&&attach=/x",
+                     "mailto:a@b.org?subject=S&Attachment=/x", "mailto:a@b.org?in-reply-to=x", "mailto:a@b.org?x-custom=1", "mailto:a@b.org?attach", "mailto:a@b.org?=x",
+                     "mailto:a@b.org?subject=A&subject=B", "mailto:a@b.org?body=A&body=B", "mailto:a@b.org%3Fattach=/x", "mailto:a@b.org%3fattach=/x", "mailto:a@b.org%26attach=/x",
+                     "mailto:a@b.org?subject=S;attach=/x", "mailto:a@b.org#?attach=/x", "mailto:a@b.org?{argument}=/x", "mailto:a@b.org?%00=x",
+                     "mailto:a@b.org?attach=/x&to=c@d.org", "mailto:?attach=/x"];
+        for (const t of bad)
+            verify(!target(t).ok, "must be refused: " + t);
+    }
+
+    function test_uncPaths() {
+        for (const t of ["//host/share", "file:////host/share", "file://localhost//host/share", "file:///%2F%2Fhost/share", "//", "///a"])
+            verify(!target(t).ok, "must be refused: " + t);
+        verify(target("/host/share").ok);
+        verify(target("file:///host/share").ok);
+    }
+
+    function test_chordModifierOrder() {
+        const pair = (a, b) => file("shortcuts", [{slot: "k1", chord: a, command: "a.b"}, {slot: "k2", chord: b, command: "c.d"}]);
+        bad(pair("Super+Shift+K", "Shift+Super+K"), "shortcuts[1].chord", "duplicate");
+        bad(pair("Ctrl+Alt+Shift+Super+x", "Super+Shift+Alt+Ctrl+X"), "shortcuts[1].chord", "duplicate");
+        verify(CommandsFile.validate(pair("Super+K", "Super+Shift+K")).ok);
+    }
+
+    function test_invisibleCharacters() {
+        const names = ["a\u200bb", "a\u2060b", "a" + String.fromCodePoint(0xe0041) + "b", "a\ufff9b", "a\u3164b", "a\u2800b", "a\u00adb", "\u200b", "\u3000", "\u00a0\u00a0"];
+        for (const n of names) {
+            bad(file("links", [{id: "link.a", name: n, target: "https://x.org/"}]), "links[0].name", "name");
+            bad(file("aiCommands", [{id: "ai.a", name: n, prompt: "p"}]), "aiCommands[0].name", "name");
+            bad(file("links", [link("https://x.org/", {args: [{placeholder: n}]})]), "links[0].args[0]", "arg");
+        }
+        bad(file("replacements", [{id: "text.a", replace: "a\u200bb", with: "x"}]), "replacements[0].replace", "replace");
+        // mailto addresses with hidden characters
+        verify(!target("mailto:a%E2%80%8Bb@x.org").ok);
+    }
+
     function test_openWithAlone() {
         verify(CommandsFile.validate(file("links", [{id: "link.a", name: "n", target: "", openWith: "a.desktop"}])).ok);
         bad(file("links", [{id: "link.a", name: "n", target: ""}]), "links[0].target", "length");

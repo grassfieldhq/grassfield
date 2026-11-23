@@ -1,5 +1,6 @@
 .pragma library
 .import Grassfield.Ui as Ui
+.import "PlainText.js" as PlainText
 
 // The commands.json v1 format and its validator (ADR-0067 D-8, command-palette.md slice E1a). Pure: no file, no process.
 // The shell's CommandStore (E1b) is the one writer of the file; it runs every request, and every read, through here.
@@ -67,7 +68,7 @@ function onlyKeys(o, allowed) {
 }
 
 function line(v, min, max) {
-    return typeof v === "string" && v.length >= min && v.length <= max && !UNSAFE_LINE.test(v) && v === v.replace(/^[ \t]+|[ \t]+$/g, "");
+    return PlainText.isLabel(v, min, max) && !UNSAFE_LINE.test(v);
 }
 
 // ---- Link targets (D-7) ---------------------------------------------------------------------------------------------
@@ -79,6 +80,8 @@ function checkPath(p) {
         return false;
     if (p[0] !== "/" && p.slice(0, 2) !== "~/")
         return false;
+    if (p.slice(0, 2) === "//")
+        return false;                   // "//host/share": a network path to Qt's fromLocalFile (file:////host/share too)
     if (p.indexOf("{") >= 0 || p.indexOf("}") >= 0 || p.indexOf("\\") >= 0)
         return false;
     return !p.split("/").some(s => s === "..");
@@ -87,6 +90,44 @@ function checkPath(p) {
 // Braces only as whole placeholders.
 function bracesOk(s) {
     return s.replace(PLACEHOLDER, "").search(/[{}]/) < 0;
+}
+
+// A mailto address and its query: only the to, cc, bcc, subject and body fields (names compared case-insensitively after
+// percent-decoding). Any other field (a file to attach, a header) could make a mail client send a file of the person's, so
+// it refuses the link. subject and body may appear once; to, cc and bcc may repeat.
+function mailtoOk(rest) {
+    if (rest.indexOf("#") >= 0 || rest.indexOf(";") >= 0)
+        return false;
+    const q = rest.indexOf("?");
+    const address = q < 0 ? rest : rest.slice(0, q);
+    let decoded;
+    try {
+        decoded = decodeURIComponent(address);
+    } catch (e) {
+        return false;
+    }
+    if (decoded.indexOf("?") >= 0 || decoded.indexOf("&") >= 0 || PlainText.hasHidden(decoded))
+        return false;
+    if (q < 0)
+        return true;
+    const seen = Object.create(null);
+    for (const field of rest.slice(q + 1).split("&")) {
+        const eq = field.indexOf("=");
+        if (eq < 1)
+            return false;
+        let name;
+        try {
+            name = decodeURIComponent(field.slice(0, eq)).toLowerCase();
+        } catch (e) {
+            return false;
+        }
+        if (["to", "cc", "bcc", "subject", "body"].indexOf(name) < 0)
+            return false;
+        if ((name === "subject" || name === "body") && seen[name])
+            return false;
+        seen[name] = true;
+    }
+    return true;
 }
 
 // The target list of ADR-0067 D-7: https and http URLs, mailto addresses, a local path, a file: URL with an empty or localhost
@@ -120,7 +161,7 @@ function checkTarget(t) {
     }
     if (s === "mailto") {
         const rest = t.slice(scheme[0].length);
-        if (rest.length < 1 || rest.indexOf("\\") >= 0 || !bracesOk(rest))
+        if (rest.length < 1 || rest.indexOf("\\") >= 0 || !bracesOk(rest) || !mailtoOk(rest))
             return {ok: false, reason: "url"};
         return {ok: true, target: "mailto:" + rest, kind: "mail"};
     }
@@ -192,6 +233,13 @@ function checkChord(c) {
     return true;
 }
 
+// The same chord whatever the order of its modifiers and the case: the modifiers sorted, then the key.
+function chordKey(c) {
+    const parts = c.toLowerCase().split("+");
+    const key = parts.pop();
+    return parts.sort().join("+") + "+" + key;
+}
+
 function checkShortcut(it, at) {
     if (!isObject(it) || !onlyKeys(it, ["slot", "chord", "command"]))
         return fail(at, "shape");
@@ -247,7 +295,7 @@ function checkReplacement(it, at) {
     const bad = checkId(it.id, "text.", at + ".id");
     if (bad)
         return bad;
-    if (typeof it.replace !== "string" || it.replace.length < 1 || it.replace.length > 32 || SPACE_OR_UNSAFE.test(it.replace))
+    if (typeof it.replace !== "string" || it.replace.length < 1 || it.replace.length > 32 || SPACE_OR_UNSAFE.test(it.replace) || PlainText.hasHidden(it.replace))
         return fail(at + ".replace", "replace");
     if (typeof it.with !== "string" || it.with.length < 1 || it.with.length > 16384 || UNSAFE_BLOCK.test(it.with))
         return fail(at + ".with", "with");
@@ -329,7 +377,7 @@ function validate(value) {
                     return fail(at + ".key", "duplicate");
                 uniq.quickKeys[v.key] = true;
             } else if (list === "shortcuts") {
-                const chord = v.chord.toLowerCase();
+                const chord = chordKey(v.chord);
                 if (uniq.slots[v.slot])
                     return fail(at + ".slot", "duplicate");
                 if (uniq.chords[chord])

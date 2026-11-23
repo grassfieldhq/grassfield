@@ -152,8 +152,8 @@ function validate(path, value) {
     case "pathList": {
         // Folders kept in the Dock as stacks: absolute paths or ~/ ones, as the Dock reads them (shell/dock/Stacks.js folderList).
         const ok = Array.isArray(value) && value.length <= 12 && value.every(v => typeof v === "string" && v !== "" && v.length <= 4096
-            && !/[\u0000-\u001f]/.test(v) && (v.indexOf("/") === 0 || v.indexOf("~/") === 0) && v.split("/").indexOf("..") < 0);
-        return ok ? "" : path + ": expected at most 12 absolute paths without control characters";
+            && !/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(v) && (v.indexOf("/") === 0 || v.indexOf("~/") === 0) && v.split("/").indexOf("..") < 0);
+        return ok ? "" : path + ": expected at most 12 absolute paths without control or bidirectional characters";
     }
     case "boolean":
         return typeof value === "boolean" ? "" : path + ": expected true or false";

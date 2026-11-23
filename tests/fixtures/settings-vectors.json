@@ -232,6 +232,16 @@
     {"name": "local model name over 128 characters is the default", "path": "search.localModel.model", "stored": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "default": true, "valid": false},
     {"name": "local model name of the wrong type is the default", "path": "search.localModel.model", "stored": 3, "default": true, "valid": false},
     {"name": "local model keeps conversations", "path": "search.localModel.keepConversations", "stored": true, "read": true, "valid": true},
-    {"name": "local model keep conversations of the wrong type is the default (off)", "path": "search.localModel.keepConversations", "stored": 1, "default": true, "valid": false}
+    {"name": "local model keep conversations of the wrong type is the default (off)", "path": "search.localModel.keepConversations", "stored": 1, "default": true, "valid": false},
+    {"name": "dock folders with DEL is the default", "path": "dock.folders", "stored": ["/a\u007fb"], "default": true, "valid": false},
+    {"name": "dock folders with a C1 control is the default", "path": "dock.folders", "stored": ["/a\u0085b"], "default": true, "valid": false},
+    {"name": "dock folders with a bidirectional override is the default", "path": "dock.folders", "stored": ["/a\u202eb"], "default": true, "valid": false},
+    {"name": "dock folders with a bidirectional isolate is the default", "path": "dock.folders", "stored": ["/a\u2066b"], "default": true, "valid": false},
+    {"name": "dock folders with a line separator is the default", "path": "dock.folders", "stored": ["/a\u2028b"], "default": true, "valid": false},
+    {"name": "script folders with DEL is the default", "path": "search.scriptFolders", "stored": ["/a\u007fb"], "default": true, "valid": false},
+    {"name": "script folders with a C1 control is the default", "path": "search.scriptFolders", "stored": ["/a\u0085b"], "default": true, "valid": false},
+    {"name": "script folders with a bidirectional override is the default", "path": "search.scriptFolders", "stored": ["/a\u202eb"], "default": true, "valid": false},
+    {"name": "script folders with a bidirectional isolate is the default", "path": "search.scriptFolders", "stored": ["/a\u2066b"], "default": true, "valid": false},
+    {"name": "script folders with a line separator is the default", "path": "search.scriptFolders", "stored": ["/a\u2028b"], "default": true, "valid": false}
   ]
 }
