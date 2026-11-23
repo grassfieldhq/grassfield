@@ -308,6 +308,7 @@ package_grassfield-desktop() {
     'udiskie: mounts removable media when they are connected'
     'hyprsunset: Night Light (grassfield-nightshift)'
     'kimageformats: HEIF, AVIF and JPEG XL pictures as wallpapers (the helper reads what Qt can read)'
+    'tesseract-data-fra: French text in Capture Text and in Preview (the English data is an Omarchy base package, ADR-0066 Q-5)'
   )
   # Login screen entry and a login-path check after install and upgrade (GF-015); the SDDM drop-in is a config file (an
   # administrator's edit is kept across upgrades: pacman writes .pacnew). No browser policy file is installed (see the browsers'

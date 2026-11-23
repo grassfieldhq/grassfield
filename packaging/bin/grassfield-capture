@@ -46,6 +46,15 @@
 # rename) when capture.showThumbnail is on (the default). The notice is skipped only when the shell acknowledged this very
 # capture and the result was written; otherwise (no acknowledgement, the setting off, no result file, no handshake because
 # another capture owns the state) the notice shows it. The automatic copy to the clipboard is `wl-copy --type image/png --sensitive`.
+#   grassfield-capture selection --previous [the other options but --geometry]
+# Capture Previous Area (ADR-0066 C8): the focused display's last frame of the toolbar (capture.lastSelection, in that display's
+# own coordinates, brought back inside it) is the area, as --geometry; without an entry the crosshair chooses. Refused under the lock.
+#   grassfield-capture text [--geometry "X,Y WxH"]
+# Capture Text (ADR-0066 D-7, C3): the area (--geometry, else the crosshair) goes through grim (after the shooting handshake)
+# into zbarimg (QR only) and tesseract (Preview's contract with --psm 6, plain text); QR codes found are copied with
+# `wl-copy --sensitive` (never in clipboard history, ADR-0034 PV-1) and never written to the result file, else the text is
+# copied. A notice says it (no text gives one); kind "text" in the result file holds the first 512 characters of text.
+# Refused under the lock.
 #   grassfield-capture stop
 # ends what that state names (the menu bar's stop item, Ctrl-Cmd-Esc, the session locking): SIGINT to the recorder this helper
 # started (gpu-screen-recorder saves its file on SIGINT), recognised by its pid, its start time and its parent (this helper's
@@ -116,6 +125,22 @@ RECORDER = ["-k", "auto", "-f", "60", "-fm", "cfr", "-fallback-cpu-encoding", "y
 RECORDER_MAX = (3840, 2160)
 OUTPUT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 # The toolbar's --geometry, "X,Y WxH" in the compositor's logical coordinates, whole numbers (as slurp prints it).
+# Capture Text (ADR-0066 D-7): Preview's tesseract contract (apps/preview/src/previewlogic.cpp recognitionCommand) with one page
+# segmentation mode of a region instead of a page, plain text instead of TSV; zbarimg reads QR codes only. A tool still running
+# TOOL_SECONDS later is killed, as Preview's is.
+TOOL_SECONDS = 60
+TOOL_OUTPUT_MAX = 4 * 1024 * 1024
+TEXT_MAX = 1 << 20
+TESSERACT = ["--oem", "1", "--psm", "6", "--dpi", "300"]
+ZBAR = ["-q", "-Sdisable", "-Sqrcode.enable", "-"]
+LANGUAGE_NAME = re.compile(r"[A-Za-z0-9_]{1,32}")
+# Tesseract's code for a session language (apps/preview/qml/TextInImages.js languageCodes: tests/shell/capture.sh holds them equal).
+LANGUAGE_CODES = dict(pair.split(":") for pair in (
+    "af:afr am:amh ar:ara az:aze be:bel bg:bul bn:ben bs:bos ca:cat cs:ces cy:cym da:dan de:deu el:ell en:eng eo:epo es:spa "  # i18n-ignore (language codes)
+    "et:est eu:eus fa:fas fi:fin fr:fra ga:gle gl:glg gu:guj he:heb hi:hin hr:hrv hu:hun hy:hye id:ind is:isl it:ita ja:jpn "
+    "ka:kat kk:kaz km:khm kn:kan ko:kor ky:kir lo:lao lt:lit lv:lav mk:mkd ml:mal mn:mon mr:mar ms:msa mt:mlt my:mya nb:nor "
+    "ne:nep nl:nld nn:nor no:nor pa:pan pl:pol ps:pus pt:por ro:ron ru:rus si:sin sk:slk sl:slv sq:sqi sr:srp sv:swe sw:swa "
+    "ta:tam te:tel tg:tgk th:tha tl:tgl tr:tur uk:ukr ur:urd uz:uzb vi:vie yi:yid").split())
 GEOMETRY_ARG = re.compile(r"(-?[0-9]{1,6}),(-?[0-9]{1,6}) ([0-9]{1,6})x([0-9]{1,6})")
 # While recording, the shell's lock marker is read this often (seconds): the session locking ends the recording.
 LOCK_POLL_SECONDS = 0.5
@@ -143,6 +168,11 @@ REC_DOCUMENTS = "Saved to Documents."
 REC_FOLDER = "Saved to %(folder)s."
 REC_FAILED = "The screen recording could not be saved."
 REC_OPEN = "Open"
+TEXT_TITLE = "Capture Text"
+TEXT_COPIED = "Text copied."
+QR_COPIED = "QR code copied."
+TEXT_NONE = "No text was found."
+TEXT_MISSING = "Text recognition is not installed."
 # The folder screenshots go to by default, in the Pictures folder, named in the session's language when it is made (an existing
 # folder of the English name is used as it is, so that changing the language does not start a second one).
 SCREENSHOTS = "Screenshots"
@@ -161,6 +191,11 @@ CATALOG = {
         REC_FOLDER: "Enregistré dans %(folder)s.",
         REC_FAILED: "L’enregistrement de l’écran n’a pas pu être sauvegardé.",
         REC_OPEN: "Ouvrir",
+        TEXT_TITLE: "Capturer le texte",
+        TEXT_COPIED: "Texte copié.",
+        QR_COPIED: "Code QR copié.",
+        TEXT_NONE: "Aucun texte trouvé.",
+        TEXT_MISSING: "La reconnaissance de texte n’est pas installée.",
         SCREENSHOTS: "Captures d’écran",
     },
 }
@@ -836,9 +871,9 @@ def write_result(kind, paths, rect, output, scale, pixels, text=""):
     # $XDG_RUNTIME_DIR/grassfield/capture-result.json (ADR-0066 D-1): 0600, written to a file of its own (O_EXCL, never a link)
     # and renamed over the last one, so the shell reads a whole file or the one before. False when it could not be written.
     folder = runtime_folder()
-    if folder is None or not paths:
+    if folder is None or (not paths and kind != "text"):  # a text capture saves no file: no paths, no primary
         return False
-    result = {"v": 1, "id": os.urandom(8).hex(), "kind": kind, "paths": paths, "primary": paths[0], "output": output,
+    result = {"v": 1, "id": os.urandom(8).hex(), "kind": kind, "paths": paths, "primary": paths[0] if paths else "", "output": output,
               "rect": rect, "scale": scale, "pixels": pixels, "time": int(time.time() * 1000), "text": text[:512]}
     path = os.path.join(folder, RESULT_NAME)
     tmp = "%s.%s.tmp" % (path, os.urandom(6).hex())
@@ -985,6 +1020,11 @@ def shot(opts):
     mode, save = opts["mode"], opts["save"]
     pointer = ["-c"] if opts["pointer"] else []
     monitors = hyprctl("monitors")
+    if opts["previous"]:
+        # Capture Previous Area (C8): the focused display's last frame as --geometry; without one the crosshair chooses.
+        if session_locked(monitors):
+            return 1
+        opts["geometry"] = previous_frame(monitors)
     if mode == "screen":
         screens = displays(monitors)
         if opts["output"]:
@@ -1066,6 +1106,135 @@ def shot(opts):
     written = show_thumbnail() and write_result("shot", paths, area, place, scale, picture_size(paths[0], area, scale))
     if not (acknowledged and written):
         notify(paths, TITLE, saved_note(save, folder), OPEN)
+    return 0
+
+
+def previous_frame(monitors):
+    # Capture Previous Area (ADR-0066 C8): the focused display's entry of capture.lastSelection ("NAME=x,y,w,h;...", the frame in
+    # the display's own logical coordinates, as the toolbar writes it) as a rectangle in layout coordinates, brought back
+    # inside the display; None without an entry that reads.
+    screens = displays(monitors)
+    value = settings_group("capture").get("lastSelection")
+    if not screens or not isinstance(value, str) or len(value) > 4096:
+        return None
+    name, area = screens[0]
+    for part in value.split(";"):
+        m = re.fullmatch(r"([A-Za-z0-9._-]{1,64})=(-?[0-9]{1,6}),(-?[0-9]{1,6}),([0-9]{1,6}),([0-9]{1,6})", part)
+        if m and m[1] == name and int(m[4]) > 0 and int(m[5]) > 0:
+            w, h = min(int(m[4]), area["w"]), min(int(m[5]), area["h"])
+            x, y = max(0, min(int(m[2]), area["w"] - w)), max(0, min(int(m[3]), area["h"] - h))
+            return {"x": area["x"] + x, "y": area["y"] + y, "w": w, "h": h}
+    return None
+
+
+def tool(argv, data):
+    # A recognition tool as Preview runs it: the lowest CPU priority, one OpenMP thread, standard error dropped, a time and an
+    # output cap. None when it does not run, ends late or answers too much; else (exit status, standard output).
+    env = dict(os.environ, OMP_THREAD_LIMIT="1")
+    try:
+        r = subprocess.run(argv, input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=TOOL_SECONDS, env=env,
+                           preexec_fn=lambda: os.setpriority(os.PRIO_PROCESS, 0, 19))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return None if len(r.stdout) > TOOL_OUTPUT_MAX else (r.returncode, r.stdout)
+
+
+def session_languages():
+    # tesseract's -l value as Preview chooses it (TextInImages.chooseLanguages): the session's language, then English, among the
+    # installed ones ("fra+eng"); "" when neither is, or tesseract does not answer.
+    r = tool(["tesseract", "--list-langs"], b"")
+    if r is None or r[0] != 0:
+        return ""
+    installed = [l.strip() for l in r[1].decode("utf-8", "replace").split("\n") if LANGUAGE_NAME.fullmatch(l.strip())]
+    lang = next((os.environ[v] for v in ("GRASSFIELD_LANG", "LC_ALL", "LC_MESSAGES", "LANG") if os.environ.get(v)), "")
+    code = re.split(r"[_.@-]", lang)[0].lower()
+    if code == "zh":
+        code = "chi_tra" if re.search(r"[_.@-](TW|HK|MO|Hant)\b", lang) else "chi_sim"
+    else:
+        code = LANGUAGE_CODES.get(code, "")
+    out = []
+    for c in (code, "eng"):
+        if c and c in installed and c not in out:
+            out.append(c)
+    return "+".join(out)
+
+
+def read_codes(image):
+    # The QR codes of a picture, as Preview reads them (TextInImages.parseCodes): each starts a line "QR-Code:", a line without
+    # it continues the code before; duplicates dropped.
+    if not shutil.which("zbarimg"):
+        return []
+    r = tool(["zbarimg"] + ZBAR, image)
+    if r is None or r[0] != 0:
+        return []
+    texts = []
+    for line in r[1].decode("utf-8", "replace").rstrip("\n").split("\n"):
+        if line.startswith("QR-Code:"):
+            texts.append(line[8:])
+        elif texts:
+            texts[-1] += "\n" + line
+    return [t for i, t in enumerate(texts) if t and t not in texts[:i]]
+
+
+def copy_text(text, sensitive=False):
+    # wl-copy as copy_png: the text on its standard input. QR data is --sensitive: clipboard history never records it
+    # (ADR-0034 PV-1).
+    try:
+        subprocess.run(["wl-copy", "--type", "text/plain"] + (["--sensitive"] if sensitive else []), input=text.encode("utf-8"),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def text(opts):
+    # Capture Text (ADR-0066 D-7, slice C3): an area (--geometry, else the crosshair), grim, the QR codes in it copied as
+    # sensitive when there are any, else its text copied; a notice says what happened. QR data is never written to the result
+    # file, a notice or a log. The picture is not saved.
+    monitors = hyprctl("monitors")
+    if session_locked(monitors):
+        return 1
+    if opts["geometry"] is not None:
+        sel = on_one_display(opts["geometry"], monitors)
+        if sel is None:
+            sys.stderr.write("grassfield-capture: --geometry is not on one display\n")
+            return 2
+        ready = close_previous()
+    else:
+        if selecting(crosshair(False)):
+            return 0
+        ready = close_previous()
+        sel = choose(monitors)
+        if sel is None:
+            return 0
+    time.sleep(max(0.0, ready - time.monotonic()))
+    if lock_requested():
+        return 1
+    with shooting("shot") as acknowledged:
+        if session_locked():
+            return 1
+        r = run(["grim", "-t", "ppm", "-g", geometry_text(sel), "-"], timeout=30)
+        if r is None or r.returncode != 0 or not r.stdout:
+            return 1
+        image = r.stdout
+    place, scale = place_of(sel, monitors, "")
+    codes = read_codes(image)
+    if codes:
+        copy_text("\n".join(codes), sensitive=True)
+        body, shown = QR_COPIED, ""
+    else:
+        found = ""
+        if shutil.which("tesseract"):
+            languages = session_languages()
+            r = tool(["tesseract", "stdin", "stdout"] + TESSERACT + ["-l", languages], image) if languages else None
+            found = r[1].decode("utf-8", "replace").replace("\f", "").strip() if r is not None and r[0] == 0 else ""
+        if not found:
+            notify([], TEXT_TITLE, TEXT_NONE if shutil.which("tesseract") else TEXT_MISSING, picture=False)
+            return 0
+        copy_text(found[:TEXT_MAX])
+        body, shown = TEXT_COPIED, found
+    written = show_thumbnail() and write_result("text", [], sel, place, scale, picture_size("", sel, scale), shown)
+    if not (acknowledged and written):
+        notify([], TEXT_TITLE, body, picture=False)
     return 0
 
 
@@ -1318,13 +1487,18 @@ def parse(args):
     # The command line as a dict, or None (usage). Each option once, each value from its list.
     if args == ["stop"]:
         return {"action": "stop"}
+    if args[:1] == ["text"]:
+        m = GEOMETRY_ARG.fullmatch(args[2]) if len(args) == 3 and args[1] == "--geometry" else None
+        if args == ["text"] or (m and int(m[3]) > 0 and int(m[4]) > 0):
+            return {"action": "text", "geometry": {"x": int(m[1]), "y": int(m[2]), "w": int(m[3]), "h": int(m[4])} if m else None}
+        return None
     action = "shot"
     if args[:1] == ["record"]:
         action, args = "record", args[1:]
     if not args or args[0] not in (RECORD_MODES if action == "record" else MODES):
         return None
     out = {"action": action, "mode": args[0], "save": None, "timer": 0, "pointer": False, "mic": False, "output": "",
-           "geometry": None}
+           "geometry": None, "previous": False}
     seen, i = set(), 1
     while i < len(args):
         option = args[i]
@@ -1348,11 +1522,14 @@ def parse(args):
             else:
                 return None
             i += 2
-        elif option == "--pointer" or (option == "--mic" and action == "record"):
+        elif option == "--pointer" or (option == "--mic" and action == "record") \
+                or (option == "--previous" and action == "shot" and out["mode"] == "selection"):
             out[option[2:]] = True
             i += 1
         else:
             return None
+    if out["previous"] and out["geometry"] is not None:
+        return None  # the remembered frame is the geometry
     return out
 
 
@@ -1367,10 +1544,19 @@ def main():
                          " [--timer 0|5|10] [--pointer] [--output NAME (screen)] [--geometry 'X,Y WxH' (window, selection)]\n"
                          "       grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview]"
                          " [--timer 0|5|10] [--pointer] [--mic] [--output NAME (screen)] [--geometry 'X,Y WxH' (selection)]\n"
+                         "       grassfield-capture selection --previous [--save ...] [--timer 0|5|10] [--pointer]\n"
+                         "       grassfield-capture text [--geometry 'X,Y WxH']\n"
                          "       grassfield-capture stop\n")
         return 2
     if opts["action"] == "stop":
         return stop()
+    if opts["action"] == "text":
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+        signal.signal(signal.SIGINT, raise_cancelled)
+        try:
+            return text(opts)
+        except Cancelled:
+            return 0
     if opts["save"] is None:
         opts["save"] = stored_location()  # the keys: the toolbar's Save to
     if opts["action"] == "record" and opts["save"] == "clipboard":
