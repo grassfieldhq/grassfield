@@ -3494,8 +3494,16 @@
         <translation>Texte copié dans le presse-papiers</translation>
     </message>
     <message>
+        <source>QR code copied to the clipboard</source>
+        <translation>Code QR copié dans le presse-papiers</translation>
+    </message>
+    <message>
         <source>Opens it in Preview</source>
         <translation>L’ouvre dans la Visionneuse</translation>
+    </message>
+    <message>
+        <source>Opens it for editing</source>
+        <translation>L’ouvre pour le modifier</translation>
     </message>
     <message>
         <source>Close</source>
