@@ -52,6 +52,29 @@ From slice C1, before **every** grim call, every frozen grab and every recorder 
 Before accepting the acknowledgement, the helper checks it: a regular file, the user's own, mode 0600, not a link, at most
 64 bytes, and `seq` equal to its own. The existing notice closing (`close_previous`) stays for the notice path.
 
+**The acknowledgement contract (built in C1, written to by slice A1).** Both sides rely on exactly this:
+- **The state.** While the phase is `shooting`, `$XDG_RUNTIME_DIR/grassfield/capture-state.json` (0600, by rename) holds
+  `{"v": 1, "phase": "shooting", "kind": "shot" | "recording", "seq": "<16 lowercase hex digits>", "pid", "start"}`. `seq` is
+  new for every shooting phase (8 random bytes). The phase lasts from the handshake to the last grim call of that capture
+  (or, for a recording, to the recorder's start, when the phase becomes `recording`), and then returns to `idle`. It is
+  written before every grim call, and before the recorder start, and by nothing else.
+- **The file.** `$XDG_RUNTIME_DIR/grassfield/capture-ack`, in the 0700 folder. The shell writes into it, in place, once
+  every thumbnail is unmapped and one frame has passed. It holds the `seq` of the state it answers: the 16 digits as ASCII,
+  then at most one `\n`, and nothing else. A file of another content (an older `seq`, empty) is ignored.
+- **What the helper accepts.** It opens the path with `O_NOFOLLOW` and accepts it only if it is a regular file with one
+  name (`st_nlink == 1`, so neither a symbolic link nor a second name for another file), owned by the user, with permission
+  bits exactly 0600, at most 64 bytes (`ACK_MAX`), and the content above for the current `seq`. It polls every 20 ms. It
+  ignores anything else and keeps polling until the deadline.
+- **The deadline.** `ACK_SECONDS` = 1 s from the moment the state is written. At the deadline the helper goes on without an
+  acknowledgement and never fails because of it.
+- **The shell's duties.** Pre-create the file once with `install -m 600` (a FileView cannot set modes; it keeps the mode of
+  an existing target), write the `seq` of every `shooting` state it sees, even after it has already hidden its cards, and
+  never replace the file with a link. A `shooting` state seen under the lock is stopped like any other
+  (`grassfield-capture stop` ends it: the helper holds the capture lock during the phase, and a stop makes it take no
+  picture).
+- **No handshake without a runtime folder, or while another capture owns the state.** A screenshot taken while a
+  recording or a countdown holds the capture lock writes nothing and waits for nothing (the state is theirs).
+
 On the shell side, `CaptureFile.parse` and `stopNeeded` learn the phases `shooting` and `frozen`. A `shooting` phase under
 the lock is stopped like any other (SC15a).
 
@@ -107,9 +130,21 @@ After each capture the helper writes `$XDG_RUNTIME_DIR/grassfield/capture-result
     {"v": 1, "id", "kind": "shot" | "recording" | "text" | "scroll", "paths": [...], "primary",
      "output", "rect", "scale", "pixels" {w, h}, "time", "text"}
 
-- `text` holds the first 512 characters of the recognised text, never QR data.
-- When `capture.showThumbnail` is true (the default), the notice is not sent and the shell shows the thumbnail.
-- When it is false, the notice is sent as it is today.
+- `text` holds the first 512 characters of the recognised text, never QR data. It is `""` for a picture and a recording.
+- The file is written once the shooting phase is over (the state `idle`), by a file of its own (`O_EXCL`, 0600, never a
+  link) renamed over the last result, so the shell reads a whole file or the one before.
+- `paths` are the saved files (one per display for `screen`), `primary` is the first (the one copied). `rect` is the
+  logical rectangle of `primary`'s capture, `output` the display it is on, `scale` that display's scale, `pixels` the
+  picture's size in device pixels (read from the PNG header; a recording's is its rectangle at the scale), `time` is
+  milliseconds since the epoch, `id` 16 random hex digits.
+- When `capture.showThumbnail` is true (the default; any value that is not a boolean reads as the default), the notice is not
+  sent and the shell shows the thumbnail. If the result cannot be written (no private runtime folder), the notice is sent.
+- When it is false, the notice is sent as it is today and **no result file is written**, so a shell that is on a stale
+  setting never shows both.
+- No result is written for a capture that is not offered a notice today: Save to Clipboard (no file) and Preview (opened at
+  once).
+- The automatic copy of a saved picture is `wl-copy --type image/png --sensitive`. Save to Clipboard is the user's own copy
+  and stays a normal one.
 
 ### D-2. The shell owns what is on screen during and right after a capture
 New shell surfaces, all in `shell/capture/` (an existing directory), each a layer with its own namespace and `no_anim`:
