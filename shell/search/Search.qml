@@ -303,9 +303,13 @@ Scope {
         builtins.entries
     ])
 
+    // The Start Screen Saver command: shell.qml connects it to the Saver (Search does not know it).
+    signal startScreenSaver
+
     BuiltinCommands {
         id: builtins
         screenName: root.screenName
+        onStartSaver: root.startScreenSaver()
     }
 
     function mkApp(r: var): var {

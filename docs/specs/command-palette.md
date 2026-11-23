@@ -143,6 +143,11 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 | B15 | Translate [R22], Dictionary (UNCONFIRMED) | yes (Pro) | Dictionary in Spotlight [A1] | none | Translate: only through the local model (A3). Dictionary: not planned (no local dictionary installed; a new dependency). | — | — | — |
 | B16 | Open Settings pages | — | yes | yes (search.md:80) | Unchanged; each page also gets Actions "Open", "Copy Link" not planned. | — | — | — |
 
+**Built by S1, S3 and S6, and what is left (integrator decisions, 2026-11-23):**
+- **Start Screen Saver** is built (`Saver.start()`, in process: Search signals, `shell.qml` connects it; no new IPC function). **Sleep Displays is not offered**: displays-off lives in the security idle module (`shell/security/idle`), so it is a separate security-engineer slice (a function the UI may call, then the command), outside S1.
+- **Do Not Disturb for 1 hour / until tomorrow** keeps its deadline in `$stateDir/dnd-until.json` (0600), read back at start; a deadline in the past turns Do Not Disturb off, one in the future is re-armed (`shell/notifications/DndFor.js`, tokens `notification.dndForMs`, `dndTomorrowHour` = 8, `dndCheckMs`). The deadline is not a settings key (no schema change); a settings key would let the Settings app show "until 3:00 PM" and is a follow-up if wanted.
+- **Follow-up, window commands:** "Move to <display>" per named output (names as Settings > Displays gives them; today only Next and Previous Display), and the Layouts section's zones (Left Third, Middle Third, Right Third, the quarter columns: `placeInZone`, capability `tiling-layouts`). Neither is in S3.
+
 ### 2.3 Text: links, text replacements, clipboard, emoji
 
 | # | Feature [source] | Raycast | macOS 27 | Grassfield today | Proposal | Effort | Security note | Slices |

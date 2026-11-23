@@ -37,8 +37,9 @@ Scope {
 
     // Quickshell's IdleMonitor keeps the timeout it was enabled with (Idle.qml): re-enabled when the delay changes.
     property bool rearming: false
-    // `saver devShow` (dev only): shown without waiting, for captures; ends like the real one, at the first input.
-    property bool devShown: false
+    // Shown without waiting: by `start()` (the Start Screen Saver command of Search) and by `saver devShow` (dev only, for captures);
+    // ends like the real one, at the first input.
+    property bool startedByHand: false
     // The first input ended it: hidden at once, before the compositor's activity report reaches the monitor.
     property bool dismissed: false
 
@@ -47,7 +48,7 @@ Scope {
     // never confirms keeps trying on its own). `wasShown` is what was on screen before the lock flipped `locked`.
     property bool wasShown: false
     readonly property bool lockStarting: SessionState.lockStarting
-    readonly property bool shown: (root.lockStarting && root.wasShown) || (!SessionState.locked && !root.dismissed && (root.devShown || (monitor.enabled && monitor.isIdle)))
+    readonly property bool shown: (root.lockStarting && root.wasShown) || (!SessionState.locked && !root.dismissed && (root.startedByHand || (monitor.enabled && monitor.isIdle)))
     onLockStartingChanged: {
         if (root.lockStarting && root.wasShown)
             untilLockBound.restart();
@@ -71,18 +72,27 @@ Scope {
         root.slideFiles = next;
     }
 
+    // Start Screen Saver (Search, ADR-0067 B1): the saver at once, as if the idle delay had passed; the first input ends it. The person's
+    // own request, so the idle delay and the applications' inhibitors do not apply; never while locked (the lock owns the screen).
+    function start(): void {
+        if (SessionState.refuses("saver start"))
+            return;
+        root.dismissed = false;
+        root.startedByHand = true;
+    }
+
     function dismiss(): void {
         if (!root.shown)
             return;
         root.dismissed = true;
-        root.devShown = false;
+        root.startedByHand = false;
     }
 
     Connections {
         target: SessionState
 
         function onLockedChanged(): void {
-            root.devShown = false;
+            root.startedByHand = false;
         }
     }
 
@@ -96,7 +106,7 @@ Scope {
         onIsIdleChanged: {
             if (isIdle)
                 return;
-            root.devShown = false;
+            root.startedByHand = false;
             root.dismissed = false;
         }
         onTimeoutChanged: {
@@ -218,7 +228,7 @@ Scope {
             if (!root.devHooks || SessionState.locked)
                 return Mode.refused;
             root.dismissed = false;
-            root.devShown = true;
+            root.startedByHand = true;
             return "ok";
         }
     }

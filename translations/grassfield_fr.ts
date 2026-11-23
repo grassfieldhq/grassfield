@@ -3519,6 +3519,14 @@
         <translation>tout supprimer</translation>
     </message>
     <message>
+        <source>Start Screen Saver</source>
+        <translation>Lancer l’économiseur d’écran</translation>
+    </message>
+    <message>
+        <source>screensaver</source>
+        <translation>économiseur d’écran</translation>
+    </message>
+    <message>
         <source>Open Trash</source>
         <translation>Ouvrir la corbeille</translation>
     </message>

@@ -607,6 +607,7 @@ ShellRoot {
         }
         Search {
             ipcEnabled: false
+            onStartScreenSaver: saver.start()
         }
     }
     readonly property var searchSurface: searchLoader.item
