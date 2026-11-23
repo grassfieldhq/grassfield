@@ -24,6 +24,7 @@ BANNED = [
     "Handoff", "Sidecar", "FaceTime", "Safari", "Keychain", "Retina", "Touch ID", "Aqua", "Cupertino", "Sequoia",
     "Sonoma", "SF Pro", "SF Symbols", "San Francisco", "Night Shift", "True Tone", "Notification Center",
     "Dashboard", "Continuity", "Ventura", "Monterey", "Big Sur", "Catalina", "Mojave", "Split View",
+    "Apple Intelligence", "Raycast",
 ]
 # Whole words only. "Mac" is matched case-sensitively (the Mac, not a "MAC address").
 PATTERN = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(n) for n in BANNED) + r")(?!\w)", re.I)
@@ -108,6 +109,9 @@ def selftest():
         ('text: qsTr("Exit Split View")', "code", 1),
         ('text: qsTr("Left of Screen")', "code", 0),
         ('// a Split View Desktop (comment)', "code", 0),
+        ('text: qsTr("Ask Apple Intelligence")', "code", 1),
+        ('text: qsTr("Raycast script")', "code", 1),
+        ('text: qsTr("Ask Local Model")', "code", 0),
     ]
     bad = [c for c in cases if len(hits_in(c[0], c[1])) != c[2]]
     for text, kind, want in bad:
