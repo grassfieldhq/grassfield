@@ -277,6 +277,18 @@ Reduce Motion: the card fades instead of sliding in.
 - The global menu has File, Edit, Tools and View.
 - After an export with a Redact, Pixelate or Blur layer, the exported picture replaces the clipboard's automatic copy
   (ADR-0066 D-9).
+- As built in slices B3 and B4:
+  - The tool group has Select, Arrow, Line, Rectangle and Ellipse (letters V, A, L, R, O); the arrow has three styles (straight,
+    curved, double), rectangle and ellipse an outline or a fill. Style controls and the other tools come with B5 to B9.
+  - Shapes are layers in device pixels (the fields are listed in `apps/screenshot/src/annotations.h`); a new shape's stroke is
+    `screenshot.strokeWidth` times the display scale. The view draws the layers with the exporter itself (an overlay image
+    rendered at the size on screen), so that what is seen is what Done writes.
+  - Select picks the topmost shape, moves it by dragging, resizes it by a handle (eight on a box, the ends and the control point
+    on a line or curve); Shift keeps 45-degree angles and squares while drawing. The arrow keys move the selection by 1 px (10 with
+    Shift) and Delete removes it.
+  - Each gesture is one undo step (Ctrl+Z, Ctrl+Shift+Z), up to 200 steps; closing a window that has changes asks Done, Don't Save
+    or Cancel (Esc first lets go of the selection).
+  - The exporter is golden-tested at scale 1 and 1.25 (`tests/unit/screenshot/golden/README.md`: tolerance and regeneration).
 
 **Pins**
 - A borderless floating picture with a thin rim (the window rim tokens).
