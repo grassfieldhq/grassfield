@@ -56,11 +56,17 @@ Window {
         }
     }
 
-    // New shapes are drawn as wide on the picture as on the screen the window is on: a capture at 1.25 has 1.25 times the pixels.
+    // A shortcut as the device's style writes it (Ctrl+Z on a PC, the symbols on a Mac; keyboard.shortcutStyle).
+    function keyLabel(text: string): string {
+        return MenuShortcut.label(text, Appearance.shortcutStyle);
+    }
+
+    // New shapes are as wide on the picture as on the screen the capture was taken on: a capture at 1.25 has 1.25 times the
+    // pixels. The capture's own scale (written in the PNG) when the file says; else the scale of this window's screen.
     Binding {
         target: editorWin.backend
         property: "toolWidth"
-        value: Tokens.screenshotStrokeWidth * editorWin.screen.devicePixelRatio
+        value: Tokens.screenshotStrokeWidth * (editorWin.backend.captureScale > 0 ? editorWin.backend.captureScale : editorWin.screen.devicePixelRatio)
     }
     // The colour of new shapes (the style group of slice B5 offers more).
     Binding {
@@ -400,7 +406,7 @@ Window {
                     capsule: true
                     enabled: editorWin.backend.canUndo
                     accessibleName: qsTr("Undo")
-                    tooltip: qsTr("Undo (Ctrl+Z)")
+                    tooltip: qsTr("Undo (%1)").arg(editorWin.keyLabel(qsTr("Ctrl+Z")))
                     onClicked: editorWin.backend.undo()
 
                     Glyph {
@@ -413,7 +419,7 @@ Window {
                     capsule: true
                     enabled: editorWin.backend.canRedo
                     accessibleName: qsTr("Redo")
-                    tooltip: qsTr("Redo (Ctrl+Shift+Z)")
+                    tooltip: qsTr("Redo (%1)").arg(editorWin.keyLabel(qsTr("Ctrl+Shift+Z")))
                     onClicked: editorWin.backend.redo()
 
                     Glyph {
@@ -473,6 +479,7 @@ Window {
         AnnotationLayer {
             parent: view.holder
             backend: editorWin.backend
+            flick: view.flickable
             viewScale: view.viewScale
         }
     }

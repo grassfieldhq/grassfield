@@ -6,6 +6,7 @@
 #include <QPainterPath>
 #include <QPolygonF>
 
+#include <algorithm>
 #include <cmath>
 
 namespace screenshot {
@@ -139,21 +140,42 @@ QImage exportLayers(const QImage &original, const Layers &layers)
     const QImage::Format back = original.hasAlphaChannel() ? QImage::Format_ARGB32 : QImage::Format_RGB32;
     QImage out = work.convertToFormat(back);
     out.setDevicePixelRatio(original.devicePixelRatio());
+    for (const QString &key : original.textKeys())
+        out.setText(key, original.text(key)); // the capture's own metadata (its scale) stays in the file
     return out;
 }
 
-QImage renderOverlay(const Layers &layers, const QSize &natural, const QSize &target)
+QSize clampedOverlaySize(const QSize &target)
 {
-    if (natural.isEmpty() || target.isEmpty())
+    if (target.isEmpty())
+        return target;
+    double f = 1;
+    f = std::min(f, double(kMaxOverlaySide) / std::max(target.width(), target.height()));
+    f = std::min(f, std::sqrt(double(kMaxOverlayPixels) / (double(target.width()) * target.height())));
+    if (f >= 1)
+        return target;
+    return QSize(std::max(1, int(target.width() * f)), std::max(1, int(target.height() * f)));
+}
+
+QImage renderOverlayRegion(const Layers &layers, const QRectF &region, const QSize &requested)
+{
+    const QSize target = clampedOverlaySize(requested);
+    if (region.isEmpty() || target.isEmpty() || !std::isfinite(region.width()) || !std::isfinite(region.height()))
         return {};
     QImage overlay(target, QImage::Format_ARGB32_Premultiplied);
     overlay.fill(Qt::transparent);
     {
         QPainter painter(&overlay);
-        painter.scale(qreal(target.width()) / natural.width(), qreal(target.height()) / natural.height());
+        painter.scale(qreal(target.width()) / region.width(), qreal(target.height()) / region.height());
+        painter.translate(-region.topLeft());
         paintLayers(&painter, layers);
     }
     return overlay;
+}
+
+QImage renderOverlay(const Layers &layers, const QSize &natural, const QSize &target)
+{
+    return renderOverlayRegion(layers, QRectF(QPointF(0, 0), QSizeF(natural)), target);
 }
 
 } // namespace screenshot

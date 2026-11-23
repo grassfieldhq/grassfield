@@ -312,9 +312,32 @@ TEST_F(AppTest, TheOverlayHasTheShapesAndNothingElse)
     m_app->setTool("line");
     ASSERT_TRUE(m_app->toolPress(5, 30, 3));
     m_app->toolRelease(75, 30, false);
-    const QImage overlay = m_app->overlayImage(QSize(80, 60));
+    const QImage overlay = m_app->overlayImage(QRectF(), QSize(80, 60));
     EXPECT_EQ(overlay.size(), QSize(80, 60));
     EXPECT_EQ(overlay.pixelColor(40, 30), QColor(255, 0, 0));
     EXPECT_EQ(overlay.pixelColor(40, 5).alpha(), 0);
-    EXPECT_EQ(m_app->overlayImage(QSize()).size(), QSize(80, 60)) << "no requested size: the picture's own";
+    EXPECT_EQ(m_app->overlayImage(QRectF(), QSize()).size(), QSize(80, 60)) << "no requested size: the picture's own";
+}
+
+TEST_F(AppTest, TheCaptureScaleComesFromThePngAndSurvivesDone)
+{
+    EXPECT_EQ(m_app->captureScale(), 0) << "a file that does not say";
+    QImage image(80, 60, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    image.setText("Grassfield-Scale", "1.25");
+    const QString scaled = m_dir.path() + "/pics/Scaled.png";
+    ASSERT_TRUE(image.save(scaled, "PNG"));
+    ScreenshotApp app(scaled, QStringList(), m_dir.path() + "/state2");
+    EXPECT_DOUBLE_EQ(app.captureScale(), 1.25);
+    app.setToolColor("#ff0000");
+    app.setTool("line");
+    ASSERT_TRUE(app.toolPress(5, 30, 3));
+    app.toolRelease(75, 30, false);
+    ASSERT_TRUE(app.done());
+    ScreenshotApp again(scaled, QStringList(), m_dir.path() + "/state2");
+    EXPECT_DOUBLE_EQ(again.captureScale(), 1.25) << "the edited file keeps the capture's scale";
+    image.setText("Grassfield-Scale", "40");
+    ASSERT_TRUE(image.save(scaled, "PNG"));
+    ScreenshotApp odd(scaled, QStringList(), m_dir.path() + "/state3");
+    EXPECT_EQ(odd.captureScale(), 0) << "a value out of range is no scale";
 }
