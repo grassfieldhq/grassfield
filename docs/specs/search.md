@@ -19,7 +19,7 @@ The clipboard history (⌘4, the Clipboard view) has its own spec: `docs/specs/c
 3. S3 Calculator: arithmetic, parentheses, %, ^, constants; result copyable with Return (clipboard via wl-copy).
 4. S4 Units: length, mass, temperature, data sizes; currency excluded (needs network).
 5. S5 Files: query localsearch asynchronously (max 20 results, ≤ 300 ms on 100k files), cancel stale queries.
-6. S6 Keyboard: ↑/↓, Tab between groups, Return open, Ctrl+Return reveal in Files, Esc clear/close.
+6. S6 Keyboard: ↑/↓, Page Down/Page Up (Ctrl+↓/Ctrl+↑) between groups, Tab opens the Actions of the selected row (command-palette.md §3.3, ADR-0067 D-11; Tab moved between groups before palette P3c), Shift+Tab to the filter chips, Return open, Ctrl+Return reveal in Files, Esc closes Actions, else clears, else closes.
 7. S7 Results show icon, name, subtitle (path/category); no network calls.
 
 ## Acceptance criteria
@@ -81,7 +81,7 @@ command); in French the Settings page reads "Écran verrouillé" and the command
 - The results list is keyed (`Search.rowModel`, `KeyedRows.js`): a result that stays from one keystroke to the next keeps its row delegate, only new results make one (audit B-05). The panel's height glides, its glass judged over its height at rest.
 - Rows (ADR-0024 lot 2, macOS 27 Spotlight; measured in `docs/audits/visual-tahoe-2026-10-25.md` § Search — partly close, 6/10
   and `docs/audits/ui-finesse-2026-10-25.md` § 7.1 macOS 27 changed the target): one row per result, no header rows (the groups
-  still order the list, Tab moves between them and `status()` reports them); 17 / 15 type (Inter sizes with the cap height of
+  still order the list, Page Down and Page Up move between them and `status()` reports them); 17 / 15 type (Inter sizes with the cap height of
   macOS's 17.7 / 15); rows 63 tall (two lines), the 36-pt icon 26 and the title and subtitle 80 from the panel edge; the
   selected row 12 from the panel sides, radius 18, a neutral fill (`colors.fill` at `search.selectionFillOpacity`, ordinary
   text colours, inside the A2 material fill overlay).
@@ -92,7 +92,7 @@ command); in French the Settings page reads "Écran verrouillé" and the command
   something to show (chips, results or "No Results").
 - Latency is logged by the shell: `search open->visible N ms` (IPC call to first frame) and `search keystroke->results N ms`.
 
-- Filter chips (F2c): with a query that has results in two or more of Applications, Commands and Documents (files and recents), a chip row sits under the field (`Filters.js`; the capsule is the Apps category chip). A click narrows the results to that kind (the Top Hit joins its kind; inline answers are hidden) and a second click clears it; a new query clears it. IPC `search filter <apps|commands|documents|"">` is the test hook. The field keeps the text focus; the chips are reachable by keyboard: Tab past the last result group (Shift+Tab before the first) moves the focus ring to the first (last) chip, Left/Right/Home/End move along them, Space or Return selects or clears, Esc or Tab past the end returns to the field, and any other key (typing, Up, Down) leaves the chips and acts on the field. The ring is the shared outside accent ring (`control.focusOutline`). Test: `tests/shell/search_chips`. The `filter` hook answers only in a visual fixture session (`VisualFixtures.active`).
+- Filter chips (F2c): with a query that has results in two or more of Applications, Commands and Documents (files and recents), a chip row sits under the field (`Filters.js`; the capsule is the Apps category chip). A click narrows the results to that kind (the Top Hit joins its kind; inline answers are hidden) and a second click clears it; a new query clears it. IPC `search filter <apps|commands|documents|"">` is the test hook. The field keeps the text focus; the chips are reachable by keyboard: Shift+Tab (from the field or the results; palette P3c, it was Tab past the last result group) moves the focus ring to the first chip, Left/Right/Home/End move along them, Space or Return selects or clears, Esc or Tab past the last chip returns to the field, and any other key (typing, Up, Down) leaves the chips and acts on the field. The ring is the shared outside accent ring (`control.focusOutline`). Test: `tests/shell/search_chips`. The `filter` hook answers only in a visual fixture session (`VisualFixtures.active`).
 - No-results notice: a non-empty query that nothing answers, once the file search settled (`filesPending`: the debounce timer and every live `localsearch`/`plocate` process, so the plocate fallback is waited for), shows "No Results for ...", centred under the field.
 - Clipboard view (ADR-0034, `docs/specs/clipboard.md`): ⌘4 in the field (Super+4, forwarded as Ctrl+4), the Clipboard button right of the empty field, or Super+Ctrl+V (IPC `search clipboard`, opening only through `show()`) switch the same window to the clipboard history: the clipboard symbol and "Clipboard" in the field, the More button, the history's rows, the row and More menus and a preview panel beside the results. Backspace in the empty field returns to the results. Test: `tests/shell/search_clipboard`.
 

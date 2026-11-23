@@ -9,6 +9,8 @@
 // Entry: {id, title, subtitle, keywords[], keywordsEn[], glyph, kind, provider, args[], actions[], available, run}
 // - id: ^[a-z][a-z0-9.-]{0,63}$ (`sys.lock`); ids of menu items are ephemeral and never stored.
 // - keywords: words in the shell's language; keywordsEn: English words kept besides them (optional).
+// - actions: the entry's own Actions (Tab), after Run: [{id, title, shortcut?, destructive?, enabled?, run(args, origin)}], ids as above;
+//   Actions.js (palette P3) drops a malformed one and puts the destructive ones last.
 // - available: a boolean or a function returning one (default: available); an unavailable entry is never offered or run.
 // - run(args, origin): the action; origin is "row", "quickkey", "hotkey", "ipc" or "refresh".
 

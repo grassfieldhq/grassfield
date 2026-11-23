@@ -224,6 +224,12 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 Slice P3c proves in nested that Super+K reaches the Exclusive layer (no Grassfield or Omarchy bind takes it) before it is
 listed; if it does not, ⌘K is not offered and Tab alone opens Actions.
 
+Status (P3a to P3c): Tab opens Actions, Shift+Tab reaches the chips, Page Down/Up and Ctrl+↓/↑ move between groups. ⌘K is coded
+(`Actions.keyAction`, option `cmdK`, by symbol or by the K key's place) but **off**: `SearchPanel.qml` passes no option until the nested
+proof; the Actions list names no ⌘K. Rows with Actions today: app, setting (Open), command (Run, plus the `actions` its registry
+entry brings, destructive ones last), calculator (Copy), file and recent (Open, Show in Files); the clipboard rows keep the CB-8
+menu. The kind-specific actions of P4 to P7 (Open With, Copy Path, Quit, favorites, quick keys, shortcut) arrive with their slices.
+
 ### 3.3 Actions panel
 - A glass list of the `menu` class (the PopupMenu used by the clipboard row menu, SearchPanel.qml:1165) anchored to the
   selected row's right side, with a filter field at its top when it has more than 7 actions (Raycast's searchable panel [R2];
