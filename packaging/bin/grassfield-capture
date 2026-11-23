@@ -82,6 +82,7 @@ import stat
 import subprocess
 import sys
 import time
+import zlib
 
 # capture.* of ui/tokens/tokens.json, as slurp takes them (#rrggbbaa): the veil over the screen, the selection's fill and
 # border, the border's width in pixels. The boxes a click can pick (the windows, then the displays) are filled with the veil
@@ -610,9 +611,32 @@ def publish(folder, stem, ext, tmp):
     return None
 
 
-def save_picture(folder, stem, grim):
+def stamp_scale(path, scale):
+    # The capture's output scale as a tEXt chunk "Grassfield-Scale" right after IHDR (the screenshot editor sizes its strokes in
+    # picture pixels from it), in the hidden file of this helper's, before it is published: a new file renamed over it, never a
+    # file rewritten in place. A file that is not a plain PNG, or any failure, leaves the picture as grim wrote it.
+    if not isinstance(scale, float) or not 0 < scale < 1e6:
+        return
+    tmp = path + ".scale"
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        if data[:8] != b"\x89PNG\r\n\x1a\n" or data[8:16] != b"\x00\x00\x00\x0dIHDR":
+            return
+        body = b"Grassfield-Scale\x00" + repr(scale).encode("ascii")
+        chunk = len(body).to_bytes(4, "big") + b"tEXt" + body + zlib.crc32(b"tEXt" + body).to_bytes(4, "big")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, stat.S_IMODE(os.stat(path).st_mode))
+        with os.fdopen(fd, "wb") as out:
+            out.write(data[:33] + chunk + data[33:])  # signature 8 + IHDR chunk 25
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
+
+def save_picture(folder, stem, grim, scale=None):
     # grim writes a hidden file of this helper's in the folder, which then takes the first free name (publish). Returns the
-    # path, or None (nothing left behind).
+    # path, or None (nothing left behind). The scale (the output's) is stamped into the hidden file first (stamp_scale).
     tmp = reserve(folder, "grassfield-capture", ".png")
     if tmp is None:
         return None
@@ -620,6 +644,7 @@ def save_picture(folder, stem, grim):
         r = run(grim + [tmp], timeout=30)
         if r is None or r.returncode != 0 or os.path.getsize(tmp) == 0:
             return None
+        stamp_scale(tmp, scale)
         return publish(folder, stem, ".png", tmp)
     except OSError:
         return None
@@ -1034,6 +1059,7 @@ def shot(opts):
             # The display clicked in the toolbar's Capture Entire Screen mode, and only it.
             screens = [s for s in screens if s[0] == opts["output"]]
         shots = [["grim", "-o", name] + pointer for name, _ in screens]
+        scales = [place_of(rect, monitors, name)[1] for name, rect in screens]
         if not shots:
             return 1
         ready = close_previous()
@@ -1046,6 +1072,7 @@ def shot(opts):
             return 2
         ready = close_previous()
         shots = [["grim", "-g", geometry_text(sel)] + pointer]
+        scales = [place_of(sel, monitors, "")[1]]
         area, output = sel, ""
     else:
         if selecting(crosshair(mode == "window")):
@@ -1055,6 +1082,7 @@ def shot(opts):
         if sel is None:
             return 0
         shots = [["grim", "-g", geometry_text(sel)] + pointer]
+        scales = [place_of(sel, monitors, "")[1]]
         area, output = sel, ""
     if opts["timer"]:
         lock = take_lock()
@@ -1088,7 +1116,7 @@ def shot(opts):
                 return 1
             data = r.stdout
         else:
-            paths = [p for p in (save_picture(folder, stem, grim) for grim in shots) if p]
+            paths = [p for p in (save_picture(folder, stem, grim, sc) for grim, sc in zip(shots, scales)) if p]
             if not paths:
                 return 1
     shutter()
