@@ -3986,6 +3986,36 @@ QtObject {
     readonly property int captureWindowHighlightRadius: 17
     // the window highlight's corner is the window's own superellipse: Hyprland draws a corner of rounding x power / 2 points at decoration.rounding_power 2.6 (config/hypr/grassfield/looknfeel.lua), so a circular radius leaves notches at the title bar [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property real captureWindowHighlightPower: 2.6
+    // estimate: the floating thumbnail's card (a glass card of the menus' class), about the width of macOS 27's screenshot thumbnail [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailWidth: 216
+    // estimate: the tallest the picture inside the card gets, so a tall capture does not fill the corner; the picture is fitted inside the card's width and this height [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailPictureHeight: 135
+    // estimate: the card's corner, concentric with the picture's (capture.thumbnailPictureRadius) inside its capture.thumbnailInset [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailRadius: 16
+    // estimate: the picture's corner inside the card, the card's radius less the inset (16 - 6) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailPictureRadius: 10
+    // estimate: the card's glass around the picture [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailInset: 6
+    // estimate: between two stacked cards [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailGap: 10
+    // estimate: the card's distance from the display's side edge, and above the Dock's band or the bottom edge [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailEdgeMargin: 16
+    // estimate: a hover button of the card (Copy, Show in Files, Move to Trash, Close), a round button over the picture's corners [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailButtonSize: 28
+    // estimate: the glyph of a hover button [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailButtonIconSize: 14
+    // ADR-0066 D-1: cards stacked at once; a new capture pushes the oldest out
+    readonly property int captureThumbnailMax: 3
+    // estimate: how long the cards stay unmapped before the shell tells the helper they are gone (the acknowledgement of the shooting phase, ADR-0066 D-1): three frames at 60 Hz, so the compositor has unmapped and repainted
+    readonly property int captureThumbnailSettleMs: 50
+    // estimate: how far the pointer moves before a press on a card becomes a drag (a swipe toward the edge, or a drag of the file out), the desktop icons' threshold (desktop.iconDragThreshold) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailDragThreshold: 10
+    // estimate: how far a card is dragged toward its screen edge before letting go dismisses it (swipe to dismiss) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailDismissDistance: 48
+    // estimate: how far a card slides in from its edge when it arrives (a fade only under Reduce Motion)
+    readonly property int captureThumbnailDismissSlide: 24
+    // estimate: a result file older than this when the shell reads it is not shown (a file left from before the shell started)
+    readonly property int captureThumbnailFreshMs: 30000
 
     // the selected tab's indicator of GTK 3.24.52 Adwaita and GTK 4.24.1 Default (box-shadow inset 4 px): the generated GTK themes recolour it, never resize it [ref: docs/decisions/ADR-0035-system-dialogs.md D-8]
     readonly property int gtkTabIndicatorWidth: 4

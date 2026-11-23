@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Grassfield.Ui
 import qs.lib
 import "CaptureFile.js" as CaptureFile
 
@@ -93,6 +94,14 @@ Singleton {
     onStateChanged: root.acknowledge()
     onThumbnailsHiddenChanged: root.acknowledge()
 
+    // The helper's result file (ADR-0066 D-1), read whole each time it is replaced: a picture or recording was saved. The floating
+    // thumbnail (CaptureThumbnails) shows it. Only a result written lately counts (a file left from before the shell started is
+    // not shown), and each one is announced once by its id (a reload of the same file is no new capture). The paths in it are data:
+    // CaptureThumbs decides what may be shown.
+    readonly property string resultPath: CaptureFile.resultPath(Mode.stateHome, Quickshell.env("XDG_RUNTIME_DIR"))
+    property string lastResultId: ""
+    signal resultArrived(var result)
+
     // Still not idle under the lock (the stop could not reach the helper yet: its state was written before its recorder): asked
     // again until the helper's state says idle.
     Timer {
@@ -133,8 +142,23 @@ Singleton {
         onRunningChanged: {
             if (!running) {
                 stateFile.path = root.path;
+                resultFile.path = root.resultPath;
                 root.acknowledge();
             }
+        }
+    }
+
+    FileView {
+        id: resultFile
+        printErrors: false
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            const result = CaptureFile.parseResult(resultFile.text());
+            if (result === null || result.id === root.lastResultId || !CaptureFile.resultFresh(result, Date.now(), Tokens.captureThumbnailFreshMs))
+                return;
+            root.lastResultId = result.id;
+            root.resultArrived(result);
         }
     }
 
