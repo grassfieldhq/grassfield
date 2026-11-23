@@ -156,7 +156,9 @@ Folders are watched; a changed file is re-read.
    `MemoryMax=512M`, `TasksMax=64`, `NoNewPrivileges=yes`: its own cgroup, limits, and a whole-tree kill on timeout;
 3. writes one framed message on the unit's stdin (`--pipe`): the script's bytes and their hash, the non-secret arguments and the
    password values. Inside the unit, the runner's sandbox stage (`grassfield-script-run --sandbox`) reads it, hashes the bytes
-   again and refuses a mismatch, puts them in a sealed memfd, and execs `bwrap` with the profile of the script's level (below)
+   again and refuses a mismatch, puts them in a sealed memfd (Python's `os.memfd_create` sets close-on-exec: the stage makes
+   the fd inheritable with `os.set_inheritable` and seeks it back to 0 before the exec), and execs
+   `bwrap` with the profile of the script's level (below)
    and `--ro-bind-data` from that memfd; it hands the arguments and passwords to the next stage on an inherited pipe (no file
    descriptor crosses `systemd-run`, only its stdin). Inside `bwrap`, the exec stage (`grassfield-script-run --exec`) applies
    the Landlock scopes of the level (below), reads the arguments, and execs the script with the non-secret arguments as
@@ -181,26 +183,30 @@ group-accessible (read-only checks, 2026-11-23). So the levels hide **all of `/r
 | | **Confined** (default) | **Allow network** (per script, off by default) | **Allow access to my session** (per script, off by default) |
 |---|---|---|---|
 | Network | new network namespace: a loopback of its own; no internet, no host localhost services | the host's network namespace: internet and the host's localhost TCP services (Ollama, CUPS on 631…) | the host's network, whatever the other switch says (the session can reach it anyway) |
-| `/run` (system bus, resolved, CUPS, Avahi, Docker, machined, the runtime directory) | a tmpfs over all of `/run`, with an empty `/run/user/<uid>` (0700) as `XDG_RUNTIME_DIR`; `DBUS_SESSION_BUS_ADDRESS`, `DBUS_SYSTEM_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE` unset | the same tmpfs, plus **only `/run/systemd/resolve` bound back read-only**, so names resolve | `/run` bound, with those variables set, **except** `$XDG_RUNTIME_DIR/grassfield` (still hidden); this includes the system bus and, for a docker-group member, Docker |
+| `/run` (system bus, resolved, CUPS, Avahi, Docker, machined, the runtime directory) | a tmpfs over all of `/run`, with an empty `/run/user/<uid>` (0700) as `XDG_RUNTIME_DIR`; `DBUS_SESSION_BUS_ADDRESS`, `DBUS_SYSTEM_BUS_ADDRESS`, `WAYLAND_DISPLAY`, `DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE` unset | the same tmpfs, plus **only two files of `/run/systemd/resolve` bound back read-only**: the varlink socket `io.systemd.Resolve` and `stub-resolv.conf` (the target of `/etc/resolv.conf`), so names resolve; not the folder, whose `io.systemd.Resolve.Monitor` is mode 0666 | `/run` bound, with those variables set, **except** `$XDG_RUNTIME_DIR/grassfield` (still hidden); this includes the system bus and, for a docker-group member, Docker |
 | DNS | none: `/etc/resolv.conf` dangles, nss `resolve` finds no socket, `mdns_minimal` finds no Avahi, `mymachines` no machined; only `/etc/hosts` and `myhostname` answer | systemd-resolved, through its varlink socket (nss `resolve`) and its stub 127.0.0.53 (nss `dns`); mDNS stays off (no Avahi socket) | the host's |
 | Abstract Unix sockets (an Xwayland X11 socket, D-Bus abstract addresses) | refused twice: the network namespace and **Landlock `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`** | refused by **Landlock `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET`** | allowed |
 | Signals to processes outside the sandbox | refused (new PID namespace and **Landlock `LANDLOCK_SCOPE_SIGNAL`**) | same | the PID namespace only |
 | X11 file sockets | private `/tmp`: no `/tmp/.X11-unix` | same | `/tmp/.X11-unix` bound |
 | Clipboard (ext-data-control), screen, input | unreachable (no Wayland socket) | unreachable | reachable: the script can read the clipboard, start apps, drive Hyprland |
 | systemd user manager (`systemd-run --user`, `systemctl --user`) | unreachable | unreachable | **reachable: the script can start processes outside every barrier** |
-| Files | `/` read-only. **The home is mounted read-only, then each visible top-level entry (`~/Documents`, `~/Projects`, `~/notes.txt`…) is bound writable.** Hidden entries (`~/.config`, `~/.local`, `~/.ssh`…) stay read-only, and so do absent ones: the home itself is read-only, so no new top-level entry (`~/.zshenv`, `~/.bash_login`, `~/.xprofile`, a new folder) can be created, and nothing can be added under a hidden entry (`~/.ssh/authorized_keys`). A visible entry that is a link is bound only when its target is not inside a hidden entry or the home's root; otherwise it stays read-only. A top-level entry created by another program during the run stays read-only for that run. **Every script folder is mounted read-only** after the writable binds. Hidden: `$XDG_STATE_HOME/grassfield`, `$XDG_CONFIG_HOME/grassfield`, `~/.local/share/keyrings`, and known socket files in the home (`~/.gnupg/S.*`, `~/.ssh/*.sock`), masked with `/dev/null` | same as Confined; whatever the script can read it can now send | same as Confined |
+| Files | `/` read-only. **The home is mounted read-only, then each visible top-level entry (`~/Documents`, `~/Projects`, `~/notes.txt`…) is bound writable.** Hidden entries (`~/.config`, `~/.local`, `~/.ssh`…) stay read-only, and so do absent ones: the home itself is read-only, so no new top-level entry (`~/.zshenv`, `~/.bash_login`, `~/.xprofile`, a new folder) can be created, and nothing can be added under a hidden entry (`~/.ssh/authorized_keys`). **A visible entry that is a link** is bound writable only when its `realpath` is a directory or regular file inside the home's visible part (under a visible top-level entry, never a hidden one nor the home's root itself) or under `/mnt`, `/media` or `/srv`; it is **never** bound when the realpath is, or lies under, `/run`, `/var/run`, `/tmp`, `/var/tmp`, `/dev`, `/proc`, `/sys` or the runtime directory, or when it is a socket, FIFO or device. Such a link stays as it is in the read-only home, so it **dangles** inside the sandbox: its target is under the tmpfs `/run`, the private `/tmp` or the sandbox's own `/dev` and `/proc`. A link to any other place outside the home (`/opt/x`, `/usr/share/y`) is left read-only through the read-only `/`. A top-level entry created by another program during the run stays read-only for that run. **Every script folder is mounted read-only** after the writable binds, and the script's own bytes (`--ro-bind-data`) after that. `~/.cache` is a private tmpfs (many tools need a writable cache), discarded with the run. **Mount order:** `/` read-only, the home read-only, the writable visible entries, the script folders read-only, the script's bytes, the masks, `~/.cache`, and **then** the tmpfs over `/run` (with the level's resolved files), the private `/tmp` and `/var/tmp`, the fresh `/dev` and `/proc`, so the system mounts always win over any home bind. Hidden: `$XDG_STATE_HOME/grassfield`, `$XDG_CONFIG_HOME/grassfield`, `~/.local/share/keyrings`, and known socket files in the home (`~/.gnupg/S.*`, `~/.ssh/*.sock`), masked with `/dev/null` | same as Confined; whatever the script can read it can now send | same as Confined |
 | Processes | new PID, IPC and UTS namespaces, `--die-with-parent`, `--new-session` (no TIOCSTI), `NoNewPrivileges`, the systemd limits | same | same, without the Landlock scopes |
 | How its effects reach the session | only through the palette: output shown in Search, Copy (the palette copies), Paste (ADR-0034's targeted paste), a notification or HUD the shell posts for `silent` and `compact` | same | also directly |
 
 **Landlock** (kernel LSM; this machine's kernel 7.2.15 reports ABI 10 and lists `landlock` in `/sys/kernel/security/lsm`; the
 scopes need ABI ≥ 6). The runner's exec stage calls `landlock_create_ruleset` with `scoped =
 LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET | LANDLOCK_SCOPE_SIGNAL` and `landlock_restrict_self` through Python `ctypes` (no new
-dependency), after `no_new_privs`, before it execs the script, at every level except Allow access to my session. If the ABI is
+dependency), in the exec stage, that is after `bwrap` has set the sandbox up and `no_new_privs` is set, and before it execs
+the script, at every level except Allow access to my session. `landlock_restrict_self` applies to the calling thread only, so
+the exec stage starts no thread (no thread-creating import, a check of `threading.active_count() == 1` and of
+`/proc/self/task` before the call). If the ABI is
 below 6, Landlock is absent, or a call fails, the script **does not run** at those levels (fail closed); the row says "This
 computer cannot confine scripts" and the journal says why.
 
 **Switches.**
-- **Allow network** lifts only the network namespace and binds `/run/systemd/resolve` back. Its switch (in the script's Actions
+- **Allow network** lifts only the network namespace and binds back the two resolved files (`io.systemd.Resolve`,
+  `stub-resolv.conf`). Its switch (in the script's Actions
   and its approval prompt) reads: "Allow network: this script can send anything it can read to the internet." Abstract
   sockets and every other `/run` socket stay closed.
 - **Allow access to my session** lifts the `/run`, runtime-directory, Wayland, X11, bus and Landlock barriers. Its switch carries
@@ -310,7 +316,7 @@ opening reaches the network through Files or KIO without the browser's visible a
 site in its URL. The rule is decided on the **resolved value**, not on the template:
 - `Placeholders.js` records where every substituted piece came from. A piece that comes from the clipboard or the selection,
   directly or through a `{snippet}` whose text contains `{clipboard}` (resolved recursively, at most 3 levels), marks the link
-  as **carrying data**. Values the person typed in this run (`{argument}`) and generated values (`{date}`, `{time}`,
+  as **carrying data**. Nesting deeper than 3 levels is **refused** with a message, never treated as data-free. Values the person typed in this run (`{argument}`) and generated values (`{date}`, `{time}`,
   `{datetime}`, `{day}`, `{uuid}`) do not.
 - A link carrying data never opens directly, **from any origin** (a row, a quick key, a keyboard shortcut, `qs ipc call
   search run`): Search opens on the detail pane, which shows "This link will open:" and the **full URL, percent-encoded, never
