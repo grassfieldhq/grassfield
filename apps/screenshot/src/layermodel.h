@@ -7,8 +7,8 @@
 
 // The editor's shapes as a list model for the scene items of qml/ShapeScene.qml (one item per layer, in picture pixels). It is
 // updated from the layer list after every edit with the least change: a drag edits one row (dataChanged: one item's geometry
-// moves, no other item is touched), a new shape or a cancelled one adds or removes the last row, anything else (undo, delete,
-// open) resets the model. The geometry is the exporter's own (shapeGeometry), so that the screen and the file agree.
+// moves, no other item is touched), a layer more or fewer (a new shape, a cancelled one, a delete, an undo or redo of those) goes
+// in or out at its index with the other rows' items kept; anything else (open, a revert) resets the model. The geometry is the exporter's own (shapeGeometry), so that the screen and the file agree.
 class LayerModel : public QAbstractListModel
 {
     Q_OBJECT

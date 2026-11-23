@@ -93,17 +93,33 @@ int LayerModel::setLayers(const Layers &layers)
         emit dataChanged(index(first), index(last));
         return 1;
     }
-    if (newSize == oldSize + 1 && samePrefix(m_layers, layers, oldSize)) {
-        beginInsertRows(QModelIndex(), oldSize, oldSize);
-        m_layers = layers;
-        endInsertRows();
-        return 2;
-    }
-    if (oldSize == newSize + 1 && samePrefix(m_layers, layers, newSize)) {
-        beginRemoveRows(QModelIndex(), newSize, newSize);
-        m_layers = layers;
-        endRemoveRows();
-        return 3;
+    // One layer more or fewer (a new shape, a delete, an undo or a redo of either): the row goes in or out at its index and the others
+    // keep their items. The ids around it are the same, in the same order.
+    if (newSize == oldSize + 1 || oldSize == newSize + 1) {
+        const bool adding = newSize > oldSize;
+        const Layers &longer = adding ? layers : m_layers;
+        const Layers &shorter = adding ? m_layers : layers;
+        int at = 0;
+        while (at < shorter.size() && longer[at].id == shorter[at].id)
+            ++at;
+        bool rest = true; // after the row, the same layers (the data too, so a changed one is not hidden)
+        for (int i = at; i < shorter.size() && rest; ++i)
+            rest = longer[i + 1] == shorter[i];
+        bool before = true;
+        for (int i = 0; i < at && before; ++i)
+            before = longer[i] == shorter[i];
+        if (rest && before) {
+            if (adding) {
+                beginInsertRows(QModelIndex(), at, at);
+                m_layers = layers;
+                endInsertRows();
+                return 2;
+            }
+            beginRemoveRows(QModelIndex(), at, at);
+            m_layers = layers;
+            endRemoveRows();
+            return 3;
+        }
     }
     beginResetModel();
     m_layers = layers;

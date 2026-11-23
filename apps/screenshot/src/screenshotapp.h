@@ -123,6 +123,7 @@ private:
     screenshot::UndoStack m_undo;
     screenshot::ToolController m_tools;
     LayerModel m_layerModel;
+    bool m_lastDirty = false; // what documentChanged last told about
     mutable QMutex m_imageLock;
     QImage m_image;
     int m_revision = 0;

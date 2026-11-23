@@ -138,6 +138,57 @@ double differing(const QImage &a, const QImage &b, int tolerance, int *worst = n
     return double(count) / (double(a.width()) * a.height());
 }
 
+// Where a layer is drawn, in pixels of the scene at `zoom`: its geometry with the stroke and the heads, a little more, within the image.
+QRect boxOf(const Layer &layer, qreal zoom, const QSize &image)
+{
+    const ShapeGeometry g = shapeGeometry(layer);
+    QRectF bounds = layerBounds(layer);
+    for (const QPolygonF *head : {&g.endHead, &g.startHead}) {
+        for (const QPointF &p : *head)
+            bounds = bounds.united(QRectF(p, QSizeF(0, 0)));
+    }
+    const qreal margin = g.width + g.headStroke + 3;
+    bounds.adjust(-margin, -margin, margin, margin);
+    const QRectF px(bounds.x() * zoom, bounds.y() * zoom, bounds.width() * zoom, bounds.height() * zoom);
+    return px.toAlignedRect().intersected(QRect(QPoint(0, 0), image));
+}
+
+// As `differing`, inside `box` only: a thin shape in a large picture would hide a wrong width in the empty pixels around it.
+double differingIn(const QImage &a, const QImage &b, const QRect &box, int tolerance)
+{
+    long count = 0;
+    for (int y = box.top(); y <= box.bottom(); ++y) {
+        const auto *pa = reinterpret_cast<const QRgb *>(a.constScanLine(y));
+        const auto *pb = reinterpret_cast<const QRgb *>(b.constScanLine(y));
+        for (int x = box.left(); x <= box.right(); ++x) {
+            const int d = std::max({std::abs(qRed(pa[x]) - qRed(pb[x])), std::abs(qGreen(pa[x]) - qGreen(pb[x])), std::abs(qBlue(pa[x]) - qBlue(pb[x]))});
+            if (d > tolerance)
+                ++count;
+        }
+    }
+    return double(count) / (double(box.width()) * box.height());
+}
+
+// The same layer drawn wrongly, for the exporter's side of a comparison that must then fail.
+Layer thinner(Layer layer)
+{
+    layer.fields.insert("width", layer.fields.value("width").toDouble() * 0.7);
+    return layer;
+}
+Layer withoutHeads(const Layer &layer) // an arrow as the plain line it would be with no head
+{
+    if (layer.type != QLatin1String("arrow"))
+        return layer;
+    Layer line = layer;
+    line.type = QStringLiteral("line");
+    return line;
+}
+Layer oneHeadLess(Layer layer) // a double arrow with one head
+{
+    layer.fields.insert("style", "straight");
+    return layer;
+}
+
 } // namespace
 
 // ---- the model ----------------------------------------------------------------------------------------------------------------
@@ -165,9 +216,16 @@ TEST(LayerModel, UpdatesTheLeastItCan)
     layers.removeLast();
     EXPECT_EQ(model.setLayers(layers), 3);
     EXPECT_EQ(removed, 1);
+    const Layer middle = layers[2];
     layers.removeAt(2);
-    EXPECT_EQ(model.setLayers(layers), 4) << "a layer taken out of the middle: a reset";
-    EXPECT_EQ(resets, 2);
+    EXPECT_EQ(model.setLayers(layers), 3) << "a layer taken out of the middle: that row goes, the others stay";
+    EXPECT_EQ(removed, 2);
+    layers.insert(2, middle);
+    EXPECT_EQ(model.setLayers(layers), 2) << "and undo puts it back at its index";
+    EXPECT_EQ(inserted, 2);
+    EXPECT_EQ(resets, 1) << "only the first load reset the model";
+    layers.swapItemsAt(0, 1);
+    EXPECT_EQ(model.setLayers(layers), 4) << "a different order is a reset";
 }
 
 TEST(LayerModel, TheRolesAreTheExportersGeometry)
@@ -201,7 +259,15 @@ class SceneAgreement : public ::testing::TestWithParam<double>
 {
 };
 
-// Every kind at once, then each alone, at the zoom: the scene's pixels are the exporter's within a few levels along the edges.
+// What the scene may differ from the exporter by, inside a layer's own box: a pixel differs when a channel is off by more than
+// kLevels; a layer fails above kShare (0.1%) of the box's pixels. The correct scene measures 0.000% at the three zooms (the software
+// backend draws with the exporter's own QPainter); a stroke 30% too thin (1.6% to 17%), a missing head (2.1% to 18%) and a double
+// arrow with one head (7% to 8.8%) are far above (checked below, every run).
+constexpr int kLevels = 24;
+constexpr double kShare = 0.001;
+
+// Every kind at once, then each alone, at the zoom: the scene's pixels are the exporter's within a few levels along the edges. Each
+// layer alone is compared inside its own box, and the same comparison must fail against a wrongly drawn exporter picture.
 TEST_P(SceneAgreement, TheSceneIsTheExportersDrawingAtThatZoom)
 {
     const double zoom = GetParam();
@@ -210,23 +276,35 @@ TEST_P(SceneAgreement, TheSceneIsTheExportersDrawingAtThatZoom)
     Rig rig(natural, zoom, QSize(int(natural.width() * zoom), int(natural.height() * zoom)));
     ASSERT_NE(rig.scene, nullptr);
 
-    QList<Layers> cases{all};
-    for (const Layer &layer : all)
-        cases.append(Layers{layer});
-    for (int i = 0; i < cases.size(); ++i) {
-        rig.model.setLayers(cases[i]);
+    rig.model.setLayers(all);
+    const QImage together = rig.grab();
+    EXPECT_LT(differing(together, exporterAt(all, natural, zoom), kLevels), 0.01) << "all kinds together at zoom " << zoom;
+
+    for (const Layer &layer : all) {
+        rig.model.setLayers({layer});
         const QImage scene = rig.grab();
-        const QImage expected = exporterAt(cases[i], natural, zoom);
-        ASSERT_EQ(scene.size(), expected.size());
-        int worst = 0;
-        const double share = differing(scene, expected, 40, &worst);
-        EXPECT_LT(share, 0.01) << "case " << i << " at zoom " << zoom << ": " << share * 100 << "% of the pixels differ by more than 40 levels (the most "
-                               << worst << ")";
-        if (i > 0) { // each layer alone must draw something
-            QImage blank(scene.size(), QImage::Format_RGB32);
-            blank.fill(Qt::white);
-            EXPECT_GT(differing(scene, blank, 40), 0.0) << "case " << i << " drew nothing";
+        const QRect box = boxOf(layer, zoom, scene.size());
+        ASSERT_FALSE(box.isEmpty());
+        const double right = differingIn(scene, exporterAt({layer}, natural, zoom), box, kLevels);
+        std::printf("share layer %d (%s) zoom %.1f: right %.3f%%", layer.id, layer.type.toLatin1().constData(), zoom, right * 100);
+        EXPECT_LT(right, kShare) << layer.type.toStdString() << " " << layer.id << " at zoom " << zoom;
+
+        QImage blank(scene.size(), QImage::Format_RGB32);
+        blank.fill(Qt::white);
+        EXPECT_GT(differingIn(scene, blank, box, kLevels), 0.0) << "layer " << layer.id << " drew nothing";
+
+        // The bound is tight: the comparison fails for the wrong drawings it is there to catch.
+        const double narrow = differingIn(scene, exporterAt({thinner(layer)}, natural, zoom), box, kLevels);
+        std::printf(", thinner %.3f%%", narrow * 100);
+        EXPECT_GT(narrow, kShare) << "a stroke 30% thinner passes for layer " << layer.id << " at zoom " << zoom;
+        if (layer.type == QLatin1String("arrow")) {
+            const bool both = layer.fields.value("style").toString() == QLatin1String("double");
+            const Layer wrong = both ? oneHeadLess(layer) : withoutHeads(layer);
+            const double missing = differingIn(scene, exporterAt({wrong}, natural, zoom), box, kLevels);
+            std::printf(", head missing %.3f%%", missing * 100);
+            EXPECT_GT(missing, kShare) << "a missing head passes for layer " << layer.id << " at zoom " << zoom;
         }
+        std::printf("\n");
     }
 }
 
@@ -243,6 +321,53 @@ TEST(Scene, ItIsClippedToThePictureAsTheExportIs)
     EXPECT_EQ(scene.pixelColor(20, 12), QColor(255, 0, 0)) << "inside the picture";
     EXPECT_EQ(scene.pixelColor(60, 12), QColor(Qt::white)) << "past the picture's right edge: nothing, as in the file";
     EXPECT_EQ(scene.pixelColor(20, 60), QColor(Qt::white));
+}
+
+// A rectangle's outline is one closed path: its first corner is joined like the others (mitred), not capped round.
+TEST(Scene, TheFirstCornerOfARectangleIsJoinedNotRounded)
+{
+    const QSize natural(60, 40);
+    const double zoom = 8;
+    Rig rig(natural, zoom, QSize(int(natural.width() * zoom), int(natural.height() * zoom)));
+    ASSERT_NE(rig.scene, nullptr);
+    rig.model.setLayers({makeShape(1, "rectangle", QPointF(10, 10), QPointF(50, 30), style("#ff0000", 6))});
+    const QImage scene = rig.grab();
+    // The outer corner of the stroke is (7, 7) in the picture: one pixel in from it, on the screen, is red for a mitre and white for a cap.
+    const int c = int(7 * zoom) + 1;
+    EXPECT_EQ(scene.pixelColor(c, c), QColor(255, 0, 0)) << "top left (where the path starts)";
+    EXPECT_EQ(scene.pixelColor(int(53 * zoom) - 2, c), QColor(255, 0, 0)) << "top right";
+    EXPECT_EQ(scene.pixelColor(c, int(33 * zoom) - 2), QColor(255, 0, 0)) << "bottom left";
+}
+
+// A layer taken out or put back in the middle goes in or out of the scene alone: the other items are the same objects.
+TEST(Scene, TheOtherItemsSurviveARowRemovedOrInsertedInTheMiddle)
+{
+    Rig rig(QSize(96, 72), 1, QSize(96, 72));
+    ASSERT_NE(rig.scene, nullptr);
+    Layers layers = allKinds();
+    rig.model.setLayers(layers);
+    const auto items = [&] {
+        QList<QQuickItem *> out;
+        for (QQuickItem *child : rig.content()->childItems()) {
+            if (child->objectName() != QLatin1String("shapeRepeater"))
+                out.append(child);
+        }
+        return out;
+    };
+    const QList<QQuickItem *> before = items();
+    ASSERT_EQ(before.size(), 8);
+    const Layer middle = layers[3];
+    layers.removeAt(3);
+    rig.model.setLayers(layers);
+    QList<QQuickItem *> expected = before;
+    expected.removeAt(3);
+    EXPECT_EQ(items(), expected) << "the seven others are the same items";
+    layers.insert(3, middle);
+    rig.model.setLayers(layers);
+    const QList<QQuickItem *> after = items();
+    ASSERT_EQ(after.size(), 8);
+    for (const QQuickItem *item : expected)
+        EXPECT_TRUE(after.contains(const_cast<QQuickItem *>(item))) << "kept through the insert";
 }
 
 TEST(Scene, TheItemsFollowTheZoomWithNothingDrawnAgain)

@@ -54,6 +54,8 @@ Item {
                             fillColor: rectItem.gFill ? rectItem.gColor : "transparent"
                             joinStyle: ShapePath.MiterJoin
                             capStyle: ShapePath.RoundCap
+                            // Four sides, the last ending exactly where the first began: the outline is closed, so Qt joins the
+                            // first corner as it does the others (a path with open ends would cap it).
                             startX: rectItem.boxX
                             startY: rectItem.boxY
                             PathLine { x: rectItem.boxX + rectItem.boxW; y: rectItem.boxY }
@@ -146,6 +148,9 @@ Item {
                             fillColor: arrowItem.gColor
                             joinStyle: ShapePath.RoundJoin
                             capStyle: ShapePath.RoundCap
+                            // The path starts at the head's first point and ends on it again: a closed outline, joined at every corner.
+                            startX: arrowItem.endHead.length > 0 ? arrowItem.endHead[0].x : 0
+                            startY: arrowItem.endHead.length > 0 ? arrowItem.endHead[0].y : 0
                             PathPolyline { path: arrowItem.endHead }
                         }
                         ShapePath {
@@ -154,6 +159,9 @@ Item {
                             fillColor: arrowItem.gColor
                             joinStyle: ShapePath.RoundJoin
                             capStyle: ShapePath.RoundCap
+                            // The path starts at the head's first point and ends on it again: a closed outline, joined at every corner.
+                            startX: arrowItem.startHead.length > 0 ? arrowItem.startHead[0].x : 0
+                            startY: arrowItem.startHead.length > 0 ? arrowItem.startHead[0].y : 0
                             PathPolyline { path: arrowItem.startHead }
                         }
                     }
@@ -192,6 +200,9 @@ Item {
                             fillColor: curvedItem.gColor
                             joinStyle: ShapePath.RoundJoin
                             capStyle: ShapePath.RoundCap
+                            // The path starts at the head's first point and ends on it again: a closed outline, joined at every corner.
+                            startX: curvedItem.endHead.length > 0 ? curvedItem.endHead[0].x : 0
+                            startY: curvedItem.endHead.length > 0 ? curvedItem.endHead[0].y : 0
                             PathPolyline { path: curvedItem.endHead }
                         }
                     }

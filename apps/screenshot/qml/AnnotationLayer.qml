@@ -32,15 +32,17 @@ Item {
     }
 
     // The selected layer's handles.
+    // By count, so that a drag (the handles move, their number does not) keeps the same items and only their places change.
     Repeater {
-        model: root.backend.handles
+        model: root.backend.handles.length
 
         Rectangle {
-            required property var modelData
+            required property int index
+            readonly property var handle: root.backend.handles[index]
             width: Tokens.screenshotHandleSize
             height: Tokens.screenshotHandleSize
-            x: modelData.x * root.viewScale - width / 2
-            y: modelData.y * root.viewScale - height / 2
+            x: (handle ? handle.x : 0) * root.viewScale - width / 2
+            y: (handle ? handle.y : 0) * root.viewScale - height / 2
             z: 1
             radius: Tokens.radiusControl
             color: Appearance.colors.windowBackground

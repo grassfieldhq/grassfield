@@ -351,6 +351,23 @@ TEST_F(AppTest, TheLayerModelFollowsTheEditsRowByRow)
     m_app->selectNone();
 }
 
+TEST_F(AppTest, AMoveDoesNotTellTheWholeDocumentChanged)
+{
+    int documentChanged = 0;
+    QObject::connect(m_app.get(), &ScreenshotApp::documentChanged, [&] { ++documentChanged; });
+    m_app->setToolColor("#ff0000");
+    m_app->setTool("rectangle");
+    ASSERT_TRUE(m_app->toolPress(10, 10, 3));
+    m_app->toolMove(30, 30, false);
+    EXPECT_EQ(documentChanged, 1) << "the document became dirty";
+    for (int i = 0; i < 20; ++i)
+        m_app->toolMove(30 + i, 30 + i, false);
+    m_app->toolRelease(60, 60, false);
+    EXPECT_EQ(documentChanged, 1) << "geometry only: nothing else is told";
+    m_app->undo();
+    EXPECT_EQ(documentChanged, 2) << "clean again";
+}
+
 TEST_F(AppTest, TheCaptureScaleComesFromThePngAndSurvivesDone)
 {
     EXPECT_EQ(m_app->captureScale(), 0) << "a file that does not say";

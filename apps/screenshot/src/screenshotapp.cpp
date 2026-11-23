@@ -61,7 +61,11 @@ void ScreenshotApp::layersEdited()
     m_document.setLayers(m_undo.layers());
     m_layerModel.setLayers(m_undo.layers());
     emit layersChanged();
-    emit documentChanged(); // dirty
+    // A move changes geometry only: documentChanged (dirty, and everything that hangs on the document) only when the state does.
+    if (m_document.dirty() != m_lastDirty) {
+        m_lastDirty = m_document.dirty();
+        emit documentChanged();
+    }
 }
 
 qreal ScreenshotApp::captureScale() const
@@ -200,6 +204,7 @@ bool ScreenshotApp::done()
     QString why;
     const bool ok = m_document.done(&why);
     setLastError(ok ? QString() : why);
+    m_lastDirty = m_document.dirty();
     emit documentChanged();
     return ok;
 }
@@ -209,6 +214,7 @@ bool ScreenshotApp::revert()
     QString why;
     const bool ok = m_document.revert(&why);
     setLastError(ok ? QString() : why);
+    m_lastDirty = m_document.dirty();
     if (ok)
         publish();
     else
