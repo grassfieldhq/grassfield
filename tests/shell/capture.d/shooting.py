@@ -324,6 +324,32 @@ for value, notice in ((True, 0), (False, 1), ("no", 0), (0, 0), (None, 0)):
                                                            "no notice, a result" if notice == 0 else "the notice, no result",
                                                            len(calls("notify-send")), os.path.exists(result_file)))
 
+# not acknowledged (no shell answers in time): the setting on still writes the result, but the notice shows the picture
+set_config({})
+r, took, began, shell = shot(["screen"], "none", program=short)
+check(r.returncode == 0 and len(calls("notify-send")) == 1 and os.path.exists(result_file),
+      "showThumbnail on, no acknowledgement: the notice AND a result [notices %d, result %s]"
+      % (len(calls("notify-send")), os.path.exists(result_file)))
+r, took, began, shell = shot(["screen"], "wrong", program=short)
+check(r.returncode == 0 and len(calls("notify-send")) == 1 and os.path.exists(result_file),
+      "showThumbnail on, an invalid acknowledgement: the notice and a result")
+# a recording not acknowledged: the notice too
+reset()
+proc = subprocess.Popen([short, "record", "screen"], env=env_of({}), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+until = time.monotonic() + 10
+while not calls("gpu-screen-recorder") and time.monotonic() < until:
+    time.sleep(0.02)
+time.sleep(0.3)
+subprocess.run([short, "stop"], env=env_of({}), capture_output=True, timeout=30)
+proc.wait(timeout=30)
+check(len(calls("notify-send")) == 1 and os.path.exists(result_file),
+      "a recording not acknowledged: the notice and a result")
+set_config({"showThumbnail": False})
+r, took, began, shell = shot(["screen"], "good")
+check(len(calls("notify-send")) == 1 and not os.path.exists(result_file),
+      "showThumbnail off, even acknowledged: the notice, no result")
+set_config({})
+
 # the clipboard: a saved picture is copied sensitive; Save to Clipboard is the user's own copy and is not
 set_config({"location": "clipboard"})
 r, took, began, shell = shot(["screen"], "good")

@@ -137,10 +137,14 @@ After each capture the helper writes `$XDG_RUNTIME_DIR/grassfield/capture-result
   logical rectangle of `primary`'s capture, `output` the display it is on, `scale` that display's scale, `pixels` the
   picture's size in device pixels (read from the PNG header; a recording's is its rectangle at the scale), `time` is
   milliseconds since the epoch, `id` 16 random hex digits.
-- When `capture.showThumbnail` is true (the default; any value that is not a boolean reads as the default), the notice is not
-  sent and the shell shows the thumbnail. If the result cannot be written (no private runtime folder), the notice is sent.
-- When it is false, the notice is sent as it is today and **no result file is written**, so a shell that is on a stale
-  setting never shows both.
+- When `capture.showThumbnail` is true (the default; any value that is not a boolean reads as the default) and the file can be
+  written, the result is written, whether or not a shell answered.
+- **The notice is skipped only when all three hold for this very capture:** the shell acknowledged its `shooting` phase
+  (`handshake` returned true), `capture.showThumbnail` is true, and the result file was written. In every other case the
+  notice is sent as it is today: no acknowledgement within 1 s (no shell, a shell without thumbnails), no runtime folder, the
+  result could not be written, `showThumbnail` false, or a shot taken while a recording or countdown owns the state (no
+  handshake). So a capture is never left without feedback while the shell has no thumbnail surface.
+- When `showThumbnail` is false **no result file is written**, so a shell on a stale setting never shows both.
 - No result is written for a capture that is not offered a notice today: Save to Clipboard (no file) and Preview (opened at
   once).
 - The automatic copy of a saved picture is `wl-copy --type image/png --sensitive`. Save to Clipboard is the user's own copy
