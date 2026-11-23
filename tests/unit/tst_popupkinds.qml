@@ -132,7 +132,7 @@ TestCase {
         verify(/running: root\.countsDown && root\.secondsLeft > 0/.test(dialog));
         verify(/root\.secondsLeft--;\s*if \(root\.secondsLeft <= 0\)\s*root\.confirm\(\);/.test(dialog), "zero confirms");
         for (const path of ["shell/overlay/SystemMenu.qml", "shell/search/Search.qml"]) {
-            const calls = source(path).match(/Popups\.confirm\([^;]*"(logout|restart|shutdown)", \{\}/g) || [];
+            const calls = source(path).match(/Popups\.confirm\([^;]*?"(logout|restart|shutdown)", \{\}/g) || [];
             compare(calls.length, 3, path + ": Restart, Shut Down and Log Out");
             for (const call of calls)
                 verify(/^Popups\.confirm\(qs(?:Tr|Translate)\((?:"(?:SystemMenu|Search)", )?"[^"]*"\)(\.arg\([A-Za-z.]*\))?, "", qs(?:Tr|Translate)\(/.test(call), call);

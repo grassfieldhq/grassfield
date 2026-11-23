@@ -209,6 +209,8 @@ Scope {
         if (SessionState.refusesConfirmed("search"))
             return;
         openStartMs = Date.now();
+        // The Night Light command reads its state as Control Center does when it opens (grassfield-nightshift has no event).
+        NightShift.refresh();
         if (Popups.active)
             Popups.close();
         // The window a paste may go to: the one active now, never the desktop (FocusReturn remembers the same one).
@@ -303,8 +305,19 @@ Scope {
             restart: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to restart your computer now?"), "", qsTranslate("Search", "Restart"), "restart", {}, true, screenName),
             shutdown: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to shut down your computer now?"), "", qsTranslate("Search", "Shut Down"), "shutdown", {}, true, screenName),
             logout: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to quit all applications and log out %1?").arg(SystemInfo.user), "", qsTranslate("Search", "Log Out"), "logout", {}, true, screenName)
-        }, lockAvailable)
+        }, lockAvailable),
+        // S1, S3, S6: system extras, window commands for the window Search opened over, and the Control Center toggles.
+        builtins.entries
     ])
+
+    // The Start Screen Saver command: shell.qml connects it to the Saver (Search does not know it).
+    signal startScreenSaver
+
+    BuiltinCommands {
+        id: builtins
+        screenName: root.screenName
+        onStartSaver: root.startScreenSaver()
+    }
 
     function mkApp(r: var): var {
         return {kind: "app", key: "app:" + r.app.id, title: r.app.name, subtitle: r.app.genericName !== "" ? r.app.genericName : qsTr("Application"),

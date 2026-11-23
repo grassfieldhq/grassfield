@@ -63,4 +63,33 @@ TestCase {
         compare(SaverModel.backdrop(undefined, {source: "builtin"}), {kind: "art", file: "", color: ""});
         compare(SaverModel.backdrop(undefined, undefined), {kind: "art", file: "", color: ""});
     }
+
+    // Start Screen Saver (Saver.start): shown at once; the first input ends it; the next idle saver still shows.
+    function test_startedByHandThenDismissedLeavesTheNextIdleSaverFree() {
+        let s = SaverModel.afterStart();
+        verify(SaverModel.isShown(s, false), "shown without the idle delay");
+        s = SaverModel.afterDismiss(s, false);
+        verify(!SaverModel.isShown(s, false), "a key ends it");
+        verify(!s.dismissed, "the monitor was not idle: nothing stays dismissed");
+        verify(SaverModel.isShown(s, true), "the next idle period shows the saver");
+    }
+
+    function test_dismissingAnIdleSaverStaysDismissedUntilActivity() {
+        let s = SaverModel.afterDismiss({byHand: false, dismissed: false}, true);
+        verify(!SaverModel.isShown(s, true), "ended at once, before the monitor sees the activity");
+        s = SaverModel.afterActivity();
+        verify(!SaverModel.isShown(s, false));
+        verify(SaverModel.isShown(s, true), "the next idle period shows it");
+        // Started by hand while the monitor also says idle: the same.
+        s = SaverModel.afterDismiss(SaverModel.afterStart(), true);
+        verify(!SaverModel.isShown(s, true));
+        compare(SaverModel.afterDismiss(s, true), s, "nothing shown: nothing to dismiss");
+    }
+
+    function test_pointerMoveEndsAHandStartedSaver() {
+        verify(!SaverModel.pointerEnds(null, 10, 20), "the first position is where the pointer already was");
+        verify(!SaverModel.pointerEnds({x: 10, y: 20}, 10, 20), "the same place again");
+        verify(SaverModel.pointerEnds({x: 10, y: 20}, 11, 20));
+        verify(SaverModel.pointerEnds({x: 10, y: 20}, 10, 19));
+    }
 }
