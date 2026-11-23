@@ -417,7 +417,7 @@ Singleton {
         path: root.dndUntilPath
         printErrors: false
         onLoaded: {
-            root.dndUntil = DndFor.parse(text());
+            root.dndUntil = DndFor.parse(text(), Date.now());
             root.dndUntilRead = true;
             root.checkDndUntil();
         }

@@ -171,7 +171,7 @@ TestCase {
         compare(Commands.find(r, "win.tile.previous").title, "Return to Previous Size");
     }
 
-    function test_windowCommandsGreyedWithoutFeatures() {
+    function test_windowCommandsUnavailableWithoutFeatures() {
         let r = reg(Builtin.windowCommands(words(), ctx({canTile: false, canArrange: false, canMoveOutput: false, canMinimize: false}), winAct(), refuses));
         verify(!runId(r, "win.tile.left"));
         verify(!runId(r, "win.arrange.quarters"));

@@ -77,15 +77,18 @@ Scope {
     function start(): void {
         if (SessionState.refuses("saver start"))
             return;
-        root.dismissed = false;
-        root.startedByHand = true;
+        const n = SaverModel.afterStart();
+        root.dismissed = n.dismissed;
+        root.startedByHand = n.byHand;
     }
 
     function dismiss(): void {
         if (!root.shown)
             return;
-        root.dismissed = true;
-        root.startedByHand = false;
+        // A saver only the hand started (the monitor not idle) just ends: `dismissed` would outlive it and hide the next idle one.
+        const n = SaverModel.afterDismiss({byHand: root.startedByHand, dismissed: root.dismissed}, monitor.enabled && monitor.isIdle);
+        root.dismissed = n.dismissed;
+        root.startedByHand = n.byHand;
     }
 
     Connections {
@@ -170,6 +173,19 @@ Scope {
                 enabled: root.shown
                 acceptedButtons: Qt.AllButtons
                 cursorShape: root.shown ? Qt.BlankCursor : Qt.ArrowCursor
+                // The idle saver ends at the compositor's activity report; one started from Search is not idle, so the pointer moving
+                // ends it here (SaverModel.pointerEnds: the first position is where the pointer already was).
+                hoverEnabled: true
+                property var origin: null
+                onEnabledChanged: origin = null
+                onPositionChanged: mouse => {
+                    if (!root.startedByHand)
+                        return;
+                    if (SaverModel.pointerEnds(origin, mouse.x, mouse.y))
+                        root.dismiss();
+                    else if (origin === null)
+                        origin = {x: mouse.x, y: mouse.y};
+                }
                 onPressed: mouse => {
                     mouse.accepted = true;
                     root.dismiss();

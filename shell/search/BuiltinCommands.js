@@ -79,7 +79,7 @@ const LAYOUTS = ["left-right", "right-left", "top-bottom", "bottom-top", "quarte
 // For the window that was active when Search opened. `ctx`: {hasTarget (it still exists), canTile, canArrange, canMoveOutput
 // (the plugin's tile-hover and another output), canMinimize, fullscreen}; `act`: {tile(place), arrange(layout), nextOutput(
 // direction), minimize(), fullscreen()}, each acting on that remembered window only (BuiltinCommands.qml resolves it by its
-// address and drops it when it closed). `t`: {subtitle, tileFmt, arrangeFmt, places{}, layouts{}, ...}. Greyed (unavailable)
+// address and drops it when it closed). `t`: {subtitle, tileFmt, arrangeFmt, places{}, layouts{}, ...}. Unavailable (hidden by Commands.match)
 // without the plugin feature, never faked.
 function windowCommands(t, ctx, act, refuses) {
     const win = (id, title, words, wordsEn, glyph, run, available) =>
