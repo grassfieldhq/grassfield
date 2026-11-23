@@ -7912,7 +7912,7 @@
     </message>
     <message>
         <source>Change all similar documents to open with “%1”?</source>
-        <translation>Ouvrir tous les documents de ce type avec « %1 » ?</translation>
+        <translation>Ouvrir tous les documents de ce type avec «&#xa0;%1&#xa0;»&#xa0;?</translation>
     </message>
     <message>
         <source>This change applies to all documents of this kind (%1).</source>
@@ -12416,10 +12416,6 @@
     <message>
         <source>All Displays</source>
         <translation>Tous les écrans</translation>
-    </message>
-    <message>
-        <source>Use the All Displays settings</source>
-        <translation>Utiliser les réglages de Tous les écrans</translation>
     </message>
     <message>
         <source>Use All Displays</source>
