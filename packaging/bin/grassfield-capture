@@ -53,7 +53,7 @@
 # Capture Text (ADR-0066 D-7, C3): the area (--geometry, else the crosshair) goes through grim (after the shooting handshake)
 # into zbarimg (QR only) and tesseract (Preview's contract with --psm 6, plain text); QR codes found are copied with
 # `wl-copy --sensitive` (never in clipboard history, ADR-0034 PV-1) and never written to the result file, else the text is
-# copied. A notice says it (no text gives one); kind "text" in the result file holds the first 512 characters of text.
+# copied. A notice says it (no text gives one); kind "text" in the result file holds the first 512 characters of text (and "qr": true when it came from a QR code, never the data).
 # Refused under the lock.
 #   grassfield-capture stop
 # ends what that state names (the menu bar's stop item, Ctrl-Cmd-Esc, the session locking): SIGINT to the recorder this helper
@@ -867,7 +867,7 @@ def picture_size(path, rect, scale):
     return {"w": max(1, round(rect["w"] * scale)), "h": max(1, round(rect["h"] * scale))}
 
 
-def write_result(kind, paths, rect, output, scale, pixels, text=""):
+def write_result(kind, paths, rect, output, scale, pixels, text="", qr=False):
     # $XDG_RUNTIME_DIR/grassfield/capture-result.json (ADR-0066 D-1): 0600, written to a file of its own (O_EXCL, never a link)
     # and renamed over the last one, so the shell reads a whole file or the one before. False when it could not be written.
     folder = runtime_folder()
@@ -875,6 +875,9 @@ def write_result(kind, paths, rect, output, scale, pixels, text=""):
         return False
     result = {"v": 1, "id": os.urandom(8).hex(), "kind": kind, "paths": paths, "primary": paths[0] if paths else "", "output": output,
               "rect": rect, "scale": scale, "pixels": pixels, "time": int(time.time() * 1000), "text": text[:512]}
+    if qr:
+        # A flag only, for the shell's wording: a text result that came from a QR code. The data is never in this file.
+        result["qr"] = True
     path = os.path.join(folder, RESULT_NAME)
     tmp = "%s.%s.tmp" % (path, os.urandom(6).hex())
     try:
@@ -1232,7 +1235,7 @@ def text(opts):
             return 0
         copy_text(found[:TEXT_MAX])
         body, shown = TEXT_COPIED, found
-    written = show_thumbnail() and write_result("text", [], sel, place, scale, picture_size("", sel, scale), shown)
+    written = show_thumbnail() and write_result("text", [], sel, place, scale, picture_size("", sel, scale), shown, qr=bool(codes))
     if not (acknowledged and written):
         notify([], TEXT_TITLE, body, picture=False)
     return 0

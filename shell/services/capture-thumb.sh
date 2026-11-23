@@ -7,7 +7,7 @@
 # PATH is acted on only when it is an absolute path, no hidden name, with the extension of its kind, a regular file (not a link,
 # not a folder) whose folder, once links are resolved, is one of the ROOTs once links are resolved. For copy, the file is opened
 # once and the open file must be that very file (a link swapped in after the checks makes it fail). Exit 0 done; 1 refused or
-# failed; 2 bad usage. Tested by tests/shell/capture_thumb.sh.
+# failed; 2 bad usage. `check` prints the checked path, links resolved, on its one line of output. Tested by tests/shell/capture_thumb.sh.
 umask 077
 [ $# -ge 4 ] || exit 2
 action=$1
@@ -65,6 +65,9 @@ done
 [ "$found" = 0 ] || exit 1
 case $action in
     check)
+        # The path that was checked, links resolved: the one a caller opens, so that it is the file checked and not what the
+        # given path may name a moment later.
+        printf '%s\n' "$real/$name"
         exit 0
         ;;
     copy)
@@ -76,6 +79,8 @@ case $action in
         exec wl-copy --type "$mime" <&3
         ;;
     trash)
-        exec gio trash -- "$path"
+        # The checked path, links resolved. Between this check and gio's own look the same user could still swap the file:
+        # gio trash moves a link itself, never what it points to, so the worst that remains is the user's own file or folder.
+        exec gio trash -- "$real/$name"
         ;;
 esac

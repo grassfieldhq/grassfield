@@ -44,7 +44,8 @@ function userDirs(text, home) {
 
 // The folders a capture of `kind` goes to for one Save to location (CaptureLocation: screenshots, desktop, documents, clipboard,
 // preview), as the helper's destination(save, record) does: a screenshot's default place is the Screenshots folder, a recording's
-// the Videos folder; "clipboard" and "preview" keep the default place.
+// the Videos folder; "clipboard" and "preview" keep the default place. A screenshot's default place is also the Pictures folder
+// itself: the helper's screenshots() falls back to it when the Screenshots folder is a link, a file or cannot be made.
 function foldersFor(location, kind, dirs) {
     if (location === "desktop")
         return [dirs.desktop];
@@ -52,11 +53,12 @@ function foldersFor(location, kind, dirs) {
         return [dirs.documents];
     if (kind === "recording")
         return [dirs.videos];
-    return SCREENSHOT_FOLDERS.map(n => dirs.pictures + "/" + n);
+    return SCREENSHOT_FOLDERS.map(n => dirs.pictures + "/" + n).concat([dirs.pictures]);
 }
 
 // Every folder a capture of `kind` may be in: the union over all the Save to locations, since the setting can change while a card
-// shows. Never the Pictures folder itself, the home folder or the folder a result names.
+// shows. Exactly what the helper's destination() can produce (the Pictures folder for a screenshot only as its fallback), never
+// the home folder, and a file only directly in one of them: the folder a result names is never a file.
 function roots(kind, dirs) {
     const list = [];
     for (const location of CaptureLocation.LOCATIONS)
@@ -106,7 +108,7 @@ function acceptText(result, screens) {
     const screen = CaptureFile.plateScreen({output: result.output, rect: result.rect}, list) || (list.length > 0 ? list[0].name : "");
     if (screen === "" || result.paths.length !== 0)
         return null;
-    return {id: result.id, kind: "text", path: "", folder: "", name: "", pixels: null, text: result.text, screen: screen, time: result.time};
+    return {id: result.id, kind: "text", path: "", folder: "", name: "", pixels: null, text: result.text, qr: result.qr === true, screen: screen, time: result.time};
 }
 
 // The card for a result, or null when any of its paths is refused or no display can show it. `screens` is
@@ -201,15 +203,21 @@ function dragIntent(side, dx, dy) {
     return toward > 0 && Math.abs(dx) >= Math.abs(dy) ? "swipe" : "out";
 }
 
+// The editor (the Screenshot app, apps/screenshot: `grassfield-screenshot <file>`, a local PNG).
+var EDITOR = "grassfield-screenshot";
+
 // What an action runs, as argument vectors (nothing runs through a shell string), or null when it is refused. `script` is
 // services/capture-thumb.sh. Actions:
-//   verify   the script's check alone (a card is verified before it maps, and again when the pointer reaches it, before a drag)
-//   copy     the picture onto the clipboard (a normal copy: the user asked); a recording is not copied
-//   trash    gio trash, never a deletion
-//   open     the file in its default application (Preview); `check` first, then `run`
-//   reveal   the folder holding it in Files; `check` first, then `run`
+//   verify    the script's check alone (a card is verified before it maps, and again when the pointer reaches it, before a drag)
+//   copy      the picture onto the clipboard (a normal copy: the user asked); a recording is not copied
+//   trash     gio trash of the path the script checked, never a deletion
+//   open      the file in its default application (a recording in Preview); `check` first, then `run`
+//   annotate  a PNG screenshot in the Screenshot app, any other file as `open`; `check` first, then `run`
+//   reveal    the folder holding it in Files; `check` first, then `run`
 // The script takes the action, the kind, the path and every Save to folder, and refuses what is not a regular file (not a link,
-// not a folder) directly in one of them.
+// not a folder) directly in one of them. For `check` it prints the path it checked, links resolved: what `opened` turns into the
+// command to run, so the file opened is the one checked (a swap after the check is by the same user and remains possible between
+// the script's last look and the application's start).
 function plan(action, card, dirs, script) {
     if (!card || pathProblem(card.kind, card.path, dirs) !== "")
         return null;
@@ -223,11 +231,65 @@ function plan(action, card, dirs, script) {
     case "trash":
         return {check: null, run: guarded("trash")};
     case "open":
-        return {check: guarded("check"), run: ["gio", "open", card.path]};
+    case "annotate":
     case "reveal":
-        return {check: guarded("check"), run: ["gio", "open", card.folder]};
+        return {check: guarded("check"), run: opened(action, card, card.path)};
     }
     return null;
+}
+
+// The command of an `open`, `annotate` or `reveal` for `path`, the canonical path the script printed (its first line): null when
+// that is not an absolute path to a file of the card's own name.
+function opened(action, card, output) {
+    const path = String(output || "").split("\n")[0];
+    if (path === "" || path[0] !== "/" || CONTROL.test(path) || path.substring(path.lastIndexOf("/") + 1) !== card.name)
+        return null;
+    const folder = path.substring(0, path.lastIndexOf("/"));
+    if (folder === "")
+        return null;
+    if (action === "reveal")
+        return ["gio", "open", folder];
+    if (action === "annotate" && card.kind === "shot" && extensionOf(card.name) === "png")
+        return [EDITOR, path];
+    if (action === "open" || action === "annotate")
+        return ["gio", "open", path];
+    return null;
+}
+
+// What a click on a card does: a PNG screenshot opens in the Screenshot app, anything else in its default application.
+function clickAction(card) {
+    return card && card.kind === "shot" ? "annotate" : "open";
+}
+
+// The helper that makes the card's picture (services/image-copy.py `file`, as the lock screen's avatar and the notifications'
+// images): the shell decodes only the PNG it made, never the capture file itself. Bounded in time and killed with the shell.
+function copyArgv(helper, path, cap, out) {
+    return ["/usr/bin/timeout", "-k", "2", "20", "/usr/bin/setpriv", "--pdeathsig", "KILL", "--", "/usr/bin/python3", "-I", helper, "file", path, String(cap), out];
+}
+
+// The private folder of the pictures (0700, emptied at start and when the last card leaves: services/capture-thumb-dir.sh), in the
+// folder of the helper's private files; "" when that is not an absolute path.
+function copyFolder(privateFolder) {
+    return privateFolder && String(privateFolder)[0] === "/" && !CONTROL.test(privateFolder) ? String(privateFolder).replace(/\/+$/, "") + "/capture-thumbs" : "";
+}
+
+// A picture's path in it: <folder>/<pid>-<n>.png ("" without the folder).
+function copyPath(folder, pid, n) {
+    return folder && String(folder).endsWith("/capture-thumbs") ? folder + "/" + pid + "-" + n + ".png" : "";
+}
+
+// The most a capture file may weigh for its picture to be made: 64 MiB. The largest display picture supported is 8K
+// (7680 x 4320, 33 Mpx, under image-copy.py's 50 Mpx limit): raw it is 126 MiB, and a PNG of anything but noise is under half of
+// that. The helper reads the file into memory and wraps it for rsvg-convert (a third more), inside its 1 GiB address-space limit.
+var COPY_CAP = 64 * 1024 * 1024;
+
+// The least width of a card's picture: the Close disc and the action capsule side by side with an inset around and between them
+// (`button` the buttons' size, `pad` the room around a button in its disc or capsule, `inset` the card's inset), so a tall capture
+// does not squeeze them over each other or out of the card.
+function leastPictureWidth(button, pad, inset) {
+    const closeWidth = button + 2 * pad;
+    const capsuleWidth = 3 * button + 2 * pad;
+    return 3 * inset + closeWidth + capsuleWidth;
 }
 
 // Whether a card dragged by (dx) from where it lay is far enough toward its screen edge to be dismissed on release.
@@ -244,6 +306,17 @@ function sideOf(value) {
 // seconds in that range (the card then stays until it is closed, never closes at once).
 function secondsOf(value) {
     return typeof value === "number" && isFinite(value) && Math.floor(value) === value && value >= 2 && value <= 30 ? value : 0;
+}
+
+// What is left of a card's time after it ran from `startedAt` to `now` (ms) and was paused: never under 1 ms, so a card that was
+// hidden a moment before its time does not close the instant it is shown again. A capture, the lock or a toolbar pauses it.
+function remainingAfter(remaining, startedAt, now) {
+    return Math.max(1, remaining - Math.max(0, now - startedAt));
+}
+
+// Whether a card slides in now: when it is first mapped, never again after being unmapped by a capture, the lock or a toolbar.
+function slidesIn(entered, shown) {
+    return shown === true && entered !== true;
 }
 
 // Whether the cards are hidden (unmapped) now. The capture's own `shooting` phase (a card must never be in a picture), a recording

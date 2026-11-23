@@ -82,8 +82,14 @@ TestCase {
         compare(c.path, "");
         compare(c.text, "Hello\nworld");
         compare(c.screen, "DP-1");
-        for (const action of ["verify", "copy", "trash", "open", "reveal"])
+        for (const action of ["verify", "copy", "trash", "open", "annotate", "reveal"])
             compare(Thumbs.plan(action, c, dirs, script), null, "a text card runs nothing: " + action);
+        verify(!c.qr, "recognised text is not a QR code");
+        const q = Thumbs.accept(CaptureFile.parseResult(result({kind: "text", paths: [], primary: "", text: "", qr: true})), dirs, screens);
+        verify(q.qr, "a result with the flag is a QR card");
+        compare(q.text, "", "never the data");
+        verify(!CaptureFile.parseResult(result({kind: "shot", qr: true})).qr, "the flag is for text results only");
+        verify(!CaptureFile.parseResult(result({kind: "text", paths: [], primary: "", qr: "yes"})).qr, "a flag that is not true is not set");
         compare(CaptureFile.parseResult(result({kind: "text", paths: [shots + "/a.png"], primary: shots + "/a.png"})), null, "text with a file is not a result");
         compare(CaptureFile.parseResult(result({kind: "text", paths: [], primary: "/etc/passwd"})), null);
         compare(CaptureFile.parseResult(result({kind: "shot", paths: [], primary: ""})), null, "a picture needs its path");
@@ -108,7 +114,8 @@ TestCase {
         verify(s.indexOf(shots) >= 0);
         verify(s.indexOf("/home/u/Pictures/Captures d’écran") >= 0, "the translated Screenshots folder");
         verify(s.indexOf("/home/u/Desktop") >= 0 && s.indexOf("/home/u/Documents") >= 0);
-        verify(s.indexOf("/home/u/Pictures") < 0, "never the Pictures folder itself");
+        verify(s.indexOf("/home/u/Pictures") >= 0, "the Pictures folder: the helper's fallback when Screenshots cannot be had");
+        verify(s.indexOf("/home/u") < 0, "never the home folder");
         verify(s.indexOf("/home/u/Videos") < 0, "a screenshot is never in Videos");
         const r = Thumbs.roots("recording", dirs);
         compare(r.sort(), ["/home/u/Desktop", "/home/u/Documents", "/home/u/Videos"]);
@@ -120,13 +127,15 @@ TestCase {
         compare(Thumbs.pathProblem("shot", shots + "/Screenshot 2026-11-23 at 10.00.00.png", dirs), "");
         compare(Thumbs.pathProblem("shot", "/home/u/Desktop/Capture.PNG", dirs), "", "the extension in any case");
         compare(Thumbs.pathProblem("shot", "/home/u/Documents/a.webp", dirs), "");
+        compare(Thumbs.pathProblem("shot", "/home/u/Pictures/Screenshot.png", dirs), "", "the helper's fallback folder");
         compare(Thumbs.pathProblem("recording", "/home/u/Videos/Screen Recording.mp4", dirs), "");
     }
 
     function test_pathRefused() {
         const cases = [
             ["shot", "/etc/passwd.png", "a picture outside every Save to folder"],
-            ["shot", "/home/u/Pictures/a.png", "the Pictures folder is not a Save to folder"],
+            ["shot", "/home/u/Pictures/sub/a.png", "a folder below the Pictures folder"],
+            ["recording", "/home/u/Pictures/a.mp4", "a recording is never in Pictures"],
             ["shot", "/home/u/a.png", "the home folder is not a Save to folder"],
             ["shot", shots + "/sub/a.png", "a folder below a Save to folder"],
             ["shot", shots + "/../a.png", "dot dot"],
@@ -167,7 +176,7 @@ TestCase {
 
     function test_nothingActsOnARefusedPath() {
         const bad = {id: "ab", kind: "shot", path: "/etc/passwd.png", folder: "/etc", name: "passwd.png", pixels: null, screen: "DP-1", time: 0};
-        for (const action of ["verify", "copy", "trash", "open", "reveal"])
+        for (const action of ["verify", "copy", "trash", "open", "annotate", "reveal"])
             compare(Thumbs.plan(action, bad, dirs, script), null, action);
         compare(Thumbs.plan("trash", null, dirs, script), null);
     }
@@ -200,6 +209,64 @@ TestCase {
         const c = card({kind: "recording", paths: [name], primary: name, pixels: null});
         compare(Thumbs.plan("copy", c, dirs, script), null);
         compare(Thumbs.plan("trash", c, dirs, script).run.slice(0, 4), ["sh", script, "trash", "recording"]);
+    }
+
+    // The path the script checked is what is opened: its first line, an absolute path of the card's own name.
+    function test_openedTakesTheCheckedPath() {
+        const c = card();
+        compare(Thumbs.opened("open", c, "/real/Pictures/Screenshots/Screenshot.png\n"), ["gio", "open", "/real/Pictures/Screenshots/Screenshot.png"]);
+        compare(Thumbs.opened("annotate", c, "/real/Pictures/Screenshots/Screenshot.png\n"), ["grassfield-screenshot", "/real/Pictures/Screenshots/Screenshot.png"]);
+        compare(Thumbs.opened("reveal", c, "/real/Pictures/Screenshots/Screenshot.png\n"), ["gio", "open", "/real/Pictures/Screenshots"]);
+        const jpg = card({paths: [shots + "/a.jpg"], primary: shots + "/a.jpg"});
+        compare(Thumbs.opened("annotate", jpg, "/r/a.jpg\n"), ["gio", "open", "/r/a.jpg"], "the editor opens PNG files");
+        const name = "/home/u/Videos/Screen Recording.mp4";
+        const rec = card({kind: "recording", paths: [name], primary: name, pixels: null});
+        compare(Thumbs.opened("annotate", rec, "/r/Screen Recording.mp4\n"), ["gio", "open", "/r/Screen Recording.mp4"], "a recording is not edited");
+        for (const bad of ["", "\n", "relative/Screenshot.png", "/real/other.png", "/Screenshot.png", "/real/Screenshot.png\u0001"])
+            compare(Thumbs.opened("open", c, bad), null, JSON.stringify(bad));
+        compare(Thumbs.opened("delete", c, "/real/Screenshot.png"), null);
+        compare(Thumbs.clickAction(c), "annotate");
+        compare(Thumbs.clickAction(rec), "open");
+        compare(Thumbs.plan("annotate", c, dirs, script).run, [Thumbs.EDITOR, c.path]);
+    }
+
+    // The shell decodes only the PNG image-copy.py made, never the capture file.
+    function test_pictureIsMadeByTheHelper() {
+        const c = card();
+        compare(Thumbs.copyArgv("/s/image-copy.py", c.path, 1000, "/run/u/x-1-1.png"),
+            ["/usr/bin/timeout", "-k", "2", "20", "/usr/bin/setpriv", "--pdeathsig", "KILL", "--", "/usr/bin/python3", "-I", "/s/image-copy.py", "file", c.path, "1000", "/run/u/x-1-1.png"]);
+        const folder = Thumbs.copyFolder("/run/user/1000/grassfield");
+        compare(folder, "/run/user/1000/grassfield/capture-thumbs", "a private folder of its own, not loose in the runtime folder");
+        compare(Thumbs.copyFolder("/run/user/1000/grassfield/"), folder);
+        compare(Thumbs.copyFolder(""), "");
+        compare(Thumbs.copyFolder("relative"), "");
+        compare(Thumbs.copyFolder("/run/a\nb"), "");
+        compare(Thumbs.copyPath(folder, 42, 3), folder + "/42-3.png");
+        compare(Thumbs.copyPath("", 1, 1), "");
+        compare(Thumbs.copyPath("/run/user/1000", 1, 1), "", "only the private folder");
+    }
+
+    // The cap on a capture file for its picture, as documented in docs/specs/security-images.md next to the other caps.
+    function test_copyCapIsDocumented() {
+        compare(Thumbs.COPY_CAP, 64 * 1024 * 1024);
+        verify(Thumbs.COPY_CAP > 7680 * 4320 * 4 / 2, "an 8K PNG of anything but noise fits");
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../docs/specs/security-images.md"), false);
+        xhr.send();
+        verify(xhr.responseText.indexOf("capture thumbnail") > 0 && xhr.responseText.indexOf("64 MiB") > 0, "the cap is in the spec");
+    }
+
+    // A source file that is not a capture the shell may show never reaches a decoder of its own: the card's Image reads only the
+    // copy's URL (a static guard on the card), and the helper refuses a FIFO (tests/shell/capture_thumb_copy.sh).
+    function test_cardImageReadsOnlyTheCopy() {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../shell/capture/CaptureThumbnailCard.qml"), false);
+        xhr.send();
+        verify(xhr.responseText.indexOf("controller.copyUrl(") > 0);
+        verify(xhr.responseText.indexOf("fileUrl(") < 0, "the card never builds a URL of the capture file");
+        verify(xhr.responseText.indexOf("card.path") < 0 || xhr.responseText.indexOf("source: win.verified") > 0);
+        const lines = xhr.responseText.split("\n").filter(l => l.indexOf("source:") >= 0 && l.indexOf("card.path") >= 0);
+        compare(lines.length, 0, "no Image source names the capture's path");
     }
 
     function test_uriList() {
@@ -252,6 +319,41 @@ TestCase {
         compare(Thumbs.cardSize({kind: "shot", pixels: null}, metrics).pictureHeight, 115, "a size not known: 16 by 9");
     }
 
+    // The Close disc and the action capsule fit side by side whatever the capture's shape (a portrait capture used to squeeze them
+    // over each other and out of the card).
+    function test_cardNeverNarrowerThanItsButtons() {
+        const least = Thumbs.leastPictureWidth(28, 4, 6);
+        compare(least, 3 * 6 + (28 + 8) + (3 * 28 + 8), "the disc, the capsule and the room around and between them");
+        const m = Object.assign({}, metrics, {minPictureWidth: least});
+        const portrait = Thumbs.cardSize({kind: "shot", pixels: {w: 600, h: 1200}}, m);
+        verify(portrait.pictureWidth >= least, "a portrait capture: " + portrait.pictureWidth);
+        compare(portrait.pictureHeight, 135);
+        const slim = Thumbs.cardSize({kind: "shot", pixels: {w: 10, h: 4000}}, m);
+        compare(slim.pictureWidth, least);
+        const wide = Thumbs.cardSize({kind: "shot", pixels: {w: 6000, h: 400}}, m);
+        compare(wide.pictureWidth, 204, "a very wide capture keeps the card's width");
+        verify(wide.pictureHeight >= 1 && wide.pictureHeight < 135);
+        verify(wide.pictureWidth >= least);
+    }
+
+    // The folder names are the helper's: its SCREENSHOTS and every translation in its CATALOG. One list in two places must not drift.
+    function test_screenshotFolderNamesAreTheHelpers() {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../packaging/bin/grassfield-capture"), false);
+        xhr.send();
+        const text = xhr.responseText;
+        verify(text.length > 1000, "the helper was read");
+        const base = /^SCREENSHOTS = "([^"]+)"$/m.exec(text);
+        verify(base !== null);
+        const names = [base[1]];
+        const re = /^\s+SCREENSHOTS: "([^"]+)",$/gm;
+        let m;
+        while ((m = re.exec(text)) !== null)
+            names.push(m[1]);
+        compare(names.length >= 2, true, "the catalog names the folder in French");
+        compare(Thumbs.SCREENSHOT_FOLDERS.slice().sort(), names.slice().sort());
+    }
+
     function test_layoutNewestOnTopOldestAtTheBottom() {
         const mk = (id, screen) => ({id: id, kind: "shot", pixels: {w: 1600, h: 900}, screen: screen});
         const out = Thumbs.layout([mk("c", "DP-1"), mk("x", "HDMI-A-1"), mk("b", "DP-1"), mk("a", "DP-1")], "DP-1", metrics);
@@ -281,6 +383,18 @@ TestCase {
         compare(CaptureFile.ackNeeded(shooting, false, ""), "", "cards still mapped: no acknowledgement");
         compare(CaptureFile.ackNeeded(shooting, true, ""), "0011223344556677", "unmapped and a frame passed: acknowledged");
         compare(CaptureFile.ackNeeded(shooting, true, "0011223344556677"), "", "once");
+    }
+
+    // A new capture unmaps the older cards for its shooting phase: they come back where they were, not sliding in again, with the
+    // time they had left.
+    function test_cardsKeepTheirStateAcrossAnUnmap() {
+        verify(Thumbs.slidesIn(false, true), "the first time it maps");
+        verify(!Thumbs.slidesIn(true, true), "mapped again after a capture: already in");
+        verify(!Thumbs.slidesIn(false, false), "not mapped: nothing slides");
+        compare(Thumbs.remainingAfter(5000, 1000, 3000), 3000, "paused after 2 s of 5: 3 s left");
+        compare(Thumbs.remainingAfter(3000, 9000, 9500), 2500, "and again after half a second more");
+        compare(Thumbs.remainingAfter(1000, 0, 5000), 1, "never zero: it does not close the instant it is shown");
+        compare(Thumbs.remainingAfter(1000, 5000, 4000), 1000, "a clock that went back loses nothing");
     }
 
     function test_sideAndSeconds() {

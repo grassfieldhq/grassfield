@@ -11,10 +11,14 @@ import "CaptureThumbs.js" as Thumbs
 // own on the display the capture came from, sized to the card with room around it for the glass's shadow, mapped only while the
 // controller says the cards may show and the file was confirmed (a regular file in a Save to folder, not a link). It takes no
 // keyboard (the window being worked in stays key) and only the card itself takes the pointer. The layer has no_anim in
-// windows.lua (a card is unmapped at once when a capture starts, never faded out), and its slide-in is its own.
+// windows.lua: a card is unmapped at once when a capture starts, the lock comes or a toolbar opens (the helper's acknowledgement
+// depends on it) and keeps its state across that (no slide-in again, its timer paused and then resumed). Its slide-in and its
+// slide-out toward the screen edge (timeout, Close, a swipe, an action) are its own, a fade only under Reduce Motion.
 //
-// A press on the picture: a click opens it in Preview, a drag toward the screen edge dismisses it (the card follows the pointer),
-// a drag the other way is a drag of the file to another application (text/uri-list, as the desktop icons).
+// The picture is a PNG the shell made from the capture (CaptureThumbnails.makeCopy), never the capture file itself.
+// A press on the picture: a click opens a screenshot in the Screenshot app (a recording in Preview), a drag toward the screen edge
+// dismisses it (the card follows the pointer), a drag the other way is a drag of the file to another application (text/uri-list,
+// as the desktop icons).
 // qmllint disable uncreatable-type
 PanelWindow {
     // qmllint enable uncreatable-type
@@ -29,6 +33,12 @@ PanelWindow {
     readonly property bool recording: win.card !== null && win.card.kind === "recording"
     // Capture Text: no file, no picture; a card that says the text was copied, with Close only.
     readonly property bool isText: win.card !== null && win.card.kind === "text"
+    // A text card from a QR code says so (the data is never shown).
+    readonly property bool isQr: win.isText && win.card.qr === true
+    readonly property string textTitle: win.isQr ? qsTr("QR code copied to the clipboard") : qsTr("Text copied to the clipboard")
+    // On its way out (the controller marks it) and the slide-out's progress.
+    readonly property bool leaving: win.controller.leaving[win.cardId] === true
+    property real departure: 0
     readonly property real edge: Tokens.captureThumbnailEdgeMargin
     // The footprint of the Dock on this display: the cards keep clear of it on its edge.
     readonly property var dock: win.screen ? Settings.dockFootprintFor(win.screen.name, false) : ({
@@ -40,7 +50,9 @@ PanelWindow {
     property bool verified: false
     // The file was confirmed again when the pointer reached the card: a drag out starts only on a confirmed file.
     property bool dragOk: false
-    readonly property bool shown: win.controller.mapped && win.verified && win.screen !== null && win.entry !== null
+    // The picture is made, or refused (the glyph shows instead): a card with none to make is ready at once.
+    readonly property bool pictureReady: win.isText || win.recording || ["ok", "no"].indexOf(win.controller.copyState(win.cardId)) >= 0
+    readonly property bool shown: win.controller.mapped && win.verified && win.pictureReady && win.screen !== null && win.entry !== null
 
     screen: win.card === null ? null : (Quickshell.screens.find(s => s.name === win.card.screen) ?? null)
     visible: win.shown
@@ -85,26 +97,66 @@ PanelWindow {
             if (ok) {
                 win.verified = true;
                 win.dragOk = true;
+                win.controller.makeCopy(win.cardId);
             } else {
-                win.controller.dismiss(win.cardId);
+                win.controller.remove(win.cardId);
             }
         });
     }
 
-    // Closes after capture.thumbnailSeconds; hovering, dragging and a hidden card pause it (it starts again from the full time).
+    // Closes after capture.thumbnailSeconds. Not hidden by a capture, the lock or a toolbar, not hovered, not dragged and not leaving:
+    // it is paused otherwise and goes on with what was left (hiding keeps the time; the pointer leaving gives the full time again).
+    property real remaining: win.controller.seconds * 1000
+    property real startedAt: 0
     Timer {
-        interval: win.controller.seconds * 1000
-        running: win.shown && win.controller.seconds > 0 && !hover.hovered && !swipe.active
+        id: closing
+
+        interval: Math.max(1, win.remaining)
+        running: win.shown && win.controller.seconds > 0 && !hover.hovered && !swipe.active && !win.leaving
+        onRunningChanged: {
+            if (running)
+                win.startedAt = Date.now();
+            else
+                win.remaining = Thumbs.remainingAfter(win.remaining, win.startedAt, Date.now());
+        }
         onTriggered: win.controller.dismiss(win.cardId)
     }
 
     // 0 while the card has not come in, 1 once it has: a slide in from the screen edge with a fade, a fade only under Reduce Motion.
+    // Once only: a card mapped again after a capture, the lock or a toolbar is already in.
     property real arrival: 0
+    property bool entered: false
     onShownChanged: {
-        if (win.shown) {
+        if (Thumbs.slidesIn(win.entered, win.shown)) {
+            win.entered = true;
             win.arrival = 0;
             arrive.restart();
         }
+        // A card that is leaving and is hidden goes at once: its slide-out has nothing to show.
+        if (!win.shown && win.leaving)
+            win.controller.remove(win.cardId);
+    }
+
+    onLeavingChanged: {
+        if (!win.leaving)
+            return;
+        if (win.shown)
+            leave.restart();
+        else
+            win.controller.remove(win.cardId);
+    }
+
+    // The slide out toward the screen edge, with a fade; then the card is removed.
+    NumberAnimation {
+        id: leave
+        target: win
+        property: "departure"
+        from: 0
+        to: 1
+        duration: Appearance.duration(Tokens.motionNormal)
+        easing.type: Easing.BezierSpline
+        easing.bezierCurve: Tokens.motionCurveExit
+        onFinished: win.controller.remove(win.cardId)
     }
 
     NumberAnimation {
@@ -127,15 +179,15 @@ PanelWindow {
 
         width: win.entry ? win.entry.width : 0
         height: win.entry ? win.entry.height : 0
-        x: win.edge + plate.outward * ((Appearance.reduceMotion ? 0 : (1 - win.arrival) * Tokens.captureThumbnailDismissSlide) + plate.swipeOffset)
+        x: win.edge + plate.outward * ((Appearance.reduceMotion ? 0 : (1 - win.arrival) * Tokens.captureThumbnailDismissSlide + win.departure * plate.width) + plate.swipeOffset)
         y: win.edge
-        opacity: win.arrival * (1 - Math.min(1, Math.abs(plate.swipeOffset) / (2 * Tokens.captureThumbnailDismissDistance)))
+        opacity: win.arrival * (1 - win.departure) * (1 - Math.min(1, Math.abs(plate.swipeOffset) / (2 * Tokens.captureThumbnailDismissDistance)))
         Accessible.role: win.isText ? Accessible.StaticText : Accessible.Button
-        Accessible.name: win.isText ? qsTr("Text copied to the clipboard") + (win.card.text !== "" ? ", " + win.card.text : "") : win.recording ? qsTr("Screen recording") : (win.card !== null && win.card.pixels !== null ? qsTr("Screenshot, %1 × %2").arg(win.card.pixels.w).arg(win.card.pixels.h) : qsTr("Screenshot"))
-        Accessible.description: win.isText ? "" : qsTr("Opens it in Preview")
+        Accessible.name: win.isText ? win.textTitle + (win.card !== null && win.card.text !== "" ? ", " + win.card.text : "") : win.recording ? qsTr("Screen recording") : (win.card !== null && win.card.pixels !== null ? qsTr("Screenshot, %1 × %2").arg(win.card.pixels.w).arg(win.card.pixels.h) : qsTr("Screenshot"))
+        Accessible.description: win.isText ? "" : (win.recording ? qsTr("Opens it in Preview") : qsTr("Opens it for editing"))
         Accessible.onPressAction: {
             if (!win.isText)
-                win.controller.act("open", win.cardId);
+                win.controller.act(Thumbs.clickAction(win.card), win.cardId);
         }
 
         // The card's glass: a text-free surface of the menus' class.
@@ -159,7 +211,8 @@ PanelWindow {
 
                 anchors.fill: parent
                 visible: !win.recording && !win.isText && status === Image.Ready
-                source: win.verified && !win.recording && !win.isText && win.card !== null ? Thumbs.fileUrl(win.card.path) : ""
+                // The PNG the shell made, never the capture file: no decoder of the shell touches that.
+                source: win.verified && !win.recording && !win.isText ? win.controller.copyUrl(win.cardId) : ""
                 sourceSize: Qt.size(Math.ceil(picture.width * Screen.devicePixelRatio), Math.ceil(picture.height * Screen.devicePixelRatio))
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
@@ -184,7 +237,7 @@ PanelWindow {
                     Text {
                         width: parent.width
                         textFormat: Text.PlainText
-                        text: qsTr("Text copied to the clipboard")
+                        text: win.textTitle
                         color: Appearance.colors.text
                         elide: Text.ElideRight
                         font.family: Appearance.fontFamily
@@ -196,7 +249,7 @@ PanelWindow {
                         width: parent.width
                         height: parent.height - y
                         textFormat: Text.PlainText
-                        text: win.isText ? win.card.text : ""
+                        text: win.isText && win.card !== null && !win.isQr ? win.card.text : ""
                         color: Appearance.colors.textSecondary
                         wrapMode: Text.Wrap
                         elide: Text.ElideRight
@@ -249,18 +302,20 @@ PanelWindow {
             enabled: !win.isText
             acceptedButtons: Qt.LeftButton
             cursorShape: Qt.PointingHandCursor
-            onClicked: win.controller.act("open", win.cardId)
+            onClicked: win.controller.act(Thumbs.clickAction(win.card), win.cardId)
         }
 
         HoverHandler {
             id: hover
 
             onHoveredChanged: {
+                if (!hovered)
+                    win.remaining = win.controller.seconds * 1000;
                 if (hovered && win.verified && !win.isText)
                     win.controller.verify(win.cardId, ok => {
                         win.dragOk = ok;
                         if (!ok)
-                            win.controller.dismiss(win.cardId);
+                            win.controller.remove(win.cardId);
                     });
             }
         }
@@ -287,7 +342,8 @@ PanelWindow {
                     if (intent === "swipe") {
                         if (Thumbs.dismissed(win.side, plate.swipeOffset * plate.outward, Tokens.captureThumbnailDismissDistance))
                             win.controller.dismiss(win.cardId);
-                        plate.swipeOffset = 0;
+                        else
+                            plate.swipeOffset = 0;
                     }
                     out.stop();
                     intent = "";
@@ -335,10 +391,11 @@ PanelWindow {
             }
         }
 
-        // Close, at the picture's top corner on the screen's inner side.
+        // Close, at the picture's top corner on the screen's inner side (toward the middle of the display); the actions are on the
+        // outer side. The picture is never narrower than the two side by side (CaptureThumbs.leastPictureWidth).
         Item {
             visible: hover.hovered && !swipe.active
-            x: picture.x + Tokens.captureThumbnailInset
+            x: win.side === "right" ? picture.x + Tokens.captureThumbnailInset : picture.x + picture.width - width - Tokens.captureThumbnailInset
             y: picture.y + Tokens.captureThumbnailInset
             width: Tokens.captureThumbnailButtonSize + 2 * Tokens.spacingXs
             height: width
@@ -362,14 +419,14 @@ PanelWindow {
             }
         }
 
-        // Copy, Show in Files and Move to Trash, in a capsule at the picture's top right.
+        // Copy, Show in Files and Move to Trash, in a capsule at the picture's top corner on the screen's outer side.
         Item {
             id: actions
 
             visible: hover.hovered && !swipe.active && !win.isText
             width: buttons.implicitWidth + 2 * Tokens.spacingXs
             height: Tokens.captureThumbnailButtonSize + 2 * Tokens.spacingXs
-            x: picture.x + picture.width - width - Tokens.captureThumbnailInset
+            x: win.side === "right" ? picture.x + picture.width - width - Tokens.captureThumbnailInset : picture.x + Tokens.captureThumbnailInset
             y: picture.y + Tokens.captureThumbnailInset
 
             Material {

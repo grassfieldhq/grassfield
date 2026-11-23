@@ -40,7 +40,7 @@ Scope {
             width: Tokens.captureThumbnailWidth,
             pictureHeight: Tokens.captureThumbnailPictureHeight,
             inset: Tokens.captureThumbnailInset,
-            minPictureWidth: 2 * Tokens.captureThumbnailButtonSize,
+            minPictureWidth: Thumbs.leastPictureWidth(Tokens.captureThumbnailButtonSize, Tokens.spacingXs, Tokens.captureThumbnailInset),
             gap: Tokens.captureThumbnailGap
         })
     // Each card's size and the room under it, by id.
@@ -56,8 +56,113 @@ Scope {
         return root.cards.find(c => c.id === id) ?? null;
     }
 
-    function dismiss(id: string): void {
+    // The card goes at once (a file that did not pass, a card that is not mapped): no exit animation.
+    function remove(id: string): void {
         root.cards = Thumbs.remove(root.cards, id);
+        if (root.leaving[id] !== undefined) {
+            const next = Object.assign({}, root.leaving);
+            delete next[id];
+            root.leaving = next;
+        }
+    }
+
+    // The card goes the way macOS's thumbnail does: it slides out toward its screen edge (CaptureThumbnailCard, which then calls
+    // `remove`; a card that is not mapped is removed at once). Timeout, Close, a swipe, a drop, Move to Trash and an opened file.
+    function dismiss(id: string): void {
+        if (root.cardById(id) === null || root.leaving[id] === true)
+            return;
+        root.leaving = Object.assign({}, root.leaving, {[id]: true});
+    }
+
+    // Cards on their way out, by id.
+    property var leaving: ({})
+
+    // The pictures the cards show: the shell decodes only PNGs it made itself (services/image-copy.py `file`, as the lock
+    // screen's avatar and the notifications' images: docs/specs/security-images.md), never the capture file. id ->
+    // {state: "pending" | "ok" | "no", path}; reassigned on every change. A card is mapped once its picture is ready or refused
+    // (then it shows its glyph).
+    property var copies: ({})
+    // The folder is ready (made 0700 and emptied), and the first preparation has ended (a refusal leaves no picture).
+    property bool cleaned: false
+    property bool cleanerDone: false
+    property int counter: 0
+    readonly property string copyHelper: Quickshell.shellPath("services/image-copy.py")
+    // A source file at most this large (CaptureThumbs.COPY_CAP: an 8K picture); the copy is at most 256 x 256 pixels.
+    readonly property real copyCap: Thumbs.COPY_CAP
+    // The pictures' private folder ($XDG_RUNTIME_DIR/grassfield/capture-thumbs, 0700), made and emptied by capture-thumb-dir.sh.
+    readonly property string copyFolder: Thumbs.copyFolder(CaptureState.folder)
+
+    function copyState(id: string): string {
+        const entry = root.copies[id];
+        return entry === undefined ? "" : entry.state;
+    }
+
+    function copyUrl(id: string): string {
+        const entry = root.copies[id];
+        return entry !== undefined && entry.state === "ok" ? "file://" + entry.path : "";
+    }
+
+    function setCopy(id: string, entry: var): void {
+        root.copies = Object.assign({}, root.copies, {[id]: entry});
+    }
+
+    // Makes the card's picture, once its file passed the check. One try per card.
+    function makeCopy(id: string): void {
+        const card = root.cardById(id);
+        if (card === null || card.kind !== "shot" || root.copies[id] !== undefined)
+            return;
+        const out = Thumbs.copyPath(root.copyFolder, Quickshell.processId, ++root.counter);
+        if (out === "") {
+            root.setCopy(id, {state: "no", path: ""});
+            return;
+        }
+        root.setCopy(id, {state: "pending", path: out});
+        const start = ready => {
+            if (!ready) {
+                root.setCopy(id, {state: "no", path: ""});
+                return;
+            }
+            root.job(Thumbs.copyArgv(root.copyHelper, card.path, root.copyCap, out), ({}), ok => {
+                const still = root.cardById(id) !== null;
+                root.setCopy(id, {state: ok && still ? "ok" : "no", path: out});
+                if (!still)
+                    root.deleteCopy(out);
+            });
+        };
+        if (root.cleanerDone)
+            start(root.cleaned);
+        else
+            root.waiting = root.waiting.concat([start]);
+    }
+
+    property var waiting: []
+
+    function deleteCopy(path: string): void {
+        if (path !== "" && root.copyFolder !== "" && path.indexOf(root.copyFolder + "/") === 0)
+            root.job(["rm", "-f", "--", path], ({}), () => {});
+    }
+
+    // A card that left takes its picture with it.
+    onCardsChanged: {
+        const keep = {};
+        for (const c of root.cards)
+            keep[c.id] = true;
+        const next = {};
+        let changed = false;
+        for (const id in root.copies) {
+            if (keep[id] === true) {
+                next[id] = root.copies[id];
+            } else {
+                changed = true;
+                if (root.copies[id].state !== "pending")
+                    root.deleteCopy(root.copies[id].path);
+            }
+        }
+        if (changed)
+            root.copies = next;
+        // The last card has left: the folder is emptied (a picture whose copy was still being made is deleted when it ends).
+        if (root.cards.length === 0 && root.cleanerDone && !cleaner.running)
+            cleaner.running = true;
     }
 
     // The helper's result: the Save to folders are asked again (they can change), then the card is made.
@@ -96,7 +201,7 @@ Scope {
         const plan = card === null ? null : Thumbs.plan(action, card, root.dirs, root.script);
         if (plan === null) {
             // Refused (the path no longer passes, or a recording copy): the card goes, nothing runs.
-            root.dismiss(id);
+            root.remove(id);
             return;
         }
         const environment = action === "trash" ? Apps.openEnvironment() : ({});
@@ -109,12 +214,14 @@ Scope {
             });
             return;
         }
-        root.job(plan.check, ({}), ok => {
-            if (!ok) {
-                root.dismiss(id);
+        // The script prints the path it checked, links resolved; that is what is opened.
+        root.job(plan.check, ({}), (ok, output) => {
+            const argv = ok ? Thumbs.opened(action, card, output) : null;
+            if (argv === null) {
+                root.remove(id);
                 return;
             }
-            Apps.openDetached(plan.run);
+            Apps.openDetached(argv);
             root.dismiss(id);
         });
     }
@@ -130,6 +237,7 @@ Scope {
         root.job(plan.run, ({}), done);
     }
 
+    // Runs argv; `done(ok, output)` when it ends.
     function job(argv: var, environment: var, done: var): void {
         // qmllint disable missing-property
         const proc = runner.createObject(root, {
@@ -177,17 +285,38 @@ Scope {
         }
     }
 
+    // The folder is made (0700, no link) and emptied when the shell starts, before the first picture, and again when the last card
+    // leaves. Without it (a refusal, no runtime folder) no picture is made: the cards show their glyph.
+    Process {
+        id: cleaner
+        running: root.copyFolder !== ""
+        command: ["sh", Quickshell.shellPath("services/capture-thumb-dir.sh"), root.copyFolder]
+        // qmllint disable signal-handler-parameters
+        onExited: code => {
+            // qmllint enable signal-handler-parameters
+            root.cleaned = code === 0;
+            root.cleanerDone = true;
+            const queued = root.waiting;
+            root.waiting = [];
+            for (const start of queued)
+                start(root.cleaned);
+        }
+    }
+
     Component {
         id: runner
 
         Process {
             id: proc
             property var done: null
+            stdout: StdioCollector {
+                id: out
+            }
             // qmllint disable signal-handler-parameters
             onExited: exitCode => {
                 // qmllint enable signal-handler-parameters
                 if (proc.done)
-                    proc.done(exitCode === 0);
+                    proc.done(exitCode === 0, out.text);
                 proc.destroy();
             }
         }

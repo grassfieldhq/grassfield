@@ -149,6 +149,7 @@ res = result()
 check(res and res["kind"] == "text" and res["text"] == "Hello\nworld" and res["paths"] == [] and res["primary"] == ""
       and res["output"] == "HDMI-A-1" and res["rect"] == {"x": 2000, "y": 100, "w": 400, "h": 300}
       and stat.S_IMODE(os.stat(result_file).st_mode) == 0o600, "a text result: the text, no path, 0600 [%r]" % res)
+check(res and "qr" not in res, "a result from recognised text carries no qr flag [%r]" % res)
 check(len(calls("notify-send")) == 1 and calls("notify-send")[0]["argv"][-2:] == ["Capturer le texte", "Texte copié."],
       "no shell acknowledged: the result is written and the notice shows the copy")
 
@@ -169,6 +170,7 @@ check(r.returncode == 0 and len(copied) == 1 and copied[0]["argv"] == ["--type",
 res = result()
 check(res and res["kind"] == "text" and res["text"] == "" and "example.org" not in open(result_file).read() and "second" not in open(result_file).read(),
       "the QR data is never in the result file [%r]" % res)
+check(res and res.get("qr") is True, "a result from a QR code says so with a flag, never the data [%r]" % res)
 out = r.stdout + r.stderr + b"".join(json.dumps(c["argv"]).encode() for c in calls("notify-send"))
 check(b"example.org" not in out, "the QR data is in no notice, output or log")
 # a thumbnail off: a notice without the data

@@ -181,7 +181,9 @@ function parseResult(text) {
         scale: finite(doc.scale) && doc.scale >= 0.1 && doc.scale <= 16 ? doc.scale : 1,
         pixels: pixelSize(doc.pixels),
         time: finite(doc.time) && doc.time > 0 ? doc.time : 0,
-        text: typeof doc.text === "string" ? doc.text.substring(0, 512) : ""
+        text: typeof doc.text === "string" ? doc.text.substring(0, 512) : "",
+        // A text result that came from a QR code (a flag only: the data is never in the file).
+        qr: doc.kind === "text" && doc.qr === true
     };
 }
 

@@ -142,9 +142,16 @@ rc=$?
 desc="trash is gio trash of the path, never a removal"
 check test "$rc" = 0 -a "$(cat "$tmp/gio.args")" = "trash -- $shots/a.png" -a -e "$shots/a.png"
 
-# A Save to folder that is a link to the real folder (a Pictures folder on another disk): the picture in it is accepted.
 ln -s "$tmp/real" "$tmp/home/Documents2"
 printf 'D' >"$tmp/real/d.png"
+out=$(sh "$script" check shot "$shots/a.png" "${roots[@]}" 2>/dev/null)
+desc="check prints the path it checked, one line, for the caller to open"
+check test "$out" = "$shots/a.png"
+out=$(sh "$script" check shot "$tmp/home/Documents2/d.png" "$tmp/home/Documents2" 2>/dev/null)
+desc="through a link to a Save to folder it prints the path with the link resolved"
+check test "$out" = "$tmp/real/d.png"
+
+# A Save to folder that is a link to the real folder (a Pictures folder on another disk): the picture in it is accepted.
 act check shot "$tmp/home/Documents2/d.png" "$tmp/home/Documents2" "$tmp/home/Documents"
 rc=$?
 desc="a Save to folder reached through a link is accepted (both sides resolved)"
