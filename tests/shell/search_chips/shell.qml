@@ -9,6 +9,8 @@ import qs.search
 //   "No Results" notice must not show while the plocate fallback is still running;
 // - the filter chips are reachable by keyboard: Tab past the last group moves the ring to the first chip,
 //   Left/Right move, Space toggles, Esc and Tab past the end leave, typing leaves and is handed back to the field;
+// - the keys of the results view (palette P3c): Page Down/Up move between the groups and wrap, Shift+Tab enters the chips,
+//   Tab opens the Actions of the selected row (none for a row without actions) and Esc-equivalent closing, a chosen action runs;
 ShellRoot {
     id: root
 
@@ -39,9 +41,10 @@ ShellRoot {
         search.selected = 0;
         check("chips shown", search.chipsShown);
         search.moveGroup(1);
-        check("Tab to the next group first", search.zone === "field" && search.selected === 1);
+        check("Page Down to the next group first", search.zone === "field" && search.selected === 1);
         search.moveGroup(1);
-        check("Tab past the last group enters the chips", search.zone === "chips" && search.chipIndex === 0);
+        check("Page Down past the last group wraps to the first", search.zone === "field" && search.selected === 0);
+        check("Shift+Tab enters the first chip", search.enterChips() && search.zone === "chips" && search.chipIndex === 0);
         check("Right moves", search.chipKey("right") && search.chipIndex === 1);
         check("Right stops at the end", search.chipKey("end") && search.chipKey("right") && search.chipIndex === 2);
         check("Left moves", search.chipKey("left") && search.chipIndex === 1);
@@ -65,9 +68,48 @@ ShellRoot {
         search.items = [{groupId: "apps"}, {groupId: "commands"}];
         search.selected = 0;
         search.moveGroup(-1);
-        check("Shift+Tab before the first group enters the last chip", search.zone === "chips" && search.chipIndex === 2);
+        check("Page Up before the first group wraps to the last", search.zone === "field" && search.selected === 1);
+        search.chips = ["apps"];
+        check("no chips to reach with a single one", !search.enterChips() && search.zone === "field");
+        search.chips = ["apps", "commands", "documents"];
+        search.enterChips();
         search.hide();
         check("hide leaves the chips", search.zone === "field");
+
+        // Tab: the Actions of the selected row (Actions.js), run on the row they were opened on.
+        const ran = [];
+        search.items = [
+            {kind: "app", key: "app:a", title: "A", groupId: "apps"},
+            {kind: "clip", key: "clip:1", title: "C", groupId: "clip"},
+            {kind: "command", key: "cmd:x.one", title: "One", groupId: "commands", actions: [
+                {id: "more", title: "More", run: () => ran.push("more")},
+                {id: "bad id", title: "Bad", run: () => ran.push("bad")}
+            ]}
+        ];
+        search.selected = 1;
+        check("a clipboard row has no Actions here", !search.openActions() && !search.actionsOpen);
+        search.selected = -1;
+        check("no selection, no Actions", !search.openActions());
+        search.selected = 2;
+        check("a command row opens its Actions", search.openActions() && search.actionsOpen && search.actionsItem.key === "cmd:x.one");
+        check("Run first, then the entry's action; the malformed one is left out", search.actionList.map(a => a.id).join() === "run,x:more");
+        search.selected = 0;
+        check("the Actions stay on the row they opened on", search.actionsItem.key === "cmd:x.one");
+        search.closeActions();
+        check("closing forgets the row", !search.actionsOpen && search.actionsItem === null && search.actionList.length === 0);
+        search.selected = 2;
+        search.openActions();
+        search.runAction("x:more");
+        check("a chosen entry action runs once and closes Search and the panel", ran.join() === "more" && !search.actionsOpen && !search.open);
+        search.runAction("x:more");
+        check("nothing runs with the panel closed", ran.length === 1);
+        search.selected = 2;
+        search.openActions();
+        search.runAction("x:nope");
+        check("an unknown action runs nothing and closes", ran.length === 1 && !search.actionsOpen);
+        search.openActions();
+        search.setQuery("zzz-new");
+        check("a new query closes the Actions", !search.actionsOpen);
 
         // macOS: an empty field lists nothing (no recent documents); the first keystroke brings the results.
         search.recentList = [{path: "/home/u/report.txt"}, {path: "/home/u/notes.txt"}];

@@ -13130,6 +13130,22 @@
         <translation>Voulez-vous vraiment quitter toutes les applications et fermer la session de %1&#xa0;?</translation>
     </message>
     <message>
+        <source>Open</source>
+        <translation>Ouvrir</translation>
+    </message>
+    <message>
+        <source>Run</source>
+        <translation>Exécuter</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copier</translation>
+    </message>
+    <message>
+        <source>Show in Files</source>
+        <translation>Afficher dans Fichiers</translation>
+    </message>
+    <message>
         <source>Clipboard</source>
         <translation>Presse-papiers</translation>
     </message>
@@ -13444,6 +13460,14 @@
     <message>
         <source>Clipboard item</source>
         <translation>Élément du presse-papiers</translation>
+    </message>
+    <message>
+        <source>Search Actions</source>
+        <translation>Rechercher dans les actions</translation>
+    </message>
+    <message>
+        <source>Actions</source>
+        <translation>Actions</translation>
     </message>
     <message>
         <source>No Results for “%1”</source>
