@@ -383,7 +383,7 @@ Per slice, in docs/specs/command-palette.md §4: L0 (pure JS, helper fakes), uni
 with a screenshot path or "visual NOT verified", L2 for the owner. Opus security reviews: spec §4.4.
 
 ## Consequences
-- 66 slices of at most a day across eight lanes (spec §4.1); the first owner-visible result (Actions on every row, the system
+- 70 slices of at most a day across eight lanes (spec §4.1); the first owner-visible result (Actions on every row, the system
   and window commands, the main toggles) needs eight of them: P1, P2, P3a, P3b, P3c, S1, S3 and S6.
 - New code stays in existing directories: `shell/search/`, `shell/platform/`, `apps/settings/`, `apps/clipboard-helper/` (the
   selection-owner answer), `ui/Grassfield/`, `config/hypr/grassfield/` (`commands.lua`), plus
