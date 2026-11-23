@@ -74,7 +74,7 @@ QString ScreenshotApp::overlaySource() const
     return m_document.isOpen() ? QStringLiteral("image://screenshot/overlay/%1").arg(m_layersRevision) : QString();
 }
 
-QImage ScreenshotApp::overlayImage(const QSize &target) const
+QImage ScreenshotApp::overlayImage(const QRectF &region, const QSize &target) const
 {
     QList<screenshot::Layer> layers;
     QSize natural;
@@ -83,7 +83,16 @@ QImage ScreenshotApp::overlayImage(const QSize &target) const
         layers = m_overlayLayers;
         natural = m_image.size();
     }
-    return screenshot::renderOverlay(layers, natural, target.isEmpty() ? natural : target);
+    const QRectF area = region.isEmpty() ? QRectF(QPointF(0, 0), QSizeF(natural)) : region;
+    return screenshot::renderOverlayRegion(layers, area, target.isEmpty() ? natural : target);
+}
+
+qreal ScreenshotApp::captureScale() const
+{
+    // The capture's scale as the capture helper wrote it into the PNG ("Grassfield-Scale"); 0 when the file has none.
+    bool ok = false;
+    const qreal scale = m_document.original().text(QStringLiteral("Grassfield-Scale")).toDouble(&ok);
+    return ok && scale >= 0.5 && scale <= 8 ? scale : 0;
 }
 
 void ScreenshotApp::setTool(const QString &tool)
@@ -239,7 +248,21 @@ ScreenshotImageProvider::ScreenshotImageProvider(ScreenshotApp *app)
 QImage ScreenshotImageProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
 {
     if (id.startsWith(QLatin1String("overlay/"))) {
-        const QImage overlay = m_app->overlayImage(requestedSize);
+        // overlay/<revision>/<x>/<y>/<w>/<h>/<target w>/<target h>: the part of the picture the view shows (picture pixels) and
+        // the pixels it covers; without the numbers, the whole picture at the requested size.
+        const QStringList parts = id.split(QLatin1Char('/'));
+        QRectF region;
+        QSize target = requestedSize;
+        if (parts.size() == 8) {
+            bool ok[6];
+            const QRectF r(parts[2].toDouble(&ok[0]), parts[3].toDouble(&ok[1]), parts[4].toDouble(&ok[2]), parts[5].toDouble(&ok[3]));
+            const QSize t(parts[6].toInt(&ok[4]), parts[7].toInt(&ok[5]));
+            if (ok[0] && ok[1] && ok[2] && ok[3] && ok[4] && ok[5]) {
+                region = r;
+                target = t;
+            }
+        }
+        const QImage overlay = m_app->overlayImage(region, target);
         if (size)
             *size = overlay.size();
         return overlay;

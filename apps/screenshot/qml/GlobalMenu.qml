@@ -67,35 +67,55 @@ Platform.MenuBar {
             shortcut: "V"
             checkable: true
             checked: bar.win.backend.tool === "select"
-            onTriggered: bar.win.backend.tool = "select"
+            onTriggered: {
+                bar.win.backend.tool = "select";
+                // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
+                checked = Qt.binding(() => bar.win.backend.tool === "select");
+            }
         }
         Platform.MenuItem {
             text: qsTr("Arrow")
             shortcut: "A"
             checkable: true
             checked: bar.win.backend.tool === "arrow"
-            onTriggered: bar.win.backend.tool = "arrow"
+            onTriggered: {
+                bar.win.backend.tool = "arrow";
+                // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
+                checked = Qt.binding(() => bar.win.backend.tool === "arrow");
+            }
         }
         Platform.MenuItem {
             text: qsTr("Line")
             shortcut: "L"
             checkable: true
             checked: bar.win.backend.tool === "line"
-            onTriggered: bar.win.backend.tool = "line"
+            onTriggered: {
+                bar.win.backend.tool = "line";
+                // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
+                checked = Qt.binding(() => bar.win.backend.tool === "line");
+            }
         }
         Platform.MenuItem {
             text: qsTr("Rectangle")
             shortcut: "R"
             checkable: true
             checked: bar.win.backend.tool === "rectangle"
-            onTriggered: bar.win.backend.tool = "rectangle"
+            onTriggered: {
+                bar.win.backend.tool = "rectangle";
+                // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
+                checked = Qt.binding(() => bar.win.backend.tool === "rectangle");
+            }
         }
         Platform.MenuItem {
             text: qsTr("Ellipse")
             shortcut: "O"
             checkable: true
             checked: bar.win.backend.tool === "ellipse"
-            onTriggered: bar.win.backend.tool = "ellipse"
+            onTriggered: {
+                bar.win.backend.tool = "ellipse";
+                // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
+                checked = Qt.binding(() => bar.win.backend.tool === "ellipse");
+            }
         }
     }
 

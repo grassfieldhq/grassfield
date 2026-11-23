@@ -198,7 +198,7 @@ from the same model, so it is deterministic and testable.
 | # | Tool [source] | macOS 27 annotation (thumbnail editor) | Effort | Notes | Slices |
 |---|---|---|---|---|---|
 | E1 | Open, zoom, select, move, resize, undo and redo, atomic save, Revert | yes | M | — | B1, B2, B3 |
-| E2 | Arrows: straight, curved, double [S1] (4 styles) | arrow | S | — | B4 |
+| E2 | Arrows: straight, curved, double [S1] (4 styles) | arrow | S | Three built (slice B4). The sources name "4 styles" without saying which the fourth is, and the table's own list has three; a fourth waits for the owner to name it (a style is one more value of the arrow's `style` field, so it costs a drawing function and a golden). | B4 |
 | E3 | Line, rectangle, ellipse, filled or outlined [S1] | shapes | S | — | B4 |
 | E4 | Pencil with smoothing [S1] | sketch | S | — | B5 |
 | E5 | Highlighter [S1] | highlight | S | Snaps straight on text (as omasnap). | B5 |
@@ -281,8 +281,9 @@ Reduce Motion: the card fades instead of sliding in.
   - The tool group has Select, Arrow, Line, Rectangle and Ellipse (letters V, A, L, R, O); the arrow has three styles (straight,
     curved, double), rectangle and ellipse an outline or a fill. Style controls and the other tools come with B5 to B9.
   - Shapes are layers in device pixels (the fields are listed in `apps/screenshot/src/annotations.h`); a new shape's stroke is
-    `screenshot.strokeWidth` times the display scale. The view draws the layers with the exporter itself (an overlay image
-    rendered at the size on screen), so that what is seen is what Done writes.
+    `screenshot.strokeWidth` times the capture's scale (the `Grassfield-Scale` text of the PNG, to be written by the capture helper: it does not yet; a file that
+    does not say uses the scale of the window's screen). The view draws the layers with the exporter itself (an overlay image
+    rendered for the part of the picture on screen, at the view's own device pixels, never the zoomed picture's), so that what is seen is what Done writes.
   - Select picks the topmost shape, moves it by dragging, resizes it by a handle (eight on a box, the ends and the control point
     on a line or curve); Shift keeps 45-degree angles and squares while drawing. The arrow keys move the selection by 1 px (10 with
     Shift) and Delete removes it.

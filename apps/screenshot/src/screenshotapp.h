@@ -35,6 +35,8 @@ class ScreenshotApp : public AppearanceSettings
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
     // The editing state (slices B3, B4): the layers' drawing, the tool and its style, the selection, undo and redo.
     // image://screenshot/overlay/<revision>: the layers alone on a transparent picture (the same drawing as the export).
+    // The capture's scale for the width of new shapes (0: unknown, the view uses its own display's).
+    Q_PROPERTY(qreal captureScale READ captureScale NOTIFY documentChanged)
     Q_PROPERTY(QString overlaySource READ overlaySource NOTIFY layersChanged)
     Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
     // The style new shapes get: "#rrggbb" colour, stroke in picture pixels, fill, arrow style (straight, curved, double).
@@ -81,7 +83,10 @@ public:
     bool canRedo() const { return m_undo.canRedo(); }
 
     // The layers drawn alone at `target` pixels for a picture of the document's size (the overlay provider's picture).
-    QImage overlayImage(const QSize &target) const;
+    // `region` (picture pixels; empty: the whole picture) at `target` pixels, within the exporter's limits.
+    QImage overlayImage(const QRectF &region, const QSize &target) const;
+    // The scale of the display the capture was taken on, "Grassfield-Scale" in the PNG; 0 when the file does not say.
+    qreal captureScale() const;
 
     // The picture the provider serves (a copy: the document stays on the GUI thread).
     QImage currentImage() const;

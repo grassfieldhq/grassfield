@@ -2,7 +2,10 @@
 #include "annotations.h"
 #include "exporter.h"
 
+#include <QElapsedTimer>
 #include <QImage>
+
+#include <cstdio>
 
 #include <gtest/gtest.h>
 
@@ -254,4 +257,83 @@ TEST(Exporter, TheOverlayIsTheSameDrawingScaled)
     EXPECT_EQ(full.pixelColor(10, 25), QColor(255, 0, 0));
     EXPECT_GT(half.pixelColor(5, 12).alpha(), 200) << "the left edge, at half size";
     EXPECT_TRUE(renderOverlay(layers, QSize(), QSize(10, 10)).isNull());
+}
+
+// ---- the overlay is bounded by the view, not by the zoomed picture ---------------------------------------------------------------
+
+TEST(Overlay, TheSizeIsClampedToTheLimits)
+{
+    EXPECT_EQ(clampedOverlaySize(QSize(1200, 800)), QSize(1200, 800)) << "a size within the limits is kept";
+    const QSize huge = clampedOverlaySize(QSize(61440, 34560)); // a 4K capture at 16 times
+    EXPECT_LE(huge.width(), kMaxOverlaySide);
+    EXPECT_LE(huge.height(), kMaxOverlaySide);
+    EXPECT_LE(qint64(huge.width()) * huge.height(), kMaxOverlayPixels);
+    EXPECT_NEAR(double(huge.width()) / huge.height(), 61440.0 / 34560, 0.01) << "the aspect is kept";
+    EXPECT_TRUE(clampedOverlaySize(QSize()).isEmpty());
+}
+
+// A 3840 x 2160 capture at 16 times in a 1200 x 800 view (a 1.25 display: 1500 x 1000 device pixels): the overlay is the view's
+// size, not 61440 x 34560, and it shows the right part of the picture.
+TEST(Overlay, AViewOfAFourKCaptureAtSixteenTimesIsTheViewsSize)
+{
+    const Layers layers{makeShape(1, "line", QPointF(1900, 1080), QPointF(1960, 1080), red(8)),
+                        makeShape(2, "rectangle", QPointF(100, 100), QPointF(3700, 2000), red(8))};
+    const double scale = 16 * 1.25; // device pixels per picture pixel
+    const QSize view(1500, 1000);
+    const QRectF region(1900, 1050, view.width() / scale, view.height() / scale); // 75 x 50 picture pixels
+    QElapsedTimer timer;
+    timer.start();
+    const QImage overlay = renderOverlayRegion(layers, region, view);
+    RecordProperty("overlay_ms_16x", int(timer.elapsed()));
+    ASSERT_EQ(overlay.size(), view) << "the view's pixels";
+    // The line is at picture y 1080: (1080 - 1050) * 20 = 600, from x 0 to 60 * 20 = 1200.
+    EXPECT_EQ(overlay.pixelColor(600, 600), QColor(255, 0, 0));
+    EXPECT_EQ(overlay.pixelColor(600, 100).alpha(), 0) << "transparent away from it";
+    EXPECT_EQ(overlay.pixelColor(1400, 600).alpha(), 0) << "past the line's end";
+}
+
+TEST(Overlay, ARequestBeyondTheLimitsIsClampedNotRefused)
+{
+    const Layers layers{makeShape(1, "rectangle", QPointF(10, 10), QPointF(50, 40), red(4))};
+    const QImage overlay = renderOverlayRegion(layers, QRectF(0, 0, 60, 60), QSize(61440, 34560));
+    ASSERT_FALSE(overlay.isNull());
+    EXPECT_LE(overlay.width(), kMaxOverlaySide);
+    EXPECT_LE(qint64(overlay.width()) * overlay.height(), kMaxOverlayPixels);
+    EXPECT_TRUE(renderOverlayRegion(layers, QRectF(), QSize(10, 10)).isNull());
+}
+
+TEST(Exporter, TheCapturesTextMetadataSurvivesTheExport)
+{
+    QImage image = white(30, 30);
+    image.setText("Grassfield-Scale", "1.25");
+    const QImage out = exportLayers(image, {makeShape(1, "line", QPointF(1, 1), QPointF(20, 20), red())});
+    EXPECT_EQ(out.text("Grassfield-Scale"), "1.25");
+}
+
+// The cost of one pointer move, measured (printed, not asserted: a slow machine must not fail it): a 3840 x 2160 capture with 24
+// shapes in a 1200 x 800 point view on a 1.25 display (1500 x 1000 device pixels) at 100%, 400% and 1600%. The overlay's size is
+// asserted: it is the view's whatever the zoom.
+TEST(Overlay, TheCostOfAMoveIsTheViewsNotTheZoomsAndItsSizeIsTheViews)
+{
+    Layers layers;
+    for (int i = 0; i < 12; ++i) {
+        layers.append(makeShape(2 * i + 1, "rectangle", QPointF(100 + i * 250, 100 + i * 120), QPointF(600 + i * 250, 500 + i * 120), red(8)));
+        layers.append(makeShape(2 * i + 2, "arrow", QPointF(50 + i * 300, 2000), QPointF(900 + i * 280, 300), red(8)));
+    }
+    const QSize view(1500, 1000);
+    for (const double zoom : {1.0, 4.0, 16.0}) {
+        const double perPixel = zoom * 1.25;
+        const QRectF region(1000, 500, view.width() / perPixel, view.height() / perPixel);
+        qint64 best = -1;
+        for (int run = 0; run < 5; ++run) {
+            QElapsedTimer timer;
+            timer.start();
+            const QImage overlay = renderOverlayRegion(layers, region, view);
+            const qint64 us = timer.nsecsElapsed() / 1000;
+            best = best < 0 ? us : std::min(best, us);
+            ASSERT_EQ(overlay.size(), view);
+        }
+        std::printf("overlay per move, 4K capture, zoom %.0f%%: %lld us, %d x %d px (%lld KB)\n", zoom * 100, (long long)best, view.width(),
+                    view.height(), (long long)view.width() * view.height() * 4 / 1024);
+    }
 }

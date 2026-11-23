@@ -4,6 +4,7 @@
 
 #include <QImage>
 #include <QPainter>
+#include <QRectF>
 #include <QSize>
 
 // The exporter of the editor (ADR-0066 D-3; slice B3): the layers drawn over the original picture with QPainter, at the picture's
@@ -19,8 +20,19 @@ void paintLayers(QPainter *painter, const Layers &layers);
 // give a copy of the original. A null original gives a null image.
 QImage exportLayers(const QImage &original, const Layers &layers);
 
-// The layers alone on a transparent picture of `target` pixels, for a picture of `natural` pixels: the editor's view of them
-// (the same drawing as the export, scaled), so that what is seen is what is written.
+// The most pixels the editor's overlay may have on a side and in all: the view's size at device pixels, never the zoomed picture's
+// (a 4K capture at 16x would ask for gigabytes, and the scene graph's texture limit is 16384).
+constexpr int kMaxOverlaySide = 8192;
+constexpr qint64 kMaxOverlayPixels = 16LL * 1024 * 1024;
+// `target` brought within those limits (kept as is when it already is; empty stays empty).
+QSize clampedOverlaySize(const QSize &target);
+
+// The layers alone on a transparent picture of `target` pixels showing `region` of the picture (picture pixels): the editor's
+// view of them, the same drawing as the export, so that what is seen is what is written. `target` is clamped (see above). A null
+// image for an empty region or target.
+QImage renderOverlayRegion(const Layers &layers, const QRectF &region, const QSize &target);
+
+// The whole picture of `natural` pixels at `target` pixels (renderOverlayRegion over the picture's rectangle).
 QImage renderOverlay(const Layers &layers, const QSize &natural, const QSize &target);
 
 } // namespace screenshot
