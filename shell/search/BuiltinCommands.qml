@@ -5,7 +5,7 @@ import qs.lib
 import qs.platform
 import qs.platform.shortcuts
 import qs.services
-import qs.notifications // layering-exception: GF-087
+import qs.notifications
 import "BuiltinCommands.js" as Builtin
 import "../platform/Minimized.js" as Minimized
 
