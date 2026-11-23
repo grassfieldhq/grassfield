@@ -11,6 +11,10 @@ namespace screenshot {
 
 namespace {
 
+constexpr qreal kHeadHalfAngle = 0.5236; // 30 degrees
+constexpr qreal kHeadPerWidth = 4;       // an arrow head's length, in strokes
+constexpr qreal kHeadMinimum = 6;        // and at least this many pixels
+
 bool finiteIn(double v)
 {
     return std::isfinite(v) && std::abs(v) <= kMaxCoordinate;
@@ -46,6 +50,22 @@ bool pointsOf(const Layer &layer, QPointF *from, QPointF *to)
 bool isBox(const Layer &layer)
 {
     return layer.type == QLatin1String("rectangle") || layer.type == QLatin1String("ellipse");
+}
+
+QPointF unit(const QPointF &v, const QPointF &fallback)
+{
+    const qreal length = std::hypot(v.x(), v.y());
+    return length > 1e-9 ? v / length : fallback;
+}
+
+// The head at `tip`, pointing along `direction` (unit); `base` is where the shaft stops, inside the head, so that the tip stays sharp.
+QPolygonF headAt(const QPointF &tip, const QPointF &direction, qreal length, QPointF *base)
+{
+    const QPointF back = tip - direction * length;
+    const QPointF side(-direction.y(), direction.x());
+    const qreal half = length * std::tan(kHeadHalfAngle);
+    *base = tip - direction * (length * 0.8);
+    return QPolygonF{tip, back + side * half, back - side * half};
 }
 
 } // namespace
@@ -319,6 +339,52 @@ Layer draggedHandle(const Layer &layer, Handle::Kind kind, const QPointF &to)
     out.fields.insert(QStringLiteral("w"), next.width());
     out.fields.insert(QStringLiteral("h"), next.height());
     return out;
+}
+
+ShapeGeometry shapeGeometry(const Layer &layer)
+{
+    ShapeGeometry g;
+    g.color = layerColor(layer);
+    g.width = layerWidth(layer);
+    if (!isShapeType(layer.type) || !g.color.isValid() || g.width <= 0)
+        return ShapeGeometry();
+    if (isBox(layer)) {
+        if (!readBox(layer, &g.box))
+            return ShapeGeometry();
+        g.kind = layer.type == QLatin1String("ellipse") ? ShapeGeometry::Ellipse : ShapeGeometry::Rect;
+        g.fill = layerFill(layer);
+        return g;
+    }
+    QPointF a, b, ctrl;
+    if (!pointsOf(layer, &a, &b))
+        return ShapeGeometry();
+    if (layer.type == QLatin1String("line")) {
+        g.kind = ShapeGeometry::Line;
+        g.shaftStart = a;
+        g.shaftEnd = b;
+        return g;
+    }
+    const QString style = arrowStyle(layer);
+    const bool curved = style == QLatin1String("curved") && readPoint(layer.fields, "ctrl", &ctrl);
+    const bool both = style == QLatin1String("double");
+    if (!curved)
+        ctrl = (a + b) / 2;
+    const qreal chord = QLineF(a, b).length();
+    if (chord <= 0)
+        return ShapeGeometry();
+    // A head is at most half the arrow (a short arrow is all head); the curve leaves and arrives along its control point.
+    const qreal length = std::min(std::max(kHeadPerWidth * g.width, kHeadMinimum), chord * (both ? 0.4 : 0.5));
+    const QPointF endDir = unit(b - ctrl, unit(b - a, QPointF(1, 0)));
+    const QPointF startDir = unit(a - ctrl, unit(a - b, QPointF(-1, 0)));
+    g.kind = curved ? ShapeGeometry::ArrowCurved : ShapeGeometry::Arrow;
+    g.shaftStart = a;
+    g.shaftEnd = b;
+    g.ctrl = ctrl;
+    g.endHead = headAt(b, endDir, length, &g.shaftEnd);
+    if (both)
+        g.startHead = headAt(a, startDir, length, &g.shaftStart);
+    g.headStroke = std::max<qreal>(1, g.width * 0.5);
+    return g;
 }
 
 QPointF constrained(const QPointF &from, const QPointF &to, bool square)

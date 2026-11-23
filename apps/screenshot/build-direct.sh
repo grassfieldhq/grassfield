@@ -18,10 +18,10 @@ if [[ " $* " == *" --asan "* ]]; then
   suffix="-asan"
 fi
 jobs=${GF_JOBS:-2}
-core=(screenshotlogic layers atomicfile capturehistory annotations exporter undostack toolcontroller document appearance screenshotapp)
+core=(screenshotlogic layers atomicfile capturehistory annotations exporter layermodel undostack toolcontroller document appearance screenshotapp)
 moc=/usr/lib/qt6/moc
 [[ -x $moc ]] || moc=$(command -v moc-qt6 || command -v moc)
-for m in appearance screenshotapp; do
+for m in appearance layermodel screenshotapp; do
   "$moc" "$here/src/$m.h" -o "$out/moc_screenshot_$m$suffix.cpp"
 done
 
@@ -44,7 +44,7 @@ build_all() { # build_all <extra flags...>: every core source and its moc file
     pids+=($!)
     while (($(jobs -r | wc -l) >= jobs)); do wait -n || true; done
   done
-  for n in appearance screenshotapp; do
+  for n in appearance layermodel screenshotapp; do
     objects+=("$objdir/moc_$n.o")
     compile "$out/moc_screenshot_$n$suffix.cpp" "$objdir/moc_$n.o" "$@" &
     pids+=($!)
@@ -64,7 +64,7 @@ case ${1:-} in
     done
     # tst_pathparity.cpp runs Preview's own path rules next to this app's: their sources are compiled in (not changed).
     # shellcheck disable=SC2046
-    g++ "${cxxflags[@]}" "-DGF_SCREENSHOT_GOLDEN_DIR=\"$root/tests/unit/screenshot/golden\"" -I"$here/src" -I"$here/.." -I"$here/../preview/src" -I"$here/../files/src" $(pkg-config --cflags Qt6Core Qt6Gui Qt6Qml Qt6Quick) \
+    g++ "${cxxflags[@]}" "-DGF_SCREENSHOT_GOLDEN_DIR=\"$root/tests/unit/screenshot/golden\"" "-DGF_SCREENSHOT_QML_DIR=\"$here/qml\"" -I"$here/src" -I"$here/.." -I"$here/../preview/src" -I"$here/../files/src" $(pkg-config --cflags Qt6Core Qt6Gui Qt6Qml Qt6Quick) \
       "${objects[@]}" "${tests[@]}" "$here/../preview/src/previewlogic.cpp" "$here/../files/src/filelogic.cpp" \
       $(pkg-config --libs Qt6Core Qt6Gui Qt6Qml Qt6Quick Qt6DBus) -lgtest -pthread -o "$out/screenshot-unit-tests$suffix"
     echo "built $out/screenshot-unit-tests$suffix"

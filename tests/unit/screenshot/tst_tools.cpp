@@ -1,9 +1,11 @@
 // The pointer logic of the tools (ToolController) and the editor backend that wires it to the document, the undo stack and the
 // export (slices B3 and B4).
 #include "annotations.h"
+#include "layermodel.h"
 #include "screenshotapp.h"
 #include "toolcontroller.h"
 
+#include <QAbstractItemModel>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -257,7 +259,6 @@ TEST_F(AppTest, DrawingMakesTheDocumentDirtyAndUndoClearsIt)
     EXPECT_TRUE(m_app->canUndo());
     EXPECT_EQ(m_app->selectedId(), 1);
     EXPECT_EQ(m_app->handles().size(), 8);
-    EXPECT_FALSE(m_app->overlaySource().isEmpty());
 
     m_app->undo();
     EXPECT_FALSE(m_app->dirty()) << "back to what is saved";
@@ -305,18 +306,49 @@ TEST_F(AppTest, DoneWritesTheShapesAndRevertTakesThemOff)
     EXPECT_EQ(again.selectedId(), 1);
 }
 
-TEST_F(AppTest, TheOverlayHasTheShapesAndNothingElse)
+TEST_F(AppTest, TheLayerModelFollowsTheEditsRowByRow)
 {
+    auto *model = qobject_cast<QAbstractItemModel *>(m_app->layerModel());
+    ASSERT_NE(model, nullptr);
+    EXPECT_EQ(model->rowCount(), 0);
+    int inserted = 0, changed = 0, removed = 0, resets = 0;
+    QObject::connect(model, &QAbstractItemModel::rowsInserted, [&] { ++inserted; });
+    QObject::connect(model, &QAbstractItemModel::dataChanged, [&] { ++changed; });
+    QObject::connect(model, &QAbstractItemModel::rowsRemoved, [&] { ++removed; });
+    QObject::connect(model, &QAbstractItemModel::modelReset, [&] { ++resets; });
+
     m_app->setToolColor("#ff0000");
-    m_app->setToolWidth(4);
     m_app->setTool("line");
     ASSERT_TRUE(m_app->toolPress(5, 30, 3));
+    m_app->toolMove(40, 30, false);
+    EXPECT_EQ(model->rowCount(), 1) << "the shape is there while it is dragged";
+    EXPECT_EQ(inserted, 1);
+    m_app->toolMove(60, 30, false);
     m_app->toolRelease(75, 30, false);
-    const QImage overlay = m_app->overlayImage(QRectF(), QSize(80, 60));
-    EXPECT_EQ(overlay.size(), QSize(80, 60));
-    EXPECT_EQ(overlay.pixelColor(40, 30), QColor(255, 0, 0));
-    EXPECT_EQ(overlay.pixelColor(40, 5).alpha(), 0);
-    EXPECT_EQ(m_app->overlayImage(QRectF(), QSize()).size(), QSize(80, 60)) << "no requested size: the picture's own";
+    EXPECT_EQ(inserted, 1) << "dragging edits the one row";
+    EXPECT_GE(changed, 2);
+    EXPECT_EQ(resets, 0);
+    EXPECT_EQ(model->data(model->index(0, 0), LayerModel::KindRole).toString(), "line");
+
+    m_app->setTool("rectangle");
+    ASSERT_TRUE(m_app->toolPress(10, 10, 3));
+    m_app->toolRelease(50, 40, false);
+    EXPECT_EQ(model->rowCount(), 2);
+    const int changesBefore = changed;
+    m_app->setTool("select");
+    ASSERT_TRUE(m_app->toolPress(10, 25, 3));
+    m_app->toolMove(12, 25, false);
+    m_app->toolRelease(14, 25, false);
+    EXPECT_GT(changed, changesBefore);
+    EXPECT_EQ(resets, 0) << "moving a shape touches no other row";
+
+    m_app->undo();
+    EXPECT_EQ(model->rowCount(), 2) << "undo of the move";
+    m_app->undo();
+    EXPECT_EQ(model->rowCount(), 1);
+    EXPECT_EQ(removed, 1);
+    m_app->deleteSelected();
+    m_app->selectNone();
 }
 
 TEST_F(AppTest, TheCaptureScaleComesFromThePngAndSurvivesDone)

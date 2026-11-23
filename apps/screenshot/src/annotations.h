@@ -5,6 +5,7 @@
 #include <QColor>
 #include <QJsonArray>
 #include <QPointF>
+#include <QPolygonF>
 #include <QRectF>
 #include <QString>
 
@@ -80,6 +81,24 @@ bool handleAt(const Layer &layer, const QPointF &p, qreal tolerance, Handle::Kin
 // The layer with its handle `kind` moved to `to` (a box edge can cross the opposite one: the box flips; a side never gets
 // smaller than one pixel while it is dragged).
 Layer draggedHandle(const Layer &layer, Handle::Kind kind, const QPointF &to);
+
+// What is drawn for a shape layer, worked out once for both its users: the QPainter exporter and the editor's scene items (the
+// model of layermodel.h), so that the two cannot disagree about where a head, a shaft or an edge goes. All in picture pixels.
+struct ShapeGeometry {
+    enum Kind { None, Rect, Ellipse, Line, Arrow, ArrowCurved };
+    Kind kind = None; // None: the layer does not read, nothing is drawn
+    QColor color;
+    qreal width = 0;
+    bool fill = false;      // Rect and Ellipse
+    QRectF box;             // Rect and Ellipse
+    QPointF shaftStart;     // Line and the arrows: the stroke's ends (an arrow's shaft stops inside its head)
+    QPointF shaftEnd;
+    QPointF ctrl;           // ArrowCurved: the quadratic curve's control point
+    QPolygonF endHead;      // the arrows: filled triangles (three points)
+    QPolygonF startHead;    // a double arrow's second head, else empty
+    qreal headStroke = 0;   // the thin round-joined edge drawn around a head
+};
+ShapeGeometry shapeGeometry(const Layer &layer);
 
 // `to` kept on the 45-degree lines through `from` (a line or an arrow), or on the square's diagonal (`square`, for a box).
 QPointF constrained(const QPointF &from, const QPointF &to, bool square);
