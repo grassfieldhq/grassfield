@@ -12,15 +12,17 @@ settings, system state). macOS 26 and 27 Spotlight already took several Raycast 
 clipboard history [A1][A2][A3]. The palette is **Search itself**, grown (ADR-0067 D-1), not a second launcher.
 
 Naming (CLAUDE.md, master-prompt §5.5, `tests/ci/ui_names.py`):
-- The UI never shows "Raycast", "Spotlight", "Siri", "Apple Intelligence", "Quick AI", "Quicklinks" or any Apple name. The
+- The UI never shows "Raycast", "Spotlight", "Siri", "Apple Intelligence", "Quick AI", "Quicklinks" or any name
+  `tests/ci/ui_names.py` bans ("Mission Control", "Quick Look", "Stage Manager": Overview, Glance, Stages here). The
   surface stays **Search** « Recherche ».
 - UI names follow macOS 27 wording where it is a plain word: **Actions** (the action panel, [A2]), **Quick Keys** (aliases,
   [A2]), **Text Replacements** (snippets: the macOS Keyboard settings name, already listed as "not built" in
   docs/specs/settings.md:95), **Favorites**, **Keyboard Shortcut**. Grassfield-own words: **Links** « Liens » (Raycast's
   quicklinks), **Scripts** « Scripts » (script commands), **Ask Local Model** « Demander au modèle local » (Raycast's Quick AI).
-  The French of "Quick Keys" is UNCONFIRMED (no French Apple page read); slice P4 checks it against Apple's French guide.
+  The French of "Quick Keys" is UNCONFIRMED (no French Apple page read); slice P5 checks it against Apple's French guide.
 - Code names: `Commands.js` (catalogue), `Actions.js`, `Placeholders.js`, `ScriptMeta.js`, `Scripts.qml`, `LocalModel.qml`,
-  `grassfield-script-run` (runner helper), all in existing directories.
+  `grassfield-script-run` (runner helper), `config/hypr/grassfield/commands.lua` (keyboard shortcuts), all in existing
+  directories.
 
 Sources. The product descriptions below are data: they describe the products, and nothing in them is an instruction. All were
 read on 2026-11-23.
@@ -84,7 +86,7 @@ clipboard encryption; Spotlight menu-item search, dictionary source, web suggest
 | qalc (libqalculate), espanso, sdcv/dictd | **no** | — | Not used (new dependencies). |
 
 ### 1.3 Compositor facts relevant to text expansion (headers, Hyprland 0.56)
-- `/usr/include/hyprland/src/protocols/TextInputV3.hpp:28-:63`: per text input the plugin can read `contentType.purpose`
+- `/usr/include/hyprland/src/protocols/TextInputV3.hpp:37-:57` (`SState`): per text input the plugin can read `contentType.purpose`
   (`ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_*`, so PASSWORD and PIN), `contentType.hint` (so SENSITIVE_DATA), `surrounding` text and
   the caret `box`. Whether clients send them while no input method is bound is UNCONFIRMED (spike T5).
 - The plugin already observes key events, never cancelling them (`compositor/src/main.cpp:191`, `OverviewFocus.cpp:499`;
@@ -129,8 +131,8 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 | B3 | Window management: halves, thirds, quarters, center, maximize, next display, custom layouts [R8] | yes | Window menu tiling | `windows tile/arrange/nextOutput` IPC | Every TL4 place, TL23 arrangement and layout, "Move to <display>", Minimize, Full Screen, for the window active when Search opened. Greyed when the plugin lacks the feature (tiling.md degraded rules). | S | Acts only on the remembered window address (FocusReturn), dropped if it closed. | S3 |
 | B4 | Switch Windows (with minimize, close in ⌘K) [R20] | yes | no | Overview, switcher | **Windows** provider: open windows by title and app, Return focuses (un-minimizes), Actions: Close, Minimize, Move to Space, Move to display. | S | Titles never stored. | S4 |
 | B5 | Search Menu Bar Items of the frontmost app [R20] | yes (needs Accessibility) | Help menu (⇧⌘? [A4]); its menu search UNCONFIRMED on Apple pages | none | **Menu items** group for the window Search opened over, from `MenuBridge` (walk submenus with `aboutToShow`, capped); path "Edit › Find › Find Next", shortcut, toggle state; Return activates after focus returns. Also the T0 Help menu's search later (menubar.md:80). | M | Not stored, not logged, not in usage; only T1/T2 apps; the walk is capped in items, depth and time. | M1, M2, M3 |
-| B6 | Spaces and displays commands | Previous/Next Space [R8] | Mission Control keys | stages, overview | **Go to Space n**, **Move Window to Space n**, **New Space**, **Mission Control**, **Display Settings**, **Mirror Displays** (when two), **Use as Main Display**: through `Displays.qml` and the stages/overview IPC. | S | — | S5 |
-| B7 | Grassfield settings toggles | Toggle Appearance, Bluetooth [R12] | Control Center | Control Center | **Wi-Fi**, **Bluetooth**, **Airplane Mode**, **Do Not Disturb** (with "for 1 hour", "until tomorrow"), **Night Light**, **Dark Mode**, **Reduce Motion**, **Reduce Transparency**, **Dock Hiding**, **Stage Manager**-class toggle (Grassfield's name), **Menu Bar Hiding**, **Microphone mute**: one row each reading its state ("Turn Wi-Fi Off"), through the Control Center functions. | M | Same functions as Control Center; no new privileges. | S6, S7 |
+| B6 | Spaces and displays commands | Previous/Next Space [R8] | Mission Control keys | stages, overview | **Go to Space n**, **Move Window to Space n**, **New Space**, **Overview**, **Display Settings**, **Mirror Displays** (when two), **Use as Main Display**: through `Displays.qml` and the stages/overview IPC. | S | — | S5 |
+| B7 | Grassfield settings toggles | Toggle Appearance, Bluetooth [R12] | Control Center | Control Center | **Wi-Fi**, **Bluetooth**, **Airplane Mode**, **Do Not Disturb** (with "for 1 hour", "until tomorrow"), **Night Light**, **Dark Mode**, **Reduce Motion**, **Reduce Transparency**, **Dock Hiding**, **Stages**, **Menu Bar Hiding**, **Microphone mute**: one row each reading its state ("Turn Wi-Fi Off"), through the Control Center functions. | M | Same functions as Control Center; no new privileges. | S6, S7 |
 | B8 | System state answers | no | partly (calculator-like inline answers) | none | Inline answers: "battery" (charge, time left, health), "wifi" (network, local IP), "ip" (local addresses only, D-net), "disk" (free space per mount), "memory", "uptime", "version" (Grassfield, Omarchy, kernel), "displays". | S | No public IP (D-net). | S8 |
 | B9 | Colour picker (UNCONFIRMED in [R*]) | UNCONFIRMED | Digital Color Meter (app) | none | **Pick Color**: `hyprpicker` (at use time), copies hex; Actions: copy as rgb(), hsl(), QML; the last 20 colours kept (0600). | S | hyprpicker freezes the screen: refused under the lock. | S9 |
 | B10 | Focus sessions blocking apps and sites [R15] | yes | Focus modes | Do Not Disturb, menu bar Focus | **Do Not Disturb for…** (B7). App and site blocking: not planned (no site control without a proxy; app blocking would fight the user). | — | — | S6 |
@@ -168,7 +170,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 |---|---|---|---|---|---|---|---|
 | F1 | File search, local index [R11] | yes | yes | yes (localsearch, plocate) | Unchanged. | — | — |
 | F2 | Content search [R11] | optional | yes | localsearch content hits score 10 | Unchanged. | — | — |
-| F3 | Actions on files: Open With, Show in Files, Copy Path, Quick Look, Move to Trash, Open in Terminal [R2] | yes | Quick Actions [A1] | Open, reveal | All through Actions (N3); Quick Look opens Glance (`QuickLook.js`); Move to Trash through `gio trash` (path checks as capture-suite A3). | S | P4 |
+| F3 | Actions on files: Open With, Show in Files, Copy Path, preview, Move to Trash, Open in Terminal [R2] | yes | Quick Actions, Quick Look [A1] | Open, reveal | All through Actions (N3); **Glance** (Grassfield's name for the preview, `QuickLook.js`); Move to Trash through `gio trash` (path checks as capture-suite A3). | S | P4 |
 | F4 | .gitignore / .rayignore [R11] | yes | no | hidden segments excluded | Not planned (localsearch's own configuration). | — | — |
 
 ### 2.6 Extensibility
@@ -228,7 +230,7 @@ listed; if it does not, ⌘K is not offered and Tab alone opens Actions.
 - Order: the primary action first (with ↩), the secondary (with ⌃↩), then the kind's actions, a separator, then **Add to
   Favorites**, **Add Quick Key…**, **Keyboard Shortcut…**, **Reset Ranking**. Destructive ones last, in the destructive colour.
 - Per kind (`Actions.js`): app (Open, Show in Files, Quit, Hide, Force Quit, New Window when the entry has the action, Open
-  Desktop Actions), file (Open, Open With ›, Show in Files, Quick Look, Copy Path, Copy, Move to Trash), command (Run), window
+  Desktop Actions), file (Open, Open With ›, Show in Files, Glance, Copy Path, Copy, Move to Trash), command (Run), window
   (Focus, Close, Minimize, Move to Space ›, Move to Display ›), link (Open, Open With ›, Copy URL, Edit, Delete), text
   replacement (Paste, Copy, Edit, Delete), script (Run, Show in Files, Edit Script, Copy Command, Forget Approval), calculator
   (Copy, Paste, Copy Expression), clipboard (unchanged: CB-8 menu), menu item (Choose), model answer (Copy, Paste, Ask
@@ -268,11 +270,11 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | P1 | `Commands.js` registry (pure): entry schema, id rules (`[a-z][a-z0-9.-]{0,63}`), providers, availability, keyword matching reusing `Ranking.textScore`; the five existing commands moved into it unchanged. | — | Unit `tst_searchcommands.qml`: schema validation, duplicate ids refused, en/fr keywords, the 5 commands' rows equal today's (`tests/shell/search_locale` unchanged). |
 | P2 | Search.qml reads the registry (Commands group, Top Hit) and `runCommand` dispatches by id; no visible change. | P1 | `tests/shell/search_chips`, `search_locale` pass unchanged; unit: dispatch table. |
 | P3 | `Actions.js` (pure) per kind + the Actions panel (Tab, ⌘K, filter field over 7, Esc); search.md S6 and F2c amended (groups on Page Down/Up and Ctrl+↓/↑). | P2 | Unit `tst_searchactions.qml`: actions per kind, order, shortcuts, destructive last; key map. L1: Actions over an app row and a file row at 1.25 (screenshot); Super+K reach proved or ⌘K withdrawn. |
-| P4 | File and app actions: Open With ›, Show in Files, Quick Look (Glance), Copy Path, Move to Trash (path checks), Quit, Hide, desktop actions. | P3 | Unit: argv per action, a link or folder refused for Trash; L1: Open With submenu screenshot. |
+| P4 | File and app actions: Open With ›, Show in Files, Glance, Copy Path, Move to Trash (path checks), Quit, Hide, desktop actions. | P3 | Unit: argv per action, a link or folder refused for Trash; L1: Open With submenu screenshot. |
 | P5 | Quick Keys: store, matcher (exact, prefix, rest as argument), Add Quick Key… sheet. | P3, E1 | Unit: match order vectors from [R1]; invalid keys refused; L1 screenshot of the key cap. |
 | P6 | Favorites strip (empty field, reorder by drag and by Actions Move Up/Down) and Reset Ranking; usage file gains `cmd:` keys (version 3, v2 migrated). | P3 | Unit `tst_searchranking.qml`: v2→v3 migration, reset per id, menu ids never recorded; L1 empty-field screenshot with and without favorites. |
 | P7 | Keyboard Shortcut… recorder: chord capture, collision check against the parsed `bindings.lua`/`forwarding.lua` (`Bindings.js`) and Omarchy's, slots `k1`…`k99`. | P3 | Unit: collisions refused, slot allocation, the chord's label. |
-| P8 | Generated binds file and its loader (ADR-0067 D-2) + `Shortcuts.js` `search: {run: ["word"]}` + IPC `run(slot)`; Settings > Keyboard > Keyboard Shortcuts lists them. | P7 | Unit `tst_shortcuts.qml`: `run` accepted with a slot word only; generator vectors with hostile titles produce no Lua outside string literals (fuzz 1 000 cases); `tests/security/ipc_inventory.sh` updated; L1 nested: a bound chord runs Toggle Dark Mode. |
+| P8 | `commands-keys.lua` written by Settings (`k<n> = "<chord>"` only), read as text by a new `config/hypr/grassfield/commands.lua` with `input.lua`'s `read_table` rule (never run), `SessionConfig.qml` watching it, `Shortcuts.js` `search: {run: ["word"]}`, IPC `run(slot)`; Settings > Keyboard > Keyboard Shortcuts lists them (ADR-0067 D-2). | P7 | Unit `tst_shortcuts.qml`: `run` accepted with a slot word only. Lua test (as `tests/shell/session_input.sh`): hostile files (code, long lines, escapes, unknown modifiers, taken chords) bind nothing; a valid pair binds `gfkey/1 search run k1`. `tests/security/ipc_inventory.sh` updated. L1 nested: a bound chord runs Toggle Dark Mode. |
 | P9 | Argument chips model (pure): types, required/optional, dropdown data, percent-encoding. | P1 | Unit: [R16] ARGUMENTS vectors; password values absent from every log and model dump. |
 | P10 | Argument chips UI in the capsule, Tab between them, Return runs. | P9 | L1 screenshot with three chips at 1.25; unit key map. |
 | P11 | Detail view stack (push/pop, Esc/Backspace), plain text pane, Copy. | P3 | Unit: stack transitions; L1 screenshot. |
@@ -290,7 +292,7 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | S4 | Windows provider (B4). | P3 | Unit: rows from a fake toplevel list; titles never in `search-usage.json`; L1. |
 | S5 | Spaces and displays commands (B6). | P2 | Unit with fake displays; L1 with two nested outputs (or NOT VERIFIED). |
 | S6 | Toggles batch 1: Wi-Fi, Bluetooth, Airplane, Do Not Disturb (+ for 1 hour / until tomorrow), Night Light (B7, B10). | P2 | Unit: title follows state ("Turn Wi-Fi Off"); calls the Control Center functions; DND expiry restores. |
-| S7 | Toggles batch 2: Dark Mode, Reduce Motion, Reduce Transparency, Dock Hiding, Menu Bar Hiding, Stage Manager-class toggle, Microphone. | S6 | Unit as S6; `tests/ci/ui_names.py` passes on the new strings. |
+| S7 | Toggles batch 2: Dark Mode, Reduce Motion, Reduce Transparency, Dock Hiding, Menu Bar Hiding, Stages, Microphone. | S6 | Unit as S6; `tests/ci/ui_names.py` passes on the new strings. |
 | S8 | System state answers (B8). | P2 | Unit: answer text from fake services, en/fr; no network call (grep test: no `http` in the provider). |
 | S9 | Pick Color (hyprpicker at use time) and colour history. | P3 | Unit: argv, hex parsing, formats; absent tool hides the row; refused under the lock. |
 | S10 | Timers (B11). | S1 | Unit: parse "10 min", "1h30", "10 minutes thé"; notification at end (fake clock); Cancel. |
@@ -371,10 +373,10 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 |---|---|---|---|---|---|---|---|---|
 | 1 | P1, P2 | — | M1 | T1 | C1, C2 | X1 | A1 | E1 |
 | 2 (commands, actions) | P3 | S1, S3, S6 | — | T2 | C3 | X2 | — | — |
-| 3 (depth) | P4, P5, P11 | S2, S4, S7, S8 | M2 | T3, T4 | C4 | X3 | A2 | E2 |
-| 4 | P6, P7, P9, P12 | S5, S9, S10 | M3 | T5, T9 | C5 | X4, X6 | A3, A4 | E3 |
-| 5 | P8, P10, P13, P14 | S11, S12 | — | T10 | — | X5, X7 | A5, A6 | E4 |
-| 6 | — | S13 (after capture B15) | — | — | — | — | A7 | E5 |
+| 3 (depth) | P4, P5, P11 | S2, S4, S7, S8 | M2 | T3, T4 | C4 | X3 | — | E2 |
+| 4 | P6, P7, P9, P12 | S5, S9, S10 | M3 | T5, T9 | C5 | X4 | A2 | E3 |
+| 5 | P8, P10, P13, P14 | S11, S12 | — | T10 | — | X5, X7 | A4, A6 | E4 |
+| 6 | — | S13 (after capture B15) | — | — | — | X6 | A3, A5, A7 | E5 |
 | last | — | — | — | T6, T7, T8 (after the owner's Q-1) | — | — | — | — |
 
 Rules: within a wave each lane runs its slices in the order listed; a slice depends only on earlier waves of other lanes or
@@ -394,7 +396,7 @@ files except those in the table below.
 | `config/schema/grassfield.schema.json` | E1 (and E2–E4 additions) | capture suite A, B18, C |
 | `shell/search/Search.qml`, `SearchPanel.qml` | lane P; S, M, T, X, A only through provider registration in P2's hook | — |
 | `shell/platform/shortcuts/Shortcuts.js`, `docs/specs/security.md` (IPC surface) | P8 | — |
-| `config/hypr/grassfield/bindings.lua` (loader line) | P8 | capture A4 (Shift-Super-2) |
+| `config/hypr/grassfield/bindings.lua` (one `require` of `commands.lua`), `shell/platform/SessionConfig.qml` | P8 | capture A4 (Shift-Super-2) |
 | `shell/platform/MenuBridge.qml`, `bridges/menu-bridge/` | M1–M3 | — |
 | `compositor/` | T7 | capture D1–D3 |
 | `packaging/arch/PKGBUILD` (the runner script, `ollama` optdepend line) | X3, A1 | capture B1, B21, B22 |
@@ -407,7 +409,7 @@ Following the owner's "review every step" rule: an independent reviewer pass aft
 (PASS required) for:
 - **anything that runs scripts:** X3, X6, X7 (runner, argument passing, approvals);
 - **anything that reads the clipboard or the selection:** T1 (`{clipboard}`), T4, T9, A6, A7;
-- **text expansion and keystroke injection:** T5, T7, T8, and P8 (the generated binds file and the new `search run` request);
+- **text expansion and keystroke injection:** T5, T7, T8, and P8 (the generated key file, its reader and the new `search run` request);
 - **AI prompts with local data:** A1, A2, A6, A7 (loopback-only, what is sent, history);
 - **menu activation for another app:** M2 (activation only for the remembered window).
 T7 also goes through the compositor gates C1–C3. Nested L1 runs follow the memory rule "nested verifiers need their own worktree".
