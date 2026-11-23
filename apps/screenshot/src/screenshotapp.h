@@ -3,6 +3,7 @@
 #include "appearance.h"
 #include "capturehistory.h"
 #include "document.h"
+#include "layermodel.h"
 #include "toolcontroller.h"
 #include "undostack.h"
 
@@ -34,10 +35,8 @@ class ScreenshotApp : public AppearanceSettings
     Q_PROPERTY(QStringList errors READ errors CONSTANT)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
     // The editing state (slices B3, B4): the layers' drawing, the tool and its style, the selection, undo and redo.
-    // image://screenshot/overlay/<revision>: the layers alone on a transparent picture (the same drawing as the export).
-    // The capture's scale for the width of new shapes (0: unknown, the view uses its own display's).
-    Q_PROPERTY(qreal captureScale READ captureScale NOTIFY documentChanged)
-    Q_PROPERTY(QString overlaySource READ overlaySource NOTIFY layersChanged)
+    // The shapes as a model for the scene items of qml/ShapeScene.qml (layermodel.h).
+    Q_PROPERTY(QObject *layerModel READ layerModel CONSTANT)
     Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
     // The style new shapes get: "#rrggbb" colour, stroke in picture pixels, fill, arrow style (straight, curved, double).
     Q_PROPERTY(QString toolColor READ toolColor WRITE setToolColor NOTIFY toolChanged)
@@ -65,7 +64,7 @@ public:
     QStringList errors() const { return m_errors; }
     QString lastError() const { return m_lastError; }
 
-    QString overlaySource() const;
+    QObject *layerModel() { return &m_layerModel; }
     QString tool() const { return m_tools.tool(); }
     void setTool(const QString &tool);
     QString toolColor() const { return m_tools.style().color; }
@@ -82,9 +81,6 @@ public:
     bool canUndo() const { return m_undo.canUndo(); }
     bool canRedo() const { return m_undo.canRedo(); }
 
-    // The layers drawn alone at `target` pixels for a picture of the document's size (the overlay provider's picture).
-    // `region` (picture pixels; empty: the whole picture) at `target` pixels, within the exporter's limits.
-    QImage overlayImage(const QRectF &region, const QSize &target) const;
     // The scale of the display the capture was taken on, "Grassfield-Scale" in the PNG; 0 when the file does not say.
     qreal captureScale() const;
 
@@ -126,11 +122,11 @@ private:
     screenshot::Document m_document;
     screenshot::UndoStack m_undo;
     screenshot::ToolController m_tools;
-    QList<screenshot::Layer> m_overlayLayers; // a copy for the provider's thread
+    LayerModel m_layerModel;
+    bool m_lastDirty = false; // what documentChanged last told about
     mutable QMutex m_imageLock;
     QImage m_image;
     int m_revision = 0;
-    int m_layersRevision = 0;
     QString m_lastError;
 };
 
@@ -140,7 +136,6 @@ class ScreenshotImageProvider : public QQuickImageProvider
 {
 public:
     explicit ScreenshotImageProvider(ScreenshotApp *app);
-    // "<revision>": the original; "overlay/<revision>": the layers alone, at the requested size.
     QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override;
 
 private:

@@ -281,9 +281,8 @@ Reduce Motion: the card fades instead of sliding in.
   - The tool group has Select, Arrow, Line, Rectangle and Ellipse (letters V, A, L, R, O); the arrow has three styles (straight,
     curved, double), rectangle and ellipse an outline or a fill. Style controls and the other tools come with B5 to B9.
   - Shapes are layers in device pixels (the fields are listed in `apps/screenshot/src/annotations.h`); a new shape's stroke is
-    `screenshot.strokeWidth` times the capture's scale (the `Grassfield-Scale` text of the PNG, to be written by the capture helper: it does not yet; a file that
-    does not say uses the scale of the window's screen). The view draws the layers with the exporter itself (an overlay image
-    rendered for the part of the picture on screen, at the view's own device pixels, never the zoomed picture's), so that what is seen is what Done writes.
+    `screenshot.strokeWidth` times the capture's scale (the `Grassfield-Scale` text of the PNG, written by the capture helper; a file that
+    does not say uses the scale of the window's screen). The view draws each layer as a Qt Quick scene item (`ShapeScene.qml`, QtQuick.Shapes with the curve renderer) inside the picture's own content, scaled by the zoom and clipped to the picture, so zooming and scrolling move the scene graph only and a drag changes one item's path; the geometry (heads, shaft ends, edges) is the exporter's own (`shapeGeometry`), so that what is seen is what Done writes.
   - Select picks the topmost shape, moves it by dragging, resizes it by a handle (eight on a box, the ends and the control point
     on a line or curve); Shift keeps 45-degree angles and squares while drawing. The arrow keys move the selection by 1 px (10 with
     Shift) and Delete removes it.

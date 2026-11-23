@@ -5,7 +5,6 @@
 #include <QPointF>
 #include <QRegularExpression>
 
-#include "exporter.h"
 
 using screenshot::CaptureHistory;
 
@@ -60,31 +59,13 @@ void ScreenshotApp::layersEdited()
 {
     m_tools.syncSelection();
     m_document.setLayers(m_undo.layers());
-    {
-        const QMutexLocker lock(&m_imageLock);
-        m_overlayLayers = m_undo.layers();
-    }
-    ++m_layersRevision;
+    m_layerModel.setLayers(m_undo.layers());
     emit layersChanged();
-    emit documentChanged(); // dirty
-}
-
-QString ScreenshotApp::overlaySource() const
-{
-    return m_document.isOpen() ? QStringLiteral("image://screenshot/overlay/%1").arg(m_layersRevision) : QString();
-}
-
-QImage ScreenshotApp::overlayImage(const QRectF &region, const QSize &target) const
-{
-    QList<screenshot::Layer> layers;
-    QSize natural;
-    {
-        const QMutexLocker lock(&m_imageLock);
-        layers = m_overlayLayers;
-        natural = m_image.size();
+    // A move changes geometry only: documentChanged (dirty, and everything that hangs on the document) only when the state does.
+    if (m_document.dirty() != m_lastDirty) {
+        m_lastDirty = m_document.dirty();
+        emit documentChanged();
     }
-    const QRectF area = region.isEmpty() ? QRectF(QPointF(0, 0), QSizeF(natural)) : region;
-    return screenshot::renderOverlayRegion(layers, area, target.isEmpty() ? natural : target);
 }
 
 qreal ScreenshotApp::captureScale() const
@@ -223,6 +204,7 @@ bool ScreenshotApp::done()
     QString why;
     const bool ok = m_document.done(&why);
     setLastError(ok ? QString() : why);
+    m_lastDirty = m_document.dirty();
     emit documentChanged();
     return ok;
 }
@@ -232,6 +214,7 @@ bool ScreenshotApp::revert()
     QString why;
     const bool ok = m_document.revert(&why);
     setLastError(ok ? QString() : why);
+    m_lastDirty = m_document.dirty();
     if (ok)
         publish();
     else
@@ -245,28 +228,8 @@ ScreenshotImageProvider::ScreenshotImageProvider(ScreenshotApp *app)
 {
 }
 
-QImage ScreenshotImageProvider::requestImage(const QString &id, QSize *size, const QSize &requestedSize)
+QImage ScreenshotImageProvider::requestImage(const QString &, QSize *size, const QSize &)
 {
-    if (id.startsWith(QLatin1String("overlay/"))) {
-        // overlay/<revision>/<x>/<y>/<w>/<h>/<target w>/<target h>: the part of the picture the view shows (picture pixels) and
-        // the pixels it covers; without the numbers, the whole picture at the requested size.
-        const QStringList parts = id.split(QLatin1Char('/'));
-        QRectF region;
-        QSize target = requestedSize;
-        if (parts.size() == 8) {
-            bool ok[6];
-            const QRectF r(parts[2].toDouble(&ok[0]), parts[3].toDouble(&ok[1]), parts[4].toDouble(&ok[2]), parts[5].toDouble(&ok[3]));
-            const QSize t(parts[6].toInt(&ok[4]), parts[7].toInt(&ok[5]));
-            if (ok[0] && ok[1] && ok[2] && ok[3] && ok[4] && ok[5]) {
-                region = r;
-                target = t;
-            }
-        }
-        const QImage overlay = m_app->overlayImage(region, target);
-        if (size)
-            *size = overlay.size();
-        return overlay;
-    }
     const QImage image = m_app->currentImage();
     if (size)
         *size = image.size();

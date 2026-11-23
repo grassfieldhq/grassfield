@@ -21,6 +21,7 @@ add_library(grassfield-screenshot-core STATIC
     src/capturehistory.cpp src/capturehistory.h
     src/document.cpp src/document.h
     src/exporter.cpp src/exporter.h
+    src/layermodel.cpp src/layermodel.h
     src/layers.cpp src/layers.h
     src/screenshotapp.cpp src/screenshotapp.h
     src/screenshotlogic.cpp src/screenshotlogic.h
@@ -55,13 +56,15 @@ if(GTest_FOUND)
         ../../tests/unit/screenshot/tst_layers.cpp
         ../../tests/unit/screenshot/tst_main.cpp
         ../../tests/unit/screenshot/tst_pathparity.cpp
+        ../../tests/unit/screenshot/tst_scene.cpp
         ../../tests/unit/screenshot/tst_screenshotlogic.cpp
         ../../tests/unit/screenshot/tst_tools.cpp
         ../../tests/unit/screenshot/tst_undo.cpp
         # Preview's own path rules, run beside this app's by tst_pathparity (sources not changed).
         ../preview/src/previewlogic.cpp ../files/src/filelogic.cpp)
     target_include_directories(screenshot-unit-tests PRIVATE ../preview/src ../files/src)
-    target_compile_definitions(screenshot-unit-tests PRIVATE GF_SCREENSHOT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/unit/screenshot/golden")
+    target_compile_definitions(screenshot-unit-tests PRIVATE GF_SCREENSHOT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/unit/screenshot/golden"
+        GF_SCREENSHOT_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml")
     target_link_libraries(screenshot-unit-tests PRIVATE grassfield-screenshot-core GTest::gtest)
     add_test(NAME screenshot-unit-tests COMMAND screenshot-unit-tests)
 endif()

@@ -13,10 +13,6 @@ namespace screenshot {
 
 namespace {
 
-constexpr qreal kHeadHalfAngle = 0.5236; // 30 degrees
-constexpr qreal kHeadPerWidth = 4;       // the head's length, in strokes
-constexpr qreal kHeadMinimum = 6;        // and at least this many pixels
-
 QPen strokePen(const QColor &color, qreal width, Qt::PenJoinStyle join)
 {
     QPen pen(color, width);
@@ -25,84 +21,44 @@ QPen strokePen(const QColor &color, qreal width, Qt::PenJoinStyle join)
     return pen;
 }
 
-// The head at `tip`, pointing along `direction` (unit); its base centre is returned in `base`.
-QPolygonF head(const QPointF &tip, const QPointF &direction, qreal length, QPointF *base)
+void paintShape(QPainter *p, const ShapeGeometry &g)
 {
-    const QPointF back = tip - direction * length;
-    const QPointF side(-direction.y(), direction.x());
-    const qreal half = length * std::tan(kHeadHalfAngle);
-    *base = tip - direction * (length * 0.8); // the shaft stops inside the head, so that the tip stays sharp
-    return QPolygonF{tip, back + side * half, back - side * half};
-}
-
-QPointF unit(const QPointF &v, const QPointF &fallback)
-{
-    const qreal length = std::hypot(v.x(), v.y());
-    return length > 1e-9 ? v / length : fallback;
-}
-
-void paintBox(QPainter *p, const Layer &layer, const QColor &color, qreal width)
-{
-    QRectF box;
-    if (!readBox(layer, &box))
+    switch (g.kind) {
+    case ShapeGeometry::None:
         return;
-    p->setPen(strokePen(color, width, Qt::MiterJoin));
-    p->setBrush(layerFill(layer) ? QBrush(color) : QBrush(Qt::NoBrush));
-    if (layer.type == QLatin1String("ellipse"))
-        p->drawEllipse(box);
-    else
-        p->drawRect(box);
-}
-
-void paintLine(QPainter *p, const Layer &layer, const QColor &color, qreal width)
-{
-    QPointF a, b;
-    if (!readPoint(layer.fields, "from", &a) || !readPoint(layer.fields, "to", &b))
+    case ShapeGeometry::Rect:
+    case ShapeGeometry::Ellipse:
+        p->setPen(strokePen(g.color, g.width, Qt::MiterJoin));
+        p->setBrush(g.fill ? QBrush(g.color) : QBrush(Qt::NoBrush));
+        if (g.kind == ShapeGeometry::Ellipse)
+            p->drawEllipse(g.box);
+        else
+            p->drawRect(g.box);
         return;
-    p->setPen(strokePen(color, width, Qt::RoundJoin));
-    p->setBrush(Qt::NoBrush);
-    p->drawLine(a, b);
-}
-
-void paintArrow(QPainter *p, const Layer &layer, const QColor &color, qreal width)
-{
-    QPointF a, b, ctrl;
-    if (!readPoint(layer.fields, "from", &a) || !readPoint(layer.fields, "to", &b))
+    case ShapeGeometry::Line:
+        p->setPen(strokePen(g.color, g.width, Qt::RoundJoin));
+        p->setBrush(Qt::NoBrush);
+        p->drawLine(g.shaftStart, g.shaftEnd);
         return;
-    const QString style = arrowStyle(layer);
-    const bool curved = style == QLatin1String("curved") && readPoint(layer.fields, "ctrl", &ctrl);
-    const bool both = style == QLatin1String("double");
-    if (!curved)
-        ctrl = (a + b) / 2;
-    const qreal chord = QLineF(a, b).length();
-    if (chord <= 0)
+    case ShapeGeometry::Arrow:
+    case ShapeGeometry::ArrowCurved: {
+        QPainterPath shaft(g.shaftStart);
+        if (g.kind == ShapeGeometry::ArrowCurved)
+            shaft.quadTo(g.ctrl, g.shaftEnd);
+        else
+            shaft.lineTo(g.shaftEnd);
+        p->setBrush(Qt::NoBrush);
+        p->setPen(strokePen(g.color, g.width, Qt::RoundJoin));
+        p->drawPath(shaft);
+        // The heads: filled, with a thin round-joined edge so that the corners are not sharper than the shaft's ends.
+        p->setBrush(g.color);
+        p->setPen(strokePen(g.color, g.headStroke, Qt::RoundJoin));
+        p->drawPolygon(g.endHead);
+        if (!g.startHead.isEmpty())
+            p->drawPolygon(g.startHead);
         return;
-    // A head is at most half the arrow (a short arrow is all head); the curve leaves and arrives along its control point.
-    const qreal length = std::min(std::max(kHeadPerWidth * width, kHeadMinimum), chord * (both ? 0.4 : 0.5));
-    const QPointF endDir = unit(b - ctrl, unit(b - a, QPointF(1, 0)));
-    const QPointF startDir = unit(a - ctrl, unit(a - b, QPointF(-1, 0)));
-
-    QPointF shaftEnd = b, shaftStart = a;
-    QPolygonF endHead, startHead;
-    endHead = head(b, endDir, length, &shaftEnd);
-    if (both)
-        startHead = head(a, startDir, length, &shaftStart);
-
-    QPainterPath shaft(shaftStart);
-    if (curved)
-        shaft.quadTo(ctrl, shaftEnd);
-    else
-        shaft.lineTo(shaftEnd);
-    p->setBrush(Qt::NoBrush);
-    p->setPen(strokePen(color, width, Qt::RoundJoin));
-    p->drawPath(shaft);
-
-    // The heads: filled, with a thin round-joined edge so that the corners are not sharper than the shaft's ends.
-    p->setBrush(color);
-    p->setPen(strokePen(color, std::max<qreal>(1, width * 0.5), Qt::RoundJoin));
-    p->drawPolygon(endHead);
-    if (both)
-        p->drawPolygon(startHead);
+    }
+    }
 }
 
 } // namespace
@@ -111,18 +67,8 @@ void paintLayers(QPainter *painter, const Layers &layers)
 {
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);
-    for (const Layer &layer : layers) {
-        const QColor color = layerColor(layer);
-        const qreal width = layerWidth(layer);
-        if (!isShapeType(layer.type) || !color.isValid() || width <= 0)
-            continue;
-        if (layer.type == QLatin1String("rectangle") || layer.type == QLatin1String("ellipse"))
-            paintBox(painter, layer, color, width);
-        else if (layer.type == QLatin1String("line"))
-            paintLine(painter, layer, color, width);
-        else
-            paintArrow(painter, layer, color, width);
-    }
+    for (const Layer &layer : layers)
+        paintShape(painter, shapeGeometry(layer));
     painter->restore();
 }
 
@@ -143,39 +89,6 @@ QImage exportLayers(const QImage &original, const Layers &layers)
     for (const QString &key : original.textKeys())
         out.setText(key, original.text(key)); // the capture's own metadata (its scale) stays in the file
     return out;
-}
-
-QSize clampedOverlaySize(const QSize &target)
-{
-    if (target.isEmpty())
-        return target;
-    double f = 1;
-    f = std::min(f, double(kMaxOverlaySide) / std::max(target.width(), target.height()));
-    f = std::min(f, std::sqrt(double(kMaxOverlayPixels) / (double(target.width()) * target.height())));
-    if (f >= 1)
-        return target;
-    return QSize(std::max(1, int(target.width() * f)), std::max(1, int(target.height() * f)));
-}
-
-QImage renderOverlayRegion(const Layers &layers, const QRectF &region, const QSize &requested)
-{
-    const QSize target = clampedOverlaySize(requested);
-    if (region.isEmpty() || target.isEmpty() || !std::isfinite(region.width()) || !std::isfinite(region.height()))
-        return {};
-    QImage overlay(target, QImage::Format_ARGB32_Premultiplied);
-    overlay.fill(Qt::transparent);
-    {
-        QPainter painter(&overlay);
-        painter.scale(qreal(target.width()) / region.width(), qreal(target.height()) / region.height());
-        painter.translate(-region.topLeft());
-        paintLayers(&painter, layers);
-    }
-    return overlay;
-}
-
-QImage renderOverlay(const Layers &layers, const QSize &natural, const QSize &target)
-{
-    return renderOverlayRegion(layers, QRectF(QPointF(0, 0), QSizeF(natural)), target);
 }
 
 } // namespace screenshot
