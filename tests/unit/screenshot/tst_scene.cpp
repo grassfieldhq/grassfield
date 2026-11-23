@@ -79,6 +79,11 @@ struct Rig {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     }
 
+    // The scene is a QML-made object: deleted before its engine goes (else the engine's contexts are reported as leaks).
+    ~Rig() { delete scene; }
+    Rig(const Rig &) = delete;
+    Rig &operator=(const Rig &) = delete;
+
     void setZoom(qreal z)
     {
         zoom = z;
