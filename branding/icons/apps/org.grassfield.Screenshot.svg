@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Grassfield Screenshot: a captured picture on a light tile (a sky, two hills) with the editor's rectangle tool drawn over it in
+       the brand green, its four corner handles and a small arrow (the grammar of the own app icons of ADR-0040; ADR-0066 D-3).
+       Hand-written shapes, no tracing, nothing derived from any installed theme or from another system's screenshot icon.
+       Placeholder drawing: legal review pending (owner). CC-BY-SA-4.0, see branding/LICENSES.md. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F6F8F6"/>
+      <stop offset="1" stop-color="#DCE4DE"/>
+    </linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#BFE0F5"/>
+      <stop offset="1" stop-color="#E4F2FA"/>
+    </linearGradient>
+    <clipPath id="photo">
+      <rect x="26" y="30" width="76" height="62" rx="4"/>
+    </clipPath>
+  </defs>
+  <rect x="12" y="12" width="104" height="104" rx="23.4" fill="url(#tile)"/>
+  <rect x="12.5" y="12.5" width="103" height="103" rx="22.9" fill="none" stroke="#FFFFFF" stroke-opacity=".35"/>
+  <rect x="26" y="33" width="76" height="62" rx="4" fill="#2B2E35" fill-opacity=".12"/>
+  <rect x="26" y="30" width="76" height="62" rx="4" fill="url(#sky)"/>
+  <g clip-path="url(#photo)">
+    <circle cx="86" cy="45" r="7" fill="#FCEFA1"/>
+    <path d="M26 92V76C38 64 50 66 60 74C70 80 84 70 102 78V92Z" fill="#7DBE8C"/>
+    <path d="M26 92V84C42 76 58 82 72 86C82 88 94 84 102 86V92Z" fill="#4FB36B"/>
+  </g>
+  <rect x="26.5" y="30.5" width="75" height="61" rx="3.5" fill="none" stroke="#26231E" stroke-opacity=".18"/>
+  <rect x="38" y="42" width="40" height="30" rx="2" fill="none" stroke="#2F9E55" stroke-width="3"/>
+  <rect x="35" y="39" width="6" height="6" rx="1.5" fill="#FFFFFF" stroke="#2F9E55" stroke-width="1.5"/>
+  <rect x="75" y="39" width="6" height="6" rx="1.5" fill="#FFFFFF" stroke="#2F9E55" stroke-width="1.5"/>
+  <rect x="35" y="69" width="6" height="6" rx="1.5" fill="#FFFFFF" stroke="#2F9E55" stroke-width="1.5"/>
+  <rect x="75" y="69" width="6" height="6" rx="1.5" fill="#FFFFFF" stroke="#2F9E55" stroke-width="1.5"/>
+  <path d="M96 100L84 80M84 80L84 88M84 80L91 83" stroke="#E5484D" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

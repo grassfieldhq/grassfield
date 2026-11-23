@@ -198,6 +198,10 @@ build() {
   cmake -S "$(_root)/apps/preview" -B "$srcdir/preview-build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
   cmake --build "$srcdir/preview-build"
+  # Grassfield Screenshot (ADR-0066 D-3): the editor of the capture suite, a new binary and desktop entry in grassfield-desktop.
+  cmake -S "$(_root)/apps/screenshot" -B "$srcdir/screenshot-build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build "$srcdir/screenshot-build"
   # Activity Monitor (ADR-0038): the app, its QML, its desktop entry and its icon; packaged in grassfield-desktop (AD2).
   cmake -S "$(_root)/apps/activity" -B "$srcdir/activity-build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
@@ -475,6 +479,8 @@ package_grassfield-desktop() {
   DESTDIR="$pkgdir" cmake --install "$srcdir/files-build"
   # Grassfield Preview and Glance (M4; QtPdf comes from qt6-webengine).
   DESTDIR="$pkgdir" cmake --install "$srcdir/preview-build"
+  # Grassfield Screenshot (ADR-0066 D-3): grassfield-screenshot, its QML, its desktop entry and its icon.
+  DESTDIR="$pkgdir" cmake --install "$srcdir/screenshot-build"
   # Activity Monitor (ADR-0038; no root part, no polkit action).
   DESTDIR="$pkgdir" cmake --install "$srcdir/activity-build"
   # Grassfield Memos (ADR-0051; no root part, no service).

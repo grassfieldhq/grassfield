@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Screenshot
+Name[fr]=Capture d’écran
+Comment=Edit and annotate a screenshot
+Comment[fr]=Modifier et annoter une capture d’écran
+Exec=grassfield-screenshot %f
+Icon=org.grassfield.Screenshot
+Terminal=false
+Categories=Graphics;
+StartupWMClass=org.grassfield.Screenshot
