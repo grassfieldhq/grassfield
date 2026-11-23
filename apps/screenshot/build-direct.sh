@@ -62,9 +62,10 @@ case ${1:-} in
     for t in "$root"/tests/unit/screenshot/tst_*.cpp; do
       tests+=("$t")
     done
+    # tst_pathparity.cpp runs Preview's own path rules next to this app's: their sources are compiled in (not changed).
     # shellcheck disable=SC2046
-    g++ "${cxxflags[@]}" -I"$here/src" -I"$here/.." $(pkg-config --cflags Qt6Core Qt6Gui Qt6Qml Qt6Quick) \
-      "${objects[@]}" "${tests[@]}" \
+    g++ "${cxxflags[@]}" -I"$here/src" -I"$here/.." -I"$here/../preview/src" -I"$here/../files/src" $(pkg-config --cflags Qt6Core Qt6Gui Qt6Qml Qt6Quick) \
+      "${objects[@]}" "${tests[@]}" "$here/../preview/src/previewlogic.cpp" "$here/../files/src/filelogic.cpp" \
       $(pkg-config --libs Qt6Core Qt6Gui Qt6Qml Qt6Quick Qt6DBus) -lgtest -pthread -o "$out/screenshot-unit-tests$suffix"
     echo "built $out/screenshot-unit-tests$suffix"
     ;;

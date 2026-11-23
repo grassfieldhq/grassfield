@@ -146,3 +146,44 @@ TEST(ScreenshotArguments, PngHeader)
     f.seek(0);
     EXPECT_EQ(pngSize(f.read(23)), QSize()) << "a header cut short";
 }
+
+// ---- no file: open the capture toolbar through the shell's IPC (the Apps entry) ----
+
+TEST(ScreenshotOpenToolbar, ArgvIsTheShellIpcPlusCaptureToggle)
+{
+    const QStringList ipc{"ipc", "-p", "/usr/share/grassfield/shell", "call"};
+    EXPECT_EQ(openToolbarArguments(ipc), (QStringList{"ipc", "-p", "/usr/share/grassfield/shell", "call", "capture", "toggle"}));
+    EXPECT_TRUE(openToolbarArguments({}).isEmpty());
+}
+
+TEST(ScreenshotOpenToolbar, RunsTheCallAndSucceeds)
+{
+    QStringList seen;
+    int calls = 0;
+    QString why;
+    const int code = openToolbar({"ipc", "-p", "/shell", "call"}, [&](const QStringList &a) {
+        seen = a;
+        ++calls;
+        return true;
+    }, &why);
+    EXPECT_EQ(code, 0);
+    EXPECT_EQ(calls, 1);
+    EXPECT_EQ(seen.mid(seen.size() - 2), (QStringList{"capture", "toggle"}));
+    EXPECT_TRUE(why.isEmpty());
+}
+
+TEST(ScreenshotOpenToolbar, NoShellExitsTwoWithoutRunningAnything)
+{
+    int calls = 0;
+    QString why;
+    EXPECT_EQ(openToolbar({}, [&](const QStringList &) { ++calls; return true; }, &why), 2);
+    EXPECT_EQ(calls, 0);
+    EXPECT_FALSE(why.isEmpty());
+}
+
+TEST(ScreenshotOpenToolbar, AFailedCallExitsTwo)
+{
+    QString why;
+    EXPECT_EQ(openToolbar({"ipc", "call"}, [](const QStringList &) { return false; }, &why), 2);
+    EXPECT_FALSE(why.isEmpty());
+}

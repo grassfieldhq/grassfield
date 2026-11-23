@@ -231,7 +231,11 @@ Why a new app:
 - **Annotate.** Done replaces the file atomically (hidden file, then rename) and keeps the original in the history for
   Revert. "Save as Copy" writes `<name> (edited).png` beside it.
 - **History:** `$XDG_STATE_HOME/grassfield/capture-history/` (0700, files 0600):
-  - `index.json` (id, kind, path, time, pixel size; **no recognised text**), plus per entry `original.png` and `layers.json`;
+  - `index.json` (`{"v": 1, "entries": [...]}`; each entry `id`, `kind`, `path`, `time`, `w`, `h`, `orig`, `cur`; **no recognised text**), plus per entry `original.png` and `layers.json`.
+    As built in slice B2: `orig` and `cur` are the SHA-256 of the picture file as captured and as Done last wrote it (`cur` is
+    empty before the first Done and after a Revert). An entry names a file only while the file's bytes are one of the two, so
+    a later capture that reuses the path never gets another picture's original back, and Revert is offered only for a file the
+    editor itself wrote. One entry exists per path; a new one for the same path replaces the older and removes its folder;
   - retention 1 day, 1 week (default) or 1 month, pruned at each capture and at app start; Clear History removes everything;
   - an entry whose file is gone is dropped; clipboard-only captures are never kept.
 - **Temporary frames** (freeze, scroll), the result, the acknowledgement and the choice: `$XDG_RUNTIME_DIR/grassfield/`

@@ -48,7 +48,11 @@ if(GTest_FOUND)
         ../../tests/unit/screenshot/tst_document.cpp
         ../../tests/unit/screenshot/tst_layers.cpp
         ../../tests/unit/screenshot/tst_main.cpp
-        ../../tests/unit/screenshot/tst_screenshotlogic.cpp)
+        ../../tests/unit/screenshot/tst_pathparity.cpp
+        ../../tests/unit/screenshot/tst_screenshotlogic.cpp
+        # Preview's own path rules, run beside this app's by tst_pathparity (sources not changed).
+        ../preview/src/previewlogic.cpp ../files/src/filelogic.cpp)
+    target_include_directories(screenshot-unit-tests PRIVATE ../preview/src ../files/src)
     target_link_libraries(screenshot-unit-tests PRIVATE grassfield-screenshot-core GTest::gtest)
     add_test(NAME screenshot-unit-tests COMMAND screenshot-unit-tests)
 endif()

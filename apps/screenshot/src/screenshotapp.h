@@ -15,7 +15,7 @@
 class ScreenshotApp : public AppearanceSettings
 {
     Q_OBJECT
-    // The picture file, "" when none opened (an argument error: the window then says so and offers to close).
+    // The picture file, "" when none opened. main.cpp then prints the errors on stderr and exits 2 before any window exists.
     Q_PROPERTY(QString path READ path NOTIFY documentChanged)
     Q_PROPERTY(QString fileName READ fileName NOTIFY documentChanged)
     // The picture's size in device pixels, 0 x 0 without a document.

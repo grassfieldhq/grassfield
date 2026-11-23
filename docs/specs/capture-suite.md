@@ -338,7 +338,7 @@ gitleaks.
 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
-| B1 | Skeleton: CMake target, `.desktop`, open a PNG, window with unified toolbar, zoom and fit. | — | gtest: argument validation (local paths only, as Preview's); CMake build at -j4; the package lists the binary and the `.desktop` file. |
+| B1 | Skeleton: CMake target, `.desktop`, open a PNG, window with unified toolbar, zoom and fit. | — | gtest: argument validation (local paths only, as Preview's, held by a parity test); with no file the app asks the shell to toggle the capture toolbar (`qs ipc ... call capture toggle`, as the Apps entry needs; exit 2 without a shell); CMake build at -j4; the package lists the binary and the `.desktop` file. |
 | B2 | Document model and `layers.json` v1; Done (atomic) and Revert; history entry written. | B1 | gtest: schema round trip; atomic save leaves no partial file after a forced failure; Revert restores the original. |
 | B3 | QPainter exporter and golden harness; select, move, resize; undo stack. | B2 | gtest: undo and redo; golden export at scale 1 and 1.25. |
 | B4 | Arrow (straight, curved, double), line, rectangle, ellipse. | B3 | gtest: golden per tool. |
@@ -351,7 +351,7 @@ gitleaks.
 | B11 | Pins 1: `--pin`, window rule, wheel resize, Ctrl+wheel opacity, arrows, close. | B1 | Config test: the rule matches `org.grassfield.Screenshot.Pin`; gtest: size and opacity clamps; L1: a pin above a window. |
 | B12 | Pins 2: Lock (click-through) and the IPC that A13 calls to release it. | B11 | L1 nested: a click reaches the window below a locked pin; release restores input. |
 | B13 | Shared recognition: move `recognitionCommand` and TSV parsing to `apps/recognition.*`; Copy Text in the editor. | B3 | Preview's existing recognition tests unchanged and passing; gtest for Copy Text on a fixture. |
-| B14 | History store: index (no recognised text), originals, retention pruning, Clear History. | B2 | gtest: pruning by retention, 0700 and 0600 modes, missing files dropped, clipboard-only captures absent, Clear History removes everything. |
+| B14 | History store: index (no recognised text), originals, retention pruning, Clear History. | B2 | gtest: pruning by retention (it also removes `<id>/` folders that the index does not list: B2's `add` rewrites an unreadable index with only the new entry, which orphans the folders of the older ones), 0700 and 0600 modes, missing files dropped, clipboard-only captures absent, Clear History removes everything. |
 | B15 | Recent Captures window: grid by day, kind filter. | B14 | gtest: model grouping and filter; L1 screenshot. |
 | B16 | Recent Captures actions: reopen with layers, delete, Show in Files. | B15 | gtest: reopen restores layers; delete removes the entry and its original. |
 | B17 | Settings window part 1: format (PNG, JPEG, WebP), Save at Standard Resolution. | B2 | gtest: settings read with the JsonSafety rules; export in each format; standard-resolution size at 1.25. |

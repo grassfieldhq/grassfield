@@ -124,4 +124,27 @@ Arguments resolveArguments(const QStringList &args, const QString &cwd)
     return out;
 }
 
+QStringList openToolbarArguments(const QStringList &shellIpc)
+{
+    if (shellIpc.isEmpty())
+        return {};
+    return shellIpc + QStringList{QStringLiteral("capture"), QStringLiteral("toggle")};
+}
+
+int openToolbar(const QStringList &shellIpc, const std::function<bool(const QStringList &)> &run, QString *error)
+{
+    const QStringList args = openToolbarArguments(shellIpc);
+    if (args.isEmpty()) {
+        if (error)
+            *error = QStringLiteral("no file to edit, and no running shell to open the capture toolbar");
+        return 2;
+    }
+    if (!run(args)) {
+        if (error)
+            *error = QStringLiteral("no file to edit, and the shell did not open the capture toolbar");
+        return 2;
+    }
+    return 0;
+}
+
 } // namespace screenshot

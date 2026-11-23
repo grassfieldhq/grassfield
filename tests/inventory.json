@@ -858,6 +858,7 @@
  {"path": "tests/unit/screenshot/tst_document.cpp", "layer": "logic"},
  {"path": "tests/unit/screenshot/tst_layers.cpp", "layer": "logic"},
  {"path": "tests/unit/screenshot/tst_main.cpp", "layer": "logic"},
+ {"path": "tests/unit/screenshot/tst_pathparity.cpp", "layer": "logic"},
  {"path": "tests/unit/screenshot/tst_screenshotlogic.cpp", "layer": "logic"},
  {"path": "tests/unit/tst_capturesettings.qml", "layer": "headless"},
  {"path": "tests/unit/tst_screenshotview.qml", "layer": "headless"},
