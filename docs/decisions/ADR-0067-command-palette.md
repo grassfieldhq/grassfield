@@ -318,6 +318,9 @@ site in its URL. The rule is decided on the **resolved value**, not on the templ
   directly or through a `{snippet}` whose text contains `{clipboard}` (resolved recursively, at most 3 levels), marks the link
   as **carrying data**. Nesting deeper than 3 levels is **refused** with a message, never treated as data-free. Values the person typed in this run (`{argument}`) and generated values (`{date}`, `{time}`,
   `{datetime}`, `{day}`, `{uuid}`) do not.
+- In a link every substituted piece, and the whole text of a `{snippet}`, is percent-encoded; [R6]'s `| raw` modifier (which
+  lifts that encoding in Raycast) is accepted but changes nothing in a link, so a copied `&evil=1#frag` can never add a parameter
+  or a fragment (integrator decision, tested by `tst_placeholders`).
 - A link carrying data never opens directly, **from any origin** (a row, a quick key, a keyboard shortcut, `qs ipc call
   search run`): Search opens on the detail pane, which shows "This link will open:" and the **full URL, percent-encoded, never
   elided** (wrapped over as many lines as it needs).

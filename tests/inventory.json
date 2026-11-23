@@ -224,6 +224,7 @@
  {"path": "tests/unit/tst_searchranking.qml", "layer": "headless"},
  {"path": "tests/unit/tst_savermodel.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchsettings.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_placeholders.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchunits.qml", "layer": "headless"},
  {"path": "tests/unit/tst_sessionexit.qml", "layer": "headless"},
  {"path": "tests/unit/tst_entrance.qml", "layer": "headless"},

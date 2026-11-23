@@ -220,12 +220,60 @@ function format(value, locale) {
     return Numbers.localize(Numbers.trimmed(rounded, Math.min(20, digits)), locale);
 }
 
+// Percentage phrasings (palette slice C1), read before the plain grammar: "15% of 85" -> 12.75, "200 + 10%" -> 220 (the
+// percentage of the left side added), "200 - 10%" -> 180, "20% off 50" -> 40. In French also "15 % de 85", "20 % de remise sur 50"
+// (réduction, rabais), "15 pour cent de 85". The base (y) is any expression the grammar accepts; the percentage (x) is a
+// plain number. Returns the value or null when the text is none of these phrasings or its base does not evaluate.
+const NUM = "(\\d+\\.?\\d*|\\.\\d+)";
+const PCT = "\\s*(?:%|percent|pour\\s*cent|pourcent)";
+
+// The base of a phrasing is itself a phrasing when it can be ("200 + 10% + 10%": 200 + 10% is 220, then + 10% is 242, the
+// percentage of the running value), else any expression of the grammar.
+function evaluateBase(text) {
+    const phrased = percentPhrase(text, null);
+    if (phrased !== null && isFinite(phrased))
+        return phrased;
+    const r = evaluate(text);
+    return r.ok ? r.value : null;
+}
+
+function percentPhrase(input, locale) {
+    if (typeof input !== "string" || input.length === 0 || input.length > MAX_LENGTH)
+        return null;
+    const text = input.toLowerCase().trim();
+    const fr = Numbers.languageOf(locale) === "fr";
+    let m = new RegExp("^" + NUM + PCT + "\\s+(?:(?:of" + (fr ? "|de|du|des" : "") + ")\\s+" + (fr ? "|d'\\s*" : "") + ")(.+)$").exec(text);
+    if (m) {
+        const y = evaluateBase(m[2]);
+        if (y !== null)
+            return Number(m[1]) / 100 * y;
+    }
+    const off = "off" + (fr ? "|de\\s+(?:remise|r[ée]duction|rabais)\\s+sur|(?:remise|r[ée]duction|rabais)\\s+de" : "");
+    m = new RegExp("^" + NUM + PCT + "\\s+(?:" + off + ")\\s+(.+)$").exec(text);
+    if (m) {
+        const y = evaluateBase(m[2]);
+        return y === null ? null : y * (1 - Number(m[1]) / 100);
+    }
+    m = new RegExp("^(.+?)\\s*([+-])\\s*" + NUM + PCT + "$").exec(text);
+    if (m) {
+        const y = evaluateBase(m[1]);
+        if (y === null)
+            return null;
+        const x = Number(m[3]) / 100;
+        return m[2] === "+" ? y * (1 + x) : y * (1 - x);
+    }
+    return null;
+}
+
 // Provider entry point: {text, value} or null. `locale` (optional, Qt.locale()): numbers are read and written the way the
 // language does ("1,5 * 2" in French, "19 560").
 function answer(input, locale) {
     if (typeof input !== "string")
         return null;
     const text = Numbers.normalizeInput(input, locale);
+    const phrased = percentPhrase(text, locale);
+    if (phrased !== null && isFinite(phrased))
+        return {value: phrased, text: format(phrased, locale)};
     if (!isExpression(text))
         return null;
     const r = evaluate(text);
