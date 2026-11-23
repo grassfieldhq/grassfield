@@ -1573,6 +1573,7 @@ Window {
     ScreenCornersSheet {
         id: screenCornersSheet
         store: cfg
+        backend: root.backend
     }
 
     // Every sheet of the window. Each gives the keyboard focus back, when it closes, to what had it as the sheet appeared (the

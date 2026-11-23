@@ -2,6 +2,7 @@
 .pragma library
 .import "WallpaperConfig.js" as WallpaperConfig
 .import "DisplayRole.js" as DisplayRole
+.import "DisplayScope.js" as DisplayScope
 .import "NotificationPrefs.js" as NotificationPrefs
 
 // The contract version of grassfield.json.
@@ -26,6 +27,8 @@ const DEFAULTS = {
     "dock.showRecents": true,
     "dock.folders": ["~/Downloads"],
     "dock.minimizeIntoApp": false,
+    "dock.outputs": [],
+    "dock.allDisplays": true,
     "dock.clickMinimizes": true,
     "dock.animateOpening": true,
     "dock.showIndicators": true,
@@ -59,6 +62,7 @@ const DEFAULTS = {
     "hotCorners.topRight": "none",
     "hotCorners.bottomLeft": "none",
     "hotCorners.bottomRight": "none",
+    "hotCorners.outputs": [],
     "desktop.showIcons": true,
     "displays.main": [],
     "menubar.showBackground": false,
@@ -79,6 +83,7 @@ const DEFAULTS = {
     "menubar.showTrayItems": true,
     "menubar.recentItems": 10,
     "menubar.clockShowSeconds": false,
+    "menubar.outputs": [],
     "accent.color": "multicolor",
     "accent.highlight": "automatic",
     "terminal.matchAppearance": false,
@@ -165,6 +170,8 @@ const ALL_DEFAULTS = {
     "dock.folders": ["~/Downloads"],
     "dock.stackOptions": {},
     "dock.minimizeIntoApp": false,
+    "dock.outputs": [],
+    "dock.allDisplays": true,
     "dock.clickMinimizes": true,
     "dock.animateOpening": true,
     "dock.showIndicators": true,
@@ -198,6 +205,7 @@ const ALL_DEFAULTS = {
     "hotCorners.topRight": "none",
     "hotCorners.bottomLeft": "none",
     "hotCorners.bottomRight": "none",
+    "hotCorners.outputs": [],
     "desktop.showIcons": true,
     "displays.main": [],
     "menubar.showBackground": false,
@@ -218,6 +226,7 @@ const ALL_DEFAULTS = {
     "menubar.showTrayItems": true,
     "menubar.recentItems": 10,
     "menubar.clockShowSeconds": false,
+    "menubar.outputs": [],
     "accent.color": "multicolor",
     "accent.highlight": "automatic",
     "terminal.matchAppearance": false,
@@ -300,6 +309,8 @@ const RULES = {
     "dock.showRecents": {"type": "boolean"},
     "dock.folders": {"type": "pathList"},
     "dock.minimizeIntoApp": {"type": "boolean"},
+    "dock.outputs": {"type": "dockOutputs"},
+    "dock.allDisplays": {"type": "boolean"},
     "dock.clickMinimizes": {"type": "boolean"},
     "dock.animateOpening": {"type": "boolean"},
     "dock.showIndicators": {"type": "boolean"},
@@ -333,6 +344,7 @@ const RULES = {
     "hotCorners.topRight": {"type": "enum", "values": ["none", "overview", "notifications", "apps", "lock"]},
     "hotCorners.bottomLeft": {"type": "enum", "values": ["none", "overview", "notifications", "apps", "lock"]},
     "hotCorners.bottomRight": {"type": "enum", "values": ["none", "overview", "notifications", "apps", "lock"]},
+    "hotCorners.outputs": {"type": "hotCornersOutputs"},
     "desktop.showIcons": {"type": "boolean"},
     "displays.main": {"type": "mainDisplays"},
     "menubar.showBackground": {"type": "boolean"},
@@ -353,6 +365,7 @@ const RULES = {
     "menubar.showTrayItems": {"type": "boolean"},
     "menubar.recentItems": {"type": "integer", "min": 0, "max": 50},
     "menubar.clockShowSeconds": {"type": "boolean"},
+    "menubar.outputs": {"type": "menubarOutputs"},
     "accent.color": {"type": "enum", "values": ["multicolor", "blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"]},
     "accent.highlight": {"type": "enum", "values": ["automatic", "blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"]},
     "terminal.matchAppearance": {"type": "boolean"},
@@ -416,6 +429,37 @@ const RULES = {
     "wallpaper.outputs": {"type": "wallpaperOutputs"}
 };
 
+// The fields of each per-display override list and their rules (the keys' own: DisplayScope.js has no copy of a bound).
+const DOCK_SCHEMA = {
+    "size": RULES["dock.size"],
+    "position": RULES["dock.position"],
+    "magnification": RULES["dock.magnification"],
+    "magnificationEnabled": RULES["dock.magnificationEnabled"],
+    "autohide": RULES["dock.autohide"]
+};
+const MENUBAR_SCHEMA = {
+    "autoHide": RULES["menubar.autoHide"],
+    "showBackground": RULES["menubar.showBackground"]
+};
+const HOTCORNERS_SCHEMA = {
+    "topLeft": RULES["hotCorners.topLeft"],
+    "topRight": RULES["hotCorners.topRight"],
+    "bottomLeft": RULES["hotCorners.bottomLeft"],
+    "bottomRight": RULES["hotCorners.bottomRight"]
+};
+
+function scopeSchema(ruleType) {
+    switch (ruleType) {
+    case "dockOutputs":
+        return DOCK_SCHEMA;
+    case "menubarOutputs":
+        return MENUBAR_SCHEMA;
+    case "hotCornersOutputs":
+        return HOTCORNERS_SCHEMA;
+    }
+    return null;
+}
+
 function isObject(v) {
     return v !== null && typeof v === "object" && !Array.isArray(v);
 }
@@ -445,6 +489,12 @@ function validate(path, value) {
         return value === "" || WallpaperConfig.pathProblem(value) === "" ? "" : path + ": expected an absolute path without control characters (at most 4096 bytes)";
     case "wallpaperOutputs": {
         const why = WallpaperConfig.outputsProblem(value);
+        return why === "" ? "" : path + ": " + why;
+    }
+    case "dockOutputs":
+    case "menubarOutputs":
+    case "hotCornersOutputs": {
+        const why = DisplayScope.problem(scopeSchema(rule.type), value);
         return why === "" ? "" : path + ": " + why;
     }
     case "mainDisplays": {
@@ -497,6 +547,8 @@ function normalize(path, value) {
     // as a whole by validate): the shell and the Settings app read one list.
     if (rule.type === "mainDisplays")
         return DisplayRole.normalize(value);
+    if (rule.type === "dockOutputs" || rule.type === "menubarOutputs" || rule.type === "hotCornersOutputs")
+        return DisplayScope.normalize(scopeSchema(rule.type), value);
     if (rule.type === "notificationApps")
         return NotificationPrefs.normalize(value);
     if (rule.type === "notificationStyles")

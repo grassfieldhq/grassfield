@@ -124,9 +124,26 @@ SettingsPage {
         }
     }
 
-    SettingsGroup {
+    // With several displays: which display the auto-hide mode and the background are for (each display has its own bar).
+    DisplayScopeState {
+        id: barScope
+        store: root.store
+        backend: root.backend
+        group: "menubar"
+        schema: SettingsContract.MENUBAR_SCHEMA
+    }
+    property alias displays: barScope.displays
+    property alias displayId: barScope.displayId
+
+    // The auto-hide mode and the background can differ per display (each display has its own bar): they sit in the group the
+    // display pop-up opens; the rest of the pane is the same on every display.
+    ScopeGroup {
+        scope: barScope
+        title: qsTr("Menu Bar settings for")
+        appliesToOne: qsTr("Automatically hide and show, and the background, apply to the menu bar of %1 only.")
+        appliesToAll: qsTr("Automatically hide and show, and the background, apply to the menu bar of every display that has no setting of its own.")
         // Shown while the wallpaper forces the band, whatever the switch says (macOS turns the background on by itself the same way).
-        footnote: root.bandForced && !root.store.value("menubar.showBackground") ? qsTr("The wallpaper is too busy under the menu bar for its text to be read, so a background is shown.") : ""
+        footnote: root.bandForced && !barScope.scoped("showBackground") ? qsTr("The wallpaper is too busy under the menu bar for its text to be read, so a background is shown.") : ""
 
         SettingsRow {
             title: qsTr("Automatically hide and show the menu bar")
@@ -134,8 +151,8 @@ SettingsPage {
                 inline: true
                 accessibleName: qsTr("Automatically hide and show the menu bar")
                 model: [{id: "always", text: qsTr("Always")}, {id: "desktop", text: qsTr("On Desktop Only")}, {id: "fullscreen", text: qsTr("In Full Screen Only")}, {id: "never", text: qsTr("Never")}]
-                value: root.store.value("menubar.autoHide")
-                onPicked: id => root.store.set("menubar.autoHide", id)
+                value: barScope.scoped("autoHide")
+                onPicked: id => barScope.setScoped({"autoHide": id}, false)
             }
         }
 
@@ -143,11 +160,13 @@ SettingsPage {
             title: qsTr("Show menu bar background")
             Toggle {
                 accessibleName: qsTr("Show menu bar background")
-                checked: root.store.value("menubar.showBackground")
-                onToggled: c => root.store.set("menubar.showBackground", c)
+                checked: barScope.scoped("showBackground")
+                onToggled: c => barScope.setScoped({"showBackground": c}, false)
             }
         }
+    }
 
+    SettingsGroup {
         SettingsRow {
             title: qsTr("Recent documents and applications")
             ComboBox {

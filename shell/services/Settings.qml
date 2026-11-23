@@ -31,22 +31,57 @@ Singleton {
     readonly property real zoomLevel: store.zoomLevel
     readonly property var dockPinned: store.dockPinned
     readonly property int dockSize: store.dockSize
-    // Metrics of the Dock at the stored tile size (what the others reserve around it; the Dock itself follows a live resize).
     readonly property string dockPosition: store.dockPosition
-    readonly property var dockMetrics: DockGeometry.metrics(dockSize, {
-        iconSize: Tokens.dockIconSize,
-        padding: Tokens.dockPadding,
-        spacing: Tokens.dockSpacing,
-        bottomMargin: Tokens.dockBottomMargin,
-        separatorHeight: Tokens.dockSeparatorHeight,
-        badgeSize: Tokens.dockBadgeSize,
-        radiusIcon: Tokens.radiusDockIcon
-    })
-    // What the Dock keeps clear on its edge, whether or not it hides (the desktop icons, the widgets and the Apps panel stay put).
-    readonly property var dockFootprint: DockGeometry.footprint(dockPosition, dockMetrics, false)
     readonly property real dockMagnification: store.dockMagnification
     readonly property bool dockMagnificationEnabled: store.dockMagnificationEnabled
     readonly property bool dockAutohide: store.dockAutohide
+    readonly property bool dockAllDisplays: store.dockAllDisplays
+    // Per-display overrides of size, position, magnification and auto-hide (DisplayScope; Settings > Desktop & Dock). The keys
+    // above are the "All Displays" values; a display with an entry here reads its own fields over them.
+    readonly property var dockOutputs: store.dockOutputs
+
+    // The identity of an output by its name ({name, model, serial}); only the name when the output is not known.
+    function displayOf(screenName: string): var {
+        return DisplayScope.identity(Quickshell.screens.find(x => x.name === screenName) || {name: screenName});
+    }
+    // The Dock settings that apply to `display` ({name, model, serial}): size, position, magnification, magnificationEnabled, autohide.
+    function dockFor(display: var): var {
+        return DisplayScope.resolve(SettingsContract.DOCK_SCHEMA, {
+            size: dockSize,
+            position: dockPosition,
+            magnification: dockMagnification,
+            magnificationEnabled: dockMagnificationEnabled,
+            autohide: dockAutohide
+        }, dockOutputs, display);
+    }
+    // Per-display overrides of the menu bar's auto-hide and background, and of the screen corners (DisplayScope).
+    readonly property var menubarOutputs: store.menubarOutputs
+    readonly property var hotCornersOutputs: store.hotCornersOutputs
+    // The menu bar settings that apply to the display `screenName`: autoHide, showBackground.
+    function menubarForScreen(screenName: string): var {
+        return DisplayScope.resolve(SettingsContract.MENUBAR_SCHEMA, {autoHide: menubarAutoHide, showBackground: menubarShowBackground}, menubarOutputs, displayOf(screenName));
+    }
+    // The action of each corner of the display `screenName`: topLeft, topRight, bottomLeft, bottomRight.
+    function hotCornersForScreen(screenName: string): var {
+        return DisplayScope.resolve(SettingsContract.HOTCORNERS_SCHEMA, {topLeft: hotCornerTopLeft, topRight: hotCornerTopRight, bottomLeft: hotCornerBottomLeft, bottomRight: hotCornerBottomRight}, hotCornersOutputs, displayOf(screenName));
+    }
+    function dockForScreen(screenName: string): var {
+        return dockFor(displayOf(screenName));
+    }
+    // What the Dock keeps clear on `screenName`'s edge (the desktop icons, widgets, panels), at that display's own size and edge,
+    // whether or not it hides; `inset` with `honourAutohide` is what a window may use right now (an auto-hidden Dock keeps nothing).
+    function dockFootprintFor(screenName: string, honourAutohide: bool): var {
+        const d = dockForScreen(screenName);
+        return DockGeometry.footprint(d.position, DockGeometry.metrics(d.size, {
+            iconSize: Tokens.dockIconSize,
+            padding: Tokens.dockPadding,
+            spacing: Tokens.dockSpacing,
+            bottomMargin: Tokens.dockBottomMargin,
+            separatorHeight: Tokens.dockSeparatorHeight,
+            badgeSize: Tokens.dockBadgeSize,
+            radiusIcon: Tokens.radiusDockIcon
+        }), honourAutohide === true && d.autohide);
+    }
     readonly property bool clipboardEnabled: store.clipboardEnabled
     readonly property string clipboardRetention: store.clipboardRetention
     readonly property bool clipboardKeepOnDisk: store.clipboardKeepOnDisk
@@ -240,6 +275,31 @@ Singleton {
 
     function setDockMagnification(value: real, enabled: bool): void {
         store.setDockMagnification(value, enabled);
+    }
+
+    // A Dock setting changed on the Dock of `screenName` (a size drag, the auto-hide shortcut): it is written where the display
+    // reads that field from, its own override when it has one, else the All Displays value. `fields` is {size, position,
+    // magnification, magnificationEnabled, autohide}, any of them.
+    function setDockOn(screenName: string, fields: var): void {
+        const display = displayOf(screenName);
+        const own = {};
+        const shared = {};
+        for (const key of Object.keys(fields)) {
+            if (DisplayScope.overridden(SettingsContract.DOCK_SCHEMA, dockOutputs, display, key))
+                own[key] = fields[key];
+            else
+                shared[key] = fields[key];
+        }
+        if (Object.keys(own).length > 0)
+            store.setDockOutputs(DisplayScope.withOverride(SettingsContract.DOCK_SCHEMA, dockOutputs, display, own));
+        if ("size" in shared)
+            setDockSize(shared.size);
+        if ("position" in shared)
+            setDockPosition(shared.position);
+        if ("autohide" in shared)
+            setDockAutohide(shared.autohide);
+        if ("magnification" in shared || "magnificationEnabled" in shared)
+            setDockMagnification("magnification" in shared ? shared.magnification : dockMagnification, "magnificationEnabled" in shared ? shared.magnificationEnabled : dockMagnificationEnabled);
     }
 
     function setDockPinned(list: var): void {

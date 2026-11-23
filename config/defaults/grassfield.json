@@ -32,6 +32,8 @@
     ],
     "stackOptions": {},
     "minimizeIntoApp": false,
+    "outputs": [],
+    "allDisplays": true,
     "clickMinimizes": true,
     "animateOpening": true,
     "showIndicators": true,
@@ -74,7 +76,8 @@
     "topLeft": "none",
     "topRight": "none",
     "bottomLeft": "none",
-    "bottomRight": "none"
+    "bottomRight": "none",
+    "outputs": []
   },
   "desktop": {
     "showIcons": true
@@ -100,7 +103,8 @@
     "clockFlashSeparators": false,
     "showTrayItems": true,
     "recentItems": 10,
-    "clockShowSeconds": false
+    "clockShowSeconds": false,
+    "outputs": []
   },
   "accent": {
     "color": "multicolor",

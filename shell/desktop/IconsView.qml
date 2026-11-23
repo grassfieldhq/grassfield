@@ -54,9 +54,10 @@ FocusScope {
     readonly property real margin: Tokens.desktopIconMargin
     readonly property real topInset: Tokens.menubarHeight + margin
     // The Dock sits on one edge (bottom, left or right): keep the grid clear of it.
-    readonly property real bottomInset: margin + Settings.dockFootprint.bottom
-    readonly property real leftInset: margin + Settings.dockFootprint.left
-    readonly property real areaW: Math.max(0, width - leftInset - margin - Settings.dockFootprint.right)
+    readonly property var dockSpace: Settings.dockFootprintFor(screen ? screen.name : "", false)
+    readonly property real bottomInset: margin + dockSpace.bottom
+    readonly property real leftInset: margin + dockSpace.left
+    readonly property real areaW: Math.max(0, width - leftInset - margin - dockSpace.right)
     readonly property real areaH: Math.max(0, height - topInset - bottomInset)
     readonly property var grid: Logic.gridSize(areaW, areaH, Tokens.desktopIconCellWidth, Tokens.desktopIconCellHeight)
     // Nothing is exposed before every input of the first layout is final (Logic.settledOn): no default layout that then moves,

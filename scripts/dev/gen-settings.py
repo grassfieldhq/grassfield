@@ -26,7 +26,13 @@ DEFAULTS = ROOT / "config/defaults/grassfield.json"
 CONTRACT = ROOT / "ui/Grassfield/Ui/SettingsContract.js"
 
 PATTERN_RULES = ("tint", "folderColor", "pointerColor", "localeName", "plainText", "nodeName")
-CUSTOM_RULES = ("wallpaperPath", "wallpaperOutputs", "mainDisplays", "notificationApps", "notificationStyles", "pathList")
+# Per-display override lists (DisplayScope): rule type -> (group, fields). The bounds of a field are the key's own rule.
+DISPLAY_SCOPES = {
+    "dockOutputs": ("DOCK_SCHEMA", "dock", ["size", "position", "magnification", "magnificationEnabled", "autohide"]),
+    "menubarOutputs": ("MENUBAR_SCHEMA", "menubar", ["autoHide", "showBackground"]),
+    "hotCornersOutputs": ("HOTCORNERS_SCHEMA", "hotCorners", ["topLeft", "topRight", "bottomLeft", "bottomRight"]),
+}
+CUSTOM_RULES = ("wallpaperPath", "wallpaperOutputs", "dockOutputs", "menubarOutputs", "hotCornersOutputs", "mainDisplays", "notificationApps", "notificationStyles", "pathList")
 
 
 def is_group(node):
@@ -125,6 +131,12 @@ function validate(path, value) {
         const why = WallpaperConfig.outputsProblem(value);
         return why === "" ? "" : path + ": " + why;
     }
+    case "dockOutputs":
+    case "menubarOutputs":
+    case "hotCornersOutputs": {
+        const why = DisplayScope.problem(scopeSchema(rule.type), value);
+        return why === "" ? "" : path + ": " + why;
+    }
     case "mainDisplays": {
         const why = DisplayRole.problem(value);
         return why === "" ? "" : path + ": " + why;
@@ -175,6 +187,8 @@ function normalize(path, value) {
     // as a whole by validate): the shell and the Settings app read one list.
     if (rule.type === "mainDisplays")
         return DisplayRole.normalize(value);
+    if (rule.type === "dockOutputs" || rule.type === "menubarOutputs" || rule.type === "hotCornersOutputs")
+        return DisplayScope.normalize(scopeSchema(rule.type), value);
     if (rule.type === "notificationApps")
         return NotificationPrefs.normalize(value);
     if (rule.type === "notificationStyles")
@@ -216,6 +230,7 @@ def render_contract(schema, errors):
         ".pragma library",
         '.import "WallpaperConfig.js" as WallpaperConfig',
         '.import "DisplayRole.js" as DisplayRole',
+        '.import "DisplayScope.js" as DisplayScope',
         '.import "NotificationPrefs.js" as NotificationPrefs',
         "",
         "// The contract version of grassfield.json.",
@@ -232,7 +247,15 @@ def render_contract(schema, errors):
     out.append(",\n".join(f"    {json.dumps(p)}: {json.dumps(leaf['default'], ensure_ascii=False)}" for p, leaf in entries if p != "version"))
     out += ["};", "", "// Rule of every settable key.", "const RULES = {"]
     out.append(",\n".join(f"    {json.dumps(p)}: {json.dumps(rule_of(p, leaf, errors), ensure_ascii=False)}" for p, leaf in settable))
-    out += ["};"]
+    out += ["};", "", "// The fields of each per-display override list and their rules (the keys' own: DisplayScope.js has no copy of a bound)."]
+    for name, (const, group, fields) in DISPLAY_SCOPES.items():
+        out.append(f"const {const} = {{")
+        out.append(",\n".join(f'    "{f}": RULES["{group}.{f}"]' for f in fields))
+        out.append("};")
+    out += ["", "function scopeSchema(ruleType) {", "    switch (ruleType) {"]
+    for name, (const, group, fields) in DISPLAY_SCOPES.items():
+        out += [f'    case "{name}":', f"        return {const};"]
+    out += ["    }", "    return null;", "}"]
     return "\n".join(out) + "\n" + ENGINE
 
 

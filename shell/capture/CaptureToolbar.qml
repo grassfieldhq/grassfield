@@ -605,7 +605,7 @@ Variants {
             height: Tokens.captureToolbarHeight
             x: Math.round((win.width - width) / 2)
             // Above the Dock's band (where the Dock lies at the bottom), else above the display's bottom edge.
-            y: win.height - Settings.dockFootprint.bottom - Tokens.captureToolbarBottomGap - height
+            y: win.height - Settings.dockFootprintFor(win.name, false).bottom - Tokens.captureToolbarBottomGap - height
             Accessible.role: Accessible.ToolBar
             Accessible.name: qsTr("Screenshot")
 

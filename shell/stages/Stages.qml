@@ -39,8 +39,8 @@ Scope {
         revealed = next;
     }
 
-    function insets(): var {
-        const dock = Settings.dockFootprint;
+    function insets(screenName: string): var {
+        const dock = Settings.dockFootprintFor(screenName, false);
         return {left: dock.left, top: Tokens.menubarHeight, bottom: dock.bottom};
     }
 
@@ -52,7 +52,7 @@ Scope {
     // A screen being torn down (a display unplugged) reads as null for a moment: it gets an empty geometry, not an error.
     function geometryOf(screen: var): var {
         const scr = screen ? screen : ({name: "", x: 0, y: 0, width: 0, height: 0});
-        const ins = insets();
+        const ins = insets(scr.name);
         const availH = scr.height - ins.top - Tokens.stagesEdgeMargin - Math.max(ins.bottom, Tokens.stagesEdgeMargin);
         return Layout.geometry(scr, ins, Layout.tileCount(stripCount(scr.name), availH, metrics), metrics);
     }

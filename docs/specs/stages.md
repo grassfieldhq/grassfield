@@ -602,7 +602,7 @@ Files: `shell/platform/StagesLink.qml` (capability, setting, events, verb; the o
 - **Strip.** One surface per output, namespace `grassfield-stages` (layer rule `gf-shell-blur` lists it), Top layer, anchored top-left with
   explicit margins (`ExclusionMode.Ignore`), keyboard `None`, transparent over the plugin's thumbnails. Tiles 160x120, gap 24, centred
   vertically below the menu bar (macOS centres the strip), left of nothing but the Dock when the Dock is on the left (inset =
-  `Settings.dockFootprint.left`). Tile count = strip stages, capped by what fits (1..8). Drawn by the shell: a frosted app icon badge at
+  `Settings.dockFootprintFor(screen).left`). Tile count = strip stages, capped by what fits (1..8). Drawn by the shell: a frosted app icon badge at
   the tile's bottom-left (material blurred by the layer rule) and a hover / drop-target outline; never a fake blur.
 - **op:on.** One request for all outputs, sent debounced (`stages.resendDebounceMs`) only when tiles, `hidden` or timing change
   (`signature`), after `StagesLink.resumed` (capabilities event with `stages`: contract 7) and again after `no-strip` or `interrupted`

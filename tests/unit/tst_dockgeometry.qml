@@ -460,6 +460,25 @@ TestCase {
         }
     }
 
+    // The owner's report (2026-11-22, 3 displays): the Dock, its auto-hide and its glass were on one display only. With
+    // dock.allDisplays (default) every output shows a Dock; off, only the one that has it (macOS).
+    function test_hasDockOnEveryOutputWithAllDisplays() {
+        verify(Geometry.hasDock(true, false, "DP-1"));
+        verify(Geometry.hasDock(true, true, "eDP-1"));
+        verify(Geometry.hasDock(false, true, "eDP-1"));
+        verify(!Geometry.hasDock(false, false, "DP-1"));
+        // A window being destroyed has no output name: no Dock.
+        verify(!Geometry.hasDock(true, true, ""));
+        // Nothing but true turns it on (a missing value is not "all").
+        verify(!Geometry.hasDock(undefined, false, "DP-1"));
+        // Auto-hide on an output that has a Dock follows the setting, on every output; a stay-away output always hides.
+        verify(!DockModel.hides(false, Geometry.hasDock(true, false, "DP-1"), false, false));
+        verify(DockModel.hides(true, Geometry.hasDock(true, false, "DP-1"), false, false));
+        verify(DockModel.hides(false, Geometry.hasDock(false, false, "DP-1"), false, false));
+        // With a Dock everywhere nothing takes the Dock from another output.
+        verify(!Geometry.movesDock(Geometry.hasDock(true, false, "DP-1"), "hidden", "revealing"));
+    }
+
     function test_smallSizeKeepsTheBadgeReadable() {
         const small = Geometry.metrics(32, base);
         compare(small.badgeSize, 20);

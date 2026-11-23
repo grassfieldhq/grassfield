@@ -62,6 +62,8 @@ Design system shared by the shell and (later) native apps: tokens, frosted mater
 | `dock.size` | integer 32-96 (`dock.sizeMin`/`dock.sizeMax`) | 48 | Dock, Settings ("Size" slider; a stored value out of range is clamped) |
 | `dock.position` | `"left"` \| `"bottom"` \| `"right"` | `"bottom"` | Dock, Settings ("Position on screen"; anything else reads as bottom) |
 | `dock.minimizeIntoApp` | bool | false | Dock, Settings |
+| `dock.outputs` | array | `[]` | Dock, Settings (per-display overrides of size, position, magnification, magnificationEnabled, autohide; `DisplayScope`) |
+| `dock.allDisplays` | bool | true | Dock, Settings (several displays: a Dock on each display, else one that follows the pointer) |
 | `dock.clickMinimizes` | bool | true | Dock, Settings ("Click an open app's icon to minimize its windows"; off: a click only brings the app forward, as macOS) |
 | `dock.animateOpening` | bool | true | Dock, Settings |
 | `dock.showIndicators` | bool | true | Dock, Settings |
