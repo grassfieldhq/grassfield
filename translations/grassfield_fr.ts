@@ -5039,8 +5039,68 @@
         <translation>Zoom avant</translation>
     </message>
     <message>
+        <source>Select</source>
+        <translation>Sélectionner</translation>
+    </message>
+    <message>
+        <source>Arrow</source>
+        <translation>Flèche</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>Ligne</translation>
+    </message>
+    <message>
+        <source>Rectangle</source>
+        <translation>Rectangle</translation>
+    </message>
+    <message>
+        <source>Ellipse</source>
+        <translation>Ellipse</translation>
+    </message>
+    <message>
+        <source>%1 (%2)</source>
+        <translation>%1 (%2)</translation>
+    </message>
+    <message>
+        <source>Straight Arrow</source>
+        <translation>Flèche droite</translation>
+    </message>
+    <message>
+        <source>Curved Arrow</source>
+        <translation>Flèche courbe</translation>
+    </message>
+    <message>
+        <source>Double Arrow</source>
+        <translation>Flèche double</translation>
+    </message>
+    <message>
+        <source>Filled</source>
+        <translation>Plein</translation>
+    </message>
+    <message>
+        <source>Fill the shape</source>
+        <translation>Remplir la forme</translation>
+    </message>
+    <message>
         <source>%1 × %2 pixels, %3</source>
         <translation>%1 × %2 pixels, %3</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>Annuler</translation>
+    </message>
+    <message>
+        <source>Undo (Ctrl+Z)</source>
+        <translation>Annuler (Ctrl+Z)</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>Refaire</translation>
+    </message>
+    <message>
+        <source>Redo (Ctrl+Shift+Z)</source>
+        <translation>Refaire (Ctrl+Maj+Z)</translation>
     </message>
     <message>
         <source>Revert</source>
@@ -5057,6 +5117,18 @@
     <message>
         <source>Done</source>
         <translation>Terminé</translation>
+    </message>
+    <message>
+        <source>Do you want to keep the changes to “%1”?</source>
+        <translation>Voulez-vous conserver les modifications de « %1 » ?</translation>
+    </message>
+    <message>
+        <source>Your changes are lost if you do not keep them.</source>
+        <translation>Vos modifications seront perdues si vous ne les conservez pas.</translation>
+    </message>
+    <message>
+        <source>Don’t Save</source>
+        <translation>Ne pas enregistrer</translation>
     </message>
     <message>
         <source>Could not finish: %1</source>
@@ -7485,6 +7557,30 @@
     <message>
         <source>Revert to Original</source>
         <translation>Revenir à l’original</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>Supprimer</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Sélectionner</translation>
+    </message>
+    <message>
+        <source>Arrow</source>
+        <translation>Flèche</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>Ligne</translation>
+    </message>
+    <message>
+        <source>Rectangle</source>
+        <translation>Rectangle</translation>
+    </message>
+    <message>
+        <source>Ellipse</source>
+        <translation>Ellipse</translation>
     </message>
 </context>
 <context>
