@@ -122,6 +122,74 @@ function plateScreen(state, screens) {
     return hit ? hit.name : "";
 }
 
+// The helper's result file (ADR-0066 D-1, packaging/bin/grassfield-capture write_result): $XDG_RUNTIME_DIR/grassfield/
+// capture-result.json, 0600, replaced by rename after a saved picture or recording. It is data like the state: every field is
+// checked and a file that does not read is no result (null). The paths are only text here; CaptureThumbs.js decides whether one
+// may be shown or acted on (never the folder the file names).
+var RESULT_KINDS = ["shot", "recording", "text"];
+var RESULT_ID = /^[0-9A-Fa-f]{1,32}$/;
+// At most this many paths (one picture per display), each at most this long (PATH_MAX).
+var RESULT_MAX_PATHS = 16;
+var RESULT_MAX_PATH = 4096;
+
+// The result file next to the state file (a dev session: in the dev state folder, as the state).
+function resultPath(stateHome, runtimeDir) {
+    const state = statePath(stateHome, runtimeDir);
+    return state === "" ? "" : state.substring(0, state.lastIndexOf("/")) + "/capture-result.json";
+}
+
+// The pixel size of the picture: whole numbers, each 1 to 1,000,000, else null (the card then takes a default shape).
+function pixelSize(p) {
+    if (p === null || typeof p !== "object" || Array.isArray(p))
+        return null;
+    const ok = v => typeof v === "number" && isFinite(v) && Math.floor(v) === v && v >= 1 && v <= 1000000;
+    return ok(p.w) && ok(p.h) ? {w: p.w, h: p.h} : null;
+}
+
+// {id, kind, paths, primary, output, rect, scale, pixels, time, text}, or null.
+function parseResult(text) {
+    let doc = null;
+    try {
+        doc = JSON.parse(String(text || ""));
+    } catch (e) {
+        return null;
+    }
+    if (doc === null || typeof doc !== "object" || Array.isArray(doc) || doc.v !== 1)
+        return null;
+    if (typeof doc.id !== "string" || !RESULT_ID.test(doc.id) || RESULT_KINDS.indexOf(doc.kind) < 0)
+        return null;
+    if (!Array.isArray(doc.paths) || doc.paths.length > RESULT_MAX_PATHS)
+        return null;
+    if (doc.kind === "text") {
+        // Capture Text (slice C3): the recognised text was copied; there is no file, so no path (and "" is never taken for one).
+        if (doc.paths.length !== 0 || (doc.primary !== "" && doc.primary !== undefined && doc.primary !== null))
+            return null;
+    } else {
+        if (doc.paths.length < 1 || !doc.paths.every(p => typeof p === "string" && p.length > 0 && p.length <= RESULT_MAX_PATH))
+            return null;
+        // `primary` is the first path by contract; one that differs is a file the helper did not write.
+        if (doc.primary !== doc.paths[0])
+            return null;
+    }
+    return {
+        id: doc.id,
+        kind: doc.kind,
+        paths: doc.paths.slice(),
+        primary: doc.kind === "text" ? "" : doc.primary,
+        output: typeof doc.output === "string" && OUTPUT_NAME.test(doc.output) ? doc.output : "",
+        rect: rect(doc.rect),
+        scale: finite(doc.scale) && doc.scale >= 0.1 && doc.scale <= 16 ? doc.scale : 1,
+        pixels: pixelSize(doc.pixels),
+        time: finite(doc.time) && doc.time > 0 ? doc.time : 0,
+        text: typeof doc.text === "string" ? doc.text.substring(0, 512) : ""
+    };
+}
+
+// Whether a result was written close enough to `now` (ms) to be shown: a file left from before the shell started is not.
+function resultFresh(result, now, windowMs) {
+    return result !== null && result !== undefined && finite(now) && finite(windowMs) && result.time > 0 && Math.abs(now - result.time) <= windowMs;
+}
+
 // The plate's centre in that display's own coordinates: the centre of the area when it lies there, else the display's centre.
 function plateCentre(state, screen) {
     const r = state.rect;

@@ -3476,6 +3476,45 @@
     </message>
 </context>
 <context>
+    <name>CaptureThumbnailCard</name>
+    <message>
+        <source>Screen recording</source>
+        <translation>Enregistrement de l’écran</translation>
+    </message>
+    <message>
+        <source>Screenshot, %1 × %2</source>
+        <translation>Capture d’écran, %1 × %2</translation>
+    </message>
+    <message>
+        <source>Screenshot</source>
+        <translation>Capture d’écran</translation>
+    </message>
+    <message>
+        <source>Text copied to the clipboard</source>
+        <translation>Texte copié dans le presse-papiers</translation>
+    </message>
+    <message>
+        <source>Opens it in Preview</source>
+        <translation>L’ouvre dans la Visionneuse</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Fermer</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copier</translation>
+    </message>
+    <message>
+        <source>Show in Files</source>
+        <translation>Afficher dans Fichiers</translation>
+    </message>
+    <message>
+        <source>Move to Trash</source>
+        <translation>Placer dans la corbeille</translation>
+    </message>
+</context>
+<context>
     <name>CaptureToolbar</name>
     <message>
         <source>Save to</source>

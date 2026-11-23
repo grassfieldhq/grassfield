@@ -665,6 +665,8 @@ ShellRoot {
             id: captureSurface
             // The session lock owns the screen and the keyboard: the toolbar closes and does not open.
             locked: SessionState.locked
+            // The floating thumbnail steps aside for the other full-attention surfaces.
+            attention: (root.overviewSurface ? root.overviewSurface.open : false) || (root.appsSurface ? root.appsSurface.open : false) || (root.searchSurface ? root.searchSurface.open : false) || switcher.open
         }
     }
     readonly property var captureSurface: captureLoader.item
