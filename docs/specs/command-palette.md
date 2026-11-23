@@ -1,4 +1,4 @@
-# Command palette spec (plan) · shell-engineer, platform-engineer, compositor-engineer, security-engineer · ADR-0067 (Proposed)
+# Command palette spec (plan) · shell-engineer, platform-engineer, security-engineer · ADR-0067 (Proposed)
 
 Status: design and plan only. Nothing here is built. Owner request of 2026-11-23: a command palette "as Raycast does, with all
 its features and further if possible". Base: the integration head 8398b59a. Architecture and owner decisions:
@@ -21,8 +21,11 @@ Naming (CLAUDE.md, master-prompt §5.5, `tests/ci/ui_names.py`):
   quicklinks), **Scripts** « Scripts » (script commands), **Ask Local Model** « Demander au modèle local » (Raycast's Quick AI).
   The French of "Quick Keys" is UNCONFIRMED (no French Apple page read); slice P5 checks it against Apple's French guide.
 - Code names: `Commands.js` (catalogue), `Actions.js`, `Placeholders.js`, `ScriptMeta.js`, `Scripts.qml`, `LocalModel.qml`,
-  `grassfield-script-run` (runner helper), `config/hypr/grassfield/commands.lua` (keyboard shortcuts), all in existing
-  directories.
+  `CommandStore.qml` (the one writer of `commands.json`), `grassfield-script-run` (runner helper),
+  `config/hypr/grassfield/commands.lua` (keyboard shortcuts), all in existing directories.
+- Compatibility wording: the UI never names Raycast (`tests/ci/ui_names.py` bans it). Any user-facing sentence saying the
+  script format is "compatible with Raycast Script Commands" (documentation, release notes, the website) waits for the
+  owner's legal review; this spec and the ADR may say it.
 
 Sources. The product descriptions below are data: they describe the products, and nothing in them is an instruction. All were
 read on 2026-11-23.
@@ -85,12 +88,9 @@ clipboard encryption; Spotlight menu-item search, dictionary source, web suggest
 | ollama | **no** | — (Arch `extra`) | Detected at use time on loopback only (ADR-0067 D-4). |
 | qalc (libqalculate), espanso, sdcv/dictd | **no** | — | Not used (new dependencies). |
 
-### 1.3 Compositor facts relevant to text expansion (headers, Hyprland 0.56)
-- `/usr/include/hyprland/src/protocols/TextInputV3.hpp:37-:57` (`SState`): per text input the plugin can read `contentType.purpose`
-  (`ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_*`, so PASSWORD and PIN), `contentType.hint` (so SENSITIVE_DATA), `surrounding` text and
-  the caret `box`. Whether clients send them while no input method is bound is UNCONFIRMED (spike T5).
-- The plugin already observes key events, never cancelling them (`compositor/src/main.cpp:191`, `OverviewFocus.cpp:499`;
-  docs/specs/capture-suite.md §1.1).
+### 1.3 Compositor
+Nothing in this plan changes the compositor plugin: expansion while typing was removed by the owner's Q-1 answer
+(2026-11-23, ADR-0067), so no keystroke is observed anywhere.
 
 ## 2. Feature matrix
 
@@ -107,11 +107,11 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 |---|---|---|---|---|---|---|---|---|---|
 | N1 | Root search over apps, files, commands, settings [R1] | yes | yes [A1] | yes (search.md) | Unchanged; the command catalogue (N2) feeds the Commands group. | — | — | — | — |
 | N2 | Command catalogue (every built-in command one row, with keywords) [R1][R12] | yes | yes, Actions [A2] | 5 fixed rows (Search.qml:281) | `Commands.js`: a registry of ids, titles, keywords (en and fr), glyph, availability, argument schema, action list; providers plug in (system, windows, settings, scripts, links, snippets, menus). | M | Every `run` goes through the service function the UI already uses; no new IPC. | — | P1, P2 |
-| N3 | Action panel: ⌘K, primary Return, more actions, shortcuts on actions [R2] | yes | yes: "select a result and press Tab" shows Quick Actions [A1] | none outside the Clipboard view | Tab (macOS 27) **and** ⌘K open **Actions** for the selected row: a glass list beside the row, typed filter, Return runs, Esc closes. Ctrl+Return stays the secondary action. Actions per kind in `Actions.js`. | M | Destructive actions marked, confirm where the UI already confirms. | N2 | P3, P4 |
+| N3 | Action panel: ⌘K, primary Return, more actions, shortcuts on actions [R2] | yes | yes: "select a result and press Tab" shows Quick Actions [A1] | none outside the Clipboard view | Tab (macOS 27) **and** ⌘K open **Actions** for the selected row: a glass list beside the row, typed filter, Return runs, Esc closes. Ctrl+Return stays the secondary action. Actions per kind in `Actions.js`. | M | Destructive actions marked, confirm where the UI already confirms. | N2 | P3a, P3b, P3c, P4 |
 | N4 | Favorites, shown on an empty field, reorderable [R1] | yes | no (the empty field shows nothing, search.md:48) | none | **Favorites** row strip under the capsule when the field is empty and at least one favorite exists; macOS shows nothing otherwise, so nothing changes for a user with none. Add or remove from Actions. | S | — | N3 | P6 |
 | N5 | Frecency ranking, Reset Ranking [R1] | yes | — | usage boost, decayed (search.md:51), Delete Search History | Extend the existing usage file to commands, links, snippets, scripts (`cmd:<id>`); "Reset Ranking" action per row. Menu items never recorded. | S | Menu labels can name documents: never stored. | N2 | P6 |
 | N6 | Aliases (exact then prefix match) [R3] / quick keys [A2] | yes | yes (quick keys, suggested after one run [A2]) | none | **Quick Keys**: lowercase letters, digits, spaces; exact match puts the row first, prefix next (Raycast rule [R1]); "ft Ashley" passes the rest as the argument (macOS example [A2]). Suggested quick keys: not planned (macOS assigns them silently; a surprise binding is worse than none). | S | — | N2 | P5 |
-| N7 | Global hotkey per command [R3] | yes | no | Settings > Keyboard lists fixed bindings | **Keyboard Shortcut** action: records a chord, refused when it collides with `bindings.lua`/`forwarding.lua` or Omarchy's; written to a generated, validated binds file; the bind sends `gfkey/1 search run <slot>` (ADR-0067 D-2). Listed in Settings > Keyboard > Keyboard Shortcuts. | M | The socket payload is a slot word, never a command line. | N2 | P7, P8 |
+| N7 | Global hotkey per command [R3] | yes | no | Settings > Keyboard lists fixed bindings | **Keyboard Shortcut** action: records a chord, refused when it collides with `bindings.lua`/`forwarding.lua` or Omarchy's; the shell writes `commands-keys.lua` (`k<n> = "<chord>"` only), which `commands.lua` reads as text and never runs; the bind sends `gfkey/1 search run <slot>` (ADR-0067 D-2). Listed in Settings > Keyboard > Keyboard Shortcuts. | M | The socket payload is a slot word; no user text reaches Hyprland; scripts still pass the approval gate. | N2 | P7, P8a, P8b |
 | N8 | Arguments on commands, filled inline [R16][R6] | yes (up to 3) | yes: "fill in its fields in the search field" [A2] | none | Argument chips inside the capsule after the title (macOS model), Tab between them, Return runs; types text, password (dots, never stored or logged), dropdown. | M | Password values: memory only, cleared on close. | N2 | P9, P10 |
 | N9 | Navigation: Esc clears then closes, Backspace on empty goes back, pop to root after idle [R1] | yes | Esc returns from an action to search [A2] | Esc clears then closes; Backspace leaves the Clipboard view | Same stack model for detail views (script output, answers, AI): Esc or Backspace on empty pops one level. Pop to root: Search already forgets its query on close; nothing to add. | S | — | P11 | P11 |
 | N10 | Detail view (long output, previews) [R16 fullOutput] | yes | preview pane (Quick Look [A1]) | the clipboard preview pane | One **detail pane** in the panel's right half (the clipboard preview's geometry, tokens `search.detail*`): plain text, monospace option, ANSI colour subset, Copy, scroll. | M | ANSI parser strips everything but SGR colours; no links. | — | P11, P12 |
@@ -147,9 +147,9 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 
 | # | Feature [source] | Raycast | macOS 27 | Grassfield today | Proposal | Effort | Security note | Slices |
 |---|---|---|---|---|---|---|---|---|
-| T1 | Quicklinks with `{argument}` and "open with" [R4] | yes | no | none | **Links**: name, target (URL, file, folder, or app + target), optional "Open With" app; placeholders (T4); a link with an argument shows the argument chip (N8). Create, edit, delete from Actions and Settings > Search > Links. Grassfield ships **no** web link and no web fallback (D-net); whether a user's own http(s) link may open is owner question Q-2. | M | Opened with `xdg-open` or the app's desktop entry (argv only). A `file:` target is checked to exist; `javascript:` and `data:` refused. | T2, T3 |
-| T2 | Snippets: search and insert [R5] | yes | Text Replacements (System Settings > Keyboard) | none (settings.md:95) | **Text Replacements**: name, keyword, text (≤ 65 536 characters as [R5]); searchable in Search, Return inserts into the window Search opened over through the ADR-0034 targeted paste, copied **not recorded** by the history; edited in Settings > Keyboard > Text Replacements (macOS location) and from Actions. | M | Insertion reuses PV-14's rules; the copy carries the helper's own-copy marker and is never recorded. | T4, T5, E3 |
-| T3 | Text expansion as you type (Immediately / After Delimiter, per-app exclusions) [R5] | yes | yes (Text Replacements in apps) | none | **Owner question Q-1 (ADR-0067).** Recommended: the compositor plugin matches keywords in the focused window and asks the shell to replace them; protected like the capture suite's keystroke display. | L | Observes typing: opus review, suppressed for passwords, sheets, lock, protected windows. | T6, T7, T8 |
+| T1 | Quicklinks with `{argument}` and "open with" [R4] | yes | no | none | **Links**: name, target, optional "Open With" app; placeholders (T4); a link with an argument shows the argument chip (N8). Opens only when the person picks it (owner decision Q-2). Targets from the ADR-0067 D-7 allowlist: http(s), mailto, an existing local path, an application. An http(s) or mailto target containing `{clipboard}` shows its expanded target in the detail pane first; a second Return opens it. Create, edit, delete from Actions and Settings > Search > Links. Grassfield ships **no** web link and no web fallback (D-net). | M | `javascript:`, `data:`, `blob:`, custom scheme handlers and network file schemes refused at creation and at open; argv only. | T2, T3 |
+| T2 | Snippets: search and insert [R5] | yes | Text Replacements (System Settings > Keyboard) | none (settings.md:95) | **Text Replacements**: name, keyword, text (≤ 65 536 characters as [R5]); searchable in Search, Return inserts into the window Search opened over through the ADR-0034 targeted paste, copied **not recorded** by the history; the previous clipboard comes back after the paste, or is cleared when it cannot be restored (ADR-0067 D-5); edited in Settings > Keyboard > Text Replacements (macOS location) and from Actions. | M | PV-14's rules; own-copy marker; the restore never reads a copy PV-1 forbids reading. | T4, T5, T11, E3 |
+| T3 | Text expansion as you type (Immediately / After Delimiter, per-app exclusions) [R5] | yes | yes (Text Replacements in apps) | none | **Not planned: owner decision Q-1 (2026-11-23, « Non, depuis la palette »).** Text Replacements are inserted only by choosing them in Search (T2). Reason: expansion while typing needs the compositor to read what is typed in every app. | — | No keystroke observation anywhere. | — |
 | T4 | Dynamic placeholders `{clipboard}`, `{date}`, `{time}`, `{datetime}`, `{day}`, `{uuid}`, `{cursor}`, `{argument}`, `{snippet}`, `{calculator}`, modifiers, offsets, format, locale [R6]; `{selection}`, `{browser-tab}` [R6] | yes | no | none | `Placeholders.js` (pure): every [R6] placeholder except `{selection}` (D-4: shown before use, later), `{browser-tab}` (no browser extension) and `{clipboard offset=n}` (reads the history: refused, the history stays in its view). `{cursor}`: the caret is moved back with Left keys after the paste (one per character after it). | M | `{clipboard}` reads the current clipboard only when the user runs the item. | T1 |
 | T5 | Clipboard history: retention, pins, types, search, OCR search, disabled apps [R7] | yes | yes [A3] | yes (ADR-0034) | Deltas only: **Paste as Text Replacement…** action; images' text search: not planned (would store recognised text); a per-app ignore list: not planned (PV-1 already drops password managers' hinted copies; more is an owner privacy call, not asked now). | S | — | T9 |
 | T6 | Emoji & Symbols [R10] | yes | Character Viewer [A4] | panel (ES-1…ES-10) | Emoji rows in Search when the query is `:word` (macOS has none; Raycast has a command) inserting like the panel; skin tones: not planned (Omarchy's list has none). | S | Same insertion as ES-7. | T10 |
@@ -177,10 +177,10 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 
 | # | Feature [source] | Raycast | macOS 27 | Grassfield today | Proposal | Effort | Security note | Slices |
 |---|---|---|---|---|---|---|---|---|
-| X1 | Script Commands (network for scripts: owner question Q-2): metadata header `@raycast.*` in `#` or `//` comments; required `schemaVersion` (1), `title`, `mode`; optional `packageName`, `icon`, `iconDark`, `currentDirectoryPath`, `needsConfirmation`, `refreshTime`, `argument1..3`, `author`, `authorURL`, `description`, `platform` [R16] | yes | no (Shortcuts app) | none | **Scripts** (owner decision D-ext): the same header is read (and `@grassfield.*` as an alias prefix); files in the user's script folders (D-3); one row per script. `.template.` files skipped [R16]. | M | Runs the user's own code: opus review of the runner. | X1, X2 |
+| X1 | Script Commands: metadata header `@raycast.*` in `#` or `//` comments; required `schemaVersion` (1), `title`, `mode`; optional `packageName`, `icon`, `iconDark`, `currentDirectoryPath`, `needsConfirmation`, `refreshTime`, `argument1..3`, `author`, `authorURL`, `description`, `platform` [R16] | yes | no (Shortcuts app) | none | **Scripts** (owner decision D-ext): the same header is read (and `@grassfield.*` as an alias prefix); files in the user's script folders; one row per script; `.template.` files skipped [R16]. Approval on every path; **confined by default** (no network, no session bus, Wayland, X11 or runtime directory; read-only hidden home entries); per-script **Allow network** (owner decision Q-2) and **Allow access to my session**, both off by default (ADR-0067 D-3). Icons read only after approval, inside the script's folder, through `image-copy.py`. | L | Runs the user's own code: opus review of the runner, the profiles and the gate. | X1, X2, X3a, X3b, X3c, X7, X8, X9 |
 | X2 | Output modes `fullOutput`, `compact`, `silent`, `inline` (+ `refreshTime` ≥ 10 s) [R16 OUTPUTMODES] | yes | — | — | fullOutput → detail pane (N10), streamed, ANSI SGR colours; compact → last line in the row's notice; silent → last line in a HUD after Search closes (the OSD); inline → first line as the row's subtitle, refreshed while Search is open, at most 5 inline scripts. Non-zero exit: failed, last line as the error [R16]. | M | Output capped (1 MiB, 2 000 lines), plain text. | X4, X5 |
-| X3 | Arguments: `type` text, password, dropdown (`data` [{title, value}]), `placeholder`, `optional`, `percentEncoded`; at most 3; passed as `$1..$3` [R16 ARGUMENTS] | yes | — | — | N8's chips; values passed as argv (no shell). Password: dots, never logged, never in the unit's description. | S | argv is visible to the user's own processes (`/proc`): documented. | X6 |
-| X4 | `needsConfirmation` [R16] | yes | — | — | A confirmation alert before each run. Plus, always, a **first-run approval** for a new or changed file (D-3). | S | — | X7 |
+| X3 | Arguments: `type` text, password, dropdown (`data` [{title, value}]), `placeholder`, `optional`, `percentEncoded`; at most 3; passed as `$1..$3` [R16 ARGUMENTS] | yes | — | — | N8's chips. Non-secret values as `$1..$3` (no shell); **password values on the script's stdin**, one per line in argument order, their `$n` empty. The one difference from Raycast: `/proc/<pid>/cmdline` is readable by every local user. | S | Secrets never in any argv, unit property, journal line or log. | X6 |
+| X4 | `needsConfirmation` [R16] | yes | — | — | A confirmation before each run, from every origin (row, quick key, keyboard shortcut, IPC); an inline script that needs it is never refreshed by itself. Plus, always, a **first-run approval** for a new or changed file (ADR-0067 D-3). | S | — | X7, X9 |
 | X5 | Extensions and Store (React/TypeScript API) [R17] | yes | — | — | **Not planned (owner decision D-ext):** no third-party code distribution or store. | — | — | — |
 | X6 | AI Extensions, @-mentions, tools [R18] | yes | Siri actions | — | Not planned: a model never calls tools or runs commands (D-4). | — | — | — |
 
@@ -188,7 +188,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 
 | # | Feature [source] | Raycast | macOS 27 | Grassfield today | Proposal | Effort | Security note | Slices |
 |---|---|---|---|---|---|---|---|---|
-| A1 | Local models through Ollama [R18 local-models, changelog 1.99.0] | yes (also a remote Ollama host) | — | none | Detection of Ollama on **loopback only** (127.0.0.1 or ::1, port 11434); remote hosts refused; models that run remotely through Ollama refused (spike A1 finds how to tell; UNCONFIRMED). | S | D-4 data rules; opus review. | A1 |
+| A1 | Local models through Ollama [R18 local-models, changelog 1.99.0] | yes (also a remote Ollama host) | — | none | Detection of Ollama on **loopback only** (127.0.0.1 or ::1, port 11434), the listener's uid checked in `/proc/net/tcp(6)` (the user or the packaged `ollama` system account), proxies ignored (tested); remote hosts refused; models that run remotely through Ollama refused (spike A1 finds how to tell; UNCONFIRMED). | S | ADR-0067 D-4 data rules; opus review. | A1 |
 | A2 | Quick AI: question in the root search, Tab [R18 quick-ai] | yes (Pro) | Return sends the question to Siri AI [A1] | none | **Ask Local Model** row at the end of the results (and the fallback, N12) when a model is present; Return streams the answer into the detail pane (macOS 27 model: Return asks). Tab stays Actions (N3). | M | Sends only the typed text. | A2, A3 |
 | A3 | AI Chat, continue a quick answer in a chat [R18] | yes | — | none | Follow-up questions in the same detail pane (a conversation), Actions: Copy Answer, Paste Answer, New Conversation. Kept in memory only unless "Keep conversations" is on (7 days, 0600). A separate chat window: not planned. | M | History off by default. | A4, A5 |
 | A4 | AI Commands with `{selection}`, `{argument}`, output "Replace Selection" [R18 ai-commands] | yes | Writing Tools | none | Built-in prompts **Summarize**, **Improve Writing**, **Translate to…**, **Explain**, on `{clipboard}` or a typed argument; user-defined ones (name, prompt, placeholders). `{selection}` later and only through a visible "Selected text" chip showing what will be sent (D-4). Output: Copy or Paste (the targeted paste), never automatic. | M | Placeholders resolved only on the user's run; the exact text sent is visible. | A6, A7 |
@@ -200,7 +200,8 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 - **Unchanged:** Super+Space and XF86Search open Search; Super+Ctrl+V opens the Clipboard view; Ctrl+Super+Space the Emoji &
   Symbols panel; the menu bar's search item.
 - **New:** a Keyboard Shortcut per command (N7) opens nothing when the command needs no input: it runs (Raycast [R3]), with a
-  HUD when the command has a visible result; a command with arguments opens Search on its argument chips.
+  HUD when the command has a visible result; a command with arguments opens Search on its argument chips; a script that is
+  not approved, has changed or needs confirmation opens Search on its prompt instead (ADR-0067 D-3).
 - **Browse:** ⌘1 Applications, ⌘2 Documents, ⌘3 Actions (the commands view), ⌘4 Clipboard (P1 PRESS; ⌘3 [A2]).
 
 ### 3.2 Keyboard model
@@ -220,7 +221,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 | In argument chips: Tab / Shift+Tab | next / previous argument | [A2] "fill in its fields" |
 | In Actions: type, ↑ ↓, Return, Esc; each action's own chord shown at the right (`MenuShortcut.label`) | [R2] |
 
-Slice P3 proves in nested that Super+K reaches the Exclusive layer (no Grassfield or Omarchy bind takes it) before it is
+Slice P3c proves in nested that Super+K reaches the Exclusive layer (no Grassfield or Omarchy bind takes it) before it is
 listed; if it does not, ⌘K is not offered and Tab alone opens Actions.
 
 ### 3.3 Actions panel
@@ -232,7 +233,7 @@ listed; if it does not, ⌘K is not offered and Tab alone opens Actions.
 - Per kind (`Actions.js`): app (Open, Show in Files, Quit, Hide, Force Quit, New Window when the entry has the action, Open
   Desktop Actions), file (Open, Open With ›, Show in Files, Glance, Copy Path, Copy, Move to Trash), command (Run), window
   (Focus, Close, Minimize, Move to Space ›, Move to Display ›), link (Open, Open With ›, Copy URL, Edit, Delete), text
-  replacement (Paste, Copy, Edit, Delete), script (Run, Show in Files, Edit Script, Copy Command, Forget Approval), calculator
+  replacement (Paste, Copy, Edit, Delete), script (Run, Show in Files, Edit Script, Allow Network…, Allow Access to My Session…, Forget Approval), calculator
   (Copy, Paste, Copy Expression), clipboard (unchanged: CB-8 menu), menu item (Choose), model answer (Copy, Paste, Ask
   Follow-up, New Conversation).
 
@@ -255,6 +256,16 @@ listed; if it does not, ⌘K is not offered and Tab alone opens Actions.
 Each row has an accessible name with its kind ("Wi-Fi, command, On"); the Actions list is a menu (role menu, items with their
 shortcut); argument chips are text fields with their placeholder as name; the detail pane is a read-only text area.
 
+### 3.6 Known limitations (planned behaviour)
+- A password argument reaches a script on its stdin, not as `$n` (ADR-0067 D-3): a Raycast script that reads a password
+  from `$1` needs a one-line change (`read -r`).
+- After inserting a Text Replacement, a previous clipboard that the history never read (a password manager's hinted copy,
+  a copy made while the history was off) cannot be put back: the clipboard is cleared instead (ADR-0067 D-5).
+- Allow network also exposes abstract Unix sockets (an Xwayland abstract X11 socket among them): they belong to the
+  network namespace. Named in the switch's help and tested in X3c.
+- With Allow access to my session a script has the user's full rights apart from the files rule and the limits.
+- The `ollama` service account name of the Arch package is UNCONFIRMED here (Ollama is not installed); A1 checks it.
+
 ## 4. Slice plan
 
 Each slice is at most one day for one writing agent in its own worktree. Levels: **L0** pure-JS or helper fakes, **unit** QML
@@ -269,15 +280,18 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 |---|---|---|---|
 | P1 | `Commands.js` registry (pure): entry schema, id rules (`[a-z][a-z0-9.-]{0,63}`), providers, availability, keyword matching reusing `Ranking.textScore`; the five existing commands moved into it unchanged. | — | Unit `tst_searchcommands.qml`: schema validation, duplicate ids refused, en/fr keywords, the 5 commands' rows equal today's (`tests/shell/search_locale` unchanged). |
 | P2 | Search.qml reads the registry (Commands group, Top Hit) and `runCommand` dispatches by id; no visible change. | P1 | `tests/shell/search_chips`, `search_locale` pass unchanged; unit: dispatch table. |
-| P3 | `Actions.js` (pure) per kind + the Actions panel (Tab, ⌘K, filter field over 7, Esc); search.md S6 and F2c amended (groups on Page Down/Up and Ctrl+↓/↑). | P2 | Unit `tst_searchactions.qml`: actions per kind, order, shortcuts, destructive last; key map. L1: Actions over an app row and a file row at 1.25 (screenshot); Super+K reach proved or ⌘K withdrawn. |
-| P4 | File and app actions: Open With ›, Show in Files, Glance, Copy Path, Move to Trash (path checks), Quit, Hide, desktop actions. | P3 | Unit: argv per action, a link or folder refused for Trash; L1: Open With submenu screenshot. |
-| P5 | Quick Keys: store, matcher (exact, prefix, rest as argument), Add Quick Key… sheet. | P3, E1 | Unit: match order vectors from [R1]; invalid keys refused; L1 screenshot of the key cap. |
-| P6 | Favorites strip (empty field, reorder by drag and by Actions Move Up/Down) and Reset Ranking; usage file gains `cmd:` keys (version 3, v2 migrated). | P3 | Unit `tst_searchranking.qml`: v2→v3 migration, reset per id, menu ids never recorded; L1 empty-field screenshot with and without favorites. |
-| P7 | Keyboard Shortcut… recorder: chord capture, collision check against the parsed `bindings.lua`/`forwarding.lua` (`Bindings.js`) and Omarchy's, slots `k1`…`k99`. | P3 | Unit: collisions refused, slot allocation, the chord's label. |
-| P8 | `commands-keys.lua` written by Settings (`k<n> = "<chord>"` only), read as text by a new `config/hypr/grassfield/commands.lua` with `input.lua`'s `read_table` rule (never run), `SessionConfig.qml` watching it, `Shortcuts.js` `search: {run: ["word"]}`, IPC `run(slot)`; Settings > Keyboard > Keyboard Shortcuts lists them (ADR-0067 D-2). | P7 | Unit `tst_shortcuts.qml`: `run` accepted with a slot word only. Lua test (as `tests/shell/session_input.sh`): hostile files (code, long lines, escapes, unknown modifiers, taken chords) bind nothing; a valid pair binds `gfkey/1 search run k1`. `tests/security/ipc_inventory.sh` updated. L1 nested: a bound chord runs Toggle Dark Mode. |
+| P3a | `Actions.js` (pure): actions per kind, order, shortcuts, destructive last; the key map (Tab, ⌘K, Page Down/Up, Ctrl+↓/↑, Shift+Tab). | P2 | Unit `tst_searchactions.qml`: actions per kind, order, destructive last; key map vectors including AZERTY scan codes. |
+| P3b | Actions panel surface (the PopupMenu class, filter field over 7 actions, Esc), opened from the selected row. | P3a | Unit: panel model; L1: Actions over an app row and a file row at 1.25 (screenshot). |
+| P3c | Keys in `SearchPanel.qml`: Tab opens Actions, groups move to Page Down/Up and Ctrl+↓/↑, Shift+Tab reaches the chips; search.md S6 and F2c amended; nested proof that Super+K reaches the layer, else ⌘K is withdrawn. | P3b | `tests/shell/search_chips` updated and passing; L1 nested key injection with keysyms (memory "nested key chords"). |
+| P4 | File and app actions: Open With ›, Show in Files, Glance, Copy Path, Move to Trash (path checks), Quit, Hide, desktop actions. | P3b | Unit: argv per action, a link or folder refused for Trash; L1: Open With submenu screenshot. |
+| P5 | Quick Keys: store, matcher (exact, prefix, rest as argument), Add Quick Key… sheet. | P3b, E1b | Unit: match order vectors from [R1]; invalid keys refused; L1 screenshot of the key cap. |
+| P6 | Favorites strip (empty field, reorder by drag and by Actions Move Up/Down) and Reset Ranking; usage file gains `cmd:` keys (version 3, v2 migrated). | P3b | Unit `tst_searchranking.qml`: v2→v3 migration, reset per id, menu ids never recorded; L1 empty-field screenshot with and without favorites. |
+| P7 | Keyboard Shortcut… recorder: chord capture, collision check against the parsed `bindings.lua`/`forwarding.lua` (`Bindings.js`) and Omarchy's, slots `k1`…`k99`. | P3b | Unit: collisions refused, slot allocation, the chord's label. |
+| P8a | `config/hypr/grassfield/commands.lua`: reads `commands-keys.lua` with `input.lua`'s `read_table` (never run), validates chords, skips taken ones, binds `gfkey/1 search run k<n>`; one `require` in `bindings.lua`. | — | Lua test (as `tests/shell/session_input.sh`): hostile files (code, long lines, escapes, unknown modifiers, taken chords) bind nothing; a valid pair binds the event. |
+| P8b | The shell (`CommandStore`) writes `commands-keys.lua` from `commands.json`; `SessionConfig.qml` watches it; `Shortcuts.js` `search: {run: ["word"]}`; IPC `run(slot)` through `Commands.run` (origin `hotkey`); Settings > Keyboard > Keyboard Shortcuts lists them. | P7, P8a, E1b | Unit `tst_shortcuts.qml`: `run` accepted with a slot word only; the generator writes only `k<n> = "<chord>"` whatever the titles (fuzz 1 000 cases); a script behind a slot still meets the approval gate and its confirmation; `tests/security/ipc_inventory.sh` updated. L1 nested: a bound chord runs Toggle Dark Mode. |
 | P9 | Argument chips model (pure): types, required/optional, dropdown data, percent-encoding. | P1 | Unit: [R16] ARGUMENTS vectors; password values absent from every log and model dump. |
 | P10 | Argument chips UI in the capsule, Tab between them, Return runs. | P9 | L1 screenshot with three chips at 1.25; unit key map. |
-| P11 | Detail view stack (push/pop, Esc/Backspace), plain text pane, Copy. | P3 | Unit: stack transitions; L1 screenshot. |
+| P11 | Detail view stack (push/pop, Esc/Backspace), plain text pane, Copy. | P3b | Unit: stack transitions; L1 screenshot. |
 | P12 | ANSI SGR subset parser (pure) and monospace streaming view (caps 1 MiB, 2 000 lines). | P11 | Unit: SGR colours mapped to tokens, every other escape stripped (OSC 8 links, cursor moves), caps. |
 | P13 | ⌘1, ⌘2, ⌘3 browse views on the chips. | P2 | Unit `ClipboardView.opensView`-style key tests on AZERTY scan codes; L1. |
 | P14 | Fallback rows on no results (Search Files for, Ask Local Model when present, Create Link / Text Replacement). | P11, (A2 for the AI row) | Unit: rows per state; L1 screenshot. |
@@ -289,12 +303,12 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | S1 | System commands batch (B1). | P2 | Unit: each id calls the expected service function (fakes); Empty Trash asks; nothing runs while locked. |
 | S2 | Quit All Applications…, Hide Others, Force Quit… (B2). | P2 | Unit with fake toplevels; the dialog lists apps; L1. |
 | S3 | Window commands (B3) on the remembered window; greyed without the plugin features. | P2 | Unit: places map to `windows tile` args; dropped when the address closed; L1 nested with the plugin. |
-| S4 | Windows provider (B4). | P3 | Unit: rows from a fake toplevel list; titles never in `search-usage.json`; L1. |
+| S4 | Windows provider (B4). | P3b | Unit: rows from a fake toplevel list; titles never in `search-usage.json`; L1. |
 | S5 | Spaces and displays commands (B6). | P2 | Unit with fake displays; L1 with two nested outputs (or NOT VERIFIED). |
 | S6 | Toggles batch 1: Wi-Fi, Bluetooth, Airplane, Do Not Disturb (+ for 1 hour / until tomorrow), Night Light (B7, B10). | P2 | Unit: title follows state ("Turn Wi-Fi Off"); calls the Control Center functions; DND expiry restores. |
 | S7 | Toggles batch 2: Dark Mode, Reduce Motion, Reduce Transparency, Dock Hiding, Menu Bar Hiding, Stages, Microphone. | S6 | Unit as S6; `tests/ci/ui_names.py` passes on the new strings. |
 | S8 | System state answers (B8). | P2 | Unit: answer text from fake services, en/fr; no network call (grep test: no `http` in the provider). |
-| S9 | Pick Color (hyprpicker at use time) and colour history. | P3 | Unit: argv, hex parsing, formats; absent tool hides the row; refused under the lock. |
+| S9 | Pick Color (hyprpicker at use time) and colour history. | P3b | Unit: argv, hex parsing, formats; absent tool hides the row; refused under the lock. |
 | S10 | Timers (B11). | S1 | Unit: parse "10 min", "1h30", "10 minutes thé"; notification at end (fake clock); Cancel. |
 | S11 | New Memo, Memos provider read of the store (ADR-0051 format, read-only, size caps). | P2 | Unit with a fixture store; malformed store gives no rows. |
 | S12 | Search Memos rows and open. | S11 | L1 screenshot. |
@@ -308,18 +322,16 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | M2 | Menu items provider: capped walk (depth 4, 500 items, 300 ms, 50 rows shown), path labels, shortcut, toggle state; Return activates after FocusReturn. | M1, P2 | Unit with a fake MenuBridge tree: caps, disabled items, separators skipped, labels mnemonic-stripped (`_File`); activation only for the remembered window. |
 | M3 | Privacy and degradation: no record in usage, no log of labels; T0 apps show nothing; bridge absent shows nothing. | M2 | Unit; grep test on logs in `tests/shell/search_menu` (new). L1 nested with a Qt test app. |
 
-**Lane T: text** (`shell/search/Placeholders.js`, `Links.js`, `TextReplacements.js`; `apps/settings/` pane; `compositor/` for T6)
+**Lane T: text** (`shell/search/Placeholders.js`, `Links.js`, `TextReplacements.js`; `apps/clipboard-helper/` for T11; `apps/settings/` pane)
 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | T1 | `Placeholders.js` (pure): every supported [R6] placeholder, modifiers chain, offsets, format, locale; unknown placeholders left as written. | — | Unit `tst_placeholders.qml`: [R6] examples verbatim, offsets with no space after the sign, `format` and `locale` exclusive, `json-stringify`. |
-| T2 | Links store (`commands.json`, JsonSafety caps) + provider + run (xdg-open / app). | T1, E1 | Unit: scheme allow-list (http, https, file, mailto, app targets), `javascript:` and `data:` refused, percent-encoding of arguments. |
+| T2 | Links store through `CommandStore` + provider + run (xdg-open / app) + the expanded-target step for http(s) and mailto targets with `{clipboard}`. | T1, E1b | Unit: the ADR-0067 D-7 allowlist (http, https, mailto, an existing local path, `file://` with an empty or localhost host, an application) accepted, and `javascript:`, `data:`, `blob:`, `smb:`, `sftp:`, `ftp:`, `dav:`, a custom `x-scheme-handler` scheme and a missing path refused, at creation and at open; `{argument}` percent-encoding; a `{clipboard}` web link opens only after the second Return and shows the exact URL first. |
 | T3 | Links create/edit sheet in Search and Settings > Search > Links list. | T2 | L1 screenshots; unit form validation. |
-| T4 | Text Replacements store + provider + insert through the targeted paste, not recorded. | T1, E1 | `tests/shell/search_clipboard`-style test: the copy carries the own-copy marker; the history records nothing; insert refused when the window closed (PV-14 vectors). |
+| T4 | Text Replacements store + provider + insert through the targeted paste, not recorded. | T1, E1b | `tests/shell/search_clipboard`-style test: the copy carries the own-copy marker; the history records nothing; insert refused when the window closed (PV-14 vectors). |
 | T5 | `{cursor}`: Left keys after the paste, in the same compositor call. | T4 | Unit: key count from the text after `{cursor}` (grapheme clusters); L1 nested into a Qt text field. |
-| T6 | Spike (only after the owner's Q-1 answer): text-input-v3 purpose and hints seen by the plugin per toolkit (GTK 4, Qt 6, Chromium, Firefox, foot); keysym→UTF-8 through the xkb state; compose and IME cases. | Q-1 | Spike report; nothing merged. |
-| T7 | Plugin matcher (per Q-1, recommended option): ring buffer per focused surface, suppression rules, `expand` event with the keyword id only. | T6 | Plugin gtest for each suppression case; gates C1–C3; opus reviewer PASS. |
-| T8 | Shell expansion: delete the keyword (BackSpace ×n) and paste the replacement in one compositor call to the address; Immediately / After Delimiter; per-app exclusions. | T7, T4 | Unit: the call's key sequence; refused under the lock and when the address changed; L1 nested in a Qt and a GTK field; opus reviewer PASS. |
+| T11 | Clipboard restore: the helper answers which item owns the selection (`apps/clipboard-helper/`, one line-protocol request); the shell remembers it before the paste and asks the helper to copy it again once the target has read the replacement (or after 1 s), else to clear the selection (ADR-0067 D-5). | T4 | L0 `tests/shell/clipboard_helper.sh`: the owner answer for an own copy, a recorded item, a pinned item, a hinted copy (no data requested), a copy made while the history was off. Shell test (`search_clipboard` style): a recorded previous item is back on the clipboard after the paste; a hinted previous copy leaves the clipboard empty; the replacement is never recorded; the restore still runs after a lock or a closed window cancels the paste. |
 | T9 | Clipboard row action "Save as Text Replacement…". | T4 | Unit: menu ids; the history item is copied into the store only on the user's action. |
 | T10 | `:word` emoji rows in Search inserting like ES-7. | P2 | Unit with `tests/fixtures/emojis.json`. |
 
@@ -333,17 +345,21 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | C4 | `DateCalc.js` (pure): time in a city, a time between zones, date math, days until, in en and fr. | C3 | Unit vectors including DST changes (not run inside the DST fall-back hour: memory "DST SystemClock spin"). |
 | C5 | Calculator History row and file, cleared with Delete Search History. | P11 | Unit: 50 entries, 0600, clearing. |
 
-**Lane X: scripts** (`shell/search/ScriptMeta.js`, `shell/search/Scripts.qml`, `packaging/bin/grassfield-script-run`)
+**Lane X: scripts** (`shell/search/ScriptMeta.js`, `shell/search/Scripts.qml`, `packaging/bin/grassfield-script-run`). The approval gate (X7, X9) lands before any output mode (X4, X5), so no merged path can run an unapproved script.
 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | X1 | `ScriptMeta.js` (pure) parser: first 64 lines or 8 KiB, `#` and `//` comments, `@raycast.` and `@grassfield.` keys, required fields, values validated, argument JSON, unknown keys ignored, `platform` only `windows` hides it. | — | Unit `tst_scriptmeta.qml`: [R16] README and ARGUMENTS examples verbatim, malformed JSON, 4 arguments refused, a 9 KiB header. |
-| X2 | Discovery: folders from settings (default `$XDG_DATA_HOME/grassfield/script-commands/`, created on "Open Scripts Folder"), checks (regular file, owned by the user, not group/world-writable, executable, ≤ 256 KiB, folder not group/world-writable, a link only to a file passing the same checks), watch for changes. | X1, E1 | Shell test with a temp folder: each refused case; `.template.` skipped; changes picked up. |
-| X3 | `grassfield-script-run` (Python stdlib, `-I`): `systemd-run --user --wait --pipe --collect --quiet --description=<fixed>` with limits, inside `bwrap` per ADR-0067 D-3 (network per the owner's Q-2 answer, Grassfield private stores hidden); stdout/stderr capped; exit status; kill on timeout and on lock. | X2 | L0 with fake systemd-run and bwrap: argv exact; the description never contains arguments; env scrubbed; timeout kills; lock kills; caps. L1 nested: a real script prints. Opus reviewer PASS. |
-| X4 | Modes compact and silent (row notice, HUD), exit status handling. | X3, P11 | Unit: last line selection, failure text; L1. |
-| X5 | Modes fullOutput (streamed into the detail pane) and inline (refresh while open, ≥ 10 s, ≤ 5 scripts). | X4, P12 | Unit: refresh scheduler stops when Search closes or locks; L1 screenshot. |
-| X6 | Arguments wired (chips → argv), percent-encoding, password handling. | X3, P10 | L0: argv; password absent from journal (`journalctl --user` scan in the test unit), the unit's description, and every Grassfield log. |
-| X7 | First-run approval (hash of the file), `needsConfirmation`, Forget Approval. | X3 | Unit: changed file asks again; imported settings never carry approvals; opus reviewer PASS (with X3). |
+| X2 | Discovery: folders from settings (default `$XDG_DATA_HOME/grassfield/script-commands/`, created on "Open Scripts Folder"), checks (regular file, owned by the user, not group/world-writable, executable, ≤ 256 KiB, folder not group/world-writable, a link only to a file passing the same checks), watch for changes. | X1, E1a | Shell test with a temp folder: each refused case; `.template.` skipped; changes picked up. |
+| X3a | Runner, outer part: the approvals-file check (the runner's own read), the copy into `$XDG_RUNTIME_DIR/grassfield/script-run/<random>/` (0700) and the hash of the copy, the framed stdin message, `systemd-run --user --wait --pipe --collect --quiet --description="Grassfield script"` with the limits, output caps, exit status, kill on timeout and on lock. | — | L0 with a fake `systemd-run`: argv exact; the description and every argv hold no argument; a hash not in the approvals file is refused even when the shell asks; a file swapped after the copy is not run; caps; timeout and lock kill. |
+| X3b | Runner, sandbox profiles: `bwrap` argv per level (Confined, Allow network, Allow access to my session), environment scrub, tmpfs over `/run/user/<uid>`, private `/tmp`, read-only hidden home entries, hidden Grassfield stores and keyrings, the copy bound read-only at the script's path; the `--exec` stage (non-secret arguments as argv, passwords on the script's stdin). | X3a | L0: the bwrap argv per level equals ADR-0067 D-3's table; the exec stage's vectors (framing errors refused, passwords never in argv). |
+| X3c | Confinement probe, for real (`systemd-run` and `bwrap` in the dev session, never the owner's live session): a probe script tries `curl` to a host loopback listener and to an outside address, `dbus-send --session`, `hyprctl version`, `systemd-run --user true`, `wl-paste`, an X11 connection, writing `~/.bashrc`, reading `$XDG_STATE_HOME/grassfield/search-usage.json`, under each level; a refused property fails closed. | X3b | L1: each probe's result equals the table for each level (any extra reach fails the test); the fail-closed case with a forced refused property. |
+| X4 | Modes compact and silent (the row's notice, a HUD the shell posts), exit status handling. | X7, X9, P11 | Unit: last line selection, failure text; a confined script's own `notify-send` fails (the palette posts instead); L1. |
+| X5 | Modes fullOutput (streamed into the detail pane) and inline (refresh while open, ≥ 10 s, ≤ 5 scripts). | X4, P12 | Unit: refresh scheduler stops when Search closes or locks; an unapproved inline script shows "Needs approval" and is not run; a `needsConfirmation` script is never refreshed by itself; L1 screenshot. |
+| X6 | Arguments wired: chips → the framed stdin message → non-secret argv, passwords on the script's stdin; percent-encoding. | X3b, P10 | L1: a password value is absent from every process's `/proc/*/cmdline`, `systemctl --user show` of the unit, the user journal and every Grassfield log; the script reads it from stdin. |
+| X7 | Approval gate: the approvals store `{path, SHA-256, allowNetwork, allowSession}`, `Commands.run` refusing an unapproved or changed script from every origin (row, quick key, hotkey, `qs ipc call search run`, inline) and opening the approval prompt instead, `needsConfirmation` from every origin, permissions reset when the hash changes, Forget Approval. | X3a | Unit: each origin with an unapproved and a changed script opens the prompt and runs nothing; `needsConfirmation` shown for the hotkey and IPC origins; the permissions dropped on a hash change; imported settings carry no approval. L0: the runner refuses what the store does not hold. |
+| X9 | Approval prompt and permission switches: the prompt (title, folder, level), the Allow network and Allow access to my session switches with their warnings (ADR-0067 D-3 wording), the row's level glyph. | X7 | Unit: the switches write the store and are off by default; strings en and fr; L1 screenshot of the prompt at 1.25. |
+| X8 | Script icons: an emoji as plain text; a file icon read only after approval, only a relative path resolving inside the script's folder to a regular file ≤ 256 KiB (`O_NOFOLLOW`, `O_NONBLOCK`), through `shell/services/image-copy.py`; https never fetched. | X7 | Unit and L0: a link, a FIFO, a path outside the folder, an oversize file and an https URL give the generic glyph; nothing is read before approval. |
 
 **Lane A: local AI** (`shell/search/LocalModel.qml`, `AiPrompt.js`)
 
@@ -361,31 +377,32 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
-| E1 | Schema keys (ADR-0067 D-8) and the `commands.json` v1 format with its validator. | — | Schema tests: defaults, enums; validator vectors (oversize, wrong types). |
-| E2 | Settings > Search: Scripts folders (Add Folder…, Open Folder), show Menu Items, show System State, Links list entry. | E1 | `tst_settingssearch.qml` extended; L1 screenshot. |
-| E3 | Settings > Keyboard > Text Replacements (macOS pane: table Replace / With, +, −). | E1, T4 | Unit for the model; L1 screenshot en and fr. |
-| E4 | Settings > Search > Local Model (on/off, model, keep conversations, Clear). | E1, A1 | Unit; L1. |
-| E5 | Export Commands… / Import… (and Raycast snippet and quicklink JSON import). | E1, T2, T4 | Unit: round trip; Raycast fixtures map; approvals and history never exported. |
+| E1a | Schema keys (ADR-0067 D-8) and the `commands.json` v1 format with its pure validator. | — | Schema tests: defaults, enums; validator vectors (oversize, wrong types, the link allowlist). |
+| E1b | `CommandStore.qml`, the one writer of `commands.json` (atomic, 0600, `write-private.sh`), and the `search` IPC item functions for the Settings app (`addItem`, `updateItem`, `removeItem`, `importFile`), refused while locked; `docs/specs/security.md` IPC surface. | E1a | Unit: validation through the IPC path, the 64 KiB cap, refusal under the lock, the file's mode, two quick requests both kept; `tests/security/ipc_inventory.sh`. |
+| E2 | Settings > Search: Scripts folders (Add Folder…, Open Folder), show Menu Items, show System State, Links list entry. | E1a | `tst_settingssearch.qml` extended; L1 screenshot. |
+| E3 | Settings > Keyboard > Text Replacements (macOS pane: table Replace / With, +, −). | E1b, T4 | Unit for the model; L1 screenshot en and fr. |
+| E4 | Settings > Search > Local Model (on/off, model, keep conversations, Clear). | E1a, A1 | Unit; L1. |
+| E5 | Export Commands… / Import… (and Raycast snippet and quicklink JSON import). | E1b, T2, T4 | Unit: round trip; Raycast fixtures map; approvals and history never exported. |
 
 ### 4.2 Waves (owner-visible value first) and parallel lanes
 
 | Wave | Lane P | Lane S | Lane M | Lane T | Lane C | Lane X | Lane A | Lane E |
 |---|---|---|---|---|---|---|---|---|
-| 1 | P1, P2 | — | M1 | T1 | C1, C2 | X1 | A1 | E1 |
-| 2 (commands, actions) | P3 | S1, S3, S6 | — | T2 | C3 | X2 | — | — |
-| 3 (depth) | P4, P5, P11 | S2, S4, S7, S8 | M2 | T3, T4 | C4 | X3 | — | E2 |
-| 4 | P6, P7, P9, P12 | S5, S9, S10 | M3 | T5, T9 | C5 | X4 | A2 | E3 |
-| 5 | P8, P10, P13, P14 | S11, S12 | — | T10 | — | X5, X7 | A4, A6 | E4 |
-| 6 | — | S13 (after capture B15) | — | — | — | X6 | A3, A5, A7 | E5 |
-| last | — | — | — | T6, T7, T8 (after the owner's Q-1) | — | — | — | — |
+| 1 | P1, P2 | — | M1 | T1 | C1, C2 | X1 | A1 | E1a |
+| 2 (commands, actions) | P3a, P3b, P3c | S1, S3, S6 | — | — | C3 | X2, X3a | — | E1b |
+| 3 (depth) | P4, P5, P11 | S2, S4, S7, S8 | M2 | T2, T4 | C4 | X3b, X7 | — | E2 |
+| 4 | P6, P7, P9, P12, P8a | S5, S9, S10 | M3 | T3, T5, T11, T9 | C5 | X3c, X9 | A2 | E3 |
+| 5 | P8b, P10, P13, P14 | S11, S12 | — | T10 | — | X4, X8 | A4, A6 | E4 |
+| 6 | — | S13 (after capture B15) | — | — | — | X5, X6 | A3, A5, A7 | E5 |
 
 Rules: within a wave each lane runs its slices in the order listed; a slice depends only on earlier waves of other lanes or
-earlier slices of its lane. P3 is the first owner-visible change (Actions on every row) and lands with S1, S3 and S6 in wave 2,
+earlier slices of its lane. P3a to P3c are the first owner-visible change (Actions on every row) and land with S1, S3 and S6 in wave 2,
 so the first merged weeks already give: Actions, every system command, window commands and the main toggles.
 
 **Running beside the capture suite (owner decision D-when).** The capture suite's lanes (capture-suite.md §4) touch
 `shell/capture/`, `packaging/bin/grassfield-capture`, `apps/screenshot/`, `compositor/` (D1–D3) and the schema. This plan's lanes
-touch `shell/search/` (P, S, M, T, C, X, A), `shell/platform/` (P8, M), `apps/settings/` (E) and the schema. With the "one writing
+touch `shell/search/` (P, S, M, T, C, X, A), `shell/platform/` (P8b, M), `apps/settings/` (E), `apps/clipboard-helper/` (T11)
+and the schema; never `compositor/`. With the "one writing
 agent per worktree" rule, three palette lanes (P, S, then T or X) can run beside the capture's three without touching the same
 files except those in the table below.
 
@@ -393,23 +410,27 @@ files except those in the table below.
 
 | File | Edited by (this plan) | Also edited by |
 |---|---|---|
-| `config/schema/grassfield.schema.json` | E1 (and E2–E4 additions) | capture suite A, B18, C |
+| `config/schema/grassfield.schema.json` | E1a (and E2–E4 additions) | capture suite A, B18, C |
 | `shell/search/Search.qml`, `SearchPanel.qml` | lane P; S, M, T, X, A only through provider registration in P2's hook | — |
-| `shell/platform/shortcuts/Shortcuts.js`, `docs/specs/security.md` (IPC surface) | P8 | — |
-| `config/hypr/grassfield/bindings.lua` (one `require` of `commands.lua`), `shell/platform/SessionConfig.qml` | P8 | capture A4 (Shift-Super-2) |
+| `shell/platform/shortcuts/Shortcuts.js`, `docs/specs/security.md` (IPC surface) | P8b, E1b | — |
+| `config/hypr/grassfield/bindings.lua` (one `require` of `commands.lua`) | P8a | capture A4 (Shift-Super-2) |
+| `shell/platform/SessionConfig.qml` | P8b | — |
 | `shell/platform/MenuBridge.qml`, `bridges/menu-bridge/` | M1–M3 | — |
-| `compositor/` | T7 | capture D1–D3 |
-| `packaging/arch/PKGBUILD` (the runner script, `ollama` optdepend line) | X3, A1 | capture B1, B21, B22 |
+| `apps/clipboard-helper/`, `shell/services/Clipboard.qml` | T11 | — |
+| `packaging/arch/PKGBUILD` (the runner script, `ollama` optdepend line) | X3a, A1 | capture B1, B21, B22 |
 | `ui/Grassfield/` (+ `docs/specs/ui-api.md` changelog) | C3 | — |
 | `apps/settings/` | E2–E5 | capture B19 (app settings live in the Screenshot app: no overlap expected) |
-| `docs/specs/search.md` | P3 (keys), P13, P14 | — |
+| `docs/specs/search.md` | P3c (keys), P13, P14 | — |
 
 ### 4.4 Review rules
 Following the owner's "review every step" rule: an independent reviewer pass after each merged slice. **Opus security review**
 (PASS required) for:
-- **anything that runs scripts:** X3, X6, X7 (runner, argument passing, approvals);
-- **anything that reads the clipboard or the selection:** T1 (`{clipboard}`), T4, T9, A6, A7;
-- **text expansion and keystroke injection:** T5, T7, T8, and P8 (the generated key file, its reader and the new `search run` request);
-- **AI prompts with local data:** A1, A2, A6, A7 (loopback-only, what is sent, history);
+- **anything that runs scripts or decides whether one runs:** X2 (discovery checks), X3a, X3b, X3c (runner, profiles, probe),
+  X5 (inline refresh), X6 (arguments), X7, X9 (approval gate and permissions), X8 (icon files);
+- **anything that reads the clipboard or the selection:** T1 (`{clipboard}`), T2 (`{clipboard}` in links), T4, T9, T11 (the
+  restore), A6, A7;
+- **keystroke injection and key bindings:** T5 (`{cursor}` keys), P8a, P8b (the generated key file, its reader and `search run`);
+- **AI prompts with local data:** A1, A2, A6, A7 (loopback-only, listener uid, proxies, what is sent, history);
+- **new write surface and imported content:** E1b (the IPC item functions), E5 (import);
 - **menu activation for another app:** M2 (activation only for the remembered window).
-T7 also goes through the compositor gates C1–C3. Nested L1 runs follow the memory rule "nested verifiers need their own worktree".
+Nested L1 runs follow the memory rule "nested verifiers need their own worktree".
