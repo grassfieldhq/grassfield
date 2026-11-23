@@ -82,12 +82,15 @@ Scope {
     // {state: "pending" | "ok" | "no", path}; reassigned on every change. A card is mapped once its picture is ready or refused
     // (then it shows its glyph).
     property var copies: ({})
+    // The folder is ready (made 0700 and emptied), and the first preparation has ended (a refusal leaves no picture).
     property bool cleaned: false
+    property bool cleanerDone: false
     property int counter: 0
     readonly property string copyHelper: Quickshell.shellPath("services/image-copy.py")
-    // A source file at most this large (a 4K capture is a few tens of MB); the copy is at most 256 x 256 pixels.
-    readonly property real copyCap: 64 * 1024 * 1024
-    readonly property string copyBase: Thumbs.copyBase(Quickshell.env("WAYLAND_DISPLAY"))
+    // A source file at most this large (CaptureThumbs.COPY_CAP: an 8K picture); the copy is at most 256 x 256 pixels.
+    readonly property real copyCap: Thumbs.COPY_CAP
+    // The pictures' private folder ($XDG_RUNTIME_DIR/grassfield/capture-thumbs, 0700), made and emptied by capture-thumb-dir.sh.
+    readonly property string copyFolder: Thumbs.copyFolder(CaptureState.folder)
 
     function copyState(id: string): string {
         const entry = root.copies[id];
@@ -108,20 +111,26 @@ Scope {
         const card = root.cardById(id);
         if (card === null || card.kind !== "shot" || root.copies[id] !== undefined)
             return;
-        const out = Thumbs.copyPath(Quickshell.env("XDG_RUNTIME_DIR"), Quickshell.env("WAYLAND_DISPLAY"), Quickshell.processId, ++root.counter);
+        const out = Thumbs.copyPath(root.copyFolder, Quickshell.processId, ++root.counter);
         if (out === "") {
             root.setCopy(id, {state: "no", path: ""});
             return;
         }
         root.setCopy(id, {state: "pending", path: out});
-        const start = () => root.job(Thumbs.copyArgv(root.copyHelper, card.path, root.copyCap, out), ({}), ok => {
-            const still = root.cardById(id) !== null;
-            root.setCopy(id, {state: ok && still ? "ok" : "no", path: out});
-            if (!still)
-                root.deleteCopy(out);
-        });
-        if (root.cleaned)
-            start();
+        const start = ready => {
+            if (!ready) {
+                root.setCopy(id, {state: "no", path: ""});
+                return;
+            }
+            root.job(Thumbs.copyArgv(root.copyHelper, card.path, root.copyCap, out), ({}), ok => {
+                const still = root.cardById(id) !== null;
+                root.setCopy(id, {state: ok && still ? "ok" : "no", path: out});
+                if (!still)
+                    root.deleteCopy(out);
+            });
+        };
+        if (root.cleanerDone)
+            start(root.cleaned);
         else
             root.waiting = root.waiting.concat([start]);
     }
@@ -129,7 +138,7 @@ Scope {
     property var waiting: []
 
     function deleteCopy(path: string): void {
-        if (path !== "" && path.indexOf("/" + root.copyBase + "-") >= 0)
+        if (path !== "" && root.copyFolder !== "" && path.indexOf(root.copyFolder + "/") === 0)
             root.job(["rm", "-f", "--", path], ({}), () => {});
     }
 
@@ -151,6 +160,9 @@ Scope {
         }
         if (changed)
             root.copies = next;
+        // The last card has left: the folder is emptied (a picture whose copy was still being made is deleted when it ends).
+        if (root.cards.length === 0 && root.cleanerDone && !cleaner.running)
+            cleaner.running = true;
     }
 
     // The helper's result: the Save to folders are asked again (they can change), then the card is made.
@@ -273,19 +285,21 @@ Scope {
         }
     }
 
-    // The pictures of earlier runs of this shell (same display) are deleted before the first one is made.
+    // The folder is made (0700, no link) and emptied when the shell starts, before the first picture, and again when the last card
+    // leaves. Without it (a refusal, no runtime folder) no picture is made: the cards show their glyph.
     Process {
         id: cleaner
-        running: root.copyBase !== "" && Quickshell.env("XDG_RUNTIME_DIR") !== ""
-        command: ["sh", "-c", "case $1 in /*) ;; *) exit 1 ;; esac; for f in \"$1/$2\"-*.png; do [ -f \"$f\" ] && [ ! -L \"$f\" ] && rm -f -- \"$f\"; done; exit 0", "gf-capture-thumb-clean", Quickshell.env("XDG_RUNTIME_DIR"), root.copyBase]
+        running: root.copyFolder !== ""
+        command: ["sh", Quickshell.shellPath("services/capture-thumb-dir.sh"), root.copyFolder]
         // qmllint disable signal-handler-parameters
-        onExited: () => {
+        onExited: code => {
             // qmllint enable signal-handler-parameters
-            root.cleaned = true;
+            root.cleaned = code === 0;
+            root.cleanerDone = true;
             const queued = root.waiting;
             root.waiting = [];
             for (const start of queued)
-                start();
+                start(root.cleaned);
         }
     }
 

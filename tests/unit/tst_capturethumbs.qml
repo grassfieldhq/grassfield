@@ -235,10 +235,25 @@ TestCase {
         const c = card();
         compare(Thumbs.copyArgv("/s/image-copy.py", c.path, 1000, "/run/u/x-1-1.png"),
             ["/usr/bin/timeout", "-k", "2", "20", "/usr/bin/setpriv", "--pdeathsig", "KILL", "--", "/usr/bin/python3", "-I", "/s/image-copy.py", "file", c.path, "1000", "/run/u/x-1-1.png"]);
-        compare(Thumbs.copyPath("/run/user/1000", "wayland-1", 42, 3), "/run/user/1000/grassfield-capture-thumb-wayland-1-42-3.png");
-        compare(Thumbs.copyPath("/run/user/1000", "a/../b", 1, 1), "/run/user/1000/grassfield-capture-thumb-a_.._b-1-1.png");
-        compare(Thumbs.copyPath("", "wayland-1", 1, 1), "");
-        compare(Thumbs.copyPath("relative", "wayland-1", 1, 1), "");
+        const folder = Thumbs.copyFolder("/run/user/1000/grassfield");
+        compare(folder, "/run/user/1000/grassfield/capture-thumbs", "a private folder of its own, not loose in the runtime folder");
+        compare(Thumbs.copyFolder("/run/user/1000/grassfield/"), folder);
+        compare(Thumbs.copyFolder(""), "");
+        compare(Thumbs.copyFolder("relative"), "");
+        compare(Thumbs.copyFolder("/run/a\nb"), "");
+        compare(Thumbs.copyPath(folder, 42, 3), folder + "/42-3.png");
+        compare(Thumbs.copyPath("", 1, 1), "");
+        compare(Thumbs.copyPath("/run/user/1000", 1, 1), "", "only the private folder");
+    }
+
+    // The cap on a capture file for its picture, as documented in docs/specs/security-images.md next to the other caps.
+    function test_copyCapIsDocumented() {
+        compare(Thumbs.COPY_CAP, 64 * 1024 * 1024);
+        verify(Thumbs.COPY_CAP > 7680 * 4320 * 4 / 2, "an 8K PNG of anything but noise fits");
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", Qt.resolvedUrl("../../docs/specs/security-images.md"), false);
+        xhr.send();
+        verify(xhr.responseText.indexOf("capture thumbnail") > 0 && xhr.responseText.indexOf("64 MiB") > 0, "the cap is in the spec");
     }
 
     // A source file that is not a capture the shell may show never reaches a decoder of its own: the card's Image reads only the

@@ -267,16 +267,21 @@ function copyArgv(helper, path, cap, out) {
     return ["/usr/bin/timeout", "-k", "2", "20", "/usr/bin/setpriv", "--pdeathsig", "KILL", "--", "/usr/bin/python3", "-I", helper, "file", path, String(cap), out];
 }
 
-// The copy's path: $XDG_RUNTIME_DIR/grassfield-capture-thumb-<display>-<pid>-<n>.png ("" without a runtime folder).
-function copyPath(runtimeDir, display, pid, n) {
-    if (!runtimeDir || String(runtimeDir)[0] !== "/")
-        return "";
-    return runtimeDir + "/" + copyBase(display) + "-" + pid + "-" + n + ".png";
+// The private folder of the pictures (0700, emptied at start and when the last card leaves: services/capture-thumb-dir.sh), in the
+// folder of the helper's private files; "" when that is not an absolute path.
+function copyFolder(privateFolder) {
+    return privateFolder && String(privateFolder)[0] === "/" && !CONTROL.test(privateFolder) ? String(privateFolder).replace(/\/+$/, "") + "/capture-thumbs" : "";
 }
 
-function copyBase(display) {
-    return "grassfield-capture-thumb-" + String(display || "none").replace(/[^A-Za-z0-9._-]/g, "_");
+// A picture's path in it: <folder>/<pid>-<n>.png ("" without the folder).
+function copyPath(folder, pid, n) {
+    return folder && String(folder).endsWith("/capture-thumbs") ? folder + "/" + pid + "-" + n + ".png" : "";
 }
+
+// The most a capture file may weigh for its picture to be made: 64 MiB. The largest display picture supported is 8K
+// (7680 x 4320, 33 Mpx, under image-copy.py's 50 Mpx limit): raw it is 126 MiB, and a PNG of anything but noise is under half of
+// that. The helper reads the file into memory and wraps it for rsvg-convert (a third more), inside its 1 GiB address-space limit.
+var COPY_CAP = 64 * 1024 * 1024;
 
 // The least width of a card's picture: the Close disc and the action capsule side by side with an inset around and between them
 // (`button` the buttons' size, `pad` the room around a button in its disc or capsule, `inset` the card's inset), so a tall capture
