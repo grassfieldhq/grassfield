@@ -9,6 +9,7 @@ import qs.platform.shortcuts
 import qs.services
 import "../platform/ScreenChoice.js" as ScreenChoice
 import "Calc.js" as Calc
+import "Commands.js" as Commands
 import "ClipboardView.js" as ClipView
 import "Files.js" as Files
 import "Filters.js" as Filters
@@ -278,23 +279,25 @@ Scope {
         appRecords = Model.disambiguate(out);
     }
 
-    function commandList(): var {
-        const list = [];
-        if (lockAvailable)
-            list.push({id: "lock", title: qsTr("Lock Screen"), words: [qsTr("lock")], glyph: "lock"});
-        list.push({id: "sleep", title: qsTr("Sleep"), words: [qsTr("suspend")], glyph: "moon"});
-        list.push({id: "restart", title: qsTr("Restart"), words: [qsTr("reboot")], glyph: "power"});
-        list.push({id: "shutdown", title: qsTr("Shut Down"), words: [qsTr("power off"), qsTr("poweroff")], glyph: "power"});
-        list.push({id: "logout", title: qsTr("Log Out"), words: [qsTr("sign out"), qsTr("log off")], glyph: "person"});
-        return list;
-    }
-
-    function commandScore(cmd: var, q: string): real {
-        let s = Ranking.textScore(Ranking.norm(cmd.title), q);
-        for (const w of cmd.words)
-            s = Math.max(s, Ranking.textScore(Ranking.norm(w), q) * 0.8);
-        return s >= 50 ? s : 0;
-    }
+    // The command catalogue (Commands.js, ADR-0067 D-2): providers hand their entries over, Search only ranks and dispatches.
+    // The system provider's five commands each run the function they always ran. Rebuilt when the language changes.
+    readonly property var commandRegistry: Commands.build([
+        Commands.systemCommands({
+            subtitle: qsTr("System command"),
+            lock: qsTr("Lock Screen"), lockWord: qsTr("lock"),
+            sleep: qsTr("Sleep"), sleepWord: qsTr("suspend"),
+            restart: qsTr("Restart"), restartWord: qsTr("reboot"),
+            shutdown: qsTr("Shut Down"), shutdownWord: qsTr("power off"), shutdownWord2: qsTr("poweroff"),
+            logout: qsTr("Log Out"), logoutWord: qsTr("sign out"), logoutWord2: qsTr("log off")
+        }, {
+            lock: () => SessionState.requestLock("search"),
+            sleep: () => Power.sleepNow(),
+            // Restart, Shut Down and Log Out: no message, the dialog shows its countdown (ADR-0040 ID-21).
+            restart: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to restart your computer now?"), "", qsTranslate("Search", "Restart"), "restart", {}, true, screenName),
+            shutdown: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to shut down your computer now?"), "", qsTranslate("Search", "Shut Down"), "shutdown", {}, true, screenName),
+            logout: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to quit all applications and log out %1?").arg(SystemInfo.user), "", qsTranslate("Search", "Log Out"), "logout", {}, true, screenName)
+        }, lockAvailable)
+    ])
 
     function mkApp(r: var): var {
         return {kind: "app", key: "app:" + r.app.id, title: r.app.name, subtitle: r.app.genericName !== "" ? r.app.genericName : qsTr("Application"),
@@ -302,7 +305,7 @@ Scope {
     }
 
     function mkCommand(c: var): var {
-        return {kind: "command", key: "cmd:" + c.id, title: c.title, subtitle: qsTr("System command"), glyph: c.glyph, command: c.id};
+        return {kind: "command", key: "cmd:" + c.id, title: c.title, subtitle: c.subtitle, glyph: c.glyph, command: c.id};
     }
 
     function mkSetting(h: var): var {
@@ -326,15 +329,7 @@ Scope {
         const lq = Ranking.norm(q);
 
         let apps = showApps && q !== "" ? Ranking.rank(appRecords, q, usage, 8) : [];
-        let cmds = [];
-        if (showCommands && q !== "") {
-            for (const c of commandList()) {
-                const s = commandScore(c, lq);
-                if (s > 0)
-                    cmds.push({cmd: c, score: s});
-            }
-            cmds.sort((a, b) => b.score - a.score);
-        }
+        let cmds = showCommands && q !== "" ? Commands.match(commandRegistry, q) : [];
         let pages = showSettings && q !== "" ? SettingsPages.match(settingsPageList, q) : [];
         // A command and a Settings page that read the same are one row, the command (the action wins; the page is one click
         // away in Settings). In French the page is "Écran verrouillé" and the command "Verrouiller l’écran": both stay.
@@ -550,24 +545,7 @@ Scope {
     }
 
     function runCommand(id: string): void {
-        switch (id) {
-        case "lock":
-            SessionState.requestLock("search");
-            return;
-        case "sleep":
-            Power.sleepNow();
-            return;
-        // Restart, Shut Down and Log Out: no message, the dialog shows its countdown (ADR-0040 ID-21).
-        case "restart":
-            Popups.confirm(qsTranslate("Search", "Are you sure you want to restart your computer now?"), "", qsTranslate("Search", "Restart"), "restart", {}, true, screenName);
-            return;
-        case "shutdown":
-            Popups.confirm(qsTranslate("Search", "Are you sure you want to shut down your computer now?"), "", qsTranslate("Search", "Shut Down"), "shutdown", {}, true, screenName);
-            return;
-        case "logout":
-            Popups.confirm(qsTranslate("Search", "Are you sure you want to quit all applications and log out %1?").arg(SystemInfo.user), "", qsTranslate("Search", "Log Out"), "logout", {}, true, screenName);
-            return;
-        }
+        Commands.run(commandRegistry, id, [], "row");
     }
 
     // Click on a chip: select it, or clear the filter when it is the selected one.

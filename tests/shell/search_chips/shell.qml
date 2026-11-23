@@ -96,9 +96,10 @@ ShellRoot {
         search.showCalculator = false;
         check("no calculator when off", groupIds("2+3").indexOf("calc") < 0);
         check("commands match", JSON.stringify(groupIds("sleep")).match(/top|commands/) !== null);
+        check("...the Sleep command's row", JSON.stringify(search.groups).indexOf("cmd:sys.sleep") >= 0);
         search.showCommands = false;
         groupIds("sleep");
-        check("no command when off", JSON.stringify(search.groups).indexOf("cmd:sleep") < 0);
+        check("no command when off", JSON.stringify(search.groups).indexOf("cmd:") < 0);
         groupIds("wallpaper");
         check("settings pages match", JSON.stringify(search.groups).indexOf("setting:wallpaper") >= 0);
         search.showSettings = false;
