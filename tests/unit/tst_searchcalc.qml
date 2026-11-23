@@ -146,6 +146,9 @@ TestCase {
         compare(pc("200 - 10%"), "180");
         compare(pc("100 + 5 - 10%"), "94.5");
         compare(pc("2*3+50%"), "9");
+        compare(pc("200+10%+10%"), "242", "each percentage applies to the running value");
+        compare(pc("200 + 10% - 10%"), "198");
+        compare(pc("100 - 50% - 50%"), "25");
         compare(pc("1 200 + 10 %", fr), "1" + fr.groupSeparator + "320");
         compare(pc("19,99 - 15%", fr), "16,9915");
         // A percentage that is no phrasing keeps the grammar's meaning.

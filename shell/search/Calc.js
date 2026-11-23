@@ -227,7 +227,12 @@ function format(value, locale) {
 const NUM = "(\\d+\\.?\\d*|\\.\\d+)";
 const PCT = "\\s*(?:%|percent|pour\\s*cent|pourcent)";
 
+// The base of a phrasing is itself a phrasing when it can be ("200 + 10% + 10%": 200 + 10% is 220, then + 10% is 242, the
+// percentage of the running value), else any expression of the grammar.
 function evaluateBase(text) {
+    const phrased = percentPhrase(text, null);
+    if (phrased !== null && isFinite(phrased))
+        return phrased;
     const r = evaluate(text);
     return r.ok ? r.value : null;
 }

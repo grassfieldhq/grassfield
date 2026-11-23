@@ -238,7 +238,8 @@ function baseAnswer(text, locale) {
 function answer(input, locale) {
     if (typeof input !== "string" || input.length > 100)
         return null;
-    const text = Numbers.normalizeInput(input, locale);
+    // "fl oz" and "fluid ounce(s)" are one word to the table.
+    const text = Numbers.normalizeInput(input, locale).replace(/\bfl(?:uid)?\s+(?:oz|ounces?)\b/gi, "floz");
     const based = baseAnswer(text, locale);
     if (based)
         return based;

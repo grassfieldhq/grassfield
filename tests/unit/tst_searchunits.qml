@@ -143,6 +143,10 @@ TestCase {
         compare(ut("1 m³ to L"), "1000 L");
         compare(ut("2 cups to ml"), "473.1765 mL");
         compare(ut("1 floz to ml"), "29.5735 mL");
+        compare(ut("1 fl oz to ml"), "29.5735 mL");
+        compare(ut("2 FL OZ in cups"), "0.25 cup");
+        compare(ut("1 cup to fl oz"), "8 fl oz");
+        compare(ut("1 fluid ounce to ml"), "29.5735 mL");
         compare(ut("2 litres en gallons", fr), "0,5283 gal");
     }
 
@@ -198,6 +202,10 @@ TestCase {
         compare(ut("0xff en hex"), null, "en is a French word only");
         compare(ut("ff to dec"), null, "digits without a base are decimal");
         compare(ut("12 bin to dec"), null);
+        // "0b12 hex" is ambiguous: 0b is the binary prefix, but 12 is no binary number (it could also be the hex digits
+        // 0, b, 1, 2). It stays refused rather than guessed.
+        compare(ut("0b12 hex to dec"), null);
+        compare(ut("0b12 to dec"), null);
         compare(ut("0xff bin to dec"), null, "the prefix and the named base must agree");
         compare(ut("1.5 to hex"), null);
         compare(ut("9007199254740993 to hex"), null, "beyond 2^53 - 1 is refused");
