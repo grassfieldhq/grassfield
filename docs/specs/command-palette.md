@@ -215,7 +215,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 | **Tab** | **Actions of the selected row** (macOS 27: "select a result and press Tab" [A1]). Changes search.md S6, where Tab moves between groups | [A1] |
 | ⌘K (Super+K, unbound in bindings.lua; Ctrl+K as a fallback) | Actions (Raycast [R2]) | [R2] |
 | Page Down / Page Up, Ctrl+↓ / Ctrl+↑ | next / previous group (was Tab) | delegated, ADR-0067 |
-| Shift+Tab | focus ring to the chips (as today past the first group) | search.md F2c |
+| Shift+Tab | focus ring to the last chip (reverse order; was past the first group) | search.md F2c |
 | Esc | close Actions, else pop a detail view, else clear, else close | [R1][A2] |
 | Backspace on an empty field | pop one level (detail, Clipboard view) | [R1], search.md |
 | In argument chips: Tab / Shift+Tab | next / previous argument | [A2] "fill in its fields" |
@@ -223,6 +223,12 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 
 Slice P3c proves in nested that Super+K reaches the Exclusive layer (no Grassfield or Omarchy bind takes it) before it is
 listed; if it does not, ⌘K is not offered and Tab alone opens Actions.
+
+Status (P3a to P3c): Tab opens Actions, Shift+Tab reaches the last chip, Page Down/Up and Ctrl+↓/↑ move between groups. ⌘K is coded
+(`Actions.keyAction`, option `cmdK`, by symbol or by the K key's place) but **off**: `SearchPanel.qml` passes no option until the nested
+proof; the Actions list names no ⌘K. Rows with Actions today: app, setting (Open), command (Run, plus the `actions` its registry
+entry brings, destructive ones last), calculator (Copy), file and recent (Open, Show in Files); the clipboard rows keep the CB-8
+menu. The kind-specific actions of P4 to P7 (Open With, Copy Path, Quit, favorites, quick keys, shortcut) arrive with their slices.
 
 ### 3.3 Actions panel
 - A glass list of the `menu` class (the PopupMenu used by the clipboard row menu, SearchPanel.qml:1165) anchored to the

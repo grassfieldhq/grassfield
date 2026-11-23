@@ -8,6 +8,7 @@ import qs.platform
 import qs.platform.shortcuts
 import qs.services
 import "../platform/ScreenChoice.js" as ScreenChoice
+import "Actions.js" as Actions
 import "Calc.js" as Calc
 import "Commands.js" as Commands
 import "ClipboardView.js" as ClipView
@@ -72,6 +73,10 @@ Scope {
     // Chips need something to choose between; a lone category is the list itself.
     readonly property bool chipsShown: query.trim() !== "" && chips.length > 1
     // Keyboard reach of the chips: the field keeps the text focus; in the "chips" zone the ring is on chip `chipIndex`.
+    // The Actions panel of the selected row (P3b, ADR-0067 D-1): the row it was opened on and its actions (Actions.js).
+    property bool actionsOpen: false
+    property var actionsItem: null
+    property var actionList: []
     property string zone: "field"
     property int chipIndex: -1
 
@@ -218,6 +223,7 @@ Scope {
 
     function hide(): void {
         open = false;
+        closeActions();
         // A paste the helper has not confirmed yet ends with Search: a late confirmation pastes nothing (ADR-0034 §4).
         Clipboard.searchClosed();
         leaveChips();
@@ -252,6 +258,7 @@ Scope {
             return;
         query = text;
         filter = "";
+        closeActions();
         leaveChips();
         fileHits = [];
         cancelFiles();
@@ -305,7 +312,7 @@ Scope {
     }
 
     function mkCommand(c: var): var {
-        return {kind: "command", key: "cmd:" + c.id, title: c.title, subtitle: c.subtitle, glyph: c.glyph, command: c.id};
+        return {kind: "command", key: "cmd:" + c.id, title: c.title, subtitle: c.subtitle, glyph: c.glyph, command: c.id, actions: c.actions};
     }
 
     function mkSetting(h: var): var {
@@ -575,20 +582,67 @@ Scope {
         selected = (selected + delta + items.length) % items.length;
     }
 
-    // Tab / Shift+Tab: first item of the next / previous group.
+    // Page Down / Page Up, Ctrl+Down / Ctrl+Up: first item of the next / previous group (wrapping).
     function moveGroup(delta: int): void {
         if (items.length === 0 || groups.length === 0)
             return;
         const current = selected >= 0 ? items[selected].groupId : groups[0].id;
         let gi = groups.findIndex(g => g.id === current);
-        if (chipsShown && Filters.leavesForChips(gi, groups.length, delta)) {
-            zone = "chips";
-            chipIndex = delta > 0 ? 0 : chips.length - 1;
-            return;
-        }
         gi = (gi + delta + groups.length) % groups.length;
         const target = groups[gi].id;
         selected = items.findIndex(it => it.groupId === target);
+    }
+
+    // Shift+Tab: the focus ring goes to the last filter chip (reverse order) (search.md F2c). Returns whether there are chips to reach.
+    function enterChips(): bool {
+        if (!chipsShown)
+            return false;
+        zone = "chips";
+        chipIndex = chips.length - 1;
+        return true;
+    }
+
+    // ---- the Actions panel (P3b) ----------------------------------------------------------
+
+    // The words the actions are named with (translated here so that lupdate finds them; Actions.js orders them).
+    readonly property var actionWords: ({open: qsTr("Open"), run: qsTr("Run"), copy: qsTr("Copy"), reveal: qsTr("Show in Files")})
+
+    // Tab: the Actions of the selected row. Returns whether the row has any (the Clipboard view keeps its own menu).
+    function openActions(): bool {
+        if (clipboardView || selected < 0 || selected >= items.length)
+            return false;
+        const list = Actions.forItem(items[selected], actionWords);
+        if (list.length === 0)
+            return false;
+        leaveChips();
+        actionsItem = items[selected];
+        actionList = list;
+        actionsOpen = true;
+        return true;
+    }
+
+    function closeActions(): void {
+        actionsOpen = false;
+        actionsItem = null;
+        actionList = [];
+    }
+
+    // The user chose an action of the open panel: it runs on the row it was opened on.
+    function runAction(id: string): void {
+        const a = Actions.find(actionList, id);
+        const item = actionsItem;
+        closeActions();
+        if (!a || a.enabled === false || !item)
+            return;
+        if (id.startsWith("x:")) {
+            // An entry's own action goes through the registry's gate (availability), like Run.
+            hide();
+            Commands.runAction(commandRegistry, item.command, id.slice(2), "row");
+        } else if (id === "reveal") {
+            activate(item, true);
+        } else {
+            activate(item, false);
+        }
     }
 
     // ---- the Clipboard view (ADR-0034) ----------------------------------------------------

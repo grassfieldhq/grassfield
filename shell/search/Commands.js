@@ -9,6 +9,8 @@
 // Entry: {id, title, subtitle, keywords[], keywordsEn[], glyph, kind, provider, args[], actions[], available, run}
 // - id: ^[a-z][a-z0-9.-]{0,63}$ (`sys.lock`); ids of menu items are ephemeral and never stored.
 // - keywords: words in the shell's language; keywordsEn: English words kept besides them (optional).
+// - actions: the entry's own Actions (Tab), after Run: [{id, title, shortcut?, destructive?, enabled?, run(args, origin)}], ids as above;
+//   Actions.js (palette P3) drops a malformed one and puts the destructive ones last.
 // - available: a boolean or a function returning one (default: available); an unavailable entry is never offered or run.
 // - run(args, origin): the action; origin is "row", "quickkey", "hotkey", "ipc" or "refresh".
 
@@ -127,5 +129,18 @@ function run(registry, id, args, origin) {
     if (!e || !isAvailable(e))
         return false;
     e.run(args || [], origin || "row");
+    return true;
+}
+
+// An action of an entry (its `actions`, shown in the Actions panel), through the same gate as `run`: an unknown or unavailable
+// entry, an unknown or disabled action does nothing. Returns whether it ran.
+function runAction(registry, id, actionId, origin) {
+    const e = find(registry, id);
+    if (!e || !isAvailable(e) || !Array.isArray(e.actions))
+        return false;
+    const a = e.actions.find(x => x && x.id === actionId);
+    if (!a || a.enabled === false || typeof a.run !== "function")
+        return false;
+    a.run([], origin || "row");
     return true;
 }
