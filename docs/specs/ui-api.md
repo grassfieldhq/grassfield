@@ -85,6 +85,7 @@ add MenuPopup
 add TimeOfDay
 add SoundEffects
 add Glide
+add DisplayScope
 ```
 
 ## Property changes of public types
