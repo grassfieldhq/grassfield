@@ -23,8 +23,10 @@
 #    that is not letters and digits: Rejected, no sheet
 #  8 wrong answers from the shell (a PIN with punctuation, 5 digits for a passkey, a code for a confirmation, ok for a code
 #    shown, a check box, a name) cancel the request (Rejected, "cancel"); the shell's refusal is Rejected, never Canceled
-#  9 the bound of 8 is shared with gcr's requests: four gcr prompts and four pairing steps outstanding, the next one
-#    Rejected at once
+#  9 the bound of 8 is shared with gcr's requests (B-05 and the applications' queue): six gcr prompts from three
+#    connections, four shown and two waiting unseen; two pairing steps still shown (BlueZ keeps two places), a third
+#    Rejected at once (six shown and NetworkManager's two kept fill the 8); a pairing step's freed place goes to the next
+#    pairing step, never to a waiting gcr request; the waiting ones shown on their turns, every request answered
 # 10 Settings' Pair() (an application without an agent of its own) reaches the bridge's sheet as the default agent
 # 11 the shell goes with a request outstanding: Rejected, the agent unregisters (no Release follows, as in BlueZ 5.87); it
 #    comes back: registered again
@@ -426,21 +428,64 @@ scenario_body() {
   check wait_until 10 grep -qx "r0 error org.bluez.Error.Rejected" "$d/bz.bz"
 
   # --- 9 the bound is shared with gcr -------------------------------------------------------------------------------------
+  # B-05 (bridges/prompter/src/Requests.h) and its amendment (the applications' queue, owner decision 2026-11-22): of the
+  # shell's 8 places NetworkManager and BlueZ keep two each; the applications' gcr prompts hold at most four (one connection
+  # two), the others wait in the bridge, unseen and holding no place; bluetoothd's requests never wait.
   if python3 -I -c 'import gi; gi.require_version("Gcr", "4"); from gi.repository import Gcr' 2>/dev/null; then
+    # ids_since <shell log line> <kind>: the ids of the prompts of that kind the shell got after that line, oldest first
+    ids_since() {
+      tail -n +"$(($1 + 1))" "$d/s.shell" | grep '"type":"prompt"' \
+        | python3 -I -c 'import json,sys; [print(m["id"]) for m in map(json.loads, sys.stdin) if m["kind"] == sys.argv[1]]' "$2"
+    }
+    local from waits turns g bt=()
+    from=$(wc -l <"$d/s.shell")
     n=$(prompts s)
-    "${run_env[@]}" python3 -I "$client_py" many 4 >"$d/gcr.out" 2>&1 &
-    pids+=("$!")
-    wait_until 10 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) -ge 4 ]]' _ "$d/s.shell" "$n"
-    for tag in q1 q2 q3 q4; do say bz "authorize $tag AA_BB_CC_DD_EE_01"; done
-    wait_until 10 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) -ge 8 ]]' _ "$d/s.shell" "$n"
-    say bz "authorize q9 AA_BB_CC_DD_EE_02"
-    desc="four gcr prompts and four pairing steps outstanding: the ninth (bluetooth) gets Rejected at once"
-    check wait_until 10 grep -qx "q9 error org.bluez.Error.Rejected" "$d/bz.bz"
-    for cid in $(grep '"type":"prompt"' "$d/s.shell" | tail -n 8 | python3 -I -c 'import json,sys; [print(json.loads(l)["id"]) for l in sys.stdin]'); do
-      say s "answer $cid cancel"
+    waits=$(count main log "waits for a place")
+    turns=$(count main log "a place is free, its turn")
+    # Three connections with two prompts each: whichever four are shown, each waiting one is held back by the applications'
+    # share only (its connection shows fewer than two), so a place BlueZ frees would fit it if the reserve were not kept.
+    for g in g1 g2 g3; do
+      "${run_env[@]}" python3 -I "$client_py" many 2 >"$d/$g.out" 2>&1 &
+      pids+=("$!")
     done
-    desc="...and the eight get their answers (gcr: cancelled; bluetooth: Decline, Rejected)"
-    check wait_until 10 bash -c '[[ $(grep -c "cancelled" "$1") == 4 ]] && for t in q1 q2 q3 q4; do grep -qx "$t error org.bluez.Error.Rejected" "$2" || exit 1; done' _ "$d/gcr.out" "$d/bz.bz"
+    desc="six gcr prompts from three connections: the shell gets the applications' four, the other two wait in the bridge"
+    check wait_until 15 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 4 && $(( $(grep -c "waits for a place" "$3") - $4 )) == 2 ]]' \
+      _ "$d/s.shell" "$n" "$d/main.log" "$waits"
+    say bz "authorize q1 AA_BB_CC_DD_EE_01"
+    say bz "authorize q2 AA_BB_CC_DD_EE_01"
+    desc="...two pairing steps still reach the shell: BlueZ keeps its two places, which the waiting gcr requests do not hold"
+    check wait_until 10 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 6 ]]' _ "$d/s.shell" "$n"
+    say bz "authorize q3 AA_BB_CC_DD_EE_02"
+    desc="...a third gets Rejected at once, never queued: six shown and NetworkManager's two kept fill the shell's 8"
+    check wait_until 10 grep -qx "q3 error org.bluez.Error.Rejected" "$d/bz.bz"
+    sleep 0.3
+    desc="...the shell saw nothing of it, and no gcr request was answered or refused meanwhile"
+    check bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 6 ]] && ! cat "$3" "$4" "$5" | grep -q -e cancelled -e password=' \
+      _ "$d/s.shell" "$n" "$d/g1.out" "$d/g2.out" "$d/g3.out"
+    mapfile -t bt < <(ids_since "$from" bluetooth)
+    printf '%s\n' "${bt[@]:0:1}" >"$d/answered"
+    say s "answer ${bt[0]:-none} cancel"
+    wait_until 10 grep -qx "q1 error org.bluez.Error.Rejected" "$d/bz.bz"
+    sleep 1
+    desc="a pairing step declined (q1, Rejected) leaves its place to BlueZ: no waiting gcr request takes it"
+    check bash -c 'grep -qx "q1 error org.bluez.Error.Rejected" "$1" && [[ $(( $(grep -c "\"type\":\"prompt\"" "$2") - $3 )) == 6 && $(grep -c "a place is free, its turn" "$4") == "$5" ]]' \
+      _ "$d/bz.bz" "$d/s.shell" "$n" "$d/main.log" "$turns"
+    say bz "authorize q4 AA_BB_CC_DD_EE_01"
+    desc="...the next pairing step (q4) gets it, shown at once"
+    check wait_until 10 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 7 ]]' _ "$d/s.shell" "$n"
+    # Every prompt answered "cancel" as it reaches the shell: each gcr answer gives its place to a waiting gcr request.
+    for _ in $(seq 1 30); do
+      for cid in $(ids_since "$from" password) $(ids_since "$from" bluetooth); do
+        grep -qx "$cid" "$d/answered" && continue
+        echo "$cid" >>"$d/answered"
+        say s "answer $cid cancel"
+      done
+      [[ $(cat "$d/g1.out" "$d/g2.out" "$d/g3.out" | grep -c cancelled) -ge 6 ]] && break
+      sleep 0.5
+    done
+    desc="...the two waiting gcr requests are shown on their turns, and every request gets its answer (gcr: six cancelled; bluetooth: q2 and q4 Rejected)"
+    check wait_until 10 bash -c '[[ $(cat "$1" "$2" "$3" | grep -c cancelled) == 6 && $(( $(grep -c "a place is free, its turn" "$4") - $5 )) == 2 ]] && for t in q2 q4; do grep -qx "$t error org.bluez.Error.Rejected" "$6" || exit 1; done' \
+      _ "$d/g1.out" "$d/g2.out" "$d/g3.out" "$d/main.log" "$turns" "$d/bz.bz"
   else
     echo "SKIP: bluez_agent: the shared bound needs PyGObject with Gcr 4"
   fi
@@ -594,6 +639,8 @@ not-reregistered-after-a-restart#BtAgent.cpp#        if (!owner.isEmpty() && m_w
 not-the-default-agent#BtAgent.cpp#                g_dbus_connection_call(agent->m_bus, bt::kBusName, bt::kAgentManagerPath, bt::kAgentManagerIface, "RequestDefaultAgent",#                g_dbus_connection_call(agent->m_bus, bt::kBusName, bt::kAgentManagerPath, bt::kAgentManagerIface, "NoSuchMethod",
 display-cancel-does-not-stop-the-pairing#BtAgent.cpp#        g_dbus_connection_call(m_bus, request->owner.constData(), request->path.constData(), bt::kDeviceIface, "CancelPairing", nullptr, nullptr,#        g_dbus_connection_call(m_bus, request->owner.constData(), request->path.constData(), bt::kDeviceIface, "NoSuchMethod", nullptr, nullptr,
 ok-for-a-code-shown#Bridge.cpp#        else if (display && answer.ok)\n            wrong = QStringLiteral("ok for a code shown");#        else if (false)\n            wrong = QStringLiteral("ok for a code shown");
+bluetooth-places-not-kept (B-05)#Requests.cpp#        if (lane != Lane::Bluetooth)\n            kept += std::max(0, kReservedBluetooth - bt);#        if (false)\n            kept += std::max(0, kReservedBluetooth - bt);
+waiting-takes-any-place (the applications' queue)#Requests.cpp#                if (!it->waiting || !fits(it->lane, it->caller))#                if (!it->waiting)
 EOF_MUTANTS
 fi
 ((rc == 0)) && echo "PASS: bluez_agent" || echo "FAIL: bluez_agent"
