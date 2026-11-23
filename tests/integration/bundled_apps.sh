@@ -6,7 +6,7 @@
 #   C  the contract desktop entries (sanaga.desktop: text/html, xhtml, http, https; grassfield-notes.desktop: text/markdown,
 #      text/x-markdown) name their binary and never a launcher that resolves the default browser again (omarchy-launch-browser,
 #      xdg-open, omarchy-browser: the fork storm of 2026-10-30)
-# C reads the entries of the PINNED commits (sanaga a9e0e56, grassfield-notes 2daf1c8), vendored byte for byte in
+# C reads the entries of the PINNED commits (sanaga 67b0296, grassfield-notes 2daf1c8), vendored byte for byte in
 # tests/fixtures/bundled-apps/ and named by the pin: never the HEAD of a sibling checkout, which moves. A re-pin replaces the file
 # and the name. When GRASSFIELD_SANAGA_GIT / GRASSFIELD_NOTES_GIT name a clone of the sibling repository, the vendored file is
 # also compared with `git show <pin>:packaging/<file>` there (run it bare, from a clone that has the pin).
@@ -66,8 +66,8 @@ verify_pin() { # vendored file, clone dir, pin, path in the repository
     bad "C the vendored $(basename "$vendored") differs from $path at $pin in $clone (or the clone lacks the pin)"
   fi
 }
-check_entry "$fixtures/sanaga-a9e0e56.desktop.pinned" sanaga.desktop "text/html application/xhtml+xml x-scheme-handler/http x-scheme-handler/https"
+check_entry "$fixtures/sanaga-67b0296.desktop.pinned" sanaga.desktop "text/html application/xhtml+xml x-scheme-handler/http x-scheme-handler/https"
 check_entry "$fixtures/grassfield-notes-2daf1c8.desktop.pinned" grassfield-notes.desktop "text/markdown text/x-markdown"
-verify_pin "$fixtures/sanaga-a9e0e56.desktop.pinned" "${GRASSFIELD_SANAGA_GIT:-}" a9e0e56 packaging/sanaga.desktop
+verify_pin "$fixtures/sanaga-67b0296.desktop.pinned" "${GRASSFIELD_SANAGA_GIT:-}" 67b0296 packaging/sanaga.desktop
 verify_pin "$fixtures/grassfield-notes-2daf1c8.desktop.pinned" "${GRASSFIELD_NOTES_GIT:-}" 2daf1c8 packaging/grassfield-notes.desktop
 exit "$fail"
