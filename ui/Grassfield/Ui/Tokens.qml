@@ -2939,6 +2939,25 @@ QtObject {
     // estimate (no capture): Select Text in Images, the widest host name a QR code chip shows before eliding it in the middle [ref: docs/specs/preview.md]
     readonly property int previewCodeChipLabelWidth: 220
 
+    // estimate: the Screenshot app's editor window, wider than Preview's 860 to leave room for the tool group, the style group and the buttons [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotWindowWidth: 960
+    // estimate: the Screenshot app's editor window [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotWindowHeight: 680
+    // estimate: the narrowest editor window, the unified toolbar's groups with the lights [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotWindowMinWidth: 560
+    // estimate: the shortest editor window [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotWindowMinHeight: 360
+    // as preview.toolbarHeight and files.toolbarHeight: glass capsule groups in a 52-pt band, one unified toolbar for every app window [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotToolbarHeight: 52
+    // as preview.toolbarIconSize: the glyph inside a toolbar button [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotToolbarIconSize: 18
+    // as preview.zoomStep: one Zoom In or Zoom Out step [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property real screenshotZoomStep: 1.25
+    // as preview.zoomMin: the smallest zoom [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property real screenshotZoomMin: 0.05
+    // as preview.zoomMax: the largest zoom [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotZoomMax: 16
+
     // F1 reference (docs/testing/f1-reference-gaps.md, Apps launcher): panel 844 +-1 pt wide (2x capture)
     readonly property int launcherPanelWidth: 844
     // panel radius about 34 (macOS 26: 27-28) [ref: docs/audits/ui-finesse-2026-10-25/f1-macos27.md § Apps]
