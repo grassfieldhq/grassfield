@@ -25,8 +25,7 @@ public:
     // `history` is not owned and outlives the document.
     explicit Document(CaptureHistory *history);
 
-    // The picture the file holds once the layers are drawn on `original`; the default draws none (slice B3 plugs in the QPainter
-    // exporter).
+    // The picture the file holds once the layers are drawn on `original`; the default is the QPainter exporter (exporter.h).
     using Exporter = std::function<QImage(const QImage &original, const Layers &layers)>;
     void setExporter(const Exporter &exporter) { m_exporter = exporter; }
     // Seam for tests: see atomicfile.h BeforeRename; applies to the picture's replacement (Done and Revert).

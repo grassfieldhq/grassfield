@@ -12,16 +12,20 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick DBus)
 # Qt 6.10+ defines the private module targets (Qt6::GuiPrivate, linked below for windowchrome.h) only when asked for.
 find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
 
-# The argument rules, the layers file, the atomic replacement, the history entry, the document and the backend: shared by the
-# app and its tests.
+# The argument rules, the layers file, the shapes and their exporter, the undo stack and the tools, the atomic replacement, the
+# history entry, the document and the backend: shared by the app and its tests.
 add_library(grassfield-screenshot-core STATIC
+    src/annotations.cpp src/annotations.h
     src/appearance.cpp src/appearance.h
     src/atomicfile.cpp src/atomicfile.h
     src/capturehistory.cpp src/capturehistory.h
     src/document.cpp src/document.h
+    src/exporter.cpp src/exporter.h
     src/layers.cpp src/layers.h
     src/screenshotapp.cpp src/screenshotapp.h
-    src/screenshotlogic.cpp src/screenshotlogic.h)
+    src/screenshotlogic.cpp src/screenshotlogic.h
+    src/toolcontroller.cpp src/toolcontroller.h
+    src/undostack.cpp src/undostack.h)
 target_include_directories(grassfield-screenshot-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(grassfield-screenshot-core PUBLIC Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick)
 
@@ -45,14 +49,19 @@ find_package(GTest)
 if(GTest_FOUND)
     enable_testing()
     add_executable(screenshot-unit-tests
+        ../../tests/unit/screenshot/tst_annotations.cpp
         ../../tests/unit/screenshot/tst_document.cpp
+        ../../tests/unit/screenshot/tst_golden.cpp
         ../../tests/unit/screenshot/tst_layers.cpp
         ../../tests/unit/screenshot/tst_main.cpp
         ../../tests/unit/screenshot/tst_pathparity.cpp
         ../../tests/unit/screenshot/tst_screenshotlogic.cpp
+        ../../tests/unit/screenshot/tst_tools.cpp
+        ../../tests/unit/screenshot/tst_undo.cpp
         # Preview's own path rules, run beside this app's by tst_pathparity (sources not changed).
         ../preview/src/previewlogic.cpp ../files/src/filelogic.cpp)
     target_include_directories(screenshot-unit-tests PRIVATE ../preview/src ../files/src)
+    target_compile_definitions(screenshot-unit-tests PRIVATE GF_SCREENSHOT_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../tests/unit/screenshot/golden")
     target_link_libraries(screenshot-unit-tests PRIVATE grassfield-screenshot-core GTest::gtest)
     add_test(NAME screenshot-unit-tests COMMAND screenshot-unit-tests)
 endif()

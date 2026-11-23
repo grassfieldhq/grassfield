@@ -1,10 +1,12 @@
 pragma ComponentBehavior: Bound
+import QtQml
 import QtQuick
 import Grassfield.Ui
 
 // Grassfield Screenshot: the editor window (ADR-0066 D-3; docs/specs/capture-suite.md §3.3). Slice B1 shows the picture with the
-// unified toolbar, zoom and fit; slice B2 adds Done and Revert. The annotation tools come with the next slices; their groups
-// go in the toolbar's `leading` and `trailing` rows and over `view.holder`.
+// unified toolbar, zoom and fit; slice B2 adds Done and Revert; B3 the layers over the picture (select, move, resize), undo and
+// redo and the question when closing with changes; B4 the arrow, line, rectangle and ellipse tools. The later tools add their
+// buttons to the tool group and their options to the style group.
 Window {
     id: editorWin
 
@@ -22,7 +24,10 @@ Window {
     readonly property var zoomView: view
 
     // The toolbar's items, never overlapping: its inset, the lights, the groups and their margins.
-    readonly property real toolbarRest: leadingGroup.width + (revertGroup.visible ? revertGroup.width : 0) + doneButton.width + 4 * Tokens.spacingMd
+    readonly property real toolbarRest: leadingRow.width + undoGroup.width + (revertGroup.visible ? revertGroup.width : 0) + doneButton.width + 6 * Tokens.spacingMd
+
+    // Set when the changes are given up (Don't Save): the window then closes without asking.
+    property bool discarding: false
     readonly property real toolbarMin: Math.max(toolbar.contentStart, Tokens.windowItemsInset) + editorWin.toolbarRest
 
     title: editorWin.backend.fileName !== "" ? DisplayName.text(editorWin.backend.fileName) : qsTr("Screenshot")
@@ -41,6 +46,27 @@ Window {
     function finish(): void {
         if (editorWin.backend.done())
             editorWin.close();
+    }
+
+    // Closing with changes asks first (macOS: Save, Don't Save, Cancel); a window with none closes at once.
+    onClosing: close => {
+        if (editorWin.backend.dirty && !editorWin.discarding) {
+            close.accepted = false;
+            keepSheet.open();
+        }
+    }
+
+    // New shapes are drawn as wide on the picture as on the screen the window is on: a capture at 1.25 has 1.25 times the pixels.
+    Binding {
+        target: editorWin.backend
+        property: "toolWidth"
+        value: Tokens.screenshotStrokeWidth * editorWin.screen.devicePixelRatio
+    }
+    // The colour of new shapes (the style group of slice B5 offers more).
+    Binding {
+        target: editorWin.backend
+        property: "toolColor"
+        value: String(Qt.color(Tokens.colorSwatch.red))
     }
 
     // Global menu (T1). Its shortcuts repeat the ones below: every Shortcut whose key is also a menu shortcut acts on
@@ -86,11 +112,92 @@ Window {
         onActivated: view.fit()
         onActivatedAmbiguously: view.fit()
     }
-    // Esc closes. With tools there will be changes to keep or discard (slice B3 asks); until then nothing makes the document dirty.
+    // Esc lets go of the selection, then closes (and with changes, asks: onClosing).
     Shortcut {
         sequence: "Esc"
-        enabled: !editorWin.backend.dirty
-        onActivated: editorWin.close()
+        enabled: !keepSheet.shown
+        onActivated: {
+            if (editorWin.backend.selectedId !== 0)
+                editorWin.backend.selectNone();
+            else
+                editorWin.close();
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+Z"
+        enabled: !keepSheet.shown
+        onActivated: editorWin.backend.undo()
+        onActivatedAmbiguously: editorWin.backend.undo()
+    }
+    Shortcut {
+        sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]
+        enabled: !keepSheet.shown
+        onActivated: editorWin.backend.redo()
+        onActivatedAmbiguously: editorWin.backend.redo()
+    }
+    Shortcut {
+        sequences: ["Delete", "Backspace"]
+        enabled: !keepSheet.shown
+        onActivated: editorWin.backend.deleteSelected()
+        onActivatedAmbiguously: editorWin.backend.deleteSelected()
+    }
+    // The arrow keys move the selection by 1 pixel, 10 with Shift (as the pins).
+    Shortcut {
+        sequence: "Left"
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        onActivated: editorWin.backend.nudgeSelected(-1, 0)
+    }
+    Shortcut {
+        sequence: "Right"
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        onActivated: editorWin.backend.nudgeSelected(1, 0)
+    }
+    Shortcut {
+        sequence: "Up"
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        onActivated: editorWin.backend.nudgeSelected(0, -1)
+    }
+    Shortcut {
+        sequence: "Down"
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        onActivated: editorWin.backend.nudgeSelected(0, 1)
+    }
+    Shortcut {
+        sequence: "Shift+Left"
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        onActivated: editorWin.backend.nudgeSelected(-10, 0)
+    }
+    Shortcut {
+        sequence: "Shift+Right"
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        onActivated: editorWin.backend.nudgeSelected(10, 0)
+    }
+    Shortcut {
+        sequence: "Shift+Up"
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        onActivated: editorWin.backend.nudgeSelected(0, -10)
+    }
+    Shortcut {
+        sequence: "Shift+Down"
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        onActivated: editorWin.backend.nudgeSelected(0, 10)
+    }
+    // Tool letters.
+    Instantiator {
+        model: [
+            {key: "V", tool: "select"},
+            {key: "A", tool: "arrow"},
+            {key: "L", tool: "line"},
+            {key: "R", tool: "rectangle"},
+            {key: "O", tool: "ellipse"}
+        ]
+        delegate: Shortcut {
+            required property var modelData
+            sequence: modelData.key
+            enabled: !keepSheet.shown
+            onActivated: editorWin.backend.tool = modelData.tool
+            onActivatedAmbiguously: editorWin.backend.tool = modelData.tool
+        }
     }
 
     // ---- toolbar ---------------------------------------------------------------------------------
@@ -108,40 +215,130 @@ Window {
         doubleClickAction: editorWin.backend.titlebarDoubleClick
         canMinimize: editorWin.backend.canMinimize
 
-        ToolbarGroup {
-            id: leadingGroup
-            objectName: "zoomGroup"
-            x: toolbar.contentStart
+        // Zoom, the tools and the options of the tool at hand, left to right.
+        Row {
+            id: leadingRow
+            objectName: "leadingRow"
+            x: Math.max(toolbar.contentStart, Tokens.windowItemsInset)
             anchors.verticalCenter: parent.verticalCenter
+            spacing: Tokens.spacingMd
 
-            ToolButton {
-                capsule: true
-                accessibleName: qsTr("Zoom Out")
-                onClicked: view.zoomOut()
+            ToolbarGroup {
+                objectName: "zoomGroup"
 
-                Glyph {
-                    anchors.centerIn: parent
-                    kind: "zoomOut"
+                ToolButton {
+                    capsule: true
+                    accessibleName: qsTr("Zoom Out")
+                    onClicked: view.zoomOut()
+
+                    Glyph {
+                        anchors.centerIn: parent
+                        kind: "zoomOut"
+                    }
+                }
+                ToolButton {
+                    capsule: true
+                    accessibleName: qsTr("Zoom to Fit")
+                    onClicked: view.fit()
+
+                    Glyph {
+                        anchors.centerIn: parent
+                        kind: "fit"
+                    }
+                }
+                ToolButton {
+                    capsule: true
+                    accessibleName: qsTr("Zoom In")
+                    onClicked: view.zoomIn()
+
+                    Glyph {
+                        anchors.centerIn: parent
+                        kind: "zoomIn"
+                    }
                 }
             }
-            ToolButton {
-                capsule: true
-                accessibleName: qsTr("Zoom to Fit")
-                onClicked: view.fit()
 
-                Glyph {
-                    anchors.centerIn: parent
-                    kind: "fit"
+            // The tools: one is on at a time.
+            ToolbarGroup {
+                id: toolGroup
+                objectName: "toolGroup"
+
+                Repeater {
+                    model: [
+                        {tool: "select", name: qsTr("Select"), key: "V"},
+                        {tool: "arrow", name: qsTr("Arrow"), key: "A"},
+                        {tool: "line", name: qsTr("Line"), key: "L"},
+                        {tool: "rectangle", name: qsTr("Rectangle"), key: "R"},
+                        {tool: "ellipse", name: qsTr("Ellipse"), key: "O"}
+                    ]
+
+                    ToolButton {
+                        id: toolButton
+                        required property var modelData
+                        objectName: "tool_" + toolButton.modelData.tool
+                        capsule: true
+                        radio: true
+                        checkable: true
+                        checked: editorWin.backend.tool === toolButton.modelData.tool
+                        accessibleName: toolButton.modelData.name
+                        tooltip: qsTr("%1 (%2)").arg(toolButton.modelData.name).arg(toolButton.modelData.key)
+                        onClicked: editorWin.backend.tool = toolButton.modelData.tool
+
+                        Glyph {
+                            anchors.centerIn: parent
+                            kind: toolButton.modelData.tool
+                        }
+                    }
                 }
             }
-            ToolButton {
-                capsule: true
-                accessibleName: qsTr("Zoom In")
-                onClicked: view.zoomIn()
 
-                Glyph {
-                    anchors.centerIn: parent
-                    kind: "zoomIn"
+            // The options of the tool: the arrow's style, a shape's fill.
+            ToolbarGroup {
+                objectName: "arrowStyleGroup"
+                visible: editorWin.backend.tool === "arrow"
+
+                Repeater {
+                    model: [
+                        {style: "straight", name: qsTr("Straight Arrow")},
+                        {style: "curved", name: qsTr("Curved Arrow")},
+                        {style: "double", name: qsTr("Double Arrow")}
+                    ]
+
+                    ToolButton {
+                        id: styleButton
+                        required property var modelData
+                        objectName: "arrow_" + styleButton.modelData.style
+                        capsule: true
+                        radio: true
+                        checkable: true
+                        checked: editorWin.backend.arrowStyle === styleButton.modelData.style
+                        accessibleName: styleButton.modelData.name
+                        onClicked: editorWin.backend.arrowStyle = styleButton.modelData.style
+
+                        Glyph {
+                            anchors.centerIn: parent
+                            kind: "arrow" + styleButton.modelData.style.charAt(0).toUpperCase() + styleButton.modelData.style.slice(1)
+                        }
+                    }
+                }
+            }
+            ToolbarGroup {
+                objectName: "fillGroup"
+                visible: editorWin.backend.tool === "rectangle" || editorWin.backend.tool === "ellipse"
+
+                ToolButton {
+                    objectName: "fillButton"
+                    capsule: true
+                    checkable: true
+                    checked: editorWin.backend.toolFill
+                    accessibleName: qsTr("Filled")
+                    tooltip: qsTr("Fill the shape")
+                    onClicked: editorWin.backend.toolFill = !editorWin.backend.toolFill
+
+                    Glyph {
+                        anchors.centerIn: parent
+                        kind: "fillShape"
+                    }
                 }
             }
         }
@@ -150,7 +347,7 @@ Window {
         Column {
             id: titleBlock
             anchors {
-                left: leadingGroup.right
+                left: leadingRow.right
                 leftMargin: Tokens.spacingMd
                 right: actions.left
                 rightMargin: Tokens.spacingMd
@@ -193,6 +390,38 @@ Window {
                 verticalCenter: parent.verticalCenter
             }
             spacing: Tokens.spacingMd
+
+            ToolbarGroup {
+                id: undoGroup
+                objectName: "undoGroup"
+
+                ToolButton {
+                    objectName: "undoButton"
+                    capsule: true
+                    enabled: editorWin.backend.canUndo
+                    accessibleName: qsTr("Undo")
+                    tooltip: qsTr("Undo (Ctrl+Z)")
+                    onClicked: editorWin.backend.undo()
+
+                    Glyph {
+                        anchors.centerIn: parent
+                        kind: "undo"
+                    }
+                }
+                ToolButton {
+                    objectName: "redoButton"
+                    capsule: true
+                    enabled: editorWin.backend.canRedo
+                    accessibleName: qsTr("Redo")
+                    tooltip: qsTr("Redo (Ctrl+Shift+Z)")
+                    onClicked: editorWin.backend.redo()
+
+                    Glyph {
+                        anchors.centerIn: parent
+                        kind: "redo"
+                    }
+                }
+            }
 
             ToolbarGroup {
                 id: revertGroup
@@ -238,6 +467,14 @@ Window {
         natW: editorWin.backend.imageWidth
         natH: editorWin.backend.imageHeight
         pictureName: editorWin.backend.fileName
+        // A double click belongs to the tools now (a shape is drawn by dragging); View > Actual Size and Zoom to Fit remain.
+        doubleTapZoom: false
+
+        AnnotationLayer {
+            parent: view.holder
+            backend: editorWin.backend
+            viewScale: view.viewScale
+        }
     }
 
     // The toolbar's rule appears once the picture scrolls under it (ADR-0039 D3).
@@ -247,6 +484,24 @@ Window {
         height: 1
         visible: view.scrolled
         color: Appearance.withAlpha(Appearance.colors.separator, Appearance.separatorOpacity)
+    }
+
+    // The question when the window closes with changes: Done keeps them, Don't Save gives them up, Cancel goes back to the picture.
+    Sheet {
+        id: keepSheet
+        objectName: "keepSheet"
+        title: qsTr("Do you want to keep the changes to “%1”?").arg(editorWin.title)
+        message: qsTr("Your changes are lost if you do not keep them.")
+        confirmText: qsTr("Done")
+        extraButtons: [{id: "discard", text: qsTr("Don’t Save")}]
+        onAccepted: editorWin.finish()
+        onExtra: id => {
+            if (id === "discard") {
+                keepSheet.close();
+                editorWin.discarding = true;
+                editorWin.close();
+            }
+        }
     }
 
     // The last failure of Done or Revert: the window stays and the file keeps its old bytes whole.

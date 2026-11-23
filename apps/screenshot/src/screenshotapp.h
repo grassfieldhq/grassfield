@@ -3,12 +3,16 @@
 #include "appearance.h"
 #include "capturehistory.h"
 #include "document.h"
+#include "toolcontroller.h"
+#include "undostack.h"
 
 #include <QImage>
 #include <QMutex>
 #include <QQuickImageProvider>
+#include <QRectF>
 #include <QString>
 #include <QStringList>
+#include <QVariantList>
 
 // The backend of the editor window: one open document, its state for the toolbar and the menus, and Done and Revert. The
 // window itself is qml/Editor.qml; everything it may do to a file goes through the two invokables below.
@@ -29,6 +33,21 @@ class ScreenshotApp : public AppearanceSettings
     // The messages of the command line's rejected arguments, and the last failure of Done or Revert ("" when none).
     Q_PROPERTY(QStringList errors READ errors CONSTANT)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
+    // The editing state (slices B3, B4): the layers' drawing, the tool and its style, the selection, undo and redo.
+    // image://screenshot/overlay/<revision>: the layers alone on a transparent picture (the same drawing as the export).
+    Q_PROPERTY(QString overlaySource READ overlaySource NOTIFY layersChanged)
+    Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
+    // The style new shapes get: "#rrggbb" colour, stroke in picture pixels, fill, arrow style (straight, curved, double).
+    Q_PROPERTY(QString toolColor READ toolColor WRITE setToolColor NOTIFY toolChanged)
+    Q_PROPERTY(qreal toolWidth READ toolWidth WRITE setToolWidth NOTIFY toolChanged)
+    Q_PROPERTY(bool toolFill READ toolFill WRITE setToolFill NOTIFY toolChanged)
+    Q_PROPERTY(QString arrowStyle READ arrowStyle WRITE setArrowStyle NOTIFY toolChanged)
+    Q_PROPERTY(int selectedId READ selectedId NOTIFY layersChanged)
+    // The selected layer's handles as [{x, y}] and its box, in picture pixels (empty and null without a selection).
+    Q_PROPERTY(QVariantList handles READ handles NOTIFY layersChanged)
+    Q_PROPERTY(QRectF selectionBounds READ selectionBounds NOTIFY layersChanged)
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY layersChanged)
+    Q_PROPERTY(bool canRedo READ canRedo NOTIFY layersChanged)
 
 public:
     // `path` empty with `errors` set: nothing to edit. `historyRoot` empty: the user's own (CaptureHistory::defaultRoot()).
@@ -44,6 +63,26 @@ public:
     QStringList errors() const { return m_errors; }
     QString lastError() const { return m_lastError; }
 
+    QString overlaySource() const;
+    QString tool() const { return m_tools.tool(); }
+    void setTool(const QString &tool);
+    QString toolColor() const { return m_tools.style().color; }
+    void setToolColor(const QString &color);
+    qreal toolWidth() const { return m_tools.style().width; }
+    void setToolWidth(qreal width);
+    bool toolFill() const { return m_tools.style().fill; }
+    void setToolFill(bool fill);
+    QString arrowStyle() const { return m_tools.style().arrow; }
+    void setArrowStyle(const QString &style);
+    int selectedId() const { return m_tools.selected(); }
+    QVariantList handles() const;
+    QRectF selectionBounds() const { return m_tools.selectionBounds(); }
+    bool canUndo() const { return m_undo.canUndo(); }
+    bool canRedo() const { return m_undo.canRedo(); }
+
+    // The layers drawn alone at `target` pixels for a picture of the document's size (the overlay provider's picture).
+    QImage overlayImage(const QSize &target) const;
+
     // The picture the provider serves (a copy: the document stays on the GUI thread).
     QImage currentImage() const;
 
@@ -52,20 +91,41 @@ public:
     // Revert: puts the captured picture back in the file.
     Q_INVOKABLE bool revert();
 
+    // The pointer, in picture pixels (`tolerance`: the picking reach, in picture pixels). The view calls press on a press, move
+    // while it is held, release at its end; Shift (`constrain`) keeps angles and squares.
+    Q_INVOKABLE bool toolPress(qreal x, qreal y, qreal tolerance);
+    Q_INVOKABLE void toolMove(qreal x, qreal y, bool constrain);
+    Q_INVOKABLE void toolRelease(qreal x, qreal y, bool constrain);
+    Q_INVOKABLE void toolCancel();
+    Q_INVOKABLE void undo();
+    Q_INVOKABLE void redo();
+    // The selected layer: removed, or moved by (dx, dy) picture pixels.
+    Q_INVOKABLE void deleteSelected();
+    Q_INVOKABLE void nudgeSelected(qreal dx, qreal dy);
+    Q_INVOKABLE void selectNone();
+
 signals:
     void documentChanged();
     void lastErrorChanged();
+    void layersChanged();
+    void toolChanged();
 
 private:
     void setLastError(const QString &error);
     void publish();
+    // The layers changed (a step, an undo, a preview): the document, the view and the state follow.
+    void layersEdited();
 
     QStringList m_errors;
     screenshot::CaptureHistory m_history;
     screenshot::Document m_document;
+    screenshot::UndoStack m_undo;
+    screenshot::ToolController m_tools;
+    QList<screenshot::Layer> m_overlayLayers; // a copy for the provider's thread
     mutable QMutex m_imageLock;
     QImage m_image;
     int m_revision = 0;
+    int m_layersRevision = 0;
     QString m_lastError;
 };
 
@@ -75,6 +135,7 @@ class ScreenshotImageProvider : public QQuickImageProvider
 {
 public:
     explicit ScreenshotImageProvider(ScreenshotApp *app);
+    // "<revision>": the original; "overlay/<revision>": the layers alone, at the requested size.
     QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override;
 
 private:

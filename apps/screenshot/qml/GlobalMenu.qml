@@ -4,8 +4,8 @@ import Qt.labs.platform as Platform
 
 // The editor's menus in the global menu bar (T1: master-prompt 5.7, ADR-0008), exported by Qt through DBusMenu. Editor.qml creates
 // it only while the registrar is there, and a fresh one when the registrar restarts (src/main.cpp, apps/globalmenu.h); the
-// toolbar stays either way. macOS structure: File, Edit, View, Tools; the app menu and Window are the shell's T0 menus. Edit and
-// Tools come with the tools (slice B3 on): an empty menu would be noise. Every item runs the same action as the toolbar and the
+// toolbar stays either way. macOS structure: File, Edit, Tools, View; the app menu and Window are the shell's T0 menus. Edit and
+// Tools came with the tools (slices B3 and B4); the later tools add their items. Every item runs the same action as the toolbar and the
 // window's shortcuts. A shortcut that an in-window Shortcut also registers is handled once: Qt hands an ambiguous key to one of
 // them per press and the window's Shortcut also acts on activatedAmbiguously.
 Platform.MenuBar {
@@ -32,6 +32,70 @@ Platform.MenuBar {
             text: qsTr("Close Window")
             shortcut: "Ctrl+W"
             onTriggered: bar.win.close()
+        }
+    }
+
+    Platform.Menu {
+        title: qsTr("Edit")
+
+        Platform.MenuItem {
+            text: qsTr("Undo")
+            shortcut: "Ctrl+Z"
+            enabled: bar.win.backend.canUndo
+            onTriggered: bar.win.backend.undo()
+        }
+        Platform.MenuItem {
+            text: qsTr("Redo")
+            shortcut: "Ctrl+Shift+Z"
+            enabled: bar.win.backend.canRedo
+            onTriggered: bar.win.backend.redo()
+        }
+        Platform.MenuSeparator {}
+        Platform.MenuItem {
+            text: qsTr("Delete")
+            shortcut: "Backspace"
+            enabled: bar.win.backend.selectedId !== 0
+            onTriggered: bar.win.backend.deleteSelected()
+        }
+    }
+
+    Platform.Menu {
+        title: qsTr("Tools")
+
+        Platform.MenuItem {
+            text: qsTr("Select")
+            shortcut: "V"
+            checkable: true
+            checked: bar.win.backend.tool === "select"
+            onTriggered: bar.win.backend.tool = "select"
+        }
+        Platform.MenuItem {
+            text: qsTr("Arrow")
+            shortcut: "A"
+            checkable: true
+            checked: bar.win.backend.tool === "arrow"
+            onTriggered: bar.win.backend.tool = "arrow"
+        }
+        Platform.MenuItem {
+            text: qsTr("Line")
+            shortcut: "L"
+            checkable: true
+            checked: bar.win.backend.tool === "line"
+            onTriggered: bar.win.backend.tool = "line"
+        }
+        Platform.MenuItem {
+            text: qsTr("Rectangle")
+            shortcut: "R"
+            checkable: true
+            checked: bar.win.backend.tool === "rectangle"
+            onTriggered: bar.win.backend.tool = "rectangle"
+        }
+        Platform.MenuItem {
+            text: qsTr("Ellipse")
+            shortcut: "O"
+            checkable: true
+            checked: bar.win.backend.tool === "ellipse"
+            onTriggered: bar.win.backend.tool = "ellipse"
         }
     }
 

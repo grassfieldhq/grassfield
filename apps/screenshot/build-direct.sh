@@ -18,7 +18,7 @@ if [[ " $* " == *" --asan "* ]]; then
   suffix="-asan"
 fi
 jobs=${GF_JOBS:-2}
-core=(screenshotlogic layers atomicfile capturehistory document appearance screenshotapp)
+core=(screenshotlogic layers atomicfile capturehistory annotations exporter undostack toolcontroller document appearance screenshotapp)
 moc=/usr/lib/qt6/moc
 [[ -x $moc ]] || moc=$(command -v moc-qt6 || command -v moc)
 for m in appearance screenshotapp; do
@@ -64,7 +64,7 @@ case ${1:-} in
     done
     # tst_pathparity.cpp runs Preview's own path rules next to this app's: their sources are compiled in (not changed).
     # shellcheck disable=SC2046
-    g++ "${cxxflags[@]}" -I"$here/src" -I"$here/.." -I"$here/../preview/src" -I"$here/../files/src" $(pkg-config --cflags Qt6Core Qt6Gui Qt6Qml Qt6Quick) \
+    g++ "${cxxflags[@]}" "-DGF_SCREENSHOT_GOLDEN_DIR=\"$root/tests/unit/screenshot/golden\"" -I"$here/src" -I"$here/.." -I"$here/../preview/src" -I"$here/../files/src" $(pkg-config --cflags Qt6Core Qt6Gui Qt6Qml Qt6Quick) \
       "${objects[@]}" "${tests[@]}" "$here/../preview/src/previewlogic.cpp" "$here/../files/src/filelogic.cpp" \
       $(pkg-config --libs Qt6Core Qt6Gui Qt6Qml Qt6Quick Qt6DBus) -lgtest -pthread -o "$out/screenshot-unit-tests$suffix"
     echo "built $out/screenshot-unit-tests$suffix"

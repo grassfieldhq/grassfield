@@ -2957,6 +2957,12 @@ QtObject {
     readonly property real screenshotZoomMin: 0.05
     // as preview.zoomMax: the largest zoom [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
     readonly property int screenshotZoomMax: 16
+    // estimate: the default stroke of a new shape, in points: a device-pixel width is this times the display scale, so that a capture at 1.25 draws 1.25 times as wide (the file keeps device pixels) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotStrokeWidth: 3
+    // estimate: the side of a selection handle, in points, a ringed square as macOS 27 draws its annotation handles [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotHandleSize: 10
+    // estimate: how far from a shape the pointer still picks it, and from a handle still grabs it, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotHitTolerance: 6
 
     // F1 reference (docs/testing/f1-reference-gaps.md, Apps launcher): panel 844 +-1 pt wide (2x capture)
     readonly property int launcherPanelWidth: 844

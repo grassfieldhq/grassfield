@@ -12,6 +12,8 @@ Item {
     property real natW: 1
     property real natH: 1
     property string pictureName: ""
+    // A double click toggles Zoom to Fit and Actual Size (an editor turns it off: its tools take the pointer).
+    property bool doubleTapZoom: true
 
     readonly property real fitScale: Math.min(1, Math.min(flick.width / Math.max(1, root.natW), flick.height / Math.max(1, root.natH)))
     property bool fitMode: true
@@ -113,6 +115,7 @@ Item {
         // Double click toggles between Zoom to Fit and Actual Size.
         TapHandler {
             acceptedButtons: Qt.LeftButton
+            enabled: root.doubleTapZoom
             onDoubleTapped: root.toggleActualSize()
         }
 

@@ -1,5 +1,6 @@
 #include "document.h"
 
+#include "exporter.h"
 #include "screenshotlogic.h"
 
 #include <QBuffer>
@@ -30,6 +31,7 @@ QImage decodePng(const QByteArray &bytes)
 
 Document::Document(CaptureHistory *history)
     : m_history(history)
+    , m_exporter(exportLayers)
 {
 }
 
