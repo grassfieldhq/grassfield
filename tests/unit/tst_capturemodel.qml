@@ -19,16 +19,21 @@ TestCase {
         })
 
     function test_modesInOrder() {
-        compare(Model.MODES.map(m => m.id), ["screen", "window", "selection", "recordScreen", "recordSelection"]);
-        compare(Model.MODES.map(m => m.glyph), ["capture-screen", "capture-window", "capture-selection", "record-screen", "record-selection"]);
-        compare(Model.shown(true).length, 5);
-        compare(Model.shown(false).map(m => m.id), ["screen", "window", "selection"], "without the recorder, no Record buttons");
+        compare(Model.MODES.map(m => m.id), ["screen", "window", "selection", "text", "recordScreen", "recordSelection"]);
+        compare(Model.MODES.map(m => m.glyph), ["capture-screen", "capture-window", "capture-selection", "capture-text", "record-screen", "record-selection"]);
+        compare(Model.shown(true).length, 6);
+        compare(Model.shown(false).map(m => m.id), ["screen", "window", "selection", "text"], "without the recorder, no Record buttons");
+        verify(!Model.isRecord("text"), "Capture Text is a capture");
+        verify(Model.isFrame("selection") && Model.isFrame("recordSelection") && Model.isFrame("text"), "these draw the frame");
+        verify(!Model.isFrame("screen") && !Model.isFrame("window") && !Model.isFrame("recordScreen") && !Model.isFrame(""));
         verify(Model.isRecord("recordScreen") && Model.isRecord("recordSelection"));
         verify(!Model.isRecord("selection") && !Model.isRecord(""));
     }
 
     function test_startMode() {
         compare(Model.startMode("window", true), "window", "the mode chosen last");
+        compare(Model.startMode("text", true), "text", "Capture Text is kept as the mode");
+        compare(Model.startMode("text", false), "text", "it needs no recorder");
         compare(Model.startMode("recordScreen", true), "recordScreen");
         compare(Model.startMode("recordScreen", false), "selection", "a recording that cannot start gives way");
         compare(Model.startMode("video", true), "selection", "an unknown mode: Capture Selected Portion");
@@ -36,11 +41,15 @@ TestCase {
     }
 
     function test_arrows() {
-        compare(Model.step("selection", 1, true), "recordScreen");
+        compare(Model.step("selection", 1, true), "text", "Capture Text follows Selected Portion");
+        compare(Model.step("text", 1, true), "recordScreen");
+        compare(Model.step("recordScreen", -1, true), "text");
+        compare(Model.step("text", -1, true), "selection");
         compare(Model.step("selection", -1, true), "window");
         compare(Model.step("screen", -1, true), "screen", "stops at the left end");
         compare(Model.step("recordSelection", 1, true), "recordSelection", "stops at the right end");
-        compare(Model.step("selection", 1, false), "selection", "no recording to step to");
+        compare(Model.step("selection", 1, false), "text");
+        compare(Model.step("text", 1, false), "text", "no recording to step to");
         compare(Model.step("recordScreen", 1, false), "screen", "a mode no longer offered: the first one");
     }
 
@@ -97,6 +106,18 @@ TestCase {
         compare(Model.helperArgs("recordScreen", plain, "a b"), ["record", "screen", "--save", "screenshots"], "an odd display name is not passed");
         compare(Model.helperArgs("recordScreen", plain, ""), ["record", "screen", "--save", "screenshots"]);
         compare(Model.helperArgs("nope", null, ""), ["selection", "--save", "screenshots"]);
+    }
+
+    // Capture Text (ADR-0066 A4): grassfield-capture text [--geometry]; nothing else (the text goes to the clipboard).
+    function test_helperArgsText() {
+        const all = {location: "desktop", timer: "10", microphone: "default", showPointer: true};
+        compare(Model.helperArgs("text", all, ""), ["text"], "no frame: the helper's crosshair");
+        compare(Model.helperArgs("text", all, "DP-1", "100,50 800x600"), ["text", "--geometry", "100,50 800x600"], "the frame, no display");
+        compare(Model.helperArgs("text", all, "", "-10,20 300x200"), ["text", "--geometry", "-10,20 300x200"]);
+        compare(Model.helperArgs("text", all, "", "10,20 300x200 "), ["text"], "a malformed one: none");
+        compare(Model.helperArgs("text", all, "", "1.5,20 300x200"), ["text"]);
+        compare(Model.helperArgs("text", all, "", 7), ["text"]);
+        compare(Model.helperArgs("text", null, ""), ["text"]);
     }
 
     function ids(rows) {

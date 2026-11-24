@@ -3597,6 +3597,10 @@
         <translation>Capturer la partie sélectionnée</translation>
     </message>
     <message>
+        <source>Capture Text</source>
+        <translation>Capturer le texte</translation>
+    </message>
+    <message>
         <source>Record Entire Screen</source>
         <translation>Enregistrer l’écran entier</translation>
     </message>

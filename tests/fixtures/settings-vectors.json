@@ -187,6 +187,7 @@
     {"name": "screen saver slideshow", "path": "screensaver.kind", "stored": "slideshow", "read": "slideshow", "valid": true},
     {"name": "screen saver of an unknown kind is the default", "path": "screensaver.kind", "stored": "aerial", "default": true, "valid": false},
     {"name": "capture toolbar in Record Selected Portion", "path": "capture.mode", "stored": "recordSelection", "read": "recordSelection", "valid": true},
+    {"name": "capture toolbar in Capture Text", "path": "capture.mode", "stored": "text", "read": "text", "valid": true},
     {"name": "capture toolbar in an unknown mode is the default", "path": "capture.mode", "stored": "video", "default": true, "valid": false},
     {"name": "capture saved to Documents", "path": "capture.saveTo", "stored": "documents", "read": "documents", "valid": true},
     {"name": "capture saved to an unknown place is the default", "path": "capture.saveTo", "stored": "mail", "default": true, "valid": false},

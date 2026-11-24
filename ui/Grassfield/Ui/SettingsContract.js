@@ -405,7 +405,7 @@ const RULES = {
     "pointer.size": {"type": "integer", "min": 24, "max": 96},
     "pointer.outlineColor": {"type": "pointerColor", "pattern": "^#[0-9a-fA-F]{6}$"},
     "pointer.fillColor": {"type": "pointerColor", "pattern": "^#[0-9a-fA-F]{6}$"},
-    "capture.mode": {"type": "enum", "values": ["screen", "window", "selection", "recordScreen", "recordSelection"]},
+    "capture.mode": {"type": "enum", "values": ["screen", "window", "selection", "text", "recordScreen", "recordSelection"]},
     "capture.saveTo": {"type": "enum", "values": ["desktop", "documents", "clipboard", "preview"]},
     "capture.location": {"type": "enum", "values": ["screenshots", "desktop", "documents", "clipboard", "preview"]},
     "capture.timer": {"type": "enum", "values": ["none", "5", "10"]},

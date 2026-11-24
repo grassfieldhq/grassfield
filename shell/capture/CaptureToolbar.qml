@@ -128,7 +128,7 @@ Variants {
             root.holder = win.name;
         }
         readonly property bool recordMode: Model.isRecord(root.controller.mode)
-        readonly property bool framing: win.shown && (root.controller.mode === "selection" || root.controller.mode === "recordSelection")
+        readonly property bool framing: win.shown && Model.isFrame(root.controller.mode)
         readonly property bool windowMode: win.covered && root.controller.mode === "window"
         // The display's logical size: the window's once mapped, else the screen's (the window is 0x0 when the frame is first made).
         readonly property var bounds: Model.displayBounds(win.width, win.height, win.modelData ? win.modelData.width : 0, win.modelData ? win.modelData.height : 0)
@@ -253,6 +253,7 @@ Variants {
                 "screen": qsTr("Capture Entire Screen"),
                 "window": qsTr("Capture Selected Window"),
                 "selection": qsTr("Capture Selected Portion"),
+                "text": qsTr("Capture Text"),
                 "recordScreen": qsTr("Record Entire Screen"),
                 "recordSelection": qsTr("Record Selected Portion")
             })

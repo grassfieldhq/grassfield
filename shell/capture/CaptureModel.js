@@ -4,11 +4,13 @@
 // order, the mode it opens in, the arrows, the helper's argv for a mode and the options, and the Options menu. Pure functions
 // (tests/unit/tst_capturemodel.qml); Capture.qml and CaptureToolbar.qml hold the state and draw it.
 
-// The modes, left to right: the three captures, then the two recordings. `glyph`: the button's symbol (branding/icons).
+// The modes, left to right: the captures (Capture Text, slice A4, after Selected Portion as macOS 27 lists it), then the two
+// recordings. `glyph`: the button's symbol (branding/icons).
 var MODES = [
     {id: "screen", record: false, glyph: "capture-screen"},
     {id: "window", record: false, glyph: "capture-window"},
     {id: "selection", record: false, glyph: "capture-selection"},
+    {id: "text", record: false, glyph: "capture-text"},
     {id: "recordScreen", record: true, glyph: "record-screen"},
     {id: "recordSelection", record: true, glyph: "record-selection"}
 ];
@@ -69,12 +71,20 @@ function timerSeconds(timer) {
 // "X,Y WxH" in the compositor's logical coordinates, as grim -g and the helper's --geometry take it.
 var GEOMETRY = /^-?[0-9]{1,6},-?[0-9]{1,6} [0-9]{1,6}x[0-9]{1,6}$/;
 
+// The modes that draw the frame on the toolbar's display (Selected Portion, and the area Capture Text reads).
+function isFrame(mode) {
+    return mode === "selection" || mode === "recordSelection" || mode === "text";
+}
+
 // The helper's arguments (packaging/bin/grassfield-capture) for a mode, the options ({location, timer, microphone,
 // showPointer}, as the settings store them), a display (`output`: the one clicked in an Entire Screen mode, the toolbar's for
 // Record Entire Screen; "" for every display) and the area chosen on the toolbar's surface (`geometry`, GEOMETRY: the frame of a
 // Selected Portion mode, the window clicked; "" lets the helper's crosshair choose).
 function helperArgs(mode, options, output, geometry) {
     const o = options || {};
+    // Capture Text (grassfield-capture text [--geometry]): the text goes to the clipboard, so no Save to, timer or pointer.
+    if (mode === "text")
+        return typeof geometry === "string" && GEOMETRY.test(geometry) ? ["text", "--geometry", geometry] : ["text"];
     const args = isRecord(mode) ? ["record", mode === "recordScreen" ? "screen" : "selection"]
                                 : [known(mode) ? mode : "selection"];
     args.push("--save", location(mode, o.location));

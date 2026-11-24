@@ -1057,11 +1057,12 @@
             "screen",
             "window",
             "selection",
+            "text",
             "recordScreen",
             "recordSelection"
           ],
           "default": "selection",
-          "description": "The mode the toolbar opens in (the one chosen last): Capture Entire Screen, Capture Selected Window, Capture Selected Portion, Record Entire Screen, Record Selected Portion."
+          "description": "The mode the toolbar opens in (the one chosen last): Capture Entire Screen, Capture Selected Window, Capture Selected Portion, Capture Text, Record Entire Screen, Record Selected Portion."
         },
         "saveTo": {
           "type": "string",
