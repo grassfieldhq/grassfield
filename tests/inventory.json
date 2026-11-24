@@ -328,6 +328,7 @@
  {"path": "tests/unit/preview/tst_previewlogic.cpp", "layer": "logic"},
  {"path": "tests/unit/preview/tst_shortcutstyle.cpp", "layer": "logic"},
  {"path": "tests/unit/settings/tst_systemguard.cpp", "layer": "logic"},
+ {"path": "tests/unit/timezones/tst_timezones.cpp", "layer": "logic"},
  {"path": "tests/unit/stack-helper/tst_stacklogic.cpp", "layer": "logic"},
  {"path": "tests/unit/stack-helper/tst_helper.cpp", "layer": "logic"},
  {"path": "tests/unit/clipboard-helper/tst_cliplogic.cpp", "layer": "logic"},

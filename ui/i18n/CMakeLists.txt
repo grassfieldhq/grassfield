@@ -21,7 +21,7 @@ qt_add_qml_module(grassfield_i18n
     CLASS_NAME GrassfieldI18nPlugin
     NO_GENERATE_PLUGIN_SOURCE
     OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Grassfield/I18n
-    SOURCES translator.h translator.cpp translationloader.h iconsearchpaths.h)
+    SOURCES translator.h translator.cpp timezones.h timezones.cpp translationloader.h iconsearchpaths.h)
 set_target_properties(grassfield_i18n PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(grassfield_i18n PRIVATE Qt6::Core Qt6::Qml)
 target_sources(grassfield_i18nplugin PRIVATE plugin.cpp)

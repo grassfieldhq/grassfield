@@ -1,0 +1,10 @@
+# a small zone1970.tab (tab separated), the format of tzdata
+FR	+4852+00220	Europe/Paris
+GB,GG,IM,JE	+513030-0000731	Europe/London
+JP	+353916+1394441	Asia/Tokyo
+US	+404251-0740023	America/New_York	Eastern (most areas)
+US	+415100-0873900	America/Chicago	Central (most areas)
+CH,DE,LI	+4723+00832	Europe/Zurich	Swiss time
+BR	-2332-04637	America/Sao_Paulo	Brazil (southeast)
+XX	+0000+00000	Not/AZone
+broken line without tabs
