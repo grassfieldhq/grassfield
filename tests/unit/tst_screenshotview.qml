@@ -247,7 +247,7 @@ TestCase {
         compare(view.fitScale, expect);
         compare(view.viewScale, expect);
         verify(view.fitScale < 1, "a 2000 x 1000 picture is larger than the window");
-        compare(view.holder.width, 2000 * expect);
+        compare(view.holder.width, Math.round(2000 * expect), "whole device pixels");
         backendItem.imageWidth = 100;
         backendItem.imageHeight = 80;
         compare(view.fitScale, 1, "a small picture is not enlarged to fit");
@@ -753,6 +753,40 @@ TestCase {
             flick.contentX = 0;
             flick.contentY = 0;
         }
+        view.fit();
+    }
+
+    // 100% is one picture pixel per device pixel (ADR-0066): at 1.25 an 800 px picture is 640 logical px, on the device grid.
+    function test_actualSizeIsOnePicturePixelPerDevicePixel() {
+        const view = editor.zoomView;
+        const content = findChild(editor.contentItem, "shapeContent");
+        const scene = findChild(editor.contentItem, "shapeScene");
+        const w = backendItem.imageWidth, h = backendItem.imageHeight;
+        backendItem.imageWidth = 800;
+        backendItem.imageHeight = 500;
+        const keep = view.dpr;
+        for (const dpr of [1, 1.25, 1.5, 2]) {
+            view.dpr = dpr;
+            view.actualSize();
+            compare(view.zoomLabel, "100%");
+            compare(view.viewScale, 1);
+            fuzzyCompare(view.holder.width * dpr, 800, 1e-6, "800 picture px are 800 device px at " + dpr);
+            fuzzyCompare(view.holder.height * dpr, 500, 1e-6, "500 picture px are 500 device px at " + dpr);
+            fuzzyCompare(view.holder.x * dpr, Math.round(view.holder.x * dpr), 1e-6, "x on the device grid at " + dpr);
+            fuzzyCompare(view.holder.y * dpr, Math.round(view.holder.y * dpr), 1e-6, "y on the device grid at " + dpr);
+            // The shapes and the overlay are scaled the same: a picture pixel is one device pixel.
+            fuzzyCompare(content.scale * dpr, 1, 1e-9, "the scene at " + dpr);
+            fuzzyCompare(scene.width * dpr, 800, 1e-6);
+            compare(scene.deviceRatio, dpr);
+            const corner = content.children[0].mapToItem(view.holder, 100, 50);
+            fuzzyCompare(corner.x * dpr, 100, 1e-6, "the corner (100, 50) is 100 device px from the picture's edge at " + dpr);
+            fuzzyCompare(corner.y * dpr, 50, 1e-6);
+            view.setZoom(2);
+            fuzzyCompare(view.holder.width * dpr, 1600, 1e-6, "200%");
+        }
+        view.dpr = keep;
+        backendItem.imageWidth = w;
+        backendItem.imageHeight = h;
         view.fit();
     }
 

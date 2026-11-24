@@ -95,7 +95,7 @@ struct Rig {
         window.resize(view);
         QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(GF_SCREENSHOT_QML_DIR "/ShapeScene.qml")));
         EXPECT_FALSE(component.isError()) << component.errorString().toStdString();
-        QObject *object = component.createWithInitialProperties({{QStringLiteral("model"), QVariant::fromValue(&model)}, {QStringLiteral("viewScale"), zoom}, {QStringLiteral("regionRevision"), 0}, {QStringLiteral("regionPlaceholder"), QColor(Qt::black)}});
+        QObject *object = component.createWithInitialProperties({{QStringLiteral("model"), QVariant::fromValue(&model)}, {QStringLiteral("viewScale"), zoom}, {QStringLiteral("deviceRatio"), qFuzzyCompare(zoom, 0.8) ? 1.25 : 1.0}, {QStringLiteral("regionRevision"), 0}, {QStringLiteral("regionPlaceholder"), QColor(Qt::black)}});
         scene = qobject_cast<QQuickItem *>(object);
         EXPECT_NE(scene, nullptr);
         if (!scene)
@@ -340,7 +340,8 @@ TEST_P(SceneAgreement, TheSceneIsTheExportersDrawingAtThatZoom)
     }
 }
 
-INSTANTIATE_TEST_SUITE_P(Zooms, SceneAgreement, ::testing::Values(1.0, 2.5, 16.0));
+// 0.8 is the scene scale of a picture at 100% on a 1.25 display (ZoomView.sceneScale = 1 / 1.25).
+INSTANTIATE_TEST_SUITE_P(Zooms, SceneAgreement, ::testing::Values(0.8, 1.0, 2.5, 16.0));
 
 // The same bound for the kinds of slices B5 and B6, each on its own and then all together (the counters' numbers come from their place
 // in the list, so the two counters are also drawn with each other). Text depends on the font at hand, but the scene and the
@@ -617,4 +618,4 @@ TEST_P(RegionScene, RedactAndSpotlightMatchTheExportAndThePlaceholderCoversTheRe
     }
 }
 
-INSTANTIATE_TEST_SUITE_P(Zooms, RegionScene, ::testing::Values(1.0, 1.25, 2.0));
+INSTANTIATE_TEST_SUITE_P(Zooms, RegionScene, ::testing::Values(0.8, 1.0, 1.25, 2.0));

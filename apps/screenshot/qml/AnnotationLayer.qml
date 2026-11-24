@@ -11,8 +11,10 @@ Item {
     id: root
 
     required property var backend
-    // Screen points per picture pixel (ZoomView.viewScale).
+    // Logical pixels per picture pixel (ZoomView.sceneScale).
     required property real viewScale
+    // Device pixels per logical pixel (ZoomView.dpr).
+    property real deviceRatio: 1
 
     readonly property bool drawing: root.backend.tool !== "select"
     // The crop rectangle in this item's points (empty without the Crop tool).
@@ -33,6 +35,7 @@ Item {
         anchors.fill: parent
         model: root.backend.layerModel
         viewScale: root.viewScale
+        deviceRatio: root.deviceRatio
         regionRevision: root.backend.regionRevision
         // Opaque: what shows before the exporter's pixels are there hides the area whole.
         regionPlaceholder: Qt.rgba(Appearance.colors.textSecondary.r, Appearance.colors.textSecondary.g, Appearance.colors.textSecondary.b, 1)
