@@ -167,6 +167,13 @@ Singleton {
     readonly property bool searchShowSettings: store.searchShowSettings
     readonly property bool searchShowCommands: store.searchShowCommands
     readonly property real searchHistoryResetAt: store.searchHistoryResetAt
+    readonly property bool searchShowMenuItems: store.searchShowMenuItems
+    readonly property bool searchShowSystemState: store.searchShowSystemState
+    readonly property bool searchShowScripts: store.searchShowScripts
+    readonly property var searchScriptFolders: store.searchScriptFolders
+    readonly property bool searchLocalModelEnabled: store.searchLocalModelEnabled
+    readonly property string searchLocalModelModel: store.searchLocalModelModel
+    readonly property bool searchLocalModelKeepConversations: store.searchLocalModelKeepConversations
     readonly property int screenSaverIdleMinutes: store.screenSaverIdleMinutes
     readonly property string screenSaverKind: store.screenSaverKind
     readonly property string screenSaverFolder: store.screenSaverFolder

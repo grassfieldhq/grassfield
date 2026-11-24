@@ -6,6 +6,7 @@ import Grassfield.Ui
 import qs.launchpad // layering-exception: GF-087
 import qs.platform
 import qs.services
+import "Actions.js" as ActionsJs
 import "ClipboardView.js" as ClipView
 
 // Search window, one per screen, mapped only on the controller's screen while open. Full-screen
@@ -37,6 +38,9 @@ Variants {
         property string menuKind: ""
         property var menuItem: null
         property point menuAt: Qt.point(0, 0)
+        // The Actions panel of the selected row (Tab, P3b): where it hangs (the row's right side) and whether it is placed.
+        property point actionsAt: Qt.point(0, 0)
+        property bool actionsPlaced: false
         readonly property var menuModel: menuKind === "row" ? rowMenuModel(menuItem) : menuKind === "more" ? moreMenuModel() : []
         // What a row shows in the moment its result is gone and the row not yet removed (Search.setResults).
         readonly property var noResult: ({kind: "", key: "", title: "", subtitle: ""})
@@ -83,6 +87,12 @@ Variants {
                 item: win.menuKind !== "" ? menuLoader : null
                 radius: Tokens.radiusMenu
             }
+
+            // The Actions list's glass (the filter field above it has none).
+            Region {
+                item: win.actionsPlaced ? actionsLoader.glass : null
+                radius: Tokens.radiusMenu
+            }
         }
 
         Region {
@@ -127,10 +137,27 @@ Variants {
 
         onShownChanged: {
             closeMenu();
+            if (!shown)
+                win.actionsPlaced = false;
             if (shown) {
                 field.text = root.controller.query;
                 field.forceActiveFocus();
                 firstFrame.done = false;
+            }
+        }
+
+        // The Actions panel opens beside the selected row and closes with the keyboard back in the field.
+        Connections {
+            target: root.controller
+
+            function onActionsOpenChanged(): void {
+                if (root.controller.actionsOpen && win.shown) {
+                    win.placeActions();
+                } else if (win.actionsPlaced) {
+                    win.actionsPlaced = false;
+                    if (win.shown)
+                        field.forceActiveFocus();
+                }
             }
         }
 
@@ -299,6 +326,13 @@ Variants {
             win.menuItem = null;
             win.menuAt = Qt.point(capsule.x + capsuleButton.x + capsuleButton.width, capsule.y + capsule.height + Tokens.spacingSm);
             win.menuKind = "more";
+        }
+
+        // The row's right side, level with its top (the Actions list hangs there, spec §3.3).
+        function placeActions(): void {
+            const rowItem = list.itemAtIndex(root.controller.selected);
+            win.actionsAt = rowItem ? rowItem.mapToItem(win.contentItem, rowItem.width + Tokens.searchActionsGap, 0) : Qt.point(panel.x + panel.width + Tokens.searchActionsGap, panel.y);
+            win.actionsPlaced = true;
         }
 
         function closeMenu(): void {
@@ -509,19 +543,28 @@ Variants {
                         if (c.chipKey(actions[event.key] ?? "other"))
                             return;
                     }
+                    // The keys of the results view (Actions.js): Tab opens Actions, Shift+Tab reaches the chips, Page Down and
+                    // Page Up (Ctrl+Down, Ctrl+Up) move between the groups.
+                    switch (ActionsJs.keyAction(event.key, event.modifiers, event.nativeScanCode)) {
+                    case "actions":
+                        c.openActions();
+                        return;
+                    case "chips":
+                        c.enterChips();
+                        return;
+                    case "groupNext":
+                        c.moveGroup(1);
+                        return;
+                    case "groupPrev":
+                        c.moveGroup(-1);
+                        return;
+                    }
                     switch (event.key) {
                     case Qt.Key_Down:
                         c.move(1);
                         break;
                     case Qt.Key_Up:
                         c.move(-1);
-                        break;
-                    case Qt.Key_Tab:
-                        // Some injectors (wtype) deliver Shift+Tab as Tab with Shift held.
-                        c.moveGroup((event.modifiers & Qt.ShiftModifier) !== 0 ? -1 : 1);
-                        break;
-                    case Qt.Key_Backtab:
-                        c.moveGroup(-1);
                         break;
                     case Qt.Key_Return:
                     case Qt.Key_Enter:
@@ -1142,9 +1185,14 @@ Variants {
         MouseArea {
             anchors.fill: parent
             z: 900
-            visible: win.menuKind !== ""
+            visible: win.menuKind !== "" || win.actionsPlaced
             acceptedButtons: Qt.AllButtons
             onPressed: mouse => {
+                if (win.actionsPlaced) {
+                    if (!actionsLoader.contains(actionsLoader.mapFromItem(win.contentItem, mouse.x, mouse.y)))
+                        root.controller.closeActions();
+                    return;
+                }
                 const menu = menuLoader.item as PopupMenu;
                 if (!menu || !menu.containsPoint(mouse.x, mouse.y))
                     win.closeMenu();
@@ -1170,6 +1218,101 @@ Variants {
                 onCloseRequested: win.closeMenu()
             }
             onLoaded: (item as Item).forceActiveFocus()
+        }
+
+        // The Actions list of the selected row (Tab): the `menu` class, with a filter field above it when the row has more than
+        // seven actions. The field or the list holds the keyboard; Esc closes, Return runs, Tab closes again.
+        Loader {
+            id: actionsLoader
+
+            // The list's glass for the blur region (the box sets it on load).
+            property Item glass: null
+            readonly property point placed: MenuPlace.place(win.actionsAt, {w: width, h: height}, {w: win.width, h: win.height}, Tokens.panelPopupMargin)
+
+            z: 901
+            x: placed.x
+            y: placed.y
+            width: (item as Item)?.width ?? 0
+            height: (item as Item)?.height ?? 0
+            active: win.actionsPlaced
+            onLoaded: (item as Item).forceActiveFocus()
+
+            sourceComponent: FocusScope {
+                id: box
+
+                readonly property var all: root.controller.actionList
+                readonly property bool filtered: ActionsJs.needsFilter(all)
+                readonly property var visibleActions: ActionsJs.filter(all, filterField.text)
+
+                width: menu.width
+                height: (filtered ? filterField.height + Tokens.spacingSm : 0) + menu.height
+
+                // Tab leaves as it came: the keys the list and the field do not use end here.
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                        root.controller.closeActions();
+                        event.accepted = true;
+                    }
+                }
+
+                function chooseFirst(): void {
+                    menu.currentIndex = ActionsJs.firstSelectable(box.visibleActions);
+                }
+
+                onVisibleActionsChanged: Qt.callLater(chooseFirst)
+                Component.onCompleted: {
+                    actionsLoader.glass = menu;
+                    chooseFirst();
+                }
+                Component.onDestruction: actionsLoader.glass = null
+
+                SearchField {
+                    id: filterField
+                    width: menu.width
+                    visible: box.filtered
+                    toolbar: true
+                    focus: box.filtered
+                    placeholderText: qsTr("Search Actions")
+                    Accessible.name: qsTr("Search Actions")
+                    Keys.onPressed: event => {
+                        switch (event.key) {
+                        case Qt.Key_Down:
+                            menu.currentIndex = ActionsJs.step(box.visibleActions, menu.currentIndex, 1);
+                            event.accepted = true;
+                            break;
+                        case Qt.Key_Up:
+                            menu.currentIndex = ActionsJs.step(box.visibleActions, menu.currentIndex, -1);
+                            event.accepted = true;
+                            break;
+                        case Qt.Key_Return:
+                        case Qt.Key_Enter:
+                            if (menu.currentIndex >= 0 && menu.currentIndex < box.visibleActions.length)
+                                menu.activated(box.visibleActions[menu.currentIndex], false);
+                            event.accepted = true;
+                            break;
+                        }
+                    }
+                    // Esc clears the typed words first, a second one closes: SearchField's own handler runs before this one and
+                    // accepts the key when it cleared, so only an Esc it left alone closes (tst_searchactionsfield).
+                    Keys.onEscapePressed: event => {
+                        if (!event.accepted && text === "") {
+                            root.controller.closeActions();
+                            event.accepted = true;
+                        }
+                    }
+                }
+
+                PopupMenu {
+                    id: menu
+                    y: box.filtered ? filterField.height + Tokens.spacingSm : 0
+                    bounds: win.contentItem
+                    focus: !box.filtered
+                    model: box.visibleActions
+                    accessibleName: qsTr("Actions")
+                    onActivated: item => root.controller.runAction(item.id)
+                    onCloseRequested: root.controller.closeActions()
+                }
+            }
         }
     }
 }

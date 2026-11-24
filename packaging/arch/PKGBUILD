@@ -373,6 +373,8 @@ package_grassfield-desktop() {
   install -d "$pkgdir/usr/lib/grassfield/omarchy-shims"
   # Regular files only: an ignored __pycache__ or editor directory in the tree must neither break nor enter the package.
   find "$root/packaging/bin" -maxdepth 1 -type f -exec install -m755 -t "$pkgdir/usr/lib/grassfield/" {} +
+  # grassfield-script-run, the runner of the user's script commands (ADR-0067 D-3), lands here too; it needs python and systemd (a
+  # user manager) and, from slice X3b, bubblewrap. The shell runs it by this path; it is not on PATH.
   # The commands a person types are on PATH (grassfield-report: the diagnostic report a beta tester attaches, ADR-0053).
   install -d "$pkgdir/usr/bin"
   for tool in grassfield-login grassfield-login-check grassfield-nightshift grassfield-channel-set grassfield-report; do

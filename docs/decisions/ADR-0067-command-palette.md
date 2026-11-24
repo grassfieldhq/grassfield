@@ -247,12 +247,16 @@ choose the model.
 **Listener check (port squatting).** Before the first request, the shell reads `/proc/net/tcp` and `/proc/net/tcp6` (readable
 by every user; the shell runs in the host network namespace) and finds the LISTEN entry on 127.0.0.1:11434 or [::1]:11434.
 Its `uid` column must be the user's own uid or the uid of the system account named `ollama` in `/etc/passwd` with a uid below
-1000 (the packaged service's account; the Arch package's account name is UNCONFIRMED here, since Ollama is not installed: A1
-checks the package's sysusers file). Any other uid (another local user listening first) → no AI rows, and a journal line.
+1000 (the packaged service's account; the Arch package ships `usr/lib/sysusers.d/ollama.conf`, so the account name `ollama` is
+inferred from the file name and stays UNCONFIRMED: Ollama is not installed here and the file's content is not served). Wildcard
+and IPv4-mapped listeners on the port are checked too. A request's answer is accepted only when its `responseURL` is the URL
+asked (XHR follows redirects). Any other uid (another local user listening first) → no AI rows, and a journal line.
 
 **Remote models.** Ollama can serve models that run on a remote service; such a model would send the prompt off the machine,
-against D-net. How `/api/tags` or `/api/show` marks them is UNCONFIRMED; slice A1 establishes it from Ollama's API
-documentation and a test install, and the rule is **fail closed**: a model that cannot be shown to run locally is not offered.
+against D-net. Spike A1 (docs/specs/command-palette.md) found it in Ollama's documentation: an `/api/tags` entry of a remote
+model carries `remote_model` and `remote_host`, and cloud models are named with a `:cloud` tag. Still UNCONFIRMED: the `-cloud`
+suffix on current releases and the size of a cloud entry (no test install was made). The rule is **fail closed**: a model with
+either field, a `:cloud` or `-cloud` name, a malformed name or a size under 1 MiB is not offered.
 
 **What is sent.** Only:
 - the text the person typed (Ask Local Model, a follow-up, an argument);
@@ -318,6 +322,9 @@ site in its URL. The rule is decided on the **resolved value**, not on the templ
   directly or through a `{snippet}` whose text contains `{clipboard}` (resolved recursively, at most 3 levels), marks the link
   as **carrying data**. Nesting deeper than 3 levels is **refused** with a message, never treated as data-free. Values the person typed in this run (`{argument}`) and generated values (`{date}`, `{time}`,
   `{datetime}`, `{day}`, `{uuid}`) do not.
+- In a link every substituted piece, and the whole text of a `{snippet}`, is percent-encoded; [R6]'s `| raw` modifier (which
+  lifts that encoding in Raycast) is accepted but changes nothing in a link, so a copied `&evil=1#frag` can never add a parameter
+  or a fragment (integrator decision, tested by `tst_placeholders`).
 - A link carrying data never opens directly, **from any origin** (a row, a quick key, a keyboard shortcut, `qs ipc call
   search run`): Search opens on the detail pane, which shows "This link will open:" and the **full URL, percent-encoded, never
   elided** (wrapped over as many lines as it needs).
@@ -332,14 +339,14 @@ Grassfield ships no web link and no web-search fallback (D-net).
 
 ### D-8. Storage, one writer, settings and export
 - **User content** (quick keys, keyboard shortcuts, favorites, links, text replacements, user AI commands):
-  `$XDG_CONFIG_HOME/grassfield/commands.json`, `{"v": 1, …}`, 0600, read with the JsonSafety rules and caps (1 MiB; 2 000
+  `$XDG_CONFIG_HOME/grassfield/commands.json`, `{"v": 1, …}`, 0600, read with the JsonSafety rules and caps (256 KiB, owner decision: a commit of the whole file stays a few hundred ms; 2 000
   items per list).
 - **One writer: the shell** (`CommandStore.qml`, through `write-private.sh`, atomic). Reasons: the shell is always running;
   most edits come from Search itself (Actions: add a quick key, a favorite, a link, a shortcut); the shell also generates
   `commands-keys.lua` from the same data; and one writer removes lost updates between two processes. The Settings app's
   Text Replacements and Links panes read the file and **request** changes through the `search` IPC target
-  (`addItem(json)`, `updateItem(json)`, `removeItem(id)`, `importFile(path)`), each validated by `CommandStore` (types,
-  caps, the link allowlist, at most 64 KiB per call) and refused while the session is locked; the panes follow the file
+  (`addItem(json)`, `updateItem(json)`, `removeItem(id)`, `importFile(path)`, and `importResult()` for the outcome of the last import, counts or a reason and no content), each validated by `CommandStore` (types,
+  caps, the link allowlist, no unpaired surrogate, at most 64 KiB per call, at most a burst of 10 calls then 5 a second, and each call keeps the next away for nine times the main-thread time it took; past it a call answers `busy` with `retryAfterMs`, and the Settings panes retry after that time) and refused while the session is locked (an import that finishes reading after the lock commits nothing); the panes follow the file
   when it changes. These functions are listed in `docs/specs/security.md` "IPC surface" (any process of the user can call
   them, as it could write the file; nothing they accept is executable).
 - **State** (usage v3, script approvals, calculator history, colour history, kept conversations):

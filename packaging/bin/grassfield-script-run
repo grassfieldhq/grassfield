@@ -1,0 +1,469 @@
+#!/usr/bin/python3 -I
+# grassfield-script-run: the runner of the user's script commands (ADR-0067 D-3, command-palette.md slice X3a; X3b, X3c and X3d
+# add the sandbox stage, the profiles and Landlock). Standard library only. The shell never runs a script itself: it starts this
+# helper, which checks again what the shell checked, reads the script once, and hands the same bytes to a transient user unit.
+#
+#   grassfield-script-run                reads ONE request line on stdin, runs the script, prints events on stdout
+#   grassfield-script-run --kill-all     kills every running script unit (the session locked)
+#   grassfield-script-run --sandbox      the unit's own stage: reads the frame on its stdin (X3b)
+#
+# The request (one JSON line, at most 64 KiB; arguments and passwords are NEVER in this helper's argv, which every local user can
+# read in /proc/<pid>/cmdline):
+#   {"v": 1, "path": "/abs/script", "level": "confined" | "network" | "session", "mode": "fullOutput" | "compact" | "silent" |
+#    "inline", "args": ["non-secret", ...], "passwords": ["secret", ...]}
+# The events (one JSON object per line on stdout; the helper exits 0 for a script that succeeded, 1 for anything else):
+#   {"o": "<a line of the script's stdout>"}   {"e": "<a line of its stderr>"}
+#   {"done": true, "status": <int|null>, "reason": "ok" | "failed" | "timeout" | "killed" | "capped" | "refused" | "error",
+#    "why": "<short code>"}
+#
+# The checks, in this order, every one failing closed:
+#   1. the request is well formed (a path, a level, at most 3 arguments, passwords without a line break);
+#   2. the script is read ONCE into memory: opened with O_NONBLOCK, fstat must say a regular file of this user's, not group- or
+#      world-writable, executable, at most 256 KiB; the bytes are hashed (SHA-256);
+#   3. the approvals file ($XDG_STATE_HOME/grassfield/script-approvals.json, 0600, this user's) is read by THIS helper (it does
+#      not trust the shell's word): the path and the hash must be in it, and the level must be within what the approval allows
+#      (network needs allowNetwork, session needs allowSession). A hash not in the file is refused even when the shell asks;
+#   4. one framed message goes to the unit's stdin: the same bytes, their hash, the arguments and the passwords. There is no run
+#      folder and no second read of the file: a file swapped after step 2 changes nothing that runs.
+# The unit: `systemd-run --user --wait --pipe --collect --quiet --description="Grassfield script"` with a unit name of its own,
+# RuntimeMaxSec (60 s, 10 s for inline), MemoryMax=512M, TasksMax=64, NoNewPrivileges=yes; its command line holds only fixed
+# arguments. Output is capped at 1 MiB and 2 000 lines on stdout and 64 KiB on stderr, then the run is killed (the whole cgroup).
+#
+# The frame (also read by --sandbox): b"GFSCRIPT1\n", a big-endian 4-byte header length, the header (JSON, UTF-8, at most 64 KiB:
+#   {"v": 1, "path", "sha256", "size", "level", "args", "passwords"}), then exactly `size` bytes of script.
+import hashlib
+import json
+import os
+import selectors
+import signal
+import stat
+import struct
+import subprocess
+import sys
+import threading
+import time
+
+RUN_SECONDS = 60
+INLINE_SECONDS = 10
+GRACE_SECONDS = 3                 # after RuntimeMaxSec the helper kills the unit itself
+MAX_SCRIPT = 256 * 1024
+MAX_REQUEST = 64 * 1024
+MAX_HEADER = 64 * 1024
+MAX_APPROVALS = 1024 * 1024
+MAX_STDOUT = 1024 * 1024
+MAX_LINES = 2000
+MAX_STDERR = 64 * 1024
+MAX_CHUNK = 64 * 1024             # a line longer than this is cut into pieces
+MAX_ARGS = 3
+MAX_ARG_LENGTH = 4096
+LEVELS = ("confined", "network", "session")
+MODES = ("fullOutput", "compact", "silent", "inline")
+MAGIC = b"GFSCRIPT1\n"
+UNIT_PREFIX = "grassfield-script-"
+SHA256_RE = frozenset("0123456789abcdef")
+# The tools are found at ABSOLUTE paths, never through PATH: a script that can write a `systemd-run` into a folder on the user's
+# PATH (~/bin, ~/.local/bin) must not become the next run's launcher, which would hold the frame (the passwords) and no sandbox.
+# There is no override in this file and none through the environment: tests/shell/script_run.sh runs a COPY of this file with these
+# constants (and the timings) rewritten. The shell must start this helper by its absolute path (/usr/lib/grassfield/
+# grassfield-script-run, slice X7), never by a name looked up on PATH.
+SYSTEMD_RUN = "/usr/bin/systemd-run"
+SYSTEMCTL = "/usr/bin/systemctl"
+PYTHON = "/usr/bin/python3"
+KILL_RETRIES = 10                 # a kill asked before the unit is loaded is asked again, every KILL_INTERVAL seconds
+KILL_INTERVAL = 0.5
+KILL_MARKER = "grassfield-script-kill-all"      # in $XDG_RUNTIME_DIR: written by --kill-all, seen by runs that started before it
+
+
+START = time.time()
+
+
+class Refused(Exception):
+    def __init__(self, why):
+        super().__init__(why)
+        self.why = why
+
+
+def emit(obj):
+    try:
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+    except (BrokenPipeError, OSError):
+        pass
+
+
+def is_int(value, wanted=None):
+    """An int that is not a bool (True == 1 in Python)."""
+    return type(value) is int and (wanted is None or value == wanted)
+
+
+def clean_text(value, limit):
+    return isinstance(value, str) and len(value) <= limit and "\0" not in value and "\n" not in value and "\r" not in value
+
+
+# ---- the request ---------------------------------------------------------------------------------------------------------
+
+def read_request(stream):
+    raw = stream.buffer.readline(MAX_REQUEST + 1)
+    if len(raw) > MAX_REQUEST:
+        raise Refused("request")
+    try:
+        req = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        raise Refused("request")
+    if not isinstance(req, dict) or set(req) - {"v", "path", "level", "mode", "args", "passwords"}:
+        raise Refused("request")
+    if not is_int(req.get("v"), 1) or req.get("level") not in LEVELS or req.get("mode") not in MODES:
+        raise Refused("request")
+    path = req.get("path")
+    if not clean_text(path, 4096) or not path.startswith("/") or path.startswith("//"):
+        raise Refused("request")
+    args, passwords = req.get("args"), req.get("passwords")
+    if not isinstance(args, list) or not isinstance(passwords, list) or len(args) > MAX_ARGS or len(passwords) > MAX_ARGS:
+        raise Refused("request")
+    if not all(clean_text(a, MAX_ARG_LENGTH) for a in args):
+        raise Refused("request")
+    # A password goes to the script's stdin one per line: it can hold no line break.
+    if not all(clean_text(p, MAX_ARG_LENGTH) for p in passwords):
+        raise Refused("request")
+    return req
+
+
+# ---- the script and the approvals ----------------------------------------------------------------------------------------
+
+def read_all(fd, limit):
+    chunks, total = [], 0
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise Refused("script-size")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def read_script(path):
+    """The script's bytes, read once. Opened with O_NONBLOCK (a FIFO named here would not hang), judged on the open file."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC)
+    except OSError:
+        raise Refused("script-open")
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise Refused("script-type")
+        if st.st_uid != os.geteuid():
+            raise Refused("script-owner")
+        if st.st_mode & 0o022:
+            raise Refused("script-writable")
+        if not st.st_mode & 0o100:
+            raise Refused("script-executable")
+        if st.st_size > MAX_SCRIPT:
+            raise Refused("script-size")
+        data = read_all(fd, MAX_SCRIPT)
+    except OSError:
+        raise Refused("script-read")
+    finally:
+        os.close(fd)
+    return data
+
+
+def approvals_path():
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+    return os.path.join(state, "grassfield", "script-approvals.json")
+
+
+def read_approvals():
+    """The entries of the approvals file: [{path, sha256, allowNetwork, allowSession}] (a malformed entry is left out)."""
+    try:
+        fd = os.open(approvals_path(), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC)
+    except OSError:
+        raise Refused("approval")
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077 or st.st_size > MAX_APPROVALS:
+            raise Refused("approval-file")
+        raw = read_all(fd, MAX_APPROVALS)
+    except OSError:
+        raise Refused("approval-file")
+    finally:
+        os.close(fd)
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        raise Refused("approval-file")
+    if not isinstance(doc, dict) or not is_int(doc.get("v"), 1) or not isinstance(doc.get("approvals"), list):
+        raise Refused("approval-file")
+    out = []
+    for e in doc["approvals"]:
+        if (isinstance(e, dict) and isinstance(e.get("path"), str) and isinstance(e.get("sha256"), str)
+                and len(e["sha256"]) == 64 and set(e["sha256"]) <= SHA256_RE
+                and isinstance(e.get("allowNetwork"), bool) and isinstance(e.get("allowSession"), bool)):
+            out.append(e)
+    return out
+
+
+def check_approval(path, digest, level):
+    for e in read_approvals():
+        if e["path"] == path and e["sha256"] == digest:
+            if level == "network" and not e["allowNetwork"]:
+                raise Refused("approval-level")
+            if level == "session" and not e["allowSession"]:
+                raise Refused("approval-level")
+            return
+    raise Refused("approval")
+
+
+# ---- the frame -------------------------------------------------------------------------------------------------------------
+
+def encode_frame(path, data, digest, level, args, passwords):
+    header = json.dumps({"v": 1, "path": path, "sha256": digest, "size": len(data), "level": level, "args": args,
+                         "passwords": passwords}, ensure_ascii=False).encode("utf-8")
+    if len(header) > MAX_HEADER:
+        raise Refused("request")
+    return MAGIC + struct.pack(">I", len(header)) + header + data
+
+
+def decode_frame(buf):
+    """(header, script bytes) of a frame; ValueError on any framing error (bad magic, lengths, hash, types)."""
+    if not buf.startswith(MAGIC) or len(buf) < len(MAGIC) + 4:
+        raise ValueError("magic")
+    (n,) = struct.unpack(">I", buf[len(MAGIC):len(MAGIC) + 4])
+    start = len(MAGIC) + 4
+    if n < 2 or n > MAX_HEADER or len(buf) < start + n:
+        raise ValueError("header length")
+    try:
+        header = json.loads(buf[start:start + n].decode("utf-8"))
+    except RecursionError:
+        raise ValueError("nesting")
+    data = buf[start + n:]
+    if not isinstance(header, dict) or not is_int(header.get("v"), 1) or header.get("level") not in LEVELS:
+        raise ValueError("header")
+    if not is_int(header.get("size")) or header["size"] != len(data) or len(data) > MAX_SCRIPT:
+        raise ValueError("size")
+    if header.get("sha256") != hashlib.sha256(data).hexdigest():
+        raise ValueError("hash")
+    if not isinstance(header.get("path"), str) or not isinstance(header.get("args"), list) \
+            or not isinstance(header.get("passwords"), list):
+        raise ValueError("fields")
+    return header, data
+
+
+# ---- the unit ------------------------------------------------------------------------------------------------------------
+
+def tool(path):
+    if not os.access(path, os.X_OK):
+        raise Refused("missing-" + os.path.basename(path))
+    return path
+
+
+def kill_unit(unit):
+    try:
+        subprocess.run([tool(SYSTEMCTL), "--user", "kill", "--kill-whom=all", "--signal=SIGKILL", unit], timeout=10,
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except (Refused, OSError, subprocess.SubprocessError):
+        pass
+
+
+def marker_path():
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    return os.path.join(runtime, KILL_MARKER) if runtime and runtime.startswith("/") else ""
+
+
+def kill_all_seen():
+    """True when --kill-all ran after this helper started: a unit that was not loaded yet when it ran is killed all the same."""
+    path = marker_path()
+    try:
+        return bool(path) and os.stat(path).st_mtime >= START - 0.02
+    except OSError:
+        return False
+
+
+def unit_command(unit, seconds):
+    return [tool(SYSTEMD_RUN), "--user", "--wait", "--pipe", "--collect", "--quiet", "--description=Grassfield script",
+            "--unit=" + unit, "--property=RuntimeMaxSec=%d" % seconds, "--property=MemoryMax=512M", "--property=TasksMax=64",
+            "--property=NoNewPrivileges=yes", "--", PYTHON, "-I", os.path.realpath(sys.argv[0]), "--sandbox"]
+
+
+class Stream:
+    """Cuts a pipe's bytes into lines, counts what it has passed on, and says when its cap is exceeded."""
+
+    def __init__(self, key, max_bytes, max_lines):
+        self.key, self.max_bytes, self.max_lines = key, max_bytes, max_lines
+        self.buf, self.bytes, self.lines, self.capped = b"", 0, 0, False
+
+    def feed(self, chunk):
+        self.bytes += len(chunk)
+        over = self.bytes > self.max_bytes
+        if over:
+            chunk = chunk[:max(0, len(chunk) - (self.bytes - self.max_bytes))]
+        self.buf += chunk
+        while not self.capped:
+            i = self.buf.find(b"\n")
+            if i < 0 and len(self.buf) < MAX_CHUNK:
+                break
+            end = i if i >= 0 else MAX_CHUNK
+            self.line(self.buf[:end])
+            self.buf = self.buf[end + 1:] if i >= 0 else self.buf[end:]
+        if over:
+            self.flush()
+            self.capped = True
+
+    def line(self, raw):
+        if self.lines >= self.max_lines:
+            self.capped = True
+            return
+        self.lines += 1
+        emit({self.key: raw.decode("utf-8", "replace")})
+
+    def flush(self):
+        if self.buf and not (self.lines >= self.max_lines):
+            self.line(self.buf)
+        self.buf = b""
+
+
+def run_unit(frame, seconds):
+    unit = UNIT_PREFIX + os.urandom(8).hex()
+    cmd = unit_command(unit, seconds)
+    state = {"killed": False, "kills": 0, "last": 0.0}
+
+    def ask_kill():
+        state["kills"] += 1
+        state["last"] = time.monotonic()
+        kill_unit(unit)
+
+    def on_signal(signum, _frame):
+        state["killed"] = True
+        ask_kill()
+
+    if kill_all_seen():
+        raise Refused("locked")
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, on_signal)
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
+
+    def feed():
+        try:
+            proc.stdin.write(frame)
+            proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+    threading.Thread(target=feed, daemon=True).start()
+    out, err = Stream("o", MAX_STDOUT, MAX_LINES), Stream("e", MAX_STDERR, MAX_LINES)
+    sel = selectors.DefaultSelector()
+    for pipe, stream in ((proc.stdout, out), (proc.stderr, err)):
+        os.set_blocking(pipe.fileno(), False)
+        sel.register(pipe, selectors.EVENT_READ, stream)
+    started = time.monotonic()
+    deadline = started + seconds + GRACE_SECONDS
+    reason = ""
+    while sel.get_map():
+        if not state["killed"] and kill_all_seen():
+            state["killed"] = True
+        if state["killed"]:
+            reason = reason or "killed"
+            # A kill asked before the unit was loaded (a signal or --kill-all during the start) missed it: ask again, a few times.
+            if state["kills"] < KILL_RETRIES and time.monotonic() - state["last"] >= KILL_INTERVAL:
+                ask_kill()
+            elif state["kills"] >= KILL_RETRIES and time.monotonic() - state["last"] >= KILL_INTERVAL:
+                proc.kill()             # the unit would not die: stop waiting for it (it is still bound by RuntimeMaxSec)
+                break
+        if not reason and time.monotonic() > deadline:
+            reason = "timeout"
+            kill_unit(unit)
+        for key, _ in sel.select(0.1):
+            try:
+                chunk = os.read(key.fd, 65536)
+            except BlockingIOError:
+                continue
+            except OSError:
+                chunk = b""
+            if not chunk:
+                key.data.flush()
+                sel.unregister(key.fileobj)
+                continue
+            key.data.feed(chunk)
+            if key.data.capped and not reason:
+                reason = "capped"
+                kill_unit(unit)
+        if reason and time.monotonic() > deadline + GRACE_SECONDS:
+            break                       # the pipes stay open: something outside the unit holds them; the unit is dead
+    try:
+        status = proc.wait(timeout=GRACE_SECONDS + 2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        status = proc.wait()
+        reason = reason or "killed"
+    if state["killed"]:
+        reason = "killed"
+    if not reason:
+        reason = "ok" if status == 0 else ("timeout" if time.monotonic() - started >= seconds else "failed")
+    emit({"done": True, "status": status, "reason": reason, "why": ""})
+    return 0 if reason == "ok" else 1
+
+
+# ---- the entry points ----------------------------------------------------------------------------------------------------
+
+def run():
+    req = read_request(sys.stdin)
+    data = read_script(req["path"])
+    digest = hashlib.sha256(data).hexdigest()
+    check_approval(req["path"], digest, req["level"])
+    frame = encode_frame(req["path"], data, digest, req["level"], req["args"], req["passwords"])
+    return run_unit(frame, INLINE_SECONDS if req["mode"] == "inline" else RUN_SECONDS)
+
+
+def kill_all():
+    path = marker_path()
+    if path:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            try:
+                os.utime(fd)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
+    try:
+        subprocess.run([tool(SYSTEMCTL), "--user", "kill", "--kill-whom=all", "--signal=SIGKILL", UNIT_PREFIX + "*.service"],
+                       timeout=15, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    except (Refused, OSError, subprocess.SubprocessError):
+        return 1
+    return 0
+
+
+def sandbox_stage():
+    """Inside the unit. X3b adds the re-hash, the memfd and bwrap; until then it checks the frame and refuses to run anything,
+    so no merged path runs a script before its sandbox exists (fail closed)."""
+    try:
+        decode_frame(sys.stdin.buffer.read(4 + len(MAGIC) + MAX_HEADER + MAX_SCRIPT + 1))
+    except (ValueError, OSError, RecursionError):
+        sys.stderr.write("script frame refused\n")
+        return 70
+    sys.stderr.write("the sandbox stage is not installed\n")
+    return 71
+
+
+def main(argv):
+    if argv == ["--kill-all"]:
+        return kill_all()
+    if argv == ["--sandbox"]:
+        return sandbox_stage()
+    if argv:
+        sys.stderr.write("usage: grassfield-script-run [--kill-all | --sandbox]  (the request is read on stdin)\n")
+        return 2
+    try:
+        return run()
+    except Refused as e:
+        emit({"done": True, "status": None, "reason": "refused", "why": e.why})
+        return 1
+    except Exception as e:                  # never a traceback with a request's contents; the class name only
+        emit({"done": True, "status": None, "reason": "error", "why": type(e).__name__})
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

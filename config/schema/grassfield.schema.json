@@ -1243,6 +1243,33 @@
           "default": true,
           "description": "Search shows system commands (Lock Screen, Sleep, Restart, Shut Down, Log Out) (Settings > Search > Search Results: System Commands)."
         },
+        "showMenuItems": {
+          "type": "boolean",
+          "default": true,
+          "description": "Search shows the menu items of the front application (Settings > Search > Search Results: Menu Items; ADR-0067 D-6)."
+        },
+        "showSystemState": {
+          "type": "boolean",
+          "default": true,
+          "description": "Search shows the state of the system (Wi-Fi, Bluetooth, volume, brightness...) and its toggles (Settings > Search > Search Results: System State; ADR-0067)."
+        },
+        "showScripts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Search shows the user's script commands (Settings > Search > Search Results: Scripts; ADR-0067 D-3). A script still needs the user's approval before it runs."
+        },
+        "scriptFolders": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "Folders Search reads script commands from (Settings > Search > Scripts: Add Folder...), at most 12 absolute paths or ~/ ones. The default folder $XDG_DATA_HOME/grassfield/script-commands/ is always read and is not listed here.",
+          "x-grassfield": {
+            "rule": "pathList"
+          }
+        },
         "historyResetAt": {
           "type": "integer",
           "minimum": 0,
@@ -1288,6 +1315,32 @@
               "maximum": 9999999999999,
               "default": 0,
               "description": "Milliseconds since the epoch of the last Clear Clipboard History with \"Also delete pinned items\": the shell deletes the pinned items too when it changes. 0 = never."
+            }
+          }
+        },
+        "localModel": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The local model in Search (ADR-0067 D-4): a model served on this computer only (loopback), never a remote one.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Search offers Ask Local Model (Settings > Search > Local Model). Inert while no local model is found."
+            },
+            "model": {
+              "type": "string",
+              "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]{0,128}$",
+              "default": "",
+              "description": "The local model Search asks, by the name the local server gives it. Empty = the first local model found.",
+              "x-grassfield": {
+                "rule": "plainText"
+              }
+            },
+            "keepConversations": {
+              "type": "boolean",
+              "default": false,
+              "description": "Search keeps conversations with the local model for 7 days (Settings > Search > Local Model). Off: they live in memory and end when Search closes."
             }
           }
         }

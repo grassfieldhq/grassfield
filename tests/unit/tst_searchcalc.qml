@@ -119,4 +119,52 @@ TestCase {
         compare(Calc.answer("120*163").text, "19560");
         compare(Calc.format(19560), "19560");
     }
+
+    // Palette slice C1: percentage phrasings, in English and in French.
+    function pc(s, loc) {
+        const r = Calc.answer(s, loc);
+        return r ? r.text : null;
+    }
+
+    function test_percentOf() {
+        compare(pc("15% of 85"), "12.75");
+        compare(pc("15 % of 85"), "12.75");
+        compare(pc("15 percent of 85"), "12.75");
+        compare(pc("12.5% of (40+40)"), "10");
+        compare(pc("15% de 85", fr), "12,75");
+        compare(pc("15 % de 85", fr), "12,75");
+        compare(pc("15 pour cent de 85", fr), "12,75");
+        compare(pc("12,5% de 80", fr), "10");
+        compare(pc("15% de 85"), null, "French connectors need the French locale");
+        compare(pc("15% of"), null);
+        compare(pc("15% of banana"), null);
+    }
+
+    function test_percentAddedAndRemoved() {
+        compare(pc("200 + 10%"), "220");
+        compare(pc("200+10%"), "220");
+        compare(pc("200 - 10%"), "180");
+        compare(pc("100 + 5 - 10%"), "94.5");
+        compare(pc("2*3+50%"), "9");
+        compare(pc("200+10%+10%"), "242", "each percentage applies to the running value");
+        compare(pc("200 + 10% - 10%"), "198");
+        compare(pc("100 - 50% - 50%"), "25");
+        compare(pc("1 200 + 10 %", fr), "1" + fr.groupSeparator + "320");
+        compare(pc("19,99 - 15%", fr), "16,9915");
+        // A percentage that is no phrasing keeps the grammar's meaning.
+        compare(pc("200*10%"), "20");
+        compare(pc("2+3*10%"), "2.3");
+        compare(pc("50%"), "0.5");
+    }
+
+    function test_percentOff() {
+        compare(pc("20% off 50"), "40");
+        compare(pc("20 % off 50"), "40");
+        compare(pc("20% off (30+20)"), "40");
+        compare(pc("20% de remise sur 50", fr), "40");
+        compare(pc("20 % de réduction sur 50", fr), "40");
+        compare(pc("20% de rabais sur 49,90", fr), "39,92");
+        compare(pc("20% off 50", fr), "40", "off stays valid in French");
+        compare(pc("20% de remise sur 50"), null);
+    }
 }

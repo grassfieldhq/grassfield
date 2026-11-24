@@ -486,6 +486,15 @@ Scope {
     readonly property bool searchShowSettings: read("search.showSettings")
     readonly property bool searchShowCommands: read("search.showCommands")
     readonly property real searchHistoryResetAt: read("search.historyResetAt")
+    // The command palette (ADR-0067 D-8): menu items, system state and scripts in Search, the script folders the person added,
+    // and the local model (Settings > Search).
+    readonly property bool searchShowMenuItems: read("search.showMenuItems")
+    readonly property bool searchShowSystemState: read("search.showSystemState")
+    readonly property bool searchShowScripts: read("search.showScripts")
+    readonly property var searchScriptFolders: stable("searchScriptFolders", read("search.scriptFolders"))
+    readonly property bool searchLocalModelEnabled: read("search.localModel.enabled")
+    readonly property string searchLocalModelModel: read("search.localModel.model")
+    readonly property bool searchLocalModelKeepConversations: read("search.localModel.keepConversations")
     // The screen saver (Settings > Wallpaper > Screen Saver, ADR-0032): its delay in minutes (0 = never), which one, and the
     // slideshow's folder ("" = the Pictures folder).
     readonly property int screenSaverIdleMinutes: read("screensaver.idleMinutes")

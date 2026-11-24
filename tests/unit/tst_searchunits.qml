@@ -112,6 +112,111 @@ TestCase {
         compare(Units.answer("10 km en kg", fr), null);
     }
 
+    // Palette slice C2: the new families, number bases, French names.
+    function ut(s, loc) {
+        const r = Units.answer(s, loc);
+        return r ? r.text : null;
+    }
+
+    function test_speed() {
+        compare(ut("100 km/h in mph"), "62.1371 mph");
+        compare(ut("10 m/s to km/h"), "36 km/h");
+        compare(ut("60 mph to m/s"), "26.8224 m/s");
+        compare(ut("1 knot to km/h"), "1.852 km/h");
+        compare(ut("100 km/h en m/s", fr), "27,7778 m/s");
+        compare(ut("10 nœuds en km/h", fr), "18,52 km/h");
+    }
+
+    function test_area() {
+        compare(ut("1 ha to m²"), "10000 m²");
+        compare(ut("1 ha to m2"), "10000 m²");
+        compare(ut("1 acre to m²"), "4046.8564 m²");
+        compare(ut("100 ft² to m²"), "9.2903 m²");
+        compare(ut("1 km² en hectares", fr), "100 ha");
+        compare(ut("1 m² in ft"), null, "area is not length");
+    }
+
+    function test_volume() {
+        compare(ut("1 gal to L"), "3.7854 L");
+        compare(ut("1 L in mL"), "1000 mL");
+        compare(ut("500 ml en cl", fr), "50 cL");
+        compare(ut("1 m³ to L"), "1000 L");
+        compare(ut("2 cups to ml"), "473.1765 mL");
+        compare(ut("1 floz to ml"), "29.5735 mL");
+        compare(ut("1 fl oz to ml"), "29.5735 mL");
+        compare(ut("2 FL OZ in cups"), "0.25 cup");
+        compare(ut("1 cup to fl oz"), "8 fl oz");
+        compare(ut("1 fluid ounce to ml"), "29.5735 mL");
+        compare(ut("2 litres en gallons", fr), "0,5283 gal");
+    }
+
+    function test_time() {
+        compare(ut("90 min to h"), "1.5 h");
+        compare(ut("2 days in hours"), "48 h");
+        compare(ut("1 week to d"), "7 d");
+        compare(ut("3 heures en minutes", fr), "180 min");
+        compare(ut("1 jour en secondes", fr), "86" + fr.groupSeparator + "400 s");
+        compare(ut("1500 ms to s"), "1.5 s");
+        compare(ut("1 h in kg"), null);
+    }
+
+    function test_pressure() {
+        compare(ut("1 atm to kPa"), "101.325 kPa");
+        compare(ut("1 bar to psi"), "14.5038 psi");
+        compare(ut("760 mmhg to atm"), "1 atm");
+        compare(ut("1 bar en pascals", fr), "100" + fr.groupSeparator + "000 Pa");
+    }
+
+    function test_energy() {
+        compare(ut("1 kWh to kJ"), "3600 kJ");
+        compare(ut("1 kcal to kJ"), "4.184 kJ");
+        compare(ut("100 kcal en joules", fr), "418" + fr.groupSeparator + "400 J");
+        compare(ut("1 kWh to Wh"), "1000 Wh");
+    }
+
+    function test_angles() {
+        compare(ut("180 deg to rad"), "3.1416 rad");
+        compare(ut("180° to rad"), "3.1416 rad");
+        compare(ut("1 turn to deg"), "360 °");
+        compare(ut("90 degrés en radians", fr), "1,5708 rad");
+        compare(ut("100 grad to deg"), "90 °");
+    }
+
+    function test_numberBases() {
+        compare(ut("255 to hex"), "0xff");
+        compare(ut("255 in bin"), "0b11111111");
+        compare(ut("0xff in dec"), "255");
+        compare(ut("0xFF to decimal"), "255");
+        compare(ut("ff hex to dec"), "255");
+        compare(ut("1010 bin to dec"), "10");
+        compare(ut("0b1010 to hex"), "0xa");
+        compare(ut("8 to oct"), "0o10");
+        compare(ut("0o17 to dec"), "15");
+        compare(ut("-255 to hex"), "-0xff");
+        compare(ut("255 en hexadécimal", fr), "0xff");
+        compare(ut("0xff vers décimal", fr), "255");
+        compare(ut("1 000 en hex", fr), "0x3e8");
+        compare(ut("65535 to hex"), "0xffff");
+        compare(Units.answer("255 to hex").value, 255);
+        compare(Units.answer("255 to hex").to, "hex");
+        compare(ut("0xff en hex"), null, "en is a French word only");
+        compare(ut("ff to dec"), null, "digits without a base are decimal");
+        compare(ut("12 bin to dec"), null);
+        // "0b12 hex" is ambiguous: 0b is the binary prefix, but 12 is no binary number (it could also be the hex digits
+        // 0, b, 1, 2). It stays refused rather than guessed.
+        compare(ut("0b12 hex to dec"), null);
+        compare(ut("0b12 to dec"), null);
+        compare(ut("0xff bin to dec"), null, "the prefix and the named base must agree");
+        compare(ut("1.5 to hex"), null);
+        compare(ut("9007199254740993 to hex"), null, "beyond 2^53 - 1 is refused");
+        compare(ut("0x to dec"), null);
+    }
+
+    function test_noCurrencyEvenWithNewNames() {
+        compare(ut("5 usd in eur"), null);
+        compare(ut("5 eur en cad", fr), null);
+    }
+
     function test_noGroupingWithoutALocale() {
         compare(Units.answer("1 km in m").text, "1000 m");
     }

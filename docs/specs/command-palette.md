@@ -128,7 +128,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 |---|---|---|---|---|---|---|---|---|
 | B1 | System commands: Lock, Sleep, Sleep Displays, Restart, Shut Down, Log Out, Screen Saver, Toggle Appearance, Empty/Open Trash, Show Desktop, volume and media [R12] | yes | partly, as actions [A2] | 5 rows | All of them, through `Power`, `Trash.emptyNow` (asks, as Trash does), `Settings.dark`, `windows showDesktop`, `Audio`, `Media`, screen saver IPC. Eject All Disks, Toggle Hidden Files: not planned (no system-wide hidden-files state; Files owns it). | S | Empty Trash keeps its confirmation. | S1 |
 | B2 | Quit All Apps, Quit All Except Frontmost, Restart Frontmost App, Hide Others [R12]; Force Quit; Kill Process (UNCONFIRMED) | yes | no | Force Quit panel | **Quit All Applications…** (asks, the Log Out dialog's list), **Hide Others**, **Force Quit…** opens the existing panel. Kill Process: through Activity Monitor (not a palette list). | S | Quit asks first. | S2 |
-| B3 | Window management: halves, thirds, quarters, center, maximize, next display, custom layouts [R8] | yes | Window menu tiling | `windows tile/arrange/nextOutput` IPC | Every TL4 place, TL23 arrangement and layout, "Move to <display>", Minimize, Full Screen, for the window active when Search opened. Greyed when the plugin lacks the feature (tiling.md degraded rules). | S | Acts only on the remembered window address (FocusReturn), dropped if it closed. | S3 |
+| B3 | Window management: halves, thirds, quarters, center, maximize, next display, custom layouts [R8] | yes | Window menu tiling | `windows tile/arrange/nextOutput` IPC | Every TL4 place, TL23 arrangement and layout, "Move to <display>", Minimize, Full Screen, for the window active when Search opened. Hidden (not offered) when the plugin lacks the feature (tiling.md degraded rules), as macOS Spotlight hides what it cannot do; an unavailable command is never listed. | S | Acts only on the remembered window address (FocusReturn), dropped if it closed. | S3 |
 | B4 | Switch Windows (with minimize, close in ⌘K) [R20] | yes | no | Overview, switcher | **Windows** provider: open windows by title and app, Return focuses (un-minimizes), Actions: Close, Minimize, Move to Space, Move to display. | S | Titles never stored. | S4 |
 | B5 | Search Menu Bar Items of the frontmost app [R20] | yes (needs Accessibility) | Help menu (⇧⌘? [A4]); its menu search UNCONFIRMED on Apple pages | none | **Menu items** group for the window Search opened over, from `MenuBridge` (walk submenus with `aboutToShow`, capped); path "Edit › Find › Find Next", shortcut, toggle state; Return activates after focus returns. Also the T0 Help menu's search later (menubar.md:80). | M | Not stored, not logged, not in usage; only T1/T2 apps; the walk is capped in items, depth and time. | M1, M2, M3 |
 | B6 | Spaces and displays commands | Previous/Next Space [R8] | Mission Control keys | stages, overview | **Go to Space n**, **Move Window to Space n**, **New Space**, **Overview**, **Display Settings**, **Mirror Displays** (when two), **Use as Main Display**: through `Displays.qml` and the stages/overview IPC. | S | — | S5 |
@@ -142,6 +142,11 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 | B14 | Search Screenshots (UNCONFIRMED) | UNCONFIRMED | no | none | **Recent Captures** command once the capture suite's history exists (capture-suite.md H1, B15). | S | — | S13 |
 | B15 | Translate [R22], Dictionary (UNCONFIRMED) | yes (Pro) | Dictionary in Spotlight [A1] | none | Translate: only through the local model (A3). Dictionary: not planned (no local dictionary installed; a new dependency). | — | — | — |
 | B16 | Open Settings pages | — | yes | yes (search.md:80) | Unchanged; each page also gets Actions "Open", "Copy Link" not planned. | — | — | — |
+
+**Built by S1, S3 and S6, and what is left (integrator decisions, 2026-11-23):**
+- **Start Screen Saver** is built (`Saver.start()`, in process: Search signals, `shell.qml` connects it; no new IPC function). **Sleep Displays is not offered**: displays-off lives in the security idle module (`shell/security/idle`), so it is a separate security-engineer slice (a function the UI may call, then the command), outside S1.
+- **Do Not Disturb for 1 hour / until tomorrow** keeps its deadline in `$stateDir/dnd-until.json` (0600), read back at start; a deadline in the past turns Do Not Disturb off, one in the future is re-armed (`shell/notifications/DndFor.js`, tokens `notification.dndForMs`, `dndTomorrowHour` = 8, `dndCheckMs`). The deadline is not a settings key (no schema change); a settings key would let the Settings app show "until 3:00 PM" and is a follow-up if wanted.
+- **Follow-up, window commands:** "Move to <display>" per named output (names as Settings > Displays gives them; today only Next and Previous Display), and the Layouts section's zones (Left Third, Middle Third, Right Third, the quarter columns: `placeInZone`, capability `tiling-layouts`). Neither is in S3.
 
 ### 2.3 Text: links, text replacements, clipboard, emoji
 
@@ -161,7 +166,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 | C1 | Math, percentages [R9] | yes | yes [A1] | yes (Calc.js, `%`) | Unchanged. "15% of 85" phrasing ([A1] example) added if missing. | S | No eval (search.md:49). | C1 |
 | C2 | Units [R9] | yes | yes [A1] | length, mass, temperature, data | Add speed, area, volume, time durations, pressure, energy, angles, number bases (hex, bin). | S | — | C2 |
 | C3 | Currency, crypto [R9] | yes | yes [A1] | excluded (S4) | **Not planned (D-net):** rates need the network. | — | — | — |
-| C4 | Dates and time zones: "time in tokyo", date math [R9] | yes | UNCONFIRMED | none | "time in Tokyo", "15:00 Paris in Tokyo", "monday + 3 weeks", "days until 25 Dec", "2026-12-25 - today", in en and fr. Zones from the system tzdata through `QTimeZone` (a small invokable in `Grassfield.Ui`, ui API changelog), city names from `zone1970.tab`. | M | — | C3, C4 |
+| C4 | Dates and time zones: "time in tokyo", date math [R9] | yes | UNCONFIRMED | none | "time in Tokyo", "15:00 Paris in Tokyo", "monday + 3 weeks", "days until 25 Dec", "2026-12-25 - today", in en and fr. Zones from the system tzdata through `QTimeZone` (the `TimeZones` singleton of `Grassfield.I18n`, ui API changelog), city names from `zone1970.tab`. | M | — | C3, C4 |
 | C5 | Calculator history [R9] | yes (3 months) | no | none | Last 50 answers, a "Calculator History" row; private file, cleared by Delete Search History. | S | Results can hold amounts: 0600, cleared with history. | C5 |
 
 ### 2.5 Files
@@ -188,7 +193,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 
 | # | Feature [source] | Raycast | macOS 27 | Grassfield today | Proposal | Effort | Security note | Slices |
 |---|---|---|---|---|---|---|---|---|
-| A1 | Local models through Ollama [R18 local-models, changelog 1.99.0] | yes (also a remote Ollama host) | — | none | Detection of Ollama on **loopback only** (127.0.0.1 or ::1, port 11434), the listener's uid checked in `/proc/net/tcp(6)` (the user or the packaged `ollama` system account), proxies ignored (tested); remote hosts refused; models that run remotely through Ollama refused (spike A1 finds how to tell; UNCONFIRMED). | S | ADR-0067 D-4 data rules; opus review. | A1 |
+| A1 | Local models through Ollama [R18 local-models, changelog 1.99.0] | yes (also a remote Ollama host) | — | none | Detection of Ollama on **loopback only** (127.0.0.1 or ::1, port 11434), the listener's uid checked in `/proc/net/tcp(6)` (the user or the packaged `ollama` system account), proxies ignored (tested); remote hosts refused; models that run remotely through Ollama refused (spike A1: see "Spike A1" below). | S | ADR-0067 D-4 data rules; opus review. | A1 |
 | A2 | Quick AI: question in the root search, Tab [R18 quick-ai] | yes (Pro) | Return sends the question to Siri AI [A1] | none | **Ask Local Model** row at the end of the results (and the fallback, N12) when a model is present; Return streams the answer into the detail pane (macOS 27 model: Return asks). Tab stays Actions (N3). | M | Sends only the typed text. | A2, A3 |
 | A3 | AI Chat, continue a quick answer in a chat [R18] | yes | — | none | Follow-up questions in the same detail pane (a conversation), Actions: Copy Answer, Paste Answer, New Conversation. Kept in memory only unless "Keep conversations" is on (7 days, 0600). A separate chat window: not planned. | M | History off by default. | A4, A5 |
 | A4 | AI Commands with `{selection}`, `{argument}`, output "Replace Selection" [R18 ai-commands] | yes | Writing Tools | none | Built-in prompts **Summarize**, **Improve Writing**, **Translate to…**, **Explain**, on `{clipboard}` or a typed argument; user-defined ones (name, prompt, placeholders). `{selection}` later and only through a visible "Selected text" chip showing what will be sent (D-4). Output: Copy or Paste (the targeted paste), never automatic. | M | Placeholders resolved only on the user's run; the exact text sent is visible. | A6, A7 |
@@ -215,7 +220,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 | **Tab** | **Actions of the selected row** (macOS 27: "select a result and press Tab" [A1]). Changes search.md S6, where Tab moves between groups | [A1] |
 | ⌘K (Super+K, unbound in bindings.lua; Ctrl+K as a fallback) | Actions (Raycast [R2]) | [R2] |
 | Page Down / Page Up, Ctrl+↓ / Ctrl+↑ | next / previous group (was Tab) | delegated, ADR-0067 |
-| Shift+Tab | focus ring to the chips (as today past the first group) | search.md F2c |
+| Shift+Tab | focus ring to the last chip (reverse order; was past the first group) | search.md F2c |
 | Esc | close Actions, else pop a detail view, else clear, else close | [R1][A2] |
 | Backspace on an empty field | pop one level (detail, Clipboard view) | [R1], search.md |
 | In argument chips: Tab / Shift+Tab | next / previous argument | [A2] "fill in its fields" |
@@ -223,6 +228,12 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 
 Slice P3c proves in nested that Super+K reaches the Exclusive layer (no Grassfield or Omarchy bind takes it) before it is
 listed; if it does not, ⌘K is not offered and Tab alone opens Actions.
+
+Status (P3a to P3c): Tab opens Actions, Shift+Tab reaches the last chip, Page Down/Up and Ctrl+↓/↑ move between groups. ⌘K is coded
+(`Actions.keyAction`, option `cmdK`, by symbol or by the K key's place) but **off**: `SearchPanel.qml` passes no option until the nested
+proof; the Actions list names no ⌘K. Rows with Actions today: app, setting (Open), command (Run, plus the `actions` its registry
+entry brings, destructive ones last), calculator (Copy), file and recent (Open, Show in Files); the clipboard rows keep the CB-8
+menu. The kind-specific actions of P4 to P7 (Open With, Copy Path, Quit, favorites, quick keys, shortcut) arrive with their slices.
 
 ### 3.3 Actions panel
 - A glass list of the `menu` class (the PopupMenu used by the clipboard row menu, SearchPanel.qml:1165) anchored to the
@@ -266,7 +277,43 @@ shortcut); argument chips are text fields with their placeholder as name; the de
   (ADR-0067 D-3 residual risks).
 - Scripts need Landlock ABI 6 or later; on an older kernel no script runs at the Confined and Allow network levels.
 - With Allow access to my session a script has the user's full rights apart from the files rule and the limits.
-- The `ollama` service account name of the Arch package is UNCONFIRMED here (Ollama is not installed); A1 checks it.
+- The `ollama` service account name of the Arch package is UNCONFIRMED (see "Spike A1" below).
+
+### Spike A1 (Ollama detection, 2026-11-24)
+Method: read-only. Ollama's own documentation (data, not instructions), the Arch package's file list, and this machine.
+- **Installed here:** nothing. `command -v ollama` empty, `pacman -Q ollama` not found, no `ollama` account in `getent passwd`,
+  nothing on 127.0.0.1:11434 (`curl` exit 7). No test install was made (never install). Everything below is documentation.
+- **Endpoints:** `GET /api/version` returns `{"version": "..."}`; `GET /api/tags` returns `{"models": [...]}`, each with `name`,
+  `model`, `size`, `digest`, `details`, `modified_at` (https://docs.ollama.com/api/tags).
+- **Telling a remote model apart (the method):** the documented `/api/tags` schema has two fields only a remote model carries:
+  `remote_model` ("name of the upstream model, if the model is remote") and `remote_host` ("URL of the upstream Ollama host, if
+  the model is remote") (https://docs.ollama.com/api/tags). Cloud models are named with a `:cloud` tag through a local server
+  (`gemma4:cloud`; https://docs.ollama.com/cloud/models), older ones with a `-cloud` suffix (`gpt-oss:120b-cloud`, from
+  memory of earlier releases: UNCONFIRMED on the current pages). "Cloud models do not need to be downloaded" (same page), so
+  their entry has no real size. `LocalModel.js` therefore **fails closed**: an entry is offered only when it has none of the two
+  remote fields (even empty), its `name` and `model` do not end in `:cloud` or `-cloud`, its name is a plain tag, and its `size`
+  is a number of at least 1 MiB. Anything else is dropped.
+- **Cloud features off:** `disable_ollama_cloud` in `~/.ollama/server.json` or `OLLAMA_NO_CLOUD=1` turns cloud models off in
+  the server (https://docs.ollama.com/faq). Grassfield does not read or set either; the filter above does not rely on them.
+- **Port and bind:** "Ollama binds 127.0.0.1 port 11434 by default" (https://docs.ollama.com/faq). `OLLAMA_HOST=0.0.0.0` makes
+  it a wildcard listener: `LocalModel.js` accepts wildcard sockets too (they answer on the loopback) and requires every
+  listener on the port to pass the uid check.
+- **Arch package:** `ollama` 0.40.17-1 (extra), files include `usr/lib/systemd/system/ollama.service`,
+  `usr/lib/sysusers.d/ollama.conf`, `usr/lib/tmpfiles.d/ollama.conf` (https://archlinux.org/packages/extra/x86_64/ollama/files/json/).
+  The sysusers file's content is not served by that page, so the account **name** `ollama` stays an inference from the file name;
+  `LocalModel.js` accepts the user's uid or the uid of an account named `ollama` that is a system uid (1..999), and nothing else.
+- **Built (A1):** `shell/search/LocalModel.js` (pure): `parseProcNet`, `serviceUid`, `checkListener`, `parseVersion`,
+  `parseTags`, `chooseModel`, and `create(deps)` whose `detect(cb, force)` reads the identity, checks the listener **before any
+  request**, asks 127.0.0.1 then [::1] (2 s per request), caches the answer (an absent one too) for 60 s and shares one run
+  among concurrent callers. The base URLs are constants; `create` has no URL, host, port or proxy option (tested with such
+  options passed in). Tests: `tests/unit/tst_searchlocalmodel.qml`.
+- **Left for the QML wrapper (A2, `LocalModel.qml`):** reading `/proc/net/tcp{,6}`, `/etc/passwd` and the uid (a `FileView`
+  or the existing helper) and the real `XMLHttpRequest`. The **proxy test of D-4** (a fake proxy on `http_proxy`,
+  `https_proxy`, `all_proxy` that must see nothing while a loopback responder is reached) needs a real socket and Qt's network
+  stack, so it belongs to that wrapper's L1 test; it is NOT covered by A1's pure unit.
+- **UNCONFIRMED:** the `-cloud` suffix on current releases; the exact `size` of a cloud entry (the 1 MiB floor is a safe bound,
+  not a measured value); whether `/api/tags` of a signed-in server lists cloud models at all (the filter holds either way);
+  the sysusers account name; a real run against an installed Ollama (nothing installed here).
 
 ## 4. Slice plan
 
@@ -304,7 +351,7 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 |---|---|---|---|
 | S1 | System commands batch (B1). | P2 | Unit: each id calls the expected service function (fakes); Empty Trash asks; nothing runs while locked. |
 | S2 | Quit All Applications…, Hide Others, Force Quit… (B2). | P2 | Unit with fake toplevels; the dialog lists apps; L1. |
-| S3 | Window commands (B3) on the remembered window; greyed without the plugin features. | P2 | Unit: places map to `windows tile` args; dropped when the address closed; L1 nested with the plugin. |
+| S3 | Window commands (B3) on the remembered window; hidden without the plugin features. | P2 | Unit: places map to `windows tile` args; dropped when the address closed; L1 nested with the plugin. |
 | S4 | Windows provider (B4). | P3b | Unit: rows from a fake toplevel list; titles never in `search-usage.json`; L1. |
 | S5 | Spaces and displays commands (B6). | P2 | Unit with fake displays; L1 with two nested outputs (or NOT VERIFIED). |
 | S6 | Toggles batch 1: Wi-Fi, Bluetooth, Airplane, Do Not Disturb (+ for 1 hour / until tomorrow), Night Light (B7, B10). | P2 | Unit: title follows state ("Turn Wi-Fi Off"); calls the Control Center functions; DND expiry restores. |
@@ -329,7 +376,7 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | T1 | `Placeholders.js` (pure): every supported [R6] placeholder, modifiers chain, offsets, format, locale; unknown placeholders left as written; the **provenance** of every substituted piece (clipboard, selection, typed, generated), `{snippet}` resolved recursively up to 3 levels. | — | Unit `tst_placeholders.qml`: [R6] examples verbatim, offsets with no space after the sign, `format` and `locale` exclusive, `json-stringify`; provenance vectors (a `{snippet}` holding `{clipboard}` marks the result as carrying clipboard data; `{argument}` and `{date}` do not); nesting deeper than 3 levels refused (an error, never a data-free result). |
-| T2 | Links store through `CommandStore` + provider + run (xdg-open / app) + the expanded-target step for http(s) and mailto targets with `{clipboard}`. | T1, E1b | Unit: the ADR-0067 D-7 allowlist (http, https, mailto, an existing local path, `file://` with an empty or localhost host, an application) accepted, and `javascript:`, `data:`, `blob:`, `smb:`, `sftp:`, `ftp:`, `dav:`, a custom `x-scheme-handler` scheme and a missing path refused, at creation and at open; `{argument}` percent-encoding; a link whose resolved URL carries clipboard data, directly or through a `{snippet}`, opens only after the second Return **from every origin** (row, quick key, keyboard shortcut, `qs ipc call search run`), shows the full percent-encoded URL unelided first, is refused over 2 048 characters, and opens exactly the shown string even when the clipboard changes between the two Returns. |
+| T2 | Links store through `CommandStore` + provider + run (xdg-open / app) + the expanded-target step for http(s) and mailto targets with `{clipboard}`. | T1, E1b | Unit: the ADR-0067 D-7 allowlist (http, https, mailto, an existing local path, `file://` with an empty or localhost host, an application) accepted, and `javascript:`, `data:`, `blob:`, `smb:`, `sftp:`, `ftp:`, `dav:`, a custom `x-scheme-handler` scheme and a missing path refused, at creation and at open; `{argument}` percent-encoding; a link whose resolved URL carries clipboard data, directly or through a `{snippet}`, opens only after the second Return **from every origin** (row, quick key, keyboard shortcut, `qs ipc call search run`), shows the full percent-encoded URL unelided first, is refused over 2 048 characters, and opens exactly the shown string even when the clipboard changes between the two Returns. Review note (X1/E1a): a local path link must be a regular file or a directory (never `/dev`, `/proc`, a socket or a FIFO), checked when the link is created and when it opens. |
 | T3 | Links create/edit sheet in Search and Settings > Search > Links list. | T2 | L1 screenshots; unit form validation. |
 | T4 | Text Replacements store + provider + insert through the targeted paste, not recorded. | T1, E1b | `tests/shell/search_clipboard`-style test: the copy carries the own-copy marker; the history records nothing; insert refused when the window closed (PV-14 vectors). |
 | T5 | `{cursor}`: Left keys after the paste, in the same compositor call. | T4 | Unit: key count from the text after `{cursor}` (grapheme clusters); L1 nested into a Qt text field. |
@@ -337,13 +384,13 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | T9 | Clipboard row action "Save as Text Replacement…". | T4 | Unit: menu ids; the history item is copied into the store only on the user's action. |
 | T10 | `:word` emoji rows in Search inserting like ES-7. | P2 | Unit with `tests/fixtures/emojis.json`. |
 
-**Lane C: calculator** (`shell/search/Calc.js`, `Units.js`, new `DateCalc.js`; `ui/Grassfield` for zones)
+**Lane C: calculator** (`shell/search/Calc.js`, `Units.js`, new `DateCalc.js`; `ui/i18n` for zones)
 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | C1 | "x% of y", "y + x%", "x% off y" phrasings (en, fr). | — | `tst_searchcalc.qml` vectors. |
 | C2 | New unit families and number bases. | — | `tst_searchunits.qml` vectors, French names. |
-| C3 | `Grassfield.Ui` `TimeZones` invokable (QTimeZone, city table from `zone1970.tab`), ui API changelog line. | — | gtest/unit; `just check-contracts` (ui_api). |
+| C3 | `Grassfield.I18n` `TimeZones` singleton (`ui/i18n/timezones.h`; Grassfield.Ui has no compiled code) (QTimeZone, city table from `zone1970.tab`), ui API changelog line. | — | gtest/unit; `just check-contracts` (ui_api; the changelog line is in the "Compiled types of Grassfield.I18n" section). |
 | C4 | `DateCalc.js` (pure): time in a city, a time between zones, date math, days until, in en and fr. | C3 | Unit vectors including DST changes (not run inside the DST fall-back hour: memory "DST SystemClock spin"). |
 | C5 | Calculator History row and file, cleared with Delete Search History. | P11 | Unit: 50 entries, 0600, clearing. |
 
@@ -352,7 +399,7 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | X1 | `ScriptMeta.js` (pure) parser: first 64 lines or 8 KiB, `#` and `//` comments, `@raycast.` and `@grassfield.` keys, required fields, values validated, argument JSON, unknown keys ignored, `platform` only `windows` hides it. | — | Unit `tst_scriptmeta.qml`: [R16] README and ARGUMENTS examples verbatim, malformed JSON, 4 arguments refused, a 9 KiB header. |
-| X2 | Discovery: folders from settings (default `$XDG_DATA_HOME/grassfield/script-commands/`, created on "Open Scripts Folder"), checks (regular file, owned by the user, not group/world-writable, executable, ≤ 256 KiB, folder not group/world-writable, a link only to a file passing the same checks), watch for changes. | X1, E1a | Shell test with a temp folder: each refused case; `.template.` skipped; changes picked up. |
+| X2 | Discovery: folders from settings (default `$XDG_DATA_HOME/grassfield/script-commands/`, created on "Open Scripts Folder"), checks (regular file, owned by the user, not group/world-writable, executable, ≤ 256 KiB, folder not group/world-writable, a link only to a file passing the same checks), watch for changes. | X1, E1a | Shell test with a temp folder: each refused case; `.template.` skipped; changes picked up. Review note (X1/E1a): folder and file names reach the approval prompt only as plain escaped text (X9 escapes them). |
 | X3a | Runner, outer part: the approvals-file check (the runner's own read), the script read once into memory and hashed, the framed message on the unit's stdin (the same bytes, their hash, the arguments, the passwords; no run folder), `systemd-run --user --wait --pipe --collect --quiet --description="Grassfield script"` with the limits, output caps, exit status, kill on timeout and on lock. | — | L0 with a fake `systemd-run`: argv exact; the description and every argv hold no argument; a hash not in the approvals file is refused even when the shell asks; the file is read once (a swap after the read changes nothing that runs); caps; timeout and lock kill. |
 | X3b | Runner, sandbox stage and profiles: `--sandbox` (inside the unit: re-hash of the bytes, a sealed memfd, `bwrap --perms 0555 --ro-bind-data` at the script's path, the arguments on an inherited pipe) and the `bwrap` argv per level (Confined, Allow network, Allow access to my session): a tmpfs over all of `/run` with an empty `/run/user/<uid>`, private `/tmp`, only `io.systemd.Resolve` and `stub-resolv.conf` bound back for Allow network (not the folder: `io.systemd.Resolve.Monitor` is 0666), the home read-only with each visible top-level entry bound writable, a linked entry bound only when its realpath is in the home's visible part or under `/mnt`, `/media`, `/srv` (never `/run`, `/var/run`, `/tmp`, `/var/tmp`, `/dev`, `/proc`, `/sys`, the runtime directory, a socket, FIFO or device: those dangle), every script folder read-only, then the script's bytes, the masks, a private tmpfs `~/.cache`, and **last** the tmpfs `/run`, private `/tmp` and `/var/tmp`, fresh `/dev` and `/proc` (ADR-0067 D-3 mount order), hidden Grassfield stores, keyrings and known home sockets, environment scrub; notes: `os.memfd_create` sets close-on-exec, so the stage calls `os.set_inheritable` and seeks to 0 before the exec; `--ro-bind-data` comes after the script folder's read-only bind; the `--exec` stage (non-secret arguments as argv, passwords on the script's stdin). | X3a | L0: the bwrap argv per level equals ADR-0067 D-3's table on a fixture home (visible and hidden entries, a link into `~/.config`, a top-level file); the exec stage's vectors (framing errors refused, passwords never in argv). |
 | X3d | Runner, Landlock: the exec stage applies `LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET \| LANDLOCK_SCOPE_SIGNAL` through Python `ctypes` at the Confined and Allow network levels, after `bwrap`'s setup and `no_new_privs` and before the script's exec; the stage starts no thread (`landlock_restrict_self` is per thread: checked with `threading.active_count()` and `/proc/self/task`); fails closed when the ABI is below 6, Landlock is absent or a call fails. | X3b | L0: the syscall sequence on a fake `ctypes` layer; ABI 5, `ENOSYS` and `EOPNOTSUPP` refuse to run; Allow access to my session applies nothing. |
@@ -361,7 +408,7 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | X5 | Modes fullOutput (streamed into the detail pane) and inline (refresh while open, ≥ 10 s, ≤ 5 scripts). | X4, P12 | Unit: refresh scheduler stops when Search closes or locks; an unapproved inline script shows "Needs approval" and is not run; a `needsConfirmation` script is never refreshed by itself; L1 screenshot. |
 | X6 | Arguments wired: chips → the framed stdin message → non-secret argv, passwords on the script's stdin; percent-encoding. | X3b, P10 | L1: a password value is absent from every process's `/proc/*/cmdline`, `systemctl --user show` of the unit, the user journal and every Grassfield log; the script reads it from stdin. |
 | X7 | Approval gate: the approvals store `{path, SHA-256, allowNetwork, allowSession}`, `Commands.run` refusing an unapproved or changed script from every origin (row, quick key, hotkey, `qs ipc call search run`, inline) and opening the approval prompt instead, `needsConfirmation` from every origin, permissions reset when the hash changes, Forget Approval. | X3a | Unit: each origin with an unapproved and a changed script opens the prompt and runs nothing; `needsConfirmation` shown for the hotkey and IPC origins; the permissions dropped on a hash change; imported settings carry no approval. L0: the runner refuses what the store does not hold. |
-| X9 | Approval prompt and permission switches: the prompt (title, folder, level), the Allow network and Allow access to my session switches with their warnings (ADR-0067 D-3 wording), the row's level glyph. | X7 | Unit: the switches write the store and are off by default; strings en and fr; L1 screenshot of the prompt at 1.25. |
+| X9 | Approval prompt and permission switches: the prompt (title, folder, level), the Allow network and Allow access to my session switches with their warnings (ADR-0067 D-3 wording), the row's level glyph. | X7 | Unit: the switches write the store and are off by default; strings en and fr; L1 screenshot of the prompt at 1.25. Review note (X1/E1a): the script title, folder and file name are drawn as plain text, with the hidden-character set of `PlainText.js`. |
 | X8 | Script icons: an emoji as plain text; a file icon read only after approval, only a relative path resolving inside the script's folder to a regular file ≤ 256 KiB (`O_NOFOLLOW`, `O_NONBLOCK`), through `shell/services/image-copy.py`; https never fetched. | X7 | Unit and L0: a link, a FIFO, a path outside the folder, an oversize file and an https URL give the generic glyph; nothing is read before approval. |
 
 **Lane A: local AI** (`shell/search/LocalModel.qml`, `AiPrompt.js`)
@@ -369,7 +416,7 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | A1 | Spike + detection: loopback only, `/api/version` and `/api/tags`, cached 60 s, cloud/remote models excluded (method established in the spike from Ollama's API docs), absent → nothing shown. | — | Unit with a fake responder (XHR mocked): a non-loopback URL is impossible to configure; remote models dropped; timeouts. Spike notes in the spec. Opus review with A2. |
-| A2 | Ask Local Model row + streaming answer into the detail pane (NDJSON over XHR), Stop, Copy, Paste. | A1, P11 | Unit: stream parser (partial lines, errors); the request body contains exactly the typed text; aborted on close and on lock. L1 with a fake local server (sandbox-local). |
+| A2 | Ask Local Model row + streaming answer into the detail pane (NDJSON over XHR), Stop, Copy, Paste. | A1, P11 | Unit: stream parser (partial lines, errors); the request body contains exactly the typed text; aborted on close and on lock. **Moved here from A1 (ADR-0067 D-4):** the proxy test (`http_proxy`, `https_proxy`, `all_proxy` set to a fake proxy that must see nothing while a loopback responder is reached). **The listener check is re-run right before each POST** (the 60 s detection cache is a time-of-check window). L1 with a fake local server (sandbox-local). |
 | A3 | Answer actions and the fallback row. | A2, P14 | Unit. |
 | A4 | Conversation in the pane (follow-ups), memory only. | A2 | Unit: context window cap, New Conversation clears. |
 | A5 | Keep conversations (7 days, 0600 store, Clear). | A4, E4 | Unit: retention pruning, modes, clear. |
@@ -381,11 +428,30 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | E1a | Schema keys (ADR-0067 D-8) and the `commands.json` v1 format with its pure validator. | — | Schema tests: defaults, enums; validator vectors (oversize, wrong types, the link allowlist). |
-| E1b | `CommandStore.qml`, the one writer of `commands.json` (atomic, 0600, `write-private.sh`), and the `search` IPC item functions for the Settings app (`addItem`, `updateItem`, `removeItem`, `importFile`), refused while locked; `docs/specs/security.md` IPC surface. | E1a | Unit: validation through the IPC path, the 64 KiB cap, refusal under the lock, the file's mode, two quick requests both kept; `tests/security/ipc_inventory.sh`. |
+| E1b | `CommandStore.qml`, the one writer of `commands.json` (atomic, 0600, `write-private.sh`), and the `search` IPC item functions for the Settings app (`addItem`, `updateItem`, `removeItem`, `importFile`), refused while locked; `docs/specs/security.md` IPC surface. | E1a | Unit: validation through the IPC path, the 64 KiB cap, refusal under the lock, the file's mode, two quick requests both kept; `tests/security/ipc_inventory.sh`. Review note (X1/E1a): a commands.json that fails validation is kept aside and never overwritten; the store keeps serving the last good copy and writes only after the person agrees. |
 | E2 | Settings > Search: Scripts folders (Add Folder…, Open Folder), show Menu Items, show System State, Links list entry. | E1a | `tst_settingssearch.qml` extended; L1 screenshot. |
 | E3 | Settings > Keyboard > Text Replacements (macOS pane: table Replace / With, +, −). | E1b, T4 | Unit for the model; L1 screenshot en and fr. |
 | E4 | Settings > Search > Local Model (on/off, model, keep conversations, Clear). | E1a, A1 | Unit; L1. |
 | E5 | Export Commands… / Import… (and Raycast snippet and quicklink JSON import). | E1b, T2, T4 | Unit: round trip; Raycast fixtures map; approvals and history never exported. |
+
+**The `commands.json` v1 format (E1a; `shell/search/CommandsFile.js`, tests `tst_commandsfile.qml`).** `{"v": 1}` plus six optional lists, each at most 2 000 items, the file at most 256 KiB (262 144 bytes; a bigger file is refused as `too-big` like any other and never truncated), read with the JsonSafety rules; any unknown key, wrong type, out-of-bounds value or duplicate refuses the whole file (the result carries the path and a reason, never a partly accepted file):
+- `quickKeys` `{key, command}`: key `^[a-z0-9][a-z0-9 ]{0,15}$` without a trailing space, unique.
+- `shortcuts` `{slot, chord, command}`: slot `k1`..`k99`, unique; chord = one to four distinct modifiers of `Super Ctrl Alt Shift` then a key `^[A-Za-z0-9_]{1,32}$` or `code:<n>`, unique ignoring case.
+- `favorites`: command ids, unique. Command ids match `^[a-z][a-z0-9.-]{0,63}$`.
+- `links` `{id: "link.…", name ≤ 80, target, openWith?, args[≤3]: {placeholder ≤ 64, optional?}}`: the target is the ADR-0067 D-7 allowlist (http and https with an ASCII host and no user information, `mailto:`, a local absolute or `~/` path without a parent step or placeholder, a `file:` URL with an empty or `localhost` host turned into its path, or empty with `openWith` for an application alone), at most 2 048 characters; braces only as whole placeholders; a `mailto:` query may carry only `to`, `cc`, `bcc`, `subject` and `body` (names percent-decoded and compared without case; `subject` and `body` once), so no `attach` field can send a file; a path never starts with `//` (a network path to Qt); everything else refused. Whether a path exists, whether `openWith` is listed, and the carrying-data rule are checks of creation and of opening, not of this validator.
+- `replacements` `{id: "text.…", replace ≤ 32 without whitespace, with ≤ 16 384}` (tab and line feed allowed in `with`).
+- `aiCommands` `{id: "ai.…", name ≤ 80, prompt ≤ 16 384}`.
+Names, titles and placeholders are plain labels: no control, bidirectional, zero-width, tag, filler or other hidden character and not only white space (`shell/search/PlainText.js`, tied by a test to the set `shell/security/secret/Prompter.js` removes). A shortcut chord counts as a duplicate whatever the order of its modifiers. Ids of links, replacements and AI commands are unique across the file. `ScriptMeta.js` (X1) is strict in the same way: a known header key with a malformed value, a repeated key, a fourth argument, an argument field it does not know, a key repeated inside an argument's JSON, an `authorURL` the link checker refuses (user information, a placeholder, a non-ASCII host) or a header line over 4 096 characters refuses the script; unknown header keys are ignored and never returned; an icon that is not an emoji or a plain relative image path (a URL, an absolute path, a parent step, a hidden file) does not refuse the script, it gives the generic glyph.
+
+**`CommandStore` (E1b; `shell/search/CommandStore.qml`, `CommandsFile.js` request functions, `shell/services/write-private.sh --stdin`, `shell/services/read-import.sh`; test `tests/shell/command_store`).** One instance, owned by `Search`; `data` is always content `CommandsFile.parseText` accepted.
+- **Every change goes through the file reader's validator.** The candidate content is serialized and read back by `parseText` before it replaces `data`, so a request is accepted exactly when a file holding it would be (the test compares the two over the link allowlist). Search's own actions use `change(list, item, mode)` and `remove(list, key)` for any list; the IPC functions reach `links`, `replacements` and `aiCommands` only (a key binding is never created over IPC), at most 64 KiB of plain JSON (`{"list", "item"}`; no duplicate key, no integer beyond 2^53).
+- **Writes.** `data` changes at once, so two requests in a row both apply, the second on top of the first; the file follows, one write at a time, always the newest `data`, atomically and 0600 in a 0700 directory (`write-private.sh DIR FILE --stdin BYTES`: one argument cannot carry a 256 KiB file). The writes the store made are recognised when the file watcher reports them back; an edit by the person is followed.
+- **A file on disk that fails validation is never overwritten** (corrupt, not JSON, a newer version, unknown key, empty, a directory, unreadable). Decision (macOS-like: keep the person's file, say so, never lose it): `status` is `invalid` with `invalidReason`, the store keeps serving the last good content (empty at start), every change and import answers `file-invalid`, and nothing is written. Settings (E2) offers to keep the file aside; the person agrees with `keepAside()`, which renames it to `commands.json.invalid-<time>` (nothing is deleted, `keptAside` names it) and writes the last good content as a new file. The person can do the same rename by hand; a file that becomes valid again is followed.
+- **`importFile(path)`** reads only an absolute path of a regular file of the user's, never a symbolic link as its last part, a FIFO, a directory, a device, a file of another user or one over 256 KiB, checks the open file against the path, stops after five seconds, runs nothing; the content must be a valid `commands.json`; links, replacements and AI commands with a new id are added, an id already there is skipped (what is there wins), quick keys, shortcuts and favorites in the file are ignored (counted). The answer is `{"ok": true, "state": "reading"}`; the outcome is read with `importResult()` (counts or a reason, no content).
+- **Safety.** No string or key may hold an unpaired surrogate (it has no UTF-8 form; a writer would drop it and wait for bytes that never come). A write that does not end is killed after 10 s and reported (`writeError`); the content stays in memory. The file is written as one line (2 000 items per list must fit the cap). A file made invalid and put back as the store wrote it is valid again.
+- **The person edits the file while a store write runs.** The write lands over the edit (an atomic rename cannot be refused), so the store settles it afterwards, the person's text being the newest intent: a **valid** edit becomes the content and is written back as the file exactly as saved (a change queued behind it is dropped, a change acknowledged earlier is replaced); an **invalid** edit is kept in `commands.json.invalid-<time>` (`keptAside`) and the store's file stays. Both set `writeError` to `changed-on-disk` until the next change is written, and a change asked meanwhile answers `changed-on-disk` (ask again).
+- **Rate limit of the IPC path** (`tests/shell/command_store_dos`): a token bucket (10 at once, then 5 a second) and a duty cycle: a request that took `ms` of the shell's main thread (measured) keeps the next away for `9 * ms`, then `busy`. Search's own actions are not limited. Measured with a loop of one `updateItem` per event-loop turn on a file of 8 large replacements (about 256 000 bytes, the cap): 3 accepted in 8 s, about 3 700 refused, the store's work 10.5 to 11.3 % of the time, the event loop keeping 75 of 80 beats; the claim is "about one tenth of the main thread", not less. The cost is that quick use meets it (six adds in a row: one accepted; a commit near the cap keeps the next away about 2.6 s): the `busy` answer carries `retryAfterMs` and **an IPC caller (the Settings panes, E2 and E3) must retry after that time** (queue the request, show no error).
+- **Locked.** Every item function answers `{"ok": false, "reason": "locked"}` and changes nothing while the session is locked, whichever way it was called.
 
 ### 4.2 Waves (owner-visible value first) and parallel lanes
 
@@ -421,7 +487,7 @@ files except those in the table below.
 | `shell/platform/MenuBridge.qml`, `bridges/menu-bridge/` | M1–M3 | — |
 | `apps/clipboard-helper/`, `shell/services/Clipboard.qml` | T11 | — |
 | `packaging/arch/PKGBUILD` (the runner script, `ollama` optdepend line) | X3a, A1 | capture B1, B21, B22 |
-| `ui/Grassfield/` (+ `docs/specs/ui-api.md` changelog) | C3 | — |
+| `ui/i18n/` (+ `docs/specs/ui-api.md` changelog) | C3 | — |
 | `apps/settings/` | E2–E5 | capture B19 (app settings live in the Screenshot app: no overlap expected) |
 | `docs/specs/search.md` | P3c (keys), P13, P14 | — |
 

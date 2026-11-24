@@ -8,7 +8,9 @@ import qs.platform
 import qs.platform.shortcuts
 import qs.services
 import "../platform/ScreenChoice.js" as ScreenChoice
+import "Actions.js" as Actions
 import "Calc.js" as Calc
+import "Commands.js" as Commands
 import "ClipboardView.js" as ClipView
 import "Files.js" as Files
 import "Filters.js" as Filters
@@ -71,6 +73,10 @@ Scope {
     // Chips need something to choose between; a lone category is the list itself.
     readonly property bool chipsShown: query.trim() !== "" && chips.length > 1
     // Keyboard reach of the chips: the field keeps the text focus; in the "chips" zone the ring is on chip `chipIndex`.
+    // The Actions panel of the selected row (P3b, ADR-0067 D-1): the row it was opened on and its actions (Actions.js).
+    property bool actionsOpen: false
+    property var actionsItem: null
+    property var actionList: []
     property string zone: "field"
     property int chipIndex: -1
 
@@ -203,6 +209,8 @@ Scope {
         if (SessionState.refusesConfirmed("search"))
             return;
         openStartMs = Date.now();
+        // The Night Light command reads its state as Control Center does when it opens (grassfield-nightshift has no event).
+        NightShift.refresh();
         if (Popups.active)
             Popups.close();
         // The window a paste may go to: the one active now, never the desktop (FocusReturn remembers the same one).
@@ -217,6 +225,7 @@ Scope {
 
     function hide(): void {
         open = false;
+        closeActions();
         // A paste the helper has not confirmed yet ends with Search: a late confirmation pastes nothing (ADR-0034 §4).
         Clipboard.searchClosed();
         leaveChips();
@@ -251,6 +260,7 @@ Scope {
             return;
         query = text;
         filter = "";
+        closeActions();
         leaveChips();
         fileHits = [];
         cancelFiles();
@@ -278,22 +288,45 @@ Scope {
         appRecords = Model.disambiguate(out);
     }
 
-    function commandList(): var {
-        const list = [];
-        if (lockAvailable)
-            list.push({id: "lock", title: qsTr("Lock Screen"), words: [qsTr("lock")], glyph: "lock"});
-        list.push({id: "sleep", title: qsTr("Sleep"), words: [qsTr("suspend")], glyph: "moon"});
-        list.push({id: "restart", title: qsTr("Restart"), words: [qsTr("reboot")], glyph: "power"});
-        list.push({id: "shutdown", title: qsTr("Shut Down"), words: [qsTr("power off"), qsTr("poweroff")], glyph: "power"});
-        list.push({id: "logout", title: qsTr("Log Out"), words: [qsTr("sign out"), qsTr("log off")], glyph: "person"});
-        return list;
+    // The command catalogue (Commands.js, ADR-0067 D-2): providers hand their entries over, Search only ranks and dispatches.
+    // The system provider's five commands each run the function they always ran. Rebuilt when the language changes.
+    readonly property var commandRegistry: Commands.build([
+        Commands.systemCommands({
+            subtitle: qsTr("System command"),
+            lock: qsTr("Lock Screen"), lockWord: qsTr("lock"),
+            sleep: qsTr("Sleep"), sleepWord: qsTr("suspend"),
+            restart: qsTr("Restart"), restartWord: qsTr("reboot"),
+            shutdown: qsTr("Shut Down"), shutdownWord: qsTr("power off"), shutdownWord2: qsTr("poweroff"),
+            logout: qsTr("Log Out"), logoutWord: qsTr("sign out"), logoutWord2: qsTr("log off")
+        }, {
+            lock: () => SessionState.requestLock("search"),
+            sleep: () => Power.sleepNow(),
+            // Restart, Shut Down and Log Out: no message, the dialog shows its countdown (ADR-0040 ID-21).
+            restart: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to restart your computer now?"), "", qsTranslate("Search", "Restart"), "restart", {}, true, screenName),
+            shutdown: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to shut down your computer now?"), "", qsTranslate("Search", "Shut Down"), "shutdown", {}, true, screenName),
+            logout: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to quit all applications and log out %1?").arg(SystemInfo.user), "", qsTranslate("Search", "Log Out"), "logout", {}, true, screenName)
+        }, lockAvailable),
+        // S1, S3, S6: system extras, window commands for the window Search opened over, and the Control Center toggles.
+        builtins.entries,
+        // X2: the user's script commands (nothing runs before the approval gate, X7).
+        scripts.entries
+    ])
+
+    // The Start Screen Saver command: shell.qml connects it to the Saver (Search does not know it).
+    signal startScreenSaver
+
+    BuiltinCommands {
+        id: builtins
+        screenName: root.screenName
+        onStartSaver: root.startScreenSaver()
     }
 
-    function commandScore(cmd: var, q: string): real {
-        let s = Ranking.textScore(Ranking.norm(cmd.title), q);
-        for (const w of cmd.words)
-            s = Math.max(s, Ranking.textScore(Ranking.norm(w), q) * 0.8);
-        return s >= 50 ? s : 0;
+    Scripts {
+        id: scripts
+        showScripts: Settings.searchShowScripts
+        folderSettings: Settings.searchScriptFolders
+        open: root.open
+        screenName: root.screenName
     }
 
     function mkApp(r: var): var {
@@ -302,7 +335,7 @@ Scope {
     }
 
     function mkCommand(c: var): var {
-        return {kind: "command", key: "cmd:" + c.id, title: c.title, subtitle: qsTr("System command"), glyph: c.glyph, command: c.id};
+        return {kind: "command", key: "cmd:" + c.id, title: c.title, subtitle: c.subtitle, glyph: c.glyph, command: c.id, actions: c.actions};
     }
 
     function mkSetting(h: var): var {
@@ -326,15 +359,7 @@ Scope {
         const lq = Ranking.norm(q);
 
         let apps = showApps && q !== "" ? Ranking.rank(appRecords, q, usage, 8) : [];
-        let cmds = [];
-        if (showCommands && q !== "") {
-            for (const c of commandList()) {
-                const s = commandScore(c, lq);
-                if (s > 0)
-                    cmds.push({cmd: c, score: s});
-            }
-            cmds.sort((a, b) => b.score - a.score);
-        }
+        let cmds = showCommands && q !== "" ? Commands.match(commandRegistry, q) : [];
         let pages = showSettings && q !== "" ? SettingsPages.match(settingsPageList, q) : [];
         // A command and a Settings page that read the same are one row, the command (the action wins; the page is one click
         // away in Settings). In French the page is "Écran verrouillé" and the command "Verrouiller l’écran": both stay.
@@ -550,24 +575,7 @@ Scope {
     }
 
     function runCommand(id: string): void {
-        switch (id) {
-        case "lock":
-            SessionState.requestLock("search");
-            return;
-        case "sleep":
-            Power.sleepNow();
-            return;
-        // Restart, Shut Down and Log Out: no message, the dialog shows its countdown (ADR-0040 ID-21).
-        case "restart":
-            Popups.confirm(qsTranslate("Search", "Are you sure you want to restart your computer now?"), "", qsTranslate("Search", "Restart"), "restart", {}, true, screenName);
-            return;
-        case "shutdown":
-            Popups.confirm(qsTranslate("Search", "Are you sure you want to shut down your computer now?"), "", qsTranslate("Search", "Shut Down"), "shutdown", {}, true, screenName);
-            return;
-        case "logout":
-            Popups.confirm(qsTranslate("Search", "Are you sure you want to quit all applications and log out %1?").arg(SystemInfo.user), "", qsTranslate("Search", "Log Out"), "logout", {}, true, screenName);
-            return;
-        }
+        Commands.run(commandRegistry, id, [], "row");
     }
 
     // Click on a chip: select it, or clear the filter when it is the selected one.
@@ -597,20 +605,67 @@ Scope {
         selected = (selected + delta + items.length) % items.length;
     }
 
-    // Tab / Shift+Tab: first item of the next / previous group.
+    // Page Down / Page Up, Ctrl+Down / Ctrl+Up: first item of the next / previous group (wrapping).
     function moveGroup(delta: int): void {
         if (items.length === 0 || groups.length === 0)
             return;
         const current = selected >= 0 ? items[selected].groupId : groups[0].id;
         let gi = groups.findIndex(g => g.id === current);
-        if (chipsShown && Filters.leavesForChips(gi, groups.length, delta)) {
-            zone = "chips";
-            chipIndex = delta > 0 ? 0 : chips.length - 1;
-            return;
-        }
         gi = (gi + delta + groups.length) % groups.length;
         const target = groups[gi].id;
         selected = items.findIndex(it => it.groupId === target);
+    }
+
+    // Shift+Tab: the focus ring goes to the last filter chip (reverse order) (search.md F2c). Returns whether there are chips to reach.
+    function enterChips(): bool {
+        if (!chipsShown)
+            return false;
+        zone = "chips";
+        chipIndex = chips.length - 1;
+        return true;
+    }
+
+    // ---- the Actions panel (P3b) ----------------------------------------------------------
+
+    // The words the actions are named with (translated here so that lupdate finds them; Actions.js orders them).
+    readonly property var actionWords: ({open: qsTr("Open"), run: qsTr("Run"), copy: qsTr("Copy"), reveal: qsTr("Show in Files")})
+
+    // Tab: the Actions of the selected row. Returns whether the row has any (the Clipboard view keeps its own menu).
+    function openActions(): bool {
+        if (clipboardView || selected < 0 || selected >= items.length)
+            return false;
+        const list = Actions.forItem(items[selected], actionWords);
+        if (list.length === 0)
+            return false;
+        leaveChips();
+        actionsItem = items[selected];
+        actionList = list;
+        actionsOpen = true;
+        return true;
+    }
+
+    function closeActions(): void {
+        actionsOpen = false;
+        actionsItem = null;
+        actionList = [];
+    }
+
+    // The user chose an action of the open panel: it runs on the row it was opened on.
+    function runAction(id: string): void {
+        const a = Actions.find(actionList, id);
+        const item = actionsItem;
+        closeActions();
+        if (!a || a.enabled === false || !item)
+            return;
+        if (id.startsWith("x:")) {
+            // An entry's own action goes through the registry's gate (availability), like Run.
+            hide();
+            Commands.runAction(commandRegistry, item.command, id.slice(2), "row");
+        } else if (id === "reveal") {
+            activate(item, true);
+        } else {
+            activate(item, false);
+        }
     }
 
     // ---- the Clipboard view (ADR-0034) ----------------------------------------------------
@@ -975,8 +1030,36 @@ Scope {
     // amendment): two handlers for one target warn and only one is used, so the loader switches them over in order.
     property bool ipcEnabled: true
 
+    // commands.json: quick keys, shortcuts, favorites, links, replacements, AI commands (E1b). Search and the Settings app change
+    // it only through this store.
+    readonly property CommandStore commandStore: commandStoreItem
+
+    CommandStore {
+        id: commandStoreItem
+        // The predicate of SessionState.refuses(): locked (confirmed or not); the request path asks it first, this one covers an import in flight.
+        locked: SessionState.locked
+    }
+
+    // The Settings app's requests (IPC `addItem`, `updateItem`, `removeItem`, `importFile`, `importResult`), as an answer in JSON:
+    // `{"ok": true}` or `{"ok": false, "reason": ...}`. Nothing changes while the session is locked, whichever way the call came.
+    function commandRequest(op: string, payload: string): string {
+        if (SessionState.refuses("search"))
+            return JSON.stringify({ok: false, reason: "locked"});
+        return JSON.stringify(commandStoreItem.request(op, payload));
+    }
+
+    function commandImportResult(): string {
+        if (SessionState.refuses("search"))
+            return JSON.stringify({ok: false, reason: "locked"});
+        return JSON.stringify(commandStoreItem.lastImport);
+    }
+
+    // The handler itself, for the tests that call its functions as a client would.
+    property alias ipc: ipcHandler
+
     IpcHandler {
         target: "search"
+        id: ipcHandler
         // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
         Component.onCompleted: Shortcuts.attach(this)
         enabled: root.ipcEnabled
@@ -1014,6 +1097,31 @@ Scope {
             if (!VisualFixtures.active)
                 return;
             root.toggleFilter(id);
+        }
+
+        // The Settings app's requests for commands.json (E1b; docs/specs/security.md "IPC surface"). The payload is JSON of at most
+        // 64 KiB: {"list": "links" | "replacements" | "aiCommands", "item": {...}}.
+        function addItem(json: string): string {
+            return root.commandRequest("add", json);
+        }
+
+        function updateItem(json: string): string {
+            return root.commandRequest("update", json);
+        }
+
+        // The id of a link, replacement or AI command.
+        function removeItem(id: string): string {
+            return root.commandRequest("remove", id);
+        }
+
+        // An absolute path of a regular file of the user's: its links, replacements and AI commands with a new id are added.
+        function importFile(path: string): string {
+            return root.commandRequest("import", path);
+        }
+
+        // The outcome of the last importFile.
+        function importResult(): string {
+            return root.commandImportResult();
         }
 
         // JSON of the visible groups.

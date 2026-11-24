@@ -952,6 +952,12 @@ QtObject {
 
     // docs/specs/notifications.md: about 344 pt
     readonly property int notificationBannerWidth: 344
+    // ms Do Not Disturb lasts for "for 1 hour" (macOS Focus duration choice) [ref: docs/specs/notifications.md § Functional requirements]
+    readonly property int notificationDndForMs: 3600000
+    // local hour "until tomorrow" ends Do Not Disturb: the next morning, as macOS's "until tomorrow morning" [ref: docs/specs/notifications.md § Functional requirements]
+    readonly property int notificationDndTomorrowHour: 8
+    // ms between two checks of a Do Not Disturb deadline (a timer does not count the time asleep, so a resume ends it at most this late) [ref: docs/specs/notifications.md § Functional requirements]
+    readonly property int notificationDndCheckMs: 60000
     // ms to wait after the set of sender apps changes before notification-apps.json is rewritten [ref: docs/testing/f1-reference-gaps.md § Notifications and widgets; docs/specs/notifications.md]
     readonly property int notificationAppsWriteMs: 500
     // F1 gap 7: gap between stacked cards 6 +-1 (value only) [ref: docs/testing/f1-reference-gaps.md § Notifications and widgets; docs/specs/notifications.md]
@@ -1159,6 +1165,8 @@ QtObject {
     readonly property int searchClipPreviewTextSize: Math.round(14 * Appearance.textScale)
     // estimate: the first-use prompt's margins inside the results panel (CB-6, macOS 26.0 capture W-36) [ref: docs/specs/clipboard.md; ADR-0034]
     readonly property int searchClipPromptPadding: 24
+    // estimate: the Actions list to the right edge of the selected row, the capsule-to-panel gap (search.capsuleGap) [ref: docs/specs/command-palette.md § 3.3 Actions panel; ADR-0067 D-1]
+    readonly property int searchActionsGap: 11
 
     // estimate of macOS 27's compact Character Viewer popover (Control-Command-Space; no capture of it in design/reference yet, F1 pending): nine glyphs to a row [ref: docs/specs/clipboard.md § Emoji & Symbols]
     readonly property int emojiColumns: 9

@@ -55,3 +55,34 @@ function backdrop(published, cfg) {
         return {kind: "color", file: "", color: cfg.color};
     return {kind: "art", file: "", color: ""};
 }
+
+// The saver's two flags: `byHand` (Start Screen Saver, shown without the idle delay) and `dismissed` (the first input ended it
+// before the compositor's activity report reached the monitor). `idle` is whether the idle monitor says idle.
+function isShown(s, idle) {
+    return s.dismissed !== true && (s.byHand === true || idle === true);
+}
+
+// The first input while the saver shows. A saver the idle monitor also holds up stays dismissed until the monitor sees activity
+// (its idle to active change clears it); one that only the hand started, with the monitor not idle, just ends: `dismissed` must not
+// stay set, or the next idle saver would never show.
+function afterDismiss(s, idle) {
+    if (!isShown(s, idle))
+        return s;
+    return {byHand: false, dismissed: idle === true};
+}
+
+// The idle monitor went from idle to active: both flags clear.
+function afterActivity() {
+    return {byHand: false, dismissed: false};
+}
+
+// Start Screen Saver.
+function afterStart() {
+    return {byHand: true, dismissed: false};
+}
+
+// A saver started by hand ends when the pointer moves (macOS: the pointer ends the saver as it does the idle one). The first
+// position a display reports is where the pointer already was: `origin` null takes it, a later different one ends the saver.
+function pointerEnds(origin, x, y) {
+    return origin !== null && (x !== origin.x || y !== origin.y);
+}

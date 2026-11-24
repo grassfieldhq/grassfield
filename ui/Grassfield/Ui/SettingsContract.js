@@ -127,12 +127,19 @@ const DEFAULTS = {
     "search.showConversions": true,
     "search.showSettings": true,
     "search.showCommands": true,
+    "search.showMenuItems": true,
+    "search.showSystemState": true,
+    "search.showScripts": true,
+    "search.scriptFolders": [],
     "search.historyResetAt": 0,
     "search.clipboard.enabled": false,
     "search.clipboard.retention": "8h",
     "search.clipboard.keepOnDisk": false,
     "search.clipboard.clearedAt": 0,
     "search.clipboard.pinnedClearedAt": 0,
+    "search.localModel.enabled": true,
+    "search.localModel.model": "",
+    "search.localModel.keepConversations": false,
     "screensaver.idleMinutes": 0,
     "screensaver.kind": "artwork",
     "screensaver.folder": "",
@@ -282,12 +289,19 @@ const ALL_DEFAULTS = {
     "search.showConversions": true,
     "search.showSettings": true,
     "search.showCommands": true,
+    "search.showMenuItems": true,
+    "search.showSystemState": true,
+    "search.showScripts": true,
+    "search.scriptFolders": [],
     "search.historyResetAt": 0,
     "search.clipboard.enabled": false,
     "search.clipboard.retention": "8h",
     "search.clipboard.keepOnDisk": false,
     "search.clipboard.clearedAt": 0,
     "search.clipboard.pinnedClearedAt": 0,
+    "search.localModel.enabled": true,
+    "search.localModel.model": "",
+    "search.localModel.keepConversations": false,
     "screensaver.idleMinutes": 0,
     "screensaver.kind": "artwork",
     "screensaver.folder": "",
@@ -433,12 +447,19 @@ const RULES = {
     "search.showConversions": {"type": "boolean"},
     "search.showSettings": {"type": "boolean"},
     "search.showCommands": {"type": "boolean"},
+    "search.showMenuItems": {"type": "boolean"},
+    "search.showSystemState": {"type": "boolean"},
+    "search.showScripts": {"type": "boolean"},
+    "search.scriptFolders": {"type": "pathList"},
     "search.historyResetAt": {"type": "integer", "min": 0, "max": 9999999999999},
     "search.clipboard.enabled": {"type": "boolean"},
     "search.clipboard.retention": {"type": "enum", "values": ["30m", "8h", "7d"]},
     "search.clipboard.keepOnDisk": {"type": "boolean"},
     "search.clipboard.clearedAt": {"type": "integer", "min": 0, "max": 9999999999999},
     "search.clipboard.pinnedClearedAt": {"type": "integer", "min": 0, "max": 9999999999999},
+    "search.localModel.enabled": {"type": "boolean"},
+    "search.localModel.model": {"type": "plainText", "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]{0,128}$"},
+    "search.localModel.keepConversations": {"type": "boolean"},
     "screensaver.idleMinutes": {"type": "integer", "min": 0, "max": 240},
     "screensaver.kind": {"type": "enum", "values": ["artwork", "wallpaperClock", "slideshow", "clock", "moving"]},
     "screensaver.folder": {"type": "wallpaperPath"},
@@ -548,8 +569,8 @@ function validate(path, value) {
     case "pathList": {
         // Folders kept in the Dock as stacks: absolute paths or ~/ ones, as the Dock reads them (shell/dock/Stacks.js folderList).
         const ok = Array.isArray(value) && value.length <= 12 && value.every(v => typeof v === "string" && v !== "" && v.length <= 4096
-            && !/[\u0000-\u001f]/.test(v) && (v.indexOf("/") === 0 || v.indexOf("~/") === 0) && v.split("/").indexOf("..") < 0);
-        return ok ? "" : path + ": expected at most 12 absolute paths without control characters";
+            && !/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(v) && (v.indexOf("/") === 0 || v.indexOf("~/") === 0) && v.split("/").indexOf("..") < 0);
+        return ok ? "" : path + ": expected at most 12 absolute paths without control or bidirectional characters";
     }
     case "boolean":
         return typeof value === "boolean" ? "" : path + ": expected true or false";
