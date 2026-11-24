@@ -82,6 +82,7 @@ private:
     QPointF m_start;
     Layer m_origin; // the selected layer when a move or a resize began
     int m_drawId = 0;
+    quint64 m_seed = 1; // the pixelate being drawn: its seed, drawn when the press began
     // A stroke's samples, thinned as they come: the points kept, and the ones since the last kept, all within m_eps of the line from the
     // last kept to the latest (so a move is a bounded amount of work, and the stroke's size follows its shape, not its sampling).
     QVector<QPointF> m_kept;

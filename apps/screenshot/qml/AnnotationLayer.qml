@@ -33,6 +33,9 @@ Item {
         anchors.fill: parent
         model: root.backend.layerModel
         viewScale: root.viewScale
+        regionRevision: root.backend.regionRevision
+        // Opaque: what shows before the exporter's pixels are there hides the area whole.
+        regionPlaceholder: Qt.rgba(Appearance.colors.textSecondary.r, Appearance.colors.textSecondary.g, Appearance.colors.textSecondary.b, 1)
     }
 
     // The selected layer's handles.

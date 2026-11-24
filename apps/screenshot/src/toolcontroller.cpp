@@ -1,6 +1,7 @@
 #include "toolcontroller.h"
 
 #include <QLineF>
+#include <QRandomGenerator>
 
 #include <algorithm>
 #include <cmath>
@@ -11,13 +12,14 @@ QStringList ToolController::tools()
 {
     return {QStringLiteral("select"), QStringLiteral("arrow"),       QStringLiteral("line"),    QStringLiteral("rectangle"),
             QStringLiteral("ellipse"), QStringLiteral("pen"),        QStringLiteral("highlighter"), QStringLiteral("text"),
-            QStringLiteral("counter"), QStringLiteral("eyedropper"), QStringLiteral("crop")};
+            QStringLiteral("counter"), QStringLiteral("redact"), QStringLiteral("pixelate"), QStringLiteral("blur"),
+            QStringLiteral("spotlight"), QStringLiteral("eyedropper"), QStringLiteral("crop")};
 }
 
 bool ToolController::draws(const QString &tool)
 {
     return tool == QLatin1String("arrow") || tool == QLatin1String("line") || tool == QLatin1String("rectangle") || tool == QLatin1String("ellipse")
-        || tool == QLatin1String("pen") || tool == QLatin1String("highlighter") || tool == QLatin1String("counter");
+        || tool == QLatin1String("pen") || tool == QLatin1String("highlighter") || tool == QLatin1String("counter") || isRegionType(tool);
 }
 
 bool ToolController::setTool(const QString &tool)
@@ -71,6 +73,7 @@ bool ToolController::press(const QPointF &p, qreal tolerance)
             return false;
         m_mode = Mode::Draw;
         m_drawId = 0;
+        m_seed = QRandomGenerator::system()->generate64() | 1; // never 0: that asks makeRegion for a seed of its own
         m_kept = {p};
         m_pending.clear();
         m_eps = kStrokeEpsilon;
@@ -126,7 +129,7 @@ void ToolController::updateGesture(const QPointF &p, bool constrain)
         return;
     }
     if (m_mode == Mode::Draw) {
-        const bool box = m_tool == QLatin1String("rectangle") || m_tool == QLatin1String("ellipse");
+        const bool box = m_tool == QLatin1String("rectangle") || m_tool == QLatin1String("ellipse") || isRegionType(m_tool);
         const QPointF end = constrain ? constrained(m_start, p, box) : p;
         if (m_drawId == 0) {
             if (QLineF(m_start, end).length() < kMinDrag)
@@ -134,7 +137,10 @@ void ToolController::updateGesture(const QPointF &p, bool constrain)
             m_drawId = nextLayerId(now);
         }
         Layers next = m_stack->gestureBase();
-        next.append(makeShape(m_drawId, m_tool, m_start, end, m_style));
+        ShapeStyle drawn = m_style;
+        if (drawn.seed == 0)
+            drawn.seed = m_seed; // one seed for the whole drag: the pixelate does not change its noise as it is dragged out
+        next.append(isRegionType(m_tool) ? makeRegion(m_drawId, m_tool, m_start, end, drawn) : makeShape(m_drawId, m_tool, m_start, end, m_style));
         m_stack->preview(next);
         return;
     }
@@ -145,7 +151,7 @@ void ToolController::updateGesture(const QPointF &p, bool constrain)
     if (m_mode == Mode::Move) {
         next[i] = translated(m_origin, p - m_start);
     } else if (m_mode == Mode::Resize) {
-        const bool box = m_origin.type == QLatin1String("rectangle") || m_origin.type == QLatin1String("ellipse");
+        const bool box = m_origin.type == QLatin1String("rectangle") || m_origin.type == QLatin1String("ellipse") || isRegionType(m_origin.type);
         QPointF to = p;
         if (constrain && !box) {
             // An end of a line keeps its 45-degree angle from the other end.

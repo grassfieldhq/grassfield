@@ -39,6 +39,21 @@ struct Arguments {
 };
 Arguments resolveArguments(const QStringList &args, const QString &cwd);
 
+// The clipboard after a redacted export (ADR-0066 D-9): the arguments of the command that puts the exported PNG (on its stdin) on the clipboard,
+// the automatic copy's own (type image/png, --sensitive: clipboard history does not record it), and the one that empties it when that fails.
+QStringList clipboardArguments();
+QStringList clipboardClearArguments();
+
+// A command run with a bound, blocking the calling thread (no event loop runs meanwhile): its input goes to its stdin, its stdout and stderr
+// are dropped, and it is killed after `timeoutMs` in all. `started` is false when it could not be run; `finished` when it exited by itself
+// within the bound (`exitCode` is then its own).
+struct BoundedRun {
+    bool started = false;
+    bool finished = false;
+    int exitCode = -1;
+};
+BoundedRun runBlocking(const QStringList &argv, const QByteArray &input, int timeoutMs);
+
 // Started with no file (the Apps entry): macOS's Screenshot app opens the capture toolbar, so this one asks the running shell to.
 // `shellIpc` is grassfield::apps::runmode::shellIpcArgs() (the arguments after `qs`: ipc -p <dir> call), empty when there is no
 // shell to call. The target is "capture" and the function "toggle", the one the Shift-Super-5 key calls: "open" answers only in a

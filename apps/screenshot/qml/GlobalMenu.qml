@@ -5,7 +5,7 @@ import Qt.labs.platform as Platform
 // The editor's menus in the global menu bar (T1: master-prompt 5.7, ADR-0008), exported by Qt through DBusMenu. Editor.qml creates
 // it only while the registrar is there, and a fresh one when the registrar restarts (src/main.cpp, apps/globalmenu.h); the
 // toolbar stays either way. macOS structure: File, Edit, Tools, View; the app menu and Window are the shell's T0 menus. Edit and
-// Tools came with the tools (slices B3 and B4); B5 to B8 added the pen, highlighter, text, counter, eyedropper and crop, and Rotate and Flip
+// Tools came with the tools (slices B3 and B4); B5 to B8 added the pen, highlighter, text, counter, eyedropper and crop (B7: redact, pixelate, blur and spotlight), and Rotate and Flip
 // (Preview's own Tools menu names them). Every item runs the same action as the toolbar and the
 // window's shortcuts. A shortcut that an in-window Shortcut also registers is handled once: Qt hands an ambiguous key to one of
 // them per press and the window's Shortcut also acts on activatedAmbiguously.
@@ -160,6 +160,50 @@ Platform.MenuBar {
                 bar.win.backend.tool = "counter";
                 // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
                 checked = Qt.binding(() => bar.win.backend.tool === "counter");
+            }
+        }
+        Platform.MenuItem {
+            text: qsTr("Redact")
+            shortcut: "X"
+            checkable: true
+            checked: bar.win.backend.tool === "redact"
+            onTriggered: {
+                bar.win.backend.tool = "redact";
+                // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
+                checked = Qt.binding(() => bar.win.backend.tool === "redact");
+            }
+        }
+        Platform.MenuItem {
+            text: qsTr("Pixelate")
+            shortcut: "M"
+            checkable: true
+            checked: bar.win.backend.tool === "pixelate"
+            onTriggered: {
+                bar.win.backend.tool = "pixelate";
+                // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
+                checked = Qt.binding(() => bar.win.backend.tool === "pixelate");
+            }
+        }
+        Platform.MenuItem {
+            text: qsTr("Blur")
+            shortcut: "B"
+            checkable: true
+            checked: bar.win.backend.tool === "blur"
+            onTriggered: {
+                bar.win.backend.tool = "blur";
+                // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
+                checked = Qt.binding(() => bar.win.backend.tool === "blur");
+            }
+        }
+        Platform.MenuItem {
+            text: qsTr("Focus")
+            shortcut: "S"
+            checkable: true
+            checked: bar.win.backend.tool === "spotlight"
+            onTriggered: {
+                bar.win.backend.tool = "spotlight";
+                // Picking the tool at hand would untick the item and break its binding: the tick follows the tool.
+                checked = Qt.binding(() => bar.win.backend.tool === "spotlight");
             }
         }
         Platform.MenuItem {

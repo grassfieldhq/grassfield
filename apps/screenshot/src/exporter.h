@@ -20,4 +20,12 @@ void paintLayers(QPainter *painter, const Layers &layers);
 // give a copy of the original. A null original gives a null image.
 QImage exportLayers(const QImage &original, const Layers &layers);
 
+// Whether the export of `layers` hides pixels of the picture (a Redact, a Pixelate or a Blur): such an export also drops the original's text
+// chunks but its scale, and the app puts the exported picture on the clipboard in place of the automatic copy (ADR-0066 D-9).
+bool hidesPixels(const Layers &layers);
+
+// The picture's part under the Pixelate or Blur (or Redact) layer `id` as the export draws it (its area clipped to the picture), from the framed
+// picture and the layers: what the editor shows for the layer, made by the same code as the file. A null image for any other layer.
+QImage regionPatch(const QImage &framed, const Layers &layers, int id);
+
 } // namespace screenshot

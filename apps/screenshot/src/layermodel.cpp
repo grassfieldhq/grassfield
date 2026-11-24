@@ -38,7 +38,7 @@ LayerModel::Row LayerModel::makeRow(const Layer &layer, int number)
     row.geometry = shapeGeometry(layer, number);
     row.endHead = closedPolyline(row.geometry.endHead);
     row.startHead = closedPolyline(row.geometry.startHead);
-    if (row.geometry.kind == ShapeGeometry::Stroke || row.geometry.kind == ShapeGeometry::Glyphs)
+    if (row.geometry.kind == ShapeGeometry::Stroke || row.geometry.kind == ShapeGeometry::Glyphs || row.geometry.kind == ShapeGeometry::Spotlight)
         row.pathSvg = pathToSvg(row.geometry.path);
     if (row.geometry.kind == ShapeGeometry::Glyphs && !row.geometry.plate.isEmpty())
         row.plateSvg = pathToSvg(row.geometry.plate);
@@ -62,6 +62,10 @@ QVariant LayerModel::data(const QModelIndex &index, int role) const
         case ShapeGeometry::ArrowCurved: return QStringLiteral("arrowCurved");
         case ShapeGeometry::Stroke: return QStringLiteral("stroke");
         case ShapeGeometry::Glyphs: return QStringLiteral("glyphs");
+        case ShapeGeometry::Redact: return QStringLiteral("redact");
+        case ShapeGeometry::Pixelate: return QStringLiteral("pixelate");
+        case ShapeGeometry::Blur: return QStringLiteral("blur");
+        case ShapeGeometry::Spotlight: return QStringLiteral("spotlight");
         case ShapeGeometry::None: return QString();
         }
         return QString();

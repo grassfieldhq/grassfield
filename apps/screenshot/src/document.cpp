@@ -143,6 +143,8 @@ bool Document::done(QString *error)
     if (!atomicWrite(m_path, png, -1, &why, m_beforeRename))
         return fail(why);
 
+    ++m_writes;
+    m_exportedPng = png;
     const QString digest = CaptureHistory::sha256(png);
     m_fileDigest = digest;
     m_savedLayers = m_layers;

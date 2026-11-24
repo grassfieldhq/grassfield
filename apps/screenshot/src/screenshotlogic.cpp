@@ -1,12 +1,54 @@
 #include "screenshotlogic.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QUrl>
 
+#include <algorithm>
+
 namespace screenshot {
+
+BoundedRun runBlocking(const QStringList &argv, const QByteArray &input, int timeoutMs)
+{
+    BoundedRun result;
+    if (argv.isEmpty())
+        return result;
+    // No event loop: while it waits, nothing else of the application runs (a close request cannot cut the command short).
+    QProcess process;
+    process.setStandardOutputFile(QProcess::nullDevice()); // no pipe for a background copy to hold open
+    process.setStandardErrorFile(QProcess::nullDevice());
+    QElapsedTimer clock;
+    clock.start();
+    process.start(argv.first(), argv.mid(1));
+    if (!process.waitForStarted(timeoutMs))
+        return result;
+    result.started = true;
+    if (!input.isEmpty())
+        process.write(input);
+    process.closeWriteChannel();
+    const int left = std::max(1, timeoutMs - int(clock.elapsed()));
+    result.finished = process.waitForFinished(left) && process.exitStatus() == QProcess::NormalExit;
+    result.exitCode = result.finished ? process.exitCode() : -1;
+    if (process.state() != QProcess::NotRunning) {
+        process.kill();
+        process.waitForFinished(200);
+    }
+    return result;
+}
+
+QStringList clipboardArguments()
+{
+    return {QStringLiteral("wl-copy"), QStringLiteral("--type"), QStringLiteral("image/png"), QStringLiteral("--sensitive")};
+}
+
+QStringList clipboardClearArguments()
+{
+    return {QStringLiteral("wl-copy"), QStringLiteral("--clear")};
+}
 
 QString localPathFromArgument(const QString &arg, const QString &cwd, QString *error)
 {

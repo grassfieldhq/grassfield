@@ -19,6 +19,11 @@ Item {
     required property var model
     // Screen points per picture pixel.
     required property real viewScale
+    // Pixelate and Blur (slice B7) show the exporter's own pixels, which the backend serves as image://screenshot/fx/<revision>/<layer id>
+    // (the revision changes with every edit). Until an image is there for the layer, and whenever it is not, the area shows this opaque
+    // colour: the screen never shows less redaction than the file.
+    required property int regionRevision
+    required property color regionPlaceholder
 
     clip: true
 
@@ -94,6 +99,104 @@ Item {
                                 startAngle: 0
                                 sweepAngle: 360
                             }
+                        }
+                    }
+                }
+
+                // Redact: an opaque fill of the area (whole pixels, as the exporter's), nothing blended along its border.
+                DelegateChoice {
+                    roleValue: "redact"
+                    Rectangle {
+                        id: redactItem
+                        required property color gColor
+                        required property real boxX
+                        required property real boxY
+                        required property real boxW
+                        required property real boxH
+                        // One device pixel more on every side: the picture under it is drawn with mipmaps, which blend a pixel or so of what
+                        // it hides across the border; the screen covers that, so it never shows less than the file.
+                        readonly property real grow: 1 / Math.max(root.viewScale, 0.01)
+                        x: redactItem.boxX - grow
+                        y: redactItem.boxY - grow
+                        width: redactItem.boxW + 2 * grow
+                        height: redactItem.boxH + 2 * grow
+                        antialiasing: false
+                        color: Qt.rgba(redactItem.gColor.r, redactItem.gColor.g, redactItem.gColor.b, 1)
+                    }
+                }
+
+                // Pixelate and Blur: the opaque placeholder first, the exporter's pixels over it as soon as they are loaded.
+                DelegateChoice {
+                    roleValue: "pixelate"
+                    Item {
+                        id: pixelateItem
+                        required property int gId
+                        required property real boxX
+                        required property real boxY
+                        required property real boxW
+                        required property real boxH
+                        Rectangle {
+                            x: pixelateItem.boxX
+                            y: pixelateItem.boxY
+                            width: pixelateItem.boxW
+                            height: pixelateItem.boxH
+                            antialiasing: false
+                            color: root.regionPlaceholder
+                        }
+                        Image {
+                            x: Math.max(0, pixelateItem.boxX)
+                            y: Math.max(0, pixelateItem.boxY)
+                            source: "image://screenshot/fx/" + root.regionRevision + "/" + pixelateItem.gId
+                            asynchronous: true
+                            cache: false
+                            smooth: false
+                            mipmap: false
+                        }
+                    }
+                }
+
+                DelegateChoice {
+                    roleValue: "blur"
+                    Item {
+                        id: blurItem
+                        required property int gId
+                        required property real boxX
+                        required property real boxY
+                        required property real boxW
+                        required property real boxH
+                        Rectangle {
+                            x: blurItem.boxX
+                            y: blurItem.boxY
+                            width: blurItem.boxW
+                            height: blurItem.boxH
+                            antialiasing: false
+                            color: root.regionPlaceholder
+                        }
+                        Image {
+                            x: Math.max(0, blurItem.boxX)
+                            y: Math.max(0, blurItem.boxY)
+                            source: "image://screenshot/fx/" + root.regionRevision + "/" + blurItem.gId
+                            asynchronous: true
+                            cache: false
+                            smooth: false
+                            mipmap: false
+                        }
+                    }
+                }
+
+                // Spotlight: a veil over everything but the area (the exporter's own path, odd-even filled).
+                DelegateChoice {
+                    roleValue: "spotlight"
+                    Shape {
+                        id: spotlightItem
+                        required property color gColor
+                        required property string pathSvg
+                        ShapePath {
+                            strokeColor: "transparent"
+                            strokeWidth: 0
+                            fillColor: spotlightItem.gColor
+                            fillRule: ShapePath.OddEvenFill
+                            PathSvg { path: spotlightItem.pathSvg }
                         }
                     }
                 }

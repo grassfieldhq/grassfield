@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QLineF>
 #include <QPainterPath>
+#include <QRandomGenerator>
 #include <QRegularExpression>
 #include <QTransform>
 
@@ -53,7 +54,7 @@ bool pointsOf(const Layer &layer, QPointF *from, QPointF *to)
 
 bool isBox(const Layer &layer)
 {
-    return layer.type == QLatin1String("rectangle") || layer.type == QLatin1String("ellipse");
+    return layer.type == QLatin1String("rectangle") || layer.type == QLatin1String("ellipse") || isRegionType(layer.type);
 }
 
 QPointF unit(const QPointF &v, const QPointF &fallback)
@@ -507,6 +508,11 @@ QString layerText(const Layer &layer)
 
 Layer withColor(const Layer &layer, const QString &color)
 {
+    if (layer.type == QLatin1String("redact") && validColorForm(color)) {
+        Layer out = layer;
+        out.fields.insert(QStringLiteral("color"), QColor(QColor(color).rgb()).name()); // a redaction is opaque: the alpha is dropped
+        return out;
+    }
     if (!isShapeType(layer.type) || !validColorForm(color))
         return layer;
     Layer out = layer;
@@ -531,7 +537,7 @@ Layer withWidth(const Layer &layer, qreal width)
 
 Layer withFill(const Layer &layer, bool fill)
 {
-    if (!isBox(layer))
+    if (layer.type != QLatin1String("rectangle") && layer.type != QLatin1String("ellipse"))
         return layer;
     Layer out = layer;
     out.fields.insert(QStringLiteral("fill"), fill);
@@ -618,6 +624,10 @@ bool hitLayer(const Layer &layer, const QPointF &p, qreal tolerance)
         if (layer.type == QLatin1String("counter"))
             return QLineF(box.center(), p).length() <= box.width() / 2 + tolerance;
         return box.adjusted(-tolerance, -tolerance, tolerance, tolerance).contains(p);
+    }
+    if (isRegionType(layer.type)) {
+        const QRect area = regionArea(layer);
+        return !area.isEmpty() && QRectF(area).adjusted(-tolerance, -tolerance, tolerance, tolerance).contains(p);
     }
     if (!isShapeType(layer.type) || !layerColor(layer).isValid() || layerWidth(layer) <= 0)
         return false;
@@ -856,8 +866,110 @@ static ShapeGeometry glyphGeometry(const Layer &layer, int counterNumber)
     return g;
 }
 
+namespace {
+
+// The geometry of a region layer (slice B7). Redact and Pixelate fail closed: a field that does not read gives the safe default, never
+// a layer that draws nothing (only a box that does not read, or an empty one, has nothing to hide).
+ShapeGeometry regionGeometry(const Layer &layer)
+{
+    ShapeGeometry g;
+    const QRect area = regionArea(layer);
+    if (area.isEmpty())
+        return g;
+    g.area = area;
+    g.box = QRectF(area);
+    if (layer.type == QLatin1String("redact")) {
+        g.kind = ShapeGeometry::Redact;
+        const QColor c = layerColor(layer);
+        g.color = c.isValid() ? QColor(c.rgb()) : QColor(0, 0, 0);
+    } else if (layer.type == QLatin1String("pixelate")) {
+        g.kind = ShapeGeometry::Pixelate;
+        qreal block = 0;
+        g.block = readNumber(layer, "block", &block, kMinPixelateBlock, kMaxPixelateBlock) ? int(std::lround(block)) : 16;
+        g.block = std::clamp(g.block, kMinPixelateBlock, kMaxPixelateBlock);
+        g.seed = regionSeed(layer);
+    } else if (layer.type == QLatin1String("blur")) {
+        g.kind = ShapeGeometry::Blur;
+        qreal radius = 0;
+        g.radius = readNumber(layer, "radius", &radius, kMinBlurRadius, kMaxBlurRadius) ? radius : 8;
+    } else {
+        g.kind = ShapeGeometry::Spotlight;
+        qreal dim = 0;
+        g.width = readNumber(layer, "dim", &dim, kMinSpotlightDim, kMaxSpotlightDim) ? dim : 0.55;
+        g.color = QColor::fromRgbF(0, 0, 0, g.width);
+        // The veil: a rectangle past every picture's edge (the picture is at most 16384 px a side) and the area as a hole.
+        constexpr qreal far = 1 << 16;
+        QPainterPath veil;
+        veil.setFillRule(Qt::OddEvenFill);
+        veil.addRect(QRectF(-far, -far, 2 * far, 2 * far));
+        veil.addRect(QRectF(area));
+        g.path = veil;
+    }
+    return g;
+}
+
+} // namespace
+
+bool isRegionType(const QString &type)
+{
+    return type == QLatin1String("redact") || type == QLatin1String("pixelate") || type == QLatin1String("blur") || type == QLatin1String("spotlight");
+}
+
+QRect regionArea(const Layer &layer)
+{
+    QRectF box;
+    if (!isRegionType(layer.type) || !readBox(layer, &box))
+        return {};
+    // Outward to whole pixels: a pixel the box touches at all is inside the area, so a hidden pixel is never half covered.
+    const int left = int(std::floor(box.left())), top = int(std::floor(box.top()));
+    const int right = int(std::ceil(box.right())), bottom = int(std::ceil(box.bottom()));
+    return QRect(left, top, right - left, bottom - top);
+}
+
+QString seedString(quint64 seed)
+{
+    return QStringLiteral("%1").arg(seed, 16, 16, QLatin1Char('0'));
+}
+
+quint64 regionSeed(const Layer &layer)
+{
+    const QString text = layer.fields.value(QStringLiteral("seed")).toString();
+    bool ok = false;
+    const quint64 seed = text.size() == 16 ? text.toULongLong(&ok, 16) : 0;
+    return ok ? seed : 0;
+}
+
+Layer makeRegion(int id, const QString &type, const QPointF &from, const QPointF &to, const ShapeStyle &style)
+{
+    if (!isRegionType(type))
+        return Layer{};
+    Layer layer;
+    layer.id = id;
+    layer.type = type;
+    const QRectF box = QRectF(from, to).normalized();
+    layer.fields.insert(QStringLiteral("x"), box.x());
+    layer.fields.insert(QStringLiteral("y"), box.y());
+    layer.fields.insert(QStringLiteral("w"), box.width());
+    layer.fields.insert(QStringLiteral("h"), box.height());
+    if (type == QLatin1String("redact")) {
+        const QColor c(style.redactColor);
+        layer.fields.insert(QStringLiteral("color"), c.isValid() ? QColor(c.rgb()).name() : QStringLiteral("#000000"));
+    } else if (type == QLatin1String("pixelate")) {
+        layer.fields.insert(QStringLiteral("block"), std::clamp<qreal>(std::round(style.pixelateBlock), kMinPixelateBlock, kMaxPixelateBlock));
+        // The system's random source (getrandom): the grid's offset and the noise cannot be predicted from anything in the picture.
+        layer.fields.insert(QStringLiteral("seed"), seedString(style.seed != 0 ? style.seed : QRandomGenerator::system()->generate64()));
+    } else if (type == QLatin1String("blur")) {
+        layer.fields.insert(QStringLiteral("radius"), std::clamp(style.blurRadius, kMinBlurRadius, kMaxBlurRadius));
+    } else {
+        layer.fields.insert(QStringLiteral("dim"), std::clamp(style.spotlightDim, kMinSpotlightDim, kMaxSpotlightDim));
+    }
+    return layer;
+}
+
 ShapeGeometry shapeGeometry(const Layer &layer, int counterNumber)
 {
+    if (isRegionType(layer.type))
+        return regionGeometry(layer);
     ShapeGeometry g;
     g.color = layerColor(layer);
     g.width = layerWidth(layer);

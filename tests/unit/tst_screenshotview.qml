@@ -69,6 +69,11 @@ TestCase {
         property string cropAspect: "free"
         property bool cropChanges: false
         property var cropAspects: ["free", "original", "1:1", "4:3", "3:2", "16:9", "9:16"]
+        // The region tools (slice B7).
+        property real pixelateBlock: 0
+        property real blurRadius: 0
+        property real spotlightDim: 0
+        property int regionRevision: 0
         property var calls: []
         function record(name, arg) {
             calls = calls.concat([[name, arg]]);
@@ -318,7 +323,7 @@ TestCase {
     // ---- editing (slices B3 and B4) ------------------------------------------------------------------------------------------
 
     function test_theToolGroupHasTheToolsAndOneIsOn() {
-        const names = ["select", "arrow", "line", "rectangle", "ellipse", "pen", "highlighter", "text", "counter", "crop"];
+        const names = ["select", "arrow", "line", "rectangle", "ellipse", "pen", "highlighter", "text", "counter", "redact", "pixelate", "blur", "spotlight", "crop"];
         for (const name of names) {
             const button = findChild(editor.contentItem, "tool_" + name);
             verify(button, name);
@@ -573,6 +578,44 @@ TestCase {
             compare(backendItem.tool, tool);
         }
         keyClick(Qt.Key_V);
+    }
+
+    function test_theRegionToolsLetterAndTheirTooltipsSayWhatTheyGuarantee() {
+        editor.requestActivate();
+        for (const [key, tool] of [[Qt.Key_X, "redact"], [Qt.Key_M, "pixelate"], [Qt.Key_B, "blur"], [Qt.Key_S, "spotlight"]]) {
+            keyClick(key);
+            compare(backendItem.tool, tool);
+        }
+        keyClick(Qt.Key_V);
+        const tip = name => findChild(editor.contentItem, "tool_" + name).tooltip;
+        verify(tip("redact").indexOf("secrets") >= 0, tip("redact"));
+        verify(tip("pixelate").indexOf("Use Redact for secrets") >= 0, "Pixelate points to Redact: " + tip("pixelate"));
+        verify(tip("pixelate").indexOf("guessed") >= 0, tip("pixelate"));
+        verify(tip("blur").indexOf("Does not hide text") >= 0, "Blur says it is for looks: " + tip("blur"));
+        verify(tip("blur").indexOf("secrets") < 0);
+    }
+
+    function test_theStyleBarSaysWhatTheRegionToolHides() {
+        const note = findChild(editor.contentItem, "regionNote");
+        const bar = findChild(editor.contentItem, "styleBar");
+        compare(note.visible, false);
+        backendItem.tool = "redact";
+        compare(bar.visible, true);
+        compare(note.visible, true);
+        verify(note.text.indexOf("secrets") >= 0);
+        compare(findChild(editor.contentItem, "colorSwatches").visible, true, "Redact has a colour of its own");
+        backendItem.tool = "pixelate";
+        verify(note.text.indexOf("Use Redact for secrets") >= 0);
+        compare(findChild(editor.contentItem, "colorSwatches").visible, false);
+        backendItem.tool = "blur";
+        verify(note.text.indexOf("Does not hide text") >= 0);
+        backendItem.tool = "spotlight";
+        compare(note.visible, true);
+        backendItem.tool = "select";
+        compare(note.visible, false);
+        backendItem.selectedType = "blur";
+        compare(note.visible, true, "Select styles what is selected: the note follows the layer");
+        backendItem.selectedType = "";
     }
 
     function test_toolLettersSwitchTools() {

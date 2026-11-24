@@ -18,7 +18,7 @@ if [[ " $* " == *" --asan "* ]]; then
   suffix="-asan"
 fi
 jobs=${GF_JOBS:-2}
-core=(screenshotlogic layers atomicfile capturehistory annotations exporter framing layermodel undostack toolcontroller document appearance screenshotapp)
+core=(screenshotlogic layers atomicfile capturehistory annotations redaction exporter framing layermodel undostack toolcontroller document appearance screenshotapp)
 moc=/usr/lib/qt6/moc
 [[ -x $moc ]] || moc=$(command -v moc-qt6 || command -v moc)
 for m in appearance layermodel screenshotapp; do
