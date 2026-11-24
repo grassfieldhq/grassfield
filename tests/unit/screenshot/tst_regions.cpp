@@ -14,6 +14,8 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileDevice>
+#include <QThread>
+#include <QCoreApplication>
 #include <QTimer>
 #include <QFile>
 #include <QImage>
@@ -1131,28 +1133,30 @@ TEST_F(RealCopyTest, AWlCopyThatHangsIsKilledAtTheBoundAndFollowedByClear)
     QElapsedTimer clock;
     clock.start();
     EXPECT_FALSE(m_app->done());
-    EXPECT_LT(clock.elapsed(), 3000) << "two seconds at most, not the hang's own time";
-    EXPECT_GE(clock.elapsed(), 1400);
+    EXPECT_LT(clock.elapsed(), 2100) << "two seconds at most (copy, clear and the waits for the kills), not the hang's own time";
+    EXPECT_GE(clock.elapsed(), 1100);
     EXPECT_EQ(fake.log().trimmed().split('\n'), (QStringList{"--type image/png --sensitive", "--clear"}));
     EXPECT_FALSE(m_app->lastError().isEmpty());
 }
 
 TEST_F(RealCopyTest, ACloseRequestedWhileDoneWaitsCannotCutTheCopyShort)
 {
-    // As the app: Done runs in the main event loop and the last window closes (the application quits) while wl-copy is still working. The
-    // copy is a blocking call, so no event of the loop runs before it ends, and the redacted picture is what the clipboard holds.
-    FakeWlCopy fake("ok", 400);
-    QEventLoop loop;
+    // As the app: Done runs in the application's own event loop and the last window closes (QCoreApplication::quit, which ends every event loop,
+    // nested ones too) 100 ms into a 600 ms wl-copy. The copy is a blocking call, so the quit is only handled once it has ended, and the redacted
+    // picture is what the clipboard holds. An event-loop wait inside the copy would be cut short by the quit and fail this test.
+    FakeWlCopy fake("ok", 600);
     bool returned = false, ok = false;
     QTimer::singleShot(0, [&] {
         ok = m_app->done();
         returned = true;
     });
-    QTimer::singleShot(100, [&] { loop.quit(); }); // the quit request, 100 ms into the 400 ms copy
-    loop.exec();
+    QTimer::singleShot(100, [] { QCoreApplication::quit(); });
+    QTimer::singleShot(8000, [] { QCoreApplication::quit(); }); // a guard
+    QCoreApplication::exec();
     EXPECT_TRUE(returned) << "Done finished before the quit was handled";
-    EXPECT_TRUE(ok);
+    EXPECT_TRUE(ok) << m_app->lastError().toStdString();
+    QThread::msleep(100);
     const QImage clip = fake.clip();
-    ASSERT_FALSE(clip.isNull());
+    ASSERT_FALSE(clip.isNull()) << "the copy completed";
     EXPECT_NE(clip.pixel(50, 30), qRgb(255, 0, 255)) << "the clipboard holds the redacted picture";
 }

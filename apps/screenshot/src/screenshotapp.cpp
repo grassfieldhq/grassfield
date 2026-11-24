@@ -789,8 +789,8 @@ bool ScreenshotApp::replaceClipboard(const QByteArray &png)
 {
     // Always, whatever the clipboard holds (owner decision): after a Done that hid pixels the clipboard is the exported picture. The automatic copy
     // of a capture goes through the same command (ADR-0066 D-1: type image/png, --sensitive, so clipboard history does not record it). Plain
-    // blocking calls, two seconds in all (the window waits that long at most), and no event loop: a close request cannot cut the copy short.
-    constexpr int kCopyMs = 1500, kClearMs = 500;
+    // blocking calls, two seconds in all (the window waits that long at most: 1.2 s of copy and 0.4 s of clear, each with 0.2 s to see a killed command off), and no event loop: a close request cannot cut the copy short.
+    constexpr int kCopyMs = 1200, kClearMs = 400;
     bool taken = false;
     if (m_clipboardWriter) {
         taken = m_clipboardWriter(screenshot::clipboardArguments(), png);

@@ -35,7 +35,7 @@ BoundedRun runBlocking(const QStringList &argv, const QByteArray &input, int tim
     result.exitCode = result.finished ? process.exitCode() : -1;
     if (process.state() != QProcess::NotRunning) {
         process.kill();
-        process.waitForFinished(300);
+        process.waitForFinished(200);
     }
     return result;
 }
