@@ -55,6 +55,17 @@
 # `wl-copy --sensitive` (never in clipboard history, ADR-0034 PV-1) and never written to the result file, else the text is
 # copied. A notice says it (no text gives one); kind "text" in the result file holds the first 512 characters of text (and "qr": true when it came from a QR code, never the data).
 # Refused under the lock.
+#   grassfield-capture selection --freeze [--save ...] [--pointer]   (ADR-0066 D-1, C4)
+#   grassfield-capture choose --token T (--geometry "X,Y WxH" | --cancel)
+# The frozen screen: after the shooting handshake every display is grabbed into $XDG_RUNTIME_DIR/grassfield/frozen/ (0700, files
+# 0600, binary PPM), the state says phase "frozen" with a random 128-bit "token" and "frames" [{output, path, rect, scale}], and
+# the helper waits FREEZE_SECONDS for the shell's answer, `choose`, which checks the token (32 lowercase hex digits, equal to the
+# state's), that the state's pid and start name a live helper of this user, and that the geometry (whole numbers, a positive
+# size) lies wholly inside one frame, and then writes capture-choice.json (0600, by rename); anything else: exit 2, nothing
+# written. The helper reads that file only as a private regular file (no link, one name, 0600, at most 4 KiB, version 1, the
+# token, a geometry inside a frame, or "cancel"), deletes it, crops the frozen frame (logical to device pixels with the frame's
+# scale, rounded outwards) and goes on as a screenshot. Frames and choice are removed on a picture, a cancel, the timeout, stop
+# (SIGINT), SIGTERM and the lock; a left-over folder at the next freeze. Refused under the lock (exit 1).
 #   grassfield-capture stop
 # ends what that state names (the menu bar's stop item, Ctrl-Cmd-Esc, the session locking): SIGINT to the recorder this helper
 # started (gpu-screen-recorder saves its file on SIGINT), recognised by its pid, its start time and its parent (this helper's
@@ -72,7 +83,9 @@ import contextlib
 import ctypes
 import datetime
 import fcntl
+import hmac
 import json
+import math
 import os
 import re
 import select
@@ -100,6 +113,14 @@ CLICK_AREA = 20
 # either covers the other windows of its workspace, except the pinned ones and those allowed over it.
 FULLSCREEN = 2
 WAIT_SECONDS = 120
+FREEZE_SECONDS = 120  # a frozen screen waits this long for the shell's choice (ADR-0066 D-1)
+FREEZE_POLL_SECONDS = 0.05
+FROZEN_NAME = "frozen"
+FROZEN_MAX = 256 * 1024 * 1024  # one frame (an 8K display is 100 MB)
+CHOICE_NAME = "capture-choice.json"
+CHOICE_MAX = 4096
+TOKEN = re.compile(r"[0-9a-f]{32}")
+PPM_HEAD = re.compile(rb"P6\n([0-9]{1,5}) ([0-9]{1,5})\n255\n")
 # The previous capture's notice is closed before a capture, and the picture is taken at least this long after: the shell
 # unmaps the banner's window at once, and Hyprland fades a layer out in at most its global speed, 300 ms
 # (config/hypr/grassfield/looknfeel.lua), so a picture never shows the notice of the one before. The crosshair does not wait.
@@ -1045,6 +1066,8 @@ def copy_png(data, sensitive=False):
 
 def shot(opts):
     # A screenshot: the screen (every display), a window or a selection, then the toolbar's timer, then the picture.
+    if opts["freeze"]:
+        return freeze_shot(opts)
     mode, save = opts["mode"], opts["save"]
     pointer = ["-c"] if opts["pointer"] else []
     monitors = hyprctl("monitors")
@@ -1119,6 +1142,11 @@ def shot(opts):
             paths = [p for p in (save_picture(folder, stem, grim, sc) for grim, sc in zip(shots, scales)) if p]
             if not paths:
                 return 1
+    return finish_shot(save, folder, paths, data, area, output, monitors, acknowledged)
+
+
+def finish_shot(save, folder, paths, data, area, output, monitors, acknowledged):
+    # After the picture: the shutter, the clipboard, Preview or the thumbnail and notice (shared by shot() and freeze_shot()).
     shutter()
     if save == "clipboard":
         copy_png(data)
@@ -1138,6 +1166,308 @@ def shot(opts):
     if not (acknowledged and written):
         notify(paths, TITLE, saved_note(save, folder), OPEN)
     return 0
+
+
+# ---- the freeze channel (ADR-0066 D-1, slice C4) ----
+
+def private_read(path, limit):
+    # The bytes of a private file of this user's, or None: a regular file opened without following a link, one name (no hard
+    # link), mode 0600, at most `limit` bytes. What the freeze channel trusts from the runtime folder, as ack_read() does.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600
+                or st.st_nlink != 1 or st.st_size > limit):
+            return None
+        data = os.read(fd, limit + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return data if len(data) <= limit else None
+
+
+def frozen_folder(create=False):
+    # $XDG_RUNTIME_DIR/grassfield/frozen: 0700, the user's own, never a link. With `create`, a left-over one (a helper killed
+    # without a clean-up) is removed first and a new one made. None when it cannot be had.
+    folder = runtime_folder()
+    if folder is None:
+        return None
+    path = os.path.join(folder, FROZEN_NAME)
+    if create:
+        clear_frozen()
+        try:
+            os.mkdir(path, 0o700)
+        except OSError:
+            return None
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        return None
+    return path
+
+
+def clear_frozen():
+    # Removes the frozen frames and their folder, and the choice file: names only, never through a link (a link is unlinked, not
+    # followed), never above the folder.
+    folder = runtime_folder()
+    if folder is None:
+        return
+    with contextlib.suppress(OSError):
+        os.unlink(os.path.join(folder, CHOICE_NAME))
+    path = os.path.join(folder, FROZEN_NAME)
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    if not stat.S_ISDIR(st.st_mode):
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return
+    try:
+        for name in os.listdir(fd):
+            with contextlib.suppress(OSError):
+                os.unlink(name, dir_fd=fd)
+    finally:
+        os.close(fd)
+    with contextlib.suppress(OSError):
+        os.rmdir(path)
+
+
+def in_a_frame(sel, frames):
+    # The rectangle (a positive size) lies wholly inside one frame's logical rectangle.
+    if sel is None or sel["w"] <= 0 or sel["h"] <= 0:
+        return False
+    for f in frames:
+        r = f["rect"]
+        if r["x"] <= sel["x"] and r["y"] <= sel["y"] and sel["x"] + sel["w"] <= r["x"] + r["w"] \
+                and sel["y"] + sel["h"] <= r["y"] + r["h"]:
+            return True
+    return False
+
+
+def frames_of(value):
+    # The frames of a state, or None when any rectangle is not four whole numbers.
+    if not isinstance(value, list) or not value:
+        return None
+    for f in value:
+        r = f.get("rect") if isinstance(f, dict) else None
+        if not isinstance(r, dict) or any(type(r.get(k)) is not int for k in ("x", "y", "w", "h")):
+            return None
+    return value
+
+
+def choice_of(data, token, frames):
+    # What a choice file says, or None when it is not a valid choice for this token and these frames: JSON version 1 holding
+    # the token and exactly one of "cancel": true or "geometry": "X,Y WxH" of a positive size wholly inside a frame.
+    try:
+        obj = json.loads(data.decode("ascii"))
+    except Exception:  # not JSON, not ASCII, or nested too deep for the parser
+        return None
+    if not isinstance(obj, dict) or obj.get("v") != 1 or type(obj.get("token")) is not str:
+        return None
+    if not hmac.compare_digest(obj["token"].encode("ascii", "replace"), token.encode("ascii")):
+        return None
+    if set(obj) == {"v", "token", "cancel"} and obj["cancel"] is True:
+        return "cancel"
+    if set(obj) == {"v", "token", "geometry"} and isinstance(obj["geometry"], str):
+        m = GEOMETRY_ARG.fullmatch(obj["geometry"])
+        sel = {"x": int(m[1]), "y": int(m[2]), "w": int(m[3]), "h": int(m[4])} if m else None
+        return sel if in_a_frame(sel, frames) else None
+    return None
+
+
+def choose_command(opts):
+    # `choose --token T (--geometry G | --cancel)`: the shell's answer to a frozen screen. Exit 0 once the choice file is
+    # written; exit 2, and nothing written, for a token that is not the state's, a state that is not a frozen screen of a live
+    # helper of this user's, or a geometry that is not wholly inside a frame; exit 1 under the lock.
+    if lock_requested():
+        return 1
+    state = None
+    path = state_path()
+    data = private_read(path, 4096) if path else None
+    if data is not None:
+        with contextlib.suppress(Exception):
+            state = json.loads(data.decode("ascii"))
+    if not isinstance(state, dict) or state.get("phase") != "frozen":
+        return 2
+    token, frames = state.get("token"), frames_of(state.get("frames"))
+    pid = state.get("pid")
+    if type(token) is not str or not TOKEN.fullmatch(token) or frames is None or type(pid) is not int or pid <= 1 \
+            or pid == os.getpid() or not own(pid, state.get("start")):
+        return 2
+    if not hmac.compare_digest(opts["token"].encode("ascii"), token.encode("ascii")):
+        return 2
+    if opts["cancel"]:
+        body = {"v": 1, "token": token, "cancel": True}
+    else:
+        if not in_a_frame(opts["geometry"], frames):
+            return 2
+        body = {"v": 1, "token": token, "geometry": geometry_text(opts["geometry"])}
+    folder = runtime_folder()
+    if folder is None:
+        return 1
+    path = os.path.join(folder, CHOICE_NAME)
+    tmp = "%s.%s.tmp" % (path, os.urandom(6).hex())
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(body) + "\n")
+        os.replace(tmp, path)  # by rename: over a link, the link is replaced, never followed
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        return 1
+    return 0
+
+
+def read_ppm(path):
+    # A frozen frame (grim's binary PPM, 8 bits): (width, height, pixels), or None when it is not a private file of ours.
+    data = private_read(path, FROZEN_MAX)
+    m = PPM_HEAD.match(data) if data else None
+    if m is None:
+        return None
+    w, h = int(m[1]), int(m[2])
+    pixels = data[m.end():]
+    return (w, h, pixels) if w > 0 and h > 0 and len(pixels) == w * h * 3 else None
+
+
+def device_span(start, size, scale, limit):
+    # A logical span as device pixels, rounded outwards, inside 0..limit (a hair of float error is not a pixel).
+    lo = max(0, min(limit, math.floor(start * scale + 1e-6)))
+    hi = max(0, min(limit, math.ceil((start + size) * scale - 1e-6)))
+    return lo, hi
+
+
+def crop_png(frame, sel):
+    # The part of a frozen frame `sel` (logical, layout coordinates) covers, as a PNG (8-bit RGB), or None.
+    got = read_ppm(frame["path"])
+    if got is None:
+        return None
+    w, h, pixels = got
+    r, scale = frame["rect"], frame["scale"]
+    x0, x1 = device_span(sel["x"] - r["x"], sel["w"], scale, w)
+    y0, y1 = device_span(sel["y"] - r["y"], sel["h"], scale, h)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    rows = b"".join(b"\0" + pixels[(y * w + x0) * 3:(y * w + x1) * 3] for y in range(y0, y1))
+
+    def chunk(kind, body):
+        return len(body).to_bytes(4, "big") + kind + body + zlib.crc32(kind + body).to_bytes(4, "big")
+
+    head = (x1 - x0).to_bytes(4, "big") + (y1 - y0).to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(rows, 3)) + chunk(b"IEND", b"")
+
+
+def freeze_grab(monitors, pointer):
+    # Every enabled display into the frozen folder, one binary PPM each (0600; PPM so that a crop is a slice of rows, with no
+    # PNG decoder). The frames as the state lists them, or None (the caller removes what was made).
+    screens = displays(monitors)
+    folder = frozen_folder(create=True)
+    if not screens or folder is None:
+        return None
+    frames = []
+    for n, (name, rect) in enumerate(screens):
+        path = os.path.join(folder, "%d.ppm" % n)
+        try:
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+        except OSError:
+            return None
+        r = run(["grim", "-t", "ppm", "-o", name] + pointer + [path], timeout=30)
+        if r is None or r.returncode != 0 or read_ppm(path) is None:
+            return None
+        frames.append({"output": name, "path": path, "rect": rect, "scale": place_of(rect, monitors, name)[1]})
+    return frames
+
+
+def freeze_wait(token, frames):
+    # Waits at most FREEZE_SECONDS for the shell's choice: a rectangle, "cancel", or None (the timeout, or the lock). A choice
+    # file that is not valid (a link, another mode, over 4 KiB, another token, a geometry outside the frames) is ignored and
+    # stays until a valid one replaces it; the valid one is deleted before it is used.
+    path = os.path.join(runtime_folder() or "", CHOICE_NAME)
+    until, polls = time.monotonic() + FREEZE_SECONDS, 0
+    while time.monotonic() < until:
+        data = private_read(path, CHOICE_MAX)
+        got = choice_of(data, token, frames) if data is not None else None
+        if got is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+            return got
+        polls += 1
+        if polls % 10 == 0 and lock_requested():
+            return None
+        time.sleep(FREEZE_POLL_SECONDS)
+    return None
+
+
+def freeze_shot(opts):
+    # `selection --freeze`: the screen is grabbed first (every display, after the shooting handshake), the shell shows the
+    # frames and answers through `choose`, and the choice is cropped from the frozen frames: what was on the screen when the key
+    # was pressed. The state says "frozen" with a random token while it waits. The frames and the choice file are removed on
+    # every way out: the picture, a cancel, the timeout, `stop` (SIGINT), SIGTERM and the lock.
+    monitors = hyprctl("monitors")
+    save = opts["save"]
+    if session_locked(monitors):
+        return 1
+    folder = None if save == "clipboard" else destination(save)
+    if save != "clipboard" and folder is None:
+        return 1
+    lock = take_lock()
+    if lock is None:
+        return 1  # another capture owns the state
+    try:
+        time.sleep(max(0.0, close_previous() - time.monotonic()))
+        acknowledged = handshake("shot")
+        if session_locked():
+            return 1
+        frames = freeze_grab(monitors, ["-c"] if opts["pointer"] else [])
+        if frames is None:
+            return 1
+        token = os.urandom(16).hex()
+        write_state(dict(me(), phase="frozen", kind="shot", token=token, frames=frames))
+        got = freeze_wait(token, frames)
+        if got == "cancel":
+            return 0
+        if got is None or session_locked():
+            return 1
+        frame = next(f for f in frames if in_a_frame(got, [f]))
+        data = crop_png(frame, got)
+        if data is None:
+            return 1
+        now = datetime.datetime.now()
+        stem = tr(NAME) % {"date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H.%M.%S")}
+        paths = []
+        if save != "clipboard":
+            tmp = reserve(folder, "grassfield-capture", ".png")
+            if tmp is None:
+                return 1
+            try:
+                with open(tmp, "wb") as f:
+                    f.write(data)
+                stamp_scale(tmp, frame["scale"])
+                path = publish(folder, stem, ".png", tmp)
+            except OSError:
+                path = None
+            finally:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+            if path is None:
+                return 1
+            paths = [path]
+    finally:
+        clear_frozen()
+        write_state({"phase": "idle"})
+        os.close(lock)
+    return finish_shot(save, folder, paths, data, got, "", monitors, acknowledged)
 
 
 def previous_frame(monitors):
@@ -1488,7 +1818,7 @@ def stop():
     # Exit 0 when something was told to end, 1 otherwise.
     state = read_state()
     phase = state.get("phase")
-    if phase not in ("starting", "selecting", "countdown", "shooting", "recording"):
+    if phase not in ("starting", "selecting", "countdown", "shooting", "frozen", "recording"):
         return 1
     lock = take_lock()
     if lock is not None:
@@ -1518,6 +1848,15 @@ def parse(args):
     # The command line as a dict, or None (usage). Each option once, each value from its list.
     if args == ["stop"]:
         return {"action": "stop"}
+    if args[:1] == ["choose"]:
+        # choose --token T (--geometry G | --cancel), in this order: T is 32 lowercase hex digits, G whole numbers, a positive size.
+        if len(args) == 4 and args[1] == "--token" and TOKEN.fullmatch(args[2]) and args[3] == "--cancel":
+            return {"action": "choose", "token": args[2], "cancel": True, "geometry": None}
+        m = GEOMETRY_ARG.fullmatch(args[4]) if len(args) == 5 and args[1] == "--token" and args[3] == "--geometry" else None
+        if m and TOKEN.fullmatch(args[2]) and int(m[3]) > 0 and int(m[4]) > 0:
+            return {"action": "choose", "token": args[2], "cancel": False,
+                    "geometry": {"x": int(m[1]), "y": int(m[2]), "w": int(m[3]), "h": int(m[4])}}
+        return None
     if args[:1] == ["text"]:
         m = GEOMETRY_ARG.fullmatch(args[2]) if len(args) == 3 and args[1] == "--geometry" else None
         if args == ["text"] or (m and int(m[3]) > 0 and int(m[4]) > 0):
@@ -1529,7 +1868,7 @@ def parse(args):
     if not args or args[0] not in (RECORD_MODES if action == "record" else MODES):
         return None
     out = {"action": action, "mode": args[0], "save": None, "timer": 0, "pointer": False, "mic": False, "output": "",
-           "geometry": None, "previous": False}
+           "geometry": None, "previous": False, "freeze": False}
     seen, i = set(), 1
     while i < len(args):
         option = args[i]
@@ -1554,13 +1893,15 @@ def parse(args):
                 return None
             i += 2
         elif option == "--pointer" or (option == "--mic" and action == "record") \
-                or (option == "--previous" and action == "shot" and out["mode"] == "selection"):
+                or (option in ("--previous", "--freeze") and action == "shot" and out["mode"] == "selection"):
             out[option[2:]] = True
             i += 1
         else:
             return None
     if out["previous"] and out["geometry"] is not None:
         return None  # the remembered frame is the geometry
+    if out["freeze"] and (out["previous"] or out["geometry"] is not None or out["timer"]):
+        return None  # the frozen screen is the picture: no remembered frame, no frame given, no countdown
     return out
 
 
@@ -1576,11 +1917,15 @@ def main():
                          "       grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview]"
                          " [--timer 0|5|10] [--pointer] [--mic] [--output NAME (screen)] [--geometry 'X,Y WxH' (selection)]\n"
                          "       grassfield-capture selection --previous [--save ...] [--timer 0|5|10] [--pointer]\n"
+                         "       grassfield-capture selection --freeze [--save ...] [--pointer]\n"
+                         "       grassfield-capture choose --token T (--geometry 'X,Y WxH' | --cancel)\n"
                          "       grassfield-capture text [--geometry 'X,Y WxH']\n"
                          "       grassfield-capture stop\n")
         return 2
     if opts["action"] == "stop":
         return stop()
+    if opts["action"] == "choose":
+        return choose_command(opts)
     if opts["action"] == "text":
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
         signal.signal(signal.SIGINT, raise_cancelled)
