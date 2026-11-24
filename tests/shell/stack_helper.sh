@@ -252,37 +252,80 @@ kill -9 "$parent"
 wait "$parent" 2>/dev/null
 t=$(waitfor 3 bash -c "! kill -0 $child 2>/dev/null")
 ok "it dies with its parent (${t} ms)" test "$t" != never
-# ... also under a subreaper (a container's init, a user manager), which adopts the orphan under a pid that is not 1: a parent that
-# ends right after starting it, possibly before the parent-death signal was requested (the signal then never comes), must not
-# leave it running. The subreaper here is this test's own python; five tries, since the window is a race.
-leftover=$(python3 -I - "$bin" "$d" <<'PY'
-import ctypes, os, signal, subprocess, sys, time
-ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
+# ... and when the parent is already gone before the helper looks (exec and loading take a moment, and the signal is never sent to a
+# process whose parent died first), or dies right after. The orphan is adopted by something that is not PID 1 (a subreaper, a user
+# manager, a container's init), so the helper cannot tell by getppid() alone: the shell names itself in
+# GRASSFIELD_STACK_HELPER_PARENT. Its stdin is held open explicitly (a pipe whose writer this test keeps; a background command of
+# a non-interactive shell would get /dev/null and end on end of file, which proves nothing), so only the parent's death can stop
+# it. Four cases, 3 tries each: the parent killed before / after the helper started, under a subreaper (this test's python) and
+# without one (the system's adopter). Each helper must be gone within 3 s.
+survivors=$(python3 -I - "$bin" "$d" <<'PY'
+import ctypes, os, select, signal, sys, time
 bin_, folder = sys.argv[1], sys.argv[2]
-alive = []
-rfd, wfd = os.pipe()  # its stdin stays open: only the parent's end can stop it
-for _ in range(5):
-    r = subprocess.run(["bash", "-c", '"$0" "$1" name 30 >/dev/null 2>&1 & echo $!', bin_, folder],
-                       stdin=rfd, capture_output=True, text=True)
-    pid = int(r.stdout.strip())
+rfd, wfd = os.pipe()  # the helper's stdin: this test holds the writer, nobody writes
+outr, outw = os.pipe()  # its stdout
+
+
+def alive(pid):
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            return f.read().rsplit(") ", 1)[1][0] not in "ZX"
+    except OSError:
+        return False
+
+
+def one(subreaper, kill):
+    go_r, go_w = os.pipe()
+    pid_r, pid_w = os.pipe()
+    p = os.fork()
+    if p == 0:  # the parent: starts the helper's process, names itself
+        os.environ["GRASSFIELD_STACK_HELPER_PARENT"] = str(os.getpid())
+        c = os.fork()
+        if c == 0:
+            os.read(go_r, 1)  # the exec happens when the test says so
+            os.dup2(rfd, 0)
+            os.dup2(outw, 1)
+            os.execv(bin_, [bin_, folder, "name", "30"])
+        os.write(pid_w, b"%d\n" % c)
+        time.sleep(60)
+        os._exit(0)
+    child = int(os.read(pid_r, 32))
+    if kill == "before":
+        os.kill(p, signal.SIGKILL)
+        os.waitpid(p, 0)
+        os.write(go_w, b"x")
+    else:
+        os.write(go_w, b"x")
+        ready, _, _ = select.select([outr], [], [], 5)
+        if ready:
+            os.read(outr, 4096)  # the helper is running: it armed its watch
+        os.kill(p, signal.SIGKILL)
+        os.waitpid(p, 0)
     deadline = time.time() + 3
     while time.time() < deadline:
-        try:
-            os.waitpid(-1, os.WNOHANG)  # the adopted orphan, once it ends
-        except ChildProcessError:
-            pass
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            break
+        if subreaper:
+            try:
+                os.waitpid(child, os.WNOHANG)
+            except ChildProcessError:
+                pass
+        if not alive(child):
+            return 0
         time.sleep(0.05)
-    else:
-        alive.append(pid)
-        os.kill(pid, signal.SIGKILL)
-print(len(alive))
+    os.kill(child, signal.SIGKILL)
+    return 1
+
+
+left = 0
+for subreaper in (False, True):
+    if subreaper:
+        ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
+    for kill in ("before", "after"):
+        for _ in range(3):
+            left += one(subreaper, kill)
+print(left)
 PY
 )
-ok "an orphan adopted by a subreaper dies too, whenever its parent ended (${leftover} of 5 left running)" test "$leftover" = 0
+ok "a helper whose parent ended before or after its start dies too, adopted by a subreaper or not (${survivors} of 12 left running)" test "$survivors" = 0
 # ... and when its stdin is closed (the pipe's writer, a sleep, ends after a second)
 sleep 1 | "$bin" "$d" name 30 >"$tmp/h.out" 2>/dev/null &
 t=$(waitfor 3 grep -a -q '^W' "$tmp/h.out")

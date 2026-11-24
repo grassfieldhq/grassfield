@@ -77,6 +77,7 @@ while (($#)); do
 done
 ((explicit)) || requested=(data logic headless nested)
 if ((skip_gtest && shard_mode)); then echo "test.sh: --skip-gtest and --gtest-shard exclude each other" >&2; exit 2; fi
+if ((shard_mode)) && ((${#requested[@]})); then echo "test.sh: --gtest-shard runs no layer: it does not go with --layer" >&2; exit 2; fi
 declare -A selected=()
 for l in "${requested[@]}"; do
   [[ " ${layers_all[*]} " == *" $l "* ]] || { echo "test.sh: unknown layer '$l' (${layers_all[*]})" >&2; exit 2; }

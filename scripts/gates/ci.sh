@@ -192,14 +192,15 @@ toolkit() {
   local dir line name ver sum url files=() names=() f
   ci_only toolkit || return 2
   dir=$(mktemp -d)
-  unresolved_libs >"$dir/unresolved.before"
+  unresolved_libs >"$dir/unresolved.before" || { echo "ci.sh toolkit: the scan of unresolved libraries failed" >&2; return 1; }
   for line in "${COMPAT[@]}"; do
     read -r name ver sum url members <<<"$line"
     f=$dir/${url##*/}
     curl -fsSL --retry 3 -o "$f" "$url" || { echo "ci.sh toolkit: cannot download $url" >&2; return 1; }
     [[ $(sha256sum "$f" | cut -d' ' -f1) == "$sum" ]] || { echo "ci.sh toolkit: $name $ver: sha256 differs from the pin: refused" >&2; return 1; }
-    # shellcheck disable=SC2086
-    tar --zstd -xf "$f" -C / --wildcards $members || { echo "ci.sh toolkit: cannot extract $members from $name $ver" >&2; return 1; }
+    local -a patterns
+    read -r -a patterns <<<"$members" # one pattern per word, never expanded by this shell
+    tar --zstd -xf "$f" -C / --wildcards "${patterns[@]}" || { echo "ci.sh toolkit: cannot extract $members from $name $ver" >&2; return 1; }
     echo "ci.sh toolkit: $name $ver: $members added beside the installed $(pacman -Q "$name")"
   done
   ldconfig || return 1
@@ -223,7 +224,7 @@ toolkit() {
   # The pins and the compat objects leave nothing unresolved that was not before (a repository can move a soname under the
   # pinned stack, or a pin can take one from a package), and the compositor itself has none.
   local after new
-  after=$(unresolved_libs)
+  after=$(unresolved_libs) || { echo "ci.sh toolkit: the scan of unresolved libraries failed" >&2; return 1; }
   new=$(comm -13 "$dir/unresolved.before" <(printf '%s\n' "$after" | sed '/^$/d'))
   [[ -z $new ]] || { echo "ci.sh toolkit: unresolved libraries the pins brought (path: library):" >&2; echo "$new" >&2; return 1; }
   if grep -E '^/usr/(s?bin/Hyprland|lib/libhypr|lib/libaquamarine)' <<<"$after"; then
@@ -254,6 +255,8 @@ for top in ("/usr/bin", "/usr/sbin", "/usr/lib"):
             except OSError:
                 continue
             files.append(p)
+if len(files) < 200:
+    raise SystemExit("ci.sh: the scan found only %d ELF files (a container has thousands)" % len(files))
 def check(p):
     r = subprocess.run(["ldd", p], capture_output=True, text=True)
     return ["%s: %s" % (p, m.group(1)) for m in re.finditer(r"^\s*(\S+) => not found", r.stdout, re.M)]

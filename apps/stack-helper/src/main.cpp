@@ -25,6 +25,7 @@
 
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 
 #include <fcntl.h>
 #include <sys/prctl.h>
@@ -82,18 +83,28 @@ private:
 
 int main(int argc, char **argv)
 {
+    // Dies with the shell, and runs behind it. The first thing the process does: the signal is requested before anything else is
+    // read or loaded, then the parent is looked at once more. The shell that starts the helper names itself in
+    // GRASSFIELD_STACK_HELPER_PARENT (shell/dock/StackHelper.qml); any other parent, or PID 1, is a parent that is gone: one that
+    // died before this first look has been replaced by whatever adopts orphans (PID 1, a subreaper, a user manager, a container's
+    // init), whose pid cannot be told from the parent's without the expected one. Without the variable (a run by hand, a test)
+    // the parent seen before the request is compared with the one after it, which only closes the race between the two calls.
+    // In real use end of file on stdin, the shell's end of the pipe, is the backstop: it ends the helper whatever the signal did.
+    const pid_t first = ::getppid();
+    ::prctl(PR_SET_PDEATHSIG, SIGTERM);
+    pid_t expected = first;
+    if (const char *named = std::getenv("GRASSFIELD_STACK_HELPER_PARENT")) {
+        const long pid = std::strtol(named, nullptr, 10);
+        if (pid > 1)
+            expected = pid_t(pid);
+    }
+    if (::getppid() != expected || ::getppid() == 1)
+        return 0;
     const QByteArray folder = argc == 4 || argc == 5 ? StackLogic::folderArgument(QByteArray(argv[1])) : QByteArray();
     if (folder.isEmpty()) {
         std::fprintf(stderr, "usage: grassfield-stack-helper <absolute folder | file: URI> <name|dateAdded|dateModified|dateCreated|kind> <K> [<low>]\n");
         return 2;
     }
-    // dies with the shell, and runs behind it. The parent may already be gone when the signal is requested (it then never comes):
-    // the parent seen before the request is compared with the one after it. (`getppid() == 1` says nothing under a subreaper,
-    // a user manager or a container's init, which adopt orphans under another pid, and is wrong when the shell is PID 1.)
-    const pid_t parent = ::getppid();
-    ::prctl(PR_SET_PDEATHSIG, SIGTERM);
-    if (::getppid() != parent)
-        return 0;
     ::setpriority(PRIO_PROCESS, 0, 10);
     ::signal(SIGPIPE, SIG_IGN);
     QCoreApplication app(argc, argv);

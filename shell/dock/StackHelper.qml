@@ -89,6 +89,8 @@ QtObject {
         running: root.folder !== "" && !root.restarting
         command: [root.tool, root.folder, root.sort, String(root.limit), String(root.low)]
         stdinEnabled: true
+        // The helper ends when this shell is not its parent any more (apps/stack-helper/src/main.cpp).
+        environment: ({ GRASSFIELD_STACK_HELPER_PARENT: String(Quickshell.processId) })
         stdout: SplitParser {
             onRead: line => {
                 if (line === "A") {
