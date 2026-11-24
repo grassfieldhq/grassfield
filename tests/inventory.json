@@ -781,6 +781,7 @@
  {"path": "tests/visual/default-apps.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/energy-pane.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/files-capture-fixes.sh", "layer": "nested", "runner": "bare"},
+ {"path": "tests/visual/capture-suite.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/flow-files.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/flow-notifications.sh", "layer": "nested", "runner": "bare"},
  {"path": "tests/visual/flow-preview.sh", "layer": "nested", "runner": "bare"},
