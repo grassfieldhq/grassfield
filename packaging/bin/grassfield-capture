@@ -12,7 +12,7 @@
 # shortcut; no tensaku. Standard library only; strings through tr() (gate I1: scripts/dev/check-i18n.py).
 #
 # The capture toolbar (Shift-Cmd-5, shell/capture) runs the same modes with its options, and a window mode:
-#   grassfield-capture screen|window|selection [--save screenshots|desktop|documents|clipboard|preview] [--timer 0|5|10]
+#   grassfield-capture screen|window|selection [--save screenshots|desktop|documents|clipboard|preview] [--timer 0|3|5|10]
 #                      [--pointer] [--output NAME (screen)] [--geometry "X,Y WxH" (window, selection)]
 # The toolbar chooses on its own surface (macOS 27): the frame of Capture Selected Portion and the window clicked in Capture
 # Selected Window come as --geometry (whole numbers, a positive size, wholly on one enabled display, or the usage, exit 2), the
@@ -24,7 +24,7 @@
 # Screenshots folder, since Preview cannot save a document, and opened in Preview at once, no notice). Without --save (the keys)
 # the toolbar's choice applies: capture.location of grassfield.json, as the shell reads it (stored_location). --timer: a
 # countdown after the choice and before the picture; --pointer: grim draws the pointer (-c).
-#   grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview] [--timer 0|5|10] [--pointer]
+#   grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview] [--timer 0|3|5|10] [--pointer]
 #                             [--mic] [--output NAME (screen)] [--geometry "X,Y WxH" (selection)]
 # records with gpu-screen-recorder (an Omarchy base package) and Omarchy's backend arguments (omarchy-capture-screenrecording:
 # `-w <display> -s <size>` for a whole display, `-w WxH+X+Y` in logical coordinates for an area, `-k auto -f 60 -fm cfr
@@ -131,7 +131,7 @@ PREVIEW_ICON = "org.grassfield.Preview"
 MODES = ("screen", "window", "selection")
 RECORD_MODES = ("screen", "selection")
 SAVE_TO = ("screenshots", "desktop", "documents", "clipboard", "preview")
-TIMERS = ("0", "5", "10")
+TIMERS = ("0", "3", "5", "10")
 # Save to without --save (the keys): capture.location of grassfield.json, else the older capture.saveTo's documents, clipboard and
 # preview (its desktop, the old default, reads as the new one), else the Screenshots folder (shell/store/CaptureLocation.js).
 DEFAULT_SAVE = "screenshots"
@@ -1913,10 +1913,10 @@ def main():
     opts = parse(sys.argv[1:])
     if opts is None:
         sys.stderr.write("usage: grassfield-capture screen|window|selection [--save screenshots|desktop|documents|clipboard|preview]"
-                         " [--timer 0|5|10] [--pointer] [--output NAME (screen)] [--geometry 'X,Y WxH' (window, selection)]\n"
+                         " [--timer 0|3|5|10] [--pointer] [--output NAME (screen)] [--geometry 'X,Y WxH' (window, selection)]\n"
                          "       grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview]"
-                         " [--timer 0|5|10] [--pointer] [--mic] [--output NAME (screen)] [--geometry 'X,Y WxH' (selection)]\n"
-                         "       grassfield-capture selection --previous [--save ...] [--timer 0|5|10] [--pointer]\n"
+                         " [--timer 0|3|5|10] [--pointer] [--mic] [--output NAME (screen)] [--geometry 'X,Y WxH' (selection)]\n"
+                         "       grassfield-capture selection --previous [--save ...] [--timer 0|3|5|10] [--pointer]\n"
                          "       grassfield-capture selection --freeze [--save ...] [--pointer]\n"
                          "       grassfield-capture choose --token T (--geometry 'X,Y WxH' | --cancel)\n"
                          "       grassfield-capture text [--geometry 'X,Y WxH']\n"
