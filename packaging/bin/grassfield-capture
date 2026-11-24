@@ -343,8 +343,9 @@ def shutter():
         pass
 
 
-class Cancelled(Exception):
-    """A choice or a countdown ended by `stop` (SIGINT) or the session ending (SIGTERM): nothing is captured."""
+class Cancelled(BaseException):
+    """A choice or a countdown ended by `stop` (SIGINT) or the session ending (SIGTERM): nothing is captured. A BaseException: no
+    `except Exception` (a parser's guard, say) can swallow it, the way a signal handler raises it from any line."""
 
 
 def tr(text):
@@ -1215,9 +1216,14 @@ def open_frozen():
     return fd
 
 
-def clear_frozen():
+def clear_frozen(dfd=None):
     # Removes the frozen frames and their folder, and the choice file: names only, never through a link (a link is unlinked, not
-    # followed), never above the folder.
+    # followed), never above the folder. With `dfd`, the open frozen folder of this helper is emptied through that descriptor first.
+    if dfd is not None:
+        with contextlib.suppress(OSError):
+            for name in os.listdir(dfd):
+                with contextlib.suppress(OSError):
+                    os.unlink(name, dir_fd=dfd)
     folder = runtime_folder()
     if folder is None:
         return
@@ -1274,7 +1280,7 @@ def choice_of(data, token, frames):
     # the token and exactly one of "cancel": true or "geometry": "X,Y WxH" of a positive size wholly inside a frame.
     try:
         obj = json.loads(data.decode("ascii"))
-    except Exception:  # not JSON, not ASCII, or nested too deep for the parser
+    except (ValueError, RecursionError):  # not JSON, not ASCII, or nested too deep for the parser
         return None
     if not isinstance(obj, dict) or type(obj.get("v")) is not int or obj["v"] != 1 \
             or type(obj.get("token")) is not str:
@@ -1300,7 +1306,7 @@ def choose_command(opts):
     path = state_path()
     data = private_read(path, 4096) if path else None
     if data is not None:
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(ValueError, RecursionError):
             state = json.loads(data.decode("ascii"))
     if not isinstance(state, dict) or state.get("phase") != "frozen":
         return 2
@@ -1492,7 +1498,7 @@ def freeze_shot(opts):
     finally:
         for n in previous:
             signal.signal(n, signal.SIG_IGN)  # no signal cuts the clean-up short
-        clear_frozen()
+        clear_frozen(dfd)
         if dfd is not None:
             os.close(dfd)
         write_state({"phase": "idle"})

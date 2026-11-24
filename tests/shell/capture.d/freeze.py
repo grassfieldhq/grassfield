@@ -336,6 +336,52 @@ if st:
     check(rc in (0, 143) and not os.path.lexists(frozen) and not written() and state().get("phase") == "idle",
           "SIGTERM, SIGINT and SIGTERM in a row: the clean-up is not cut short, the frames are gone [%r]" % rc)
 
+# ---- the signal's exception goes through the choice parser: a timer fires while a large choice is parsed ----
+ns = {"__name__": "grassfield_capture_under_test"}
+exec(compile(source, helper, "exec"), ns)
+
+
+def on_alarm(signum, frame):
+    raise ns["Cancelled"]()
+
+
+old = signal.signal(signal.SIGALRM, on_alarm)
+big = b'{"v": 1, "token": "x", "pad": "' + b"a" * 20_000_000 + b'"}'
+reached = 0
+for n in range(5):
+    signal.setitimer(signal.ITIMER_REAL, 0.002)
+    try:
+        ns["choice_of"](big, "0" * 32, [])
+    except ns["Cancelled"]:
+        reached += 1
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+signal.signal(signal.SIGALRM, old)
+check(reached == 5 and issubclass(ns["Cancelled"], BaseException) and not issubclass(ns["Cancelled"], Exception),
+      "Cancelled is a BaseException and comes out of choice_of when the signal lands while it parses [%d of 5]" % reached)
+
+# ---- a stop or SIGTERM is never swallowed while an invalid choice file is parsed again and again ----
+swallowed = []
+for n in range(8):
+    proc = start()
+    st = frozen_state(proc)
+    if not st:
+        swallowed.append(("no state", n))
+        continue
+    with open(choice, "w") as f:
+        f.write("[" * 4000 + "\n")  # JSON the parser gives up on (too deep); the file stays in place, 20 reads a second
+    os.chmod(choice, 0o600)
+    time.sleep(0.2 + 0.013 * n)
+    if n % 2:
+        proc.send_signal(signal.SIGTERM)
+    else:
+        subprocess.run([fast, "stop"], env=ENV, capture_output=True, timeout=30)
+    began = time.monotonic()
+    rc = finish(proc, 5)
+    if rc not in (0, 143) or time.monotonic() - began > 3 or os.path.lexists(frozen) or written():
+        swallowed.append((n, rc))
+check(not swallowed, "stop and SIGTERM end the wait promptly while an invalid choice file is re-read: frames cleaned, 8 runs [%r]" % swallowed)
+
 # ---- Hyprland's lock (no marker file) ends the wait ----
 proc = start()
 st = frozen_state(proc)
