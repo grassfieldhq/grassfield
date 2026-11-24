@@ -64,10 +64,6 @@ Singleton {
         onTriggered: root.iconsWaitedOut = true
     }
 
-    onPhaseChanged: {
-        if (root.phase !== "shooting")
-            root.iconsWaitedOut = false;
-    }
     // gpu-screen-recorder is installed (an Omarchy base package): asked when the toolbar opens, as it is used (OC-0 rule 3).
     property bool recorderAvailable: false
 
@@ -105,7 +101,11 @@ Singleton {
             root.stop();
     }
 
-    onPhaseChanged: root.enforceLock()
+    onPhaseChanged: {
+        root.enforceLock();
+        if (root.phase !== "shooting")
+            root.iconsWaitedOut = false;
+    }
 
     // Writes the acknowledgement of a `shooting` state once the cards are hidden: the `seq` alone, in place (capture-ack.sh keeps
     // the 0600 mode). Only after the preparation ran: the folder and the file exist by then. Asked on every change of what it reads.
