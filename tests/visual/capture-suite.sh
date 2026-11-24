@@ -581,14 +581,41 @@ if want editor; then
     vs_ipc notifications clearAll >/dev/null
     fl_focus_class '^org\.grassfield\.Screenshot$'
   }
-  # canvas_box SHOT: "WxH+X+Y" of the picture inside the window (the largest block that is not the window's own background), in device pixels
-  canvas_box() {
-    magick "$1" -crop 1120x680+380+215 +repage -fuzz 10% -trim -format '%wx%h+%[fx:page.x+380]+%[fx:page.y+215]' info:
+  # ed_win: the editor window's "X Y W H" in device pixels, from the compositor's own client list (logical coordinates times the scale)
+  ed_win() {
+    local ox oy
+    read -r ox oy <<<"$("$VS_ROOT/scripts/nestctl" monitors -j | jq -r --arg n "$VS_OUTPUT" '.[] | select(.name == $n) | "\(.x) \(.y)"')"
+    "$VS_ROOT/scripts/nestctl" clients -j | jq -r --argjson s "$GRASSFIELD_REF_SCALE" --argjson ox "$ox" --argjson oy "$oy" \
+      '[.[] | select(.mapped and .class == "org.grassfield.Screenshot")][0] | "\(((.at[0] - $ox) * $s) | round) \(((.at[1] - $oy) * $s) | round) \((.size[0] * $s) | round) \((.size[1] * $s) | round)"'
   }
+  # canvas_box SHOT [TOP]: "WxH+X+Y" of the picture inside the window (the largest block that is not the window's own background), in device
+  # pixels. Searched under the toolbar and the style bar of the window (ED_WIN), so no position is a constant of the layout.
+  canvas_box() {
+    local wx wy ww wh cx cy cw ch
+    read -r wx wy ww wh <<<"$ED_WIN"
+    cx=$((wx + 20)); cy=$((wy + ${2:-205})); cw=$((ww - 40)); ch=$((wh - ${2:-205} - 20))
+    magick "$1" -crop "${cw}x${ch}+${cx}+${cy}" +repage -fuzz 10% -trim -format "%wx%h+%[fx:page.x+$cx]+%[fx:page.y+$cy]" info:
+  }
+  # ed_measure SHOT [TOP]: TOP is where the search starts below the window top (past the toolbar, and the style bar when it shows).
+  # ed_measure SHOT: ED_WIN, ED_BOX and the picture's corner (ED_PX, ED_PY). The pointer is parked outside the window first.
+  ed_measure() {
+    vs_pointer abs 5 5 >/dev/null
+    sleep 0.5
+    ED_WIN=$(ed_win)
+    shot "$1"
+    ED_BOX=$(canvas_box "$out/$1.png" "${2:-205}")
+    IFS='x+' read -r ED_W ED_H ED_PX ED_PY <<<"$ED_BOX"
+    echo "$1: window $ED_WIN, picture box $ED_BOX"
+  }
+  # vs_pointer takes logical coordinates (the device pixels over the output scale).
+  # ed_at DX DY: a point of the picture (in its own pixels) as a pointer position.
+  ed_at() { awk -v x=$((ED_PX + $1)) -v y=$((ED_PY + $2)) -v s="$GRASSFIELD_REF_SCALE" 'BEGIN{printf "%.0f %.0f", x / s, y / s}'; }
+  # ed_wat DX DY: a point of the window (device pixels from its top left corner, ED_WIN) as a pointer position.
+  ed_wat() { local wx wy ww wh; read -r wx wy ww wh <<<"$ED_WIN"; awk -v x=$((wx + $1)) -v y=$((wy + $2)) -v s="$GRASSFIELD_REF_SCALE" 'BEGIN{printf "%.0f %.0f", x / s, y / s}'; }
   # edit_compare SHOT EXPORT: the exported PNG against the window's pixels over the picture (the export drawn at the view's size)
   ed_compare() {
     local box w h x y
-    box=$(canvas_box "$1")
+    box=$ED_BOX
     IFS='x+' read -r w h x y <<<"$box"
     magick "$1" -crop "${w}x${h}+${x}+${y}" +repage "$cs/.view.png"
     magick "$2" -resize "${w}x${h}!" "$cs/.export.png"
@@ -601,39 +628,44 @@ if want editor; then
   gpulibs=$(grep -oE "lib(EGL|GLX|vulkan|gallium)[^ /]*|[a-z0-9_]+_dri\.so" "/proc/$epid/maps" 2>/dev/null | sort -u | tr '\n' ' ')
   echo "editor pid $epid maps: ${gpulibs:-none}; QT_QUICK_BACKEND=$(tr '\0' '\n' < /proc/$epid/environ 2>/dev/null | sed -n 's/^QT_QUICK_BACKEND=//p'); QSG_RHI_BACKEND=$(tr '\0' '\n' < /proc/$epid/environ 2>/dev/null | sed -n 's/^QSG_RHI_BACKEND=//p')"
   fl_check "the editor renders on the GPU (an EGL/Vulkan/GLX stack is loaded, no software backend requested: $gpulibs)" bash -c "[[ -n '$gpulibs' ]] && ! tr '\0' '\n' < /proc/$epid/environ | grep -qE '^QT_QUICK_BACKEND=software|^QSG_RHI_BACKEND=software'"
-  shot ed-open
+  # The picture before any tool: 100% must be 800x500 device pixels (the window's size and place come from the compositor, the box from this capture).
+  ed_measure ed-open 70
+  fl_check "100% shows the 800x500-pixel picture on 800x500 device pixels (box ${ED_BOX}; at 1.25 it should not be magnified)" test "${ED_BOX%%+*}" = 800x500
   tool() { fl_key "$1"; sleep 0.3; }
+  # Every tool but Select shows the style bar, which moves the picture down: measured again, then every click is the picture's corner plus an offset.
   tool a
-  vs_pointer abs 420 240 sleep 200 down sleep 100 drag 640 330 sleep 100 up >/dev/null
+  ed_measure ed-tool
+  read -r WX WY WW WH <<<"$ED_WIN"
+  vs_pointer abs $(ed_at 40 25) sleep 200 down sleep 100 drag $(ed_at 260 115) sleep 100 up >/dev/null
   tool r
-  vs_pointer abs 700 220 sleep 200 down sleep 100 drag 860 320 sleep 100 up >/dev/null
+  vs_pointer abs $(ed_at 320 5) sleep 200 down sleep 100 drag $(ed_at 480 105) sleep 100 up >/dev/null
   tool o
-  vs_pointer abs 480 300 sleep 200 down sleep 100 drag 580 380 sleep 100 up >/dev/null
+  vs_pointer abs $(ed_at 100 85) sleep 200 down sleep 100 drag $(ed_at 200 165) sleep 100 up >/dev/null
   tool l
-  vs_pointer abs 700 360 sleep 200 down sleep 100 drag 900 460 sleep 100 up >/dev/null
+  vs_pointer abs $(ed_at 320 145) sleep 200 down sleep 100 drag $(ed_at 520 245) sleep 100 up >/dev/null
   tool p
-  vs_pointer abs 420 430 sleep 200 down sleep 100 drag 500 470 drag 560 410 drag 640 480 sleep 100 up >/dev/null
+  vs_pointer abs $(ed_at 40 215) sleep 200 down sleep 100 drag $(ed_at 120 255) drag $(ed_at 180 195) drag $(ed_at 260 265) sleep 100 up >/dev/null
   tool h
-  vs_pointer abs 700 400 sleep 200 down sleep 100 drag 900 400 sleep 100 up >/dev/null
+  vs_pointer abs $(ed_at 320 185) sleep 200 down sleep 100 drag $(ed_at 520 185) sleep 100 up >/dev/null
   tool n
-  vs_pointer abs 950 250 sleep 200 click >/dev/null
-  vs_pointer abs 1000 250 sleep 200 click >/dev/null
-  vs_pointer abs 1050 250 sleep 200 click >/dev/null
+  vs_pointer abs $(ed_at 570 35) sleep 200 click >/dev/null
+  vs_pointer abs $(ed_at 620 35) sleep 200 click >/dev/null
+  vs_pointer abs $(ed_at 670 35) sleep 200 click >/dev/null
   # text in the three styles (Plain, Outlined, Pill: the style bar)
   tool t
-  vs_pointer abs 842 139 sleep 200 click >/dev/null
-  vs_pointer abs 629 139 sleep 200 click >/dev/null
-  vs_pointer abs 420 520 sleep 200 click >/dev/null; sleep 0.4; fl_type "Plain 1.25"; fl_tap Return; fl_tap Escape
-  vs_pointer abs 702 139 sleep 200 click >/dev/null
-  vs_pointer abs 420 580 sleep 200 click >/dev/null; sleep 0.4; fl_type "Outlined"; fl_tap Return; fl_tap Escape
-  vs_pointer abs 768 139 sleep 200 click >/dev/null
-  vs_pointer abs 420 640 sleep 200 click >/dev/null; sleep 0.4; fl_type "Pill"; fl_tap Return; fl_tap Escape
+  ed_measure ed-text
+  # the style bar's Outlined and Pill buttons, in device pixels from the window's top left corner (read off ed-text.png: the bar is at +90)
+  TXT_OUTLINED=517 TXT_PILL=600
+  vs_pointer abs $(ed_at 40 305) sleep 200 click >/dev/null; sleep 0.4; fl_type "Plain 1.25"; fl_tap Return; fl_tap Escape
+  vs_pointer abs $(ed_wat $TXT_OUTLINED 90) sleep 200 click >/dev/null
+  vs_pointer abs $(ed_at 40 365) sleep 200 click >/dev/null; sleep 0.4; fl_type "Outlined"; fl_tap Return; fl_tap Escape
+  vs_pointer abs $(ed_wat $TXT_PILL 90) sleep 200 click >/dev/null
+  vs_pointer abs $(ed_at 40 425) sleep 200 click >/dev/null; sleep 0.4; fl_type "Pill"; fl_tap Return; fl_tap Escape
   tool v
-  vs_pointer abs 1250 650 >/dev/null
   sleep 1
-  shot ed-final
+  ed_measure ed-final 70
   ed_compare "$out/ed-final.png" "$ed/in.png"
-  fl_check "100% shows the 800x500-pixel picture on 800x500 device pixels (box ${ED_BOX}; at 1.25 it should not be magnified)" test "${ED_BOX%%+*}" = 800x500
+  fl_check "the annotated picture is still 800x500 device pixels (box ${ED_BOX})" test "${ED_BOX%%+*}" = 800x500
   echo "canvas box ${ED_BOX}; view against the UNANNOTATED picture: RMSE $ED_RMSE"
   ctrl=$ED_RMSE
   fl_appkey ctrl s
@@ -650,8 +682,8 @@ if want editor; then
   ed_open "$ed/work2.png"
   tool c
   sleep 0.6
-  shot ed-crop
-  vs_pointer abs 368 203 sleep 200 down sleep 150 drag 428 243 sleep 150 up >/dev/null
+  ed_measure ed-crop
+  vs_pointer abs $(ed_at 6 6) sleep 200 down sleep 150 drag $(ed_at 66 46) sleep 150 up >/dev/null
   sleep 0.8
   shot ed-crop2
   fl_tap Return
