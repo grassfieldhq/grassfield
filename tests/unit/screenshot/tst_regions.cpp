@@ -11,6 +11,8 @@
 
 #include <QBuffer>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QTimer>
 #include <QFile>
 #include <QImage>
 #include <QJsonArray>
@@ -651,7 +653,9 @@ TEST(Pixelate, TheNoiseHasATermTheChannelsShareAndStaysWithinTheBound)
         }
     }
     const double sd = std::sqrt(sumSq / n - (sum / n) * (sum / n));
-    EXPECT_GT(sd, 3.8) << "the channels' average still moves by several levels from block to block";
+    // Pinned between the two: the shared term gives 5.1; independent noise of the same bound (the first version) gives 4.2, which must fail.
+    std::printf("pixelate noise: spread of the channel average %.2f levels\n", sd);
+    EXPECT_GT(sd, 4.6) << "the channels' average still moves by several levels from block to block";
 }
 
 // ---- the tools ------------------------------------------------------------------------------------------------------------------------
@@ -824,6 +828,117 @@ TEST_F(RegionAppTest, TheClipboardIsReplacedOnlyWhileItStillHoldsTheCapture)
         EXPECT_FALSE(hasSecret(fileImage())) << "the file is redacted all the same";
         m_app->undo();
     }
+}
+
+TEST_F(RegionAppTest, TheEyedropperReadsThePixelatedPixelNotTheOneUnderIt)
+{
+    drag("pixelate", QPointF(25, 15), QPointF(75, 45));
+    const QImage source = QImage(m_file);
+    const QString picked = m_app->pickColor(50, 30);
+    ASSERT_TRUE(m_app->done());
+    const QImage out = fileImage();
+    EXPECT_EQ(picked, QColor(out.pixel(50, 30)).name()) << "what the export has there";
+    EXPECT_NE(picked, QColor(qRgb(255, 0, 255)).name()) << "not the secret's magenta";
+    EXPECT_NE(picked, QColor(source.pixel(50, 30)).name());
+}
+
+TEST(RunBounded, WaitsAtMostItsBoundKeepsTheEventLoopGoingAndReportsTheRest)
+{
+    const BoundedRun echoed = runBounded({"cat"}, "hello", 3000, true);
+    EXPECT_TRUE(echoed.started);
+    EXPECT_TRUE(echoed.finished);
+    EXPECT_EQ(echoed.exitCode, 0);
+    EXPECT_EQ(echoed.output, QByteArray("hello"));
+    const BoundedRun failed = runBounded({"false"}, {}, 3000, false);
+    EXPECT_TRUE(failed.finished);
+    EXPECT_EQ(failed.exitCode, 1);
+    EXPECT_FALSE(runBounded({"/nonexistent/grassfield-no-such-command"}, {}, 3000, false).finished);
+    // A command that does not answer: killed at the bound, while timers of the GUI thread keep firing.
+    int ticks = 0;
+    QTimer tick;
+    tick.setInterval(20);
+    QObject::connect(&tick, &QTimer::timeout, [&] { ++ticks; });
+    tick.start();
+    QElapsedTimer clock;
+    clock.start();
+    const BoundedRun slow = runBounded({"sleep", "30"}, {}, 400, true);
+    EXPECT_FALSE(slow.finished);
+    EXPECT_GE(clock.elapsed(), 380);
+    EXPECT_LT(clock.elapsed(), 2500) << "the bound, not the command's own time";
+    EXPECT_GT(ticks, 5) << "the window stayed responsive while it waited";
+}
+
+TEST(RedactClipboard, ASecondRedactionOfTheSameCaptureReplacesTheFirstExportToo)
+{
+    QTemporaryDir dir;
+    const QString file = dir.path() + "/Screenshot.png";
+    QImage image(120, 80, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    for (int y = 20; y < 40; ++y) {
+        for (int x = 10; x < 40; ++x)
+            image.setPixel(x, y, qRgb(255, 0, 255)); // secret A
+        for (int x = 70; x < 100; ++x)
+            image.setPixel(x, y, qRgb(0, 255, 0)); // secret B
+    }
+    image.setText("Grassfield-Scale", "1");
+    ASSERT_TRUE(image.save(file, "PNG"));
+    QFile f(file);
+    ASSERT_TRUE(f.open(QIODevice::ReadOnly));
+    QByteArray clipboard = f.readAll(); // the automatic copy
+    f.close();
+    int writes = 0;
+    const auto wire = [&](ScreenshotApp &app) {
+        app.setClipboardWriter([&](const QStringList &argv, const QByteArray &png) {
+            if (argv.contains("--sensitive")) {
+                clipboard = png;
+                ++writes;
+            }
+            return true;
+        });
+        app.setClipboardReader([&](QByteArray *png) {
+            *png = clipboard;
+            return 0;
+        });
+        app.setToolColor("#de3651");
+    };
+    {
+        ScreenshotApp app(file, QStringList(), dir.path() + "/state");
+        wire(app);
+        app.setTool("redact");
+        ASSERT_TRUE(app.toolPress(8, 18, 3));
+        app.toolMove(42, 42, false);
+        app.toolRelease(42, 42, false);
+        ASSERT_TRUE(app.done());
+    }
+    ASSERT_EQ(writes, 1);
+    {
+        // The capture is reopened (the thumbnail, Recent Captures) and the second secret redacted: the clipboard still holds the first export.
+        ScreenshotApp app(file, QStringList(), dir.path() + "/state");
+        wire(app);
+        app.setTool("redact");
+        ASSERT_TRUE(app.toolPress(68, 18, 3));
+        app.toolMove(102, 42, false);
+        app.toolRelease(102, 42, false);
+        ASSERT_TRUE(app.done());
+    }
+    EXPECT_EQ(writes, 2);
+    const QImage onClipboard = QImage::fromData(clipboard, "PNG");
+    EXPECT_NE(onClipboard.pixel(80, 30), qRgb(0, 255, 0)) << "the clipboard no longer shows the second secret";
+    EXPECT_NE(onClipboard.pixel(20, 30), qRgb(255, 0, 255));
+    // And the user's own copy since then is left alone by a third.
+    clipboard = pngBytes(gradient(10, 10));
+    const QByteArray theirs = clipboard;
+    {
+        ScreenshotApp app(file, QStringList(), dir.path() + "/state");
+        wire(app);
+        app.setTool("blur");
+        ASSERT_TRUE(app.toolPress(2, 2, 3));
+        app.toolMove(30, 15, false);
+        app.toolRelease(30, 15, false);
+        ASSERT_TRUE(app.done());
+    }
+    EXPECT_EQ(writes, 2);
+    EXPECT_EQ(clipboard, theirs);
 }
 
 TEST_F(RegionAppTest, ACopyThatCannotBeReadIsReplacedRatherThanLeft)

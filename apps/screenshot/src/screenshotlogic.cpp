@@ -1,12 +1,51 @@
 #include "screenshotlogic.h"
 
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
 #include <QRegularExpression>
+#include <QTimer>
 #include <QUrl>
 
 namespace screenshot {
+
+BoundedRun runBounded(const QStringList &argv, const QByteArray &input, int timeoutMs, bool wantOutput)
+{
+    BoundedRun result;
+    if (argv.isEmpty())
+        return result;
+    QProcess process;
+    if (!wantOutput)
+        process.setStandardOutputFile(QProcess::nullDevice()); // no pipe for a background copy to hold open
+    process.setStandardErrorFile(QProcess::nullDevice());
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&process, &QProcess::finished, &loop, &QEventLoop::quit);
+    QObject::connect(&process, &QProcess::errorOccurred, &loop, &QEventLoop::quit);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    process.start(argv.first(), argv.mid(1));
+    if (process.state() == QProcess::NotRunning || process.error() == QProcess::FailedToStart)
+        return result; // it could not be started (a program that is not there reports a normal exit 0 otherwise)
+    result.started = true;
+    if (!input.isEmpty())
+        process.write(input);
+    process.closeWriteChannel();
+    timer.start(timeoutMs);
+    if (process.state() != QProcess::NotRunning)
+        loop.exec();
+    result.finished = process.state() == QProcess::NotRunning && process.exitStatus() == QProcess::NormalExit && process.error() != QProcess::FailedToStart;
+    result.exitCode = result.finished ? process.exitCode() : -1;
+    if (wantOutput)
+        result.output = process.readAllStandardOutput();
+    if (process.state() != QProcess::NotRunning) {
+        process.kill();
+        process.waitForFinished(500);
+    }
+    return result;
+}
 
 QStringList clipboardArguments()
 {

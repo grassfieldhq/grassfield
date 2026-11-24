@@ -47,6 +47,17 @@ QStringList clipboardClearArguments();
 QStringList clipboardTypesArguments();
 QStringList clipboardPasteArguments();
 
+// A command run with a bound, without blocking the GUI thread: its input goes to its stdin, its stdout is collected (`wantOutput`) and its
+// stderr dropped, and the call waits in a nested event loop (the window stays responsive) for at most `timeoutMs`, then kills it. `started` is
+// false when it could not be run; `finished` when it exited by itself within the bound (`exitCode` is then its own).
+struct BoundedRun {
+    bool started = false;
+    bool finished = false;
+    int exitCode = -1;
+    QByteArray output;
+};
+BoundedRun runBounded(const QStringList &argv, const QByteArray &input, int timeoutMs, bool wantOutput);
+
 // Started with no file (the Apps entry): macOS's Screenshot app opens the capture toolbar, so this one asks the running shell to.
 // `shellIpc` is grassfield::apps::runmode::shellIpcArgs() (the arguments after `qs`: ipc -p <dir> call), empty when there is no
 // shell to call. The target is "capture" and the function "toggle", the one the Shift-Super-5 key calls: "open" answers only in a

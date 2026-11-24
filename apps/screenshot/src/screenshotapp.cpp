@@ -3,6 +3,7 @@
 #include "exporter.h"
 #include "screenshotlogic.h"
 
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QMutexLocker>
 #include <QPointF>
@@ -549,6 +550,18 @@ QString ScreenshotApp::pixelColorAt(qreal x, qreal y) const
         const screenshot::ShapeGeometry g = screenshot::shapeGeometry(layers[i]);
         if (g.kind == screenshot::ShapeGeometry::Redact && g.area.contains(int(fx), int(fy)))
             return g.color.name();
+        if ((g.kind == screenshot::ShapeGeometry::Pixelate || g.kind == screenshot::ShapeGeometry::Blur) && g.area.contains(int(fx), int(fy))) {
+            // Under a Pixelate or Blur it reads the pixel the export has there: the layer cut down to that one pixel (its grid and its reach
+            // stay the same, so the pixel is the same), the other layers as they are (a Redact over the source stays filled in first).
+            screenshot::Layers cut = layers;
+            cut[i].fields.insert(QStringLiteral("x"), double(int(fx)));
+            cut[i].fields.insert(QStringLiteral("y"), double(int(fy)));
+            cut[i].fields.insert(QStringLiteral("w"), 1.0);
+            cut[i].fields.insert(QStringLiteral("h"), 1.0);
+            const QImage patch = screenshot::regionPatch(image, cut, layers[i].id);
+            if (!patch.isNull())
+                return QColor(patch.pixelColor(0, 0).rgb()).name();
+        }
     }
     const QColor pixel = image.pixelColor(int(fx), int(fy));
     return QColor(pixel.red(), pixel.green(), pixel.blue()).name();
@@ -786,19 +799,8 @@ bool ScreenshotApp::replaceClipboard(const QByteArray &png)
     if (m_clipboardWriter) {
         taken = m_clipboardWriter(arguments, png);
     } else {
-        QProcess process;
-        process.setStandardOutputFile(QProcess::nullDevice()); // no pipe for the background copy to hold open
-        process.setStandardErrorFile(QProcess::nullDevice());
-        process.start(arguments.first(), arguments.mid(1));
-        if (process.waitForStarted(3000)) {
-            process.write(png);
-            process.closeWriteChannel();
-            taken = process.waitForFinished(5000) && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
-        }
-        if (!taken && process.state() != QProcess::NotRunning) {
-            process.kill();
-            process.waitForFinished(1000);
-        }
+        const screenshot::BoundedRun run = screenshot::runBounded(arguments, png, 3000, false);
+        taken = run.finished && run.exitCode == 0;
     }
     if (!taken) {
         // Better an empty clipboard than the capture as it was taken.
@@ -806,7 +808,7 @@ bool ScreenshotApp::replaceClipboard(const QByteArray &png)
         if (m_clipboardWriter)
             m_clipboardWriter(clear, QByteArray());
         else
-            QProcess::execute(clear.first(), clear.mid(1));
+            screenshot::runBounded(clear, QByteArray(), 2000, false);
     }
     return taken;
 }
@@ -814,39 +816,39 @@ bool ScreenshotApp::replaceClipboard(const QByteArray &png)
 bool ScreenshotApp::clipboardHoldsCapture()
 {
     QByteArray held;
-    int state = 2;
+    int state = 2; // 0 an image/png (in `held`), 1 empty or something else, 2 cannot be told
     if (m_clipboardReader) {
         state = m_clipboardReader(&held);
     } else {
-        const QStringList types = screenshot::clipboardTypesArguments();
-        QProcess list;
-        list.start(types.first(), types.mid(1));
-        if (list.waitForStarted(3000)) {
-            list.closeWriteChannel();
-            if (list.waitForFinished(3000) && list.exitStatus() == QProcess::NormalExit) {
-                state = 1;
-                if (list.exitCode() == 0 && QString::fromUtf8(list.readAllStandardOutput()).split(QLatin1Char('\n')).contains(QStringLiteral("image/png"))) {
-                    const QStringList paste = screenshot::clipboardPasteArguments();
-                    QProcess get;
-                    get.start(paste.first(), paste.mid(1));
-                    if (get.waitForStarted(3000)) {
-                        get.closeWriteChannel();
-                        // Never more than a picture the editor opens.
-                        if (get.waitForFinished(10000) && get.exitStatus() == QProcess::NormalExit && get.exitCode() == 0
-                            && get.bytesAvailable() <= screenshot::kMaxImageBytes) {
-                            held = get.readAllStandardOutput();
-                            state = 0;
-                        }
+        // Two short runs of wl-paste within one bound of two seconds in all, in a nested event loop: the window stays responsive, and a
+        // clipboard that does not answer in time is "cannot be told".
+        constexpr int kBoundMs = 2000;
+        QElapsedTimer clock;
+        clock.start();
+        const screenshot::BoundedRun types = screenshot::runBounded(screenshot::clipboardTypesArguments(), QByteArray(), kBoundMs, true);
+        if (types.finished) {
+            state = 1; // an empty clipboard (wl-paste fails) or one that offers no picture
+            if (types.exitCode == 0 && QString::fromUtf8(types.output).split(QLatin1Char('\n')).contains(QStringLiteral("image/png"))) {
+                // It offers a picture: a failure to read it (a timeout, one over the size the editor opens) is "cannot be told", not "other".
+                state = 2;
+                const int left = kBoundMs - int(clock.elapsed());
+                if (left > 0) {
+                    const screenshot::BoundedRun paste = screenshot::runBounded(screenshot::clipboardPasteArguments(), QByteArray(), left, true);
+                    if (paste.finished && paste.exitCode == 0 && paste.output.size() <= screenshot::kMaxImageBytes) {
+                        held = paste.output;
+                        state = 0;
                     }
                 }
             }
         }
     }
     if (state == 2)
-        return true; // cannot tell: better to replace than to leave the capture where it may still be
+        return true; // cannot be told: better to replace than to leave the capture where it may still be
     if (state != 0)
-        return false;
-    // Still the capture: the same picture (the copy was made from the file, so its pixels are the original's).
+        return false; // empty, or something the user copied that is not a picture
+    // The capture, or an earlier export of it (the bytes the copies were made from), else the same picture as the capture.
+    if (m_document.knownDigests().contains(screenshot::CaptureHistory::sha256(held)))
+        return true;
     const QImage copy = QImage::fromData(held, "PNG");
     const QImage original = m_document.original();
     return !copy.isNull() && copy.size() == original.size()

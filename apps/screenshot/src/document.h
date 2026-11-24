@@ -6,6 +6,7 @@
 
 #include <QImage>
 #include <QString>
+#include <QStringList>
 
 #include <functional>
 #include <optional>
@@ -51,6 +52,9 @@ public:
     // redacted export); the document keeps no second copy of a picture that may be large.
     int writes() const { return m_writes; }
     QByteArray takeExportedPng() { return std::exchange(m_exportedPng, QByteArray()); }
+    // The digests (sha256 of the bytes) of every picture of this capture that may be on the clipboard: the capture, the file as it was opened
+    // (an earlier export when the file was edited) and each export Done wrote since.
+    QStringList knownDigests() const { return m_knownDigests; }
     // The history entry of this picture, once there is one.
     const std::optional<HistoryEntry> &entry() const { return m_entry; }
 
@@ -76,6 +80,7 @@ private:
     QString m_fileDigest; // the file's bytes when opened or last written by this document
     bool m_dirty = false;
     int m_writes = 0;
+    QStringList m_knownDigests;
     QByteArray m_exportedPng;
 };
 
