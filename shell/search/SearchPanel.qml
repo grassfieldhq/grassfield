@@ -1120,26 +1120,42 @@ Variants {
                 text: root.controller.clipNotice
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
-                // Said in the dev status so that the nested test proves the whole notice shows.
-                readonly property bool cut: win.shown && visible && probe.advanceWidth > 0.9 * maximumLineCount * width
-                onCutChanged: root.controller.noticeTruncated = cut
-                // Drawn for real: this screen's panel is shown, the footer is visible with some opacity, has text, and lies inside
-                // the panel's rectangle (not clipped away below it). The nested test reads it from the dev status.
-                readonly property bool drawn: win.shown && panel.visible && panel.opacity > 0 && visible && opacity > 0 && text !== ""
-                    && x >= 0 && y >= 0 && x + width <= panel.width && y + height <= panel.height && height > 0 && width > 0
-                onDrawnChanged: root.controller.noticeShown = drawn
+                // Said in the dev status so that the nested test proves the whole notice shows. Only the screen Search is shown on
+                // writes it (a hidden panel of another screen lays the text out at a stale width).
+                readonly property bool cut: win.shown && visible && truncated
+                onCutChanged: if (win.shown || !root.controller.open)
+                    root.controller.noticeTruncated = cut
+                // The painted text's rectangle in the window (logical px): the footer centres its lines in its own box.
+                readonly property rect paintRect: {
+                    // mapToItem does not track movement: the geometry it depends on is read here so the binding re-runs.
+                    const deps = [x, y, width, height, panel.x, panel.y, panel.width, panel.height, win.width, win.height, capsule.y, capsule.height];
+                    const p = footerText.mapToItem(win.contentItem, (width - contentWidth) / 2, (height - contentHeight) / 2 + (deps.length > 0 ? 0 : 1));
+                    return Qt.rect(p.x, p.y, contentWidth, contentHeight);
+                }
+                // Drawn for real: this screen's panel is shown and opaque, the footer is visible with opacity and text, its text
+                // rectangle lies inside the window and inside the panel's rectangle, and below the last row (the list ends where the
+                // footer begins, so no row covers it). The nested test reads it, and the rectangle, from the dev status.
+                readonly property bool drawn: {
+                    if (!win.shown || !panel.visible || panel.opacity <= 0 || !visible || opacity <= 0 || text === "" || contentWidth <= 0)
+                        return false;
+                    // (mapToItem does not track movement: the panel's own x and y are read so the binding re-runs with them)
+                    const pr = panel.mapToItem(win.contentItem, 0, 0 * (panel.x + panel.y));
+                    const r = paintRect;
+                    const inWindow = r.x >= 0 && r.y >= 0 && r.x + r.width <= win.width && r.y + r.height <= win.height;
+                    const inPanel = r.x >= pr.x && r.y >= pr.y && r.x + r.width <= pr.x + panel.width && r.y + r.height <= pr.y + panel.height;
+                    const rows = pr.y + list.y + list.height;                    return inWindow && inPanel && r.y >= rows - 0.5;
+                }
+                onPaintRectChanged: if (drawn && win.shown)
+                    root.controller.noticeRect = ({x: paintRect.x, y: paintRect.y, w: paintRect.width, h: paintRect.height})
+                onDrawnChanged: if (win.shown || !root.controller.open) {
+                    root.controller.noticeShown = drawn;
+                    root.controller.noticeRect = drawn ? ({x: paintRect.x, y: paintRect.y, w: paintRect.width, h: paintRect.height}) : null;
+                }
                 color: Appearance.colors.textSecondary
                 font.family: Appearance.fontFamily
                 font.pixelSize: Tokens.searchSubtitleSize
                 Accessible.role: Accessible.StaticText
                 Accessible.name: text
-
-                // The text on one line: it fits the two lines while it is at most about 1.8 widths (words wrap with some slack).
-                TextMetrics {
-                    id: probe
-                    font: footerText.font
-                    text: footerText.text
-                }
             }
         }
 

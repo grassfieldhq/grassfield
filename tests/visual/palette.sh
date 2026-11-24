@@ -482,8 +482,10 @@ EOF
   fl_tap Escape; vs_sleep 0.4
   sb=$(shot script-before)
   fl_tap Return; vs_sleep 0.8
-  note=$(st .notice); opened=$(st .open); cut=$(st .noticeTruncated); drawn=$(st .noticeShown)
-  echo "    [script] after Return: open=$opened notice='$note' drawn=$drawn"
+  stj=$(fl_json search status)
+  note=$(jq -r '.notice' <<<"$stj"); opened=$(jq -r '.open' <<<"$stj"); cut=$(jq -r '.noticeTruncated' <<<"$stj"); drawn=$(jq -r '.noticeShown' <<<"$stj")
+  rect=$(jq -r '.noticeRect // empty | "\(.x) \(.y) \(.w) \(.h)"' <<<"$stj")
+  echo "    [script] after Return: open=$opened notice='$note' drawn=$drawn rect(logical x y w h)='$rect'"
   sa=$(shot script-return)
   after_note=$(st .notice)
   # X3b (the runner) is not built: Return refuses cleanly. Search stays open and says why under the rows (defect 2, fixed 2026-11-24)
@@ -491,14 +493,17 @@ EOF
   fl_check "Return on a script says why it did not run (notice '$note')" test -n "$note"
   # the whole reason shows: wrapped on two lines, never elided (the French text is the long one)
   fl_check "the notice is shown whole, not cut (truncated: $cut)" test "$cut" = false
-  # drawn for real: visible, opaque and inside the panel (state), still set when the capture was taken, and on screen (pixels)
+  # drawn for real: state (visible, opaque, its text rectangle inside the window and the panel and below the last row) ...
   fl_check "the notice footer is drawn inside the panel (noticeShown: $drawn)" test "$drawn" = true
   fl_check "the notice was still up when the capture was taken" test "$after_note" = "$note"
-  sbb=$(bbox "$sb" "$sa" 3); unpack "${sbb:-0x0+0+0}"
-  echo "    [script] pixels that differ before/after Return: ${sbb:-none} (logical height $(lg "$gh"))"
-  fl_check "pixels changed under the row after Return (a strip at least 20 logical px high)" awk -v h="$gh" -v s="$scale" 'BEGIN { exit !(h / s >= 20) }'
-  e1=$(contrast "$sb" "${gw}x${gh}+${gx}+${gy}"); e2=$(contrast "$sa" "${gw}x${gh}+${gx}+${gy}")
-  fl_check "the strip carries text after Return (contrast $e1 before, $e2 after)" awk -v a="$e1" -v b="$e2" 'BEGIN { exit !(b > a * 1.2) }'
+  # ... and pixels: only the footer text's own rectangle (no caret, no panel growth), before and after Return
+  fl_check "the status gives the notice text's rectangle" test -n "$rect"
+  read -r rx ry rw rh <<<"$rect"
+  crop=$(awk -v x="$rx" -v y="$ry" -v w="$rw" -v h="$rh" -v s="$scale" 'BEGIN { printf "%dx%d+%d+%d", int(w * s + 4), int(h * s + 4), int(x * s - 2), int(y * s - 2) }')
+  e1=$(contrast "$sb" "$crop"); e2=$(contrast "$sa" "$crop")
+  echo "    [script] text rectangle crop $crop: contrast $e1 before Return, $e2 after"
+  fl_check "the text rectangle holds text after Return (contrast $e1 before, $e2 after)" awk -v a="$e1" -v b="$e2" 'BEGIN { exit !(b > 0.05 && b > a * 2.5) }'
+  magick "$sa" -crop "$crop" +repage "$VS_SHOTS/palette-script-notice-crop.$VS_LANG.png" 2>/dev/null || true
   if [[ -f $VS_STATE/palette-ran ]]; then echo "FAIL: the script ran"; fl_fail=1; fi
   fl_check "no QML error after running a script row" fl_no_qml_errors
   tail -n 5 "$VS_DEV/shell.log" | sed 's/^/    [log] /'

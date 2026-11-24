@@ -226,6 +226,7 @@ Scope {
 
     function hide(): void {
         open = false;
+        clearStickyNotice();
         closeActions();
         // A paste the helper has not confirmed yet ends with Search: a late confirmation pastes nothing (ADR-0034 §4).
         Clipboard.searchClosed();
@@ -261,10 +262,7 @@ Scope {
         if (text === query && groups.length > 0)
             return;
         query = text;
-        if (noticeSticky) {
-            clipNotice = "";
-            noticeSticky = false;
-        }
+        clearStickyNotice();
         filter = "";
         closeActions();
         leaveChips();
@@ -602,6 +600,14 @@ Scope {
             noticeTimer.restart();
     }
 
+    // Ends a sticky notice (a timed one keeps its own timer).
+    function clearStickyNotice(): void {
+        if (!noticeSticky)
+            return;
+        clipNotice = "";
+        noticeSticky = false;
+    }
+
     // A sticky notice stays until the query changes or Search closes (the reason a script did not run needs time to read).
     property bool noticeSticky: false
 
@@ -664,6 +670,8 @@ Scope {
     property bool noticeTruncated: false
     // The panel says whether the footer notice is really drawn (visible, opaque, inside the panel); dev status only.
     property bool noticeShown: false
+    // {x, y, w, h} of the painted notice text in the window (logical px) while it is drawn, else null; dev status only.
+    property var noticeRect: null
 
     // Set by moveGroup for the selection change it makes; the list reads it and clears it.
     property bool groupJump: false
@@ -748,6 +756,7 @@ Scope {
         fileHits = [];
         leaveChips();
         filter = "";
+        clearStickyNotice();
         view = "clipboard";
         query = "";
         clipMatch = null;
@@ -761,6 +770,7 @@ Scope {
     function leaveClipboard(): void {
         closePreview();
         clipNotice = "";
+        noticeSticky = false;
         view = "";
         zone = "field";
         query = "";
@@ -1195,6 +1205,7 @@ Scope {
                 notice: root.clipNotice,
                 noticeTruncated: root.noticeTruncated,
                 noticeShown: root.noticeShown,
+                noticeRect: root.noticeRect,
                 copied: root.clipCopiedKey,
                 preview: root.clipPreview ? root.clipPreview.id : "",
                 groups: root.groups.map(g => ({id: g.id, title: g.title, items: g.items.map(i => ({kind: i.kind, title: i.title, subtitle: i.subtitle}))}))

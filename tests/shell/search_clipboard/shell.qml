@@ -81,6 +81,32 @@ ShellRoot {
                     check("the view asks first while the history is off", search.clipPrompt && search.rows.length === 0);
                     search.clipNotNow();
                     check("Not Now leaves the view, Search stays open", search.open && !search.clipboardView && !Clipboard.enabled);
+                    // The sticky notice of a refused script row (Search.say(text, true)): it goes with a query change, with entering or
+                    // leaving the Clipboard view, and with closing; a timed notice after it is a timed one again.
+                    search.say("refused", true);
+                    check("a sticky notice is set and stays (no timer)", search.clipNotice === "refused" && search.noticeSticky);
+                    search.setQuery("abcd");
+                    check("a query change clears the sticky notice", search.clipNotice === "" && !search.noticeSticky);
+                    search.say("refused", true);
+                    search.enterClipboard();
+                    check("entering the Clipboard view clears the sticky notice", search.clipNotice === "" && !search.noticeSticky);
+                    search.say("timed", false);
+                    check("a timed notice is not sticky", search.clipNotice === "timed" && !search.noticeSticky);
+                    search.setQuery("x");
+                    check("a timed notice survives typing in the view (its own timer ends it)", search.clipNotice === "timed");
+                    search.say("refused", true);
+                    check("a sticky notice replaces a timed one and stops its timer", search.clipNotice === "refused" && search.noticeSticky);
+                    search.leaveClipboard();
+                    check("leaving the Clipboard view clears the sticky notice", search.clipNotice === "" && !search.noticeSticky);
+                    search.say("refused", true);
+                    search.say("timed", false);
+                    check("a timed notice after a sticky one is not sticky", search.clipNotice === "timed" && !search.noticeSticky);
+                    search.setQuery("abcde");
+                    check("typing does not end a timed notice", search.clipNotice === "timed");
+                    search.say("refused", true);
+                    search.hide();
+                    check("closing clears the sticky notice", search.clipNotice === "" && !search.noticeSticky);
+                    search.show("");
                     search.toggleClipboard();
                     check("Super+Ctrl+V over open Search enters the view", search.open && search.clipboardView);
                     search.toggleClipboard();
