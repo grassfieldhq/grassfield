@@ -466,6 +466,7 @@
  {"path": "tests/shell/settings_backoff/shell.qml", "layer": "headless"},
  {"path": "tests/shell/pointer_theme/shell.qml", "layer": "headless"},
  {"path": "tests/shell/usable/shell.qml", "layer": "headless"},
+ {"path": "tests/shell/command_store/shell.qml", "layer": "headless"},
  {"path": "tests/shell/search_chips/shell.qml", "layer": "headless"},
  {"path": "tests/shell/search_locale/shell.qml", "layer": "headless"},
  {"path": "tests/shell/search_clipboard/shell.qml", "layer": "headless"},

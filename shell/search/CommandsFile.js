@@ -412,3 +412,127 @@ function parseText(text) {
         return fail("", "unsafe-json");
     return validate(value);
 }
+
+// ---- Requests (E1b: CommandStore, the `search` IPC item functions) ------------------------------------------------------------
+// Pure. A request never edits the file by itself: it builds the candidate content, which the store serializes and reads back
+// through parseText() above, so a request is judged by exactly the rules a file is (the item checks here only give a precise path).
+
+const MAX_REQUEST = 65536;      // one IPC call, in UTF-8 bytes (ADR-0067 D-8)
+const IPC_LISTS = ["links", "replacements", "aiCommands"];     // what the Settings app may change over IPC (never a key binding)
+const ID_PREFIX = {links: "link.", replacements: "text.", aiCommands: "ai."};
+
+// The identity of an item inside its list.
+function keyOf(list, item) {
+    if (list === "favorites")
+        return item;
+    if (list === "quickKeys")
+        return item.key;
+    if (list === "shortcuts")
+        return item.slot;
+    return item.id;
+}
+
+function parseJson(text) {
+    if (typeof text !== "string")
+        return {ok: false, reason: "text"};
+    if (utf8Length(text) > MAX_REQUEST)
+        return {ok: false, reason: "too-big"};
+    let value;
+    try {
+        value = JSON.parse(text);
+    } catch (e) {
+        return {ok: false, reason: "json"};
+    }
+    if (Ui.JsonSafety.unsafeReason(text) !== "")
+        return {ok: false, reason: "unsafe-json"};
+    return {ok: true, value: value};
+}
+
+// `{"list": "links", "item": {...}}`, at most 64 KiB, the item checked as the file reader checks one. `lists` are the lists the
+// caller may touch (IPC_LISTS for the IPC path). Returns {ok: true, list, item} (the item normalized) or {ok: false, path, reason}.
+function parseRequest(text, lists) {
+    const j = parseJson(text);
+    if (!j.ok)
+        return fail("", j.reason);
+    if (!isObject(j.value) || !onlyKeys(j.value, ["list", "item"]))
+        return fail("", "shape");
+    const list = j.value.list;
+    if (typeof list !== "string" || (lists || IPC_LISTS).indexOf(list) < 0)
+        return fail("list", "list");
+    const r = validateItem(list, j.value.item);
+    if (!r.ok)
+        return r;
+    return {ok: true, list: list, item: r.value};
+}
+
+function copy(data) {
+    return JSON.parse(JSON.stringify(data));
+}
+
+// The candidate content after adding (mode "add": the key must be new) or replacing (mode "update": it must exist) an item.
+// Returns {ok: true, data} (not yet validated as a whole file) or {ok: false, path, reason}.
+function withItem(data, list, item, mode) {
+    const next = copy(data);
+    const key = keyOf(list, item);
+    const at = next[list].findIndex(x => keyOf(list, x) === key);
+    if (mode === "add") {
+        if (at >= 0)
+            return fail(list, "exists");
+        next[list].push(item);
+    } else {
+        if (at < 0)
+            return fail(list, "not-found");
+        next[list][at] = item;
+    }
+    return {ok: true, data: next};
+}
+
+// The candidate content without the link, replacement or AI command `id`.
+function withoutItem(data, id) {
+    if (typeof id !== "string" || id.length < 1 || id.length > 128)
+        return fail("id", "id");
+    const next = copy(data);
+    for (const list of IPC_LISTS) {
+        if (id.indexOf(ID_PREFIX[list]) !== 0)
+            continue;
+        const at = next[list].findIndex(x => x.id === id);
+        if (at < 0)
+            return fail(list, "not-found");
+        next[list].splice(at, 1);
+        return {ok: true, data: next};
+    }
+    return fail("id", "id");
+}
+
+// The candidate content after importing the file content `incoming` (a validated commands.json): the links, replacements and AI
+// commands of the file whose id is not already there are added, the others are skipped (what is there wins). Quick keys,
+// keyboard shortcuts and favorites are ignored: a key binding is never imported through this door.
+// Returns {ok: true, data, added, skipped, ignored}.
+function mergeImport(data, incoming) {
+    const next = copy(data);
+    const have = Object.create(null);
+    for (const list of IPC_LISTS)
+        for (const x of next[list])
+            have[x.id] = true;
+    let added = 0;
+    let skipped = 0;
+    for (const list of IPC_LISTS) {
+        for (const x of incoming[list]) {
+            if (have[x.id]) {
+                skipped++;
+                continue;
+            }
+            have[x.id] = true;
+            next[list].push(copy(x));
+            added++;
+        }
+    }
+    const ignored = incoming.quickKeys.length + incoming.shortcuts.length + incoming.favorites.length;
+    return {ok: true, data: next, added: added, skipped: skipped, ignored: ignored};
+}
+
+// The text the store writes: two-space indent and a final newline. `bytes` is its UTF-8 length.
+function serialize(data) {
+    const text = JSON.stringify(data, null, 2) + "\n";
+    return {text: text, bytes: utf8Length(text)};
+}

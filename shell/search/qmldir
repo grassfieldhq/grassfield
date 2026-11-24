@@ -1,4 +1,5 @@
 module qs.search
 BuiltinCommands 1.0 BuiltinCommands.qml
+CommandStore 1.0 CommandStore.qml
 Search 1.0 Search.qml
 SearchPanel 1.0 SearchPanel.qml

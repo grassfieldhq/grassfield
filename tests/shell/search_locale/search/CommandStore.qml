@@ -1,0 +1,1 @@
+../../../../shell/search/CommandStore.qml

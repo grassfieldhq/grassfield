@@ -865,6 +865,27 @@ ShellRoot {
                 console.info("grassfield-shell: search filter ignored, the surface is still being built");
         }
 
+        // The Settings app's requests for commands.json, before the surface exists: the store is built with it.
+        function addItem(json: string): string {
+            return "{\"ok\":false,\"reason\":\"not-ready\"}";
+        }
+
+        function updateItem(json: string): string {
+            return "{\"ok\":false,\"reason\":\"not-ready\"}";
+        }
+
+        function removeItem(id: string): string {
+            return "{\"ok\":false,\"reason\":\"not-ready\"}";
+        }
+
+        function importFile(path: string): string {
+            return "{\"ok\":false,\"reason\":\"not-ready\"}";
+        }
+
+        function importResult(): string {
+            return "{\"ok\":false,\"reason\":\"not-ready\"}";
+        }
+
         function status(): string {
             if (!VisualFixtures.dev)
                 return "refused";

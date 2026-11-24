@@ -287,8 +287,21 @@ ShellRoot {
         check("unconfirmed: every other surface stays refused (" + still.join(", ") + (anyOpen() ? "; " + anyOpen() : "") + ")", still.length === 0 && anyOpen() === "" && !Emoji.placing);
         SessionState.lockConfirmed = true;
 
+        // The Settings app's item functions of the `search` IPC target (command palette E1b): none changes commands.json while locked.
+        const item = JSON.stringify({list: "replacements", item: {id: "text.lk", replace: "lk", with: "x"}});
+        const refused = "{\"ok\":false,\"reason\":\"locked\"}";
+        const revision = search.commandStore.revision;
+        check("locked: search IPC addItem is refused", search.ipc.addItem(item) === refused);
+        check("locked: search IPC updateItem is refused", search.ipc.updateItem(item) === refused);
+        check("locked: search IPC removeItem is refused", search.ipc.removeItem("text.lk") === refused);
+        check("locked: search IPC importFile is refused", search.ipc.importFile("/etc/hostname") === refused);
+        check("locked: search IPC importResult is refused", search.ipc.importResult() === refused);
+        check("locked: commands.json is not changed, nothing is written", search.commandStore.revision === revision && !search.commandStore.writing && search.commandStore.data.replacements.length === 0);
+
         // Unlock: back to normal.
         SessionState.locked = false;
+        check("unlock: the same request is accepted", JSON.parse(search.ipc.addItem(item)).ok === true);
+        search.ipc.removeItem("text.lk");
         openAll();
         check("unlock: everything opens again (" + anyOpen() + ")", search.open && apps.open && Notifications.centerOpen && overview.open && Popups.kind === "controlcenter");
         closeAll();

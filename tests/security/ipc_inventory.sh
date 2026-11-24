@@ -879,6 +879,14 @@ def check(files):
         if path.startswith("apps/") and path.endswith(".cpp") and "shellIpcArgs()" in files[path]:
             callers |= set(re.findall(r'(?:shellIpcArgs\(\)|\bipc)\s*\+\s*QStringList\s*\{\s*QStringLiteral\("(\w+)"\)\s*,\s*QStringLiteral\("(\w+)"\)', files[path]))
 
+    # Command palette E1b: the Settings app's Links and Text Replacements panes (E2, E3) call the item functions of `search`. Until
+    # they do, those functions are listed here (class action, no real-session caller yet); a function listed here that an app or
+    # a binding already calls fails, so the entry is removed with the caller's arrival.
+    pending = {("search", f) for f in ("addItem", "updateItem", "removeItem", "importFile", "importResult")}
+    for key in sorted(pending & callers):
+        fails.append("%s.%s has a real-session caller now: remove it from the pending list" % key)
+    callers |= pending
+
     defs = definitions(files)
     fails += defs
     if not defs:
