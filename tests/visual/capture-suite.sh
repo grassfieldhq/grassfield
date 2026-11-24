@@ -256,13 +256,15 @@ if want thumb; then
   fl_check "one card, on GF-REF (x $cx is right of the output's middle 2208), bottom-right" test "$(card_count)" = 1 -a "$cx" -gt 2208
   # layer = plate + 2 x edge (16): plate 216 wide
   fl_check "card plate is 216 pt wide (token) = 270 device pixels: layer ${cw} wide" test "$cw" -ge 247 -a "$cw" -le 248
+  # the card is the picture (no plate): its pixels are 270 device pixels wide (216 pt at 1.25), not 269
+  fl_check "card is 270 device pixels wide (216 pt at 1.25), whole pixels: ${bb%%x*}" test "${bb%%x*}" = 270
   fl_check "card sits 16 pt from the right edge: layer right edge $((cx + cw)) vs output right 2976" test "$((cx + cw))" = 2976
   # the picture inside the card is the capture: compare the card's picture with the capture scaled to it
-  ix=$(( (cx - 1440 + 16 + 6) * 125 / 100 )); iy=$(( (cy + 16 + 6) * 125 / 100 ))
-  magick "$(result_field .primary)" -resize 255x170! "$out/th-ref.png"
-  magick "$out/th-card1.png" -crop 255x170+${ix}+${iy} +repage "$out/th-inner.png"
+  ix=$(( (cx - 1440 + 16) * 125 / 100 )); iy=$(( (cy + 16) * 125 / 100 ))
+  magick "$(result_field .primary)" -resize 270x180! "$out/th-ref.png"
+  magick "$out/th-card1.png" -crop 270x180+${ix}+${iy} +repage "$out/th-inner.png"
   rm1=$(magick compare -metric RMSE "$out/th-ref.png" "$out/th-inner.png" null: 2>&1 | sed 's/.*(\(.*\))/\1/')
-  echo "RMSE (0-1) of the card's picture against the capture scaled to 255x170: $rm1"
+  echo "RMSE (0-1) of the card's picture against the capture scaled to 270x180: $rm1"
   fl_check "the card shows the capture (RMSE $rm1 < 0.05)" awk -v r="$rm1" 'BEGIN{exit !(r < 0.05)}'
   # a portrait capture
   cs_timed "$out/th2.log" selection --geometry "1500,50 300x500"
@@ -272,13 +274,14 @@ if want thumb; then
   echo "cards after the portrait: ${L[*]}"
   read -r px py pw ph <<<"${L[0]}"
   fl_check "two cards, the new portrait one on top" test "${#L[@]}" = 2
-  fl_check "portrait card: 135 pt tall picture, narrower than the landscape (layer ${pw} wide, ${ph} tall)" test "$pw" -lt 248 -a "$ph" = $((135 + 12 + 32))
+  fl_check "portrait card: 144 pt tall picture, narrower than the landscape (layer ${pw} wide, ${ph} tall)" test "$pw" -lt 248 -a "$ph" = $((144 + 32))
   # three, then a fourth pushes the oldest out
   cs_timed "$out/th3.log" screen --output GF-REF
   cs_timed "$out/th4.log" selection --geometry "1700,300 500x300"
   sleep 1.5
   shot th-stack
   fl_check "at most three cards (four shots, now $(card_count))" test "$(card_count)" = 3
+  fl_check "no binding loop in the shell log" test "$(grep -c 'Binding loop' "$VS_DEV/shell.log")" = 0
   # the card's hover buttons
   read -r cx cy cw ch <<<"$(card_layers | tail -1)"
   vs_pointer abs $(( cx - 1440 + cw / 2 )) $(( cy + ch / 2 )) >/dev/null

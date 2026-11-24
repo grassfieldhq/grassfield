@@ -434,3 +434,8 @@ function choice(id, options) {
         return {action: "previous"};
     return null;
 }
+
+// Whether the rectangle `r` touches `hole`.
+function touches(r, hole) {
+    return !!hole && hole.w > 0 && hole.h > 0 && r.x < hole.x + hole.w && r.x + r.w > hole.x && r.y < hole.y + hole.h && r.y + r.h > hole.y;
+}

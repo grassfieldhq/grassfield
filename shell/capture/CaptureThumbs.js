@@ -155,19 +155,52 @@ function remove(cards, id) {
     return (cards || []).filter(c => c.id !== id);
 }
 
-// A card's size, `m` = {width, pictureHeight, inset, minPictureWidth}: the picture fits the card's width (a screenshot's own shape,
-// 16:9 for a recording or a size that is not known) and at most `pictureHeight` tall, narrower then (not less than
-// `minPictureWidth`), so a tall capture does not fill the corner. {width, height, pictureWidth, pictureHeight} in points.
+// A length in points snapped to whole device pixels at `scale` (1.25: 216 pt is 270 px, a card never lands on a fractional pixel).
+function snap(value, scale) {
+    const k = scale > 0 ? scale : 1;
+    return Math.round(value * k) / k;
+}
+
+// How many lines of recognised text a Capture Text card shows: none for a QR code (its data is never shown); else the number the
+// card's own Text measured (`m.lines[id]`, the Text wraps by words, so only it knows), at most `maxLines`; until it has measured,
+// a guess from the text's lines and about `charsPerLine` characters a line.
+function textLineCount(card, m) {
+    if (!card || card.qr === true || !card.text)
+        return 0;
+    const most = Math.max(1, m.maxLines || 1);
+    const measured = m.lines ? m.lines[card.id] : undefined;
+    if (typeof measured === "number" && measured >= 1)
+        return Math.min(most, measured);
+    const per = Math.max(1, m.charsPerLine || 1);
+    let n = 0;
+    for (const line of String(card.text).split("\n"))
+        n += Math.max(1, Math.ceil(line.length / per));
+    return Math.min(most, n);
+}
+
+// A card's size, `m` = {width, pictureHeight, inset, minPictureWidth, scale}: the picture fits the card's width (a screenshot's own
+// shape, 16:9 for a recording or a size that is not known) and at most `pictureHeight` tall, narrower then (not less than
+// `minPictureWidth`), so a tall capture does not fill the corner. {width, height, pictureWidth, pictureHeight} in points, all on
+// whole device pixels at `m.scale`. The picture is the card (`inset` 0): no plate around it. A Capture Text card is as tall as its
+// title and its first lines (`m.textPad`, `m.titleHeight`, `m.textGap`, `m.lineHeight`, `m.charsPerLine`, `m.maxLines`).
 function cardSize(card, m) {
+    const sc = m.scale;
+    if (card && card.kind === "text") {
+        const lines = textLineCount(card, m);
+        const body = lines > 0 ? m.textGap + lines * m.lineHeight : 0;
+        const h = snap(2 * m.textPad + m.titleHeight + body, sc);
+        const w = snap(m.width, sc);
+        return {width: w, height: h, pictureWidth: w, pictureHeight: h, lines: lines};
+    }
     const inner = m.width - 2 * m.inset;
     const ratio = card && card.kind === "shot" && card.pixels ? card.pixels.h / card.pixels.w : 9 / 16;
-    let w = inner;
-    let h = Math.round(inner * ratio);
+    let w = snap(inner, sc);
+    let h = snap(inner * ratio, sc);
     if (h > m.pictureHeight) {
-        h = m.pictureHeight;
-        w = Math.max(m.minPictureWidth, Math.round(h / ratio));
+        h = snap(m.pictureHeight, sc);
+        w = Math.max(snap(m.minPictureWidth, sc), snap(h / ratio, sc));
     }
-    h = Math.max(1, h);
+    h = Math.max(1 / (sc > 0 ? sc : 1), h);
     return {width: w + 2 * m.inset, height: h + 2 * m.inset, pictureWidth: w, pictureHeight: h};
 }
 
@@ -180,8 +213,8 @@ function layout(cards, screenName, m) {
     let below = 0;
     for (let i = mine.length - 1; i >= 0; i--) {
         const size = cardSize(mine[i], m);
-        out.unshift({id: mine[i].id, width: size.width, height: size.height, pictureWidth: size.pictureWidth, pictureHeight: size.pictureHeight, below: below});
-        below += size.height + m.gap;
+        out.unshift({id: mine[i].id, width: size.width, height: size.height, pictureWidth: size.pictureWidth, pictureHeight: size.pictureHeight, lines: size.lines || 0, below: below});
+        below += size.height + snap(m.gap, m.scale);
     }
     return out;
 }
@@ -295,6 +328,43 @@ function leastPictureWidth(button, pad, inset) {
 // Whether a card dragged by (dx) from where it lay is far enough toward its screen edge to be dismissed on release.
 function dismissed(side, dx, distance) {
     return (side === "left" ? -dx : dx) >= distance;
+}
+
+// The speed of a drag toward the screen edge (points per second, positive toward it) from the pointer's own velocity along x
+// (Qt measures it from the events' timestamps, so a stalled burst of queued events is not a flick); 0 when it is not a number.
+function towardVelocity(side, vx) {
+    if (typeof vx !== "number" || !isFinite(vx))
+        return 0;
+    return side === "left" ? -vx : vx;
+}
+
+// What a drag is once the pointer is `threshold` away from where it was pressed, (dx, dy) from the press: the direction of the
+// whole press-to-now vector, never of the first pixels of a move; "" while it is inside the dead zone.
+function intentAt(side, dx, dy, threshold) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold)
+        return "";
+    return dragIntent(side, dx, dy);
+}
+
+// Whether a translucent surface shows on a card (a Capture Text card, a recording's placeholder, a picture still loading or
+// refused), so the compositor must blur behind it: only a fully opaque picture has none.
+function blurWanted(isText, pictureShown) {
+    return isText === true || pictureShown !== true;
+}
+
+// Whether letting go of a swipe dismisses the card (macOS: a flick or a drag far enough toward the edge): it moved `distance`
+// toward the edge, or it moved toward it at all and left at `flick` points per second or more.
+function swipeDismisses(side, dx, velocity, distance, flick) {
+    const toward = side === "left" ? -dx : dx;
+    return toward >= distance || (toward > 0 && velocity >= flick);
+}
+
+// The decision when the pointer is let go: `dx` the distance pulled, `speed` the speed of the last move toward the edge, `sinceMove`
+// the time (ms) since that move. A pause makes no event, so the speed of a move that was held for `staleMs` or longer is stale: a
+// fast pull, a hold and a release is no flick.
+function releaseDismisses(side, dx, speed, sinceMove, distance, flick, staleMs) {
+    const live = sinceMove <= staleMs ? speed : 0;
+    return swipeDismisses(side, dx, live, distance, flick);
 }
 
 // The side the cards are on: capture.thumbnailSide, "right" for anything else.

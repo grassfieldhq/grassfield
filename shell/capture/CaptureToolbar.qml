@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Effects
 import QtQuick.Shapes
 import Quickshell
 import Quickshell.Wayland
@@ -459,42 +460,77 @@ Variants {
             anchors.fill: parent
             visible: win.framing
 
-            Rectangle {
-                width: parent.width
-                height: win.frame.y
-                color: Model.qtColor(Tokens.captureFrameVeil)
+            // The dimmed display around the frame and the frame's line. They are in this window, so under the Options menu its glass
+            // would show them unblurred (the compositor blurs only what is behind the window): while the menu is open the group is
+            // cut with the menu's own rounded shape (the one its blur region has), so no pixel is neither dimmed nor blurred.
+            Item {
+                id: dimmed
+
+                anchors.fill: parent
+                layer.enabled: win.menuOpen
+                layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskInverted: true
+                    maskSource: menuHole
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: win.frame.y
+                    color: Model.qtColor(Tokens.captureFrameVeil)
+                }
+
+                Rectangle {
+                    y: win.frame.y + win.frame.h
+                    width: parent.width
+                    height: parent.height - y
+                    color: Model.qtColor(Tokens.captureFrameVeil)
+                }
+
+                Rectangle {
+                    y: win.frame.y
+                    width: win.frame.x
+                    height: win.frame.h
+                    color: Model.qtColor(Tokens.captureFrameVeil)
+                }
+
+                Rectangle {
+                    x: win.frame.x + win.frame.w
+                    y: win.frame.y
+                    width: parent.width - x
+                    height: win.frame.h
+                    color: Model.qtColor(Tokens.captureFrameVeil)
+                }
+
+                Rectangle {
+                    x: win.frame.x
+                    y: win.frame.y
+                    width: win.frame.w
+                    height: win.frame.h
+                    color: "transparent"
+                    border.width: Tokens.captureBorderWidth
+                    border.color: Model.qtColor(Tokens.captureBorder)
+                }
             }
 
-            Rectangle {
-                y: win.frame.y + win.frame.h
-                width: parent.width
-                height: parent.height - y
-                color: Model.qtColor(Tokens.captureFrameVeil)
-            }
+            // The menu's shape, the mask that cuts the group above.
+            Item {
+                id: menuHole
 
-            Rectangle {
-                y: win.frame.y
-                width: win.frame.x
-                height: win.frame.h
-                color: Model.qtColor(Tokens.captureFrameVeil)
-            }
+                width: frameLayer.width
+                height: frameLayer.height
+                visible: false
+                layer.enabled: win.menuOpen
 
-            Rectangle {
-                x: win.frame.x + win.frame.w
-                y: win.frame.y
-                width: parent.width - x
-                height: win.frame.h
-                color: Model.qtColor(Tokens.captureFrameVeil)
-            }
-
-            Rectangle {
-                x: win.frame.x
-                y: win.frame.y
-                width: win.frame.w
-                height: win.frame.h
-                color: "transparent"
-                border.width: Tokens.captureBorderWidth
-                border.color: Model.qtColor(Tokens.captureBorder)
+                Rectangle {
+                    x: win.menuRect.x
+                    y: win.menuRect.y
+                    width: win.menuRect.w
+                    height: win.menuRect.h
+                    radius: Tokens.radiusMenu
+                }
             }
 
             // Eight handles made once, each bound to its place on the frame: a model of fresh points destroyed and made the eight
@@ -508,6 +544,12 @@ Variants {
 
                     x: Math.round(centre.x - width / 2)
                     y: Math.round(centre.y - height / 2)
+                    visible: !Model.touches({
+                        x: x,
+                        y: y,
+                        w: width,
+                        h: height
+                    }, win.menuRect)
                     width: Tokens.captureHandleSize
                     height: Tokens.captureHandleSize
                     radius: width / 2
@@ -749,6 +791,19 @@ Variants {
                     win.closeMenu();
             }
         }
+
+        // Where the Options menu is while it is open ({x, y, w, h}, empty otherwise).
+        readonly property var menuRect: win.menuOpen && menuLoader.item !== null ? ({
+                x: menuLoader.x,
+                y: menuLoader.y,
+                w: menuLoader.width,
+                h: menuLoader.height
+            }) : ({
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0
+            })
 
         Loader {
             id: menuLoader

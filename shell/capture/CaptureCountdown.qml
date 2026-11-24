@@ -76,9 +76,9 @@ Variants {
             Accessible.role: Accessible.StaticText
             Accessible.name: seconds.text
 
-            // A text surface: the menus' class.
+            // The HUD glass of the OSD (the controls' class), a circle.
             Material {
-                glassClass: "menu"
+                glassClass: "controls"
                 anchors.fill: parent
                 radius: Tokens.captureCountdownRadius
             }

@@ -393,4 +393,12 @@ TestCase {
         const border = Qt.color(Model.qtColor(Tokens.captureBorder));
         verify(border.r === 1 && border.g === 1 && border.b === 1 && border.a > 0.85, "the border is near-white, not yellow");
     }
+
+    // A handle under the Options menu is hidden.
+    function test_handleUnderTheMenuTouches() {
+        verify(Model.touches({x: 0, y: 0, w: 10, h: 10}, {x: 9, y: 9, w: 5, h: 5}));
+        verify(!Model.touches({x: 0, y: 0, w: 10, h: 10}, {x: 10, y: 0, w: 5, h: 5}));
+        verify(!Model.touches({x: 0, y: 0, w: 10, h: 10}, null));
+        verify(!Model.touches({x: 0, y: 0, w: 10, h: 10}, {x: 0, y: 0, w: 0, h: 0}));
+    }
 }
