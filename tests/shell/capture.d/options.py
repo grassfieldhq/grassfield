@@ -217,7 +217,7 @@ def stop(**extra):
 
 
 # ---- usage: the toolbar's argv only; anything else runs nothing ----
-for bad in (["record"], ["record", "window"], ["screen", "--timer", "3"], ["screen", "--save", "nowhere"], ["selection", "--mic"],
+for bad in (["record"], ["record", "window"], ["screen", "--timer", "4"], ["screen", "--save", "nowhere"], ["selection", "--mic"],
             ["selection", "--output", "DP-1"], ["record", "selection", "--output", "DP-1"], ["record", "screen", "--output", "a b"],
             ["screen", "--pointer", "--pointer"], ["screen", "--timer"], ["stop", "now"], ["window", "extra"],
             # --geometry: whole numbers in slurp's form, a positive size, only where an area is chosen
@@ -329,6 +329,12 @@ r_proc.wait(timeout=30)
 grim = calls("grim")
 check(r_proc.returncode == 0 and grim and grim[0]["t"] - calls()[0]["t"] >= 5.4 and state().get("phase") == "idle",
       "the picture is taken once the countdown is over and the plate gone, and the state goes idle")
+r_proc = start(["screen", "--timer", "3"])
+seen = wait_for(lambda: state().get("phase") == "countdown")
+s = state()
+r_proc.wait(timeout=30)
+check(seen and abs(s.get("until", 0) - time.time() * 1000) < 3500 and r_proc.returncode == 0 and calls("grim")
+      and calls("grim")[0]["t"] - calls()[0]["t"] >= 2.4, "--timer 3 is accepted: a 3 s countdown, then the picture [%r]" % s.get("until"))
 r_proc = start(["selection", "--timer", "10"], FAKE_SLURP="10,20 300x200")
 wait_for(lambda: state().get("phase") == "countdown")
 check(state().get("rect") == {"x": 10, "y": 20, "w": 300, "h": 200}, "the countdown of a selection is over the selection")
