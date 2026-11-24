@@ -3,7 +3,7 @@ import QtQuick
 import QtQuick.Shapes
 import Qt.labs.qmlmodels
 
-// The shapes of the document as scene items (slices B3 and B4): one item per layer, in picture pixels, inside one item scaled by
+// The shapes of the document as scene items (slices B3 to B6: shapes, pen and highlighter strokes, text and counters): one item per layer, in picture pixels, inside one item scaled by
 // the view's zoom. Zooming and scrolling therefore move the scene graph only; nothing is drawn again, and the shapes are
 // aligned with the picture by construction (they are in the same content item). A drag changes one row of the model, so only that
 // shape's path changes. Strokes are in picture pixels, so they grow with the zoom as the exported strokes do. The scene is
@@ -163,6 +163,62 @@ Item {
                             startX: arrowItem.startHead.length > 0 ? arrowItem.startHead[0].x : 0
                             startY: arrowItem.startHead.length > 0 ? arrowItem.startHead[0].y : 0
                             PathPolyline { path: arrowItem.startHead }
+                        }
+                    }
+                }
+
+                // A pen's or a highlighter's stroke: the smoothed centre line as the exporter's own path (SVG path data).
+                DelegateChoice {
+                    roleValue: "stroke"
+                    Shape {
+                        id: strokeItem
+                        required property color gColor
+                        required property real gStroke
+                        required property bool flatCap
+                        required property string pathSvg
+                        preferredRendererType: Shape.CurveRenderer
+                        ShapePath {
+                            strokeColor: strokeItem.gColor
+                            strokeWidth: strokeItem.gStroke
+                            fillColor: "transparent"
+                            joinStyle: ShapePath.RoundJoin
+                            capStyle: strokeItem.flatCap ? ShapePath.FlatCap : ShapePath.RoundCap
+                            PathSvg { path: strokeItem.pathSvg }
+                        }
+                    }
+                }
+
+                // Text and a counter's number: glyph outlines (the exporter's own), over a plate for a pill and for the counter's disc.
+                DelegateChoice {
+                    roleValue: "glyphs"
+                    Shape {
+                        id: glyphItem
+                        required property string pathSvg
+                        required property string plateSvg
+                        required property color plateColor
+                        required property color inkColor
+                        required property color outlineColor
+                        required property real outlineWidth
+                        preferredRendererType: Shape.CurveRenderer
+                        ShapePath {
+                            strokeColor: "transparent"
+                            strokeWidth: 0
+                            fillColor: glyphItem.plateSvg !== "" ? glyphItem.plateColor : "transparent"
+                            PathSvg { path: glyphItem.plateSvg }
+                        }
+                        ShapePath {
+                            strokeColor: glyphItem.outlineWidth > 0 ? glyphItem.outlineColor : "transparent"
+                            strokeWidth: glyphItem.outlineWidth > 0 ? glyphItem.outlineWidth : 0
+                            fillColor: "transparent"
+                            joinStyle: ShapePath.RoundJoin
+                            capStyle: ShapePath.RoundCap
+                            PathSvg { path: glyphItem.pathSvg }
+                        }
+                        ShapePath {
+                            strokeColor: "transparent"
+                            strokeWidth: 0
+                            fillColor: glyphItem.inkColor
+                            PathSvg { path: glyphItem.pathSvg }
                         }
                     }
                 }

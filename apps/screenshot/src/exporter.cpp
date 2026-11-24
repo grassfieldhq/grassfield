@@ -1,6 +1,7 @@
 #include "exporter.h"
 
 #include "annotations.h"
+#include "framing.h"
 
 #include <QLineF>
 #include <QPainterPath>
@@ -40,6 +41,29 @@ void paintShape(QPainter *p, const ShapeGeometry &g)
         p->setBrush(Qt::NoBrush);
         p->drawLine(g.shaftStart, g.shaftEnd);
         return;
+    case ShapeGeometry::Stroke: {
+        QPen pen = strokePen(g.color, g.width, Qt::RoundJoin);
+        pen.setCapStyle(g.flatCap ? Qt::FlatCap : Qt::RoundCap);
+        p->setBrush(Qt::NoBrush);
+        p->setPen(pen);
+        p->drawPath(g.path); // one path, one stroke: a highlighter's overlaps are not darker
+        return;
+    }
+    case ShapeGeometry::Glyphs:
+        p->setPen(Qt::NoPen);
+        if (!g.plate.isEmpty()) {
+            p->setBrush(g.plateColor);
+            p->drawPath(g.plate);
+        }
+        if (g.outlineWidth > 0) {
+            p->setBrush(Qt::NoBrush);
+            p->setPen(strokePen(g.outlineColor, g.outlineWidth, Qt::RoundJoin));
+            p->drawPath(g.path);
+            p->setPen(Qt::NoPen);
+        }
+        p->setBrush(g.ink);
+        p->drawPath(g.path);
+        return;
     case ShapeGeometry::Arrow:
     case ShapeGeometry::ArrowCurved: {
         QPainterPath shaft(g.shaftStart);
@@ -67,8 +91,9 @@ void paintLayers(QPainter *painter, const Layers &layers)
 {
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);
-    for (const Layer &layer : layers)
-        paintShape(painter, shapeGeometry(layer));
+    const QList<int> numbers = counterNumbers(layers);
+    for (int i = 0; i < layers.size(); ++i)
+        paintShape(painter, shapeGeometry(layers[i], numbers[i]));
     painter->restore();
 }
 
@@ -76,7 +101,14 @@ QImage exportLayers(const QImage &original, const Layers &layers)
 {
     if (original.isNull() || layers.isEmpty())
         return original;
-    QImage work = original.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    // The picture as the frame layer (crop, rotate, flip) leaves it: every other layer is in its pixels.
+    const QImage framed = applyFrame(original, frameOf(layers));
+    bool anyDrawn = false;
+    for (const Layer &layer : layers)
+        anyDrawn = anyDrawn || layer.type != QLatin1String("frame");
+    if (!anyDrawn)
+        return framed; // a crop or a turn alone moves whole pixels: no round trip through another format, nothing to blend
+    QImage work = framed.convertToFormat(QImage::Format_ARGB32_Premultiplied);
     work.setDevicePixelRatio(1);
     {
         QPainter painter(&work);

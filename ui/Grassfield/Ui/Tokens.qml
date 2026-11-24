@@ -2963,6 +2963,38 @@ QtObject {
     readonly property int screenshotHandleSize: 10
     // estimate: how far from a shape the pointer still picks it, and from a handle still grabs it, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
     readonly property int screenshotHitTolerance: 6
+    // estimate: the thin choice of the style bar's stroke width, in points (the default stroke is screenshot.strokeWidth) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotStrokeWidthThin: 2
+    // estimate: the thick choice of the style bar's stroke width, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotStrokeWidthThick: 6
+    // estimate: the small text size of the style bar, in points: a pixel size is this times the capture's scale [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotTextSizeSmall: 14
+    // estimate: the default text size, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotTextSize: 20
+    // estimate: the large text size of the style bar, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotTextSizeLarge: 32
+    // estimate: the default diameter of a counter, in points, a disc that holds two digits at the default text size [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotCounterSize: 28
+    // estimate: the small counter is this share of the default diameter [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotCounterSizeScaleSmall: 0.75
+    // estimate: the large counter is this many times the default diameter [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotCounterSizeScaleLarge: 1.5
+    // estimate: the highlighter is this many times as wide as the pen's stroke, a marker's broad tip [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotHighlighterFactor: 4
+    // estimate: the highlighter's alpha, so that the text under it reads (checked on the nested screenshots) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotHighlighterOpacity: 0.4
+    // estimate: the options strip under the unified toolbar (colour, width, text style and the crop's presets), one row of 32-pt controls in a 40-pt band [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotStyleBarHeight: 40
+    // estimate: the diameter of a colour swatch of the style bar, a disc as Settings' accent swatches [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotSwatchSize: 18
+    // estimate: the narrowest the text editor on the picture gets while it is empty, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotTextEditorMinWidth: 48
+    // estimate: the dim over the part of the picture the crop leaves out [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotCropScrimOpacity: 0.5
+    // estimate: the crop rectangle's border, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotCropBorderWidth: 2
+    // estimate: the alpha of the selection in the text editor on the picture (its letters are drawn by the preview layer, not by the editor) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotTextSelectionOpacity: 0.35
 
     // F1 reference (docs/testing/f1-reference-gaps.md, Apps launcher): panel 844 +-1 pt wide (2x capture)
     readonly property int launcherPanelWidth: 844

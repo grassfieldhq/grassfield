@@ -55,6 +55,35 @@ Layers allKinds()
             makeShape(8, "arrow", QPointF(12, 46), QPointF(70, 30), style("#de3651", 3, false, "curved"))};
 }
 
+// The kinds of slices B5 and B6: pen, highlighter, the three text styles (one of two lines, one turned) and two counters.
+ShapeStyle penLook(const char *color, qreal width)
+{
+    ShapeStyle s = style(color, width);
+    s.highlightFactor = 4;
+    s.highlightOpacity = 0.45;
+    s.textSize = 14;
+    s.counterSize = 18;
+    return s;
+}
+
+Layers newKinds()
+{
+    ShapeStyle plain = penLook("#0167fd", 3), outlined = plain, pill = plain;
+    outlined.textStyle = "outlined";
+    outlined.color = "#fcea21"; // yellow: its edge is black, which shows on the scene test's white
+    pill.textStyle = "pill";
+    Layer turned = makeText(7, QPointF(80, 55), "Turned", plain);
+    turned.fields.insert("rot", 1);
+    return {makeStroke(1, "pen", {{4, 6}, {14, 16}, {25, 8}, {36, 18}, {50, 10}, {62, 20}}, penLook("#de3651", 2.5)),
+            makeStroke(2, "highlighter", {{6, 30}, {70, 33}, {88, 28}}, penLook("#fcea21", 3)),
+            makeText(3, QPointF(30, 46), "Look here", plain),
+            makeText(4, QPointF(62, 58), "Two\nlines", outlined),
+            makeText(5, QPointF(22, 62), "Pill", pill),
+            makeCounter(6, QPointF(86, 12), penLook("#7fb844", 3)),
+            turned,
+            makeCounter(8, QPointF(88, 40), penLook("#de3651", 3))};
+}
+
 // The scene on a software window, the way Editor.qml puts it (the holder is the picture's size on screen).
 struct Rig {
     Rig(const QSize &picture, qreal zoom, const QSize &view)
@@ -147,7 +176,7 @@ QRect boxOf(const Layer &layer, qreal zoom, const QSize &image)
         for (const QPointF &p : *head)
             bounds = bounds.united(QRectF(p, QSizeF(0, 0)));
     }
-    const qreal margin = g.width + g.headStroke + 3;
+    const qreal margin = g.width + g.headStroke + g.outlineWidth + 3;
     bounds.adjust(-margin, -margin, margin, margin);
     const QRectF px(bounds.x() * zoom, bounds.y() * zoom, bounds.width() * zoom, bounds.height() * zoom);
     return px.toAlignedRect().intersected(QRect(QPoint(0, 0), image));
@@ -172,7 +201,10 @@ double differingIn(const QImage &a, const QImage &b, const QRect &box, int toler
 // The same layer drawn wrongly, for the exporter's side of a comparison that must then fail.
 Layer thinner(Layer layer)
 {
-    layer.fields.insert("width", layer.fields.value("width").toDouble() * 0.7);
+    if (layer.fields.contains("size")) // a text or a counter: 30% smaller
+        layer.fields.insert("size", layer.fields.value("size").toDouble() * 0.7);
+    else
+        layer.fields.insert("width", layer.fields.value("width").toDouble() * 0.7);
     return layer;
 }
 Layer withoutHeads(const Layer &layer) // an arrow as the plain line it would be with no head
@@ -309,6 +341,94 @@ TEST_P(SceneAgreement, TheSceneIsTheExportersDrawingAtThatZoom)
 }
 
 INSTANTIATE_TEST_SUITE_P(Zooms, SceneAgreement, ::testing::Values(1.0, 2.5, 16.0));
+
+// The same bound for the kinds of slices B5 and B6, each on its own and then all together (the counters' numbers come from their place
+// in the list, so the two counters are also drawn with each other). Text depends on the font at hand, but the scene and the
+// exporter lay out the same glyph outlines, so the bound does not.
+class SceneAgreementNewKinds : public ::testing::TestWithParam<double>
+{
+};
+
+TEST_P(SceneAgreementNewKinds, TheScenePenHighlighterTextAndCountersAreTheExportersDrawing)
+{
+    const double zoom = GetParam();
+    const QSize natural(96, 72);
+    const Layers all = newKinds();
+    Rig rig(natural, zoom, QSize(int(natural.width() * zoom), int(natural.height() * zoom)));
+    ASSERT_NE(rig.scene, nullptr);
+
+    rig.model.setLayers(all);
+    const QImage together = rig.grab();
+    EXPECT_LT(differing(together, exporterAt(all, natural, zoom), kLevels), 0.01) << "all the new kinds together at zoom " << zoom;
+
+    const QList<int> numbers = counterNumbers(all);
+    for (int i = 0; i < all.size(); ++i) {
+        const Layer &layer = all[i];
+        // Alone, but with the counters before it that number it: a counter is drawn as the place it takes among the counters.
+        Layers shown;
+        for (int k = 0; k <= i; ++k) {
+            if (k == i || (layer.type == QLatin1String("counter") && all[k].type == QLatin1String("counter")))
+                shown.append(all[k]);
+        }
+        rig.model.setLayers(shown);
+        const QImage scene = rig.grab();
+        const QRect box = boxOf(layer, zoom, scene.size());
+        ASSERT_FALSE(box.isEmpty());
+        const double right = differingIn(scene, exporterAt(shown, natural, zoom), box, kLevels);
+        std::printf("share layer %d (%s, number %d) zoom %.1f: right %.3f%%", layer.id, layer.type.toLatin1().constData(), numbers[i], zoom, right * 100);
+        EXPECT_LT(right, kShare) << layer.type.toStdString() << " " << layer.id << " at zoom " << zoom;
+
+        QImage blank(scene.size(), QImage::Format_RGB32);
+        blank.fill(Qt::white);
+        EXPECT_GT(differingIn(scene, blank, box, kLevels), 0.0) << "layer " << layer.id << " drew nothing";
+
+        // The bound is tight: a stroke 30% thinner and a text or counter 30% smaller are caught.
+        Layers wrong = shown;
+        wrong.last() = thinner(layer);
+        const double narrow = differingIn(scene, exporterAt(wrong, natural, zoom), box, kLevels);
+        std::printf(", wrong size or width %.3f%%", narrow * 100);
+        EXPECT_GT(narrow, kShare) << "a 30% smaller drawing passes for layer " << layer.id << " at zoom " << zoom;
+        if (layer.type == QLatin1String("text") && layer.fields.value("style").toString() != QLatin1String("plain")) {
+            Layers plainOne = shown;
+            plainOne.last().fields.insert("style", "plain");
+            const double flat = differingIn(scene, exporterAt(plainOne, natural, zoom), box, kLevels);
+            std::printf(", style left out %.3f%%", flat * 100);
+            EXPECT_GT(flat, kShare) << "the outline or the pill is missing from the exporter's side and the bound does not see it";
+        }
+        if (layer.type == QLatin1String("counter") && shown.size() > 1) {
+            Layers renumbered = shown;
+            renumbered.removeFirst(); // the same counter, drawn as the first
+            const double number = differingIn(scene, exporterAt(renumbered, natural, zoom), box, kLevels);
+            std::printf(", number off by one %.3f%%", number * 100);
+            EXPECT_GT(number, kShare) << "a counter with the wrong number passes";
+        }
+        std::printf("\n");
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Zooms, SceneAgreementNewKinds, ::testing::Values(1.0, 2.5, 16.0));
+
+TEST(LayerModel, TheNewKindsAreStrokesAndGlyphsWithTheExportersOutlines)
+{
+    LayerModel model;
+    const Layers all = newKinds();
+    model.setLayers(all);
+    const auto role = [&](int row, LayerModel::Role r) { return model.data(model.index(row), r); };
+    EXPECT_EQ(role(0, LayerModel::KindRole).toString(), "stroke");
+    EXPECT_EQ(role(1, LayerModel::KindRole).toString(), "stroke");
+    EXPECT_EQ(role(0, LayerModel::FlatCapRole).toBool(), false);
+    EXPECT_EQ(role(1, LayerModel::FlatCapRole).toBool(), true) << "a marker's ends are flat";
+    for (int row : {2, 3, 4, 5, 6, 7})
+        EXPECT_EQ(role(row, LayerModel::KindRole).toString(), "glyphs") << row;
+    EXPECT_EQ(role(0, LayerModel::PathRole).toString(), pathToSvg(shapeGeometry(all[0]).path));
+    EXPECT_EQ(role(5, LayerModel::PathRole).toString(), pathToSvg(shapeGeometry(all[5], 1).path)) << "the first counter reads 1";
+    EXPECT_EQ(role(7, LayerModel::PathRole).toString(), pathToSvg(shapeGeometry(all[7], 2).path)) << "the second reads 2";
+    EXPECT_EQ(role(2, LayerModel::PlateRole).toString(), "") << "plain text has no plate";
+    EXPECT_NE(role(4, LayerModel::PlateRole).toString(), "") << "a pill has";
+    EXPECT_NE(role(5, LayerModel::PlateRole).toString(), "") << "and a counter's disc is its plate";
+    EXPECT_GT(role(3, LayerModel::OutlineWidthRole).toDouble(), 0);
+    EXPECT_EQ(role(2, LayerModel::OutlineWidthRole).toDouble(), 0);
+}
 
 TEST(Scene, ItIsClippedToThePictureAsTheExportIs)
 {

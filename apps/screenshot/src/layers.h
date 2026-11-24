@@ -27,11 +27,16 @@ struct Layer {
 };
 using Layers = QList<Layer>;
 
-// The layer types of the tool group (docs/specs/capture-suite.md §3.3) and "image" (a dropped picture, slice B27).
+// The layer types of the tool group (docs/specs/capture-suite.md §3.3), "image" (a dropped picture, slice B27) and "frame" (slice B8:
+// the crop, rotation and flip of the picture itself, at most one per document; framing.h).
 QStringList layerTypes();
 
 // The file's bytes for `layers` (compact JSON, keys sorted: the same layers always give the same bytes).
 QByteArray layersToJson(const Layers &layers);
+
+// Whether the file for `layers` stays within what the reader takes (kMaxLayersBytes): every edit and the writer check it, so that a file
+// that is written can be read back.
+bool layersFit(const Layers &layers);
 
 // Parses and validates a layers file. False with `error` set when the bytes are not valid JSON, hold more than kMaxLayersBytes,
 // are not a version-1 document, hold more than kMaxLayers layers, a layer that is not an object, an id that is not an integer of

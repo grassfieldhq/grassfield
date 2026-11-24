@@ -207,6 +207,12 @@ bool CaptureHistory::writeLayers(const QString &id, const QByteArray &layers, QS
             *error = QStringLiteral("not an entry id");
         return false;
     }
+    if (layers.size() > kMaxLayersBytes) {
+        // The reader refuses more than this: a file written past it could never be opened again.
+        if (error)
+            *error = QStringLiteral("layers file too large");
+        return false;
+    }
     return atomicWrite(layersPath(id), layers, 0600, error);
 }
 

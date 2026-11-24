@@ -12,7 +12,8 @@ QStringList layerTypes()
     return {QStringLiteral("arrow"),    QStringLiteral("line"),      QStringLiteral("rectangle"), QStringLiteral("ellipse"),
             QStringLiteral("pen"),      QStringLiteral("highlighter"), QStringLiteral("text"),    QStringLiteral("counter"),
             QStringLiteral("redact"),   QStringLiteral("pixelate"),  QStringLiteral("blur"),      QStringLiteral("spotlight"),
-            QStringLiteral("image")};
+            QStringLiteral("image"),
+            QStringLiteral("frame")};
 }
 
 QByteArray layersToJson(const Layers &layers)
@@ -26,6 +27,11 @@ QByteArray layersToJson(const Layers &layers)
     }
     const QJsonObject root{{QStringLiteral("v"), kLayersVersion}, {QStringLiteral("layers"), array}};
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+bool layersFit(const Layers &layers)
+{
+    return layers.size() <= kMaxLayers && layersToJson(layers).size() <= kMaxLayersBytes;
 }
 
 bool layersFromJson(const QByteArray &bytes, Layers *layers, QString *error)

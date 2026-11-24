@@ -977,6 +977,21 @@
     </message>
 </context>
 <context>
+    <name>AnnotationLayer</name>
+    <message>
+        <source>Crop rectangle, %1 by %2 pixels</source>
+        <translation>Rectangle de recadrage, %1 sur %2 pixels</translation>
+    </message>
+    <message>
+        <source>%1 × %2</source>
+        <translation>%1 × %2</translation>
+    </message>
+    <message>
+        <source>Text</source>
+        <translation>Texte</translation>
+    </message>
+</context>
+<context>
     <name>AppAboutPanel</name>
     <message>
         <source>About %1</source>
@@ -5134,28 +5149,28 @@
         <translation>Ellipse</translation>
     </message>
     <message>
+        <source>Pen</source>
+        <translation>Crayon</translation>
+    </message>
+    <message>
+        <source>Highlighter</source>
+        <translation>Surligneur</translation>
+    </message>
+    <message>
+        <source>Text</source>
+        <translation>Texte</translation>
+    </message>
+    <message>
+        <source>Counter</source>
+        <translation>Compteur</translation>
+    </message>
+    <message>
+        <source>Crop</source>
+        <translation>Recadrer</translation>
+    </message>
+    <message>
         <source>%1 (%2)</source>
         <translation>%1 (%2)</translation>
-    </message>
-    <message>
-        <source>Straight Arrow</source>
-        <translation>Flèche droite</translation>
-    </message>
-    <message>
-        <source>Curved Arrow</source>
-        <translation>Flèche courbe</translation>
-    </message>
-    <message>
-        <source>Double Arrow</source>
-        <translation>Flèche double</translation>
-    </message>
-    <message>
-        <source>Filled</source>
-        <translation>Plein</translation>
-    </message>
-    <message>
-        <source>Fill the shape</source>
-        <translation>Remplir la forme</translation>
     </message>
     <message>
         <source>%1 × %2 pixels, %3</source>
@@ -7664,6 +7679,38 @@
     <message>
         <source>Ellipse</source>
         <translation>Ellipse</translation>
+    </message>
+    <message>
+        <source>Pen</source>
+        <translation>Crayon</translation>
+    </message>
+    <message>
+        <source>Highlighter</source>
+        <translation>Surligneur</translation>
+    </message>
+    <message>
+        <source>Text</source>
+        <translation>Texte</translation>
+    </message>
+    <message>
+        <source>Counter</source>
+        <translation>Compteur</translation>
+    </message>
+    <message>
+        <source>Eyedropper</source>
+        <translation>Pipette</translation>
+    </message>
+    <message>
+        <source>Crop</source>
+        <translation>Recadrer</translation>
+    </message>
+    <message>
+        <source>Flip Horizontal</source>
+        <translation>Retourner horizontalement</translation>
+    </message>
+    <message>
+        <source>Flip Vertical</source>
+        <translation>Retourner verticalement</translation>
     </message>
 </context>
 <context>
@@ -16434,6 +16481,161 @@
     <message>
         <source>Stop</source>
         <translation>Arrêter</translation>
+    </message>
+</context>
+<context>
+    <name>StyleBar</name>
+    <message>
+        <source>Red</source>
+        <translation>Rouge</translation>
+    </message>
+    <message>
+        <source>Orange</source>
+        <translation>Orange</translation>
+    </message>
+    <message>
+        <source>Yellow</source>
+        <translation>Jaune</translation>
+    </message>
+    <message>
+        <source>Green</source>
+        <translation>Vert</translation>
+    </message>
+    <message>
+        <source>Blue</source>
+        <translation>Bleu</translation>
+    </message>
+    <message>
+        <source>Purple</source>
+        <translation>Violet</translation>
+    </message>
+    <message>
+        <source>Graphite</source>
+        <translation>Graphite</translation>
+    </message>
+    <message>
+        <source>Current colour %1</source>
+        <translation>Couleur actuelle %1</translation>
+    </message>
+    <message>
+        <source>Eyedropper</source>
+        <translation>Pipette</translation>
+    </message>
+    <message>
+        <source>%1 (%2)</source>
+        <translation>%1 (%2)</translation>
+    </message>
+    <message>
+        <source>Stroke Width</source>
+        <translation>Épaisseur du trait</translation>
+    </message>
+    <message>
+        <source>Thin</source>
+        <translation>Fin</translation>
+    </message>
+    <message>
+        <source>Medium</source>
+        <translation>Moyen</translation>
+    </message>
+    <message>
+        <source>Thick</source>
+        <translation>Épais</translation>
+    </message>
+    <message>
+        <source>Straight Arrow</source>
+        <translation>Flèche droite</translation>
+    </message>
+    <message>
+        <source>Curved Arrow</source>
+        <translation>Flèche courbe</translation>
+    </message>
+    <message>
+        <source>Double Arrow</source>
+        <translation>Flèche double</translation>
+    </message>
+    <message>
+        <source>Filled</source>
+        <translation>Plein</translation>
+    </message>
+    <message>
+        <source>Fill the shape</source>
+        <translation>Remplir la forme</translation>
+    </message>
+    <message>
+        <source>Text Style</source>
+        <translation>Style du texte</translation>
+    </message>
+    <message>
+        <source>Plain</source>
+        <translation>Simple</translation>
+    </message>
+    <message>
+        <source>Outlined</source>
+        <translation>Contour</translation>
+    </message>
+    <message>
+        <source>Pill</source>
+        <translation>Pastille</translation>
+    </message>
+    <message>
+        <source>Text Size</source>
+        <translation>Taille du texte</translation>
+    </message>
+    <message>
+        <source>Small</source>
+        <translation>Petit</translation>
+    </message>
+    <message>
+        <source>Large</source>
+        <translation>Grand</translation>
+    </message>
+    <message>
+        <source>Counter Size</source>
+        <translation>Taille du compteur</translation>
+    </message>
+    <message>
+        <source>Aspect Ratio</source>
+        <translation>Format</translation>
+    </message>
+    <message>
+        <source>Free</source>
+        <translation>Libre</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Original</translation>
+    </message>
+    <message>
+        <source>Rotate Left</source>
+        <translation>Pivoter à gauche</translation>
+    </message>
+    <message>
+        <source>Rotate Right</source>
+        <translation>Pivoter à droite</translation>
+    </message>
+    <message>
+        <source>Flip Horizontal</source>
+        <translation>Retourner horizontalement</translation>
+    </message>
+    <message>
+        <source>Flip Vertical</source>
+        <translation>Retourner verticalement</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Annuler</translation>
+    </message>
+    <message>
+        <source>Cancel Crop</source>
+        <translation>Annuler le recadrage</translation>
+    </message>
+    <message>
+        <source>Crop</source>
+        <translation>Recadrer</translation>
+    </message>
+    <message>
+        <source>Apply Crop</source>
+        <translation>Appliquer le recadrage</translation>
     </message>
 </context>
 <context>

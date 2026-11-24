@@ -5,8 +5,9 @@ import Grassfield.Ui
 
 // Grassfield Screenshot: the editor window (ADR-0066 D-3; docs/specs/capture-suite.md §3.3). Slice B1 shows the picture with the
 // unified toolbar, zoom and fit; slice B2 adds Done and Revert; B3 the layers over the picture (select, move, resize), undo and
-// redo and the question when closing with changes; B4 the arrow, line, rectangle and ellipse tools. The later tools add their
-// buttons to the tool group and their options to the style group.
+// redo and the question when closing with changes; B4 the arrow, line, rectangle and ellipse tools; B5 the pen, the highlighter, the
+// eyedropper and the style bar; B6 text and counters; B8 crop, rotate and flip. The tools are the toolbar's group; the options of the
+// tool at hand are the style bar's (StyleBar.qml) under the toolbar.
 Window {
     id: editorWin
 
@@ -28,6 +29,11 @@ Window {
 
     // Set when the changes are given up (Don't Save): the window then closes without asking.
     property bool discarding: false
+    // Device pixels per point of the capture (its own scale when the file says, else this window's screen): what a width or a size
+    // in points is, in the picture's pixels.
+    readonly property real unit: editorWin.backend.captureScale > 0 ? editorWin.backend.captureScale : editorWin.screen.devicePixelRatio
+    // A text is being typed: the letters, Delete, the arrows and the undo keys are the text's.
+    readonly property bool typing: editorWin.backend.textEditing
     readonly property real toolbarMin: Math.max(toolbar.contentStart, Tokens.windowItemsInset) + editorWin.toolbarRest
 
     title: editorWin.backend.fileName !== "" ? DisplayName.text(editorWin.backend.fileName) : qsTr("Screenshot")
@@ -66,7 +72,34 @@ Window {
     Binding {
         target: editorWin.backend
         property: "toolWidth"
-        value: Tokens.screenshotStrokeWidth * (editorWin.backend.captureScale > 0 ? editorWin.backend.captureScale : editorWin.screen.devicePixelRatio)
+        value: Tokens.screenshotStrokeWidth * editorWin.unit
+    }
+    // The size of a new text and of a new counter, and the font the text is laid out in (the layer names it, so that the file does
+    // not depend on the theme), and the highlighter's width and alpha.
+    Binding {
+        target: editorWin.backend
+        property: "textSize"
+        value: Tokens.screenshotTextSize * editorWin.unit
+    }
+    Binding {
+        target: editorWin.backend
+        property: "counterSize"
+        value: Tokens.screenshotCounterSize * editorWin.unit
+    }
+    Binding {
+        target: editorWin.backend
+        property: "textFamily"
+        value: Appearance.fontFamily
+    }
+    Binding {
+        target: editorWin.backend
+        property: "highlightFactor"
+        value: Tokens.screenshotHighlighterFactor
+    }
+    Binding {
+        target: editorWin.backend
+        property: "highlightOpacity"
+        value: Tokens.screenshotHighlighterOpacity
     }
     // The colour of new shapes (the style group of slice B5 offers more).
     Binding {
@@ -118,74 +151,101 @@ Window {
         onActivated: view.fit()
         onActivatedAmbiguously: view.fit()
     }
-    // Esc lets go of the selection, then closes (and with changes, asks: onClosing).
+    // Esc gives up a crop being drawn, then lets go of the selection, then closes (and with changes, asks: onClosing). While a text is
+    // typed it is the editor's own (it gives the text up).
     Shortcut {
         sequence: "Esc"
-        enabled: !keepSheet.shown
+        enabled: !keepSheet.shown && !editorWin.typing
         onActivated: {
-            if (editorWin.backend.selectedId !== 0)
+            if (editorWin.backend.cropChanges)
+                editorWin.backend.cancelCrop();
+            else if (editorWin.backend.selectedId !== 0)
                 editorWin.backend.selectNone();
             else
                 editorWin.close();
         }
     }
+    // Return applies the crop, or edits the selected text.
+    Shortcut {
+        sequences: ["Return", "Enter"]
+        enabled: !keepSheet.shown && !editorWin.typing && (editorWin.backend.tool === "crop" || editorWin.backend.selectedType === "text")
+        onActivated: {
+            if (editorWin.backend.tool === "crop")
+                editorWin.backend.applyCrop();
+            else
+                editorWin.backend.editSelectedText();
+        }
+    }
+    // Tools > Rotate Left and Rotate Right (the global menu repeats them).
+    Shortcut {
+        sequence: "Ctrl+L"
+        enabled: !keepSheet.shown && !editorWin.typing
+        onActivated: editorWin.backend.rotateLeft()
+        onActivatedAmbiguously: editorWin.backend.rotateLeft()
+    }
+    Shortcut {
+        sequence: "Ctrl+R"
+        enabled: !keepSheet.shown && !editorWin.typing
+        onActivated: editorWin.backend.rotateRight()
+        onActivatedAmbiguously: editorWin.backend.rotateRight()
+    }
     Shortcut {
         sequence: "Ctrl+Z"
-        enabled: !keepSheet.shown
+        enabled: !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.undo()
         onActivatedAmbiguously: editorWin.backend.undo()
     }
     Shortcut {
         sequences: ["Ctrl+Shift+Z", "Ctrl+Y"]
-        enabled: !keepSheet.shown
+        enabled: !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.redo()
         onActivatedAmbiguously: editorWin.backend.redo()
     }
     Shortcut {
         sequences: ["Delete", "Backspace"]
-        enabled: !keepSheet.shown
+        enabled: !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.deleteSelected()
         onActivatedAmbiguously: editorWin.backend.deleteSelected()
     }
     // The arrow keys move the selection by 1 pixel, 10 with Shift (as the pins).
     Shortcut {
         sequence: "Left"
-        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.nudgeSelected(-1, 0)
     }
     Shortcut {
         sequence: "Right"
-        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.nudgeSelected(1, 0)
     }
     Shortcut {
         sequence: "Up"
-        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.nudgeSelected(0, -1)
     }
     Shortcut {
         sequence: "Down"
-        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.nudgeSelected(0, 1)
     }
     Shortcut {
         sequence: "Shift+Left"
-        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.nudgeSelected(-10, 0)
     }
     Shortcut {
         sequence: "Shift+Right"
-        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.nudgeSelected(10, 0)
     }
     Shortcut {
         sequence: "Shift+Up"
-        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.nudgeSelected(0, -10)
     }
     Shortcut {
         sequence: "Shift+Down"
-        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown
+        enabled: editorWin.backend.selectedId !== 0 && !keepSheet.shown && !editorWin.typing
         onActivated: editorWin.backend.nudgeSelected(0, 10)
     }
     // Tool letters.
@@ -195,12 +255,18 @@ Window {
             {key: "A", tool: "arrow"},
             {key: "L", tool: "line"},
             {key: "R", tool: "rectangle"},
-            {key: "O", tool: "ellipse"}
+            {key: "O", tool: "ellipse"},
+            {key: "P", tool: "pen"},
+            {key: "H", tool: "highlighter"},
+            {key: "T", tool: "text"},
+            {key: "N", tool: "counter"},
+            {key: "I", tool: "eyedropper"},
+            {key: "C", tool: "crop"}
         ]
         delegate: Shortcut {
             required property var modelData
             sequence: modelData.key
-            enabled: !keepSheet.shown
+            enabled: !keepSheet.shown && !editorWin.typing
             onActivated: editorWin.backend.tool = modelData.tool
             onActivatedAmbiguously: editorWin.backend.tool = modelData.tool
         }
@@ -221,7 +287,7 @@ Window {
         doubleClickAction: editorWin.backend.titlebarDoubleClick
         canMinimize: editorWin.backend.canMinimize
 
-        // Zoom, the tools and the options of the tool at hand, left to right.
+        // Zoom and the tools, left to right.
         Row {
             id: leadingRow
             objectName: "leadingRow"
@@ -275,7 +341,12 @@ Window {
                         {tool: "arrow", name: qsTr("Arrow"), key: "A"},
                         {tool: "line", name: qsTr("Line"), key: "L"},
                         {tool: "rectangle", name: qsTr("Rectangle"), key: "R"},
-                        {tool: "ellipse", name: qsTr("Ellipse"), key: "O"}
+                        {tool: "ellipse", name: qsTr("Ellipse"), key: "O"},
+                        {tool: "pen", name: qsTr("Pen"), key: "P"},
+                        {tool: "highlighter", name: qsTr("Highlighter"), key: "H"},
+                        {tool: "text", name: qsTr("Text"), key: "T"},
+                        {tool: "counter", name: qsTr("Counter"), key: "N"},
+                        {tool: "crop", name: qsTr("Crop"), key: "C"}
                     ]
 
                     ToolButton {
@@ -294,56 +365,6 @@ Window {
                             anchors.centerIn: parent
                             kind: toolButton.modelData.tool
                         }
-                    }
-                }
-            }
-
-            // The options of the tool: the arrow's style, a shape's fill.
-            ToolbarGroup {
-                objectName: "arrowStyleGroup"
-                visible: editorWin.backend.tool === "arrow"
-
-                Repeater {
-                    model: [
-                        {style: "straight", name: qsTr("Straight Arrow")},
-                        {style: "curved", name: qsTr("Curved Arrow")},
-                        {style: "double", name: qsTr("Double Arrow")}
-                    ]
-
-                    ToolButton {
-                        id: styleButton
-                        required property var modelData
-                        objectName: "arrow_" + styleButton.modelData.style
-                        capsule: true
-                        radio: true
-                        checkable: true
-                        checked: editorWin.backend.arrowStyle === styleButton.modelData.style
-                        accessibleName: styleButton.modelData.name
-                        onClicked: editorWin.backend.arrowStyle = styleButton.modelData.style
-
-                        Glyph {
-                            anchors.centerIn: parent
-                            kind: "arrow" + styleButton.modelData.style.charAt(0).toUpperCase() + styleButton.modelData.style.slice(1)
-                        }
-                    }
-                }
-            }
-            ToolbarGroup {
-                objectName: "fillGroup"
-                visible: editorWin.backend.tool === "rectangle" || editorWin.backend.tool === "ellipse"
-
-                ToolButton {
-                    objectName: "fillButton"
-                    capsule: true
-                    checkable: true
-                    checked: editorWin.backend.toolFill
-                    accessibleName: qsTr("Filled")
-                    tooltip: qsTr("Fill the shape")
-                    onClicked: editorWin.backend.toolFill = !editorWin.backend.toolFill
-
-                    Glyph {
-                        anchors.centerIn: parent
-                        kind: "fillShape"
                     }
                 }
             }
@@ -464,11 +485,22 @@ Window {
 
     // ---- the picture ------------------------------------------------------------------------------
 
+    // The options of the tool at hand (colour, width, text style, the crop's presets): a strip under the toolbar, there while the tool has any.
+    StyleBar {
+        id: styleBar
+        objectName: "styleBar"
+        z: 1
+        anchors.top: toolbar.bottom
+        width: parent.width
+        backend: editorWin.backend
+        unit: editorWin.unit
+    }
+
     ZoomView {
         id: view
         objectName: "zoomView"
         anchors.fill: parent
-        anchors.topMargin: toolbar.height
+        anchors.topMargin: toolbar.height + styleBar.height
         imageSource: editorWin.backend.imageSource
         natW: editorWin.backend.imageWidth
         natH: editorWin.backend.imageHeight
@@ -485,10 +517,11 @@ Window {
 
     // The toolbar's rule appears once the picture scrolls under it (ADR-0039 D3).
     Rectangle {
-        anchors.top: toolbar.bottom
+        anchors.top: styleBar.bottom
         width: parent.width
         height: 1
-        visible: view.scrolled
+        z: 1
+        visible: view.scrolled || styleBar.shown
         color: Appearance.withAlpha(Appearance.colors.separator, Appearance.separatorOpacity)
     }
 

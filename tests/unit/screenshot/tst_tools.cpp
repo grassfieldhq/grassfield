@@ -37,11 +37,19 @@ protected:
 
 } // namespace
 
-TEST_F(ToolsTest, TheToolsAreTheFiveOfThisSlice)
+TEST_F(ToolsTest, TheToolsAreTheOnesOfThisSlice)
 {
-    EXPECT_EQ(ToolController::tools(), (QStringList{"select", "arrow", "line", "rectangle", "ellipse"}));
+    EXPECT_EQ(ToolController::tools(), (QStringList{"select", "arrow", "line", "rectangle", "ellipse", "pen", "highlighter", "text", "counter",
+                                                     "eyedropper", "crop"}));
     EXPECT_EQ(tools.tool(), "select");
-    EXPECT_FALSE(tools.setTool("pen")) << "a tool of a later slice";
+    EXPECT_FALSE(tools.setTool("redact")) << "a tool of a later slice";
+    EXPECT_FALSE(tools.setTool("")) << "and no tool at all";
+    for (const char *t : {"text", "eyedropper", "crop"}) {
+        EXPECT_TRUE(tools.setTool(t));
+        EXPECT_FALSE(ToolController::draws(t)) << t << " is the backend's, not a drawing gesture of the controller";
+        EXPECT_FALSE(tools.press(QPointF(5, 5), 3)) << t;
+        EXPECT_FALSE(tools.busy());
+    }
     EXPECT_TRUE(tools.setTool("rectangle"));
     EXPECT_EQ(tools.tool(), "rectangle");
 }

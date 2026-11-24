@@ -4,11 +4,16 @@ Each PNG is the exporter's output (`apps/screenshot/src/exporter.cpp`, QPainter)
 named `<case>@<scale>.png`: the picture is 160 x 100 at scale `1` and 200 x 125 at scale `1.25`, the shapes' coordinates and
 widths are multiplied by the scale, as a capture at 1.25 makes them. The cases are in `tst_golden.cpp`: `arrow-straight`,
 `arrow-curved`, `arrow-double`, `line`, `rectangle`, `rectangle-filled` (translucent), `ellipse`, `ellipse-filled`, and `scene`
-(all of them over each other: the drawing order).
+(all of them over each other: the drawing order), then, from slices B5 and B6, `pen`, `highlighter`, `text-plain`, `text-outlined`,
+`text-pill` and `counters`.
 
 ## Determinism
 
-- The base picture is computed (checkers over a ramp); no file, font, theme or style takes part. The exporter reads nothing but
+- **Text and counters name a font.** Their layers carry the family `Inter` (the design tokens' family, installed with Grassfield's
+  fonts), and the goldens are the drawing in it: where `Inter` is not installed, those four cases (`text-*`, `counters`) are skipped, not failed. The scene-against-exporter
+  bound of `tst_scene.cpp` and the other text tests do not depend on the font (both sides lay out the same outlines).
+
+- The base picture is computed (checkers over a ramp); no file, theme or style takes part (and no font, but for the text cases above). The exporter reads nothing but
   the picture and the layers.
 - The tests run with `QT_QPA_PLATFORM=offscreen` and `QT_QPA_PLATFORMTHEME` unset (`tst_main.cpp` forces offscreen).
 - Qt's raster engine draws the shapes (no GPU).
