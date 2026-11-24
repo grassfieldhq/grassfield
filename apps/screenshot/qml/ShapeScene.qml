@@ -17,8 +17,10 @@ Item {
 
     // The LayerModel of the backend.
     required property var model
-    // Screen points per picture pixel.
+    // Logical pixels per picture pixel (ZoomView.sceneScale).
     required property real viewScale
+    // Device pixels per logical pixel: the Redact rectangle grows by one DEVICE pixel.
+    property real deviceRatio: 1
     // Pixelate and Blur (slice B7) show the exporter's own pixels, which the backend serves as image://screenshot/fx/<revision>/<layer id>
     // (the revision changes with every edit). Until an image is there for the layer, and whenever it is not, the area shows this opaque
     // colour: the screen never shows less redaction than the file.
@@ -115,7 +117,7 @@ Item {
                         required property real boxH
                         // One device pixel more on every side: the picture under it is drawn with mipmaps, which blend a pixel or so of what
                         // it hides across the border; the screen covers that, so it never shows less than the file.
-                        readonly property real grow: 1 / Math.max(root.viewScale, 0.01)
+                        readonly property real grow: 1 / Math.max(root.viewScale * root.deviceRatio, 0.01)
                         x: redactItem.boxX - grow
                         y: redactItem.boxY - grow
                         width: redactItem.boxW + 2 * grow

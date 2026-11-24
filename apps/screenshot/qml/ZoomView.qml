@@ -15,10 +15,21 @@ Item {
     // A double click toggles Zoom to Fit and Actual Size (an editor turns it off: its tools take the pointer).
     property bool doubleTapZoom: true
 
-    readonly property real fitScale: Math.min(1, Math.min(flick.width / Math.max(1, root.natW), flick.height / Math.max(1, root.natH)))
+    // Device pixels per logical pixel of this window's screen (1.25 on the owner's panel). The zoom is in DEVICE pixels per picture pixel:
+    // 100% shows one picture pixel on one device pixel, so the base picture is never resampled; at 1.25 an 800 px picture is 640
+    // logical px wide. A test sets it to prove other scales.
+    // The window's own (fractional-scale) ratio, which is what its buffer uses; the screen's may be the rounded-up integer one.
+    property real dpr: root.Window.window && root.Window.window.devicePixelRatio > 0 ? root.Window.window.devicePixelRatio : (Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1)
+    // Logical pixels per picture pixel: what the picture holder and the layers over it are scaled by.
+    readonly property real sceneScale: root.viewScale / root.dpr
+    readonly property real fitScale: Math.min(1, Math.min(flick.width * root.dpr / Math.max(1, root.natW), flick.height * root.dpr / Math.max(1, root.natH)))
     property bool fitMode: true
     property real zoom: 1
     readonly property real viewScale: root.fitMode ? root.fitScale : root.zoom
+    // The nearest device pixel, as a logical length (a place or a size on the device grid).
+    function snap(value: real): real {
+        return Math.round(value * root.dpr) / root.dpr;
+    }
     readonly property string zoomLabel: Math.round(root.viewScale * 100) + "%"
     // The content has scrolled under the window's toolbar: the toolbar draws its rule (ADR-0039 D3, step 16).
     readonly property bool scrolled: flick.contentY > flick.originY
@@ -51,8 +62,8 @@ Item {
         root.fitMode = false;
         root.zoom = root.clampZoom(value);
         if (current !== root.zoom) {
-            flick.contentX = Math.max(0, Math.min(flick.contentWidth - flick.width, pictureHolder.x + fx * pictureHolder.width - px));
-            flick.contentY = Math.max(0, Math.min(flick.contentHeight - flick.height, pictureHolder.y + fy * pictureHolder.height - py));
+            flick.contentX = root.snap(Math.max(0, Math.min(flick.contentWidth - flick.width, pictureHolder.x + fx * pictureHolder.width - px)));
+            flick.contentY = root.snap(Math.max(0, Math.min(flick.contentHeight - flick.height, pictureHolder.y + fy * pictureHolder.height - py)));
             flick.returnToBounds();
         }
     }
@@ -83,10 +94,11 @@ Item {
 
         Item {
             id: pictureHolder
-            width: root.natW * root.viewScale
-            height: root.natH * root.viewScale
-            x: Math.max(0, (flick.contentWidth - width) / 2)
-            y: Math.max(0, (flick.contentHeight - height) / 2)
+            // Whole device pixels, in size and in place: at 100% every picture pixel is one device pixel.
+            width: root.snap(root.natW * root.sceneScale)
+            height: root.snap(root.natH * root.sceneScale)
+            x: root.snap(Math.max(0, (flick.contentWidth - width) / 2))
+            y: root.snap(Math.max(0, (flick.contentHeight - height) / 2))
 
             Image {
                 anchors.fill: parent
@@ -94,8 +106,9 @@ Item {
                 asynchronous: true
                 retainWhileLoading: true
                 cache: false
-                mipmap: true
-                smooth: true
+                // Exactly 1:1 is copied as it is; mipmaps only help when the picture is shown smaller.
+                mipmap: root.viewScale < 1
+                smooth: root.viewScale !== 1
                 fillMode: Image.Stretch
             }
         }

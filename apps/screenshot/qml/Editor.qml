@@ -536,7 +536,8 @@ Window {
         AnnotationLayer {
             parent: view.holder
             backend: editorWin.backend
-            viewScale: view.viewScale
+            viewScale: view.sceneScale
+            deviceRatio: view.dpr
         }
     }
 
