@@ -37,7 +37,7 @@ Singleton {
     readonly property bool dnd: Settings.notificationsDnd
     // No banner: the user's Do Not Disturb, or a recording with capture.recordDnd on (nothing saved: the indicators below follow
     // `dnd` only, as macOS shows the Focus of the user's own choice).
-    readonly property bool silenced: CaptureFile.silenced(Settings.notificationsDnd, CaptureState.recording, Settings.captureRecordDnd)
+    readonly property bool silenced: CaptureFile.silenced(Settings.notificationsDnd, CaptureState.phase, CaptureState.kind, Settings.captureRecordDnd)
     // The global previews default is Settings.notificationsPreviews; each app may override it
     // (Settings.notificationsAppPreviews, NotificationPrefs.js).
     // The session lock (SessionState mirrors shell/security/lock; false where nothing feeds it).

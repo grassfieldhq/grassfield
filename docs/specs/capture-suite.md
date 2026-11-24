@@ -173,7 +173,7 @@ The "Slices" column names the §4 slices that build the feature. An M or L row l
 | R9 | Camera overlay [S1] | no | no | `grassfield-screenshot --camera`: a round floating window (Qt Multimedia `Camera`), window rule, corners and sizes, closed with the recording. The shell never opens the camera. | M | Camera only on request. | B23, B24 |
 | R10 | Quality, FPS, resolution [S1][S2] | no | fixed: 60 fps, display size up to 4K | `--fps 30\|60`, `--quality` (`-q`), and the app settings. | S | — | C7 |
 | R11 | Recording time in the menu bar [S1] | yes | yes (MenuBar.qml:1348) | Unchanged. | — | — | — |
-| R12 | Do Not Disturb while recording [S1] | no | no | Option: the shell sets `notifications.dnd` while recording and restores it afterwards. | S | Fewer notification contents in recordings. | A8 |
+| R12 | Do Not Disturb while recording [S1] | no | no | Option: the notification service shows no banner while a recording runs or counts down (a runtime silence, owner decision 2026-11-24: nothing is saved, `notifications.dnd` is never written, the Do Not Disturb indicators follow the user's own setting). | S | Fewer notification contents in recordings. | A8 |
 | R13 | Trim [inferred]; zoom, cursor smoothing, backgrounds, motion blur, "Studio Mode" [S1][S2] | trim in the thumbnail editor | no | Trim: playback and handles (Qt Multimedia), then `ffmpeg -ss -to` (stream copy, or re-encode for an exact cut). The others are not planned for 1.x. | M (trim) | — | B25, B26 |
 | R14 | Webcam-only, portrait or square exports [S1] | no | no | Not planned. | — | — | — |
 

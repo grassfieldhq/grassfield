@@ -131,17 +131,27 @@ TestCase {
 
     // Do Not Disturb while recording is a runtime silence only: the user's own setting decides alone otherwise, and is never an output.
     function test_silencedWhileRecording() {
-        verify(CaptureFile.silenced(false, true, true), "recording with the option on: silenced");
-        verify(!CaptureFile.silenced(false, false, true), "idle: not silenced");
-        verify(!CaptureFile.silenced(false, true, false), "the option off: not silenced");
-        verify(!CaptureFile.silenced(false, false, false));
-        for (const recording of [true, false]) {
-            for (const enabled of [true, false]) {
-                verify(CaptureFile.silenced(true, recording, enabled), "the user's own Do Not Disturb always silences");
+        verify(CaptureFile.silenced(false, "recording", "recording", true), "recording with the option on: silenced");
+        verify(CaptureFile.silenced(false, "recording", "", true), "the phase alone is enough");
+        verify(!CaptureFile.silenced(false, "idle", "", true), "idle: not silenced");
+        verify(!CaptureFile.silenced(false, "recording", "recording", false), "the option off: not silenced");
+        verify(!CaptureFile.silenced(false, "idle", "", false));
+        // A recording's countdown and crosshair: a banner posted then must not be on the screen when it starts.
+        for (const phase of ["starting", "selecting", "countdown", "shooting", "frozen"])
+            verify(CaptureFile.silenced(false, phase, "recording", true), phase + " of a recording");
+        verify(!CaptureFile.silenced(false, "countdown", "shot", true), "a screenshot's countdown is not a recording");
+        verify(!CaptureFile.silenced(false, "countdown", "", true));
+        verify(!CaptureFile.silenced(false, "idle", "recording", true), "an idle state is not under way whatever its kind");
+        verify(!CaptureFile.silenced(false, "countdown", "recording", false), "the option off: not even then");
+        for (const phase of ["idle", "countdown", "recording"]) {
+            for (const kind of ["", "shot", "recording"]) {
+                for (const enabled of [true, false])
+                    verify(CaptureFile.silenced(true, phase, kind, enabled), "the user's own Do Not Disturb always silences");
             }
         }
-        verify(!CaptureFile.silenced(undefined, "yes", 1), "only booleans count");
-        verify(!CaptureFile.silenced(false, undefined, undefined));
+        verify(!CaptureFile.silenced(undefined, "recording", "recording", 1), "only booleans count");
+        verify(!CaptureFile.silenced(false, undefined, undefined, undefined));
+        verify(!CaptureFile.recordingActive("nonsense", "recording"), "an unknown phase is not under way");
     }
 
     // Hide Desktop Icons and the acknowledgement: a key-started shot waits for the icons to be presented hidden, never for ever.

@@ -35,6 +35,8 @@ Singleton {
     property var state: CaptureFile.parse("")
     readonly property string phase: root.state.phase
     readonly property bool recording: root.phase === "recording"
+    // "shot" or "recording" while a capture runs ("" when the helper does not say).
+    readonly property string kind: root.state.kind
     // The clock of the countdown and of the elapsed time, a tick a quarter of a second while either shows.
     property real now: Date.now()
     readonly property int secondsLeft: root.phase === "countdown" ? CaptureFile.secondsLeft(root.now, root.state.until) : 0
