@@ -543,6 +543,13 @@ QString ScreenshotApp::pixelColorAt(qreal x, qreal y) const
     const double fx = std::floor(x), fy = std::floor(y);
     if (image.isNull() || fx < 0 || fy < 0 || fx >= image.width() || fy >= image.height())
         return {};
+    // Under a Redact the eyedropper reads the redaction's fill, never the pixel it hides (the colour would land in the layers file and the export).
+    const screenshot::Layers &layers = m_undo.layers();
+    for (int i = layers.size() - 1; i >= 0; --i) {
+        const screenshot::ShapeGeometry g = screenshot::shapeGeometry(layers[i]);
+        if (g.kind == screenshot::ShapeGeometry::Redact && g.area.contains(int(fx), int(fy)))
+            return g.color.name();
+    }
     const QColor pixel = image.pixelColor(int(fx), int(fy));
     return QColor(pixel.red(), pixel.green(), pixel.blue()).name();
 }
@@ -751,10 +758,14 @@ bool ScreenshotApp::done()
         if (screenshot::hidesPixels(m_document.layers()))
             m_clipboardPng = png;
     }
+    if (!m_clipboardPng.isEmpty() && !m_clipboardForce && !clipboardHoldsCapture())
+        m_clipboardPng.clear(); // the user copied something else since the capture: that is theirs, not ours to replace
     if (!m_clipboardPng.isEmpty()) {
         if (replaceClipboard(m_clipboardPng)) {
             m_clipboardPng.clear();
+            m_clipboardForce = false;
         } else if (ok) {
+            m_clipboardForce = true;
             // Saved, but the capture may still be on the clipboard: the window stays, and a second Done tries again.
             ok = false;
             why = QStringLiteral("the clipboard could not be replaced; it may still hold the picture as it was captured");
@@ -798,6 +809,48 @@ bool ScreenshotApp::replaceClipboard(const QByteArray &png)
             QProcess::execute(clear.first(), clear.mid(1));
     }
     return taken;
+}
+
+bool ScreenshotApp::clipboardHoldsCapture()
+{
+    QByteArray held;
+    int state = 2;
+    if (m_clipboardReader) {
+        state = m_clipboardReader(&held);
+    } else {
+        const QStringList types = screenshot::clipboardTypesArguments();
+        QProcess list;
+        list.start(types.first(), types.mid(1));
+        if (list.waitForStarted(3000)) {
+            list.closeWriteChannel();
+            if (list.waitForFinished(3000) && list.exitStatus() == QProcess::NormalExit) {
+                state = 1;
+                if (list.exitCode() == 0 && QString::fromUtf8(list.readAllStandardOutput()).split(QLatin1Char('\n')).contains(QStringLiteral("image/png"))) {
+                    const QStringList paste = screenshot::clipboardPasteArguments();
+                    QProcess get;
+                    get.start(paste.first(), paste.mid(1));
+                    if (get.waitForStarted(3000)) {
+                        get.closeWriteChannel();
+                        // Never more than a picture the editor opens.
+                        if (get.waitForFinished(10000) && get.exitStatus() == QProcess::NormalExit && get.exitCode() == 0
+                            && get.bytesAvailable() <= screenshot::kMaxImageBytes) {
+                            held = get.readAllStandardOutput();
+                            state = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (state == 2)
+        return true; // cannot tell: better to replace than to leave the capture where it may still be
+    if (state != 0)
+        return false;
+    // Still the capture: the same picture (the copy was made from the file, so its pixels are the original's).
+    const QImage copy = QImage::fromData(held, "PNG");
+    const QImage original = m_document.original();
+    return !copy.isNull() && copy.size() == original.size()
+        && copy.convertToFormat(QImage::Format_ARGB32) == original.convertToFormat(QImage::Format_ARGB32);
 }
 
 bool ScreenshotApp::revert()

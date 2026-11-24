@@ -119,6 +119,14 @@ bool isPixelRegion(ShapeGeometry::Kind kind)
 void renderLayers(QImage *work, const Layers &layers, int count, const QPoint &origin)
 {
     const QList<int> numbers = counterNumbers(layers);
+    // Every Redact of the document is filled in first, before anything reads a pixel: a Blur or a Pixelate that comes earlier in the layer
+    // order (or any later reader) must never see the pixels a Redact hides, or it would spread them outside the box. The Redact's own turn
+    // below fills it again, over whatever was drawn on it in between. Redacted pixels never exist in a buffer that another layer reads.
+    for (int j = 0; j < layers.size(); ++j) {
+        const ShapeGeometry r = shapeGeometry(layers[j], numbers[j]);
+        if (r.kind == ShapeGeometry::Redact)
+            applyRegion(work, r, origin);
+    }
     int i = 0;
     while (i < count) {
         const ShapeGeometry g = shapeGeometry(layers[i], numbers[i]);

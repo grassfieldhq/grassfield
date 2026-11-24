@@ -104,8 +104,14 @@ QPoint pixelateOffset(quint64 seed, int block)
 
 void pixelateNoise(quint64 seed, int blockX, int blockY, int noise[3])
 {
+    const auto draw = [&](quint64 stream, int range) {
+        return int(hashOf(seed, quint64(qint64(blockX)), quint64(qint64(blockY)), stream) % quint64(2 * range + 1)) - range;
+    };
+    // One term shared by the three channels (a brightness shift that averaging the channels of grey text cannot cancel) and one of each
+    // channel's own; together at most kPixelateNoise.
+    const int shared = draw(2, kPixelateLuma);
     for (int c = 0; c < 3; ++c)
-        noise[c] = int(hashOf(seed, quint64(qint64(blockX)), quint64(qint64(blockY)), quint64(c + 3)) % (2 * kPixelateNoise + 1)) - kPixelateNoise;
+        noise[c] = shared + draw(quint64(c + 3), kPixelateNoise - kPixelateLuma);
 }
 
 void pixelateArea(QImage *image, const QRect &area, int block, quint64 seed, const QPoint &origin)

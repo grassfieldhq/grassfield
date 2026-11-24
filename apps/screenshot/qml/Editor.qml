@@ -366,7 +366,7 @@ Window {
                         {tool: "highlighter", name: qsTr("Highlighter"), key: "H"},
                         {tool: "text", name: qsTr("Text"), key: "T"},
                         {tool: "counter", name: qsTr("Counter"), key: "N"},
-                        {tool: "redact", name: qsTr("Redact"), key: "X", hint: qsTr("Hides the area for good. Use it for secrets.")},
+                        {tool: "redact", name: qsTr("Redact"), key: "X", hint: qsTr("Hides the area in the saved picture. Use it for secrets.")},
                         {tool: "pixelate", name: qsTr("Pixelate"), key: "M", hint: qsTr("Hides detail, but short text can still be guessed. Use Redact for secrets.")},
                         {tool: "blur", name: qsTr("Blur"), key: "B", hint: qsTr("For looks only. Does not hide text.")},
                         {tool: "spotlight", name: qsTr("Focus"), key: "S", hint: qsTr("Dims everything outside the box.")},

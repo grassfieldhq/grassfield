@@ -13,6 +13,16 @@ QStringList clipboardArguments()
     return {QStringLiteral("wl-copy"), QStringLiteral("--type"), QStringLiteral("image/png"), QStringLiteral("--sensitive")};
 }
 
+QStringList clipboardTypesArguments()
+{
+    return {QStringLiteral("wl-paste"), QStringLiteral("--list-types")};
+}
+
+QStringList clipboardPasteArguments()
+{
+    return {QStringLiteral("wl-paste"), QStringLiteral("--no-newline"), QStringLiteral("--type"), QStringLiteral("image/png")};
+}
+
 QStringList clipboardClearArguments()
 {
     return {QStringLiteral("wl-copy"), QStringLiteral("--clear")};

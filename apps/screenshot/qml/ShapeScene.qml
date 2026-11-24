@@ -113,10 +113,13 @@ Item {
                         required property real boxY
                         required property real boxW
                         required property real boxH
-                        x: redactItem.boxX
-                        y: redactItem.boxY
-                        width: redactItem.boxW
-                        height: redactItem.boxH
+                        // One device pixel more on every side: the picture under it is drawn with mipmaps, which blend a pixel or so of what
+                        // it hides across the border; the screen covers that, so it never shows less than the file.
+                        readonly property real grow: 1 / Math.max(root.viewScale, 0.01)
+                        x: redactItem.boxX - grow
+                        y: redactItem.boxY - grow
+                        width: redactItem.boxW + 2 * grow
+                        height: redactItem.boxH + 2 * grow
                         antialiasing: false
                         color: Qt.rgba(redactItem.gColor.r, redactItem.gColor.g, redactItem.gColor.b, 1)
                     }

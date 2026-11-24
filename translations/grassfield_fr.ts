@@ -5169,10 +5169,6 @@
         <translation>Caviarder</translation>
     </message>
     <message>
-        <source>Hides the area for good. Use it for secrets.</source>
-        <translation>Masque définitivement la zone. À utiliser pour les secrets.</translation>
-    </message>
-    <message>
         <source>Pixelate</source>
         <translation>Pixeliser</translation>
     </message>
@@ -5235,6 +5231,10 @@
     <message>
         <source>Redo</source>
         <translation>Refaire</translation>
+    </message>
+    <message>
+        <source>Hides the area in the saved picture. Use it for secrets.</source>
+        <translation>Masque la zone dans l’image enregistrée. À utiliser pour les secrets.</translation>
     </message>
     <message>
         <source>Revert</source>
@@ -16538,8 +16538,8 @@
 <context>
     <name>StyleBar</name>
     <message>
-        <source>Hides what is under it for good. Use it for secrets.</source>
-        <translation>Masque définitivement ce qui se trouve dessous. À utiliser pour les secrets.</translation>
+        <source>Hides what is under it in the saved picture. Use it for secrets.</source>
+        <translation>Masque ce qui se trouve dessous dans l’image enregistrée. À utiliser pour les secrets.</translation>
     </message>
     <message>
         <source>Hides detail, but short text can still be guessed. Use Redact for secrets.</source>

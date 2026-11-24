@@ -43,6 +43,9 @@ Arguments resolveArguments(const QStringList &args, const QString &cwd);
 // the automatic copy's own (type image/png, --sensitive: clipboard history does not record it), and the one that empties it when that fails.
 QStringList clipboardArguments();
 QStringList clipboardClearArguments();
+// What the clipboard offers, and its image/png (the bytes on stdout): how the app tells whether it still holds the capture it copied.
+QStringList clipboardTypesArguments();
+QStringList clipboardPasteArguments();
 
 // Started with no file (the Apps entry): macOS's Screenshot app opens the capture toolbar, so this one asks the running shell to.
 // `shellIpc` is grassfield::apps::runmode::shellIpcArgs() (the arguments after `qs`: ipc -p <dir> call), empty when there is no

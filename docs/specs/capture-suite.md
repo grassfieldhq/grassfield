@@ -324,12 +324,12 @@ Reduce Motion: the card fades instead of sliding in.
   - **One box, four pixel operations.** A region layer is a box (`x y w h`) in the framed picture's pixels. Its **area** is the box rounded
     outward to whole device pixels (`regionArea`) and is never anti-aliased, so a pixel the box touches at all is wholly inside it: no source
     pixel is left half-covered along the border. The exporter runs the layers in order; the vector layers go through a painter and Redact,
-    Pixelate and Blur are operations on the pixels in between (a Pixelate reads what the layers before it drew). Layers move, rotate and flip with the picture like any box.
+    Pixelate and Blur are operations on the pixels in between (a Pixelate reads what the layers before it drew). **Every Redact is filled into the working picture before any layer reads a pixel**, so a Blur or Pixelate that comes earlier in the layer order never sees, and never spreads, what a Redact hides; the eyedropper reads a Redact's fill, not the pixel under it. Layers move, rotate and flip with the picture like any box.
   - **Redact** fills the area with its colour, opaque whatever alpha the field or the source had (partially transparent and fully transparent
     source pixels included); a colour that does not read is black. Default fill black. **Pixelate** (`block`, `seed`): a grid of blocks of at
     least 12 device pixels (the file's value is clamped; a field that does not read is 16) whose offset comes from the seed; each block of the area becomes ONE
     colour, the mean of the whole block (also the part outside the area, so a one-pixel sliver is the mean of a full block) plus a per-block,
-    per-channel noise of at most 12 levels from `splitmix64(seed, block, channel)`, opaque. The output depends on the source only through
+    noise of at most 12 levels from `splitmix64(seed, block, channel)` (a term of at most 8 shared by the three channels, so that averaging the channels of grey text cannot cancel it, plus at most 4 of each channel's own), opaque. The output depends on the source only through
     the block means. **The seed is drawn from the system's random source (getrandom) when the layer is made** and kept in the layer, so the offset and
     noise differ between layers and captures and cannot be predicted from the picture, while the screen, the file and a re-edit agree. A pixelate
     whose seed does not read hides with seed 0. **Blur** (`radius`, the Gaussian's sigma): three box passes reading the picture around the area. Blur is
@@ -338,10 +338,10 @@ Reduce Motion: the card fades instead of sliding in.
     channel to hold hidden values) and keeps no text chunk of the original but `Grassfield-Scale`. The layers file holds boxes, colours,
     blocks and seeds, never pixels.
   - **The copies of the unredacted picture.** (1) The clipboard: the capture helper's automatic copy is `--sensitive` (not in clipboard history). After a Done that
-    hid pixels the app runs `wl-copy --type image/png --sensitive` with the saved file's own bytes on its stdin, replacing it; if that fails it runs
+    hid pixels the app first asks `wl-paste` what the clipboard holds and replaces it only while it is still this capture's picture (the user's own later copy is left alone; when wl-paste cannot be run the app replaces), by running `wl-copy --type image/png --sensitive` with the saved file's own bytes on its stdin; if that fails it runs
     `wl-copy --clear`, keeps the window open with the error, and the next Done tries again. A Done that hides nothing, and a Done with no change, leave the clipboard alone.
     (2) The saved file is the redacted export. (3) **The history keeps the picture as captured** (private 0600 file in a 0700 folder, for Revert and re-editing, ADR-0066 D-9);
-    the layers are editable, so a redaction can be moved off its secret there. B14 adds the history's retention and Clear History; until then the original stays until the entry is removed.
+    the layers are editable, so a redaction can be moved off its secret there: Redact hides the area **in the saved picture**, and the history original stays until B14's Clear History. B14 adds the history's retention and Clear History; until then the original stays until the entry is removed.
     The floating thumbnail copies the file's current bytes (`capture-thumb.sh`), which are the redacted ones after a Done.
   - **Screen = export.** Redact is a scene rectangle on whole pixels and Spotlight a veil from the same path; a Pixelate or Blur shows
     `image://screenshot/fx/<revision>/<id>`, the pixels `regionPatch` makes with the exporter's own code (what the layers before it drew, then the operation). While an

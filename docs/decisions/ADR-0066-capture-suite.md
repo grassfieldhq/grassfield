@@ -313,7 +313,9 @@ in 0700 folders, opened with `O_NOFOLLOW` and checked for owner, mode, type and 
    capture is not in clipboard history until the user copies it.
 2. *The saved file* stays unredacted until Done replaces it.
 3. *The history original* is kept on purpose for Revert. It is private, pruned by retention and removed by Clear History,
-   whose explanation says it holds the pictures as they were taken.
+   whose explanation says it holds the pictures as they were taken. Until slice B14 builds Clear History the original stays in the history and the
+   layers stay editable: Redact hides the area in the saved picture, not in the history entry, and the tools' texts say "in the saved picture".
+   The editor replaces the clipboard after a redacted export only while it still holds the capture (checked with `wl-paste`), with `wl-copy --type image/png --sensitive`.
 
 **Redaction tools and what they guarantee.**
 - **Redact** (solid fill, default black, opaque): the area's pixels are replaced in every exported file. This is the tool for

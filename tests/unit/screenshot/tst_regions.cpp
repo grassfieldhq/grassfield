@@ -14,7 +14,9 @@
 #include <QFile>
 #include <QImage>
 #include <QJsonArray>
+#include <QFont>
 #include <QJsonDocument>
+#include <QPainter>
 #include <QSet>
 #include <QTemporaryDir>
 
@@ -499,6 +501,159 @@ TEST(RegionPatch, WithACropAndAPixelateBeforeTheBlurAgreesWithTheFile)
     }
 }
 
+// ---- a Redact is read by nothing ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+// A page with a line of text: two pages differ only where the secret is drawn.
+QImage secretPage(const QString &secret)
+{
+    QImage img(400, 120, QImage::Format_RGB32);
+    img.fill(Qt::white);
+    QPainter p(&img);
+    QFont f;
+    f.setPixelSize(18);
+    p.setFont(f);
+    p.setPen(Qt::black);
+    p.drawText(QRect(100, 50, 200, 22), Qt::AlignLeft | Qt::AlignVCenter, secret);
+    return img;
+}
+
+// Exports `layers` over two pages that differ only inside the redact box and counts the pixels outside it that differ.
+long dependingOnTheSecret(const Layers &layers, const QRect &redactBox)
+{
+    const QImage a = exportLayers(secretPage("hunter2-PASSWORD"), layers), b = exportLayers(secretPage("xyzzy9-TOKENVAL"), layers);
+    EXPECT_EQ(a.size(), b.size());
+    long differing = 0;
+    for (int y = 0; y < a.height(); ++y) {
+        for (int x = 0; x < a.width(); ++x) {
+            if (!redactBox.contains(x, y) && a.pixel(x, y) != b.pixel(x, y))
+                ++differing;
+        }
+    }
+    return differing;
+}
+
+Layer withId(Layer layer, int id)
+{
+    layer.id = id;
+    return layer;
+}
+
+} // namespace
+
+TEST(RedactOrder, NoLayerBeforeOrAfterARedactCarriesItsPixelsOutsideTheBox)
+{
+    const Layer redact = region(9, "redact", 98, 48, 204, 26);
+    const QRect box = regionArea(redact);
+    const Layer blur = region(1, "blur", 20, 10, 360, 100, QJsonObject{{"radius", 10}});
+    const Layer pix = region(1, "pixelate", 20, 10, 360, 100, QJsonObject{{"block", 16}, {"seed", "0123456789abcdef"}});
+    const Layer focus = region(1, "spotlight", 150, 30, 100, 60);
+    ASSERT_NE(secretPage("hunter2-PASSWORD"), secretPage("xyzzy9-TOKENVAL")) << "a control: the secret is on the page";
+    EXPECT_EQ(dependingOnTheSecret({blur, redact}, box), 0) << "blur, then redact";
+    EXPECT_EQ(dependingOnTheSecret({redact, withId(blur, 10)}, box), 0) << "redact, then blur";
+    EXPECT_EQ(dependingOnTheSecret({pix, redact}, box), 0) << "pixelate, then redact";
+    EXPECT_EQ(dependingOnTheSecret({redact, withId(pix, 10)}, box), 0) << "redact, then pixelate (overlapping, blocks cross the box)";
+    EXPECT_EQ(dependingOnTheSecret({blur, withId(pix, 2), withId(redact, 3)}, box), 0) << "blur, pixelate, redact";
+    EXPECT_EQ(dependingOnTheSecret({pix, withId(blur, 2), withId(redact, 3)}, box), 0) << "pixelate, blur, redact";
+    EXPECT_EQ(dependingOnTheSecret({focus, withId(blur, 2), withId(redact, 3)}, box), 0) << "focus, blur, redact";
+    EXPECT_EQ(dependingOnTheSecret({withId(redact, 1), withId(blur, 2), withId(redact, 3)}, box), 0) << "a blur between two redactions";
+}
+
+TEST(RedactOrder, StillHoldsAfterACropAndATurnBetweenTheLayers)
+{
+    // The frame layer moves the picture first; the boxes are in the framed picture's pixels (here 100 wide and 300 tall).
+    Frame frame;
+    frame.crop = QRect(40, 10, 300, 100);
+    frame.rot = 1;
+    const Layer turned = makeFrame(1, frame);
+    const Layer redact = region(9, "redact", 30, 40, 70, 220);
+    const Layer blur = region(2, "blur", 0, 0, 100, 300, QJsonObject{{"radius", 8}});
+    const Layer pix = region(3, "pixelate", 0, 0, 100, 300, QJsonObject{{"block", 14}, {"seed", "00000000000000ff"}});
+    const QRect box = regionArea(redact);
+    const QImage a = exportLayers(secretPage("hunter2-PASSWORD"), {turned, blur, pix, redact});
+    const QImage b = exportLayers(secretPage("xyzzy9-TOKENVAL"), {turned, blur, pix, redact});
+    ASSERT_EQ(a.size(), QSize(100, 300));
+    const QImage ua = exportLayers(secretPage("hunter2-PASSWORD"), {turned}), ub = exportLayers(secretPage("xyzzy9-TOKENVAL"), {turned});
+    long under = 0, outside = 0;
+    for (int y = 0; y < a.height(); ++y) {
+        for (int x = 0; x < a.width(); ++x) {
+            if (box.contains(x, y)) {
+                under += ua.pixel(x, y) != ub.pixel(x, y);
+            } else {
+                EXPECT_EQ(ua.pixel(x, y), ub.pixel(x, y)) << "the secret is only under the box, at " << x << "," << y;
+                outside += a.pixel(x, y) != b.pixel(x, y);
+            }
+        }
+    }
+    ASSERT_GT(under, 0) << "the secret is under the redact box";
+    EXPECT_EQ(outside, 0);
+}
+
+TEST(RedactOrder, ThePreviewPatchOfAnEarlierBlurOrPixelateNeverHasTheSecretEither)
+{
+    const Layer redact = region(9, "redact", 98, 48, 204, 26);
+    const QRect box = regionArea(redact);
+    for (const QString &type : {QStringLiteral("blur"), QStringLiteral("pixelate")}) {
+        const Layer fx = region(1, type, 20, 10, 360, 100, QJsonObject{{"radius", 10}, {"block", 16}, {"seed", "0123456789abcdef"}});
+        const Layers layers{fx, redact};
+        const QImage a = regionPatch(secretPage("hunter2-PASSWORD"), layers, 1), b = regionPatch(secretPage("xyzzy9-TOKENVAL"), layers, 1);
+        ASSERT_FALSE(a.isNull());
+        const QRect area = regionArea(fx);
+        const QImage exported = exportLayers(secretPage("hunter2-PASSWORD"), layers);
+        long differing = 0;
+        for (int y = 0; y < a.height(); ++y) {
+            for (int x = 0; x < a.width(); ++x) {
+                if (box.contains(area.x() + x, area.y() + y))
+                    continue;
+                differing += a.pixel(x, y) != b.pixel(x, y);
+                ASSERT_EQ(a.pixel(x, y), exported.pixel(area.x() + x, area.y() + y)) << type.toStdString() << ": the patch is the export's pixels";
+            }
+        }
+        EXPECT_EQ(differing, 0) << type.toStdString();
+    }
+}
+
+TEST(Redact, TheAreaRoundsOutwardOnEveryEdge)
+{
+    // Right and bottom edges ending in .3 and .7 round up (a round instead of a ceil would leave the .3 case half covered), left and top round down.
+    for (const double frac : {0.3, 0.7}) {
+        const QRect area = regionArea(region(1, "redact", 10 + frac, 20 + frac, 15, 9));
+        EXPECT_EQ(area.left(), 10) << frac;
+        EXPECT_EQ(area.top(), 20) << frac;
+        EXPECT_EQ(area.right() + 1, 26) << "the right edge " << 25 + frac << " rounds up";
+        EXPECT_EQ(area.bottom() + 1, 30) << "the bottom edge " << 29 + frac << " rounds up";
+    }
+    // Edges that end in .3 and .7 themselves (the width and height carry the fraction).
+    const QRect a = regionArea(region(1, "redact", 10, 20, 15.3, 9.7));
+    EXPECT_EQ(a.right() + 1, 26);
+    EXPECT_EQ(a.bottom() + 1, 30);
+    EXPECT_EQ(regionArea(region(1, "redact", 10, 20, 15, 9)), QRect(10, 20, 15, 9)) << "a box on whole pixels is not grown";
+    const QImage out = exportLayers(gradient(60, 50), {region(1, "redact", 10.3, 20.3, 15, 9, QJsonObject{{"color", "#112233"}})});
+    EXPECT_EQ(out.pixel(25, 29), qRgb(0x11, 0x22, 0x33)) << "the last pixel the box touches";
+    EXPECT_NE(out.pixel(26, 30), qRgb(0x11, 0x22, 0x33));
+}
+
+TEST(Pixelate, TheNoiseHasATermTheChannelsShareAndStaysWithinTheBound)
+{
+    double sum = 0, sumSq = 0;
+    int n = 0;
+    for (int by = 0; by < 40; ++by) {
+        for (int bx = 0; bx < 40; ++bx) {
+            int noise[3];
+            pixelateNoise(0x1234, bx, by, noise);
+            for (int c = 0; c < 3; ++c)
+                ASSERT_LE(std::abs(noise[c]), kPixelateNoise);
+            const double mean = (noise[0] + noise[1] + noise[2]) / 3.0; // what averaging the channels of grey text leaves
+            sum += mean;
+            sumSq += mean * mean;
+            ++n;
+        }
+    }
+    const double sd = std::sqrt(sumSq / n - (sum / n) * (sum / n));
+    EXPECT_GT(sd, 3.8) << "the channels' average still moves by several levels from block to block";
+}
+
 // ---- the tools ------------------------------------------------------------------------------------------------------------------------
 
 TEST(RegionTools, DragDrawsOneLayerWithOneSeedAndMoveKeepsIt)
@@ -580,6 +735,17 @@ protected:
             return m_clipboardWorks;
         });
         m_app->setToolColor("#de3651");
+        QFile original(m_file);
+        ASSERT_TRUE(original.open(QIODevice::ReadOnly));
+        m_originalBytes = original.readAll();
+        // The clipboard holds the capture as it was copied (the file's own bytes), unless a test says otherwise.
+        m_app->setClipboardReader([this](QByteArray *png) {
+            if (m_held == Held::Capture)
+                *png = m_originalBytes;
+            else if (m_held == Held::Other)
+                *png = pngBytes(gradient(10, 10));
+            return m_held == Held::Capture || m_held == Held::Other ? 0 : (m_held == Held::Text ? 1 : 2);
+        });
     }
     void drag(const QString &tool, QPointF from, QPointF to)
     {
@@ -608,6 +774,9 @@ protected:
     std::unique_ptr<ScreenshotApp> m_app;
     QList<Call> m_calls;
     bool m_clipboardWorks = true;
+    QByteArray m_originalBytes;
+    enum class Held { Capture, Other, Text, Unreadable };
+    Held m_held = Held::Capture;
 };
 
 } // namespace
@@ -641,6 +810,37 @@ TEST_F(RegionAppTest, DoneHidesThePixelsAndReplacesTheClipboardWithTheRedactedPi
     EXPECT_EQ(onClipboard.pixel(50, 30), qRgb(0, 0, 0));
     // The history keeps the capture for Revert, privately (ADR-0066 D-9, copy 3): what the original-keeping path does today.
     EXPECT_TRUE(m_app->canRevert());
+}
+
+TEST_F(RegionAppTest, TheClipboardIsReplacedOnlyWhileItStillHoldsTheCapture)
+{
+    // The user copied another picture, or some text, since the capture: it is theirs.
+    for (const Held held : {Held::Other, Held::Text}) {
+        m_held = held;
+        m_calls.clear();
+        drag("redact", QPointF(25, 15), QPointF(75, 45));
+        ASSERT_TRUE(m_app->done()) << m_app->lastError().toStdString();
+        EXPECT_TRUE(m_calls.isEmpty()) << "the user's own copy is left alone";
+        EXPECT_FALSE(hasSecret(fileImage())) << "the file is redacted all the same";
+        m_app->undo();
+    }
+}
+
+TEST_F(RegionAppTest, ACopyThatCannotBeReadIsReplacedRatherThanLeft)
+{
+    m_held = Held::Unreadable;
+    drag("redact", QPointF(25, 15), QPointF(75, 45));
+    ASSERT_TRUE(m_app->done());
+    ASSERT_EQ(m_calls.size(), 1);
+    EXPECT_EQ(m_calls[0].argv, clipboardArguments());
+}
+
+TEST_F(RegionAppTest, TheEyedropperReadsTheRedactionsFillNotThePixelUnderIt)
+{
+    drag("redact", QPointF(25, 15), QPointF(75, 45));
+    m_app->applyColor("#336699");
+    EXPECT_EQ(m_app->pickColor(50, 30), QStringLiteral("#336699")) << "not the secret's magenta";
+    EXPECT_NE(m_app->pickColor(5, 5), QStringLiteral("#336699"));
 }
 
 TEST_F(RegionAppTest, DoneWithoutAHidingLayerLeavesTheClipboardAlone)
@@ -707,6 +907,8 @@ TEST_F(RegionAppTest, ThePreviewImageIsTheExportsPixels)
 
 TEST(ClipboardArguments, AreTheAutomaticCopysOwn)
 {
+    EXPECT_EQ(clipboardTypesArguments(), (QStringList{"wl-paste", "--list-types"}));
+    EXPECT_EQ(clipboardPasteArguments(), (QStringList{"wl-paste", "--no-newline", "--type", "image/png"}));
     EXPECT_EQ(clipboardArguments(), (QStringList{"wl-copy", "--type", "image/png", "--sensitive"}));
     EXPECT_EQ(clipboardClearArguments(), (QStringList{"wl-copy", "--clear"}));
 }

@@ -25,7 +25,7 @@ Item {
     readonly property bool hasCounter: root.kind === "counter"
     readonly property bool hasCrop: root.kind === "crop"
     // The region tools (slice B7) say in the strip what they guarantee: Redact is the tool for secrets, Pixelate and Blur are not (ADR-0066 D-9).
-    readonly property string regionNote: root.kind === "redact" ? qsTr("Hides what is under it for good. Use it for secrets.")
+    readonly property string regionNote: root.kind === "redact" ? qsTr("Hides what is under it in the saved picture. Use it for secrets.")
         : root.kind === "pixelate" ? qsTr("Hides detail, but short text can still be guessed. Use Redact for secrets.")
         : root.kind === "blur" ? qsTr("For looks only. Does not hide text.")
         : root.kind === "spotlight" ? qsTr("Dims everything outside the box.") : ""

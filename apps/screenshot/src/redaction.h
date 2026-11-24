@@ -15,7 +15,7 @@
 //   Pixelate  the picture is cut in square blocks of `block` pixels (at least kMinPixelateBlock) on a grid whose offset comes from the
 //             seed; each block of the area becomes ONE colour: the mean of the block's source pixels (the whole block, also the part
 //             outside the area, so that a sliver of one pixel is still the mean of a full block) plus a per-block, per-channel noise
-//             of at most kPixelateNoise levels, opaque. The output inside a block therefore depends on the source only through the
+//             of at most kPixelateNoise levels (a term shared by the three channels, kPixelateLuma at most, and one of each), opaque. The output inside a block therefore depends on the source only through the
 //             block's mean, and the noise depends on the seed and the block's place only.
 //   Blur      three box passes (a Gaussian of `sigma`) over the area, reading the picture around it. Blur is NOT redaction: it keeps
 //             enough of the picture to be undone in part, and the tools say so.
@@ -26,6 +26,7 @@
 namespace screenshot {
 
 constexpr int kPixelateNoise = 12; // the most a channel of a block is moved by its noise, in levels of 255
+constexpr int kPixelateLuma = 8;   // of which a share common to the three channels (the rest is each channel's own)
 
 void redactArea(QImage *image, const QRect &area, const QColor &fill, const QPoint &origin = QPoint());
 void pixelateArea(QImage *image, const QRect &area, int block, quint64 seed, const QPoint &origin = QPoint());
