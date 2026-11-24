@@ -231,6 +231,10 @@ private:
     bool m_picking = false;
     QTimer m_flushTimer; // one preview of a stroke per frame
     QString m_textPreview;
+    // The text being typed: where a new one begins (the click), and the style changes made to an edited one while typing (they are
+    // part of the same edit, so they are kept and applied to the layer at every preview).
+    QPointF m_textAnchor;
+    QList<std::function<screenshot::Layer(const screenshot::Layer &)>> m_textRestyles;
     int m_lastSelected = 0;
     bool m_textEditing = false;
     int m_textEditId = 0;

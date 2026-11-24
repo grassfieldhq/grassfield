@@ -271,6 +271,7 @@ bool ScreenshotApp::toolPress(qreal x, qreal y, qreal tolerance)
 {
     if (!m_document.isOpen())
         return false;
+    finishText(); // a press anywhere puts in the text being typed (the editor's own click-away does it too)
     const QString tool = m_tools.tool();
     if (tool == QLatin1String("eyedropper")) {
         const QString color = pixelColorAt(x, y);
@@ -385,24 +386,34 @@ void ScreenshotApp::redo()
 
 void ScreenshotApp::deleteSelected()
 {
+    finishText(); // from the menu: the text is put in, then the selection (which is that text) goes; the key is the editor's while typing
     if (m_tools.deleteSelected())
         layersEdited();
 }
 
 void ScreenshotApp::nudgeSelected(qreal dx, qreal dy)
 {
+    finishText();
     if (m_tools.nudgeSelected(QPointF(dx, dy)))
         layersEdited();
 }
 
 void ScreenshotApp::selectNone()
 {
+    finishText();
     m_tools.select(0);
     layersEdited();
 }
 
 void ScreenshotApp::restyleSelection(const std::function<screenshot::Layer(const screenshot::Layer &)> &edit)
 {
+    if (m_textEditing) {
+        // While a text is typed a style change is the text's, part of the same edit (macOS: the controls act on what is being typed): it
+        // goes in the preview, never into a step of its own, and never on another layer.
+        m_textRestyles.append(edit);
+        previewText(m_textPreview);
+        return;
+    }
     const screenshot::Layer layer = m_tools.selectedLayer();
     if (layer.id == 0 || m_tools.busy())
         return;
@@ -416,7 +427,7 @@ void ScreenshotApp::applyColor(const QString &color)
     if (!validColor(color))
         return;
     setToolColor(color);
-    restyleSelection([&color](const screenshot::Layer &layer) { return screenshot::withColor(layer, color); });
+    restyleSelection([color](const screenshot::Layer &layer) { return screenshot::withColor(layer, color); });
 }
 
 void ScreenshotApp::applyWidth(qreal width)
@@ -441,7 +452,7 @@ void ScreenshotApp::applyTextStyle(const QString &style)
     if (style != QLatin1String("plain") && style != QLatin1String("outlined") && style != QLatin1String("pill"))
         return; // not a style: neither the next text's nor the selection's
     setTextStyle(style);
-    restyleSelection([&style](const screenshot::Layer &layer) { return screenshot::withTextStyle(layer, style); });
+    restyleSelection([style](const screenshot::Layer &layer) { return screenshot::withTextStyle(layer, style); });
 }
 
 void ScreenshotApp::applyTextSize(qreal size)
@@ -505,7 +516,10 @@ QString ScreenshotApp::pickColor(qreal x, qreal y)
 
 void ScreenshotApp::beginText(int id, const QPointF &pos, const QString &text)
 {
+    finishText(); // another text being typed is put in first: one gesture at a time
     m_tools.cancel();
+    m_textRestyles.clear();
+    m_textAnchor = pos;
     m_textEditing = true;
     m_textEditId = id;
     m_textEditPos = pos;
@@ -532,10 +546,10 @@ void ScreenshotApp::previewText(const QString &typed)
     screenshot::Layer shown;
     if (m_textEditId == 0) {
         const int id = screenshot::nextLayerId(base);
-        shown = screenshot::makeText(id, m_textEditPos, text, m_tools.style());
+        shown = screenshot::makeText(id, m_textAnchor, text, m_tools.style());
         if (shown.id != 0) {
             // The click is where the text begins, not its middle.
-            shown = screenshot::translated(shown, m_textEditPos - screenshot::layerBounds(shown).topLeft());
+            shown = screenshot::translated(shown, m_textAnchor - screenshot::layerBounds(shown).topLeft());
             if (next.size() < screenshot::kMaxLayers)
                 next.append(shown);
         }
@@ -547,7 +561,10 @@ void ScreenshotApp::previewText(const QString &typed)
             if (text.trimmed().isEmpty()) {
                 next.removeAt(i); // erasing all of a text takes it away
             } else {
-                shown = screenshot::withText(before, text);
+                screenshot::Layer styled = before;
+                for (const auto &restyle : std::as_const(m_textRestyles))
+                    styled = restyle(styled);
+                shown = screenshot::withText(styled, text);
                 if (before.fields.value(QStringLiteral("rot")).toInt() == 0) // the text stays where it began
                     shown = screenshot::translated(shown, screenshot::layerBounds(before).topLeft() - screenshot::layerBounds(shown).topLeft());
                 next[i] = shown;
@@ -562,7 +579,7 @@ void ScreenshotApp::previewText(const QString &typed)
     if (shown.id != 0) {
         // The editor goes where the lettering is (a pill's text starts inside its plate).
         const QPointF at = screenshot::shapeGeometry(shown).layoutBox.topLeft();
-        if (at != m_textEditPos && m_textEditId != 0) {
+        if (at != m_textEditPos) {
             m_textEditPos = at;
             emit textEditChanged();
         }

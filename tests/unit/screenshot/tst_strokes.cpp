@@ -831,3 +831,176 @@ TEST(TextRotation, ANumberOutOfRangeReadsAsATurnWithoutOverflow)
     text.fields.insert("rot", 2.5);
     EXPECT_EQ(shapeGeometry(text).kind, ShapeGeometry::Glyphs);
 }
+
+// ---- one gesture at a time: nothing but the text itself edits the document while a text is typed -----------------------------------------
+
+namespace {
+
+class TypedWhileSelected : public TextEditing
+{
+protected:
+    void SetUp() override
+    {
+        TextEditing::SetUp();
+        // Another layer is selected when the typing starts: it must never take what is meant for the text.
+        m_app->setToolWidth(2);
+        m_app->setTool("rectangle");
+        ASSERT_TRUE(m_app->toolPress(120, 10, 3));
+        m_app->toolRelease(180, 40, false);
+        ASSERT_NE(m_app->selectedId(), 0);
+        m_model = qobject_cast<LayerModel *>(m_app->layerModel());
+        m_rectColor = m_model->data(m_model->index(0), LayerModel::ColorRole).value<QColor>();
+        m_app->setTool("text");
+        m_app->setToolColor("#0167fd");
+        ASSERT_TRUE(m_app->toolPress(20, 60, 3));
+        m_app->previewText("ab");
+    }
+    int glyphRows() const
+    {
+        int n = 0;
+        for (int i = 0; i < m_model->rowCount(); ++i)
+            n += m_model->data(m_model->index(i), LayerModel::KindRole).toString() == "glyphs";
+        return n;
+    }
+    QColor rowColor(int row) const { return m_model->data(m_model->index(row), LayerModel::ColorRole).value<QColor>(); }
+    LayerModel *m_model = nullptr;
+    QColor m_rectColor;
+};
+
+} // namespace
+
+TEST_F(TypedWhileSelected, ASwatchWhileTypingColoursTheTextAndNothingElse)
+{
+    m_app->applyColor("#de3651");
+    m_app->previewText("abc");
+    EXPECT_EQ(glyphRows(), 1) << "still the one text being typed";
+    m_app->commitText("abc");
+    EXPECT_EQ(glyphRows(), 1) << "not a second text with the rest of the letters";
+    ASSERT_EQ(m_model->rowCount(), 2);
+    EXPECT_EQ(rowColor(0), m_rectColor) << "the rectangle that was selected is untouched";
+    EXPECT_EQ(rowColor(1), QColor("#de3651"));
+    EXPECT_EQ(undoSteps(*m_app), 2) << "the rectangle, and the text with its colour as one step";
+}
+
+TEST_F(TypedWhileSelected, ASizeWhileTypingSizesTheText)
+{
+    m_app->applyTextSize(60);
+    m_app->previewText("abc");
+    m_app->commitText("abc");
+    EXPECT_EQ(glyphRows(), 1);
+    ShapeStyle style;
+    style.color = "#0167fd";
+    style.textSize = 60;
+    EXPECT_NEAR(m_app->selectionBounds().height(), layerBounds(makeText(1, QPointF(0, 0), "abc", style)).height(), 0.5);
+    EXPECT_EQ(undoSteps(*m_app), 2);
+}
+
+TEST_F(TypedWhileSelected, TheMenuDeletePutsTheTextInThenDeletesTheSelectionWhichIsThatText)
+{
+    m_app->deleteSelected();
+    EXPECT_FALSE(m_app->textEditing());
+    EXPECT_EQ(glyphRows(), 0) << "no duplicate, and nothing of the text left";
+    EXPECT_EQ(m_model->rowCount(), 1) << "the rectangle stays";
+    EXPECT_EQ(undoSteps(*m_app), 3) << "the rectangle, the text put in, the delete";
+}
+
+TEST_F(TypedWhileSelected, ARotationWhileTypingPutsTheTextInFirst)
+{
+    m_app->rotateRight();
+    EXPECT_EQ(glyphRows(), 1);
+    EXPECT_EQ(m_model->rowCount(), 3) << "the frame, the rectangle and one text";
+    EXPECT_EQ(undoSteps(*m_app), 3) << "the rectangle, the text, the turn";
+}
+
+TEST_F(TypedWhileSelected, UndoWhileTypingPutsTheTextInAndThenUndoesIt)
+{
+    m_app->undo();
+    EXPECT_EQ(glyphRows(), 0) << "the text typed is what Undo takes";
+    EXPECT_EQ(m_model->rowCount(), 1);
+    EXPECT_TRUE(m_app->canUndo()) << "the rectangle is still there to undo";
+    EXPECT_TRUE(m_app->canRedo());
+    m_app->redo();
+    EXPECT_EQ(glyphRows(), 1) << "and Redo brings it back, one text";
+}
+
+TEST_F(TypedWhileSelected, ArrowKeysFlipsAndAnotherToolAlsoPutTheTextInOnce)
+{
+    m_app->nudgeSelected(3, 0);
+    EXPECT_EQ(glyphRows(), 1);
+    EXPECT_FALSE(m_app->textEditing());
+    m_app->toolPress(20, 60, 3); // a click on the text edits it again
+    EXPECT_TRUE(m_app->textEditing());
+    m_app->previewText("abcd");
+    m_app->flipHorizontal();
+    EXPECT_EQ(glyphRows(), 1);
+    EXPECT_FALSE(m_app->textEditing());
+}
+
+TEST_F(TypedWhileSelected, AnEditedTextTakesTheStyleChangedWhileItIsEdited)
+{
+    m_app->commitText("ab");
+    m_app->selectNone();
+    const QRectF box = m_app->selectionBounds(); // none selected: null
+    (void)box;
+    // Press on the text: it is edited; a swatch then a letter, then Return.
+    ASSERT_TRUE(m_app->toolPress(22, 62, 6));
+    ASSERT_TRUE(m_app->textEditing());
+    ASSERT_NE(m_app->textEditId(), 0);
+    m_app->applyColor("#7fb844");
+    m_app->previewText("abc");
+    m_app->commitText("abc");
+    EXPECT_EQ(glyphRows(), 1) << "the same layer, not a second";
+    EXPECT_EQ(rowColor(1), QColor("#7fb844"));
+    EXPECT_EQ(rowColor(0), m_rectColor);
+    EXPECT_EQ(undoSteps(*m_app), 3) << "the rectangle, the text, and the edit with its colour";
+}
+
+TEST_F(TextEditing, TheEditorFollowsTheLettersInAPillAsItFollowsThemInAnExistingText)
+{
+    m_app->applyTextStyle("pill");
+    ASSERT_TRUE(m_app->toolPress(20, 20, 3));
+    EXPECT_EQ(m_app->textEditPos(), QPointF(20, 20));
+    m_app->previewText("Look");
+    ShapeStyle style;
+    style.color = "#0167fd";
+    style.textStyle = "pill";
+    style.textSize = 30;
+    Layer expected = makeText(1, QPointF(20, 20), "Look", style);
+    expected = translated(expected, QPointF(20, 20) - layerBounds(expected).topLeft());
+    const QPointF letters = shapeGeometry(expected).layoutBox.topLeft();
+    EXPECT_GT(letters.x(), 20.5) << "the pill's padding is before the letters";
+    EXPECT_NEAR(m_app->textEditPos().x(), letters.x(), 0.01);
+    EXPECT_NEAR(m_app->textEditPos().y(), letters.y(), 0.01);
+    const QPointF before = m_app->textEditPos();
+    m_app->previewText("Look!");
+    EXPECT_NEAR(m_app->textEditPos().x(), before.x(), 0.01) << "no drift from one letter to the next";
+    EXPECT_NEAR(m_app->textEditPos().y(), before.y(), 0.01);
+}
+
+TEST(StrokeCost, ThePerFramePreviewOfALongStrokeStaysWithinABound)
+{
+    UndoStack stack;
+    ToolController tools(&stack);
+    tools.style().color = "#de3651";
+    tools.setDeferPreview(true);
+    ASSERT_TRUE(tools.setTool("pen"));
+    const QVector<QPointF> samples = tremor(4000);
+    ASSERT_TRUE(tools.press(samples[0], 3));
+    double worst = 0, total = 0;
+    int frames = 0;
+    for (int i = 1; i < samples.size(); ++i) {
+        tools.move(samples[i], false);
+        if (i % 16 == 0) { // a frame
+            QElapsedTimer timer;
+            timer.start();
+            tools.flushPreview();
+            const double ms = timer.nsecsElapsed() / 1e6;
+            worst = std::max(worst, ms);
+            total += ms;
+            ++frames;
+        }
+    }
+    std::printf("4000 samples, %d frames: stroke made %.1f ms in all, worst frame %.2f ms\n", frames, total, worst);
+    EXPECT_LT(worst, 60) << "the layer's side of a frame (the scene's own cost is measured with the scene)";
+    EXPECT_LT(total, 2500);
+}
