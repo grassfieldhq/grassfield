@@ -43,6 +43,9 @@ PKGS=https://archive.archlinux.org/packages
 # stack had drifted (checked against the 2026-11-24 extra.files: glslang 16, re2 11, display-info 3, lua 5.5 ... are current);
 # the toolkit step compares the unresolved libraries of every executable and shared object before and after the pins and
 # fails by name on a new one, so a later drift fails there and not in seven tests.
+# The rolling hyprtoolkit and hyprland-guiutils moved to libaquamarine.so.15 and libhyprgraphics.so.5 (PR #53's first run): they
+# are pinned with the stack at the snapshot's builds (hyprtoolkit 0.6.0-1, hyprland-guiutils 0.2.2-4, linked to .so.14 and
+# .so.4, the versions an Omarchy 4.5 machine runs), as the unresolved-library scan asked.
 COMPAT=(
   "libjxl 0.12.0-1 a4e0f65e8ba3a2da1cc348aad4f7f8aee1b504b824a64838fb3d9b2f75cc9449 $PKGS/l/libjxl/libjxl-0.12.0-1-x86_64.pkg.tar.zst usr/lib/libjxl*.so.0.12*"
 )
@@ -50,6 +53,8 @@ PINS=(
   "hyprutils 0.14.2-1 177dfe5d64dba65ef2f1274d84d647b12cc1bc0b808394fd556f135ac8d7e65e $ARCHIVE/hyprutils-0.14.2-1-x86_64.pkg.tar.zst"
   "hyprgraphics 0.5.1-4 c916b1fb9d7ad0e78fab2d94b0066dcdc8be0a2810be7e72df57ddf5b639fea3 $ARCHIVE/hyprgraphics-0.5.1-4-x86_64.pkg.tar.zst"
   "aquamarine 0.15.1-1 ac96995cceea132e32cafd9bf63fd6cbe3d0599ab175e82bcee85b0c7da9706c $ARCHIVE/aquamarine-0.15.1-1-x86_64.pkg.tar.zst"
+  "hyprtoolkit 0.6.0-1 2f223b6c9fb03416e3ddf4a7380c3411452e3701da2285fa4bfee972a22f42cf $ARCHIVE/hyprtoolkit-0.6.0-1-x86_64.pkg.tar.zst"
+  "hyprland-guiutils 0.2.2-4 c0a0938005128c574fa0fb8fcb7061876db381213143d2ed3b37faf1ea21f09e $ARCHIVE/hyprland-guiutils-0.2.2-4-x86_64.pkg.tar.zst"
   "hyprland 0.56.2-4 163bc740241880192d90027fad39ddb809b1705b04800a1f0185a58f3ce0884a $ARCHIVE/hyprland-0.56.2-4-x86_64.pkg.tar.zst"
   "quickshell 0.3.2.r7.g2b4501a-1 f9f813213597d1ee25e16860ed326e810857810460c09ee87d06bc3b655c2da1 https://pkgs.omarchy.org/stable/x86_64/quickshell-0.3.2.r7.g2b4501a-1-x86_64.pkg.tar.zst"
 )
@@ -402,7 +407,7 @@ EOF
   fi
   expect "pins: the Hyprland 0.56.2 stack and Omarchy's Quickshell, each with a sha256 and an https address" \
     "$(pins | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ { print $1, $2 }' | tr '\n' ';')" \
-    "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
+    "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprtoolkit 0.6.0-1;hyprland-guiutils 0.2.2-4;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
   expect "pins: Quickshell is not the refused 0.3.2 tag" "$(pins | awk '$1 == "quickshell" && $2 !~ /^0\.3\.2-/ { print "ok" }')" ok
   expect "compat: libjxl 0.12 objects only, with a sha256, an https address and the 0.12 soname pattern" \
     "$(compat | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ && $5 == "usr/lib/libjxl*.so.0.12*" { print $1, $2 }' | tr '\n' ';')" "libjxl 0.12.0-1;"
