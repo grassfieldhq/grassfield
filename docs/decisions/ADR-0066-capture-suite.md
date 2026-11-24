@@ -104,6 +104,19 @@ the helper has no stdin to read. The choice therefore comes back as a second, sh
 6. **Cleanup.** Every frozen file and the choice file are removed on finish, cancel, timeout, SIGTERM and lock. A
    left-over `frozen/` folder is removed at the next helper start.
 
+As built in slice C4 (`packaging/bin/grassfield-capture`, tests `tests/shell/capture.d/freeze.py`):
+- The frames are binary PPM files (`frozen/0.ppm`, `1.ppm`, ... one per enabled display, the focused one first; `grim -t ppm`), so
+  that a crop is a slice of rows and the helper needs no PNG decoder; the crop is written as an 8-bit RGB PNG with the
+  `Grassfield-Scale` chunk. A frame is read only as a private file (regular, no link, one name, 0600, at most 256 MiB).
+- The state's `kind` stays `shot`; the phase `frozen` is also ended by `stop` (SIGINT to the helper, which holds the capture lock).
+- The choice file is `{"v": 1, "token": T, "geometry": "X,Y WxH"}` or `{"v": 1, "token": T, "cancel": true}`, nothing else; the
+  state is read by `choose` as a private file of at most 4 KiB. Tokens are compared with `hmac.compare_digest`.
+- Exit codes of `choose`: 0 written; 2 for a usage error, a wrong token, a state that is not a frozen screen of a live helper of
+  this user's (pid and start time), or a geometry not wholly inside one frame; 1 under the lock or when the file cannot be
+  written. `selection --freeze` refuses `--timer`, `--geometry` and `--previous` (usage, exit 2) and exits 1 under the lock.
+- The helper ignores (leaves in place) an invalid choice file; `choose` replaces it by rename, a link included, never following it.
+- The device rectangle is the logical one times the frame's scale, rounded outwards (floor, ceil) and clamped to the frame.
+
 #### Other new subcommands
 - `text [--geometry G]`: recognise text and QR codes in an area (D-7, slice C3).
 - `scroll --geometry G`: a scrolling capture (slices C5 and C6). It takes region frames (`grim -t ppm -g`, at most 8 per
