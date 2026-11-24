@@ -10,8 +10,10 @@
 # A per-layer summary of pass, fail, skip and manual is printed at the end, and the run fails when a layer it covered
 # reported no result (tests/ci/inventory.py --results).
 # The gtest suites (built here, twice with the sanitizers: by far the longest part) can be split over parallel CI jobs without
-# dropping any: `--skip-gtest` runs the layers without them, `--gtest-shard I/N` runs only the suites whose position K in this
-# file has K mod N == I (K from 1, I from 0), nothing else; the N shards together are the suites of `--layer logic` (ci.yml).
+# dropping any: `--skip-gtest` runs the layers without them; `--gtest-shard I/N` (not with --skip-gtest, and alone: no layer) runs
+# only the suites of shard I of N and fails when it ran none, or when every suite it ran was skipped. With N = 4 the suites go to
+# the shards by their measured wall time (gtest_shard4 below); any other N, or a suite not in the table, falls back to the
+# suite's position K in this file, K mod N. The N shards together are the suites of `--layer logic` (ci.yml's matrix).
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root"
@@ -26,6 +28,7 @@ layers_all=(data logic headless nested visual)
 requested=()
 explicit=0
 skip_gtest=0
+shard_mode=0
 shard_i=0
 shard_n=1
 while (($#)); do
@@ -46,7 +49,7 @@ while (($#)); do
         || { echo "test.sh: --gtest-shard needs I/N with 0 <= I < N" >&2; exit 2; }
       shard_i=${BASH_REMATCH[1]}
       shard_n=${BASH_REMATCH[2]}
-      requested+=(gtest)
+      shard_mode=1
       explicit=1
       ;;
     --layer)
@@ -63,7 +66,7 @@ while (($#)); do
       shift
       ;;
     -h | --help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,/^set -/p' "$0" | sed '$d;s/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -73,14 +76,15 @@ while (($#)); do
   esac
 done
 ((explicit)) || requested=(data logic headless nested)
+if ((skip_gtest && shard_mode)); then echo "test.sh: --skip-gtest and --gtest-shard exclude each other" >&2; exit 2; fi
 declare -A selected=()
 for l in "${requested[@]}"; do
-  [[ " ${layers_all[*]} gtest " == *" $l "* ]] || { echo "test.sh: unknown layer '$l' (${layers_all[*]})" >&2; exit 2; }
+  [[ " ${layers_all[*]} " == *" $l "* ]] || { echo "test.sh: unknown layer '$l' (${layers_all[*]})" >&2; exit 2; }
   selected[$l]=1
 done
 want() { [[ -n ${selected[$1]:-} ]]; }
-# The gtest suites go with the logic layer unless left out; `gtest` alone (--gtest-shard) selects them without it.
-if ((!skip_gtest)) && want logic; then selected[gtest]=1; fi
+# The gtest suites go with the logic layer unless left out; a shard (--gtest-shard) selects them without any layer.
+if ((shard_mode)) || { ((!skip_gtest)) && want logic; }; then selected[gtest]=1; fi
 
 status=0
 # Skipped checks are reported on their own (a SKIP line is never a pass): every line with "SKIP" printed by a test or
@@ -222,13 +226,28 @@ for script in tests/shell/*.sh tests/security/*.sh tests/integration/*.sh tests/
 done
 # gtest suites: logic. One step per binary, built here (the sources are listed in tests/inventory.json).
 # gtest_suite LABEL GTEST_HEADER_NEEDED_NOTE BUILD_CMD BINARY...: builds, runs every binary, records one result.
+# The shard (of 4) of each suite, balanced by the wall time of the first CI run (2026-11-24, build plus both runs, minutes):
+# files 20, store 18, activity 18, portal 10, settings 8, menu-bridge 7, prompter ~5 (cut off), stack-helper 4, wallpaper-tool 3,
+# memos 2, clipboard-helper 2, the rest 1 each: about 25 minutes a shard. To rebalance, move a suite to another number here
+# (every suite should be listed; one that is not goes to its position K mod N) and keep the sums even.
+declare -A gtest_shard4=(
+  [tests/unit/files]=0 [tests/unit/preview]=0 [tests/unit/secrets-handover]=0 [tests/unit/portal-settings]=0 [tests/unit/memos]=0
+  [tests/unit/store]=1 [tests/unit/menu-bridge]=1
+  [tests/unit/activity]=2 [tests/unit/prompter]=2 [tests/unit/stack-helper]=2
+  [tests/unit/portal]=3 [tests/unit/settings]=3 [tests/unit/wallpaper-tool]=3 [tests/unit/clipboard-helper]=3
+)
 gtest_position=0
+gtest_ran=0
+gtest_passed=0
 gtest_suite() {
   local label=$1 build=$2
   shift 2
   want gtest || return 0
   gtest_position=$((gtest_position + 1))
-  ((gtest_position % shard_n == shard_i)) || return 0
+  local mine=$((gtest_position % shard_n))
+  if ((shard_n == 4)) && [[ -n ${gtest_shard4[$label]:-} ]]; then mine=${gtest_shard4[$label]}; fi
+  ((mine == shard_i)) || return 0
+  gtest_ran=$((gtest_ran + 1))
   if [[ ! -f /usr/include/gtest/gtest.h ]]; then
     skip "$label (gtest not installed)"
     record logic "$label" skip
@@ -245,6 +264,7 @@ gtest_suite() {
     rc=1
   fi
   ((rc == 0)) || status=1
+  ((rc != 0)) || gtest_passed=$((gtest_passed + 1))
   record logic "$label" "$([[ $rc == 0 ]] && echo pass || echo fail)"
 }
 # Grassfield Files pure logic (sort keys, sizes, dates, path segments, names), and its KIO dialogs (ADR-0035 D-12 a: the
@@ -466,6 +486,14 @@ for l in "${layers_all[@]}"; do
   if ((!explicit)) && [[ $l == nested ]]; then runnable=0; fi
   if ((runnable)); then gate_layers+=("$l"); else echo "note: layer $l is not gated in this run (${manual[$l]:-0} manual entries: docs/testing/README.md)"; fi
 done
+# A gtest shard has no layer table: its own gate. It ran at least one suite, and at least one passed (a shard whose suites were
+# all skipped, gtest missing, verified nothing).
+if ((shard_mode)); then
+  echo "gtest shard $shard_i/$shard_n: $gtest_ran suite(s) ran, $gtest_passed passed"
+  if ((gtest_ran == 0)); then echo "FAIL: gtest shard $shard_i/$shard_n ran no suite"; status=1
+  elif ((gtest_passed == 0)); then echo "FAIL: gtest shard $shard_i/$shard_n: no suite passed (failed or skipped)"; status=1
+  fi
+fi
 if ((${#gate_layers[@]})); then
   gate_csv=$(IFS=,; echo "${gate_layers[*]}")
   python3 -I tests/ci/inventory.py --results "$results" --layers "$gate_csv" || status=1

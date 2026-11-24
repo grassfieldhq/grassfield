@@ -7,7 +7,9 @@
 #
 #   scripts/gates/ci.sh deps                  the packages the job installs from the repositories (one per line)
 #   scripts/gates/ci.sh pins                  the pinned packages: "<name> <version> <sha256> <url>" per line
-#   scripts/gates/ci.sh scope [BASE]          "full" when compositor/ changed since BASE (or BASE is unknown), else "quick"
+#   scripts/gates/ci.sh compat                the shared objects of an older package added beside the installed one (libjxl 0.12 for
+#                                             Hyprland): "<name> <version> <sha256> <url> <members>" per line
+#   scripts/gates/ci.sh scope [BASE]         "full" when compositor/ changed since BASE (or BASE is unknown), else "quick"
 #   scripts/gates/ci.sh setup [--tidy] [USER] (root, CI only) pacman set up, the packages (with clang for --tidy), USER (default
 #                                             builder) created and given the checkout
 #   scripts/gates/ci.sh toolkit               (root, CI only) the pinned packages, each checked against its sha256, installed
@@ -33,13 +35,18 @@ root=$(cd "$here/../.." && pwd)
 ARCHIVE=https://archive.archlinux.org/repos/2026/10/20/extra/os/x86_64
 # The snapshot's index lists only the databases; the package files are under /packages/<initial>/<name>/.
 PKGS=https://archive.archlinux.org/packages
-# libjxl is pinned with the stack: Hyprland 0.56.2-4 and hyprgraphics 0.5.1-4 were built against libjxl.so.0.12 (the snapshot's
-# libjxl 0.12.0-1) and the rolling repositories moved on to 0.13.0-1 (libjxl.so.0.13). Without the pin Hyprland does not start
-# ("error while loading shared libraries: libjxl.so.0.12", main CI run 45378817729). Nothing else of the stack had drifted
-# (checked against the 2026-11-24 extra.files: glslang 16, re2 11, display-info 3, lua 5.5 ... are current); the toolkit step
-# proves it with ldd on Hyprland, so a later drift fails there with its name, not in seven tests.
+# Hyprland 0.56.2-4 and hyprgraphics 0.5.1-4 were built against libjxl.so.0.12 (the snapshot's libjxl 0.12.0-1) and the rolling
+# repositories moved on to 0.13.0-1 (libjxl.so.0.13): without 0.12 Hyprland does not start ("error while loading shared
+# libraries: libjxl.so.0.12", main CI run 45378817729). The package itself is NOT downgraded: current ffmpeg, glycin, sdl2_image,
+# opencv and webkit are built against 0.13 and need it. Only the 0.12 shared objects are added beside it (COMPAT: the files
+# usr/lib/libjxl*.so.0.12*, whose names do not clash with 0.13's), checked against the package's sha256. Nothing else of the
+# stack had drifted (checked against the 2026-11-24 extra.files: glslang 16, re2 11, display-info 3, lua 5.5 ... are current);
+# the toolkit step compares the unresolved libraries of every executable and shared object before and after the pins and
+# fails by name on a new one, so a later drift fails there and not in seven tests.
+COMPAT=(
+  "libjxl 0.12.0-1 a4e0f65e8ba3a2da1cc348aad4f7f8aee1b504b824a64838fb3d9b2f75cc9449 $PKGS/l/libjxl/libjxl-0.12.0-1-x86_64.pkg.tar.zst usr/lib/libjxl*.so.0.12*"
+)
 PINS=(
-  "libjxl 0.12.0-1 a4e0f65e8ba3a2da1cc348aad4f7f8aee1b504b824a64838fb3d9b2f75cc9449 $PKGS/l/libjxl/libjxl-0.12.0-1-x86_64.pkg.tar.zst"
   "hyprutils 0.14.2-1 177dfe5d64dba65ef2f1274d84d647b12cc1bc0b808394fd556f135ac8d7e65e $ARCHIVE/hyprutils-0.14.2-1-x86_64.pkg.tar.zst"
   "hyprgraphics 0.5.1-4 c916b1fb9d7ad0e78fab2d94b0066dcdc8be0a2810be7e72df57ddf5b639fea3 $ARCHIVE/hyprgraphics-0.5.1-4-x86_64.pkg.tar.zst"
   "aquamarine 0.15.1-1 ac96995cceea132e32cafd9bf63fd6cbe3d0599ab175e82bcee85b0c7da9706c $ARCHIVE/aquamarine-0.15.1-1-x86_64.pkg.tar.zst"
@@ -96,6 +103,7 @@ PY
 }
 
 pins() { printf '%s\n' "${PINS[@]}"; }
+compat() { printf '%s\n' "${COMPAT[@]}"; }
 
 deps() { { pkgbuild_deps "$root/packaging/arch/PKGBUILD" && printf '%s\n' "${EXTRA[@]}"; } | sort -u; }
 
@@ -184,6 +192,17 @@ toolkit() {
   local dir line name ver sum url files=() names=() f
   ci_only toolkit || return 2
   dir=$(mktemp -d)
+  unresolved_libs >"$dir/unresolved.before"
+  for line in "${COMPAT[@]}"; do
+    read -r name ver sum url members <<<"$line"
+    f=$dir/${url##*/}
+    curl -fsSL --retry 3 -o "$f" "$url" || { echo "ci.sh toolkit: cannot download $url" >&2; return 1; }
+    [[ $(sha256sum "$f" | cut -d' ' -f1) == "$sum" ]] || { echo "ci.sh toolkit: $name $ver: sha256 differs from the pin: refused" >&2; return 1; }
+    # shellcheck disable=SC2086
+    tar --zstd -xf "$f" -C / --wildcards $members || { echo "ci.sh toolkit: cannot extract $members from $name $ver" >&2; return 1; }
+    echo "ci.sh toolkit: $name $ver: $members added beside the installed $(pacman -Q "$name")"
+  done
+  ldconfig || return 1
   for line in "${PINS[@]}"; do
     read -r name ver sum url <<<"$line"
     f=$dir/${url##*/}
@@ -195,18 +214,53 @@ toolkit() {
   pacman -Udd --noconfirm "${files[@]}" || return 1
   pacman -U --noconfirm "$dir"/quickshell-*.pkg.tar.zst || return 1
   sed -i "/^\[options\]/a IgnorePkg = ${names[*]}" /etc/pacman.conf
-  rm -rf "$dir"
   for line in "${PINS[@]}"; do
     read -r name ver _ <<<"$line"
     [[ $(pacman -Q "$name" 2>/dev/null) == "$name $ver" ]] || { echo "ci.sh toolkit: $name is $(pacman -Q "$name" 2>&1), not $ver" >&2; return 1; }
   done
   pacman -Q qt6-base "${names[@]}"
   qs --version
-  # Every shared library of the compositor resolves (a rolling repository can move a soname under the pinned stack).
-  local missing
-  missing=$(ldd /usr/bin/Hyprland 2>&1 | grep 'not found')
-  [[ -z $missing ]] || { echo "ci.sh toolkit: Hyprland has unresolved libraries (a repository moved a soname under the pins):" >&2; echo "$missing" >&2; return 1; }
+  # The pins and the compat objects leave nothing unresolved that was not before (a repository can move a soname under the
+  # pinned stack, or a pin can take one from a package), and the compositor itself has none.
+  local after new
+  after=$(unresolved_libs)
+  new=$(comm -13 "$dir/unresolved.before" <(printf '%s\n' "$after" | sed '/^$/d'))
+  [[ -z $new ]] || { echo "ci.sh toolkit: unresolved libraries the pins brought (path: library):" >&2; echo "$new" >&2; return 1; }
+  if grep -E '^/usr/(s?bin/Hyprland|lib/libhypr|lib/libaquamarine)' <<<"$after"; then
+    echo "ci.sh toolkit: the Hyprland stack has unresolved libraries" >&2
+    return 1
+  fi
   /usr/bin/Hyprland --version | head -1
+  rm -rf "$dir"
+}
+
+# "<path>: <library>" for each library an ELF file under /usr/bin, /usr/sbin and /usr/lib cannot resolve (ldd), sorted. A plugin
+# that needs an optional library is the same before and after the pins, which is what toolkit compares.
+unresolved_libs() {
+  python3 -I -c '
+import os, re, subprocess
+from concurrent.futures import ThreadPoolExecutor
+files = []
+for top in ("/usr/bin", "/usr/sbin", "/usr/lib"):
+    for base, _dirs, names in os.walk(top):
+        for n in names:
+            p = os.path.join(base, n)
+            if os.path.islink(p) or not os.path.isfile(p):
+                continue
+            try:
+                with open(p, "rb") as f:
+                    if f.read(4) != b"\x7fELF":
+                        continue
+            except OSError:
+                continue
+            files.append(p)
+def check(p):
+    r = subprocess.run(["ldd", p], capture_output=True, text=True)
+    return ["%s: %s" % (p, m.group(1)) for m in re.finditer(r"^\s*(\S+) => not found", r.stdout, re.M)]
+with ThreadPoolExecutor(8) as ex:
+    out = sorted({line for lines in ex.map(check, files) for line in lines})
+print("\n".join(out))
+'
 }
 
 # The environment of the checks and tests: the owner's locale, en_US.UTF-8 (the suites' sorted expectations are written in its
@@ -345,8 +399,11 @@ EOF
   fi
   expect "pins: the Hyprland 0.56.2 stack and Omarchy's Quickshell, each with a sha256 and an https address" \
     "$(pins | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ { print $1, $2 }' | tr '\n' ';')" \
-    "libjxl 0.12.0-1;hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
+    "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
   expect "pins: Quickshell is not the refused 0.3.2 tag" "$(pins | awk '$1 == "quickshell" && $2 !~ /^0\.3\.2-/ { print "ok" }')" ok
+  expect "compat: libjxl 0.12 objects only, with a sha256, an https address and the 0.12 soname pattern" \
+    "$(compat | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ && $5 == "usr/lib/libjxl*.so.0.12*" { print $1, $2 }' | tr '\n' ';')" "libjxl 0.12.0-1;"
+  expect "compat: libjxl is not also a pin (the installed 0.13 stays for ffmpeg, glycin, opencv, webkit)" "$(pins | grep -c '^libjxl ')" 0
   expect "toolkit refuses on a bare machine" "$(env -u CI bash "$0" toolkit >/dev/null 2>&1; echo $?)" 2
   # The environment of check and test: en_US.UTF-8 where it is generated (LC_ALL and the other overrides cleared), a runtime
   # directory; the copy of the checkout lives in the user's home.
@@ -377,6 +434,7 @@ shift || true
 case $cmd in
   deps) deps ;;
   pins) pins ;;
+  compat) compat ;;
   scope) scope "${1:-}" ;;
   setup) setup "$@" ;;
   toolkit) toolkit ;;
@@ -384,5 +442,5 @@ case $cmd in
   test) test_run "$@" ;;
   --selftest) selftest ;;
   -h | --help) sed -n '2,/^set -uo/p' "$0" | sed '$d;s/^# \{0,1\}//' ;;
-  *) echo "usage: ci.sh deps|pins|scope|setup|toolkit|check|test|--selftest (--help)" >&2; exit 2 ;;
+  *) echo "usage: ci.sh deps|pins|compat|scope|setup|toolkit|check|test|--selftest (--help)" >&2; exit 2 ;;
 esac

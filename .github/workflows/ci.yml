@@ -5,8 +5,10 @@
 # changed, `just check-quick` otherwise; `just test` runs the data, logic and headless layers (the nested and visual layers
 # need a compositor session: owner runs), from a copy of the checkout in the user's home, with LANG=en_US.UTF-8.
 # One job, a matrix of seven containers in parallel (a serial run took 3 hours and hit the timeout): the checks, the headless
-# layer, the data/logic/nested scripts, and the gtest suites in four shards (scripts/dev/test.sh --gtest-shard I/N: together
-# exactly the suites of the logic layer; tests/shell/ci_workflow.sh checks that the matrix is complete).
+# layer, the data and logic scripts (the nested layer needs a compositor session and is left out on purpose), and the gtest
+# suites in four shards (scripts/dev/test.sh --gtest-shard I/N: together exactly the suites of the logic layer, balanced by
+# measured time; tests/shell/ci_workflow.sh checks that the matrix is complete). A last job, named as the single job was,
+# needs every part and is the one status of the run.
 # Container rules (tests/ci/no_privileged_containers.py, ADR-0057): the job adds no container options, no device, no host
 # /dev or /run/systemd mount; the runner's defaults only. Replay locally: docs/testing/README.md "CI".
 name: CI
@@ -36,7 +38,7 @@ jobs:
           - part: headless
             args: --layer headless
           - part: scripts
-            args: --layer data,logic,nested --skip-gtest
+            args: --layer data,logic --skip-gtest
           - part: gtest-0
             args: --gtest-shard 0/4
           - part: gtest-1
@@ -107,3 +109,18 @@ jobs:
             .dev/ci/check.log
           if-no-files-found: warn
           retention-days: 30
+
+  # One status for the whole run (the matrix has seven parts): it needs every part and fails when any did not succeed, also when
+  # one was cancelled or skipped. A required check, if one is ever set on main, would name this one.
+  check-and-test-result:
+    name: check and test (Arch Linux)
+    runs-on: ubuntu-latest
+    needs: check-and-test
+    if: ${{ always() }}
+    steps:
+      - name: Every part succeeded
+        env:
+          RESULT: ${{ needs.check-and-test.result }}
+        run: |
+          echo "the parts of check-and-test: $RESULT"
+          [ "$RESULT" = success ]
