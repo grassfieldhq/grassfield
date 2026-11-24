@@ -17,14 +17,19 @@ Item {
 
     // What the strip styles: the tool, or the selected layer's type for Select.
     readonly property string kind: root.backend.tool !== "select" ? root.backend.tool : root.backend.selectedType
-    readonly property bool hasColor: ["arrow", "line", "rectangle", "ellipse", "pen", "highlighter", "text", "counter", "eyedropper"].indexOf(root.kind) >= 0
+    readonly property bool hasColor: ["arrow", "line", "rectangle", "ellipse", "pen", "highlighter", "text", "counter", "redact", "eyedropper"].indexOf(root.kind) >= 0
     readonly property bool hasWidth: ["arrow", "line", "rectangle", "ellipse", "pen", "highlighter"].indexOf(root.kind) >= 0
     readonly property bool hasArrow: root.kind === "arrow"
     readonly property bool hasFill: root.kind === "rectangle" || root.kind === "ellipse"
     readonly property bool hasText: root.kind === "text"
     readonly property bool hasCounter: root.kind === "counter"
     readonly property bool hasCrop: root.kind === "crop"
-    readonly property bool shown: root.hasColor || root.hasCrop
+    // The region tools (slice B7) say in the strip what they guarantee: Redact is the tool for secrets, Pixelate and Blur are not (ADR-0066 D-9).
+    readonly property string regionNote: root.kind === "redact" ? qsTr("Hides what is under it for good. Use it for secrets.")
+        : root.kind === "pixelate" ? qsTr("Hides detail, but short text can still be guessed. Use Redact for secrets.")
+        : root.kind === "blur" ? qsTr("For looks only. Does not hide text.")
+        : root.kind === "spotlight" ? qsTr("Dims everything outside the box.") : ""
+    readonly property bool shown: root.hasColor || root.hasCrop || root.regionNote !== ""
 
     visible: root.shown
     height: root.shown ? Tokens.screenshotStyleBarHeight : 0
@@ -339,5 +344,26 @@ Item {
             Accessible.name: qsTr("Apply Crop")
             onClicked: root.backend.applyCrop()
         }
+    }
+
+    // What the region tool does and does not hide: after the controls, cut at the window's edge (the tool's tooltip says it whole).
+    Text {
+        objectName: "regionNote"
+        visible: root.regionNote !== ""
+        anchors {
+            left: row.right
+            leftMargin: Tokens.spacingLg
+            right: parent.right
+            rightMargin: Tokens.spacingLg
+            verticalCenter: parent.verticalCenter
+        }
+        text: root.regionNote
+        elide: Text.ElideRight
+        textFormat: Text.PlainText
+        color: Appearance.windowSecondary
+        font.family: Appearance.fontFamily
+        font.pixelSize: Tokens.typographyBodySize
+        Accessible.role: Accessible.StaticText
+        Accessible.name: root.regionNote
     }
 }

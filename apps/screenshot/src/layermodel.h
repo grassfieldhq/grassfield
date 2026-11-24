@@ -20,7 +20,7 @@ class LayerModel : public QAbstractListModel
 public:
     // Names the delegates read (QML Items have x, y, width and color of their own, so these are prefixed).
     enum Role {
-        KindRole = Qt::UserRole + 1, // "rect" "ellipse" "line" "arrow" "arrowCurved" "stroke" "glyphs", "" for a layer that does not read
+        KindRole = Qt::UserRole + 1, // "rect" "ellipse" "line" "arrow" "arrowCurved" "stroke" "glyphs" "redact" "pixelate" "blur" "spotlight", "" for a layer that does not read
         IdRole,
         ColorRole,
         StrokeRole,

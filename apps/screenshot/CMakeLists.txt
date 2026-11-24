@@ -24,6 +24,7 @@ add_library(grassfield-screenshot-core STATIC
     src/framing.cpp src/framing.h
     src/layermodel.cpp src/layermodel.h
     src/layers.cpp src/layers.h
+    src/redaction.cpp src/redaction.h
     src/screenshotapp.cpp src/screenshotapp.h
     src/screenshotlogic.cpp src/screenshotlogic.h
     src/toolcontroller.cpp src/toolcontroller.h
@@ -56,6 +57,7 @@ if(GTest_FOUND)
         ../../tests/unit/screenshot/tst_golden.cpp
         ../../tests/unit/screenshot/tst_framing.cpp
         ../../tests/unit/screenshot/tst_layers.cpp
+        ../../tests/unit/screenshot/tst_regions.cpp
         ../../tests/unit/screenshot/tst_main.cpp
         ../../tests/unit/screenshot/tst_pathparity.cpp
         ../../tests/unit/screenshot/tst_scene.cpp

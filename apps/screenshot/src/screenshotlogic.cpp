@@ -8,6 +8,16 @@
 
 namespace screenshot {
 
+QStringList clipboardArguments()
+{
+    return {QStringLiteral("wl-copy"), QStringLiteral("--type"), QStringLiteral("image/png"), QStringLiteral("--sensitive")};
+}
+
+QStringList clipboardClearArguments()
+{
+    return {QStringLiteral("wl-copy"), QStringLiteral("--clear")};
+}
+
 QString localPathFromArgument(const QString &arg, const QString &cwd, QString *error)
 {
     const auto fail = [error](const QString &message) {

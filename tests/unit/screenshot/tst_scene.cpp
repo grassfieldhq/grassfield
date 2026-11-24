@@ -95,7 +95,7 @@ struct Rig {
         window.resize(view);
         QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(GF_SCREENSHOT_QML_DIR "/ShapeScene.qml")));
         EXPECT_FALSE(component.isError()) << component.errorString().toStdString();
-        QObject *object = component.createWithInitialProperties({{QStringLiteral("model"), QVariant::fromValue(&model)}, {QStringLiteral("viewScale"), zoom}});
+        QObject *object = component.createWithInitialProperties({{QStringLiteral("model"), QVariant::fromValue(&model)}, {QStringLiteral("viewScale"), zoom}, {QStringLiteral("regionRevision"), 0}, {QStringLiteral("regionPlaceholder"), QColor(Qt::black)}});
         scene = qobject_cast<QQuickItem *>(object);
         EXPECT_NE(scene, nullptr);
         if (!scene)
@@ -558,3 +558,63 @@ TEST(Scene, TheCostOfAMoveOnAFourKCapture)
                     zoom * 100, (long long)model, (long long)render);
     }
 }
+
+// ---- the region tools (slice B7) ---------------------------------------------------------------------------------------------------
+
+// Redact and Spotlight are drawn by the scene as the export draws them (whole-pixel areas, nothing blended along the border), at three zooms; a
+// Pixelate and a Blur show an opaque placeholder until the backend's pixels for them are there (no image provider here), so the screen never shows
+// less redaction than the file.
+class RegionScene : public ::testing::TestWithParam<double>
+{
+};
+
+TEST_P(RegionScene, RedactAndSpotlightMatchTheExportAndThePlaceholderCoversTheRest)
+{
+    const double zoom = GetParam();
+    const QSize natural(96, 72);
+    QImage white(natural, QImage::Format_RGB32);
+    white.fill(Qt::white);
+    const auto layerOf = [](int id, const QString &type, qreal x, qreal y, qreal w, qreal h, QJsonObject extra = {}) {
+        Layer layer;
+        layer.id = id;
+        layer.type = type;
+        layer.fields = extra;
+        layer.fields.insert("x", x);
+        layer.fields.insert("y", y);
+        layer.fields.insert("w", w);
+        layer.fields.insert("h", h);
+        return layer;
+    };
+    Rig rig(natural, zoom, QSize(int(natural.width() * zoom), int(natural.height() * zoom)));
+    ASSERT_NE(rig.scene, nullptr);
+
+    for (const Layer &layer : {layerOf(1, "redact", 10.4, 8.6, 30.3, 20.2, QJsonObject{{"color", "#336699"}}), layerOf(2, "spotlight", 20, 20, 40, 30, QJsonObject{{"dim", 0.5}})}) {
+        rig.model.setLayers({layer});
+        const QImage scene = rig.grab();
+        // Over white, the export of the same layer: for Redact the pixel operation, for Spotlight the veil.
+        const QImage exported = exportLayers(white, {layer});
+        QImage reference(scene.size(), QImage::Format_RGB32);
+        {
+            QPainter painter(&reference);
+            painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
+            painter.drawImage(QRect(QPoint(), scene.size()), exported);
+        }
+        const double share = differing(scene, reference, kLevels);
+        std::printf("region scene %s zoom %.1f: differing %.3f%%\n", layer.type.toLatin1().constData(), zoom, share * 100);
+        // Along the border a scene scaled to a fractional zoom blends one device pixel; the inside is exact.
+        EXPECT_LT(share, 0.03) << layer.type.toStdString() << " at zoom " << zoom;
+    }
+
+    for (const QString &type : {QStringLiteral("pixelate"), QStringLiteral("blur")}) {
+        const Layer layer = layerOf(3, type, 10, 10, 40, 30);
+        rig.model.setLayers({layer});
+        const QImage scene = rig.grab();
+        const QRect area = regionArea(layer);
+        for (int y = int(std::ceil(area.top() * zoom)) + 1; y < int(std::floor(area.bottom() * zoom)); ++y) {
+            for (int x = int(std::ceil(area.left() * zoom)) + 1; x < int(std::floor(area.right() * zoom)); ++x)
+                ASSERT_NE(scene.pixel(x, y), qRgb(255, 255, 255)) << type.toStdString() << " shows the picture under it at " << x << "," << y;
+        }
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Zooms, RegionScene, ::testing::Values(1.0, 1.25, 2.0));

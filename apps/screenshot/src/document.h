@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <optional>
+#include <utility>
 
 // The document of the Screenshot app: the original picture (never changed in memory), the layers over it, and the two actions
 // that write (ADR-0066 D-5):
@@ -46,6 +47,10 @@ public:
     bool dirty() const { return m_dirty; }
     // The file holds an edited result and the history still has its original.
     bool canRevert() const { return m_entry && !m_entry->current.isEmpty() && m_fileDigest == m_entry->current; }
+    // How many times Done has replaced the file, and the bytes of the last such file, handed over once (what the clipboard takes after a
+    // redacted export); the document keeps no second copy of a picture that may be large.
+    int writes() const { return m_writes; }
+    QByteArray takeExportedPng() { return std::exchange(m_exportedPng, QByteArray()); }
     // The history entry of this picture, once there is one.
     const std::optional<HistoryEntry> &entry() const { return m_entry; }
 
@@ -70,6 +75,8 @@ private:
     std::optional<HistoryEntry> m_entry;
     QString m_fileDigest; // the file's bytes when opened or last written by this document
     bool m_dirty = false;
+    int m_writes = 0;
+    QByteArray m_exportedPng;
 };
 
 } // namespace screenshot

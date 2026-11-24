@@ -101,6 +101,22 @@ Window {
         property: "highlightOpacity"
         value: Tokens.screenshotHighlighterOpacity
     }
+    // The region tools' defaults: a pixelate's blocks and a blur's sigma in device pixels (at least 12 for a block), a spotlight's veil.
+    Binding {
+        target: editorWin.backend
+        property: "pixelateBlock"
+        value: Math.max(12, Math.round(Tokens.screenshotPixelateBlock * editorWin.unit))
+    }
+    Binding {
+        target: editorWin.backend
+        property: "blurRadius"
+        value: Tokens.screenshotBlurRadius * editorWin.unit
+    }
+    Binding {
+        target: editorWin.backend
+        property: "spotlightDim"
+        value: Tokens.screenshotSpotlightDim
+    }
     // The colour of new shapes (the style group of slice B5 offers more).
     Binding {
         target: editorWin.backend
@@ -260,6 +276,10 @@ Window {
             {key: "H", tool: "highlighter"},
             {key: "T", tool: "text"},
             {key: "N", tool: "counter"},
+            {key: "X", tool: "redact"},
+            {key: "M", tool: "pixelate"},
+            {key: "B", tool: "blur"},
+            {key: "S", tool: "spotlight"},
             {key: "I", tool: "eyedropper"},
             {key: "C", tool: "crop"}
         ]
@@ -346,6 +366,10 @@ Window {
                         {tool: "highlighter", name: qsTr("Highlighter"), key: "H"},
                         {tool: "text", name: qsTr("Text"), key: "T"},
                         {tool: "counter", name: qsTr("Counter"), key: "N"},
+                        {tool: "redact", name: qsTr("Redact"), key: "X", hint: qsTr("Hides the area for good. Use it for secrets.")},
+                        {tool: "pixelate", name: qsTr("Pixelate"), key: "M", hint: qsTr("Hides detail, but short text can still be guessed. Use Redact for secrets.")},
+                        {tool: "blur", name: qsTr("Blur"), key: "B", hint: qsTr("For looks only. Does not hide text.")},
+                        {tool: "spotlight", name: qsTr("Focus"), key: "S", hint: qsTr("Dims everything outside the box.")},
                         {tool: "crop", name: qsTr("Crop"), key: "C"}
                     ]
 
@@ -358,7 +382,8 @@ Window {
                         checkable: true
                         checked: editorWin.backend.tool === toolButton.modelData.tool
                         accessibleName: toolButton.modelData.name
-                        tooltip: qsTr("%1 (%2)").arg(toolButton.modelData.name).arg(toolButton.modelData.key)
+                        tooltip: toolButton.modelData.hint ? qsTr("%1 (%2): %3").arg(toolButton.modelData.name).arg(toolButton.modelData.key).arg(toolButton.modelData.hint)
+                            : qsTr("%1 (%2)").arg(toolButton.modelData.name).arg(toolButton.modelData.key)
                         onClicked: editorWin.backend.tool = toolButton.modelData.tool
 
                         Glyph {

@@ -45,6 +45,7 @@ class ScreenshotApp : public AppearanceSettings
     Q_PROPERTY(QObject *layerModel READ layerModel CONSTANT)
     Q_PROPERTY(QString tool READ tool WRITE setTool NOTIFY toolChanged)
     // The style new shapes get: "#rrggbb" colour, stroke in picture pixels, fill, arrow style (straight, curved, double).
+    // With the Redact tool at hand (or a Redact layer selected) the colour is the redaction's own fill, black until changed.
     Q_PROPERTY(QString toolColor READ toolColor WRITE setToolColor NOTIFY toolChanged)
     Q_PROPERTY(qreal toolWidth READ toolWidth WRITE setToolWidth NOTIFY toolChanged)
     Q_PROPERTY(bool toolFill READ toolFill WRITE setToolFill NOTIFY toolChanged)
@@ -57,6 +58,13 @@ class ScreenshotApp : public AppearanceSettings
     Q_PROPERTY(qreal counterSize READ counterSize WRITE setCounterSize NOTIFY toolChanged)
     Q_PROPERTY(qreal highlightFactor READ highlightFactor WRITE setHighlightFactor NOTIFY toolChanged)
     Q_PROPERTY(qreal highlightOpacity READ highlightOpacity WRITE setHighlightOpacity NOTIFY toolChanged)
+    // The region tools (slice B7): a pixelate's block side and a blur's sigma in device pixels, a spotlight's veil alpha (the style new layers get).
+    Q_PROPERTY(qreal pixelateBlock READ pixelateBlock WRITE setPixelateBlock NOTIFY toolChanged)
+    Q_PROPERTY(qreal blurRadius READ blurRadius WRITE setBlurRadius NOTIFY toolChanged)
+    Q_PROPERTY(qreal spotlightDim READ spotlightDim WRITE setSpotlightDim NOTIFY toolChanged)
+    // Changes whenever what a Pixelate or Blur shows may have changed (any edit of the layers or the picture): the scene asks for each region's
+    // image again (image://screenshot/fx/<revision>/<layer id>).
+    Q_PROPERTY(int regionRevision READ regionRevision NOTIFY layersChanged)
     // The text being typed (the Text tool): whether an editor is open, the layer it edits (0 for a new text), the picture point of
     // its top left and its text. The view puts its editor there and answers with commitText or cancelText.
     Q_PROPERTY(bool textEditing READ textEditing NOTIFY textEditChanged)
@@ -89,6 +97,13 @@ public:
     int imageWidth() const { return m_image.width(); }
     int imageHeight() const { return m_image.height(); }
     QString imageSource() const;
+    qreal pixelateBlock() const { return m_tools.style().pixelateBlock; }
+    void setPixelateBlock(qreal block);
+    qreal blurRadius() const { return m_tools.style().blurRadius; }
+    void setBlurRadius(qreal radius);
+    qreal spotlightDim() const { return m_tools.style().spotlightDim; }
+    void setSpotlightDim(qreal dim);
+    int regionRevision() const { return m_regionRevision; }
     QString textStyle() const { return m_tools.style().textStyle; }
     void setTextStyle(const QString &style);
     qreal textSize() const { return m_tools.style().textSize; }
@@ -119,7 +134,7 @@ public:
     QObject *layerModel() { return &m_layerModel; }
     QString tool() const { return m_tools.tool(); }
     void setTool(const QString &tool);
-    QString toolColor() const { return m_tools.style().color; }
+    QString toolColor() const { return colorSlot(); }
     void setToolColor(const QString &color);
     qreal toolWidth() const { return m_tools.style().width; }
     void setToolWidth(qreal width);
@@ -138,6 +153,13 @@ public:
 
     // The picture the provider serves (a copy: the document stays on the GUI thread).
     QImage currentImage() const;
+    // What a Pixelate or Blur layer shows over its area (the exporter's own pixels; regionPatch), for the provider's thread. Null for any other id.
+    QImage regionImage(int id) const;
+
+    // Where a redacted export puts the picture: wl-copy's arguments and the PNG on its stdin; true when it was taken. The app's own runs
+    // wl-copy; the tests replace it. After a Done that hid pixels the clipboard holds the exported picture, never the capture (ADR-0066 D-9).
+    using ClipboardWriter = std::function<bool(const QStringList &arguments, const QByteArray &png)>;
+    void setClipboardWriter(const ClipboardWriter &writer) { m_clipboardWriter = writer; }
 
     // Done: replaces the file with the edited picture, keeping the original in the history. True when the window may close.
     Q_INVOKABLE bool done();
@@ -198,6 +220,11 @@ signals:
 
 private:
     void setLastError(const QString &error);
+    // The colour of the tool at hand (or the selected layer's tool): the redaction's own fill for Redact, else the style's colour.
+    QString &colorSlot();
+    QString colorSlot() const;
+    // Puts the exported picture on the clipboard in place of the automatic copy; false (and the clipboard cleared, if it can be) when it cannot.
+    bool replaceClipboard(const QByteArray &png);
     void publish();
     // The layers changed (a step, an undo, a preview): the document, the view and the state follow.
     void layersEdited();
@@ -241,6 +268,11 @@ private:
     QPointF m_textEditPos;
     QString m_textEditText;
     QString m_lastError;
+    // Region previews (the provider's thread reads them): the layers the scene shows, under m_imageLock with m_image.
+    screenshot::Layers m_regionLayers;
+    int m_regionRevision = 0;
+    ClipboardWriter m_clipboardWriter;
+    QByteArray m_clipboardPng; // the exported picture of a Done that hid pixels, until the clipboard has taken it
 };
 
 // image://screenshot/<revision>: the document's original picture at its own size (the Image's sourceSize decides what is

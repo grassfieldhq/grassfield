@@ -2939,8 +2939,8 @@ QtObject {
     // estimate (no capture): Select Text in Images, the widest host name a QR code chip shows before eliding it in the middle [ref: docs/specs/preview.md]
     readonly property int previewCodeChipLabelWidth: 220
 
-    // estimate: the Screenshot app's editor window, wider than Preview's 860 to leave room for the tool group, the style group and the buttons [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
-    readonly property int screenshotWindowWidth: 960
+    // estimate: the Screenshot app's editor window (960 before the four region tools of slice B7 made the toolbar 962 wide), wider than Preview's 860 to leave room for the tool group, the style group and the buttons [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotWindowWidth: 1040
     // estimate: the Screenshot app's editor window [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
     readonly property int screenshotWindowHeight: 680
     // estimate: the narrowest editor window, the unified toolbar's groups with the lights [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
@@ -2995,6 +2995,12 @@ QtObject {
     readonly property int screenshotCropBorderWidth: 2
     // estimate: the alpha of the selection in the text editor on the picture (its letters are drawn by the preview layer, not by the editor) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
     readonly property real screenshotTextSelectionOpacity: 0.35
+    // estimate: the side of a Pixelate block, in points; the file's block is this times the capture's scale and never under 12 device pixels (ADR-0066 D-9) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotPixelateBlock: 16
+    // estimate: a Blur's Gaussian sigma, in points, times the capture's scale [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotBlurRadius: 8
+    // estimate: the alpha of the dark veil a Spotlight puts over everything outside its box [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotSpotlightDim: 0.55
 
     // F1 reference (docs/testing/f1-reference-gaps.md, Apps launcher): panel 844 +-1 pt wide (2x capture)
     readonly property int launcherPanelWidth: 844

@@ -864,6 +864,7 @@
  {"path": "tests/unit/screenshot/tst_framing.cpp", "layer": "logic"},
  {"path": "tests/unit/screenshot/tst_layers.cpp", "layer": "logic"},
  {"path": "tests/unit/screenshot/tst_main.cpp", "layer": "logic"},
+ {"path": "tests/unit/screenshot/tst_regions.cpp", "layer": "logic"},
  {"path": "tests/unit/screenshot/tst_pathparity.cpp", "layer": "logic"},
  {"path": "tests/unit/screenshot/tst_scene.cpp", "layer": "logic"},
  {"path": "tests/unit/screenshot/tst_screenshotlogic.cpp", "layer": "logic"},

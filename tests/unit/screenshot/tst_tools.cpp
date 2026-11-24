@@ -40,9 +40,9 @@ protected:
 TEST_F(ToolsTest, TheToolsAreTheOnesOfThisSlice)
 {
     EXPECT_EQ(ToolController::tools(), (QStringList{"select", "arrow", "line", "rectangle", "ellipse", "pen", "highlighter", "text", "counter",
-                                                     "eyedropper", "crop"}));
+                                                     "redact", "pixelate", "blur", "spotlight", "eyedropper", "crop"}));
     EXPECT_EQ(tools.tool(), "select");
-    EXPECT_FALSE(tools.setTool("redact")) << "a tool of a later slice";
+    EXPECT_FALSE(tools.setTool("background")) << "a tool of a later slice";
     EXPECT_FALSE(tools.setTool("")) << "and no tool at all";
     for (const char *t : {"text", "eyedropper", "crop"}) {
         EXPECT_TRUE(tools.setTool(t));

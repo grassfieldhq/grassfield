@@ -1,8 +1,12 @@
 #include "screenshotapp.h"
 
+#include "exporter.h"
+#include "screenshotlogic.h"
+
 #include <QFileInfo>
 #include <QMutexLocker>
 #include <QPointF>
+#include <QProcess>
 #include <QRegularExpression>
 
 #include <cmath>
@@ -65,6 +69,18 @@ QImage ScreenshotApp::currentImage() const
     return m_image;
 }
 
+QImage ScreenshotApp::regionImage(int id) const
+{
+    QImage picture;
+    screenshot::Layers layers;
+    {
+        const QMutexLocker lock(&m_imageLock);
+        picture = m_image;
+        layers = m_regionLayers;
+    }
+    return screenshot::regionPatch(picture, layers, id);
+}
+
 void ScreenshotApp::publish()
 {
     m_frame = frameOf(m_document.layers());
@@ -115,9 +131,15 @@ void ScreenshotApp::layersEdited()
         m_lastSelected = m_tools.selected();
         if (m_lastSelected != 0)
             adoptStyle(m_tools.selectedLayer());
+        emit toolChanged(); // the colour shown is the selected layer's tool's (a Redact's fill is its own)
     }
     m_document.setLayers(m_undo.layers());
     m_layerModel.setLayers(m_undo.layers());
+    {
+        const QMutexLocker lock(&m_imageLock);
+        m_regionLayers = m_undo.layers();
+        ++m_regionRevision;
+    }
     emit layersChanged();
     // A move changes geometry only: documentChanged (dirty, and everything that hangs on the document) only when the state does.
     if (m_document.dirty() != m_lastDirty) {
@@ -140,7 +162,7 @@ void ScreenshotApp::adoptStyle(const screenshot::Layer &layer)
     const screenshot::ShapeStyle before = style;
     const QColor color = screenshot::layerColor(layer);
     if (color.isValid())
-        style.color = color.name(); // the colour without its alpha: a highlighter's see-through is the tool's
+        (layer.type == QLatin1String("redact") ? style.redactColor : style.color) = color.name(); // without its alpha: a highlighter's see-through is the tool's
     if (screenshot::isTextType(layer.type)) {
         qreal size = layer.fields.value(QStringLiteral("size")).toDouble();
         if (size >= screenshot::kMinTextSize && size <= screenshot::kMaxTextSize)
@@ -155,7 +177,7 @@ void ScreenshotApp::adoptStyle(const screenshot::Layer &layer)
         if (layer.type == QLatin1String("arrow"))
             style.arrow = screenshot::arrowStyle(layer);
     }
-    if (style.color != before.color || style.width != before.width || style.fill != before.fill || style.arrow != before.arrow
+    if (style.color != before.color || style.redactColor != before.redactColor || style.width != before.width || style.fill != before.fill || style.arrow != before.arrow
         || style.textSize != before.textSize || style.counterSize != before.counterSize || style.textStyle != before.textStyle)
         emit toolChanged();
 }
@@ -228,8 +250,49 @@ void ScreenshotApp::setHighlightOpacity(qreal opacity)
 void ScreenshotApp::setToolColor(const QString &color)
 {
     static const QRegularExpression form(QStringLiteral("^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"));
-    if (color != m_tools.style().color && form.match(color).hasMatch()) {
-        m_tools.style().color = color;
+    if (!form.match(color).hasMatch())
+        return;
+    QString &slot = colorSlot();
+    // A redaction's fill is opaque: the colour without its alpha.
+    const QString next = &slot == &m_tools.style().redactColor ? QColor(QColor(color).rgb()).name() : color;
+    if (next != slot) {
+        slot = next;
+        emit toolChanged();
+    }
+}
+
+QString &ScreenshotApp::colorSlot()
+{
+    const bool redact = m_tools.tool() == QLatin1String("redact")
+        || (m_tools.tool() == QLatin1String("select") && m_tools.selectedLayer().type == QLatin1String("redact"));
+    return redact ? m_tools.style().redactColor : m_tools.style().color;
+}
+
+QString ScreenshotApp::colorSlot() const
+{
+    return const_cast<ScreenshotApp *>(this)->colorSlot();
+}
+
+void ScreenshotApp::setPixelateBlock(qreal block)
+{
+    if (block != m_tools.style().pixelateBlock && block >= screenshot::kMinPixelateBlock && block <= screenshot::kMaxPixelateBlock) {
+        m_tools.style().pixelateBlock = block;
+        emit toolChanged();
+    }
+}
+
+void ScreenshotApp::setBlurRadius(qreal radius)
+{
+    if (radius != m_tools.style().blurRadius && radius >= screenshot::kMinBlurRadius && radius <= screenshot::kMaxBlurRadius) {
+        m_tools.style().blurRadius = radius;
+        emit toolChanged();
+    }
+}
+
+void ScreenshotApp::setSpotlightDim(qreal dim)
+{
+    if (dim != m_tools.style().spotlightDim && dim >= screenshot::kMinSpotlightDim && dim <= screenshot::kMaxSpotlightDim) {
+        m_tools.style().spotlightDim = dim;
         emit toolChanged();
     }
 }
@@ -680,11 +743,61 @@ bool ScreenshotApp::done()
 {
     finishText(); // the text being typed is part of what Done writes
     QString why;
-    const bool ok = m_document.done(&why);
+    const int written = m_document.writes();
+    bool ok = m_document.done(&why);
+    if (m_document.writes() != written) {
+        // The file was replaced. If it hides pixels, the clipboard must not keep the automatic copy of the capture: it takes the exported picture.
+        const QByteArray png = m_document.takeExportedPng();
+        if (screenshot::hidesPixels(m_document.layers()))
+            m_clipboardPng = png;
+    }
+    if (!m_clipboardPng.isEmpty()) {
+        if (replaceClipboard(m_clipboardPng)) {
+            m_clipboardPng.clear();
+        } else if (ok) {
+            // Saved, but the capture may still be on the clipboard: the window stays, and a second Done tries again.
+            ok = false;
+            why = QStringLiteral("the clipboard could not be replaced; it may still hold the picture as it was captured");
+        }
+    }
     setLastError(ok ? QString() : why);
     m_lastDirty = m_document.dirty();
     emit documentChanged();
     return ok;
+}
+
+bool ScreenshotApp::replaceClipboard(const QByteArray &png)
+{
+    // The automatic copy of a capture goes through the same command (ADR-0066 D-1: type image/png, --sensitive, so clipboard history does not
+    // record it); this replaces it the same way. A Copy the user asks for is a normal copy, and is none of this.
+    const QStringList arguments = screenshot::clipboardArguments();
+    bool taken = false;
+    if (m_clipboardWriter) {
+        taken = m_clipboardWriter(arguments, png);
+    } else {
+        QProcess process;
+        process.setStandardOutputFile(QProcess::nullDevice()); // no pipe for the background copy to hold open
+        process.setStandardErrorFile(QProcess::nullDevice());
+        process.start(arguments.first(), arguments.mid(1));
+        if (process.waitForStarted(3000)) {
+            process.write(png);
+            process.closeWriteChannel();
+            taken = process.waitForFinished(5000) && process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+        }
+        if (!taken && process.state() != QProcess::NotRunning) {
+            process.kill();
+            process.waitForFinished(1000);
+        }
+    }
+    if (!taken) {
+        // Better an empty clipboard than the capture as it was taken.
+        const QStringList clear = screenshot::clipboardClearArguments();
+        if (m_clipboardWriter)
+            m_clipboardWriter(clear, QByteArray());
+        else
+            QProcess::execute(clear.first(), clear.mid(1));
+    }
+    return taken;
 }
 
 bool ScreenshotApp::revert()
@@ -706,8 +819,16 @@ ScreenshotImageProvider::ScreenshotImageProvider(ScreenshotApp *app)
 {
 }
 
-QImage ScreenshotImageProvider::requestImage(const QString &, QSize *size, const QSize &)
+QImage ScreenshotImageProvider::requestImage(const QString &id, QSize *size, const QSize &)
 {
+    // fx/<revision>/<layer id>: what a Pixelate or Blur shows over its area (the revision only keeps the scene from reusing a stale image).
+    if (id.startsWith(QLatin1String("fx/"))) {
+        bool ok = false;
+        const QImage patch = m_app->regionImage(id.section(QLatin1Char('/'), 2, 2).toInt(&ok));
+        if (size)
+            *size = ok ? patch.size() : QSize();
+        return ok ? patch : QImage();
+    }
     const QImage image = m_app->currentImage();
     if (size)
         *size = image.size();

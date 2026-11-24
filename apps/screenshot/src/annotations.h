@@ -7,6 +7,7 @@
 #include <QPainterPath>
 #include <QPointF>
 #include <QPolygonF>
+#include <QRect>
 #include <QRectF>
 #include <QString>
 #include <QVector>
@@ -27,6 +28,14 @@
 //                 font's pixel size), "color", "style": "plain" | "outlined" | "pill", "family", "rot" (quarter turns, clockwise)
 //   counter       "x" "y" the centre of the disc, "size" its diameter, "color"; its number is its place among the counters
 //                 (counterNumbers), never stored, so that deleting one renumbers the others
+//   redact        "x" "y" "w" "h" (the box), "color" (the fill; its alpha is ignored: a redaction is opaque, black when the field does not read)
+//   pixelate      the box, "block" (the block's side in device pixels, at least kMinPixelateBlock), "seed" (16 hex digits: the grid's offset
+//                 and the per-block noise; drawn from the system's random source when the layer is made)
+//   blur          the box, "radius" (the Gaussian's sigma in device pixels). Blur is for looks: it is NOT redaction (it can be undone).
+//   spotlight     the box, "dim" (the alpha of the dark veil over everything outside the box)
+//   The area of these four is the box rounded OUTWARD to whole device pixels (regionArea), never anti-aliased: no source pixel of the
+//   border is left half-covered. Redact and Pixelate are the secure tools (redaction.h); a layer of theirs that does not read in some
+//   field still hides (black, the default block, seed 0) rather than draw nothing.
 // A layer whose fields do not read (missing, not finite, out of range, no valid colour) is neither drawn, hit nor selected.
 namespace screenshot {
 
@@ -37,6 +46,13 @@ constexpr int kMaxStrokePoints = 4000;
 constexpr int kMaxTextLength = 2000;
 constexpr qreal kMinTextSize = 4;
 constexpr qreal kMaxTextSize = 1000;
+// Pixelate: blocks are never smaller than this many device pixels (ADR-0066 D-9), nor larger than the cap.
+constexpr int kMinPixelateBlock = 12;
+constexpr int kMaxPixelateBlock = 512;
+constexpr qreal kMinBlurRadius = 1;
+constexpr qreal kMaxBlurRadius = 128;
+constexpr qreal kMinSpotlightDim = 0.05;
+constexpr qreal kMaxSpotlightDim = 0.95;
 
 // What a new shape is drawn with.
 struct ShapeStyle {
@@ -52,12 +68,28 @@ struct ShapeStyle {
     // The highlighter (slice B5) is as wide as the pen's width times this, at this alpha.
     qreal highlightFactor = 4;
     qreal highlightOpacity = 0.4;
+    // The region tools (slice B7). Redact's fill has a colour of its own ("#rrggbb": the tool's default is black); a pixelate block, a blur
+    // sigma and a spotlight's veil are in device pixels / alpha; `seed` 0 draws a new one from the system's random source for each layer.
+    QString redactColor = QStringLiteral("#000000");
+    qreal pixelateBlock = 16;
+    qreal blurRadius = 8;
+    qreal spotlightDim = 0.55;
+    quint64 seed = 0;
 };
 
 // The layer types the tools draw and edit (shapes, strokes, text and counters; a frame is no shape: framing.h).
 bool isShapeType(const QString &type);
 bool isStrokeType(const QString &type); // pen and highlighter
 bool isTextType(const QString &type);
+// The four tools that act on a box of the picture (slice B7): redact, pixelate, blur and spotlight.
+bool isRegionType(const QString &type);
+// What reads of a region layer: its area (the box rounded outward to whole pixels; empty when the box does not read or is empty).
+QRect regionArea(const Layer &layer);
+// A region layer over the box from `from` to `to` (either order); an unknown type gives id 0.
+Layer makeRegion(int id, const QString &type, const QPointF &from, const QPointF &to, const ShapeStyle &style);
+// The seed field as a number (0 when missing or not 16 hex digits) and a number as the field.
+quint64 regionSeed(const Layer &layer);
+QString seedString(quint64 seed);
 
 // The colour of a layer, invalid when the field is missing or does not read.
 QColor layerColor(const Layer &layer);
@@ -138,7 +170,7 @@ Layer draggedHandle(const Layer &layer, Handle::Kind kind, const QPointF &to);
 // What is drawn for a shape layer, worked out once for both its users: the QPainter exporter and the editor's scene items (the
 // model of layermodel.h), so that the two cannot disagree about where a head, a shaft or an edge goes. All in picture pixels.
 struct ShapeGeometry {
-    enum Kind { None, Rect, Ellipse, Line, Arrow, ArrowCurved, Stroke, Glyphs };
+    enum Kind { None, Rect, Ellipse, Line, Arrow, ArrowCurved, Stroke, Glyphs, Redact, Pixelate, Blur, Spotlight };
     Kind kind = None; // None: the layer does not read, nothing is drawn
     QColor color;
     qreal width = 0;
@@ -160,6 +192,12 @@ struct ShapeGeometry {
     qreal outlineWidth = 0;
     QPainterPath plate;
     QColor plateColor;
+    // The regions (slice B7): `area` is whole device pixels (box = area), `color` is Redact's opaque fill or the Spotlight's veil;
+    // Spotlight's `path` is the veil (an outer rectangle and the area, odd-even filled).
+    QRect area;
+    int block = 0;      // Pixelate: at least kMinPixelateBlock
+    quint64 seed = 0;   // Pixelate
+    qreal radius = 0;   // Blur: the Gaussian's sigma
     QRectF layoutBox; // the lines' box (their advances, not the ink): what a text or a counter takes, which is what is picked and selected
 };
 // `counterNumber` is the counter's place among the counters (counterNumbers); other layers ignore it.

@@ -5165,8 +5165,44 @@
         <translation>Compteur</translation>
     </message>
     <message>
+        <source>Redact</source>
+        <translation>Caviarder</translation>
+    </message>
+    <message>
+        <source>Hides the area for good. Use it for secrets.</source>
+        <translation>Masque définitivement la zone. À utiliser pour les secrets.</translation>
+    </message>
+    <message>
+        <source>Pixelate</source>
+        <translation>Pixeliser</translation>
+    </message>
+    <message>
+        <source>Hides detail, but short text can still be guessed. Use Redact for secrets.</source>
+        <translation>Masque les détails, mais un texte court peut encore être deviné. Utilisez Caviarder pour les secrets.</translation>
+    </message>
+    <message>
+        <source>Blur</source>
+        <translation>Flouter</translation>
+    </message>
+    <message>
+        <source>For looks only. Does not hide text.</source>
+        <translation>Pour l’esthétique uniquement. Ne masque pas le texte.</translation>
+    </message>
+    <message>
+        <source>Dims everything outside the box.</source>
+        <translation>Assombrit tout ce qui est hors du cadre.</translation>
+    </message>
+    <message>
+        <source>Focus</source>
+        <translation>Focalisation</translation>
+    </message>
+    <message>
         <source>Crop</source>
         <translation>Recadrer</translation>
+    </message>
+    <message>
+        <source>%1 (%2): %3</source>
+        <translation>%1 (%2) : %3</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
@@ -7695,6 +7731,22 @@
     <message>
         <source>Counter</source>
         <translation>Compteur</translation>
+    </message>
+    <message>
+        <source>Redact</source>
+        <translation>Caviarder</translation>
+    </message>
+    <message>
+        <source>Pixelate</source>
+        <translation>Pixeliser</translation>
+    </message>
+    <message>
+        <source>Blur</source>
+        <translation>Flouter</translation>
+    </message>
+    <message>
+        <source>Focus</source>
+        <translation>Focalisation</translation>
     </message>
     <message>
         <source>Eyedropper</source>
@@ -16485,6 +16537,22 @@
 </context>
 <context>
     <name>StyleBar</name>
+    <message>
+        <source>Hides what is under it for good. Use it for secrets.</source>
+        <translation>Masque définitivement ce qui se trouve dessous. À utiliser pour les secrets.</translation>
+    </message>
+    <message>
+        <source>Hides detail, but short text can still be guessed. Use Redact for secrets.</source>
+        <translation>Masque les détails, mais un texte court peut encore être deviné. Utilisez Caviarder pour les secrets.</translation>
+    </message>
+    <message>
+        <source>For looks only. Does not hide text.</source>
+        <translation>Pour l’esthétique uniquement. Ne masque pas le texte.</translation>
+    </message>
+    <message>
+        <source>Dims everything outside the box.</source>
+        <translation>Assombrit tout ce qui est hors du cadre.</translation>
+    </message>
     <message>
         <source>Red</source>
         <translation>Rouge</translation>
