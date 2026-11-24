@@ -225,6 +225,7 @@
  {"path": "tests/unit/tst_searchbuiltin.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchcommands.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchfilters.qml", "layer": "headless"},
+ {"path": "tests/unit/tst_searchlocalmodel.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchranking.qml", "layer": "headless"},
  {"path": "tests/unit/tst_savermodel.qml", "layer": "headless"},
  {"path": "tests/unit/tst_searchsettings.qml", "layer": "headless"},
