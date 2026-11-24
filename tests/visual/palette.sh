@@ -481,12 +481,14 @@ EOF
   shot script-actions >/dev/null
   fl_tap Escape; vs_sleep 0.4
   fl_tap Return; vs_sleep 0.8
-  note=$(st .notice); opened=$(st .open)
+  note=$(st .notice); opened=$(st .open); cut=$(st .noticeTruncated)
   echo "    [script] after Return: open=$opened notice='$note'"
   shot script-return >/dev/null
   # X3b (the runner) is not built: Return refuses cleanly. Search stays open and says why under the rows (defect 2, fixed 2026-11-24)
   fl_check "Return on a script keeps Search open" test "$opened" = true
   fl_check "Return on a script says why it did not run (notice '$note')" test -n "$note"
+  # the whole reason shows: wrapped on two lines, never elided (the French text is the long one)
+  fl_check "the notice is shown whole, not cut (truncated: $cut)" test "$cut" = false
   if [[ -f $VS_STATE/palette-ran ]]; then echo "FAIL: the script ran"; fl_fail=1; fi
   fl_check "no QML error after running a script row" fl_no_qml_errors
   tail -n 5 "$VS_DEV/shell.log" | sed 's/^/    [log] /'

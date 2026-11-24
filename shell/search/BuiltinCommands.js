@@ -118,6 +118,9 @@ function toggleCommands(t, st, act, refuses) {
     const tog = (id, on, titleOn, titleOff, words, wordsEn, glyph, run, available, subtitle) =>
         _entry({id: id, title: on ? titleOn : titleOff, subtitle: subtitle !== undefined ? subtitle : (on ? t.stateOn : t.stateOff), words: words,
             wordsEn: wordsEn, glyph: glyph, kind: KIND_SETTING, run: run, available: available}, refuses);
+    // The localized name is a keyword of every variant: whatever a language puts first in a title ("Turn ... On", "Ne pas déranger
+    // jusqu'à demain"), the toggle ranks before the timed ones, as in English.
+    const dndWords = (t.dndName ? [t.dndName] : []).concat(t.dndWords || []);
     const dndSub = st.dnd.on ? (st.dnd.until > 0 ? t.stateOnUntil.arg(st.dnd.untilText) : t.stateOn) : t.stateOff;
     return [
         tog("set.wifi", st.wifi.on, t.wifiTurnOff, t.wifiTurnOn, t.wifiWords, ["wifi", "wi-fi", "wireless", "network"],
@@ -126,11 +129,11 @@ function toggleCommands(t, st, act, refuses) {
             "bluetooth", () => act.bluetooth(!st.bluetooth.on), st.bluetooth.available),
         tog("set.airplane", st.airplane.on, t.airplaneTurnOff, t.airplaneTurnOn, t.airplaneWords, ["airplane mode", "flight mode", "radios"],
             "airplane", () => act.airplane(!st.airplane.on), st.airplane.available),
-        tog("set.dnd", st.dnd.on, t.dndTurnOff, t.dndTurnOn, t.dndWords, ["do not disturb", "dnd", "focus", "silence", "notifications"],
+        tog("set.dnd", st.dnd.on, t.dndTurnOff, t.dndTurnOn, dndWords, ["do not disturb", "dnd", "focus", "silence", "notifications"],
             "moon", () => act.dnd(!st.dnd.on), st.dnd.available, dndSub),
-        tog("set.dnd.hour", false, "", t.dndHour, t.dndWords, ["do not disturb for 1 hour", "dnd", "focus"],
+        tog("set.dnd.hour", false, "", t.dndHour, dndWords, ["do not disturb for 1 hour", "dnd", "focus"],
             "moon", () => act.dndFor("hour"), st.dnd.available && !st.dnd.on, t.stateOff),
-        tog("set.dnd.tomorrow", false, "", t.dndTomorrow, t.dndWords, ["do not disturb until tomorrow", "dnd", "focus"],
+        tog("set.dnd.tomorrow", false, "", t.dndTomorrow, dndWords, ["do not disturb until tomorrow", "dnd", "focus"],
             "moon", () => act.dndFor("tomorrow"), st.dnd.available && !st.dnd.on, t.stateOff),
         tog("set.nightlight", st.nightLight.on, t.nightLightTurnOff, t.nightLightTurnOn, t.nightLightWords, ["night light", "warm", "blue light"],
             "sun", () => act.nightLight(!st.nightLight.on), st.nightLight.available)

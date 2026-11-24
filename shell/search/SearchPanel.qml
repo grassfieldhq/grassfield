@@ -1112,17 +1112,29 @@ Variants {
                 x: Tokens.searchFieldInset
                 y: panel.height - height - Tokens.spacingSm
                 width: panel.width - 2 * Tokens.searchFieldInset
-                height: Tokens.searchClipButtonSize
+                // Two lines at most (the French refusal is longer than one); the footer grows with the text, whole pixels.
+                height: Math.max(Tokens.searchClipButtonSize, Math.ceil(contentHeight))
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 textFormat: Text.PlainText
                 text: root.controller.clipNotice
-                elide: Text.ElideRight
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
+                // Said in the dev status so that the nested test proves the whole notice shows.
+                readonly property bool cut: win.shown && visible && probe.advanceWidth > 0.9 * maximumLineCount * width
+                onCutChanged: root.controller.noticeTruncated = cut
                 color: Appearance.colors.textSecondary
                 font.family: Appearance.fontFamily
                 font.pixelSize: Tokens.searchSubtitleSize
                 Accessible.role: Accessible.StaticText
                 Accessible.name: text
+
+                // The text on one line: it fits the two lines while it is at most about 1.8 widths (words wrap with some slack).
+                TextMetrics {
+                    id: probe
+                    font: footerText.font
+                    text: footerText.text
+                }
             }
         }
 
@@ -1246,8 +1258,10 @@ Variants {
             readonly property point placed: MenuPlace.place(win.actionsAt, {w: width, h: height}, {w: win.width, h: win.height}, Tokens.panelPopupMargin)
 
             z: 901
-            x: placed.x
-            y: placed.y
+            // Whole device pixels (the panel is on the 1.25 grid like its width: an 11 px gap is 13.75 device px)
+            readonly property real dpr: Math.max(1, win.devicePixelRatio)
+            x: Math.round(placed.x * dpr) / dpr
+            y: Math.round(placed.y * dpr) / dpr
             width: (item as Item)?.width ?? 0
             height: (item as Item)?.height ?? 0
             active: win.actionsPlaced

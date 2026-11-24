@@ -212,10 +212,11 @@ TestCase {
     // The order of a command's variants does not depend on the language: a language whose titles START with the name ("Ne pas
     // déranger jusqu'à demain") ranks the toggle first like English does, because the localized name is a keyword of all three.
     function test_dndVariantsKeepTheirOrderInEveryLanguage() {
-        const en = reg(Builtin.toggleCommands(words({dndWords: ["do not disturb", "focus"]}), togState(), togAct(), refuses));
+        // The words BuiltinCommands.qml hands over: the localized name (dndName) and the other keywords, not the name in dndWords.
+        const en = reg(Builtin.toggleCommands(words({dndName: "do not disturb", dndWords: ["focus"]}), togState(), togAct(), refuses));
         compare(Commands.match(en, "do not disturb")[0].cmd.id, "set.dnd");
         const fr = words({dndTurnOn: "Activer Ne pas déranger", dndTurnOff: "Désactiver Ne pas déranger", dndHour: "Ne pas déranger pendant 1 heure",
-            dndTomorrow: "Ne pas déranger jusqu’à demain", dndWords: ["ne pas déranger", "concentration"]});
+            dndTomorrow: "Ne pas déranger jusqu’à demain", dndName: "ne pas déranger", dndWords: ["concentration"]});
         const r = reg(Builtin.toggleCommands(fr, togState(), togAct(), refuses));
         const ids = Commands.match(r, "ne pas déranger").map(h => h.cmd.id);
         compare(ids.slice(0, 3), ["set.dnd", "set.dnd.hour", "set.dnd.tomorrow"]);

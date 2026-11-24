@@ -648,6 +648,9 @@ Scope {
         selected = idx;
     }
 
+    // The panel says whether the footer notice had to be cut (more than two lines); shown in the dev status.
+    property bool noticeTruncated: false
+
     // Set by moveGroup for the selection change it makes; the list reads it and clears it.
     property bool groupJump: false
 
@@ -1176,6 +1179,7 @@ Scope {
                 view: root.view,
                 prompt: root.clipPrompt,
                 notice: root.clipNotice,
+                noticeTruncated: root.noticeTruncated,
                 copied: root.clipCopiedKey,
                 preview: root.clipPreview ? root.clipPreview.id : "",
                 groups: root.groups.map(g => ({id: g.id, title: g.title, items: g.items.map(i => ({kind: i.kind, title: i.title, subtitle: i.subtitle}))}))

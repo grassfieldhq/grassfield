@@ -96,8 +96,23 @@ function score(entry, rawQuery) {
 
 // The form commands are compared in: Ranking.norm, then every no-break space a space, every other punctuation mark a space too
 // ("move window left" finds "Move Window: Left"; French "Déplacer la fenêtre : %1" uses a no-break space), runs of spaces one.
+// Each title and keyword is folded once, not at every keystroke (a bounded cache like Ranking's).
+const MAX_FOLDED = 4000;
+let folded = new Map();
 function fold(s) {
-    return Ranking.norm(s).replace(/[   ]/g, " ").replace(/[!-\/:-@\[-`{-~¡-¿‐-‧‰-⁞、-〃]+/g, " ").replace(/\s+/g, " ").trim();
+    if (typeof s !== "string")
+        return "";
+    const hit = folded.get(s);
+    if (hit !== undefined)
+        return hit;
+    // Punctuation only: ASCII, the Latin-1 marks (not the letters ª µ º nor ² ³ ¼ ½ ¾), general punctuation, CJK marks.
+    const f = Ranking.norm(s).replace(/[   ]/g, " ")
+        .replace(/[!-\/:-@\[-`{-~¡-©«-±´¶·¸»¿‐-‧‰-⁞、-〃]+/g, " ")
+        .replace(/\s+/g, " ").trim();
+    if (folded.size >= MAX_FOLDED)
+        folded = new Map();
+    folded.set(s, f);
+    return f;
 }
 
 // Available entries matching the query, best first (stable for equal scores): [{cmd, score}].
