@@ -243,6 +243,7 @@ Scope {
         closePreview();
         view = "";
         clipNotice = "";
+        noticeSticky = false;
     }
 
     function toggle(): void {
@@ -260,6 +261,10 @@ Scope {
         if (text === query && groups.length > 0)
             return;
         query = text;
+        if (noticeSticky) {
+            clipNotice = "";
+            noticeSticky = false;
+        }
         filter = "";
         closeActions();
         leaveChips();
@@ -588,10 +593,17 @@ Scope {
     }
 
     // A short message under the rows (the clipboard notice's place and timing).
-    function say(text: string): void {
+    function say(text: string, sticky: bool): void {
         clipNotice = text;
-        noticeTimer.restart();
+        noticeSticky = sticky;
+        if (sticky)
+            noticeTimer.stop();
+        else
+            noticeTimer.restart();
     }
+
+    // A sticky notice stays until the query changes or Search closes (the reason a script did not run needs time to read).
+    property bool noticeSticky: false
 
     // How a script run that ended with `code` is told (the runner's own refusals, exit 70 and 71, included).
     function scriptFailed(code: int): void {
@@ -600,7 +612,7 @@ Scope {
             refused: qsTr("This script was refused by the runner"),
             noSandbox: qsTr("This script can't run: its sandbox isn't installed"),
             failed: qsTr("The script failed (code %1)")
-        }));
+        }), true);
     }
 
     function runCommand(id: string): void {
@@ -650,6 +662,8 @@ Scope {
 
     // The panel says whether the footer notice had to be cut (more than two lines); shown in the dev status.
     property bool noticeTruncated: false
+    // The panel says whether the footer notice is really drawn (visible, opaque, inside the panel); dev status only.
+    property bool noticeShown: false
 
     // Set by moveGroup for the selection change it makes; the list reads it and clears it.
     property bool groupJump: false
@@ -1180,6 +1194,7 @@ Scope {
                 prompt: root.clipPrompt,
                 notice: root.clipNotice,
                 noticeTruncated: root.noticeTruncated,
+                noticeShown: root.noticeShown,
                 copied: root.clipCopiedKey,
                 preview: root.clipPreview ? root.clipPreview.id : "",
                 groups: root.groups.map(g => ({id: g.id, title: g.title, items: g.items.map(i => ({kind: i.kind, title: i.title, subtitle: i.subtitle}))}))

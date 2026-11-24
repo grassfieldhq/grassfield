@@ -1123,6 +1123,11 @@ Variants {
                 // Said in the dev status so that the nested test proves the whole notice shows.
                 readonly property bool cut: win.shown && visible && probe.advanceWidth > 0.9 * maximumLineCount * width
                 onCutChanged: root.controller.noticeTruncated = cut
+                // Drawn for real: this screen's panel is shown, the footer is visible with some opacity, has text, and lies inside
+                // the panel's rectangle (not clipped away below it). The nested test reads it from the dev status.
+                readonly property bool drawn: win.shown && panel.visible && panel.opacity > 0 && visible && opacity > 0 && text !== ""
+                    && x >= 0 && y >= 0 && x + width <= panel.width && y + height <= panel.height && height > 0 && width > 0
+                onDrawnChanged: root.controller.noticeShown = drawn
                 color: Appearance.colors.textSecondary
                 font.family: Appearance.fontFamily
                 font.pixelSize: Tokens.searchSubtitleSize
