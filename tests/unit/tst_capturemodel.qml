@@ -218,6 +218,52 @@ TestCase {
         compare(Model.dndStep(free, "yes", true, false).set, null, "recording is a boolean only");
     }
 
+    // The user's own change of Do Not Disturb during a recording releases the hold: nothing is set at the end, their choice stands.
+    function test_userChangeReleasesTheHold() {
+        const during = {held: true, previous: false};
+        let r = Model.dndStep(during, true, true, false);
+        compare(r.held, {held: false, previous: false}, "turned off in the recording: released at once");
+        compare(r.set, null, "and nothing is set (the hold does not turn it back on)");
+        // Released: the end of the recording changes nothing, even though the hold would have turned it off.
+        compare(Model.dndStep(r.held, false, true, false).set, null);
+        // Turned off and on again: the next step sees it on and the recording over, the earlier value (off) is restored.
+        compare(Model.dndStep(during, false, true, true).set, false, "untouched: restored at the end");
+        // Held over a Do Not Disturb that was already on, then turned off by the user: also released.
+        compare(Model.dndStep({held: true, previous: true}, true, true, false), {held: {held: false, previous: false}, set: null});
+        // A recording that ends at the very moment the user turned it off: the user's choice wins.
+        compare(Model.dndStep(during, false, true, false).set, null);
+    }
+
+    // The hold survives a restart (capture-dnd-hold.json): start, end, and a restart with the file while idle or recording.
+    function test_holdOutlivesTheShell() {
+        compare(Model.serializeHold({held: false, previous: false}), "", "no hold: no file");
+        compare(Model.serializeHold(null), "");
+        const text = Model.serializeHold({held: true, previous: false});
+        compare(JSON.parse(text), {held: true, previous: false});
+        compare(Model.parseHold(text), {held: true, previous: false});
+        compare(Model.parseHold(Model.serializeHold({held: true, previous: true})), {held: true, previous: true});
+        // The shell was killed in a recording; Do Not Disturb is on and stored. It starts again with the file, nothing recording.
+        const start = Model.dndStep({held: false, previous: false}, true, true, false);
+        compare(start.set, true, "start: on");
+        const file = Model.parseHold(Model.serializeHold(start.held));
+        const restart = Model.dndStep(file, false, true, true);
+        compare(restart.set, false, "restart while idle: the earlier value is back");
+        compare(Model.serializeHold(restart.held), "", "and the file goes");
+        // The same restart while a recording still runs (the helper outlives the shell): the hold stays, nothing changes.
+        const running = Model.dndStep(file, true, true, true);
+        compare(running, {held: file, set: null});
+        // The user had turned it off before the restart: left off, the file goes.
+        compare(Model.dndStep(file, false, true, false), {held: {held: false, previous: false}, set: null});
+        // It was on before the recording: still on after the restart.
+        const was = Model.parseHold('{"held": true, "previous": true}');
+        compare(Model.dndStep(was, false, true, true).set, null);
+        // A file that is not a hold reads as none.
+        for (const bad of ["", "{", "[]", "null", '{"held": false, "previous": true}', '{"held": true}', '{"held": 1, "previous": false}',
+                '{"held": true, "previous": "no"}', "x".repeat(1000)])
+            compare(Model.parseHold(bad), {held: false, previous: false}, bad.slice(0, 20));
+        compare(Model.parseHold(undefined), {held: false, previous: false});
+    }
+
     function test_choice() {
         const o = {location: "screenshots", timer: "none", microphone: "none", showPointer: false};
         compare(Model.choice("location:preview", o), {key: "location", value: "preview"});
@@ -239,6 +285,9 @@ TestCase {
         compare(Model.choice("previous:toggle", o), null);
         compare(Model.choice("showThumbnail:on", o), null);
         compare(Model.choice("freeze:toggle", o), null, "only the toggles the menu holds");
+        compare(Model.choice("constructor:toggle", o), null, "an inherited name is no toggle");
+        compare(Model.choice("toString:toggle", o), null);
+        compare(Model.choice("__proto__:toggle", o), null);
         compare(Model.choice("location:mail", o), null);
         compare(Model.choice("saveTo:desktop", o), null, "the older key is never written");
         compare(Model.choice("timer:7", o), null);

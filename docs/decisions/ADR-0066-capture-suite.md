@@ -355,7 +355,7 @@ Alternatives).
 - **New toolbar modes:** Capture Text and Capture Scrolling Area.
 - **New key:** Shift-Super-2 for Capture Text.
 - **Schema additions** under `capture.*`: `showThumbnail` (true), `thumbnailSeconds` (5), `thumbnailSide` (right),
-  `freeze` (false), `hideDesktopIcons` (false), `systemAudio` (false), `recordDnd` (false), `historyRetention` (week),
+  `freeze` (false), `hideDesktopIcons` (false), `rememberSelection` (true), a timer value `"3"`, `systemAudio` (false), `recordDnd` (false), `historyRetention` (week),
   `format` (png), `standardResolution` (false), `fps` (60).
 - `config/schema/grassfield.schema.json` is edited by lanes A, B and C. It is listed as a shared file in the spec's lane
   table, and one slice at a time changes it.

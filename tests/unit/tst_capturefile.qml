@@ -129,6 +129,23 @@ TestCase {
             "a shooting state with a bad seq is still stopped");
     }
 
+    // Hide Desktop Icons and the acknowledgement: a key-started shot waits for the icons to be presented hidden, never for ever.
+    function test_iconsReady() {
+        verify(CaptureFile.iconsReady(false, false, 0, false), "the option off: nothing to wait for");
+        verify(CaptureFile.iconsReady(undefined, true, 0, false), "only a boolean true turns it on");
+        verify(!CaptureFile.iconsReady(true, true, 0, false), "hidden, no frame presented yet: wait");
+        verify(!CaptureFile.iconsReady(true, true, 1, false), "the first frame may have been under way: wait");
+        verify(CaptureFile.iconsReady(true, true, 2, false), "two frames since they were hidden");
+        verify(CaptureFile.iconsReady(true, true, 0, true), "the bounded wait is over: go");
+        verify(!CaptureFile.iconsReady(true, false, 5, false), "not hidden yet: wait whatever the frames");
+        verify(CaptureFile.iconsReady(true, false, 0, true), "even then the wait ends");
+        const shooting = CaptureFile.parse('{"v": 1, "phase": "shooting", "seq": "0123456789abcdef"}');
+        compare(CaptureFile.ackNeeded(shooting, true, "", false), "", "the icons are not off the screen: no acknowledgement");
+        compare(CaptureFile.ackNeeded(shooting, true, "", true), "0123456789abcdef");
+        compare(CaptureFile.ackNeeded(shooting, true, ""), "0123456789abcdef", "without the argument: as before");
+        compare(CaptureFile.ackNeeded(shooting, false, "", true), "", "a card is still mapped");
+    }
+
     // The acknowledgement is asked for once per seq, only when the cards are hidden.
     function test_ackNeeded() {
         const shooting = CaptureFile.parse('{"v": 1, "phase": "shooting", "seq": "0123456789abcdef"}');

@@ -647,6 +647,16 @@ FocusScope {
 
     // ---- icons -------------------------------------------------------------------------------------
 
+    // Hide Desktop Icons: the frames this surface presents after the icons are hidden (the capture's acknowledgement waits for them).
+    Connections {
+        target: CaptureState.hidesDesktopIcons && root.iconsHere ? root.Window.window : null
+        ignoreUnknownSignals: true
+
+        function onFrameSwapped(): void {
+            CaptureState.noteIconFrame();
+        }
+    }
+
     Repeater {
         model: ScriptModel {
             values: root.shown

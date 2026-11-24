@@ -44,6 +44,32 @@ Singleton {
     property bool armed: false
     // The desktop icons are hidden (Hide Desktop Icons): DesktopIcons binds it.
     readonly property bool hidesDesktopIcons: CaptureFile.hidesIcons(Settings.captureHideDesktopIcons, root.armed, root.phase)
+    // Frames the icons' surface presented since they were hidden (IconsView counts them), and whether the bounded wait for them is
+    // over: a `shooting` state is acknowledged only once the icons are off the screen (Hide Desktop Icons), so grim never sees them.
+    property int iconFrames: 0
+    property bool iconsWaitedOut: false
+    readonly property bool iconsReady: CaptureFile.iconsReady(Settings.captureHideDesktopIcons, root.hidesDesktopIcons, root.iconFrames, root.iconsWaitedOut)
+    // The helper's state was read once (a missing file counts): what waits for "not recording" waits for it.
+    property bool stateLoaded: false
+
+    onHidesDesktopIconsChanged: root.iconFrames = 0
+    onIconsReadyChanged: root.acknowledge()
+
+    function noteIconFrame(): void {
+        if (root.hidesDesktopIcons && root.iconFrames < 1000)
+            root.iconFrames++;
+    }
+
+    Timer {
+        interval: Tokens.captureIconsHideWaitMs
+        running: root.phase === "shooting" && !root.iconsReady
+        onTriggered: root.iconsWaitedOut = true
+    }
+
+    onPhaseChanged: {
+        if (root.phase !== "shooting")
+            root.iconsWaitedOut = false;
+    }
     // gpu-screen-recorder is installed (an Omarchy base package): asked when the toolbar opens, as it is used (OC-0 rule 3).
     property bool recorderAvailable: false
 
@@ -88,7 +114,7 @@ Singleton {
     function acknowledge(): void {
         if (prepare.running || root.ackPath === "")
             return;
-        const seq = CaptureFile.ackNeeded(root.state, root.thumbnailsHidden, root.ackedSeq);
+        const seq = CaptureFile.ackNeeded(root.state, root.thumbnailsHidden, root.ackedSeq, root.iconsReady);
         if (seq === "")
             return;
         root.ackedSeq = seq;
@@ -171,8 +197,14 @@ Singleton {
         printErrors: false
         watchChanges: true
         onFileChanged: reload()
-        onLoaded: root.state = CaptureFile.parse(stateFile.text())
-        onLoadFailed: root.state = CaptureFile.parse("")
+        onLoaded: {
+            root.state = CaptureFile.parse(stateFile.text());
+            root.stateLoaded = true;
+        }
+        onLoadFailed: {
+            root.state = CaptureFile.parse("");
+            root.stateLoaded = true;
+        }
     }
 
     Component.onCompleted: root.probeRecorder()

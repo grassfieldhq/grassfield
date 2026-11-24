@@ -119,18 +119,41 @@ function previousArgs(options) {
 
 // ---- Do Not Disturb while recording (Options, a recording mode) ----
 
-// One step of the hold: `held` is {held, previous} (whether this holds Do Not Disturb, and what it was before), `recording` whether
+// One step of the hold: `hold` is {held, previous} (whether this holds Do Not Disturb, and what it was before), `recording` whether
 // a recording runs, `enabled` capture.recordDnd, `dnd` the state now. Returns {held, set} with `set` the value to give
-// notifications.dnd (true or false) or null to leave it. Do Not Disturb that was already on stays on afterwards, and one the user
-// turned off meanwhile is left off.
-function dndStep(held, recording, enabled, dnd) {
-    const h = held && held.held === true ? held : {held: false, previous: false};
+// notifications.dnd (true or false) or null to leave it. The hold sets Do Not Disturb on, so any other value while it is held is
+// the user's own change: that releases the hold at once and sets nothing, the user's choice stands. Do Not Disturb that was already
+// on stays on afterwards.
+var FREE = {held: false, previous: false};
+
+function dndStep(hold, recording, enabled, dnd) {
+    const h = hold && hold.held === true ? {held: true, previous: hold.previous === true} : FREE;
     const want = recording === true && enabled === true;
-    if (want && !h.held)
-        return {held: {held: true, previous: dnd === true}, set: dnd === true ? null : true};
-    if (!want && h.held)
-        return {held: {held: false, previous: false}, set: h.previous === false && dnd === true ? false : null};
+    if (!h.held)
+        return want ? {held: {held: true, previous: dnd === true}, set: dnd === true ? null : true} : {held: FREE, set: null};
+    if (dnd !== true)
+        return {held: FREE, set: null};
+    if (!want)
+        return {held: FREE, set: h.previous === false ? false : null};
     return {held: h, set: null};
+}
+
+// The hold as the file keeps it (capture-dnd-hold.json in the state folder: Do Not Disturb is stored, so a hold must outlive a
+// log out, a power cut or a crash of the shell), and what a file's text reads as: a hold, or FREE for anything else.
+function serializeHold(hold) {
+    return hold && hold.held === true ? JSON.stringify({held: true, previous: hold.previous === true}) : "";
+}
+
+function parseHold(text) {
+    let doc = null;
+    try {
+        doc = JSON.parse(String(text || "").slice(0, 256));
+    } catch (e) {
+        return FREE;
+    }
+    if (doc === null || typeof doc !== "object" || doc.held !== true || typeof doc.previous !== "boolean")
+        return FREE;
+    return {held: true, previous: doc.previous};
 }
 
 // ---- the selection frame of the Selected Portion modes (macOS 27: a frame over the dimmed display, eight handles) ----
@@ -382,7 +405,7 @@ var TOGGLES = {showPointer: false, showThumbnail: true, rememberSelection: true,
 
 function toggled(options, key) {
     const v = (options || {})[key];
-    return typeof v === "boolean" ? v : TOGGLES[key];
+    return typeof v === "boolean" ? v : Object.prototype.hasOwnProperty.call(TOGGLES, key) ? TOGGLES[key] : false;
 }
 
 // The Options menu (PopupMenu rows), each a section with its header and a check on the current choice: Save to and Timer (not for
@@ -444,7 +467,7 @@ function choice(id, options) {
         return {key: key, value: value};
     if (key === "microphone" && (value === "none" || value === "default"))
         return {key: key, value: value};
-    if (key in TOGGLES && value === "toggle")
+    if (Object.prototype.hasOwnProperty.call(TOGGLES, key) && value === "toggle")
         return {key: key, value: !toggled(options, key)};
     if (key === "previous" && value === "run")
         return {action: "previous"};
