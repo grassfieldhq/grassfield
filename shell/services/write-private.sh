@@ -21,7 +21,7 @@ chmod 700 "$dir" || exit 1
 tmp=$file.tmp
 rm -f "$tmp"
 if [ -n "$bytes" ]; then
-    head -c "$bytes" >"$tmp" || { rm -f "$tmp"; exit 1; }
+    timeout 10 head -c "$bytes" >"$tmp" || { rm -f "$tmp"; exit 1; }
     [ "$(wc -c <"$tmp")" -eq "$bytes" ] || { rm -f "$tmp"; exit 1; }
 else
     printf '%s' "$text" >"$tmp" || exit 1

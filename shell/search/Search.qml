@@ -1026,6 +1026,7 @@ Scope {
 
     CommandStore {
         id: commandStoreItem
+        locked: SessionState.locked
     }
 
     // The Settings app's requests (IPC `addItem`, `updateItem`, `removeItem`, `importFile`, `importResult`), as an answer in JSON:

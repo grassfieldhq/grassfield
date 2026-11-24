@@ -885,6 +885,14 @@ def check(files):
     pending = {("search", f) for f in ("addItem", "updateItem", "removeItem", "importFile", "importResult")}
     for key in sorted(pending & callers):
         fails.append("%s.%s has a real-session caller now: remove it from the pending list" % key)
+    # Any other mention of those names in a caller's tree (an app, the session helpers, the Hyprland config) is a caller too,
+    # whatever form it takes: the entry goes with it.
+    names = sorted({k[1] for k in pending})
+    for path in sorted(files):
+        if path.startswith(("apps/", "config/hypr/", "packaging/", "bridges/")) and not path.startswith("apps/settings/tests/"):
+            for n in names:
+                if re.search(r'(?<![A-Za-z0-9_])' + n + r'(?![A-Za-z0-9_])', files[path]):
+                    fails.append("%s mentions %s: a caller of the pending search item functions: remove them from the pending list" % (path, n))
     callers |= pending
 
     defs = definitions(files)

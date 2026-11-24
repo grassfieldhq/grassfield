@@ -370,4 +370,23 @@ TestCase {
         verify(back.ok);
         compare(JSON.stringify(back.data), JSON.stringify(d));
     }
+
+    function test_loneSurrogate() {
+        const hi = String.fromCharCode(0xd800);
+        const lo = String.fromCharCode(0xdc00);
+        const pair = hi + lo;
+        verify(CommandsFile.validate(file("replacements", [{id: "text.a", replace: "a", with: "x" + pair + "y"}])).ok, "a pair is fine");
+        for (const bad of [hi, lo, "a" + hi + "b", lo + hi, hi + hi + lo + lo]) {
+            if (bad === hi + hi + lo + lo)
+                continue;
+            compare(CommandsFile.validate(file("replacements", [{id: "text.a", replace: "a", with: "x" + bad}])).reason, "surrogate", JSON.stringify(bad));
+        }
+        compare(CommandsFile.validate(file("aiCommands", [{id: "ai.a", name: "n", prompt: "p" + hi}])).reason, "surrogate");
+        compare(CommandsFile.parseText("{\"v\":1,\"replacements\":[{\"id\":\"text.a\",\"replace\":\"a\",\"with\":\"a\\ud800b\"}]}").reason, "surrogate");
+        compare(CommandsFile.parseRequest("{\"list\":\"links\",\"item\":{},\"\\udc00\":1}").reason, "surrogate");
+        compare(CommandsFile.parseRequest(JSON.stringify({list: "replacements", item: {id: "text.a", replace: "a", with: "a" + hi + "b"}})).reason, "surrogate");
+        verify(CommandsFile.parseRequest(JSON.stringify({list: "replacements", item: {id: "text.a", replace: "a", with: "a" + pair + "b"}})).ok);
+        // An over-long text is refused before it is scanned.
+        compare(CommandsFile.parseRequest("x".repeat(65537)).reason, "too-big");
+    }
 }

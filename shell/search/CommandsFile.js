@@ -41,6 +41,20 @@ function fail(path, reason) {
     return {ok: false, path: path, reason: reason};
 }
 
+// An unpaired surrogate (U+D800 to U+DFFF alone) in a string or a key: it has no UTF-8 form, a writer that encodes it drops
+// it and a byte count that includes it is wrong, so no file, request or import may carry one.
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?:^|[^\ud800-\udbff])[\udc00-\udfff]/;
+
+function hasLoneSurrogate(v) {
+    if (typeof v === "string")
+        return LONE_SURROGATE.test(v);
+    if (Array.isArray(v))
+        return v.some(hasLoneSurrogate);
+    if (v !== null && typeof v === "object")
+        return Object.keys(v).some(k => LONE_SURROGATE.test(k) || hasLoneSurrogate(v[k]));
+    return false;
+}
+
 function isObject(v) {
     return v !== null && typeof v === "object" && !Array.isArray(v);
 }
@@ -340,6 +354,8 @@ function empty() {
 // A parsed commands.json value. Returns {ok: true, data} with a new, normalized object (every list present), or
 // {ok: false, path, reason}.
 function validate(value) {
+    if (hasLoneSurrogate(value))
+        return fail("", "surrogate");
     if (!isObject(value))
         return fail("", "shape");
     if (!onlyKeys(value, ["v"].concat(LISTS)))
@@ -435,7 +451,8 @@ function keyOf(list, item) {
 function parseJson(text) {
     if (typeof text !== "string")
         return {ok: false, reason: "text"};
-    if (utf8Length(text) > MAX_REQUEST)
+    // UTF-16 units are at most as many as bytes: a longer text is over the bound without scanning it.
+    if (text.length > MAX_REQUEST || utf8Length(text) > MAX_REQUEST)
         return {ok: false, reason: "too-big"};
     let value;
     try {
@@ -454,6 +471,8 @@ function parseRequest(text, lists) {
     const j = parseJson(text);
     if (!j.ok)
         return fail("", j.reason);
+    if (hasLoneSurrogate(j.value))
+        return fail("", "surrogate");
     if (!isObject(j.value) || !onlyKeys(j.value, ["list", "item"]))
         return fail("", "shape");
     const list = j.value.list;

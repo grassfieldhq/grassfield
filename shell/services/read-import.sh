@@ -20,6 +20,5 @@ before=$(stat -c %d:%i -- "$p") || err unreadable
     after=$(stat -L -c %d:%i:%F:%u /dev/fd/3) || err unreadable
     [ "$after" = "$before:regular file:$(id -u)" ] || err changed
     echo OK
-    head -c 1048577 <&3
-    :
+    exec head -c 1048577 <&3
 } 3<"$p" || err unreadable

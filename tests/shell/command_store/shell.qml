@@ -136,6 +136,10 @@ ShellRoot {
     // ---- 1. a missing file, then the requests -----------------------------------------------------------------------------
 
     function step1(): void {
+        // The rate limit of the IPC path has its own step (stepSafety); the others send many requests in a row.
+        store.rateBurst = 1000000;
+        store.ratePerSecond = 1000000;
+        store.tokens = 1000000;
         check("no file: status ok, nothing in it", store.status === "ok" && same(store.data, CommandsFile.empty()));
         check("the store is in a dev config directory", root.file.indexOf("/commands.json") > 0 && root.file.indexOf("config") > 0);
         const rev = store.revision;
@@ -512,6 +516,164 @@ ShellRoot {
                     sh("cat \"$1\"", [p], out => {
                         const f = CommandsFile.parseText(out);
                         check("the file holds the old and the new content", f.ok && f.data.quickKeys.length === 1 && f.data.replacements.length === 1 && f.data.favorites.length === 0);
+                        root.stepSafety();
+                    });
+                });
+            });
+        });
+    }
+
+    // ---- 10. review fixes: surrogates, a restored file, an outside edit during a write, the rate limit, the lock during an import --
+
+    property var safe: null
+
+    function stepSafety(): void {
+        const lone = "{\"list\":\"replacements\",\"item\":{\"id\":\"text.s\",\"replace\":\"zz\",\"with\":\"a\\ud800b\"}}";
+        // The main store is left invalid by step 7 (a newer version): the person agrees, it is kept aside and the store works again.
+        sh("printf '{\"v\":1,\"replacements\":[{\"id\":\"text.f\",\"replace\":\"ff\",\"with\":\"a\\\\ud800b\"}]}' >\"$1/lone-file.json\"", [root.fixtures], () => {
+            check("keepAside agrees again", store.keepAside() === true);
+            until("the store works again", () => store.status === "ok" && !store.writing && store.keptAside !== "", () => {
+                const s = store;
+                const p = store.path;
+                s.rateBurst = 1000000;
+                s.ratePerSecond = 1000000;
+                s.tokens = 1000000;
+                root.safe = s;
+                const rev = s.revision;
+                // Unpaired surrogates: refused everywhere (a pair is fine).
+                const a = JSON.parse(search.ipc.addItem(lone));
+                check("a lone surrogate in a request is refused (" + JSON.stringify(a) + ")", a.ok === false && a.reason === "surrogate");
+                const k = JSON.parse(search.ipc.addItem(lone.slice(0, -1) + ",\"\\ud800\":1}"));
+                check("a lone surrogate in a key is refused", k.ok === false && k.reason === "surrogate");
+                const low = JSON.parse(search.ipc.addItem(lone.replace("\\ud800b", "\\udc00")));
+                check("a lone low surrogate is refused", low.ok === false && low.reason === "surrogate");
+                check("a lone surrogate in a replacement is refused in process", s.change("replacements", {id: "text.p", replace: "pp", with: "a" + String.fromCharCode(0xd800) + "b"}, "add").ok === false);
+                check("refused requests changed nothing", s.revision === rev && !s.writing);
+                const pair = JSON.parse(search.ipc.addItem(JSON.stringify({list: "replacements", item: {id: "text.pair", replace: "pp", with: "x\ud83d\ude00y"}})));
+                check("a valid surrogate pair is accepted", pair.ok === true);
+                until("the pair is written", () => !s.writing, () => {
+                    root.sh("cat \"$1\"", [p], out => {
+                        const f = CommandsFile.parseText(out);
+                        check("the file holds the pair, the store is not stuck (" + s.writeError + ")", f.ok && f.data.replacements.some(x => x.id === "text.pair") && s.writeError === "" && !s.writing);
+                        root.safeImport();
+                    });
+                });
+            });
+        });
+    }
+
+    function safeImport(): void {
+        const s = root.safe;
+        const f = name => root.fixtures + "/" + name;
+        const r = JSON.parse(search.ipc.importFile(f("lone-file.json")));
+        check("importFile starts on a file with a lone surrogate", r.ok === true);
+        until("the import ends", () => JSON.parse(search.ipc.importResult()).reason !== "reading", () => {
+            const res = JSON.parse(search.ipc.importResult());
+            check("a file with a lone surrogate is refused by an import (" + JSON.stringify(res) + ")", res.ok === false && res.reason === "surrogate");
+            // importResult is not left with an older outcome by a refused call.
+            s.importFile("relative.json");
+            check("a refused importFile is the last outcome", s.lastImport.reason === "path");
+            root.safeRestore();
+        });
+    }
+
+    // A file made invalid and put back exactly as the store wrote it is valid again.
+    function safeRestore(): void {
+        const s = root.safe;
+        const p = s.path;
+        sh("cp \"$1\" \"$1.keep\"; printf 'oops' >\"$1\"", [p], () => {
+            until("the file is invalid", () => s.status === "invalid", () => {
+                root.sh("cp \"$1.keep\" \"$1\"", [p], () => {
+                    root.until("the restored file is valid again", () => s.status === "ok", () => {
+                        check("a file restored to the store's last write: status ok, invalid reason cleared", s.invalidReason === "" && s.status === "ok");
+                        check("and a change is accepted again", s.change("replacements", {id: "text.r1", replace: "r1", with: "x"}, "add").ok === true);
+                        root.until("the write", () => !s.writing, root.safeExternal);
+                    });
+                });
+            });
+        });
+    }
+
+    // An outside edit seen while a write runs: the next change is refused (changed-on-disk), the edit is kept, then the caller retries.
+    function safeExternal(): void {
+        const s = root.safe;
+        const mine = s.change("replacements", {id: "text.w1", replace: "w1", with: "x"}, "add");
+        check("a change starts a write (" + JSON.stringify(mine) + " " + s.writing + " " + s.status + ")", mine.ok === true && s.writing);
+        s.take("{\"v\":1,\"favorites\":[\"sys.lock\"]}");
+        const r = s.change("replacements", {id: "text.w2", replace: "w2", with: "x"}, "add");
+        check("a change queued behind an outside edit is refused (" + JSON.stringify(r) + ")", r.ok === false && r.reason === "changed-on-disk");
+        until("the store settles", () => !s.writing && s.external === "", () => {
+            check("the outside edit became the content, and the store says so", s.data.favorites.length === 1 && s.data.replacements.length === 0 && s.writeError === "changed-on-disk");
+            const again = s.change("replacements", {id: "text.w2", replace: "w2", with: "x"}, "add");
+            check("the retry is accepted", again.ok === true && s.data.favorites.length === 1);
+            until("the retry is written", () => !s.writing, root.safeRate);
+        });
+    }
+
+    // The IPC rate limit: a loop of 400 requests is bounded to the burst, and the refusal is cheap.
+    function safeRate(): void {
+        const s = root.safe;
+        s.rateBurst = 10;
+        s.ratePerSecond = 5;
+        s.tokens = 10;
+        s.tokensAt = 0;
+        const t0 = Date.now();
+        let ok = 0;
+        let busy = 0;
+        for (let i = 0; i < 400; i++) {
+            const r = s.request("add", JSON.stringify({list: "replacements", item: {id: "text.l" + i, replace: "l" + i, with: "x"}}));
+            if (r.ok)
+                ok++;
+            else if (r.reason === "busy")
+                busy++;
+        }
+        const ms = Date.now() - t0;
+        check("400 requests in a loop: only the burst is accepted (" + ok + " accepted, " + busy + " busy, " + ms + " ms)", ok >= 10 && ok <= 12 && ok + busy === 400);
+        check("the in-process path is not limited", s.change("replacements", {id: "text.inproc", replace: "ip", with: "x"}, "add").ok === true);
+        s.tokensAt = Date.now() - 1000;
+        s.tokens = 0;
+        check("tokens come back with time (5 per second)", s.request("remove", "text.inproc").ok === true);
+        s.rateBurst = 1000000;
+        s.ratePerSecond = 1000000;
+        s.tokens = 1000000;
+        until("the writes", () => !s.writing, root.safeLock);
+    }
+
+    // An import that finishes reading after the session locked commits nothing.
+    function safeLock(): void {
+        const s = root.safe;
+        const before = JSON.stringify(s.data);
+        const r = s.importFile(root.fixtures + "/good.json");
+        check("an import starts", r.ok === true);
+        SessionState.locked = true;
+        check("the store follows the session's lock", search.commandStore.locked === true);
+        s.locked = true;
+        until("the import ends", () => s.lastImport.reason !== "reading", () => {
+            check("an import that ends while locked is refused (" + JSON.stringify(s.lastImport) + ")", s.lastImport.ok === false && s.lastImport.reason === "locked");
+            check("and committed nothing", JSON.stringify(s.data) === before && !s.writing);
+            SessionState.locked = false;
+            s.locked = false;
+            check("the store is unlocked with the session", search.commandStore.locked === false);
+            root.safeHang();
+        });
+    }
+
+    // A writer that never ends is killed after the limit: the store reports it, is not stuck, and writes again with the next change.
+    function safeHang(): void {
+        const s = root.safe;
+        const real = s.writerTool;
+        sh("printf 'sleep 30\\n' >\"$1/hang.sh\"", [root.fixtures], () => {
+            s.writerTool = root.fixtures + "/hang.sh";
+            s.writeLimitMs = 400;
+            check("a change is accepted", s.change("replacements", {id: "text.h1", replace: "h1", with: "x"}, "add").ok === true && s.writing);
+            until("the hung write is ended", () => !s.writing, () => {
+                check("the hung write is reported (" + s.writeError + ")", s.writeError === "write-timeout");
+                s.writerTool = real;
+                check("the next change is accepted", s.change("replacements", {id: "text.h2", replace: "h2", with: "x"}, "add").ok === true);
+                until("the next write ends", () => !s.writing, () => {
+                    root.sh("cat \"$1\"", [s.path], out => {
+                        const f = CommandsFile.parseText(out);
+                        check("the file then holds both changes, the error is cleared (" + s.writeError + " ok=" + f.ok + " " + out.length + " " + (f.ok ? f.data.replacements.map(x => x.id).join() : f.reason) + ")", f.ok && f.data.replacements.some(x => x.id === "text.h1") && f.data.replacements.some(x => x.id === "text.h2") && s.writeError === "");
                         root.finish();
                     });
                 });
