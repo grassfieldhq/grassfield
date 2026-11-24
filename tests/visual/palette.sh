@@ -224,7 +224,7 @@ if want actions; then
     # the results panel, so the list touches the panel's edge. Reported as DEFECT (not a FAIL) until it is fixed.
     # (fixed 2026-11-24: anchored to the results panel's edge, token searchActionsGap 11, on whole device pixels)
     fl_check "the Actions list is the token's 11 logical px from the results panel (got $(lg "$gap"))" awk -v g="$gap" -v s="$scale" 'BEGIN { d = g / s - 11; exit !(d > -1.01 && d < 1.01) }'
-    fl_check "the Actions list is at least 220 logical px wide (got $(lg "$aw"))" awk -v w="$aw" -v s="$scale" 'BEGIN { exit !(w / s >= 219) }'
+    fl_check "the Actions list is at least 218 logical px wide (token 220, minus the rim) (got $(lg "$aw"))" awk -v w="$aw" -v s="$scale" 'BEGIN { exit !(w / s >= 218) }'
     echo "    [geom] Actions top $(lg "$ay") vs the selected row (list is level with the row's top: spec 3.3)"
     echo "PASS: Tab opens an Actions panel ($(lg "$aw") x $(lg "$ah") logical)"
   fi
@@ -392,7 +392,9 @@ if want run; then
         open_search "$alt"
         echo "    [win:left] query '$alt' -> $(fl_json search status | jq -r '[.groups[].items[] | select(.kind == "command") | .title] | join(" | ")')"
       done
-      natural_left() { open_search "move window left"; has_title 'move window: left'; }
+      # (French: the title is "Déplacer la fenêtre : Gauche" with a no-break space before the colon)
+      if ((fr)); then natural_left() { open_search "déplacer la fenêtre gauche"; has_title 'fenêtre.*gauche'; }
+      else natural_left() { open_search "move window left"; has_title 'move window: left'; }; fi
       # Known defect 2026-11-24: the natural spelling finds nothing (the title has a colon). DEFECT, not a FAIL.
       fl_check "the natural query 'move window left' finds Move Window: Left" natural_left
       open_search "$q"
@@ -478,13 +480,13 @@ EOF
   fl_tap Tab; vs_sleep 0.7
   shot script-actions >/dev/null
   fl_tap Escape; vs_sleep 0.4
-  fl_tap Return; vs_sleep 1.5
-  echo "    [script] after Return: open=$(st .open) notice='$(st .notice)'"
+  fl_tap Return; vs_sleep 0.8
+  note=$(st .notice); opened=$(st .open)
+  echo "    [script] after Return: open=$opened notice='$note'"
   shot script-return >/dev/null
-  # X3b (the runner) is not built: Return must refuse cleanly. What the user sees is the DEFECT below until a message exists.
-  # Search stays open and says why under the rows (defect 2, fixed 2026-11-24)
-  fl_check "Return on a script keeps Search open" is .open true
-  fl_check "Return on a script says why it did not run (notice '$(st .notice)')" test -n "$(st .notice)"
+  # X3b (the runner) is not built: Return refuses cleanly. Search stays open and says why under the rows (defect 2, fixed 2026-11-24)
+  fl_check "Return on a script keeps Search open" test "$opened" = true
+  fl_check "Return on a script says why it did not run (notice '$note')" test -n "$note"
   if [[ -f $VS_STATE/palette-ran ]]; then echo "FAIL: the script ran"; fl_fail=1; fi
   fl_check "no QML error after running a script row" fl_no_qml_errors
   tail -n 5 "$VS_DEV/shell.log" | sed 's/^/    [log] /'
