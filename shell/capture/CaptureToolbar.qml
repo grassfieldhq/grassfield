@@ -240,6 +240,7 @@ Variants {
             preview: qsTr("Preview"),
             timer: qsTr("Timer"),
             none: qsTr("None"),
+            three: qsTr("3 Seconds"),
             five: qsTr("5 Seconds"),
             ten: qsTr("10 Seconds"),
             microphone: qsTr("Microphone"),
@@ -247,7 +248,12 @@ Variants {
             // The default input by the name the sound settings give it (macOS lists the inputs by name).
             micDefault: Audio.source ? Audio.describe(Audio.source) : qsTr("Default Input"),
             options: qsTr("Options"),
-            showPointer: qsTr("Show Mouse Pointer")
+            showThumbnail: qsTr("Show Floating Thumbnail"),
+            rememberSelection: qsTr("Remember Last Selection"),
+            showPointer: qsTr("Show Mouse Pointer"),
+            hideDesktopIcons: qsTr("Hide Desktop Icons"),
+            doNotDisturb: qsTr("Do Not Disturb"),
+            previousArea: qsTr("Capture Previous Area")
         }) : []
         readonly property var modeNames: ({
                 "screen": qsTr("Capture Entire Screen"),

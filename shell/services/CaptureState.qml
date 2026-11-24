@@ -40,6 +40,10 @@ Singleton {
     readonly property int secondsLeft: root.phase === "countdown" ? CaptureFile.secondsLeft(root.now, root.state.until) : 0
     readonly property bool countingDown: root.secondsLeft > 0
     readonly property string elapsedText: CaptureFile.elapsed(root.now - root.state.started)
+    // The capture toolbar is open or has just started the helper (Capture.qml sets it): the desktop icons are already hidden.
+    property bool armed: false
+    // The desktop icons are hidden (Hide Desktop Icons): DesktopIcons binds it.
+    readonly property bool hidesDesktopIcons: CaptureFile.hidesIcons(Settings.captureHideDesktopIcons, root.armed, root.phase)
     // gpu-screen-recorder is installed (an Omarchy base package): asked when the toolbar opens, as it is used (OC-0 rule 3).
     property bool recorderAvailable: false
 

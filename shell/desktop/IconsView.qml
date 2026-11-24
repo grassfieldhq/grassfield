@@ -658,6 +658,8 @@ FocusScope {
 
             required property var modelData
 
+            // Hide Desktop Icons (capture): hidden while a capture is made; the layout and the selection stay.
+            visible: !CaptureState.hidesDesktopIcons
             name: modelData.name
             isDir: modelData.isDir
             filePath: modelData.path

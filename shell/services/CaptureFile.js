@@ -25,6 +25,12 @@ var TOKEN = /^[0-9A-Fa-f]{1,64}$/;
 function stopNeeded(locked, phase) {
     return locked === true && PHASES.indexOf(phase) > 0;
 }
+
+// Whether the desktop icons are hidden (Options > Hide Desktop Icons, capture.hideDesktopIcons): the option is on and the toolbar is
+// open or has just started the helper (`armed`), or the helper's phase is anything but idle (a countdown, the picture, a recording).
+function hidesIcons(enabled, armed, phase) {
+    return enabled === true && (armed === true || PHASES.indexOf(phase) > 0);
+}
 var OUTPUT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
 // $XDG_RUNTIME_DIR/grassfield/capture-state.json, the helper's path; in a dev session with GRASSFIELD_STATE_HOME, a file of the

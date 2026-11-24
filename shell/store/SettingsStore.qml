@@ -504,6 +504,8 @@ Scope {
     readonly property bool captureShowPointer: read("capture.showPointer")
     // The last frame of the Selected Portion modes per display ("NAME=x,y,w,h;..."; CaptureModel.parseSelections reads it).
     readonly property string captureLastSelection: read("capture.lastSelection")
+    // Options > Remember Last Selection (default on): the Selected Portion frame opens on the last one, and the last one is kept.
+    readonly property bool captureRememberSelection: read("capture.rememberSelection")
     // The capture suite's options (ADR-0066 D-11); the Screenshot app and the helper read the same keys.
     readonly property bool captureShowThumbnail: read("capture.showThumbnail")
     readonly property int captureThumbnailSeconds: read("capture.thumbnailSeconds")

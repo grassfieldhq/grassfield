@@ -22,7 +22,7 @@ var LOCATIONS = ["screenshots", "desktop", "documents", "clipboard", "preview"];
 // A recording is not copied: its Save to lists these, and a stored "clipboard" means the default folder (Videos) for it.
 var RECORD_LOCATIONS = ["screenshots", "desktop", "documents", "preview"];
 var DEFAULT_LOCATION = "screenshots";
-var TIMERS = ["none", "5", "10"];
+var TIMERS = ["none", "3", "5", "10"];
 var OUTPUT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
 function known(mode) {
@@ -65,7 +65,7 @@ function location(mode, stored) {
 }
 
 function timerSeconds(timer) {
-    return timer === "5" ? 5 : timer === "10" ? 10 : 0;
+    return timer === "3" ? 3 : timer === "5" ? 5 : timer === "10" ? 10 : 0;
 }
 
 // "X,Y WxH" in the compositor's logical coordinates, as grim -g and the helper's --geometry take it.
@@ -101,6 +101,36 @@ function helperArgs(mode, options, output, geometry) {
             && GEOMETRY.test(geometry))
         args.push("--geometry", geometry);
     return args;
+}
+
+// Capture Previous Area (Options): the last frame of the display in focus again, with no toolbar frame: `selection --previous` (the
+// helper reads capture.lastSelection itself, ADR-0066 C8; no entry gives its crosshair). The Save to, timer and pointer follow
+// the options.
+function previousArgs(options) {
+    const o = options || {};
+    const args = ["selection", "--previous", "--save", location("selection", o.location)];
+    const seconds = timerSeconds(o.timer);
+    if (seconds > 0)
+        args.push("--timer", String(seconds));
+    if (o.showPointer === true)
+        args.push("--pointer");
+    return args;
+}
+
+// ---- Do Not Disturb while recording (Options, a recording mode) ----
+
+// One step of the hold: `held` is {held, previous} (whether this holds Do Not Disturb, and what it was before), `recording` whether
+// a recording runs, `enabled` capture.recordDnd, `dnd` the state now. Returns {held, set} with `set` the value to give
+// notifications.dnd (true or false) or null to leave it. Do Not Disturb that was already on stays on afterwards, and one the user
+// turned off meanwhile is left off.
+function dndStep(held, recording, enabled, dnd) {
+    const h = held && held.held === true ? held : {held: false, previous: false};
+    const want = recording === true && enabled === true;
+    if (want && !h.held)
+        return {held: {held: true, previous: dnd === true}, set: dnd === true ? null : true};
+    if (!want && h.held)
+        return {held: {held: false, previous: false}, set: h.previous === false && dnd === true ? false : null};
+    return {held: h, set: null};
 }
 
 // ---- the selection frame of the Selected Portion modes (macOS 27: a frame over the dimmed display, eight handles) ----
@@ -347,36 +377,62 @@ function clip(r, bounds) {
     return x1 > x0 && y1 > y0 ? {x: x0, y: y0, w: x1 - x0, h: y1 - y0} : null;
 }
 
-// The Options menu (PopupMenu rows): Save to, Timer, Microphone for a recording, then Options (Show Mouse Pointer), each a
-// section with its header and a check on the current choice. `labels` holds the translated texts (the QML's qsTr), by key:
-// saveTo screenshots videos desktop documents clipboard preview timer none five ten microphone micNone micDefault options
-// showPointer (`screenshots` names a screenshot's default folder, `videos` a recording's: one choice, `location:screenshots`).
+// The toggles of the Options menu: their key in capture.* and the value when the setting is not a boolean (the schema's default).
+var TOGGLES = {showPointer: false, showThumbnail: true, rememberSelection: true, hideDesktopIcons: false, recordDnd: false};
+
+function toggled(options, key) {
+    const v = (options || {})[key];
+    return typeof v === "boolean" ? v : TOGGLES[key];
+}
+
+// The Options menu (PopupMenu rows), each a section with its header and a check on the current choice: Save to and Timer (not for
+// Capture Text, whose text goes to the clipboard), Microphone for a recording, then Options: Show Floating Thumbnail, Remember Last
+// Selection (the frame modes), Show Mouse Pointer (not for Capture Text), Hide Desktop Icons, Do Not Disturb (a recording), and
+// the Capture Previous Area action (Capture Selected Portion; unavailable while the last frame is not remembered). `labels` holds
+// the translated texts (the QML's qsTr), by key: saveTo screenshots videos desktop documents clipboard preview timer none three
+// five ten microphone micNone micDefault options showThumbnail rememberSelection showPointer hideDesktopIcons doNotDisturb
+// previousArea (`screenshots` names a screenshot's default folder, `videos` a recording's: one choice, `location:screenshots`).
 function menuModel(mode, options, labels) {
     const o = options || {};
     const l = labels || {};
     const record = isRecord(mode);
-    const destination = location(mode, o.location);
-    const timer = TIMERS.indexOf(o.timer) >= 0 ? o.timer : "none";
-    const rows = [{header: true, text: l.saveTo}];
-    for (const id of record ? RECORD_LOCATIONS : LOCATIONS)
-        rows.push({id: "location:" + id, text: id === "screenshots" && record ? l.videos : l[id], checked: destination === id});
-    rows.push({separator: true}, {header: true, text: l.timer});
-    const timerLabels = {"none": l.none, "5": l.five, "10": l.ten};
-    for (const id of TIMERS)
-        rows.push({id: "timer:" + id, text: timerLabels[id], checked: timer === id});
-    if (record) {
-        rows.push({separator: true}, {header: true, text: l.microphone});
-        rows.push({id: "microphone:none", text: l.micNone, checked: o.microphone !== "default"});
-        rows.push({id: "microphone:default", text: l.micDefault, checked: o.microphone === "default"});
+    const text = mode === "text";
+    const rows = [];
+    if (!text) {
+        const destination = location(mode, o.location);
+        const timer = TIMERS.indexOf(o.timer) >= 0 ? o.timer : "none";
+        rows.push({header: true, text: l.saveTo});
+        for (const id of record ? RECORD_LOCATIONS : LOCATIONS)
+            rows.push({id: "location:" + id, text: id === "screenshots" && record ? l.videos : l[id], checked: destination === id});
+        rows.push({separator: true}, {header: true, text: l.timer});
+        const timerLabels = {"none": l.none, "3": l.three, "5": l.five, "10": l.ten};
+        for (const id of TIMERS)
+            rows.push({id: "timer:" + id, text: timerLabels[id], checked: timer === id});
+        if (record) {
+            rows.push({separator: true}, {header: true, text: l.microphone});
+            rows.push({id: "microphone:none", text: l.micNone, checked: o.microphone !== "default"});
+            rows.push({id: "microphone:default", text: l.micDefault, checked: o.microphone === "default"});
+        }
+        rows.push({separator: true});
     }
-    rows.push({separator: true}, {header: true, text: l.options});
-    rows.push({id: "showPointer:toggle", text: l.showPointer, checked: o.showPointer === true});
+    rows.push({header: true, text: l.options});
+    const toggle = (key, label) => rows.push({id: key + ":toggle", text: label, checked: toggled(o, key)});
+    toggle("showThumbnail", l.showThumbnail);
+    if (isFrame(mode))
+        toggle("rememberSelection", l.rememberSelection);
+    if (!text)
+        toggle("showPointer", l.showPointer);
+    toggle("hideDesktopIcons", l.hideDesktopIcons);
+    if (record)
+        toggle("recordDnd", l.doNotDisturb);
+    if (mode === "selection")
+        rows.push({separator: true}, {id: "previous:run", text: l.previousArea, enabled: toggled(o, "rememberSelection")});
     return rows;
 }
 
-// A chosen row as the setting it changes ({key, value} of capture.<key>), or null for a row that changes nothing.
+// A chosen row as the setting it changes ({key, value} of capture.<key>), {action: "previous"} for Capture Previous Area, or null
+// for a row that changes nothing.
 function choice(id, options) {
-    const o = options || {};
     const parts = String(id || "").split(":");
     if (parts.length !== 2)
         return null;
@@ -388,7 +444,9 @@ function choice(id, options) {
         return {key: key, value: value};
     if (key === "microphone" && (value === "none" || value === "default"))
         return {key: key, value: value};
-    if (key === "showPointer" && value === "toggle")
-        return {key: key, value: o.showPointer !== true};
+    if (key in TOGGLES && value === "toggle")
+        return {key: key, value: !toggled(options, key)};
+    if (key === "previous" && value === "run")
+        return {action: "previous"};
     return null;
 }

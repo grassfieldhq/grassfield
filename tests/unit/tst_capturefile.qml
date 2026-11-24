@@ -51,6 +51,18 @@ TestCase {
 
     // The lock and the helper's state, in either order (security review of OC-1, MEDIUM): the shell stops the helper whenever
     // the session is locked and the state is not idle, also when the state becomes active only after the lock.
+    // Hide Desktop Icons: hidden while the toolbar is open or has just started the helper, and while the helper is not idle.
+    function test_desktopIconsHiddenWhileNotIdle() {
+        verify(!CaptureFile.hidesIcons(false, true, "recording"), "the option off: never");
+        verify(!CaptureFile.hidesIcons(undefined, true, "recording"), "only a boolean true turns it on");
+        verify(!CaptureFile.hidesIcons(true, false, "idle"), "idle and no toolbar: shown");
+        verify(CaptureFile.hidesIcons(true, true, "idle"), "the toolbar open: hidden");
+        for (const phase of ["starting", "selecting", "countdown", "recording", "shooting", "frozen"])
+            verify(CaptureFile.hidesIcons(true, false, phase), phase);
+        verify(!CaptureFile.hidesIcons(true, false, "nonsense"), "an unknown phase is not a capture");
+        verify(!CaptureFile.hidesIcons(true, false, CaptureFile.parse("{").phase), "an unreadable file reads idle");
+    }
+
     function test_stopUnderTheLock() {
         verify(!CaptureFile.stopNeeded(false, "recording"), "unlocked: nothing to stop");
         verify(!CaptureFile.stopNeeded(true, "idle"), "locked and idle: nothing to stop");

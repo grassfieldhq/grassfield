@@ -1587,9 +1587,17 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
     enabled display or has no size. Its crosshair stays only as the fallback when the surface has no geometry to give.
 - SC9 Options (the shared `PopupMenu` with section headers and check marks, opened above the button, inside the toolbar's
   surface): Save to (Screenshots, Desktop, Documents, Clipboard, Preview; a recording mode lists Videos, Desktop, Documents and
-  Preview: Screenshots and Videos are one choice, the default place, named after its folder), Timer (None, 5 Seconds, 10
-  Seconds), Microphone in a recording mode (None, and the default input by its name), Show Mouse Pointer. A choice is saved at
-  once (`capture.location`, `capture.timer`, `capture.microphone`, `capture.showPointer`).
+  Preview: Screenshots and Videos are one choice, the default place, named after its folder), Timer (None, 3 Seconds, 5
+  Seconds, 10 Seconds), Microphone in a recording mode (None, and the default input by its name), then Options: Show Floating
+  Thumbnail, Remember Last Selection (the frame modes), Show Mouse Pointer, Hide Desktop Icons, Do Not Disturb (a recording mode)
+  and, in Capture Selected Portion, the action Capture Previous Area (ADR-0066 A8; unavailable while Remember Last Selection is
+  off). Capture Text has Options only (its text goes to the clipboard: no Save to, Timer or pointer). A choice is saved at once
+  (`capture.location`, `capture.timer`, `capture.microphone`, `capture.showPointer`, `capture.showThumbnail`,
+  `capture.rememberSelection`, `capture.hideDesktopIcons`, `capture.recordDnd`). Hide Desktop Icons hides the desktop icons while
+  the toolbar is open, for 2 s after it started the helper and while the helper's phase is not idle. Do Not Disturb sets
+  `notifications.dnd` when a recording starts and gives it its earlier value when the recording ends or the option goes off (a shell
+  restarted during a recording forgets the hold). The toolbar's mode Capture Text (after Selected Portion) draws the same frame and
+  runs `grassfield-capture text --geometry`; Shift-Super-2 and the keypad's 2 run `grassfield-capture text` (ADR-0066 A4).
 - SC10 The action hides the toolbar first, then (once its surface has given the keyboard back and gone,
   `focusReturn.releaseHoldMs` and a moment for the window's focus to return) runs `grassfield-capture` with the mode and the
   options (`shell/capture/CaptureModel.js` helperArgs): `screen [--output <the display clicked>] | window --geometry <the

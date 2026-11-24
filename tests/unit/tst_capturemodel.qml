@@ -13,9 +13,10 @@ TestCase {
 
     readonly property var labels: ({
             saveTo: "Save to", screenshots: "Screenshots", videos: "Videos", desktop: "Desktop", documents: "Documents",
-            clipboard: "Clipboard", preview: "Preview", timer: "Timer", none: "None", five: "5 Seconds", ten: "10 Seconds",
-            microphone: "Microphone", micNone: "None", micDefault: "Built-in Microphone", options: "Options",
-            showPointer: "Show Mouse Pointer"
+            clipboard: "Clipboard", preview: "Preview", timer: "Timer", none: "None", three: "3 Seconds", five: "5 Seconds",
+            ten: "10 Seconds", microphone: "Microphone", micNone: "None", micDefault: "Built-in Microphone", options: "Options",
+            showThumbnail: "Show Floating Thumbnail", rememberSelection: "Remember Last Selection", showPointer: "Show Mouse Pointer",
+            hideDesktopIcons: "Hide Desktop Icons", doNotDisturb: "Do Not Disturb", previousArea: "Capture Previous Area"
         })
 
     function test_modesInOrder() {
@@ -60,6 +61,7 @@ TestCase {
         compare(Model.location("screen", "desktop"), "desktop", "the Desktop when chosen");
         compare(Model.location("screen", "mail"), "screenshots", "an unknown place: the default folder");
         compare(Model.location("screen", undefined), "screenshots");
+        compare(Model.timerSeconds("3"), 3);
         compare(Model.timerSeconds("5"), 5);
         compare(Model.timerSeconds("10"), 10);
         compare(Model.timerSeconds("none"), 0);
@@ -127,10 +129,15 @@ TestCase {
     function test_menuForAScreenshot() {
         const rows = Model.menuModel("selection", {location: "documents", timer: "5", microphone: "default", showPointer: false}, labels);
         compare(ids(rows), ["#Save to", "location:screenshots", "location:desktop", "location:documents*", "location:clipboard",
-            "location:preview", "-", "#Timer", "timer:none", "timer:5*", "timer:10", "-", "#Options", "showPointer:toggle"]);
+            "location:preview", "-", "#Timer", "timer:none", "timer:3", "timer:5*", "timer:10", "-", "#Options",
+            "showThumbnail:toggle*", "rememberSelection:toggle*", "showPointer:toggle", "hideDesktopIcons:toggle", "-", "previous:run"]);
         compare(rows[1].text, "Screenshots", "a screenshot's default folder by its name");
-        compare(rows[9].text, "5 Seconds");
-        verify(rows.filter(r => !r.header && !r.separator).every(r => r.checked !== undefined), "every choice is checkable");
+        compare(rows[10].text, "5 Seconds");
+        compare(rows[9].text, "3 Seconds");
+        verify(rows.filter(r => !r.header && !r.separator && r.id !== "previous:run").every(r => r.checked !== undefined),
+            "every choice but the action is checkable");
+        verify(rows.filter(r => r.id === "previous:run")[0].checked === undefined, "Capture Previous Area is an action, not a check");
+        compare(rows[rows.length - 1].text, "Capture Previous Area");
         compare(ids(Model.menuModel("screen", {}, labels)).slice(0, 3), ["#Save to", "location:screenshots*", "location:desktop"],
             "nothing chosen: the Screenshots folder");
     }
@@ -138,10 +145,77 @@ TestCase {
     function test_menuForARecording() {
         const rows = Model.menuModel("recordScreen", {location: "clipboard", timer: "nope", microphone: "default", showPointer: true}, labels);
         compare(ids(rows), ["#Save to", "location:screenshots*", "location:desktop", "location:documents", "location:preview", "-",
-            "#Timer", "timer:none*", "timer:5", "timer:10", "-", "#Microphone", "microphone:none", "microphone:default*", "-",
-            "#Options", "showPointer:toggle*"]);
+            "#Timer", "timer:none*", "timer:3", "timer:5", "timer:10", "-", "#Microphone", "microphone:none", "microphone:default*", "-",
+            "#Options", "showThumbnail:toggle*", "showPointer:toggle*", "hideDesktopIcons:toggle", "recordDnd:toggle"]);
         compare(rows[1].text, "Videos", "a recording's default folder by its name");
-        compare(rows[13].text, "Built-in Microphone", "the default input by its name");
+        compare(rows[14].text, "Built-in Microphone", "the default input by its name");
+        compare(rows[rows.length - 1].text, "Do Not Disturb");
+    }
+
+    // The frame modes hold Remember Last Selection; a recording of a portion holds Do Not Disturb, never Capture Previous Area.
+    function test_menuOptionsPerMode() {
+        const only = (mode, o) => ids(Model.menuModel(mode, o || {}, labels)).filter(r => /toggle|run/.test(r));
+        compare(only("screen"), ["showThumbnail:toggle*", "showPointer:toggle", "hideDesktopIcons:toggle"]);
+        compare(only("window"), ["showThumbnail:toggle*", "showPointer:toggle", "hideDesktopIcons:toggle"]);
+        compare(only("selection"), ["showThumbnail:toggle*", "rememberSelection:toggle*", "showPointer:toggle", "hideDesktopIcons:toggle",
+            "previous:run"]);
+        compare(only("recordScreen"), ["showThumbnail:toggle*", "showPointer:toggle", "hideDesktopIcons:toggle", "recordDnd:toggle"]);
+        compare(only("recordSelection"), ["showThumbnail:toggle*", "rememberSelection:toggle*", "showPointer:toggle",
+            "hideDesktopIcons:toggle", "recordDnd:toggle"]);
+        const on = {showThumbnail: false, rememberSelection: false, showPointer: true, hideDesktopIcons: true, recordDnd: true};
+        compare(only("recordSelection", on), ["showThumbnail:toggle", "rememberSelection:toggle", "showPointer:toggle*",
+            "hideDesktopIcons:toggle*", "recordDnd:toggle*"], "the checks follow the settings");
+        compare(only("selection", {showThumbnail: "yes"}), only("selection"), "a value that is not a boolean is the default");
+    }
+
+    // Capture Text: the text goes to the clipboard, so no Save to, Timer or pointer; the options that do apply remain.
+    function test_menuForText() {
+        compare(ids(Model.menuModel("text", {}, labels)), ["#Options", "showThumbnail:toggle*", "rememberSelection:toggle*",
+            "hideDesktopIcons:toggle"]);
+    }
+
+    function test_previousAreaNeedsARememberedFrame() {
+        const rows = Model.menuModel("selection", {rememberSelection: false}, labels);
+        const row = rows[rows.length - 1];
+        compare(row.id, "previous:run");
+        compare(row.enabled, false, "no new frame is kept while Remember Last Selection is off");
+        compare(Model.menuModel("selection", {}, labels).slice(-1)[0].enabled, true);
+    }
+
+    function test_previousArgs() {
+        compare(Model.previousArgs({location: "screenshots", timer: "none", showPointer: false}), ["selection", "--previous", "--save", "screenshots"]);
+        compare(Model.previousArgs({location: "clipboard", timer: "3", showPointer: true, microphone: "default"}),
+            ["selection", "--previous", "--save", "clipboard", "--timer", "3", "--pointer"]);
+        compare(Model.previousArgs(null), ["selection", "--previous", "--save", "screenshots"]);
+        compare(Model.previousArgs({location: "mail", timer: "7"}), ["selection", "--previous", "--save", "screenshots"]);
+    }
+
+    // Do Not Disturb while recording: set when a recording starts, the earlier state restored when it ends or the option goes off.
+    function test_dndHeldWhileRecording() {
+        const free = {held: false, previous: false};
+        let r = Model.dndStep(free, false, true, false);
+        compare(r, {held: free, set: null}, "not recording: nothing");
+        r = Model.dndStep(free, true, false, false);
+        compare(r.set, null, "the option off: nothing");
+        r = Model.dndStep(free, true, true, false);
+        compare(r.set, true, "a recording starts with Do Not Disturb off: it goes on");
+        compare(r.held, {held: true, previous: false});
+        const during = r.held;
+        compare(Model.dndStep(during, true, true, true), {held: during, set: null}, "while recording: left alone");
+        r = Model.dndStep(during, false, true, true);
+        compare(r.set, false, "the recording ends: restored to off");
+        compare(r.held, free);
+        r = Model.dndStep(during, true, false, true);
+        compare(r.set, false, "the option turned off meanwhile: restored");
+        r = Model.dndStep(during, false, true, false);
+        compare(r.set, null, "the user turned it off meanwhile: left off");
+        // It was already on: kept on afterwards.
+        r = Model.dndStep(free, true, true, true);
+        compare(r.set, null, "already on: not touched");
+        compare(r.held, {held: true, previous: true});
+        compare(Model.dndStep(r.held, false, true, true).set, null, "already on before: still on after");
+        compare(Model.dndStep(null, true, true, false).set, true, "no state yet reads as free");
+        compare(Model.dndStep(free, "yes", true, false).set, null, "recording is a boolean only");
     }
 
     function test_choice() {
@@ -153,9 +227,21 @@ TestCase {
         compare(Model.choice("microphone:default", o), {key: "microphone", value: "default"});
         compare(Model.choice("showPointer:toggle", o), {key: "showPointer", value: true});
         compare(Model.choice("showPointer:toggle", {showPointer: true}), {key: "showPointer", value: false});
+        compare(Model.choice("timer:3", o), {key: "timer", value: "3"});
+        compare(Model.choice("showThumbnail:toggle", {}), {key: "showThumbnail", value: false}, "on by default: the toggle turns it off");
+        compare(Model.choice("showThumbnail:toggle", {showThumbnail: false}), {key: "showThumbnail", value: true});
+        compare(Model.choice("rememberSelection:toggle", {}), {key: "rememberSelection", value: false});
+        compare(Model.choice("rememberSelection:toggle", {rememberSelection: false}), {key: "rememberSelection", value: true});
+        compare(Model.choice("hideDesktopIcons:toggle", {}), {key: "hideDesktopIcons", value: true});
+        compare(Model.choice("hideDesktopIcons:toggle", {hideDesktopIcons: true}), {key: "hideDesktopIcons", value: false});
+        compare(Model.choice("recordDnd:toggle", {recordDnd: false}), {key: "recordDnd", value: true});
+        compare(Model.choice("previous:run", o), {action: "previous"}, "an action, not a setting");
+        compare(Model.choice("previous:toggle", o), null);
+        compare(Model.choice("showThumbnail:on", o), null);
+        compare(Model.choice("freeze:toggle", o), null, "only the toggles the menu holds");
         compare(Model.choice("location:mail", o), null);
         compare(Model.choice("saveTo:desktop", o), null, "the older key is never written");
-        compare(Model.choice("timer:3", o), null);
+        compare(Model.choice("timer:7", o), null);
         compare(Model.choice("mode:screen", o), null, "the menu never changes the mode");
         compare(Model.choice("", o), null);
         compare(Model.choice("location:desktop:x", o), null);

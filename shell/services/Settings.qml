@@ -178,6 +178,7 @@ Singleton {
     readonly property string captureMicrophone: store.captureMicrophone
     readonly property bool captureShowPointer: store.captureShowPointer
     readonly property string captureLastSelection: store.captureLastSelection
+    readonly property bool captureRememberSelection: store.captureRememberSelection
     readonly property bool captureShowThumbnail: store.captureShowThumbnail
     readonly property int captureThumbnailSeconds: store.captureThumbnailSeconds
     readonly property string captureThumbnailSide: store.captureThumbnailSide
@@ -353,7 +354,7 @@ Singleton {
         store.setNotificationsPreviews(value);
     }
 
-    // key: mode | location | timer | microphone | showPointer (capture.*); an invalid value is refused.
+    // key: any capture.* key the toolbar writes: mode, location, timer, microphone, showPointer, lastSelection, rememberSelection, showThumbnail, hideDesktopIcons, recordDnd; an invalid value is refused.
     function setCaptureOption(key: string, value: var): void {
         store.setCaptureOption(key, value);
     }
