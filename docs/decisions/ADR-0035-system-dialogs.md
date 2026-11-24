@@ -3596,3 +3596,18 @@ caller not passing, the bounds, the deadline and the withdrawal); `tests/securit
 prompts from three connections: four shown, five waiting unseen, each shown on its turn, a waiting one withdrawn unseen,
 the queue's time and bounds) and `tests/security/kio_passwd.sh` section 12 (gcr prompts and KIO queries waiting in one
 queue); both fail against the bridge of rc9 (the control).
+
+**Follow-up (integration gate of rc9 feedback, 2026-11-23).** `tests/security/bluez_agent.sh` section 9 and
+`tests/security/nm_agent.sh` section 10 (the bound shared with gcr) still modelled the bound before B-05: one gcr
+connection with four prompts all shown and "the ninth" refused by the bound of 8. Since B-05 that connection shows two
+(the other two were cancelled at once, which kept the old count of four "cancelled" true by accident), and the request
+they called the ninth was refused with six held, by the other system lane's two kept places; since this amendment the
+connection's other two wait and are shown once places free, after the test had answered, so its count failed. No
+property was lost: a waiting request holds no place (`RequestBook::fits` skips it) and is promoted only where it fits,
+reserves included (`promote`), and NetworkManager's and bluetoothd's requests go through `reserve`, never `admit`. The
+sections now prove the rule as it stands, against the system lane each test drives: six gcr prompts from three
+connections (four shown, two waiting), the lane's two requests shown, its third refused at once, its freed place never
+given to a waiting gcr request, the waiting ones shown on their turns, every request answered. Mutants added to their
+`--mutants` lists: the lane's reserve removed, and the queue promoting without `fits`. Unit case
+`PrompterQueue.TheSharedBoundWithGcrAsTheAgentTestsSeeIt` holds the same scenario for both lanes. The spec's line "the
+9th, from any side, is refused" (section 5) now states the lanes and the queue.

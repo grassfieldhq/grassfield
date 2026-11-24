@@ -23,6 +23,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
@@ -768,6 +769,48 @@ TEST(PrompterQueue, WiFiAndBluetoothNeverWaitAndKeepTheirPlaces) {
     // An application's place goes to the oldest waiting request.
     EXPECT_TRUE(book.release(book.idOf(&o[0])));
     EXPECT_EQ(book.takePromoted(), QStringList{w1.id});
+}
+
+// The scenario of bluez_agent.sh section 9 and nm_agent.sh section 10 (the bound shared with gcr), for either system lane:
+// six gcr prompts from three connections, four placed and two waiting, each held back by the applications' share only;
+// the lane's two requests placed past them, its third refused at once (six placed and the other lane's two kept fill the
+// 8); the lane's freed place never goes to a waiting gcr request; the waiting ones get the places the gcr answers free.
+TEST(PrompterQueue, TheSharedBoundWithGcrAsTheAgentTestsSeeIt) {
+    for (const Lane lane : {Lane::Bluetooth, Lane::Nm}) {
+        SCOPED_TRACE(lane == Lane::Bluetooth ? "bluetooth" : "nm");
+        RequestBook book(limits::kRequests);
+        int         g[6], q[4];
+        QStringList placed, waiting;
+        for (int i = 0; i < 6; ++i) {
+            const Admission a = book.admit(&g[i], Lane::Keyring, QStringLiteral(":1.%1").arg(20 + i / 2), 1000);
+            ASSERT_FALSE(a.id.isEmpty());
+            (a.waiting ? waiting : placed).append(a.id);
+        }
+        EXPECT_EQ(placed.size(), 4);
+        EXPECT_EQ(waiting.size(), 2);
+        const Admission q1 = book.admit(&q[0], lane, QString(), 1000);
+        const Admission q2 = book.admit(&q[1], lane, QString(), 1000);
+        EXPECT_FALSE(q1.id.isEmpty());
+        EXPECT_FALSE(q1.waiting);
+        EXPECT_FALSE(q2.id.isEmpty());
+        EXPECT_FALSE(q2.waiting);
+        EXPECT_TRUE(book.admit(&q[2], lane, QString(), 1000).id.isEmpty()) << "the third is refused at once, never queued";
+        EXPECT_EQ(book.count(), 6);
+        EXPECT_EQ(book.waiting(), 2);
+        EXPECT_TRUE(book.release(q1.id));
+        EXPECT_TRUE(book.takePromoted().isEmpty()) << "the lane's freed place is not a waiting gcr request's";
+        const Admission q4 = book.admit(&q[3], lane, QString(), 1000);
+        EXPECT_FALSE(q4.id.isEmpty());
+        EXPECT_FALSE(q4.waiting);
+        QStringList turns;
+        for (const QString& id : placed) {
+            EXPECT_TRUE(book.release(id));
+            turns += book.takePromoted();
+        }
+        std::sort(turns.begin(), turns.end());
+        std::sort(waiting.begin(), waiting.end());
+        EXPECT_EQ(turns, waiting) << "each waiting gcr request gets a place a gcr answer frees";
+    }
 }
 
 // One caller cannot starve the others: a freed place goes to the caller served least recently, then the oldest request,

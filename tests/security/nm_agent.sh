@@ -25,8 +25,10 @@
 #  9 a wrong answer from the shell (a name for a WPA2 network, ok without a password, an empty password, a name for an
 #    enterprise network) cancels the request: "cancel" to the shell, NoSecrets to NetworkManager; the shell's refusal
 #    ("refused", its bound) is NoSecrets, never UserCanceled
-# 10 the bound of 8 is shared with gcr's requests: four gcr prompts and four nm requests outstanding, the next nm request
-#    gets NoSecrets at once
+# 10 the bound of 8 is shared with gcr's requests (B-05 and the applications' queue): six gcr prompts from three
+#    connections, four shown and two waiting unseen; two nm requests still shown (NetworkManager keeps two places), a third
+#    gets NoSecrets at once (six shown and BlueZ's two kept fill the 8); an nm request's freed place goes to the next nm
+#    request, never to a waiting gcr request; the waiting ones shown on their turns, every request answered
 # 11 the shell goes with a request outstanding: NoSecrets, and the agent unregisters; it comes back: Register again
 # 12 NetworkManager restarts with a request outstanding: the shell gets "cancel"; the new NetworkManager gets Register
 # 13 a request left unanswered past the answer's time (a bridge run with --nm-timeout-ms): withdrawn, NoSecrets
@@ -335,21 +337,66 @@ scenario_body() {
   check wait_until 10 grep -qx "r0 error org.freedesktop.NetworkManager.SecretAgent.NoSecrets" "$d/nm.nm"
 
   # --- 10 the bound is shared with gcr ------------------------------------------------------------------------------------
+  # B-05 (bridges/prompter/src/Requests.h) and its amendment (the applications' queue, owner decision 2026-11-22): of the
+  # shell's 8 places NetworkManager and BlueZ keep two each; the applications' gcr prompts hold at most four (one connection
+  # two), the others wait in the bridge, unseen and holding no place; NetworkManager's requests never wait.
   if python3 -I -c 'import gi; gi.require_version("Gcr", "4"); from gi.repository import Gcr' 2>/dev/null; then
+    # ids_since <shell log line> <kind>: the ids of the prompts of that kind the shell got after that line, oldest first
+    ids_since() {
+      tail -n +"$(($1 + 1))" "$d/s.shell" | grep '"type":"prompt"' \
+        | python3 -I -c 'import json,sys; [print(m["id"]) for m in map(json.loads, sys.stdin) if m["kind"] == sys.argv[1]]' "$2"
+    }
+    local from waits turns g nmids=()
+    local canceled=org.freedesktop.NetworkManager.SecretAgent.UserCanceled
+    from=$(wc -l <"$d/s.shell")
     n=$(prompts s)
-    "${run_env[@]}" python3 -I "$client_py" many 4 >"$d/gcr.out" 2>&1 &
-    pids+=("$!")
-    wait_until 10 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) -ge 4 ]]' _ "$d/s.shell" "$n"
-    for tag in q1 q2 q3 q4; do say nm "get $tag 802-11-wireless-security 0x1 ssid=Queue"; done
-    wait_until 10 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) -ge 8 ]]' _ "$d/s.shell" "$n"
-    say nm "get q9 802-11-wireless-security 0x1 ssid=Ninth"
-    desc="four gcr prompts and four nm requests outstanding: the ninth (nm) gets NoSecrets at once"
-    check wait_until 10 grep -qx "q9 error org.freedesktop.NetworkManager.SecretAgent.NoSecrets" "$d/nm.nm"
-    for cid in $(grep '"type":"prompt"' "$d/s.shell" | tail -n 8 | python3 -I -c 'import json,sys; [print(json.loads(l)["id"]) for l in sys.stdin]'); do
-      say s "answer $cid cancel"
+    waits=$(count main log "waits for a place")
+    turns=$(count main log "a place is free, its turn")
+    # Three connections with two prompts each: whichever four are shown, each waiting one is held back by the applications'
+    # share only (its connection shows fewer than two), so a place NetworkManager frees would fit it if the reserve were not
+    # kept.
+    for g in g1 g2 g3; do
+      "${run_env[@]}" python3 -I "$client_py" many 2 >"$d/$g.out" 2>&1 &
+      pids+=("$!")
     done
-    desc="...and the eight get their answers (gcr: cancelled; nm: UserCanceled)"
-    check wait_until 10 bash -c '[[ $(grep -c "cancelled" "$1") == 4 ]] && for t in q1 q2 q3 q4; do grep -qx "$t error org.freedesktop.NetworkManager.SecretAgent.UserCanceled" "$2" || exit 1; done' _ "$d/gcr.out" "$d/nm.nm"
+    desc="six gcr prompts from three connections: the shell gets the applications' four, the other two wait in the bridge"
+    check wait_until 15 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 4 && $(( $(grep -c "waits for a place" "$3") - $4 )) == 2 ]]' \
+      _ "$d/s.shell" "$n" "$d/main.log" "$waits"
+    say nm "get q1 802-11-wireless-security 0x1 ssid=Queue"
+    say nm "get q2 802-11-wireless-security 0x1 ssid=Queue"
+    desc="...two nm requests still reach the shell: NetworkManager keeps its two places, which the waiting gcr requests do not hold"
+    check wait_until 10 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 6 ]]' _ "$d/s.shell" "$n"
+    say nm "get q3 802-11-wireless-security 0x1 ssid=Third"
+    desc="...a third gets NoSecrets at once, never queued: six shown and BlueZ's two kept fill the shell's 8"
+    check wait_until 10 grep -qx "q3 error org.freedesktop.NetworkManager.SecretAgent.NoSecrets" "$d/nm.nm"
+    sleep 0.3
+    desc="...the shell saw nothing of it, and no gcr request was answered or refused meanwhile"
+    check bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 6 ]] && ! cat "$3" "$4" "$5" | grep -q -e cancelled -e password=' \
+      _ "$d/s.shell" "$n" "$d/g1.out" "$d/g2.out" "$d/g3.out"
+    mapfile -t nmids < <(ids_since "$from" nm)
+    printf '%s\n' "${nmids[@]:0:1}" >"$d/answered"
+    say s "answer ${nmids[0]:-none} cancel"
+    wait_until 10 grep -qx "q1 error $canceled" "$d/nm.nm"
+    sleep 1
+    desc="an nm request cancelled by the user (q1, UserCanceled) leaves its place to NetworkManager: no waiting gcr request takes it"
+    check bash -c 'grep -qx "q1 error $6" "$1" && [[ $(( $(grep -c "\"type\":\"prompt\"" "$2") - $3 )) == 6 && $(grep -c "a place is free, its turn" "$4") == "$5" ]]' \
+      _ "$d/nm.nm" "$d/s.shell" "$n" "$d/main.log" "$turns" "$canceled"
+    say nm "get q4 802-11-wireless-security 0x1 ssid=Queue"
+    desc="...the next nm request (q4) gets it, shown at once"
+    check wait_until 10 bash -c '[[ $(( $(grep -c "\"type\":\"prompt\"" "$1") - $2 )) == 7 ]]' _ "$d/s.shell" "$n"
+    # Every prompt answered "cancel" as it reaches the shell: each gcr answer gives its place to a waiting gcr request.
+    for _ in $(seq 1 30); do
+      for cid in $(ids_since "$from" password) $(ids_since "$from" nm); do
+        grep -qx "$cid" "$d/answered" && continue
+        echo "$cid" >>"$d/answered"
+        say s "answer $cid cancel"
+      done
+      [[ $(cat "$d/g1.out" "$d/g2.out" "$d/g3.out" | grep -c cancelled) -ge 6 ]] && break
+      sleep 0.5
+    done
+    desc="...the two waiting gcr requests are shown on their turns, and every request gets its answer (gcr: six cancelled; nm: q2 and q4 UserCanceled)"
+    check wait_until 10 bash -c '[[ $(cat "$1" "$2" "$3" | grep -c cancelled) == 6 && $(( $(grep -c "a place is free, its turn" "$4") - $5 )) == 2 ]] && for t in q2 q4; do grep -qx "$t error $7" "$6" || exit 1; done' \
+      _ "$d/g1.out" "$d/g2.out" "$d/g3.out" "$d/main.log" "$turns" "$d/nm.nm" "$canceled"
   else
     echo "SKIP: nm_agent: the shared bound needs PyGObject with Gcr 4"
   fi
@@ -467,6 +514,8 @@ refusal-as-usercanceled#Bridge.cpp#                m_nm->refuse(request, nm::kEr
 no-timeout#NmAgent.cpp#        request->timeout = g_timeout_add(static_cast<guint>(m_timeoutMs), onTimeout, request.get());#        request->timeout = 0;
 save-claims-success#NmAgent.cpp#            g_dbus_method_invocation_return_dbus_error(invocation, nm::kErrorFailed, "grassfield-prompter stores no secrets");#            g_dbus_method_invocation_return_value(invocation, nullptr);
 not-reregistered-after-a-restart#NmAgent.cpp#        if (!owner.isEmpty() && m_wanted)\n            sendRegister();#        if (false)\n            sendRegister();
+nm-places-not-kept (B-05)#Requests.cpp#        if (lane != Lane::Nm)\n            kept += std::max(0, kReservedNm - nm);#        if (false)\n            kept += std::max(0, kReservedNm - nm);
+waiting-takes-any-place (the applications' queue)#Requests.cpp#                if (!it->waiting || !fits(it->lane, it->caller))#                if (!it->waiting)
 EOF_MUTANTS
 fi
 ((rc == 0)) && echo "PASS: nm_agent" || echo "FAIL: nm_agent"
