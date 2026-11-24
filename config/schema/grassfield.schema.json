@@ -1057,11 +1057,12 @@
             "screen",
             "window",
             "selection",
+            "text",
             "recordScreen",
             "recordSelection"
           ],
           "default": "selection",
-          "description": "The mode the toolbar opens in (the one chosen last): Capture Entire Screen, Capture Selected Window, Capture Selected Portion, Record Entire Screen, Record Selected Portion."
+          "description": "The mode the toolbar opens in (the one chosen last): Capture Entire Screen, Capture Selected Window, Capture Selected Portion, Capture Text, Record Entire Screen, Record Selected Portion."
         },
         "saveTo": {
           "type": "string",
@@ -1090,11 +1091,12 @@
           "type": "string",
           "enum": [
             "none",
+            "3",
             "5",
             "10"
           ],
           "default": "none",
-          "description": "Options > Timer: a countdown of 5 or 10 seconds before the capture or the recording starts."
+          "description": "Options > Timer: a countdown of 3, 5 or 10 seconds before the capture or the recording starts."
         },
         "microphone": {
           "type": "string",
@@ -1118,6 +1120,11 @@
           "x-grassfield": {
             "rule": "plainText"
           }
+        },
+        "rememberSelection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Options > Remember Last Selection (macOS): Capture/Record Selected Portion and Capture Text open on the last frame of the display, and keep the frame made last. Off, the frame opens centred and nothing is kept, so Capture Previous Area has no new frame to use."
         },
         "showThumbnail": {
           "type": "boolean",

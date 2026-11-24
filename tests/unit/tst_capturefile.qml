@@ -51,6 +51,18 @@ TestCase {
 
     // The lock and the helper's state, in either order (security review of OC-1, MEDIUM): the shell stops the helper whenever
     // the session is locked and the state is not idle, also when the state becomes active only after the lock.
+    // Hide Desktop Icons: hidden while the toolbar is open or has just started the helper, and while the helper is not idle.
+    function test_desktopIconsHiddenWhileNotIdle() {
+        verify(!CaptureFile.hidesIcons(false, true, "recording"), "the option off: never");
+        verify(!CaptureFile.hidesIcons(undefined, true, "recording"), "only a boolean true turns it on");
+        verify(!CaptureFile.hidesIcons(true, false, "idle"), "idle and no toolbar: shown");
+        verify(CaptureFile.hidesIcons(true, true, "idle"), "the toolbar open: hidden");
+        for (const phase of ["starting", "selecting", "countdown", "recording", "shooting", "frozen"])
+            verify(CaptureFile.hidesIcons(true, false, phase), phase);
+        verify(!CaptureFile.hidesIcons(true, false, "nonsense"), "an unknown phase is not a capture");
+        verify(!CaptureFile.hidesIcons(true, false, CaptureFile.parse("{").phase), "an unreadable file reads idle");
+    }
+
     function test_stopUnderTheLock() {
         verify(!CaptureFile.stopNeeded(false, "recording"), "unlocked: nothing to stop");
         verify(!CaptureFile.stopNeeded(true, "idle"), "locked and idle: nothing to stop");
@@ -115,6 +127,48 @@ TestCase {
         verify(!CaptureFile.stopNeeded(false, "shooting"));
         verify(CaptureFile.stopNeeded(true, CaptureFile.parse('{"v": 1, "phase": "shooting", "seq": "zz"}').phase),
             "a shooting state with a bad seq is still stopped");
+    }
+
+    // Do Not Disturb while recording is a runtime silence only: the user's own setting decides alone otherwise, and is never an output.
+    function test_silencedWhileRecording() {
+        verify(CaptureFile.silenced(false, "recording", "recording", true), "recording with the option on: silenced");
+        verify(CaptureFile.silenced(false, "recording", "", true), "the phase alone is enough");
+        verify(!CaptureFile.silenced(false, "idle", "", true), "idle: not silenced");
+        verify(!CaptureFile.silenced(false, "recording", "recording", false), "the option off: not silenced");
+        verify(!CaptureFile.silenced(false, "idle", "", false));
+        // A recording's countdown and crosshair: a banner posted then must not be on the screen when it starts.
+        for (const phase of ["starting", "selecting", "countdown", "shooting", "frozen"])
+            verify(CaptureFile.silenced(false, phase, "recording", true), phase + " of a recording");
+        verify(!CaptureFile.silenced(false, "countdown", "shot", true), "a screenshot's countdown is not a recording");
+        verify(!CaptureFile.silenced(false, "countdown", "", true));
+        verify(!CaptureFile.silenced(false, "idle", "recording", true), "an idle state is not under way whatever its kind");
+        verify(!CaptureFile.silenced(false, "countdown", "recording", false), "the option off: not even then");
+        for (const phase of ["idle", "countdown", "recording"]) {
+            for (const kind of ["", "shot", "recording"]) {
+                for (const enabled of [true, false])
+                    verify(CaptureFile.silenced(true, phase, kind, enabled), "the user's own Do Not Disturb always silences");
+            }
+        }
+        verify(!CaptureFile.silenced(undefined, "recording", "recording", 1), "only booleans count");
+        verify(!CaptureFile.silenced(false, undefined, undefined, undefined));
+        verify(!CaptureFile.recordingActive("nonsense", "recording"), "an unknown phase is not under way");
+    }
+
+    // Hide Desktop Icons and the acknowledgement: a key-started shot waits for the icons to be presented hidden, never for ever.
+    function test_iconsReady() {
+        verify(CaptureFile.iconsReady(false, false, 0, false), "the option off: nothing to wait for");
+        verify(CaptureFile.iconsReady(undefined, true, 0, false), "only a boolean true turns it on");
+        verify(!CaptureFile.iconsReady(true, true, 0, false), "hidden, no frame presented yet: wait");
+        verify(!CaptureFile.iconsReady(true, true, 1, false), "the first frame may have been under way: wait");
+        verify(CaptureFile.iconsReady(true, true, 2, false), "two frames since they were hidden");
+        verify(CaptureFile.iconsReady(true, true, 0, true), "the bounded wait is over: go");
+        verify(!CaptureFile.iconsReady(true, false, 5, false), "not hidden yet: wait whatever the frames");
+        verify(CaptureFile.iconsReady(true, false, 0, true), "even then the wait ends");
+        const shooting = CaptureFile.parse('{"v": 1, "phase": "shooting", "seq": "0123456789abcdef"}');
+        compare(CaptureFile.ackNeeded(shooting, true, "", false), "", "the icons are not off the screen: no acknowledgement");
+        compare(CaptureFile.ackNeeded(shooting, true, "", true), "0123456789abcdef");
+        compare(CaptureFile.ackNeeded(shooting, true, ""), "0123456789abcdef", "without the argument: as before");
+        compare(CaptureFile.ackNeeded(shooting, false, "", true), "", "a card is still mapped");
     }
 
     // The acknowledgement is asked for once per seq, only when the cards are hidden.

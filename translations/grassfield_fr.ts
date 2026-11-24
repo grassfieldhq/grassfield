@@ -3561,6 +3561,10 @@
         <translation>Aucun</translation>
     </message>
     <message>
+        <source>3 Seconds</source>
+        <translation>3 secondes</translation>
+    </message>
+    <message>
         <source>5 Seconds</source>
         <translation>5 secondes</translation>
     </message>
@@ -3581,8 +3585,28 @@
         <translation>Options</translation>
     </message>
     <message>
+        <source>Show Floating Thumbnail</source>
+        <translation>Afficher la vignette flottante</translation>
+    </message>
+    <message>
+        <source>Remember Last Selection</source>
+        <translation>Mémoriser la dernière sélection</translation>
+    </message>
+    <message>
         <source>Show Mouse Pointer</source>
         <translation>Afficher le pointeur de la souris</translation>
+    </message>
+    <message>
+        <source>Hide Desktop Icons</source>
+        <translation>Masquer les icônes du bureau</translation>
+    </message>
+    <message>
+        <source>Do Not Disturb</source>
+        <translation>Ne pas déranger</translation>
+    </message>
+    <message>
+        <source>Capture Previous Area</source>
+        <translation>Capturer la zone précédente</translation>
     </message>
     <message>
         <source>Capture Entire Screen</source>
@@ -3595,6 +3619,10 @@
     <message>
         <source>Capture Selected Portion</source>
         <translation>Capturer la partie sélectionnée</translation>
+    </message>
+    <message>
+        <source>Capture Text</source>
+        <translation>Capturer le texte</translation>
     </message>
     <message>
         <source>Record Entire Screen</source>

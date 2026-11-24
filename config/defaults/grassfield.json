@@ -145,6 +145,7 @@
     "microphone": "none",
     "showPointer": false,
     "lastSelection": "",
+    "rememberSelection": true,
     "showThumbnail": true,
     "thumbnailSeconds": 5,
     "thumbnailSide": "right",

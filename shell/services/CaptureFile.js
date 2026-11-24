@@ -25,6 +25,35 @@ var TOKEN = /^[0-9A-Fa-f]{1,64}$/;
 function stopNeeded(locked, phase) {
     return locked === true && PHASES.indexOf(phase) > 0;
 }
+
+// Whether the desktop icons are hidden (Options > Hide Desktop Icons, capture.hideDesktopIcons): the option is on and the toolbar is
+// open or has just started the helper (`armed`), or the helper's phase is anything but idle (a countdown, the picture, a recording).
+function hidesIcons(enabled, armed, phase) {
+    return enabled === true && (armed === true || PHASES.indexOf(phase) > 0);
+}
+// Whether a recording is under way as far as the notices go: its phase, or any phase but idle of a state whose kind is "recording"
+// (its countdown, its crosshair): a banner posted before the picture starts must not be on the screen in it.
+function recordingActive(phase, kind) {
+    return phase === "recording" || (kind === "recording" && PHASES.indexOf(phase) > 0);
+}
+
+// Whether the notifications are silenced (no banner, as under Do Not Disturb; they stay in the Notification Center): the user's own
+// Do Not Disturb, as saved, or a recording under way (recordingActive) with Options > Do Not Disturb on. The second is a runtime
+// fact only: nothing is saved, so a crash, a restart or a log out cannot leave anything on, and the user's setting is never changed.
+function silenced(userDnd, phase, kind, enabled) {
+    return userDnd === true || (enabled === true && recordingActive(phase, kind));
+}
+
+// Frames the desktop icons' surface presents after they are hidden before a picture may be taken (the first may have been under
+// way already).
+var ICON_FRAMES = 2;
+
+// Whether the desktop icons are off the screen as far as the shell can tell, for the acknowledgement of a `shooting` state: the
+// option is off, or the icons are hidden and `frames` frames were presented since, or the bounded wait is over (`waited`: a picture
+// never hangs on a surface that presents nothing).
+function iconsReady(enabled, hidden, frames, waited) {
+    return enabled !== true || waited === true || (hidden === true && frames >= ICON_FRAMES);
+}
 var OUTPUT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
 // $XDG_RUNTIME_DIR/grassfield/capture-state.json, the helper's path; in a dev session with GRASSFIELD_STATE_HOME, a file of the
@@ -81,8 +110,8 @@ function parse(text) {
 
 // Whether the shell must acknowledge the helper's `shooting` state now: it has a valid `seq`, the thumbnails are hidden (unmapped
 // and one frame passed), and this `seq` was not acknowledged yet. Returns the `seq` to write, or "".
-function ackNeeded(state, hidden, acked) {
-    if (hidden !== true || !state || state.phase !== "shooting" || state.seq === "" || state.seq === acked)
+function ackNeeded(state, hidden, acked, iconsReady) {
+    if (hidden !== true || iconsReady === false || !state || state.phase !== "shooting" || state.seq === "" || state.seq === acked)
         return "";
     return state.seq;
 }

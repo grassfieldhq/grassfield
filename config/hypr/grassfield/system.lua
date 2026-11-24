@@ -17,6 +17,10 @@ hl.bind("SUPER + SHIFT + code:13", capture("selection"), { description = "Screen
 hl.bind("SUPER + SHIFT + code:89", capture("screen"), { description = "Screenshot of the screen" })
 hl.bind("SUPER + SHIFT + code:83", capture("selection"), { description = "Screenshot of a selection" })
 hl.bind("PRINT", capture("selection"), { description = "Screenshot of a selection" })
+-- Command+Shift+2 reads the text in an area (Capture Text, ADR-0066 A4; a crosshair, Esc cancels): the text goes to the clipboard.
+-- Its keypad twin is <KP2> (keycode 88: KP_2 with NumLock on, KP_Down without).
+hl.bind("SUPER + SHIFT + code:11", capture("text"), { description = "Capture text from the screen" })
+hl.bind("SUPER + SHIFT + code:88", capture("text"), { description = "Capture text from the screen" })
 -- Stop the screen recording (macOS Control-Command-Esc; ADR-0045 OC-1), or the countdown of a capture: the helper signals only
 -- the recorder it started (its pid, start time and parent), never a process found by its name.
 hl.bind("SUPER + CTRL + ESCAPE", capture("stop"), { description = "Stop the screen recording" })

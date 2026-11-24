@@ -106,6 +106,7 @@ ShellRoot {
             "capture.microphone": "captureMicrophone",
             "capture.showPointer": "captureShowPointer",
             "capture.lastSelection": "captureLastSelection",
+            "capture.rememberSelection": "captureRememberSelection",
             "capture.showThumbnail": "captureShowThumbnail",
             "capture.thumbnailSeconds": "captureThumbnailSeconds",
             "capture.thumbnailSide": "captureThumbnailSide",

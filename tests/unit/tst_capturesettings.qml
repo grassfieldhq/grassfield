@@ -9,6 +9,8 @@ TestCase {
 
     // key -> [type, default, enum or null]
     readonly property var keys: ({
+            "rememberSelection": ["boolean", true, null],
+            "timer": ["string", "none", ["none", "3", "5", "10"]],
             "showThumbnail": ["boolean", true, null],
             "thumbnailSeconds": ["integer", 5, null],
             "thumbnailSide": ["string", "right", ["right", "left"]],

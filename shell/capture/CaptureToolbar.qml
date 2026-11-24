@@ -128,7 +128,7 @@ Variants {
             root.holder = win.name;
         }
         readonly property bool recordMode: Model.isRecord(root.controller.mode)
-        readonly property bool framing: win.shown && (root.controller.mode === "selection" || root.controller.mode === "recordSelection")
+        readonly property bool framing: win.shown && Model.isFrame(root.controller.mode)
         readonly property bool windowMode: win.covered && root.controller.mode === "window"
         // The display's logical size: the window's once mapped, else the screen's (the window is 0x0 when the frame is first made).
         readonly property var bounds: Model.displayBounds(win.width, win.height, win.modelData ? win.modelData.width : 0, win.modelData ? win.modelData.height : 0)
@@ -240,6 +240,7 @@ Variants {
             preview: qsTr("Preview"),
             timer: qsTr("Timer"),
             none: qsTr("None"),
+            three: qsTr("3 Seconds"),
             five: qsTr("5 Seconds"),
             ten: qsTr("10 Seconds"),
             microphone: qsTr("Microphone"),
@@ -247,12 +248,18 @@ Variants {
             // The default input by the name the sound settings give it (macOS lists the inputs by name).
             micDefault: Audio.source ? Audio.describe(Audio.source) : qsTr("Default Input"),
             options: qsTr("Options"),
-            showPointer: qsTr("Show Mouse Pointer")
+            showThumbnail: qsTr("Show Floating Thumbnail"),
+            rememberSelection: qsTr("Remember Last Selection"),
+            showPointer: qsTr("Show Mouse Pointer"),
+            hideDesktopIcons: qsTr("Hide Desktop Icons"),
+            doNotDisturb: qsTr("Do Not Disturb"),
+            previousArea: qsTr("Capture Previous Area")
         }) : []
         readonly property var modeNames: ({
                 "screen": qsTr("Capture Entire Screen"),
                 "window": qsTr("Capture Selected Window"),
                 "selection": qsTr("Capture Selected Portion"),
+                "text": qsTr("Capture Text"),
                 "recordScreen": qsTr("Record Entire Screen"),
                 "recordSelection": qsTr("Record Selected Portion")
             })

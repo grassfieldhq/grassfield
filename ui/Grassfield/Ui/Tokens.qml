@@ -4020,6 +4020,10 @@ QtObject {
     readonly property int captureThumbnailDismissDistance: 48
     // estimate: how far a card slides in from its edge when it arrives (a fade only under Reduce Motion)
     readonly property int captureThumbnailDismissSlide: 24
+    // estimate: how long Hide Desktop Icons keeps the icons hidden after the toolbar started the helper, until its state shows a phase
+    readonly property int captureIconsSettleMs: 2000
+    // estimate: the longest the shell holds the acknowledgement of a shot for the hidden desktop icons to be presented; under the helper's 1 s wait, so a shot never hangs
+    readonly property int captureIconsHideWaitMs: 400
     // estimate: a result file older than this when the shell reads it is not shown (a file left from before the shell started)
     readonly property int captureThumbnailFreshMs: 30000
 

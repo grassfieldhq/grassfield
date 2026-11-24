@@ -879,6 +879,7 @@
  {"path": "tests/unit/tst_glassrects.qml", "layer": "headless"},
  {"path": "tests/shell/banner_stack/shell.qml", "layer": "headless"},
  {"path": "tests/shell/notif_replace/shell.qml", "layer": "headless"},
+ {"path": "tests/shell/notif_recording_silence/shell.qml", "layer": "headless"},
  {"path": "tests/unit/tst_shortcuts.qml", "layer": "headless"},
  {"path": "tests/shell/bindings_inprocess.sh", "layer": "logic"},
  {"path": "tests/shell/shortcuts_router/shell.qml", "layer": "headless"},
