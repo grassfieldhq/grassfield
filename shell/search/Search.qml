@@ -307,7 +307,9 @@ Scope {
             logout: () => Popups.confirm(qsTranslate("Search", "Are you sure you want to quit all applications and log out %1?").arg(SystemInfo.user), "", qsTranslate("Search", "Log Out"), "logout", {}, true, screenName)
         }, lockAvailable),
         // S1, S3, S6: system extras, window commands for the window Search opened over, and the Control Center toggles.
-        builtins.entries
+        builtins.entries,
+        // X2: the user's script commands (nothing runs before the approval gate, X7).
+        scripts.entries
     ])
 
     // The Start Screen Saver command: shell.qml connects it to the Saver (Search does not know it).
@@ -317,6 +319,14 @@ Scope {
         id: builtins
         screenName: root.screenName
         onStartSaver: root.startScreenSaver()
+    }
+
+    Scripts {
+        id: scripts
+        showScripts: Settings.searchShowScripts
+        folderSettings: Settings.searchScriptFolders
+        open: root.open
+        screenName: root.screenName
     }
 
     function mkApp(r: var): var {

@@ -1,0 +1,1 @@
+../../../../shell/search/Scripts.qml

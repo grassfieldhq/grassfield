@@ -13019,6 +13019,29 @@
     </message>
 </context>
 <context>
+    <name>Scripts</name>
+    <message>
+        <source>Script command</source>
+        <translation>Commande de script</translation>
+    </message>
+    <message>
+        <source>script</source>
+        <translation>script</translation>
+    </message>
+    <message>
+        <source>Open Scripts Folder</source>
+        <translation>Ouvrir le dossier des scripts</translation>
+    </message>
+    <message>
+        <source>scripts</source>
+        <translation>scripts</translation>
+    </message>
+    <message>
+        <source>folder</source>
+        <translation>dossier</translation>
+    </message>
+</context>
+<context>
     <name>ScrollBar</name>
     <message>
         <source>Scroll bar</source>
