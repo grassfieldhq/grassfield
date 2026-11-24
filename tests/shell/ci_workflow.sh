@@ -49,6 +49,20 @@ try:
     expect("yaml: the tests run even when a check failed", "!cancelled()" in next(s for s in steps if "ci.sh test" in s.get("run", "")).get("if", ""))
     expect("yaml: every action pinned to a major version", all(re.fullmatch(r"[\w-]+/[\w-]+@v\d+", u) for u in uses))
     expect("yaml: the tests wait for the pinned toolkit", "steps.toolkit.outcome == 'success'" in next(s for s in steps if "ci.sh test" in s.get("run", "")).get("if", ""))
+    # The matrix splits `just test` without dropping anything: every layer of a default run once, the gtest suites (they belong to
+    # the logic layer) in shards 0..N-1 of the same N, and the one part that runs no tests is the checks.
+    parts = job["strategy"]["matrix"]["include"]
+    args = [p.get("args", "") for p in parts]
+    layers = [l for a in args if "--layer" in a for l in a.split("--layer ", 1)[1].split()[0].split(",")]
+    shards = [tuple(map(int, a.split("--gtest-shard ", 1)[1].split()[0].split("/"))) for a in args if "--gtest-shard" in a]
+    expect("yaml: matrix: the checks part has no test arguments", [p["part"] for p in parts if not p.get("args")] == ["checks"])
+    expect("yaml: matrix: data, logic, headless and nested are each run exactly once", sorted(layers) == ["data", "headless", "logic", "nested"])
+    expect("yaml: matrix: the logic layer is run without the gtest suites, which are the shards",
+           all("--skip-gtest" in a for a in args if "logic" in a) and len(shards) > 0)
+    expect("yaml: matrix: the gtest shards are 0..N-1 of one N, each once",
+           len({n for _, n in shards}) == 1 and sorted(i for i, _ in shards) == list(range(shards[0][1])))
+    expect("yaml: matrix: every part is a distinct name", len({p["part"] for p in parts}) == len(parts))
+    expect("yaml: the job has a timeout (a stuck run does not take hours)", isinstance(job.get("timeout-minutes"), int) and job["timeout-minutes"] <= 120)
 except ImportError:
     print("  SKIP the parsed checks (PyYAML not installed: pacman -S python-yaml); the line checks still run")
 # Line checks, PyYAML or not: the container rules of tests/ci/no_privileged_containers.py, spelled for a workflow.

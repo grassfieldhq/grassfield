@@ -14,7 +14,8 @@
 #                                             (the Hyprland stack with -dd, as on the chroot) and held (IgnorePkg)
 #   scripts/gates/ci.sh check [BASE] [DIR]    `just check` when scope is full (clang-tidy over the compositor), else
 #                                             `just check-quick`; log in DIR (default .dev/ci)
-#   scripts/gates/ci.sh test [DIR]            `just test`; DIR/test.log and DIR/test-summary.txt (the run's summary lines)
+#   scripts/gates/ci.sh test [DIR [ARGS...]]  `just test ARGS` (scripts/dev/test.sh: --layer, --skip-gtest, --gtest-shard I/N);
+#                                             DIR/test.log and DIR/test-summary.txt (the run's summary lines)
 #   scripts/gates/ci.sh --selftest            the pure parts on fixtures
 #
 # CI only (docs/testing/README.md, the rule update_migrate.sh uses too): CI=true, GITHUB_ACTIONS=true and RUNNER_TEMP, all three
@@ -30,7 +31,15 @@ root=$(cd "$here/../.." && pwd)
 # of 18c95fae that the PKGBUILD's quickshell!=0.3.2 is about is in it). Each file is checked against its sha256 before pacman
 # sees it; a moved or rebuilt file fails the job instead of changing the toolkit under it.
 ARCHIVE=https://archive.archlinux.org/repos/2026/10/20/extra/os/x86_64
+# The snapshot's index lists only the databases; the package files are under /packages/<initial>/<name>/.
+PKGS=https://archive.archlinux.org/packages
+# libjxl is pinned with the stack: Hyprland 0.56.2-4 and hyprgraphics 0.5.1-4 were built against libjxl.so.0.12 (the snapshot's
+# libjxl 0.12.0-1) and the rolling repositories moved on to 0.13.0-1 (libjxl.so.0.13). Without the pin Hyprland does not start
+# ("error while loading shared libraries: libjxl.so.0.12", main CI run 45378817729). Nothing else of the stack had drifted
+# (checked against the 2026-11-24 extra.files: glslang 16, re2 11, display-info 3, lua 5.5 ... are current); the toolkit step
+# proves it with ldd on Hyprland, so a later drift fails there with its name, not in seven tests.
 PINS=(
+  "libjxl 0.12.0-1 a4e0f65e8ba3a2da1cc348aad4f7f8aee1b504b824a64838fb3d9b2f75cc9449 $PKGS/l/libjxl/libjxl-0.12.0-1-x86_64.pkg.tar.zst"
   "hyprutils 0.14.2-1 177dfe5d64dba65ef2f1274d84d647b12cc1bc0b808394fd556f135ac8d7e65e $ARCHIVE/hyprutils-0.14.2-1-x86_64.pkg.tar.zst"
   "hyprgraphics 0.5.1-4 c916b1fb9d7ad0e78fab2d94b0066dcdc8be0a2810be7e72df57ddf5b639fea3 $ARCHIVE/hyprgraphics-0.5.1-4-x86_64.pkg.tar.zst"
   "aquamarine 0.15.1-1 ac96995cceea132e32cafd9bf63fd6cbe3d0599ab175e82bcee85b0c7da9706c $ARCHIVE/aquamarine-0.15.1-1-x86_64.pkg.tar.zst"
@@ -193,6 +202,11 @@ toolkit() {
   done
   pacman -Q qt6-base "${names[@]}"
   qs --version
+  # Every shared library of the compositor resolves (a rolling repository can move a soname under the pinned stack).
+  local missing
+  missing=$(ldd /usr/bin/Hyprland 2>&1 | grep 'not found')
+  [[ -z $missing ]] || { echo "ci.sh toolkit: Hyprland has unresolved libraries (a repository moved a soname under the pins):" >&2; echo "$missing" >&2; return 1; }
+  /usr/bin/Hyprland --version | head -1
 }
 
 # The environment of the checks and tests: the owner's locale, en_US.UTF-8 (the suites' sorted expectations are written in its
@@ -213,6 +227,36 @@ user_env() {
   fi
 }
 
+# The container's PID 1 is the runner's idle process, which never reaps: a process whose parent died is handed to it and stays a
+# zombie (it keeps a /proc entry and `kill -0` still succeeds), so the suites' "it died with its parent" checks (stack_helper,
+# capture, terminal_theme, the Store's terminal helper) read a dead process as alive for ever. On a machine systemd reaps. The
+# command runs as the child of a subreaper (PR_SET_CHILD_SUBREAPER) that adopts and reaps the orphans; its exit status is the
+# command's (128+N when a signal N ended it), SIGINT and SIGTERM are passed on.
+reaped() { # <command> [args...]
+  python3 -I -c '
+import ctypes, os, signal, sys
+if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    sys.exit("ci.sh: PR_SET_CHILD_SUBREAPER refused")
+main = os.fork()
+if main == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+for sig in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(sig, lambda s, _frame: os.kill(main, s))
+code = 1
+while True:
+    try:
+        pid, status = os.waitpid(-1, 0)
+    except InterruptedError:
+        continue
+    except ChildProcessError:
+        break
+    if pid == main:
+        code = os.waitstatus_to_exitcode(status)
+        break
+sys.exit(code if code >= 0 else 128 - code)
+' "$@"
+}
+
 check() { # [base] [dir]
   local s dir=${2:-$root/.dev/ci} rc
   s=$(scope "${1:-}")
@@ -221,31 +265,32 @@ check() { # [base] [dir]
   cd "$root" || return 2
   if [[ $s == full ]]; then
     echo "ci.sh check: compositor/ changed (or no base to compare with): just check (with clang-tidy)"
-    just check 2>&1 | tee "$dir/check.log"
+    reaped just check 2>&1 | tee "$dir/check.log"
   else
     echo "ci.sh check: compositor/ unchanged: just check-quick"
-    just check-quick 2>&1 | tee "$dir/check.log"
+    reaped just check-quick 2>&1 | tee "$dir/check.log"
   fi
   rc=${PIPESTATUS[0]}
   echo "check ($s): exit $rc" >"$dir/check-summary.txt"
   return "$rc"
 }
 
-test_run() { # [dir]
+test_run() { # [dir [test.sh arguments...]]
   local dir=${1:-$root/.dev/ci} rc
+  shift || true
   mkdir -p "$dir" || return 2
   user_env
   cd "$root" || return 2
-  just test 2>&1 | tee "$dir/test.log"
+  reaped just test "$@" 2>&1 | tee "$dir/test.log"
   rc=${PIPESTATUS[0]}
-  summarize "$dir/test.log" "$rc" >"$dir/test-summary.txt"
+  summarize "$dir/test.log" "$rc" "$*" >"$dir/test-summary.txt"
   return "$rc"
 }
 
 # The summary of a `just test` log: its FAIL lines, the "summary:" block to the end (skips, the per-layer table, the inventory
 # gate), and the exit code.
-summarize() { # <log> <rc>
-  echo "just test: exit $2"
+summarize() { # <log> <rc> [test.sh arguments]
+  echo "just test${3:+ $3}: exit $2"
   echo
   echo "Failures:"
   grep -a -E '^(FAIL|  FAIL)[: ]' "$1" | sed 's/^/  /' || echo "  none"
@@ -300,7 +345,7 @@ EOF
   fi
   expect "pins: the Hyprland 0.56.2 stack and Omarchy's Quickshell, each with a sha256 and an https address" \
     "$(pins | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ { print $1, $2 }' | tr '\n' ';')" \
-    "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
+    "libjxl 0.12.0-1;hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
   expect "pins: Quickshell is not the refused 0.3.2 tag" "$(pins | awk '$1 == "quickshell" && $2 !~ /^0\.3\.2-/ { print "ok" }')" ok
   expect "toolkit refuses on a bare machine" "$(env -u CI bash "$0" toolkit >/dev/null 2>&1; echo $?)" 2
   # The environment of check and test: en_US.UTF-8 where it is generated (LC_ALL and the other overrides cleared), a runtime
@@ -311,6 +356,12 @@ EOF
     "$(LC_ALL=C LANG=fr_FR.UTF-8 XDG_RUNTIME_DIR="$w/rt" bash -c '. "$1" --source-only; user_env 2>/dev/null; echo "$LANG|${LC_ALL-unset}|$XDG_RUNTIME_DIR"' _ "$0")" \
     "$want_lang|unset|$w/rt"
   expect "workdir: <home of the user>/grassfield" "$(workdir_of "$(id -un)")" "$(getent passwd "$(id -un)" | cut -d: -f6)/grassfield"
+  # The subreaper: the command's exit status (and 128+N for a signal) comes back, an orphan is adopted by it (its parent is the
+  # subreaper, the command's own parent), not left to PID 1.
+  expect "reaped: the command's exit status is kept" "$(reaped bash -c 'exit 7' >/dev/null 2>&1; echo $?)" 7
+  expect "reaped: a signalled command is 128+N" "$(reaped bash -c 'kill -TERM $$' >/dev/null 2>&1; echo $?)" 143
+  expect "reaped: an orphan's new parent is the subreaper" \
+    "$(reaped bash -c '(sleep 1 & echo $! >"$1"); sleep 0.3; echo "$(awk "/^PPid/{print \$2}" /proc/$(cat "$1")/status) $PPID"' _ "$w/orphan" | awk '$1 == $2 { print "adopted" }')" adopted
   # The summary of a test log.
   printf 'x\nFAIL: tests/shell/a.sh\n  FAIL inner\nsummary: 1 check(s) SKIPPED\n  SKIP: y\nlayer pass\nlogic 3\n' >"$w/test.log"
   expect "summary: the failures, then the summary block to the end" "$(summarize "$w/test.log" 1 | tr '\n' '|')" \

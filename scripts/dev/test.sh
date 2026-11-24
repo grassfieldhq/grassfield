@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Offscreen tests (L0): QML TestCase files under tests/unit/, tests/shell, tests/security, gtest suites, compositor unit tests.
 #
-#   scripts/dev/test.sh [--layer data|logic|headless|nested|visual[,...]]
+#   scripts/dev/test.sh [--layer data|logic|headless|nested|visual[,...]] [--skip-gtest | --gtest-shard I/N]
 #
 # The layer of every test is in tests/inventory.json (docs/testing/README.md). Without --layer the run is what it always
 # was: data, logic and headless, plus the tests/shell scripts of the nested layer (they SKIP themselves without a nested
@@ -9,6 +9,9 @@
 # tests/compositor/*.sh, ...) are never started here, they are counted as "manual" in the summary.
 # A per-layer summary of pass, fail, skip and manual is printed at the end, and the run fails when a layer it covered
 # reported no result (tests/ci/inventory.py --results).
+# The gtest suites (built here, twice with the sanitizers: by far the longest part) can be split over parallel CI jobs without
+# dropping any: `--skip-gtest` runs the layers without them, `--gtest-shard I/N` runs only the suites whose position K in this
+# file has K mod N == I (K from 1, I from 0), nothing else; the N shards together are the suites of `--layer logic` (ci.yml).
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root"
@@ -22,8 +25,30 @@ fi
 layers_all=(data logic headless nested visual)
 requested=()
 explicit=0
+skip_gtest=0
+shard_i=0
+shard_n=1
 while (($#)); do
   case $1 in
+    --skip-gtest)
+      skip_gtest=1
+      shift
+      ;;
+    --gtest-shard | --gtest-shard=*)
+      if [[ $1 == --gtest-shard ]]; then
+        shard=${2:-}
+        shift 2 || shift
+      else
+        shard=${1#--gtest-shard=}
+        shift
+      fi
+      [[ $shard =~ ^([0-9]+)/([1-9][0-9]*)$ ]] && ((BASH_REMATCH[1] < BASH_REMATCH[2])) \
+        || { echo "test.sh: --gtest-shard needs I/N with 0 <= I < N" >&2; exit 2; }
+      shard_i=${BASH_REMATCH[1]}
+      shard_n=${BASH_REMATCH[2]}
+      requested+=(gtest)
+      explicit=1
+      ;;
     --layer)
       [[ -n ${2:-} ]] || { echo "test.sh: --layer needs a value" >&2; exit 2; }
       IFS=, read -r -a more <<<"$2"
@@ -50,10 +75,12 @@ done
 ((explicit)) || requested=(data logic headless nested)
 declare -A selected=()
 for l in "${requested[@]}"; do
-  [[ " ${layers_all[*]} " == *" $l "* ]] || { echo "test.sh: unknown layer '$l' (${layers_all[*]})" >&2; exit 2; }
+  [[ " ${layers_all[*]} gtest " == *" $l "* ]] || { echo "test.sh: unknown layer '$l' (${layers_all[*]})" >&2; exit 2; }
   selected[$l]=1
 done
 want() { [[ -n ${selected[$1]:-} ]]; }
+# The gtest suites go with the logic layer unless left out; `gtest` alone (--gtest-shard) selects them without it.
+if ((!skip_gtest)) && want logic; then selected[gtest]=1; fi
 
 status=0
 # Skipped checks are reported on their own (a SKIP line is never a pass): every line with "SKIP" printed by a test or
@@ -195,10 +222,13 @@ for script in tests/shell/*.sh tests/security/*.sh tests/integration/*.sh tests/
 done
 # gtest suites: logic. One step per binary, built here (the sources are listed in tests/inventory.json).
 # gtest_suite LABEL GTEST_HEADER_NEEDED_NOTE BUILD_CMD BINARY...: builds, runs every binary, records one result.
+gtest_position=0
 gtest_suite() {
   local label=$1 build=$2
   shift 2
-  want logic || return 0
+  want gtest || return 0
+  gtest_position=$((gtest_position + 1))
+  ((gtest_position % shard_n == shard_i)) || return 0
   if [[ ! -f /usr/include/gtest/gtest.h ]]; then
     skip "$label (gtest not installed)"
     record logic "$label" skip

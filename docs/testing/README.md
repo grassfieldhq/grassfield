@@ -131,14 +131,22 @@ with the runner's defaults only (no container option, device or host mount: the 
    (`/home/builder/grassfield`): the suites' scratch directories are below the checkout, and the shell reads images only
    below the home and the data directories (`shell/services/image-copy.py`), as on a machine.
 2. `ci.sh toolkit` (root): the audit's toolchain, pinned by sha256 (`ci.sh pins`): the Hyprland 0.56.2 stack from the Arch
-   archive of 2026-10-20 (hyprland 0.56.2-4, aquamarine 0.15.1-1, hyprgraphics 0.5.1-4, hyprutils 0.14.2-1, `pacman -Udd`)
-   and Omarchy's own Quickshell 0.3.2.r7 (`pkgs.omarchy.org/stable`), then held with `IgnorePkg`. Qt and KF6 are current Arch.
+   archive of 2026-10-20 (hyprland 0.56.2-4, aquamarine 0.15.1-1, hyprgraphics 0.5.1-4, hyprutils 0.14.2-1, `pacman -Udd`) with the libjxl 0.12.0-1 of the same snapshot (the stack is linked against
+   libjxl.so.0.12; current Arch ships 0.13), checked with `ldd` on Hyprland, and Omarchy's own Quickshell 0.3.2.r7 (`pkgs.omarchy.org/stable`), then held with `IgnorePkg`. Qt and KF6 are current Arch.
 3. As `builder`, in that copy, with `LANG=en_US.UTF-8` (the owner's locale: the suites' sorted expectations are in its
    collation) and a runtime directory of its own: `ci.sh check BASE` runs `just check` when `compositor/` changed since BASE
    (the pull request's base, or the previous tip of main; an unknown base counts as changed), otherwise `just check-quick`;
-   `ci.sh test` runs `just test`. Their logs go to the workspace's `.dev/ci`.
+   `ci.sh test DIR [ARGS]` runs `just test ARGS`. Both run under a subreaper (`reaped` in `ci.sh`): a container's PID 1 does not
+   reap, so a process whose parent died would stay a zombie that `kill -0` still finds, and the suites' "dies with its parent"
+   checks would fail for ever. Their logs go to the workspace's `.dev/ci`.
 4. The test summary (`.dev/ci/test-summary.txt`: the failures, the skips, the per-layer table) and the logs are uploaded as the
-   artifact `ci-summary-<run id>` and shown on the run's page.
+   artifact `ci-summary-<run id>-<part>` and shown on the run's page.
+
+The job is a matrix of parallel containers, each doing steps 1 to 4 for its part (a serial run took 3 hours): `checks`;
+`headless` (`just test --layer headless`); `scripts` (`just test --layer data,logic,nested --skip-gtest`); and `gtest-0` to
+`gtest-3` (`just test --gtest-shard I/4`: the gtest suites of the logic layer, suite number K of `scripts/dev/test.sh` going to
+shard K mod 4). Together they are exactly what a bare `just test` runs; `tests/shell/ci_workflow.sh` fails when a layer or a
+shard is missing from the matrix or listed twice.
 
 The installing steps (1, 2) refuse unless they run as root in a container on a CI runner: `CI=true`, `GITHUB_ACTIONS=true` and
 `RUNNER_TEMP`, all three (the rule `update_migrate.sh` uses; `CI=true` alone is not enough). There is no override. Locally,

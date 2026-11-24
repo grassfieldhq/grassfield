@@ -4,6 +4,9 @@
 # depends). The checks and tests run as an unprivileged user. `just check` (with clang-tidy, gate Q1) runs when compositor/
 # changed, `just check-quick` otherwise; `just test` runs the data, logic and headless layers (the nested and visual layers
 # need a compositor session: owner runs), from a copy of the checkout in the user's home, with LANG=en_US.UTF-8.
+# One job, a matrix of seven containers in parallel (a serial run took 3 hours and hit the timeout): the checks, the headless
+# layer, the data/logic/nested scripts, and the gtest suites in four shards (scripts/dev/test.sh --gtest-shard I/N: together
+# exactly the suites of the logic layer; tests/shell/ci_workflow.sh checks that the matrix is complete).
 # Container rules (tests/ci/no_privileged_containers.py, ADR-0057): the job adds no container options, no device, no host
 # /dev or /run/systemd mount; the runner's defaults only. Replay locally: docs/testing/README.md "CI".
 name: CI
@@ -22,9 +25,26 @@ concurrency:
 
 jobs:
   check-and-test:
-    name: check and test (Arch Linux)
+    name: check and test (Arch Linux, ${{ matrix.part }})
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: checks
+          - part: headless
+            args: --layer headless
+          - part: scripts
+            args: --layer data,logic,nested --skip-gtest
+          - part: gtest-0
+            args: --gtest-shard 0/4
+          - part: gtest-1
+            args: --gtest-shard 1/4
+          - part: gtest-2
+            args: --gtest-shard 2/4
+          - part: gtest-3
+            args: --gtest-shard 3/4
     container:
       image: archlinux:latest
     env:
@@ -51,7 +71,7 @@ jobs:
           echo "scope=$(scripts/gates/ci.sh scope "$BASE_SHA")" >>"$GITHUB_OUTPUT"
 
       - name: Packages (the PKGBUILD's makedepends and the desktop's depends) and the build user
-        run: scripts/gates/ci.sh setup ${{ steps.scope.outputs.scope == 'full' && '--tidy' || '' }} builder
+        run: scripts/gates/ci.sh setup ${{ matrix.part == 'checks' && steps.scope.outputs.scope == 'full' && '--tidy' || '' }} builder
 
       - name: Toolkit (Hyprland 0.56.2 stack and Omarchy's Quickshell, pinned by sha256)
         id: toolkit
@@ -60,11 +80,12 @@ jobs:
       # Both run in setup's copy of the checkout in the user's home (as on a machine: the shell reads images only below the
       # home); the logs go to the workspace's .dev/ci for the summary and the upload.
       - name: Checks
+        if: ${{ matrix.part == 'checks' }}
         run: runuser -u builder -- env HOME=/home/builder /home/builder/grassfield/scripts/gates/ci.sh check "$BASE_SHA" "$GITHUB_WORKSPACE/.dev/ci"
 
-      - name: Tests (just test)
-        if: ${{ !cancelled() && steps.toolkit.outcome == 'success' }}
-        run: runuser -u builder -- env HOME=/home/builder /home/builder/grassfield/scripts/gates/ci.sh test "$GITHUB_WORKSPACE/.dev/ci"
+      - name: Tests (just test, this part's share of the suites)
+        if: ${{ !cancelled() && steps.toolkit.outcome == 'success' && matrix.part != 'checks' }}
+        run: runuser -u builder -- env HOME=/home/builder /home/builder/grassfield/scripts/gates/ci.sh test "$GITHUB_WORKSPACE/.dev/ci" ${{ matrix.args }}
 
       - name: Summary
         if: ${{ !cancelled() }}
@@ -78,7 +99,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ci-summary-${{ github.run_id }}
+          name: ci-summary-${{ github.run_id }}-${{ matrix.part }}
           path: |
             .dev/ci/test-summary.txt
             .dev/ci/test.log
