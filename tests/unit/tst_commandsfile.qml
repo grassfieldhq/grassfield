@@ -80,8 +80,11 @@ TestCase {
         bad({v: 1, favorites: many}, "favorites", "too-many");
         many.pop();
         verify(CommandsFile.validate({v: 1, favorites: many}).ok);
-        // 1 MiB: bytes, not characters
-        compare(CommandsFile.parseText("{\"v\": 1, \"pad\": \"" + "x".repeat(1048576) + "\"}").reason, "too-big");
+        // 256 KiB: bytes, not characters
+        compare(CommandsFile.parseText("{\"v\": 1, \"pad\": \"" + "x".repeat(262144) + "\"}").reason, "too-big");
+        const head = "{\"v\": 1, \"replacements\": [], \"pad\":\"";
+        verify(CommandsFile.parseText(head + "é".repeat((262144 - 40) / 2) + "\"}").reason !== "too-big", "just under the cap is not too-big");
+        compare(CommandsFile.parseText(head + "é".repeat(131072) + "\"}").reason, "too-big", "two-byte characters are counted in bytes");
         compare(CommandsFile.parseText("{\"v\": 1, \"pad\": \"" + "\u20ac".repeat(400000) + "\"}").reason, "too-big");
         bad(file("replacements", [{id: "text.a", replace: "r", with: "x".repeat(16385)}]), "replacements[0].with", "with");
         verify(CommandsFile.validate(file("replacements", [{id: "text.a", replace: "r", with: "x".repeat(16384)}])).ok);
@@ -277,5 +280,116 @@ TestCase {
         verify(!CommandsFile.validateItem("constructor", {}).ok);
         verify(!CommandsFile.validateItem("toString", {}).ok);
         verify(!CommandsFile.validateItem("links", null).ok);
+    }
+
+    // ---- E1b: the request layer (CommandStore, the `search` IPC item functions) ----
+
+    function req(list, item) {
+        return JSON.stringify({list: list, item: item});
+    }
+
+    function test_parseRequest() {
+        const ok = CommandsFile.parseRequest(req("links", link("mailto:a@example.org?subject=x")));
+        verify(ok.ok);
+        compare(ok.list, "links");
+        compare(ok.item.id, "link.a1");
+        // The same rules as the file reader, for the same item.
+        for (const t of ["javascript:x", "smb://h/s", "mailto:a@b.org?attach=/etc/passwd", "//h/s", "https://u:p@example.org/", "relative"]) {
+            verify(!CommandsFile.parseRequest(req("links", link(t))).ok, t);
+            verify(!CommandsFile.parseText(JSON.stringify(file("links", [link(t)]))).ok, t);
+        }
+        // Only the lists the Settings app may change.
+        for (const l of ["shortcuts", "quickKeys", "favorites", "constructor", "__proto__", ""])
+            compare(CommandsFile.parseRequest(req(l, {})).reason, "list", l);
+        compare(CommandsFile.parseRequest("{nope").reason, "json");
+        compare(CommandsFile.parseRequest("[]").reason, "shape");
+        compare(CommandsFile.parseRequest(5).reason, "text");
+        compare(CommandsFile.parseRequest("{\"list\":\"links\",\"item\":{},\"x\":1}").reason, "shape");
+        compare(CommandsFile.parseRequest("{\"list\":\"links\",\"list\":\"links\",\"item\":{}}").reason, "unsafe-json");
+        compare(CommandsFile.parseRequest("{\"list\":\"links\",\"item\":{},\"n\":9007199254740993}").reason, "unsafe-json");
+        // A caller may widen the lists (Search's own actions).
+        verify(CommandsFile.parseRequest(req("shortcuts", {slot: "k1", chord: "Super+K", command: "sys.lock"}), ["shortcuts"]).ok);
+    }
+
+    function test_requestBound() {
+        const base = req("replacements", {id: "text.a", replace: "a", with: "\u00e9"});
+        const bytes = CommandsFile.utf8Length(base);
+        verify(CommandsFile.parseRequest(base + " ".repeat(65536 - bytes)).ok, "65 536 bytes");
+        compare(CommandsFile.parseRequest(base + " ".repeat(65537 - bytes)).reason, "too-big");
+        // Counted in bytes, not characters: 32 769 two-byte characters are over the bound.
+        compare(CommandsFile.parseRequest(base + "\u00e9".repeat(32769)).reason, "too-big");
+    }
+
+    function test_withItem() {
+        const d = CommandsFile.empty();
+        const a = CommandsFile.withItem(d, "links", link("https://x.org/"), "add");
+        verify(a.ok);
+        compare(d.links.length, 0, "the data given is not changed");
+        compare(a.data.links.length, 1);
+        compare(CommandsFile.withItem(a.data, "links", link("https://x.org/"), "add").reason, "exists");
+        const u = CommandsFile.withItem(a.data, "links", Object.assign(link("https://y.org/"), {name: "New"}), "update");
+        compare(u.data.links[0].name, "New");
+        compare(CommandsFile.withItem(d, "links", link("https://x.org/"), "update").reason, "not-found");
+        compare(CommandsFile.keyOf("shortcuts", {slot: "k2"}), "k2");
+        compare(CommandsFile.keyOf("quickKeys", {key: "gh"}), "gh");
+        compare(CommandsFile.keyOf("favorites", "sys.lock"), "sys.lock");
+    }
+
+    function test_withoutItem() {
+        const d = CommandsFile.validate({v: 1, links: [link("https://x.org/")], replacements: [{id: "text.b", replace: "b", with: "c"}], aiCommands: [{id: "ai.c", name: "n", prompt: "p"}]}).data;
+        compare(CommandsFile.withoutItem(d, "link.a1").data.links.length, 0);
+        compare(CommandsFile.withoutItem(d, "text.b").data.replacements.length, 0);
+        compare(CommandsFile.withoutItem(d, "ai.c").data.aiCommands.length, 0);
+        compare(CommandsFile.withoutItem(d, "link.zz").reason, "not-found");
+        compare(CommandsFile.withoutItem(d, "sys.lock").reason, "id");
+        compare(CommandsFile.withoutItem(d, "link." + "a".repeat(200)).reason, "id");
+        compare(CommandsFile.withoutItem(d, 5).reason, "id");
+        compare(d.links.length, 1, "the data given is not changed");
+    }
+
+    function test_mergeImport() {
+        const d = CommandsFile.validate({v: 1, links: [link("https://x.org/")]}).data;
+        const incoming = CommandsFile.validate({v: 1, links: [link("https://other.org/"), {id: "link.b2", name: "B", target: "https://b.org/"}],
+            replacements: [{id: "text.r", replace: "r", with: "x"}], quickKeys: [{key: "gh", command: "sys.lock"}],
+            shortcuts: [{slot: "k1", chord: "Super+K", command: "sys.lock"}], favorites: ["sys.lock"]}).data;
+        const m = CommandsFile.mergeImport(d, incoming);
+        compare(m.added, 2);
+        compare(m.skipped, 1);
+        compare(m.ignored, 3);
+        compare(m.data.links[0].target, "https://x.org/", "what is there wins");
+        compare(m.data.shortcuts.length, 0);
+        compare(m.data.quickKeys.length, 0);
+        compare(m.data.favorites.length, 0);
+        verify(CommandsFile.validate(m.data).ok);
+    }
+
+    function test_serializeRoundTrip() {
+        const d = CommandsFile.validate({v: 1, links: [link("https://x.org/?q={argument}", {args: [{placeholder: "Query"}]})],
+            replacements: [{id: "text.b", replace: "b", with: "caf\u00e9\n\ttext"}]}).data;
+        const s = CommandsFile.serialize(d);
+        compare(s.bytes, CommandsFile.utf8Length(s.text));
+        verify(s.text.endsWith("}\n"));
+        const back = CommandsFile.parseText(s.text);
+        verify(back.ok);
+        compare(JSON.stringify(back.data), JSON.stringify(d));
+    }
+
+    function test_loneSurrogate() {
+        const hi = String.fromCharCode(0xd800);
+        const lo = String.fromCharCode(0xdc00);
+        const pair = hi + lo;
+        verify(CommandsFile.validate(file("replacements", [{id: "text.a", replace: "a", with: "x" + pair + "y"}])).ok, "a pair is fine");
+        for (const bad of [hi, lo, "a" + hi + "b", lo + hi, hi + hi + lo + lo]) {
+            if (bad === hi + hi + lo + lo)
+                continue;
+            compare(CommandsFile.validate(file("replacements", [{id: "text.a", replace: "a", with: "x" + bad}])).reason, "surrogate", JSON.stringify(bad));
+        }
+        compare(CommandsFile.validate(file("aiCommands", [{id: "ai.a", name: "n", prompt: "p" + hi}])).reason, "surrogate");
+        compare(CommandsFile.parseText("{\"v\":1,\"replacements\":[{\"id\":\"text.a\",\"replace\":\"a\",\"with\":\"a\\ud800b\"}]}").reason, "surrogate");
+        compare(CommandsFile.parseRequest("{\"list\":\"links\",\"item\":{},\"\\udc00\":1}").reason, "surrogate");
+        compare(CommandsFile.parseRequest(JSON.stringify({list: "replacements", item: {id: "text.a", replace: "a", with: "a" + hi + "b"}})).reason, "surrogate");
+        verify(CommandsFile.parseRequest(JSON.stringify({list: "replacements", item: {id: "text.a", replace: "a", with: "a" + pair + "b"}})).ok);
+        // An over-long text is refused before it is scanned.
+        compare(CommandsFile.parseRequest("x".repeat(65537)).reason, "too-big");
     }
 }

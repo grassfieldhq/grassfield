@@ -132,6 +132,13 @@ expect("PopupKinds.endsOrLocks: the Grassfield menu, and a confirmation of logou
        and re.search(r'if \(kind === "system"\)\s*return true;\s*return kind === "confirm" && payload !== null && typeof payload === "object" && sessionActions\.indexOf\(payload\.action\) >= 0;', code(function(kinds_js, "endsOrLocks") or "")) is not None)
 first_decision("shell/search/Search.qml", "show", 'SessionState.refusesConfirmed("search")', lines=1)
 first_decision("shell/search/Search.qml", "enterClipboard", R, lines=1)
+# The Settings app's item functions (command palette E1b): every one answers through these two entry points, which refuse first.
+first_decision("shell/search/Search.qml", "commandRequest", R, lines=1)
+first_decision("shell/search/Search.qml", "commandImportResult", R, lines=1)
+_search_ipc = code(ipc(read("shell/search/Search.qml"), "search") or "")
+for _fn, _route in (("addItem", 'root.commandRequest("add"'), ("updateItem", 'root.commandRequest("update"'), ("removeItem", 'root.commandRequest("remove"'),
+                    ("importFile", 'root.commandRequest("import"'), ("importResult", "root.commandImportResult()")):
+    expect(f"shell/search/Search.qml: IPC search {_fn} goes through the refusing entry point", _route in (function(_search_ipc, _fn) or ""))
 first_decision("shell/launchpad/AppsController.qml", "show", R)
 first_decision("shell/overview/Overview.qml", "show", R)
 first_decision("shell/notifications/Notifications.qml", "openWidgetGallery", R)

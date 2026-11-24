@@ -1030,8 +1030,36 @@ Scope {
     // amendment): two handlers for one target warn and only one is used, so the loader switches them over in order.
     property bool ipcEnabled: true
 
+    // commands.json: quick keys, shortcuts, favorites, links, replacements, AI commands (E1b). Search and the Settings app change
+    // it only through this store.
+    readonly property CommandStore commandStore: commandStoreItem
+
+    CommandStore {
+        id: commandStoreItem
+        // The predicate of SessionState.refuses(): locked (confirmed or not); the request path asks it first, this one covers an import in flight.
+        locked: SessionState.locked
+    }
+
+    // The Settings app's requests (IPC `addItem`, `updateItem`, `removeItem`, `importFile`, `importResult`), as an answer in JSON:
+    // `{"ok": true}` or `{"ok": false, "reason": ...}`. Nothing changes while the session is locked, whichever way the call came.
+    function commandRequest(op: string, payload: string): string {
+        if (SessionState.refuses("search"))
+            return JSON.stringify({ok: false, reason: "locked"});
+        return JSON.stringify(commandStoreItem.request(op, payload));
+    }
+
+    function commandImportResult(): string {
+        if (SessionState.refuses("search"))
+            return JSON.stringify({ok: false, reason: "locked"});
+        return JSON.stringify(commandStoreItem.lastImport);
+    }
+
+    // The handler itself, for the tests that call its functions as a client would.
+    property alias ipc: ipcHandler
+
     IpcHandler {
         target: "search"
+        id: ipcHandler
         // A key binding calls it: it answers the key in-process (platform/shortcuts, CIO-01).
         Component.onCompleted: Shortcuts.attach(this)
         enabled: root.ipcEnabled
@@ -1069,6 +1097,31 @@ Scope {
             if (!VisualFixtures.active)
                 return;
             root.toggleFilter(id);
+        }
+
+        // The Settings app's requests for commands.json (E1b; docs/specs/security.md "IPC surface"). The payload is JSON of at most
+        // 64 KiB: {"list": "links" | "replacements" | "aiCommands", "item": {...}}.
+        function addItem(json: string): string {
+            return root.commandRequest("add", json);
+        }
+
+        function updateItem(json: string): string {
+            return root.commandRequest("update", json);
+        }
+
+        // The id of a link, replacement or AI command.
+        function removeItem(id: string): string {
+            return root.commandRequest("remove", id);
+        }
+
+        // An absolute path of a regular file of the user's: its links, replacements and AI commands with a new id are added.
+        function importFile(path: string): string {
+            return root.commandRequest("import", path);
+        }
+
+        // The outcome of the last importFile.
+        function importResult(): string {
+            return root.commandImportResult();
         }
 
         // JSON of the visible groups.

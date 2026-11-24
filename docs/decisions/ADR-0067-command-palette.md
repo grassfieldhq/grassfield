@@ -339,14 +339,14 @@ Grassfield ships no web link and no web-search fallback (D-net).
 
 ### D-8. Storage, one writer, settings and export
 - **User content** (quick keys, keyboard shortcuts, favorites, links, text replacements, user AI commands):
-  `$XDG_CONFIG_HOME/grassfield/commands.json`, `{"v": 1, …}`, 0600, read with the JsonSafety rules and caps (1 MiB; 2 000
+  `$XDG_CONFIG_HOME/grassfield/commands.json`, `{"v": 1, …}`, 0600, read with the JsonSafety rules and caps (256 KiB, owner decision: a commit of the whole file stays a few hundred ms; 2 000
   items per list).
 - **One writer: the shell** (`CommandStore.qml`, through `write-private.sh`, atomic). Reasons: the shell is always running;
   most edits come from Search itself (Actions: add a quick key, a favorite, a link, a shortcut); the shell also generates
   `commands-keys.lua` from the same data; and one writer removes lost updates between two processes. The Settings app's
   Text Replacements and Links panes read the file and **request** changes through the `search` IPC target
-  (`addItem(json)`, `updateItem(json)`, `removeItem(id)`, `importFile(path)`), each validated by `CommandStore` (types,
-  caps, the link allowlist, at most 64 KiB per call) and refused while the session is locked; the panes follow the file
+  (`addItem(json)`, `updateItem(json)`, `removeItem(id)`, `importFile(path)`, and `importResult()` for the outcome of the last import, counts or a reason and no content), each validated by `CommandStore` (types,
+  caps, the link allowlist, no unpaired surrogate, at most 64 KiB per call, at most a burst of 10 calls then 5 a second, and each call keeps the next away for nine times the main-thread time it took; past it a call answers `busy` with `retryAfterMs`, and the Settings panes retry after that time) and refused while the session is locked (an import that finishes reading after the lock commits nothing); the panes follow the file
   when it changes. These functions are listed in `docs/specs/security.md` "IPC surface" (any process of the user can call
   them, as it could write the file; nothing they accept is executable).
 - **State** (usage v3, script approvals, calculator history, colour history, kept conversations):

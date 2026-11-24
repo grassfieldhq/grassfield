@@ -170,6 +170,12 @@ def load():
         text = read(path)
         if "shellIpcArgs()" in text:
             files[path] = text
+    # The apps' QML and JavaScript (the Settings app's panes call the shell from there), and their headers: read whole, so that a
+    # caller in any of them is seen (a `call <target> <function>` in an argument list) whatever file type it is in.
+    for pattern in ("apps/**/*.qml", "apps/**/*.js", "apps/**/*.h"):
+        for path in sorted(glob.glob(pattern, recursive=True)):
+            if os.path.isfile(path) and "/build" not in path and path not in files:
+                files[path] = read(path)
     files["docs/specs/security.md"] = open("docs/specs/security.md", encoding="utf-8").read()
     return files
 
@@ -878,6 +884,36 @@ def check(files):
     for path in sorted(files):
         if path.startswith("apps/") and path.endswith(".cpp") and "shellIpcArgs()" in files[path]:
             callers |= set(re.findall(r'(?:shellIpcArgs\(\)|\bipc)\s*\+\s*QStringList\s*\{\s*QStringLiteral\("(\w+)"\)\s*,\s*QStringLiteral\("(\w+)"\)', files[path]))
+
+    # A QML or JavaScript file of an app that names `ipc` and lists `"call", "<target>", "<function>"` in an argument list.
+    for path in sorted(files):
+        if path.startswith("apps/") and path.endswith((".qml", ".js")) and "ipc" in files[path]:
+            callers |= set(re.findall(r'"call"\s*,\s*"(\w+)"\s*,\s*"(\w+)"', files[path]))
+
+    # Command palette E1b: the Settings app's Links and Text Replacements panes (E2, E3) call the item functions of `search`. Until
+    # they do, those functions are listed here (class action, no real-session caller yet); a function listed here that an app or
+    # a binding already calls fails, so the entry is removed with the caller's arrival.
+    pending = {("search", f) for f in ("addItem", "updateItem", "removeItem", "importFile", "importResult")}
+    for key in sorted(pending & callers):
+        fails.append("%s.%s has a real-session caller now: remove it from the pending list" % key)
+    # Any other mention of those names in a caller's tree (an app, the session helpers, the Hyprland config) is a caller too,
+    # whatever form it takes: the entry goes with it.
+    names = sorted({k[1] for k in pending})
+    for path in sorted(files):
+        # (only a file that talks to the shell's IPC about `search`: addItem and removeItem are common names elsewhere)
+        if path.startswith(("apps/", "config/hypr/", "packaging/", "bridges/")) and not path.startswith("apps/settings/tests/") \
+                and re.search(r'\bipc\b', files[path], re.I) and re.search(r'["\']search["\']', files[path]):
+            for n in names:
+                if re.search(r'(?<![A-Za-z0-9_])' + n + r'(?![A-Za-z0-9_])', files[path]):
+                    fails.append("%s mentions %s: a caller of the pending search item functions: remove them from the pending list" % (path, n))
+    # A caller built with variables (backend.shellCall("search", "addItem", ...)) names the target and the function as two literals in
+    # a row: found in any file of the apps, whatever else it says.
+    for path in sorted(files):
+        if path.startswith("apps/"):
+            for n in names:
+                if re.search(r'["\']search["\']\s*,\s*["\']' + n + r'["\']', files[path]):
+                    fails.append("%s calls search.%s: remove it from the pending list" % (path, n))
+    callers |= pending
 
     defs = definitions(files)
     fails += defs

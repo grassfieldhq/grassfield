@@ -1,0 +1,1 @@
+../../../../shell/search/ClipboardView.js
