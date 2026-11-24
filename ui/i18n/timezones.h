@@ -21,7 +21,7 @@
 // built-in French table (Londres, Japon...) when the locale is French; every other language gets English. A missing or
 // unreadable zone1970.tab leaves the table to the zones QTimeZone itself lists; nothing throws.
 //
-// Every function takes the time as numbers, never a Date: the QML side owns "now" (the tests never read the clock).
+// Every function but now() takes the time as numbers, never a Date: the QML side owns "now" (the tests never read the clock).
 class TimeZones : public QObject
 {
     Q_OBJECT
@@ -65,6 +65,10 @@ public:
     // True when zone1970.tab was read (for diagnostics).
     Q_INVOKABLE bool hasCityTable() const;
 
+    // Builds the tables now (about 0.1 s the first time, none after): a caller that knows a query is coming (the palette opening)
+    // pays it at an idle moment instead of in the first keystroke. Every other function does the same on first use.
+    Q_INVOKABLE void warmUp() const;
+
 private:
     struct City
     {
@@ -74,12 +78,29 @@ private:
         QStringList countries;
         QString key;         // normalized city
         QString idKey;       // normalized id
+        QString frKey;       // normalized French spelling, or empty
+    };
+    struct Country
+    {
+        QString code;
+        QStringList keys;    // normalized names: English, French, aliases
+        QList<int> rows;     // cities whose first code is this one, in table order
+        int secondary = -1;  // a city listing the country after its first code (when rows is empty)
+        int capital = -1;    // index into m_cities: the capital's zone, else the first row
+    };
+    struct Alias
+    {
+        QString key;         // normalized
+        int city = -1;       // index into m_cities
+        QString en, fr;      // names shown for the alias ("Beijing", "Pekin")
     };
     void ensureLoaded() const;
-    QVariantMap entryFor(const City &c, const QString &kind, bool ambiguous, const QLocale &loc) const;
+    QVariantMap entryFor(int cityIndex, const QString &kind, bool ambiguous, const QLocale &loc, const Alias *alias = nullptr) const;
 
     QString m_tabPath;
     mutable bool m_loaded = false;
     mutable bool m_hasTable = false;
     mutable QList<City> m_cities;
+    mutable QList<Country> m_countries;
+    mutable QList<Alias> m_aliases;
 };

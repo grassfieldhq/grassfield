@@ -8,7 +8,8 @@ namespace {
 
 constexpr qint64 kMaxTabBytes = 1 << 20; // the real file is about 20 KiB
 
-// Lowercase, accents dropped, "_" "-" "/" "." as spaces, runs of spaces collapsed.
+// Lowercase, accents dropped, apostrophes (straight and typographic) and periods removed, other punctuation ("_" "-" "/" ","
+// brackets) as spaces, runs of spaces collapsed.
 QString normalize(const QString &text)
 {
     const QString decomposed = text.normalized(QString::NormalizationForm_D);
@@ -18,7 +19,12 @@ QString normalize(const QString &text)
         if (ch.category() == QChar::Mark_NonSpacing)
             continue;
         const QChar lower = ch.toLower();
-        out.append(lower == u'_' || lower == u'-' || lower == u'/' || lower == u'.' ? QChar(u' ') : lower);
+        // Periods and apostrophes join ("U.K." is "uk", "d'Ivoire" and "d’Ivoire" are "divoire"); other punctuation separates.
+        if (lower == u'.' || lower == u'\'' || lower == u'’' || lower == u'‘' || lower == u'ʼ' || lower == u'`'
+            || lower == u'´')
+            continue;
+        const bool punct = lower.isPunct() || lower.isSymbol() || lower == u'_';
+        out.append(punct ? QChar(u' ') : lower);
     }
     return out.simplified();
 }
@@ -42,8 +48,8 @@ struct NamePair { const char *key; const char *name; };
 constexpr NamePair kFrenchCities[] = {
     {"Europe/London", "Londres"}, {"Europe/Moscow", "Moscou"}, {"Europe/Brussels", "Bruxelles"}, {"Europe/Lisbon", "Lisbonne"},
     {"Europe/Vienna", "Vienne"}, {"Europe/Warsaw", "Varsovie"}, {"Europe/Athens", "Athènes"}, {"Europe/Copenhagen", "Copenhague"},
-    {"Europe/Kyiv", "Kiev"}, {"Europe/Bucharest", "Bucarest"}, {"Europe/Geneva", "Genève"}, {"Asia/Shanghai", "Pékin"},
-    {"Asia/Kolkata", "Calcutta"}, {"Asia/Dubai", "Dubaï"}, {"Asia/Seoul", "Séoul"}, {"Asia/Singapore", "Singapour"},
+    {"Europe/Bucharest", "Bucarest"},
+    {"Asia/Dubai", "Dubaï"}, {"Asia/Seoul", "Séoul"}, {"Asia/Singapore", "Singapour"},
     {"Asia/Jerusalem", "Jérusalem"}, {"Asia/Tehran", "Téhéran"}, {"Asia/Baghdad", "Bagdad"},
     {"America/Montreal", "Montréal"}, {"America/Havana", "La Havane"}, {"America/Mexico_City", "Mexico"},
     {"Africa/Cairo", "Le Caire"}, {"Africa/Algiers", "Alger"},
@@ -58,6 +64,52 @@ constexpr NamePair kFrenchCountries[] = {
     {"NZ", "Nouvelle-Zélande"}, {"EG", "Égypte"}, {"MA", "Maroc"}, {"DZ", "Algérie"}, {"TN", "Tunisie"},
     {"ZA", "Afrique du Sud"}, {"CM", "Cameroun"}, {"CI", "Côte d’Ivoire"}, {"SN", "Sénégal"},
     {"AE", "Émirats arabes unis"}, {"SA", "Arabie saoudite"}, {"IL", "Israël"},
+};
+
+// Names that are not a tzdata city but that people type: they resolve to the zone of the city they belong to, and the answer
+// shows the alias' own name (en, fr), never the zone city's ("Beijing" is Asia/Shanghai's zone, Shanghai stays Shanghai).
+struct AliasRow { const char *alias; const char *id; const char *en; const char *fr; };
+
+constexpr AliasRow kCityAliases[] = {
+    {"Beijing", "Asia/Shanghai", "Beijing", "Pékin"}, {"Peking", "Asia/Shanghai", "Beijing", "Pékin"},
+    {"Pékin", "Asia/Shanghai", "Beijing", "Pékin"}, {"Kiev", "Europe/Kyiv", "Kyiv", "Kyiv"},
+    {"Genève", "Europe/Zurich", "Geneva", "Genève"}, {"Geneva", "Europe/Zurich", "Geneva", "Genève"},
+    {"Calcutta", "Asia/Kolkata", "Kolkata", "Calcutta"}, {"Bombay", "Asia/Kolkata", "Mumbai", "Bombay"},
+    {"Mumbai", "Asia/Kolkata", "Mumbai", "Bombay"}, {"New Delhi", "Asia/Kolkata", "New Delhi", "New Delhi"},
+    {"Delhi", "Asia/Kolkata", "Delhi", "Delhi"}, {"Saigon", "Asia/Ho_Chi_Minh", "Saigon", "Saïgon"},
+    {"Washington", "America/New_York", "Washington", "Washington"}, {"Boston", "America/New_York", "Boston", "Boston"},
+    {"Miami", "America/New_York", "Miami", "Miami"}, {"Atlanta", "America/New_York", "Atlanta", "Atlanta"},
+    {"Houston", "America/Chicago", "Houston", "Houston"}, {"Dallas", "America/Chicago", "Dallas", "Dallas"},
+    {"San Francisco", "America/Los_Angeles", "San Francisco", "San Francisco"},
+    {"Seattle", "America/Los_Angeles", "Seattle", "Seattle"}, {"Las Vegas", "America/Los_Angeles", "Las Vegas", "Las Vegas"},
+    {"Ottawa", "America/Toronto", "Ottawa", "Ottawa"}, {"Brasilia", "America/Sao_Paulo", "Brasília", "Brasilia"},
+    {"Canberra", "Australia/Sydney", "Canberra", "Canberra"}, {"Tel Aviv", "Asia/Jerusalem", "Tel Aviv", "Tel Aviv"},
+    {"Bangalore", "Asia/Kolkata", "Bengaluru", "Bangalore"}, {"Bengaluru", "Asia/Kolkata", "Bengaluru", "Bangalore"},
+    {"Saint Petersburg", "Europe/Moscow", "Saint Petersburg", "Saint-Pétersbourg"},
+    {"Saint-Pétersbourg", "Europe/Moscow", "Saint Petersburg", "Saint-Pétersbourg"},
+};
+
+// English names and short forms of countries that Qt spells differently or not at all: alias, ISO code.
+constexpr NamePair kCountryAliases[] = {
+    {"UK", "GB"}, {"Great Britain", "GB"}, {"England", "GB"}, {"Scotland", "GB"}, {"Wales", "GB"}, {"Britain", "GB"},
+    {"USA", "US"}, {"America", "US"}, {"United States of America", "US"}, {"U.S.", "US"}, {"U.S.A.", "US"},
+    {"UAE", "AE"}, {"Emirates", "AE"}, {"Ivory Coast", "CI"}, {"Côte d'Ivoire", "CI"}, {"Cote d'Ivoire", "CI"},
+    {"Holland", "NL"}, {"Czech Republic", "CZ"}, {"Czechia", "CZ"}, {"Korea", "KR"}, {"South Korea", "KR"},
+    {"Burma", "MM"}, {"Swaziland", "SZ"}, {"Turkey", "TR"}, {"Türkiye", "TR"}, {"Russia", "RU"}, {"Vietnam", "VN"},
+    {"Royaume Uni", "GB"}, {"Etats Unis", "US"}, {"Pays Bas", "NL"}, {"Corée", "KR"}, {"Tchéquie", "CZ"},
+};
+
+// The zone of the capital for a country with several zones (a country answers with its capital's time, as the system clock
+// apps do, not with the first row of zone1970.tab). A single-zone country needs no entry.
+constexpr NamePair kCapitalZones[] = {
+    {"US", "America/New_York"}, {"CA", "America/Toronto"}, {"AU", "Australia/Sydney"}, {"BR", "America/Sao_Paulo"},
+    {"RU", "Europe/Moscow"}, {"MX", "America/Mexico_City"}, {"CN", "Asia/Shanghai"}, {"ID", "Asia/Jakarta"},
+    {"KZ", "Asia/Almaty"}, {"AR", "America/Argentina/Buenos_Aires"}, {"CL", "America/Santiago"}, {"ES", "Europe/Madrid"},
+    {"PT", "Europe/Lisbon"}, {"CD", "Africa/Kinshasa"}, {"EC", "America/Guayaquil"}, {"MN", "Asia/Ulaanbaatar"},
+    {"GL", "America/Nuuk"}, {"PF", "Pacific/Tahiti"}, {"NZ", "Pacific/Auckland"}, {"FM", "Pacific/Pohnpei"},
+    {"UA", "Europe/Kyiv"}, {"MY", "Asia/Kuala_Lumpur"}, {"PG", "Pacific/Port_Moresby"}, {"FR", "Europe/Paris"},
+    {"GB", "Europe/London"}, {"UZ", "Asia/Tashkent"}, {"KI", "Pacific/Tarawa"}, {"DE", "Europe/Berlin"},
+    {"NL", "Europe/Amsterdam"}, {"ZA", "Africa/Johannesburg"}, {"IN", "Asia/Kolkata"}, {"JP", "Asia/Tokyo"},
 };
 
 template<size_t N>
@@ -89,6 +141,20 @@ QString countryName(const QString &code, const QLocale &loc)
 }
 
 // A path-like or odd id never reaches QTimeZone's file lookup: letters, digits and "_+-/" only, no "..", at most 64 bytes.
+// Only an id QTimeZone lists as available is accepted (no offset ids such as "UTC+02:00", no POSIX strings), compared by
+// exact bytes; "UTC" is always accepted.
+const QSet<QByteArray> &availableIds()
+{
+    static const QSet<QByteArray> ids = [] {
+        QSet<QByteArray> s;
+        for (const QByteArray &raw : QTimeZone::availableTimeZoneIds())
+            s.insert(raw);
+        s.insert(QByteArray("UTC"));
+        return s;
+    }();
+    return ids;
+}
+
 QTimeZone zoneOf(const QString &id)
 {
     const QByteArray raw = id.toUtf8();
@@ -97,8 +163,17 @@ QTimeZone zoneOf(const QString &id)
     for (const char c : raw)
         if (!(QChar::fromLatin1(c).isLetterOrNumber() || c == '_' || c == '+' || c == '-' || c == '/'))
             return QTimeZone();
-    return QTimeZone::isTimeZoneIdAvailable(raw) ? QTimeZone(raw) : QTimeZone();
+    if (!availableIds().contains(raw))
+        return QTimeZone();
+    if (raw == "UTC")
+        return QTimeZone::UTC;
+    return QTimeZone(raw);
 }
+
+// Years the answers cover: a wall time outside them is invalid, not clamped to 1970.
+constexpr int kMinYear = 1;
+constexpr int kMaxYear = 9999;
+bool yearOk(int year) { return year >= kMinYear && year <= kMaxYear; }
 
 QString isoOffset(int seconds)
 {
@@ -163,12 +238,32 @@ TimeZones::TimeZones(const QString &tabPath, QObject *parent)
 {
 }
 
+void TimeZones::warmUp() const
+{
+    ensureLoaded();
+}
+
 void TimeZones::ensureLoaded() const
 {
     if (m_loaded)
         return;
     m_loaded = true;
-    QSet<QString> seen;
+    QHash<QString, int> byId;
+    auto addCity = [&](const QString &id, const QString &comment, const QStringList &countries) {
+        City c;
+        c.id = id;
+        c.city = cityOf(id);
+        c.comment = comment;
+        c.countries = countries;
+        c.key = normalize(c.city);
+        c.idKey = normalize(c.id);
+        c.frKey = normalize(tableName(kFrenchCities, id));
+        byId.insert(id, int(m_cities.size()));
+        m_cities.append(c);
+    };
+
+    // The table's own rows first (their order is the table's: geographic within a country).
+    int tableRows = 0;
     QFile file(m_tabPath);
     if (!m_tabPath.isEmpty() && file.open(QIODevice::ReadOnly)) {
         const QByteArray data = file.read(kMaxTabBytes);
@@ -179,45 +274,107 @@ void TimeZones::ensureLoaded() const
             if (cols.size() < 3)
                 continue;
             const QString id = QString::fromUtf8(cols[2]).trimmed();
-            if (id.isEmpty() || seen.contains(id) || !zoneOf(id).isValid())
+            if (id.isEmpty() || byId.contains(id) || !availableIds().contains(id.toUtf8()))
                 continue;
-            seen.insert(id);
-            City c;
-            c.id = id;
-            c.city = cityOf(id);
-            c.comment = cols.size() > 3 ? QString::fromUtf8(cols[3]).trimmed() : QString();
+            QStringList countries;
             for (const QByteArray &cc : cols[0].split(','))
                 if (!cc.trimmed().isEmpty())
-                    c.countries << QString::fromLatin1(cc.trimmed());
-            c.key = normalize(c.city);
-            c.idKey = normalize(c.id);
-            m_cities.append(c);
-            m_hasTable = true;
+                    countries << QString::fromLatin1(cc.trimmed());
+            addCity(id, cols.size() > 3 ? QString::fromUtf8(cols[3]).trimmed() : QString(), countries);
+            ++tableRows;
         }
     }
-    // zone1970.tab leaves out the zones that tzdata merged since 1970 (Amsterdam, Oslo, Stockholm...): the zones QTimeZone knows
-    // add their city, after the table's own, with the country QTimeZone reports.
+    m_hasTable = tableRows > 0;
+
+    // Aliases: only those whose zone exists. Their keys shadow the zones tzdata keeps as backward links ("Kiev", "Calcutta").
+    QSet<QString> aliasKeys;
+    for (const AliasRow &a : kCityAliases)
+        aliasKeys.insert(normalize(QString::fromUtf8(a.alias)));
+
+    // zone1970.tab leaves out the zones that tzdata merged since 1970 (Amsterdam, Oslo, Vaduz...): the zones QTimeZone knows add
+    // their city, after the table's own, with the country QTimeZone reports.
     static const QSet<QString> areas = {QStringLiteral("Africa"), QStringLiteral("America"), QStringLiteral("Antarctica"),
                                         QStringLiteral("Asia"), QStringLiteral("Atlantic"), QStringLiteral("Australia"),
                                         QStringLiteral("Europe"), QStringLiteral("Indian"), QStringLiteral("Pacific")};
     QStringList extra;
-    for (const QByteArray &raw : QTimeZone::availableTimeZoneIds()) {
+    for (const QByteArray &raw : availableIds()) {
         const QString id = QString::fromUtf8(raw);
         const int slash = id.indexOf(u'/');
-        if (slash > 0 && !seen.contains(id) && areas.contains(id.left(slash)))
+        if (slash > 0 && !byId.contains(id) && areas.contains(id.left(slash)) && !aliasKeys.contains(normalize(cityOf(id))))
             extra << id;
     }
     std::sort(extra.begin(), extra.end());
+    const int firstExtra = int(m_cities.size());
     for (const QString &id : std::as_const(extra)) {
-        City c;
-        c.id = id;
-        c.city = cityOf(id);
+        QStringList countries;
         const QLocale::Territory t = QTimeZone(id.toUtf8()).territory();
         if (t != QLocale::AnyTerritory)
-            c.countries << QLocale::territoryToCode(t);
-        c.key = normalize(c.city);
-        c.idKey = normalize(c.id);
-        m_cities.append(c);
+            countries << QLocale::territoryToCode(t);
+        addCity(id, QString(), countries);
+    }
+
+    for (const AliasRow &a : kCityAliases) {
+        const int city = byId.value(QString::fromLatin1(a.id), -1);
+        if (city < 0)
+            continue;
+        Alias al;
+        al.key = normalize(QString::fromUtf8(a.alias));
+        al.city = city;
+        al.en = QString::fromUtf8(a.en);
+        al.fr = QString::fromUtf8(a.fr);
+        m_aliases.append(al);
+    }
+
+    // Countries. A table row counts for every code it lists (the first as the row's own, the others as shared); a merged zone from
+    // Qt only for a country the table gives no row of its own (Netherlands, Norway, Liechtenstein).
+    QHash<QString, int> countryIndex;
+    auto countryAt = [&](const QString &code) -> Country & {
+        auto it = countryIndex.find(code);
+        if (it == countryIndex.end()) {
+            it = countryIndex.insert(code, int(m_countries.size()));
+            Country c;
+            c.code = code;
+            m_countries.append(c);
+        }
+        return m_countries[it.value()];
+    };
+    for (int i = 0; i < firstExtra; ++i) {
+        const QStringList &cs = m_cities.at(i).countries;
+        for (int k = 0; k < cs.size(); ++k) {
+            Country &c = countryAt(cs.at(k));
+            if (k == 0)
+                c.rows.append(i);
+            else if (c.secondary < 0)
+                c.secondary = i;
+        }
+    }
+    for (int i = firstExtra; i < m_cities.size(); ++i) {
+        const QStringList &cs = m_cities.at(i).countries;
+        if (cs.isEmpty())
+            continue;
+        Country &c = countryAt(cs.first());
+        if (c.rows.isEmpty() || !m_hasTable)
+            c.rows.append(i);
+    }
+    for (Country &c : m_countries) {
+        const QLocale::Territory t = QLocale::codeToTerritory(c.code);
+        if (t != QLocale::AnyTerritory)
+            c.keys << normalize(QLocale::territoryToString(t));
+        const QString fr = normalize(tableName(kFrenchCountries, c.code));
+        if (!fr.isEmpty())
+            c.keys << fr;
+        c.keys << normalize(c.code);
+        for (const NamePair &p : kCountryAliases)
+            if (c.code == QLatin1String(p.name))
+                c.keys << normalize(QString::fromUtf8(p.key));
+        const QString capitalId = tableName(kCapitalZones, c.code);
+        const int capital = capitalId.isEmpty() ? -1 : byId.value(capitalId, -1);
+        if (capital >= 0 && c.rows.contains(capital))
+            c.capital = capital;
+        else if (!c.rows.isEmpty())
+            c.capital = c.rows.first();
+        else
+            c.capital = c.secondary;
     }
 }
 
@@ -233,12 +390,18 @@ QString TimeZones::normalizeId(const QString &id) const
     return zone.isValid() ? QString::fromUtf8(zone.id()) : QString();
 }
 
-QVariantMap TimeZones::entryFor(const City &c, const QString &kind, bool ambiguous, const QLocale &loc) const
+QVariantMap TimeZones::entryFor(int cityIndex, const QString &kind, bool ambiguous, const QLocale &loc, const Alias *alias) const
 {
+    const City &c = m_cities.at(cityIndex);
     QVariantMap m;
     m[QStringLiteral("id")] = c.id;
-    m[QStringLiteral("city")] = c.city;
-    m[QStringLiteral("cityLocal")] = cityName(c.id, loc);
+    if (alias) {
+        m[QStringLiteral("city")] = alias->en;
+        m[QStringLiteral("cityLocal")] = isFrench(loc) ? alias->fr : alias->en;
+    } else {
+        m[QStringLiteral("city")] = c.city;
+        m[QStringLiteral("cityLocal")] = cityName(c.id, loc);
+    }
     m[QStringLiteral("countryCode")] = c.countries.value(0);
     m[QStringLiteral("country")] = c.countries.isEmpty() ? QString() : countryName(c.countries.value(0), loc);
     m[QStringLiteral("comment")] = c.comment;
@@ -258,80 +421,89 @@ QVariantList TimeZones::find(const QString &query, int limit, const QString &loc
     ensureLoaded();
     const QLocale loc = localeFor(localeName);
 
-    struct Hit { int rank; int order; QVariantMap entry; };
+    // Hits are cheap records; the maps (with the zone's localized name) are built for the few that are returned.
+    enum Kind { CityHit, AliasHit, CountryHit, UtcHit };
+    struct Hit { int rank; int group; int sub; Kind kind; int city; int alias; bool ambiguous; };
     QList<Hit> hits;
-    QSet<QString> used;
-    auto add = [&](int rank, int order, const QVariantMap &entry) {
-        const QString id = entry.value(QStringLiteral("id")).toString();
-        if (used.contains(id))
-            return;
-        used.insert(id);
-        hits.append({rank, order, entry});
-    };
 
-    if (q == u"utc" || q == u"gmt" || q == u"zulu") {
-        City utc;
-        utc.id = QStringLiteral("UTC");
-        utc.city = QStringLiteral("UTC");
-        add(0, -1, entryFor(utc, QStringLiteral("utc"), false, loc));
-    }
+    if (q == u"utc" || q == u"gmt" || q == u"zulu")
+        hits.append({0, -1, 0, UtcHit, -1, -1, false});
 
-    for (int i = 0; i < m_cities.size(); ++i) {
+    const int cityCount = int(m_cities.size());
+    for (int i = 0; i < cityCount; ++i) {
         const City &c = m_cities.at(i);
         int rank = -1;
-        // The French spelling matches in every locale: "Londres" is typed by someone whose language is French.
-        const QString fr = normalize(tableName(kFrenchCities, c.id));
-        if (c.key == q || c.idKey == q || fr == q)
+        if (c.key == q || c.idKey == q || (!c.frKey.isEmpty() && c.frKey == q))
             rank = 0;
-        else if (c.key.startsWith(q) || fr.startsWith(q))
+        else if (c.key.startsWith(q) || (!c.frKey.isEmpty() && c.frKey.startsWith(q)))
             rank = 2;
-        else if (c.key.contains(u' ' + q) || fr.contains(u' ' + q))
+        else if (c.key.contains(u' ' + q) || (!c.frKey.isEmpty() && c.frKey.contains(u' ' + q)))
             rank = 3;
         if (rank >= 0)
-            add(rank, i, entryFor(c, QStringLiteral("city"), false, loc));
+            hits.append({rank, i, 0, CityHit, i, -1, false});
     }
-
-    // Countries, by the localized name, the English name or the ISO code: the first row that lists the country first.
-    QHash<QString, QList<int>> byCountry;
-    for (int i = 0; i < m_cities.size(); ++i)
-        if (!m_cities.at(i).countries.isEmpty())
-            byCountry[m_cities.at(i).countries.value(0)].append(i);
-    auto countryRank = [&](const QString &code) {
-        const QString localized = normalize(countryName(code, loc));
-        const QString english = normalize(countryName(code, QLocale::c()));
-        const QString french = normalize(tableName(kFrenchCountries, code));
-        if (localized == q || english == q || french == q || normalize(code) == q)
-            return 1;
-        if (q.size() >= 3 && (localized.startsWith(q) || english.startsWith(q) || french.startsWith(q)))
-            return 4;
-        return -1;
-    };
-    for (auto it = byCountry.cbegin(); it != byCountry.cend(); ++it) {
-        const int rank = countryRank(it.key());
-        if (rank < 0)
-            continue;
-        const int first = it.value().first();
-        add(rank, first, entryFor(m_cities.at(first), QStringLiteral("country"), it.value().size() > 1, loc));
+    for (int a = 0; a < m_aliases.size(); ++a) {
+        const Alias &al = m_aliases.at(a);
+        int rank = -1;
+        if (al.key == q)
+            rank = 0;
+        else if (al.key.startsWith(q))
+            rank = 2;
+        else if (al.key.contains(u' ' + q))
+            rank = 3;
+        if (rank >= 0)
+            hits.append({rank, cityCount + a, 0, AliasHit, al.city, a, false});
     }
-    // A country that is never a row's first code (Liechtenstein shares Zurich): its first row.
-    for (int i = 0; i < m_cities.size(); ++i) {
-        const City &c = m_cities.at(i);
-        for (int k = 1; k < c.countries.size(); ++k) {
-            if (byCountry.contains(c.countries.at(k)))
-                continue;
-            const int rank = countryRank(c.countries.at(k));
-            if (rank >= 0)
-                add(rank, i, entryFor(c, QStringLiteral("country"), false, loc));
+    // Countries: the capital's zone first, then the country's other zones in the table's order.
+    for (const Country &c : std::as_const(m_countries)) {
+        int rank = -1;
+        for (const QString &key : c.keys) {
+            if (key == q) {
+                rank = 1;
+                break;
+            }
+            if (q.size() >= 3 && key.startsWith(q))
+                rank = 4;
         }
+        if (rank < 0 || c.capital < 0)
+            continue;
+        const bool many = c.rows.size() > 1;
+        hits.append({rank, c.capital, 0, CountryHit, c.capital, -1, many});
+        int sub = 1;
+        for (const int row : c.rows)
+            if (row != c.capital)
+                hits.append({rank, c.capital, sub++, CountryHit, row, -1, many});
     }
 
     std::stable_sort(hits.begin(), hits.end(), [](const Hit &a, const Hit &b) {
-        return a.rank != b.rank ? a.rank < b.rank : a.order < b.order;
+        if (a.rank != b.rank)
+            return a.rank < b.rank;
+        return a.group != b.group ? a.group < b.group : a.sub < b.sub;
     });
+    QSet<int> used;
     for (const Hit &h : std::as_const(hits)) {
         if (out.size() >= limit)
             break;
-        out.append(h.entry);
+        if (h.kind == UtcHit) {
+            QVariantMap m;
+            m[QStringLiteral("id")] = QStringLiteral("UTC");
+            m[QStringLiteral("city")] = QStringLiteral("UTC");
+            m[QStringLiteral("cityLocal")] = QStringLiteral("UTC");
+            m[QStringLiteral("countryCode")] = QString();
+            m[QStringLiteral("country")] = QString();
+            m[QStringLiteral("comment")] = QString();
+            m[QStringLiteral("name")] = QTimeZone(QTimeZone::UTC).displayName(QDateTime(QDate(2000, 1, 1), QTime(12, 0), QTimeZone::UTC),
+                                                                              QTimeZone::LongName, loc);
+            m[QStringLiteral("kind")] = QStringLiteral("utc");
+            m[QStringLiteral("ambiguous")] = false;
+            out.append(m);
+            continue;
+        }
+        if (used.contains(h.city))
+            continue;
+        used.insert(h.city);
+        const QString kind = h.kind == CountryHit ? QStringLiteral("country") : QStringLiteral("city");
+        out.append(entryFor(h.city, kind, h.ambiguous, loc, h.kind == AliasHit ? &m_aliases.at(h.alias) : nullptr));
     }
     return out;
 }
@@ -347,12 +519,16 @@ QVariantMap TimeZones::info(const QString &zoneId, qint64 epochMs, const QString
     QVariantMap m;
     const QTimeZone zone = zoneOf(zoneId);
     const QDateTime utc = QDateTime::fromMSecsSinceEpoch(epochMs, QTimeZone::UTC);
-    if (!zone.isValid() || !utc.isValid()) {
+    if (!zone.isValid() || !utc.isValid() || !yearOk(utc.date().year())) {
         m[QStringLiteral("valid")] = false;
         return m;
     }
     const QLocale loc = localeFor(localeName);
     const QDateTime local = utc.toTimeZone(zone);
+    if (!yearOk(local.date().year())) {
+        m[QStringLiteral("valid")] = false;
+        return m;
+    }
     const int offset = local.offsetFromUtc();
     m[QStringLiteral("valid")] = true;
     m[QStringLiteral("id")] = QString::fromUtf8(zone.id());
@@ -385,7 +561,7 @@ QVariantMap TimeZones::instant(const QString &zoneId, int year, int month, int d
     const QTimeZone zone = zoneOf(zoneId);
     const QDate date(year, month, day);
     const QTime time(hour, minute, second);
-    if (!zone.isValid() || !date.isValid() || !time.isValid()) {
+    if (!zone.isValid() || !yearOk(year) || !date.isValid() || !time.isValid()) {
         m[QStringLiteral("valid")] = false;
         return m;
     }

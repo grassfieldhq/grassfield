@@ -166,7 +166,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 | C1 | Math, percentages [R9] | yes | yes [A1] | yes (Calc.js, `%`) | Unchanged. "15% of 85" phrasing ([A1] example) added if missing. | S | No eval (search.md:49). | C1 |
 | C2 | Units [R9] | yes | yes [A1] | length, mass, temperature, data | Add speed, area, volume, time durations, pressure, energy, angles, number bases (hex, bin). | S | — | C2 |
 | C3 | Currency, crypto [R9] | yes | yes [A1] | excluded (S4) | **Not planned (D-net):** rates need the network. | — | — | — |
-| C4 | Dates and time zones: "time in tokyo", date math [R9] | yes | UNCONFIRMED | none | "time in Tokyo", "15:00 Paris in Tokyo", "monday + 3 weeks", "days until 25 Dec", "2026-12-25 - today", in en and fr. Zones from the system tzdata through `QTimeZone` (a small invokable in `Grassfield.Ui`, ui API changelog), city names from `zone1970.tab`. | M | — | C3, C4 |
+| C4 | Dates and time zones: "time in tokyo", date math [R9] | yes | UNCONFIRMED | none | "time in Tokyo", "15:00 Paris in Tokyo", "monday + 3 weeks", "days until 25 Dec", "2026-12-25 - today", in en and fr. Zones from the system tzdata through `QTimeZone` (the `TimeZones` singleton of `Grassfield.I18n`, ui API changelog), city names from `zone1970.tab`. | M | — | C3, C4 |
 | C5 | Calculator history [R9] | yes (3 months) | no | none | Last 50 answers, a "Calculator History" row; private file, cleared by Delete Search History. | S | Results can hold amounts: 0600, cleared with history. | C5 |
 
 ### 2.5 Files
@@ -384,13 +384,13 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | T9 | Clipboard row action "Save as Text Replacement…". | T4 | Unit: menu ids; the history item is copied into the store only on the user's action. |
 | T10 | `:word` emoji rows in Search inserting like ES-7. | P2 | Unit with `tests/fixtures/emojis.json`. |
 
-**Lane C: calculator** (`shell/search/Calc.js`, `Units.js`, new `DateCalc.js`; `ui/Grassfield` for zones)
+**Lane C: calculator** (`shell/search/Calc.js`, `Units.js`, new `DateCalc.js`; `ui/i18n` for zones)
 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | C1 | "x% of y", "y + x%", "x% off y" phrasings (en, fr). | — | `tst_searchcalc.qml` vectors. |
 | C2 | New unit families and number bases. | — | `tst_searchunits.qml` vectors, French names. |
-| C3 | `Grassfield.Ui` `TimeZones` invokable (QTimeZone, city table from `zone1970.tab`), ui API changelog line. | — | gtest/unit; `just check-contracts` (ui_api). |
+| C3 | `Grassfield.I18n` `TimeZones` singleton (`ui/i18n/timezones.h`; Grassfield.Ui has no compiled code) (QTimeZone, city table from `zone1970.tab`), ui API changelog line. | — | gtest/unit; `just check-contracts` (ui_api; the changelog line is in the "Compiled types of Grassfield.I18n" section). |
 | C4 | `DateCalc.js` (pure): time in a city, a time between zones, date math, days until, in en and fr. | C3 | Unit vectors including DST changes (not run inside the DST fall-back hour: memory "DST SystemClock spin"). |
 | C5 | Calculator History row and file, cleared with Delete Search History. | P11 | Unit: 50 entries, 0600, clearing. |
 
@@ -477,7 +477,7 @@ files except those in the table below.
 | `shell/platform/MenuBridge.qml`, `bridges/menu-bridge/` | M1–M3 | — |
 | `apps/clipboard-helper/`, `shell/services/Clipboard.qml` | T11 | — |
 | `packaging/arch/PKGBUILD` (the runner script, `ollama` optdepend line) | X3a, A1 | capture B1, B21, B22 |
-| `ui/Grassfield/` (+ `docs/specs/ui-api.md` changelog) | C3 | — |
+| `ui/i18n/` (+ `docs/specs/ui-api.md` changelog) | C3 | — |
 | `apps/settings/` | E2–E5 | capture B19 (app settings live in the Screenshot app: no overlap expected) |
 | `docs/specs/search.md` | P3c (keys), P13, P14 | — |
 

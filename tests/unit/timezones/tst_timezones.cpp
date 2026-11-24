@@ -4,6 +4,10 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QElapsedTimer>
+#include <QFile>
+#include <iostream>
+#include <limits>
 
 #include "timezones.h"
 
@@ -224,6 +228,132 @@ TEST(TimeZonesNow, SmokeOnly)
     const QVariantMap n = zones().now(QStringLiteral("UTC"));
     EXPECT_TRUE(flag(n, "valid"));
     EXPECT_GT(epoch(n), utcMs(2026, 1, 1, 0, 0));
+}
+
+TEST(TimeZonesFind, CountryAnswersWithItsCapitalsZoneThenTheOthers)
+{
+    struct Case { const char *query; const char *capital; const char *other; };
+    const Case cases[] = {
+        {"canada", "America/Toronto", "America/St_Johns"},
+        {"australia", "Australia/Sydney", "Australia/Lord_Howe"},
+        {"brazil", "America/Sao_Paulo", "America/Noronha"},
+        {"russia", "Europe/Moscow", "Europe/Kaliningrad"},
+    };
+    for (const Case &c : cases) {
+        const QVariantMap first = zones().lookup(QString::fromLatin1(c.query), QStringLiteral("en"));
+        EXPECT_EQ(str(first, "id"), c.capital) << c.query;
+        EXPECT_TRUE(flag(first, "ambiguous")) << c.query;
+        EXPECT_EQ(str(first, "kind"), "country") << c.query;
+        const QVariantList all = zones().find(QString::fromLatin1(c.query), 8, QStringLiteral("en"));
+        ASSERT_GE(all.size(), 2) << c.query;
+        EXPECT_EQ(str(all.at(1).toMap(), "id"), c.other) << c.query;
+    }
+    // A single-zone country is unchanged and not ambiguous.
+    EXPECT_FALSE(flag(zones().lookup(QStringLiteral("japan")), "ambiguous"));
+    // French names reach the same answers.
+    EXPECT_EQ(lookupId("russie", "fr"), "Europe/Moscow");
+    EXPECT_EQ(lookupId("brésil", "fr"), "America/Sao_Paulo");
+}
+
+TEST(TimeZonesFind, CountriesOnTheRealTableAnswerWithTheCapital)
+{
+    if (!QFile::exists(QStringLiteral("/usr/share/zoneinfo/zone1970.tab")))
+        GTEST_SKIP() << "no system zone1970.tab";
+    TimeZones real;
+    ASSERT_TRUE(real.hasCityTable());
+    EXPECT_EQ(str(real.lookup(QStringLiteral("canada")), "id"), "America/Toronto");
+    EXPECT_EQ(str(real.lookup(QStringLiteral("australia")), "id"), "Australia/Sydney");
+    EXPECT_EQ(str(real.lookup(QStringLiteral("brazil")), "id"), "America/Sao_Paulo");
+    EXPECT_EQ(str(real.lookup(QStringLiteral("russia")), "id"), "Europe/Moscow");
+    EXPECT_EQ(str(real.lookup(QStringLiteral("usa")), "id"), "America/New_York");
+    EXPECT_EQ(str(real.lookup(QStringLiteral("netherlands")), "id"), "Europe/Amsterdam");
+    // The first query does the loading (about 0.1 s); every later one is cheap. Both are bounded loosely: a loaded machine
+    // must not fail this, a regression to the old per-query rebuild (5-9 ms each) or a 10x load would.
+    QElapsedTimer timer;
+    timer.start();
+    for (int i = 0; i < 100; ++i)
+        real.find(QStringLiteral("canada"));
+    const double perFind = timer.nsecsElapsed() / 1e6 / 100;
+    std::cout << "[ timing  ] find(): " << perFind << " ms per call\n";
+#ifdef __SANITIZE_ADDRESS__
+    EXPECT_LT(perFind, 20.0); // sanitized code runs several times slower
+#else
+    EXPECT_LT(perFind, 3.0);
+#endif
+}
+
+TEST(TimeZonesFind, FirstLoadTime)
+{
+    TimeZones fresh;
+    QElapsedTimer timer;
+    timer.start();
+    fresh.warmUp();
+    const double ms = timer.nsecsElapsed() / 1e6;
+    std::cout << "[ timing  ] warmUp() first load: " << ms << " ms\n";
+    EXPECT_LT(ms, 500.0);
+    timer.restart();
+    fresh.warmUp();
+    EXPECT_LT(timer.nsecsElapsed() / 1e6, 1.0);
+}
+
+TEST(TimeZonesFind, PunctuationAndEnglishAliases)
+{
+    EXPECT_EQ(lookupId("côte d'ivoire", "fr"), "Africa/Abidjan");
+    EXPECT_EQ(lookupId("côte d’ivoire", "fr"), "Africa/Abidjan");
+    EXPECT_EQ(lookupId("ivory coast"), "Africa/Abidjan");
+    EXPECT_EQ(lookupId("uk"), "Europe/London");
+    EXPECT_EQ(lookupId("U.K."), "Europe/London");
+    EXPECT_EQ(lookupId("usa"), "America/New_York");
+    EXPECT_EQ(lookupId("uae"), "Asia/Dubai");
+    EXPECT_EQ(lookupId("holland"), "Europe/Amsterdam");
+}
+
+TEST(TimeZonesFind, CityAliasesKeepTheirOwnNames)
+{
+    const QVariantMap bj = zones().lookup(QStringLiteral("beijing"), QStringLiteral("fr"));
+    EXPECT_EQ(str(bj, "id"), "Asia/Shanghai");
+    EXPECT_EQ(str(bj, "city"), "Beijing");
+    EXPECT_EQ(str(bj, "cityLocal"), "Pékin");
+    EXPECT_EQ(lookupId("pékin", "fr"), "Asia/Shanghai");
+    // Shanghai stays Shanghai, in French too.
+    const QVariantMap sh = zones().lookup(QStringLiteral("shanghai"), QStringLiteral("fr"));
+    EXPECT_EQ(str(sh, "id"), "Asia/Shanghai");
+    EXPECT_EQ(str(sh, "city"), "Shanghai");
+    EXPECT_EQ(str(sh, "cityLocal"), "Shanghai");
+    // Kyiv is the shown name; Kiev finds it.
+    const QVariantMap kv = zones().lookup(QStringLiteral("kiev"), QStringLiteral("fr"));
+    EXPECT_EQ(str(kv, "id"), "Europe/Kyiv");
+    EXPECT_EQ(str(kv, "cityLocal"), "Kyiv");
+    EXPECT_EQ(str(zones().lookup(QStringLiteral("kyiv"), QStringLiteral("fr")), "cityLocal"), "Kyiv");
+    // Geneva is Zurich's zone, shown as Geneva / Genève.
+    const QVariantMap ge = zones().lookup(QStringLiteral("genève"), QStringLiteral("fr"));
+    EXPECT_EQ(str(ge, "id"), "Europe/Zurich");
+    EXPECT_EQ(str(ge, "cityLocal"), "Genève");
+    EXPECT_EQ(lookupId("geneva"), "Europe/Zurich");
+}
+
+TEST(TimeZonesConvert, OutOfRangeYearsAreInvalid)
+{
+    EXPECT_FALSE(flag(zones().convert(QStringLiteral("UTC"), 300000000, 1, 1, 0, 0, 0, QStringLiteral("Asia/Tokyo")), "valid"));
+    EXPECT_FALSE(flag(zones().convert(QStringLiteral("UTC"), 10000, 1, 1, 0, 0, 0, QStringLiteral("Asia/Tokyo")), "valid"));
+    EXPECT_FALSE(flag(zones().convert(QStringLiteral("UTC"), 0, 1, 1, 0, 0, 0, QStringLiteral("Asia/Tokyo")), "valid"));
+    EXPECT_FALSE(flag(zones().convert(QStringLiteral("UTC"), -5, 1, 1, 0, 0, 0, QStringLiteral("Asia/Tokyo")), "valid"));
+    EXPECT_FALSE(flag(zones().instant(QStringLiteral("UTC"), 300000000, 1, 1, 0, 0), "valid"));
+    EXPECT_TRUE(flag(zones().convert(QStringLiteral("UTC"), 9999, 6, 1, 0, 0, 0, QStringLiteral("Asia/Tokyo")), "valid"));
+    EXPECT_TRUE(flag(zones().convert(QStringLiteral("UTC"), 1, 6, 1, 12, 0, 0, QStringLiteral("UTC")), "valid"));
+    EXPECT_FALSE(flag(zones().info(QStringLiteral("UTC"), std::numeric_limits<qint64>::max()), "valid"));
+    EXPECT_FALSE(flag(zones().info(QStringLiteral("UTC"), std::numeric_limits<qint64>::min()), "valid"));
+}
+
+TEST(TimeZonesIds, OnlyListedZonesAreAccepted)
+{
+    EXPECT_TRUE(zones().normalizeId(QStringLiteral("UTC+02:00")).isEmpty());
+    EXPECT_TRUE(zones().normalizeId(QStringLiteral("UTC-5")).isEmpty());
+    EXPECT_TRUE(zones().normalizeId(QStringLiteral("GMT+1")).isEmpty());
+    EXPECT_TRUE(zones().normalizeId(QStringLiteral("EST5EDT,M3.2.0,M11.1.0")).isEmpty());
+    EXPECT_TRUE(zones().normalizeId(QStringLiteral("europe/paris")).isEmpty()); // case-exact, as the ids are
+    EXPECT_EQ(zones().normalizeId(QStringLiteral("Asia/Tokyo")), "Asia/Tokyo");
+    EXPECT_FALSE(flag(zones().info(QStringLiteral("UTC+02:00"), 0), "valid"));
 }
 
 int main(int argc, char **argv)
