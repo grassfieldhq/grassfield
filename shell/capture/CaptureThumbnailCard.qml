@@ -387,6 +387,7 @@ PanelWindow {
             // is reset to zero as the press ends, before (or while) `active` goes false, so the release cannot read it.
             property real pulled: 0
             property real speed: 0
+            property real movedAt: 0
 
             target: null
             enabled: !win.isText
@@ -399,9 +400,10 @@ PanelWindow {
                     intent = "";
                     pulled = 0;
                     speed = 0;
+                    movedAt = 0;
                 } else {
                     if (intent === "swipe") {
-                        if (Thumbs.swipeDismisses(win.side, pulled, speed, Tokens.captureThumbnailDismissDistance, Tokens.captureThumbnailFlickVelocity))
+                        if (Thumbs.releaseDismisses(win.side, pulled, speed, Date.now() - movedAt, Tokens.captureThumbnailDismissDistance, Tokens.captureThumbnailFlickVelocity, Tokens.captureThumbnailFlickStaleMs))
                             win.controller.dismiss(win.cardId);
                         else
                             plate.swipeOffset = 0;
@@ -429,6 +431,7 @@ PanelWindow {
                     return;
                 pulled = translation.x;
                 speed = Thumbs.towardVelocity(win.side, centroid.velocity.x);
+                movedAt = Date.now();
                 plate.swipeOffset = Math.max(0, pulled * plate.outward);
             }
         }

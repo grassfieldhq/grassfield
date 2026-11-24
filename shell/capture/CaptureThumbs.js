@@ -359,6 +359,14 @@ function swipeDismisses(side, dx, velocity, distance, flick) {
     return toward >= distance || (toward > 0 && velocity >= flick);
 }
 
+// The decision when the pointer is let go: `dx` the distance pulled, `speed` the speed of the last move toward the edge, `sinceMove`
+// the time (ms) since that move. A pause makes no event, so the speed of a move that was held for `staleMs` or longer is stale: a
+// fast pull, a hold and a release is no flick.
+function releaseDismisses(side, dx, speed, sinceMove, distance, flick, staleMs) {
+    const live = sinceMove <= staleMs ? speed : 0;
+    return swipeDismisses(side, dx, live, distance, flick);
+}
+
 // The side the cards are on: capture.thumbnailSide, "right" for anything else.
 function sideOf(value) {
     return value === "left" ? "left" : "right";

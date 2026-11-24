@@ -4052,6 +4052,8 @@ QtObject {
     readonly property int captureThumbnailDismissDistance: 48
     // estimate: a swipe toward the screen edge this fast (points per second, the pointer's own velocity) dismisses the card whatever the distance, a flick [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailFlickVelocity: 600
+    // estimate: a swipe held this long (ms) before the pointer is let go is no flick: the speed of its last move is stale, a pause makes no event [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailFlickStaleMs: 80
     // estimate: how far a card slides in from its edge when it arrives (a fade only under Reduce Motion)
     readonly property int captureThumbnailDismissSlide: 24
     // estimate: how long Hide Desktop Icons keeps the icons hidden after the toolbar started the helper, until its state shows a phase

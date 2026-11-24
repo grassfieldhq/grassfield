@@ -194,6 +194,17 @@ Scope {
         }
         if (changed)
             root.copies = next;
+        // The lines a leaving card's Text measured go with it.
+        const lines = {};
+        let linesChanged = false;
+        for (const id in root.textLines) {
+            if (keep[id] === true)
+                lines[id] = root.textLines[id];
+            else
+                linesChanged = true;
+        }
+        if (linesChanged)
+            root.textLines = lines;
         // The last card has left: the folder is emptied (a picture whose copy was still being made is deleted when it ends).
         if (root.cards.length === 0 && root.cleanerDone && !cleaner.running)
             cleaner.running = true;

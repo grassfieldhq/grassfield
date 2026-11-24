@@ -443,6 +443,19 @@ TestCase {
         verify(!Thumbs.swipeDismisses("right", 5, Thumbs.towardVelocity("right", Infinity), 48, 600), "no accidental dismiss");
     }
 
+    // A pause makes no event: the speed of the last move is stale once the pointer was held (the reviewer's case).
+    function test_releaseAfterAHoldIsNoFlick() {
+        const stale = 80;
+        verify(Thumbs.releaseDismisses("right", 30, 884.5, 10, 48, 600, stale), "the same fast pull released at once: dismissed");
+        verify(!Thumbs.releaseDismisses("right", 30, 884.5, 1000, 48, 600, stale), "a fast 30 pt pull, a 1 s hold, a release: stays");
+        verify(!Thumbs.releaseDismisses("right", 30, 884.5, 81, 48, 600, stale), "just past the stale time");
+        verify(Thumbs.releaseDismisses("right", 30, 884.5, 80, 48, 600, stale), "at the stale time still live");
+        verify(Thumbs.releaseDismisses("right", 60, 0, 1000, 48, 600, stale), "far enough: dismissed whatever the hold");
+        verify(Thumbs.releaseDismisses("left", -30, 700, 20, 48, 600, stale), "left edge flick");
+        verify(!Thumbs.releaseDismisses("left", -30, 700, 500, 48, 600, stale), "left edge, held");
+        verify(!Thumbs.releaseDismisses("right", 0, 900, 0, 48, 600, stale), "a stop before the release: no flick");
+    }
+
     function test_swipeIntentFromThePressNotTheFirstPixels() {
         compare(Thumbs.intentAt("right", 2, 1, 10), "", "inside the dead zone");
         compare(Thumbs.intentAt("right", 12, 3, 10), "swipe");

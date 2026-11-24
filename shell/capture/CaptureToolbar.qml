@@ -522,7 +522,7 @@ Variants {
                 width: frameLayer.width
                 height: frameLayer.height
                 visible: false
-                layer.enabled: true
+                layer.enabled: win.menuOpen
 
                 Rectangle {
                     x: win.menuRect.x
