@@ -331,7 +331,9 @@ Variants {
         // The row's right side, level with its top (the Actions list hangs there, spec §3.3).
         function placeActions(): void {
             const rowItem = list.itemAtIndex(root.controller.selected);
-            win.actionsAt = rowItem ? rowItem.mapToItem(win.contentItem, rowItem.width + Tokens.searchActionsGap, 0) : Qt.point(panel.x + panel.width + Tokens.searchActionsGap, panel.y);
+            // Anchored to the results panel's edge (the row is inset inside it), level with the row's top.
+            const top = rowItem ? rowItem.mapToItem(win.contentItem, 0, 0).y : panel.y;
+            win.actionsAt = Qt.point(panel.mapToItem(win.contentItem, panel.width, 0).x + Tokens.searchActionsGap, top);
             win.actionsPlaced = true;
         }
 
@@ -577,7 +579,9 @@ Variants {
                             c.hide();
                         break;
                     default:
-                        event.accepted = false;
+                        // A Super or Alt chord the palette does not handle is not text ("Super+K" must not type a "k");
+                        // Ctrl keeps the field's own editing keys (Ctrl+A, Ctrl+C, Ctrl+V, ...).
+                        event.accepted = (event.modifiers & (Qt.MetaModifier | Qt.AltModifier)) !== 0;
                     }
                 }
 
@@ -658,7 +662,7 @@ Variants {
             readonly property string clipStatus: win.clipView ? win.clipStatusText() : ""
             readonly property bool prompt: win.clipView && root.controller.clipPrompt
             readonly property bool notice: noResults || clipStatus !== ""
-            readonly property bool footer: win.clipView && root.controller.clipNotice !== "" && hasResults
+            readonly property bool footer: root.controller.clipNotice !== "" && hasResults
             readonly property real listTop: chipBlock + Tokens.spacingSm
             // Nothing to show under the capsule: no panel at all (an empty query without chips or recents).
             readonly property bool used: chipsShown || hasResults || notice || prompt
@@ -845,7 +849,18 @@ Variants {
                 model: root.controller.rowModel
                 currentIndex: root.controller.selected
                 onCurrentIndexChanged: {
-                    if (currentIndex >= 0)
+                    if (currentIndex < 0)
+                        return;
+                    const jump = root.controller.groupJump;
+                    root.controller.groupJump = false;
+                    if ((currentIndex + 1) * Tokens.searchRowHeight <= height)
+                        // The row is in the first screenful (Top Hit and the first group included): show the top, so a move
+                        // between groups never scrolls the Top Hit row out of view.
+                        positionViewAtBeginning();
+                    else if (jump)
+                        // Page Down / Page Up: the group's first row goes to the top, the group is seen from its start.
+                        positionViewAtIndex(currentIndex, ListView.Beginning);
+                    else
                         positionViewAtIndex(currentIndex, ListView.Contain);
                 }
 
@@ -1102,6 +1117,7 @@ Variants {
                 verticalAlignment: Text.AlignVCenter
                 textFormat: Text.PlainText
                 text: root.controller.clipNotice
+                elide: Text.ElideRight
                 color: Appearance.colors.textSecondary
                 font.family: Appearance.fontFamily
                 font.pixelSize: Tokens.searchSubtitleSize
@@ -1309,6 +1325,7 @@ Variants {
                     focus: !box.filtered
                     model: box.visibleActions
                     accessibleName: qsTr("Actions")
+                    minimumWidth: Tokens.searchActionsMinWidth
                     onActivated: item => root.controller.runAction(item.id)
                     onCloseRequested: root.controller.closeActions()
                 }

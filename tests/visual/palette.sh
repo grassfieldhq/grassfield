@@ -137,7 +137,8 @@ if want open; then
   d=$(vs_px_diff "$a" "$b")
   if is .open true; then
     echo "NOTE: Super+K with Search open: Search stays open, query now '$(st .query)', pixel change $d (cmdK is off in SearchPanel.qml)"
-    [[ $(st .query) == "dark modek" ]] && echo "DEFECT: Super+K types a 'k' into the field (the Super modifier is ignored by the text input while ⌘K is withdrawn)"
+    # An unhandled Super chord must not insert text (defect 4, fixed 2026-11-24).
+    fl_check "Super+K types nothing into the field (query '$(st .query)')" is .query "dark mode"
   else echo "NOTE: Super+K closed Search"; fi
   vs_ipc search close >/dev/null
   fl_chord Super_L k
@@ -162,6 +163,11 @@ if want queries; then
     titles | sed "s/^/    [$k] /"
     shot "q-$k" >/dev/null
   done
+  # The order of a command's variants does not depend on the language: the toggle comes before "for 1 Hour" / "Until Tomorrow"
+  # (defect 6, fixed 2026-11-24).
+  open_search "$q_dnd"
+  first=$(fl_json search status | jq -r '[.groups[].items[] | select(.kind == "command") | .title][0] // ""')
+  fl_check "'$q_dnd' ranks the toggle first, not a timed variant (first: '$first')" bash -c '[[ $1 =~ ^(Turn|Activer|D.sactiver) ]]' _ "$first"
   for q in "15% of 80" "20 + 15%" "5 km in miles" "72 f in c" "2 gb in mb"; do
     open_search "$q"
     n=${q//[^A-Za-z0-9]/_}
@@ -216,11 +222,9 @@ if want actions; then
     echo "    [geom] gap results panel right edge -> Actions left: $(lg "$gap") logical (token searchActionsGap 11)"
     # Known defect 2026-11-24 (report): the list hangs 11 logical px right of the SELECTED ROW, which is itself inset 12 inside
     # the results panel, so the list touches the panel's edge. Reported as DEFECT (not a FAIL) until it is fixed.
-    if awk -v g="$gap" -v s="$scale" 'BEGIN { exit !(g / s < 8) }'; then
-      echo "DEFECT: the Actions list is $(lg "$gap") logical px from the results panel (it touches the panel edge; spec 3.3 wants it beside the row with a visible gap)"
-    else
-      echo "PASS: the Actions list clears the results panel by $(lg "$gap") logical px"
-    fi
+    # (fixed 2026-11-24: anchored to the results panel's edge, token searchActionsGap 11, on whole device pixels)
+    fl_check "the Actions list is the token's 11 logical px from the results panel (got $(lg "$gap"))" awk -v g="$gap" -v s="$scale" 'BEGIN { d = g / s - 11; exit !(d > -1.01 && d < 1.01) }'
+    fl_check "the Actions list is at least 220 logical px wide (got $(lg "$aw"))" awk -v w="$aw" -v s="$scale" 'BEGIN { exit !(w / s >= 219) }'
     echo "    [geom] Actions top $(lg "$ay") vs the selected row (list is level with the row's top: spec 3.3)"
     echo "PASS: Tab opens an Actions panel ($(lg "$aw") x $(lg "$ah") logical)"
   fi
@@ -287,6 +291,7 @@ if want actions; then
   echo "    [groups]"; titles | sed 's/^/      /'
   g=$(fl_json search status | jq -r '[.groups[] | .items | length] | join(",")')
   s0=$(sel_json)
+  g0=$(shot groups-first)
   fl_tap Next; s1=$(sel_json)
   fl_tap Next; s2=$(sel_json)
   fl_tap Prior; s3=$(sel_json)
@@ -294,6 +299,12 @@ if want actions; then
   shot pagedown >/dev/null
   if [[ $s1 != "$s0" ]]; then echo "PASS: Page Down moves to the next group ($s0 -> $s1)"; else echo "FAIL: Page Down did not move the selection"; fl_fail=1; fi
   [[ $s3 != "$s2" ]] && echo "PASS: Page Up moves back ($s2 -> $s3)" || { echo "FAIL: Page Up did not move the selection"; fl_fail=1; }
+  # Back to the first group (the Top Hit): the view shows the top again, exactly as at the start (defect 7, fixed 2026-11-24)
+  guard=0
+  while [[ $(sel_json) != "$s0" ]] && ((guard++ < 6)); do fl_tap Prior; vs_sleep 0.5; done
+  g4=$(shot groups-back)
+  fl_check "Page Up back to the first group selects the first row ($s0)" is .selected "$s0"
+  fl_check "Page Up back to the first group shows the Top Hit row again (view equals the start: $(vs_px_diff "$g0" "$g4") px)" test "$(vs_px_diff "$g0" "$g4")" = 0
   # Shift+Tab to the last chip
   fl_chord Shift_L Tab
   vs_sleep 0.5
@@ -383,7 +394,7 @@ if want run; then
       done
       natural_left() { open_search "move window left"; has_title 'move window: left'; }
       # Known defect 2026-11-24: the natural spelling finds nothing (the title has a colon). DEFECT, not a FAIL.
-      if natural_left; then echo "PASS: the natural query 'move window left' finds Move Window: Left"; else echo "DEFECT: 'move window left' finds no Move Window: Left (only 'move window: left' or 'left' do)"; fi
+      fl_check "the natural query 'move window left' finds Move Window: Left" natural_left
       open_search "$q"
     fi
     titles | sed "s/^/    [win:$k] /"
@@ -471,9 +482,9 @@ EOF
   echo "    [script] after Return: open=$(st .open) notice='$(st .notice)'"
   shot script-return >/dev/null
   # X3b (the runner) is not built: Return must refuse cleanly. What the user sees is the DEFECT below until a message exists.
-  if [[ $(st .open) == false && -z $(st .notice) && $(fl_notif history) == 0 ]]; then
-    echo "DEFECT: Return on a script closes Search with no message at all (nothing runs, nothing says why: notices 0, no refusal text)"
-  fi
+  # Search stays open and says why under the rows (defect 2, fixed 2026-11-24)
+  fl_check "Return on a script keeps Search open" is .open true
+  fl_check "Return on a script says why it did not run (notice '$(st .notice)')" test -n "$(st .notice)"
   if [[ -f $VS_STATE/palette-ran ]]; then echo "FAIL: the script ran"; fl_fail=1; fi
   fl_check "no QML error after running a script row" fl_no_qml_errors
   tail -n 5 "$VS_DEV/shell.log" | sed 's/^/    [log] /'

@@ -3859,6 +3859,10 @@
         <translation>notifications</translation>
     </message>
     <message>
+        <source>do not disturb</source>
+        <translation>ne pas déranger</translation>
+    </message>
+    <message>
         <source>Turn Night Light On</source>
         <translation>Activer l’éclairage nocturne</translation>
     </message>
@@ -13568,6 +13572,22 @@
         <translation>Voulez-vous vraiment quitter toutes les applications et fermer la session de %1&#xa0;?</translation>
     </message>
     <message>
+        <source>This script can&apos;t run: the script runner isn&apos;t connected</source>
+        <translation>Ce script ne peut pas s’exécuter&#xa0;: l’exécuteur de scripts n’est pas connecté</translation>
+    </message>
+    <message>
+        <source>This script was refused by the runner</source>
+        <translation>Ce script a été refusé par l’exécuteur</translation>
+    </message>
+    <message>
+        <source>This script can&apos;t run: its sandbox isn&apos;t installed</source>
+        <translation>Ce script ne peut pas s’exécuter&#xa0;: son bac à sable n’est pas installé</translation>
+    </message>
+    <message>
+        <source>The script failed (code %1)</source>
+        <translation>Le script a échoué (code %1)</translation>
+    </message>
+    <message>
         <source>Open</source>
         <translation>Ouvrir</translation>
     </message>
@@ -13582,6 +13602,14 @@
     <message>
         <source>Show in Files</source>
         <translation>Afficher dans Fichiers</translation>
+    </message>
+    <message>
+        <source>Return</source>
+        <translation>Entrée</translation>
+    </message>
+    <message>
+        <source>Ctrl+Return</source>
+        <translation>Ctrl+Entrée</translation>
     </message>
     <message>
         <source>Clipboard</source>

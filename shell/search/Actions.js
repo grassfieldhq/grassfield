@@ -76,7 +76,7 @@ function validExtra(a) {
 function forItem(item, t) {
     if (!item || typeof item !== "object" || !t)
         return [];
-    const primary = (id, text) => ({id: id, text: text, shortcut: "Return"});
+    const primary = (id, text) => ({id: id, text: text, shortcut: t.keyReturn || "Return"});
     let list = [];
     switch (item.kind) {
     case "app":
@@ -92,7 +92,7 @@ function forItem(item, t) {
     case "file":
     case "recent":
         list.push(primary("open", t.open));
-        list.push({id: "reveal", text: t.reveal, shortcut: "Ctrl+Return"});
+        list.push({id: "reveal", text: t.reveal, shortcut: t.keyCtrlReturn || "Ctrl+Return"});
         break;
     default:
         return [];

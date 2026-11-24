@@ -16,6 +16,7 @@ import "Files.js" as Files
 import "Filters.js" as Filters
 import "KeyedRows.js" as KeyedRows
 import "Ranking.js" as Ranking
+import "Scripts.js" as ScriptsJs
 import "SettingsPages.js" as SettingsPages
 import "Units.js" as Units
 import "../launchpad/Model.js" as Model // layering-exception: GF-087
@@ -327,6 +328,8 @@ Scope {
         folderSettings: Settings.searchScriptFolders
         open: root.open
         screenName: root.screenName
+        // The approval gate and the runner (X7, X3) are not connected yet: the request is refused with a message, never silently.
+        onRunRequested: root.scriptFailed(-1)
     }
 
     function mkApp(r: var): var {
@@ -545,6 +548,11 @@ Scope {
             Quickshell.execDetached(["wl-copy", "--", item.text]);
             return;
         case "command":
+            // A script command stays open: nothing runs until the runner is connected (X7), and Search says why under the rows.
+            if (isScript(item.command)) {
+                runCommand(item.command);
+                return;
+            }
             hide();
             runCommand(item.command);
             return;
@@ -572,6 +580,27 @@ Scope {
     function activateSelected(reveal: bool): void {
         if (selected >= 0 && selected < items.length)
             activate(items[selected], reveal);
+    }
+
+    function isScript(id: string): bool {
+        const e = Commands.find(commandRegistry, id);
+        return !!e && e.kind === "script";
+    }
+
+    // A short message under the rows (the clipboard notice's place and timing).
+    function say(text: string): void {
+        clipNotice = text;
+        noticeTimer.restart();
+    }
+
+    // How a script run that ended with `code` is told (the runner's own refusals, exit 70 and 71, included).
+    function scriptFailed(code: int): void {
+        say(ScriptsJs.failureText(code, {
+            notRun: qsTr("This script can't run: the script runner isn't connected"),
+            refused: qsTr("This script was refused by the runner"),
+            noSandbox: qsTr("This script can't run: its sandbox isn't installed"),
+            failed: qsTr("The script failed (code %1)")
+        }));
     }
 
     function runCommand(id: string): void {
@@ -613,8 +642,14 @@ Scope {
         let gi = groups.findIndex(g => g.id === current);
         gi = (gi + delta + groups.length) % groups.length;
         const target = groups[gi].id;
-        selected = items.findIndex(it => it.groupId === target);
+        const idx = items.findIndex(it => it.groupId === target);
+        // The list scrolls to the group's start (SearchPanel reads and clears this when the selection changes).
+        groupJump = idx !== selected;
+        selected = idx;
     }
+
+    // Set by moveGroup for the selection change it makes; the list reads it and clears it.
+    property bool groupJump: false
 
     // Shift+Tab: the focus ring goes to the last filter chip (reverse order) (search.md F2c). Returns whether there are chips to reach.
     function enterChips(): bool {
@@ -628,7 +663,9 @@ Scope {
     // ---- the Actions panel (P3b) ----------------------------------------------------------
 
     // The words the actions are named with (translated here so that lupdate finds them; Actions.js orders them).
-    readonly property var actionWords: ({open: qsTr("Open"), run: qsTr("Run"), copy: qsTr("Copy"), reveal: qsTr("Show in Files")})
+    readonly property var actionWords: ({open: qsTr("Open"), run: qsTr("Run"), copy: qsTr("Copy"), reveal: qsTr("Show in Files"),
+        // The shortcut texts, with their key names translated like every menu shortcut (MenuShortcut draws the symbols in the Mac style).
+        keyReturn: qsTr("Return"), keyCtrlReturn: qsTr("Ctrl+Return")})
 
     // Tab: the Actions of the selected row. Returns whether the row has any (the Clipboard view keeps its own menu).
     function openActions(): bool {

@@ -113,3 +113,16 @@ function entries(scripts, t, refuses, onRun) {
         }
     }));
 }
+
+// The message for a script run that did not happen or did not succeed. `code`: the runner's exit status, or a negative number when
+// no runner took the request. `t`: {notRun, refused, noSandbox, failed ("%1" = the code)}. 70 is a refused frame, 71 a runner whose
+// sandbox stage is not installed (grassfield-script-run); never an empty string.
+function failureText(code, t) {
+    if (typeof code !== "number" || !isFinite(code) || code < 0)
+        return t.notRun;
+    if (code === 70)
+        return t.refused;
+    if (code === 71)
+        return t.noSandbox;
+    return t.failed.replace("%1", String(code));
+}

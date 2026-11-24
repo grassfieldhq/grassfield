@@ -86,11 +86,18 @@ function find(registry, id) {
 }
 
 // Title, then keywords at 80 %; below 50 nothing (the former commandScore). q is the normalized query.
-function score(entry, q) {
-    let s = Ranking.textScore(Ranking.norm(entry.title), q);
+function score(entry, rawQuery) {
+    const q = fold(rawQuery);
+    let s = Ranking.textScore(fold(entry.title), q);
     for (const w of (entry.keywords || []).concat(entry.keywordsEn || []))
-        s = Math.max(s, Ranking.textScore(Ranking.norm(w), q) * KEYWORD_WEIGHT);
+        s = Math.max(s, Ranking.textScore(fold(w), q) * KEYWORD_WEIGHT);
     return s >= MIN_SCORE ? s : 0;
+}
+
+// The form commands are compared in: Ranking.norm, then every no-break space a space, every other punctuation mark a space too
+// ("move window left" finds "Move Window: Left"; French "Déplacer la fenêtre : %1" uses a no-break space), runs of spaces one.
+function fold(s) {
+    return Ranking.norm(s).replace(/[   ]/g, " ").replace(/[!-\/:-@\[-`{-~¡-¿‐-‧‰-⁞、-〃]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 // Available entries matching the query, best first (stable for equal scores): [{cmd, score}].
