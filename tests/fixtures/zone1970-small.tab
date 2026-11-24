@@ -1,0 +1,17 @@
+# a small zone1970.tab (tab separated), the format of tzdata
+AU	-3133+15905	Australia/Lord_Howe	Lord Howe Island
+AU	-3352+15113	Australia/Sydney	New South Wales (most areas)
+BR	-0351-03225	America/Noronha	Atlantic islands
+BR	-2332-04637	America/Sao_Paulo	Brazil (southeast)
+CA	+4734-05243	America/St_Johns	Newfoundland
+CA	+4339-07923	America/Toronto	Eastern - ON, QC (most areas)
+CH,DE,LI	+4723+00832	Europe/Zurich	Swiss time
+FR	+4852+00220	Europe/Paris
+GB,GG,IM,JE	+513030-0000731	Europe/London
+JP	+353916+1394441	Asia/Tokyo
+RU	+5443+02030	Europe/Kaliningrad	MSK-01 - Kaliningrad
+RU	+554521+0373704	Europe/Moscow	MSK+00 - Moscow area
+US	+404251-0740023	America/New_York	Eastern (most areas)
+US	+415100-0873900	America/Chicago	Central (most areas)
+XX	+0000+00000	Not/AZone
+broken line without tabs

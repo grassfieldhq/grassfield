@@ -231,6 +231,10 @@ gtest_suite tests/unit/preview "apps/preview/build-direct.sh --tests" ".dev/buil
 # here, then again with ASan and UBSan.
 gtest_suite tests/unit/wallpaper-tool "apps/wallpaper-tool/build-direct.sh --tests >/dev/null && apps/wallpaper-tool/build-direct.sh --tests --asan" \
   "QT_QPA_PLATFORM=offscreen .dev/build/wallpaper-unit-tests --gtest_brief=1" "QT_QPA_PLATFORM=offscreen .dev/build/wallpaper-unit-tests-asan --gtest_brief=1"
+# Grassfield.I18n TimeZones (command palette C3): the city table, lookups and DST-correct conversions at fixed instants, built
+# here, then again with ASan and UBSan.
+gtest_suite tests/unit/timezones "ui/i18n/build-direct.sh --tests >/dev/null && ui/i18n/build-direct.sh --tests --asan >/dev/null" \
+  "QT_QPA_PLATFORM=offscreen .dev/build/timezones-unit-tests --gtest_brief=1" "QT_QPA_PLATFORM=offscreen .dev/build/timezones-unit-tests-asan --gtest_brief=1"
 # grassfield-stack-helper (ADR-0025) logic: the orders, the window, the scan, the race of a vanishing file, the escaping: built
 # here, then again with ASan and UBSan. The process itself is tests/shell/stack_helper.sh.
 gtest_suite tests/unit/stack-helper "apps/stack-helper/build-direct.sh --tests >/dev/null && apps/stack-helper/build-direct.sh --tests --asan" \

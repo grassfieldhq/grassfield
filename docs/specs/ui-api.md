@@ -94,3 +94,12 @@ Properties added to a public type (not machine-checked: the block above tracks t
 - 2026-11-04 `SearchField.focusRing` (bool, default `true`): `false` draws no 3-px focus ring while the field has the focus,
   for a popover over a window that stays key (Emoji & Symbols, ADR-0045 OC-3). Existing users unchanged. Test:
   `tests/unit/tst_controlstext.qml` `test_searchFieldFocusRingOptOut`.
+
+## Compiled types of `Grassfield.I18n`
+`Grassfield.Ui` is QML and JS only; the one compiled plugin the shell loads is `Grassfield.I18n` (`ui/i18n`), so a compiled
+public type lives there. Not machine-checked (the block above tracks the qmldir). Append-only, one line each.
+
+- 2026-11-24 `add TimeZones singleton` (`ui/i18n/timezones.h`): zones and cities from the system tzdata (`QTimeZone`, city
+  table from `zone1970.tab`, read-only, parsed once, a missing file leaves the zones Qt lists), and DST-correct conversion of
+  a wall time between zones. Invokables: `normalizeId`, `find`, `lookup`, `info`, `now`, `instant`, `convert`,
+  `hasCityTable`. Test: `tests/unit/timezones/tst_timezones.cpp` (gtest). Command palette slice C3.
