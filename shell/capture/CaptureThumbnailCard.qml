@@ -53,7 +53,7 @@ PanelWindow {
     // The file was confirmed again when the pointer reached the card: a drag out starts only on a confirmed file.
     property bool dragOk: false
     // The picture is made, or refused (the glyph shows instead): a card with none to make is ready at once.
-    readonly property bool pictureReady: win.isText || win.recording || ["ok", "no"].indexOf(win.controller.copyState(win.cardId)) >= 0
+    readonly property bool pictureReady: (win.isText && win.controller.textLines[win.cardId] !== undefined) || win.recording || ["ok", "no"].indexOf(win.controller.copyState(win.cardId)) >= 0
     // Whether the card is mapped. The screen is read from the model (card.screen), not from `win.screen`: the window's own screen
     // is bound to the card and is set again when the window is created, which made this binding depend on its own change.
     readonly property bool shown: win.controller.mapped && win.verified && win.pictureReady && win.card !== null && win.entry !== null && win.onScreen
@@ -84,8 +84,9 @@ PanelWindow {
     mask: Region {
         item: plate
     }
-    // Only the Capture Text card is glass; a picture is opaque.
-    BackgroundEffect.blurRegion: Appearance.effectiveTransparency > 0 && win.shown && win.isText ? blur : null
+    // Blurred behind whatever translucent surface shows (the text card, a recording's placeholder, a picture loading or refused);
+    // only a fully opaque picture has none.
+    BackgroundEffect.blurRegion: Appearance.effectiveTransparency > 0 && win.shown && Thumbs.blurWanted(win.isText, image.visible) ? blur : null
     // qmllint enable missing-type
 
     Region {
@@ -189,15 +190,20 @@ PanelWindow {
         id: plate
 
         readonly property real outward: win.side === "left" ? -1 : 1
+        // A length in points on a whole device pixel.
+        function snapped(v: real): real {
+            const k = Math.max(1, Screen.devicePixelRatio);
+            return Math.round(v * k) / k;
+        }
         // The slide in, and the swipe toward the edge (the card follows the pointer, only toward it).
         property real swipeOffset: 0
 
         width: win.entry ? win.entry.width : 0
         height: win.entry ? win.entry.height : 0
         // Snapped to device pixels once the card is in; the slide-in and the swipe are free.
-        readonly property real restX: win.side === "left" ? win.edge : win.width - win.edge - plate.width
+        readonly property real restX: plate.snapped(win.side === "left" ? win.edge : win.width - win.edge - plate.width)
         x: restX + plate.outward * ((Appearance.reduceMotion ? 0 : (1 - win.arrival) * Tokens.captureThumbnailDismissSlide + win.departure * plate.width) + plate.swipeOffset)
-        y: Math.round((win.height - win.edge - plate.height) * Math.max(1, Screen.devicePixelRatio)) / Math.max(1, Screen.devicePixelRatio)
+        y: plate.snapped(win.height - win.edge - plate.height)
         opacity: win.arrival * (1 - win.departure) * (1 - Math.min(1, Math.abs(plate.swipeOffset) / (2 * Tokens.captureThumbnailDismissDistance)))
         Accessible.role: win.isText ? Accessible.StaticText : Accessible.Button
         Accessible.name: win.isText ? win.textTitle + (win.card !== null && win.card.text !== "" ? ", " + win.card.text : "") : win.recording ? qsTr("Screen recording") : (win.card !== null && win.card.pixels !== null ? qsTr("Screenshot, %1 × %2").arg(win.card.pixels.w).arg(win.card.pixels.h) : qsTr("Screenshot"))
@@ -296,6 +302,24 @@ PanelWindow {
             border.color: Appearance.withAlpha(Appearance.colors.materialHighlight, material.highlightOpacity / 2)
         }
 
+        // Measures the recognised text the way the card shows it (it wraps by words, so only a Text knows the lines): the lines it
+        // takes, at most the token's, are what the controller sizes the card by. Not shown.
+        Text {
+            id: measure
+
+            visible: false
+            width: Tokens.captureThumbnailWidth - 2 * win.controller.textPad
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            maximumLineCount: Tokens.captureThumbnailTextLines
+            text: win.isText && win.card !== null && !win.isQr ? win.card.text : ""
+            font.family: Appearance.fontFamily
+            font.pixelSize: Tokens.typographyBodySize
+            onLineCountChanged: win.controller.setTextLines(win.cardId, measure.lineCount)
+            Component.onCompleted: if (win.isText)
+                win.controller.setTextLines(win.cardId, measure.lineCount)
+        }
+
         // Capture Text: the title and the first lines of what was recognised, in a card as tall as they are.
         Column {
             visible: win.isText
@@ -359,26 +383,25 @@ PanelWindow {
             id: swipe
 
             property string intent: ""
-            // Where the card was pulled to, and how fast at the end: kept here because the handler's translation is reset to zero
-            // as the press ends, before (or while) `active` goes false, so the release cannot read it.
+            // Where the card was pulled to, and how fast toward the edge at the last move: kept here because the handler's translation
+            // is reset to zero as the press ends, before (or while) `active` goes false, so the release cannot read it.
             property real pulled: 0
-            property var samples: []
+            property real speed: 0
 
             target: null
             enabled: !win.isText
             acceptedButtons: Qt.LeftButton
             dragThreshold: Tokens.captureThumbnailDragThreshold
-            // The press is a drag from the moment `active` is true, but its translation counts from there (the threshold's distance is
-            // not in it): the direction is read at the first move, not at activation, or every swipe read as a drag of the file.
+            // The press is a drag from the moment `active` is true. Its direction is that of the whole press-to-now vector once the
+            // pointer is a drag threshold away (never of the first pixels of a move), read at the first move after activation.
             onActiveChanged: {
                 if (active) {
                     intent = "";
                     pulled = 0;
-                    samples = [];
+                    speed = 0;
                 } else {
                     if (intent === "swipe") {
-                        const velocity = Thumbs.swipeVelocity(win.side, samples, Date.now(), Tokens.captureThumbnailVelocityWindowMs);
-                        if (Thumbs.swipeDismisses(win.side, pulled, velocity, Tokens.captureThumbnailDismissDistance, Tokens.captureThumbnailFlickVelocity))
+                        if (Thumbs.swipeDismisses(win.side, pulled, speed, Tokens.captureThumbnailDismissDistance, Tokens.captureThumbnailFlickVelocity))
                             win.controller.dismiss(win.cardId);
                         else
                             plate.swipeOffset = 0;
@@ -392,7 +415,9 @@ PanelWindow {
                 if (!active || (translation.x === 0 && translation.y === 0))
                     return;
                 if (intent === "") {
-                    intent = Thumbs.dragIntent(win.side, translation.x, translation.y);
+                    intent = Thumbs.intentAt(win.side, centroid.scenePosition.x - centroid.scenePressPosition.x, centroid.scenePosition.y - centroid.scenePressPosition.y, Tokens.captureThumbnailDragThreshold);
+                    if (intent === "")
+                        return;
                     if (intent === "out" && !win.dragOk) {
                         intent = "none";
                         return;
@@ -403,11 +428,8 @@ PanelWindow {
                 if (intent !== "swipe")
                     return;
                 pulled = translation.x;
+                speed = Thumbs.towardVelocity(win.side, centroid.velocity.x);
                 plate.swipeOffset = Math.max(0, pulled * plate.outward);
-                samples = samples.concat([{
-                        t: Date.now(),
-                        x: pulled
-                    }]).slice(-16);
             }
         }
 

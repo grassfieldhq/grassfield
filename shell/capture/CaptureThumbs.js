@@ -161,16 +161,21 @@ function snap(value, scale) {
     return Math.round(value * k) / k;
 }
 
-// How many lines of recognised text a Capture Text card shows: the text's lines, a long one wrapping at about `charsPerLine`
-// characters, at most `maxLines`; none for a QR code (its data is never shown). The card is as tall as these.
+// How many lines of recognised text a Capture Text card shows: none for a QR code (its data is never shown); else the number the
+// card's own Text measured (`m.lines[id]`, the Text wraps by words, so only it knows), at most `maxLines`; until it has measured,
+// a guess from the text's lines and about `charsPerLine` characters a line.
 function textLineCount(card, m) {
     if (!card || card.qr === true || !card.text)
         return 0;
+    const most = Math.max(1, m.maxLines || 1);
+    const measured = m.lines ? m.lines[card.id] : undefined;
+    if (typeof measured === "number" && measured >= 1)
+        return Math.min(most, measured);
     const per = Math.max(1, m.charsPerLine || 1);
     let n = 0;
     for (const line of String(card.text).split("\n"))
         n += Math.max(1, Math.ceil(line.length / per));
-    return Math.min(Math.max(1, m.maxLines || 1), n);
+    return Math.min(most, n);
 }
 
 // A card's size, `m` = {width, pictureHeight, inset, minPictureWidth, scale}: the picture fits the card's width (a screenshot's own
@@ -325,18 +330,26 @@ function dismissed(side, dx, distance) {
     return (side === "left" ? -dx : dx) >= distance;
 }
 
-// The speed of a drag toward the screen edge (points per second, positive toward it) from its samples [{t (ms), x (points, the
-// card's offset along the pointer)}], measured over the last `windowMs` before `now`; 0 without two samples in that stretch.
-function swipeVelocity(side, samples, now, windowMs) {
-    const recent = (samples || []).filter(p => now - p.t <= windowMs);
-    if (recent.length < 2)
+// The speed of a drag toward the screen edge (points per second, positive toward it) from the pointer's own velocity along x
+// (Qt measures it from the events' timestamps, so a stalled burst of queued events is not a flick); 0 when it is not a number.
+function towardVelocity(side, vx) {
+    if (typeof vx !== "number" || !isFinite(vx))
         return 0;
-    const first = recent[0];
-    const last = recent[recent.length - 1];
-    const dt = last.t - first.t;
-    if (dt <= 0)
-        return 0;
-    return (side === "left" ? first.x - last.x : last.x - first.x) / dt * 1000;
+    return side === "left" ? -vx : vx;
+}
+
+// What a drag is once the pointer is `threshold` away from where it was pressed, (dx, dy) from the press: the direction of the
+// whole press-to-now vector, never of the first pixels of a move; "" while it is inside the dead zone.
+function intentAt(side, dx, dy, threshold) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < threshold)
+        return "";
+    return dragIntent(side, dx, dy);
+}
+
+// Whether a translucent surface shows on a card (a Capture Text card, a recording's placeholder, a picture still loading or
+// refused), so the compositor must blur behind it: only a fully opaque picture has none.
+function blurWanted(isText, pictureShown) {
+    return isText === true || pictureShown !== true;
 }
 
 // Whether letting go of a swipe dismisses the card (macOS: a flick or a drag far enough toward the edge): it moved `distance`

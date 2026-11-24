@@ -242,7 +242,8 @@ The existing keys and the toolbar keep their behaviour, and the toolbar grows:
 
 ### 3.2 Floating thumbnail
 **Placement and lifetime**
-- A glass card (the menus' class, tokens `capture.thumbnail*`) appears at the bottom right of the display the capture came
+- A card (the picture itself with a rounded clip, a device-pixel rim and a shadow, no plate around it; sizes on whole device
+  pixels; tokens `capture.thumbnail*`) appears at the bottom right of the display the capture came
   from, inside the Dock's band margin. The side is a setting.
 - It shows the picture, or a recording's first frame with its duration.
 - It closes after 5 s (a setting: 5 s, 10 s or Never). Hovering pauses the timer.

@@ -3996,7 +3996,7 @@ QtObject {
     readonly property int captureToolbarBottomGap: 24
     // estimate: the Close glyph of the toolbar, a cross in a circle at the left end [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property int captureToolbarCloseIconSize: 18
-    // estimate: the timer's countdown, a square glass plate centred on what is captured (the display, the window or the area), as macOS shows the seconds left [ref: docs/specs/system-dialogs.md § Capture toolbar]
+    // estimate: the timer's countdown, a round plate of the controls' glass (the OSD's class) centred on what is captured (the display, the window or the area), as macOS shows the seconds left [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property int captureCountdownSize: 112
     // estimate: the countdown plate is a circle of the system HUD glass, its corner half its size, as the OSD pill's is half its height [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property int captureCountdownRadius: 56
@@ -4024,7 +4024,7 @@ QtObject {
     readonly property int captureWindowHighlightRadius: 17
     // the window highlight's corner is the window's own superellipse: Hyprland draws a corner of rounding x power / 2 points at decoration.rounding_power 2.6 (config/hypr/grassfield/looknfeel.lua), so a circular radius leaves notches at the title bar [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property real captureWindowHighlightPower: 2.6
-    // estimate: the floating thumbnail's card (a glass card of the menus' class), about the width of macOS 27's screenshot thumbnail [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    // estimate: the floating thumbnail's width (the picture itself, no plate), about the width of macOS 27's screenshot thumbnail [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailWidth: 216
     // estimate: the tallest the card gets (a 3:2 picture at the full card width), so a tall capture does not fill the corner; the picture is fitted inside the card width and this height [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailPictureHeight: 144
@@ -4050,10 +4050,8 @@ QtObject {
     readonly property int captureThumbnailDragThreshold: 10
     // estimate: how far a card is dragged toward its screen edge before letting go dismisses it (swipe to dismiss) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailDismissDistance: 48
-    // estimate: a swipe toward the screen edge this fast (points per second, over the last thumbnailVelocityWindowMs) dismisses the card whatever the distance, a flick [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    // estimate: a swipe toward the screen edge this fast (points per second, the pointer's own velocity) dismisses the card whatever the distance, a flick [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailFlickVelocity: 600
-    // estimate: the stretch of the drag's end over which its speed is measured for a flick
-    readonly property int captureThumbnailVelocityWindowMs: 120
     // estimate: how far a card slides in from its edge when it arrives (a fade only under Reduce Motion)
     readonly property int captureThumbnailDismissSlide: 24
     // estimate: how long Hide Desktop Icons keeps the icons hidden after the toolbar started the helper, until its state shows a phase

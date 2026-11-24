@@ -49,9 +49,18 @@ Scope {
             textGap: Tokens.spacingXs,
             lineHeight: bodyMetrics.height,
             charsPerLine: Math.floor((Tokens.captureThumbnailWidth - 2 * (Tokens.captureThumbnailInset + Tokens.spacingXs)) / Math.max(1, bodyMetrics.averageCharacterWidth)),
-            maxLines: Tokens.captureThumbnailTextLines
+            maxLines: Tokens.captureThumbnailTextLines,
+            lines: root.textLines
         })
     readonly property real textPad: root.metrics.textPad
+    // The lines each Capture Text card's own Text measured (id -> lines), reassigned on every change.
+    property var textLines: ({})
+
+    function setTextLines(id: string, n: int): void {
+        if (root.textLines[id] === n)
+            return;
+        root.textLines = Object.assign({}, root.textLines, {[id]: n});
+    }
 
     FontMetrics {
         id: titleMetrics

@@ -432,13 +432,39 @@ TestCase {
         verify(!Thumbs.swipeDismisses("left", 60, 900, 48, 600), "left edge, pulled the wrong way");
     }
 
-    function test_swipeVelocityOfTheDragsEnd() {
-        const samples = [{t: 1000, x: 0}, {t: 1050, x: 10}, {t: 1100, x: 40}, {t: 1150, x: 70}];
-        compare(Thumbs.swipeVelocity("right", samples, 1150, 120), (70 - 10) / 100 * 1000, "the last 120 ms");
-        compare(Thumbs.swipeVelocity("left", samples.map(p => ({t: p.t, x: -p.x})), 1150, 120), 600, "left: toward the edge is negative x");
-        compare(Thumbs.swipeVelocity("right", samples, 2000, 120), 0, "a stop before the release: no flick");
-        compare(Thumbs.swipeVelocity("right", [{t: 1, x: 0}], 1, 120), 0, "one sample");
-        compare(Thumbs.swipeVelocity("right", [], 1, 120), 0);
+    // The speed is the pointer's own (Qt's, from the events' timestamps): a stall that queues events is not a flick here.
+    function test_swipeVelocityIsTowardTheEdge() {
+        compare(Thumbs.towardVelocity("right", 700), 700);
+        compare(Thumbs.towardVelocity("right", -700), -700, "away from the edge: negative");
+        compare(Thumbs.towardVelocity("left", -650), 650);
+        compare(Thumbs.towardVelocity("right", NaN), 0);
+        compare(Thumbs.towardVelocity("right", Infinity), 0, "a burst of events 0 ms apart is not a speed");
+        compare(Thumbs.towardVelocity("right", undefined), 0);
+        verify(!Thumbs.swipeDismisses("right", 5, Thumbs.towardVelocity("right", Infinity), 48, 600), "no accidental dismiss");
+    }
+
+    function test_swipeIntentFromThePressNotTheFirstPixels() {
+        compare(Thumbs.intentAt("right", 2, 1, 10), "", "inside the dead zone");
+        compare(Thumbs.intentAt("right", 12, 3, 10), "swipe");
+        compare(Thumbs.intentAt("right", 3, 12, 10), "out", "mostly vertical: the file");
+        compare(Thumbs.intentAt("right", -12, 0, 10), "out", "away from the edge");
+        compare(Thumbs.intentAt("left", -11, 4, 10), "swipe");
+    }
+
+    // A translucent placeholder needs the compositor's blur; only an opaque picture does not.
+    function test_blurWhenAnythingTranslucentShows() {
+        verify(Thumbs.blurWanted(true, false), "a text card");
+        verify(Thumbs.blurWanted(false, false), "a recording, or a picture loading or refused");
+        verify(!Thumbs.blurWanted(false, true), "an opaque picture");
+    }
+
+    // The Text that wraps by words measures the lines; the guess is only for before it has.
+    function test_textLinesFollowTheMeasure() {
+        const m = {width: 216, inset: 0, minPictureWidth: 56, pictureHeight: 144, gap: 10, scale: 1, textPad: 12, titleHeight: 16, textGap: 4, lineHeight: 15, charsPerLine: 28, maxLines: 3, lines: {a: 2, b: 9}};
+        compare(Thumbs.cardSize({id: "a", kind: "text", text: "x"}, m).lines, 2, "measured");
+        compare(Thumbs.cardSize({id: "b", kind: "text", text: "x"}, m).lines, 3, "capped");
+        compare(Thumbs.cardSize({id: "c", kind: "text", text: "x"}, m).lines, 1, "not measured yet: the guess");
+        compare(Thumbs.cardSize({id: "a", kind: "text", qr: true, text: "x"}, m).lines, 0);
     }
 
     // At 1.25 everything is on whole device pixels: 216 pt is 270 px, never 269.

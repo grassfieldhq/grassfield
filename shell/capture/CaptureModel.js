@@ -435,63 +435,7 @@ function choice(id, options) {
     return null;
 }
 
-// What is left of the rectangle `r` ({x, y, w, h}) outside `hole` (null, or a rectangle with no area, takes nothing away): up to
-// four rectangles that tile it. The frame's line is drawn in the toolbar's own window, so under the Options menu it would show
-// through the menu's glass (the compositor blurs only what is behind the window); it is cut where the menu is.
-function outside(r, hole) {
-    if (!hole || !(hole.w > 0) || !(hole.h > 0))
-        return [r];
-    const x0 = Math.max(r.x, hole.x);
-    const y0 = Math.max(r.y, hole.y);
-    const x1 = Math.min(r.x + r.w, hole.x + hole.w);
-    const y1 = Math.min(r.y + r.h, hole.y + hole.h);
-    if (x0 >= x1 || y0 >= y1)
-        return [r];
-    const out = [];
-    if (y0 > r.y)
-        out.push({x: r.x, y: r.y, w: r.w, h: y0 - r.y});
-    if (y1 < r.y + r.h)
-        out.push({x: r.x, y: y1, w: r.w, h: r.y + r.h - y1});
-    if (x0 > r.x)
-        out.push({x: r.x, y: y0, w: x0 - r.x, h: y1 - y0});
-    if (x1 < r.x + r.w)
-        out.push({x: x1, y: y0, w: r.x + r.w - x1, h: y1 - y0});
-    return out;
-}
-
-// The frame's line of `width` (inside the frame's outline) as rectangles, none of it under `hole`.
-function borderPieces(frame, width, hole) {
-    const w = Math.min(width, frame.w / 2, frame.h / 2);
-    const edges = [
-        {x: frame.x, y: frame.y, w: frame.w, h: w},
-        {x: frame.x, y: frame.y + frame.h - w, w: frame.w, h: w},
-        {x: frame.x, y: frame.y + w, w: w, h: frame.h - 2 * w},
-        {x: frame.x + frame.w - w, y: frame.y + w, w: w, h: frame.h - 2 * w}
-    ];
-    let out = [];
-    for (const e of edges)
-        if (e.w > 0 && e.h > 0)
-            out = out.concat(outside(e, hole));
-    return out;
-}
-
 // Whether the rectangle `r` touches `hole`.
 function touches(r, hole) {
     return !!hole && hole.w > 0 && hole.h > 0 && r.x < hole.x + hole.w && r.x + r.w > hole.x && r.y < hole.y + hole.h && r.y + r.h > hole.y;
-}
-
-// The dimmed part of a `w` x `h` display around the `frame` (the four rectangles that tile what is outside it), none of it under
-// `hole`: the Options menu's glass takes the compositor's blur of the desktop alone, not the veil in front of it.
-function veilPieces(frame, w, h, hole) {
-    const sides = [
-        {x: 0, y: 0, w: w, h: frame.y},
-        {x: 0, y: frame.y + frame.h, w: w, h: h - frame.y - frame.h},
-        {x: 0, y: frame.y, w: frame.x, h: frame.h},
-        {x: frame.x + frame.w, y: frame.y, w: w - frame.x - frame.w, h: frame.h}
-    ];
-    let out = [];
-    for (const r of sides)
-        if (r.w > 0 && r.h > 0)
-            out = out.concat(outside(r, hole));
-    return out;
 }

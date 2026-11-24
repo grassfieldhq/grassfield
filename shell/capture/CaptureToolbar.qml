@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Effects
 import QtQuick.Shapes
 import Quickshell
 import Quickshell.Wayland
@@ -459,77 +460,76 @@ Variants {
             anchors.fill: parent
             visible: win.framing
 
-            Rectangle {
-                visible: !win.menuOpen
-                width: parent.width
-                height: win.frame.y
-                color: Model.qtColor(Tokens.captureFrameVeil)
-            }
+            // The dimmed display around the frame and the frame's line. They are in this window, so under the Options menu its glass
+            // would show them unblurred (the compositor blurs only what is behind the window): while the menu is open the group is
+            // cut with the menu's own rounded shape (the one its blur region has), so no pixel is neither dimmed nor blurred.
+            Item {
+                id: dimmed
 
-            Rectangle {
-                visible: !win.menuOpen
-                y: win.frame.y + win.frame.h
-                width: parent.width
-                height: parent.height - y
-                color: Model.qtColor(Tokens.captureFrameVeil)
-            }
+                anchors.fill: parent
+                layer.enabled: win.menuOpen
+                layer.effect: MultiEffect {
+                    maskEnabled: true
+                    maskInverted: true
+                    maskSource: menuHole
+                    maskThresholdMin: 0.5
+                    maskSpreadAtMin: 1.0
+                }
 
-            Rectangle {
-                visible: !win.menuOpen
-                y: win.frame.y
-                width: win.frame.x
-                height: win.frame.h
-                color: Model.qtColor(Tokens.captureFrameVeil)
-            }
-
-            Rectangle {
-                visible: !win.menuOpen
-                x: win.frame.x + win.frame.w
-                y: win.frame.y
-                width: parent.width - x
-                height: win.frame.h
-                color: Model.qtColor(Tokens.captureFrameVeil)
-            }
-
-            Rectangle {
-                visible: !win.menuOpen
-                x: win.frame.x
-                y: win.frame.y
-                width: win.frame.w
-                height: win.frame.h
-                color: "transparent"
-                border.width: Tokens.captureBorderWidth
-                border.color: Model.qtColor(Tokens.captureBorder)
-            }
-
-            // While the Options menu is open the veil and the frame's line are drawn in pieces, none of them under the menu: they
-            // are in this window, so the menu's glass would show them unblurred (the compositor blurs only what is behind the
-            // window). The frame cannot move while the menu is open, so the pieces are made once.
-            Repeater {
-                model: win.menuOpen ? Model.veilPieces(win.frame, frameLayer.width, frameLayer.height, win.menuRect) : []
-
-                delegate: Rectangle {
-                    required property var modelData
-
-                    x: modelData.x
-                    y: modelData.y
-                    width: modelData.w
-                    height: modelData.h
+                Rectangle {
+                    width: parent.width
+                    height: win.frame.y
                     color: Model.qtColor(Tokens.captureFrameVeil)
+                }
+
+                Rectangle {
+                    y: win.frame.y + win.frame.h
+                    width: parent.width
+                    height: parent.height - y
+                    color: Model.qtColor(Tokens.captureFrameVeil)
+                }
+
+                Rectangle {
+                    y: win.frame.y
+                    width: win.frame.x
+                    height: win.frame.h
+                    color: Model.qtColor(Tokens.captureFrameVeil)
+                }
+
+                Rectangle {
+                    x: win.frame.x + win.frame.w
+                    y: win.frame.y
+                    width: parent.width - x
+                    height: win.frame.h
+                    color: Model.qtColor(Tokens.captureFrameVeil)
+                }
+
+                Rectangle {
+                    x: win.frame.x
+                    y: win.frame.y
+                    width: win.frame.w
+                    height: win.frame.h
+                    color: "transparent"
+                    border.width: Tokens.captureBorderWidth
+                    border.color: Model.qtColor(Tokens.captureBorder)
                 }
             }
 
-            Repeater {
-                model: win.menuOpen ? Model.borderPieces(win.frame, Tokens.captureBorderWidth, win.menuRect) : []
+            // The menu's shape, the mask that cuts the group above.
+            Item {
+                id: menuHole
 
-                delegate: Rectangle {
-                    required property var modelData
+                width: frameLayer.width
+                height: frameLayer.height
+                visible: false
+                layer.enabled: true
 
-                    x: modelData.x
-                    y: modelData.y
-                    width: modelData.w
-                    height: modelData.h
-                    color: Model.qtColor(Tokens.captureBorder)
+                Rectangle {
+                    x: win.menuRect.x
+                    y: win.menuRect.y
+                    width: win.menuRect.w
+                    height: win.menuRect.h
+                    radius: Tokens.radiusMenu
                 }
             }
 
