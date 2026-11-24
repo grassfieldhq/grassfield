@@ -279,7 +279,7 @@ Reduce Motion: the card fades instead of sliding in.
   (ADR-0066 D-9).
 - As built in slices B3 and B4:
   - The tool group has Select, Arrow, Line, Rectangle and Ellipse (letters V, A, L, R, O); the arrow has three styles (straight,
-    curved, double), rectangle and ellipse an outline or a fill. Style controls and the other tools come with B5 to B9.
+    curved, double), rectangle and ellipse an outline or a fill. B5, B6 and B8 added the tools below; Redact, Pixelate, Blur and Spotlight come with B7 and the Background tool with B9 and B10.
   - Shapes are layers in device pixels (the fields are listed in `apps/screenshot/src/annotations.h`); a new shape's stroke is
     `screenshot.strokeWidth` times the capture's scale (the `Grassfield-Scale` text of the PNG, written by the capture helper; a file that
     does not say uses the scale of the window's screen). The view draws each layer as a Qt Quick scene item (`ShapeScene.qml`, QtQuick.Shapes with the curve renderer) inside the picture's own content, scaled by the zoom and clipped to the picture, so zooming and scrolling move the scene graph only and a drag changes one item's path; the geometry (heads, shaft ends, edges) is the exporter's own (`shapeGeometry`), so that what is seen is what Done writes.
@@ -289,6 +289,37 @@ Reduce Motion: the card fades instead of sliding in.
   - Each gesture is one undo step (Ctrl+Z, Ctrl+Shift+Z), up to 200 steps; closing a window that has changes asks Done, Don't Save
     or Cancel (Esc first lets go of the selection).
   - The exporter is golden-tested at scale 1 and 1.25 (`tests/unit/screenshot/golden/README.md`: tolerance and regeneration).
+- As built in slices B5, B6 and B8:
+  - **Shared geometry.** Every tool draws through `shapeGeometry` (`annotations.cpp`), which the exporter and `ShapeScene.qml` both use:
+    a pen or a highlighter stroke is one smoothed `QPainterPath` (Catmull-Rom through the stored points), text and a counter's number are
+    glyph outlines (`QPainterPath::addText`, laid out at 100 px and scaled, so a size is any number and nothing is hinted), and the scene
+    gets each path as SVG path data (`pathToSvg`, drawn with `PathSvg`). The screen and the file therefore draw the same outline. `tst_scene.cpp` bounds
+    the scene against the exporter for the new kinds at three zooms, 24 levels per channel and 0.1% of each layer's box, and proves
+    the bound with a drawing that is 30% too small or thin, a missing outline or pill and a counter with the wrong number.
+  - **Pen and highlighter** (P, H). The pen is a stroke of the style's width through the pointer's samples, thinned as they come (Ramer-Douglas-Peucker, 0.4 px) and
+    smoothed when drawn; the highlighter is `screenshot.highlighterFactor` times as wide, flat-capped, at `screenshot.highlighterOpacity`,
+    and snaps to a straight (level, within 10 degrees) mark when it was nearly straight (the marker along a line of text); Shift
+    draws it straight on a 45-degree line. A stroke is picked along its line, moved, and resized by the eight handles of its box.
+    A stroke keeps at most 4000 points and the tool refuses a new one when layers.json would pass three quarters of its 4 MiB.
+  - **Eyedropper** (I; the button is beside the swatches). A press or a drag reads the framed picture's pixel (`floor` of the picture-pixel point, so a capture at 1.25
+    reads the right pixel); it becomes the colour of new layers and of the selection. It reads the picture, not the layers over it.
+  - **Style bar** (`StyleBar.qml`, under the toolbar, there while the tool has options): colour swatches (the design tokens' swatch colours), the colour in use, a thin, medium or thick width, an
+    arrow's style and a shape's fill (moved here from the toolbar), a text's style and size, a counter's size, and for Crop the aspect presets, rotate, flip, Cancel and Crop. With Select, it styles the selection. Every
+    change is one undo step on the selected layer and the style of the next one; selecting a layer makes its style the next layer's.
+  - **Text** (T; plain, outlined, on a pill). A click puts an editor on the picture, Return puts the text in, Shift+Return starts a new line, Esc gives it up, and a
+    click elsewhere puts it in; a click on a text edits it (Return does too when it is selected); erasing all of a text removes it. The layer
+    names the font family (Appearance.fontFamily at the time), so the file does not depend on the theme. The outline and the pill
+    take black or white, whichever reads better on the colour. A text is picked and moved by its box; its size is a style control.
+  - **Counters** (N). A click puts a disc with its number; the number is the counter's place among the counters in layer order and is never stored, so deleting
+    one renumbers the others, in the file and on the screen (the model tells the rows after a row that goes in or out). The digits shrink to stay in the disc.
+  - **Crop, rotate, flip** (C; Rotate Left Ctrl+L, Rotate Right Ctrl+R, Flip in the Tools menu and the Crop options). They change the picture, kept as one layer of
+    type `frame` (`framing.h`): the crop in the original's pixels, the quarter turns, a mirror. The exporter and the view apply it to the
+    original with whole-pixel copies (no resampling), and every other layer is in the framed picture's pixels, so one edit is one
+    undo step that updates the frame and moves the layers (a text turns with the picture and stays unmirrored; a counter stays upright). The Crop tool shows the
+    rectangle with eight handles over a dimmed picture; the aspect presets are Free, Original, 1:1, 4:3, 3:2, 16:9 and 9:16; Return or Crop applies and Esc or Cancel gives it up.
+    A crop is pixel-exact: a crop of the whole picture is none. Revert puts the capture back; Done writes the framed picture.
+  - Tests: `tst_strokes.cpp`, `tst_text.cpp`, `tst_framing.cpp`, the new goldens in `tst_golden.cpp` (the three text styles and the counters
+    need the font `Inter`, which they name, and are skipped where it is not installed) and the style bar, the text editor and the crop overlay in `tst_screenshotview.qml`.
 
 **Pins**
 - A borderless floating picture with a thin rim (the window rim tokens).
