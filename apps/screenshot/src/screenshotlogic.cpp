@@ -1,48 +1,41 @@
 #include "screenshotlogic.h"
 
 #include <QDir>
-#include <QEventLoop>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
-#include <QTimer>
 #include <QUrl>
+
+#include <algorithm>
 
 namespace screenshot {
 
-BoundedRun runBounded(const QStringList &argv, const QByteArray &input, int timeoutMs, bool wantOutput)
+BoundedRun runBlocking(const QStringList &argv, const QByteArray &input, int timeoutMs)
 {
     BoundedRun result;
     if (argv.isEmpty())
         return result;
+    // No event loop: while it waits, nothing else of the application runs (a close request cannot cut the command short).
     QProcess process;
-    if (!wantOutput)
-        process.setStandardOutputFile(QProcess::nullDevice()); // no pipe for a background copy to hold open
+    process.setStandardOutputFile(QProcess::nullDevice()); // no pipe for a background copy to hold open
     process.setStandardErrorFile(QProcess::nullDevice());
-    QEventLoop loop;
-    QTimer timer;
-    timer.setSingleShot(true);
-    QObject::connect(&process, &QProcess::finished, &loop, &QEventLoop::quit);
-    QObject::connect(&process, &QProcess::errorOccurred, &loop, &QEventLoop::quit);
-    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    QElapsedTimer clock;
+    clock.start();
     process.start(argv.first(), argv.mid(1));
-    if (process.state() == QProcess::NotRunning || process.error() == QProcess::FailedToStart)
-        return result; // it could not be started (a program that is not there reports a normal exit 0 otherwise)
+    if (!process.waitForStarted(timeoutMs))
+        return result;
     result.started = true;
     if (!input.isEmpty())
         process.write(input);
     process.closeWriteChannel();
-    timer.start(timeoutMs);
-    if (process.state() != QProcess::NotRunning)
-        loop.exec();
-    result.finished = process.state() == QProcess::NotRunning && process.exitStatus() == QProcess::NormalExit && process.error() != QProcess::FailedToStart;
+    const int left = std::max(1, timeoutMs - int(clock.elapsed()));
+    result.finished = process.waitForFinished(left) && process.exitStatus() == QProcess::NormalExit;
     result.exitCode = result.finished ? process.exitCode() : -1;
-    if (wantOutput)
-        result.output = process.readAllStandardOutput();
     if (process.state() != QProcess::NotRunning) {
         process.kill();
-        process.waitForFinished(500);
+        process.waitForFinished(300);
     }
     return result;
 }
@@ -50,16 +43,6 @@ BoundedRun runBounded(const QStringList &argv, const QByteArray &input, int time
 QStringList clipboardArguments()
 {
     return {QStringLiteral("wl-copy"), QStringLiteral("--type"), QStringLiteral("image/png"), QStringLiteral("--sensitive")};
-}
-
-QStringList clipboardTypesArguments()
-{
-    return {QStringLiteral("wl-paste"), QStringLiteral("--list-types")};
-}
-
-QStringList clipboardPasteArguments()
-{
-    return {QStringLiteral("wl-paste"), QStringLiteral("--no-newline"), QStringLiteral("--type"), QStringLiteral("image/png")};
 }
 
 QStringList clipboardClearArguments()

@@ -3,7 +3,6 @@
 #include "exporter.h"
 #include "screenshotlogic.h"
 
-#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QMutexLocker>
 #include <QPointF>
@@ -771,17 +770,13 @@ bool ScreenshotApp::done()
         if (screenshot::hidesPixels(m_document.layers()))
             m_clipboardPng = png;
     }
-    if (!m_clipboardPng.isEmpty() && !m_clipboardForce && !clipboardHoldsCapture())
-        m_clipboardPng.clear(); // the user copied something else since the capture: that is theirs, not ours to replace
     if (!m_clipboardPng.isEmpty()) {
         if (replaceClipboard(m_clipboardPng)) {
             m_clipboardPng.clear();
-            m_clipboardForce = false;
         } else if (ok) {
-            m_clipboardForce = true;
             // Saved, but the capture may still be on the clipboard: the window stays, and a second Done tries again.
             ok = false;
-            why = QStringLiteral("the clipboard could not be replaced; it may still hold the picture as it was captured");
+            why = QStringLiteral("the clipboard could not be replaced and was cleared");
         }
     }
     setLastError(ok ? QString() : why);
@@ -792,67 +787,25 @@ bool ScreenshotApp::done()
 
 bool ScreenshotApp::replaceClipboard(const QByteArray &png)
 {
-    // The automatic copy of a capture goes through the same command (ADR-0066 D-1: type image/png, --sensitive, so clipboard history does not
-    // record it); this replaces it the same way. A Copy the user asks for is a normal copy, and is none of this.
-    const QStringList arguments = screenshot::clipboardArguments();
+    // Always, whatever the clipboard holds (owner decision): after a Done that hid pixels the clipboard is the exported picture. The automatic copy
+    // of a capture goes through the same command (ADR-0066 D-1: type image/png, --sensitive, so clipboard history does not record it). Plain
+    // blocking calls, two seconds in all (the window waits that long at most), and no event loop: a close request cannot cut the copy short.
+    constexpr int kCopyMs = 1500, kClearMs = 500;
     bool taken = false;
     if (m_clipboardWriter) {
-        taken = m_clipboardWriter(arguments, png);
+        taken = m_clipboardWriter(screenshot::clipboardArguments(), png);
     } else {
-        const screenshot::BoundedRun run = screenshot::runBounded(arguments, png, 3000, false);
+        const screenshot::BoundedRun run = screenshot::runBlocking(screenshot::clipboardArguments(), png, kCopyMs);
         taken = run.finished && run.exitCode == 0;
     }
     if (!taken) {
         // Better an empty clipboard than the capture as it was taken.
-        const QStringList clear = screenshot::clipboardClearArguments();
         if (m_clipboardWriter)
-            m_clipboardWriter(clear, QByteArray());
+            m_clipboardWriter(screenshot::clipboardClearArguments(), QByteArray());
         else
-            screenshot::runBounded(clear, QByteArray(), 2000, false);
+            screenshot::runBlocking(screenshot::clipboardClearArguments(), QByteArray(), kClearMs);
     }
     return taken;
-}
-
-bool ScreenshotApp::clipboardHoldsCapture()
-{
-    QByteArray held;
-    int state = 2; // 0 an image/png (in `held`), 1 empty or something else, 2 cannot be told
-    if (m_clipboardReader) {
-        state = m_clipboardReader(&held);
-    } else {
-        // Two short runs of wl-paste within one bound of two seconds in all, in a nested event loop: the window stays responsive, and a
-        // clipboard that does not answer in time is "cannot be told".
-        constexpr int kBoundMs = 2000;
-        QElapsedTimer clock;
-        clock.start();
-        const screenshot::BoundedRun types = screenshot::runBounded(screenshot::clipboardTypesArguments(), QByteArray(), kBoundMs, true);
-        if (types.finished) {
-            state = 1; // an empty clipboard (wl-paste fails) or one that offers no picture
-            if (types.exitCode == 0 && QString::fromUtf8(types.output).split(QLatin1Char('\n')).contains(QStringLiteral("image/png"))) {
-                // It offers a picture: a failure to read it (a timeout, one over the size the editor opens) is "cannot be told", not "other".
-                state = 2;
-                const int left = kBoundMs - int(clock.elapsed());
-                if (left > 0) {
-                    const screenshot::BoundedRun paste = screenshot::runBounded(screenshot::clipboardPasteArguments(), QByteArray(), left, true);
-                    if (paste.finished && paste.exitCode == 0 && paste.output.size() <= screenshot::kMaxImageBytes) {
-                        held = paste.output;
-                        state = 0;
-                    }
-                }
-            }
-        }
-    }
-    if (state == 2)
-        return true; // cannot be told: better to replace than to leave the capture where it may still be
-    if (state != 0)
-        return false; // empty, or something the user copied that is not a picture
-    // The capture, or an earlier export of it (the bytes the copies were made from), else the same picture as the capture.
-    if (m_document.knownDigests().contains(screenshot::CaptureHistory::sha256(held)))
-        return true;
-    const QImage copy = QImage::fromData(held, "PNG");
-    const QImage original = m_document.original();
-    return !copy.isNull() && copy.size() == original.size()
-        && copy.convertToFormat(QImage::Format_ARGB32) == original.convertToFormat(QImage::Format_ARGB32);
 }
 
 bool ScreenshotApp::revert()

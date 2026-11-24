@@ -43,20 +43,16 @@ Arguments resolveArguments(const QStringList &args, const QString &cwd);
 // the automatic copy's own (type image/png, --sensitive: clipboard history does not record it), and the one that empties it when that fails.
 QStringList clipboardArguments();
 QStringList clipboardClearArguments();
-// What the clipboard offers, and its image/png (the bytes on stdout): how the app tells whether it still holds the capture it copied.
-QStringList clipboardTypesArguments();
-QStringList clipboardPasteArguments();
 
-// A command run with a bound, without blocking the GUI thread: its input goes to its stdin, its stdout is collected (`wantOutput`) and its
-// stderr dropped, and the call waits in a nested event loop (the window stays responsive) for at most `timeoutMs`, then kills it. `started` is
-// false when it could not be run; `finished` when it exited by itself within the bound (`exitCode` is then its own).
+// A command run with a bound, blocking the calling thread (no event loop runs meanwhile): its input goes to its stdin, its stdout and stderr
+// are dropped, and it is killed after `timeoutMs` in all. `started` is false when it could not be run; `finished` when it exited by itself
+// within the bound (`exitCode` is then its own).
 struct BoundedRun {
     bool started = false;
     bool finished = false;
     int exitCode = -1;
-    QByteArray output;
 };
-BoundedRun runBounded(const QStringList &argv, const QByteArray &input, int timeoutMs, bool wantOutput);
+BoundedRun runBlocking(const QStringList &argv, const QByteArray &input, int timeoutMs);
 
 // Started with no file (the Apps entry): macOS's Screenshot app opens the capture toolbar, so this one asks the running shell to.
 // `shellIpc` is grassfield::apps::runmode::shellIpcArgs() (the arguments after `qs`: ipc -p <dir> call), empty when there is no

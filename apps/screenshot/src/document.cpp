@@ -85,7 +85,6 @@ bool Document::open(const QString &path, QString *error)
     m_savedLayers.clear();
     m_dirty = false;
     m_fileDigest = CaptureHistory::sha256(bytes);
-    m_knownDigests = {m_fileDigest}; // the file as opened: the capture, or an earlier export of it
     m_entry = m_history->find(path, m_fileDigest);
     if (m_entry && m_entry->current == m_fileDigest) {
         // The file is the result of an earlier Done: editing goes on from the capture and its layers.
@@ -102,7 +101,6 @@ bool Document::open(const QString &path, QString *error)
             m_entry.reset(); // the history lost the original: the file is all there is
         }
     }
-    m_knownDigests << CaptureHistory::sha256(m_originalBytes); // and the capture as it was taken
     return true;
 }
 
@@ -148,7 +146,6 @@ bool Document::done(QString *error)
     ++m_writes;
     m_exportedPng = png;
     const QString digest = CaptureHistory::sha256(png);
-    m_knownDigests << digest;
     m_fileDigest = digest;
     m_savedLayers = m_layers;
     m_dirty = false;

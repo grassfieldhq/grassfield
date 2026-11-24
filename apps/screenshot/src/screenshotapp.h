@@ -160,10 +160,6 @@ public:
     // wl-copy; the tests replace it. After a Done that hid pixels the clipboard holds the exported picture, never the capture (ADR-0066 D-9).
     using ClipboardWriter = std::function<bool(const QStringList &arguments, const QByteArray &png)>;
     void setClipboardWriter(const ClipboardWriter &writer) { m_clipboardWriter = writer; }
-    // What the clipboard holds as a PNG, to see whether it is still this capture's own automatic copy: 0 and the bytes when it offers image/png,
-    // 1 when it is empty or holds something else, 2 when it cannot be read (no wl-paste). The app's own runs wl-paste; the tests replace it.
-    using ClipboardReader = std::function<int(QByteArray *png)>;
-    void setClipboardReader(const ClipboardReader &reader) { m_clipboardReader = reader; }
 
     // Done: replaces the file with the edited picture, keeping the original in the history. True when the window may close.
     Q_INVOKABLE bool done();
@@ -229,8 +225,6 @@ private:
     QString colorSlot() const;
     // Puts the exported picture on the clipboard in place of the automatic copy; false (and the clipboard cleared, if it can be) when it cannot.
     bool replaceClipboard(const QByteArray &png);
-    // Whether the clipboard still holds the capture as it was taken (its automatic copy): only then does a redacted export replace it.
-    bool clipboardHoldsCapture();
     void publish();
     // The layers changed (a step, an undo, a preview): the document, the view and the state follow.
     void layersEdited();
@@ -278,8 +272,6 @@ private:
     screenshot::Layers m_regionLayers;
     int m_regionRevision = 0;
     ClipboardWriter m_clipboardWriter;
-    ClipboardReader m_clipboardReader;
-    bool m_clipboardForce = false; // a replacement failed and the clipboard was cleared: the retry writes without asking what it holds
     QByteArray m_clipboardPng; // the exported picture of a Done that hid pixels, until the clipboard has taken it
 };
 

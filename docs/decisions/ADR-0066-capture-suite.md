@@ -315,7 +315,7 @@ in 0700 folders, opened with `O_NOFOLLOW` and checked for owner, mode, type and 
 3. *The history original* is kept on purpose for Revert. It is private, pruned by retention and removed by Clear History,
    whose explanation says it holds the pictures as they were taken. Until slice B14 builds Clear History the original stays in the history and the
    layers stay editable: Redact hides the area in the saved picture, not in the history entry, and the tools' texts say "in the saved picture".
-   The editor replaces the clipboard after a redacted export only while it still holds the capture (checked with `wl-paste`), with `wl-copy --type image/png --sensitive`.
+   After an export that hides pixels the editor ALWAYS replaces the clipboard (owner decision, "toujours remplacer"), with no check of what it holds, using `wl-copy --type image/png --sensitive` and the saved file's bytes; the call blocks for two seconds at most (no event loop, so a close request cannot cut it short), and on failure or timeout `wl-copy --clear` runs and Done reports the error.
 
 **Redaction tools and what they guarantee.**
 - **Redact** (solid fill, default black, opaque): the area's pixels are replaced in every exported file. This is the tool for

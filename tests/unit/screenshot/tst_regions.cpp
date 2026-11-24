@@ -12,6 +12,8 @@
 #include <QBuffer>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
+#include <QFileDevice>
 #include <QTimer>
 #include <QFile>
 #include <QImage>
@@ -739,17 +741,6 @@ protected:
             return m_clipboardWorks;
         });
         m_app->setToolColor("#de3651");
-        QFile original(m_file);
-        ASSERT_TRUE(original.open(QIODevice::ReadOnly));
-        m_originalBytes = original.readAll();
-        // The clipboard holds the capture as it was copied (the file's own bytes), unless a test says otherwise.
-        m_app->setClipboardReader([this](QByteArray *png) {
-            if (m_held == Held::Capture)
-                *png = m_originalBytes;
-            else if (m_held == Held::Other)
-                *png = pngBytes(gradient(10, 10));
-            return m_held == Held::Capture || m_held == Held::Other ? 0 : (m_held == Held::Text ? 1 : 2);
-        });
     }
     void drag(const QString &tool, QPointF from, QPointF to)
     {
@@ -778,9 +769,6 @@ protected:
     std::unique_ptr<ScreenshotApp> m_app;
     QList<Call> m_calls;
     bool m_clipboardWorks = true;
-    QByteArray m_originalBytes;
-    enum class Held { Capture, Other, Text, Unreadable };
-    Held m_held = Held::Capture;
 };
 
 } // namespace
@@ -816,20 +804,6 @@ TEST_F(RegionAppTest, DoneHidesThePixelsAndReplacesTheClipboardWithTheRedactedPi
     EXPECT_TRUE(m_app->canRevert());
 }
 
-TEST_F(RegionAppTest, TheClipboardIsReplacedOnlyWhileItStillHoldsTheCapture)
-{
-    // The user copied another picture, or some text, since the capture: it is theirs.
-    for (const Held held : {Held::Other, Held::Text}) {
-        m_held = held;
-        m_calls.clear();
-        drag("redact", QPointF(25, 15), QPointF(75, 45));
-        ASSERT_TRUE(m_app->done()) << m_app->lastError().toStdString();
-        EXPECT_TRUE(m_calls.isEmpty()) << "the user's own copy is left alone";
-        EXPECT_FALSE(hasSecret(fileImage())) << "the file is redacted all the same";
-        m_app->undo();
-    }
-}
-
 TEST_F(RegionAppTest, TheEyedropperReadsThePixelatedPixelNotTheOneUnderIt)
 {
     drag("pixelate", QPointF(25, 15), QPointF(75, 45));
@@ -848,30 +822,24 @@ TEST_F(RegionAppTest, TheEyedropperReadsThePixelatedPixelNotTheOneUnderIt)
     EXPECT_GE(notTheSecret, 3) << "the source's own magenta is not what it reads";
 }
 
-TEST(RunBounded, WaitsAtMostItsBoundKeepsTheEventLoopGoingAndReportsTheRest)
+TEST(RunBlocking, WaitsAtMostItsBoundAndReportsTheRest)
 {
-    const BoundedRun echoed = runBounded({"cat"}, "hello", 3000, true);
+    const BoundedRun echoed = runBlocking({"cat"}, "hello", 3000);
     EXPECT_TRUE(echoed.started);
     EXPECT_TRUE(echoed.finished);
     EXPECT_EQ(echoed.exitCode, 0);
-    EXPECT_EQ(echoed.output, QByteArray("hello"));
-    const BoundedRun failed = runBounded({"false"}, {}, 3000, false);
+    const BoundedRun failed = runBlocking({"false"}, {}, 3000);
     EXPECT_TRUE(failed.finished);
     EXPECT_EQ(failed.exitCode, 1);
-    EXPECT_FALSE(runBounded({"/nonexistent/grassfield-no-such-command"}, {}, 3000, false).finished);
-    // A command that does not answer: killed at the bound, while timers of the GUI thread keep firing.
-    int ticks = 0;
-    QTimer tick;
-    tick.setInterval(20);
-    QObject::connect(&tick, &QTimer::timeout, [&] { ++ticks; });
-    tick.start();
+    const BoundedRun missing = runBlocking({"/nonexistent/grassfield-no-such-command"}, {}, 3000);
+    EXPECT_FALSE(missing.started);
+    EXPECT_FALSE(missing.finished);
     QElapsedTimer clock;
     clock.start();
-    const BoundedRun slow = runBounded({"sleep", "30"}, {}, 400, true);
+    const BoundedRun slow = runBlocking({"sleep", "30"}, {}, 400);
     EXPECT_FALSE(slow.finished);
     EXPECT_GE(clock.elapsed(), 380);
     EXPECT_LT(clock.elapsed(), 2500) << "the bound, not the command's own time";
-    EXPECT_GT(ticks, 5) << "the window stayed responsive while it waited";
 }
 
 TEST(RedactClipboard, ASecondRedactionOfTheSameCaptureReplacesTheFirstExportToo)
@@ -901,10 +869,6 @@ TEST(RedactClipboard, ASecondRedactionOfTheSameCaptureReplacesTheFirstExportToo)
             }
             return true;
         });
-        app.setClipboardReader([&](QByteArray *png) {
-            *png = clipboard;
-            return 0;
-        });
         app.setToolColor("#de3651");
     };
     {
@@ -931,9 +895,8 @@ TEST(RedactClipboard, ASecondRedactionOfTheSameCaptureReplacesTheFirstExportToo)
     const QImage onClipboard = QImage::fromData(clipboard, "PNG");
     EXPECT_NE(onClipboard.pixel(80, 30), qRgb(0, 255, 0)) << "the clipboard no longer shows the second secret";
     EXPECT_NE(onClipboard.pixel(20, 30), qRgb(255, 0, 255));
-    // And the user's own copy since then is left alone by a third.
+    // Whatever the clipboard holds, a third Done that hides pixels replaces it (owner decision): the user's own copy, too.
     clipboard = pngBytes(gradient(10, 10));
-    const QByteArray theirs = clipboard;
     {
         ScreenshotApp app(file, QStringList(), dir.path() + "/state");
         wire(app);
@@ -943,17 +906,62 @@ TEST(RedactClipboard, ASecondRedactionOfTheSameCaptureReplacesTheFirstExportToo)
         app.toolRelease(30, 15, false);
         ASSERT_TRUE(app.done());
     }
-    EXPECT_EQ(writes, 2);
-    EXPECT_EQ(clipboard, theirs);
+    EXPECT_EQ(writes, 3);
+    EXPECT_NE(QImage::fromData(clipboard, "PNG").size(), QSize(10, 10));
 }
 
-TEST_F(RegionAppTest, ACopyThatCannotBeReadIsReplacedRatherThanLeft)
+TEST(RedactClipboard, AnExportThenARevertThenANewRedactionStillReplacesTheClipboard)
 {
-    m_held = Held::Unreadable;
-    drag("redact", QPointF(25, 15), QPointF(75, 45));
-    ASSERT_TRUE(m_app->done());
-    ASSERT_EQ(m_calls.size(), 1);
-    EXPECT_EQ(m_calls[0].argv, clipboardArguments());
+    QTemporaryDir dir;
+    const QString file = dir.path() + "/Screenshot.png";
+    QImage image(120, 80, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    for (int y = 20; y < 40; ++y) {
+        for (int x = 10; x < 40; ++x)
+            image.setPixel(x, y, qRgb(255, 0, 255));
+        for (int x = 70; x < 100; ++x)
+            image.setPixel(x, y, qRgb(0, 255, 0));
+    }
+    image.setText("Grassfield-Scale", "1");
+    ASSERT_TRUE(image.save(file, "PNG"));
+    QByteArray clipboard;
+    int writes = 0;
+    const auto wire = [&](ScreenshotApp &app) {
+        app.setClipboardWriter([&](const QStringList &argv, const QByteArray &png) {
+            if (argv.contains("--sensitive")) {
+                clipboard = png;
+                ++writes;
+            }
+            return true;
+        });
+        app.setToolColor("#de3651");
+    };
+    const auto box = [](ScreenshotApp &app, double x0, double x1) {
+        app.setTool("redact");
+        ASSERT_TRUE(app.toolPress(x0, 18, 3));
+        app.toolMove(x1, 42, false);
+        app.toolRelease(x1, 42, false);
+    };
+    {
+        ScreenshotApp app(file, {}, dir.path() + "/state");
+        wire(app);
+        box(app, 8, 42);
+        ASSERT_TRUE(app.done());
+    }
+    {
+        ScreenshotApp app(file, {}, dir.path() + "/state");
+        wire(app);
+        ASSERT_TRUE(app.revert()) << qPrintable(app.lastError());
+    }
+    {
+        ScreenshotApp app(file, {}, dir.path() + "/state");
+        wire(app);
+        box(app, 8, 42);
+        box(app, 68, 102);
+        ASSERT_TRUE(app.done());
+    }
+    EXPECT_EQ(writes, 2);
+    EXPECT_NE(QImage::fromData(clipboard, "PNG").pixel(80, 30), qRgb(0, 255, 0));
 }
 
 TEST_F(RegionAppTest, TheEyedropperReadsTheRedactionsFillNotThePixelUnderIt)
@@ -1028,8 +1036,123 @@ TEST_F(RegionAppTest, ThePreviewImageIsTheExportsPixels)
 
 TEST(ClipboardArguments, AreTheAutomaticCopysOwn)
 {
-    EXPECT_EQ(clipboardTypesArguments(), (QStringList{"wl-paste", "--list-types"}));
-    EXPECT_EQ(clipboardPasteArguments(), (QStringList{"wl-paste", "--no-newline", "--type", "image/png"}));
     EXPECT_EQ(clipboardArguments(), (QStringList{"wl-copy", "--type", "image/png", "--sensitive"}));
     EXPECT_EQ(clipboardClearArguments(), (QStringList{"wl-copy", "--clear"}));
+}
+
+// ---- the real wl-copy path: a fake wl-copy on PATH ------------------------------------------------------------------------------------
+
+namespace {
+
+// A directory with a fake `wl-copy` first on PATH: `mode` is "ok" (keeps what it is given in clip.png), "fail" (exit 1) or "hang" (sleeps); every
+// call is logged in `log` (its arguments, one line each).
+struct FakeWlCopy {
+    explicit FakeWlCopy(const QString &mode, int delayMs = 0)
+    {
+        EXPECT_TRUE(dir.isValid());
+        QFile script(dir.path() + "/wl-copy");
+        EXPECT_TRUE(script.open(QIODevice::WriteOnly));
+        const QString body = QStringLiteral(
+            "#!/bin/sh\necho \"$*\" >> %1/log\n"
+            "if [ \"$1\" = \"--clear\" ]; then rm -f %1/clip.png; exit 0; fi\n"
+            "case %2 in\n"
+            "  fail) cat >/dev/null; exit 1 ;;\n"
+            "  hang) sleep 30 ;;\n"
+            "  *) sleep %3; cat > %1/clip.png.part; mv %1/clip.png.part %1/clip.png ;;\n"
+            "esac\n").arg(dir.path(), mode, QString::number(delayMs / 1000.0));
+        script.write(body.toUtf8());
+        script.close();
+        script.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+        saved = qEnvironmentVariable("PATH");
+        qputenv("PATH", (dir.path() + ":" + saved).toUtf8());
+    }
+    ~FakeWlCopy() { qputenv("PATH", saved.toUtf8()); }
+    QString log() const
+    {
+        QFile f(dir.path() + "/log");
+        return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+    }
+    QImage clip() const { return QImage(dir.path() + "/clip.png"); }
+    QTemporaryDir dir;
+    QString saved;
+};
+
+class RealCopyTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        ASSERT_TRUE(m_dir.isValid());
+        m_file = m_dir.path() + "/Screenshot.png";
+        QImage image = gradient(120, 80);
+        for (int y = 20; y < 40; ++y) {
+            for (int x = 30; x < 70; ++x)
+                image.setPixel(x, y, qRgb(255, 0, 255));
+        }
+        ASSERT_TRUE(image.save(m_file, "PNG"));
+        m_app = std::make_unique<ScreenshotApp>(m_file, QStringList(), m_dir.path() + "/state");
+        m_app->setToolColor("#de3651");
+        m_app->setTool("redact");
+        ASSERT_TRUE(m_app->toolPress(25, 15, 3));
+        m_app->toolMove(75, 45, false);
+        m_app->toolRelease(75, 45, false);
+    }
+    QTemporaryDir m_dir;
+    QString m_file;
+    std::unique_ptr<ScreenshotApp> m_app;
+};
+
+} // namespace
+
+TEST_F(RealCopyTest, WlCopyTakesTheSavedBytesWithTheSensitiveArguments)
+{
+    FakeWlCopy fake("ok");
+    ASSERT_TRUE(m_app->done()) << m_app->lastError().toStdString();
+    EXPECT_EQ(fake.log().trimmed(), QStringLiteral("--type image/png --sensitive"));
+    QFile saved(m_file);
+    ASSERT_TRUE(saved.open(QIODevice::ReadOnly));
+    QFile clip(fake.dir.path() + "/clip.png");
+    ASSERT_TRUE(clip.open(QIODevice::ReadOnly));
+    EXPECT_EQ(clip.readAll(), saved.readAll());
+}
+
+TEST_F(RealCopyTest, AFailingWlCopyIsFollowedByClearAndTheErrorIsReportedBeforeDoneReturns)
+{
+    FakeWlCopy fake("fail");
+    EXPECT_FALSE(m_app->done());
+    EXPECT_FALSE(m_app->lastError().isEmpty());
+    EXPECT_EQ(fake.log().trimmed().split('\n'), (QStringList{"--type image/png --sensitive", "--clear"}));
+    EXPECT_TRUE(fake.clip().isNull());
+}
+
+TEST_F(RealCopyTest, AWlCopyThatHangsIsKilledAtTheBoundAndFollowedByClear)
+{
+    FakeWlCopy fake("hang");
+    QElapsedTimer clock;
+    clock.start();
+    EXPECT_FALSE(m_app->done());
+    EXPECT_LT(clock.elapsed(), 3000) << "two seconds at most, not the hang's own time";
+    EXPECT_GE(clock.elapsed(), 1400);
+    EXPECT_EQ(fake.log().trimmed().split('\n'), (QStringList{"--type image/png --sensitive", "--clear"}));
+    EXPECT_FALSE(m_app->lastError().isEmpty());
+}
+
+TEST_F(RealCopyTest, ACloseRequestedWhileDoneWaitsCannotCutTheCopyShort)
+{
+    // As the app: Done runs in the main event loop and the last window closes (the application quits) while wl-copy is still working. The
+    // copy is a blocking call, so no event of the loop runs before it ends, and the redacted picture is what the clipboard holds.
+    FakeWlCopy fake("ok", 400);
+    QEventLoop loop;
+    bool returned = false, ok = false;
+    QTimer::singleShot(0, [&] {
+        ok = m_app->done();
+        returned = true;
+    });
+    QTimer::singleShot(100, [&] { loop.quit(); }); // the quit request, 100 ms into the 400 ms copy
+    loop.exec();
+    EXPECT_TRUE(returned) << "Done finished before the quit was handled";
+    EXPECT_TRUE(ok);
+    const QImage clip = fake.clip();
+    ASSERT_FALSE(clip.isNull());
+    EXPECT_NE(clip.pixel(50, 30), qRgb(255, 0, 255)) << "the clipboard holds the redacted picture";
 }
