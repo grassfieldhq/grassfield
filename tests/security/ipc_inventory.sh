@@ -900,7 +900,9 @@ def check(files):
     # whatever form it takes: the entry goes with it.
     names = sorted({k[1] for k in pending})
     for path in sorted(files):
-        if path.startswith(("apps/", "config/hypr/", "packaging/", "bridges/")) and not path.startswith("apps/settings/tests/"):
+        # (only a file that talks to the shell's IPC about `search`: addItem and removeItem are common names elsewhere)
+        if path.startswith(("apps/", "config/hypr/", "packaging/", "bridges/")) and not path.startswith("apps/settings/tests/") \
+                and re.search(r'\bipc\b', files[path], re.I) and re.search(r'["\']search["\']', files[path]):
             for n in names:
                 if re.search(r'(?<![A-Za-z0-9_])' + n + r'(?![A-Za-z0-9_])', files[path]):
                     fails.append("%s mentions %s: a caller of the pending search item functions: remove them from the pending list" % (path, n))
