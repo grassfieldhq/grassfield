@@ -49,8 +49,6 @@ Singleton {
     property int iconFrames: 0
     property bool iconsWaitedOut: false
     readonly property bool iconsReady: CaptureFile.iconsReady(Settings.captureHideDesktopIcons, root.hidesDesktopIcons, root.iconFrames, root.iconsWaitedOut)
-    // The helper's state was read once (a missing file counts): what waits for "not recording" waits for it.
-    property bool stateLoaded: false
 
     onHidesDesktopIconsChanged: root.iconFrames = 0
     onIconsReadyChanged: root.acknowledge()
@@ -197,14 +195,8 @@ Singleton {
         printErrors: false
         watchChanges: true
         onFileChanged: reload()
-        onLoaded: {
-            root.state = CaptureFile.parse(stateFile.text());
-            root.stateLoaded = true;
-        }
-        onLoadFailed: {
-            root.state = CaptureFile.parse("");
-            root.stateLoaded = true;
-        }
+        onLoaded: root.state = CaptureFile.parse(stateFile.text())
+        onLoadFailed: root.state = CaptureFile.parse("")
     }
 
     Component.onCompleted: root.probeRecorder()

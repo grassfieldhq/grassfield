@@ -31,6 +31,13 @@ function stopNeeded(locked, phase) {
 function hidesIcons(enabled, armed, phase) {
     return enabled === true && (armed === true || PHASES.indexOf(phase) > 0);
 }
+// Whether the notifications are silenced (no banner, as under Do Not Disturb; they stay in the Notification Center): the user's own
+// Do Not Disturb, as saved, or a recording running with Options > Do Not Disturb on. The second is a runtime fact only: nothing is
+// saved, so a crash, a restart or a log out cannot leave anything on, and the user's setting is never changed.
+function silenced(userDnd, recording, enabled) {
+    return userDnd === true || (recording === true && enabled === true);
+}
+
 // Frames the desktop icons' surface presents after they are hidden before a picture may be taken (the first may have been under
 // way already).
 var ICON_FRAMES = 2;

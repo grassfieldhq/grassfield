@@ -352,6 +352,10 @@ Alternatives).
 ### D-11. Settings and options
 - **Toolbar Options** (macOS 27 wording): Show Floating Thumbnail, Remember Last Selection, Freeze Screen, Hide Desktop
   Icons; for recordings, Record System Audio, Do Not Disturb and the microphone list.
+  Do Not Disturb while recording is a runtime silence only (owner decision, 2026-11-24, "temporary silence"): the notification
+  service shows no banner while a recording runs and `capture.recordDnd` is on, as macOS does while sharing the screen. The saved
+  `notifications.dnd` is never read back or written by the capture, nothing is persisted, and the Do Not Disturb indicators follow the
+  user's own setting only.
 - **New toolbar modes:** Capture Text and Capture Scrolling Area.
 - **New key:** Shift-Super-2 for Capture Text.
 - **Schema additions** under `capture.*`: `showThumbnail` (true), `thumbnailSeconds` (5), `thumbnailSide` (right),

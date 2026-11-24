@@ -3,7 +3,6 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import Grassfield.Ui
-import qs.lib
 import qs.platform
 import qs.platform.shortcuts
 import qs.services
@@ -179,99 +178,9 @@ Scope {
         value: root.armed
     }
 
-    // Do Not Disturb while recording (Options > Do Not Disturb): held when a recording starts, the state before it restored when it
-    // ends or the option is turned off; a change of Do Not Disturb by the user during the recording releases the hold and the user's
-    // choice stands (CaptureModel.dndStep). Notifications.dnd is stored, so the hold is kept in capture-dnd-hold.json (0600, in the
-    // state folder, as the other state files): a shell that starts and finds one restores it once the helper's state is read and no
-    // recording runs (a log out, a power cut or a crash in a recording would leave Do Not Disturb on for ever).
-    property var dndHold: ({held: false, previous: false})
-    property bool holdRead: false
-    property bool holdDirty: false
-    readonly property string holdPath: Mode.stateDir !== "" ? Mode.stateDir + "/capture-dnd-hold.json" : ""
-
-    function syncDnd(): void {
-        if (!holdRead || !CaptureState.stateLoaded)
-            return;
-        const step = Model.dndStep(root.dndHold, CaptureState.recording, Settings.captureRecordDnd, Settings.notificationsDnd);
-        const changed = Model.serializeHold(step.held) !== Model.serializeHold(root.dndHold);
-        root.dndHold = step.held;
-        if (changed)
-            saveHold();
-        if (step.set !== null)
-            Settings.setNotificationsDnd(step.set);
-    }
-
-    function takeHold(text: string): void {
-        if (holdRead)
-            return;
-        holdRead = true;
-        const read = Model.parseHold(text);
-        if (read.held)
-            root.dndHold = read;
-        syncDnd();
-    }
-
-    // The file holds the hold while it is held and is gone otherwise; a second change while one is written is written after it.
-    function saveHold(): void {
-        if (root.holdPath === "")
-            return;
-        if (holdWriter.running) {
-            root.holdDirty = true;
-            return;
-        }
-        const text = Model.serializeHold(root.dndHold);
-        holdWriter.command = text !== "" ? ["sh", Quickshell.shellPath("services/write-private.sh"), Mode.stateDir, root.holdPath, text] : ["rm", "-f", "--", root.holdPath];
-        holdWriter.running = true;
-    }
-
-    FileView {
-        path: root.holdPath
-        printErrors: false
-        onLoaded: root.takeHold(text())
-        onLoadFailed: root.takeHold("")
-    }
-
-    Process {
-        id: holdWriter
-        onRunningChanged: {
-            if (!running && root.holdDirty) {
-                root.holdDirty = false;
-                root.saveHold();
-            }
-        }
-    }
-
-    Connections {
-        target: CaptureState
-
-        function onStateLoadedChanged(): void {
-            root.syncDnd();
-        }
-    }
-
-    Connections {
-        target: Settings
-
-        function onNotificationsDndChanged(): void {
-            root.syncDnd();
-        }
-    }
-
-    Connections {
-        target: CaptureState
-
-        function onRecordingChanged(): void {
-            root.syncDnd();
-        }
-    }
-
-    Connections {
-        target: Settings
-
-        function onCaptureRecordDndChanged(): void {
-            root.syncDnd();
-        }
-    }
+    // Do Not Disturb while recording (Options > Do Not Disturb) writes nothing: Notifications silences its banners while the helper
+    // records and the option is on (CaptureFile.silenced), as macOS does while the screen is shared. The user's own Do Not Disturb is
+    // never read back or changed here.
 
     // The window list of Capture Selected Window comes from Hyprland's window data, read again when the mode shows (a window
     // moved since the shell last read it).

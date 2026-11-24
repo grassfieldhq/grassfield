@@ -129,6 +129,21 @@ TestCase {
             "a shooting state with a bad seq is still stopped");
     }
 
+    // Do Not Disturb while recording is a runtime silence only: the user's own setting decides alone otherwise, and is never an output.
+    function test_silencedWhileRecording() {
+        verify(CaptureFile.silenced(false, true, true), "recording with the option on: silenced");
+        verify(!CaptureFile.silenced(false, false, true), "idle: not silenced");
+        verify(!CaptureFile.silenced(false, true, false), "the option off: not silenced");
+        verify(!CaptureFile.silenced(false, false, false));
+        for (const recording of [true, false]) {
+            for (const enabled of [true, false]) {
+                verify(CaptureFile.silenced(true, recording, enabled), "the user's own Do Not Disturb always silences");
+            }
+        }
+        verify(!CaptureFile.silenced(undefined, "yes", 1), "only booleans count");
+        verify(!CaptureFile.silenced(false, undefined, undefined));
+    }
+
     // Hide Desktop Icons and the acknowledgement: a key-started shot waits for the icons to be presented hidden, never for ever.
     function test_iconsReady() {
         verify(CaptureFile.iconsReady(false, false, 0, false), "the option off: nothing to wait for");

@@ -10,6 +10,7 @@ import qs.platform
 import qs.platform.shortcuts
 import qs.services
 import "History.js" as History
+import "../services/CaptureFile.js" as CaptureFile
 import "../platform/ScreenChoice.js" as ScreenChoice
 import "Sanitizer.js" as Sanitizer
 
@@ -34,6 +35,9 @@ Singleton {
     readonly property ListModel bannerModel: bannerStore
     readonly property int bannerCount: bannerStore.count
     readonly property bool dnd: Settings.notificationsDnd
+    // No banner: the user's Do Not Disturb, or a recording with capture.recordDnd on (nothing saved: the indicators below follow
+    // `dnd` only, as macOS shows the Focus of the user's own choice).
+    readonly property bool silenced: CaptureFile.silenced(Settings.notificationsDnd, CaptureState.recording, Settings.captureRecordDnd)
     // The global previews default is Settings.notificationsPreviews; each app may override it
     // (Settings.notificationsAppPreviews, NotificationPrefs.js).
     // The session lock (SessionState mirrors shell/security/lock; false where nothing feeds it).
@@ -276,7 +280,7 @@ Singleton {
             restored: false
         };
         addEntry(entry);
-        if (!dnd)
+        if (!silenced)
             showBanner(entry, Tokens.notificationBannerTimeout);
         return key;
     }
@@ -1125,7 +1129,7 @@ Singleton {
     // timeout in ms (0: it stays). Notification.expireTimeout is in milliseconds (see History.bannerTimeout). Alert style of
     // the sender (GF-107): None shows no banner, Alerts stay until dismissed.
     function bannerTimeoutOf(entry: var, expireTimeout: real): var {
-        if (dnd && entry.urgency !== 2)
+        if (silenced && entry.urgency !== 2)
             return null;
         return NotificationPrefs.bannerTimeoutFor(NotificationPrefs.styleFor(Settings.notificationsAppStyles, entry.appName),
             History.bannerTimeout(entry.urgency, expireTimeout, Tokens.notificationBannerTimeout));

@@ -1594,12 +1594,12 @@ it; it is saved as "Screen Recording <date> at <time>.mov". macOS records no sys
   off). Capture Text has Options only (its text goes to the clipboard: no Save to, Timer or pointer). A choice is saved at once
   (`capture.location`, `capture.timer`, `capture.microphone`, `capture.showPointer`, `capture.showThumbnail`,
   `capture.rememberSelection`, `capture.hideDesktopIcons`, `capture.recordDnd`). Hide Desktop Icons hides the desktop icons while
-  the toolbar is open, for 2 s after it started the helper and while the helper's phase is not idle. Do Not Disturb sets
-  `notifications.dnd` when a recording starts and gives it its earlier value when the recording ends or the option goes off. The hold
-  is kept in `capture-dnd-hold.json` (0600, the state folder, through `write-private.sh`), because `notifications.dnd` is stored: a
-  shell that starts with the file there restores the earlier value once the helper's state is read and no recording runs (a log
-  out, a power cut or a crash leaves nothing on), and keeps the hold while one does. Any change of Do Not Disturb by the user during
-  the recording releases the hold, and the user's choice stands. A shot started by a key (Shift-Super-3 or 4) with Hide Desktop Icons
+  the toolbar is open, for 2 s after it started the helper and while the helper's phase is not idle. Under a recording, the option Do Not Disturb
+  silences notification banners while it runs, as macOS does while the screen is shared: a runtime fact only (the notification
+  service's silence is the user's own Do Not Disturb, as saved, or a recording with `capture.recordDnd` on). Nothing is saved and
+  `notifications.dnd` is never written, so a crash, a restart or a log out cannot leave anything on, and the user's own choice is never
+  overwritten. The notifications are held as under Do Not Disturb (kept in the Notification Center, critical ones still shown); the
+  menu bar's and the Control Center's Do Not Disturb indicators follow the user's own setting only. A shot started by a key (Shift-Super-3 or 4) with Hide Desktop Icons
   on is acknowledged to the helper only once the icons' surface has presented two frames since they were hidden, or after 400 ms. The toolbar's mode Capture Text (after Selected Portion) draws the same frame and
   runs `grassfield-capture text --geometry`; Shift-Super-2 and the keypad's 2 run `grassfield-capture text` (ADR-0066 A4).
 - SC10 The action hides the toolbar first, then (once its surface has given the keyboard back and gone,
