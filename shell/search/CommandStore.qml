@@ -237,17 +237,19 @@ Scope {
     // "remove" (payload: the id of a link, replacement or AI command) or "import" (payload: an absolute path). The payload is at
     // most 64 KiB and refused unless it is plain JSON with no duplicate key and no huge integer; the lists are links,
     // replacements and AI commands. Returns {ok, reason?, path?}.
-    function allow(): bool {
+    // 0 when a request may run now (a token is taken), else the milliseconds to wait before asking again (`retryAfterMs` in the
+    // `busy` answer). Callers (the Settings panes) retry on `busy` after that time.
+    function allow(): int {
         const now = Date.now();
         if (now < root.cooldownUntil)
-            return false;
+            return Math.ceil(root.cooldownUntil - now);
         if (root.tokensAt > 0)
             root.tokens = Math.min(root.rateBurst, root.tokens + (now - root.tokensAt) * root.ratePerSecond / 1000);
         root.tokensAt = now;
         if (root.tokens < 1)
-            return false;
+            return Math.ceil((1 - root.tokens) * 1000 / Math.max(root.ratePerSecond, 0.001));
         root.tokens -= 1;
-        return true;
+        return 0;
     }
 
     // Charges `ms` of main-thread work to the limited path.
@@ -257,8 +259,9 @@ Scope {
     }
 
     function request(op: string, payload: string): var {
-        if (!root.allow())
-            return {ok: false, reason: "busy"};
+        const wait = root.allow();
+        if (wait > 0)
+            return {ok: false, reason: "busy", retryAfterMs: wait};
         const t0 = Date.now();
         const r = root.dispatch(op, payload);
         root.charge(Date.now() - t0);
@@ -414,7 +417,7 @@ Scope {
             return {ok: false, reason: "file-invalid", detail: root.invalidReason};
         }
         if (reader.running)
-            return {ok: false, reason: "busy"};
+            return {ok: false, reason: "busy", retryAfterMs: 250};
         // A refused import is the last outcome too (importResult does not keep an older one).
         if (typeof path !== "string" || path.length < 1 || path[0] !== "/" || !CommandsFile.checkPath(path)) {
             root.lastImport = {ok: false, reason: "path"};

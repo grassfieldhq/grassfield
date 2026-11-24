@@ -906,6 +906,13 @@ def check(files):
             for n in names:
                 if re.search(r'(?<![A-Za-z0-9_])' + n + r'(?![A-Za-z0-9_])', files[path]):
                     fails.append("%s mentions %s: a caller of the pending search item functions: remove them from the pending list" % (path, n))
+    # A caller built with variables (backend.shellCall("search", "addItem", ...)) names the target and the function as two literals in
+    # a row: found in any file of the apps, whatever else it says.
+    for path in sorted(files):
+        if path.startswith("apps/"):
+            for n in names:
+                if re.search(r'["\']search["\']\s*,\s*["\']' + n + r'["\']', files[path]):
+                    fails.append("%s calls search.%s: remove it from the pending list" % (path, n))
     callers |= pending
 
     defs = definitions(files)

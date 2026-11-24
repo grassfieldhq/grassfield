@@ -622,13 +622,18 @@ ShellRoot {
         const t0 = Date.now();
         let ok = 0;
         let busy = 0;
+        let noRetry = 0;
         for (let i = 0; i < 400; i++) {
             const r = s.request("add", JSON.stringify({list: "replacements", item: {id: "text.l" + i, replace: "l" + i, with: "x"}}));
             if (r.ok)
                 ok++;
-            else if (r.reason === "busy")
+            else if (r.reason === "busy") {
                 busy++;
+                if (!(r.retryAfterMs > 0))
+                    noRetry++;
+            }
         }
+        check("every busy answer says when to retry", busy > 0 && noRetry === 0);
         const ms = Date.now() - t0;
         check("400 requests in a loop: the burst at most is accepted (" + ok + " accepted, " + busy + " busy, " + ms + " ms)", ok >= 1 && ok <= 12 && busy > 0 && ok + busy === 400);
         check("the in-process path is not limited", s.change("replacements", {id: "text.inproc", replace: "ip", with: "x"}, "add").ok === true);

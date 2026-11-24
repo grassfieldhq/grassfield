@@ -346,7 +346,7 @@ Grassfield ships no web link and no web-search fallback (D-net).
   `commands-keys.lua` from the same data; and one writer removes lost updates between two processes. The Settings app's
   Text Replacements and Links panes read the file and **request** changes through the `search` IPC target
   (`addItem(json)`, `updateItem(json)`, `removeItem(id)`, `importFile(path)`, and `importResult()` for the outcome of the last import, counts or a reason and no content), each validated by `CommandStore` (types,
-  caps, the link allowlist, no unpaired surrogate, at most 64 KiB per call, at most a burst of 10 calls then 5 a second, and each call keeps the next away for nine times the main-thread time it took) and refused while the session is locked (an import that finishes reading after the lock commits nothing); the panes follow the file
+  caps, the link allowlist, no unpaired surrogate, at most 64 KiB per call, at most a burst of 10 calls then 5 a second, and each call keeps the next away for nine times the main-thread time it took; past it a call answers `busy` with `retryAfterMs`, and the Settings panes retry after that time) and refused while the session is locked (an import that finishes reading after the lock commits nothing); the panes follow the file
   when it changes. These functions are listed in `docs/specs/security.md` "IPC surface" (any process of the user can call
   them, as it could write the file; nothing they accept is executable).
 - **State** (usage v3, script approvals, calculator history, colour history, kept conversations):
