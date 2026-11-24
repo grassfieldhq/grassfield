@@ -87,9 +87,12 @@ int main(int argc, char **argv)
         std::fprintf(stderr, "usage: grassfield-stack-helper <absolute folder | file: URI> <name|dateAdded|dateModified|dateCreated|kind> <K> [<low>]\n");
         return 2;
     }
-    // dies with the shell, and runs behind it
+    // dies with the shell, and runs behind it. The parent may already be gone when the signal is requested (it then never comes):
+    // the parent seen before the request is compared with the one after it. (`getppid() == 1` says nothing under a subreaper,
+    // a user manager or a container's init, which adopt orphans under another pid, and is wrong when the shell is PID 1.)
+    const pid_t parent = ::getppid();
     ::prctl(PR_SET_PDEATHSIG, SIGTERM);
-    if (::getppid() == 1)
+    if (::getppid() != parent)
         return 0;
     ::setpriority(PRIO_PROCESS, 0, 10);
     ::signal(SIGPIPE, SIG_IGN);

@@ -252,6 +252,37 @@ kill -9 "$parent"
 wait "$parent" 2>/dev/null
 t=$(waitfor 3 bash -c "! kill -0 $child 2>/dev/null")
 ok "it dies with its parent (${t} ms)" test "$t" != never
+# ... also under a subreaper (a container's init, a user manager), which adopts the orphan under a pid that is not 1: a parent that
+# ends right after starting it, possibly before the parent-death signal was requested (the signal then never comes), must not
+# leave it running. The subreaper here is this test's own python; five tries, since the window is a race.
+leftover=$(python3 -I - "$bin" "$d" <<'PY'
+import ctypes, os, signal, subprocess, sys, time
+ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
+bin_, folder = sys.argv[1], sys.argv[2]
+alive = []
+rfd, wfd = os.pipe()  # its stdin stays open: only the parent's end can stop it
+for _ in range(5):
+    r = subprocess.run(["bash", "-c", '"$0" "$1" name 30 >/dev/null 2>&1 & echo $!', bin_, folder],
+                       stdin=rfd, capture_output=True, text=True)
+    pid = int(r.stdout.strip())
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        try:
+            os.waitpid(-1, os.WNOHANG)  # the adopted orphan, once it ends
+        except ChildProcessError:
+            pass
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        alive.append(pid)
+        os.kill(pid, signal.SIGKILL)
+print(len(alive))
+PY
+)
+ok "an orphan adopted by a subreaper dies too, whenever its parent ended (${leftover} of 5 left running)" test "$leftover" = 0
 # ... and when its stdin is closed (the pipe's writer, a sleep, ends after a second)
 sleep 1 | "$bin" "$d" name 30 >"$tmp/h.out" 2>/dev/null &
 t=$(waitfor 3 grep -a -q '^W' "$tmp/h.out")
