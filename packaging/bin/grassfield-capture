@@ -816,6 +816,9 @@ def take_lock():
     except OSError:
         os.close(fd)
         return None
+    # Nobody else holds the lock, so no helper is waiting on frozen frames: those left by one that was killed go (ADR-0066 D-1,
+    # item 6; every helper start and `stop` come through here).
+    clear_frozen()
     return fd
 
 
@@ -1170,11 +1173,12 @@ def finish_shot(save, folder, paths, data, area, output, monitors, acknowledged)
 
 # ---- the freeze channel (ADR-0066 D-1, slice C4) ----
 
-def private_read(path, limit):
+def private_read(path, limit, dir_fd=None):
     # The bytes of a private file of this user's, or None: a regular file opened without following a link, one name (no hard
     # link), mode 0600, at most `limit` bytes. What the freeze channel trusts from the runtime folder, as ack_read() does.
+    # With `dir_fd`, `path` is a name inside that open folder.
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
     except OSError:
         return None
     try:
@@ -1190,26 +1194,25 @@ def private_read(path, limit):
     return data if len(data) <= limit else None
 
 
-def frozen_folder(create=False):
-    # $XDG_RUNTIME_DIR/grassfield/frozen: 0700, the user's own, never a link. With `create`, a left-over one (a helper killed
-    # without a clean-up) is removed first and a new one made. None when it cannot be had.
+def open_frozen():
+    # A new $XDG_RUNTIME_DIR/grassfield/frozen (a left-over one removed first) opened as a directory without following a link and
+    # checked on the open descriptor (a directory, this user's, no group or other bits): every frame is made, read and removed
+    # through it, never by path again. The descriptor, or None.
     folder = runtime_folder()
     if folder is None:
         return None
+    clear_frozen()
     path = os.path.join(folder, FROZEN_NAME)
-    if create:
-        clear_frozen()
-        try:
-            os.mkdir(path, 0o700)
-        except OSError:
-            return None
     try:
-        st = os.lstat(path)
+        os.mkdir(path, 0o700)
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError:
         return None
+    st = os.fstat(fd)
     if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        os.close(fd)
         return None
-    return path
+    return fd
 
 
 def clear_frozen():
@@ -1273,7 +1276,8 @@ def choice_of(data, token, frames):
         obj = json.loads(data.decode("ascii"))
     except Exception:  # not JSON, not ASCII, or nested too deep for the parser
         return None
-    if not isinstance(obj, dict) or obj.get("v") != 1 or type(obj.get("token")) is not str:
+    if not isinstance(obj, dict) or type(obj.get("v")) is not int or obj["v"] != 1 \
+            or type(obj.get("token")) is not str:
         return None
     if not hmac.compare_digest(obj["token"].encode("ascii", "replace"), token.encode("ascii")):
         return None
@@ -1330,9 +1334,10 @@ def choose_command(opts):
     return 0
 
 
-def read_ppm(path):
-    # A frozen frame (grim's binary PPM, 8 bits): (width, height, pixels), or None when it is not a private file of ours.
-    data = private_read(path, FROZEN_MAX)
+def read_ppm(name, dfd):
+    # A frozen frame (grim's binary PPM, 8 bits) in the frozen folder `dfd`: (width, height, pixels), or None when it is not a
+    # private file of ours.
+    data = private_read(name, FROZEN_MAX, dir_fd=dfd)
     m = PPM_HEAD.match(data) if data else None
     if m is None:
         return None
@@ -1348,9 +1353,9 @@ def device_span(start, size, scale, limit):
     return lo, hi
 
 
-def crop_png(frame, sel):
+def crop_png(frame, sel, dfd):
     # The part of a frozen frame `sel` (logical, layout coordinates) covers, as a PNG (8-bit RGB), or None.
-    got = read_ppm(frame["path"])
+    got = read_ppm(frame["name"], dfd)
     if got is None:
         return None
     w, h, pixels = got
@@ -1368,24 +1373,30 @@ def crop_png(frame, sel):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(rows, 3)) + chunk(b"IEND", b"")
 
 
-def freeze_grab(monitors, pointer):
-    # Every enabled display into the frozen folder, one binary PPM each (0600; PPM so that a crop is a slice of rows, with no
-    # PNG decoder). The frames as the state lists them, or None (the caller removes what was made).
+def freeze_grab(monitors, pointer, dfd):
+    # Every enabled display into the frozen folder `dfd`, one binary PPM each (0600, made here with O_EXCL; grim writes to its
+    # standard output). PPM so that a crop is a slice of rows, with no PNG decoder. The frames as the state lists them, or None
+    # (the caller removes what was made).
     screens = displays(monitors)
-    folder = frozen_folder(create=True)
+    folder = runtime_folder()
     if not screens or folder is None:
         return None
     frames = []
     for n, (name, rect) in enumerate(screens):
-        path = os.path.join(folder, "%d.ppm" % n)
+        leaf = "%d.ppm" % n
+        r = run(["grim", "-t", "ppm", "-o", name] + pointer + ["-"], timeout=30)
+        if r is None or r.returncode != 0 or not r.stdout:
+            return None
         try:
-            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+            fd = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+            with os.fdopen(fd, "wb") as f:
+                f.write(r.stdout)
         except OSError:
             return None
-        r = run(["grim", "-t", "ppm", "-o", name] + pointer + [path], timeout=30)
-        if r is None or r.returncode != 0 or read_ppm(path) is None:
+        if read_ppm(leaf, dfd) is None:
             return None
-        frames.append({"output": name, "path": path, "rect": rect, "scale": place_of(rect, monitors, name)[1]})
+        frames.append({"output": name, "name": leaf, "path": os.path.join(folder, FROZEN_NAME, leaf), "rect": rect,
+                       "scale": place_of(rect, monitors, name)[1]})
     return frames
 
 
@@ -1403,8 +1414,8 @@ def freeze_wait(token, frames):
                 os.unlink(path)
             return got
         polls += 1
-        if polls % 10 == 0 and lock_requested():
-            return None
+        if (polls % 10 == 0 and lock_requested()) or (polls % 20 == 0 and session_locked()):
+            return None  # the shell's marker every 0.5 s, Hyprland's own answer every second (a locker without the marker)
         time.sleep(FREEZE_POLL_SECONDS)
     return None
 
@@ -1424,12 +1435,27 @@ def freeze_shot(opts):
     lock = take_lock()
     if lock is None:
         return 1  # another capture owns the state
+    dfd = None
+    previous = {n: signal.getsignal(n) for n in (signal.SIGINT, signal.SIGTERM)}
+
+    def ending(signum, frame):
+        # The first signal ends the capture and the clean-up that follows runs to its end: a second one (the lock's `stop` and the
+        # user's together) is ignored from here on, then the handlers are given back.
+        for n in previous:
+            signal.signal(n, signal.SIG_IGN)
+        if signum == signal.SIGTERM:
+            sys.exit(143)
+        raise Cancelled()
+
+    for n in previous:
+        signal.signal(n, ending)
     try:
         time.sleep(max(0.0, close_previous() - time.monotonic()))
         acknowledged = handshake("shot")
         if session_locked():
             return 1
-        frames = freeze_grab(monitors, ["-c"] if opts["pointer"] else [])
+        dfd = open_frozen()
+        frames = freeze_grab(monitors, ["-c"] if opts["pointer"] else [], dfd) if dfd is not None else None
         if frames is None:
             return 1
         token = os.urandom(16).hex()
@@ -1440,7 +1466,7 @@ def freeze_shot(opts):
         if got is None or session_locked():
             return 1
         frame = next(f for f in frames if in_a_frame(got, [f]))
-        data = crop_png(frame, got)
+        data = crop_png(frame, got, dfd)
         if data is None:
             return 1
         now = datetime.datetime.now()
@@ -1464,9 +1490,15 @@ def freeze_shot(opts):
                 return 1
             paths = [path]
     finally:
+        for n in previous:
+            signal.signal(n, signal.SIG_IGN)  # no signal cuts the clean-up short
         clear_frozen()
+        if dfd is not None:
+            os.close(dfd)
         write_state({"phase": "idle"})
         os.close(lock)
+        for n, handler in previous.items():
+            signal.signal(n, handler)
     return finish_shot(save, folder, paths, data, got, "", monitors, acknowledged)
 
 

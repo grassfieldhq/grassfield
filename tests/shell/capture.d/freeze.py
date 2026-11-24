@@ -64,9 +64,17 @@ if name == "grim":
         row[1::3] = bytes([y % 256]) * w
         row[2::3] = base[y % 256:y % 256 + w]
         rows.append(bytes(row))
-    open(sys.argv[-1], "wb").write(b"P6\n%d %d\n255\n" % (w, h) + b"".join(rows))
+    ppm = b"P6\n%d %d\n255\n" % (w, h) + b"".join(rows)
+    if sys.argv[-1] == "-":
+        sys.stdout.buffer.write(ppm)
+    else:
+        open(sys.argv[-1], "wb").write(ppm)
 elif name == "hyprctl":
-    print(env["FAKE_MONITORS"] if sys.argv[2] == "monitors" else "[]")
+    mons = json.loads(env["FAKE_MONITORS"]) if sys.argv[2] == "monitors" else []
+    if os.path.exists(os.path.join(env["FAKE_LOG"], "hypr-locked")):
+        for m in mons:
+            m["solitaryBlockedBy"] = ["LOCK"]  # Hyprland's own answer under a lock, with no marker file
+    print(json.dumps(mons))
 elif name == "xdg-user-dir":
     if "FAKE_" + sys.argv[1] in env:
         print(env["FAKE_" + sys.argv[1]])
@@ -94,6 +102,7 @@ bait = os.path.join(scratch, "bait")
 ENV = {"PATH": fake + ":/usr/bin:/bin", "HOME": home, "FAKE_LOG": log, "FAKE_MONITORS": MONITORS, "XDG_RUNTIME_DIR": runtime,
        "FAKE_DESKTOP": desktop, "FAKE_SIZES": "DP-1=1200x800,DP-2=600x400"}
 GOOD = "101,53 203x77"
+OTHER = os.urandom(16).hex()  # a token that is not the helper's, made at run time
 
 
 def calls(name):
@@ -120,7 +129,7 @@ def written():
 
 
 def start(args=("selection", "--freeze"), program=fast):
-    for p in (os.path.join(log, "calls"), marker):
+    for p in (os.path.join(log, "calls"), marker, os.path.join(log, "hypr-locked")):
         if os.path.lexists(p):
             os.unlink(p)
     for n in os.listdir(desktop) if os.path.isdir(desktop) else []:
@@ -227,8 +236,8 @@ proc = start()
 st = frozen_state(proc)
 if st:
     tok = st["token"]
-    refused = [("a wrong token", ["--token", "f" * 32, "--geometry", GOOD]),
-               ("a wrong token, cancel", ["--token", "f" * 32, "--cancel"]),
+    refused = [("a wrong token", ["--token", OTHER, "--geometry", GOOD]),
+               ("a wrong token, cancel", ["--token", OTHER, "--cancel"]),
                ("an upper-case token", ["--token", tok.upper().replace("E", "A"), "--geometry", GOOD]),
                ("a 31-digit token", ["--token", tok[:31], "--geometry", GOOD]),
                ("a 33-digit token", ["--token", tok + "0", "--geometry", GOOD]),
@@ -297,6 +306,47 @@ if st:
     r = choose("--token", st2["token"], "--cancel")
     finish(proc)
 
+# ---- frames left by a killed helper: removed by `stop` and by the next helper of any kind ----
+proc = start()
+st = frozen_state(proc)
+if st:
+    os.kill(proc.pid, signal.SIGKILL)
+    finish(proc)
+    left = os.path.isdir(frozen) and sorted(os.listdir(frozen)) == ["0.ppm", "1.ppm"]
+    r = subprocess.run([fast, "stop"], env=ENV, capture_output=True, timeout=30)
+    check(left and r.returncode == 1 and not os.path.lexists(frozen) and state().get("phase") == "idle",
+          "stop with no helper left: the frames of the killed one are removed [%r]" % r.returncode)
+    os.mkdir(frozen, 0o700)
+    with open(os.path.join(frozen, "0.ppm"), "wb") as f:
+        f.write(b"x")
+    r = subprocess.run([fast, "screen"], env=ENV, capture_output=True, timeout=30)
+    check(r.returncode == 0 and not os.path.lexists(frozen), "a normal capture removes left-over frames at its start [%r]" % r.returncode)
+
+# ---- two signals during the clean-up: it still runs to its end ----
+proc = start()
+st = frozen_state(proc)
+if st:
+    for n in range(3000):
+        open(os.path.join(frozen, "pad%04d" % n), "w").close()
+    proc.send_signal(signal.SIGTERM)
+    proc.send_signal(signal.SIGINT)
+    proc.send_signal(signal.SIGTERM)
+    rc = finish(proc)
+    # the first handler to run decides the exit (143 for SIGTERM, 0 for a stop); the others are ignored
+    check(rc in (0, 143) and not os.path.lexists(frozen) and not written() and state().get("phase") == "idle",
+          "SIGTERM, SIGINT and SIGTERM in a row: the clean-up is not cut short, the frames are gone [%r]" % rc)
+
+# ---- Hyprland's lock (no marker file) ends the wait ----
+proc = start()
+st = frozen_state(proc)
+if st:
+    open(os.path.join(log, "hypr-locked"), "w").close()
+    began = time.monotonic()
+    rc = finish(proc)
+    check(rc == 1 and time.monotonic() - began < 8 and not os.path.lexists(frozen) and not pictures()
+          and state().get("phase") == "idle", "a display blocked by LOCK ends the wait: no picture, the frames removed [%r]" % rc)
+    os.unlink(os.path.join(log, "hypr-locked"))
+
 # ---- the waiting helper ignores a choice that is not a private regular file of the right shape ----
 proc = start()
 st = frozen_state(proc)
@@ -309,9 +359,11 @@ if st:
             os.unlink(choice)
         mode = 0o644 if kind == "mode644" else 0o600
         body = {"link": good, "hardlink": good, "mode644": good, "big": good + " " * 4096, "mode600": good,
-                "wrongtoken": json.dumps({"v": 1, "token": "f" * 32, "geometry": GOOD}),
+                "wrongtoken": json.dumps({"v": 1, "token": OTHER, "geometry": GOOD}),
                 "outside": json.dumps({"v": 1, "token": tok, "geometry": "970,10 20x20"}),
                 "version": json.dumps({"v": 2, "token": tok, "geometry": GOOD}),
+                "vbool": json.dumps({"v": True, "token": tok, "geometry": GOOD}),
+                "vfloat": '{"v": 1.0, "token": "%s", "geometry": "%s"}' % (tok, GOOD),
                 "extra": json.dumps({"v": 1, "token": tok, "geometry": GOOD, "x": 1}),
                 "both": json.dumps({"v": 1, "token": tok, "geometry": GOOD, "cancel": True}),
                 "cancelfalse": json.dumps({"v": 1, "token": tok, "cancel": False}),
@@ -327,7 +379,7 @@ if st:
             os.link(bait, choice)
 
     wrongly = []
-    for kind in ("link", "hardlink", "mode644", "big", "wrongtoken", "outside", "version", "extra", "both", "cancelfalse", "garbage",
+    for kind in ("link", "hardlink", "mode644", "big", "wrongtoken", "outside", "version", "vbool", "vfloat", "extra", "both", "cancelfalse", "garbage",
                  "notjson", "nonascii", "array"):
         plant(kind)
         time.sleep(0.3)
