@@ -170,6 +170,12 @@ def load():
         text = read(path)
         if "shellIpcArgs()" in text:
             files[path] = text
+    # The apps' QML and JavaScript (the Settings app's panes call the shell from there), and their headers: read whole, so that a
+    # caller in any of them is seen (a `call <target> <function>` in an argument list) whatever file type it is in.
+    for pattern in ("apps/**/*.qml", "apps/**/*.js", "apps/**/*.h"):
+        for path in sorted(glob.glob(pattern, recursive=True)):
+            if os.path.isfile(path) and "/build" not in path and path not in files:
+                files[path] = read(path)
     files["docs/specs/security.md"] = open("docs/specs/security.md", encoding="utf-8").read()
     return files
 
@@ -878,6 +884,11 @@ def check(files):
     for path in sorted(files):
         if path.startswith("apps/") and path.endswith(".cpp") and "shellIpcArgs()" in files[path]:
             callers |= set(re.findall(r'(?:shellIpcArgs\(\)|\bipc)\s*\+\s*QStringList\s*\{\s*QStringLiteral\("(\w+)"\)\s*,\s*QStringLiteral\("(\w+)"\)', files[path]))
+
+    # A QML or JavaScript file of an app that names `ipc` and lists `"call", "<target>", "<function>"` in an argument list.
+    for path in sorted(files):
+        if path.startswith("apps/") and path.endswith((".qml", ".js")) and "ipc" in files[path]:
+            callers |= set(re.findall(r'"call"\s*,\s*"(\w+)"\s*,\s*"(\w+)"', files[path]))
 
     # Command palette E1b: the Settings app's Links and Text Replacements panes (E2, E3) call the item functions of `search`. Until
     # they do, those functions are listed here (class action, no real-session caller yet); a function listed here that an app or

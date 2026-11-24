@@ -19,7 +19,7 @@
 // A successful result holds a new object built from the known fields only (a file can carry no other property into the shell).
 
 const VERSION = 1;
-const MAX_BYTES = 1048576;      // the file, in UTF-8 bytes
+const MAX_BYTES = 262144;       // the file, in UTF-8 bytes (256 KiB, owner decision: a commit of the whole file stays a few hundred ms)
 const MAX_ITEMS = 2000;         // per list
 const MAX_ARGS = 3;
 const MAX_URL = 2048;           // a longer link could not be shown whole in the approval pane (D-7)
@@ -411,7 +411,7 @@ function validate(value) {
     return {ok: true, data: data};
 }
 
-// The file's text: at most 1 MiB, valid JSON that a rewrite keeps exactly (JsonSafety: no duplicate key, no integer beyond
+// The file's text: at most 256 KiB, valid JSON that a rewrite keeps exactly (JsonSafety: no duplicate key, no integer beyond
 // 2^53), then validate(). Returns the same result shape.
 function parseText(text) {
     if (typeof text !== "string")
@@ -550,8 +550,8 @@ function mergeImport(data, incoming) {
     return {ok: true, data: next, added: added, skipped: skipped, ignored: ignored};
 }
 
-// The text the store writes: two-space indent and a final newline. `bytes` is its UTF-8 length.
+// The text the store writes: one line and a final newline (2 000 items per list must fit the cap). `bytes` is its UTF-8 length.
 function serialize(data) {
-    const text = JSON.stringify(data, null, 2) + "\n";
+    const text = JSON.stringify(data) + "\n";
     return {text: text, bytes: utf8Length(text)};
 }

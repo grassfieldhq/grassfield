@@ -140,6 +140,7 @@ ShellRoot {
         store.rateBurst = 1000000;
         store.ratePerSecond = 1000000;
         store.tokens = 1000000;
+        store.dutyFactor = 0;
         check("no file: status ok, nothing in it", store.status === "ok" && same(store.data, CommandsFile.empty()));
         check("the store is in a dev config directory", root.file.indexOf("/commands.json") > 0 && root.file.indexOf("config") > 0);
         const rev = store.revision;
@@ -298,7 +299,7 @@ ShellRoot {
                 {name: "a directory", path: f("dir"), reason: "not-regular"},
                 {name: "a file that is not there", path: f("nothere.json"), reason: "missing"},
                 {name: "a file of another user", path: "/etc/passwd", reason: "not-yours"},
-                {name: "a file over 1 MiB", path: f("big.json"), reason: "too-big"},
+                {name: "a file over 256 KiB", path: f("big.json"), reason: "too-big"},
                 {name: "content that is not JSON", path: f("bad.json"), reason: "json"},
                 {name: "a file of a newer version", path: f("foreign.json"), reason: "version"},
                 {name: "a link with a javascript: target", path: f("evil.json"), reason: "not-allowed"},
@@ -459,20 +460,20 @@ ShellRoot {
         });
     }
 
-    // A file of 63 large replacements (1 032 192 bytes of text): one more is over 1 MiB, refused by the read-back.
+    // A file of 15 large replacements (245 760 bytes of text): one more is over 256 KiB, refused by the read-back.
     function stepBig(): void {
         const p = root.dir + "/big/commands.json";
-        const gen = "rm -rf \"$1\"; mkdir -p \"$(dirname \"$1\")\"; awk 'BEGIN{x=sprintf(\"%16384s\",\"\"); gsub(/ /,\"x\",x); printf \"{\\\"v\\\":1,\\\"replacements\\\":[\"; for(i=0;i<63;i++){if(i)printf \",\"; printf \"{\\\"id\\\":\\\"text.b%d\\\",\\\"replace\\\":\\\"b%d\\\",\\\"with\\\":\\\"%s\\\"}\",i,i,x}; printf \"]}\"}' >\"$1\"";
+        const gen = "rm -rf \"$1\"; mkdir -p \"$(dirname \"$1\")\"; awk 'BEGIN{x=sprintf(\"%16384s\",\"\"); gsub(/ /,\"x\",x); printf \"{\\\"v\\\":1,\\\"replacements\\\":[\"; for(i=0;i<15;i++){if(i)printf \",\"; printf \"{\\\"id\\\":\\\"text.b%d\\\",\\\"replace\\\":\\\"b%d\\\",\\\"with\\\":\\\"%s\\\"}\",i,i,x}; printf \"]}\"}' >\"$1\"";
         root.secondPath = "";
         sh(gen, [p], () => {
             root.secondPath = p;
-            until("the second store reads 63 large items", () => second.item && second.item.status !== "loading", () => {
+            until("the second store reads 15 large items", () => second.item && second.item.status !== "loading", () => {
                 const s = second.item;
-                check("63 large items are read (" + s.status + " " + s.invalidReason + ")", s.status === "ok" && s.data.replacements.length === 63);
+                check("15 large items are read (" + s.status + " " + s.invalidReason + ")", s.status === "ok" && s.data.replacements.length === 15);
                 const r = s.change("replacements", {id: "text.over", replace: "over", with: "y".repeat(16384)}, "add");
-                check("one more is over 1 MiB and refused (" + JSON.stringify(r) + ")", r.ok === false && r.reason === "too-big" && s.data.replacements.length === 63);
+                check("one more is over 256 KiB and refused (" + JSON.stringify(r) + ")", r.ok === false && r.reason === "too-big" && s.data.replacements.length === 15);
                 const small = s.change("replacements", {id: "text.small", replace: "small", with: "y"}, "add");
-                check("a small one still fits", small.ok === true && s.data.replacements.length === 64);
+                check("a small one still fits", small.ok === true && s.data.replacements.length === 16);
                 until("the writes", () => !s.writing, root.stepCap);
             });
         });
@@ -538,6 +539,7 @@ ShellRoot {
                 s.rateBurst = 1000000;
                 s.ratePerSecond = 1000000;
                 s.tokens = 1000000;
+                s.dutyFactor = 0;
                 root.safe = s;
                 const rev = s.revision;
                 // Unpaired surrogates: refused everywhere (a pair is fine).
@@ -628,8 +630,10 @@ ShellRoot {
                 busy++;
         }
         const ms = Date.now() - t0;
-        check("400 requests in a loop: only the burst is accepted (" + ok + " accepted, " + busy + " busy, " + ms + " ms)", ok >= 10 && ok <= 12 && ok + busy === 400);
+        check("400 requests in a loop: the burst at most is accepted (" + ok + " accepted, " + busy + " busy, " + ms + " ms)", ok >= 1 && ok <= 12 && busy > 0 && ok + busy === 400);
         check("the in-process path is not limited", s.change("replacements", {id: "text.inproc", replace: "ip", with: "x"}, "add").ok === true);
+        s.dutyFactor = 0;
+        s.cooldownUntil = 0;
         s.tokensAt = Date.now() - 1000;
         s.tokens = 0;
         check("tokens come back with time (5 per second)", s.request("remove", "text.inproc").ok === true);
@@ -674,6 +678,52 @@ ShellRoot {
                     root.sh("cat \"$1\"", [s.path], out => {
                         const f = CommandsFile.parseText(out);
                         check("the file then holds both changes, the error is cleared (" + s.writeError + " ok=" + f.ok + " " + out.length + " " + (f.ok ? f.data.replacements.map(x => x.id).join() : f.reason) + ")", f.ok && f.data.replacements.some(x => x.id === "text.h1") && f.data.replacements.some(x => x.id === "text.h2") && s.writeError === "");
+                        root.safeRace();
+                    });
+                });
+            });
+        });
+    }
+
+    // The person saves the file while a (slow) write of the store runs: the write lands over it, and the person's text is not lost.
+    function safeRace(): void {
+        const s = root.safe;
+        const real = s.writerTool;
+        const p = s.path;
+        s.writeLimitMs = 10000;
+        const valid = "{\"v\":1,\"favorites\":[\"sys.lock\"]}";
+        sh("printf 'sleep 1\\nexec sh \"%s\" \"$@\"\\n' \"$2\" >\"$1/slow.sh\"", [root.fixtures, real], () => {
+            s.writerTool = root.fixtures + "/slow.sh";
+            check("a change starts a slow write", s.change("replacements", {id: "text.q1", replace: "q1", with: "x"}, "add").ok === true && s.writing);
+            root.sh("printf '%s' \"$2\" >\"$1\"", [p, valid], () => {
+                root.until("the store sees the edit during the write", () => s.external !== "", () => {
+                    root.until("the write and the write-back end", () => !s.writing && s.external === "", () => {
+                        root.sh("cat \"$1\"", [p], out => {
+                            check("a valid edit during a write is written back as the person saved it (" + out.slice(0, 60) + ")", out === valid);
+                            check("and is the content (" + s.writeError + ")", s.data.favorites.length === 1 && s.data.replacements.every(x => x.id !== "text.q1") && s.writeError === "changed-on-disk");
+                            root.safeRaceInvalid(real);
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    function safeRaceInvalid(real: string): void {
+        const s = root.safe;
+        const p = s.path;
+        const before = JSON.stringify(s.data);
+        check("a change starts a slow write", s.change("replacements", {id: "text.q2", replace: "q2", with: "x"}, "add").ok === true && s.writing);
+        sh("printf '{broken by person' >\"$1\"", [p], () => {
+            until("the store sees the edit during the write", () => s.external !== "", () => {
+                until("the write and the aside end", () => !s.writing && s.external === "", () => {
+                    root.sh("cat \"$1\"; echo ---; cat \"$2\"", [p, s.keptAside], out => {
+                        const parts = out.split("---\n");
+                        const f = CommandsFile.parseText(parts[0]);
+                        check("an invalid edit during a write is kept aside, the store's file stays (" + s.keptAside.slice(-30) + ")", parts[1] === "{broken by person\n".slice(0, -1) + "\n" || parts[1].indexOf("{broken by person") === 0);
+                        check("and the store's file is the store's content, valid", f.ok && f.data.replacements.some(x => x.id === "text.q2"));
+                        check("and the store reports it", s.writeError === "changed-on-disk" && s.status === "ok" && JSON.stringify(s.data) !== before);
+                        s.writerTool = real;
                         root.finish();
                     });
                 });

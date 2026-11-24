@@ -80,8 +80,11 @@ TestCase {
         bad({v: 1, favorites: many}, "favorites", "too-many");
         many.pop();
         verify(CommandsFile.validate({v: 1, favorites: many}).ok);
-        // 1 MiB: bytes, not characters
-        compare(CommandsFile.parseText("{\"v\": 1, \"pad\": \"" + "x".repeat(1048576) + "\"}").reason, "too-big");
+        // 256 KiB: bytes, not characters
+        compare(CommandsFile.parseText("{\"v\": 1, \"pad\": \"" + "x".repeat(262144) + "\"}").reason, "too-big");
+        const head = "{\"v\": 1, \"replacements\": [], \"pad\":\"";
+        verify(CommandsFile.parseText(head + "é".repeat((262144 - 40) / 2) + "\"}").reason !== "too-big", "just under the cap is not too-big");
+        compare(CommandsFile.parseText(head + "é".repeat(131072) + "\"}").reason, "too-big", "two-byte characters are counted in bytes");
         compare(CommandsFile.parseText("{\"v\": 1, \"pad\": \"" + "\u20ac".repeat(400000) + "\"}").reason, "too-big");
         bad(file("replacements", [{id: "text.a", replace: "r", with: "x".repeat(16385)}]), "replacements[0].with", "with");
         verify(CommandsFile.validate(file("replacements", [{id: "text.a", replace: "r", with: "x".repeat(16384)}])).ok);

@@ -4,7 +4,7 @@
 # decide the mode), created under umask 077 and chmod 0600 before it replaces FILE. Used for airplane.json
 # (shell/services/Connectivity.qml) and audio-routing.json (shell/services/Audio.qml, ADR-0047); tests/shell/write_private.sh.
 # write-private.sh DIR FILE --stdin BYTES: the text is the next BYTES bytes of standard input (one command-line argument holds
-# at most 128 KiB; commands.json, written by shell/search/CommandStore.qml, may be 1 MiB). A short input is an error and
+# at most 128 KiB; commands.json, written by shell/search/CommandStore.qml, may be 256 KiB). A short input is an error and
 # replaces nothing.
 umask 077
 dir=$1

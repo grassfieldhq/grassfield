@@ -42,7 +42,7 @@ Scope {
     property int revision: 0
     // A write is on its way: started (Process.running follows a moment later) and not yet ended, or a change waits for one.
     property bool writeBusy: false
-    readonly property bool writing: root.writeBusy || root.dirty
+    readonly property bool writing: root.writeBusy || root.dirty || root.jobs.length > 0
     signal changed
 
     // The newest content is not on disk yet.
@@ -58,14 +58,21 @@ Scope {
     // An outside edit seen while a write ran (not one of this store's texts): the next write does not overwrite it.
     property string external: ""
 
-    // Rate limit of the IPC path (`request`), a token bucket: every request costs one token, `rateBurst` tokens at most, refilled at
-    // `ratePerSecond`. Past it a request answers `busy` and does nothing. Search's own actions (`change`, `remove`) are not limited.
-    // 10 and 5 per second: a person editing by hand never meets it; a same-user loop is bounded to 5 commits a second instead of
-    // one commit of the whole file (up to 1 MiB, about 1 s at the cap) after another on the shell's main thread.
+    // Rate limit of the IPC path (`request`, and the commit of an import), two parts; past either a request answers `busy` and does
+    // nothing. Search's own actions (`change`, `remove`) are not limited.
+    // 1. A token bucket: every request costs one token, `rateBurst` at most, refilled at `ratePerSecond` (10 at once, then 5 a
+    //    second): a person editing by hand never meets it, and a loop of cheap requests is bounded.
+    // 2. A duty cycle: a request that took `ms` of the shell's main thread (measured, parse, validation, serialization and
+    //    all) keeps the next one away for `ms * dutyFactor` (9): the IPC path never holds the main thread more than about
+    //    one tenth of the time, whatever the size of the file (at the 256 KiB cap a commit takes a few hundred ms).
     property int rateBurst: 10
     property real ratePerSecond: 5
     property real tokens: rateBurst
     property real tokensAt: 0
+    property int dutyFactor: 9
+    property real cooldownUntil: 0
+    // Milliseconds of main-thread work the limited path has done (what the tests divide by the elapsed time).
+    property real workMs: 0
 
     // (a property, not a constant: the test replaces it by a script that never ends)
     property string writerTool: Quickshell.shellPath("services/write-private.sh")
@@ -86,7 +93,7 @@ Scope {
     function take(text: string): void {
         // While a write is on its way the file says what an older write said (one of the texts this store wrote): ignored, the
         // newest content is in memory and goes out next. Any other text then is an outside edit: it is kept, and the next write
-        // does not overwrite it (adoptExternal).
+        // does not lose it (settleExternal).
         if (root.writing) {
             if (root.wrote.indexOf(text) < 0)
                 root.external = text;
@@ -124,15 +131,34 @@ Scope {
         root.changed();
     }
 
-    // The outside edit kept while a write ran becomes the content (it is later than what was in flight); a change that was queued
-    // behind it is dropped, and `writeError` says so.
-    function adoptExternal(): void {
+    // The person edited the file while a write of this store ran, and that write has landed over the edit. The edit is the newest
+    // intent, so it is not lost:
+    //  - valid: it becomes the content and is written back as the file, exactly as the person saved it (a change that was queued
+    //    behind it is dropped: the person's text is newer);
+    //  - not valid: it is kept aside as commands.json.invalid-<time> (`keptAside`) and the store's file stays; the person is told by
+    //    `keptAside` and `writeError`.
+    // Either way `writeError` is "changed-on-disk".
+    function settleExternal(): void {
         const t = root.external;
         root.external = "";
-        root.dirty = false;
         root.writeError = "changed-on-disk";
-        console.warn("grassfield: commands.json was changed on disk while a change was being written; the file is kept as it is");
-        root.takeText(t);
+        const r = CommandsFile.parseText(t);
+        if (r.ok) {
+            console.warn("grassfield: commands.json was edited while a change was being written; the edit is written back");
+            root.dirty = false;
+            root.status = "ok";
+            root.invalidReason = "";
+            root.invalidPath = "";
+            root.data = r.data;
+            root.revision++;
+            root.changed();
+            root.jobs = root.jobs.concat([{file: root.path, text: t}]);
+        } else {
+            const aside = root.path + ".invalid-" + Date.now();
+            console.warn("grassfield: commands.json was edited while a change was being written and the edit is not valid (" + r.reason + "); it is kept in " + aside);
+            root.keptAside = aside;
+            root.jobs = root.jobs.concat([{file: aside, text: t}]);
+        }
     }
 
     // No file (not made yet, or the person removed it): empty content, unless the content is being kept (aside or in flight).
@@ -167,9 +193,11 @@ Scope {
         if (root.status === "invalid")
             return {ok: false, reason: "file-invalid", detail: root.invalidReason};
         if (root.external !== "") {
-            // The file changed under the store while it wrote: take that first, the caller asks again.
-            if (!root.writeBusy)
-                root.adoptExternal();
+            // The file changed under the store while it wrote: settle that first, the caller asks again.
+            if (!root.writeBusy) {
+                root.settleExternal();
+                root.pump();
+            }
             return {ok: false, reason: "changed-on-disk"};
         }
         const s = CommandsFile.serialize(next);
@@ -211,6 +239,8 @@ Scope {
     // replacements and AI commands. Returns {ok, reason?, path?}.
     function allow(): bool {
         const now = Date.now();
+        if (now < root.cooldownUntil)
+            return false;
         if (root.tokensAt > 0)
             root.tokens = Math.min(root.rateBurst, root.tokens + (now - root.tokensAt) * root.ratePerSecond / 1000);
         root.tokensAt = now;
@@ -220,9 +250,22 @@ Scope {
         return true;
     }
 
+    // Charges `ms` of main-thread work to the limited path.
+    function charge(ms: real): void {
+        root.workMs += ms;
+        root.cooldownUntil = Math.max(root.cooldownUntil, Date.now() + ms * root.dutyFactor);
+    }
+
     function request(op: string, payload: string): var {
         if (!root.allow())
             return {ok: false, reason: "busy"};
+        const t0 = Date.now();
+        const r = root.dispatch(op, payload);
+        root.charge(Date.now() - t0);
+        return r;
+    }
+
+    function dispatch(op: string, payload: string): var {
         if (op === "import")
             return root.importFile(payload);
         if (root.status === "loading")
@@ -243,23 +286,32 @@ Scope {
     // ---- Writing --------------------------------------------------------------------------------------------------------
 
     property string outgoing: ""
-    property int outgoingBytes: 0
+    // Texts to write as they are, before the next change of `data` goes out: [{file, text}] (an outside edit written back or kept).
+    property var jobs: []
 
     function pump(): void {
         if (root.writeBusy)
             return;
-        if (root.external !== "") {
-            root.adoptExternal();
+        if (root.external !== "")
+            root.settleExternal();
+        if (root.jobs.length > 0) {
+            const j = root.jobs[0];
+            root.jobs = root.jobs.slice(1);
+            root.start(j.file, j.text);
             return;
         }
         if (!root.dirty)
             return;
         root.dirty = false;
-        const s = CommandsFile.serialize(root.data);
-        root.outgoing = s.text;
-        root.outgoingBytes = s.bytes;
-        root.wrote = root.wrote.concat([s.text]).slice(-4);
-        writer.command = ["sh", root.writerTool, root.dir, root.path, "--stdin", String(s.bytes)];
+        root.writeError = "";
+        root.start(root.path, CommandsFile.serialize(root.data).text);
+    }
+
+    function start(file: string, text: string): void {
+        if (file === root.path)
+            root.wrote = root.wrote.concat([text]).slice(-4);
+        root.outgoing = text;
+        writer.command = ["sh", root.writerTool, root.dir, file, "--stdin", String(CommandsFile.utf8Length(text))];
         root.writeTimedOut = false;
         root.writeBusy = true;
         writer.running = true;
@@ -300,7 +352,11 @@ Scope {
     function writerDone(code: int): void {
         writeLimit.stop();
         root.writeBusy = false;
-        root.writeError = code === 0 ? "" : (root.writeTimedOut ? "write-timeout" : "write-failed");
+        // ("changed-on-disk" stays until the next change of the content is written)
+        if (code !== 0)
+            root.writeError = root.writeTimedOut ? "write-timeout" : "write-failed";
+        else if (root.writeError !== "changed-on-disk")
+            root.writeError = "";
         if (code !== 0)
             console.warn("grassfield: commands.json could not be written (" + code + ")");
         root.pump();
@@ -345,7 +401,7 @@ Scope {
     // ---- Importing a file -----------------------------------------------------------------------------------------------
 
     // Reads the file the person chose through shell/services/read-import.sh (an absolute path; never a link, a FIFO, a file of
-    // another user or more than 1 MiB; nothing is run), validates it as a commands.json and adds the links, replacements and
+    // another user or more than 256 KiB; nothing is run), validates it as a commands.json and adds the links, replacements and
     // AI commands whose id is new. The answer is at once ({ok: true, state: "reading"} or a refusal); the outcome follows in
     // `lastImport` ({ok, added, skipped, ignored} or {ok: false, reason}), which the `importResult` IPC function returns.
     function importFile(path: string): var {
@@ -375,6 +431,12 @@ Scope {
     property bool timedOut: false
 
     function finishImport(out: string): void {
+        const t0 = Date.now();
+        root.finishImportNow(out);
+        root.charge(Date.now() - t0);
+    }
+
+    function finishImportNow(out: string): void {
         limit.stop();
         // A session that locked while the file was read commits nothing.
         if (root.locked) {

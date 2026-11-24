@@ -1026,6 +1026,7 @@ Scope {
 
     CommandStore {
         id: commandStoreItem
+        // The predicate of SessionState.refuses(): locked (confirmed or not); the request path asks it first, this one covers an import in flight.
         locked: SessionState.locked
     }
 
