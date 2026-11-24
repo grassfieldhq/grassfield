@@ -15,10 +15,12 @@ import "CaptureThumbs.js" as Thumbs
 // depends on it) and keeps its state across that (no slide-in again, its timer paused and then resumed). Its slide-in and its
 // slide-out toward the screen edge (timeout, Close, a swipe, an action) are its own, a fade only under Reduce Motion.
 //
+// The card is the picture itself (macOS 27: no plate around it): a rounded clip, a device-pixel rim and a shadow; only the
+// Capture Text card has a glass of its own, as tall as its first lines. Every size is on whole device pixels (CaptureThumbs.cardSize).
 // The picture is a PNG the shell made from the capture (CaptureThumbnails.makeCopy), never the capture file itself.
 // A press on the picture: a click opens a screenshot in the Screenshot app (a recording in Preview), a drag toward the screen edge
-// dismisses it (the card follows the pointer), a drag the other way is a drag of the file to another application (text/uri-list,
-// as the desktop icons).
+// follows the pointer and, on release, dismisses it when it went far enough or was a flick (CaptureThumbs.swipeDismisses), a drag
+// the other way is a drag of the file to another application (text/uri-list, as the desktop icons).
 // qmllint disable uncreatable-type
 PanelWindow {
     // qmllint enable uncreatable-type
@@ -52,7 +54,10 @@ PanelWindow {
     property bool dragOk: false
     // The picture is made, or refused (the glyph shows instead): a card with none to make is ready at once.
     readonly property bool pictureReady: win.isText || win.recording || ["ok", "no"].indexOf(win.controller.copyState(win.cardId)) >= 0
-    readonly property bool shown: win.controller.mapped && win.verified && win.pictureReady && win.screen !== null && win.entry !== null
+    // Whether the card is mapped. The screen is read from the model (card.screen), not from `win.screen`: the window's own screen
+    // is bound to the card and is set again when the window is created, which made this binding depend on its own change.
+    readonly property bool shown: win.controller.mapped && win.verified && win.pictureReady && win.card !== null && win.entry !== null && win.onScreen
+    readonly property bool onScreen: win.card !== null && Quickshell.screens.some(s => s.name === win.card.screen)
 
     screen: win.card === null ? null : (Quickshell.screens.find(s => s.name === win.card.screen) ?? null)
     visible: win.shown
@@ -66,8 +71,9 @@ PanelWindow {
     margins.left: win.side === "left" ? win.dock.left : 0
     margins.right: win.side === "right" ? win.dock.right : 0
     // qmllint enable unqualified unresolved-type
-    implicitWidth: (win.entry ? win.entry.width : 0) + 2 * win.edge
-    implicitHeight: (win.entry ? win.entry.height : 0) + 2 * win.edge
+    // Whole points around the card: the card sits `edge` from the screen edge and the Dock, on a device pixel.
+    implicitWidth: Math.ceil(win.entry ? win.entry.width : 0) + 2 * win.edge
+    implicitHeight: Math.ceil(win.entry ? win.entry.height : 0) + 2 * win.edge
     exclusionMode: ExclusionMode.Ignore
     color: "transparent"
     WlrLayershell.layer: WlrLayer.Overlay
@@ -78,7 +84,8 @@ PanelWindow {
     mask: Region {
         item: plate
     }
-    BackgroundEffect.blurRegion: Appearance.effectiveTransparency > 0 && win.shown ? blur : null
+    // Only the Capture Text card is glass; a picture is opaque.
+    BackgroundEffect.blurRegion: Appearance.effectiveTransparency > 0 && win.shown && win.isText ? blur : null
     // qmllint enable missing-type
 
     Region {
@@ -134,7 +141,15 @@ PanelWindow {
         }
         // A card that is leaving and is hidden goes at once: its slide-out has nothing to show.
         if (!win.shown && win.leaving)
-            win.controller.remove(win.cardId);
+            win.removeLater();
+    }
+
+    // Removes the card once the change that asked for it has finished notifying (it changes `cards`, which this card's own bindings
+    // read); the controller and the id are taken now, the card may be gone by then.
+    function removeLater(): void {
+        const owner = win.controller;
+        const id = win.cardId;
+        Qt.callLater(() => owner.remove(id));
     }
 
     onLeavingChanged: {
@@ -143,7 +158,7 @@ PanelWindow {
         if (win.shown)
             leave.restart();
         else
-            win.controller.remove(win.cardId);
+            win.removeLater();
     }
 
     // The slide out toward the screen edge, with a fade; then the card is removed.
@@ -179,8 +194,10 @@ PanelWindow {
 
         width: win.entry ? win.entry.width : 0
         height: win.entry ? win.entry.height : 0
-        x: win.edge + plate.outward * ((Appearance.reduceMotion ? 0 : (1 - win.arrival) * Tokens.captureThumbnailDismissSlide + win.departure * plate.width) + plate.swipeOffset)
-        y: win.edge
+        // Snapped to device pixels once the card is in; the slide-in and the swipe are free.
+        readonly property real restX: win.side === "left" ? win.edge : win.width - win.edge - plate.width
+        x: restX + plate.outward * ((Appearance.reduceMotion ? 0 : (1 - win.arrival) * Tokens.captureThumbnailDismissSlide + win.departure * plate.width) + plate.swipeOffset)
+        y: Math.round((win.height - win.edge - plate.height) * Math.max(1, Screen.devicePixelRatio)) / Math.max(1, Screen.devicePixelRatio)
         opacity: win.arrival * (1 - win.departure) * (1 - Math.min(1, Math.abs(plate.swipeOffset) / (2 * Tokens.captureThumbnailDismissDistance)))
         Accessible.role: win.isText ? Accessible.StaticText : Accessible.Button
         Accessible.name: win.isText ? win.textTitle + (win.card !== null && win.card.text !== "" ? ", " + win.card.text : "") : win.recording ? qsTr("Screen recording") : (win.card !== null && win.card.pixels !== null ? qsTr("Screenshot, %1 × %2").arg(win.card.pixels.w).arg(win.card.pixels.h) : qsTr("Screenshot"))
@@ -190,20 +207,24 @@ PanelWindow {
                 win.controller.act(Thumbs.clickAction(win.card), win.cardId);
         }
 
-        // The card's glass: a text-free surface of the menus' class.
+        // The shadow of the picture (outside its shape), and the glass of a Capture Text card (a text surface: the menus' class). The
+        // picture covers it: its rim is drawn over the picture below.
         Material {
+            id: material
+
             glassClass: "menu"
             anchors.fill: parent
             radius: Tokens.captureThumbnailRadius
+            highlightEnabled: win.isText
+            borderEnabled: win.isText
         }
 
         Item {
             id: picture
 
-            x: Tokens.captureThumbnailInset
-            y: Tokens.captureThumbnailInset
-            width: win.entry ? win.entry.pictureWidth : 0
-            height: win.entry ? win.entry.pictureHeight : 0
+            width: plate.width
+            height: plate.height
+            visible: !win.isText
 
             // The picture, decoded at the size it shows (never the capture's full size: a 4K capture is 33 MB decoded).
             Image {
@@ -227,54 +248,14 @@ PanelWindow {
                 visible: !image.visible
                 color: Appearance.withAlpha(Appearance.colors.fill, Appearance.fillOpacity)
 
-                // Capture Text: what was recognised, a few lines of it, elided.
-                Column {
-                    visible: win.isText
-                    anchors.fill: parent
-                    anchors.margins: Tokens.captureThumbnailInset
-                    spacing: Tokens.spacingXs
-
-                    Text {
-                        width: parent.width
-                        textFormat: Text.PlainText
-                        text: win.textTitle
-                        color: Appearance.colors.text
-                        elide: Text.ElideRight
-                        font.family: Appearance.fontFamily
-                        font.pixelSize: Tokens.typographyBodySize
-                        font.weight: Tokens.typographyTitleWeight
-                    }
-
-                    Text {
-                        width: parent.width
-                        height: parent.height - y
-                        textFormat: Text.PlainText
-                        text: win.isText && win.card !== null && !win.isQr ? win.card.text : ""
-                        color: Appearance.colors.textSecondary
-                        wrapMode: Text.Wrap
-                        elide: Text.ElideRight
-                        // As many lines as the card has room for, the last one elided.
-                        maximumLineCount: Math.max(1, Math.floor(height / snippetMetrics.height))
-                        clip: true
-                        FontMetrics {
-                            id: snippetMetrics
-                            font.family: Appearance.fontFamily
-                            font.pixelSize: Tokens.typographyBodySize
-                        }
-                        font.family: Appearance.fontFamily
-                        font.pixelSize: Tokens.typographyBodySize
-                    }
-                }
-
                 Icon {
-                    visible: !win.isText
                     anchors.centerIn: parent
                     name: win.recording ? "film" : "camera"
                     size: Tokens.captureThumbnailButtonSize
                 }
             }
 
-            // The corners of the picture are the card's radius less its inset: concentric.
+            // The picture's rounded clip: the card's corner.
             layer.enabled: true
             layer.effect: MultiEffect {
                 maskEnabled: true
@@ -289,9 +270,63 @@ PanelWindow {
 
             width: picture.width
             height: picture.height
-            radius: Tokens.captureThumbnailPictureRadius
+            radius: Tokens.captureThumbnailRadius
             visible: false
             layer.enabled: true
+        }
+
+        // The picture's rim, one device pixel wide at every scale (ADR-0024): the dark edge on its outline and the light specular
+        // line just inside it, over the picture.
+        Rectangle {
+            visible: !win.isText
+            anchors.fill: parent
+            radius: Tokens.captureThumbnailRadius
+            color: "transparent"
+            border.width: material.hairline
+            border.color: Appearance.withAlpha(material.borderColor, material.borderOpacity)
+        }
+
+        Rectangle {
+            visible: !win.isText
+            anchors.fill: parent
+            anchors.margins: material.hairline
+            radius: Math.max(0, Tokens.captureThumbnailRadius - material.hairline)
+            color: "transparent"
+            border.width: material.hairline
+            border.color: Appearance.withAlpha(Appearance.colors.materialHighlight, material.highlightOpacity / 2)
+        }
+
+        // Capture Text: the title and the first lines of what was recognised, in a card as tall as they are.
+        Column {
+            visible: win.isText
+            x: win.controller.textPad
+            y: win.controller.textPad
+            width: plate.width - 2 * win.controller.textPad
+            spacing: Tokens.spacingXs
+
+            Text {
+                width: parent.width
+                textFormat: Text.PlainText
+                text: win.textTitle
+                color: Appearance.colors.text
+                elide: Text.ElideRight
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyBodySize
+                font.weight: Tokens.typographyTitleWeight
+            }
+
+            Text {
+                visible: text !== ""
+                width: parent.width
+                textFormat: Text.PlainText
+                text: win.isText && win.card !== null && !win.isQr ? win.card.text : ""
+                color: Appearance.colors.textSecondary
+                wrapMode: Text.Wrap
+                elide: Text.ElideRight
+                maximumLineCount: win.entry ? Math.max(1, win.entry.lines) : 1
+                font.family: Appearance.fontFamily
+                font.pixelSize: Tokens.typographyBodySize
+            }
         }
 
         // Click: open it. Drag toward the edge: dismiss. Drag elsewhere: the file to another application.
@@ -324,23 +359,26 @@ PanelWindow {
             id: swipe
 
             property string intent: ""
+            // Where the card was pulled to, and how fast at the end: kept here because the handler's translation is reset to zero
+            // as the press ends, before (or while) `active` goes false, so the release cannot read it.
+            property real pulled: 0
+            property var samples: []
 
             target: null
             enabled: !win.isText
             acceptedButtons: Qt.LeftButton
             dragThreshold: Tokens.captureThumbnailDragThreshold
+            // The press is a drag from the moment `active` is true, but its translation counts from there (the threshold's distance is
+            // not in it): the direction is read at the first move, not at activation, or every swipe read as a drag of the file.
             onActiveChanged: {
                 if (active) {
-                    intent = Thumbs.dragIntent(win.side, translation.x, translation.y);
-                    if (intent === "out" && !win.dragOk) {
-                        intent = "";
-                        return;
-                    }
-                    if (intent === "out")
-                        out.start();
+                    intent = "";
+                    pulled = 0;
+                    samples = [];
                 } else {
                     if (intent === "swipe") {
-                        if (Thumbs.dismissed(win.side, plate.swipeOffset * plate.outward, Tokens.captureThumbnailDismissDistance))
+                        const velocity = Thumbs.swipeVelocity(win.side, samples, Date.now(), Tokens.captureThumbnailVelocityWindowMs);
+                        if (Thumbs.swipeDismisses(win.side, pulled, velocity, Tokens.captureThumbnailDismissDistance, Tokens.captureThumbnailFlickVelocity))
                             win.controller.dismiss(win.cardId);
                         else
                             plate.swipeOffset = 0;
@@ -350,8 +388,26 @@ PanelWindow {
                 }
             }
             onTranslationChanged: {
-                if (active && intent === "swipe")
-                    plate.swipeOffset = Math.max(0, translation.x * plate.outward);
+                // The reset at the end of the press is not a move.
+                if (!active || (translation.x === 0 && translation.y === 0))
+                    return;
+                if (intent === "") {
+                    intent = Thumbs.dragIntent(win.side, translation.x, translation.y);
+                    if (intent === "out" && !win.dragOk) {
+                        intent = "none";
+                        return;
+                    }
+                    if (intent === "out")
+                        out.start();
+                }
+                if (intent !== "swipe")
+                    return;
+                pulled = translation.x;
+                plate.swipeOffset = Math.max(0, pulled * plate.outward);
+                samples = samples.concat([{
+                        t: Date.now(),
+                        x: pulled
+                    }]).slice(-16);
             }
         }
 
@@ -395,8 +451,8 @@ PanelWindow {
         // outer side. The picture is never narrower than the two side by side (CaptureThumbs.leastPictureWidth).
         Item {
             visible: hover.hovered && !swipe.active
-            x: win.side === "right" ? picture.x + Tokens.captureThumbnailInset : picture.x + picture.width - width - Tokens.captureThumbnailInset
-            y: picture.y + Tokens.captureThumbnailInset
+            x: win.side === "right" ? Tokens.captureThumbnailInset : picture.width - width - Tokens.captureThumbnailInset
+            y: Tokens.captureThumbnailInset
             width: Tokens.captureThumbnailButtonSize + 2 * Tokens.spacingXs
             height: width
 
@@ -426,8 +482,8 @@ PanelWindow {
             visible: hover.hovered && !swipe.active && !win.isText
             width: buttons.implicitWidth + 2 * Tokens.spacingXs
             height: Tokens.captureThumbnailButtonSize + 2 * Tokens.spacingXs
-            x: win.side === "right" ? picture.x + picture.width - width - Tokens.captureThumbnailInset : picture.x + Tokens.captureThumbnailInset
-            y: picture.y + Tokens.captureThumbnailInset
+            x: win.side === "right" ? picture.width - width - Tokens.captureThumbnailInset : Tokens.captureThumbnailInset
+            y: Tokens.captureThumbnailInset
 
             Material {
                 glassClass: "menu"

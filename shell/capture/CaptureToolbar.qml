@@ -460,12 +460,14 @@ Variants {
             visible: win.framing
 
             Rectangle {
+                visible: !win.menuOpen
                 width: parent.width
                 height: win.frame.y
                 color: Model.qtColor(Tokens.captureFrameVeil)
             }
 
             Rectangle {
+                visible: !win.menuOpen
                 y: win.frame.y + win.frame.h
                 width: parent.width
                 height: parent.height - y
@@ -473,6 +475,7 @@ Variants {
             }
 
             Rectangle {
+                visible: !win.menuOpen
                 y: win.frame.y
                 width: win.frame.x
                 height: win.frame.h
@@ -480,6 +483,7 @@ Variants {
             }
 
             Rectangle {
+                visible: !win.menuOpen
                 x: win.frame.x + win.frame.w
                 y: win.frame.y
                 width: parent.width - x
@@ -488,6 +492,7 @@ Variants {
             }
 
             Rectangle {
+                visible: !win.menuOpen
                 x: win.frame.x
                 y: win.frame.y
                 width: win.frame.w
@@ -495,6 +500,37 @@ Variants {
                 color: "transparent"
                 border.width: Tokens.captureBorderWidth
                 border.color: Model.qtColor(Tokens.captureBorder)
+            }
+
+            // While the Options menu is open the veil and the frame's line are drawn in pieces, none of them under the menu: they
+            // are in this window, so the menu's glass would show them unblurred (the compositor blurs only what is behind the
+            // window). The frame cannot move while the menu is open, so the pieces are made once.
+            Repeater {
+                model: win.menuOpen ? Model.veilPieces(win.frame, frameLayer.width, frameLayer.height, win.menuRect) : []
+
+                delegate: Rectangle {
+                    required property var modelData
+
+                    x: modelData.x
+                    y: modelData.y
+                    width: modelData.w
+                    height: modelData.h
+                    color: Model.qtColor(Tokens.captureFrameVeil)
+                }
+            }
+
+            Repeater {
+                model: win.menuOpen ? Model.borderPieces(win.frame, Tokens.captureBorderWidth, win.menuRect) : []
+
+                delegate: Rectangle {
+                    required property var modelData
+
+                    x: modelData.x
+                    y: modelData.y
+                    width: modelData.w
+                    height: modelData.h
+                    color: Model.qtColor(Tokens.captureBorder)
+                }
             }
 
             // Eight handles made once, each bound to its place on the frame: a model of fresh points destroyed and made the eight
@@ -508,6 +544,12 @@ Variants {
 
                     x: Math.round(centre.x - width / 2)
                     y: Math.round(centre.y - height / 2)
+                    visible: !Model.touches({
+                        x: x,
+                        y: y,
+                        w: width,
+                        h: height
+                    }, win.menuRect)
                     width: Tokens.captureHandleSize
                     height: Tokens.captureHandleSize
                     radius: width / 2
@@ -749,6 +791,19 @@ Variants {
                     win.closeMenu();
             }
         }
+
+        // Where the Options menu is while it is open ({x, y, w, h}, empty otherwise).
+        readonly property var menuRect: win.menuOpen && menuLoader.item !== null ? ({
+                x: menuLoader.x,
+                y: menuLoader.y,
+                w: menuLoader.width,
+                h: menuLoader.height
+            }) : ({
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0
+            })
 
         Loader {
             id: menuLoader

@@ -3998,8 +3998,8 @@ QtObject {
     readonly property int captureToolbarCloseIconSize: 18
     // estimate: the timer's countdown, a square glass plate centred on what is captured (the display, the window or the area), as macOS shows the seconds left [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property int captureCountdownSize: 112
-    // estimate: the countdown plate's corner, the alerts' radius (radius.alert) on a plate of that size [ref: docs/specs/system-dialogs.md § Capture toolbar]
-    readonly property int captureCountdownRadius: 26
+    // estimate: the countdown plate is a circle of the system HUD glass, its corner half its size, as the OSD pill's is half its height [ref: docs/specs/system-dialogs.md § Capture toolbar]
+    readonly property int captureCountdownRadius: 56
     // estimate: the seconds left, large digits on the countdown plate [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property int captureCountdownTextSize: 64
     // estimate: the smallest frame of the Selected Portion modes, each way (logical px): a drag or a handle never makes it thinner, so it stays a frame with handles [ref: docs/specs/system-dialogs.md § Capture toolbar]
@@ -4026,14 +4026,14 @@ QtObject {
     readonly property real captureWindowHighlightPower: 2.6
     // estimate: the floating thumbnail's card (a glass card of the menus' class), about the width of macOS 27's screenshot thumbnail [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailWidth: 216
-    // estimate: the tallest the picture inside the card gets, so a tall capture does not fill the corner; the picture is fitted inside the card's width and this height [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
-    readonly property int captureThumbnailPictureHeight: 135
-    // estimate: the card's corner, concentric with the picture's (capture.thumbnailPictureRadius) inside its capture.thumbnailInset [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    // estimate: the tallest the card gets (a 3:2 picture at the full card width), so a tall capture does not fill the corner; the picture is fitted inside the card width and this height [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailPictureHeight: 144
+    // estimate: the corner of the floating thumbnail, the picture's own rounded clip (macOS 27's thumbnail is the picture itself, no plate) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailRadius: 16
-    // estimate: the picture's corner inside the card, the card's radius less the inset (16 - 6) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
-    readonly property int captureThumbnailPictureRadius: 10
-    // estimate: the card's glass around the picture [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    // estimate: the room between the card's edge and its hover buttons, and around the text of a Capture Text card [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailInset: 6
+    // estimate: the most lines of the recognised text a Capture Text card shows, the card is as tall as they are (a compact card, as macOS's)
+    readonly property int captureThumbnailTextLines: 3
     // estimate: between two stacked cards [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailGap: 10
     // estimate: the card's distance from the display's side edge, and above the Dock's band or the bottom edge [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
@@ -4050,6 +4050,10 @@ QtObject {
     readonly property int captureThumbnailDragThreshold: 10
     // estimate: how far a card is dragged toward its screen edge before letting go dismisses it (swipe to dismiss) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
     readonly property int captureThumbnailDismissDistance: 48
+    // estimate: a swipe toward the screen edge this fast (points per second, over the last thumbnailVelocityWindowMs) dismisses the card whatever the distance, a flick [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailFlickVelocity: 600
+    // estimate: the stretch of the drag's end over which its speed is measured for a flick
+    readonly property int captureThumbnailVelocityWindowMs: 120
     // estimate: how far a card slides in from its edge when it arrives (a fade only under Reduce Motion)
     readonly property int captureThumbnailDismissSlide: 24
     // estimate: how long Hide Desktop Icons keeps the icons hidden after the toolbar started the helper, until its state shows a phase

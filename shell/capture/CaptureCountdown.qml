@@ -78,7 +78,7 @@ Variants {
 
             // A text surface: the menus' class.
             Material {
-                glassClass: "menu"
+                glassClass: "controls"
                 anchors.fill: parent
                 radius: Tokens.captureCountdownRadius
             }

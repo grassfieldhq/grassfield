@@ -36,18 +36,43 @@ Scope {
     // the acknowledgement is late rather than early.
     readonly property bool mapped: root.cards.length > 0 && !root.hidden
     readonly property string script: Quickshell.shellPath("services/capture-thumb.sh")
+    // The picture is the card (macOS 27: no plate around it), so a picture card has no inset; a Capture Text card is as tall as its
+    // title and its first lines (the same fonts the card sets them in).
     readonly property var metrics: ({
             width: Tokens.captureThumbnailWidth,
             pictureHeight: Tokens.captureThumbnailPictureHeight,
-            inset: Tokens.captureThumbnailInset,
+            inset: 0,
             minPictureWidth: Thumbs.leastPictureWidth(Tokens.captureThumbnailButtonSize, Tokens.spacingXs, Tokens.captureThumbnailInset),
-            gap: Tokens.captureThumbnailGap
+            gap: Tokens.captureThumbnailGap,
+            textPad: Tokens.captureThumbnailInset + Tokens.spacingXs,
+            titleHeight: titleMetrics.height,
+            textGap: Tokens.spacingXs,
+            lineHeight: bodyMetrics.height,
+            charsPerLine: Math.floor((Tokens.captureThumbnailWidth - 2 * (Tokens.captureThumbnailInset + Tokens.spacingXs)) / Math.max(1, bodyMetrics.averageCharacterWidth)),
+            maxLines: Tokens.captureThumbnailTextLines
         })
-    // Each card's size and the room under it, by id.
+    readonly property real textPad: root.metrics.textPad
+
+    FontMetrics {
+        id: titleMetrics
+        font.family: Appearance.fontFamily
+        font.pixelSize: Tokens.typographyBodySize
+        font.weight: Tokens.typographyTitleWeight
+    }
+
+    FontMetrics {
+        id: bodyMetrics
+        font.family: Appearance.fontFamily
+        font.pixelSize: Tokens.typographyBodySize
+    }
+
+    // Each card's size and the room under it, by id, on whole device pixels of the display it is on.
     readonly property var entries: {
         const out = {};
         for (const s of Quickshell.screens)
-            for (const e of Thumbs.layout(root.cards, s.name, root.metrics))
+            for (const e of Thumbs.layout(root.cards, s.name, Object.assign({}, root.metrics, {
+                    scale: s.devicePixelRatio
+                })))
                 out[e.id] = e;
         return out;
     }

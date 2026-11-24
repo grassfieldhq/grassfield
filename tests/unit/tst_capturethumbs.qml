@@ -419,4 +419,59 @@ TestCase {
         verify(Thumbs.dismissed("left", -60, 48));
         verify(!Thumbs.dismissed("left", 60, 48));
     }
+
+    // Letting go of a swipe: far enough toward the edge, or a flick toward it (macOS), never a pull the other way.
+    function test_swipeDismissesByDistanceOrFlick() {
+        verify(Thumbs.swipeDismisses("right", 48, 0, 48, 600), "the distance");
+        verify(!Thumbs.swipeDismisses("right", 20, 100, 48, 600), "short and slow stays");
+        verify(Thumbs.swipeDismisses("right", 20, 700, 48, 600), "short but a flick");
+        verify(!Thumbs.swipeDismisses("right", 0, 900, 48, 600), "a flick that moved the card not at all");
+        verify(!Thumbs.swipeDismisses("right", -80, 900, 48, 600), "pulled away from the edge: never");
+        verify(Thumbs.swipeDismisses("left", -60, 0, 48, 600), "left edge, distance");
+        verify(Thumbs.swipeDismisses("left", -15, 650, 48, 600), "left edge, flick");
+        verify(!Thumbs.swipeDismisses("left", 60, 900, 48, 600), "left edge, pulled the wrong way");
+    }
+
+    function test_swipeVelocityOfTheDragsEnd() {
+        const samples = [{t: 1000, x: 0}, {t: 1050, x: 10}, {t: 1100, x: 40}, {t: 1150, x: 70}];
+        compare(Thumbs.swipeVelocity("right", samples, 1150, 120), (70 - 10) / 100 * 1000, "the last 120 ms");
+        compare(Thumbs.swipeVelocity("left", samples.map(p => ({t: p.t, x: -p.x})), 1150, 120), 600, "left: toward the edge is negative x");
+        compare(Thumbs.swipeVelocity("right", samples, 2000, 120), 0, "a stop before the release: no flick");
+        compare(Thumbs.swipeVelocity("right", [{t: 1, x: 0}], 1, 120), 0, "one sample");
+        compare(Thumbs.swipeVelocity("right", [], 1, 120), 0);
+    }
+
+    // At 1.25 everything is on whole device pixels: 216 pt is 270 px, never 269.
+    function test_cardOnWholeDevicePixels() {
+        const m = Object.assign({}, metrics, {inset: 0, scale: 1.25});
+        for (const px of [{w: 1600, h: 900}, {w: 750, h: 500}, {w: 500, h: 1000}, {w: 2400, h: 1350}]) {
+            const c = Thumbs.cardSize({kind: "shot", pixels: px}, m);
+            for (const v of [c.width, c.height, c.pictureWidth, c.pictureHeight]) {
+                const dev = v * 1.25;
+                verify(Math.abs(dev - Math.round(dev)) < 1e-9, "device pixels of " + v);
+            }
+            compare(c.pictureWidth === 216 || c.pictureHeight === 135.2, true, "the token width, or the tallest");
+        }
+        compare(Thumbs.cardSize({kind: "shot", pixels: {w: 1600, h: 900}}, m).width * 1.25, 270, "216 pt = 270 px");
+        const out = Thumbs.layout([{id: "a", kind: "shot", pixels: {w: 750, h: 500}, screen: "DP-1"}, {id: "b", kind: "shot", pixels: {w: 750, h: 500}, screen: "DP-1"}], "DP-1", m);
+        verify(Math.abs(out[0].below * 1.25 - Math.round(out[0].below * 1.25)) < 1e-9, "the room under the card too");
+        compare(out[0].width, out[0].pictureWidth, "no plate around the picture");
+    }
+
+    // A Capture Text card is as tall as its title and first lines, not a picture's shape.
+    function test_textCardFitsItsContent() {
+        const m = {width: 216, pictureHeight: 135, inset: 0, minPictureWidth: 56, gap: 10, scale: 1.25, textPad: 12, titleHeight: 16, textGap: 4, lineHeight: 15, charsPerLine: 28, maxLines: 3};
+        const one = Thumbs.cardSize({kind: "text", text: "Quartz"}, m);
+        compare(one.lines, 1);
+        compare(one.height, Thumbs.snap(2 * 12 + 16 + 4 + 15, 1.25), "snapped to device pixels");
+        const many = Thumbs.cardSize({kind: "text", text: "a\nb\nc\nd\ne"}, m);
+        compare(many.lines, 3, "at most the token's lines");
+        const wrapped = Thumbs.cardSize({kind: "text", text: "x".repeat(60)}, m);
+        compare(wrapped.lines, 3, "a long line wraps");
+        const qr = Thumbs.cardSize({kind: "text", qr: true, text: "https://secret"}, m);
+        compare(qr.lines, 0, "a QR card shows no data");
+        compare(qr.height, Thumbs.snap(2 * 12 + 16, 1.25), "the title alone");
+        compare(one.width, 216);
+        verify(many.height < 135, "compact");
+    }
 }

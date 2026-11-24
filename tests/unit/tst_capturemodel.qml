@@ -393,4 +393,22 @@ TestCase {
         const border = Qt.color(Model.qtColor(Tokens.captureBorder));
         verify(border.r === 1 && border.g === 1 && border.b === 1 && border.a > 0.85, "the border is near-white, not yellow");
     }
+
+    // The frame's line is cut where the Options menu is (its glass would show it unblurred).
+    function test_frameLineIsCutUnderTheMenu() {
+        const frame = {x: 100, y: 100, w: 400, h: 300};
+        const all = Model.borderPieces(frame, 1, null);
+        const area = r => r.w * r.h;
+        compare(all.reduce((a, r) => a + area(r), 0), 2 * 400 + 2 * 298, "the whole outline, no overlap");
+        const hole = {x: 300, y: 350, w: 120, h: 200};
+        const cut = Model.borderPieces(frame, 1, hole);
+        verify(cut.length > 0);
+        for (const r of cut)
+            verify(!Model.touches(r, hole), "no piece under the menu");
+        compare(cut.reduce((a, r) => a + area(r), 0), 2 * 400 + 2 * 298 - 120 * 1, "the bottom edge loses the menu's width");
+        compare(Model.borderPieces(frame, 1, {x: 0, y: 0, w: 0, h: 0}).length, all.length, "an empty hole takes nothing");
+        compare(Model.outside({x: 0, y: 0, w: 10, h: 10}, {x: 2, y: 2, w: 4, h: 4}).reduce((a, r) => a + area(r), 0), 100 - 16);
+        verify(Model.touches({x: 0, y: 0, w: 10, h: 10}, {x: 9, y: 9, w: 5, h: 5}));
+        verify(!Model.touches({x: 0, y: 0, w: 10, h: 10}, {x: 10, y: 0, w: 5, h: 5}));
+    }
 }
