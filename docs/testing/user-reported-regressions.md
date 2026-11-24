@@ -685,105 +685,105 @@ None of these reports came with a diagnostic report.
 - First shipped version: 1.0.0-rc8
 
 ### URR-048: Text could not be copied or pasted in Grassfield Notes
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): high
 - Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
   external displays)
 - Reproduction: Grassfield Notes, select text in a note, copy, paste (in Notes or into another app); nothing is pasted. The owner
   also asks for an audit of Notes' editing against the best note apps.
-- Cause: not yet investigated (agent dispatched 2026-11-22)
-- Fix: none
-- Verification: pending
+- Cause: the system clipboard did not reach the editor, and Command+C/V/X/A/Z chords were not forwarded to applications.
+- Fix: merge 2979632a (Command+C/V/X/A/Z reach applications) and grassfield-notes PR #9 (0fcc1fd: the system clipboard and the editing audit), pinned in grassfield-packages PR #24 and the vendored entry (4ca3490d).
+- Verification: integration branch integ/rc9-feedback 80be2154, 2026-11-24: `just check` exit 0, the full `just test` run with only environment/load failures, each re-run alone (see docs/STATE.md); on-screen check by the owner pending
 - First shipped version:
 
 ### URR-049: Preview did not show Markdown (.md) files
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): medium
 - Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
   external displays)
 - Reproduction: open a .md file in Preview (or press Space on it in Files); its content is not shown.
-- Cause: not yet investigated (agent dispatched 2026-11-22)
-- Fix: none
-- Verification: pending
+- Cause: Preview had no Markdown view: a .md file was not shown rendered.
+- Fix: merge 0a49392e (Markdown files show rendered in Preview; review fixes 5cfc8433, fe10f8b7).
+- Verification: integration branch integ/rc9-feedback 80be2154, 2026-11-24: `just check` exit 0, the full `just test` run with only environment/load failures, each re-run alone (see docs/STATE.md); on-screen check by the owner pending
 - First shipped version:
 
 ### URR-050: The Preview window could not be moved
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): medium
 - Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
   external displays)
 - Reproduction: open a file in Preview and drag its title bar; the window does not move.
-- Cause: not yet investigated (agent dispatched 2026-11-22)
-- Fix: none
-- Verification: pending
+- Cause: the Glance window's header was not a move area, so the window could not be dragged.
+- Fix: merge 0a49392e (the Glance moves by its header; a toolbar button never moves a window).
+- Verification: integration branch integ/rc9-feedback 80be2154, 2026-11-24: `just check` exit 0, the full `just test` run with only environment/load failures, each re-run alone (see docs/STATE.md); on-screen check by the owner pending
 - First shipped version:
 
 ### URR-051: Dock settings applied to one display only
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): medium
 - Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
   external displays)
 - Reproduction: with three displays, Settings > Desktop & Dock > turn on hiding the Dock; it hides only on the display where the
   pointer is. Request: choose whether a setting applies to this display or to all displays, for every such setting.
-- Cause: not yet investigated (agent dispatched 2026-11-22)
-- Fix: none
-- Verification: pending
+- Cause: the Dock and its settings were one global surface on one display; the other displays had none.
+- Fix: merge 62d87134 (a Dock and its glass on every display; Dock, menu bar and screen-corner settings for All Displays or one display).
+- Verification: integration branch integ/rc9-feedback 80be2154, 2026-11-24: `just check` exit 0, the full `just test` run with only environment/load failures, each re-run alone (see docs/STATE.md); on-screen check by the owner pending
 - First shipped version:
 
 ### URR-052: The Dock's translucency was not the same on every display
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): low
 - Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
   external displays)
 - Reproduction: three displays at different scales; the Dock's glass looks right on one display and not on the others.
-- Cause: not yet investigated (agent dispatched 2026-11-22)
-- Fix: none
-- Verification: pending
+- Cause: the Dock's glass (blur and tint) existed for one display only.
+- Fix: merge 62d87134 (one glass per display's Dock, same translucency everywhere).
+- Verification: integration branch integ/rc9-feedback 80be2154, 2026-11-24: `just check` exit 0, the full `just test` run with only environment/load failures, each re-run alone (see docs/STATE.md); on-screen check by the owner pending
 - First shipped version:
 
 ### URR-053: No central place to choose the default app per file type (request)
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): medium
 - Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
   external displays)
 - Reproduction: install an Office-type app (WordCraft) and try to make it the default for Word documents; there is no setting for
   the default app per format (follow-up of URR-043, Get Info > Change All…).
-- Cause: not yet investigated (agent dispatched 2026-11-22)
-- Fix: none
-- Verification: pending
+- Cause: a request: there was no Default Apps setting.
+- Fix: merge 65960a6f (Settings > Default Apps per kind of file).
+- Verification: integration branch integ/rc9-feedback 80be2154, 2026-11-24: `just check` exit 0, the full `just test` run with only environment/load failures, each re-run alone (see docs/STATE.md); on-screen check by the owner pending
 - First shipped version:
 
 ### URR-054: The Trash view refreshed late after Empty Trash
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): low
 - Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
   external displays)
 - Reproduction: Files > Trash > Empty Trash; the items stay shown for a while before the view empties; sometimes.
-- Cause: not yet investigated (agent dispatched 2026-11-22)
-- Fix: none
-- Verification: pending
+- Cause: Files' Trash listing was not told of Empty Trash and kept its old rows until a later refresh.
+- Fix: merge 65960a6f (the Trash view follows Empty Trash).
+- Verification: integration branch integ/rc9-feedback 80be2154, 2026-11-24: `just check` exit 0, the full `just test` run with only environment/load failures, each re-run alone (see docs/STATE.md); on-screen check by the owner pending
 - First shipped version:
 
 ### URR-055: No way to choose the default terminal (request)
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): low
 - Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
   external displays)
 - Reproduction: look for a setting to choose which terminal app opens; there is none.
-- Cause: not yet investigated (agent dispatched 2026-11-22)
-- Fix: none
-- Verification: pending
+- Cause: a request: the terminal was fixed by Omarchy's default.
+- Fix: merge 65960a6f (the default terminal).
+- Verification: integration branch integ/rc9-feedback 80be2154, 2026-11-24: `just check` exit 0, the full `just test` run with only environment/load failures, each re-run alone (see docs/STATE.md); on-screen check by the owner pending
 - First shipped version:
 
 ### URR-056: Opening a terminal at a folder in Files went through Services (request)
-- Status: open
+- Status: fixed in source
 - Severity (1.0 threshold): low
 - Reported: 2026-11-22, owner, Grassfield 1.0.0-rc9 (diagnostic report: no), three displays (eDP-1 at 125 % and two
   external displays)
 - Reproduction: Files, a folder: opening a terminal there needs the Services menu; the owner asks for a direct way.
-- Cause: not yet investigated (agent dispatched 2026-11-22)
-- Fix: none
-- Verification: pending
+- Cause: a request: Files had no New Terminal at Folder command.
+- Fix: merge 65960a6f (Files > New Terminal at Folder).
+- Verification: integration branch integ/rc9-feedback 80be2154, 2026-11-24: `just check` exit 0, the full `just test` run with only environment/load failures, each re-run alone (see docs/STATE.md); on-screen check by the owner pending
 - First shipped version:
 
 ### URR-057: The capture tools lack a full screenshot suite (request)
@@ -849,13 +849,13 @@ None of these reports came with a diagnostic report.
 | URR-045 | Google Meet's screen-sharing preview was white | high | open |
 | URR-046 | Some Open and Save windows showed the GTK file chooser instead of Grassfield's panel | medium | fixed in source |
 | URR-047 | The portal frontend took about 26 s to start at login | medium | fixed in source |
-| URR-048 | Text could not be copied or pasted in Grassfield Notes | high | open |
-| URR-049 | Preview did not show Markdown (.md) files | medium | open |
-| URR-050 | The Preview window could not be moved | medium | open |
-| URR-051 | Dock settings applied to one display only | medium | open |
-| URR-052 | The Dock's translucency was not the same on every display | low | open |
-| URR-053 | No central place to choose the default app per file type (request) | medium | open |
-| URR-054 | The Trash view refreshed late after Empty Trash | low | open |
-| URR-055 | No way to choose the default terminal (request) | low | open |
-| URR-056 | Opening a terminal at a folder in Files went through Services (request) | low | open |
+| URR-048 | Text could not be copied or pasted in Grassfield Notes | high | fixed in source |
+| URR-049 | Preview did not show Markdown (.md) files | medium | fixed in source |
+| URR-050 | The Preview window could not be moved | medium | fixed in source |
+| URR-051 | Dock settings applied to one display only | medium | fixed in source |
+| URR-052 | The Dock's translucency was not the same on every display | low | fixed in source |
+| URR-053 | No central place to choose the default app per file type (request) | medium | fixed in source |
+| URR-054 | The Trash view refreshed late after Empty Trash | low | fixed in source |
+| URR-055 | No way to choose the default terminal (request) | low | fixed in source |
+| URR-056 | Opening a terminal at a folder in Files went through Services (request) | low | fixed in source |
 | URR-057 | The capture tools lack a full screenshot suite (request) | low | open |
