@@ -833,13 +833,19 @@ TEST_F(RegionAppTest, TheClipboardIsReplacedOnlyWhileItStillHoldsTheCapture)
 TEST_F(RegionAppTest, TheEyedropperReadsThePixelatedPixelNotTheOneUnderIt)
 {
     drag("pixelate", QPointF(25, 15), QPointF(75, 45));
-    const QImage source = QImage(m_file);
-    const QString picked = m_app->pickColor(50, 30);
+    // The four corners of the secret (magenta, x 30..69, y 20..39): a block there mixes in the picture around it.
+    const QList<QPoint> corners{{30, 20}, {69, 20}, {30, 39}, {69, 39}};
+    QStringList picked;
+    for (const QPoint &p : corners)
+        picked << m_app->pickColor(p.x() + 0.5, p.y() + 0.5);
     ASSERT_TRUE(m_app->done());
     const QImage out = fileImage();
-    EXPECT_EQ(picked, QColor(out.pixel(50, 30)).name()) << "what the export has there";
-    EXPECT_NE(picked, QColor(qRgb(255, 0, 255)).name()) << "not the secret's magenta";
-    EXPECT_NE(picked, QColor(source.pixel(50, 30)).name());
+    int notTheSecret = 0;
+    for (int i = 0; i < corners.size(); ++i) {
+        EXPECT_EQ(picked[i], QColor(out.pixel(corners[i].x(), corners[i].y())).name()) << "what the export has there";
+        notTheSecret += picked[i] != QColor(qRgb(255, 0, 255)).name();
+    }
+    EXPECT_GE(notTheSecret, 3) << "the source's own magenta is not what it reads";
 }
 
 TEST(RunBounded, WaitsAtMostItsBoundKeepsTheEventLoopGoingAndReportsTheRest)
