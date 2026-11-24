@@ -149,13 +149,17 @@ expect("shell/services/Emoji.qml: place() opens nothing once the session locked"
 # triggered runs only if the session is still unlocked once the toolbar is gone.
 first_decision("shell/capture/Capture.qml", "show", R, lines=1)
 capture = read("shell/capture/Capture.qml")
-expect("shell.qml gives the capture toolbar the lock state", re.search(r"\bCapture\s*\{\s*id:\s*captureSurface\s*locked:\s*SessionState\.locked\s*\}", code(shell)) is not None)
+# The Capture block (its other bindings, e.g. the thumbnail's `attention`, may follow): exactly one `locked:` binding, to the lock.
+capture_use = re.search(r"\bCapture\s*\{\s*id:\s*captureSurface\b", code(shell))
+capture_block = code(block_after(code(shell), capture_use.start())) if capture_use else ""
+expect("shell.qml gives the capture toolbar the lock state", re.search(r"^\s*locked:\s*SessionState\.locked\s*$", capture_block, re.M) is not None
+       and len(re.findall(r"\blocked\s*:", capture_block)) == 1)
 expect("shell.qml: Capture is a child of the root or of the one reviewed LazyLoader (ADR-0056 D-6), nowhere else",
        placement(shell, r"\bCapture\s*\{") in (["ShellRoot"], ["ShellRoot", "LazyLoader"]))
 expect("shell/capture/Capture.qml: toggle() opens only through show()", re.search(r"^\s*else\s+show\(\);\s*$", code(function(capture, "toggle") or ""), re.M) is not None
        and "open = true" not in code(function(capture, "toggle") or ""))
 expect("shell/capture/Capture.qml: the capture runs only if the session is still unlocked when the toolbar is gone",
-       re.search(r"id:\s*launch\b[\s\S]*?onTriggered:\s*\{[^}]*?if\s*\(args\s*&&\s*!SessionState\.locked\)\s*CaptureState\.run\(args\);", code(capture)) is not None
+       re.search(r"id:\s*launch\b[\s\S]*?onTriggered:\s*\{[^}]*?if\s*\(args\s*&&\s*!SessionState\.locked\)\s*(?:\{[^{}]*?)?CaptureState\.run\(args\);", code(capture)) is not None
        and len(re.findall(r"CaptureState\.run\(", code(capture))) == 1)
 expect("shell/capture/Capture.qml: only show() opens the toolbar (one open = true)", len(re.findall(r"\bopen\s*=\s*true\b", code(capture))) == 1
        and re.search(r"\bopen\s*=\s*true\b", code(function(capture, "show") or "")) is not None)
@@ -950,6 +954,8 @@ for case_ in 'shell/dock/Dock.qml#SessionState.refuses("dock keyboard")#false' \
   'shell/capture/Capture.qml#            if (args && !SessionState.locked)#            if (args)' \
   'shell/capture/Capture.qml#        else\n            show();#        else\n            open = true;' \
   'shell/shell.qml#            id: captureSurface\n            // The session lock owns the screen and the keyboard: the toolbar closes and does not open.\n            locked: SessionState.locked#            id: captureSurface' \
+  'shell/shell.qml#            locked: SessionState.locked\n            // The floating thumbnail#            locked: false\n            // The floating thumbnail' \
+  'shell/capture/Capture.qml#                settle.restart();\n                CaptureState.run(args);\n            }#                settle.restart();\n            }\n            CaptureState.run(args);' \
   'shell/shell.qml#        property: "locked"\n        value: LockClient.locked#        property: "locked"\n        value: false' \
   'shell/security/polkit/AuthDialog.qml#            id: identityList\n            enabled: root.inputEnabled#            id: identityList' \
   'shell/security/polkit/AuthDialog.qml#                // No focus while AuthAgent keeps the keys on its sink (as the identity rows).\n                enabled: root.inputEnabled#                // No focus while AuthAgent keeps the keys on its sink (as the identity rows).' \
