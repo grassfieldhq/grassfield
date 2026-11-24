@@ -278,6 +278,10 @@ gtest_suite tests/unit/activity "apps/activity/build-direct.sh --tests >/dev/nul
 # plain paste), the frames read from Hyprland (a fake socket) and the backend. Built twice: plain, then with ASan and UBSan.
 gtest_suite tests/unit/memos "apps/memos/build-direct.sh --tests >/dev/null && apps/memos/build-direct.sh --tests --asan" \
   ".dev/build/memos-unit-tests --gtest_brief=1" ".dev/build/memos-unit-tests-asan --gtest_brief=1"
+# Grassfield Screenshot (ADR-0066 D-3): the argument rules (local PNG files only), layers.json v1, the atomic replacement, Done and
+# Revert and the history entry. Built twice: plain, then with ASan and UBSan. The packaging is tests/shell/screenshot_package.sh.
+gtest_suite tests/unit/screenshot "apps/screenshot/build-direct.sh --tests >/dev/null && apps/screenshot/build-direct.sh --tests --asan" \
+  ".dev/build/screenshot-unit-tests --gtest_brief=1" ".dev/build/screenshot-unit-tests-asan --gtest_brief=1"
 # grassfield-menu-bridge logic (menu/1 validation, DBusMenu layout mapping, mnemonics, guards). The peer-to-peer D-Bus
 # case skips itself inside the sandbox (no Unix sockets).
 # Built twice: plain, then with ASan and UBSan.

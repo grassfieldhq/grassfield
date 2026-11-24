@@ -1057,11 +1057,12 @@
             "screen",
             "window",
             "selection",
+            "text",
             "recordScreen",
             "recordSelection"
           ],
           "default": "selection",
-          "description": "The mode the toolbar opens in (the one chosen last): Capture Entire Screen, Capture Selected Window, Capture Selected Portion, Record Entire Screen, Record Selected Portion."
+          "description": "The mode the toolbar opens in (the one chosen last): Capture Entire Screen, Capture Selected Window, Capture Selected Portion, Capture Text, Record Entire Screen, Record Selected Portion."
         },
         "saveTo": {
           "type": "string",
@@ -1090,11 +1091,12 @@
           "type": "string",
           "enum": [
             "none",
+            "3",
             "5",
             "10"
           ],
           "default": "none",
-          "description": "Options > Timer: a countdown of 5 or 10 seconds before the capture or the recording starts."
+          "description": "Options > Timer: a countdown of 3, 5 or 10 seconds before the capture or the recording starts."
         },
         "microphone": {
           "type": "string",
@@ -1118,6 +1120,86 @@
           "x-grassfield": {
             "rule": "plainText"
           }
+        },
+        "rememberSelection": {
+          "type": "boolean",
+          "default": true,
+          "description": "Options > Remember Last Selection (macOS): Capture/Record Selected Portion and Capture Text open on the last frame of the display, and keep the frame made last. Off, the frame opens centred and nothing is kept, so Capture Previous Area has no new frame to use."
+        },
+        "showThumbnail": {
+          "type": "boolean",
+          "default": true,
+          "description": "Options > Show Floating Thumbnail (ADR-0066 D-11): after a capture a small thumbnail of the result floats in a corner of the display; off, the capture notice is sent as before."
+        },
+        "thumbnailSeconds": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 30,
+          "default": 5,
+          "description": "Seconds the floating thumbnail stays before it slides away (2 to 30); hovering it pauses the countdown."
+        },
+        "thumbnailSide": {
+          "type": "string",
+          "enum": [
+            "right",
+            "left"
+          ],
+          "default": "right",
+          "description": "The side of the display the floating thumbnail appears on: the bottom right corner (macOS) or the bottom left one."
+        },
+        "freeze": {
+          "type": "boolean",
+          "default": false,
+          "description": "Options > Freeze Screen: Capture Selected Portion shows the screen as a still picture while the area is chosen, so that moving content is caught as it was."
+        },
+        "hideDesktopIcons": {
+          "type": "boolean",
+          "default": false,
+          "description": "Options > Hide Desktop Icons: the desktop icons are hidden while a capture is made and shown again afterwards."
+        },
+        "systemAudio": {
+          "type": "boolean",
+          "default": false,
+          "description": "Options > Record System Audio (recordings): the sound the computer plays is recorded with the microphone, if one is chosen. Off by default."
+        },
+        "recordDnd": {
+          "type": "boolean",
+          "default": false,
+          "description": "Options > Do Not Disturb (recordings): notices are held back while a recording runs, and the previous state is restored afterwards."
+        },
+        "historyRetention": {
+          "type": "string",
+          "enum": [
+            "day",
+            "week",
+            "month"
+          ],
+          "default": "week",
+          "description": "How long Recent Captures keeps a capture and the picture as it was taken: one day, one week or one month. Older entries are removed when a capture is made and when the Screenshot app starts."
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "png",
+            "jpeg",
+            "webp"
+          ],
+          "default": "png",
+          "description": "The file format of a saved screenshot: PNG, JPEG or WebP (Screenshot app settings)."
+        },
+        "standardResolution": {
+          "type": "boolean",
+          "default": false,
+          "description": "Save at Standard Resolution: on a scaled display a picture is saved at its logical size instead of its device pixels."
+        },
+        "fps": {
+          "type": "integer",
+          "enum": [
+            30,
+            60
+          ],
+          "default": 60,
+          "description": "Frames per second of a screen recording: 30 or 60."
         }
       }
     },

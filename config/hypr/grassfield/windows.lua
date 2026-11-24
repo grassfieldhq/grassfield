@@ -103,7 +103,7 @@ hl.window_rule({ name = "gf-glance", match = { class = "^org\\.grassfield\\.Prev
 
 -- Grassfield shell surfaces (layer-shell namespaces start with "grassfield-").
 -- Blur behind them comes from BackgroundEffect when available; this rule is the fallback (§5.5).
-hl.layer_rule({ name = "gf-shell-blur", match = { namespace = "^grassfield-(menubar|dock|overlay|overview|search|switcher|banners|notification-center|apps|osd|polkit|secret|widgets|widgets-menu|stages|capture|capture-countdown)$" }, blur = true, ignore_alpha = 0.01 })
+hl.layer_rule({ name = "gf-shell-blur", match = { namespace = "^grassfield-(menubar|dock|overlay|overview|search|switcher|banners|notification-center|apps|osd|polkit|secret|widgets|widgets-menu|stages|capture|capture-countdown|capture-thumbnail)$" }, blur = true, ignore_alpha = 0.01 })
 -- The desktop's context menu is an xdg popup of the icons layer; Hyprland 0.56.2 left it unblurred with
 -- BackgroundEffect alone. Only its popups blur (never the icons layer itself), limited to the menu's own pixels.
 hl.layer_rule({ name = "gf-desktop-menu-blur", match = { namespace = "^grassfield-desktop-icons$" }, blur_popups = true, ignore_alpha = 0.01 })
@@ -132,3 +132,6 @@ hl.layer_rule({ name = "gf-capture-countdown-no-anim", match = { namespace = "^g
 -- layer set to Exclusive does not get the focus); Hyprland's layer fade made the bar blink for about half a second each time.
 -- macOS shows and hides the screenshot toolbar at once, so its surfaces map and unmap without the compositor's fade.
 hl.layer_rule({ name = "gf-capture-toolbar-no-anim", match = { namespace = "^grassfield-capture$" }, no_anim = true })
+-- The floating thumbnail's cards (ADR-0066 A2) are unmapped before the next picture is taken (the shooting acknowledgement):
+-- a fade would leave a card in that picture.
+hl.layer_rule({ name = "gf-capture-thumbnail-no-anim", match = { namespace = "^grassfield-capture-thumbnail$" }, no_anim = true })

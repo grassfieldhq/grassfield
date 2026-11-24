@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Grassfield.Ui
 import qs.lib
 import "CaptureFile.js" as CaptureFile
 
@@ -21,15 +22,50 @@ Singleton {
     readonly property string path: CaptureFile.statePath(Mode.stateHome, Quickshell.env("XDG_RUNTIME_DIR"))
     readonly property string folder: root.path !== "" ? root.path.substring(0, root.path.lastIndexOf("/")) : ""
 
-    // The state as read (CaptureFile.parse): phase idle | selecting | countdown | recording, and its fields.
+    // The helper's acknowledgement file (ADR-0066 D-1), next to the state: pre-created 0600 in the 0700 folder at start
+    // (capture-ack.sh), because a FileView cannot set modes.
+    readonly property string ackPath: root.folder !== "" ? root.folder + "/capture-ack" : ""
+    // True while no thumbnail card is mapped and one frame has passed since the last one went. The thumbnail layer (slice A2)
+    // binds it; until then there are no cards, so it stays true. The acknowledgement waits for it.
+    property bool thumbnailsHidden: true
+    // The last `seq` acknowledged, so that one `shooting` state is acknowledged once.
+    property string ackedSeq: ""
+
+    // The state as read (CaptureFile.parse): phase idle | starting | selecting | countdown | recording | shooting | frozen, and its fields.
     property var state: CaptureFile.parse("")
     readonly property string phase: root.state.phase
     readonly property bool recording: root.phase === "recording"
+    // "shot" or "recording" while a capture runs ("" when the helper does not say).
+    readonly property string kind: root.state.kind
     // The clock of the countdown and of the elapsed time, a tick a quarter of a second while either shows.
     property real now: Date.now()
     readonly property int secondsLeft: root.phase === "countdown" ? CaptureFile.secondsLeft(root.now, root.state.until) : 0
     readonly property bool countingDown: root.secondsLeft > 0
     readonly property string elapsedText: CaptureFile.elapsed(root.now - root.state.started)
+    // The capture toolbar is open or has just started the helper (Capture.qml sets it): the desktop icons are already hidden.
+    property bool armed: false
+    // The desktop icons are hidden (Hide Desktop Icons): DesktopIcons binds it.
+    readonly property bool hidesDesktopIcons: CaptureFile.hidesIcons(Settings.captureHideDesktopIcons, root.armed, root.phase)
+    // Frames the icons' surface presented since they were hidden (IconsView counts them), and whether the bounded wait for them is
+    // over: a `shooting` state is acknowledged only once the icons are off the screen (Hide Desktop Icons), so grim never sees them.
+    property int iconFrames: 0
+    property bool iconsWaitedOut: false
+    readonly property bool iconsReady: CaptureFile.iconsReady(Settings.captureHideDesktopIcons, root.hidesDesktopIcons, root.iconFrames, root.iconsWaitedOut)
+
+    onHidesDesktopIconsChanged: root.iconFrames = 0
+    onIconsReadyChanged: root.acknowledge()
+
+    function noteIconFrame(): void {
+        if (root.hidesDesktopIcons && root.iconFrames < 1000)
+            root.iconFrames++;
+    }
+
+    Timer {
+        interval: Tokens.captureIconsHideWaitMs
+        running: root.phase === "shooting" && !root.iconsReady
+        onTriggered: root.iconsWaitedOut = true
+    }
+
     // gpu-screen-recorder is installed (an Omarchy base package): asked when the toolbar opens, as it is used (OC-0 rule 3).
     property bool recorderAvailable: false
 
@@ -67,7 +103,34 @@ Singleton {
             root.stop();
     }
 
-    onPhaseChanged: root.enforceLock()
+    onPhaseChanged: {
+        root.enforceLock();
+        if (root.phase !== "shooting")
+            root.iconsWaitedOut = false;
+    }
+
+    // Writes the acknowledgement of a `shooting` state once the cards are hidden: the `seq` alone, in place (capture-ack.sh keeps
+    // the 0600 mode). Only after the preparation ran: the folder and the file exist by then. Asked on every change of what it reads.
+    function acknowledge(): void {
+        if (prepare.running || root.ackPath === "")
+            return;
+        const seq = CaptureFile.ackNeeded(root.state, root.thumbnailsHidden, root.ackedSeq, root.iconsReady);
+        if (seq === "")
+            return;
+        root.ackedSeq = seq;
+        Quickshell.execDetached(["sh", Quickshell.shellPath("services/capture-ack.sh"), root.folder, root.ackPath, seq]);
+    }
+
+    onStateChanged: root.acknowledge()
+    onThumbnailsHiddenChanged: root.acknowledge()
+
+    // The helper's result file (ADR-0066 D-1), read whole each time it is replaced: a picture or recording was saved. The floating
+    // thumbnail (CaptureThumbnails) shows it. Only a result written lately counts (a file left from before the shell started is
+    // not shown), and each one is announced once by its id (a reload of the same file is no new capture). The paths in it are data:
+    // CaptureThumbs decides what may be shown.
+    readonly property string resultPath: CaptureFile.resultPath(Mode.stateHome, Quickshell.env("XDG_RUNTIME_DIR"))
+    property string lastResultId: ""
+    signal resultArrived(var result)
 
     // Still not idle under the lock (the stop could not reach the helper yet: its state was written before its recorder): asked
     // again until the helper's state says idle.
@@ -105,10 +168,27 @@ Singleton {
     Process {
         id: prepare
         running: root.folder !== ""
-        command: ["sh", "-c", "umask 077; mkdir -p -m 700 -- \"$1\"", "sh", root.folder]
+        command: ["sh", Quickshell.shellPath("services/capture-ack.sh"), root.folder, root.ackPath]
         onRunningChanged: {
-            if (!running)
+            if (!running) {
                 stateFile.path = root.path;
+                resultFile.path = root.resultPath;
+                root.acknowledge();
+            }
+        }
+    }
+
+    FileView {
+        id: resultFile
+        printErrors: false
+        watchChanges: true
+        onFileChanged: reload()
+        onLoaded: {
+            const result = CaptureFile.parseResult(resultFile.text());
+            if (result === null || result.id === root.lastResultId || !CaptureFile.resultFresh(result, Date.now(), Tokens.captureThumbnailFreshMs))
+                return;
+            root.lastResultId = result.id;
+            root.resultArrived(result);
         }
     }
 

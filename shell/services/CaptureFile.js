@@ -7,8 +7,16 @@
 // The file is the user's own (0600 in a 0700 folder, written by rename) and still data: every field is checked, a field that
 // does not read is dropped, and a file that does not read at all is "idle".
 
-// "starting": a recording's helper has begun (written at once, before anything slow), "selecting": its crosshair shows.
-var PHASES = ["idle", "starting", "selecting", "countdown", "recording"];
+// "starting": a recording's helper has begun (written at once, before anything slow), "selecting": its crosshair shows,
+// "shooting": the helper is about to take pixels and waits (1 s at most) for the shell's acknowledgement, "frozen": it holds
+// grabbed frames and waits for the choice (ADR-0066 D-1, D-2).
+var PHASES = ["idle", "starting", "selecting", "countdown", "recording", "shooting", "frozen"];
+
+// The helper's `seq` (a random 64-bit hex, 16 digits today) and the frozen state's `token` (128 bits, 32 digits): hex only, so
+// that nothing but hex ever reaches the acknowledgement file or a helper argument. The `seq` limit keeps the file far under the
+// 64 bytes the helper accepts.
+var SEQ = /^[0-9A-Fa-f]{1,32}$/;
+var TOKEN = /^[0-9A-Fa-f]{1,64}$/;
 
 // Whether the shell must stop the helper now: the session is locked (or locking) and a capture is anything but idle. Asked on
 // every change of either, so that a recording that becomes active after the lock (its helper was slow to start, or the shell
@@ -16,6 +24,35 @@ var PHASES = ["idle", "starting", "selecting", "countdown", "recording"];
 // of OC-1, MEDIUM).
 function stopNeeded(locked, phase) {
     return locked === true && PHASES.indexOf(phase) > 0;
+}
+
+// Whether the desktop icons are hidden (Options > Hide Desktop Icons, capture.hideDesktopIcons): the option is on and the toolbar is
+// open or has just started the helper (`armed`), or the helper's phase is anything but idle (a countdown, the picture, a recording).
+function hidesIcons(enabled, armed, phase) {
+    return enabled === true && (armed === true || PHASES.indexOf(phase) > 0);
+}
+// Whether a recording is under way as far as the notices go: its phase, or any phase but idle of a state whose kind is "recording"
+// (its countdown, its crosshair): a banner posted before the picture starts must not be on the screen in it.
+function recordingActive(phase, kind) {
+    return phase === "recording" || (kind === "recording" && PHASES.indexOf(phase) > 0);
+}
+
+// Whether the notifications are silenced (no banner, as under Do Not Disturb; they stay in the Notification Center): the user's own
+// Do Not Disturb, as saved, or a recording under way (recordingActive) with Options > Do Not Disturb on. The second is a runtime
+// fact only: nothing is saved, so a crash, a restart or a log out cannot leave anything on, and the user's setting is never changed.
+function silenced(userDnd, phase, kind, enabled) {
+    return userDnd === true || (enabled === true && recordingActive(phase, kind));
+}
+
+// Frames the desktop icons' surface presents after they are hidden before a picture may be taken (the first may have been under
+// way already).
+var ICON_FRAMES = 2;
+
+// Whether the desktop icons are off the screen as far as the shell can tell, for the acknowledgement of a `shooting` state: the
+// option is off, or the icons are hidden and `frames` frames were presented since, or the bounded wait is over (`waited`: a picture
+// never hangs on a surface that presents nothing).
+function iconsReady(enabled, hidden, frames, waited) {
+    return enabled !== true || waited === true || (hidden === true && frames >= ICON_FRAMES);
 }
 var OUTPUT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -42,10 +79,10 @@ function rect(r) {
     return {x: r.x, y: r.y, w: r.w, h: r.h};
 }
 
-// The state read from the file's text: {phase, kind, until, started, rect, output}. `until` and `started` are ms since the
+// The state read from the file's text: {phase, kind, until, started, rect, output, seq, token}. `until` and `started` are ms since the
 // epoch (0 when absent); a countdown without its end and a recording without its start read as idle (nothing to show).
 function parse(text) {
-    const idle = {phase: "idle", kind: "", until: 0, started: 0, rect: null, output: ""};
+    const idle = {phase: "idle", kind: "", until: 0, started: 0, rect: null, output: "", seq: "", token: ""};
     let doc = null;
     try {
         doc = JSON.parse(String(text || ""));
@@ -60,11 +97,23 @@ function parse(text) {
         until: finite(doc.until) && doc.until > 0 ? doc.until : 0,
         started: finite(doc.started) && doc.started > 0 ? doc.started : 0,
         rect: rect(doc.rect),
-        output: typeof doc.output === "string" && OUTPUT_NAME.test(doc.output) ? doc.output : ""
+        output: typeof doc.output === "string" && OUTPUT_NAME.test(doc.output) ? doc.output : "",
+        // Only the phase that owns each field carries it. A `shooting` or `frozen` state whose field does not read keeps its
+        // phase (the lock must still stop it) and an empty field (it is never acknowledged).
+        seq: doc.phase === "shooting" && typeof doc.seq === "string" && SEQ.test(doc.seq) ? doc.seq : "",
+        token: doc.phase === "frozen" && typeof doc.token === "string" && TOKEN.test(doc.token) ? doc.token : ""
     };
     if ((out.phase === "countdown" && out.until === 0) || (out.phase === "recording" && out.started === 0))
         return idle;
     return out;
+}
+
+// Whether the shell must acknowledge the helper's `shooting` state now: it has a valid `seq`, the thumbnails are hidden (unmapped
+// and one frame passed), and this `seq` was not acknowledged yet. Returns the `seq` to write, or "".
+function ackNeeded(state, hidden, acked, iconsReady) {
+    if (hidden !== true || iconsReady === false || !state || state.phase !== "shooting" || state.seq === "" || state.seq === acked)
+        return "";
+    return state.seq;
 }
 
 // Whole seconds left of a countdown ending at `until` (5, 4, ... 1), 0 once it is over.
@@ -100,6 +149,76 @@ function plateScreen(state, screens) {
     const cy = r.y + r.h / 2;
     const hit = list.find(s => cx >= s.x && cx < s.x + s.width && cy >= s.y && cy < s.y + s.height);
     return hit ? hit.name : "";
+}
+
+// The helper's result file (ADR-0066 D-1, packaging/bin/grassfield-capture write_result): $XDG_RUNTIME_DIR/grassfield/
+// capture-result.json, 0600, replaced by rename after a saved picture or recording. It is data like the state: every field is
+// checked and a file that does not read is no result (null). The paths are only text here; CaptureThumbs.js decides whether one
+// may be shown or acted on (never the folder the file names).
+var RESULT_KINDS = ["shot", "recording", "text"];
+var RESULT_ID = /^[0-9A-Fa-f]{1,32}$/;
+// At most this many paths (one picture per display), each at most this long (PATH_MAX).
+var RESULT_MAX_PATHS = 16;
+var RESULT_MAX_PATH = 4096;
+
+// The result file next to the state file (a dev session: in the dev state folder, as the state).
+function resultPath(stateHome, runtimeDir) {
+    const state = statePath(stateHome, runtimeDir);
+    return state === "" ? "" : state.substring(0, state.lastIndexOf("/")) + "/capture-result.json";
+}
+
+// The pixel size of the picture: whole numbers, each 1 to 1,000,000, else null (the card then takes a default shape).
+function pixelSize(p) {
+    if (p === null || typeof p !== "object" || Array.isArray(p))
+        return null;
+    const ok = v => typeof v === "number" && isFinite(v) && Math.floor(v) === v && v >= 1 && v <= 1000000;
+    return ok(p.w) && ok(p.h) ? {w: p.w, h: p.h} : null;
+}
+
+// {id, kind, paths, primary, output, rect, scale, pixels, time, text}, or null.
+function parseResult(text) {
+    let doc = null;
+    try {
+        doc = JSON.parse(String(text || ""));
+    } catch (e) {
+        return null;
+    }
+    if (doc === null || typeof doc !== "object" || Array.isArray(doc) || doc.v !== 1)
+        return null;
+    if (typeof doc.id !== "string" || !RESULT_ID.test(doc.id) || RESULT_KINDS.indexOf(doc.kind) < 0)
+        return null;
+    if (!Array.isArray(doc.paths) || doc.paths.length > RESULT_MAX_PATHS)
+        return null;
+    if (doc.kind === "text") {
+        // Capture Text (slice C3): the recognised text was copied; there is no file, so no path (and "" is never taken for one).
+        if (doc.paths.length !== 0 || (doc.primary !== "" && doc.primary !== undefined && doc.primary !== null))
+            return null;
+    } else {
+        if (doc.paths.length < 1 || !doc.paths.every(p => typeof p === "string" && p.length > 0 && p.length <= RESULT_MAX_PATH))
+            return null;
+        // `primary` is the first path by contract; one that differs is a file the helper did not write.
+        if (doc.primary !== doc.paths[0])
+            return null;
+    }
+    return {
+        id: doc.id,
+        kind: doc.kind,
+        paths: doc.paths.slice(),
+        primary: doc.kind === "text" ? "" : doc.primary,
+        output: typeof doc.output === "string" && OUTPUT_NAME.test(doc.output) ? doc.output : "",
+        rect: rect(doc.rect),
+        scale: finite(doc.scale) && doc.scale >= 0.1 && doc.scale <= 16 ? doc.scale : 1,
+        pixels: pixelSize(doc.pixels),
+        time: finite(doc.time) && doc.time > 0 ? doc.time : 0,
+        text: typeof doc.text === "string" ? doc.text.substring(0, 512) : "",
+        // A text result that came from a QR code (a flag only: the data is never in the file).
+        qr: doc.kind === "text" && doc.qr === true
+    };
+}
+
+// Whether a result was written close enough to `now` (ms) to be shown: a file left from before the shell started is not.
+function resultFresh(result, now, windowMs) {
+    return result !== null && result !== undefined && finite(now) && finite(windowMs) && result.time > 0 && Math.abs(now - result.time) <= windowMs;
 }
 
 // The plate's centre in that display's own coordinates: the centre of the area when it lies there, else the display's centre.

@@ -2939,6 +2939,69 @@ QtObject {
     // estimate (no capture): Select Text in Images, the widest host name a QR code chip shows before eliding it in the middle [ref: docs/specs/preview.md]
     readonly property int previewCodeChipLabelWidth: 220
 
+    // estimate: the Screenshot app's editor window (960 before the four region tools of slice B7 made the toolbar 962 wide), wider than Preview's 860 to leave room for the tool group, the style group and the buttons [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotWindowWidth: 1040
+    // estimate: the Screenshot app's editor window [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotWindowHeight: 680
+    // estimate: the narrowest editor window, the unified toolbar's groups with the lights [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotWindowMinWidth: 560
+    // estimate: the shortest editor window [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotWindowMinHeight: 360
+    // as preview.toolbarHeight and files.toolbarHeight: glass capsule groups in a 52-pt band, one unified toolbar for every app window [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotToolbarHeight: 52
+    // as preview.toolbarIconSize: the glyph inside a toolbar button [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotToolbarIconSize: 18
+    // as preview.zoomStep: one Zoom In or Zoom Out step [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property real screenshotZoomStep: 1.25
+    // as preview.zoomMin: the smallest zoom [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property real screenshotZoomMin: 0.05
+    // as preview.zoomMax: the largest zoom [ref: docs/specs/capture-suite.md § 3.3 The Screenshot app]
+    readonly property int screenshotZoomMax: 16
+    // estimate: the default stroke of a new shape, in points: a device-pixel width is this times the display scale, so that a capture at 1.25 draws 1.25 times as wide (the file keeps device pixels) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotStrokeWidth: 3
+    // estimate: the side of a selection handle, in points, a ringed square as macOS 27 draws its annotation handles [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotHandleSize: 10
+    // estimate: how far from a shape the pointer still picks it, and from a handle still grabs it, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotHitTolerance: 6
+    // estimate: the thin choice of the style bar's stroke width, in points (the default stroke is screenshot.strokeWidth) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotStrokeWidthThin: 2
+    // estimate: the thick choice of the style bar's stroke width, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotStrokeWidthThick: 6
+    // estimate: the small text size of the style bar, in points: a pixel size is this times the capture's scale [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotTextSizeSmall: 14
+    // estimate: the default text size, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotTextSize: 20
+    // estimate: the large text size of the style bar, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotTextSizeLarge: 32
+    // estimate: the default diameter of a counter, in points, a disc that holds two digits at the default text size [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotCounterSize: 28
+    // estimate: the small counter is this share of the default diameter [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotCounterSizeScaleSmall: 0.75
+    // estimate: the large counter is this many times the default diameter [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotCounterSizeScaleLarge: 1.5
+    // estimate: the highlighter is this many times as wide as the pen's stroke, a marker's broad tip [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotHighlighterFactor: 4
+    // estimate: the highlighter's alpha, so that the text under it reads (checked on the nested screenshots) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotHighlighterOpacity: 0.4
+    // estimate: the options strip under the unified toolbar (colour, width, text style and the crop's presets), one row of 32-pt controls in a 40-pt band [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotStyleBarHeight: 40
+    // estimate: the diameter of a colour swatch of the style bar, a disc as Settings' accent swatches [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotSwatchSize: 18
+    // estimate: the narrowest the text editor on the picture gets while it is empty, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotTextEditorMinWidth: 48
+    // estimate: the dim over the part of the picture the crop leaves out [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotCropScrimOpacity: 0.5
+    // estimate: the crop rectangle's border, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotCropBorderWidth: 2
+    // estimate: the alpha of the selection in the text editor on the picture (its letters are drawn by the preview layer, not by the editor) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotTextSelectionOpacity: 0.35
+    // estimate: the side of a Pixelate block, in points; the file's block is this times the capture's scale and never under 12 device pixels (ADR-0066 D-9) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotPixelateBlock: 16
+    // estimate: a Blur's Gaussian sigma, in points, times the capture's scale [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property int screenshotBlurRadius: 8
+    // estimate: the alpha of the dark veil a Spotlight puts over everything outside its box [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotSpotlightDim: 0.55
+
     // F1 reference (docs/testing/f1-reference-gaps.md, Apps launcher): panel 844 +-1 pt wide (2x capture)
     readonly property int launcherPanelWidth: 844
     // panel radius about 34 (macOS 26: 27-28) [ref: docs/audits/ui-finesse-2026-10-25/f1-macos27.md § Apps]
@@ -3939,10 +4002,10 @@ QtObject {
     readonly property int captureToolbarBottomGap: 24
     // estimate: the Close glyph of the toolbar, a cross in a circle at the left end [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property int captureToolbarCloseIconSize: 18
-    // estimate: the timer's countdown, a square glass plate centred on what is captured (the display, the window or the area), as macOS shows the seconds left [ref: docs/specs/system-dialogs.md § Capture toolbar]
+    // estimate: the timer's countdown, a round plate of the controls' glass (the OSD's class) centred on what is captured (the display, the window or the area), as macOS shows the seconds left [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property int captureCountdownSize: 112
-    // estimate: the countdown plate's corner, the alerts' radius (radius.alert) on a plate of that size [ref: docs/specs/system-dialogs.md § Capture toolbar]
-    readonly property int captureCountdownRadius: 26
+    // estimate: the countdown plate is a circle of the system HUD glass, its corner half its size, as the OSD pill's is half its height [ref: docs/specs/system-dialogs.md § Capture toolbar]
+    readonly property int captureCountdownRadius: 56
     // estimate: the seconds left, large digits on the countdown plate [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property int captureCountdownTextSize: 64
     // estimate: the smallest frame of the Selected Portion modes, each way (logical px): a drag or a handle never makes it thinner, so it stays a frame with handles [ref: docs/specs/system-dialogs.md § Capture toolbar]
@@ -3967,6 +4030,44 @@ QtObject {
     readonly property int captureWindowHighlightRadius: 17
     // the window highlight's corner is the window's own superellipse: Hyprland draws a corner of rounding x power / 2 points at decoration.rounding_power 2.6 (config/hypr/grassfield/looknfeel.lua), so a circular radius leaves notches at the title bar [ref: docs/specs/system-dialogs.md § Capture toolbar]
     readonly property real captureWindowHighlightPower: 2.6
+    // estimate: the floating thumbnail's width (the picture itself, no plate), about the width of macOS 27's screenshot thumbnail [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailWidth: 216
+    // estimate: the tallest the card gets (a 3:2 picture at the full card width), so a tall capture does not fill the corner; the picture is fitted inside the card width and this height [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailPictureHeight: 144
+    // estimate: the corner of the floating thumbnail, the picture's own rounded clip (macOS 27's thumbnail is the picture itself, no plate) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailRadius: 16
+    // estimate: the room between the card's edge and its hover buttons, and around the text of a Capture Text card [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailInset: 6
+    // estimate: the most lines of the recognised text a Capture Text card shows, the card is as tall as they are (a compact card, as macOS's)
+    readonly property int captureThumbnailTextLines: 3
+    // estimate: between two stacked cards [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailGap: 10
+    // estimate: the card's distance from the display's side edge, and above the Dock's band or the bottom edge [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailEdgeMargin: 16
+    // estimate: a hover button of the card (Copy, Show in Files, Move to Trash, Close), a round button over the picture's corners [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailButtonSize: 28
+    // estimate: the glyph of a hover button [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailButtonIconSize: 14
+    // ADR-0066 D-1: cards stacked at once; a new capture pushes the oldest out
+    readonly property int captureThumbnailMax: 3
+    // estimate: how long the cards stay unmapped before the shell tells the helper they are gone (the acknowledgement of the shooting phase, ADR-0066 D-1): three frames at 60 Hz, so the compositor has unmapped and repainted
+    readonly property int captureThumbnailSettleMs: 50
+    // estimate: how far the pointer moves before a press on a card becomes a drag (a swipe toward the edge, or a drag of the file out), the desktop icons' threshold (desktop.iconDragThreshold) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailDragThreshold: 10
+    // estimate: how far a card is dragged toward its screen edge before letting go dismisses it (swipe to dismiss) [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailDismissDistance: 48
+    // estimate: a swipe toward the screen edge this fast (points per second, the pointer's own velocity) dismisses the card whatever the distance, a flick [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailFlickVelocity: 600
+    // estimate: a swipe held this long (ms) before the pointer is let go is no flick: the speed of its last move is stale, a pause makes no event [ref: docs/specs/capture-suite.md § 3.2 Floating thumbnail]
+    readonly property int captureThumbnailFlickStaleMs: 80
+    // estimate: how far a card slides in from its edge when it arrives (a fade only under Reduce Motion)
+    readonly property int captureThumbnailDismissSlide: 24
+    // estimate: how long Hide Desktop Icons keeps the icons hidden after the toolbar started the helper, until its state shows a phase
+    readonly property int captureIconsSettleMs: 2000
+    // estimate: the longest the shell holds the acknowledgement of a shot for the hidden desktop icons to be presented; under the helper's 1 s wait, so a shot never hangs
+    readonly property int captureIconsHideWaitMs: 400
+    // estimate: a result file older than this when the shell reads it is not shown (a file left from before the shell started)
+    readonly property int captureThumbnailFreshMs: 30000
 
     // the selected tab's indicator of GTK 3.24.52 Adwaita and GTK 4.24.1 Default (box-shadow inset 4 px): the generated GTK themes recolour it, never resize it [ref: docs/decisions/ADR-0035-system-dialogs.md D-8]
     readonly property int gtkTabIndicatorWidth: 4

@@ -12,7 +12,7 @@
 # shortcut; no tensaku. Standard library only; strings through tr() (gate I1: scripts/dev/check-i18n.py).
 #
 # The capture toolbar (Shift-Cmd-5, shell/capture) runs the same modes with its options, and a window mode:
-#   grassfield-capture screen|window|selection [--save screenshots|desktop|documents|clipboard|preview] [--timer 0|5|10]
+#   grassfield-capture screen|window|selection [--save screenshots|desktop|documents|clipboard|preview] [--timer 0|3|5|10]
 #                      [--pointer] [--output NAME (screen)] [--geometry "X,Y WxH" (window, selection)]
 # The toolbar chooses on its own surface (macOS 27): the frame of Capture Selected Portion and the window clicked in Capture
 # Selected Window come as --geometry (whole numbers, a positive size, wholly on one enabled display, or the usage, exit 2), the
@@ -24,7 +24,7 @@
 # Screenshots folder, since Preview cannot save a document, and opened in Preview at once, no notice). Without --save (the keys)
 # the toolbar's choice applies: capture.location of grassfield.json, as the shell reads it (stored_location). --timer: a
 # countdown after the choice and before the picture; --pointer: grim draws the pointer (-c).
-#   grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview] [--timer 0|5|10] [--pointer]
+#   grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview] [--timer 0|3|5|10] [--pointer]
 #                             [--mic] [--output NAME (screen)] [--geometry "X,Y WxH" (selection)]
 # records with gpu-screen-recorder (an Omarchy base package) and Omarchy's backend arguments (omarchy-capture-screenrecording:
 # `-w <display> -s <size>` for a whole display, `-w WxH+X+Y` in logical coordinates for an area, `-k auto -f 60 -fm cfr
@@ -36,9 +36,36 @@
 # (Preview plays it) follows. A recording with --save clipboard is not offered (a movie is not copied): it goes to the Videos
 # folder. While a recording or a countdown runs this helper holds a lock and keeps its state in a private file,
 # $XDG_RUNTIME_DIR/grassfield/capture-state.json (0600, by rename, in the 0700 folder of the capture notice), which the shell watches (its countdown and the menu bar's stop item):
-#   {"v": 1, "phase": "idle" | "starting" | "selecting" | "countdown" | "recording", "kind": "shot" | "recording",
+#   {"v": 1, "phase": "idle" | "starting" | "selecting" | "countdown" | "shooting" | "recording", "kind": "shot" | "recording",
 #    "pid", "start", "until" (ms since the epoch, countdown), "rect" {x, y, w, h} and "output" (where the capture is),
-#    "recorder", "recorderStart" and "started" (ms, recording)}
+#    "recorder", "recorderStart" and "started" (ms, recording), "seq" (shooting)}
+# Before every grim call and every recorder start (ADR-0066 D-1) the phase is "shooting", with "seq", 16 random hex digits: the
+# shell unmaps its floating thumbnails and writes that seq to $XDG_RUNTIME_DIR/grassfield/capture-ack (0600, one name, at most 64
+# bytes: the 16 digits and at most a newline; anything else is ignored); this helper goes on at that, or after ACK_SECONDS with
+# none. Afterwards a saved picture or recording is described in $XDG_RUNTIME_DIR/grassfield/capture-result.json (0600, by
+# rename) when capture.showThumbnail is on (the default). The notice is skipped only when the shell acknowledged this very
+# capture and the result was written; otherwise (no acknowledgement, the setting off, no result file, no handshake because
+# another capture owns the state) the notice shows it. The automatic copy to the clipboard is `wl-copy --type image/png --sensitive`.
+#   grassfield-capture selection --previous [the other options but --geometry]
+# Capture Previous Area (ADR-0066 C8): the focused display's last frame of the toolbar (capture.lastSelection, in that display's
+# own coordinates, brought back inside it) is the area, as --geometry; without an entry the crosshair chooses. Refused under the lock.
+#   grassfield-capture text [--geometry "X,Y WxH"]
+# Capture Text (ADR-0066 D-7, C3): the area (--geometry, else the crosshair) goes through grim (after the shooting handshake)
+# into zbarimg (QR only) and tesseract (Preview's contract with --psm 6, plain text); QR codes found are copied with
+# `wl-copy --sensitive` (never in clipboard history, ADR-0034 PV-1) and never written to the result file, else the text is
+# copied. A notice says it (no text gives one); kind "text" in the result file holds the first 512 characters of text (and "qr": true when it came from a QR code, never the data).
+# Refused under the lock.
+#   grassfield-capture selection --freeze [--save ...] [--pointer]   (ADR-0066 D-1, C4)
+#   grassfield-capture choose --token T (--geometry "X,Y WxH" | --cancel)
+# The frozen screen: after the shooting handshake every display is grabbed into $XDG_RUNTIME_DIR/grassfield/frozen/ (0700, files
+# 0600, binary PPM), the state says phase "frozen" with a random 128-bit "token" and "frames" [{output, path, rect, scale}], and
+# the helper waits FREEZE_SECONDS for the shell's answer, `choose`, which checks the token (32 lowercase hex digits, equal to the
+# state's), that the state's pid and start name a live helper of this user, and that the geometry (whole numbers, a positive
+# size) lies wholly inside one frame, and then writes capture-choice.json (0600, by rename); anything else: exit 2, nothing
+# written. The helper reads that file only as a private regular file (no link, one name, 0600, at most 4 KiB, version 1, the
+# token, a geometry inside a frame, or "cancel"), deletes it, crops the frozen frame (logical to device pixels with the frame's
+# scale, rounded outwards) and goes on as a screenshot. Frames and choice are removed on a picture, a cancel, the timeout, stop
+# (SIGINT), SIGTERM and the lock; a left-over folder at the next freeze. Refused under the lock (exit 1).
 #   grassfield-capture stop
 # ends what that state names (the menu bar's stop item, Ctrl-Cmd-Esc, the session locking): SIGINT to the recorder this helper
 # started (gpu-screen-recorder saves its file on SIGINT), recognised by its pid, its start time and its parent (this helper's
@@ -56,7 +83,9 @@ import contextlib
 import ctypes
 import datetime
 import fcntl
+import hmac
 import json
+import math
 import os
 import re
 import select
@@ -66,6 +95,7 @@ import stat
 import subprocess
 import sys
 import time
+import zlib
 
 # capture.* of ui/tokens/tokens.json, as slurp takes them (#rrggbbaa): the veil over the screen, the selection's fill and
 # border, the border's width in pixels. The boxes a click can pick (the windows, then the displays) are filled with the veil
@@ -83,6 +113,14 @@ CLICK_AREA = 20
 # either covers the other windows of its workspace, except the pinned ones and those allowed over it.
 FULLSCREEN = 2
 WAIT_SECONDS = 120
+FREEZE_SECONDS = 120  # a frozen screen waits this long for the shell's choice (ADR-0066 D-1)
+FREEZE_POLL_SECONDS = 0.05
+FROZEN_NAME = "frozen"
+FROZEN_MAX = 256 * 1024 * 1024  # one frame (an 8K display is 100 MB)
+CHOICE_NAME = "capture-choice.json"
+CHOICE_MAX = 4096
+TOKEN = re.compile(r"[0-9a-f]{32}")
+PPM_HEAD = re.compile(rb"P6\n([0-9]{1,5}) ([0-9]{1,5})\n255\n")
 # The previous capture's notice is closed before a capture, and the picture is taken at least this long after: the shell
 # unmaps the banner's window at once, and Hyprland fades a layer out in at most its global speed, 300 ms
 # (config/hypr/grassfield/looknfeel.lua), so a picture never shows the notice of the one before. The crosshair does not wait.
@@ -93,7 +131,7 @@ PREVIEW_ICON = "org.grassfield.Preview"
 MODES = ("screen", "window", "selection")
 RECORD_MODES = ("screen", "selection")
 SAVE_TO = ("screenshots", "desktop", "documents", "clipboard", "preview")
-TIMERS = ("0", "5", "10")
+TIMERS = ("0", "3", "5", "10")
 # Save to without --save (the keys): capture.location of grassfield.json, else the older capture.saveTo's documents, clipboard and
 # preview (its desktop, the old default, reads as the new one), else the Screenshots folder (shell/store/CaptureLocation.js).
 DEFAULT_SAVE = "screenshots"
@@ -109,9 +147,34 @@ RECORDER = ["-k", "auto", "-f", "60", "-fm", "cfr", "-fallback-cpu-encoding", "y
 RECORDER_MAX = (3840, 2160)
 OUTPUT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 # The toolbar's --geometry, "X,Y WxH" in the compositor's logical coordinates, whole numbers (as slurp prints it).
+# Capture Text (ADR-0066 D-7): Preview's tesseract contract (apps/preview/src/previewlogic.cpp recognitionCommand) with one page
+# segmentation mode of a region instead of a page, plain text instead of TSV; zbarimg reads QR codes only. A tool still running
+# TOOL_SECONDS later is killed, as Preview's is.
+TOOL_SECONDS = 60
+TOOL_OUTPUT_MAX = 4 * 1024 * 1024
+TEXT_MAX = 1 << 20
+TESSERACT = ["--oem", "1", "--psm", "6", "--dpi", "300"]
+ZBAR = ["-q", "-Sdisable", "-Sqrcode.enable", "-"]
+LANGUAGE_NAME = re.compile(r"[A-Za-z0-9_]{1,32}")
+# Tesseract's code for a session language (apps/preview/qml/TextInImages.js languageCodes: tests/shell/capture.sh holds them equal).
+LANGUAGE_CODES = dict(pair.split(":") for pair in (
+    "af:afr am:amh ar:ara az:aze be:bel bg:bul bn:ben bs:bos ca:cat cs:ces cy:cym da:dan de:deu el:ell en:eng eo:epo es:spa "  # i18n-ignore (language codes)
+    "et:est eu:eus fa:fas fi:fin fr:fra ga:gle gl:glg gu:guj he:heb hi:hin hr:hrv hu:hun hy:hye id:ind is:isl it:ita ja:jpn "
+    "ka:kat kk:kaz km:khm kn:kan ko:kor ky:kir lo:lao lt:lit lv:lav mk:mkd ml:mal mn:mon mr:mar ms:msa mt:mlt my:mya nb:nor "
+    "ne:nep nl:nld nn:nor no:nor pa:pan pl:pol ps:pus pt:por ro:ron ru:rus si:sin sk:slk sl:slv sq:sqi sr:srp sv:swe sw:swa "
+    "ta:tam te:tel tg:tgk th:tha tl:tgl tr:tur uk:ukr ur:urd uz:uzb vi:vie yi:yid").split())
 GEOMETRY_ARG = re.compile(r"(-?[0-9]{1,6}),(-?[0-9]{1,6}) ([0-9]{1,6})x([0-9]{1,6})")
 # While recording, the shell's lock marker is read this often (seconds): the session locking ends the recording.
 LOCK_POLL_SECONDS = 0.5
+# The shooting handshake (ADR-0066 D-1): before every grim call and recorder start the state says "shooting" with a random seq,
+# and the shell, once its floating thumbnails are unmapped, writes that seq to ACK_NAME in the runtime folder. This helper waits
+# at most ACK_SECONDS for it and then goes on: a thumbnail can never block a capture. The file is at most ACK_MAX bytes.
+ACK_SECONDS = 1.0
+ACK_POLL_SECONDS = 0.02
+ACK_NAME = "capture-ack"
+ACK_MAX = 64
+# The result file (ADR-0066 D-1): what the shell shows as the floating thumbnail after a capture.
+RESULT_NAME = "capture-result.json"
 
 TITLE = "Screenshot"
 NAME = "Screenshot %(date)s at %(time)s"
@@ -127,6 +190,11 @@ REC_DOCUMENTS = "Saved to Documents."
 REC_FOLDER = "Saved to %(folder)s."
 REC_FAILED = "The screen recording could not be saved."
 REC_OPEN = "Open"
+TEXT_TITLE = "Capture Text"
+TEXT_COPIED = "Text copied."
+QR_COPIED = "QR code copied."
+TEXT_NONE = "No text was found."
+TEXT_MISSING = "Text recognition is not installed."
 # The folder screenshots go to by default, in the Pictures folder, named in the session's language when it is made (an existing
 # folder of the English name is used as it is, so that changing the language does not start a second one).
 SCREENSHOTS = "Screenshots"
@@ -145,6 +213,11 @@ CATALOG = {
         REC_FOLDER: "Enregistré dans %(folder)s.",
         REC_FAILED: "L’enregistrement de l’écran n’a pas pu être sauvegardé.",
         REC_OPEN: "Ouvrir",
+        TEXT_TITLE: "Capturer le texte",
+        TEXT_COPIED: "Texte copié.",
+        QR_COPIED: "Code QR copié.",
+        TEXT_NONE: "Aucun texte trouvé.",
+        TEXT_MISSING: "La reconnaissance de texte n’est pas installée.",
         SCREENSHOTS: "Captures d’écran",
     },
 }
@@ -270,8 +343,9 @@ def shutter():
         pass
 
 
-class Cancelled(Exception):
-    """A choice or a countdown ended by `stop` (SIGINT) or the session ending (SIGTERM): nothing is captured."""
+class Cancelled(BaseException):
+    """A choice or a countdown ended by `stop` (SIGINT) or the session ending (SIGTERM): nothing is captured. A BaseException: no
+    `except Exception` (a parser's guard, say) can swallow it, the way a signal handler raises it from any line."""
 
 
 def tr(text):
@@ -559,9 +633,32 @@ def publish(folder, stem, ext, tmp):
     return None
 
 
-def save_picture(folder, stem, grim):
+def stamp_scale(path, scale):
+    # The capture's output scale as a tEXt chunk "Grassfield-Scale" right after IHDR (the screenshot editor sizes its strokes in
+    # picture pixels from it), in the hidden file of this helper's, before it is published: a new file renamed over it, never a
+    # file rewritten in place. A file that is not a plain PNG, or any failure, leaves the picture as grim wrote it.
+    if not isinstance(scale, float) or not 0 < scale < 1e6:
+        return
+    tmp = path + ".scale"
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        if data[:8] != b"\x89PNG\r\n\x1a\n" or data[8:16] != b"\x00\x00\x00\x0dIHDR":
+            return
+        body = b"Grassfield-Scale\x00" + repr(scale).encode("ascii")
+        chunk = len(body).to_bytes(4, "big") + b"tEXt" + body + zlib.crc32(b"tEXt" + body).to_bytes(4, "big")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, stat.S_IMODE(os.stat(path).st_mode))
+        with os.fdopen(fd, "wb") as out:
+            out.write(data[:33] + chunk + data[33:])  # signature 8 + IHDR chunk 25
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
+
+def save_picture(folder, stem, grim, scale=None):
     # grim writes a hidden file of this helper's in the folder, which then takes the first free name (publish). Returns the
-    # path, or None (nothing left behind).
+    # path, or None (nothing left behind). The scale (the output's) is stamped into the hidden file first (stamp_scale).
     tmp = reserve(folder, "grassfield-capture", ".png")
     if tmp is None:
         return None
@@ -569,6 +666,7 @@ def save_picture(folder, stem, grim):
         r = run(grim + [tmp], timeout=30)
         if r is None or r.returncode != 0 or os.path.getsize(tmp) == 0:
             return None
+        stamp_scale(tmp, scale)
         return publish(folder, stem, ".png", tmp)
     except OSError:
         return None
@@ -719,12 +817,129 @@ def take_lock():
     except OSError:
         os.close(fd)
         return None
+    # Nobody else holds the lock, so no helper is waiting on frozen frames: those left by one that was killed go (ADR-0066 D-1,
+    # item 6; every helper start and `stop` come through here).
+    clear_frozen()
     return fd
 
 
 def me():
     pid = os.getpid()
     return {"pid": pid, "start": started(pid)}
+
+
+def ack_read(path, seq):
+    # The shell's acknowledgement is trusted only as a private file of this user's: a regular file (never a link: opened with
+    # O_NOFOLLOW, one name), mode 0600, at most ACK_MAX bytes, holding this capture's seq (16 lowercase hex digits, then at most
+    # one newline). Anything else is ignored.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return False
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600
+                or st.st_nlink != 1 or st.st_size > ACK_MAX):
+            return False
+        data = os.read(fd, ACK_MAX + 1)
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    return len(data) <= ACK_MAX and data in (seq.encode(), seq.encode() + b"\n")
+
+
+def handshake(kind):
+    # The state says "shooting" with a fresh random seq; the shell hides its thumbnails and writes the seq to capture-ack; this
+    # helper waits at most ACK_SECONDS for it. True when this run got the acknowledgement; False without one, and without a
+    # private runtime folder (nothing to say or hear).
+    folder = runtime_folder()
+    if folder is None:
+        return False
+    seq = os.urandom(8).hex()
+    write_state(dict(me(), phase="shooting", kind=kind, seq=seq))
+    path = os.path.join(folder, ACK_NAME)
+    until = time.monotonic() + ACK_SECONDS
+    while not ack_read(path, seq):
+        if time.monotonic() >= until:
+            return False
+        time.sleep(ACK_POLL_SECONDS)
+    return True
+
+
+@contextlib.contextmanager
+def shooting(kind):
+    # The shooting phase of a screenshot: holds the capture lock (so that `stop` and the shell's lock stop reach this helper)
+    # while the handshake and the picture run, and leaves the state idle. When a recording or a countdown holds the lock, the
+    # state is theirs: no handshake, and nothing written.
+    lock = take_lock()
+    try:
+        yield handshake(kind) if lock is not None else False  # whether the shell acknowledged this run
+    finally:
+        if lock is not None:
+            write_state({"phase": "idle"})
+            os.close(lock)
+
+
+def show_thumbnail():
+    # capture.showThumbnail of grassfield.json, true when absent or not a boolean (ADR-0066 D-11): the shell shows a floating
+    # thumbnail instead of this helper's notice.
+    value = settings_group("capture").get("showThumbnail")
+    return value if isinstance(value, bool) else True
+
+
+def place_of(rect, monitors, output):
+    # The display a capture is on (the one named, else the one under the rectangle's centre) and its scale: ("", 1.0) when
+    # Hyprland's answer does not say.
+    cx, cy = rect["x"] + rect["w"] // 2, rect["y"] + rect["h"] // 2
+    for m in monitors or []:
+        if isinstance(m, dict) and not m.get("disabled") and isinstance(m.get("name"), str):
+            r = logical(m)
+            if r and (m["name"] == output if output else contains(r, cx, cy)):
+                try:
+                    return m["name"], float(m["scale"])
+                except (KeyError, TypeError, ValueError):
+                    return m["name"], 1.0
+    return "", 1.0
+
+
+def picture_size(path, rect, scale):
+    # A PNG's pixel size from its header, else the rectangle at the display's scale.
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+        if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+            w, h = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+            if w > 0 and h > 0:
+                return {"w": w, "h": h}
+    except OSError:
+        pass
+    return {"w": max(1, round(rect["w"] * scale)), "h": max(1, round(rect["h"] * scale))}
+
+
+def write_result(kind, paths, rect, output, scale, pixels, text="", qr=False):
+    # $XDG_RUNTIME_DIR/grassfield/capture-result.json (ADR-0066 D-1): 0600, written to a file of its own (O_EXCL, never a link)
+    # and renamed over the last one, so the shell reads a whole file or the one before. False when it could not be written.
+    folder = runtime_folder()
+    if folder is None or (not paths and kind != "text"):  # a text capture saves no file: no paths, no primary
+        return False
+    result = {"v": 1, "id": os.urandom(8).hex(), "kind": kind, "paths": paths, "primary": paths[0] if paths else "", "output": output,
+              "rect": rect, "scale": scale, "pixels": pixels, "time": int(time.time() * 1000), "text": text[:512]}
+    if qr:
+        # A flag only, for the shell's wording: a text result that came from a QR code. The data is never in this file.
+        result["qr"] = True
+    path = os.path.join(folder, RESULT_NAME)
+    tmp = "%s.%s.tmp" % (path, os.urandom(6).hex())
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(result) + "\n")
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        return False
+    return True
 
 
 def countdown(seconds, rect, output, kind, lock):
@@ -843,10 +1058,11 @@ def open_with(desktop_id, paths):
     run(["systemd-run", "--user", "--collect", "--quiet", "--"] + app, timeout=30)
 
 
-def copy_png(data):
-    # wl-copy stays behind to serve the clipboard: none of its output is waited for.
+def copy_png(data, sensitive=False):
+    # wl-copy stays behind to serve the clipboard: none of its output is waited for. The automatic copy of a saved picture is
+    # --sensitive (clipboard history never records it, ADR-0034 PV-1, ADR-0066 D-9); the copy a user chose as Save to is not.
     try:
-        subprocess.run(["wl-copy", "--type", "image/png"], input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        subprocess.run(["wl-copy", "--type", "image/png"] + (["--sensitive"] if sensitive else []), input=data, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=10)
     except (OSError, subprocess.SubprocessError):
         pass
@@ -854,15 +1070,23 @@ def copy_png(data):
 
 def shot(opts):
     # A screenshot: the screen (every display), a window or a selection, then the toolbar's timer, then the picture.
+    if opts["freeze"]:
+        return freeze_shot(opts)
     mode, save = opts["mode"], opts["save"]
     pointer = ["-c"] if opts["pointer"] else []
     monitors = hyprctl("monitors")
+    if opts["previous"]:
+        # Capture Previous Area (C8): the focused display's last frame as --geometry; without one the crosshair chooses.
+        if session_locked(monitors):
+            return 1
+        opts["geometry"] = previous_frame(monitors)
     if mode == "screen":
         screens = displays(monitors)
         if opts["output"]:
             # The display clicked in the toolbar's Capture Entire Screen mode, and only it.
             screens = [s for s in screens if s[0] == opts["output"]]
         shots = [["grim", "-o", name] + pointer for name, _ in screens]
+        scales = [place_of(rect, monitors, name)[1] for name, rect in screens]
         if not shots:
             return 1
         ready = close_previous()
@@ -875,6 +1099,7 @@ def shot(opts):
             return 2
         ready = close_previous()
         shots = [["grim", "-g", geometry_text(sel)] + pointer]
+        scales = [place_of(sel, monitors, "")[1]]
         area, output = sel, ""
     else:
         if selecting(crosshair(mode == "window")):
@@ -884,6 +1109,7 @@ def shot(opts):
         if sel is None:
             return 0
         shots = [["grim", "-g", geometry_text(sel)] + pointer]
+        scales = [place_of(sel, monitors, "")[1]]
         area, output = sel, ""
     if opts["timer"]:
         lock = take_lock()
@@ -897,34 +1123,517 @@ def shot(opts):
             if lock is not None:
                 os.close(lock)
     time.sleep(max(0.0, ready - time.monotonic()))
-    if session_locked():
+    if lock_requested():
         return 1  # the session locked meanwhile: no picture of what the lock covers
-    if save == "clipboard":
-        # The clipboard only (macOS: no file, no thumbnail): the focused display's picture, or the choice.
-        r = run(shots[0] + ["-"], timeout=30)
-        if r is None or r.returncode != 0 or not r.stdout:
-            return 1
-        shutter()
-        copy_png(r.stdout)
-        return 0
-    folder = destination(save)
-    if folder is None:
+    folder = None if save == "clipboard" else destination(save)
+    if save != "clipboard" and folder is None:
         return 1
     now = datetime.datetime.now()
     stem = tr(NAME) % {"date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H.%M.%S")}
-    paths = [p for p in (save_picture(folder, stem, grim) for grim in shots) if p]
-    if not paths:
-        return 1
+    data, paths = b"", []
+    # The shooting phase: from the handshake to the last grim call, so that no floating thumbnail is in a picture; it ends
+    # before the notice, which waits for a click.
+    with shooting("shot") as acknowledged:
+        if session_locked():
+            return 1
+        if save == "clipboard":
+            # The clipboard only (macOS: no file, no thumbnail): the focused display's picture, or the choice.
+            r = run(shots[0] + ["-"], timeout=30)
+            if r is None or r.returncode != 0 or not r.stdout:
+                return 1
+            data = r.stdout
+        else:
+            paths = [p for p in (save_picture(folder, stem, grim, sc) for grim, sc in zip(shots, scales)) if p]
+            if not paths:
+                return 1
+    return finish_shot(save, folder, paths, data, area, output, monitors, acknowledged)
+
+
+def finish_shot(save, folder, paths, data, area, output, monitors, acknowledged):
+    # After the picture: the shutter, the clipboard, Preview or the thumbnail and notice (shared by shot() and freeze_shot()).
     shutter()
+    if save == "clipboard":
+        copy_png(data)
+        return 0
     if save == "preview":
         open_with(PREVIEW, paths)
         return 0
     try:
         with open(paths[0], "rb") as f:
-            copy_png(f.read())
+            copy_png(f.read(), sensitive=True)
     except OSError:
         pass
-    notify(paths, TITLE, saved_note(save, folder), OPEN)
+    place, scale = place_of(area, monitors, output)
+    # The shell's thumbnail replaces the notice only when it acknowledged this very shot, the setting is on and the result is
+    # written; otherwise (no shell, no acknowledgement, the setting off, no result file) the notice shows the picture.
+    written = show_thumbnail() and write_result("shot", paths, area, place, scale, picture_size(paths[0], area, scale))
+    if not (acknowledged and written):
+        notify(paths, TITLE, saved_note(save, folder), OPEN)
+    return 0
+
+
+# ---- the freeze channel (ADR-0066 D-1, slice C4) ----
+
+def private_read(path, limit, dir_fd=None):
+    # The bytes of a private file of this user's, or None: a regular file opened without following a link, one name (no hard
+    # link), mode 0600, at most `limit` bytes. What the freeze channel trusts from the runtime folder, as ack_read() does.
+    # With `dir_fd`, `path` is a name inside that open folder.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if (not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600
+                or st.st_nlink != 1 or st.st_size > limit):
+            return None
+        data = os.read(fd, limit + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return data if len(data) <= limit else None
+
+
+def open_frozen():
+    # A new $XDG_RUNTIME_DIR/grassfield/frozen (a left-over one removed first) opened as a directory without following a link and
+    # checked on the open descriptor (a directory, this user's, no group or other bits): every frame is made, read and removed
+    # through it, never by path again. The descriptor, or None.
+    folder = runtime_folder()
+    if folder is None:
+        return None
+    clear_frozen()
+    path = os.path.join(folder, FROZEN_NAME)
+    try:
+        os.mkdir(path, 0o700)
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return None
+    st = os.fstat(fd)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        os.close(fd)
+        return None
+    return fd
+
+
+def clear_frozen(dfd=None):
+    # Removes the frozen frames and their folder, and the choice file: names only, never through a link (a link is unlinked, not
+    # followed), never above the folder. With `dfd`, the open frozen folder of this helper is emptied through that descriptor first.
+    if dfd is not None:
+        with contextlib.suppress(OSError):
+            for name in os.listdir(dfd):
+                with contextlib.suppress(OSError):
+                    os.unlink(name, dir_fd=dfd)
+    folder = runtime_folder()
+    if folder is None:
+        return
+    with contextlib.suppress(OSError):
+        os.unlink(os.path.join(folder, CHOICE_NAME))
+    path = os.path.join(folder, FROZEN_NAME)
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return
+    if not stat.S_ISDIR(st.st_mode):
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return
+    try:
+        for name in os.listdir(fd):
+            with contextlib.suppress(OSError):
+                os.unlink(name, dir_fd=fd)
+    finally:
+        os.close(fd)
+    with contextlib.suppress(OSError):
+        os.rmdir(path)
+
+
+def in_a_frame(sel, frames):
+    # The rectangle (a positive size) lies wholly inside one frame's logical rectangle.
+    if sel is None or sel["w"] <= 0 or sel["h"] <= 0:
+        return False
+    for f in frames:
+        r = f["rect"]
+        if r["x"] <= sel["x"] and r["y"] <= sel["y"] and sel["x"] + sel["w"] <= r["x"] + r["w"] \
+                and sel["y"] + sel["h"] <= r["y"] + r["h"]:
+            return True
+    return False
+
+
+def frames_of(value):
+    # The frames of a state, or None when any rectangle is not four whole numbers.
+    if not isinstance(value, list) or not value:
+        return None
+    for f in value:
+        r = f.get("rect") if isinstance(f, dict) else None
+        if not isinstance(r, dict) or any(type(r.get(k)) is not int for k in ("x", "y", "w", "h")):
+            return None
+    return value
+
+
+def choice_of(data, token, frames):
+    # What a choice file says, or None when it is not a valid choice for this token and these frames: JSON version 1 holding
+    # the token and exactly one of "cancel": true or "geometry": "X,Y WxH" of a positive size wholly inside a frame.
+    try:
+        obj = json.loads(data.decode("ascii"))
+    except (ValueError, RecursionError):  # not JSON, not ASCII, or nested too deep for the parser
+        return None
+    if not isinstance(obj, dict) or type(obj.get("v")) is not int or obj["v"] != 1 \
+            or type(obj.get("token")) is not str:
+        return None
+    if not hmac.compare_digest(obj["token"].encode("ascii", "replace"), token.encode("ascii")):
+        return None
+    if set(obj) == {"v", "token", "cancel"} and obj["cancel"] is True:
+        return "cancel"
+    if set(obj) == {"v", "token", "geometry"} and isinstance(obj["geometry"], str):
+        m = GEOMETRY_ARG.fullmatch(obj["geometry"])
+        sel = {"x": int(m[1]), "y": int(m[2]), "w": int(m[3]), "h": int(m[4])} if m else None
+        return sel if in_a_frame(sel, frames) else None
+    return None
+
+
+def choose_command(opts):
+    # `choose --token T (--geometry G | --cancel)`: the shell's answer to a frozen screen. Exit 0 once the choice file is
+    # written; exit 2, and nothing written, for a token that is not the state's, a state that is not a frozen screen of a live
+    # helper of this user's, or a geometry that is not wholly inside a frame; exit 1 under the lock.
+    if lock_requested():
+        return 1
+    state = None
+    path = state_path()
+    data = private_read(path, 4096) if path else None
+    if data is not None:
+        with contextlib.suppress(ValueError, RecursionError):
+            state = json.loads(data.decode("ascii"))
+    if not isinstance(state, dict) or state.get("phase") != "frozen":
+        return 2
+    token, frames = state.get("token"), frames_of(state.get("frames"))
+    pid = state.get("pid")
+    if type(token) is not str or not TOKEN.fullmatch(token) or frames is None or type(pid) is not int or pid <= 1 \
+            or pid == os.getpid() or not own(pid, state.get("start")):
+        return 2
+    if not hmac.compare_digest(opts["token"].encode("ascii"), token.encode("ascii")):
+        return 2
+    if opts["cancel"]:
+        body = {"v": 1, "token": token, "cancel": True}
+    else:
+        if not in_a_frame(opts["geometry"], frames):
+            return 2
+        body = {"v": 1, "token": token, "geometry": geometry_text(opts["geometry"])}
+    folder = runtime_folder()
+    if folder is None:
+        return 1
+    path = os.path.join(folder, CHOICE_NAME)
+    tmp = "%s.%s.tmp" % (path, os.urandom(6).hex())
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(body) + "\n")
+        os.replace(tmp, path)  # by rename: over a link, the link is replaced, never followed
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        return 1
+    return 0
+
+
+def read_ppm(name, dfd):
+    # A frozen frame (grim's binary PPM, 8 bits) in the frozen folder `dfd`: (width, height, pixels), or None when it is not a
+    # private file of ours.
+    data = private_read(name, FROZEN_MAX, dir_fd=dfd)
+    m = PPM_HEAD.match(data) if data else None
+    if m is None:
+        return None
+    w, h = int(m[1]), int(m[2])
+    pixels = data[m.end():]
+    return (w, h, pixels) if w > 0 and h > 0 and len(pixels) == w * h * 3 else None
+
+
+def device_span(start, size, scale, limit):
+    # A logical span as device pixels, rounded outwards, inside 0..limit (a hair of float error is not a pixel).
+    lo = max(0, min(limit, math.floor(start * scale + 1e-6)))
+    hi = max(0, min(limit, math.ceil((start + size) * scale - 1e-6)))
+    return lo, hi
+
+
+def crop_png(frame, sel, dfd):
+    # The part of a frozen frame `sel` (logical, layout coordinates) covers, as a PNG (8-bit RGB), or None.
+    got = read_ppm(frame["name"], dfd)
+    if got is None:
+        return None
+    w, h, pixels = got
+    r, scale = frame["rect"], frame["scale"]
+    x0, x1 = device_span(sel["x"] - r["x"], sel["w"], scale, w)
+    y0, y1 = device_span(sel["y"] - r["y"], sel["h"], scale, h)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    rows = b"".join(b"\0" + pixels[(y * w + x0) * 3:(y * w + x1) * 3] for y in range(y0, y1))
+
+    def chunk(kind, body):
+        return len(body).to_bytes(4, "big") + kind + body + zlib.crc32(kind + body).to_bytes(4, "big")
+
+    head = (x1 - x0).to_bytes(4, "big") + (y1 - y0).to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(rows, 3)) + chunk(b"IEND", b"")
+
+
+def freeze_grab(monitors, pointer, dfd):
+    # Every enabled display into the frozen folder `dfd`, one binary PPM each (0600, made here with O_EXCL; grim writes to its
+    # standard output). PPM so that a crop is a slice of rows, with no PNG decoder. The frames as the state lists them, or None
+    # (the caller removes what was made).
+    screens = displays(monitors)
+    folder = runtime_folder()
+    if not screens or folder is None:
+        return None
+    frames = []
+    for n, (name, rect) in enumerate(screens):
+        leaf = "%d.ppm" % n
+        r = run(["grim", "-t", "ppm", "-o", name] + pointer + ["-"], timeout=30)
+        if r is None or r.returncode != 0 or not r.stdout:
+            return None
+        try:
+            fd = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+            with os.fdopen(fd, "wb") as f:
+                f.write(r.stdout)
+        except OSError:
+            return None
+        if read_ppm(leaf, dfd) is None:
+            return None
+        frames.append({"output": name, "name": leaf, "path": os.path.join(folder, FROZEN_NAME, leaf), "rect": rect,
+                       "scale": place_of(rect, monitors, name)[1]})
+    return frames
+
+
+def freeze_wait(token, frames):
+    # Waits at most FREEZE_SECONDS for the shell's choice: a rectangle, "cancel", or None (the timeout, or the lock). A choice
+    # file that is not valid (a link, another mode, over 4 KiB, another token, a geometry outside the frames) is ignored and
+    # stays until a valid one replaces it; the valid one is deleted before it is used.
+    path = os.path.join(runtime_folder() or "", CHOICE_NAME)
+    until, polls = time.monotonic() + FREEZE_SECONDS, 0
+    while time.monotonic() < until:
+        data = private_read(path, CHOICE_MAX)
+        got = choice_of(data, token, frames) if data is not None else None
+        if got is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+            return got
+        polls += 1
+        if (polls % 10 == 0 and lock_requested()) or (polls % 20 == 0 and session_locked()):
+            return None  # the shell's marker every 0.5 s, Hyprland's own answer every second (a locker without the marker)
+        time.sleep(FREEZE_POLL_SECONDS)
+    return None
+
+
+def freeze_shot(opts):
+    # `selection --freeze`: the screen is grabbed first (every display, after the shooting handshake), the shell shows the
+    # frames and answers through `choose`, and the choice is cropped from the frozen frames: what was on the screen when the key
+    # was pressed. The state says "frozen" with a random token while it waits. The frames and the choice file are removed on
+    # every way out: the picture, a cancel, the timeout, `stop` (SIGINT), SIGTERM and the lock.
+    monitors = hyprctl("monitors")
+    save = opts["save"]
+    if session_locked(monitors):
+        return 1
+    folder = None if save == "clipboard" else destination(save)
+    if save != "clipboard" and folder is None:
+        return 1
+    lock = take_lock()
+    if lock is None:
+        return 1  # another capture owns the state
+    dfd = None
+    previous = {n: signal.getsignal(n) for n in (signal.SIGINT, signal.SIGTERM)}
+
+    def ending(signum, frame):
+        # The first signal ends the capture and the clean-up that follows runs to its end: a second one (the lock's `stop` and the
+        # user's together) is ignored from here on, then the handlers are given back.
+        for n in previous:
+            signal.signal(n, signal.SIG_IGN)
+        if signum == signal.SIGTERM:
+            sys.exit(143)
+        raise Cancelled()
+
+    for n in previous:
+        signal.signal(n, ending)
+    try:
+        time.sleep(max(0.0, close_previous() - time.monotonic()))
+        acknowledged = handshake("shot")
+        if session_locked():
+            return 1
+        dfd = open_frozen()
+        frames = freeze_grab(monitors, ["-c"] if opts["pointer"] else [], dfd) if dfd is not None else None
+        if frames is None:
+            return 1
+        token = os.urandom(16).hex()
+        write_state(dict(me(), phase="frozen", kind="shot", token=token, frames=frames))
+        got = freeze_wait(token, frames)
+        if got == "cancel":
+            return 0
+        if got is None or session_locked():
+            return 1
+        frame = next(f for f in frames if in_a_frame(got, [f]))
+        data = crop_png(frame, got, dfd)
+        if data is None:
+            return 1
+        now = datetime.datetime.now()
+        stem = tr(NAME) % {"date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H.%M.%S")}
+        paths = []
+        if save != "clipboard":
+            tmp = reserve(folder, "grassfield-capture", ".png")
+            if tmp is None:
+                return 1
+            try:
+                with open(tmp, "wb") as f:
+                    f.write(data)
+                stamp_scale(tmp, frame["scale"])
+                path = publish(folder, stem, ".png", tmp)
+            except OSError:
+                path = None
+            finally:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+            if path is None:
+                return 1
+            paths = [path]
+    finally:
+        for n in previous:
+            signal.signal(n, signal.SIG_IGN)  # no signal cuts the clean-up short
+        clear_frozen(dfd)
+        if dfd is not None:
+            os.close(dfd)
+        write_state({"phase": "idle"})
+        os.close(lock)
+        for n, handler in previous.items():
+            signal.signal(n, handler)
+    return finish_shot(save, folder, paths, data, got, "", monitors, acknowledged)
+
+
+def previous_frame(monitors):
+    # Capture Previous Area (ADR-0066 C8): the focused display's entry of capture.lastSelection ("NAME=x,y,w,h;...", the frame in
+    # the display's own logical coordinates, as the toolbar writes it) as a rectangle in layout coordinates, brought back
+    # inside the display; None without an entry that reads.
+    screens = displays(monitors)
+    value = settings_group("capture").get("lastSelection")
+    if not screens or not isinstance(value, str) or len(value) > 4096:
+        return None
+    name, area = screens[0]
+    for part in value.split(";"):
+        m = re.fullmatch(r"([A-Za-z0-9._-]{1,64})=(-?[0-9]{1,6}),(-?[0-9]{1,6}),([0-9]{1,6}),([0-9]{1,6})", part)
+        if m and m[1] == name and int(m[4]) > 0 and int(m[5]) > 0:
+            w, h = min(int(m[4]), area["w"]), min(int(m[5]), area["h"])
+            x, y = max(0, min(int(m[2]), area["w"] - w)), max(0, min(int(m[3]), area["h"] - h))
+            return {"x": area["x"] + x, "y": area["y"] + y, "w": w, "h": h}
+    return None
+
+
+def tool(argv, data):
+    # A recognition tool as Preview runs it: the lowest CPU priority, one OpenMP thread, standard error dropped, a time and an
+    # output cap. None when it does not run, ends late or answers too much; else (exit status, standard output).
+    env = dict(os.environ, OMP_THREAD_LIMIT="1")
+    try:
+        r = subprocess.run(argv, input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=TOOL_SECONDS, env=env,
+                           preexec_fn=lambda: os.setpriority(os.PRIO_PROCESS, 0, 19))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return None if len(r.stdout) > TOOL_OUTPUT_MAX else (r.returncode, r.stdout)
+
+
+def session_languages():
+    # tesseract's -l value as Preview chooses it (TextInImages.chooseLanguages): the session's language, then English, among the
+    # installed ones ("fra+eng"); "" when neither is, or tesseract does not answer.
+    r = tool(["tesseract", "--list-langs"], b"")
+    if r is None or r[0] != 0:
+        return ""
+    installed = [l.strip() for l in r[1].decode("utf-8", "replace").split("\n") if LANGUAGE_NAME.fullmatch(l.strip())]
+    lang = next((os.environ[v] for v in ("GRASSFIELD_LANG", "LC_ALL", "LC_MESSAGES", "LANG") if os.environ.get(v)), "")
+    code = re.split(r"[_.@-]", lang)[0].lower()
+    if code == "zh":
+        code = "chi_tra" if re.search(r"[_.@-](TW|HK|MO|Hant)\b", lang) else "chi_sim"
+    else:
+        code = LANGUAGE_CODES.get(code, "")
+    out = []
+    for c in (code, "eng"):
+        if c and c in installed and c not in out:
+            out.append(c)
+    return "+".join(out)
+
+
+def read_codes(image):
+    # The QR codes of a picture, as Preview reads them (TextInImages.parseCodes): each starts a line "QR-Code:", a line without
+    # it continues the code before; duplicates dropped.
+    if not shutil.which("zbarimg"):
+        return []
+    r = tool(["zbarimg"] + ZBAR, image)
+    if r is None or r[0] != 0:
+        return []
+    texts = []
+    for line in r[1].decode("utf-8", "replace").rstrip("\n").split("\n"):
+        if line.startswith("QR-Code:"):
+            texts.append(line[8:])
+        elif texts:
+            texts[-1] += "\n" + line
+    return [t for i, t in enumerate(texts) if t and t not in texts[:i]]
+
+
+def copy_text(text, sensitive=False):
+    # wl-copy as copy_png: the text on its standard input. QR data is --sensitive: clipboard history never records it
+    # (ADR-0034 PV-1).
+    try:
+        subprocess.run(["wl-copy", "--type", "text/plain"] + (["--sensitive"] if sensitive else []), input=text.encode("utf-8"),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def text(opts):
+    # Capture Text (ADR-0066 D-7, slice C3): an area (--geometry, else the crosshair), grim, the QR codes in it copied as
+    # sensitive when there are any, else its text copied; a notice says what happened. QR data is never written to the result
+    # file, a notice or a log. The picture is not saved.
+    monitors = hyprctl("monitors")
+    if session_locked(monitors):
+        return 1
+    if opts["geometry"] is not None:
+        sel = on_one_display(opts["geometry"], monitors)
+        if sel is None:
+            sys.stderr.write("grassfield-capture: --geometry is not on one display\n")
+            return 2
+        ready = close_previous()
+    else:
+        if selecting(crosshair(False)):
+            return 0
+        ready = close_previous()
+        sel = choose(monitors)
+        if sel is None:
+            return 0
+    time.sleep(max(0.0, ready - time.monotonic()))
+    if lock_requested():
+        return 1
+    with shooting("shot") as acknowledged:
+        if session_locked():
+            return 1
+        r = run(["grim", "-t", "ppm", "-g", geometry_text(sel), "-"], timeout=30)
+        if r is None or r.returncode != 0 or not r.stdout:
+            return 1
+        image = r.stdout
+    place, scale = place_of(sel, monitors, "")
+    codes = read_codes(image)
+    if codes:
+        copy_text("\n".join(codes), sensitive=True)
+        body, shown = QR_COPIED, ""
+    else:
+        found = ""
+        if shutil.which("tesseract"):
+            languages = session_languages()
+            r = tool(["tesseract", "stdin", "stdout"] + TESSERACT + ["-l", languages], image) if languages else None
+            found = r[1].decode("utf-8", "replace").replace("\f", "").strip() if r is not None and r[0] == 0 else ""
+        if not found:
+            notify([], TEXT_TITLE, TEXT_NONE if shutil.which("tesseract") else TEXT_MISSING, picture=False)
+            return 0
+        copy_text(found[:TEXT_MAX])
+        body, shown = TEXT_COPIED, found
+    written = show_thumbnail() and write_result("text", [], sel, place, scale, picture_size("", sel, scale), shown, qr=bool(codes))
+    if not (acknowledged and written):
+        notify([], TEXT_TITLE, body, picture=False)
     return 0
 
 
@@ -1004,6 +1713,7 @@ def record(opts):
         sys.stderr.write("grassfield-capture: a recording or a countdown is already running\n")
         return 1
     tmp = None
+    acknowledged = False
     signal.signal(signal.SIGINT, on_record_signal)
     signal.signal(signal.SIGTERM, on_record_signal)
     try:
@@ -1041,6 +1751,8 @@ def record(opts):
         time.sleep(max(0.0, ready - time.monotonic()))
         folder = destination(opts["save"], record=True)
         tmp = reserve(folder, "grassfield-recording", ".mp4") if folder else None
+        if tmp is not None:
+            acknowledged = handshake("recording")  # the thumbnails are away before the recorder starts
         if tmp is None or session_locked():
             return 1  # (the session locked during the choice or the countdown: nothing is recorded)
         argv = recorder_argv(target, monitors, opts, tmp)
@@ -1101,7 +1813,11 @@ def record(opts):
     if opts["save"] == "preview":
         open_with(PREVIEW, [path])
         return 0
-    notify([path], REC_TITLE, saved_note(opts["save"], os.path.dirname(path), record=True), REC_OPEN, picture=False)
+    place, scale = place_of(rect, monitors, output)
+    pixels = {"w": max(1, round(rect["w"] * scale)), "h": max(1, round(rect["h"] * scale))}
+    written = show_thumbnail() and write_result("recording", [path], rect, place, scale, pixels)
+    if not (acknowledged and written):
+        notify([path], REC_TITLE, saved_note(opts["save"], os.path.dirname(path), record=True), REC_OPEN, picture=False)
     return 0
 
 
@@ -1140,7 +1856,7 @@ def stop():
     # Exit 0 when something was told to end, 1 otherwise.
     state = read_state()
     phase = state.get("phase")
-    if phase not in ("starting", "selecting", "countdown", "recording"):
+    if phase not in ("starting", "selecting", "countdown", "shooting", "frozen", "recording"):
         return 1
     lock = take_lock()
     if lock is not None:
@@ -1170,13 +1886,27 @@ def parse(args):
     # The command line as a dict, or None (usage). Each option once, each value from its list.
     if args == ["stop"]:
         return {"action": "stop"}
+    if args[:1] == ["choose"]:
+        # choose --token T (--geometry G | --cancel), in this order: T is 32 lowercase hex digits, G whole numbers, a positive size.
+        if len(args) == 4 and args[1] == "--token" and TOKEN.fullmatch(args[2]) and args[3] == "--cancel":
+            return {"action": "choose", "token": args[2], "cancel": True, "geometry": None}
+        m = GEOMETRY_ARG.fullmatch(args[4]) if len(args) == 5 and args[1] == "--token" and args[3] == "--geometry" else None
+        if m and TOKEN.fullmatch(args[2]) and int(m[3]) > 0 and int(m[4]) > 0:
+            return {"action": "choose", "token": args[2], "cancel": False,
+                    "geometry": {"x": int(m[1]), "y": int(m[2]), "w": int(m[3]), "h": int(m[4])}}
+        return None
+    if args[:1] == ["text"]:
+        m = GEOMETRY_ARG.fullmatch(args[2]) if len(args) == 3 and args[1] == "--geometry" else None
+        if args == ["text"] or (m and int(m[3]) > 0 and int(m[4]) > 0):
+            return {"action": "text", "geometry": {"x": int(m[1]), "y": int(m[2]), "w": int(m[3]), "h": int(m[4])} if m else None}
+        return None
     action = "shot"
     if args[:1] == ["record"]:
         action, args = "record", args[1:]
     if not args or args[0] not in (RECORD_MODES if action == "record" else MODES):
         return None
     out = {"action": action, "mode": args[0], "save": None, "timer": 0, "pointer": False, "mic": False, "output": "",
-           "geometry": None}
+           "geometry": None, "previous": False, "freeze": False}
     seen, i = set(), 1
     while i < len(args):
         option = args[i]
@@ -1200,11 +1930,16 @@ def parse(args):
             else:
                 return None
             i += 2
-        elif option == "--pointer" or (option == "--mic" and action == "record"):
+        elif option == "--pointer" or (option == "--mic" and action == "record") \
+                or (option in ("--previous", "--freeze") and action == "shot" and out["mode"] == "selection"):
             out[option[2:]] = True
             i += 1
         else:
             return None
+    if out["previous"] and out["geometry"] is not None:
+        return None  # the remembered frame is the geometry
+    if out["freeze"] and (out["previous"] or out["geometry"] is not None or out["timer"]):
+        return None  # the frozen screen is the picture: no remembered frame, no frame given, no countdown
     return out
 
 
@@ -1216,13 +1951,26 @@ def main():
     opts = parse(sys.argv[1:])
     if opts is None:
         sys.stderr.write("usage: grassfield-capture screen|window|selection [--save screenshots|desktop|documents|clipboard|preview]"
-                         " [--timer 0|5|10] [--pointer] [--output NAME (screen)] [--geometry 'X,Y WxH' (window, selection)]\n"
+                         " [--timer 0|3|5|10] [--pointer] [--output NAME (screen)] [--geometry 'X,Y WxH' (window, selection)]\n"
                          "       grassfield-capture record screen|selection [--save screenshots|desktop|documents|preview]"
-                         " [--timer 0|5|10] [--pointer] [--mic] [--output NAME (screen)] [--geometry 'X,Y WxH' (selection)]\n"
+                         " [--timer 0|3|5|10] [--pointer] [--mic] [--output NAME (screen)] [--geometry 'X,Y WxH' (selection)]\n"
+                         "       grassfield-capture selection --previous [--save ...] [--timer 0|3|5|10] [--pointer]\n"
+                         "       grassfield-capture selection --freeze [--save ...] [--pointer]\n"
+                         "       grassfield-capture choose --token T (--geometry 'X,Y WxH' | --cancel)\n"
+                         "       grassfield-capture text [--geometry 'X,Y WxH']\n"
                          "       grassfield-capture stop\n")
         return 2
     if opts["action"] == "stop":
         return stop()
+    if opts["action"] == "choose":
+        return choose_command(opts)
+    if opts["action"] == "text":
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+        signal.signal(signal.SIGINT, raise_cancelled)
+        try:
+            return text(opts)
+        except Cancelled:
+            return 0
     if opts["save"] is None:
         opts["save"] = stored_location()  # the keys: the toolbar's Save to
     if opts["action"] == "record" and opts["save"] == "clipboard":

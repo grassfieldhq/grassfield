@@ -173,7 +173,7 @@ The "Slices" column names the §4 slices that build the feature. An M or L row l
 | R9 | Camera overlay [S1] | no | no | `grassfield-screenshot --camera`: a round floating window (Qt Multimedia `Camera`), window rule, corners and sizes, closed with the recording. The shell never opens the camera. | M | Camera only on request. | B23, B24 |
 | R10 | Quality, FPS, resolution [S1][S2] | no | fixed: 60 fps, display size up to 4K | `--fps 30\|60`, `--quality` (`-q`), and the app settings. | S | — | C7 |
 | R11 | Recording time in the menu bar [S1] | yes | yes (MenuBar.qml:1348) | Unchanged. | — | — | — |
-| R12 | Do Not Disturb while recording [S1] | no | no | Option: the shell sets `notifications.dnd` while recording and restores it afterwards. | S | Fewer notification contents in recordings. | A8 |
+| R12 | Do Not Disturb while recording [S1] | no | no | Option: the notification service shows no banner while a recording runs or counts down (a runtime silence, owner decision 2026-11-24: nothing is saved, `notifications.dnd` is never written, the Do Not Disturb indicators follow the user's own setting). | S | Fewer notification contents in recordings. | A8 |
 | R13 | Trim [inferred]; zoom, cursor smoothing, backgrounds, motion blur, "Studio Mode" [S1][S2] | trim in the thumbnail editor | no | Trim: playback and handles (Qt Multimedia), then `ffmpeg -ss -to` (stream copy, or re-encode for an exact cut). The others are not planned for 1.x. | M (trim) | — | B25, B26 |
 | R14 | Webcam-only, portrait or square exports [S1] | no | no | Not planned. | — | — | — |
 
@@ -198,7 +198,7 @@ from the same model, so it is deterministic and testable.
 | # | Tool [source] | macOS 27 annotation (thumbnail editor) | Effort | Notes | Slices |
 |---|---|---|---|---|---|
 | E1 | Open, zoom, select, move, resize, undo and redo, atomic save, Revert | yes | M | — | B1, B2, B3 |
-| E2 | Arrows: straight, curved, double [S1] (4 styles) | arrow | S | — | B4 |
+| E2 | Arrows: straight, curved, double [S1] (4 styles) | arrow | S | Three built (slice B4). The sources name "4 styles" without saying which the fourth is, and the table's own list has three; a fourth waits for the owner to name it (a style is one more value of the arrow's `style` field, so it costs a drawing function and a golden). | B4 |
 | E3 | Line, rectangle, ellipse, filled or outlined [S1] | shapes | S | — | B4 |
 | E4 | Pencil with smoothing [S1] | sketch | S | — | B5 |
 | E5 | Highlighter [S1] | highlight | S | Snaps straight on text (as omasnap). | B5 |
@@ -242,7 +242,8 @@ The existing keys and the toolbar keep their behaviour, and the toolbar grows:
 
 ### 3.2 Floating thumbnail
 **Placement and lifetime**
-- A glass card (the menus' class, tokens `capture.thumbnail*`) appears at the bottom right of the display the capture came
+- A card (the picture itself with a rounded clip, a device-pixel rim and a shadow, no plate around it; sizes on whole device
+  pixels; tokens `capture.thumbnail*`) appears at the bottom right of the display the capture came
   from, inside the Dock's band margin. The side is a setting.
 - It shows the picture, or a recording's first frame with its duration.
 - It closes after 5 s (a setting: 5 s, 10 s or Never). Hovering pauses the timer.
@@ -277,6 +278,79 @@ Reduce Motion: the card fades instead of sliding in.
 - The global menu has File, Edit, Tools and View.
 - After an export with a Redact, Pixelate or Blur layer, the exported picture replaces the clipboard's automatic copy
   (ADR-0066 D-9).
+- As built in slices B3 and B4:
+  - The tool group has Select, Arrow, Line, Rectangle and Ellipse (letters V, A, L, R, O); the arrow has three styles (straight,
+    curved, double), rectangle and ellipse an outline or a fill. B5, B6 and B8 added the tools below; Redact, Pixelate, Blur and Spotlight come with B7 and the Background tool with B9 and B10.
+  - Shapes are layers in device pixels (the fields are listed in `apps/screenshot/src/annotations.h`); a new shape's stroke is
+    `screenshot.strokeWidth` times the capture's scale (the `Grassfield-Scale` text of the PNG, written by the capture helper; a file that
+    does not say uses the scale of the window's screen). The view draws each layer as a Qt Quick scene item (`ShapeScene.qml`, QtQuick.Shapes with the curve renderer) inside the picture's own content, scaled by the zoom and clipped to the picture, so zooming and scrolling move the scene graph only and a drag changes one item's path; the geometry (heads, shaft ends, edges) is the exporter's own (`shapeGeometry`), so that what is seen is what Done writes.
+  - Select picks the topmost shape, moves it by dragging, resizes it by a handle (eight on a box, the ends and the control point
+    on a line or curve); Shift keeps 45-degree angles and squares while drawing. The arrow keys move the selection by 1 px (10 with
+    Shift) and Delete removes it.
+  - Each gesture is one undo step (Ctrl+Z, Ctrl+Shift+Z), up to 200 steps; closing a window that has changes asks Done, Don't Save
+    or Cancel (Esc first lets go of the selection).
+  - The exporter is golden-tested at scale 1 and 1.25 (`tests/unit/screenshot/golden/README.md`: tolerance and regeneration).
+- As built in slices B5, B6 and B8:
+  - **Shared geometry.** Every tool draws through `shapeGeometry` (`annotations.cpp`), which the exporter and `ShapeScene.qml` both use:
+    a pen or a highlighter stroke is one smoothed `QPainterPath` (Catmull-Rom through the stored points), text and a counter's number are
+    glyph outlines (`QPainterPath::addText`, laid out at 100 px and scaled, so a size is any number and nothing is hinted), and the scene
+    gets each path as SVG path data (`pathToSvg`, drawn with `PathSvg`). The screen and the file therefore draw the same outline. `tst_scene.cpp` bounds
+    the scene against the exporter for the new kinds at three zooms, 24 levels per channel and 0.1% of each layer's box, and proves
+    the bound with a drawing that is 30% too small or thin, a missing outline or pill and a counter with the wrong number.
+  - **Pen and highlighter** (P, H). The pen is a stroke of the style's width through the pointer's samples, thinned as they come (Ramer-Douglas-Peucker, 0.4 px) and
+    smoothed when drawn; the highlighter is `screenshot.highlighterFactor` times as wide, flat-capped, at `screenshot.highlighterOpacity`,
+    and snaps to a straight (level, within 10 degrees) mark when it was nearly straight (the marker along a line of text); Shift
+    draws it straight on a 45-degree line. A stroke is picked along its line, moved, and resized by the eight handles of its box.
+    A stroke keeps at most 4000 points; the samples are thinned as they come (a bounded amount of work per move) and the stroke is previewed once a frame, so a move costs the same however long the stroke is. Every edit and the history writer refuse a layers.json past the reader's 4 MiB, and the tool does not start a stroke past three quarters of it.
+  - **Eyedropper** (I; the button is beside the swatches). A press or a drag reads the framed picture's pixel (`floor` of the picture-pixel point, so a capture at 1.25
+    reads the right pixel); it becomes the colour of new layers and of the selection. It reads the picture, not the layers over it.
+  - **Style bar** (`StyleBar.qml`, under the toolbar, there while the tool has options): colour swatches (the design tokens' swatch colours), the colour in use, a thin, medium or thick width, an
+    arrow's style and a shape's fill (moved here from the toolbar), a text's style and size, a counter's size, and for Crop the aspect presets, rotate, flip, Cancel and Crop. With Select, it styles the selection. Every
+    change is one undo step on the selected layer and the style of the next one; selecting a layer makes its style the next layer's.
+  - **Text** (T; plain, outlined, on a pill). A click puts an editor on the picture (the text is previewed as the layer it will be, through the file's own geometry, so the outline, pill and size show while typing; at most 2000 characters), Return puts the text in, Shift+Return starts a new line, Esc gives it up, and a
+    click elsewhere puts it in, and so do Done and a change of tool; a click on a text edits it (Return does too when it is selected); erasing all of a text removes it. The layer
+    names the font family (Appearance.fontFamily at the time), so the file does not depend on the theme. The outline and the pill
+    take black or white, whichever reads better on the colour. A text is picked and moved by its box; its size is a style control.
+  - **Counters** (N). A click puts a disc with its number; the number is the counter's place among the counters in layer order and is never stored, so deleting
+    one renumbers the others, in the file and on the screen (the model tells the rows after a row that goes in or out). The digits shrink to stay in the disc.
+  - **Crop, rotate, flip** (C; Rotate Left Ctrl+L, Rotate Right Ctrl+R, Flip in the Tools menu and the Crop options). They change the picture, kept as one layer of
+    type `frame` (`framing.h`): the crop in the original's pixels, the quarter turns, a mirror. The exporter and the view apply it to the
+    original with whole-pixel copies (no resampling), and every other layer is in the framed picture's pixels, so one edit is one
+    undo step that updates the frame and moves the layers (a text turns with the picture and stays unmirrored; a counter stays upright). The Crop tool shows the
+    rectangle with eight handles over a dimmed picture; the aspect presets are Free, Original, 1:1, 4:3, 3:2, 16:9 and 9:16; Return or Crop applies and Esc or Cancel gives it up.
+    A crop is pixel-exact: a crop of the whole picture is none. Revert puts the capture back; Done writes the framed picture.
+  - Tests: `tst_strokes.cpp`, `tst_text.cpp`, `tst_framing.cpp`, the new goldens in `tst_golden.cpp` (the three text styles and the counters
+    need the font `Inter`, which they name, and are skipped where it is not installed) and the style bar, the text editor and the crop overlay in `tst_screenshotview.qml`.
+- As built in slice B7 (Redact X, Pixelate M, Blur B, Spotlight S; `redaction.h`, `regionGeometry` in `annotations.cpp`, `tst_regions.cpp`):
+  - **One box, four pixel operations.** A region layer is a box (`x y w h`) in the framed picture's pixels. Its **area** is the box rounded
+    outward to whole device pixels (`regionArea`) and is never anti-aliased, so a pixel the box touches at all is wholly inside it: no source
+    pixel is left half-covered along the border. The exporter runs the layers in order; the vector layers go through a painter and Redact,
+    Pixelate and Blur are operations on the pixels in between (a Pixelate reads what the layers before it drew). **Every Redact is filled into the working picture before any layer reads a pixel**, so a Blur or Pixelate that comes earlier in the layer order never sees, and never spreads, what a Redact hides; the eyedropper reads a Redact's fill, not the pixel under it. Layers move, rotate and flip with the picture like any box.
+  - **Redact** fills the area with its colour, opaque whatever alpha the field or the source had (partially transparent and fully transparent
+    source pixels included); a colour that does not read is black. Default fill black. **Pixelate** (`block`, `seed`): a grid of blocks of at
+    least 12 device pixels (the file's value is clamped; a field that does not read is 16) whose offset comes from the seed; each block of the area becomes ONE
+    colour, the mean of the whole block (also the part outside the area, so a one-pixel sliver is the mean of a full block) plus a per-block,
+    noise of at most 12 levels from `splitmix64(seed, block, channel)` (a term of at most 8 shared by the three channels, so that averaging the channels of grey text cannot cancel it, plus at most 4 of each channel's own), opaque. The output depends on the source only through
+    the block means. **The seed is drawn from the system's random source (getrandom) when the layer is made** and kept in the layer, so the offset and
+    noise differ between layers and captures and cannot be predicted from the picture, while the screen, the file and a re-edit agree. A pixelate
+    whose seed does not read hides with seed 0. **Blur** (`radius`, the Gaussian's sigma): three box passes reading the picture around the area. Blur is
+    **for looks and does not hide text**: its tooltip and the style bar say so, and it is no part of the safe pair (Redact, Pixelate). **Spotlight** (`dim`): a dark veil over everything but the area; it hides nothing.
+  - **The file.** A Done that hides pixels (a Redact, Pixelate or Blur layer) writes the picture in the original's format (opaque stays opaque, so there is no alpha
+    channel to hold hidden values) and keeps no text chunk of the original but `Grassfield-Scale`. The layers file holds boxes, colours,
+    blocks and seeds, never pixels.
+  - **The copies of the unredacted picture.** (1) The clipboard: the capture helper's automatic copy is `--sensitive` (not in clipboard history). After a Done that
+    hid pixels the app ALWAYS replaces it (owner decision, "toujours remplacer": no check of what the clipboard holds, so a later copy of the user's is replaced too and no stale export can stay). The copy is `wl-copy --type image/png --sensitive` with the saved file's own bytes on its stdin, blocking for two seconds at most (no event loop, so a close request cannot cut it); if that fails or times out it runs
+    `wl-copy --clear`, keeps the window open with the error, and the next Done tries again. A Done that hides nothing, and a Done with no change, leave the clipboard alone.
+    (2) The saved file is the redacted export. (3) **The history keeps the picture as captured** (private 0600 file in a 0700 folder, for Revert and re-editing, ADR-0066 D-9);
+    the layers are editable, so a redaction can be moved off its secret there: Redact hides the area **in the saved picture**, and the history original stays until B14's Clear History. B14 adds the history's retention and Clear History; until then the original stays until the entry is removed.
+    The floating thumbnail copies the file's current bytes (`capture-thumb.sh`), which are the redacted ones after a Done.
+  - **Screen = export.** Redact is a scene rectangle on whole pixels and Spotlight a veil from the same path; a Pixelate or Blur shows
+    `image://screenshot/fx/<revision>/<id>`, the pixels `regionPatch` makes with the exporter's own code (what the layers before it drew, then the operation). While an
+    image is loading the area shows an opaque placeholder, so the screen never shows less redaction than the file. A resized or moved region
+    shows the placeholder or a stale patch of the same kind (pixelated or blurred content), never the picture.
+  - **Limitation: only Redact is for secrets.** The layers run in the user's order and only a Redact is filled in first. An earlier Blur still reads, and spreads outside its box, what a LATER Pixelate hides (the reviewer measured 3856 pixels depending on the secret, up to 13 levels). So Pixelate is not for secrets: the tooltips say it can still be guessed and point to Redact. The eyedropper reads a Redact's fill, and a Pixelate's or Blur's own pixel under them, never the source.
+  - Bound fixed by the slice: a Pixelate's correlation with a per-pixel textured source stays under 0.15 (measured 0.02 to 0.07 at blocks of 12 to 24).
+  - Not in this slice: a strength control (the block and sigma come from tokens times the capture's scale), Copy and Ctrl+C in the editor, the history's retention.
 
 **Pins**
 - A borderless floating picture with a thin rim (the window rim tokens).
@@ -305,10 +379,10 @@ gitleaks.
 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
-| C1 | `shooting` phase and the acknowledgement wait (1 s at most) before every grim call, frozen grab and recorder start (ADR-0066 D-1). | — | L0: grim only after the fake shell's acknowledgement (log timestamps); after 1 s without one; an acknowledgement with a wrong `seq`, a link, mode 0644 or over 64 bytes is ignored; the phase returns to `idle`; the timer path unchanged. |
-| C2 | Result file; the `capture.showThumbnail` key read (the notice skipped when it is on); the automatic clipboard copy made with `--sensitive`. | C1 | L0: result fields, 0600, by rename, never a link; notice when off, none when on; `wl-copy` argv carries `--type image/png --sensitive`; French. |
+| C1 | `shooting` phase and the acknowledgement wait (1 s at most) before every grim call, frozen grab and recorder start (ADR-0066 D-1, "The acknowledgement contract": file `capture-ack`, mode 0600, `seq` of 16 hex digits, at most 64 bytes, links refused). **Built** in `packaging/bin/grassfield-capture` (`handshake`, `shooting`), tested by `tests/shell/capture.d/shooting.py`. | — | L0: grim only after the fake shell's acknowledgement (log timestamps); after 1 s without one; an acknowledgement with a wrong `seq`, a link, mode 0644 or over 64 bytes is ignored; the phase returns to `idle`; the timer path unchanged. |
+| C2 | Result file; the `capture.showThumbnail` key read (the result is written when it is on; the notice is skipped only when the shell also acknowledged that capture and the result was written, and no result is written when it is off: ADR-0066 D-1); the automatic clipboard copy made with `--sensitive`. **Built**, same files. | C1 | L0: result fields, 0600, by rename, never a link; notice when off, none when on; `wl-copy` argv carries `--type image/png --sensitive`; French. |
 | C3 | `text`: tesseract and zbarimg, plain text to the clipboard, QR copied as sensitive, a text result. | C2 | L0: tesseract argv equals Preview's vectors except `--psm 6` (Preview `--psm 3`) and plain text (Preview `tsv`); zbarimg QR-only; `wl-copy --sensitive` for QR; QR data never in the result file; no text gives a notice; refused under the lock; French. |
-| C4 | `selection --freeze` and `choose` (token, validation, choice file, crop, cleanup, 120 s timeout). | C1 | L0: the crop is pixel-exact at scale 1.25; `choose` refuses a wrong token, a geometry outside every frame, a dead helper, and 14 malformed geometries (exit 2, nothing written); the waiting helper ignores a choice that is a link, the wrong mode or over 4 KiB; frames removed on finish, cancel, timeout, SIGTERM and lock; refused under the lock. |
+| C4 | `selection --freeze` and `choose` (token, validation, choice file, crop, cleanup, 120 s timeout). **Built** in `packaging/bin/grassfield-capture` (`freeze_shot`, `choose_command`, `choice_of`, `crop_png`), tested by `tests/shell/capture.d/freeze.py`; the as-built rules are in ADR-0066 D-1, "Freeze". | C1 | L0: the crop is pixel-exact at scale 1.25; `choose` refuses a wrong token, a geometry outside every frame, a dead helper, and 14 malformed geometries (exit 2, nothing written); the waiting helper ignores a choice that is a link, the wrong mode or over 4 KiB; frames removed on finish, cancel, timeout, SIGTERM and lock; refused under the lock. |
 | C5 | `scroll`: frame capture loop and the stitch algorithm (row hashes, overlap, fixed header and footer). | C1, C4 (the `choose --done` channel) | L0 fixtures: a synthetic page scrolled by known offsets, with a fixed header and footer, no movement, a back-scroll and noise; the stitched picture equals the reference. |
 | C6 | `scroll`: PNG writer through zlib, the 20 000 px cap, stop, lock and cleanup, the result. | C5 | L0: the PNG decodes; 30 frames of 1600×1000 within a bound measured and recorded in the slice (target ≤ 3 s); the cap; frames removed; refused under the lock. |
 | C7 | Recording options: `--system-audio`, `--mic NAME`, `--fps`, `--quality`. | C1 | L0: recorder argv with `default_output\|default_input`, a source by name (validated pattern), `-f 30`, `-q`; unknown values give usage. |
@@ -322,11 +396,11 @@ gitleaks.
 | A1 | `CaptureFile.parse` and `stopNeeded` learn `shooting` and `frozen`. CaptureState pre-creates `capture-ack` once with `install -m 600` in the 0700 folder (`umask 077`), as `Notifications.qml:1258-:1261` does, because a FileView cannot set modes. It then writes the acknowledgement once the cards are hidden. | C1 contract (can be built against it) | Unit `tst_capturefile.qml`: new phases parsed and malformed ones refused; a `shooting` state under the lock is stopped. Shell test: `capture-ack` is 0600 before and after the first write and holds the right `seq`. |
 | A2 | `CaptureThumbnails.qml`: model, placement per display and side, timer and hover pause, stack of 3, hidden while locked and during `shooting`, click opens Preview (Annotate after B3). | A1, C2 | Unit `tst_capturethumbs.qml`; L1: a card after a fake result at scale 1.25 (screenshot); the card unmapped before a fake `shooting` is acknowledged; peak memory of a 4K result with `sourceSize`. |
 | A3 | Thumbnail actions: drag out, Copy, Show in Files, Move to Trash, Close, edge dismiss, with path checks against the Save-to folders (resolved as `CaptureLocation.js` and the helper's `destination()` resolve them), never the folder the result names. | A2 | Unit: each action maps to an argv vector; a result path that is a link, a folder, or outside every Save-to folder is refused, including a forged result that names its own folder. L1: trash fixture moved (isolated home). |
-| A4 | Toolbar mode Capture Text and Shift-Super-2. It lands with its helper. | C3 | Unit `tst_capturemodel.qml`: modes, order, arrows, `helperArgs` for `text`; session_services: the key is bound to `grassfield-capture text`. |
+| A4 | Toolbar mode Capture Text and Shift-Super-2. It lands with its helper. **Built** (the key and the keypad's 2 in `system.lua`; glyph `capture-text`). | C3 | Unit `tst_capturemodel.qml`: modes, order, arrows, `helperArgs` for `text`; session_services: the key is bound to `grassfield-capture text`. |
 | A5 | Freeze surface: the frozen frames shown at device pixels, the choice sent through `choose`. | C4, A1 | Unit: logical-to-device mapping at 1.25; the `choose` argv; Esc sends `--cancel`. L1: frozen surface screenshot. |
 | A6 | Loupe ×8 with pixel grid and readout. | A5 | Unit: loupe geometry and clamping at edges. L1: loupe screenshot. |
 | A7 | Toolbar mode Capture Scrolling Area, landing with its helper, and the scroll plate: frame, live strip, Done (`choose --done`), Cancel. | C5, C6 | Unit `tst_capturemodel.qml` for the mode and `helperArgs`; plate model; L1: plate with a fake helper writing strips. |
-| A8 | Options batch: Remember Last Selection switch, Capture Previous Area, Hide Desktop Icons, Do Not Disturb while recording, 3 s timer, Show Floating Thumbnail. | C8 | Unit: `menuModel` rows and checks per mode, `choice` mapping; DND restored after a recording; desktop icons hidden while the phase is not idle. |
+| A8 | Options batch: Remember Last Selection switch, Capture Previous Area, Hide Desktop Icons, Do Not Disturb while recording, 3 s timer, Show Floating Thumbnail. **Built** in the shell (`capture.rememberSelection` is the one new key). The helper's `--timer` list still stops at 10 (lane C: add `3` to `TIMERS`, usage text and its L0 test). | C8 | Unit: `menuModel` rows and checks per mode, `choice` mapping; DND restored after a recording; desktop icons hidden while the phase is not idle. |
 | A9 | Recording card: first frame (from B20), duration, Play, Trim and Save as GIF buttons. | A3, B20 | Unit: card model for a recording result; L1 screenshot. |
 | A10 | Show Last Thumbnail from the history. | A2, B14 | Unit: reads the newest index entry; a missing file shows nothing. |
 | A11 | `CaptureClicks.qml`: ripples from the plugin capability, only while recording. | D1 | Unit: ripple model; hidden without the capability. L1 nested with the plugin. |
@@ -338,7 +412,7 @@ gitleaks.
 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
-| B1 | Skeleton: CMake target, `.desktop`, open a PNG, window with unified toolbar, zoom and fit. | — | gtest: argument validation (local paths only, as Preview's); CMake build at -j4; the package lists the binary and the `.desktop` file. |
+| B1 | Skeleton: CMake target, `.desktop`, open a PNG, window with unified toolbar, zoom and fit. | — | gtest: argument validation (local paths only, as Preview's, held by a parity test); with no file the app asks the shell to toggle the capture toolbar (`qs ipc ... call capture toggle`, as the Apps entry needs; exit 2 without a shell); CMake build at -j4; the package lists the binary and the `.desktop` file. |
 | B2 | Document model and `layers.json` v1; Done (atomic) and Revert; history entry written. | B1 | gtest: schema round trip; atomic save leaves no partial file after a forced failure; Revert restores the original. |
 | B3 | QPainter exporter and golden harness; select, move, resize; undo stack. | B2 | gtest: undo and redo; golden export at scale 1 and 1.25. |
 | B4 | Arrow (straight, curved, double), line, rectangle, ellipse. | B3 | gtest: golden per tool. |
@@ -351,7 +425,7 @@ gitleaks.
 | B11 | Pins 1: `--pin`, window rule, wheel resize, Ctrl+wheel opacity, arrows, close. | B1 | Config test: the rule matches `org.grassfield.Screenshot.Pin`; gtest: size and opacity clamps; L1: a pin above a window. |
 | B12 | Pins 2: Lock (click-through) and the IPC that A13 calls to release it. | B11 | L1 nested: a click reaches the window below a locked pin; release restores input. |
 | B13 | Shared recognition: move `recognitionCommand` and TSV parsing to `apps/recognition.*`; Copy Text in the editor. | B3 | Preview's existing recognition tests unchanged and passing; gtest for Copy Text on a fixture. |
-| B14 | History store: index (no recognised text), originals, retention pruning, Clear History. | B2 | gtest: pruning by retention, 0700 and 0600 modes, missing files dropped, clipboard-only captures absent, Clear History removes everything. |
+| B14 | History store: index (no recognised text), originals, retention pruning, Clear History. | B2 | gtest: pruning by retention (it also removes `<id>/` folders that the index does not list: B2's `add` rewrites an unreadable index with only the new entry, which orphans the folders of the older ones), 0700 and 0600 modes, missing files dropped, clipboard-only captures absent, Clear History removes everything. |
 | B15 | Recent Captures window: grid by day, kind filter. | B14 | gtest: model grouping and filter; L1 screenshot. |
 | B16 | Recent Captures actions: reopen with layers, delete, Show in Files. | B15 | gtest: reopen restores layers; delete removes the entry and its original. |
 | B17 | Settings window part 1: format (PNG, JPEG, WebP), Save at Standard Resolution. | B2 | gtest: settings read with the JsonSafety rules; export in each format; standard-resolution size at 1.25. |

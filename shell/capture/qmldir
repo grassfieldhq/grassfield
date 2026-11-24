@@ -2,3 +2,5 @@ module qs.capture
 Capture 1.0 Capture.qml
 CaptureToolbar 1.0 CaptureToolbar.qml
 CaptureCountdown 1.0 CaptureCountdown.qml
+CaptureThumbnails 1.0 CaptureThumbnails.qml
+CaptureThumbnailCard 1.0 CaptureThumbnailCard.qml

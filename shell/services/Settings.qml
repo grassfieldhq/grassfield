@@ -178,6 +178,18 @@ Singleton {
     readonly property string captureMicrophone: store.captureMicrophone
     readonly property bool captureShowPointer: store.captureShowPointer
     readonly property string captureLastSelection: store.captureLastSelection
+    readonly property bool captureRememberSelection: store.captureRememberSelection
+    readonly property bool captureShowThumbnail: store.captureShowThumbnail
+    readonly property int captureThumbnailSeconds: store.captureThumbnailSeconds
+    readonly property string captureThumbnailSide: store.captureThumbnailSide
+    readonly property bool captureFreeze: store.captureFreeze
+    readonly property bool captureHideDesktopIcons: store.captureHideDesktopIcons
+    readonly property bool captureSystemAudio: store.captureSystemAudio
+    readonly property bool captureRecordDnd: store.captureRecordDnd
+    readonly property string captureHistoryRetention: store.captureHistoryRetention
+    readonly property string captureFormat: store.captureFormat
+    readonly property bool captureStandardResolution: store.captureStandardResolution
+    readonly property int captureFps: store.captureFps
 
     readonly property bool desktopShowIcons: store.desktopShowIcons
     // The remembered choices of the main display (ui/Grassfield/Ui/DisplayRole.js); services/MainDisplay.qml resolves them.
@@ -342,7 +354,7 @@ Singleton {
         store.setNotificationsPreviews(value);
     }
 
-    // key: mode | location | timer | microphone | showPointer (capture.*); an invalid value is refused.
+    // key: any capture.* key the toolbar writes: mode, location, timer, microphone, showPointer, lastSelection, rememberSelection, showThumbnail, hideDesktopIcons, recordDnd; an invalid value is refused.
     function setCaptureOption(key: string, value: var): void {
         store.setCaptureOption(key, value);
     }

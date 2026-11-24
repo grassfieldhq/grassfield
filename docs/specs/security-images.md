@@ -39,7 +39,7 @@ followed `<image xlink:href>` to a FIFO and blocked the one image loader thread 
 
    Never `/proc`, `/sys` or `/dev`. `lstat` must say a regular file. The file is then opened with
    `O_NOFOLLOW|O_NONBLOCK|O_NOCTTY`. `fstat` must say a regular, non-empty file within its cap (8 MiB, or 16 MiB for a
-   picture), and `/proc/self/fd` must still name a path under an allowed root. The file is read once, into memory.
+   picture; 64 MiB for a capture thumbnail, see below), and `/proc/self/fd` must still name a path under an allowed root. The file is read once, into memory.
 2. **Re-encode** with `rsvg-convert`, fed on STDIN, into a PNG of at most 256 x 256 px. 256 px is the largest any site
    shows: notification images, thumbnails, art and the avatar. With no base URL, librsvg resolves no reference to
    another file. This was checked against a FIFO for absolute, `file:`, relative and `../` hrefs, XInclude, CSS
@@ -63,6 +63,15 @@ followed `<image xlink:href>` to a FIFO and blocked the one image loader thread 
      deleted.
    - Notifications: `…/grassfield-notification-images-<display>/<n>.<sender>.png`, with its window, budget and
      per-sender share (notifications.md).
+   - The capture thumbnail (docs/specs/capture-suite.md § 3.2, ADR-0066): `$XDG_RUNTIME_DIR/grassfield/capture-thumbs/<pid>-<n>.png`,
+     a 0700 folder in the 0700 folder of the capture helper's private files, made and emptied by
+     `shell/services/capture-thumb-dir.sh` when the shell starts and when the last card leaves (a link at either level is
+     refused). One copy per card, deleted when the card goes. The shell makes it with `image-copy.py file`, under
+     `timeout -k 2 20 setpriv --pdeathsig KILL`, from a capture file the thumbnail's own checks accepted
+     (`capture-thumb.sh`); a card whose copy fails shows a glyph, never the file. **The capture thumbnail's cap is 64 MiB**:
+     the largest display picture supported is 8K (7680 x 4320, 33 Mpx, within the 50 Mpx limit below), 126 MiB raw, and a
+     PNG of anything but noise is under half of that; the helper wraps it for rsvg-convert (a third more) within its 1 GiB
+     address-space limit.
 
 **Hangs.** A batch runs under `timeout -k 2 60 setpriv --pdeathsig KILL`. After 20 s the helper starts no new item: it
 answers `later` for the rest, and ThemeIcons asks for those again first. So a batch of big photos ends in time rather

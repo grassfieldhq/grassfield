@@ -28,6 +28,8 @@ Scope {
     }
     // True while the session lock (or its transition) owns the screen: the toolbar neither opens nor stays (shell.qml binds it).
     property bool locked: false
+    // True while Overview, Apps, Search or the app switcher is open (shell.qml binds it): the floating thumbnail steps aside.
+    property bool attention: false
     onLockedChanged: {
         if (locked)
             hide();
@@ -42,7 +44,11 @@ Scope {
             location: Settings.captureLocation,
             timer: Settings.captureTimer,
             microphone: Settings.captureMicrophone,
-            showPointer: Settings.captureShowPointer
+            showPointer: Settings.captureShowPointer,
+            showThumbnail: Settings.captureShowThumbnail,
+            rememberSelection: Settings.captureRememberSelection,
+            hideDesktopIcons: Settings.captureHideDesktopIcons,
+            recordDnd: Settings.captureRecordDnd
         })
     // The Entire Screen modes take a click on any display, Capture Selected Window a click on a window of any display: every
     // display's surface takes input then (the bar and the keyboard stay on the toolbar's display). The Selected Portion modes
@@ -120,11 +126,25 @@ Scope {
         choose(Model.step(mode, delta, canRecord));
     }
 
-    // A row of the Options menu (CaptureModel.menuModel ids): the setting it changes.
+    // A row of the Options menu (CaptureModel.menuModel ids): the setting it changes, or Capture Previous Area.
     function setOption(id: string): void {
         const change = Model.choice(id, options);
-        if (change)
+        if (!change)
+            return;
+        if (change.action === "previous")
+            capturePrevious();
+        else
             Settings.setCaptureOption(change.key, change.value);
+    }
+
+    // Capture Previous Area (Options, Capture Selected Portion): the toolbar goes and the helper captures the last frame of the
+    // display in focus (`selection --previous`), or shows its crosshair when none is stored.
+    function capturePrevious(): void {
+        if (!open || mode !== "selection" || !Settings.captureRememberSelection)
+            return;
+        pending = Model.previousArgs(options);
+        hide();
+        launch.restart();
     }
 
     // Capture or Record (the button, Return, a click on a display or a window): the toolbar goes first, then the helper runs,
@@ -140,13 +160,27 @@ Scope {
     }
 
     // The frame a display opens with in the Selected Portion modes (its last one, else centred), and the one to keep for it.
+    // Remember Last Selection off: the centred frame, and nothing is kept.
     function frameFor(name: string, bounds: var): var {
-        return Model.selectionFor(Settings.captureLastSelection, name, bounds, Tokens.captureFrameMinSize);
+        return Model.selectionFor(Settings.captureRememberSelection ? Settings.captureLastSelection : "", name, bounds, Tokens.captureFrameMinSize);
     }
 
     function rememberFrame(name: string, frame: var): void {
-        Settings.setCaptureOption("lastSelection", Model.withSelection(Settings.captureLastSelection, name, frame));
+        if (Settings.captureRememberSelection)
+            Settings.setCaptureOption("lastSelection", Model.withSelection(Settings.captureLastSelection, name, frame));
     }
+
+    // Hide Desktop Icons: the toolbar is open, or its helper was started a moment ago and has not written its state yet.
+    readonly property bool armed: open || launch.running || settle.running
+    Binding {
+        target: CaptureState
+        property: "armed"
+        value: root.armed
+    }
+
+    // Do Not Disturb while recording (Options > Do Not Disturb) writes nothing: Notifications silences its banners while the helper
+    // records and the option is on (CaptureFile.silenced), as macOS does while the screen is shared. The user's own Do Not Disturb is
+    // never read back or changed here.
 
     // The window list of Capture Selected Window comes from Hyprland's window data, read again when the mode shows (a window
     // moved since the shell last read it).
@@ -163,9 +197,18 @@ Scope {
         onTriggered: {
             const args = root.pending;
             root.pending = null;
-            if (args && !SessionState.locked)
+            if (args && !SessionState.locked) {
+                settle.restart();
                 CaptureState.run(args);
+            }
         }
+    }
+
+    // The helper's state is not written yet when it has just started: the desktop icons stay hidden for this long (a phase that is
+    // not idle keeps them hidden after it).
+    Timer {
+        id: settle
+        interval: Tokens.captureIconsSettleMs
     }
 
     IpcHandler {
@@ -210,4 +253,9 @@ Scope {
     }
 
     CaptureCountdown {}
+
+    // The floating thumbnail (A2, A3): it steps aside for the toolbar and for the other full-attention surfaces (`attention`).
+    CaptureThumbnails {
+        held: root.open || root.attention
+    }
 }

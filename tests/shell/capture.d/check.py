@@ -32,6 +32,11 @@ for d in (fake, quiet, home, log):
     os.makedirs(d)
 helper = os.path.join(root, "packaging/bin/grassfield-capture")
 source = open(helper).read()
+# The same helper, waiting 0.05 s instead of ACK_SECONDS for the shell's acknowledgement (no shell runs here; shooting.py holds
+# the handshake against the real wait).
+source = re.sub(r"^ACK_SECONDS = [0-9.]+$", "ACK_SECONDS = 0.05", source, flags=re.M)
+helper = os.path.join(tmp, "grassfield-capture-fast")
+write(helper, source)
 # The same helper, waiting 2 s instead of WAIT_SECONDS for a click on its notice.
 short = os.path.join(tmp, "grassfield-capture-short")
 write(short, re.sub(r"^WAIT_SECONDS = [0-9]+$", "WAIT_SECONDS = 2", source, flags=re.M))
@@ -209,7 +214,7 @@ def set_config(doc):
         json.dump(doc, f)
 
 
-ON_DESKTOP = {"capture": {"location": "desktop"}}
+ON_DESKTOP = {"capture": {"location": "desktop", "showThumbnail": False}}  # the notice, as before C2 (shooting.py holds the thumbnail)
 set_config(dict({"version": 1}, **ON_DESKTOP))
 name = re.compile(r"Screenshot [0-9]{4}-[0-9]{2}-[0-9]{2} at [0-9]{2}\.[0-9]{2}\.[0-9]{2}( \([0-9]+\))?\.png")
 
@@ -231,8 +236,9 @@ check(all(os.path.dirname(g["argv"][-1]) == desktop and os.path.basename(g["argv
 check(not any(f.startswith(".") for f in os.listdir(desktop)), "no hidden file is left on the Desktop")
 check(calls("slurp") == [], "the screen needs no crosshair")
 copied = calls("wl-copy")
-check(copied and copied[0]["argv"] == ["--type", "image/png"] and copied[0]["stdin"].startswith("�PNG")
-      and copied[0]["stdin"].endswith("HDMI-A-1"), "the focused display's picture is copied to the clipboard as PNG")
+check(copied and copied[0]["argv"] == ["--type", "image/png", "--sensitive"] and copied[0]["stdin"].startswith("�PNG")
+      and copied[0]["stdin"].endswith("HDMI-A-1"), "the focused display's picture is copied to the clipboard as PNG, sensitive "
+      "(clipboard history never records it, ADR-0066 D-9)")
 note = calls("notify-send")
 check(note and "string:image-path:" + first in note[0]["argv"] and "default=Open in Preview" in note[0]["argv"]
       and "open=Open in Preview" in note[0]["argv"] and note[0]["argv"][-2:] == ["Screenshot", "Saved to the Desktop and copied."]

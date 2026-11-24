@@ -36,6 +36,11 @@ for d in (fake, norec, home, log):
 os.makedirs(runtime, mode=0o700)
 helper = os.path.join(root, "packaging/bin/grassfield-capture")
 source = open(helper).read()
+# The same helper, waiting 0.05 s instead of ACK_SECONDS for the shell's acknowledgement (no shell runs here; shooting.py holds
+# the handshake against the real wait).
+source = re.sub(r"^ACK_SECONDS = [0-9.]+$", "ACK_SECONDS = 0.05", source, flags=re.M)
+helper = os.path.join(tmp, "grassfield-capture-fast")
+write(helper, source)
 # The same helper, killing a recorder that ignores SIGINT after 1 s instead of STOP_SECONDS.
 quick = os.path.join(tmp, "grassfield-capture-quick")
 write(quick, re.sub(r"^STOP_SECONDS = [0-9]+$", "STOP_SECONDS = 1", source, flags=re.M))
@@ -152,7 +157,7 @@ state_file = os.path.join(runtime, "grassfield", "capture-state.json")
 # Screenshots folder in Pictures, the Videos folder) are checked where --save asks for them.
 os.makedirs(os.path.join(home, ".config", "grassfield"), exist_ok=True)
 with open(os.path.join(home, ".config", "grassfield", "grassfield.json"), "w") as f:
-    json.dump({"version": 1, "capture": {"location": "desktop"}}, f)
+    json.dump({"version": 1, "capture": {"location": "desktop", "showThumbnail": False}}, f)  # the notice, as before C2
 screenshots, videos = os.path.join(home, "Pictures", "Screenshots"), os.path.join(home, "Videos")
 
 
@@ -212,7 +217,7 @@ def stop(**extra):
 
 
 # ---- usage: the toolbar's argv only; anything else runs nothing ----
-for bad in (["record"], ["record", "window"], ["screen", "--timer", "3"], ["screen", "--save", "nowhere"], ["selection", "--mic"],
+for bad in (["record"], ["record", "window"], ["screen", "--timer", "4"], ["screen", "--save", "nowhere"], ["selection", "--mic"],
             ["selection", "--output", "DP-1"], ["record", "selection", "--output", "DP-1"], ["record", "screen", "--output", "a b"],
             ["screen", "--pointer", "--pointer"], ["screen", "--timer"], ["stop", "now"], ["window", "extra"],
             # --geometry: whole numbers in slurp's form, a positive size, only where an area is chosen
@@ -324,6 +329,12 @@ r_proc.wait(timeout=30)
 grim = calls("grim")
 check(r_proc.returncode == 0 and grim and grim[0]["t"] - calls()[0]["t"] >= 5.4 and state().get("phase") == "idle",
       "the picture is taken once the countdown is over and the plate gone, and the state goes idle")
+r_proc = start(["screen", "--timer", "3"])
+seen = wait_for(lambda: state().get("phase") == "countdown")
+s = state()
+r_proc.wait(timeout=30)
+check(seen and abs(s.get("until", 0) - time.time() * 1000) < 3500 and r_proc.returncode == 0 and calls("grim")
+      and calls("grim")[0]["t"] - calls()[0]["t"] >= 2.4, "--timer 3 is accepted: a 3 s countdown, then the picture [%r]" % s.get("until"))
 r_proc = start(["selection", "--timer", "10"], FAKE_SLURP="10,20 300x200")
 wait_for(lambda: state().get("phase") == "countdown")
 check(state().get("rect") == {"x": 10, "y": 20, "w": 300, "h": 200}, "the countdown of a selection is over the selection")

@@ -52,6 +52,29 @@ From slice C1, before **every** grim call, every frozen grab and every recorder 
 Before accepting the acknowledgement, the helper checks it: a regular file, the user's own, mode 0600, not a link, at most
 64 bytes, and `seq` equal to its own. The existing notice closing (`close_previous`) stays for the notice path.
 
+**The acknowledgement contract (built in C1, written to by slice A1).** Both sides rely on exactly this:
+- **The state.** While the phase is `shooting`, `$XDG_RUNTIME_DIR/grassfield/capture-state.json` (0600, by rename) holds
+  `{"v": 1, "phase": "shooting", "kind": "shot" | "recording", "seq": "<16 lowercase hex digits>", "pid", "start"}`. `seq` is
+  new for every shooting phase (8 random bytes). The phase lasts from the handshake to the last grim call of that capture
+  (or, for a recording, to the recorder's start, when the phase becomes `recording`), and then returns to `idle`. It is
+  written before every grim call, and before the recorder start, and by nothing else.
+- **The file.** `$XDG_RUNTIME_DIR/grassfield/capture-ack`, in the 0700 folder. The shell writes into it, in place, once
+  every thumbnail is unmapped and one frame has passed. It holds the `seq` of the state it answers: the 16 digits as ASCII,
+  then at most one `\n`, and nothing else. A file of another content (an older `seq`, empty) is ignored.
+- **What the helper accepts.** It opens the path with `O_NOFOLLOW` and accepts it only if it is a regular file with one
+  name (`st_nlink == 1`, so neither a symbolic link nor a second name for another file), owned by the user, with permission
+  bits exactly 0600, at most 64 bytes (`ACK_MAX`), and the content above for the current `seq`. It polls every 20 ms. It
+  ignores anything else and keeps polling until the deadline.
+- **The deadline.** `ACK_SECONDS` = 1 s from the moment the state is written. At the deadline the helper goes on without an
+  acknowledgement and never fails because of it.
+- **The shell's duties.** Pre-create the file once with `install -m 600` (a FileView cannot set modes; it keeps the mode of
+  an existing target), write the `seq` of every `shooting` state it sees, even after it has already hidden its cards, and
+  never replace the file with a link. A `shooting` state seen under the lock is stopped like any other
+  (`grassfield-capture stop` ends it: the helper holds the capture lock during the phase, and a stop makes it take no
+  picture).
+- **No handshake without a runtime folder, or while another capture owns the state.** A screenshot taken while a
+  recording or a countdown holds the capture lock writes nothing and waits for nothing (the state is theirs).
+
 On the shell side, `CaptureFile.parse` and `stopNeeded` learn the phases `shooting` and `frozen`. A `shooting` phase under
 the lock is stopped like any other (SC15a).
 
@@ -81,6 +104,19 @@ the helper has no stdin to read. The choice therefore comes back as a second, sh
 6. **Cleanup.** Every frozen file and the choice file are removed on finish, cancel, timeout, SIGTERM and lock. A
    left-over `frozen/` folder is removed at the next helper start.
 
+As built in slice C4 (`packaging/bin/grassfield-capture`, tests `tests/shell/capture.d/freeze.py`):
+- The frames are binary PPM files (`frozen/0.ppm`, `1.ppm`, ... one per enabled display, the focused one first; `grim -t ppm`), so
+  that a crop is a slice of rows and the helper needs no PNG decoder; the crop is written as an 8-bit RGB PNG with the
+  `Grassfield-Scale` chunk. A frame is read only as a private file (regular, no link, one name, 0600, at most 256 MiB).
+- The state's `kind` stays `shot`; the phase `frozen` is also ended by `stop` (SIGINT to the helper, which holds the capture lock).
+- The choice file is `{"v": 1, "token": T, "geometry": "X,Y WxH"}` or `{"v": 1, "token": T, "cancel": true}`, nothing else; the
+  state is read by `choose` as a private file of at most 4 KiB. Tokens are compared with `hmac.compare_digest`.
+- Exit codes of `choose`: 0 written; 2 for a usage error, a wrong token, a state that is not a frozen screen of a live helper of
+  this user's (pid and start time), or a geometry not wholly inside one frame; 1 under the lock or when the file cannot be
+  written. `selection --freeze` refuses `--timer`, `--geometry` and `--previous` (usage, exit 2) and exits 1 under the lock.
+- The helper ignores (leaves in place) an invalid choice file; `choose` replaces it by rename, a link included, never following it.
+- The device rectangle is the logical one times the frame's scale, rounded outwards (floor, ceil) and clamped to the frame.
+
 #### Other new subcommands
 - `text [--geometry G]`: recognise text and QR codes in an area (D-7, slice C3).
 - `scroll --geometry G`: a scrolling capture (slices C5 and C6). It takes region frames (`grim -t ppm -g`, at most 8 per
@@ -107,9 +143,25 @@ After each capture the helper writes `$XDG_RUNTIME_DIR/grassfield/capture-result
     {"v": 1, "id", "kind": "shot" | "recording" | "text" | "scroll", "paths": [...], "primary",
      "output", "rect", "scale", "pixels" {w, h}, "time", "text"}
 
-- `text` holds the first 512 characters of the recognised text, never QR data.
-- When `capture.showThumbnail` is true (the default), the notice is not sent and the shell shows the thumbnail.
-- When it is false, the notice is sent as it is today.
+- `text` holds the first 512 characters of the recognised text, never QR data. It is `""` for a picture and a recording.
+- The file is written once the shooting phase is over (the state `idle`), by a file of its own (`O_EXCL`, 0600, never a
+  link) renamed over the last result, so the shell reads a whole file or the one before.
+- `paths` are the saved files (one per display for `screen`), `primary` is the first (the one copied). `rect` is the
+  logical rectangle of `primary`'s capture, `output` the display it is on, `scale` that display's scale, `pixels` the
+  picture's size in device pixels (read from the PNG header; a recording's is its rectangle at the scale), `time` is
+  milliseconds since the epoch, `id` 16 random hex digits.
+- When `capture.showThumbnail` is true (the default; any value that is not a boolean reads as the default) and the file can be
+  written, the result is written, whether or not a shell answered.
+- **The notice is skipped only when all three hold for this very capture:** the shell acknowledged its `shooting` phase
+  (`handshake` returned true), `capture.showThumbnail` is true, and the result file was written. In every other case the
+  notice is sent as it is today: no acknowledgement within 1 s (no shell, a shell without thumbnails), no runtime folder, the
+  result could not be written, `showThumbnail` false, or a shot taken while a recording or countdown owns the state (no
+  handshake). So a capture is never left without feedback while the shell has no thumbnail surface.
+- When `showThumbnail` is false **no result file is written**, so a shell on a stale setting never shows both.
+- No result is written for a capture that is not offered a notice today: Save to Clipboard (no file) and Preview (opened at
+  once).
+- The automatic copy of a saved picture is `wl-copy --type image/png --sensitive`. Save to Clipboard is the user's own copy
+  and stays a normal one.
 
 ### D-2. The shell owns what is on screen during and right after a capture
 New shell surfaces, all in `shell/capture/` (an existing directory), each a layer with its own namespace and `no_anim`:
@@ -192,7 +244,11 @@ Why a new app:
 - **Annotate.** Done replaces the file atomically (hidden file, then rename) and keeps the original in the history for
   Revert. "Save as Copy" writes `<name> (edited).png` beside it.
 - **History:** `$XDG_STATE_HOME/grassfield/capture-history/` (0700, files 0600):
-  - `index.json` (id, kind, path, time, pixel size; **no recognised text**), plus per entry `original.png` and `layers.json`;
+  - `index.json` (`{"v": 1, "entries": [...]}`; each entry `id`, `kind`, `path`, `time`, `w`, `h`, `orig`, `cur`; **no recognised text**), plus per entry `original.png` and `layers.json`.
+    As built in slice B2: `orig` and `cur` are the SHA-256 of the picture file as captured and as Done last wrote it (`cur` is
+    empty before the first Done and after a Revert). An entry names a file only while the file's bytes are one of the two, so
+    a later capture that reuses the path never gets another picture's original back, and Revert is offered only for a file the
+    editor itself wrote. One entry exists per path; a new one for the same path replaces the older and removes its folder;
   - retention 1 day, 1 week (default) or 1 month, pruned at each capture and at app start; Clear History removes everything;
   - an entry whose file is gone is dropped; clipboard-only captures are never kept.
 - **Temporary frames** (freeze, scroll), the result, the acknowledgement and the choice: `$XDG_RUNTIME_DIR/grassfield/`
@@ -257,7 +313,9 @@ in 0700 folders, opened with `O_NOFOLLOW` and checked for owner, mode, type and 
    capture is not in clipboard history until the user copies it.
 2. *The saved file* stays unredacted until Done replaces it.
 3. *The history original* is kept on purpose for Revert. It is private, pruned by retention and removed by Clear History,
-   whose explanation says it holds the pictures as they were taken.
+   whose explanation says it holds the pictures as they were taken. Until slice B14 builds Clear History the original stays in the history and the
+   layers stay editable: Redact hides the area in the saved picture, not in the history entry, and the tools' texts say "in the saved picture".
+   After an export that hides pixels the editor ALWAYS replaces the clipboard (owner decision, "toujours remplacer"), with no check of what it holds, using `wl-copy --type image/png --sensitive` and the saved file's bytes; the call blocks for two seconds at most (no event loop, so a close request cannot cut it short), and on failure or timeout `wl-copy --clear` runs and Done reports the error.
 
 **Redaction tools and what they guarantee.**
 - **Redact** (solid fill, default black, opaque): the area's pixels are replaced in every exported file. This is the tool for
@@ -309,10 +367,14 @@ Alternatives).
 ### D-11. Settings and options
 - **Toolbar Options** (macOS 27 wording): Show Floating Thumbnail, Remember Last Selection, Freeze Screen, Hide Desktop
   Icons; for recordings, Record System Audio, Do Not Disturb and the microphone list.
+  Do Not Disturb while recording is a runtime silence only (owner decision, 2026-11-24, "temporary silence"): the notification
+  service shows no banner while a recording runs and `capture.recordDnd` is on, as macOS does while sharing the screen. The saved
+  `notifications.dnd` is never read back or written by the capture, nothing is persisted, and the Do Not Disturb indicators follow the
+  user's own setting only.
 - **New toolbar modes:** Capture Text and Capture Scrolling Area.
 - **New key:** Shift-Super-2 for Capture Text.
 - **Schema additions** under `capture.*`: `showThumbnail` (true), `thumbnailSeconds` (5), `thumbnailSide` (right),
-  `freeze` (false), `hideDesktopIcons` (false), `systemAudio` (false), `recordDnd` (false), `historyRetention` (week),
+  `freeze` (false), `hideDesktopIcons` (false), `rememberSelection` (true), a timer value `"3"`, `systemAudio` (false), `recordDnd` (false), `historyRetention` (week),
   `format` (png), `standardResolution` (false), `fps` (60).
 - `config/schema/grassfield.schema.json` is edited by lanes A, B and C. It is listed as a shared file in the spec's lane
   table, and one slice at a time changes it.

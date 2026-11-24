@@ -977,6 +977,21 @@
     </message>
 </context>
 <context>
+    <name>AnnotationLayer</name>
+    <message>
+        <source>Crop rectangle, %1 by %2 pixels</source>
+        <translation>Rectangle de recadrage, %1 sur %2 pixels</translation>
+    </message>
+    <message>
+        <source>%1 × %2</source>
+        <translation>%1 × %2</translation>
+    </message>
+    <message>
+        <source>Text</source>
+        <translation>Texte</translation>
+    </message>
+</context>
+<context>
     <name>AppAboutPanel</name>
     <message>
         <source>About %1</source>
@@ -3476,6 +3491,53 @@
     </message>
 </context>
 <context>
+    <name>CaptureThumbnailCard</name>
+    <message>
+        <source>Screen recording</source>
+        <translation>Enregistrement de l’écran</translation>
+    </message>
+    <message>
+        <source>Screenshot, %1 × %2</source>
+        <translation>Capture d’écran, %1 × %2</translation>
+    </message>
+    <message>
+        <source>Screenshot</source>
+        <translation>Capture d’écran</translation>
+    </message>
+    <message>
+        <source>Text copied to the clipboard</source>
+        <translation>Texte copié dans le presse-papiers</translation>
+    </message>
+    <message>
+        <source>QR code copied to the clipboard</source>
+        <translation>Code QR copié dans le presse-papiers</translation>
+    </message>
+    <message>
+        <source>Opens it in Preview</source>
+        <translation>L’ouvre dans la Visionneuse</translation>
+    </message>
+    <message>
+        <source>Opens it for editing</source>
+        <translation>L’ouvre pour le modifier</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Fermer</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Copier</translation>
+    </message>
+    <message>
+        <source>Show in Files</source>
+        <translation>Afficher dans Fichiers</translation>
+    </message>
+    <message>
+        <source>Move to Trash</source>
+        <translation>Placer dans la corbeille</translation>
+    </message>
+</context>
+<context>
     <name>CaptureToolbar</name>
     <message>
         <source>Save to</source>
@@ -3514,6 +3576,10 @@
         <translation>Aucun</translation>
     </message>
     <message>
+        <source>3 Seconds</source>
+        <translation>3 secondes</translation>
+    </message>
+    <message>
         <source>5 Seconds</source>
         <translation>5 secondes</translation>
     </message>
@@ -3534,8 +3600,28 @@
         <translation>Options</translation>
     </message>
     <message>
+        <source>Show Floating Thumbnail</source>
+        <translation>Afficher la vignette flottante</translation>
+    </message>
+    <message>
+        <source>Remember Last Selection</source>
+        <translation>Mémoriser la dernière sélection</translation>
+    </message>
+    <message>
         <source>Show Mouse Pointer</source>
         <translation>Afficher le pointeur de la souris</translation>
+    </message>
+    <message>
+        <source>Hide Desktop Icons</source>
+        <translation>Masquer les icônes du bureau</translation>
+    </message>
+    <message>
+        <source>Do Not Disturb</source>
+        <translation>Ne pas déranger</translation>
+    </message>
+    <message>
+        <source>Capture Previous Area</source>
+        <translation>Capturer la zone précédente</translation>
     </message>
     <message>
         <source>Capture Entire Screen</source>
@@ -3548,6 +3634,10 @@
     <message>
         <source>Capture Selected Portion</source>
         <translation>Capturer la partie sélectionnée</translation>
+    </message>
+    <message>
+        <source>Capture Text</source>
+        <translation>Capturer le texte</translation>
     </message>
     <message>
         <source>Record Entire Screen</source>
@@ -5018,6 +5108,165 @@
     <message>
         <source>Quit</source>
         <translation>Quitter</translation>
+    </message>
+</context>
+<context>
+    <name>Editor</name>
+    <message>
+        <source>Screenshot</source>
+        <translation>Capture d’écran</translation>
+    </message>
+    <message>
+        <source>Zoom Out</source>
+        <translation>Zoom arrière</translation>
+    </message>
+    <message>
+        <source>Zoom to Fit</source>
+        <translation>Ajuster à la fenêtre</translation>
+    </message>
+    <message>
+        <source>Zoom In</source>
+        <translation>Zoom avant</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Sélectionner</translation>
+    </message>
+    <message>
+        <source>Arrow</source>
+        <translation>Flèche</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>Ligne</translation>
+    </message>
+    <message>
+        <source>Rectangle</source>
+        <translation>Rectangle</translation>
+    </message>
+    <message>
+        <source>Ellipse</source>
+        <translation>Ellipse</translation>
+    </message>
+    <message>
+        <source>Pen</source>
+        <translation>Crayon</translation>
+    </message>
+    <message>
+        <source>Highlighter</source>
+        <translation>Surligneur</translation>
+    </message>
+    <message>
+        <source>Text</source>
+        <translation>Texte</translation>
+    </message>
+    <message>
+        <source>Counter</source>
+        <translation>Compteur</translation>
+    </message>
+    <message>
+        <source>Redact</source>
+        <translation>Caviarder</translation>
+    </message>
+    <message>
+        <source>Pixelate</source>
+        <translation>Pixeliser</translation>
+    </message>
+    <message>
+        <source>Hides detail, but short text can still be guessed. Use Redact for secrets.</source>
+        <translation>Masque les détails, mais un texte court peut encore être deviné. Utilisez Caviarder pour les secrets.</translation>
+    </message>
+    <message>
+        <source>Blur</source>
+        <translation>Flouter</translation>
+    </message>
+    <message>
+        <source>For looks only. Does not hide text.</source>
+        <translation>Pour l’esthétique uniquement. Ne masque pas le texte.</translation>
+    </message>
+    <message>
+        <source>Dims everything outside the box.</source>
+        <translation>Assombrit tout ce qui est hors du cadre.</translation>
+    </message>
+    <message>
+        <source>Focus</source>
+        <translation>Focalisation</translation>
+    </message>
+    <message>
+        <source>Crop</source>
+        <translation>Recadrer</translation>
+    </message>
+    <message>
+        <source>%1 (%2): %3</source>
+        <translation>%1 (%2) : %3</translation>
+    </message>
+    <message>
+        <source>%1 (%2)</source>
+        <translation>%1 (%2)</translation>
+    </message>
+    <message>
+        <source>%1 × %2 pixels, %3</source>
+        <translation>%1 × %2 pixels, %3</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>Annuler</translation>
+    </message>
+    <message>
+        <source>Undo (%1)</source>
+        <translation>Annuler (%1)</translation>
+    </message>
+    <message>
+        <source>Ctrl+Z</source>
+        <translation>Ctrl+Z</translation>
+    </message>
+    <message>
+        <source>Redo (%1)</source>
+        <translation>Refaire (%1)</translation>
+    </message>
+    <message>
+        <source>Ctrl+Shift+Z</source>
+        <translation>Ctrl+Maj+Z</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>Refaire</translation>
+    </message>
+    <message>
+        <source>Hides the area in the saved picture. Use it for secrets.</source>
+        <translation>Masque la zone dans l’image enregistrée. À utiliser pour les secrets.</translation>
+    </message>
+    <message>
+        <source>Revert</source>
+        <translation>Rétablir</translation>
+    </message>
+    <message>
+        <source>Revert to the original</source>
+        <translation>Revenir à l’original</translation>
+    </message>
+    <message>
+        <source>Put the picture back as it was captured</source>
+        <translation>Remettre l’image telle qu’elle a été capturée</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Terminé</translation>
+    </message>
+    <message>
+        <source>Do you want to keep the changes to “%1”?</source>
+        <translation>Voulez-vous conserver les modifications de « %1 » ?</translation>
+    </message>
+    <message>
+        <source>Your changes are lost if you do not keep them.</source>
+        <translation>Vos modifications seront perdues si vous ne les conservez pas.</translation>
+    </message>
+    <message>
+        <source>Don’t Save</source>
+        <translation>Ne pas enregistrer</translation>
+    </message>
+    <message>
+        <source>Could not finish: %1</source>
+        <translation>Impossible de terminer : %1</translation>
     </message>
 </context>
 <context>
@@ -7434,6 +7683,86 @@
     <message>
         <source>Refresh</source>
         <translation>Actualiser</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Terminé</translation>
+    </message>
+    <message>
+        <source>Revert to Original</source>
+        <translation>Revenir à l’original</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>Supprimer</translation>
+    </message>
+    <message>
+        <source>Select</source>
+        <translation>Sélectionner</translation>
+    </message>
+    <message>
+        <source>Arrow</source>
+        <translation>Flèche</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>Ligne</translation>
+    </message>
+    <message>
+        <source>Rectangle</source>
+        <translation>Rectangle</translation>
+    </message>
+    <message>
+        <source>Ellipse</source>
+        <translation>Ellipse</translation>
+    </message>
+    <message>
+        <source>Pen</source>
+        <translation>Crayon</translation>
+    </message>
+    <message>
+        <source>Highlighter</source>
+        <translation>Surligneur</translation>
+    </message>
+    <message>
+        <source>Text</source>
+        <translation>Texte</translation>
+    </message>
+    <message>
+        <source>Counter</source>
+        <translation>Compteur</translation>
+    </message>
+    <message>
+        <source>Redact</source>
+        <translation>Caviarder</translation>
+    </message>
+    <message>
+        <source>Pixelate</source>
+        <translation>Pixeliser</translation>
+    </message>
+    <message>
+        <source>Blur</source>
+        <translation>Flouter</translation>
+    </message>
+    <message>
+        <source>Focus</source>
+        <translation>Focalisation</translation>
+    </message>
+    <message>
+        <source>Eyedropper</source>
+        <translation>Pipette</translation>
+    </message>
+    <message>
+        <source>Crop</source>
+        <translation>Recadrer</translation>
+    </message>
+    <message>
+        <source>Flip Horizontal</source>
+        <translation>Retourner horizontalement</translation>
+    </message>
+    <message>
+        <source>Flip Vertical</source>
+        <translation>Retourner verticalement</translation>
     </message>
 </context>
 <context>
@@ -12145,6 +12474,14 @@
         <source>Keep short notes on the desktop.</source>
         <translation>Garder de courtes notes sur le bureau.</translation>
     </message>
+    <message>
+        <source>Edit and annotate a screenshot</source>
+        <translation>Modifier et annoter une capture d’écran</translation>
+    </message>
+    <message>
+        <source>A local PNG file or a file: URL.</source>
+        <translation>Un fichier PNG local ou une URL file:.</translation>
+    </message>
 </context>
 <context>
     <name>RecentItems</name>
@@ -16199,6 +16536,177 @@
     </message>
 </context>
 <context>
+    <name>StyleBar</name>
+    <message>
+        <source>Hides what is under it in the saved picture. Use it for secrets.</source>
+        <translation>Masque ce qui se trouve dessous dans l’image enregistrée. À utiliser pour les secrets.</translation>
+    </message>
+    <message>
+        <source>Hides detail, but short text can still be guessed. Use Redact for secrets.</source>
+        <translation>Masque les détails, mais un texte court peut encore être deviné. Utilisez Caviarder pour les secrets.</translation>
+    </message>
+    <message>
+        <source>For looks only. Does not hide text.</source>
+        <translation>Pour l’esthétique uniquement. Ne masque pas le texte.</translation>
+    </message>
+    <message>
+        <source>Dims everything outside the box.</source>
+        <translation>Assombrit tout ce qui est hors du cadre.</translation>
+    </message>
+    <message>
+        <source>Red</source>
+        <translation>Rouge</translation>
+    </message>
+    <message>
+        <source>Orange</source>
+        <translation>Orange</translation>
+    </message>
+    <message>
+        <source>Yellow</source>
+        <translation>Jaune</translation>
+    </message>
+    <message>
+        <source>Green</source>
+        <translation>Vert</translation>
+    </message>
+    <message>
+        <source>Blue</source>
+        <translation>Bleu</translation>
+    </message>
+    <message>
+        <source>Purple</source>
+        <translation>Violet</translation>
+    </message>
+    <message>
+        <source>Graphite</source>
+        <translation>Graphite</translation>
+    </message>
+    <message>
+        <source>Current colour %1</source>
+        <translation>Couleur actuelle %1</translation>
+    </message>
+    <message>
+        <source>Eyedropper</source>
+        <translation>Pipette</translation>
+    </message>
+    <message>
+        <source>%1 (%2)</source>
+        <translation>%1 (%2)</translation>
+    </message>
+    <message>
+        <source>Stroke Width</source>
+        <translation>Épaisseur du trait</translation>
+    </message>
+    <message>
+        <source>Thin</source>
+        <translation>Fin</translation>
+    </message>
+    <message>
+        <source>Medium</source>
+        <translation>Moyen</translation>
+    </message>
+    <message>
+        <source>Thick</source>
+        <translation>Épais</translation>
+    </message>
+    <message>
+        <source>Straight Arrow</source>
+        <translation>Flèche droite</translation>
+    </message>
+    <message>
+        <source>Curved Arrow</source>
+        <translation>Flèche courbe</translation>
+    </message>
+    <message>
+        <source>Double Arrow</source>
+        <translation>Flèche double</translation>
+    </message>
+    <message>
+        <source>Filled</source>
+        <translation>Plein</translation>
+    </message>
+    <message>
+        <source>Fill the shape</source>
+        <translation>Remplir la forme</translation>
+    </message>
+    <message>
+        <source>Text Style</source>
+        <translation>Style du texte</translation>
+    </message>
+    <message>
+        <source>Plain</source>
+        <translation>Simple</translation>
+    </message>
+    <message>
+        <source>Outlined</source>
+        <translation>Contour</translation>
+    </message>
+    <message>
+        <source>Pill</source>
+        <translation>Pastille</translation>
+    </message>
+    <message>
+        <source>Text Size</source>
+        <translation>Taille du texte</translation>
+    </message>
+    <message>
+        <source>Small</source>
+        <translation>Petit</translation>
+    </message>
+    <message>
+        <source>Large</source>
+        <translation>Grand</translation>
+    </message>
+    <message>
+        <source>Counter Size</source>
+        <translation>Taille du compteur</translation>
+    </message>
+    <message>
+        <source>Aspect Ratio</source>
+        <translation>Format</translation>
+    </message>
+    <message>
+        <source>Free</source>
+        <translation>Libre</translation>
+    </message>
+    <message>
+        <source>Original</source>
+        <translation>Original</translation>
+    </message>
+    <message>
+        <source>Rotate Left</source>
+        <translation>Pivoter à gauche</translation>
+    </message>
+    <message>
+        <source>Rotate Right</source>
+        <translation>Pivoter à droite</translation>
+    </message>
+    <message>
+        <source>Flip Horizontal</source>
+        <translation>Retourner horizontalement</translation>
+    </message>
+    <message>
+        <source>Flip Vertical</source>
+        <translation>Retourner verticalement</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Annuler</translation>
+    </message>
+    <message>
+        <source>Cancel Crop</source>
+        <translation>Annuler le recadrage</translation>
+    </message>
+    <message>
+        <source>Crop</source>
+        <translation>Recadrer</translation>
+    </message>
+    <message>
+        <source>Apply Crop</source>
+        <translation>Appliquer le recadrage</translation>
+    </message>
+</context>
+<context>
     <name>Summary</name>
     <message>
         <source>Graph</source>
@@ -18075,6 +18583,13 @@
     <message>
         <source>Fills the screen below the menu bar, or restores the window. Alt-click for full screen</source>
         <translation>Remplit l’écran sous la barre des menus, ou restaure la fenêtre. Alt-clic pour le plein écran</translation>
+    </message>
+</context>
+<context>
+    <name>ZoomView</name>
+    <message>
+        <source>Picture %1, %2</source>
+        <translation>Image %1, %2</translation>
     </message>
 </context>
 <context>
