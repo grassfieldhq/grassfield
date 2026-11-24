@@ -13,6 +13,11 @@
 #include <QJsonArray>
 #include <QTemporaryDir>
 
+#include <QElapsedTimer>
+#include <QThread>
+#include <QCoreApplication>
+#include "capturehistory.h"
+#include "layers.h"
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -476,4 +481,353 @@ TEST_F(EyedropperTest, ADoneWritesThePenAndTheHighlighterIntoTheFile)
     const QImage out(m_file);
     EXPECT_EQ(out.pixelColor(60, 62), QColor(255, 0, 0)) << "the stroke's pixels";
     EXPECT_EQ(out.pixelColor(60, 90), QColor(60, 90, 17)) << "the others untouched";
+}
+
+// ---- a stroke costs the same per move however long it is -----------------------------------------------------------------------------
+
+namespace {
+
+// A hand-drawn line: a wave with a tremor, `count` samples a pixel or so apart.
+QVector<QPointF> tremor(int count)
+{
+    QVector<QPointF> points;
+    unsigned seed = 12345;
+    for (int i = 0; i < count; ++i) {
+        seed = seed * 1103515245u + 12345u;
+        const double noise = double((seed >> 16) & 0x7fff) / 0x7fff - 0.5;
+        points.append(QPointF(i * 0.9, 60 + 30 * std::sin(i * 0.02) + noise * 0.8));
+    }
+    return points;
+}
+
+struct Timing {
+    double total = 0; // ms, all the moves
+    double worst = 0; // ms, the slowest move
+};
+
+} // namespace
+
+TEST(StrokeCost, AMoveIsBoundedWorkAndTheStrokeStaysThinned)
+{
+    double totals[4] = {};
+    int index = 0;
+    for (int count : {500, 1000, 2000, 4000}) {
+        UndoStack stack;
+        ToolController tools(&stack);
+        tools.style().color = "#de3651";
+        tools.setDeferPreview(true);
+        ASSERT_TRUE(tools.setTool("pen"));
+        const QVector<QPointF> samples = tremor(count);
+        ASSERT_TRUE(tools.press(samples[0], 3));
+        Timing t;
+        for (int i = 1; i < count; ++i) {
+            QElapsedTimer timer;
+            timer.start();
+            tools.move(samples[i], false);
+            const double ms = timer.nsecsElapsed() / 1e6;
+            t.total += ms;
+            t.worst = std::max(t.worst, ms);
+        }
+        EXPECT_TRUE(stack.layers().isEmpty()) << "nothing is built until a preview is asked for";
+        EXPECT_TRUE(tools.previewPending());
+        const QVector<QPointF> kept = tools.strokeSoFar();
+        EXPECT_LE(kept.size(), kMaxStrokePoints);
+        EXPECT_LT(kept.size(), count / 3) << "thinned as it comes";
+        EXPECT_EQ(kept.first(), samples.first());
+        EXPECT_EQ(kept.last(), samples.last());
+        // Every sample is within the thinning's epsilon of the line through the kept points.
+        for (const QPointF &p : samples) {
+            qreal best = 1e9;
+            for (int k = 1; k < kept.size(); ++k) {
+                const QPointF a = kept[k - 1], b = kept[k], ab = b - a;
+                const qreal len2 = ab.x() * ab.x() + ab.y() * ab.y();
+                const qreal u = len2 > 0 ? std::clamp(((p.x() - a.x()) * ab.x() + (p.y() - a.y()) * ab.y()) / len2, 0.0, 1.0) : 0;
+                best = std::min(best, QLineF(p, a + ab * u).length());
+            }
+            ASSERT_LE(best, kStrokeEpsilon + 1e-6);
+        }
+        QElapsedTimer timer;
+        timer.start();
+        tools.flushPreview();
+        const double flush = timer.nsecsElapsed() / 1e6;
+        ASSERT_EQ(stack.layers().size(), 1);
+        EXPECT_TRUE(tools.release(samples.last(), false));
+        std::printf("stroke of %d samples: %zd points kept, moves %.2f ms in all, worst %.3f ms, one preview %.2f ms\n", count, size_t(kept.size()), t.total,
+                    t.worst, flush);
+        EXPECT_LT(t.worst, 25) << "no move is a hiccup";
+        EXPECT_LT(flush, 400);
+        totals[index++] = t.total;
+    }
+    EXPECT_LT(totals[3], 1000) << "4000 samples in under a second (they took 69 s when every move rebuilt the stroke)";
+    if (totals[1] > 2)
+        EXPECT_LT(totals[3] / totals[1], 9) << "four times the samples is not sixteen times the work";
+}
+
+TEST(StrokeCost, TheBackendMakesOnePreviewPerFrameNotOnePerSample)
+{
+    QTemporaryDir dir;
+    QImage image(2000, 200, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    ASSERT_TRUE(image.save(dir.path() + "/p.png", "PNG"));
+    ScreenshotApp app(dir.path() + "/p.png", QStringList(), dir.path() + "/state");
+    app.setToolColor("#de3651");
+    app.setTool("pen");
+    auto *model = qobject_cast<LayerModel *>(app.layerModel());
+    int updates = 0;
+    QObject::connect(model, &QAbstractItemModel::rowsInserted, [&] { ++updates; });
+    QObject::connect(model, &QAbstractItemModel::dataChanged, [&] { ++updates; });
+    const QVector<QPointF> samples = tremor(2000);
+    ASSERT_TRUE(app.toolPress(samples[0].x(), samples[0].y(), 3));
+    QElapsedTimer all;
+    all.start();
+    double worst = 0;
+    for (int i = 1; i < samples.size(); ++i) {
+        QElapsedTimer timer;
+        timer.start();
+        app.toolMove(samples[i].x(), samples[i].y(), false);
+        worst = std::max(worst, timer.nsecsElapsed() / 1e6);
+    }
+    EXPECT_EQ(updates, 0) << "the moves of one burst make no model update (the frame's timer has not fired)";
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    for (int i = 0; i < 40 && updates == 0; ++i) {
+        QThread::msleep(5);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+    }
+    EXPECT_GE(updates, 1) << "and the frame's timer makes one";
+    app.toolRelease(samples.back().x(), samples.back().y(), false);
+    EXPECT_EQ(model->rowCount(), 1);
+    EXPECT_TRUE(app.canUndo());
+    const double total = all.nsecsElapsed() / 1e6;
+    std::printf("backend, 2000 samples: moves %.1f ms in all, worst %.3f ms\n", total, worst);
+    EXPECT_LT(worst, 40);
+    EXPECT_LT(total, 1500);
+}
+
+// ---- the layers file is never larger than the reader takes ----------------------------------------------------------------------------
+
+TEST(LayersFileSize, EveryEditAndTheWriterStayWithinWhatTheReaderTakes)
+{
+    Layers many;
+    for (int i = 1; i <= 40; ++i) {
+        QVector<QPointF> p;
+        for (int k = 0; k < 4000; ++k)
+            p.append(QPointF(k * 0.7, 30 * std::sin(k * 0.05 + i)));
+        many.append(makeStroke(i, "pen", p, penStyle()));
+    }
+    ASSERT_FALSE(layersFit(many));
+    ASSERT_GT(layersToJson(many).size(), kMaxLayersBytes);
+    Layers part = many.mid(0, 20);
+    ASSERT_TRUE(layersFit(part));
+
+    UndoStack stack;
+    stack.reset(part);
+    EXPECT_FALSE(stack.commit(many)) << "an edit past the limit is refused";
+    EXPECT_EQ(stack.layers(), part);
+    EXPECT_EQ(stack.undoSteps(), 0);
+    // A gesture that ends past the limit is given up.
+    stack.preview(many);
+    EXPECT_FALSE(stack.commitGesture());
+    EXPECT_EQ(stack.layers(), part);
+    EXPECT_FALSE(stack.inGesture());
+    stack.preview(part.mid(0, 10));
+    EXPECT_TRUE(stack.commitGesture()) << "and one within it goes in";
+
+    // The writer refuses the same bytes, whoever asks; the reader takes what the writer wrote.
+    QTemporaryDir dir;
+    CaptureHistory history(dir.path() + "/h");
+    HistoryEntry e;
+    ASSERT_TRUE(history.add("/tmp/x.png", "bytes", QSize(2, 2), &e));
+    QString why;
+    EXPECT_FALSE(history.writeLayers(e.id, layersToJson(many), &why));
+    EXPECT_FALSE(why.isEmpty());
+    ASSERT_TRUE(history.writeLayers(e.id, layersToJson(part), &why)) << why.toStdString();
+    Layers back;
+    EXPECT_TRUE(layersFromJson(history.readLayers(e.id), &back));
+    EXPECT_EQ(back, part);
+}
+
+// ---- an eyedropper drag is one step ---------------------------------------------------------------------------------------------------
+
+namespace {
+
+int undoSteps(ScreenshotApp &app)
+{
+    int steps = 0;
+    while (app.canUndo()) {
+        app.undo();
+        ++steps;
+    }
+    return steps;
+}
+
+} // namespace
+
+TEST_F(EyedropperTest, ADragOverFiftyPixelsIsOneUndoStepOnTheSelectionAndNoneWithout)
+{
+    // Without a selection a drag edits no layer: no step at all.
+    m_app->toolPress(30, 12, 3);
+    for (int x = 31; x <= 80; ++x)
+        m_app->toolMove(x, 12, false);
+    m_app->toolRelease(80, 12, false);
+    EXPECT_EQ(m_app->toolColor(), QColor(80, 12, 17).name());
+    EXPECT_FALSE(m_app->canUndo());
+
+    m_app->setTool("rectangle");
+    ASSERT_TRUE(m_app->toolPress(10, 10, 3));
+    m_app->toolRelease(60, 40, false);
+    ASSERT_NE(m_app->selectedId(), 0);
+    m_app->setTool("eyedropper");
+    ASSERT_TRUE(m_app->toolPress(30, 12, 3));
+    for (int x = 31; x <= 90; ++x) {
+        m_app->toolMove(x, 12, false);
+        EXPECT_FALSE(m_app->canUndo()) << "a drag in progress is a preview, not a step";
+    }
+    m_app->toolRelease(90, 12, false);
+    EXPECT_EQ(m_app->toolColor(), QColor(90, 12, 17).name());
+    EXPECT_EQ(undoSteps(*m_app), 2) << "the rectangle and the whole drag, 61 pixels, as one step";
+}
+
+TEST_F(EyedropperTest, ADragThatEndsOnTheColourTheLayerHasMakesNoStep)
+{
+    m_app->setTool("rectangle");
+    m_app->applyColor(QColor(30, 12, 17).name());
+    ASSERT_TRUE(m_app->toolPress(10, 10, 3));
+    m_app->toolRelease(60, 40, false);
+    m_app->setTool("eyedropper");
+    ASSERT_TRUE(m_app->toolPress(30, 12, 3));
+    for (int x = 31; x <= 50; ++x)
+        m_app->toolMove(x, 12, false);
+    m_app->toolMove(30, 12, false);
+    m_app->toolRelease(30, 12, false);
+    EXPECT_EQ(undoSteps(*m_app), 1) << "only the rectangle: the colour came back to what it was";
+}
+
+// ---- text: Done and closing take the text being typed ---------------------------------------------------------------------------------
+
+namespace {
+
+class TextEditing : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        ASSERT_TRUE(m_dir.isValid());
+        m_file = m_dir.path() + "/t.png";
+        QImage image(200, 100, QImage::Format_RGB32);
+        image.fill(Qt::white);
+        ASSERT_TRUE(image.save(m_file, "PNG"));
+        m_app = std::make_unique<ScreenshotApp>(m_file, QStringList(), m_dir.path() + "/state");
+        m_app->setToolColor("#0167fd");
+        m_app->setTextSize(30);
+        m_app->setTool("text");
+    }
+    QTemporaryDir m_dir;
+    QString m_file;
+    std::unique_ptr<ScreenshotApp> m_app;
+};
+
+long nonWhite(const QImage &image)
+{
+    long n = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x)
+            n += image.pixelColor(x, y) != QColor(Qt::white);
+    }
+    return n;
+}
+
+} // namespace
+
+TEST_F(TextEditing, DoneWritesTheTextThatIsStillBeingTyped)
+{
+    ASSERT_TRUE(m_app->toolPress(20, 20, 3));
+    m_app->previewText("Hi there");
+    EXPECT_TRUE(m_app->textEditing());
+    EXPECT_TRUE(m_app->dirty()) << "closing asks, as with any change";
+    ASSERT_TRUE(m_app->done()) << "Ctrl+S with the editor open";
+    EXPECT_FALSE(m_app->textEditing());
+    EXPECT_GT(nonWhite(QImage(m_file)), 100) << "the text is in the file";
+    EXPECT_FALSE(m_app->dirty());
+    EXPECT_TRUE(m_app->canRevert());
+}
+
+TEST_F(TextEditing, ACleanDocumentWithTextBeingTypedIsDirtyAndATextNotTypedIsNot)
+{
+    ASSERT_TRUE(m_app->toolPress(20, 20, 3));
+    EXPECT_FALSE(m_app->dirty()) << "nothing typed yet";
+    m_app->previewText("x");
+    EXPECT_TRUE(m_app->dirty());
+    m_app->previewText("");
+    EXPECT_FALSE(m_app->dirty());
+    m_app->previewText("again");
+    m_app->cancelText();
+    EXPECT_FALSE(m_app->dirty());
+    EXPECT_FALSE(m_app->canUndo());
+}
+
+TEST_F(TextEditing, ThePreviewIsTheLayerTheCommitMakes)
+{
+    ASSERT_TRUE(m_app->toolPress(20, 20, 3));
+    m_app->applyTextStyle("pill");
+    m_app->previewText("Look");
+    auto *model = qobject_cast<LayerModel *>(m_app->layerModel());
+    ASSERT_EQ(model->rowCount(), 1) << "shown while typed, through the model of the file's own geometry";
+    const QVariant plate = model->data(model->index(0), LayerModel::PlateRole);
+    const QVariant path = model->data(model->index(0), LayerModel::PathRole);
+    EXPECT_NE(plate.toString(), "") << "the pill is already there";
+    EXPECT_FALSE(m_app->canUndo()) << "a preview, not a step";
+    m_app->commitText("Look");
+    ASSERT_EQ(model->rowCount(), 1);
+    EXPECT_EQ(model->data(model->index(0), LayerModel::PathRole), path);
+    EXPECT_EQ(model->data(model->index(0), LayerModel::PlateRole), plate);
+    EXPECT_EQ(undoSteps(*m_app), 1) << "typing a text, however long, is one step";
+}
+
+TEST_F(TextEditing, AChangeOfToolPutsTheTextIn)
+{
+    ASSERT_TRUE(m_app->toolPress(20, 20, 3));
+    m_app->previewText("kept");
+    m_app->setTool("select");
+    EXPECT_FALSE(m_app->textEditing());
+    EXPECT_EQ(m_app->selectedType(), "text");
+    EXPECT_TRUE(m_app->canUndo());
+}
+
+TEST_F(TextEditing, ATextPastTheLimitIsCutNotDropped)
+{
+    EXPECT_EQ(m_app->textMaxLength(), kMaxTextLength);
+    ASSERT_TRUE(m_app->toolPress(5, 5, 3));
+    m_app->commitText(QString(kMaxTextLength + 500, 'x'));
+    EXPECT_EQ(m_app->selectedType(), "text");
+    ASSERT_TRUE(m_app->done());
+    // Reopened, the layer holds the first kMaxTextLength characters.
+    ScreenshotApp again(m_file, QStringList(), m_dir.path() + "/state");
+    again.setTool("select");
+    ASSERT_TRUE(again.toolPress(6, 6, 3));
+    again.toolRelease(6, 6, false);
+    EXPECT_EQ(again.selectedType(), "text");
+    again.editSelectedText();
+    ASSERT_TRUE(again.textEditing());
+    EXPECT_EQ(again.textEditText().size(), kMaxTextLength) << "the first characters, not nothing";
+    EXPECT_EQ(makeText(1, QPointF(0, 0), QString(kMaxTextLength + 1, 'x'), ShapeStyle{}).id, 0) << "the layer guard stays";
+}
+
+TEST(TextRotation, ANumberOutOfRangeReadsAsATurnWithoutOverflow)
+{
+    ShapeStyle s;
+    s.color = "#0167fd";
+    Layer text = makeText(1, QPointF(50, 50), "Hello", s);
+    const QRectF flat = layerBounds(text);
+    for (double rot : {1e30, -1e30, 3e9, -7.0, 4.0, 5.0}) {
+        text.fields.insert("rot", rot);
+        EXPECT_EQ(shapeGeometry(text).kind, ShapeGeometry::Glyphs) << rot;
+        const QRectF b = layerBounds(text);
+        EXPECT_TRUE(std::abs(b.width() - flat.width()) < 0.01 || std::abs(b.width() - flat.height()) < 0.01) << rot;
+    }
+    text.fields.insert("rot", -1);
+    const QRectF minusOne = layerBounds(text);
+    text.fields.insert("rot", 3);
+    EXPECT_EQ(minusOne, layerBounds(text));
+    text.fields.insert("rot", 2.5);
+    EXPECT_EQ(shapeGeometry(text).kind, ShapeGeometry::Glyphs);
 }

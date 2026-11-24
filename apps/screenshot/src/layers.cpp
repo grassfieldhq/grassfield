@@ -29,6 +29,11 @@ QByteArray layersToJson(const Layers &layers)
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
+bool layersFit(const Layers &layers)
+{
+    return layers.size() <= kMaxLayers && layersToJson(layers).size() <= kMaxLayersBytes;
+}
+
 bool layersFromJson(const QByteArray &bytes, Layers *layers, QString *error)
 {
     layers->clear();

@@ -20,6 +20,16 @@ ScreenshotApp::ScreenshotApp(const QString &path, const QStringList &errors, con
     , m_document(&m_history)
     , m_tools(&m_undo)
 {
+    // A stroke is previewed once a frame, not at every sample of the pointer (a move then costs the same however long the stroke is).
+    m_tools.setDeferPreview(true);
+    m_flushTimer.setSingleShot(true);
+    m_flushTimer.setInterval(16);
+    connect(&m_flushTimer, &QTimer::timeout, this, [this] {
+        if (m_tools.previewPending()) {
+            m_tools.flushPreview();
+            layersEdited();
+        }
+    });
     if (!path.isEmpty()) {
         QString why;
         if (m_document.open(path, &why))
@@ -152,6 +162,10 @@ void ScreenshotApp::adoptStyle(const screenshot::Layer &layer)
 
 void ScreenshotApp::setTool(const QString &tool)
 {
+    if (tool != m_tools.tool()) {
+        finishText();
+        m_flushTimer.stop();
+    }
     if (tool != m_tools.tool() && m_tools.setTool(tool)) {
         m_picking = false;
         m_crop.cancel();
@@ -259,8 +273,12 @@ bool ScreenshotApp::toolPress(qreal x, qreal y, qreal tolerance)
         return false;
     const QString tool = m_tools.tool();
     if (tool == QLatin1String("eyedropper")) {
+        const QString color = pixelColorAt(x, y);
+        if (color.isEmpty())
+            return false;
         m_picking = true;
-        return !pickColor(x, y).isEmpty();
+        previewPick(color);
+        return true;
     }
     if (tool == QLatin1String("crop")) {
         const bool started = m_crop.press(QPointF(x, y), tolerance);
@@ -293,7 +311,9 @@ bool ScreenshotApp::toolPress(qreal x, qreal y, qreal tolerance)
 void ScreenshotApp::toolMove(qreal x, qreal y, bool constrain)
 {
     if (m_picking) {
-        pickColor(x, y);
+        const QString color = pixelColorAt(x, y);
+        if (!color.isEmpty())
+            previewPick(color);
         return;
     }
     if (m_crop.busy()) {
@@ -304,14 +324,23 @@ void ScreenshotApp::toolMove(qreal x, qreal y, bool constrain)
     if (!m_tools.busy())
         return;
     m_tools.move(QPointF(x, y), constrain);
+    if (m_tools.previewPending()) {
+        if (!m_flushTimer.isActive())
+            m_flushTimer.start();
+        return;
+    }
     layersEdited();
 }
 
 void ScreenshotApp::toolRelease(qreal x, qreal y, bool constrain)
 {
     if (m_picking) {
-        pickColor(x, y);
+        const QString color = pixelColorAt(x, y);
+        if (!color.isEmpty())
+            previewPick(color);
         m_picking = false;
+        m_undo.commitGesture(); // one step for the whole drag, none when the colour did not change
+        layersEdited();
         return;
     }
     if (m_crop.busy()) {
@@ -321,12 +350,14 @@ void ScreenshotApp::toolRelease(qreal x, qreal y, bool constrain)
     }
     if (!m_tools.busy())
         return;
+    m_flushTimer.stop();
     m_tools.release(QPointF(x, y), constrain);
     layersEdited();
 }
 
 void ScreenshotApp::toolCancel()
 {
+    m_flushTimer.stop();
     m_picking = false;
     if (m_crop.busy()) {
         m_crop.cancel();
@@ -338,6 +369,7 @@ void ScreenshotApp::toolCancel()
 
 void ScreenshotApp::undo()
 {
+    finishText();
     m_tools.cancel();
     if (m_undo.undo())
         layersEdited();
@@ -345,6 +377,7 @@ void ScreenshotApp::undo()
 
 void ScreenshotApp::redo()
 {
+    finishText();
     m_tools.cancel();
     if (m_undo.redo())
         layersEdited();
@@ -427,7 +460,7 @@ void ScreenshotApp::applyCounterSize(qreal size)
     restyleSelection([size](const screenshot::Layer &layer) { return layer.type == QLatin1String("counter") ? screenshot::withTextSize(layer, size) : layer; });
 }
 
-QString ScreenshotApp::pickColor(qreal x, qreal y)
+QString ScreenshotApp::pixelColorAt(qreal x, qreal y) const
 {
     if (!std::isfinite(x) || !std::isfinite(y))
         return {};
@@ -437,17 +470,47 @@ QString ScreenshotApp::pickColor(qreal x, qreal y)
     if (image.isNull() || fx < 0 || fy < 0 || fx >= image.width() || fy >= image.height())
         return {};
     const QColor pixel = image.pixelColor(int(fx), int(fy));
-    const QString name = QColor(pixel.red(), pixel.green(), pixel.blue()).name();
-    applyColor(name);
-    return name;
+    return QColor(pixel.red(), pixel.green(), pixel.blue()).name();
+}
+
+void ScreenshotApp::previewPick(const QString &color)
+{
+    setToolColor(color);
+    const screenshot::Layer selected = m_tools.selectedLayer();
+    if (selected.id == 0)
+        return;
+    screenshot::Layers next = m_undo.gestureBase();
+    for (screenshot::Layer &layer : next) {
+        if (layer.id == selected.id)
+            layer = screenshot::withColor(layer, color);
+    }
+    if (next != m_undo.layers()) {
+        m_undo.preview(next);
+        layersEdited();
+    }
+}
+
+QString ScreenshotApp::pickColor(qreal x, qreal y)
+{
+    const QString color = pixelColorAt(x, y);
+    if (color.isEmpty())
+        return {};
+    previewPick(color);
+    if (!m_picking) {
+        m_undo.commitGesture();
+        layersEdited();
+    }
+    return color;
 }
 
 void ScreenshotApp::beginText(int id, const QPointF &pos, const QString &text)
 {
+    m_tools.cancel();
     m_textEditing = true;
     m_textEditId = id;
     m_textEditPos = pos;
     m_textEditText = text;
+    m_textPreview = text;
     emit textEditChanged();
 }
 
@@ -458,41 +521,74 @@ void ScreenshotApp::editSelectedText()
         beginText(layer.id, screenshot::layerBounds(layer).topLeft(), screenshot::layerText(layer));
 }
 
+void ScreenshotApp::previewText(const QString &typed)
+{
+    if (!m_textEditing)
+        return;
+    const QString text = typed.left(screenshot::kMaxTextLength);
+    m_textPreview = text;
+    const screenshot::Layers base = m_undo.gestureBase();
+    screenshot::Layers next = base;
+    screenshot::Layer shown;
+    if (m_textEditId == 0) {
+        const int id = screenshot::nextLayerId(base);
+        shown = screenshot::makeText(id, m_textEditPos, text, m_tools.style());
+        if (shown.id != 0) {
+            // The click is where the text begins, not its middle.
+            shown = screenshot::translated(shown, m_textEditPos - screenshot::layerBounds(shown).topLeft());
+            if (next.size() < screenshot::kMaxLayers)
+                next.append(shown);
+        }
+    } else {
+        for (int i = 0; i < next.size(); ++i) {
+            if (next[i].id != m_textEditId)
+                continue;
+            const screenshot::Layer before = next[i];
+            if (text.trimmed().isEmpty()) {
+                next.removeAt(i); // erasing all of a text takes it away
+            } else {
+                shown = screenshot::withText(before, text);
+                if (before.fields.value(QStringLiteral("rot")).toInt() == 0) // the text stays where it began
+                    shown = screenshot::translated(shown, screenshot::layerBounds(before).topLeft() - screenshot::layerBounds(shown).topLeft());
+                next[i] = shown;
+            }
+            break;
+        }
+    }
+    if (next != m_undo.layers() || m_undo.inGesture()) {
+        m_undo.preview(next);
+        layersEdited();
+    }
+    if (shown.id != 0) {
+        // The editor goes where the lettering is (a pill's text starts inside its plate).
+        const QPointF at = screenshot::shapeGeometry(shown).layoutBox.topLeft();
+        if (at != m_textEditPos && m_textEditId != 0) {
+            m_textEditPos = at;
+            emit textEditChanged();
+        }
+    }
+}
+
+void ScreenshotApp::finishText()
+{
+    if (m_textEditing)
+        commitText(m_textPreview);
+}
+
 void ScreenshotApp::commitText(const QString &text)
 {
     if (!m_textEditing)
         return;
+    previewText(text);
     const int id = m_textEditId;
-    const QPointF pos = m_textEditPos;
     m_textEditing = false;
     emit textEditChanged();
-    if (id == 0) {
-        screenshot::Layer layer = screenshot::makeText(1, pos, text, m_tools.style());
-        if (layer.id == 0)
-            return; // nothing typed
-        // The click is the top left of the text, not its centre.
-        layer = screenshot::translated(layer, pos - screenshot::layerBounds(layer).topLeft());
-        if (m_tools.addLayer(layer))
-            layersEdited();
-        return;
+    const bool changed = m_undo.commitGesture(); // the whole edit is one step
+    if (changed) {
+        const screenshot::Layers &layers = m_undo.layers();
+        m_tools.select(id != 0 ? id : (layers.isEmpty() ? 0 : layers.last().id));
     }
-    m_tools.select(id);
-    const screenshot::Layer layer = m_tools.selectedLayer();
-    if (layer.id == 0)
-        return;
-    bool changed;
-    if (text.trimmed().isEmpty()) {
-        changed = m_tools.deleteSelected(); // erasing the text of a text takes it away
-    } else {
-        screenshot::Layer edited = screenshot::withText(layer, text);
-        if (edited == layer)
-            return;
-        if (layer.fields.value(QStringLiteral("rot")).toInt() == 0) // the text stays where it started
-            edited = screenshot::translated(edited, screenshot::layerBounds(layer).topLeft() - screenshot::layerBounds(edited).topLeft());
-        changed = m_tools.replaceSelected(edited);
-    }
-    if (changed)
-        layersEdited();
+    layersEdited();
 }
 
 void ScreenshotApp::cancelText()
@@ -501,10 +597,13 @@ void ScreenshotApp::cancelText()
         return;
     m_textEditing = false;
     emit textEditChanged();
+    m_undo.cancelGesture();
+    layersEdited();
 }
 
 void ScreenshotApp::commitFrame(const screenshot::Layers &next)
 {
+    finishText();
     if (!m_document.isOpen() || m_tools.busy() || next == m_undo.layers())
         return;
     m_tools.cancel();
@@ -562,6 +661,7 @@ void ScreenshotApp::setLastError(const QString &error)
 
 bool ScreenshotApp::done()
 {
+    finishText(); // the text being typed is part of what Done writes
     QString why;
     const bool ok = m_document.done(&why);
     setLastError(ok ? QString() : why);

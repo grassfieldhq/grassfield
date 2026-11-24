@@ -167,7 +167,7 @@ TEST(Frame, ACropBeyondThePictureIsClippedToIt)
 
 // ---- the picture, pixel for pixel --------------------------------------------------------------------------------------------
 
-TEST(Frame, ACropIsExactlyThoseVideoPixels)
+TEST(Frame, ACropIsExactlyThosePixels)
 {
     for (QImage::Format format : {QImage::Format_RGB32, QImage::Format_ARGB32}) {
         const QImage image = numbered(37, 23, format);

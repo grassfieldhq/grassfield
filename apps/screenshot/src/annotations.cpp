@@ -155,7 +155,11 @@ bool readNumber(const Layer &layer, const char *key, qreal *out, qreal lo, qreal
 int textRotation(const Layer &layer)
 {
     const QJsonValue v = layer.fields.value(QStringLiteral("rot"));
-    return v.isDouble() ? ((int(v.toDouble()) % 4) + 4) % 4 : 0;
+    if (!v.isDouble() || !std::isfinite(v.toDouble()))
+        return 0;
+    // Reduced as a double first: converting a number out of int's range would be undefined.
+    const double turns = std::fmod(std::floor(v.toDouble()), 4.0);
+    return int(turns < 0 ? turns + 4.0 : turns);
 }
 
 QString textStyleOf(const Layer &layer)

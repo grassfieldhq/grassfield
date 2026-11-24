@@ -34,6 +34,10 @@ QStringList layerTypes();
 // The file's bytes for `layers` (compact JSON, keys sorted: the same layers always give the same bytes).
 QByteArray layersToJson(const Layers &layers);
 
+// Whether the file for `layers` stays within what the reader takes (kMaxLayersBytes): every edit and the writer check it, so that a file
+// that is written can be read back.
+bool layersFit(const Layers &layers);
+
 // Parses and validates a layers file. False with `error` set when the bytes are not valid JSON, hold more than kMaxLayersBytes,
 // are not a version-1 document, hold more than kMaxLayers layers, a layer that is not an object, an id that is not an integer of
 // 1 or more or is repeated, or a type that is not in layerTypes(). `layers` is empty on failure.

@@ -64,6 +64,7 @@ TestCase {
         property int textEditId: 0
         property point textEditPos: Qt.point(0, 0)
         property string textEditText: ""
+        property int textMaxLength: 2000
         property rect cropRect: Qt.rect(0, 0, 0, 0)
         property string cropAspect: "free"
         property bool cropChanges: false
@@ -98,6 +99,9 @@ TestCase {
         }
         function editSelectedText() {
             record("editSelectedText", 0);
+        }
+        function previewText(text) {
+            record("previewText", text);
         }
         function commitText(text) {
             record("commitText", text);
@@ -505,6 +509,24 @@ TestCase {
         compare(JSON.stringify(backendItem.calls.slice(-1)), JSON.stringify([["commitText", "p\nq"]]));
         compare(box.visible, false);
         compare(backendItem.undoCalls, 0);
+    }
+
+    function test_theEditorStopsAtTheLimitAndShowsTheTextThroughThePreview() {
+        editor.requestActivate();
+        const input = findChild(editor.contentItem, "textEditInput");
+        backendItem.textMaxLength = 5;
+        backendItem.tool = "text";
+        backendItem.textEditText = "";
+        backendItem.textEditing = true;
+        tryCompare(input, "activeFocus", true);
+        for (const key of [Qt.Key_A, Qt.Key_B, Qt.Key_C, Qt.Key_D, Qt.Key_E, Qt.Key_F, Qt.Key_G])
+            keyClick(key);
+        compare(input.text, "abcde", "no more than the limit is typed");
+        const previews = backendItem.calls.filter(c => c[0] === "previewText").map(c => c[1]);
+        compare(previews[previews.length - 1], "abcde", "the backend shows what is typed, as the layer it will be");
+        compare(String(input.color), "#00000000", "the letters are the preview layer's, not the editor's");
+        backendItem.cancelText();
+        backendItem.textMaxLength = 2000;
     }
 
     function test_escGivesTheTextUpAndTheCropBeforeAnythingElse() {

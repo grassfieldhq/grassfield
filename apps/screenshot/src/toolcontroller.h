@@ -17,6 +17,7 @@ namespace screenshot {
 constexpr qreal kMinDrag = 3; // a drag shorter than this (picture pixels) draws nothing
 constexpr qreal kMinSample = 0.75;     // a pen sample closer than this to the last one is dropped
 constexpr qreal kStrokeEpsilon = 0.4;  // and the stroke is thinned to within this of its drawn line (picture pixels)
+constexpr int kMaxPendingSamples = 64; // the most samples held back since the last point kept
 
 class ToolController
 {
@@ -49,6 +50,15 @@ public:
     void cancel();
     bool busy() const { return m_mode != Mode::None; }
 
+    // A stroke's preview is made when asked (flushPreview) instead of at every move, so that the owner can make one per frame; a
+    // move then costs the same however long the stroke is. Off (the default): every move previews at once.
+    void setDeferPreview(bool defer) { m_defer = defer; }
+    bool previewPending() const { return m_dirty; }
+    // The stroke as drawn so far, previewed; a release flushes by itself.
+    void flushPreview();
+    // The points of the stroke so far (the thinned samples and the latest one).
+    QVector<QPointF> strokeSoFar() const;
+
     // Edits that are one step of their own. False when there is no selection (or nothing changed).
     bool deleteSelected();
     bool nudgeSelected(const QPointF &delta);
@@ -61,6 +71,7 @@ private:
     enum class Mode { None, Draw, Move, Resize };
 
     void updateGesture(const QPointF &p, bool constrain);
+    void addSample(const QPointF &p);
     int indexOf(int id) const;
 
     UndoStack *m_stack;
@@ -71,7 +82,13 @@ private:
     QPointF m_start;
     Layer m_origin; // the selected layer when a move or a resize began
     int m_drawId = 0;
-    QVector<QPointF> m_points; // a stroke's samples
+    // A stroke's samples, thinned as they come: the points kept, and the ones since the last kept, all within m_eps of the line from the
+    // last kept to the latest (so a move is a bounded amount of work, and the stroke's size follows its shape, not its sampling).
+    QVector<QPointF> m_kept;
+    QVector<QPointF> m_pending;
+    qreal m_eps = 0.4;
+    bool m_defer = false;
+    bool m_dirty = false;
     Handle::Kind m_handle = Handle::TopLeft;
 };
 

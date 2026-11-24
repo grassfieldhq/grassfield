@@ -64,7 +64,7 @@ Item {
         visible: root.cropping
         z: 2
 
-        readonly property color scrim: Appearance.withAlpha(Qt.color("black"), Tokens.screenshotCropScrimOpacity)
+        readonly property color scrim: Appearance.withAlpha(Appearance.colors.shadow, Tokens.screenshotCropScrimOpacity)
 
         Rectangle { color: cropOverlay.scrim; x: 0; y: 0; width: parent.width; height: root.crop.y }
         Rectangle { color: cropOverlay.scrim; x: 0; y: root.crop.y + root.crop.height; width: parent.width; height: Math.max(0, parent.height - y) }
@@ -123,8 +123,9 @@ Item {
         }
     }
 
-    // The Text tool's editor: typed on the picture where the text goes. Return puts the text in, Shift+Return starts a new line, Esc
-    // gives it up, and leaving it (a click elsewhere) puts it in.
+    // The Text tool's editor: typed on the picture where the text goes. The text is shown as the layer it will be (the backend previews it
+    // through the file's own geometry: size, outline, pill), so the editor's own letters are not drawn, only its caret and selection.
+    // Return puts the text in, Shift+Return starts a new line, Esc gives it up, and leaving it (a click elsewhere) puts it in.
     Rectangle {
         id: textEditor
         objectName: "textEditor"
@@ -135,7 +136,7 @@ Item {
         width: Math.max(Tokens.screenshotTextEditorMinWidth, edit.contentWidth + 2 * Tokens.spacingXs + edit.cursorRectangle.width)
         height: edit.contentHeight + 2 * Tokens.spacingXs
         radius: Tokens.radiusControl
-        color: Appearance.colors.windowBackground
+        color: "transparent"
         border.width: Tokens.controlBorderWidth
         border.color: Appearance.colors.accent
 
@@ -160,14 +161,25 @@ Item {
             y: Tokens.spacingXs
             textFormat: TextEdit.PlainText
             wrapMode: TextEdit.NoWrap
-            color: root.backend.toolColor
-            selectionColor: Appearance.colors.selection
-            selectedTextColor: Appearance.colors.selectionText
+            color: "transparent"
+            selectionColor: Appearance.withAlpha(Appearance.colors.selection, Tokens.screenshotTextSelectionOpacity)
+            selectedTextColor: "transparent"
+            cursorDelegate: Rectangle {
+                width: Tokens.controlBorderWidth
+                color: Appearance.colors.accent
+            }
             font.family: Appearance.fontFamily
             font.weight: Font.Medium
             font.pixelSize: Math.max(1, root.backend.textSize * root.viewScale)
             Accessible.role: Accessible.EditableText
             Accessible.name: qsTr("Text")
+            // No more than a text holds; the rest is not typed (nor pasted).
+            onTextChanged: {
+                if (edit.length > root.backend.textMaxLength)
+                    edit.remove(root.backend.textMaxLength, edit.length);
+                if (textEditor.visible)
+                    root.backend.previewText(edit.text);
+            }
             Keys.onPressed: event => {
                 if (!textEditor.visible)
                     return;

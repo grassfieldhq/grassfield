@@ -15,6 +15,7 @@
 #include <QQuickImageProvider>
 #include <QRectF>
 #include <QString>
+#include <QTimer>
 #include <QStringList>
 #include <QVariantList>
 
@@ -62,6 +63,8 @@ class ScreenshotApp : public AppearanceSettings
     Q_PROPERTY(int textEditId READ textEditId NOTIFY textEditChanged)
     Q_PROPERTY(QPointF textEditPos READ textEditPos NOTIFY textEditChanged)
     Q_PROPERTY(QString textEditText READ textEditText NOTIFY textEditChanged)
+    // The most characters a text holds (the editor stops there; a longer one handed to commitText is cut).
+    Q_PROPERTY(int textMaxLength READ textMaxLength CONSTANT)
     // The type of the selected layer ("" for none): the style controls follow it.
     Q_PROPERTY(QString selectedType READ selectedType NOTIFY layersChanged)
     // The Crop tool's rectangle in picture pixels (null when the tool is not at hand), its aspect preset ("free", "original", "1:1",
@@ -102,6 +105,7 @@ public:
     int textEditId() const { return m_textEditId; }
     QPointF textEditPos() const { return m_textEditPos; }
     QString textEditText() const { return m_textEditText; }
+    int textMaxLength() const { return screenshot::kMaxTextLength; }
     QString selectedType() const { return m_tools.selectedLayer().type; }
     QRectF cropRect() const { return m_tools.tool() == QLatin1String("crop") ? m_crop.rect() : QRectF(); }
     QString cropAspect() const { return m_crop.aspect(); }
@@ -168,6 +172,9 @@ public:
     // The Text tool: Return on a selected text edits it. commitText puts the typed text in (a new layer, or the edited one; an empty
     // text removes the edited one), cancelText leaves the layers as they were.
     Q_INVOKABLE void editSelectedText();
+    // The text as typed so far, shown as the layer it will be (the same geometry as the file: size, style, outline, pill), as a
+    // preview of the edit; commitText makes it one undo step, cancelText takes it away. Done and a change of tool commit it too.
+    Q_INVOKABLE void previewText(const QString &text);
     Q_INVOKABLE void commitText(const QString &text);
     Q_INVOKABLE void cancelText();
 
@@ -197,6 +204,12 @@ private:
     // The framed picture again from the original and the frame layer (publish, an edit of the frame, an undo of one).
     void refreshPicture();
     void commitFrame(const screenshot::Layers &next);
+    // The Eyedropper: the pixel's colour name at (x, y), "" outside the picture.
+    QString pixelColorAt(qreal x, qreal y) const;
+    // The colour as the style and, as a preview, the selection's (one step when the drag ends, none when nothing changed).
+    void previewPick(const QString &color);
+    // Puts in the text being typed, if any.
+    void finishText();
     // Selecting a layer makes its style the style of the next one (macOS: the style well shows the selection's).
     void adoptStyle(const screenshot::Layer &layer);
     void beginText(int id, const QPointF &pos, const QString &text);
@@ -216,6 +229,8 @@ private:
     screenshot::Frame m_frame;
     screenshot::CropEditor m_crop;
     bool m_picking = false;
+    QTimer m_flushTimer; // one preview of a stroke per frame
+    QString m_textPreview;
     int m_lastSelected = 0;
     bool m_textEditing = false;
     int m_textEditId = 0;

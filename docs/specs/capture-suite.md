@@ -300,14 +300,14 @@ Reduce Motion: the card fades instead of sliding in.
     smoothed when drawn; the highlighter is `screenshot.highlighterFactor` times as wide, flat-capped, at `screenshot.highlighterOpacity`,
     and snaps to a straight (level, within 10 degrees) mark when it was nearly straight (the marker along a line of text); Shift
     draws it straight on a 45-degree line. A stroke is picked along its line, moved, and resized by the eight handles of its box.
-    A stroke keeps at most 4000 points and the tool refuses a new one when layers.json would pass three quarters of its 4 MiB.
+    A stroke keeps at most 4000 points; the samples are thinned as they come (a bounded amount of work per move) and the stroke is previewed once a frame, so a move costs the same however long the stroke is. Every edit and the history writer refuse a layers.json past the reader's 4 MiB, and the tool does not start a stroke past three quarters of it.
   - **Eyedropper** (I; the button is beside the swatches). A press or a drag reads the framed picture's pixel (`floor` of the picture-pixel point, so a capture at 1.25
     reads the right pixel); it becomes the colour of new layers and of the selection. It reads the picture, not the layers over it.
   - **Style bar** (`StyleBar.qml`, under the toolbar, there while the tool has options): colour swatches (the design tokens' swatch colours), the colour in use, a thin, medium or thick width, an
     arrow's style and a shape's fill (moved here from the toolbar), a text's style and size, a counter's size, and for Crop the aspect presets, rotate, flip, Cancel and Crop. With Select, it styles the selection. Every
     change is one undo step on the selected layer and the style of the next one; selecting a layer makes its style the next layer's.
-  - **Text** (T; plain, outlined, on a pill). A click puts an editor on the picture, Return puts the text in, Shift+Return starts a new line, Esc gives it up, and a
-    click elsewhere puts it in; a click on a text edits it (Return does too when it is selected); erasing all of a text removes it. The layer
+  - **Text** (T; plain, outlined, on a pill). A click puts an editor on the picture (the text is previewed as the layer it will be, through the file's own geometry, so the outline, pill and size show while typing; at most 2000 characters), Return puts the text in, Shift+Return starts a new line, Esc gives it up, and a
+    click elsewhere puts it in, and so do Done and a change of tool; a click on a text edits it (Return does too when it is selected); erasing all of a text removes it. The layer
     names the font family (Appearance.fontFamily at the time), so the file does not depend on the theme. The outline and the pill
     take black or white, whichever reads better on the colour. A text is picked and moved by its box; its size is a style control.
   - **Counters** (N). A click puts a disc with its number; the number is the counter's place among the counters in layer order and is never stored, so deleting

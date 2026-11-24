@@ -2993,6 +2993,8 @@ QtObject {
     readonly property real screenshotCropScrimOpacity: 0.5
     // estimate: the crop rectangle's border, in points [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
     readonly property int screenshotCropBorderWidth: 2
+    // estimate: the alpha of the selection in the text editor on the picture (its letters are drawn by the preview layer, not by the editor) [ref: docs/specs/capture-suite.md § 2.4 Annotation editor]
+    readonly property real screenshotTextSelectionOpacity: 0.35
 
     // F1 reference (docs/testing/f1-reference-gaps.md, Apps launcher): panel 844 +-1 pt wide (2x capture)
     readonly property int launcherPanelWidth: 844

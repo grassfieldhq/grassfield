@@ -25,7 +25,7 @@ bool UndoStack::commit(const Layers &next)
         m_current = next;
         return commitGesture();
     }
-    if (next == m_current)
+    if (next == m_current || !layersFit(next))
         return false;
     push(m_current);
     m_current = next;
@@ -46,6 +46,8 @@ bool UndoStack::commitGesture()
     if (!m_gesture)
         return false;
     m_gesture = false;
+    if (m_current != m_base && !layersFit(m_current))
+        m_current = m_base; // a file that could not be read back is never made: the gesture is given up
     const bool changed = m_current != m_base;
     if (changed)
         push(m_base);
