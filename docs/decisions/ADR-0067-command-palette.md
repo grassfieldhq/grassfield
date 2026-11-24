@@ -247,12 +247,16 @@ choose the model.
 **Listener check (port squatting).** Before the first request, the shell reads `/proc/net/tcp` and `/proc/net/tcp6` (readable
 by every user; the shell runs in the host network namespace) and finds the LISTEN entry on 127.0.0.1:11434 or [::1]:11434.
 Its `uid` column must be the user's own uid or the uid of the system account named `ollama` in `/etc/passwd` with a uid below
-1000 (the packaged service's account; the Arch package's account name is UNCONFIRMED here, since Ollama is not installed: A1
-checks the package's sysusers file). Any other uid (another local user listening first) → no AI rows, and a journal line.
+1000 (the packaged service's account; the Arch package ships `usr/lib/sysusers.d/ollama.conf`, so the account name `ollama` is
+inferred from the file name and stays UNCONFIRMED: Ollama is not installed here and the file's content is not served). Wildcard
+and IPv4-mapped listeners on the port are checked too. A request's answer is accepted only when its `responseURL` is the URL
+asked (XHR follows redirects). Any other uid (another local user listening first) → no AI rows, and a journal line.
 
 **Remote models.** Ollama can serve models that run on a remote service; such a model would send the prompt off the machine,
-against D-net. How `/api/tags` or `/api/show` marks them is UNCONFIRMED; slice A1 establishes it from Ollama's API
-documentation and a test install, and the rule is **fail closed**: a model that cannot be shown to run locally is not offered.
+against D-net. Spike A1 (docs/specs/command-palette.md) found it in Ollama's documentation: an `/api/tags` entry of a remote
+model carries `remote_model` and `remote_host`, and cloud models are named with a `:cloud` tag. Still UNCONFIRMED: the `-cloud`
+suffix on current releases and the size of a cloud entry (no test install was made). The rule is **fail closed**: a model with
+either field, a `:cloud` or `-cloud` name, a malformed name or a size under 1 MiB is not offered.
 
 **What is sent.** Only:
 - the text the person typed (Ask Local Model, a follow-up, an argument);

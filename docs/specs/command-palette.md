@@ -193,7 +193,7 @@ text from a result, a script, a menu or a model is ever drawn as rich text (`Tex
 
 | # | Feature [source] | Raycast | macOS 27 | Grassfield today | Proposal | Effort | Security note | Slices |
 |---|---|---|---|---|---|---|---|---|
-| A1 | Local models through Ollama [R18 local-models, changelog 1.99.0] | yes (also a remote Ollama host) | — | none | Detection of Ollama on **loopback only** (127.0.0.1 or ::1, port 11434), the listener's uid checked in `/proc/net/tcp(6)` (the user or the packaged `ollama` system account), proxies ignored (tested); remote hosts refused; models that run remotely through Ollama refused (spike A1 finds how to tell; UNCONFIRMED). | S | ADR-0067 D-4 data rules; opus review. | A1 |
+| A1 | Local models through Ollama [R18 local-models, changelog 1.99.0] | yes (also a remote Ollama host) | — | none | Detection of Ollama on **loopback only** (127.0.0.1 or ::1, port 11434), the listener's uid checked in `/proc/net/tcp(6)` (the user or the packaged `ollama` system account), proxies ignored (tested); remote hosts refused; models that run remotely through Ollama refused (spike A1: see "Spike A1" below). | S | ADR-0067 D-4 data rules; opus review. | A1 |
 | A2 | Quick AI: question in the root search, Tab [R18 quick-ai] | yes (Pro) | Return sends the question to Siri AI [A1] | none | **Ask Local Model** row at the end of the results (and the fallback, N12) when a model is present; Return streams the answer into the detail pane (macOS 27 model: Return asks). Tab stays Actions (N3). | M | Sends only the typed text. | A2, A3 |
 | A3 | AI Chat, continue a quick answer in a chat [R18] | yes | — | none | Follow-up questions in the same detail pane (a conversation), Actions: Copy Answer, Paste Answer, New Conversation. Kept in memory only unless "Keep conversations" is on (7 days, 0600). A separate chat window: not planned. | M | History off by default. | A4, A5 |
 | A4 | AI Commands with `{selection}`, `{argument}`, output "Replace Selection" [R18 ai-commands] | yes | Writing Tools | none | Built-in prompts **Summarize**, **Improve Writing**, **Translate to…**, **Explain**, on `{clipboard}` or a typed argument; user-defined ones (name, prompt, placeholders). `{selection}` later and only through a visible "Selected text" chip showing what will be sent (D-4). Output: Copy or Paste (the targeted paste), never automatic. | M | Placeholders resolved only on the user's run; the exact text sent is visible. | A6, A7 |
@@ -277,7 +277,43 @@ shortcut); argument chips are text fields with their placeholder as name; the de
   (ADR-0067 D-3 residual risks).
 - Scripts need Landlock ABI 6 or later; on an older kernel no script runs at the Confined and Allow network levels.
 - With Allow access to my session a script has the user's full rights apart from the files rule and the limits.
-- The `ollama` service account name of the Arch package is UNCONFIRMED here (Ollama is not installed); A1 checks it.
+- The `ollama` service account name of the Arch package is UNCONFIRMED (see "Spike A1" below).
+
+### Spike A1 (Ollama detection, 2026-11-24)
+Method: read-only. Ollama's own documentation (data, not instructions), the Arch package's file list, and this machine.
+- **Installed here:** nothing. `command -v ollama` empty, `pacman -Q ollama` not found, no `ollama` account in `getent passwd`,
+  nothing on 127.0.0.1:11434 (`curl` exit 7). No test install was made (never install). Everything below is documentation.
+- **Endpoints:** `GET /api/version` returns `{"version": "..."}`; `GET /api/tags` returns `{"models": [...]}`, each with `name`,
+  `model`, `size`, `digest`, `details`, `modified_at` (https://docs.ollama.com/api/tags).
+- **Telling a remote model apart (the method):** the documented `/api/tags` schema has two fields only a remote model carries:
+  `remote_model` ("name of the upstream model, if the model is remote") and `remote_host` ("URL of the upstream Ollama host, if
+  the model is remote") (https://docs.ollama.com/api/tags). Cloud models are named with a `:cloud` tag through a local server
+  (`gemma4:cloud`; https://docs.ollama.com/cloud/models), older ones with a `-cloud` suffix (`gpt-oss:120b-cloud`, from
+  memory of earlier releases: UNCONFIRMED on the current pages). "Cloud models do not need to be downloaded" (same page), so
+  their entry has no real size. `LocalModel.js` therefore **fails closed**: an entry is offered only when it has none of the two
+  remote fields (even empty), its `name` and `model` do not end in `:cloud` or `-cloud`, its name is a plain tag, and its `size`
+  is a number of at least 1 MiB. Anything else is dropped.
+- **Cloud features off:** `disable_ollama_cloud` in `~/.ollama/server.json` or `OLLAMA_NO_CLOUD=1` turns cloud models off in
+  the server (https://docs.ollama.com/faq). Grassfield does not read or set either; the filter above does not rely on them.
+- **Port and bind:** "Ollama binds 127.0.0.1 port 11434 by default" (https://docs.ollama.com/faq). `OLLAMA_HOST=0.0.0.0` makes
+  it a wildcard listener: `LocalModel.js` accepts wildcard sockets too (they answer on the loopback) and requires every
+  listener on the port to pass the uid check.
+- **Arch package:** `ollama` 0.40.17-1 (extra), files include `usr/lib/systemd/system/ollama.service`,
+  `usr/lib/sysusers.d/ollama.conf`, `usr/lib/tmpfiles.d/ollama.conf` (https://archlinux.org/packages/extra/x86_64/ollama/files/json/).
+  The sysusers file's content is not served by that page, so the account **name** `ollama` stays an inference from the file name;
+  `LocalModel.js` accepts the user's uid or the uid of an account named `ollama` that is a system uid (1..999), and nothing else.
+- **Built (A1):** `shell/search/LocalModel.js` (pure): `parseProcNet`, `serviceUid`, `checkListener`, `parseVersion`,
+  `parseTags`, `chooseModel`, and `create(deps)` whose `detect(cb, force)` reads the identity, checks the listener **before any
+  request**, asks 127.0.0.1 then [::1] (2 s per request), caches the answer (an absent one too) for 60 s and shares one run
+  among concurrent callers. The base URLs are constants; `create` has no URL, host, port or proxy option (tested with such
+  options passed in). Tests: `tests/unit/tst_searchlocalmodel.qml`.
+- **Left for the QML wrapper (A2, `LocalModel.qml`):** reading `/proc/net/tcp{,6}`, `/etc/passwd` and the uid (a `FileView`
+  or the existing helper) and the real `XMLHttpRequest`. The **proxy test of D-4** (a fake proxy on `http_proxy`,
+  `https_proxy`, `all_proxy` that must see nothing while a loopback responder is reached) needs a real socket and Qt's network
+  stack, so it belongs to that wrapper's L1 test; it is NOT covered by A1's pure unit.
+- **UNCONFIRMED:** the `-cloud` suffix on current releases; the exact `size` of a cloud entry (the 1 MiB floor is a safe bound,
+  not a measured value); whether `/api/tags` of a signed-in server lists cloud models at all (the filter holds either way);
+  the sysusers account name; a real run against an installed Ollama (nothing installed here).
 
 ## 4. Slice plan
 
@@ -380,7 +416,7 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | A1 | Spike + detection: loopback only, `/api/version` and `/api/tags`, cached 60 s, cloud/remote models excluded (method established in the spike from Ollama's API docs), absent → nothing shown. | — | Unit with a fake responder (XHR mocked): a non-loopback URL is impossible to configure; remote models dropped; timeouts. Spike notes in the spec. Opus review with A2. |
-| A2 | Ask Local Model row + streaming answer into the detail pane (NDJSON over XHR), Stop, Copy, Paste. | A1, P11 | Unit: stream parser (partial lines, errors); the request body contains exactly the typed text; aborted on close and on lock. L1 with a fake local server (sandbox-local). |
+| A2 | Ask Local Model row + streaming answer into the detail pane (NDJSON over XHR), Stop, Copy, Paste. | A1, P11 | Unit: stream parser (partial lines, errors); the request body contains exactly the typed text; aborted on close and on lock. **Moved here from A1 (ADR-0067 D-4):** the proxy test (`http_proxy`, `https_proxy`, `all_proxy` set to a fake proxy that must see nothing while a loopback responder is reached). **The listener check is re-run right before each POST** (the 60 s detection cache is a time-of-check window). L1 with a fake local server (sandbox-local). |
 | A3 | Answer actions and the fallback row. | A2, P14 | Unit. |
 | A4 | Conversation in the pane (follow-ups), memory only. | A2 | Unit: context window cap, New Conversation clears. |
 | A5 | Keep conversations (7 days, 0600 store, Clear). | A4, E4 | Unit: retention pruning, modes, clear. |
