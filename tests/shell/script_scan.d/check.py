@@ -147,5 +147,19 @@ check("later.sh" in by_name(scan(d)[0]), "a new file is picked up by the next sc
 os.unlink(os.path.join(d, "later.sh"))
 check("later.sh" not in by_name(scan(d)[0]), "a removed file is dropped by the next scan")
 
+# The file-owner rule. A file of another user cannot be made in a folder of this user's, so the rule is proved on a copy of the
+# scanner in which the file's owner test is turned round (every own file counts as foreign): it must refuse with "owner", and the
+# real scanner must list the same file. A scanner with the rule removed lists it in both runs and fails here.
+src = open(tool).read()
+needle = '        if st.st_uid != os.geteuid():\n            return refused(name, path, "owner")\n'
+check(src.count(needle) == 1, "the scanner holds its file-owner check")
+foreign = os.path.join(tmp, "script-scan-foreign.py")
+with open(foreign, "w") as f:
+    f.write(src.replace(needle, needle.replace("!=", "==")))
+r = subprocess.run([sys.executable, "-I", foreign, d], capture_output=True, text=True, timeout=30)
+fs = by_name(json.loads(r.stdout)["folders"][0])
+check(fs["good2.py"]["ok"] is False and fs["good2.py"]["reason"] == "owner", "a file whose owner is not the user is refused with reason owner")
+check(by_name(scan(d)[0])["good2.py"]["ok"] is True, "the real scanner lists the same file")
+
 print("script_scan: FAIL" if failed else "script_scan: PASS")
 sys.exit(1 if failed else 0)

@@ -67,6 +67,7 @@ Scope {
         }
         scan.command = ["python3", "-I", root.scanTool].concat(root.folders);
         scan.running = true;
+        scanLimit.restart();
     }
 
     // Makes the default folder (0700) when it is not there, then shows it in the file manager.
@@ -97,10 +98,24 @@ Scope {
             }
         }
         onRunningChanged: {
-            if (!running && again) {
-                again = false;
-                root.rescan();
+            if (!running) {
+                scanLimit.stop();
+                if (again) {
+                    again = false;
+                    root.rescan();
+                }
             }
+        }
+    }
+
+    // A folder on a share that hangs must not freeze the list: a scan that takes too long is stopped and the last list stays.
+    Timer {
+        id: scanLimit
+        interval: 15000
+        onTriggered: {
+            console.warn("scripts: the folder scan took too long and was stopped");
+            scan.again = false;
+            scan.running = false;
         }
     }
 
@@ -121,7 +136,7 @@ Scope {
         id: watcher
         property bool restart: false
         stdout: SplitParser {
-            onRead: debounce.restart()
+            onRead: root.changed()
         }
         onRunningChanged: {
             if (!running && restart) {
@@ -143,10 +158,29 @@ Scope {
         }
     }
 
+    // A burst of events is read once, 300 ms after the last one; a flood that never pauses still refreshes every 2 s.
+    function changed(): void {
+        if (!debounce.running)
+            maxWait.restart();
+        debounce.restart();
+    }
+
     Timer {
         id: debounce
         interval: 300
-        onTriggered: root.rescan()
+        onTriggered: {
+            maxWait.stop();
+            root.rescan();
+        }
+    }
+
+    Timer {
+        id: maxWait
+        interval: 2000
+        onTriggered: {
+            debounce.stop();
+            root.rescan();
+        }
     }
 
     property string watchedKey: ""

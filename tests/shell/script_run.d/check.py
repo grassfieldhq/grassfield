@@ -31,18 +31,41 @@ def write(path, text, mode=0o755):
 
 runner = os.path.join(root, "packaging/bin/grassfield-script-run")
 source = open(runner).read()
-fast = os.path.join(tmp, "grassfield-script-run-fast")
-write(fast, re.sub(r"^GRACE_SECONDS = [0-9]+", "GRACE_SECONDS = 1",
-                   re.sub(r"^RUN_SECONDS = [0-9]+", "RUN_SECONDS = 1", source, flags=re.M), flags=re.M))
-
-fake, log, state, scripts = (os.path.join(tmp, d) for d in ("fake", "log", "state", "scripts"))
+fake, log, state, scripts, runtime = (os.path.join(tmp, d) for d in ("fake", "log", "state", "scripts", "runtime"))
 for d in (fake, log, scripts, os.path.join(state, "grassfield")):
     os.makedirs(d)
+os.makedirs(runtime, mode=0o700)
 os.chmod(os.path.join(state, "grassfield"), 0o700)
+
+# The production file has no override: it names its tools by absolute path and reads no environment variable for them. The tests
+# run COPIES of it with the tool paths (and the timings) rewritten, so the fakes are reached by a rewritten constant, never by PATH.
+for const, value in (("SYSTEMD_RUN", "/usr/bin/systemd-run"), ("SYSTEMCTL", "/usr/bin/systemctl"), ("PYTHON", "/usr/bin/python3")):
+    check(re.search(r'^%s = "%s"$' % (const, re.escape(value)), source, re.M) is not None, "production %s is the absolute %s" % (const, value))
+env_names = sorted(set(re.findall(r'environ(?:\.get)?[\[(]"([A-Z_]+)"', source)))
+check(env_names == ["XDG_RUNTIME_DIR", "XDG_STATE_HOME"], "production reads only XDG_STATE_HOME and XDG_RUNTIME_DIR from the environment [%r]" % env_names)
+check("which(" not in source and "sys.executable" not in source, "production never looks a tool up on PATH nor uses sys.executable")
+
+
+def variant(name, **consts):
+    text = source
+    for k, v in consts.items():
+        text, n = re.subn(r"^%s = .*$" % k, "%s = %s" % (k, v), text, flags=re.M)
+        assert n == 1, k
+    path = os.path.join(tmp, name)
+    write(path, text)
+    return path
+
+
+tools = dict(SYSTEMD_RUN=repr(os.path.join(fake, "systemd-run")), SYSTEMCTL=repr(os.path.join(fake, "systemctl")))
+testrun = variant("grassfield-script-run-test", KILL_INTERVAL="0.2", **tools)
+fast = variant("grassfield-script-run-fast", RUN_SECONDS="1", GRACE_SECONDS="1", KILL_INTERVAL="0.2", **tools)
+nopath = variant("grassfield-script-run-nopath", SYSTEMD_RUN=repr(os.path.join(tmp, "absent", "systemd-run")),
+                 SYSTEMCTL=repr(os.path.join(fake, "systemctl")), KILL_INTERVAL="0.2")
 
 write(os.path.join(fake, "systemd-run"), r'''#!/usr/bin/python3 -I
 import json, os, sys, time
 log = os.environ["FAKE_LOG"]
+time.sleep(float(os.environ.get("FAKE_DELAY", "0")))
 n = len([f for f in os.listdir(log) if f.startswith("run-")]) // 2
 stdin = sys.stdin.buffer.read()
 open(os.path.join(log, "run-%d.json" % n), "w").write(json.dumps(sys.argv[1:]))
@@ -77,7 +100,9 @@ write(os.path.join(fake, "systemctl"), r'''#!/usr/bin/python3 -I
 import json, os, sys
 log = os.environ["FAKE_LOG"]
 open(os.path.join(log, "systemctl.jsonl"), "a").write(json.dumps(sys.argv[1:]) + "\n")
-open(os.path.join(log, "killed"), "w").write("1")
+# A unit that is not loaded yet cannot be killed: only a kill that comes after the fake registered its run lands.
+if os.path.exists(os.path.join(log, "run-0.json")) and not os.environ.get("FAKE_NOKILL"):
+    open(os.path.join(log, "killed"), "w").write("1")
 ''')
 
 approvals = os.path.join(state, "grassfield", "script-approvals.json")
@@ -113,12 +138,12 @@ def req(path, **kw):
 
 
 def env(extra=None):
-    e = {"PATH": fake + ":/usr/bin:/bin", "HOME": tmp, "XDG_STATE_HOME": state, "FAKE_LOG": log}
+    e = {"PATH": fake + ":/usr/bin:/bin", "HOME": tmp, "XDG_STATE_HOME": state, "XDG_RUNTIME_DIR": runtime, "FAKE_LOG": log}
     e.update(extra or {})
     return e
 
 
-def go(request, extra=None, helper=runner, wait=True, text=None):
+def go(request, extra=None, helper=testrun, wait=True, text=None):
     reset()
     p = subprocess.Popen([sys.executable, "-I", helper], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, env=env(extra))
@@ -177,7 +202,7 @@ check(a[:7] == ["--user", "--wait", "--pipe", "--collect", "--quiet", "--descrip
       "argv starts with the fixed flags and the fixed description [%r]" % (a[:7],))
 check(a[7:11] == ["--property=RuntimeMaxSec=60", "--property=MemoryMax=512M", "--property=TasksMax=64",
                   "--property=NoNewPrivileges=yes"], "the limits are properties [%r]" % (a[7:11],))
-check(a[11:] == ["--", sys.executable, "-I", runner, "--sandbox"], "the command is the runner's own sandbox stage, nothing else [%r]" % (a[11:],))
+check(a[11:] == ["--", "/usr/bin/python3", "-I", testrun, "--sandbox"], "the command is the runner's own sandbox stage, nothing else [%r]" % (a[11:],))
 blob = "\0".join(a)
 check("one" not in a and "two words" not in blob and secret not in blob and "echo hi" not in blob,
       "no argument, password or script text in the unit's argv or description")
@@ -282,9 +307,9 @@ refused("an extra key is refused", dict(req(p), shell=True))
 refused("not JSON is refused", text=b"hello\n")
 refused("a request over 64 KiB is refused", text=b'{"v":1,"pad":"' + b"a" * 70000 + b'"}\n')
 refused("an empty request is refused", text=b"")
-rc, ev, err = go(req(p), {"PATH": "/nonexistent"})
-check(done(ev)["reason"] == "refused" and done(ev)["why"].startswith("missing-") and not ran(),
-      "no systemd-run on PATH: refused, nothing run [%s]" % done(ev)["why"])
+rc, ev, err = go(req(p), helper=nopath)
+check(done(ev)["reason"] == "refused" and done(ev)["why"] == "missing-systemd-run" and not ran() and kills() is None,
+      "a systemd-run missing at its absolute path is refused although a fake one is first on PATH: PATH is never searched [%s]" % done(ev)["why"])
 r = subprocess.run([sys.executable, "-I", runner, "--bogus"], capture_output=True)
 check(r.returncode == 2, "an unknown argument gives the usage (exit 2)")
 
@@ -321,7 +346,7 @@ k = kills()
 check(done(ev)["reason"] == "killed" and k is not None and k[0][-1] == unit_of(argv0()),
       "SIGTERM (the shell stopping a run) kills the unit and reports killed [%s]" % done(ev)["reason"])
 reset()
-r = subprocess.run([sys.executable, "-I", runner, "--kill-all"], env=env(), capture_output=True, timeout=30)
+r = subprocess.run([sys.executable, "-I", testrun, "--kill-all"], env=env(), capture_output=True, timeout=30)
 check(r.returncode == 0 and kills() == [["--user", "kill", "--kill-whom=all", "--signal=SIGKILL", "grassfield-script-*.service"]],
       "--kill-all kills every script unit (the lock) [%r]" % (kills(),))
 
@@ -340,6 +365,84 @@ r = subprocess.run([sys.executable, "-I", runner, "--sandbox"], input=b"junk", c
 check(r.returncode == 70, "the unit's stage refuses a bad frame (exit 70)")
 r = subprocess.run([sys.executable, "-I", runner, "--sandbox"], input=good, capture_output=True)
 check(r.returncode == 71 and r.stdout == b"", "until X3b the unit's stage runs nothing, even for a good frame (exit 71)")
+
+# ---- review round: owner, nesting, booleans, kills that come before the unit is loaded ---------------------------------------
+true_bytes = open("/usr/bin/true", "rb").read()
+approve([entry("/usr/bin/true", true_bytes)])
+check(refused("an approved file that is not the user's (root's /usr/bin/true) is refused", req("/usr/bin/true")) == "script-owner",
+      "  reason script-owner")
+approve([entry(p, body)])
+refused("JSON nested 60 000 levels deep in the request is refused cleanly (no RecursionError)", text=b'{"v":1,"a":' + b"[" * 60000 + b"\n")
+write(approvals, b'{"v":1,"approvals":' + b"[" * 60000, 0o600)
+check(refused("an approvals file nested 60 000 levels deep is refused cleanly") == "approval-file", "  reason approval-file")
+write(approvals, json.dumps({"v": True, "approvals": [entry(p, body)]}), 0o600)
+refused("an approvals file whose version is true (not 1) is refused")
+approve([entry(p, body)])
+refused("a request whose version is true is refused", dict(req(p), v=True))
+refused("a request whose version is 1.0 is refused", text=json.dumps(req(p)).replace('"v": 1,', '"v": 1.0,').encode() + b"\n")
+
+
+def reframe(**changes):
+    header, data = gsr.decode_frame(good)
+    header.update(changes)
+    raw = json.dumps(header).encode()
+    return gsr.MAGIC + len(raw).to_bytes(4, "big") + raw + data
+
+
+for desc, bad in (("size true", reframe(size=True)), ("version true", reframe(v=True)), ("size 1.0", reframe(size=float(len(body)))),
+                  ("level unknown", reframe(level="x"))):
+    try:
+        gsr.decode_frame(bad)
+        ok = False
+    except ValueError:
+        ok = True
+    check(ok, "decode_frame refuses a header with " + desc)
+deep = b"[" * 60000
+frame_deep = gsr.MAGIC + len(deep).to_bytes(4, "big") + deep
+try:
+    gsr.decode_frame(frame_deep)
+    ok = False
+except ValueError:
+    ok = True
+check(ok, "decode_frame turns a RecursionError into a framing error")
+r = subprocess.run([sys.executable, "-I", runner, "--sandbox"], input=frame_deep, capture_output=True)
+check(r.returncode == 70 and b"Traceback" not in r.stderr, "the unit's stage exits 70 cleanly on a header nested 60 000 levels deep")
+
+# A kill asked while the unit is not loaded yet misses it; the runner asks again.
+approve([entry(p, body)])
+proc = go(req(p), {"FAKE_WAIT": "1", "FAKE_DELAY": "1.0"}, wait=False)
+time.sleep(0.4)
+proc.send_signal(signal.SIGTERM)
+out, err = proc.communicate(timeout=30)
+ev = [json.loads(line) for line in out.decode().splitlines()]
+k = kills()
+check(done(ev)["reason"] == "killed" and k is not None and len(k) >= 2 and os.path.exists(os.path.join(log, "killed")),
+      "SIGTERM before the unit is loaded: the first kill is missed, a later retry lands and the run ends killed [%d systemctl calls]" % (len(k or [])))
+proc = go(req(p), {"FAKE_WAIT": "1", "FAKE_DELAY": "1.0"}, wait=False)
+time.sleep(0.4)
+r = subprocess.run([sys.executable, "-I", testrun, "--kill-all"], env=env({"FAKE_LOG": log}), capture_output=True, timeout=30)
+out, err = proc.communicate(timeout=30)
+ev = [json.loads(line) for line in out.decode().splitlines()]
+k = kills()
+check(r.returncode == 0 and done(ev)["reason"] == "killed" and k is not None and len(k) >= 2 and os.path.exists(os.path.join(log, "killed")),
+      "--kill-all before the unit is loaded: the run sees the marker and its retries kill it once loaded [%d systemctl calls]" % (len(k or [])))
+check(os.path.exists(os.path.join(runtime, "grassfield-script-kill-all")) and
+      oct(os.stat(os.path.join(runtime, "grassfield-script-kill-all")).st_mode & 0o777) == "0o600", "the kill-all marker is 0600 in the runtime folder")
+# A marker older than the run does not kill it.
+time.sleep(0.3)
+rc, ev, err = go(req(p))
+check(done(ev)["reason"] == "ok", "an older --kill-all (the lock before this run) does not kill a later run")
+# A unit that will not die: the runner stops waiting after its retries.
+t0 = time.monotonic()
+proc = go(req(p), {"FAKE_WAIT": "1", "FAKE_NOKILL": "1"}, wait=False)
+for _ in range(100):
+    if ran():
+        break
+    time.sleep(0.05)
+proc.send_signal(signal.SIGTERM)
+out, err = proc.communicate(timeout=30)
+ev = [json.loads(line) for line in out.decode().splitlines()]
+check(done(ev)["reason"] == "killed" and time.monotonic() - t0 < 12, "a unit that ignores the kill: the runner gives up after its retries and reports killed")
 
 print("script_run: FAIL" if failed else "script_run: PASS")
 sys.exit(1 if failed else 0)

@@ -35,7 +35,6 @@ import hashlib
 import json
 import os
 import selectors
-import shutil
 import signal
 import stat
 import struct
@@ -62,6 +61,20 @@ MODES = ("fullOutput", "compact", "silent", "inline")
 MAGIC = b"GFSCRIPT1\n"
 UNIT_PREFIX = "grassfield-script-"
 SHA256_RE = frozenset("0123456789abcdef")
+# The tools are found at ABSOLUTE paths, never through PATH: a script that can write a `systemd-run` into a folder on the user's
+# PATH (~/bin, ~/.local/bin) must not become the next run's launcher, which would hold the frame (the passwords) and no sandbox.
+# There is no override in this file and none through the environment: tests/shell/script_run.sh runs a COPY of this file with these
+# constants (and the timings) rewritten. The shell must start this helper by its absolute path (/usr/lib/grassfield/
+# grassfield-script-run, slice X7), never by a name looked up on PATH.
+SYSTEMD_RUN = "/usr/bin/systemd-run"
+SYSTEMCTL = "/usr/bin/systemctl"
+PYTHON = "/usr/bin/python3"
+KILL_RETRIES = 10                 # a kill asked before the unit is loaded is asked again, every KILL_INTERVAL seconds
+KILL_INTERVAL = 0.5
+KILL_MARKER = "grassfield-script-kill-all"      # in $XDG_RUNTIME_DIR: written by --kill-all, seen by runs that started before it
+
+
+START = time.time()
 
 
 class Refused(Exception):
@@ -78,6 +91,11 @@ def emit(obj):
         pass
 
 
+def is_int(value, wanted=None):
+    """An int that is not a bool (True == 1 in Python)."""
+    return type(value) is int and (wanted is None or value == wanted)
+
+
 def clean_text(value, limit):
     return isinstance(value, str) and len(value) <= limit and "\0" not in value and "\n" not in value and "\r" not in value
 
@@ -90,11 +108,11 @@ def read_request(stream):
         raise Refused("request")
     try:
         req = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         raise Refused("request")
     if not isinstance(req, dict) or set(req) - {"v", "path", "level", "mode", "args", "passwords"}:
         raise Refused("request")
-    if req.get("v") != 1 or req.get("level") not in LEVELS or req.get("mode") not in MODES:
+    if not is_int(req.get("v"), 1) or req.get("level") not in LEVELS or req.get("mode") not in MODES:
         raise Refused("request")
     path = req.get("path")
     if not clean_text(path, 4096) or not path.startswith("/") or path.startswith("//"):
@@ -173,9 +191,9 @@ def read_approvals():
         os.close(fd)
     try:
         doc = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         raise Refused("approval-file")
-    if not isinstance(doc, dict) or doc.get("v") != 1 or not isinstance(doc.get("approvals"), list):
+    if not isinstance(doc, dict) or not is_int(doc.get("v"), 1) or not isinstance(doc.get("approvals"), list):
         raise Refused("approval-file")
     out = []
     for e in doc["approvals"]:
@@ -215,11 +233,14 @@ def decode_frame(buf):
     start = len(MAGIC) + 4
     if n < 2 or n > MAX_HEADER or len(buf) < start + n:
         raise ValueError("header length")
-    header = json.loads(buf[start:start + n].decode("utf-8"))
+    try:
+        header = json.loads(buf[start:start + n].decode("utf-8"))
+    except RecursionError:
+        raise ValueError("nesting")
     data = buf[start + n:]
-    if not isinstance(header, dict) or header.get("v") != 1 or header.get("level") not in LEVELS:
+    if not isinstance(header, dict) or not is_int(header.get("v"), 1) or header.get("level") not in LEVELS:
         raise ValueError("header")
-    if not isinstance(header.get("size"), int) or header["size"] != len(data) or len(data) > MAX_SCRIPT:
+    if not is_int(header.get("size")) or header["size"] != len(data) or len(data) > MAX_SCRIPT:
         raise ValueError("size")
     if header.get("sha256") != hashlib.sha256(data).hexdigest():
         raise ValueError("hash")
@@ -231,25 +252,38 @@ def decode_frame(buf):
 
 # ---- the unit ------------------------------------------------------------------------------------------------------------
 
-def tool(name):
-    found = shutil.which(name)
-    if not found:
-        raise Refused("missing-" + name)
-    return found
+def tool(path):
+    if not os.access(path, os.X_OK):
+        raise Refused("missing-" + os.path.basename(path))
+    return path
 
 
 def kill_unit(unit):
     try:
-        subprocess.run([tool("systemctl"), "--user", "kill", "--kill-whom=all", "--signal=SIGKILL", unit], timeout=10,
+        subprocess.run([tool(SYSTEMCTL), "--user", "kill", "--kill-whom=all", "--signal=SIGKILL", unit], timeout=10,
                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     except (Refused, OSError, subprocess.SubprocessError):
         pass
 
 
+def marker_path():
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    return os.path.join(runtime, KILL_MARKER) if runtime and runtime.startswith("/") else ""
+
+
+def kill_all_seen():
+    """True when --kill-all ran after this helper started: a unit that was not loaded yet when it ran is killed all the same."""
+    path = marker_path()
+    try:
+        return bool(path) and os.stat(path).st_mtime >= START - 0.02
+    except OSError:
+        return False
+
+
 def unit_command(unit, seconds):
-    return [tool("systemd-run"), "--user", "--wait", "--pipe", "--collect", "--quiet", "--description=Grassfield script",
+    return [tool(SYSTEMD_RUN), "--user", "--wait", "--pipe", "--collect", "--quiet", "--description=Grassfield script",
             "--unit=" + unit, "--property=RuntimeMaxSec=%d" % seconds, "--property=MemoryMax=512M", "--property=TasksMax=64",
-            "--property=NoNewPrivileges=yes", "--", sys.executable, "-I", os.path.realpath(sys.argv[0]), "--sandbox"]
+            "--property=NoNewPrivileges=yes", "--", PYTHON, "-I", os.path.realpath(sys.argv[0]), "--sandbox"]
 
 
 class Stream:
@@ -292,11 +326,19 @@ class Stream:
 def run_unit(frame, seconds):
     unit = UNIT_PREFIX + os.urandom(8).hex()
     cmd = unit_command(unit, seconds)
-    state = {"killed": False}
+    state = {"killed": False, "kills": 0, "last": 0.0}
+
+    def ask_kill():
+        state["kills"] += 1
+        state["last"] = time.monotonic()
+        kill_unit(unit)
 
     def on_signal(signum, _frame):
         state["killed"] = True
-        kill_unit(unit)
+        ask_kill()
+
+    if kill_all_seen():
+        raise Refused("locked")
 
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, on_signal)
@@ -319,8 +361,16 @@ def run_unit(frame, seconds):
     deadline = started + seconds + GRACE_SECONDS
     reason = ""
     while sel.get_map():
+        if not state["killed"] and kill_all_seen():
+            state["killed"] = True
         if state["killed"]:
             reason = reason or "killed"
+            # A kill asked before the unit was loaded (a signal or --kill-all during the start) missed it: ask again, a few times.
+            if state["kills"] < KILL_RETRIES and time.monotonic() - state["last"] >= KILL_INTERVAL:
+                ask_kill()
+            elif state["kills"] >= KILL_RETRIES and time.monotonic() - state["last"] >= KILL_INTERVAL:
+                proc.kill()             # the unit would not die: stop waiting for it (it is still bound by RuntimeMaxSec)
+                break
         if not reason and time.monotonic() > deadline:
             reason = "timeout"
             kill_unit(unit)
@@ -367,8 +417,18 @@ def run():
 
 
 def kill_all():
+    path = marker_path()
+    if path:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            try:
+                os.utime(fd)
+            finally:
+                os.close(fd)
+        except OSError:
+            pass
     try:
-        subprocess.run([tool("systemctl"), "--user", "kill", "--kill-whom=all", "--signal=SIGKILL", UNIT_PREFIX + "*.service"],
+        subprocess.run([tool(SYSTEMCTL), "--user", "kill", "--kill-whom=all", "--signal=SIGKILL", UNIT_PREFIX + "*.service"],
                        timeout=15, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     except (Refused, OSError, subprocess.SubprocessError):
         return 1
@@ -380,7 +440,7 @@ def sandbox_stage():
     so no merged path runs a script before its sandbox exists (fail closed)."""
     try:
         decode_frame(sys.stdin.buffer.read(4 + len(MAGIC) + MAX_HEADER + MAX_SCRIPT + 1))
-    except (ValueError, OSError):
+    except (ValueError, OSError, RecursionError):
         sys.stderr.write("script frame refused\n")
         return 70
     sys.stderr.write("the sandbox stage is not installed\n")
