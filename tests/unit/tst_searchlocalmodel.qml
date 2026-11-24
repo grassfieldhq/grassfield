@@ -60,6 +60,12 @@ TestCase {
         // nobody listens
         compare(LocalModel.checkListener(head, head, 1000, passwd).reason, "no-listener");
         compare(LocalModel.checkListener(null, undefined, 1000, passwd).reason, "no-listener");
+        // IPv4-mapped forms in tcp6: the user's Ollama on [::1], a stranger on ::ffff:127.0.0.1 or ::ffff:0.0.0.0
+        const mine = row(v6Loop, "0A", 1000);
+        verify(!LocalModel.checkListener(head, head + mine + row("0000000000000000FFFF00000100007F:2CAA", "0A", 4242), 1000, passwd).ok);
+        verify(!LocalModel.checkListener(head, head + mine + row("0000000000000000FFFF000000000000:2CAA", "0A", 4242), 1000, passwd).ok);
+        compare(LocalModel.parseProcNet(head + row("0000000000000000FFFF00000100007F:2CAA", "0A", 1))[0].kind, "loopback4");
+        compare(LocalModel.parseProcNet(head + row("0000000000000000FFFF000000000000:2CAA", "0A", 1))[0].kind, "any4");
         // a second listener (SO_REUSEPORT, a wildcard socket) of a stranger fails the whole check
         c = LocalModel.checkListener(head + row(v4Loop, "0A", 1000) + row(v4Any, "0A", 1001), head, 1000, passwd);
         verify(!c.ok);
@@ -101,6 +107,17 @@ TestCase {
         compare(LocalModel.parseTags('{"models": [null, 3, "a", []]}'), []);
     }
 
+    function test_malformedModelFieldDropsEntry() {
+        const tags = JSON.stringify({models: [
+                model("ok:1b"),
+                model("a:1b", {model: 5}),
+                model("b:1b", {model: "bad name"}),
+                model("c:1b", {model: ""}),
+                model("d:1b", {model: null})
+            ]});
+        compare(LocalModel.parseTags(tags), ["ok:1b"]);
+    }
+
     function test_versionAndChoice() {
         compare(LocalModel.parseVersion('{"version":"0.40.17"}'), "0.40.17");
         compare(LocalModel.parseVersion('{"version":"0.0.0-rc1+x"}'), "0.0.0-rc1+x");
@@ -138,6 +155,7 @@ TestCase {
             if (r === "hang")
                 return;
             // an unrouted URL is a refused connection: done, status 0
+            x.responseURL = r !== undefined && r.finalUrl !== undefined ? r.finalUrl : x.url;
             x.status = r === undefined ? 0 : r.status;
             x.responseText = r === undefined ? "" : r.body;
             x.readyState = 4;
@@ -312,6 +330,32 @@ TestCase {
         compare(identityReads, 2);
         detectNow(d, true);                    // force
         compare(identityReads, 3);
+    }
+
+    function test_redirectedAnswerRefused() {
+        // a 302 followed by XHR: 200 with the target's JSON, but responseURL names another host
+        routes["http://127.0.0.1:11434/api/version"] = {status: 200, body: '{"version":"9.9.9"}', finalUrl: "http://127.0.0.2:11434/api/version"};
+        let r = detectNow(detector());
+        compare(r.state, "absent");
+        // tags redirected (version fine)
+        init();
+        routes["http://127.0.0.1:11434/api/tags"] = {status: 200, body: '{"models":[]}', finalUrl: "http://127.0.0.2:11434/api/tags"};
+        r = detectNow(detector());
+        compare(r.state, "absent");
+        // an answer without a responseURL is refused too
+        init();
+        routes["http://127.0.0.1:11434/api/version"] = {status: 200, body: '{"version":"1.0"}', finalUrl: ""};
+        compare(detectNow(detector()).state, "absent");
+    }
+
+    function test_clockGoingBackExpiresCache() {
+        const d = detector();
+        detectNow(d);
+        const n = requests.length;
+        clock -= 5000;
+        compare(d.cached().state, "absent");
+        detectNow(d);
+        compare(requests.length, 2 * n);
     }
 
     function test_absentIsCachedToo() {

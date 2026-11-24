@@ -129,7 +129,9 @@ function isLocalModel(m) {
         return false;
     if (_present(m.remote_host) || _present(m.remote_model) || "remote_host" in m || "remote_model" in m)
         return false;
-    if (/(^|[:\-])cloud$/i.test(m.name) || (_goodName(m.model) && /(^|[:\-])cloud$/i.test(m.model)))
+    if (m.model !== undefined && !_goodName(m.model))
+        return false;
+    if (/(^|[:\-])cloud$/i.test(m.name) || (m.model !== undefined && /(^|[:\-])cloud$/i.test(m.model)))
         return false;
     return typeof m.size === "number" && isFinite(m.size) && m.size >= MIN_LOCAL_SIZE;
 }
@@ -183,9 +185,9 @@ function create(deps) {
         return {state: state, reason: reason, version: version || "", models: models || [], base: base || ""};
     }
 
-    // One GET of a constant URL: cb(status, text) with status 0 on a timeout or a network error. Redirects are not followed
-    // as a request to another host (XHR would; the URL is checked against the constant list by the caller's tests and the
-    // answer of a redirect carries no JSON we accept).
+    // One GET of a constant URL: cb(status, text) with status 0 on a timeout or a network error. A real QML XHR follows a
+    // redirect (a 302 from 127.0.0.1 to another host answers 200 with the target's body), so an answer whose responseURL is
+    // not exactly the URL asked is refused (status 0, as a network error).
     function get(url, cb) {
         let done = false;
         let cancel = function () {};
@@ -205,7 +207,12 @@ function create(deps) {
         });
         xhr.onreadystatechange = () => {
             if (xhr.readyState === 4)
-                finish(xhr.status, xhr.status === 200 ? xhr.responseText : "");
+                {
+                if (xhr.responseURL !== url)
+                    finish(0, "");
+                else
+                    finish(xhr.status, xhr.status === 200 ? xhr.responseText : "");
+            }
         };
         try {
             xhr.open("GET", url);
@@ -256,8 +263,14 @@ function create(deps) {
 
     // detect(cb, force): cb(result) once; the result is cached for 60 s, an absent one too. Calls made while one is running
     // share its answer.
+    // The clock is not monotonic: a backward jump (now < cachedAt) expires the cache.
+    function fresh() {
+        const age = d.now() - cachedAt;
+        return cache !== null && age >= 0 && age < CACHE_MS;
+    }
+
     function detect(cb, force) {
-        if (!force && cache !== null && d.now() - cachedAt < CACHE_MS) {
+        if (!force && fresh()) {
             cb(cache);
             return;
         }
@@ -278,7 +291,7 @@ function create(deps) {
 
     return {
         detect: detect,
-        cached: () => (cache !== null && d.now() - cachedAt < CACHE_MS ? cache : ABSENT),
+        cached: () => (fresh() ? cache : ABSENT),
         invalidate: () => {
             cache = null;
         }

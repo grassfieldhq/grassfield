@@ -416,7 +416,7 @@ slice runs `just check-quick`, the tests it touches, `just check-inventory` for 
 | # | Slice | Depends on | Acceptance tests |
 |---|---|---|---|
 | A1 | Spike + detection: loopback only, `/api/version` and `/api/tags`, cached 60 s, cloud/remote models excluded (method established in the spike from Ollama's API docs), absent → nothing shown. | — | Unit with a fake responder (XHR mocked): a non-loopback URL is impossible to configure; remote models dropped; timeouts. Spike notes in the spec. Opus review with A2. |
-| A2 | Ask Local Model row + streaming answer into the detail pane (NDJSON over XHR), Stop, Copy, Paste. | A1, P11 | Unit: stream parser (partial lines, errors); the request body contains exactly the typed text; aborted on close and on lock. L1 with a fake local server (sandbox-local). |
+| A2 | Ask Local Model row + streaming answer into the detail pane (NDJSON over XHR), Stop, Copy, Paste. | A1, P11 | Unit: stream parser (partial lines, errors); the request body contains exactly the typed text; aborted on close and on lock. **Moved here from A1 (ADR-0067 D-4):** the proxy test (`http_proxy`, `https_proxy`, `all_proxy` set to a fake proxy that must see nothing while a loopback responder is reached). **The listener check is re-run right before each POST** (the 60 s detection cache is a time-of-check window). L1 with a fake local server (sandbox-local). |
 | A3 | Answer actions and the fallback row. | A2, P14 | Unit. |
 | A4 | Conversation in the pane (follow-ups), memory only. | A2 | Unit: context window cap, New Conversation clears. |
 | A5 | Keep conversations (7 days, 0600 store, Clear). | A4, E4 | Unit: retention pruning, modes, clear. |
