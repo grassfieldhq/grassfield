@@ -12,7 +12,8 @@ QStringList layerTypes()
     return {QStringLiteral("arrow"),    QStringLiteral("line"),      QStringLiteral("rectangle"), QStringLiteral("ellipse"),
             QStringLiteral("pen"),      QStringLiteral("highlighter"), QStringLiteral("text"),    QStringLiteral("counter"),
             QStringLiteral("redact"),   QStringLiteral("pixelate"),  QStringLiteral("blur"),      QStringLiteral("spotlight"),
-            QStringLiteral("image")};
+            QStringLiteral("image"),
+            QStringLiteral("frame")};
 }
 
 QByteArray layersToJson(const Layers &layers)

@@ -27,7 +27,8 @@ struct Layer {
 };
 using Layers = QList<Layer>;
 
-// The layer types of the tool group (docs/specs/capture-suite.md §3.3) and "image" (a dropped picture, slice B27).
+// The layer types of the tool group (docs/specs/capture-suite.md §3.3), "image" (a dropped picture, slice B27) and "frame" (slice B8:
+// the crop, rotation and flip of the picture itself, at most one per document; framing.h).
 QStringList layerTypes();
 
 // The file's bytes for `layers` (compact JSON, keys sorted: the same layers always give the same bytes).

@@ -1,8 +1,12 @@
 #include "annotations.h"
 
+#include <QFont>
+#include <QFontMetricsF>
+#include <QHash>
 #include <QLineF>
 #include <QPainterPath>
 #include <QRegularExpression>
+#include <QTransform>
 
 #include <algorithm>
 #include <cmath>
@@ -68,12 +72,143 @@ QPolygonF headAt(const QPointF &tip, const QPointF &direction, qreal length, QPo
     return QPolygonF{tip, back + side * half, back - side * half};
 }
 
+constexpr qreal kFontBase = 100;        // glyph outlines are laid out at this pixel size and scaled to the layer's size
+constexpr qreal kOutlinePerSize = 0.12; // an outlined text's edge, in sizes
+constexpr qreal kPillPadX = 0.45;       // a pill's padding around the text, in line heights
+constexpr qreal kPillPadY = 0.22;
+constexpr qreal kCounterNumberHeight = 0.5; // a counter's digits: their height and the widest they get, in diameters
+constexpr qreal kCounterNumberWidth = 0.7;
+
+// Black or white, whichever reads better on `color` (the equal-contrast luminance, 0.179).
+QColor contrastOn(const QColor &color)
+{
+    const auto lin = [](qreal c) { return c <= 0.03928 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); };
+    const qreal luminance = 0.2126 * lin(color.redF()) + 0.7152 * lin(color.greenF()) + 0.0722 * lin(color.blueF());
+    return luminance > 0.179 ? QColor(Qt::black) : QColor(Qt::white);
+}
+
+bool validColorForm(const QString &name)
+{
+    static const QRegularExpression form(QStringLiteral("^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"));
+    return form.match(name).hasMatch();
+}
+
+struct GlyphLayout {
+    QPainterPath path; // the glyphs, centred on the origin, at kFontBase
+    QRectF box;        // their lines' box (advances, not ink), centred on the origin
+};
+
+QFont baseFont(const QString &family, bool bold)
+{
+    QFont font(family);
+    font.setPixelSize(int(kFontBase));
+    font.setWeight(bold ? QFont::Bold : QFont::Medium);
+    font.setHintingPreference(QFont::PreferNoHinting);
+    return font;
+}
+
+// The lines of `text` centred on each other and on the origin. Cached by what they depend on (laying out outlines is the one costly
+// step, and a drag moves a layer without changing its text).
+GlyphLayout glyphLayout(const QString &text, const QString &family, bool bold)
+{
+    static QHash<QString, GlyphLayout> cache;
+    const QString key = family + QLatin1Char('\x1f') + (bold ? QLatin1Char('b') : QLatin1Char('r')) + text;
+    const auto hit = cache.constFind(key);
+    if (hit != cache.constEnd())
+        return *hit;
+    const QFont font = baseFont(family, bold);
+    const QFontMetricsF fm(font);
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    qreal widest = 0;
+    for (const QString &line : lines)
+        widest = std::max(widest, fm.horizontalAdvance(line));
+    const qreal lineHeight = fm.lineSpacing();
+    const qreal total = lineHeight * lines.size();
+    GlyphLayout out;
+    out.box = QRectF(-widest / 2, -total / 2, widest, total);
+    for (int i = 0; i < lines.size(); ++i) {
+        const qreal advance = fm.horizontalAdvance(lines[i]);
+        out.path.addText(QPointF(-advance / 2, -total / 2 + i * lineHeight + fm.ascent()), font, lines[i]);
+    }
+    if (cache.size() > 256)
+        cache.clear();
+    cache.insert(key, out);
+    return out;
+}
+
+QPainterPath roundedBox(const QRectF &box, qreal radius)
+{
+    QPainterPath path;
+    path.addRoundedRect(box, radius, radius);
+    return path;
+}
+
+bool readNumber(const Layer &layer, const char *key, qreal *out, qreal lo, qreal hi)
+{
+    const QJsonValue v = layer.fields.value(QLatin1String(key));
+    if (!v.isDouble() || !std::isfinite(v.toDouble()) || v.toDouble() < lo || v.toDouble() > hi)
+        return false;
+    *out = v.toDouble();
+    return true;
+}
+
+int textRotation(const Layer &layer)
+{
+    const QJsonValue v = layer.fields.value(QStringLiteral("rot"));
+    return v.isDouble() ? ((int(v.toDouble()) % 4) + 4) % 4 : 0;
+}
+
+QString textStyleOf(const Layer &layer)
+{
+    const QString style = layer.fields.value(QStringLiteral("style")).toString();
+    return style == QLatin1String("outlined") || style == QLatin1String("pill") ? style : QStringLiteral("plain");
+}
+
+QRectF pointsBox(const QVector<QPointF> &points)
+{
+    if (points.isEmpty())
+        return {};
+    qreal l = points[0].x(), r = l, t = points[0].y(), b = t;
+    for (const QPointF &p : points) {
+        l = std::min(l, p.x());
+        r = std::max(r, p.x());
+        t = std::min(t, p.y());
+        b = std::max(b, p.y());
+    }
+    return QRectF(QPointF(l, t), QPointF(r, b));
+}
+
+// The box handles and the resize work on: a rectangle's or ellipse's box, a pen's or highlighter's points' box.
+bool editBox(const Layer &layer, QRectF *box)
+{
+    if (isBox(layer))
+        return readBox(layer, box);
+    if (isStrokeType(layer.type)) {
+        const QVector<QPointF> points = strokePoints(layer);
+        if (points.size() < 2)
+            return false;
+        *box = pointsBox(points);
+        return true;
+    }
+    return false;
+}
+
 } // namespace
+
+bool isStrokeType(const QString &type)
+{
+    return type == QLatin1String("pen") || type == QLatin1String("highlighter");
+}
+
+bool isTextType(const QString &type)
+{
+    return type == QLatin1String("text") || type == QLatin1String("counter");
+}
 
 bool isShapeType(const QString &type)
 {
     return type == QLatin1String("arrow") || type == QLatin1String("line") || type == QLatin1String("rectangle")
-        || type == QLatin1String("ellipse");
+        || type == QLatin1String("ellipse") || isStrokeType(type) || isTextType(type);
 }
 
 QColor layerColor(const Layer &layer)
@@ -141,7 +276,7 @@ bool readBox(const Layer &layer, QRectF *box)
 
 Layer makeShape(int id, const QString &type, const QPointF &from, const QPointF &to, const ShapeStyle &style)
 {
-    if (!isShapeType(type))
+    if (!isShapeType(type) || isStrokeType(type) || isTextType(type))
         return Layer{};
     Layer layer;
     layer.id = id;
@@ -172,6 +307,271 @@ Layer makeShape(int id, const QString &type, const QPointF &from, const QPointF 
     return layer;
 }
 
+QVector<QPointF> strokePoints(const Layer &layer)
+{
+    QVector<QPointF> points;
+    const QJsonValue v = layer.fields.value(QStringLiteral("points"));
+    if (!v.isArray())
+        return points;
+    const QJsonArray array = v.toArray();
+    if (array.size() < 2 || array.size() > kMaxStrokePoints)
+        return points;
+    points.reserve(array.size());
+    for (const QJsonValue &item : array) {
+        const QJsonArray pair = item.toArray();
+        if (pair.size() != 2 || !pair[0].isDouble() || !pair[1].isDouble() || !finiteIn(pair[0].toDouble()) || !finiteIn(pair[1].toDouble()))
+            return {};
+        points.append(QPointF(pair[0].toDouble(), pair[1].toDouble()));
+    }
+    return points;
+}
+
+QVector<QPointF> simplified(const QVector<QPointF> &points, qreal epsilon)
+{
+    const int n = int(points.size());
+    if (n < 3)
+        return points;
+    QVector<bool> keep(n, false);
+    keep[0] = keep[n - 1] = true;
+    QList<QPair<int, int>> stack{{0, n - 1}};
+    while (!stack.isEmpty()) {
+        const auto [first, last] = stack.takeLast();
+        qreal farthest = 0;
+        int at = -1;
+        for (int i = first + 1; i < last; ++i) {
+            const qreal d = distanceToSegment(points[i], points[first], points[last]);
+            if (d > farthest) {
+                farthest = d;
+                at = i;
+            }
+        }
+        if (at >= 0 && farthest > epsilon) {
+            keep[at] = true;
+            stack.append({first, at});
+            stack.append({at, last});
+        }
+    }
+    QVector<QPointF> out;
+    for (int i = 0; i < n; ++i) {
+        if (keep[i])
+            out.append(points[i]);
+    }
+    return out;
+}
+
+QVector<QPointF> snappedStraight(const QVector<QPointF> &points, qreal width)
+{
+    if (points.size() < 2)
+        return points;
+    const QPointF a = points.first(), b = points.last();
+    if (QLineF(a, b).length() < 2 * width)
+        return points;
+    for (const QPointF &p : points) {
+        if (distanceToSegment(p, a, b) > 0.6 * width)
+            return points;
+    }
+    const QPointF d = b - a;
+    if (std::abs(d.y()) <= std::tan(M_PI / 18) * std::abs(d.x())) {
+        qreal sum = 0;
+        for (const QPointF &p : points)
+            sum += p.y();
+        const qreal level = sum / points.size();
+        return {QPointF(a.x(), level), QPointF(b.x(), level)};
+    }
+    return {a, b};
+}
+
+QPainterPath smoothPath(const QVector<QPointF> &points)
+{
+    QPainterPath path;
+    const int n = int(points.size());
+    if (n == 0)
+        return path;
+    path.moveTo(points[0]);
+    if (n == 1)
+        return path;
+    if (n == 2) {
+        path.lineTo(points[1]);
+        return path;
+    }
+    for (int i = 0; i + 1 < n; ++i) {
+        const QPointF &p0 = points[std::max(i - 1, 0)], &p1 = points[i], &p2 = points[i + 1], &p3 = points[std::min(i + 2, n - 1)];
+        path.cubicTo(p1 + (p2 - p0) / 6, p2 - (p3 - p1) / 6, p2);
+    }
+    return path;
+}
+
+QString pathToSvg(const QPainterPath &path)
+{
+    QString svg;
+    const auto num = [](qreal v) { return QString::number(v, 'g', 9); };
+    QPointF start;
+    for (int i = 0; i < path.elementCount(); ++i) {
+        const QPainterPath::Element e = path.elementAt(i);
+        switch (e.type) {
+        case QPainterPath::MoveToElement:
+            start = e;
+            svg += QStringLiteral("M%1 %2 ").arg(num(e.x), num(e.y));
+            break;
+        case QPainterPath::LineToElement:
+            svg += QStringLiteral("L%1 %2 ").arg(num(e.x), num(e.y));
+            if (QPointF(e) == start && (i + 1 == path.elementCount() || path.elementAt(i + 1).type == QPainterPath::MoveToElement))
+                svg += QLatin1String("Z "); // the outline came back to its start: closed, so that a stroke joins there
+            break;
+        case QPainterPath::CurveToElement: {
+            const QPainterPath::Element c2 = path.elementAt(i + 1), end = path.elementAt(i + 2);
+            svg += QStringLiteral("C%1 %2 %3 %4 %5 %6 ").arg(num(e.x), num(e.y), num(c2.x), num(c2.y), num(end.x), num(end.y));
+            if (QPointF(end) == start && (i + 3 == path.elementCount() || path.elementAt(i + 3).type == QPainterPath::MoveToElement))
+                svg += QLatin1String("Z ");
+            i += 2;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    return svg.trimmed();
+}
+
+Layer makeStroke(int id, const QString &type, const QVector<QPointF> &points, const ShapeStyle &style)
+{
+    if (!isStrokeType(type))
+        return Layer{};
+    QVector<QPointF> kept = points;
+    // Thin out until it fits: a longer stroke loses the detail of its curve before it loses its end.
+    for (qreal epsilon = 0.25; kept.size() > kMaxStrokePoints && epsilon < 1e5; epsilon *= 2)
+        kept = simplified(points, epsilon);
+    if (kept.size() < 2 || kept.size() > kMaxStrokePoints)
+        return Layer{};
+    Layer layer;
+    layer.id = id;
+    layer.type = type;
+    QColor color(style.color);
+    qreal width = style.width;
+    if (type == QLatin1String("highlighter")) {
+        color.setAlphaF(std::clamp(style.highlightOpacity, 0.05, 1.0));
+        width *= style.highlightFactor;
+    }
+    layer.fields.insert(QStringLiteral("color"), color.isValid() ? color.name(type == QLatin1String("highlighter") ? QColor::HexArgb : QColor::HexRgb) : style.color);
+    layer.fields.insert(QStringLiteral("width"), std::clamp<qreal>(width, kMinStrokeWidth, kMaxStrokeWidth));
+    QJsonArray array;
+    for (const QPointF &p : kept)
+        array.append(pointArray(p));
+    layer.fields.insert(QStringLiteral("points"), array);
+    return layer;
+}
+
+Layer makeText(int id, const QPointF &center, const QString &text, const ShapeStyle &style)
+{
+    if (text.trimmed().isEmpty() || text.size() > kMaxTextLength || !finiteIn(center.x()) || !finiteIn(center.y()))
+        return Layer{};
+    Layer layer;
+    layer.id = id;
+    layer.type = QStringLiteral("text");
+    layer.fields.insert(QStringLiteral("color"), style.color);
+    layer.fields.insert(QStringLiteral("x"), center.x());
+    layer.fields.insert(QStringLiteral("y"), center.y());
+    layer.fields.insert(QStringLiteral("text"), text);
+    layer.fields.insert(QStringLiteral("size"), std::clamp(style.textSize, kMinTextSize, kMaxTextSize));
+    const bool known = style.textStyle == QLatin1String("outlined") || style.textStyle == QLatin1String("pill");
+    layer.fields.insert(QStringLiteral("style"), known ? style.textStyle : QStringLiteral("plain"));
+    layer.fields.insert(QStringLiteral("family"), style.family);
+    layer.fields.insert(QStringLiteral("rot"), 0);
+    return layer;
+}
+
+Layer makeCounter(int id, const QPointF &center, const ShapeStyle &style)
+{
+    if (!finiteIn(center.x()) || !finiteIn(center.y()))
+        return Layer{};
+    Layer layer;
+    layer.id = id;
+    layer.type = QStringLiteral("counter");
+    layer.fields.insert(QStringLiteral("color"), style.color);
+    layer.fields.insert(QStringLiteral("x"), center.x());
+    layer.fields.insert(QStringLiteral("y"), center.y());
+    layer.fields.insert(QStringLiteral("size"), std::clamp(style.counterSize, kMinTextSize, kMaxTextSize));
+    layer.fields.insert(QStringLiteral("family"), style.family);
+    return layer;
+}
+
+QString layerText(const Layer &layer)
+{
+    const QString text = layer.fields.value(QStringLiteral("text")).toString();
+    return text.size() > kMaxTextLength ? QString() : text;
+}
+
+Layer withColor(const Layer &layer, const QString &color)
+{
+    if (!isShapeType(layer.type) || !validColorForm(color))
+        return layer;
+    Layer out = layer;
+    QColor c(color);
+    if (layer.type == QLatin1String("highlighter")) {
+        c.setAlpha(layerColor(layer).isValid() ? layerColor(layer).alpha() : 102); // the marker keeps its see-through
+        out.fields.insert(QStringLiteral("color"), c.name(QColor::HexArgb));
+    } else {
+        out.fields.insert(QStringLiteral("color"), c.name(c.alpha() == 255 ? QColor::HexRgb : QColor::HexArgb));
+    }
+    return out;
+}
+
+Layer withWidth(const Layer &layer, qreal width)
+{
+    if (layer.type == QLatin1String("text") || layer.type == QLatin1String("counter") || !isShapeType(layer.type))
+        return layer;
+    Layer out = layer;
+    out.fields.insert(QStringLiteral("width"), std::clamp<qreal>(width, kMinStrokeWidth, kMaxStrokeWidth));
+    return out;
+}
+
+Layer withFill(const Layer &layer, bool fill)
+{
+    if (!isBox(layer))
+        return layer;
+    Layer out = layer;
+    out.fields.insert(QStringLiteral("fill"), fill);
+    return out;
+}
+
+Layer withTextStyle(const Layer &layer, const QString &style)
+{
+    if (layer.type != QLatin1String("text"))
+        return layer;
+    Layer out = layer;
+    const bool known = style == QLatin1String("outlined") || style == QLatin1String("pill");
+    out.fields.insert(QStringLiteral("style"), known ? style : QStringLiteral("plain"));
+    return out;
+}
+
+Layer withTextSize(const Layer &layer, qreal size)
+{
+    if (!isTextType(layer.type))
+        return layer;
+    Layer out = layer;
+    out.fields.insert(QStringLiteral("size"), std::clamp(size, kMinTextSize, kMaxTextSize));
+    return out;
+}
+
+Layer withText(const Layer &layer, const QString &text)
+{
+    if (layer.type != QLatin1String("text") || text.trimmed().isEmpty() || text.size() > kMaxTextLength)
+        return layer;
+    Layer out = layer;
+    out.fields.insert(QStringLiteral("text"), text);
+    return out;
+}
+
+QList<int> counterNumbers(const Layers &layers)
+{
+    QList<int> numbers;
+    numbers.reserve(layers.size());
+    int next = 1;
+    for (const Layer &layer : layers)
+        numbers.append(layer.type == QLatin1String("counter") ? next++ : 0);
+    return numbers;
+}
+
 int nextLayerId(const Layers &layers)
 {
     qint64 top = 0;
@@ -185,6 +585,12 @@ QRectF layerBounds(const Layer &layer)
     QRectF box;
     if (isBox(layer))
         return readBox(layer, &box) ? box : QRectF();
+    if (isStrokeType(layer.type))
+        return editBox(layer, &box) ? box : QRectF();
+    if (isTextType(layer.type)) {
+        const ShapeGeometry g = shapeGeometry(layer);
+        return g.kind == ShapeGeometry::Glyphs ? g.layoutBox.united(g.plate.boundingRect()) : QRectF();
+    }
     QPointF a, b, ctrl;
     if ((layer.type == QLatin1String("line") || layer.type == QLatin1String("arrow")) && pointsOf(layer, &a, &b)) {
         QRectF bounds = QRectF(a, b).normalized();
@@ -199,8 +605,32 @@ QRectF layerBounds(const Layer &layer)
 
 bool hitLayer(const Layer &layer, const QPointF &p, qreal tolerance)
 {
+    if (isTextType(layer.type)) {
+        // A text or a counter is picked anywhere on its plate or its lines' box, a little beyond it.
+        const ShapeGeometry g = shapeGeometry(layer);
+        if (g.kind != ShapeGeometry::Glyphs)
+            return false;
+        const QRectF box = g.layoutBox.united(g.plate.boundingRect());
+        if (layer.type == QLatin1String("counter"))
+            return QLineF(box.center(), p).length() <= box.width() / 2 + tolerance;
+        return box.adjusted(-tolerance, -tolerance, tolerance, tolerance).contains(p);
+    }
     if (!isShapeType(layer.type) || !layerColor(layer).isValid() || layerWidth(layer) <= 0)
         return false;
+    if (isStrokeType(layer.type)) {
+        const QVector<QPointF> points = strokePoints(layer);
+        if (points.size() < 2)
+            return false;
+        const qreal reach = tolerance + layerWidth(layer) / 2;
+        const QPainterPath path = smoothPath(points);
+        for (const QPolygonF &polygon : path.toSubpathPolygons()) {
+            for (int i = 1; i < polygon.size(); ++i) {
+                if (distanceToSegment(p, polygon[i - 1], polygon[i]) <= reach)
+                    return true;
+            }
+        }
+        return false;
+    }
     const qreal reach = tolerance + layerWidth(layer) / 2;
     QRectF box;
     if (layer.type == QLatin1String("rectangle")) {
@@ -253,6 +683,22 @@ Layer translated(const Layer &layer, const QPointF &delta)
 {
     Layer out = layer;
     QRectF box;
+    if (isStrokeType(layer.type)) {
+        QJsonArray array;
+        for (const QPointF &point : strokePoints(layer))
+            array.append(pointArray(point + delta));
+        if (!array.isEmpty())
+            out.fields.insert(QStringLiteral("points"), array);
+        return out;
+    }
+    if (isTextType(layer.type)) {
+        qreal x, y;
+        if (readNumber(layer, "x", &x, -kMaxCoordinate, kMaxCoordinate) && readNumber(layer, "y", &y, -kMaxCoordinate, kMaxCoordinate)) {
+            out.fields.insert(QStringLiteral("x"), x + delta.x());
+            out.fields.insert(QStringLiteral("y"), y + delta.y());
+        }
+        return out;
+    }
     if (isBox(layer)) {
         if (readBox(layer, &box)) {
             out.fields.insert(QStringLiteral("x"), box.x() + delta.x());
@@ -271,8 +717,8 @@ Layer translated(const Layer &layer, const QPointF &delta)
 QList<Handle> handlesOf(const Layer &layer)
 {
     QRectF box;
-    if (isBox(layer)) {
-        if (!readBox(layer, &box))
+    if (isBox(layer) || isStrokeType(layer.type)) {
+        if (!editBox(layer, &box))
             return {};
         const QPointF c = box.center();
         return {{Handle::TopLeft, box.topLeft()},         {Handle::Top, QPointF(c.x(), box.top())},
@@ -314,7 +760,7 @@ Layer draggedHandle(const Layer &layer, Handle::Kind kind, const QPointF &to)
         return out;
     }
     QRectF box;
-    if (!readBox(layer, &box))
+    if (!editBox(layer, &box))
         return out;
     qreal l = box.left(), r = box.right(), t = box.top(), b = box.bottom();
     bool sidesX = true, sidesY = true; // whether the handle moves a vertical edge, a horizontal edge
@@ -334,6 +780,17 @@ Layer draggedHandle(const Layer &layer, Handle::Kind kind, const QPointF &to)
         next.setWidth(1);
     if (sidesY && next.height() < 1)
         next.setHeight(1);
+    if (isStrokeType(layer.type)) {
+        // The points follow the box: each keeps its place in it (a stroke as flat as a level line only moves).
+        const qreal sx = box.width() > 1e-9 ? next.width() / box.width() : 1, sy = box.height() > 1e-9 ? next.height() / box.height() : 1;
+        QJsonArray array;
+        for (const QPointF &p : strokePoints(layer)) {
+            const QPointF q(next.x() + (p.x() - box.x()) * sx, next.y() + (p.y() - box.y()) * sy);
+            array.append(pointArray(QPointF(std::clamp(q.x(), -kMaxCoordinate, kMaxCoordinate), std::clamp(q.y(), -kMaxCoordinate, kMaxCoordinate))));
+        }
+        out.fields.insert(QStringLiteral("points"), array);
+        return out;
+    }
     out.fields.insert(QStringLiteral("x"), next.x());
     out.fields.insert(QStringLiteral("y"), next.y());
     out.fields.insert(QStringLiteral("w"), next.width());
@@ -341,13 +798,78 @@ Layer draggedHandle(const Layer &layer, Handle::Kind kind, const QPointF &to)
     return out;
 }
 
-ShapeGeometry shapeGeometry(const Layer &layer)
+// A text or a counter as outlines (its glyphs, and the plate behind them), so that the exporter and the scene draw one thing.
+static ShapeGeometry glyphGeometry(const Layer &layer, int counterNumber)
+{
+    ShapeGeometry g;
+    const QColor color = layerColor(layer);
+    qreal x, y, size;
+    if (!color.isValid() || !readNumber(layer, "x", &x, -kMaxCoordinate, kMaxCoordinate) || !readNumber(layer, "y", &y, -kMaxCoordinate, kMaxCoordinate)
+        || !readNumber(layer, "size", &size, kMinTextSize, kMaxTextSize))
+        return g;
+    g.color = color;
+    g.kind = ShapeGeometry::Glyphs;
+    if (layer.type == QLatin1String("counter")) {
+        const QString number = QString::number(std::max(counterNumber, 1));
+        const QString numberFamily = layer.fields.value(QStringLiteral("family")).toString();
+        const GlyphLayout glyphs = glyphLayout(number, numberFamily.isEmpty() ? QStringLiteral("sans-serif") : numberFamily, true);
+        const QRectF ink = glyphs.path.boundingRect();
+        const qreal scale = ink.isEmpty() ? 1 : std::min(size * kCounterNumberHeight / ink.height(), size * kCounterNumberWidth / ink.width());
+        QTransform t;
+        t.translate(x, y);
+        t.scale(scale, scale);
+        t.translate(-ink.center().x(), -ink.center().y()); // the ink's own middle, so that a 1 and an 8 both sit in the disc's centre
+        g.path = t.map(glyphs.path);
+        g.layoutBox = QRectF(x - size / 2, y - size / 2, size, size);
+        g.plate.addEllipse(QPointF(x, y), size / 2, size / 2);
+        g.plateColor = color;
+        g.ink = contrastOn(color);
+        return g;
+    }
+    const QString text = layerText(layer);
+    if (text.trimmed().isEmpty())
+        return ShapeGeometry();
+    const QString family = layer.fields.value(QStringLiteral("family")).toString();
+    const GlyphLayout glyphs = glyphLayout(text, family.isEmpty() ? QStringLiteral("sans-serif") : family, false);
+    QTransform t;
+    t.translate(x, y);
+    t.rotate(90.0 * textRotation(layer));
+    t.scale(size / kFontBase, size / kFontBase);
+    g.path = t.map(glyphs.path);
+    g.layoutBox = t.mapRect(glyphs.box);
+    const QString style = textStyleOf(layer);
+    g.ink = color;
+    if (style == QLatin1String("outlined")) {
+        g.outlineColor = contrastOn(color);
+        g.outlineWidth = size * kOutlinePerSize;
+    } else if (style == QLatin1String("pill")) {
+        const qreal line = QFontMetricsF(baseFont(family, false)).lineSpacing();
+        const QRectF plate = glyphs.box.adjusted(-kPillPadX * line, -kPillPadY * line, kPillPadX * line, kPillPadY * line);
+        g.plate = t.map(roundedBox(plate, plate.height() / 2 > 0.6 * line ? 0.6 * line : plate.height() / 2));
+        g.plateColor = color;
+        g.ink = contrastOn(color);
+    }
+    return g;
+}
+
+ShapeGeometry shapeGeometry(const Layer &layer, int counterNumber)
 {
     ShapeGeometry g;
     g.color = layerColor(layer);
     g.width = layerWidth(layer);
+    if (isTextType(layer.type))
+        return glyphGeometry(layer, counterNumber);
     if (!isShapeType(layer.type) || !g.color.isValid() || g.width <= 0)
         return ShapeGeometry();
+    if (isStrokeType(layer.type)) {
+        const QVector<QPointF> points = strokePoints(layer);
+        if (points.size() < 2)
+            return ShapeGeometry();
+        g.kind = ShapeGeometry::Stroke;
+        g.path = smoothPath(points);
+        g.flatCap = layer.type == QLatin1String("highlighter");
+        return g;
+    }
     if (isBox(layer)) {
         if (!readBox(layer, &g.box))
             return ShapeGeometry();

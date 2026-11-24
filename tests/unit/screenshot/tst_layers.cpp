@@ -64,7 +64,7 @@ TEST(Layers, FileShape)
 TEST(Layers, EveryToolTypeIsKnown)
 {
     for (const char *t : {"arrow", "line", "rectangle", "ellipse", "pen", "highlighter", "text", "counter", "redact", "pixelate", "blur",
-                          "spotlight", "image"})
+                          "spotlight", "image", "frame"})
         EXPECT_TRUE(layerTypes().contains(QString::fromLatin1(t))) << t;
 }
 

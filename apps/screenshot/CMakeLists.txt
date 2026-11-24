@@ -21,6 +21,7 @@ add_library(grassfield-screenshot-core STATIC
     src/capturehistory.cpp src/capturehistory.h
     src/document.cpp src/document.h
     src/exporter.cpp src/exporter.h
+    src/framing.cpp src/framing.h
     src/layermodel.cpp src/layermodel.h
     src/layers.cpp src/layers.h
     src/screenshotapp.cpp src/screenshotapp.h
@@ -53,11 +54,14 @@ if(GTest_FOUND)
         ../../tests/unit/screenshot/tst_annotations.cpp
         ../../tests/unit/screenshot/tst_document.cpp
         ../../tests/unit/screenshot/tst_golden.cpp
+        ../../tests/unit/screenshot/tst_framing.cpp
         ../../tests/unit/screenshot/tst_layers.cpp
         ../../tests/unit/screenshot/tst_main.cpp
         ../../tests/unit/screenshot/tst_pathparity.cpp
         ../../tests/unit/screenshot/tst_scene.cpp
         ../../tests/unit/screenshot/tst_screenshotlogic.cpp
+        ../../tests/unit/screenshot/tst_strokes.cpp
+        ../../tests/unit/screenshot/tst_text.cpp
         ../../tests/unit/screenshot/tst_tools.cpp
         ../../tests/unit/screenshot/tst_undo.cpp
         # Preview's own path rules, run beside this app's by tst_pathparity (sources not changed).

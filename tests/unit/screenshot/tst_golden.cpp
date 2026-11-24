@@ -1,4 +1,4 @@
-// Golden exports (slices B3 and B4): every shape tool, and a scene of all of them, exported at scale 1 and 1.25 and compared with
+// Golden exports (slices B3 to B6): every shape tool, the pen, the highlighter, the three text styles and the counters, and a scene of all of them, exported at scale 1 and 1.25 and compared with
 // the PNG files of tests/unit/screenshot/golden/ (see golden/README.md: tolerance, regeneration).
 //
 // A capture at scale 1.25 has 1.25 times the pixels of the same window at scale 1; the editor's tools give a new shape 1.25 times
@@ -11,6 +11,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontDatabase>
 
 #include <gtest/gtest.h>
 
@@ -69,7 +70,32 @@ QPointF at(double scale, double x, double y)
 struct Case {
     const char *name;
     Layers (*layers)(double scale);
+    const char *font = nullptr; // the family the layers name: the golden is the drawing in that font, so it is skipped where it is not installed
 };
+
+constexpr const char *kFont = "Inter";
+
+ShapeStyle textLook(double scale, const char *style, double size = 22)
+{
+    ShapeStyle s;
+    s.color = QString::fromLatin1(kBlue);
+    s.textStyle = QString::fromLatin1(style);
+    s.textSize = size * scale;
+    s.counterSize = 28 * scale;
+    s.family = QString::fromLatin1(kFont);
+    return s;
+}
+
+// A hand-drawn wave, as the pointer would sample it (the tool thins it and the layer smooths it).
+QVector<QPointF> waveAt(double scale, double x0, double x1, double y, double amplitude)
+{
+    QVector<QPointF> points;
+    for (int i = 0; i <= 24; ++i) {
+        const double x = x0 + (x1 - x0) * i / 24;
+        points.append(at(scale, x, y + amplitude * std::sin(i * 0.7)));
+    }
+    return points;
+}
 
 Layers arrowStraight(double s) { return {makeShape(1, "arrow", at(s, 20, 80), at(s, 140, 20), style(s, kRed, 4))}; }
 Layers arrowCurved(double s) { return {makeShape(1, "arrow", at(s, 20, 80), at(s, 140, 30), style(s, kRed, 4, false, "curved"))}; }
@@ -79,6 +105,30 @@ Layers rectangle(double s) { return {makeShape(1, "rectangle", at(s, 30, 20), at
 Layers rectangleFilled(double s) { return {makeShape(1, "rectangle", at(s, 30, 20), at(s, 130, 80), style(s, kGreenHalf, 4, true))}; }
 Layers ellipse(double s) { return {makeShape(1, "ellipse", at(s, 25, 15), at(s, 135, 85), style(s, kRed, 4))}; }
 Layers ellipseFilled(double s) { return {makeShape(1, "ellipse", at(s, 25, 15), at(s, 135, 85), style(s, kBlue, 2, true))}; }
+
+Layers pen(double s) { return {makeStroke(1, "pen", waveAt(s, 15, 145, 50, 25), style(s, kRed, 4))}; }
+Layers highlighter(double s)
+{
+    ShapeStyle look = style(s, kGreenHalf, 3);
+    look.highlightFactor = 5;
+    look.highlightOpacity = 0.45;
+    look.color = QString::fromLatin1("#fcea21");
+    // Two passes, one straight and one wavy: each is one stroke (flat-capped, at the highlighter's alpha).
+    return {makeStroke(1, "highlighter", {at(s, 15, 35), at(s, 145, 35)}, look), makeStroke(2, "highlighter", waveAt(s, 20, 140, 65, 8), look)};
+}
+Layers textPlain(double s) { return {makeText(1, at(s, 80, 50), "Look here\nsecond line", textLook(s, "plain"))}; }
+Layers textOutlined(double s)
+{
+    ShapeStyle look = textLook(s, "outlined");
+    look.color = QString::fromLatin1("#fcea21"); // yellow: its edge is black
+    return {makeText(1, at(s, 80, 50), "Look here\nsecond line", look)};
+}
+Layers textPill(double s) { return {makeText(1, at(s, 80, 50), "Look here", textLook(s, "pill"))}; }
+Layers counters(double s)
+{
+    ShapeStyle look = textLook(s, "plain");
+    return {makeCounter(1, at(s, 30, 30), look), makeCounter(2, at(s, 70, 55), look), makeCounter(3, at(s, 110, 30), look), makeCounter(4, at(s, 140, 70), look)};
+}
 
 // Every tool in one picture, over each other: the back-to-front order is part of what is compared.
 Layers scene(double s)
@@ -96,6 +146,8 @@ const Case kCases[] = {
     {"arrow-straight", arrowStraight}, {"arrow-curved", arrowCurved},       {"arrow-double", arrowDouble},
     {"line", line},                    {"rectangle", rectangle},            {"rectangle-filled", rectangleFilled},
     {"ellipse", ellipse},              {"ellipse-filled", ellipseFilled},   {"scene", scene},
+    {"pen", pen},                      {"highlighter", highlighter},        {"text-plain", textPlain, kFont},
+    {"text-outlined", textOutlined, kFont}, {"text-pill", textPill, kFont}, {"counters", counters, kFont},
 };
 
 QString goldenPath(const char *name, const char *scaleName)
@@ -148,6 +200,8 @@ class GoldenTest : public ::testing::TestWithParam<Case>
 TEST_P(GoldenTest, ExportAtScaleOne)
 {
     const Case &c = GetParam();
+    if (c.font && !QFontDatabase::families().contains(QString::fromLatin1(c.font)))
+        GTEST_SKIP() << c.font << " is not installed: the golden is the drawing in it";
     const QImage original = basePicture(1);
     const QImage out = exportLayers(original, c.layers(1));
     EXPECT_NE(out, original) << "the drawing changed nothing: the golden would prove nothing";
@@ -157,6 +211,8 @@ TEST_P(GoldenTest, ExportAtScaleOne)
 TEST_P(GoldenTest, ExportAtScaleOnePointTwoFive)
 {
     const Case &c = GetParam();
+    if (c.font && !QFontDatabase::families().contains(QString::fromLatin1(c.font)))
+        GTEST_SKIP() << c.font << " is not installed: the golden is the drawing in it";
     const QImage original = basePicture(1.25);
     EXPECT_EQ(original.size(), QSize(200, 125));
     const QImage out = exportLayers(original, c.layers(1.25));
