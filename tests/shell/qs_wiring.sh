@@ -54,10 +54,14 @@ p = read("shell/services/Popups.qml")
 need("Popups.openCentered resolves through ScreenChoice.centered with the asker's screen", func(p, "openCentered"), r"ScreenChoice\.centered\(active, screenName, Compositor\.activeScreenName, screen\)")
 need("Popups.confirm passes the asker's screen on", func(p, "confirm"), r"openCentered\(\"confirm\".*?, screen\)")
 
-# Search: Restart, Shut Down and Log Out confirm on the display Search is shown on.
+# Search: Restart, Shut Down and Log Out (and the palette's Empty Trash) confirm on the display Search is shown on. A confirm is
+# a statement (`...);`) or a command table entry (`name: () => Popups.confirm(...),`), one per line.
 s = read("shell/search/Search.qml")
-confirms = re.findall(r"Popups\.confirm\((.*?)\);", s)
+confirm_re = r"Popups\.confirm\((.*)\)\s*[;,]?\s*$"
+confirms = re.findall(confirm_re, s, re.M)
 need("Search has its three power confirms", "\n".join(confirms), r"\"restart\".*\"shutdown\".*\"logout\"")
+confirms += re.findall(confirm_re, read("shell/search/BuiltinCommands.qml"), re.M)
+need("the palette's Empty Trash confirms", "\n".join(confirms), r"\"emptytrash\"")
 if confirms and all(c.rstrip().endswith("screenName") for c in confirms):
     print("PASS every Search confirm passes screenName")
 else:

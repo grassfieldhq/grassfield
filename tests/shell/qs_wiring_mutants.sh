@@ -14,6 +14,7 @@ root = sys.argv[1]
 files = [
     "shell/notifications/Notifications.qml", "shell/notifications/Banner.qml", "shell/notifications/NotificationList.qml",
     "shell/services/Popups.qml", "shell/search/Search.qml", "shell/services/Connectivity.qml",
+    "shell/search/BuiltinCommands.qml",
 ]
 mutants = [
     ("Banner.qml: the image is no longer hidden", "shell/notifications/Banner.qml", "Notifications.imageFor(root.image, root.appName)", "root.image"),
@@ -26,6 +27,7 @@ mutants = [
     ("Popups.qml: openCentered uses the stale screen again", "shell/services/Popups.qml", "ScreenChoice.centered(active, screenName, Compositor.activeScreenName, screen)", "(screenName !== \"\" ? screenName : Compositor.activeScreenName)"),
     ("Search.qml: Restart confirm loses the screen", "shell/search/Search.qml", '"restart", {}, true, screenName)', '"restart", {}, true)'),
     ("Search.qml: Log Out confirm loses the screen", "shell/search/Search.qml", '"logout", {}, true, screenName)', '"logout", {}, true)'),
+    ("BuiltinCommands.qml: Empty Trash confirm loses the screen", "shell/search/BuiltinCommands.qml", '"emptytrash", {}, true, root.screenName)', '"emptytrash", {}, true)'),
     ("Connectivity.qml: no settle on radio changes", "shell/services/Connectivity.qml", "onRadiosNowChanged: settleAirplane()", ""),
     ("Connectivity.qml: the stale state is only hidden, not erased", "shell/services/Connectivity.qml", "saveAirplane(Airplane.end());\n    }\n    onRadios", "}\n    onRadios"),
     ("Connectivity.qml: no settle after the grace period", "shell/services/Connectivity.qml", "root.airplaneSettling = false;\n            root.settleAirplane();", "root.airplaneSettling = false;"),
