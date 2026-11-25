@@ -12,7 +12,7 @@ hl.window_rule({ name = "gf-float-all", match = { class = ".*" }, float = true }
 -- static one read at map. Firefox left the third-party list for the plugin's reading of its negotiation (ADR-0015
 -- amendment 2026-11-08) and keeps its exemption: its own zoom control sends the request when it draws its own frame.
 -- tests/shell/client_chrome_rules.sh checks that both negations are built from those lists.
-hl.window_rule({ name = "gf-no-maximize-event", match = { class = "negative:^(org\\.grassfield\\.(Files|Settings|Preview|Store|Activity|Memos)|chromium|google-chrome|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus|firefox|org\\.mozilla\\.firefox)$" }, suppress_event = "maximize" })
+hl.window_rule({ name = "gf-no-maximize-event", match = { class = "negative:^(org\\.grassfield\\.(Files|Settings|Preview|Store|Activity|Memos|Screenshot)|chromium|google-chrome|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus|firefox|org\\.mozilla\\.firefox)$" }, suppress_event = "maximize" })
 hl.window_rule({ name = "gf-no-maximize-event-untagged", match = { class = "negative:^(chromium|google-chrome|md\\.obsidian\\.Obsidian|org\\.gnome\\.Evince|org\\.gnome\\.Nautilus|firefox|org\\.mozilla\\.firefox)$", xdg_tag = "negative:.+" }, suppress_event = "maximize" })
 
 -- Client chrome (ADR-0015): Grassfield apps that draw their own lights and toolbar are tagged
@@ -22,7 +22,7 @@ hl.window_rule({ name = "gf-no-maximize-event-untagged", match = { class = "nega
 -- shell read the same tag name: keep it in step with shell/overview/ClientChrome.js. Never `decorate = false`: it also
 -- drops Hyprland's border and shadow.
 -- Grassfield Memos (ADR-0051) draws a memo's strip instead of lights; its tag is the memo's (`memo:<id>...`, any tag matches).
-hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield\\.(Files|Settings|Preview|Store|Activity|Memos)$", xdg_tag = ".+" }, tag = "+grassfield-client-chrome" })
+hl.window_rule({ name = "gf-client-chrome", match = { class = "^org\\.grassfield\\.(Files|Settings|Preview|Store|Activity|Memos|Screenshot)$", xdg_tag = ".+" }, tag = "+grassfield-client-chrome" })
 
 -- Third-party apps that draw their own window controls (GF-056; ADR-0015 amendment 2026-10-25). macOS: a window has one
 -- set of traffic lights, close, minimize, zoom, top-left; an app that draws its own title bar gets no second bar from the
