@@ -182,6 +182,8 @@ def kills():
     return [json.loads(line) for line in open(path).read().splitlines()]
 
 
+# The runner is imported from packaging/bin: no bytecode cache there (diagnostic_report checks that none is left).
+sys.dont_write_bytecode = True
 loader = importlib.machinery.SourceFileLoader("gsr", runner)
 spec = importlib.util.spec_from_loader("gsr", loader)
 gsr = importlib.util.module_from_spec(spec)

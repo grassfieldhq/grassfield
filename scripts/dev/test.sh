@@ -229,13 +229,14 @@ done
 # gtest_suite LABEL GTEST_HEADER_NEEDED_NOTE BUILD_CMD BINARY...: builds, runs every binary, records one result.
 # The shard (of 4) of each suite, balanced by the wall time of the first CI run (2026-11-24, build plus both runs, minutes):
 # files 20, store 18, activity 18, portal 10, settings 8, menu-bridge 7, prompter ~5 (cut off), stack-helper 4, wallpaper-tool 3,
-# memos 2, clipboard-helper 2, the rest 1 each: about 25 minutes a shard. To rebalance, move a suite to another number here
+# memos 2, clipboard-helper 2, the rest 1 each (screenshot and timezones, added with the capture suite and the palette, not
+# measured yet): about 25 minutes a shard. To rebalance, move a suite to another number here
 # (every suite should be listed; one that is not goes to its position K mod N) and keep the sums even.
 declare -A gtest_shard4=(
   [tests/unit/files]=0 [tests/unit/preview]=0 [tests/unit/secrets-handover]=0 [tests/unit/portal-settings]=0 [tests/unit/memos]=0
-  [tests/unit/store]=1 [tests/unit/menu-bridge]=1
+  [tests/unit/store]=1 [tests/unit/menu-bridge]=1 [tests/unit/timezones]=1
   [tests/unit/activity]=2 [tests/unit/prompter]=2 [tests/unit/stack-helper]=2
-  [tests/unit/portal]=3 [tests/unit/settings]=3 [tests/unit/wallpaper-tool]=3 [tests/unit/clipboard-helper]=3
+  [tests/unit/portal]=3 [tests/unit/settings]=3 [tests/unit/wallpaper-tool]=3 [tests/unit/clipboard-helper]=3 [tests/unit/screenshot]=3
 )
 gtest_position=0
 gtest_ran=0
