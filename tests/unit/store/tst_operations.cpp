@@ -20,6 +20,9 @@
 
 #include <gtest/gtest.h>
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 using namespace grassfield::store;
 
 namespace {
@@ -571,6 +574,31 @@ TEST(Operations, RecoveryAtStart)
     sleeper.kill();
     sleeper.waitForFinished();
     EXPECT_FALSE(helperRunning(f.config.statusDir, live.id));
+}
+
+// A helper that has ended but is not yet reaped (a zombie: its /proc entry stays, with its pid and start time) is not running; a
+// container's PID 1 that does not reap leaves orphans in this state for good.
+TEST(Operations, AZombieIsNotARunningHelper)
+{
+    Fixture f;
+    const OperationRecord rec = helperRecord(QStringLiteral("vlc"), QStringLiteral("install"), {QStringLiteral("vlc")});
+    const pid_t child = ::fork();
+    ASSERT_GE(child, 0);
+    if (child == 0)
+        ::_exit(0);
+    QFile stat(QStringLiteral("/proc/%1/stat").arg(child));
+    QByteArray line;
+    ASSERT_TRUE(waitFor([&] {
+        if (!stat.open(QIODevice::ReadOnly))
+            return false;
+        line = stat.readAll();
+        stat.close();
+        return line.mid(line.lastIndexOf(") ") + 2, 1) == "Z";
+    })) << "the child ended and is waiting to be reaped";
+    const QByteArray start = line.mid(line.lastIndexOf(") ") + 2).split(' ').at(19);
+    storetest::writeFile(f.dir.filePath(QStringLiteral("run/") + rec.id + QStringLiteral(".started")), QByteArray::number(child) + ' ' + start + '\n');
+    EXPECT_FALSE(helperRunning(f.config.statusDir, rec.id)) << "a zombie has ended";
+    ::waitpid(child, nullptr, 0);
 }
 
 TEST(Operations, TerminalRecordsAndCommand)

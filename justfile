@@ -154,8 +154,8 @@ check-omarchy *args:
     scripts/dev/omarchy-compat.sh {{args}}
 
 # Offscreen unit tests (QML TestCase) and compositor unit tests when built.
-test:
-    scripts/dev/test.sh
+test *args:
+    scripts/dev/test.sh {{args}}
 
 # Security gates L1 (+ DT-21 graceful exit) and L4 (+ DT-05 screen share, D-4 lid and display off), each on a fresh
 # nested session (ask). Bare, outside the sandbox only: inside it the scripts refuse (PID namespace). Every nested session

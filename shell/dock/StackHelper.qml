@@ -85,10 +85,14 @@ QtObject {
         root.loaded = false;
     }
 
+    // The helper ends when this shell is not its parent any more (apps/stack-helper/src/main.cpp). A `var` property: an object
+    // literal bound to Process.environment directly is a QVariantMap where it takes a QVariantHash (qmllint incompatible-type).
+    readonly property var helperEnvironment: ({ GRASSFIELD_STACK_HELPER_PARENT: String(Quickshell.processId) })
     readonly property Process process: Process {
         running: root.folder !== "" && !root.restarting
         command: [root.tool, root.folder, root.sort, String(root.limit), String(root.low)]
         stdinEnabled: true
+        environment: root.helperEnvironment
         stdout: SplitParser {
             onRead: line => {
                 if (line === "A") {
