@@ -16,7 +16,7 @@
 #    time between two changes of the pile in an endless stream (the tail included);
 #  - the pile must be right at the end: the first three of a full sort made here with find and sort, independently of the helper.
 # The CPU and latency budgets are the targets of ADR-0025; the timing gates (latency, GUI waits) are load-sensitive: above the number
-# of cores they are reported (SKIP), not enforced. Plain shell test.
+# of cores, and on a shared CI runner, they are reported (SKIP), not enforced. Plain shell test.
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$root"
