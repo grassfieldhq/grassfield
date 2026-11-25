@@ -247,7 +247,9 @@ toolkit() {
   # pinned stack, or a pin can take one from a package), and the compositor itself has none.
   local after new
   after=$(unresolved_libs) || { echo "ci.sh toolkit: the scan of unresolved libraries failed" >&2; return 1; }
-  new=$(comm -13 "$dir/unresolved.before" <(printf '%s\n' "$after" | sed '/^$/d'))
+  # A pin can rename a library's file (libX.so.6.12.1 -> libX.so.6.12.0) without changing what it lacks: the paths are compared
+  # with their soname only (libQt6Quick3DSpatialAudio lacks the optional qt6-quick3d before and after the Qt pin).
+  new=$(comm -13 <(soname_paths <"$dir/unresolved.before") <(printf '%s\n' "$after" | sed '/^$/d' | soname_paths))
   [[ -z $new ]] || { echo "ci.sh toolkit: unresolved libraries the pins brought (path: library):" >&2; echo "$new" >&2; return 1; }
   if grep -E '^/usr/(s?bin/Hyprland|lib/libhypr|lib/libaquamarine)' <<<"$after"; then
     echo "ci.sh toolkit: the Hyprland stack has unresolved libraries" >&2
@@ -259,6 +261,10 @@ toolkit() {
 
 # "<path>: <library>" for each library an ELF file under /usr/bin, /usr/sbin and /usr/lib cannot resolve (ldd), sorted. A plugin
 # that needs an optional library is the same before and after the pins, which is what toolkit compares.
+# path: library lines, a versioned file name cut to its soname (libfoo.so.6.12.0 -> libfoo.so.6), sorted for comm.
+soname_paths() {
+  sed -E 's/(\.so\.[0-9]+)(\.[0-9]+)+:/\1:/' | sort -u
+}
 unresolved_libs() {
   python3 -I -c '
 import os, re, subprocess
@@ -425,6 +431,9 @@ EOF
   expect "pins: the Hyprland 0.56.2 stack, Qt 6.12.0 and Omarchy's Quickshell, each with a sha256 and an https address" \
     "$(pins | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ { print $1, $2 }' | tr '\n' ';')" \
     "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprtoolkit 0.6.0-1;hyprland-guiutils 0.2.2-4;hyprland 0.56.2-4;qt6-base 6.12.0-3;qt6-declarative 6.12.0-2;qt6-wayland 6.12.0-1;qt6-svg 6.12.0-1;qt6-shadertools 6.12.0-1;qt6-tools 6.12.0-1;qt6-5compat 6.12.0-1;qt6-imageformats 6.12.0-1;qt6-multimedia 6.12.0-1;qt6-multimedia-ffmpeg 6.12.0-1;qt6-positioning 6.12.0-1;qt6-webchannel 6.12.0-1;quickshell 0.3.2.r7.g2b4501a-1;"
+  expect "soname_paths: a pin that renames a library's file keeps its line" \
+    "$(printf '%s\n' '/usr/lib/libQt6X.so.6.12.1: libQt6Y.so.6' '/usr/lib/libZ.so: libW.so.1' | soname_paths | tr '\n' ';')" \
+    "/usr/lib/libQt6X.so.6: libQt6Y.so.6;/usr/lib/libZ.so: libW.so.1;"
   expect "pins: every Qt 6 pin is one version (Quickshell uses Qt's private API of exactly one)" \
     "$(pins | awk '$1 ~ /^qt6-/ { sub(/-[0-9]+$/, "", $2); print $2 }' | sort -u)" 6.12.0
   expect "pins: Quickshell is not the refused 0.3.2 tag" "$(pins | awk '$1 == "quickshell" && $2 !~ /^0\.3\.2-/ { print "ok" }')" ok
