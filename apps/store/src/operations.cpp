@@ -275,8 +275,9 @@ bool helperRunning(const QString &statusDir, const QString &id)
     if (close < 0)
         return false;
     const QList<QByteArray> rest = line.mid(close + 2).split(' ');
-    // Field 3 (state) is rest[0], so field 22 (the start time) is rest[19].
-    return rest.size() > 19 && rest.at(19) == fields.at(1);
+    // Field 3 (state) is rest[0], so field 22 (the start time) is rest[19]. A zombie has ended: its /proc entry stays only
+    // until its parent (or PID 1, when that is not an init that reaps: a container's idle process) collects it.
+    return rest.size() > 19 && rest.at(0) != "Z" && rest.at(0) != "X" && rest.at(19) == fields.at(1);
 }
 
 int countLogged(const QByteArray &logTail, const QString &verb, const QStringList &names)

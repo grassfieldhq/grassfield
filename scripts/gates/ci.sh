@@ -7,14 +7,17 @@
 #
 #   scripts/gates/ci.sh deps                  the packages the job installs from the repositories (one per line)
 #   scripts/gates/ci.sh pins                  the pinned packages: "<name> <version> <sha256> <url>" per line
-#   scripts/gates/ci.sh scope [BASE]          "full" when compositor/ changed since BASE (or BASE is unknown), else "quick"
+#   scripts/gates/ci.sh compat                the shared objects of an older package added beside the installed one (libjxl 0.12 for
+#                                             Hyprland): "<name> <version> <sha256> <url> <members>" per line
+#   scripts/gates/ci.sh scope [BASE]         "full" when compositor/ changed since BASE (or BASE is unknown), else "quick"
 #   scripts/gates/ci.sh setup [--tidy] [USER] (root, CI only) pacman set up, the packages (with clang for --tidy), USER (default
 #                                             builder) created and given the checkout
 #   scripts/gates/ci.sh toolkit               (root, CI only) the pinned packages, each checked against its sha256, installed
 #                                             (the Hyprland stack with -dd, as on the chroot) and held (IgnorePkg)
 #   scripts/gates/ci.sh check [BASE] [DIR]    `just check` when scope is full (clang-tidy over the compositor), else
 #                                             `just check-quick`; log in DIR (default .dev/ci)
-#   scripts/gates/ci.sh test [DIR]            `just test`; DIR/test.log and DIR/test-summary.txt (the run's summary lines)
+#   scripts/gates/ci.sh test [DIR [ARGS...]]  `just test ARGS` (scripts/dev/test.sh: --layer, --skip-gtest, --gtest-shard I/N);
+#                                             DIR/test.log and DIR/test-summary.txt (the run's summary lines)
 #   scripts/gates/ci.sh --selftest            the pure parts on fixtures
 #
 # CI only (docs/testing/README.md, the rule update_migrate.sh uses too): CI=true, GITHUB_ACTIONS=true and RUNNER_TEMP, all three
@@ -30,10 +33,28 @@ root=$(cd "$here/../.." && pwd)
 # of 18c95fae that the PKGBUILD's quickshell!=0.3.2 is about is in it). Each file is checked against its sha256 before pacman
 # sees it; a moved or rebuilt file fails the job instead of changing the toolkit under it.
 ARCHIVE=https://archive.archlinux.org/repos/2026/10/20/extra/os/x86_64
+# The snapshot's index lists only the databases; the package files are under /packages/<initial>/<name>/.
+PKGS=https://archive.archlinux.org/packages
+# Hyprland 0.56.2-4 and hyprgraphics 0.5.1-4 were built against libjxl.so.0.12 (the snapshot's libjxl 0.12.0-1) and the rolling
+# repositories moved on to 0.13.0-1 (libjxl.so.0.13): without 0.12 Hyprland does not start ("error while loading shared
+# libraries: libjxl.so.0.12", main CI run 45378817729). The package itself is NOT downgraded: current ffmpeg, glycin, sdl2_image,
+# opencv and webkit are built against 0.13 and need it. Only the 0.12 shared objects are added beside it (COMPAT: the files
+# usr/lib/libjxl*.so.0.12*, whose names do not clash with 0.13's), checked against the package's sha256. Nothing else of the
+# stack had drifted (checked against the 2026-11-24 extra.files: glslang 16, re2 11, display-info 3, lua 5.5 ... are current);
+# the toolkit step compares the unresolved libraries of every executable and shared object before and after the pins and
+# fails by name on a new one, so a later drift fails there and not in seven tests.
+# The rolling hyprtoolkit and hyprland-guiutils moved to libaquamarine.so.15 and libhyprgraphics.so.5 (PR #53's first run): they
+# are pinned with the stack at the snapshot's builds (hyprtoolkit 0.6.0-1, hyprland-guiutils 0.2.2-4, linked to .so.14 and
+# .so.4, the versions an Omarchy 4.5 machine runs), as the unresolved-library scan asked.
+COMPAT=(
+  "libjxl 0.12.0-1 a4e0f65e8ba3a2da1cc348aad4f7f8aee1b504b824a64838fb3d9b2f75cc9449 $PKGS/l/libjxl/libjxl-0.12.0-1-x86_64.pkg.tar.zst usr/lib/libjxl*.so.0.12*"
+)
 PINS=(
   "hyprutils 0.14.2-1 177dfe5d64dba65ef2f1274d84d647b12cc1bc0b808394fd556f135ac8d7e65e $ARCHIVE/hyprutils-0.14.2-1-x86_64.pkg.tar.zst"
   "hyprgraphics 0.5.1-4 c916b1fb9d7ad0e78fab2d94b0066dcdc8be0a2810be7e72df57ddf5b639fea3 $ARCHIVE/hyprgraphics-0.5.1-4-x86_64.pkg.tar.zst"
   "aquamarine 0.15.1-1 ac96995cceea132e32cafd9bf63fd6cbe3d0599ab175e82bcee85b0c7da9706c $ARCHIVE/aquamarine-0.15.1-1-x86_64.pkg.tar.zst"
+  "hyprtoolkit 0.6.0-1 2f223b6c9fb03416e3ddf4a7380c3411452e3701da2285fa4bfee972a22f42cf $ARCHIVE/hyprtoolkit-0.6.0-1-x86_64.pkg.tar.zst"
+  "hyprland-guiutils 0.2.2-4 c0a0938005128c574fa0fb8fcb7061876db381213143d2ed3b37faf1ea21f09e $ARCHIVE/hyprland-guiutils-0.2.2-4-x86_64.pkg.tar.zst"
   "hyprland 0.56.2-4 163bc740241880192d90027fad39ddb809b1705b04800a1f0185a58f3ce0884a $ARCHIVE/hyprland-0.56.2-4-x86_64.pkg.tar.zst"
   "quickshell 0.3.2.r7.g2b4501a-1 f9f813213597d1ee25e16860ed326e810857810460c09ee87d06bc3b655c2da1 https://pkgs.omarchy.org/stable/x86_64/quickshell-0.3.2.r7.g2b4501a-1-x86_64.pkg.tar.zst"
 )
@@ -87,6 +108,7 @@ PY
 }
 
 pins() { printf '%s\n' "${PINS[@]}"; }
+compat() { printf '%s\n' "${COMPAT[@]}"; }
 
 deps() { { pkgbuild_deps "$root/packaging/arch/PKGBUILD" && printf '%s\n' "${EXTRA[@]}"; } | sort -u; }
 
@@ -175,6 +197,18 @@ toolkit() {
   local dir line name ver sum url files=() names=() f
   ci_only toolkit || return 2
   dir=$(mktemp -d)
+  unresolved_libs >"$dir/unresolved.before" || { echo "ci.sh toolkit: the scan of unresolved libraries failed" >&2; return 1; }
+  for line in "${COMPAT[@]}"; do
+    read -r name ver sum url members <<<"$line"
+    f=$dir/${url##*/}
+    curl -fsSL --retry 3 -o "$f" "$url" || { echo "ci.sh toolkit: cannot download $url" >&2; return 1; }
+    [[ $(sha256sum "$f" | cut -d' ' -f1) == "$sum" ]] || { echo "ci.sh toolkit: $name $ver: sha256 differs from the pin: refused" >&2; return 1; }
+    local -a patterns
+    read -r -a patterns <<<"$members" # one pattern per word, never expanded by this shell
+    tar --zstd -xf "$f" -C / --wildcards "${patterns[@]}" || { echo "ci.sh toolkit: cannot extract $members from $name $ver" >&2; return 1; }
+    echo "ci.sh toolkit: $name $ver: $members added beside the installed $(pacman -Q "$name")"
+  done
+  ldconfig || return 1
   for line in "${PINS[@]}"; do
     read -r name ver sum url <<<"$line"
     f=$dir/${url##*/}
@@ -186,13 +220,55 @@ toolkit() {
   pacman -Udd --noconfirm "${files[@]}" || return 1
   pacman -U --noconfirm "$dir"/quickshell-*.pkg.tar.zst || return 1
   sed -i "/^\[options\]/a IgnorePkg = ${names[*]}" /etc/pacman.conf
-  rm -rf "$dir"
   for line in "${PINS[@]}"; do
     read -r name ver _ <<<"$line"
     [[ $(pacman -Q "$name" 2>/dev/null) == "$name $ver" ]] || { echo "ci.sh toolkit: $name is $(pacman -Q "$name" 2>&1), not $ver" >&2; return 1; }
   done
   pacman -Q qt6-base "${names[@]}"
   qs --version
+  # The pins and the compat objects leave nothing unresolved that was not before (a repository can move a soname under the
+  # pinned stack, or a pin can take one from a package), and the compositor itself has none.
+  local after new
+  after=$(unresolved_libs) || { echo "ci.sh toolkit: the scan of unresolved libraries failed" >&2; return 1; }
+  new=$(comm -13 "$dir/unresolved.before" <(printf '%s\n' "$after" | sed '/^$/d'))
+  [[ -z $new ]] || { echo "ci.sh toolkit: unresolved libraries the pins brought (path: library):" >&2; echo "$new" >&2; return 1; }
+  if grep -E '^/usr/(s?bin/Hyprland|lib/libhypr|lib/libaquamarine)' <<<"$after"; then
+    echo "ci.sh toolkit: the Hyprland stack has unresolved libraries" >&2
+    return 1
+  fi
+  /usr/bin/Hyprland --version | head -1
+  rm -rf "$dir"
+}
+
+# "<path>: <library>" for each library an ELF file under /usr/bin, /usr/sbin and /usr/lib cannot resolve (ldd), sorted. A plugin
+# that needs an optional library is the same before and after the pins, which is what toolkit compares.
+unresolved_libs() {
+  python3 -I -c '
+import os, re, subprocess
+from concurrent.futures import ThreadPoolExecutor
+files = []
+for top in ("/usr/bin", "/usr/sbin", "/usr/lib"):
+    for base, _dirs, names in os.walk(top):
+        for n in names:
+            p = os.path.join(base, n)
+            if os.path.islink(p) or not os.path.isfile(p):
+                continue
+            try:
+                with open(p, "rb") as f:
+                    if f.read(4) != b"\x7fELF":
+                        continue
+            except OSError:
+                continue
+            files.append(p)
+if len(files) < 200:
+    raise SystemExit("ci.sh: the scan found only %d ELF files (a container has thousands)" % len(files))
+def check(p):
+    r = subprocess.run(["ldd", p], capture_output=True, text=True)
+    return ["%s: %s" % (p, m.group(1)) for m in re.finditer(r"^\s*(\S+) => not found", r.stdout, re.M)]
+with ThreadPoolExecutor(8) as ex:
+    out = sorted({line for lines in ex.map(check, files) for line in lines})
+print("\n".join(out))
+'
 }
 
 # The environment of the checks and tests: the owner's locale, en_US.UTF-8 (the suites' sorted expectations are written in its
@@ -213,6 +289,36 @@ user_env() {
   fi
 }
 
+# The container's PID 1 is the runner's idle process, which never reaps: a process whose parent died is handed to it and stays a
+# zombie (it keeps a /proc entry and `kill -0` still succeeds), so the suites' "it died with its parent" checks (stack_helper,
+# capture, terminal_theme, the Store's terminal helper) read a dead process as alive for ever. On a machine systemd reaps. The
+# command runs as the child of a subreaper (PR_SET_CHILD_SUBREAPER) that adopts and reaps the orphans; its exit status is the
+# command's (128+N when a signal N ended it), SIGINT and SIGTERM are passed on.
+reaped() { # <command> [args...]
+  python3 -I -c '
+import ctypes, os, signal, sys
+if ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    sys.exit("ci.sh: PR_SET_CHILD_SUBREAPER refused")
+main = os.fork()
+if main == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+for sig in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(sig, lambda s, _frame: os.kill(main, s))
+code = 1
+while True:
+    try:
+        pid, status = os.waitpid(-1, 0)
+    except InterruptedError:
+        continue
+    except ChildProcessError:
+        break
+    if pid == main:
+        code = os.waitstatus_to_exitcode(status)
+        break
+sys.exit(code if code >= 0 else 128 - code)
+' "$@"
+}
+
 check() { # [base] [dir]
   local s dir=${2:-$root/.dev/ci} rc
   s=$(scope "${1:-}")
@@ -221,31 +327,32 @@ check() { # [base] [dir]
   cd "$root" || return 2
   if [[ $s == full ]]; then
     echo "ci.sh check: compositor/ changed (or no base to compare with): just check (with clang-tidy)"
-    just check 2>&1 | tee "$dir/check.log"
+    reaped just check 2>&1 | tee "$dir/check.log"
   else
     echo "ci.sh check: compositor/ unchanged: just check-quick"
-    just check-quick 2>&1 | tee "$dir/check.log"
+    reaped just check-quick 2>&1 | tee "$dir/check.log"
   fi
   rc=${PIPESTATUS[0]}
   echo "check ($s): exit $rc" >"$dir/check-summary.txt"
   return "$rc"
 }
 
-test_run() { # [dir]
+test_run() { # [dir [test.sh arguments...]]
   local dir=${1:-$root/.dev/ci} rc
+  shift || true
   mkdir -p "$dir" || return 2
   user_env
   cd "$root" || return 2
-  just test 2>&1 | tee "$dir/test.log"
+  reaped just test "$@" 2>&1 | tee "$dir/test.log"
   rc=${PIPESTATUS[0]}
-  summarize "$dir/test.log" "$rc" >"$dir/test-summary.txt"
+  summarize "$dir/test.log" "$rc" "$*" >"$dir/test-summary.txt"
   return "$rc"
 }
 
 # The summary of a `just test` log: its FAIL lines, the "summary:" block to the end (skips, the per-layer table, the inventory
 # gate), and the exit code.
-summarize() { # <log> <rc>
-  echo "just test: exit $2"
+summarize() { # <log> <rc> [test.sh arguments]
+  echo "just test${3:+ $3}: exit $2"
   echo
   echo "Failures:"
   grep -a -E '^(FAIL|  FAIL)[: ]' "$1" | sed 's/^/  /' || echo "  none"
@@ -300,8 +407,11 @@ EOF
   fi
   expect "pins: the Hyprland 0.56.2 stack and Omarchy's Quickshell, each with a sha256 and an https address" \
     "$(pins | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ { print $1, $2 }' | tr '\n' ';')" \
-    "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
+    "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprtoolkit 0.6.0-1;hyprland-guiutils 0.2.2-4;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
   expect "pins: Quickshell is not the refused 0.3.2 tag" "$(pins | awk '$1 == "quickshell" && $2 !~ /^0\.3\.2-/ { print "ok" }')" ok
+  expect "compat: libjxl 0.12 objects only, with a sha256, an https address and the 0.12 soname pattern" \
+    "$(compat | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ && $5 == "usr/lib/libjxl*.so.0.12*" { print $1, $2 }' | tr '\n' ';')" "libjxl 0.12.0-1;"
+  expect "compat: libjxl is not also a pin (the installed 0.13 stays for ffmpeg, glycin, opencv, webkit)" "$(pins | grep -c '^libjxl ')" 0
   expect "toolkit refuses on a bare machine" "$(env -u CI bash "$0" toolkit >/dev/null 2>&1; echo $?)" 2
   # The environment of check and test: en_US.UTF-8 where it is generated (LC_ALL and the other overrides cleared), a runtime
   # directory; the copy of the checkout lives in the user's home.
@@ -311,6 +421,12 @@ EOF
     "$(LC_ALL=C LANG=fr_FR.UTF-8 XDG_RUNTIME_DIR="$w/rt" bash -c '. "$1" --source-only; user_env 2>/dev/null; echo "$LANG|${LC_ALL-unset}|$XDG_RUNTIME_DIR"' _ "$0")" \
     "$want_lang|unset|$w/rt"
   expect "workdir: <home of the user>/grassfield" "$(workdir_of "$(id -un)")" "$(getent passwd "$(id -un)" | cut -d: -f6)/grassfield"
+  # The subreaper: the command's exit status (and 128+N for a signal) comes back, an orphan is adopted by it (its parent is the
+  # subreaper, the command's own parent), not left to PID 1.
+  expect "reaped: the command's exit status is kept" "$(reaped bash -c 'exit 7' >/dev/null 2>&1; echo $?)" 7
+  expect "reaped: a signalled command is 128+N" "$(reaped bash -c 'kill -TERM $$' >/dev/null 2>&1; echo $?)" 143
+  expect "reaped: an orphan's new parent is the subreaper" \
+    "$(reaped bash -c '(sleep 1 & echo $! >"$1"); sleep 0.3; echo "$(awk "/^PPid/{print \$2}" /proc/$(cat "$1")/status) $PPID"' _ "$w/orphan" | awk '$1 == $2 { print "adopted" }')" adopted
   # The summary of a test log.
   printf 'x\nFAIL: tests/shell/a.sh\n  FAIL inner\nsummary: 1 check(s) SKIPPED\n  SKIP: y\nlayer pass\nlogic 3\n' >"$w/test.log"
   expect "summary: the failures, then the summary block to the end" "$(summarize "$w/test.log" 1 | tr '\n' '|')" \
@@ -326,6 +442,7 @@ shift || true
 case $cmd in
   deps) deps ;;
   pins) pins ;;
+  compat) compat ;;
   scope) scope "${1:-}" ;;
   setup) setup "$@" ;;
   toolkit) toolkit ;;
@@ -333,5 +450,5 @@ case $cmd in
   test) test_run "$@" ;;
   --selftest) selftest ;;
   -h | --help) sed -n '2,/^set -uo/p' "$0" | sed '$d;s/^# \{0,1\}//' ;;
-  *) echo "usage: ci.sh deps|pins|scope|setup|toolkit|check|test|--selftest (--help)" >&2; exit 2 ;;
+  *) echo "usage: ci.sh deps|pins|compat|scope|setup|toolkit|check|test|--selftest (--help)" >&2; exit 2 ;;
 esac
