@@ -105,7 +105,9 @@ ShellRoot {
                     check("typing does not end a timed notice", search.clipNotice === "timed");
                     search.say("refused", true);
                     search.hide();
-                    check("closing clears the sticky notice", search.clipNotice === "" && !search.noticeSticky);
+                    check("the sticky notice stays while the panel fades out", search.clipNotice === "refused");
+                    search.released();
+                    check("closing clears the sticky notice once the panel is gone", search.clipNotice === "" && !search.noticeSticky);
                     search.show("");
                     search.toggleClipboard();
                     check("Super+Ctrl+V over open Search enters the view", search.open && search.clipboardView);

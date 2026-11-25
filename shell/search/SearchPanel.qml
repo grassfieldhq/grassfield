@@ -1132,9 +1132,9 @@ Variants {
                     const p = footerText.mapToItem(win.contentItem, (width - contentWidth) / 2, (height - contentHeight) / 2 + (deps.length > 0 ? 0 : 1));
                     return Qt.rect(p.x, p.y, contentWidth, contentHeight);
                 }
-                // Drawn for real: this screen's panel is shown and opaque, the footer is visible with opacity and text, its text
-                // rectangle lies inside the window and inside the panel's rectangle, and below the last row (the list ends where the
-                // footer begins, so no row covers it). The nested test reads it, and the rectangle, from the dev status.
+                // Shown on this screen: the panel is shown and opaque, the footer is visible with opacity and text, and its text
+                // rectangle starts inside the panel and lies inside the window (the footer is laid out below the list, so those are
+                // the bounds that can fail). It is state only: the nested test proves the drawing from the pixels of noticeRect.
                 readonly property bool drawn: {
                     if (!win.shown || !panel.visible || panel.opacity <= 0 || !visible || opacity <= 0 || text === "" || contentWidth <= 0)
                         return false;
@@ -1142,8 +1142,7 @@ Variants {
                     const pr = panel.mapToItem(win.contentItem, 0, 0 * (panel.x + panel.y));
                     const r = paintRect;
                     const inWindow = r.x >= 0 && r.y >= 0 && r.x + r.width <= win.width && r.y + r.height <= win.height;
-                    const inPanel = r.x >= pr.x && r.y >= pr.y && r.x + r.width <= pr.x + panel.width && r.y + r.height <= pr.y + panel.height;
-                    const rows = pr.y + list.y + list.height;                    return inWindow && inPanel && r.y >= rows - 0.5;
+                    return inWindow && r.x >= pr.x && r.y >= pr.y;
                 }
                 onPaintRectChanged: if (drawn && win.shown)
                     root.controller.noticeRect = ({x: paintRect.x, y: paintRect.y, w: paintRect.width, h: paintRect.height})

@@ -226,7 +226,7 @@ Scope {
 
     function hide(): void {
         open = false;
-        clearStickyNotice();
+        // The notice, sticky or not, stays while the panel fades out (the panel keeps its height) and ends in released().
         closeActions();
         // A paste the helper has not confirmed yet ends with Search: a late confirmation pastes nothing (ADR-0034 §4).
         Clipboard.searchClosed();
