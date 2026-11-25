@@ -46,6 +46,11 @@ PKGS=https://archive.archlinux.org/packages
 # The rolling hyprtoolkit and hyprland-guiutils moved to libaquamarine.so.15 and libhyprgraphics.so.5 (PR #53's first run): they
 # are pinned with the stack at the snapshot's builds (hyprtoolkit 0.6.0-1, hyprland-guiutils 0.2.2-4, linked to .so.14 and
 # .so.4, the versions an Omarchy 4.5 machine runs), as the unresolved-library scan asked.
+# Qt is pinned at 6.12.0, the owner's: Omarchy's Quickshell is built against Qt's private API of one exact Qt version, and Arch's
+# 6.12.1 (2026-11-25) left the pinned Quickshell's modules unloadable (qmllint: "Failed to import Quickshell.Hyprland", 169
+# warnings, main run 45682020409). The Qt modules an Omarchy 4.5 machine runs go in together (a 6.12.1 module beside a 6.12.0
+# base would load against the wrong private API); qt6-translations (data only) and qt6-webengine (versioned apart) stay current.
+# The sha256 sums are those of the owner's pacman cache, equal in size to the archive's files.
 COMPAT=(
   "libjxl 0.12.0-1 a4e0f65e8ba3a2da1cc348aad4f7f8aee1b504b824a64838fb3d9b2f75cc9449 $PKGS/l/libjxl/libjxl-0.12.0-1-x86_64.pkg.tar.zst usr/lib/libjxl*.so.0.12*"
 )
@@ -56,6 +61,18 @@ PINS=(
   "hyprtoolkit 0.6.0-1 2f223b6c9fb03416e3ddf4a7380c3411452e3701da2285fa4bfee972a22f42cf $ARCHIVE/hyprtoolkit-0.6.0-1-x86_64.pkg.tar.zst"
   "hyprland-guiutils 0.2.2-4 c0a0938005128c574fa0fb8fcb7061876db381213143d2ed3b37faf1ea21f09e $ARCHIVE/hyprland-guiutils-0.2.2-4-x86_64.pkg.tar.zst"
   "hyprland 0.56.2-4 163bc740241880192d90027fad39ddb809b1705b04800a1f0185a58f3ce0884a $ARCHIVE/hyprland-0.56.2-4-x86_64.pkg.tar.zst"
+  "qt6-base 6.12.0-3 dea8a8c45a7929af115a2ba96c60dff927425f8c65432cf5d1027c79c8aa98f0 $PKGS/q/qt6-base/qt6-base-6.12.0-3-x86_64.pkg.tar.zst"
+  "qt6-declarative 6.12.0-2 8072d884df0d344d31a3f56e75feece93013cc20077626327ca8cde3779045bd $PKGS/q/qt6-declarative/qt6-declarative-6.12.0-2-x86_64.pkg.tar.zst"
+  "qt6-wayland 6.12.0-1 5b6cd6016a5676c83b04b9b02d51a7baa34c195580fdb235404d60b0c3d6c39d $PKGS/q/qt6-wayland/qt6-wayland-6.12.0-1-x86_64.pkg.tar.zst"
+  "qt6-svg 6.12.0-1 922e48a36b2c8e1ac16c2b5f222f0e33e52fb2ec5384e69715eb427512af7ebf $PKGS/q/qt6-svg/qt6-svg-6.12.0-1-x86_64.pkg.tar.zst"
+  "qt6-shadertools 6.12.0-1 6e7863301b3111a6a9acd8b042b9e5a874c0c289287b3ecdd6209d6d67f6554a $PKGS/q/qt6-shadertools/qt6-shadertools-6.12.0-1-x86_64.pkg.tar.zst"
+  "qt6-tools 6.12.0-1 bc45c9721e2fed7c7e85afc85e8653584bb7c90219af64b23769bd3e6fa46408 $PKGS/q/qt6-tools/qt6-tools-6.12.0-1-x86_64.pkg.tar.zst"
+  "qt6-5compat 6.12.0-1 32812e7ad218035ea61d80438153ce52011eaec887669328150719ebb6958000 $PKGS/q/qt6-5compat/qt6-5compat-6.12.0-1-x86_64.pkg.tar.zst"
+  "qt6-imageformats 6.12.0-1 9851283acbd350badb3e289149ae8d6664296f61ac8172f7bc86c6be8f487cbf $PKGS/q/qt6-imageformats/qt6-imageformats-6.12.0-1-x86_64.pkg.tar.zst"
+  "qt6-multimedia 6.12.0-1 a4c1106a5dd60f559851199e234a4eeaa830be2fe77067dca28ff30faa62fee0 $PKGS/q/qt6-multimedia/qt6-multimedia-6.12.0-1-x86_64.pkg.tar.zst"
+  "qt6-multimedia-ffmpeg 6.12.0-1 9378f91c96344ff187b95c3347d45e2be0e1fe16c6dc6696e708531c0a3ccf5d $PKGS/q/qt6-multimedia-ffmpeg/qt6-multimedia-ffmpeg-6.12.0-1-x86_64.pkg.tar.zst"
+  "qt6-positioning 6.12.0-1 7c2599cd4ec2655d7a3eb00d7a4b81363da1a7e72b9d3858d8e6909bc289bc36 $PKGS/q/qt6-positioning/qt6-positioning-6.12.0-1-x86_64.pkg.tar.zst"
+  "qt6-webchannel 6.12.0-1 8246bb014ef7b1d2194efcd355b3aa8308c0b1be7aea6cdfb7b73ad7cd63cfd1 $PKGS/q/qt6-webchannel/qt6-webchannel-6.12.0-1-x86_64.pkg.tar.zst"
   "quickshell 0.3.2.r7.g2b4501a-1 f9f813213597d1ee25e16860ed326e810857810460c09ee87d06bc3b655c2da1 https://pkgs.omarchy.org/stable/x86_64/quickshell-0.3.2.r7.g2b4501a-1-x86_64.pkg.tar.zst"
 )
 # Besides the PKGBUILD's: the toolchain (base-devel), the task runner, the secret scan (gate S1), the gate tooling (jq), the
@@ -405,9 +422,11 @@ EOF
   if [[ $(id -u) != 0 ]]; then
     expect "setup refuses a CI runner's markers without root" "$(CI=true GITHUB_ACTIONS=true RUNNER_TEMP=/tmp bash "$0" setup 2>&1 | grep -c 'refused: not root')" 1
   fi
-  expect "pins: the Hyprland 0.56.2 stack and Omarchy's Quickshell, each with a sha256 and an https address" \
+  expect "pins: the Hyprland 0.56.2 stack, Qt 6.12.0 and Omarchy's Quickshell, each with a sha256 and an https address" \
     "$(pins | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ { print $1, $2 }' | tr '\n' ';')" \
-    "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprtoolkit 0.6.0-1;hyprland-guiutils 0.2.2-4;hyprland 0.56.2-4;quickshell 0.3.2.r7.g2b4501a-1;"
+    "hyprutils 0.14.2-1;hyprgraphics 0.5.1-4;aquamarine 0.15.1-1;hyprtoolkit 0.6.0-1;hyprland-guiutils 0.2.2-4;hyprland 0.56.2-4;qt6-base 6.12.0-3;qt6-declarative 6.12.0-2;qt6-wayland 6.12.0-1;qt6-svg 6.12.0-1;qt6-shadertools 6.12.0-1;qt6-tools 6.12.0-1;qt6-5compat 6.12.0-1;qt6-imageformats 6.12.0-1;qt6-multimedia 6.12.0-1;qt6-multimedia-ffmpeg 6.12.0-1;qt6-positioning 6.12.0-1;qt6-webchannel 6.12.0-1;quickshell 0.3.2.r7.g2b4501a-1;"
+  expect "pins: every Qt 6 pin is one version (Quickshell uses Qt's private API of exactly one)" \
+    "$(pins | awk '$1 ~ /^qt6-/ { sub(/-[0-9]+$/, "", $2); print $2 }' | sort -u)" 6.12.0
   expect "pins: Quickshell is not the refused 0.3.2 tag" "$(pins | awk '$1 == "quickshell" && $2 !~ /^0\.3\.2-/ { print "ok" }')" ok
   expect "compat: libjxl 0.12 objects only, with a sha256, an https address and the 0.12 soname pattern" \
     "$(compat | awk '$3 ~ /^[0-9a-f]{64}$/ && $4 ~ /^https:\/\/[^ ]+\.pkg\.tar\.zst$/ && $5 == "usr/lib/libjxl*.so.0.12*" { print $1, $2 }' | tr '\n' ';')" "libjxl 0.12.0-1;"
